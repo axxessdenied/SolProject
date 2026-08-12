@@ -88,7 +88,7 @@ Promotion/demotion is a contract, not an optimization detail. Each transition mu
 
 The visual and control experience should remain continuous from surface to space. The implementation may use layered terrain LOD, atmosphere shells, multiple render passes, dynamic near/far strategies, impostors, and frame changes. “Seamless” does not imply globally simulated ground detail or every distant body at full precision.
 
-The game uses real Solar System names, planetary radii, orbital distances, and vetted astronomical data with an initial campaign epoch displayed as 2026-01-01 00:00:00 UTC. DE440 and pinned NAIF generic kernels provide reference states at an explicit TDB ephemeris boundary. P1 uses a reproducible anchor at 28.0° N, 80.5° W, 5 m elevation; the final scope uses one fictional commercial launch facility in that region, one high-detail launch region, and one primary body while retaining full scale (ADR 0008). Final terrain placement and regulatory/operating context remain open. Planet-wide authored detail, arbitrary cities, caves, oceans, and deformable terrain are out of scope until explicitly added.
+The game uses real Solar System names, planetary radii, orbital distances, and vetted astronomical data with an initial campaign epoch displayed as 2026-01-01 00:00:00 UTC. The DE440/DE441 solution and pinned NAIF generic kernels provide reference states at an explicit TDB ephemeris boundary. P1 uses a reproducible anchor at 28.0° N, 80.5° W, 5 m above the reference ellipsoid; the final scope uses one fictional commercial launch facility in that region, one high-detail launch region, and one primary body while retaining full scale (ADR 0008). Final terrain placement and regulatory/operating context remain open. Planet-wide authored detail, arbitrary cities, caves, oceans, and deformable terrain are out of scope until explicitly added.
 
 ### 4.4 Time and scheduling
 
@@ -271,7 +271,7 @@ They remain long-term goals where confirmed; deferral protects the spacecraft-fi
 | Internal static SolEngine libraries; no stable C++ ABI | Confirmed | User accepted recommendation and ADR 0005 |
 | Owned subsystem namespaces and Doxygen public source-API contracts | Confirmed | User accepted recommendation and ADR 0006 |
 | vcpkg manifest mode with a reviewed pinned baseline | Confirmed policy | User accepted recommendation and ADR 0007; no libraries selected |
-| DE440/NAIF reference fixtures, UTC/TDB boundary, and fixed P1 launch anchor | Confirmed | User accepted recommendation and ADR 0008 |
+| DE440/DE441 and NAIF reference fixtures, UTC/TDB boundary, and fixed P1 launch anchor | Confirmed | User accepted recommendation and ADR 0008, amended 2026-08-12 after A2 measured the ephemeris-product and datum ambiguities |
 | JSON-facing persistence artifacts, chunked campaign container, and bounded migration window | Confirmed | User accepted recommendation and ADR 0009 |
 | P1 prototype thresholds and increments | Confirmed | User accepted recommendation; detailed milestone plans are authoritative |
 | P1 split into headless P1a and graphical/physics P1b | Confirmed | User approved 2026-08-12; sequences cheap high-information work first |

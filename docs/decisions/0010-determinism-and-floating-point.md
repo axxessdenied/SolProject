@@ -25,7 +25,7 @@ Cross-machine bit-exactness would require soft-float or comprehensive discipline
 ### Compiler policy
 
 - Use `/fp:precise`. `/fp:fast` is forbidden on project-owned targets.
-- Disable FMA contraction explicitly rather than relying on the default, which has varied across MSVC toolsets.
+- FMA contraction must be off for authoritative arithmetic. Prefer an explicit disabling flag where the toolset provides one, because contraction defaults have varied across MSVC releases. **Where no such flag exists, relying on the `/fp:precise` default is permitted only if a negative control demonstrates by measurement that the default actually holds**, and the build must record which of the two applies. Amended 2026-08-12; see [Recorded implementation values](#recorded-implementation-values-a1-2026-08-12), which supersedes the original requirement that contraction be disabled explicitly in all cases.
 - Target `/arch:AVX2`. All four declared baseline hosts support it: Coffee Lake and Zen+ both implement AVX2, including the hosts of the UHD 630 and Vega 8 investigation devices.
 - Do not rely on `long double`, x87 behavior, or compiler-specific math intrinsics for authoritative simulation values.
 - Increment A1 must verify and record the exact flag spellings for the selected toolset. Flag names and defaults in this area have changed between MSVC releases, so the recorded values are authoritative over this ADR's prose.
@@ -80,13 +80,17 @@ These are those values, measured on MSVC 19.51.36252.0 (toolset 14.51.36231) wit
 
 ### Amendment: contraction is disabled by default, not by flag
 
-The Decision section above requires contraction to be disabled "explicitly rather than relying
-on the default." **On this toolset that is not possible.** MSVC 19.51 provides no spelling that
-disables contraction; `/fp:precise` disables it by default and `/fp:contract` opts back in.
+**Adopted into the Decision section on 2026-08-12.** As originally written, that section required
+contraction to be disabled "explicitly rather than relying on the default." **On this toolset
+that is not possible.** MSVC 19.51 provides no spelling that disables contraction;
+`/fp:precise` disables it by default and `/fp:contract` opts back in. `cmake/SolProjectOptions.cmake`
+probes for `/fp:contract-` and `/fp:no-contract` at configure time and both are rejected.
 
-The requirement is therefore met by the `/fp:precise` default, and the build records the mode
-as `implicit-off-under-fp-precise` in every measurement report rather than implying an
-explicit flag was applied.
+Rather than leave the ADR's headline requirement unsatisfiable, the Decision section now states
+the achievable rule: prefer an explicit flag, and permit the default **only** when a negative
+control proves it. The build records the mode as `implicit-off-under-fp-precise` in every
+measurement report rather than implying an explicit flag was applied, so the two cases are
+distinguishable in evidence rather than by inference.
 
 Because this rests on a compiler default rather than a stated contract, A1 verifies it by
 measurement instead of assertion. The `contractionProbe` kernel in `DeterminismSmoke` computes

@@ -17,7 +17,7 @@ Allowed status values are **Proposed**, **Accepted**, **Superseded**, and **Reje
 | [0005](0005-engine-linkage-and-extension-boundary.md) | Accepted | Internal static engine libraries; no stable C++ ABI for mods |
 | [0006](0006-subsystem-namespaces-and-source-api-documentation.md) | Accepted | Owned subsystem namespaces and Doxygen source-API contracts |
 | [0007](0007-dependency-acquisition-and-pinning.md) | Accepted | vcpkg manifest mode with a reviewed pinned baseline |
-| [0008](0008-astronomical-reference-data-and-time-boundary.md) | Accepted | DE440 reference data, UTC/TDB boundary, and fixed P1 launch anchor |
+| [0008](0008-astronomical-reference-data-and-time-boundary.md) | Accepted, amended 2026-08-12 | DE440/DE441 reference data, UTC/TDB boundary, and a fixed P1 launch anchor defined against the reference ellipsoid |
 | [0009](0009-persistence-artifacts-and-migration-window.md) | Accepted | JSON-facing artifacts, chunked campaign saves, and migration window |
 | [0010](0010-determinism-and-floating-point.md) | Accepted | Same-machine bit-exact determinism; `/fp:precise` and `/arch:AVX2` |
 | [0011](0011-gravity-and-orbit-baseline.md) | Accepted | Patched conics with spheres of influence; no perturbations or decay |

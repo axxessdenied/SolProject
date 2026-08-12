@@ -1,14 +1,14 @@
 # Project Status
 
-**Phase:** P1a — Precision and orbit prototypes; increment A1 complete, awaiting review
+**Phase:** P1a — Precision and orbit prototypes; increments A1 and A2 complete, A2 awaiting review
 
 **Planning gate:** Approved on 2026-08-12
 
-**Implementation authorization:** **Granted on 2026-08-12** by user direction, scoped to the [P1a milestone plan](../SolProjectNotes/Milestones/P1a-Precision-and-Orbit.md)
+**Implementation authorization:** **Granted on 2026-08-12** by user direction, scoped to the [P1a milestone plan](../SolProjectNotes/Milestones/P1a-Precision-and-Orbit.md). Extended to increment A2 on 2026-08-12 by direct user instruction.
 
-**Single writer:** Claude, on branch `feature/p1a-precision-and-orbit` based on `dev`
+**Single writer:** Claude. A1 landed as PR #1 from `feature/p1a-precision-and-orbit`; A2 is uncommitted in the `dev` working tree, because branch creation was not requested.
 
-**Implementation:** Started — P1a increment A1 (measurement and build harness)
+**Implementation:** Started — P1a increments A1 (measurement and build harness) and A2 (reference frames and numerical precision)
 
 This is the single source of truth for project phase, milestone state, blockers, planning-gate state, and implementation authorization. Design intent belongs in `SolProjectNotes/`; implemented technical truth will belong in `docs/architecture.md`.
 
@@ -17,7 +17,7 @@ This is the single source of truth for project phase, milestone state, blockers,
 - Product priorities and long-term direction have been captured from the initial design interview.
 - SolEngine, **Frontiers of Sol**, the `sol` C++ namespace, the C++ naming conventions in ADR 0003, and the subsystem/API documentation policy in ADR 0006 are confirmed.
 - Windows x64, single-player, real-scale seamless surface-to-space travel, modular part construction, and a hybrid simulation model are confirmed.
-- The initial campaign epoch is fixed at 2026-01-01 00:00:00 UTC in the real Solar System, using real astronomical names/data and fictional companies and politics. DE440/NAIF data and an explicit UTC-to-TDB boundary own reference fixtures. P1 uses a fixed launch anchor at 28.0° N, 80.5° W, 5 m elevation; final fictional terrain placement and regulatory context remain open (ADR 0008).
+- The initial campaign epoch is fixed at 2026-01-01 00:00:00 UTC in the real Solar System, using real astronomical names/data and fictional companies and politics. DE440/DE441 and NAIF data and an explicit UTC-to-TDB boundary own reference fixtures. P1 uses a fixed launch anchor at 28.0° N, 80.5° W, 5 m above the reference ellipsoid; final fictional terrain placement and regulatory context remain open (ADR 0008).
 - The first playable uses external third-person flight, instruments, and an orbital map. Cockpit/IVA is later; walking inside ships is deferred beyond the current roadmap.
 - C++23, MSVC, CMake, and Ninja are accepted. Vulkan 1.2 is the accepted P1 candidate floor with per-device capability queries; final production adoption remains Proposed until ADR 0002 receives P1 evidence.
 - The baseline PC is an Intel Core i5-8400 or Ryzen 5 2600, GTX 1060 6 GB or RX 580 8 GB, 16 GB RAM, and an SSD, targeting 60 FPS at 1080p on low/medium settings. Intel UHD 630 and AMD Vega 8-class integrated graphics are investigation targets for 30 FPS at 720p/low.
@@ -35,6 +35,9 @@ This is the single source of truth for project phase, milestone state, blockers,
 - FactoryProject has been consulted for workflow patterns and remains reference-only.
 - Agent contracts and the initial planning-document set are established.
 - P1a increment A1 is building the first CMake project and disposable headless prototype targets under `prototypes/p1a/`. No runtime assets and no dependency declarations exist; P1a is deliberately dependency-free, so `vcpkg.json` remains absent.
+- P1a increment A2 selected the **hierarchical parent-relative frame graph** over a single global root, on measured evidence recorded in [`docs/architecture.md`](architecture.md) and [`evidence/p1a/A2/Index.md`](../evidence/p1a/A2/Index.md). Both candidates met every accepted threshold; the selection turned on a ~4,500× precision gap for conversions below barycentric magnitude.
+- The pinned ADR 0008 reference fixtures now exist under `fixtures/p1a/` with SHA-256 digests verified at load and full [provenance](../fixtures/p1a/Provenance.md). The UTC/TAI/TT/TDB boundary is driven entirely by the pinned leap-second kernel and agrees with JPL Horizons to the fixtures' printed 0.1 ms.
+- One ULP of a `double` is 0.98 mm at Neptune's distance. A global-root double therefore has no millimetre headroom beyond roughly Jupiter, which is the measured constraint on how far the roadmap can extend before a frame decision would have to be revisited. The selected model is not subject to it.
 
 ## Planning gate
 
@@ -42,7 +45,7 @@ This is the single source of truth for project phase, milestone state, blockers,
 
 **Implementation authorization followed on 2026-08-12**, separately and explicitly, scoped to P1a. The user granted authorization, named Claude as the single writer, and authorized creating `feature/p1a-precision-and-orbit` from `dev`. Authorization does not extend to committing, pushing, merging, tagging, or opening a pull request; each still requires explicit user direction per `AGENTS.md`.
 
-Scope granted so far covers **P1a increment A1 only**. Increments A2 and A3 are planned but not started; A2 will be scoped after A1's evidence is reviewed.
+Scope granted now covers **P1a increments A1 and A2**. The user instructed implementation of A2 directly on 2026-08-12; that instruction is the authorization, and it superseded the earlier note that A2 would be scoped only after A1's evidence was reviewed. Increment A3 is planned but not started and is **not** authorized.
 
 ### Required before approval
 
@@ -92,7 +95,7 @@ The planning set was reviewed after gate approval and revised with user authoriz
 | Stage | State | Outcome |
 |---|---|---|
 | P0 — Product and architecture planning | Complete | Planning foundation reviewed, gate approved, and plan revised 2026-08-12; no implementation delivered |
-| P1a — Precision and orbit prototypes | A1 complete; A2/A3 not started | Headless evidence for frame conversion, precision budget, and hybrid propagation under warp |
+| P1a — Precision and orbit prototypes | A1 and A2 complete; A3 not started | Headless evidence for frame conversion, precision budget, and hybrid propagation under warp |
 | P1b — Renderer and craft prototypes | Blocked on P1a; not authorized | Vulkan surface-to-orbit precision evidence and constructed-craft feasibility |
 | P2 — First-playable production | Not started | Design-build-fly-explore-research-company loop |
 | P3 — Orbital company | Not started | Persistent operations, stations, people, maintenance, logistics, and manufacturing |
@@ -105,12 +108,16 @@ The planning set was reviewed after gate approval and revised with user authoriz
 
 P0 has no remaining planning blockers, and P1a's authorization prerequisites are satisfied: implementation is authorized, Claude is the named single writer, and the branch/base are recorded above.
 
-P1a increment A1 is complete and awaiting user review of its [evidence](../evidence/p1a/A1/Index.md). A2 is blocked on that review; the granted scope covered A1 only. P1a needs no GPU hardware; the reference-hardware evidence plan is a P1b prerequisite. Product and architecture questions that belong to later milestones remain tracked in [Open Questions](../SolProjectNotes/Open-Questions.md); they do not authorize implementation-time guessing.
+P1a increments A1 and A2 are complete and awaiting user review of their evidence ([A1](../evidence/p1a/A1/Index.md), [A2](../evidence/p1a/A2/Index.md)). A3 is not authorized. P1a needs no GPU hardware; the reference-hardware evidence plan is a P1b prerequisite. Product and architecture questions that belong to later milestones remain tracked in [Open Questions](../SolProjectNotes/Open-Questions.md); they do not authorize implementation-time guessing.
 
-Open decisions raised by A1 and awaiting the user:
+**No open decisions.** The four raised by increments A1 and A2 were all resolved by the user on 2026-08-12:
 
-- Whether ADR 0010's contraction wording should be amended in place, or left carrying only the A1 "Recorded implementation values" section. The section is sufficient under the ADR's own rules.
-- A2's first task fetches pinned NAIF kernels and JPL Horizons state vectors and checks them in as provenance-stamped fixtures. This needs network access and was agreed in principle but not yet performed.
+| Decision | Resolution |
+|---|---|
+| JPL Horizons serves **DE441** while ADR 0008 named DE440 | [ADR 0008](decisions/0008-astronomical-reference-data-and-time-boundary.md) amended to name the **DE440/DE441 solution family**, with each fixture required to record which product supplied it. Downloading `de440.bsp` was rejected: a 114 MB Git LFS binary plus a reopened CSPICE dependency review, for numbers that agree with what Horizons already serves. |
+| ADR 0008's launch anchor was defined "5 m above mean sea level", a geoid statement the project cannot honour | ADR 0008 amended to define the anchor **5 m above the reference ellipsoid** named by `BODY399_RADII` in the pinned kernel, and to require a datum to travel with every geodetic coordinate. A geoid model was rejected as 30 m of machinery for a fictional facility; WGS84 was rejected because no pinned NAIF kernel supplies its constants. |
+| ADR 0010 required contraction be "disabled explicitly", which MSVC 19.51 cannot do | [ADR 0010](decisions/0010-determinism-and-floating-point.md) amended in place: prefer an explicit flag, and permit reliance on the `/fp:precise` default **only** where a negative control proves it by measurement. |
+| A1's `TimingScenario`, marked disposable and "replaced in A2" | Removed. `FrameModelCost` does its job against real conversions; the evidence and rationale remain in [A1's index](../evidence/p1a/A1/Index.md), which carries a dated addendum. |
 
 ## Known risks
 

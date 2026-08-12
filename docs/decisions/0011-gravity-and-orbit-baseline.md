@@ -55,4 +55,4 @@ The boundary is: below the atmospheric limit, an active craft is integrated nume
 
 - NASA documents the patched-conic approximation and sphere-of-influence method in its [Basics of Space Flight, Interplanetary Trajectories](https://science.nasa.gov/learn/basics-of-space-flight/chapter4-1/).
 - Vallado, *Fundamentals of Astrodynamics and Applications*, covers the Laplace sphere-of-influence formulation and the accuracy limits of patched-conic methods.
-- Reference body states and gravitational parameters come from the DE440 data pinned in [ADR 0008](0008-astronomical-reference-data-and-time-boundary.md).
+- Reference body states and gravitational parameters come from the DE440/DE441 data pinned in [ADR 0008](0008-astronomical-reference-data-and-time-boundary.md).

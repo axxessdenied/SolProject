@@ -170,3 +170,13 @@ It is recorded only because the opposite would have warranted investigation.
 | `prototypes/p1a/ToolchainReport/` | Host and toolchain capability report |
 | `prototypes/p1a/DeterminismSmoke/` | ADR 0010 determinism kernels |
 | `prototypes/p1a/TimingScenario/` | Timing pipeline demonstration; **disposable**, replaced in A2 |
+
+## Addendum, 2026-08-12: `TimingScenario` removed
+
+`TimingScenario` was deleted after increment A2, with user approval. `FrameModelCost` now
+demonstrates the same measurement pipeline against real frame conversions, which is the
+replacement this index anticipated.
+
+Nothing above is revised — it records what A1 delivered and remains accurate as history. The
+consequence for a reader re-running A1's commands is that the `TimingScenario.exe` step in
+[Handoff.md](Handoff.md) no longer exists and A1's test count drops from six to five.

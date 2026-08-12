@@ -1,8 +1,8 @@
 # P1a — Precision and Orbit Prototypes
 
-**Status:** Planned; not authorized to implement
+**Status:** See [`docs/project_status.md`](../../docs/project_status.md), which is authoritative for milestone state and implementation authorization. This plan defines scope and acceptance criteria; it does not authorize implementation.
 
-**Outcome owner:** Unassigned until implementation is authorized. One Codex or Claude feature owner must hold the branch/worktree and remain the only writer.
+**Outcome owner:** Claude, as the named single writer. One Codex or Claude feature owner must hold the branch/worktree and remain the only writer.
 
 **Planning source:** User approval on 2026-08-12; scope split and revision approved 2026-08-12
 

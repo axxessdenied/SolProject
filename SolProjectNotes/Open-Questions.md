@@ -59,7 +59,7 @@ No design or architecture questions remain on the planning-gate checklist. The u
 - Explicit plumbing/fuel and electrical systems; exact interaction/visualization depth remains open.
 - Deterministic design/piloting failures initially; no first-playable random manufacturing defects; crew death and mission revert are configurable for later crewed play.
 - First playable begins with the uncrewed Orbital Environmental Survey: approximately 200 km by 200 km stable orbit, one complete revolution, radiation/magnetic-field/upper-atmosphere observations, and valid data transmission. Reentry/recovery is not required.
-- DE440/NAIF reference data with player-facing UTC and a TDB ephemeris boundary (ADR 0008).
+- DE440/DE441 and NAIF reference data with player-facing UTC and a TDB ephemeris boundary (ADR 0008).
 - Persistent formats are versioned from first use; pre-alpha data may be disposable; guaranteed migrations begin at first public alpha (ADR 0004).
 - UTF-8 JSON settings/content, JSON-manifest blueprint packages, and JSON-manifest chunked binary campaign containers. Version 1.0 migrates all supported public-alpha saves/blueprints; later support covers the current major series plus the final previous-major schema (ADR 0009).
 - SolEngine uses internal static libraries and exposes no stable C++ binary ABI; data, scripting, or a versioned C interface are future extension paths (ADR 0005).

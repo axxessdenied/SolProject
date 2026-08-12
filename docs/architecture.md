@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** Mostly proposed pre-production architecture. The [Implemented build foundation](#implemented-build-foundation) section below is implemented technical truth as of P1a increment A1; everything else remains proposed and is not implemented. Accepted decisions are recorded in `docs/decisions/`.
+**Status:** Mostly proposed pre-production architecture. The [Implemented build foundation](#implemented-build-foundation) and [Selected reference-frame model](#selected-reference-frame-model) sections below are implemented technical truth as of P1a increments A1 and A2; everything else remains proposed and is not implemented. Accepted decisions are recorded in `docs/decisions/`.
 
 ## Implemented build foundation
 
@@ -71,6 +71,108 @@ report.
 No third-party dependency is used. Scenarios are plain executables registered with CTest, so
 ADR 0007's dependency workflow has not yet been triggered and no `vcpkg.json` exists.
 
+## Selected reference-frame model
+
+Delivered by P1a increment A2 and verified against the evidence in
+[`evidence/p1a/A2/Index.md`](../evidence/p1a/A2/Index.md). This section records a measured
+selection, not a proposal. It does not yet describe production code: A2's implementation lives in
+`prototypes/p1a/Frames/` and promoting it requires an explicit review.
+
+### The selection
+
+**Frames are stored relative to their immediate parent, and conversions walk to the lowest common
+ancestor.** A single global root holding every frame's transform against the Solar System
+barycentre was implemented as the competing candidate and measured against it.
+
+Both models meet every accepted P1a threshold, so compliance did not decide it. The measured gap
+in the case that dominates real use did:
+
+| Property | Global root | Parent-relative |
+|---|---|---|
+| Round-trip error, boundaries below barycentric magnitude | 4.5 µm | under 1.3 nm |
+| Round-trip error, full chain to the barycentre | 4.50 µm | 4.57 µm |
+| Cost, adjacent-frame conversion | 26.4 ns | 15.8 ns |
+| Cost, full chain to the root | 10.5 ns | 82.4 ns |
+| Rebuild, per timestep | 316 ns | 10.7 ns |
+
+Timings are medians on the development machine and are a distribution, not a constant; the
+evidence index records their spread and the run-to-run variation. The precision figures are
+bit-exact and gated as such.
+
+A global root routes every conversion through barycentric magnitude regardless of destination, so
+converting a vehicle's state into a launch-site frame 100 m away costs the same precision as
+converting it to the Solar System barycentre. Parent-relative storage pays that cost only when a
+conversion actually asks to cross that boundary, and most do not.
+
+The accepted trade is that a full-chain conversion to the root is 7.9× slower, at an absolute
+cost of 85.6 ns.
+
+### Frame chain
+
+```
+VehicleLocal -> LaunchSiteEnu -> EarthBodyFixed -> EarthIcrf -> EarthMoonBarycentreIcrf -> SsbIcrf
+```
+
+`VehicleLocal` is a floating local origin whose axes stay parallel to the launch site's, so a
+craft translates within the graph without rotating under it. `SunIcrf` and `MoonIcrf` branch off
+the same graph.
+
+A state carries its frame **and its epoch**. Two frames in this chain rotate, so a state
+converted against the wrong instant is wrong by hundreds of metres and looks entirely reasonable;
+conversions reject an epoch mismatch rather than proceeding.
+
+### Precision budget
+
+Per conversion at the surface anchor, for the selected model: **4.797 µm against a 1 mm
+threshold, 208× headroom.** The dominant term is the arithmetic of forming barycentric
+coordinates; every boundary below that contributes under a nanometre.
+
+Repeated conversion does not accumulate. A round trip reaches a **bitwise fixed point after one
+conversion**, because the intermediate quantisation at barycentric magnitude is far coarser than
+the perturbation the round trip introduces. Storing converted states and reconverting them is
+therefore safe, which is a stronger guarantee than the threshold asked for.
+
+The limit that constrains the roadmap: one ULP of a `double` is 0.98 mm at Neptune's distance,
+so a global-root double has no millimetre headroom at all beyond roughly Jupiter. Parent-relative
+storage does not have this problem, because its magnitudes are the relationships they describe
+rather than distances to a global origin.
+
+### Units and time
+
+SI throughout, with conversions confined to named boundary functions. Positions are metres,
+velocities metres per second, and the km-valued NAIF and Horizons data is converted once at parse.
+
+Campaign time accumulates as exact integer nanoseconds and converts to the ephemeris scale once,
+explicitly, per ADR 0010. The tick rate itself remains open.
+
+UTC, TAI, TT, and TDB are separate scales driven entirely by the pinned leap-second kernel: no
+leap-second count and no TAI−TT offset is written into the source. UTC is represented as a
+calendar, not a second count, so the 23:59:60 leap-second instant is representable and keeps its
+pre-step offset. The campaign epoch converted through this boundary agrees with JPL Horizons to
+the fixtures' printed 0.1 ms resolution.
+
+### What this section does not decide
+
+- **Earth orientation.** A2 uses the IAU_EARTH definition from a pinned kernel, which omits
+  nutation, polar motion, and UT1−UTC and can differ from ITRF by tens of metres at the surface.
+  Adequate for measuring a rotating boundary's numerics; not a navigation model. The production
+  Earth orientation model remains open.
+- **Origin motion.** A2 extrapolates celestial origins linearly from one fixture epoch. That is
+  self-consistent frame kinematics, not an ephemeris. Propagation belongs to increment A3 under
+  ADR 0011.
+- **Which ellipsoid, beyond P1.** ADR 0008 was amended after A2 to define the anchor 5 m above
+  the reference ellipsoid, and A2 adopts the IAU `pck00011` value. WGS84 places the same anchor
+  0.403 m away and may be preferable later for interoperability with real geospatial data;
+  adopting it would require new content coordinates and fixtures rather than a reinterpretation
+  of the P1 reference case.
+- **Promotion.** Nothing in `prototypes/p1a/Frames/` is production code. Unlike the measurement
+  harness it carries domain concepts, so promoting it is a larger decision, not a smaller one.
+
+### What would reopen it
+
+P1b increment B1 evaluates the screen-space jitter gate against this model. The P1a plan makes a
+B1 failure a reason to revisit this decision rather than a P1a failure.
+
 ## Proposed architecture
 
 Everything below this point is proposed and unimplemented.
@@ -95,7 +197,7 @@ authoritative for the literal values.
 - SolEngine is initially a set of internal static libraries with no stable C++ binary ABI or shared-library export surface (ADR 0005).
 - Source-level module interfaces use owned subsystem namespaces such as `sol::core`, `sol::render`, `sol::platform`, and `sol::assets`. Implementation-only symbols live under the owning subsystem's `detail` namespace, and public source APIs receive Doxygen contracts (ADR 0006).
 - vcpkg manifest mode with a reviewed `builtin-baseline` is the default C/C++ dependency acquisition policy; no package is selected until an owning milestone accepts it (ADR 0007).
-- JPL DE440 supplies initial astronomical reference states, with player-facing UTC converted at a pinned-data TDB ephemeris boundary; the P1 launch anchor is 28.0° N, 80.5° W, 5 m above mean sea level (ADR 0008).
+- The JPL DE440/DE441 solution family supplies initial astronomical reference states, with each fixture recording its actual product and with player-facing UTC converted at a pinned-data TDB ephemeris boundary; the P1 launch anchor is 28.0° N, 80.5° W, 5 m above the reference ellipsoid, and every geodetic coordinate carries its datum (ADR 0008, amended after P1a increment A2).
 - Persistence uses human-readable UTF-8 JSON for settings/content, JSON-manifest blueprint packages, and JSON-manifest chunked binary campaign containers, with concrete encodings selected later (ADRs 0004 and 0009).
 - Determinism is bit-exact on the same build and machine, tolerance-based across machines. `/fp:precise` and `/arch:AVX2`, never `/fp:fast`; `double` for authoritative state, deterministic iteration order, seeded generators, and integer campaign-time accumulation (ADR 0010).
 - Orbital propagation uses patched conics with spheres of influence. No perturbations, drag, or decay enter the propagation; aerodynamic forces still act on active craft inside the atmosphere in the local regime (ADR 0011).
@@ -152,7 +254,7 @@ This design is provisional until technical prototypes measure precision, stabili
 
 The content baseline uses real Solar System names, dimensions, orbital distances, and vetted astronomical data. The first playable limits high-detail surface content to one bounded launch region while retaining full planetary radius and astronomical scale. Fictional corporations and politics avoid binding game progression to real institutions.
 
-The initial authoritative campaign epoch is displayed as 2026-01-01 00:00:00 UTC. DE440 and pinned NAIF generic kernels provide the initial reference data; ephemeris fixtures are evaluated at a TDB boundary with complete provenance (ADR 0008). P1 uses 28.0° N, 80.5° W, and 5 m elevation as its reproducible launch anchor. The final facility remains fictional and geographically distinct from real launch complexes; its name, authored terrain placement, and regulatory/operating arrangements remain game-design decisions.
+The initial authoritative campaign epoch is displayed as 2026-01-01 00:00:00 UTC. The DE440/DE441 solution and pinned NAIF generic kernels provide the initial reference data; ephemeris fixtures are evaluated at a TDB boundary with complete provenance (ADR 0008). P1 uses 28.0° N, 80.5° W, and 5 m above the reference ellipsoid as its reproducible launch anchor. The final facility remains fictional and geographically distinct from real launch complexes; its name, authored terrain placement, and regulatory/operating arrangements remain game-design decisions.
 
 ## Time model
 

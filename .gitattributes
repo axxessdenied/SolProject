@@ -1,2 +1,15 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Pinned astronomical reference data (ADR 0008).
+#
+# These files are byte-exact inputs whose SHA-256 digests are compiled into
+# prototypes/p1a/Frames/src/ReferenceData.cpp and verified at load. They are text, but they
+# must NOT be treated as text by Git: with core.autocrlf=true a Windows checkout would rewrite
+# their line endings, changing every byte after the first line and failing every digest on a
+# fresh clone. Marking them -text stores and restores them unchanged.
+#
+# The failure this prevents is loud rather than silent -- the loader refuses to run on a digest
+# mismatch -- but it would have broken the build for every clone of this repository.
+fixtures/p1a/kernels/** -text
+fixtures/p1a/horizons/** -text
