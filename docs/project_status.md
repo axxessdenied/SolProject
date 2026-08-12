@@ -1,12 +1,14 @@
 # Project Status
 
-**Phase:** Pre-production planning complete; awaiting implementation authorization
+**Phase:** P1a — Precision and orbit prototypes; increment A1 complete, awaiting review
 
 **Planning gate:** Approved on 2026-08-12
 
-**Implementation authorization:** Not granted
+**Implementation authorization:** **Granted on 2026-08-12** by user direction, scoped to the [P1a milestone plan](../SolProjectNotes/Milestones/P1a-Precision-and-Orbit.md)
 
-**Implementation:** Not started
+**Single writer:** Claude, on branch `feature/p1a-precision-and-orbit` based on `dev`
+
+**Implementation:** Started — P1a increment A1 (measurement and build harness)
 
 This is the single source of truth for project phase, milestone state, blockers, planning-gate state, and implementation authorization. Design intent belongs in `SolProjectNotes/`; implemented technical truth will belong in `docs/architecture.md`.
 
@@ -32,11 +34,15 @@ This is the single source of truth for project phase, milestone state, blockers,
 - The working time budget is 40+ hours per week.
 - FactoryProject has been consulted for workflow patterns and remains reference-only.
 - Agent contracts and the initial planning-document set are established.
-- No C++, CMake project, runtime assets, dependency declarations, or build artifacts exist.
+- P1a increment A1 is building the first CMake project and disposable headless prototype targets under `prototypes/p1a/`. No runtime assets and no dependency declarations exist; P1a is deliberately dependency-free, so `vcpkg.json` remains absent.
 
 ## Planning gate
 
-**Approved by the user on 2026-08-12.** This approval closes P0 and accepts the planning foundation only. The user explicitly did not authorize implementation. No C++, CMake targets, runtime assets, dependency declarations, branch operations, or other implementation work may begin until **Implementation authorization** above is explicitly changed to **Granted** by user direction and the P1 prerequisites are satisfied.
+**Approved by the user on 2026-08-12.** This approval closed P0 and accepted the planning foundation only.
+
+**Implementation authorization followed on 2026-08-12**, separately and explicitly, scoped to P1a. The user granted authorization, named Claude as the single writer, and authorized creating `feature/p1a-precision-and-orbit` from `dev`. Authorization does not extend to committing, pushing, merging, tagging, or opening a pull request; each still requires explicit user direction per `AGENTS.md`.
+
+Scope granted so far covers **P1a increment A1 only**. Increments A2 and A3 are planned but not started; A2 will be scoped after A1's evidence is reviewed.
 
 ### Required before approval
 
@@ -86,7 +92,7 @@ The planning set was reviewed after gate approval and revised with user authoriz
 | Stage | State | Outcome |
 |---|---|---|
 | P0 — Product and architecture planning | Complete | Planning foundation reviewed, gate approved, and plan revised 2026-08-12; no implementation delivered |
-| P1a — Precision and orbit prototypes | Ready; not authorized | Headless evidence for frame conversion, precision budget, and hybrid propagation under warp |
+| P1a — Precision and orbit prototypes | A1 complete; A2/A3 not started | Headless evidence for frame conversion, precision budget, and hybrid propagation under warp |
 | P1b — Renderer and craft prototypes | Blocked on P1a; not authorized | Vulkan surface-to-orbit precision evidence and constructed-craft feasibility |
 | P2 — First-playable production | Not started | Design-build-fly-explore-research-company loop |
 | P3 — Orbital company | Not started | Persistent operations, stations, people, maintenance, logistics, and manufacturing |
@@ -97,7 +103,14 @@ The planning set was reviewed after gate approval and revised with user authoriz
 
 ## Current blockers and open decisions
 
-P0 has no remaining planning blockers. P1a remains inactive because implementation authorization was explicitly not granted. Before P1a begins, the user must authorize implementation, identify the single writer, and authorize the required branch/base operations. P1a needs no GPU hardware; the reference-hardware evidence plan is a P1b prerequisite. Product and architecture questions that belong to later milestones remain tracked in [Open Questions](../SolProjectNotes/Open-Questions.md); they do not authorize implementation-time guessing.
+P0 has no remaining planning blockers, and P1a's authorization prerequisites are satisfied: implementation is authorized, Claude is the named single writer, and the branch/base are recorded above.
+
+P1a increment A1 is complete and awaiting user review of its [evidence](../evidence/p1a/A1/Index.md). A2 is blocked on that review; the granted scope covered A1 only. P1a needs no GPU hardware; the reference-hardware evidence plan is a P1b prerequisite. Product and architecture questions that belong to later milestones remain tracked in [Open Questions](../SolProjectNotes/Open-Questions.md); they do not authorize implementation-time guessing.
+
+Open decisions raised by A1 and awaiting the user:
+
+- Whether ADR 0010's contraction wording should be amended in place, or left carrying only the A1 "Recorded implementation values" section. The section is sufficient under the ADR's own rules.
+- A2's first task fetches pinned NAIF kernels and JPL Horizons state vectors and checks them in as provenance-stamped fixtures. This needs network access and was agreed in principle but not yet performed.
 
 ## Known risks
 
