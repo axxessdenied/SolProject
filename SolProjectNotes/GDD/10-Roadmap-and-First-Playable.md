@@ -41,7 +41,9 @@ The first playable is complete when:
 - packaging and controls work on the accepted Windows reference hardware;
 - the representative scene sustains 60 FPS at 1080p low/medium on the discrete baseline; integrated-graphics results are reported against their separately accepted target.
 
-P1 technical-risk thresholds are accepted in the [P1 milestone plan](../Milestones/P1-Technical-Risk-Prototypes.md). The first-playable orbit acceptance band, final launch-site terrain placement, detailed science-data quality values, and production performance budgets remain open until their owning P2 milestones are planned.
+Technical-risk thresholds are accepted in the [P1a](../Milestones/P1a-Precision-and-Orbit.md) and [P1b](../Milestones/P1b-Renderer-and-Craft.md) milestone plans. The first-playable orbit acceptance band, final launch-site terrain placement, detailed science-data quality values, and production performance budgets remain open until their owning P2 milestones are planned.
+
+Orbital mechanics use patched conics with spheres of influence (ADR 0011). Orbits do not decay, and Lagrange points do not exist. The first playable is unaffected; a player familiar with real spaceflight is most likely to notice this from P3 onward.
 
 ## Excluded from first playable
 

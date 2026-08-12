@@ -11,7 +11,7 @@ Allowed status values are **Proposed**, **Accepted**, **Superseded**, and **Reje
 | ADR | Status | Decision |
 |---|---|---|
 | [0001](0001-cpp23-msvc-cmake-ninja.md) | Accepted | C++23, MSVC, CMake, and separate Ninja builds |
-| [0002](0002-vulkan-graphics-api.md) | Proposed | Prefer Vulkan if the P1 renderer prototype satisfies the older-hardware target |
+| [0002](0002-vulkan-graphics-api.md) | Proposed | Prefer Vulkan if the P1b renderer prototype satisfies the precision and capability evidence |
 | [0003](0003-cpp-naming-conventions.md) | Accepted | `sol` namespace and project-owned C++ naming conventions |
 | [0004](0004-persistence-versioning-and-compatibility.md) | Accepted | Version from first persistence; guarantee migrations from public alpha |
 | [0005](0005-engine-linkage-and-extension-boundary.md) | Accepted | Internal static engine libraries; no stable C++ ABI for mods |
@@ -19,3 +19,6 @@ Allowed status values are **Proposed**, **Accepted**, **Superseded**, and **Reje
 | [0007](0007-dependency-acquisition-and-pinning.md) | Accepted | vcpkg manifest mode with a reviewed pinned baseline |
 | [0008](0008-astronomical-reference-data-and-time-boundary.md) | Accepted | DE440 reference data, UTC/TDB boundary, and fixed P1 launch anchor |
 | [0009](0009-persistence-artifacts-and-migration-window.md) | Accepted | JSON-facing artifacts, chunked campaign saves, and migration window |
+| [0010](0010-determinism-and-floating-point.md) | Accepted | Same-machine bit-exact determinism; `/fp:precise` and `/arch:AVX2` |
+| [0011](0011-gravity-and-orbit-baseline.md) | Accepted | Patched conics with spheres of influence; no perturbations or decay |
+| [0012](0012-asset-pipeline.md) | Accepted | Blender authoring, glTF 2.0, procedural geometry, build-time bake |

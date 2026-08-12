@@ -80,6 +80,8 @@ Objects can occupy different simulation regimes:
 | Inactive/coasting | Stable trajectories away from encounters | Analytical propagation and scheduled events |
 | Strategic aggregate | Later fleets, markets, remote people | Event-driven or coarse deterministic updates |
 
+The authoritative gravity model is patched conics with spheres of influence (ADR 0011). Analytical coast is exact Kepler propagation within one sphere of influence, and no perturbations, drag, or decay enter the propagation. Aerodynamic forces still act on active craft inside the atmosphere, in the local regime. This makes trajectory prediction closed-form and warp trivially safe during coast, at the cost of Lagrange points and perturbation-driven mission design.
+
 Promotion/demotion is a contract, not an optimization detail. Each transition must define preserved state, eligibility, tolerances, wake-up events, and failure handling.
 
 ### 4.3 Seamless planets
@@ -138,37 +140,46 @@ Deliver the repository contract, GDD, engine plan, open-question register, ADR p
 
 ### P1 — Technical risk prototypes
 
-The implementation-ready scope, increments, measurement rules, and thresholds are authoritative in [P1 — Technical Risk Prototypes](Milestones/P1-Technical-Risk-Prototypes.md). P1 is planned but cannot begin until the approved planning gate is accompanied by explicit implementation authorization and the milestone prerequisites are satisfied.
+P1 is split into two milestones so that the cheap, high-information headless work completes before the expensive graphical and physics work begins. The implementation-ready scope, increments, measurement rules, and thresholds are authoritative in [P1a — Precision and Orbit](Milestones/P1a-Precision-and-Orbit.md) and [P1b — Renderer and Craft](Milestones/P1b-Renderer-and-Craft.md). Neither can begin until the approved planning gate is accompanied by explicit implementation authorization and the milestone prerequisites are satisfied.
 
-Build disposable, instrumented prototypes for:
+**P1a** is entirely headless and requires no GPU hardware or assets:
 
-1. precision and reference-frame conversion from surface scale to orbit;
-2. Vulkan surface-to-orbit planet/atmosphere rendering, depth behavior, frame pacing, device-capability reporting, and scalable quality on the discrete baseline plus UHD 630/Vega 8-class investigation systems;
-3. local integration ↔ analytical orbit transition and time warp;
-4. assembled 150–300-part rigid-body behavior, staging, deterministic failure handling, and explicit fluid/electrical networks;
-5. serialization round trips for stable IDs, blueprints, and versioned content references.
+1. a minimal build and measurement harness;
+2. precision and reference-frame conversion from surface scale to orbit;
+3. local integration ↔ analytical orbit transition and time warp under the ADR 0011 patched-conic model.
 
-These prototypes answer ADR questions. Production code is not required to reuse them. Accepted headline gates include 1 m/1 mm/s hybrid handoffs, 100 m one-orbit reference error, 0.25-pixel stationary render jitter, p95 renderer frame times of 16.67 ms on the discrete baseline and 33.3 ms on the integrated investigation tier, and p95 300-part budgets of 4 ms for craft physics plus 1 ms for resource networks.
+**P1b** requires baseline GPU hardware:
 
-**Exit:** measured results choose or reject candidate architectures against accepted tolerances and performance budgets.
+4. Vulkan surface-to-orbit planet/atmosphere rendering, depth behavior, device-capability reporting, and scalable quality;
+5. assembled 150–300-part craft behavior, staging, deterministic failure handling, and explicit fluid/electrical networks, comparing two candidate craft representations.
+
+P1a's prototypes are disposable. P1b's renderer is built in the production tree, because a working Vulkan bootstrap is never realistically discarded; P1b's craft physics remains disposable because its purpose is to reject one of two representations.
+
+Accepted headline gates include 1 m/1 mm/s hybrid handoffs, 100 m one-orbit reference error, 0.25-pixel stationary render jitter measured by the method defined in the P1b plan, and p95 300-part budgets of 4 ms for craft physics plus 1 ms for resource networks. **Renderer frame time is recorded in P1b but gated in M2**, where the scene contains representative assets; a prototype frame rate measured against placeholder geometry is not predictive enough to accept or reject a graphics API. Each increment also carries a time box whose overrun triggers a documented narrow-or-reject decision.
+
+Two items moved out of P1. Versioned persistence round trips moved to P2/M1, because they are well-understood engineering rather than an open technical risk and ADRs 0004 and 0009 stand without prototype evidence. The Direct3D 12 comparison spike was withdrawn in favor of a documented analysis, because a second backend cannot realistically change a Windows-only decision.
+
+**Exit:** measured results choose or reject candidate architectures against accepted tolerances.
 
 ### P2 — First-playable production
 
 #### M1: Foundation and headless harness
 
-Application lifecycle, explicit time services, logging/diagnostics, math/units, testing, content validation skeleton, and a headless scenario runner.
+Application lifecycle, explicit time services, logging/diagnostics, math/units, testing, content validation skeleton, a headless scenario runner, and **versioned persistence round trips** carried over from the original P1 increment 6: stable IDs, craft topology, content references, chronology, artifact versions, and the unknown-version, missing-content, corruption, and recoverable-failure scenarios required by ADRs 0004 and 0009.
 
-**Playable proof:** a deterministic scenario can run headlessly and the graphical shell displays the same authoritative clock/state summary.
+**Playable proof:** a deterministic scenario can run headlessly, save and reload without semantic loss, and the graphical shell displays the same authoritative clock/state summary.
 
 #### M2: Large-world rendering and reference frames
 
-Camera-relative rendering through the P1-selected production API, one full-scale primary body, a bounded high-detail launch region, sky/space transition, reference-frame diagnostics, capability-based graphics tiers, and initial terrain/atmosphere presentation.
+Camera-relative rendering through the P1b-selected production API, one full-scale primary body, a bounded high-detail launch region, sky/space transition, reference-frame diagnostics, capability-based graphics tiers, and initial terrain/atmosphere presentation.
 
-**Playable proof:** the camera travels continuously from the launch surface to orbital altitude without visible coordinate jitter, a loading screen, or depth collapse, while meeting 60 FPS/1080p on the discrete baseline. UHD 630 and Vega 8-class results are documented against the 30 FPS/720p-low investigation target; unsupported status must be explicit rather than hidden by lowering simulation fidelity.
+M2 owns the renderer performance gates deferred from P1b: p95 total frame time no greater than 16.67 ms at 1080p low/medium on the discrete baseline, with a spike criterion of p99 no greater than 25 ms and no frame exceeding 33 ms. The integrated investigation tier is measured against 33.3 ms p95 at 720p/low, and its support status is decided here.
+
+**Playable proof:** the camera travels continuously from the launch surface to orbital altitude without visible coordinate jitter, a loading screen, or depth collapse, while meeting the gates above on the discrete baseline. UHD 630 and Vega 8-class results are documented against the 30 FPS/720p-low investigation target; unsupported status must be explicit rather than hidden by lowering simulation fidelity.
 
 #### M3: Parts, assemblies, and construction
 
-Data-driven fixed functional parts, procedural tanks/structures, node and limited surface attachment, symmetry, modular assemblies, mass/resource aggregation, staging/action groups, logical plumbing/fuel and electrical networks, blueprint save/load/import, and construction validation.
+Data-driven fixed functional parts, **procedural geometry generation for tanks and structural pieces as an engine capability** (ADR 0012), the asset bake tool and glTF import path, node and limited surface attachment, symmetry, modular assemblies, mass/resource aggregation, staging/action groups, logical plumbing/fuel and electrical networks, blueprint save/load/import, and construction validation.
 
 **Playable proof:** build and reload a valid staged chemical launch vehicle; invalid or missing-content designs fail with actionable diagnostics.
 
@@ -262,7 +273,17 @@ They remain long-term goals where confirmed; deferral protects the spacecraft-fi
 | vcpkg manifest mode with a reviewed pinned baseline | Confirmed policy | User accepted recommendation and ADR 0007; no libraries selected |
 | DE440/NAIF reference fixtures, UTC/TDB boundary, and fixed P1 launch anchor | Confirmed | User accepted recommendation and ADR 0008 |
 | JSON-facing persistence artifacts, chunked campaign container, and bounded migration window | Confirmed | User accepted recommendation and ADR 0009 |
-| P1 prototype thresholds and increments | Confirmed | User accepted recommendation; detailed milestone plan is authoritative |
+| P1 prototype thresholds and increments | Confirmed | User accepted recommendation; detailed milestone plans are authoritative |
+| P1 split into headless P1a and graphical/physics P1b | Confirmed | User approved 2026-08-12; sequences cheap high-information work first |
+| Renderer frame-time gating deferred from P1b to M2 | Confirmed | User approved; prototype frame time without representative assets is weakly predictive |
+| Direct3D 12 spike withdrawn in favor of documented analysis | Confirmed | User approved; cannot realistically change a Windows-only decision |
+| Persistence round trips moved from P1 to P2/M1 | Confirmed | User approved; not an open technical risk |
+| P1b renderer built in the production tree; craft physics disposable | Confirmed | User approved 2026-08-12 |
+| Per-increment time boxes with narrow-or-reject triggers | Confirmed | User approved 2026-08-12; the original plan had quality gates but no cost gates |
+| Same-machine bit-exact determinism; `/fp:precise` and `/arch:AVX2` | Confirmed | User accepted recommendation and ADR 0010 |
+| Patched conics with spheres of influence; no perturbations or decay | Confirmed | User accepted recommendation and ADR 0011 |
+| Blender authoring, glTF 2.0, procedural geometry, build-time bake, Git LFS | Confirmed | User accepted recommendation and ADR 0012 |
+| Procedural geometry generation is an M3 engine deliverable | Confirmed | Follows from ADR 0012 and the committed construction design |
 | Own small hangar, mission control, one pad, and limited testing; lease major manufacturing/tracking | Confirmed initial scope | User accepted recommendation |
 | Real-scale Solar System and present-day context | Confirmed | User accepted recommendation |
 | Fixed functional parts plus procedural tanks/structures; 150–300 early parts | Confirmed direction | User accepted recommendation |

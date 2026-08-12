@@ -10,14 +10,18 @@ No design or architecture questions remain on the planning-gate checklist. The u
 
 - Finalize the launch-facility name, terrain placement, regulatory/operating arrangement, and starting staff/inventory/cash/service-contract balance. The regional location and owned/leased split are settled.
 - Set the Orbital Environmental Survey's acceptable periapsis/apoapsis band, instrument operation durations, data-validity rules, and rewards.
-- Choose the gravity/orbit baseline: patched conics, selective n-body effects, perturbations, and sphere-of-influence behavior.
 - Define powered flight and attitude control during time warp.
+- Set the atmospheric boundary altitude at which propagation switches between drag-affected local integration and drag-free conic coast, and the handoff behavior across it (ADR 0011 fixes the model on each side but not the boundary).
 - Specify simplified atmospheric/aerodynamic/heating behavior and whether weather exists.
 - Set structural stress, collision, staging, docking, and fuel-transfer fidelity.
 - Define how logical fluid/electrical connections are edited and visualized, whether pressure/voltage are simulated, and whether internal component placement appears before walkable interiors.
 - Choose input-device support beyond baseline keyboard/mouse, including gamepad, HOTAS, and custom bindings.
 - Define the exact first-playable flight instruments/HUD layout and camera comfort options beyond the accepted external orbit/zoom behavior.
 - Choose one versus multiple nearby active-physics craft and confirm the 150–300-part performance test cases.
+- Choose the craft physical representation: per-part dynamic bodies with joints, or welded aggregates with breakable constraint groups. P1b increment B2 measures both and recommends one.
+- Define the procedural geometry parameter sets for tanks, structural elements, adapters, fairings, and trusses, and how much variation the player can control.
+- Define the part attachment-node naming convention and the glTF extras schema the asset bake step validates against.
+- Decide whether M2 or a later milestone owns renderer optimization if the deferred 16.67 ms gate is missed with representative assets.
 - Define configurable crew-death, revert, quicksave, and difficulty-preset behavior for later crewed missions.
 - Select concrete window/input, Vulkan-loading, math, UI, physics, audio, serialization, testing, profiling, and asset-processing libraries only when their owning milestones demonstrate a need.
 
@@ -62,6 +66,9 @@ No design or architecture questions remain on the planning-gate checklist. The u
 - The company initially owns a small assembly hangar, mission-control room, one launch pad, and limited testing equipment while leasing major manufacturing and tracking services.
 - Editor only when demonstrated necessary.
 - vcpkg manifest mode with a reviewed `builtin-baseline` is the default dependency acquisition policy; individual libraries remain milestone decisions (ADR 0007).
-- P1 increments and thresholds are accepted in [P1 — Technical Risk Prototypes](Milestones/P1-Technical-Risk-Prototypes.md).
+- Determinism is bit-exact on the same build and machine and tolerance-based across machines; `/fp:precise` and `/arch:AVX2`, never `/fp:fast` (ADR 0010).
+- The orbital model is patched conics with spheres of influence. No perturbations, drag, or decay in the propagation; aerodynamic forces still act on active craft in atmosphere. Lagrange points and perturbation-driven mission design are consequently unavailable (ADR 0011).
+- Assets are authored in Blender, interchanged as glTF 2.0, generated procedurally where parametric, and baked at build time. Binary sources use Git LFS. No purchased packs or commissioned art for the first playable (ADR 0012).
+- P1 increments and thresholds are accepted in [P1a — Precision and Orbit](Milestones/P1a-Precision-and-Orbit.md) and [P1b — Renderer and Craft](Milestones/P1b-Renderer-and-Craft.md). Renderer frame-time gating belongs to M2; persistence round trips belong to M1.
 - Focused third-party libraries are acceptable; FactoryProject is reference-only.
 - Mod support is desired.

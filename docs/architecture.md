@@ -20,8 +20,13 @@ SolEngine supplies the focused services needed to build one demanding 3D space s
 - vcpkg manifest mode with a reviewed `builtin-baseline` is the default C/C++ dependency acquisition policy; no package is selected until an owning milestone accepts it (ADR 0007).
 - JPL DE440 supplies initial astronomical reference states, with player-facing UTC converted at a pinned-data TDB ephemeris boundary; the P1 launch anchor is 28.0° N, 80.5° W, 5 m above mean sea level (ADR 0008).
 - Persistence uses human-readable UTF-8 JSON for settings/content, JSON-manifest blueprint packages, and JSON-manifest chunked binary campaign containers, with concrete encodings selected later (ADRs 0004 and 0009).
+- Determinism is bit-exact on the same build and machine, tolerance-based across machines. `/fp:precise` and `/arch:AVX2`, never `/fp:fast`; `double` for authoritative state, deterministic iteration order, seeded generators, and integer campaign-time accumulation (ADR 0010).
+- Orbital propagation uses patched conics with spheres of influence. No perturbations, drag, or decay enter the propagation; aerodynamic forces still act on active craft inside the atmosphere in the local regime (ADR 0011).
+- Assets are authored in Blender, interchanged as glTF 2.0 with metric units and explicit axis conversion, generated procedurally where parametric, and baked at build time into an engine-ready runtime format. The runtime loads only baked assets (ADR 0012).
 
-Vulkan is the preferred graphics direction, not yet an accepted production implementation dependency. P1 uses Vulkan 1.2 as the candidate floor, queries actual device capabilities, and treats later capabilities as optional. It must establish baseline discrete-GPU support, UHD 630/Vega 8-class status, validation/capture workflow, frame pacing, and whether Vulkan remains preferable to Direct3D 12 for this Windows-first project. The discrete baseline p95 gate is 16.67 ms at 1080p low/medium; the integrated investigation p95 target is 33.3 ms at 720p/low. See ADR 0002 and the P1 milestone plan.
+Vulkan is the preferred graphics direction, not yet an accepted production implementation dependency. P1b uses Vulkan 1.2 as the candidate floor, queries actual device capabilities, and treats later capabilities as optional. It must establish surface-to-orbit render precision, depth behavior, LOD continuity, baseline discrete-GPU capability support, UHD 630/Vega 8-class status, and a validation/capture workflow. ADR 0002 closes on that evidence plus a documented Direct3D 12 analysis; a comparison spike is not required.
+
+Renderer frame time is recorded in P1b but **gated in M2**, where the scene contains representative assets: p95 no greater than 16.67 ms at 1080p low/medium on the discrete baseline, with a spike criterion of p99 no greater than 25 ms and no frame exceeding 33 ms. The integrated investigation tier is measured against 33.3 ms p95 at 720p/low and its support status is decided at M2. See ADR 0002 and the P1b milestone plan.
 
 ## Proposed layer model
 
@@ -110,8 +115,12 @@ The proposed test pyramid is:
 - performance budgets and soak tests for long-running universes;
 - interactive visual and control smoke tests for rendering, construction, and flight.
 
-P1 prototype tolerances, benchmark hardware, scenarios, and measurement rules are defined in the [P1 milestone plan](../SolProjectNotes/Milestones/P1-Technical-Risk-Prototypes.md). Later production tolerances remain attached to their owning milestones.
+Prototype tolerances, benchmark hardware, scenarios, and measurement rules are defined in the [P1a](../SolProjectNotes/Milestones/P1a-Precision-and-Orbit.md) and [P1b](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) milestone plans. Renderer frame-time gating is owned by M2 rather than P1b. Later production tolerances remain attached to their owning milestones.
+
+Determinism is scoped by ADR 0010: bit-exact on the same build and machine, tolerance-based across machines. Scenario tests may assert exact numerical values on the development machine; any future CI on differing hardware must use documented tolerances from the start.
 
 ## Unresolved foundation choices
 
-Production renderer adoption/abstraction, validation of the integrated investigation tier, window/input library, UI, physics integration, ECS/data model, audio, concrete serialization/archive libraries, test framework, terrain implementation, campaign-time storage, Earth orientation, and mod packaging require explicit decisions before their owning milestones.
+Production renderer adoption/abstraction, validation of the integrated investigation tier, window/input library, UI, physics integration, ECS/data model, audio, concrete serialization/archive libraries, test framework, terrain implementation, campaign-time tick rate, Earth orientation, craft physical representation, and mod packaging require explicit decisions before their owning milestones.
+
+ADR 0010 fixes campaign time as an integer accumulation with an explicit tick rate; the tick rate itself and the Earth orientation model remain open. ADR 0011 fixes the orbital model; the atmospheric boundary altitude at which propagation switches between drag-affected local integration and drag-free conic coast remains open. P1b increment B2 decides the craft physical representation.

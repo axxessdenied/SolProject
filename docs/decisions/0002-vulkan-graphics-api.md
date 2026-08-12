@@ -4,6 +4,8 @@
 
 **Date:** 2026-08-12
 
+**Revised:** 2026-08-12 — required evidence rebalanced toward precision and capability; frame-time confirmation moved to P2/M2; Direct3D 12 spike replaced with a documented analysis. See [P1b — Renderer and Craft Prototypes](../../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md).
+
 ## Context
 
 SolEngine needs explicit control over large-world rendering, terrain/atmosphere level of detail, GPU memory, synchronization, diagnostics, and scalable graphics settings. Windows x64 is the first platform, but Vulkan is the user's preferred API. The discrete baseline targets 60 FPS at 1080p on an Intel Core i5-8400 or Ryzen 5 2600, GTX 1060 6 GB or RX 580 8 GB, 16 GB RAM, and SSD. Intel UHD 630 and AMD Vega 8-class integrated graphics are investigation targets for 30 FPS at 720p/low; support remains conditional on P1 driver/capability/performance evidence.
@@ -26,23 +28,46 @@ SolEngine needs explicit control over large-world rendering, terrain/atmosphere 
 - **A third-party rendering abstraction:** may accelerate early development but risks constraining the unusual large-world renderer; evaluate only against concrete P1 requirements.
 - **Supporting Vulkan and Direct3D 12 immediately:** rejected for initial scope because two production backends would double validation burden before one renderer proves the game.
 
-## Required P1 evidence
+## Required P1b evidence
 
-- A p95 total frame time no greater than 16.67 ms at 1080p/low-medium on both discrete baseline GPU classes in the representative surface-to-orbit scene.
-- A documented p95 result against 33.3 ms at 720p/low on UHD 630 and Vega 8-class systems, including driver, Vulkan capabilities, frame-time distribution, CPU/GPU memory use, visual compromises, and any unsupported status. Failure of an integrated investigation device does not block P1 if it is reported honestly and removed from the support target.
-- Correct camera-relative rendering and depth behavior from launch surface to orbital altitude.
-- No more than 0.25 pixels of stationary screen-space jitter in the defined surface and orbital precision views.
-- Stable terrain/atmosphere LOD transitions without unbounded memory growth, with peak CPU/GPU memory, allocations, and uploads recorded for later production budgeting.
-- Startup capability reporting and graceful rejection on unsupported drivers/devices.
-- Clean validation-layer output for the exercised path and usable RenderDoc/capture workflow.
-- A documented comparison with a minimal Direct3D 12 spike or evidence-based analysis before this ADR becomes Accepted.
+This ADR closes on evidence that a prototype can uniquely provide: precision, structural viability, and device capability. It deliberately does not close on prototype frame rate.
+
+Frame time measured in a scene with placeholder geometry, no production part meshes, and no authored terrain is weakly predictive of the shipped renderer, and gating an API decision on it would reject or accept Vulkan for reasons unrelated to Vulkan. Frame time is therefore **measured and recorded** in P1b as the M2 baseline, and **gated** in P2/M2 where the scene is representative.
+
+### Gating evidence
+
+- Correct camera-relative rendering and depth behavior from launch surface to orbital altitude, with no depth collapse, z-fighting, or near/far discontinuity along the full path.
+- No more than 0.25 pixels of stationary screen-space jitter at the surface anchor and a 200 km orbital vantage, measured by the method defined in the P1b milestone plan.
+- Stable terrain/atmosphere LOD transitions with no detectable popping at the recorded quality setting and no unbounded memory growth over a 30-minute traverse.
+- Startup capability reporting — loader, device version, features, extensions, formats, queues, limits, memory — and graceful rejection of unsupported drivers and devices with actionable diagnostics.
+- Clean validation-layer output for the exercised path, or an explanation and acceptance of every remaining message, plus a usable RenderDoc/capture workflow.
+- Vulkan types confined to renderer-owned interfaces, demonstrated by inspection of the module boundary.
+- A documented Direct3D 12 comparison analysis covering driver coverage on the baseline GPU classes, tooling maturity, shader toolchain, and the cost of a future backend swap behind the renderer interface.
+
+### Recorded, not gating
+
+- Full frame-time distribution — p50, p95, p99, maximum, CPU and GPU separately — at 1920×1080 low/medium on GTX 1060 6 GB and RX 580 8 GB classes.
+- The same distribution at 1280×720 low on UHD 630 and Vega 8-class systems where accessible, including driver, Vulkan capabilities, visual compromises, and any unsupported status.
+- Peak CPU and GPU memory, allocation counts, and upload volume.
+
+### Deferred to P2/M2
+
+- The p95 ≤ 16.67 ms discrete-baseline gate at 1080p low/medium, in a scene with representative assets.
+- A frame-time spike criterion alongside it: p99 ≤ 25 ms and no frame exceeding 33 ms. Mean frame time is not a sufficient description of perceived smoothness, and the original single-p95 gate would have accepted a visibly stuttering renderer.
+- The integrated investigation tier's disposition. Failure there narrows the support target rather than reopening this ADR.
+
+### Withdrawn
+
+The original requirement for a minimal Direct3D 12 spike is withdrawn. A second backend costs weeks and cannot realistically change the decision for a Windows-only single-player title, where the two APIs differ in tooling and driver ergonomics rather than achievable performance. A Vulkan driver or capability failure on a baseline device with no workaround remains a genuine trigger to reconsider — that is a measured result, not a reason to have built the spike preemptively.
 
 ## Consequences
 
-- Vulkan 1.2 is the P1 candidate floor, not yet a production support promise. P1 evidence may retain it, lower it with explicit fallbacks, raise it with an accepted hardware-scope change, or reject Vulkan.
+- Vulkan 1.2 is the P1 candidate floor, not yet a production support promise. P1b evidence may retain it, lower it with explicit fallbacks, raise it with an accepted hardware-scope change, or reject Vulkan.
 - Optional graphics tiers must never change authoritative simulation results.
 - Renderer architecture must budget for pipeline/shader caching, asynchronous uploads, resource lifetime, and device-loss/error reporting from the beginning.
-- P1 records peak CPU and GPU memory. Production content budgets are set after representative assets exist rather than invented for the prototype.
+- P1b records peak CPU and GPU memory. Production content budgets are set after representative assets exist rather than invented for the prototype.
+- Accepting this ADR on precision evidence means M2 inherits a real performance risk. If M2's representative scene misses the 16.67 ms gate, the response is a renderer optimization or content-budget milestone — not an API reversal, because by then the backend swap cost is the renderer interface's problem rather than this decision's. The renderer interface boundary required above is what keeps that option open at bounded cost.
+- The P1b renderer is built in the production tree rather than as a disposable prototype. This ADR's boundary requirements therefore apply from the first commit rather than at a later cleanup.
 
 ## Sources
 

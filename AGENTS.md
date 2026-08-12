@@ -27,6 +27,7 @@ This is the canonical instruction source for every AI agent in this repository. 
 - Claude and Codex are peer feature owners. Antigravity may research, brainstorm, plan, digest, and review; delegated Antigravity work must not autonomously edit core C++ or adopt branch ownership.
 - Specialists report findings to the owner. They do not edit the same files concurrently.
 - Before a handoff, record the goal, owner, branch and base, changed files, validation performed, remaining risks, and next action.
+- **Lightweight lane.** Full handoff and evidence records are required at milestone-increment closure and at ownership transfer, not on every commit. Prototype-internal iteration inside an increment the owner already holds needs only ordinary commit messages. This keeps the evidence discipline where it earns its cost and off the daily loop.
 - Do not use multi-agent work unless the user has requested it and the work can be divided without creating multiple writers.
 
 ## Design and architecture discipline
@@ -42,15 +43,18 @@ This is the canonical instruction source for every AI agent in this repository. 
 - Use explicit units and coordinate frames. Prefer SI units for simulation truth; conversions belong at input, presentation, or data boundaries.
 - Distinguish render time, wall time, fixed-step/local physics time, and campaign/orbital time. Time warp must not silently change outcomes beyond documented tolerances.
 - Use the UTC/TDB and DE440 reference-data boundary in ADR 0008 for astronomical fixtures. Every reference vector and timestamp must identify units, frame, origin, epoch, time scale, and provenance.
+- The authoritative orbital model is patched conics with spheres of influence, with no perturbations, drag, or decay in the propagation (ADR 0011). Aerodynamic forces still apply to active craft inside the atmosphere; the exclusion governs orbital propagation only.
 - Treat transitions between local physics, analytical propagation, and aggregate simulation as testable contracts. Preserve identity, mass/resources, chronology, and state within declared tolerances.
 - Favor deterministic, headless scenario tests for orbital, resource, economy, and persistence logic. Never hide numerical error behind display rounding.
+- Determinism is bit-exact on the same build and machine, and tolerance-based across machines (ADR 0010). Authoritative simulation uses `double`, deterministic iteration order, explicitly seeded generators, and integer campaign-time accumulation.
 - Difficulty settings may add assists or simplify exposed constraints, but should share the same authoritative state model wherever practical.
 
 ## C++, dependencies, and verification
 
 - Use the canonical C++ namespace `sol`. Use PascalCase for C++ filenames and types, camelCase for functions/locals/parameters, an `m_` prefix with camelCase for private data members, `kPascalCase` for constants, and SCREAMING_SNAKE_CASE only for macros. ADR 0003 owns these conventions.
 - Put source-level module interfaces in an owned subsystem namespace such as `sol::core`, `sol::render`, `sol::platform`, or `sol::assets`; reserve `sol::<subsystem>::detail` for non-public implementation. Document public source APIs with Doxygen as specified by ADR 0006. These interfaces are project-internal and do not create a stable C++ ABI.
-- C++23, MSVC, CMake, and separate single-configuration Ninja presets are accepted in ADR 0001. Vulkan 1.2 is the accepted candidate floor for P1, with capabilities queried per device; Vulkan remains a proposed production decision pending ADR 0002's renderer evidence.
+- C++23, MSVC, CMake, and separate single-configuration Ninja presets are accepted in ADR 0001. Use `/fp:precise` and `/arch:AVX2`, and never `/fp:fast`, on project-owned targets (ADR 0010). Vulkan 1.2 is the accepted candidate floor for P1, with capabilities queried per device; Vulkan remains a proposed production decision pending ADR 0002's renderer evidence.
+- Assets are authored in Blender, interchanged as glTF 2.0, and baked at build time; procedural generation covers parametric shapes. Binary source assets use Git LFS (ADR 0012).
 - SolEngine begins as project-internal static libraries linked into Frontiers of Sol and test/tool executables. Do not promise a stable C++ binary ABI or expose internals for native mods; future extension uses data, scripting, or a deliberately versioned C interface (ADR 0005).
 - Physics libraries, ECS/data model, and concrete serialization/packaging libraries remain open until their owning milestones accept them.
 - Use vcpkg manifest mode and a reviewed `builtin-baseline` as the default dependency acquisition policy (ADR 0007). Do not create a manifest or add a package until implementation authorization is granted and its owning milestone accepts the need.
