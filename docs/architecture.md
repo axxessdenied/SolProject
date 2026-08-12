@@ -1,12 +1,89 @@
 # Architecture
 
-**Status:** Proposed pre-production architecture. Nothing described here is implemented. Accepted decisions will be recorded in `docs/decisions/`; this document becomes implemented technical truth only after code exists.
+**Status:** Mostly proposed pre-production architecture. The [Implemented build foundation](#implemented-build-foundation) section below is implemented technical truth as of P1a increment A1; everything else remains proposed and is not implemented. Accepted decisions are recorded in `docs/decisions/`.
+
+## Implemented build foundation
+
+Delivered by P1a increment A1 and verified against the evidence in
+[`evidence/p1a/A1/Index.md`](../evidence/p1a/A1/Index.md).
+
+### Toolchain
+
+MSVC 19.51.36252.0 (toolset 14.51.36231) under Visual Studio 18 Community, CMake 4.4.2, and
+Ninja 1.12.1 resolved from `PATH`. `_MSC_VER` 1951 is the recorded minimum toolset; raising it
+is a deliberate act, not a side effect of an upgrade.
+
+### Presets
+
+Single-configuration Ninja trees per ADR 0001, with binary directories at `build/<preset>/`.
+Configure, build, and test presets share each name.
+
+| Purpose | Preset |
+|---|---|
+| Debug | `windows-msvc-debug` |
+| Release | `windows-msvc-release` |
+| ADR 0010 negative control | `windows-msvc-release-negcontrol-contract` |
+
+Only Release output is eligible as performance evidence; scenario reports carry an
+`evidenceEligibility` field so a Debug number cannot be quoted by mistake. The negative-control
+preset deliberately violates ADR 0010 and fails `ToolchainReport` by design.
+
+### Applied compiler flags
+
+`cmake/SolProjectOptions.cmake` is the single place compiler policy is applied to
+project-owned targets:
+
+```
+-std:c++latest /fp:precise /arch:AVX2 /permissive- /Zc:__cplusplus /Zc:preprocessor /utf-8 /W4 /WX
+```
+
+`/std:c++23` is rejected by this toolset; `/fp:fast` is rejected at configure time. No flag
+spelling disables FMA contraction on MSVC 19.51 — `/fp:precise` disables it by default, and
+that default is verified by measurement rather than assumed. See ADR 0010's recorded
+implementation values.
+
+### Prototype tree and namespace
+
+P1a code lives under `prototypes/p1a/` in the `sol::proto` namespace, deliberately outside the
+`engine/`, `game/`, `editor/`, and `tests/` routing in `AGENTS.md`. The P1a plan makes these
+executables disposable, and a separate tree keeps disposable work from acquiring the standing
+of production code by proximity.
+
+`prototypes/p1a/Harness/` is the exception: it is durable, holds the measurement, provenance,
+and reporting types every later increment reports through, and is kept free of simulation and
+domain concepts so promoting it later remains a real option rather than a sunk cost. Promotion
+still requires explicit review.
+
+### Measurement report format
+
+Scenarios emit UTF-8 JSON with `\n` line endings and two top-level sections:
+
+- `environment` — provenance that legitimately varies between runs: timestamp, output path,
+  git commit and dirty flag, preset, compiler and flags, host CPU and OS, peak process memory,
+  allocation counts.
+- `results` — everything the scenario computed, byte-identical across runs of the same build.
+
+Determinism comparison covers `results` only. Doubles are written with `std::to_chars`
+shortest round-trip, and any value whose reproducibility matters is additionally emitted as its
+raw IEEE-754 bit pattern. Peak process memory and allocation counts are mandatory in every
+report.
+
+No third-party dependency is used. Scenarios are plain executables registered with CTest, so
+ADR 0007's dependency workflow has not yet been triggered and no `vcpkg.json` exists.
+
+## Proposed architecture
+
+Everything below this point is proposed and unimplemented.
 
 ## Architectural goal
 
 SolEngine supplies the focused services needed to build one demanding 3D space simulation game. It is not intended to become a general-purpose engine. The game remains the validation surface for every engine feature.
 
 ## Accepted foundation
+
+Decisions accepted at the planning gate. Where A1 has since implemented and measured one of
+these, the [Implemented build foundation](#implemented-build-foundation) section above is
+authoritative for the literal values.
 
 - C++23 with the canonical `sol` namespace.
 - PascalCase C++ filenames/types, camelCase functions/locals/parameters, `m_`-prefixed private members, `kPascalCase` constants, and SCREAMING_SNAKE_CASE macros (ADR 0003).

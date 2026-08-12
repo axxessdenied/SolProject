@@ -64,6 +64,49 @@ Any proposed physics, math, or simulation library must document its determinism 
 - Increment B2 asserts the same for craft physics and resource-network scenarios.
 - A deliberate flag change must be shown to alter golden output, confirming the harness would detect an accidental one.
 
+## Recorded implementation values (A1, 2026-08-12)
+
+This ADR states that "Increment A1 must verify and record the exact flag spellings for the
+selected toolset" and that "the recorded values are authoritative over this ADR's prose."
+These are those values, measured on MSVC 19.51.36252.0 (toolset 14.51.36231) with CMake 4.4.2.
+
+| Item | Recorded value |
+|---|---|
+| C++23 standard flag | `-std:c++latest`. **`/std:c++23` is rejected by this toolset.** CMake's `cxx_std_23` emits the correct flag; the project never hand-writes it. |
+| Floating-point mode | `/fp:precise` |
+| Contraction control | **No disabling flag exists.** Both `/fp:contract-` and `/fp:no-contract` are rejected; only the enabling `/fp:contract` is accepted. |
+| Architecture | `/arch:AVX2` |
+| Forbidden | `/fp:fast`, rejected at configure time by `cmake/SolProjectOptions.cmake` |
+
+### Amendment: contraction is disabled by default, not by flag
+
+The Decision section above requires contraction to be disabled "explicitly rather than relying
+on the default." **On this toolset that is not possible.** MSVC 19.51 provides no spelling that
+disables contraction; `/fp:precise` disables it by default and `/fp:contract` opts back in.
+
+The requirement is therefore met by the `/fp:precise` default, and the build records the mode
+as `implicit-off-under-fp-precise` in every measurement report rather than implying an
+explicit flag was applied.
+
+Because this rests on a compiler default rather than a stated contract, A1 verifies it by
+measurement instead of assertion. The `contractionProbe` kernel in `DeterminismSmoke` computes
+`a*b - 1.0` for `a = 1 + 2^-27` and `b = 1 - 2^-27`, where the exact product needs 54
+significant bits:
+
+- without contraction, the product rounds to exactly `1.0` and the result is exactly `0.0`;
+- with a fused multiply-add, the result is exactly `-2^-54` per term.
+
+Measured: `0.0` under `/fp:precise`, and `-4.73687929158917e-15` with `/fp:contract` added and
+nothing else changed. This simultaneously discharges the Validation requirement that "a
+deliberate flag change must be shown to alter golden output."
+
+**Consequence for toolset upgrades:** because the guarantee is a default rather than a flag, a
+compiler upgrade must re-run the negative control (`windows-msvc-release-negcontrol-contract`)
+before its output is trusted. This is a new maintenance obligation that the original decision
+did not anticipate.
+
+Full evidence: [P1a A1 evidence index](../../evidence/p1a/A1/Index.md).
+
 ## Sources
 
 - Microsoft documents `/fp` behavior, contraction, and the interaction with optimization in the [`/fp` (Specify floating-point behavior) reference](https://learn.microsoft.com/en-us/cpp/build/reference/fp-specify-floating-point-behavior).

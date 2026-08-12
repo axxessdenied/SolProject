@@ -4,6 +4,15 @@ All notable user-visible changes will be documented here after implementation be
 
 ## [Unreleased]
 
+### Added
+
+- Implementation began. P1a increment A1 delivers the first CMake/Ninja build graph, Debug and Release presets, and the disposable headless prototypes under `prototypes/p1a/`, including a durable measurement harness that records provenance, timing distributions, peak memory, and allocation counts with every result.
+- A determinism harness that proves bit-identical output across separate runs of the same build, and that is itself proven to detect a floating-point flag change.
+
+### Changed
+
+- Recorded the literal MSVC flag spellings in ADR 0010 after measuring them: `/std:c++23` is unavailable on this toolset, and no flag disables FMA contraction. `/fp:precise` disables it by default, verified by measurement rather than assumed.
+
 ### Documentation
 
 - Established the initial SolProject product vision, planning gate, engine proposal, GDD, roadmap, and AI-agent workflow.
