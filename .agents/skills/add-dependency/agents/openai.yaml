@@ -1,0 +1,4 @@
+interface:
+  display_name: "add dependency"
+  short_description: "Manage pinned SolProject dependencies"
+  default_prompt: "Use $add-dependency to add, remove, or upgrade a SolProject dependency."

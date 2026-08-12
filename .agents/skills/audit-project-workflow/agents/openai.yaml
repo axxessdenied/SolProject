@@ -1,0 +1,4 @@
+interface:
+  display_name: "audit project workflow"
+  short_description: "Audit SolProject workflow and repository"
+  default_prompt: "Use $audit-project-workflow to audit this SolProject task or handoff."

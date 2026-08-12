@@ -1,0 +1,4 @@
+interface:
+  display_name: "finish change"
+  short_description: "Finish and hand off a SolProject change"
+  default_prompt: "Use $finish-change to complete checks and hand off this SolProject change."

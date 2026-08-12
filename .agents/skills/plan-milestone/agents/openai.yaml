@@ -1,0 +1,4 @@
+interface:
+  display_name: "plan milestone"
+  short_description: "Scope a SolProject implementation milestone"
+  default_prompt: "Use $plan-milestone to turn an approved roadmap item into an implementation-ready milestone."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "review cpp change"
+  short_description: "Review SolProject C++ changes safely"
+  default_prompt: "Use $review-cpp-change to review this SolProject C++ change."

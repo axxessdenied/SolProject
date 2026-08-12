@@ -1,0 +1,4 @@
+interface:
+  display_name: "pre pr"
+  short_description: "Prepare a SolProject branch for review"
+  default_prompt: "Use $pre-pr to prepare this SolProject branch for a pull request."

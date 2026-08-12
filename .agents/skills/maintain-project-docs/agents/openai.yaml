@@ -1,0 +1,4 @@
+interface:
+  display_name: "maintain project docs"
+  short_description: "Synchronize SolProject living documents"
+  default_prompt: "Use $maintain-project-docs to update the SolProject documentation for this change."

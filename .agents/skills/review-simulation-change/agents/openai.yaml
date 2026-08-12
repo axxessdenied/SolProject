@@ -1,0 +1,4 @@
+interface:
+  display_name: "review simulation change"
+  short_description: "Review simulation math and time behavior"
+  default_prompt: "Use $review-simulation-change to review this SolProject simulation change."

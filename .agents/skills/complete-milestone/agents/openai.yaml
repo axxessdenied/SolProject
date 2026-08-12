@@ -1,0 +1,4 @@
+interface:
+  display_name: "complete milestone"
+  short_description: "Verify and close a SolProject milestone"
+  default_prompt: "Use $complete-milestone to verify and close this SolProject milestone."

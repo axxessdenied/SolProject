@@ -1,0 +1,4 @@
+interface:
+  display_name: "plan project"
+  short_description: "Plan SolProject engine and game design"
+  default_prompt: "Use $plan-project to develop or refine SolProject's engine and game plans."
