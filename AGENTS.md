@@ -42,7 +42,7 @@ This is the canonical instruction source for every AI agent in this repository. 
 
 - Use explicit units and coordinate frames. Prefer SI units for simulation truth; conversions belong at input, presentation, or data boundaries.
 - Distinguish render time, wall time, fixed-step/local physics time, and campaign/orbital time. Time warp must not silently change outcomes beyond documented tolerances.
-- Use the UTC/TDB and DE440 reference-data boundary in ADR 0008 for astronomical fixtures. Every reference vector and timestamp must identify units, frame, origin, epoch, time scale, and provenance.
+- Use the UTC/TDB and DE440/DE441 reference-data boundary in ADR 0008 for astronomical fixtures. Every reference vector and timestamp must identify units, frame, origin, epoch, time scale, and provenance, and every geodetic coordinate must carry its datum.
 - The authoritative orbital model is patched conics with spheres of influence, with no perturbations, drag, or decay in the propagation (ADR 0011). Aerodynamic forces still apply to active craft inside the atmosphere; the exclusion governs orbital propagation only.
 - Treat transitions between local physics, analytical propagation, and aggregate simulation as testable contracts. Preserve identity, mass/resources, chronology, and state within declared tolerances.
 - Favor deterministic, headless scenario tests for orbital, resource, economy, and persistence logic. Never hide numerical error behind display rounding.
