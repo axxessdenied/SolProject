@@ -8,7 +8,7 @@
 
 **Single writer:** Claude, on branch **`feature/p1b-vulkan-renderer`** from base `dev`. Prior P1a history: A1 landed as PR #1 from `feature/p1a-precision-and-orbit`; A2 landed as PR #2 from the `dev` working tree; A3 and the milestone-review corrections landed as PR #3 from `feature/p1a-hybrid-orbit-and-warp`, merged into `dev` on 2026-08-13 as `bf18c33`.
 
-**Implementation:** P1a complete — increments A1 (measurement and build harness), A2 (reference frames and numerical precision), and A3 (hybrid orbit and time warp), all closed against their accepted thresholds with evidence indexed at [`evidence/p1a/Index.md`](../evidence/p1a/Index.md). P1b increment B1 is starting; it is the first code written **in the production tree** rather than under `prototypes/`.
+**Implementation:** P1a complete — increments A1 (measurement and build harness), A2 (reference frames and numerical precision), and A3 (hybrid orbit and time warp), all closed against their accepted thresholds with evidence indexed at [`evidence/p1a/Index.md`](../evidence/p1a/Index.md). **P1b increment B1 is in progress**; it is the first code written **in the production tree** rather than under `prototypes/`. Its state is recorded in the [B1 progress and handoff](#p1b-increment-b1-progress-and-handoff) section below.
 
 This is the single source of truth for project phase, milestone state, blockers, planning-gate state, and implementation authorization. Design intent belongs in `SolProjectNotes/`; implemented technical truth will belong in `docs/architecture.md`.
 
@@ -141,6 +141,69 @@ The review re-ran both configurations from the checked-in presets — **20/20 te
 
 - **No baseline-class or AMD hardware evidence is obtainable.** The accepted [evidence plan](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) keeps every gating threshold in force — jitter, depth, LOD continuity, and validation output are properties of the implementation, not of GPU throughput — but the capability-reporting gate needs a negative control and synthetic baseline profiles to be testable at all, since both present GPUs exceed the Vulkan 1.2 floor. ADR 0002 may close on precision, capability, tooling, and the documented Direct3D 12 analysis; it may not close on any clause asserting AMD driver behavior.
 - **The frame-time rows are laptop measurements.** Dynamic Boost, variable TGP, thermal limits, and hybrid adapter selection mean the RTX 4060 result is not a fixed-hardware quantity. Frame time was already non-gating in P1b by user decision, so this affects the quality of the M2 baseline rather than any P1b verdict.
+
+## P1b increment B1 progress and handoff
+
+Recorded 2026-08-13, mid-increment. **B1 is not complete and this is not a stopping point** —
+it is a handoff record written so the work survives a fresh session, per the ownership-transfer
+rule in `AGENTS.md`. The lightweight lane puts full evidence records at increment closure; this
+is the smaller thing: enough state that nobody has to re-derive it from commit messages.
+
+**Owner:** Claude. **Branch:** `feature/p1b-vulkan-renderer`, 7 commits ahead of `dev`.
+**Validation at time of writing:** 25/25 tests pass in both configurations, 1 disabled.
+
+### Gating thresholds
+
+| Threshold | State |
+|---|---|
+| Screen-space jitter, 0.25 px | **Passes.** 0.000000 px at both required reference views, frames bit-identical. A sub-pixel response control confirms the result reflects precision rather than only stability. |
+| Depth behaviour | **Passes.** No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7. A conventional-projection control fails as expected. |
+| LOD continuity | **Memory half passes** (125.22 MiB flat, 0 bytes/step over 600 steps). **Popping half fails** — see below. |
+| Capability reporting | Implemented with a negative control; **cannot close** until the synthetic device profiles are reconciled against real reports. |
+| Validation output | Clean from this project. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category. A capture/RenderDoc workflow is not yet established. |
+
+### Where the LOD investigation stands
+
+The harness works and discriminates: **13 pops with morphing disabled against 2 with it
+enabled**, worst pop magnitude 0.2822 against 0.0030. Morphing eliminates eleven of thirteen
+and cuts the worst survivor 94-fold.
+
+It fails on **two production pops at the first subdivision of the descent** (step 22, ~255 km
+altitude), which coincide exactly with the first patch-count change. Both occur at the same
+steps with morphing disabled, and morphing is the only difference between the runs, so morphing
+cannot be their cause.
+
+**Ruled out by measurement, not by argument:**
+
+- **Horizon culling.** The cull *was* genuinely broken — it subtracted a cube-face size
+  fraction from a cosine, admitting patches ~78° from nadir where the true horizon is ~16°.
+  Fixed with the exact horizon-plane test. **The pops did not change.**
+- **Degenerate-triangle normals.** Replacing the fragment shader's derivative-recovered normal
+  with morphed per-vertex normals measured **strictly worse**: production pops 2 → 9,
+  separation 13-vs-2 → 12-vs-9, because a child's coarse-normal stencil clamps at its own patch
+  boundary. Reverted. Doing it properly needs a one-vertex skirt of neighbour data per patch.
+
+**Recommended next step, and a caution.** Two consecutive hypotheses were wrong. The next
+attempt should start from data rather than theory: capture and inspect the actual frames at
+steps 21–23 and identify what changes, instead of proposing a third mechanism. Full detail is
+in `docs/architecture.md` and in `tests/render/CMakeLists.txt`, where the test is registered and
+`DISABLED` so one known-failing gate does not mask regressions across the other twenty-five.
+
+### Outstanding for B1
+
+- The two undiagnosed LOD pops, and re-enabling `render.lod-gate`.
+- The atmosphere — the P1b plan's narrowing option permits a simple analytic shell. Note that a
+  shell has no LOD transitions, so "atmosphere LOD popping" becomes vacuous under that option,
+  which should be stated rather than quietly satisfied.
+- Representative scalable quality settings including a conservative low tier (ADR 0002).
+- Performance and memory evidence on both available devices, recorded under their own names and
+  never as baseline-class proxies. Note the depth attachment currently uses `STORE` rather than
+  `DONT_CARE` to support readback; that bandwidth is included in any frame-time figure.
+- The documented Direct3D 12 comparison analysis, and ADR 0002's disposition.
+- Reconciling the four synthetic baseline device profiles against real capability reports.
+- Licence notices for the four packages, before anything is distributed.
+- `evidence/p1b/B1/` does not exist yet. Measurements currently live in `docs/architecture.md`
+  under the lightweight lane; full evidence with raw-output locations attaches at closure.
 
 **Increment B2 is not authorized.** It needs its own explicit instruction. B2 also inherits an open question the evidence plan deliberately did not pre-decide: its 4 ms and 1 ms gates are specified against i5-8400 / Ryzen 5 2600 CPU classes, and the available i7-12650H is materially faster, so the same no-substitution rule applies on the CPU side.
 
