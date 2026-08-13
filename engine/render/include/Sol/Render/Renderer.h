@@ -52,6 +52,15 @@ struct SceneObject {
     WorldVec3 worldPosition;
     double radiusMetres = 1.0;
     float colour[3]{1.0F, 1.0F, 1.0F};
+
+    /// Render with a smooth radial intensity profile instead of flat shading.
+    ///
+    /// Set this for the screen-space jitter gate's reference marker. A hard-edged marker
+    /// cannot be centroided to sub-pixel accuracy without antialiasing — coverage is binary,
+    /// so the centroid quantises to about a pixel and a 0.25-pixel gate becomes unmeasurable.
+    /// A smooth profile carries the sub-pixel information in intensity, where a luminance
+    /// weighted centroid can recover it.
+    bool smoothMarker = false;
 };
 
 /// What one presented frame did, for the performance and jitter reports.
@@ -60,6 +69,17 @@ struct FrameStats {
     std::uint64_t frameIndex = 0;
     /// True when the swapchain was rebuilt this frame, which invalidates timing for it.
     bool swapchainRebuilt = false;
+};
+
+/// A presented frame's pixels, read back from the swapchain image.
+struct CapturedFrame {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    /// Row-major, 4 bytes per pixel, in R, G, B, A order regardless of the surface's own
+    /// channel order. Empty when the frame was skipped.
+    std::vector<std::uint8_t> rgba;
+
+    [[nodiscard]] bool empty() const { return rgba.empty(); }
 };
 
 /// A device, swapchain, and frame loop presenting to one window.
@@ -102,6 +122,18 @@ public:
     /// Returns without presenting, and without error, when the framebuffer has zero area — a
     /// minimised window is a normal state, not a failure.
     [[nodiscard]] std::expected<FrameStats, std::string> renderFrame(const CameraState& camera);
+
+    /// Renders, presents, and reads the presented image back to host memory.
+    ///
+    /// This is the measurement path. The screen-space jitter gate needs the actual presented
+    /// pixels — a per-frame centroid computed to sub-pixel accuracy — and an offscreen render
+    /// would measure a different image from the one the gate is about.
+    ///
+    /// @warning **Never use this for frame-time evidence.** It waits for the GPU to finish
+    /// before reading, which serialises CPU and GPU and removes the pipelining that makes
+    /// frame time mean anything. Frame-time measurements use @ref renderFrame.
+    [[nodiscard]] std::expected<CapturedFrame, std::string> renderFrameCaptured(
+        const CameraState& camera);
 
     /// Blocks until the device is idle. Call before destroying anything the GPU may still be
     /// reading; the destructor does this too.

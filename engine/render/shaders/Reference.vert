@@ -19,10 +19,15 @@ layout(push_constant) uniform Push {
 layout(location = 0) in vec3 inPosition;
 
 layout(location = 0) out vec3 outColour;
+layout(location = 1) out vec2 outLocal;
+layout(location = 2) out float outMarkerMode;
 
 void main()
 {
     vec3 cameraRelative = push.originAndRadius.xyz + (inPosition * push.originAndRadius.w);
     gl_Position = push.viewProjection * vec4(cameraRelative, 1.0);
     outColour = push.colour.rgb;
+    // Object-space position across the face, for the measurement marker's radial profile.
+    outLocal = inPosition.xy;
+    outMarkerMode = push.colour.a;
 }

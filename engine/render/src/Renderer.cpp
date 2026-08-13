@@ -106,6 +106,12 @@ struct Renderer::Impl {
     VkBuffer indexBuffer = VK_NULL_HANDLE;
     VmaAllocation indexAllocation = VK_NULL_HANDLE;
 
+    /// Readback staging, sized to the swapchain and rebuilt with it.
+    VkBuffer captureBuffer = VK_NULL_HANDLE;
+    VmaAllocation captureAllocation = VK_NULL_HANDLE;
+    void* captureMapped = nullptr;
+    VkDeviceSize captureSize = 0;
+
     VkCommandPool commandPool = VK_NULL_HANDLE;
     std::array<VkCommandBuffer, kFramesInFlight> commandBuffers{};
     std::array<VkSemaphore, kFramesInFlight> imageAvailable{};
@@ -113,6 +119,9 @@ struct Renderer::Impl {
 
     std::vector<SceneObject> scene;
     std::uint32_t frameSlot = 0;
+    /// Which slot's fence the last submit signals. The capture path waits on this one rather
+    /// than on the next slot, which has not been submitted.
+    std::uint32_t lastSubmittedSlot = 0;
     std::uint64_t frameIndex = 0;
     std::uint32_t pendingWidth = 0;
     std::uint32_t pendingHeight = 0;
@@ -152,6 +161,14 @@ struct Renderer::Impl {
             vmaDestroyImage(allocator, depthImage, depthAllocation);
             depthImage = VK_NULL_HANDLE;
             depthAllocation = VK_NULL_HANDLE;
+        }
+
+        if (captureBuffer != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(allocator, captureBuffer, captureAllocation);
+            captureBuffer = VK_NULL_HANDLE;
+            captureAllocation = VK_NULL_HANDLE;
+            captureMapped = nullptr;
+            captureSize = 0;
         }
     }
 
@@ -207,7 +224,12 @@ struct Renderer::Impl {
     [[nodiscard]] std::expected<void, std::string> recordFrame(
         VkCommandBuffer commandBuffer,
         std::uint32_t imageIndex,
-        const CameraState& camera);
+        const CameraState& camera,
+        bool capture);
+    [[nodiscard]] std::expected<FrameStats, std::string> submitFrame(
+        const CameraState& camera,
+        bool capture);
+    [[nodiscard]] CapturedFrame readCapture() const;
 };
 
 namespace {
@@ -406,6 +428,36 @@ std::expected<void, std::string> Renderer::Impl::buildSwapchain()
         framebuffers.push_back(framebuffer);
     }
 
+    // Readback staging, sized to the swapchain. Persistently mapped: the jitter harness reads
+    // one of these per frame for hundreds of frames, and re-mapping each time would add cost
+    // to the measurement path for no benefit.
+    captureSize = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;
+    const VkBufferCreateInfo captureInfo{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .size = captureSize,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+    };
+    const VmaAllocationCreateInfo captureAllocInfo{
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+    };
+    VmaAllocationInfo captureAllocationInfo{};
+    if (const VkResult result = vmaCreateBuffer(allocator,
+                                                &captureInfo,
+                                                &captureAllocInfo,
+                                                &captureBuffer,
+                                                &captureAllocation,
+                                                &captureAllocationInfo);
+        result != VK_SUCCESS) {
+        return std::unexpected(fail("Allocating the readback buffer failed", result));
+    }
+    captureMapped = captureAllocationInfo.pMappedData;
+
     renderFinished.reserve(swapchainImages.size());
     for (std::size_t i = 0; i < swapchainImages.size(); ++i) {
         const VkSemaphoreCreateInfo semaphoreInfo{
@@ -429,7 +481,8 @@ std::expected<void, std::string> Renderer::Impl::buildSwapchain()
 std::expected<void, std::string> Renderer::Impl::recordFrame(
     VkCommandBuffer commandBuffer,
     std::uint32_t imageIndex,
-    const CameraState& camera)
+    const CameraState& camera,
+    bool capture)
 {
     const VkCommandBufferBeginInfo beginInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -491,7 +544,9 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
         push.colour[0] = object.colour[0];
         push.colour[1] = object.colour[1];
         push.colour[2] = object.colour[2];
-        push.colour[3] = 1.0F;
+        // Alpha carries the shading mode rather than opacity: blending is disabled, so the
+        // channel is otherwise unused, and this keeps the push-constant block at 96 bytes.
+        push.colour[3] = object.smoothMarker ? 1.0F : 0.0F;
         push.originAndRadius[0] = relative.x;
         push.originAndRadius[1] = relative.y;
         push.originAndRadius[2] = relative.z;
@@ -509,10 +564,102 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
 
     vkCmdEndRenderPass(commandBuffer);
 
+    if (capture && captureBuffer != VK_NULL_HANDLE) {
+        // The render pass left the image in PRESENT_SRC. Move it to TRANSFER_SRC, copy, and
+        // move it back, so the presented image and the captured image are the same pixels.
+        // Rendering the measurement offscreen instead would measure a different image from
+        // the one the screen-space gate is about.
+        const auto barrier = [&](VkImageLayout from,
+                                 VkImageLayout to,
+                                 VkAccessFlags srcAccess,
+                                 VkAccessFlags dstAccess,
+                                 VkPipelineStageFlags srcStage,
+                                 VkPipelineStageFlags dstStage) {
+            const VkImageMemoryBarrier imageBarrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = srcAccess,
+                .dstAccessMask = dstAccess,
+                .oldLayout = from,
+                .newLayout = to,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = swapchainImages[imageIndex],
+                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            };
+            vkCmdPipelineBarrier(
+                commandBuffer, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier);
+        };
+
+        barrier(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_ACCESS_TRANSFER_READ_BIT,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+        const VkBufferImageCopy region{
+            .bufferOffset = 0,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+            .imageOffset = {0, 0, 0},
+            .imageExtent = {extent.width, extent.height, 1},
+        };
+        vkCmdCopyImageToBuffer(commandBuffer,
+                               swapchainImages[imageIndex],
+                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               captureBuffer,
+                               1,
+                               &region);
+
+        barrier(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                VK_ACCESS_TRANSFER_READ_BIT,
+                0,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    }
+
     if (const VkResult result = vkEndCommandBuffer(commandBuffer); result != VK_SUCCESS) {
         return std::unexpected(fail("Ending the command buffer failed", result));
     }
     return {};
+}
+
+CapturedFrame Renderer::Impl::readCapture() const
+{
+    CapturedFrame frame;
+    if (captureMapped == nullptr || captureSize == 0) {
+        return frame;
+    }
+
+    frame.width = extent.width;
+    frame.height = extent.height;
+    frame.rgba.resize(static_cast<std::size_t>(captureSize));
+
+    const auto* source = static_cast<const std::uint8_t*>(captureMapped);
+
+    // The surface is very likely B8G8R8A8, so the bytes arrive as B, G, R, A. Normalising to
+    // RGBA here means the harness never has to know the surface's channel order — and a
+    // harness that guessed wrong would compute a centroid from the wrong channel.
+    const bool swapRedAndBlue = swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB
+                                || swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM;
+
+    for (std::size_t i = 0; i < frame.rgba.size(); i += 4) {
+        if (swapRedAndBlue) {
+            frame.rgba[i + 0] = source[i + 2];
+            frame.rgba[i + 1] = source[i + 1];
+            frame.rgba[i + 2] = source[i + 0];
+        } else {
+            frame.rgba[i + 0] = source[i + 0];
+            frame.rgba[i + 1] = source[i + 1];
+            frame.rgba[i + 2] = source[i + 2];
+        }
+        frame.rgba[i + 3] = source[i + 3];
+    }
+
+    return frame;
 }
 
 std::expected<Renderer, std::string> Renderer::create(
@@ -1104,7 +1251,44 @@ void Renderer::waitIdle()
 
 std::expected<FrameStats, std::string> Renderer::renderFrame(const CameraState& camera)
 {
-    Impl& impl = *m_impl;
+    return m_impl->submitFrame(camera, false);
+}
+
+std::expected<CapturedFrame, std::string> Renderer::renderFrameCaptured(
+    const CameraState& camera)
+{
+    auto stats = m_impl->submitFrame(camera, true);
+    if (!stats.has_value()) {
+        return std::unexpected(stats.error());
+    }
+    if (stats->swapchainRebuilt) {
+        // The frame was skipped or the swapchain changed under it; there is nothing valid to
+        // read. Returning an empty capture lets the caller discard the sample rather than
+        // measure a stale or half-sized buffer.
+        return CapturedFrame{};
+    }
+
+    // Waiting here is what makes the capture readable, and it is also why this path must never
+    // produce frame-time evidence: it removes the CPU/GPU overlap entirely.
+    if (const VkResult result = vkWaitForFences(
+            m_impl->device, 1, &m_impl->inFlight[m_impl->lastSubmittedSlot], VK_TRUE, UINT64_MAX);
+        result != VK_SUCCESS) {
+        return std::unexpected(fail("Waiting for the captured frame failed", result));
+    }
+    if (const VkResult result = vmaInvalidateAllocation(
+            m_impl->allocator, m_impl->captureAllocation, 0, m_impl->captureSize);
+        result != VK_SUCCESS) {
+        return std::unexpected(fail("Invalidating the readback buffer failed", result));
+    }
+
+    return m_impl->readCapture();
+}
+
+std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
+    const CameraState& camera,
+    bool capture)
+{
+    Impl& impl = *this;
     FrameStats stats{.frameIndex = impl.frameIndex, .swapchainRebuilt = false};
 
     if (impl.pendingWidth == 0 || impl.pendingHeight == 0) {
@@ -1157,7 +1341,7 @@ std::expected<FrameStats, std::string> Renderer::renderFrame(const CameraState& 
         return std::unexpected(fail("Resetting the command buffer failed", result));
     }
 
-    if (auto recorded = impl.recordFrame(impl.commandBuffers[slot], imageIndex, camera);
+    if (auto recorded = impl.recordFrame(impl.commandBuffers[slot], imageIndex, camera, capture);
         !recorded.has_value()) {
         return std::unexpected(recorded.error());
     }
@@ -1197,6 +1381,7 @@ std::expected<FrameStats, std::string> Renderer::renderFrame(const CameraState& 
         return std::unexpected(fail("Presenting the frame failed", presentResult));
     }
 
+    impl.lastSubmittedSlot = slot;
     impl.frameSlot = (slot + 1) % kFramesInFlight;
     ++impl.frameIndex;
     stats.frameIndex = impl.frameIndex;

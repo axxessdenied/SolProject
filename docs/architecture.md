@@ -456,10 +456,58 @@ line to audit when the jitter gate is measured. The view matrix has no translati
 the camera *is* the origin. A conventional view matrix would reintroduce the camera's world
 magnitude in `float`, which is exactly what the frame model selected in A2 exists to prevent.
 
-**What this does not yet show.** The render loop presents and validation is clean, but no
-depth-gate measurement has been taken: nothing has read back a framebuffer or compared a
-rendered result against an expectation. Frames presenting is not evidence that the depth range
-behaves — that measurement arrives with the jitter harness, which needs the same readback path.
+### Screen-space jitter: first gating result
+
+**Measured 2026-08-13 on the RTX 4060 Laptop GPU at 1280×720, Release.** Both reference views
+the P1b plan requires, 600 measured frames each after 30 warm-up:
+
+| View | Camera world magnitude | Jitter X max | Jitter Y max | Frames |
+|---|---|---|---|---|
+| Surface anchor | 6 378 km from origin | 0.000000 px | 0.000000 px | bit-identical |
+| Orbital vantage, 200 km | 6 578 km from origin | 0.000000 px | 0.000000 px | bit-identical |
+
+Against a 0.25-pixel gate. The frames are bit-identical, so the jitter is exactly zero rather
+than merely small.
+
+**Why a zero here is not self-evidently meaningful, and what makes it so.** The gate holds
+everything constant and measures temporal stability. A renderer that narrowed world coordinates
+to `float` before subtracting the camera — the precise mistake `cameraRelative()` exists to
+prevent — would also render bit-identical frames and also score zero. It would simply be stably
+wrong. The gate alone cannot tell the two apart.
+
+A **sub-pixel response control** does. The camera is stepped laterally by 10 mm at a world
+magnitude where one ULP of a `float` is 0.5 m — fifty times the step — and the marker's
+centroid is required to track the geometric prediction:
+
+| Quantity | Value |
+|---|---|
+| Predicted shift | 0.169439 px/step |
+| Observed shift | 0.169654 px/step (0.13% agreement) |
+| Worst per-step error | 0.002529 px |
+| Monotonic | yes |
+
+With `float` world coordinates every step would fall inside one representable value and the
+response would be either nil or a ~12-pixel jump. Resolving motion fifty times below the float
+floor, smoothly and to a fraction of a percent, is what makes the zero-jitter result evidence
+about precision rather than only about stability. **A2's frame-model selection is confirmed
+under the renderer, not merely assumed compatible with it.**
+
+Two measurement-method details were forced by getting this wrong first, and both are load
+bearing rather than incidental:
+
+- **The marker needs a smooth intensity profile.** With hard edges and no antialiasing, pixel
+  coverage is binary, the rasterised footprint changes in whole-pixel steps, and the centroid
+  quantises to roughly a pixel — so a 0.25-pixel gate is unmeasurable and a zero reading means
+  only "below the quantisation floor". The sub-pixel information has to live in intensity,
+  which is how astrometry has always solved this.
+- **No hard boundary anywhere in the measured region.** A `discard` cutoff, or the geometry's
+  own edge, makes pixels pop in and out discretely and puts the quantisation straight back. The
+  profile decays below the detection threshold on its own, and the centroid weight is
+  background-subtracted so a pixel at the threshold contributes zero.
+
+**Still not measured:** the depth gate has no result. Nothing yet compares rendered depth
+behaviour against an expectation across the full surface-to-orbit path, and LOD continuity does
+not exist to measure. Frames presenting is not evidence that the depth range behaves.
 
 ## Proposed architecture
 

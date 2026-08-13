@@ -31,3 +31,12 @@ sol_apply_project_options(SolRenderLoop)
 target_link_libraries(SolRenderLoop PRIVATE sol::render sol::platform)
 add_test(NAME render.loop COMMAND SolRenderLoop)
 set_tests_properties(render.loop PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+# The screen-space jitter gate. Registered as a test because it is a pass/fail threshold, not
+# a benchmark: it either holds 0.25 px or it does not, and a regression should break the build
+# rather than wait to be noticed in a report.
+add_executable(SolJitterHarness JitterHarnessMain.cpp)
+sol_apply_project_options(SolJitterHarness)
+target_link_libraries(SolJitterHarness PRIVATE sol::render sol::platform)
+add_test(NAME render.jitter-gate COMMAND SolJitterHarness)
+set_tests_properties(render.jitter-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
