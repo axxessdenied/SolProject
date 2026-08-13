@@ -308,19 +308,41 @@ void buildTerrain(
             }
         }
 
-        // Cull nodes on the far side of the planet. A horizon test on the sphere: a node whose
-        // centre is beyond the tangent point cannot be visible, and drawing it would cost
-        // triangles the gate would then attribute to LOD.
-        const double cameraRadius = length(cameraPlanetRelative);
-        if (cameraRadius > config.radiusMetres) {
-            const double centreRadius = length(centre);
-            const double cosAngle = dot(normalise(centre), normalise(cameraPlanetRelative));
-            const double horizonCos =
-                std::sqrt(std::max(0.0, 1.0 - (config.radiusMetres * config.radiusMetres)
-                                             / (cameraRadius * cameraRadius)));
-            // Generous margin: a node is a patch, not a point, so its far corner can be
-            // visible when its centre is not.
-            if (cosAngle < horizonCos - (node.size * 2.0) && centreRadius < cameraRadius) {
+        // Cull nodes hidden behind the planet, conservatively.
+        //
+        // A point P is above the horizon from a camera at C when its projection along the
+        // camera direction reaches the horizon plane, which sits at `occluder^2 / |C|` from
+        // the planet centre. That is the exact test; what matters for the LOD gate is that it
+        // is applied to the node's whole extent rather than to its centre, and that both radii
+        // err toward drawing.
+        //
+        // The previous version subtracted `node.size * 2.0` — a fraction of a cube face — from
+        // a cosine. Mixing a size fraction into an angular quantity is dimensionally
+        // meaningless, and the result was a threshold that admitted and dropped patches while
+        // they were still on screen. Each crossing appeared or removed a patch in a single
+        // frame, which is a pop that no amount of LOD morphing can smooth: morphing blends
+        // tessellation changes, not visibility changes. The LOD gate measured exactly that,
+        // as two pops that survived with morphing enabled and occurred at the same descent
+        // steps with it disabled.
+        //
+        // Conservative on both sides is what removes the pop rather than merely moving it. The
+        // occluder is shrunk by the relief band, since terrain that dips below the reference
+        // radius occludes less; the node's bounding radius is grown by it, since terrain that
+        // rises above the radius is visible sooner. A node therefore becomes eligible to draw
+        // while it is still genuinely hidden, and contributes nothing on the frame it appears.
+        const double cameraDistance = length(cameraPlanetRelative);
+        const double occluderRadius = std::max(0.0, config.radiusMetres - config.reliefMetres);
+
+        if (cameraDistance > occluderRadius) {
+            const Vec3d cameraDirection = normalise(cameraPlanetRelative);
+            const double horizonPlane = (occluderRadius * occluderRadius) / cameraDistance;
+
+            // Half the node's diagonal across the sphere, plus the relief band. The 0.75
+            // factor covers a square patch's corner-to-centre distance with margin.
+            const double nodeWorldSize = node.size * config.radiusMetres * 2.0;
+            const double boundingRadius = (nodeWorldSize * 0.75) + config.reliefMetres;
+
+            if (dot(centre, cameraDirection) + boundingRadius < horizonPlane) {
                 continue;
             }
         }

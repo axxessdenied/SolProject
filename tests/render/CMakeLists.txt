@@ -68,12 +68,25 @@ set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 # pop magnitude of 0.2822 against 0.0030 — a 94-fold reduction. Morphing is doing its job and
 # the measurement can see it doing so.
 #
-# The gate fails on something else, and the failure is the useful part. Both of production's
-# two pops occur at the same descent steps as the control's first two, and morphing is the only
-# difference between the runs — so those two cannot be caused by it. They are a second popping
-# source, almost certainly the horizon cull in TerrainLod.cpp, which admits or drops a patch on
-# a hard threshold with no blend. Fixing that is the next step; it is a real defect the gate
-# found rather than an artefact of measuring it.
+# The gate fails on something else. Both of production's two pops occur at the same descent
+# steps as the control's first two, and morphing is the only difference between the runs, so
+# those two cannot be caused by it. They coincide exactly with the first patch-count change of
+# the descent.
+#
+# Two candidate causes have been tested and neither was it:
+#
+#   - The horizon cull was genuinely broken — it subtracted a cube-face size fraction from a
+#     cosine, which is dimensionally meaningless, and admitted patches roughly 78 degrees past
+#     the true horizon at 250 km altitude instead of about 16. It has been replaced with a
+#     correct horizon-plane test, conservative on both radii. That is a real fix, and it left
+#     the pops entirely unchanged.
+#   - Morphed per-vertex normals, replacing the fragment shader's derivative normal, on the
+#     theory that degenerate triangles at full morph give undefined derivatives. Measured
+#     strictly worse: production pops 2 -> 9, separation 13-vs-2 -> 12-vs-9. Reverted; see the
+#     note in TerrainLod.h.
+#
+# The remaining two pops are undiagnosed. They are real and reproducible, at the first
+# subdivision of the descent.
 #
 # Kept DISABLED so one known-failing gate does not mask regressions in the other twenty-five
 # tests. The failure is recorded here and in docs/architecture.md rather than hidden by it.

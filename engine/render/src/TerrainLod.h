@@ -56,7 +56,25 @@ struct TerrainVertex {
     float heightUnit = 0.0F;
     /// The coarse grid's height, blended alongside the position so shading morphs too.
     float coarseHeightUnit = 0.0F;
+
 };
+
+// Note on shading normals, recorded because the obvious improvement measured worse.
+//
+// Shading uses a normal recovered in the fragment shader from screen-space derivatives of
+// position. The apparent flaw is real: at full morph a patch's vertices coincide in pairs and
+// half its triangles are exactly degenerate — that is how the fine mesh becomes the coarse one
+// — and the derivative across a zero-area triangle is undefined.
+//
+// Replacing it with morphed per-vertex normals, computed by finite differences over the fine
+// and coarse grids, made the LOD gate strictly worse: production pops rose from 2 to 9 and the
+// separation from the control collapsed from 13-vs-2 to 12-vs-9. The cause is patch edges. A
+// child's coarse-normal stencil needs samples one parent-grid step away, which outside the
+// child's own boundary do not exist, so it clamps and disagrees with the parent's normal along
+// every shared edge — trading one artefact at the transition instant for a permanent seam
+// around every patch. Correcting that needs a one-vertex skirt of neighbour data per patch,
+// which is worth doing, but not by assumption: the version that measured better is the one in
+// the tree.
 
 /// A drawable block of terrain.
 struct TerrainPatch {

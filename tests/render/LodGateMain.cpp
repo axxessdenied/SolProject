@@ -98,6 +98,13 @@ struct TraverseResult {
     double worstChangedFraction = 0.0;
     int worstChangedStep = -1;
     double altitudeAtWorst = 0.0;
+
+    /// Steps at which the drawn patch count changed, and by how much.
+    ///
+    /// Recorded so a pop can be attributed rather than guessed at. A pop coinciding with a
+    /// patch-count change is geometry appearing or disappearing; a pop with no count change is
+    /// geometry moving, which is a different defect with a different fix.
+    std::vector<std::pair<int, int>> patchCountChanges;
 };
 
 double meanLuminance(const std::vector<std::uint8_t>& rgba, std::size_t index)
@@ -495,6 +502,7 @@ void collectResourceStats(
     renderer.setTerrain(terrain);
 
     std::vector<double> samples;
+    int previousPatchCount = -1;
     std::uint64_t minimum = UINT64_MAX;
     std::uint64_t maximum = 0;
     std::uint64_t last = 0;
@@ -520,6 +528,13 @@ void collectResourceStats(
         if (frame->deviceAllocatedBytes == 0) {
             continue;
         }
+        if (previousPatchCount >= 0
+            && static_cast<int>(frame->terrainPatches) != previousPatchCount) {
+            result.patchCountChanges.emplace_back(
+                step, static_cast<int>(frame->terrainPatches) - previousPatchCount);
+        }
+        previousPatchCount = static_cast<int>(frame->terrainPatches);
+
         minimum = std::min(minimum, frame->deviceAllocatedBytes);
         maximum = std::max(maximum, frame->deviceAllocatedBytes);
         last = frame->deviceAllocatedBytes;
@@ -588,6 +603,14 @@ void report(const TraverseResult& result)
     } else {
         std::printf("  worst concentration    none — no step moved any pixel by >%d levels\n",
                     kPerceptibleDelta);
+    }
+
+    if (!result.patchCountChanges.empty()) {
+        std::printf("  patch-count changes    ");
+        for (const auto& change : result.patchCountChanges) {
+            std::printf("%d(%+d) ", change.first, change.second);
+        }
+        std::printf("\n");
     }
 }
 

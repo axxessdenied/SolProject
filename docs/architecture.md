@@ -631,16 +631,31 @@ gentle terrain would imply nothing.
 
 Eleven of thirteen pops eliminated, and the worst surviving one reduced 94-fold.
 
-**The gate nonetheless fails, on a different mechanism.** Production's two pops fall at the
-same descent steps as the control's first two — around 255 km altitude — and morphing is the
-only difference between the runs, so morphing cannot be their cause. They are a second popping
-source: almost certainly the **horizon cull**, which admits or drops a patch on a hard
-threshold with no blend, so a patch appears or vanishes in one frame. Continuous LOD morphing
-does not address visibility changes, only tessellation changes.
+**The gate nonetheless fails, on a mechanism that is still unidentified.** Production's two
+pops fall at the same descent steps as the control's first two — around 255 km altitude — and
+morphing is the only difference between the runs, so morphing cannot be their cause. They
+coincide exactly with the first patch-count change of the descent.
 
-That is a real defect the gate found, and fixing it is the next step. The test stays registered
-and `DISABLED` so one known-failing gate does not mask regressions across the other
-twenty-five, with the reason recorded in the build description rather than hidden by it.
+Two candidate causes have been tested, and neither was it:
+
+- **The horizon cull was genuinely broken** and is now fixed. It subtracted a cube-face size
+  fraction from a cosine — dimensionally meaningless — and as a result admitted patches roughly
+  78° past the true horizon at 250 km altitude, where the real horizon is about 16°. It is
+  replaced by the exact horizon-plane test, `dot(P, Ĉ) ≥ occluder² / |C|`, applied to a node's
+  whole bounding extent with the occluder shrunk and the bound grown by the relief band, so a
+  node becomes eligible while still genuinely hidden. **This fix left the pops unchanged**, so
+  the cull was a real defect but not this one.
+- **Morphed per-vertex normals**, replacing the fragment shader's derivative-recovered normal,
+  on the theory that a patch's degenerate triangles at full morph give undefined derivatives.
+  Measured **strictly worse** — production pops rose 2 → 9 and the separation collapsed from
+  13-vs-2 to 12-vs-9 — because a child's coarse-normal stencil clamps at its own patch boundary
+  instead of reading its parent's neighbours, trading one artefact at the transition instant
+  for a permanent seam around every patch. Reverted. Doing it properly needs a one-vertex skirt
+  of neighbour data per patch.
+
+The two remaining pops are real, reproducible, and undiagnosed. The gate stays registered and
+`DISABLED` so one known-failing gate does not mask regressions across the other twenty-five,
+with the reasoning recorded in the build description rather than hidden by it.
 
 **Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
 simple analytic shell, and the capability-reporting gate's synthetic profiles.
