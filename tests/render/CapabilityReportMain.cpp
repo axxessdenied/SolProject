@@ -20,6 +20,10 @@ namespace {
 
 constexpr double kBytesPerGibibyte = 1024.0 * 1024.0 * 1024.0;
 
+/// Reported to CTest as a skip rather than a pass. A machine with no Vulkan loader must not
+/// contribute a green result to a suite total that is quoted as evidence.
+constexpr int kSkipExitCode = 77;
+
 void printLoader(const sol::render::LoaderInfo& loader, bool validationEnabled)
 {
     std::printf("Loader\n");
@@ -37,13 +41,38 @@ void printDevice(const sol::render::DeviceCapabilities& device)
     std::printf("  kind              %s\n", std::string(sol::render::toString(device.kind)).c_str());
     std::printf("  vendor/device     0x%04X / 0x%04X\n", device.vendorId, device.deviceId);
     std::printf("  device API        %s\n", sol::render::toString(device.apiVersion).c_str());
-    std::printf("  driver            %s\n", device.driverVersionText.c_str());
-    std::printf("  extensions        %zu\n", device.extensions.size());
-    std::printf("  device-local mem  %.2f GiB\n",
-                static_cast<double>(device.deviceLocalMemoryBytes()) / kBytesPerGibibyte);
-    std::printf("  maxImageDim2D     %u\n", device.limits.maxImageDimension2D);
-    std::printf("  timestamp period  %.4f ns\n",
+    std::printf("  driver            %s (vendor encoding; not comparable across vendors)\n",
+                device.driverVersionText.c_str());
+
+    // ADR 0002 requires the startup report to enumerate features, extensions, limits, and
+    // memory — not merely to have queried them. Printing counts and aggregates instead was
+    // hiding most of what the enumeration collects.
+    std::printf("  features\n");
+    std::printf("    samplerAnisotropy   %s\n", device.features.samplerAnisotropy ? "yes" : "no");
+    std::printf("    depthClamp          %s\n", device.features.depthClamp ? "yes" : "no");
+    std::printf("    fillModeNonSolid    %s\n", device.features.fillModeNonSolid ? "yes" : "no");
+    std::printf("    independentBlend    %s\n", device.features.independentBlend ? "yes" : "no");
+    std::printf("    timelineSemaphore   %s\n", device.features.timelineSemaphore ? "yes" : "no");
+
+    std::printf("  limits\n");
+    std::printf("    maxImageDimension2D     %u\n", device.limits.maxImageDimension2D);
+    std::printf("    maxSamplerAnisotropy    %.1f\n",
+                static_cast<double>(device.limits.maxSamplerAnisotropy));
+    std::printf("    maxViewports            %u\n", device.limits.maxViewports);
+    std::printf("    bufferImageGranularity  %llu\n",
+                static_cast<unsigned long long>(device.limits.bufferImageGranularity));
+    std::printf("    timestampPeriod         %.4f ns\n",
                 static_cast<double>(device.limits.timestampPeriodNanoseconds));
+
+    std::printf("  memory heaps\n");
+    for (const sol::render::MemoryHeap& heap : device.memoryHeaps) {
+        std::printf("    [%u] %8.2f GiB%s\n",
+                    heap.index,
+                    static_cast<double>(heap.sizeBytes) / kBytesPerGibibyte,
+                    heap.deviceLocal ? "  device-local" : "");
+    }
+    std::printf("    total device-local      %.2f GiB\n",
+                static_cast<double>(device.deviceLocalMemoryBytes()) / kBytesPerGibibyte);
 
     std::printf("  queue families\n");
     for (const sol::render::QueueFamily& family : device.queueFamilies) {
@@ -69,6 +98,14 @@ void printDevice(const sol::render::DeviceCapabilities& device)
                     format.optimalTilingColorAttachment ? " colour" : "",
                     format.optimalTilingSampledImage ? " sampled" : "");
     }
+
+    // Names, not just a count. An extension list is provenance: a report saying "252
+    // extensions" cannot be reconciled against another machine's, and reconciliation is the
+    // whole purpose of recording it.
+    std::printf("  extensions (%zu)\n", device.extensions.size());
+    for (const std::string& extension : device.extensions) {
+        std::printf("    %s\n", extension.c_str());
+    }
 }
 
 } // namespace
@@ -88,13 +125,19 @@ int main()
         std::printf("No usable Vulkan instance on this machine.\n\n%s\n",
                     instance.error().c_str());
         std::printf("\nSKIPPED: nothing to report without a loader.\n");
-        return 0;
+        return kSkipExitCode;
     }
 
     printLoader(instance->loader(), instance->validationEnabled());
 
     const auto devices = instance->enumerateDevices();
-    if (devices.empty()) {
+    if (!devices.has_value()) {
+        // Distinct from "no devices". Conflating the two would report a driver failure as an
+        // absent GPU and send the reader looking for the wrong problem.
+        std::printf("Device enumeration failed.\n\n%s\n", devices.error().c_str());
+        return 1;
+    }
+    if (devices->empty()) {
         std::printf("The loader reported no physical devices.\n");
         return 1;
     }
@@ -102,7 +145,7 @@ int main()
     const sol::render::CapabilityRequirement requirement = sol::render::baselineRequirement();
 
     int acceptable = 0;
-    for (const auto& device : devices) {
+    for (const auto& device : *devices) {
         printDevice(device);
 
         const auto rejections = sol::render::checkCapabilities(requirement, device);
@@ -115,7 +158,19 @@ int main()
         }
     }
 
-    std::printf("%d of %zu device(s) meet the requirement set.\n", acceptable, devices.size());
+    std::printf("%d of %zu device(s) meet the requirement set.\n", acceptable, devices->size());
+
+    // The validation gate is about what the layer actually said, so the messages are printed
+    // whether or not there are any. "0 messages" is the evidence; silence is not.
+    const auto& messages = instance->validationMessages();
+    if (instance->validationEnabled()) {
+        std::printf("\nValidation messages: %zu\n", messages.size());
+        for (const std::string& message : messages) {
+            std::printf("  %s\n", message.c_str());
+        }
+    } else {
+        std::printf("\nValidation was not active; no validation evidence from this run.\n");
+    }
 
     if (acceptable == 0) {
         std::printf("FAILED: a Vulkan loader is present but no device can run the renderer.\n");

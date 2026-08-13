@@ -56,17 +56,23 @@ Updating the baseline is a reviewed dependency change, not maintenance.
 
 ## Packages
 
-| Package | Version | License | Linked to | Boundary |
-|---|---|---|---|---|
-| `vulkan-headers` | 1.4.357.0 | Apache-2.0 OR MIT | `SolRender` (private) | Vulkan types never leave `sol::render` |
-| `volk` | 1.4.357.0 | MIT | `SolRender` (private) | ditto |
-| `vulkan-memory-allocator` | 3.4.0 | MIT | `SolRender` (private) | ditto |
-| `glfw3` | 3.5.1 | Zlib | not yet linked — see below | window/surface behind a `sol::platform` interface |
+| Package | Constraint | Resolved | License | Features | Linked to | Boundary |
+|---|---|---|---|---|---|---|
+| `vulkan-headers` | `version>=1.4.357.0` | 1.4.357.0 | Apache-2.0 OR MIT | defaults only | `SolRender` (private) | Vulkan types never leave `sol::render` |
+| `volk` | `version>=1.4.357.0` | 1.4.357.0 | MIT | defaults only | `SolRender` (private) | ditto |
+| `vulkan-memory-allocator` | baseline | 3.4.0 | MIT | defaults only | **declared, not linked** | ditto, when linked |
+| `glfw3` | baseline | 3.5.1 | Zlib | defaults only | **declared, not linked** | window/surface behind a `sol::platform` interface |
 
-Every one is linked **PRIVATE**. That is the enforcement mechanism for ADR 0002's rule that
-Vulkan types stay behind renderer-owned interfaces: a public link would propagate Vulkan's
-include directories to every consumer and the rule would hold only by everyone's continued
-good intentions. Privately linked, a violation becomes a compile error in the offending target.
+No package enables a non-default vcpkg port feature. `version>=` is a floor rather than a pin;
+the checked-in baseline supplies the resolved versions above, and `vulkan-headers` and `volk`
+additionally carry floors because volk is code-generated against a specific `vk.xml` revision
+and the two must move together.
+
+Everything that **is** linked is linked **PRIVATE**. That is the enforcement mechanism for ADR
+0002's rule that Vulkan types stay behind renderer-owned interfaces: a public link would
+propagate Vulkan's include directories to every consumer and the rule would hold only by
+everyone's continued good intentions. Privately linked, a violation becomes a compile error in
+the offending target.
 
 ### vulkan-headers
 
@@ -90,6 +96,14 @@ dialog on a machine with no Vulkan driver — before any of the project's code r
 opportunity to say anything useful. With volk, the absent loader is a `VkResult` the renderer
 inspects and reports. `VulkanInstance::create` returns exactly that diagnostic today.
 
+**Alternative weighed:** linking the loader import library `vulkan-1.lib` directly, from either
+the SDK or the `vulkan-loader` port. Simpler, one fewer package, and no implementation
+translation unit to compile. Rejected for the failure behaviour above: the import-library form
+makes an absent driver an OS-level process-start failure that no project code can intercept,
+which is the specific outcome ADR 0002 requires the shipped game to avoid. The cost of volk is
+one file and a macro; the cost of the alternative is a support burden on every machine without
+a Vulkan driver.
+
 **Boundary.** `VK_NO_PROTOTYPES` is set on `SolRender` only.
 
 **Note on the vcpkg target.** The port's prebuilt `volk::volk` static library is compiled
@@ -106,11 +120,18 @@ one translation unit, at the cost of the clean-failure behaviour above.
 
 ### vulkan-memory-allocator
 
-**Need.** Vulkan requires the application to suballocate device memory itself; the driver
-exposes a small number of large allocations and a hard cap on allocation count. B1 creates
-depth images, vertex and index buffers, and staging buffers, and P1b makes "allocation counts
-and upload volume" mandatory measurements — VMA's budget and statistics API reports both
-directly.
+**Status: declared but not yet linked.** B1 creates no `VkDevice` yet and therefore allocates
+nothing. An earlier revision of this entry justified VMA in the present tense — "B1 creates
+depth images, vertex and index buffers, and staging buffers" — describing work that is not in
+the branch, and the package was linked to `SolRender` while no translation unit included it.
+Both are corrected: the entry below is explicitly forward-looking, and the link edge is added
+by the increment that allocates.
+
+**Anticipated need.** Vulkan requires the application to suballocate device memory itself; the
+driver exposes a small number of large allocations and a hard cap on allocation count. The
+render path will create depth images, vertex and index buffers, and staging buffers, and P1b
+makes "allocation counts and upload volume" mandatory measurements — VMA's budget and
+statistics API reports both directly.
 
 **Alternative weighed:** a hand-written suballocator. Realistic in the long run and roughly
 two to three weeks to get correct, against a 6-week increment box whose purpose is precision
@@ -118,8 +139,10 @@ and capability evidence, not allocator research. Rejected on that basis rather t
 capability.
 
 **ADR 0002 caveat.** That ADR says not to select an allocator "until their owning prototype
-increment demonstrates the need". B1 is that increment and the need above is the demonstration.
-This is a B1 selection, not a production commitment: M2 may revisit it with real asset volumes.
+increment demonstrates the need". The need above is *anticipated*, not yet demonstrated, which
+is exactly why the package is declared and reviewed but not linked. The demonstration is the
+first `VkDevice`; the link edge follows it. This will be a B1 selection rather than a
+production commitment even then — M2 may revisit it with real asset volumes.
 
 **Replacement cost.** Moderate, and bounded by the private link. VMA handles do not appear in
 any `sol::render` public header.
@@ -164,6 +187,21 @@ configuration-specific feature was needed. The 20 P1a tests are unaffected.
 
 Warnings observed: `cl : Command line warning D9025 : overriding '/W4' with '/W0'`, twice,
 from the deliberate warning relaxation on `VolkImplementation.cpp`. No other warnings.
+
+## Decisions
+
+| Decision | Status | Why | Date / source |
+|---|---|---|---|
+| vcpkg for compiled/linked inputs; Vulkan SDK for tooling only | Confirmed | Keeps a compiled artifact a function of the checked-in manifest rather than of a developer's installer, while P1b's gates still need the SDK's layers | Writer, 2026-08-13, under ADR 0007 |
+| `x64-windows-static-md` triplet | Confirmed | No third-party DLLs travel with the game; dynamic CRT matches the OS-supplied loader and avoids cross-module allocator mismatch | Writer, 2026-08-13 |
+| Vulkan SDK 1.4.357.0 as the reviewed version | Confirmed | The version the user installed; matched to `vulkan-headers` so headers and validation layer share a revision | User installed 2026-08-13 |
+| `volk` over linking `vulkan-1.lib` | Confirmed | Absent-loader failure becomes a diagnostic the renderer writes, which ADR 0002 requires | Writer, 2026-08-13 |
+| `glfw3` over SDL3 | Confirmed | Smaller surface, easier to keep behind a narrow boundary; audio/gamepad are separate milestone-owned decisions that a window-library choice should not pre-empt | Writer, 2026-08-13 |
+| VMA as the allocator | **Proposed** | Reviewed and declared, but the need is anticipated rather than demonstrated; not linked until the first `VkDevice` | Writer, 2026-08-13 |
+| Licence notices file | **Open** | Nothing is distributed yet; must be settled before any build leaves the machine | This document |
+
+These are writer selections made under an accepted policy (ADR 0007), not user rulings, except
+where the table says otherwise. Any of them can be reversed on request.
 
 ## Open items
 

@@ -41,7 +41,11 @@ CapabilityRequirement baselineRequirement()
          .reason = "The depth gate spans a planetary surface to orbital altitude. A 24-bit "
                    "normalised depth buffer cannot hold that range without collapse; 32-bit "
                    "float depth with a reversed-Z projection is what the gate is measured "
-                   "against. This format is the one hard hardware demand B1 makes."},
+                   "against. This is the one requirement here that can reject a conformant "
+                   "device: Vulkan mandates D16_UNORM and then guarantees only that at least "
+                   "one of X8_D24_UNORM_PACK32 and D32_SFLOAT supports depth attachment, so "
+                   "a device supporting only the former conforms and is still rejected. That "
+                   "is a deliberate narrowing of supported hardware, not an oversight."},
     };
 
     requirement.requiresGraphicsAndPresentQueue = true;
@@ -88,7 +92,20 @@ std::vector<Rejection> checkCapabilities(
     }
 
     for (const RequiredFeature& feature : requirement.features) {
-        if (feature.field == nullptr || !(device.features.*(feature.field))) {
+        // A null field is a malformed requirement declaration, not a hardware limitation.
+        // Reporting it as "unsupported" would blame the device for our own bug, which is the
+        // one thing Rejection exists to prevent.
+        if (feature.field == nullptr) {
+            rejections.push_back({
+                .requirement = std::format("feature {}", feature.name),
+                .found = "not checked — the requirement declares no field to read",
+                .reason = "This is a defect in the requirement declaration, not a property of "
+                          "the device. The device was not evaluated against this feature.",
+            });
+            continue;
+        }
+
+        if (!(device.features.*(feature.field))) {
             rejections.push_back({
                 .requirement = std::format("feature {}", feature.name),
                 .found = "unsupported",

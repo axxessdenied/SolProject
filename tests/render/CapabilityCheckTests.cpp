@@ -43,12 +43,28 @@ bool mentions(const std::vector<Rejection>& rejections, std::string_view fragmen
 
 /// Every rejection must carry a non-empty reason. An "unsupported device" message with no
 /// explanation is precisely what ADR 0002's actionable-diagnostics requirement rules out.
+///
+/// Requires at least one rejection. `all_of` over an empty list is vacuously true, so without
+/// this a regression that produced no rejections at all would *pass* the "carries an
+/// actionable reason" check while failing the one beside it.
 bool allCarryReasons(const std::vector<Rejection>& rejections)
 {
-    return std::ranges::all_of(rejections, [](const Rejection& rejection) {
-        return !rejection.reason.empty() && !rejection.requirement.empty()
-               && !rejection.found.empty();
-    });
+    return !rejections.empty()
+           && std::ranges::all_of(rejections, [](const Rejection& rejection) {
+                  return !rejection.reason.empty() && !rejection.requirement.empty()
+                         && !rejection.found.empty();
+              });
+}
+
+/// True when exactly one requirement was rejected and it mentions @p fragment.
+///
+/// Each negative control breaks one property of an otherwise-compliant device, so anything
+/// beyond one rejection means the check is firing on something it should not. Asserting only
+/// "at least one mentions X" would let a spurious second rejection pass unnoticed.
+bool onlyRejection(const std::vector<Rejection>& rejections, std::string_view fragment)
+{
+    return rejections.size() == 1
+           && rejections.front().requirement.find(fragment) != std::string::npos;
 }
 
 void testCompliantDeviceIsAccepted(sol::test::CheckContext& context)
@@ -67,8 +83,8 @@ void testApiVersionBelowFloorIsRejected(sol::test::CheckContext& context)
     device.apiVersion = ApiVersion{1, 1, 0};
 
     const auto rejections = checkCapabilities(baselineRequirement(), device);
-    context.check(!rejections.empty(), "a Vulkan 1.1 device is rejected");
-    context.check(mentions(rejections, "Vulkan API"), "the rejection names the API version");
+    context.check(onlyRejection(rejections, "Vulkan API"),
+                  "a Vulkan 1.1 device is rejected for the API version and nothing else");
     context.check(allCarryReasons(rejections), "the API rejection carries an actionable reason");
 }
 
@@ -78,8 +94,8 @@ void testMissingSwapchainExtensionIsRejected(sol::test::CheckContext& context)
     std::erase(device.extensions, "VK_KHR_swapchain");
 
     const auto rejections = checkCapabilities(baselineRequirement(), device);
-    context.check(mentions(rejections, "VK_KHR_swapchain"),
-                  "a device without VK_KHR_swapchain is rejected by name");
+    context.check(onlyRejection(rejections, "VK_KHR_swapchain"),
+                  "a device without VK_KHR_swapchain is rejected by name and nothing else");
     context.check(allCarryReasons(rejections), "the extension rejection carries a reason");
 }
 
@@ -123,8 +139,9 @@ void testMissingPresentQueueIsRejected(sol::test::CheckContext& context)
     }
 
     const auto rejections = checkCapabilities(baselineRequirement(), device);
-    context.check(mentions(rejections, "graphics and presentation"),
-                  "a device with no graphics+present queue family is rejected");
+    context.check(onlyRejection(rejections, "graphics and presentation"),
+                  "a device with no graphics+present queue family is rejected, and only for "
+                  "that");
 }
 
 void testZeroCountQueueFamilyDoesNotSatisfyTheRequirement(sol::test::CheckContext& context)
@@ -165,8 +182,9 @@ void testNonConformantImageDimensionIsRejected(sol::test::CheckContext& context)
     device.limits.maxImageDimension2D = 2048;
 
     const auto rejections = checkCapabilities(baselineRequirement(), device);
-    context.check(mentions(rejections, "maxImageDimension2D"),
-                  "a device below Vulkan's guaranteed image dimension is rejected");
+    context.check(onlyRejection(rejections, "maxImageDimension2D"),
+                  "a device below Vulkan's guaranteed image dimension is rejected, and only "
+                  "for that");
 }
 
 void testEveryUnmetRequirementIsReportedAtOnce(sol::test::CheckContext& context)
@@ -179,13 +197,62 @@ void testEveryUnmetRequirementIsReportedAtOnce(sol::test::CheckContext& context)
     }
 
     const auto rejections = checkCapabilities(baselineRequirement(), device);
-    context.check(rejections.size() >= 3,
-                  "a device failing three requirements reports all three in one pass, so a "
-                  "user is not sent through three rounds of trial and error");
+    context.checkEqual(rejections.size(), std::size_t{3},
+                       "a device failing three requirements reports exactly three, so a user "
+                       "is not sent through three rounds of trial and error");
+    context.check(mentions(rejections, "Vulkan API"), "all three: the API version is named");
+    context.check(mentions(rejections, "VK_KHR_swapchain"), "all three: the extension is named");
+    context.check(mentions(rejections, "graphics and presentation"),
+                  "all three: the queue family is named");
 
     const std::string text = sol::render::formatRejections(device.deviceName, rejections);
     context.check(text.find(device.deviceName) != std::string::npos,
                   "the formatted diagnostic names the device it is about");
+}
+
+/// A conformant device that supports only the other guaranteed depth format is still rejected.
+///
+/// Vulkan mandates D16_UNORM for depth attachment and then guarantees only that at least one
+/// of X8_D24_UNORM_PACK32 and D32_SFLOAT supports it. The requirement set demands D32_SFLOAT
+/// specifically, so such a device conforms and is rejected anyway. That is a deliberate
+/// narrowing recorded in the requirement's own reason text, and this test exists so the
+/// narrowing is visible rather than discovered on someone's hardware.
+void testConformantDeviceWithoutD32IsStillRejected(sol::test::CheckContext& context)
+{
+    DeviceCapabilities device = compliantDevice();
+    for (auto& format : device.formats) {
+        if (format.name == "VK_FORMAT_D32_SFLOAT") {
+            format.optimalTilingDepthStencilAttachment = false;
+        }
+    }
+    device.formats.push_back({.name = "VK_FORMAT_X8_D24_UNORM_PACK32",
+                              .optimalTilingDepthStencilAttachment = true,
+                              .optimalTilingColorAttachment = false,
+                              .optimalTilingSampledImage = true});
+
+    const auto rejections = checkCapabilities(baselineRequirement(), device);
+    context.check(!rejections.empty(),
+                  "a device offering only X8_D24_UNORM_PACK32 depth is rejected, which is a "
+                  "conformant device the requirement set deliberately excludes");
+}
+
+/// A requirement declaring no field to read must not be reported as a hardware limitation.
+void testMalformedFeatureRequirementIsNotBlamedOnTheDevice(sol::test::CheckContext& context)
+{
+    CapabilityRequirement requirement = baselineRequirement();
+    requirement.features.push_back({
+        .name = "someFeature",
+        .field = nullptr,
+        .reason = "synthetic malformed requirement",
+    });
+
+    const auto rejections = checkCapabilities(requirement, compliantDevice());
+    const bool blamed = std::ranges::any_of(rejections, [](const Rejection& rejection) {
+        return rejection.found == "unsupported";
+    });
+    context.check(!rejections.empty() && !blamed,
+                  "a malformed requirement is reported as our defect, not as unsupported "
+                  "hardware");
 }
 
 /// Checks the requirement set against every baseline class P1b names.
@@ -193,6 +260,14 @@ void testEveryUnmetRequirementIsReportedAtOnce(sol::test::CheckContext& context)
 /// This is a design check on our requirements, not a driver test — see the warning in
 /// BaselineDeviceProfiles.h. It answers one question: has the requirement declaration quietly
 /// excluded a device the project has promised to support?
+///
+/// @warning It answers that question weakly today, and the weakness is worth naming. All four
+/// profiles are built from the same three helper functions and differ, across every field the
+/// requirement actually consults, in exactly one value — maxImageDimension2D, at 32768 versus
+/// 16384, against a threshold of 4096. So this is one assertion evaluated four times, not four
+/// independent checks, and the profiles were authored by the same hand that wrote the
+/// requirements. Populating them from real vulkan.gpuinfo.org reports is what would give this
+/// test independent power.
 void testBaselineClassesAreNotExcluded(sol::test::CheckContext& context)
 {
     for (const auto& profile : sol::test::allBaselineProfiles()) {
@@ -212,7 +287,9 @@ int main()
 {
     std::printf("Vulkan capability requirement checks\n");
     std::printf("  NOTE: baseline-class profiles are synthetic and unverified. They check the\n"
-                "        requirement declaration, not any driver. See BaselineDeviceProfiles.h.\n");
+                "        requirement declaration, not any driver, and across the fields the\n"
+                "        requirement consults the four profiles are near-identical -- treat\n"
+                "        them as one assertion, not four. See BaselineDeviceProfiles.h.\n");
 
     sol::test::CheckContext context("render.capability-check");
 
@@ -226,6 +303,8 @@ int main()
     testUnsupportedFeatureIsRejected(context);
     testNonConformantImageDimensionIsRejected(context);
     testEveryUnmetRequirementIsReportedAtOnce(context);
+    testConformantDeviceWithoutD32IsStillRejected(context);
+    testMalformedFeatureRequirementIsNotBlamedOnTheDevice(context);
     testBaselineClassesAreNotExcluded(context);
 
     return context.finish();

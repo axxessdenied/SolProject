@@ -24,12 +24,16 @@ target_include_directories(SolRender
     PRIVATE src)
 
 find_package(volk CONFIG REQUIRED)
-find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 
 target_link_libraries(SolRender
     PRIVATE
-        volk::volk_headers
-        GPUOpen::VulkanMemoryAllocator)
+        volk::volk_headers)
+
+# vulkan-memory-allocator is declared in vcpkg.json and reviewed in docs/dependencies.md, but
+# is deliberately not linked here. B1 creates no VkDevice yet and therefore allocates nothing,
+# and ADR 0002 says not to select an allocator "until their owning prototype increment
+# demonstrates the need". Linking a library no translation unit includes would assert a
+# demonstration that has not happened. The link edge is added by the increment that allocates.
 
 # volk dispatches through function pointers it loads itself, so nothing links vulkan-1.lib.
 # An absent loader then becomes a value this module can inspect and report, rather than a

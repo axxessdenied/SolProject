@@ -6,6 +6,7 @@
 - `docs/architecture.md` and `docs/architecture/` own accepted and implemented technical structure.
 - `docs/decisions/` owns accepted cross-cutting technical decisions.
 - `docs/changelog.md` owns append-only user-visible history.
+- `docs/dependencies.md` owns the third-party dependency and pinned-toolchain register required by ADR 0007.
 - `SolProjectNotes/Engine-Plan.md` owns proposed engine direction and sequencing.
 - `SolProjectNotes/Milestones/` owns implementation-ready milestone boundaries, increments, evidence criteria, and handoff contracts.
 - `SolProjectNotes/GDD.md` and `SolProjectNotes/GDD/` own game design.

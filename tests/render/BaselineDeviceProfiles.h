@@ -54,9 +54,19 @@ inline std::vector<std::string> commonExtensions()
     };
 }
 
-/// The depth and colour formats the requirement declaration consults. All four classes
-/// support D32_SFLOAT as a depth/stencil attachment; it is a Vulkan-mandatory format for that
-/// usage, which is precisely why the requirement chose it over a vendor-variable alternative.
+/// The depth and colour formats the requirement declaration consults.
+///
+/// @warning The `D32_SFLOAT` value below is the least trustworthy number in this file, and it
+/// is also the only one that can reject a real conformant device. An earlier version of this
+/// comment claimed D32_SFLOAT is a Vulkan-mandatory depth/stencil attachment format. **It is
+/// not.** The specification's required-format table mandates `D16_UNORM` for that usage, and
+/// otherwise guarantees only that *at least one of* `X8_D24_UNORM_PACK32` and `D32_SFLOAT`
+/// supports it — a device may conform while supporting the other one.
+///
+/// In practice every device class here is believed to support D32_SFLOAT, and both GPUs this
+/// project can measure do. But "believed" is the operative word: setting this true is an
+/// assumption about four absent devices, not a spec guarantee, and it is exactly what the
+/// reconciliation against real reports has to confirm.
 inline std::vector<render::FormatSupport> commonFormats()
 {
     return {

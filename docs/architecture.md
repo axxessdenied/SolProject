@@ -392,6 +392,21 @@ baseline class, and neither may be reported as a proxy for one:
 
 Loader instance API 1.4.357, validation layer installed and active.
 
+The driver strings above are Vulkan's vendor-specific encoding and are **the same drivers** the
+evidence plan's inventory lists as `32.0.15.8115` and `32.0.101.7082`; those are the Windows
+driver-package versions. Neither encoding is comparable across vendors, and a reader
+reconciling the two documents should expect the pair rather than a discrepancy.
+
+Validation is captured programmatically through a debug messenger chained into instance
+creation, so messages emitted during `vkCreateInstance` itself are not lost. The run above
+produced three, all `LLP_LAYER_3` loader warnings about a third-party overlay layer installed
+on the machine (`GalaxyOverlayVkLayer`), and none from this project's Vulkan usage. Under ADR
+0002 these fall in the "explained and accepted" category rather than counting against the
+clean-validation gate.
+
+These numbers live here mid-increment under the lightweight-lane rule in `AGENTS.md`. There is
+no `evidence/p1b/` yet; full evidence with raw-output locations attaches at increment closure.
+
 ## Proposed architecture
 
 Everything below this point is proposed and unimplemented.

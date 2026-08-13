@@ -82,8 +82,8 @@ struct FormatSupport {
 /// reasons about limits it has never consulted.
 struct DeviceLimits {
     std::uint32_t maxImageDimension2D = 0;
-    /// Bit mask width matters for reversed-Z: a 24-bit depth buffer and a 32-bit float one
-    /// behave differently over a surface-to-orbit depth range.
+    /// Maximum anisotropy a sampler may request. Recorded for terrain filtering quality
+    /// tiers; not currently consulted by any requirement.
     float maxSamplerAnisotropy = 0.0F;
     std::uint32_t maxViewports = 0;
     std::uint64_t bufferImageGranularity = 0;
@@ -103,7 +103,12 @@ struct DeviceFeatures {
     bool depthClamp = false;
     bool fillModeNonSolid = false;
     bool independentBlend = false;
-    /// Core in Vulkan 1.2 but optional as a feature: timeline semaphores.
+    /// Timeline semaphores.
+    ///
+    /// A conformant Vulkan 1.2 device must report this true, so on any device that clears the
+    /// candidate floor it carries no information. It is recorded anyway because it is queried
+    /// through the 1.2 feature chain, and reading false here on a device that claims 1.2 means
+    /// the query itself failed rather than that the feature is absent.
     bool timelineSemaphore = false;
 };
 

@@ -32,10 +32,10 @@ exist to produce evidence, and promoting any of them requires an explicit review
 ## Project boundaries
 
 - Engine: SolEngine, purpose-built for this game while retaining clean module boundaries.
-- Platform: Windows x64 first, targeting 60 FPS at 1080p on the baseline discrete-GPU PC and scalable higher-quality options. Selected integrated graphics are a 30 FPS/720p-low investigation tier, not yet a support promise.
+- Platform: Windows x64 first, targeting 60 FPS at 1080p on the baseline discrete-GPU PC and scalable higher-quality options. Selected integrated graphics are a 30 FPS/720p-low investigation tier, not yet a support promise. **Both targets are unverified on hardware:** no GTX 1060, RX 580, UHD 630, or Vega 8 — and no AMD device of any kind — is available to this project, so those claims rest on the [reference-hardware evidence plan](SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) rather than on measurement.
 - Mode: single-player.
 - Language/toolchain: C++23 in namespace `sol`, MSVC, CMake, and Ninja.
-- Graphics: Vulkan 1.2 is the P1 candidate floor; production adoption remains pending prototype evidence. UHD 630/Vega 8-class graphics form a 30 FPS/720p-low investigation tier.
+- Graphics: Vulkan 1.2 is the P1 candidate floor; production adoption remains pending prototype evidence. UHD 630/Vega 8-class graphics form a 30 FPS/720p-low investigation tier, unmeasured for the reason above.
 - Orbital model: patched conics with spheres of influence. No perturbations, drag, or orbital decay in the propagation; aerodynamic forces still act on craft inside the atmosphere.
 - Determinism: bit-exact on the same build and machine, tolerance-based across machines. `/arch:AVX2` sets a hard CPU floor at Haswell-era Intel and Zen-era AMD.
 - Assets: authored in Blender, interchanged as glTF 2.0, generated procedurally where parametric, baked at build time. Binary sources will use Git LFS.

@@ -17,3 +17,8 @@ sol_apply_project_options(SolRenderCapabilityReport)
 target_link_libraries(SolRenderCapabilityReport PRIVATE sol::render)
 target_include_directories(SolRenderCapabilityReport PRIVATE "${CMAKE_SOURCE_DIR}/tests")
 add_test(NAME render.capability-report COMMAND SolRenderCapabilityReport)
+
+# Without this, a machine with no Vulkan loader reports a green pass for the one test that
+# would have exercised real Vulkan, and that pass is counted in a suite total quoted as
+# evidence. 77 makes the absence visible in the summary instead.
+set_tests_properties(render.capability-report PROPERTIES SKIP_RETURN_CODE 77)
