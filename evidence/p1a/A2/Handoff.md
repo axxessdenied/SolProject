@@ -22,6 +22,11 @@ decision were resolved on 2026-08-12 and both ADRs amended. No open decision rem
   request. Every report accordingly records `gitDirty: true` against parent commit `185f6e8`.
   Re-running the evidence commands after a commit produces reports with `gitDirty: false`; the
   numbers do not change.
+
+  > **Superseded, 2026-08-13.** The bullet above records A2's state at its closure and is kept
+  > as written. A2 was subsequently committed as `8e96d2a` and merged into `dev` as PR #2; the
+  > numbers did not change. Current milestone state belongs to
+  > [`docs/project_status.md`](../../../docs/project_status.md), not to this record.
 - **Scope note.** `docs/project_status.md` recorded A2 as blocked on user review of A1's
   evidence, with authorization scoped to A1 only. The user's direct instruction to implement A2
   is taken as the authorization, and the status document is updated to say so. Commit, push,

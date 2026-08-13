@@ -31,6 +31,12 @@ fixed before the numbers were treated as evidence. **No open decision requires a
 - The same document also claimed A2 was uncommitted in the `dev` working tree. That was stale —
   A2 landed as PR #2, commit `8e96d2a` — and has been corrected.
 
+  > **Superseded, 2026-08-13.** The bullets above record A3's state at its closure and are kept
+  > as written. A3 was subsequently committed as `d314dad`, the milestone review's corrections as
+  > `1e8f6ea`, and both merged into `dev` as PR #3 (`bf18c33`); the numbers did not change.
+  > Current milestone state belongs to [`docs/project_status.md`](../../../docs/project_status.md),
+  > not to this record.
+
 ## Changed files
 
 New:
@@ -232,9 +238,12 @@ re-derived the reported numbers from fresh output, and raised eight findings —
 increment, all resolved before closure, none invalidating a threshold or reversing a selection.
 The review record is in the milestone index.
 
-P1a is **implementation-complete and reviewed**, not integrated into `dev` and not released. The
-smallest next action is a user decision on Git: this branch has never been committed. P1b remains
-**not** authorized and needs an explicit authorization of its own.
+P1a is **implementation-complete, reviewed, and integrated into `dev`** — merged on 2026-08-13
+as `bf18c33` via PR #3, with this increment landing as `d314dad` and the review's corrections as
+`1e8f6ea`. It is **not released**: nothing is tagged and nothing is on `main`.
+
+The smallest next action is a decision about P1b, which remains **not** authorized and needs an
+explicit authorization of its own naming its single writer and branch.
 
 Four questions are handed to P2/M5 rather than answered here, and each is recorded in
 [Open Questions](../../../SolProjectNotes/Open-Questions.md):

@@ -23,6 +23,11 @@ recorded in [Index.md](Index.md); one of them changes what ADR 0010 can claim.
   `gitDirty: true` against parent commit `9df0c47`. Re-running the evidence commands after a
   commit will produce reports with `gitDirty: false`; the numbers will not change.
 
+  > **Superseded, 2026-08-13.** The bullet above records A1's state at its closure and is kept
+  > as written. A1 was subsequently committed as `f049ef1` and merged into `dev` as PR #1; the
+  > numbers did not change, exactly as predicted. Current milestone state belongs to
+  > [`docs/project_status.md`](../../../docs/project_status.md), not to this record.
+
 ## Changed files
 
 New:
