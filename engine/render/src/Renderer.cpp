@@ -1689,6 +1689,7 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
         config.radiusMetres = impl.terrain->radiusMetres;
         config.reliefMetres = impl.terrain->reliefMetres;
         config.maxLevel = impl.terrain->maxLevel;
+        config.subdivisionFactor = impl.terrain->subdivisionFactor;
         config.morphEnabled = impl.terrain->morphEnabled;
 
         const detail::Vec3d cameraPlanetRelative{

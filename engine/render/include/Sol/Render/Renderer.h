@@ -88,6 +88,18 @@ struct TerrainSettings {
     double reliefMetres = 8000.0;
     std::uint32_t maxLevel = 12;
 
+    /// How close the camera must be, in multiples of a patch's world size, before that patch
+    /// subdivides. **This is the quality setting**, and the LOD gate is defined "at the
+    /// recorded quality setting" rather than in the abstract.
+    ///
+    /// Larger values tessellate more finely for the same view and cost more triangles. Values
+    /// large enough make LOD transitions sub-pixel, at which point nothing can pop and the
+    /// gate passes for a reason that has nothing to do with the LOD scheme — a pass worth
+    /// distrusting. A representative setting keeps the geometric error near the perceptual
+    /// limit, which is where a shipping renderer would put it for performance and where
+    /// morphing is actually load-bearing.
+    double subdivisionFactor = 2.5;
+
     /// Continuous LOD morphing. Disabling it is the LOD gate's negative control: the same
     /// traverse must then produce detectable popping, and a detector that cannot see it is not
     /// measuring anything.

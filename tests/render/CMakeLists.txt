@@ -63,14 +63,20 @@ set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 # the popping half is not trustworthy yet, and marking it disabled with a reason is honest
 # where either leaving the suite permanently red or quietly deleting the test would not be.
 #
-# The metric is wrong, not the renderer. Mean frame-to-frame image difference cannot separate
-# morphed from unmorphed transitions, because morphing deliberately substitutes many small
-# continuous deformations for one large discrete jump — so it frequently produces *more* total
-# image change, not less. Measured both ways across two altitude bands, the ordering of the two
-# configurations reversed depending on the band, which is the signature of a metric that is not
-# measuring the thing it names.
+# The metric has since been rebuilt and is now believed correct: per-pixel change distribution
+# rather than the frame mean, and a transition the harness locates for itself from the
+# renderer's patch count instead of a hand-picked altitude band. What blocks the gate is no
+# longer the instrument.
 #
-# Popping is spatially concentrated: a silhouette snapping across a few pixels. The next
-# attempt should measure a high per-pixel percentile or the count of pixels changing by more
-# than a perceptible step, not the mean over the frame.
+# It is the scene. Across four quality settings and three altitude bands, disabling LOD
+# morphing produces **no pixel anywhere changing by more than 15 of 255 luminance levels** in
+# any single step. The transitions are geometrically too small to see: a level change adds
+# roughly 180 m of detail at a distance of 18 km, and even under derivative-based lighting that
+# moves the image by about a luminance level. The control therefore cannot demonstrate popping,
+# and a "no popping" verdict measured against a control that never fires certifies nothing.
+#
+# What would make this measurable is terrain with far steeper relief at grid scale — the
+# fine-octave amplitude here is about 180 m over a 4 km wavelength, a 2.5-degree slope, where
+# real terrain is far rougher. That is a change to the test scene, not to the renderer or the
+# metric, and it is the next thing to try.
 set_tests_properties(render.lod-gate PROPERTIES DISABLED TRUE)

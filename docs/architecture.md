@@ -596,17 +596,35 @@ confident false pass:
   0.03 of one luminance level. Seven octaves reaching ~4 km wavelength raised the traverse's
   median difference from 0.0009 to 0.076.
 
-What remains wrong is the **metric**, not the renderer. Mean frame-to-frame image difference
-cannot separate morphed from unmorphed transitions, because morphing deliberately substitutes
-many small continuous deformations for one large discrete jump — so it frequently produces
-*more* total image change. Measured across two altitude bands, the ordering of the two
-configurations reversed depending on the band, which is the signature of a metric that is not
-measuring what it names. Popping is spatially concentrated: a silhouette snapping across a few
-pixels. The next attempt should measure a high per-pixel percentile, or the count of pixels
-changing by more than a perceptible step, rather than the mean over the frame.
+The **metric has since been rebuilt** and is believed correct:
 
-The test is registered and `DISABLED` with that reason recorded, so the suite stays honest in
-both directions.
+- **Per-pixel change distribution, not the frame mean.** A 256-bin histogram of per-pixel
+  luminance change per step yields both a 99.9th percentile and a count above a perceptible
+  step (16 of 255) in one linear pass. The mean was structurally wrong: morphing deliberately
+  substitutes many tiny continuous deformations for one large discrete jump, so it frequently
+  produces *more* total image change while being smoother. Measured with the mean across two
+  altitude bands, the ordering of the two configurations reversed depending on the band.
+- **The transition is located, not guessed.** Two hand-derived altitude bands each turned out
+  to contain no transition at all, and in both the control measured *smoother* than the
+  production path — which is what an abrupt scheme looks like when nothing switches, since its
+  geometry is then perfectly static while morphing deforms continuously. The harness now scans
+  for the altitude at which the renderer's patch count changes and sweeps around that.
+- **Terrain is lit** by a normal recovered from screen-space derivatives, because facet
+  orientation changes sharply at a tessellation change even where height barely moves.
+
+What blocks the gate is **no longer the instrument — it is the scene.** Across four quality
+settings and three altitude bands, disabling morphing produces *no pixel anywhere* changing by
+more than 15 of 255 luminance levels in any single step. The transitions are geometrically too
+small to see: a level change adds roughly 180 m of detail at 18 km distance, which even under
+lighting moves the image by about one luminance level. The control cannot demonstrate popping,
+and a "no popping" verdict measured against a control that never fires certifies nothing.
+
+The fine-octave relief here is about 180 m over a 4 km wavelength — a 2.5° slope, where real
+terrain is far rougher. Making this measurable is a change to the **test scene**, not to the
+renderer or the metric, and it is the next thing to try.
+
+The test is registered and `DISABLED` with that reasoning recorded in the build description, so
+the suite stays honest in both directions.
 
 **Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
 simple analytic shell, and the capability-reporting gate's synthetic profiles.

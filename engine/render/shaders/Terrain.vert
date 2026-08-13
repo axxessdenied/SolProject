@@ -24,6 +24,7 @@ layout(location = 2) in float inHeightUnit;
 layout(location = 3) in float inCoarseHeightUnit;
 
 layout(location = 0) out vec3 outColour;
+layout(location = 1) out vec3 outViewPosition;
 
 void main()
 {
@@ -33,6 +34,7 @@ void main()
     float height = mix(inHeightUnit, inCoarseHeightUnit, morph);
 
     gl_Position = push.viewProjection * vec4(position, 1.0);
+    outViewPosition = position;
 
     // Shading is a smooth function of terrain height only. Deliberately not of the LOD level:
     // colouring by level would paint a hard seam at exactly the transitions the gate measures,

@@ -28,6 +28,7 @@
 #include "Sol/Render/VulkanInstance.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -41,6 +42,15 @@ constexpr double kPlanetRadiusMetres = 6378136.6;
 constexpr double kStartAltitudeMetres = 300000.0;
 constexpr double kEndAltitudeMetres = 3000.0;
 constexpr int kTraverseSteps = 600;
+
+/// The recorded quality setting the gate is measured at.
+///
+/// Deliberately aggressive. At the 2.5 default, a LOD transition displaces geometry by roughly
+/// half a pixel at the distance it occurs, so nothing pops with or without morphing and the
+/// gate passes for a reason unrelated to the LOD scheme. A setting near the perceptual limit
+/// is both what a shipping renderer would use for performance and the only setting at which
+/// this gate tests anything.
+constexpr double kQualitySubdivisionFactor = 0.6;
 
 /// Neighbourhood width for the local-median comparison, in steps.
 constexpr int kWindowRadius = 12;
@@ -87,6 +97,72 @@ double frameDifference(
         total += std::abs(meanLuminance(current, i) - meanLuminance(previous, i));
     }
     return total / static_cast<double>(pixels);
+}
+
+/// What changed between two frames, described by the distribution rather than the average.
+///
+/// The mean was the wrong instrument and the reason is structural. Continuous LOD morphing
+/// *deliberately* spreads a transition across many frames as many tiny deformations; an abrupt
+/// switch concentrates it into one frame as a large displacement of a few thousand pixels.
+/// Averaged over a million pixels those can produce the same number — and measurement showed
+/// the morphed path frequently producing the *larger* one, since it is always deforming
+/// slightly while the abrupt path is perfectly still between jumps.
+///
+/// Popping is a concentration, so it is measured as one: how many pixels moved by a visible
+/// amount in a single step.
+struct StepChange {
+    double mean = 0.0;
+    /// Fraction of pixels whose luminance changed by more than a perceptible step.
+    double changedFraction = 0.0;
+    /// 99.9th percentile of per-pixel change, in 0-255 luminance units.
+    double p999 = 0.0;
+};
+
+/// A luminance step of 16 in 255 is about 6%, comfortably visible on adjacent frames.
+constexpr int kPerceptibleDelta = 16;
+
+StepChange stepChange(
+    const std::vector<std::uint8_t>& previous,
+    const std::vector<std::uint8_t>& current)
+{
+    StepChange change;
+    if (previous.size() != current.size() || previous.empty()) {
+        return change;
+    }
+
+    // A 256-bin histogram gives both the count above a threshold and any percentile in one
+    // linear pass. Sorting a million values per step, for hundreds of steps, would not finish.
+    std::array<std::uint64_t, 256> histogram{};
+    double total = 0.0;
+    const std::size_t pixels = previous.size() / 4;
+
+    for (std::size_t i = 0; i < previous.size(); i += 4) {
+        const double delta =
+            std::abs(meanLuminance(current, i) - meanLuminance(previous, i));
+        total += delta;
+        const auto bin = static_cast<std::size_t>(std::min(255.0, std::round(delta)));
+        ++histogram[bin];
+    }
+
+    change.mean = total / static_cast<double>(pixels);
+
+    std::uint64_t above = 0;
+    for (std::size_t bin = kPerceptibleDelta; bin < histogram.size(); ++bin) {
+        above += histogram[bin];
+    }
+    change.changedFraction = static_cast<double>(above) / static_cast<double>(pixels);
+
+    const auto target = static_cast<std::uint64_t>(0.999 * static_cast<double>(pixels));
+    std::uint64_t cumulative = 0;
+    for (std::size_t bin = 0; bin < histogram.size(); ++bin) {
+        cumulative += histogram[bin];
+        if (cumulative >= target) {
+            change.p999 = static_cast<double>(bin);
+            break;
+        }
+    }
+
+    return change;
 }
 
 double median(std::vector<double> values)
@@ -167,21 +243,92 @@ struct SweepResult {
     double maximumDifference = 0.0;
     /// Maximum divided by median: how far the worst single step stands above ordinary motion.
     double peakRatio = 0.0;
+
+    /// The verdict quantity: the largest fraction of the screen to change by a perceptible
+    /// amount in any single step of the sweep.
+    double worstChangedFraction = 0.0;
+    /// The 99.9th percentile of per-pixel change at that same worst step.
+    double worstP999 = 0.0;
+    int worstStep = -1;
 };
+
+/// Finds the altitude at which the LOD selection actually changes.
+///
+/// Deriving a band from the subdivision arithmetic did not work. Two hand-picked bands each
+/// turned out to contain no transition, and in both the control measured *smoother* than the
+/// production path — which is exactly what an abrupt scheme looks like when nothing switches,
+/// since its geometry is then perfectly static while morphing deforms continuously. A control
+/// that never triggers cannot demonstrate anything, and picking bands until one looks right
+/// would be fitting the experiment to the desired answer.
+///
+/// The renderer already reports how many patches it drew, and a transition is by definition a
+/// change in that number. Scanning for it removes the guesswork entirely.
+double findTransitionAltitude(sol::platform::Window& window, sol::render::Renderer& renderer)
+{
+    constexpr int kScanSteps = 400;
+
+    sol::render::TerrainSettings terrain;
+    terrain.centre = {0.0, 0.0, 0.0};
+    terrain.radiusMetres = kPlanetRadiusMetres;
+    terrain.reliefMetres = 8000.0;
+    terrain.maxLevel = 10;
+    terrain.subdivisionFactor = kQualitySubdivisionFactor;
+    terrain.morphEnabled = true;
+    renderer.setTerrain(terrain);
+    renderer.setScene({});
+
+    double bestAltitude = 0.0;
+    std::uint32_t bestDelta = 0;
+    std::uint32_t previousPatches = 0;
+    double previousAltitude = 0.0;
+
+    for (int step = 0; step < kScanSteps; ++step) {
+        const double t = static_cast<double>(step) / static_cast<double>(kScanSteps - 1);
+        const double altitude =
+            kEndAltitudeMetres * std::pow(kStartAltitudeMetres / kEndAltitudeMetres, t);
+
+        const sol::render::CameraState camera{
+            .position = {0.0, kPlanetRadiusMetres + altitude, 0.0},
+            .forward = {0.30, -0.95, 0.0},
+            .up = {0.0, 0.0, 1.0},
+            .verticalFovRadians = 1.0472,
+            .nearPlaneMetres = 0.5,
+        };
+
+        window.pollEvents();
+        auto frame = renderer.renderFrame(camera);
+        if (!frame.has_value()) {
+            break;
+        }
+        if (previousPatches != 0) {
+            const std::uint32_t delta = frame->terrainPatches > previousPatches
+                                            ? frame->terrainPatches - previousPatches
+                                            : previousPatches - frame->terrainPatches;
+            if (delta > bestDelta) {
+                bestDelta = delta;
+                bestAltitude = 0.5 * (altitude + previousAltitude);
+            }
+        }
+        previousPatches = frame->terrainPatches;
+        previousAltitude = altitude;
+    }
+
+    std::printf("Transition scan: largest patch-count change is %u patches at %.0f m altitude\n",
+                bestDelta,
+                bestAltitude);
+    return bestAltitude;
+}
 
 SweepResult runTransitionSweep(
     sol::platform::Window& window,
     sol::render::Renderer& renderer,
     bool morphEnabled,
+    double centreAltitude,
     const char* label)
 {
-    // Centred on a boundary that actually exists. A node of level L subdivides within
-    // `size * 2R * subdivisionFactor` of the camera; at level 10 that is about 31 km. The band
-    // has to straddle that, and an earlier 45-55 km band did not straddle anything — which is
-    // why its control barely popped. Nearest-to-camera patches are also the largest on screen,
-    // so this is where an abrupt switch is most visible.
-    constexpr double kBandLowMetres = 25000.0;
-    constexpr double kBandHighMetres = 40000.0;
+    // A narrow window either side of a transition known to exist, rather than a guessed band.
+    const double kBandLowMetres = centreAltitude * 0.94;
+    const double kBandHighMetres = centreAltitude * 1.06;
     constexpr int kSweepSteps = 300;
 
     SweepResult result;
@@ -192,6 +339,7 @@ SweepResult runTransitionSweep(
     terrain.radiusMetres = kPlanetRadiusMetres;
     terrain.reliefMetres = 8000.0;
     terrain.maxLevel = 10;
+    terrain.subdivisionFactor = kQualitySubdivisionFactor;
     terrain.morphEnabled = morphEnabled;
     renderer.setTerrain(terrain);
     renderer.setScene({});
@@ -217,7 +365,13 @@ SweepResult runTransitionSweep(
             continue;
         }
         if (!previous.empty()) {
-            differences.push_back(frameDifference(previous, captured->rgba));
+            const StepChange change = stepChange(previous, captured->rgba);
+            differences.push_back(change.mean);
+            if (change.changedFraction > result.worstChangedFraction) {
+                result.worstChangedFraction = change.changedFraction;
+                result.worstP999 = change.p999;
+                result.worstStep = step;
+            }
         }
         previous = captured->rgba;
         ++result.samples;
@@ -247,6 +401,7 @@ TraverseResult runTraverse(
     terrain.radiusMetres = kPlanetRadiusMetres;
     terrain.reliefMetres = 8000.0;
     terrain.maxLevel = 10;
+    terrain.subdivisionFactor = kQualitySubdivisionFactor;
     terrain.morphEnabled = morphEnabled;
     renderer.setTerrain(terrain);
     renderer.setScene({});
@@ -306,6 +461,7 @@ void collectResourceStats(
     terrain.radiusMetres = kPlanetRadiusMetres;
     terrain.reliefMetres = 8000.0;
     terrain.maxLevel = 10;
+    terrain.subdivisionFactor = kQualitySubdivisionFactor;
     terrain.morphEnabled = morphEnabled;
     renderer.setTerrain(terrain);
 
@@ -449,18 +605,40 @@ int main()
 
     // The gate's actual popping verdict comes from crossing a single boundary slowly, for the
     // reason set out at runTransitionSweep: on a full descent the transitions overlap.
-    const SweepResult sweepProduction =
-        runTransitionSweep(*window, *renderer, true, "Transition sweep, morphing enabled");
-    const SweepResult sweepControl =
-        runTransitionSweep(*window, *renderer, false, "Transition sweep, morphing DISABLED (control)");
+    const double transitionAltitude = findTransitionAltitude(*window, *renderer);
+    const SweepResult sweepProduction = runTransitionSweep(
+        *window, *renderer, true, transitionAltitude, "Transition sweep, morphing enabled");
+    const SweepResult sweepControl = runTransitionSweep(
+        *window, *renderer, false, transitionAltitude,
+        "Transition sweep, morphing DISABLED (control)");
 
-    std::printf("\nSingle-transition sweep: 45 km to 55 km altitude, 300 steps (33 m each)\n");
+    std::printf("\nSingle-transition sweep: +/-6%% around %.0f m altitude, 300 steps\n",
+                transitionAltitude);
+    std::printf("  %-46s %-12s %-10s %-8s %s\n",
+                "configuration",
+                "worst px frac",
+                "p999 delta",
+                "at step",
+                "mean max");
     for (const SweepResult* sweep : {&sweepProduction, &sweepControl}) {
-        std::printf("  %-46s median %.4f  max %.4f  peak/median %.2fx\n",
-                    sweep->label.c_str(),
-                    sweep->medianDifference,
-                    sweep->maximumDifference,
-                    sweep->peakRatio);
+        // A step of -1 means no step ever exceeded the perceptible threshold, so the p999 and
+        // step fields hold their initial values rather than measurements. Printing those as if
+        // they were data would be the same class of mistake this whole gate keeps catching.
+        if (sweep->worstStep < 0) {
+            std::printf("  %-46s %-12.6f %-10s %-8s %.4f\n",
+                        sweep->label.c_str(),
+                        sweep->worstChangedFraction,
+                        "n/a",
+                        "none",
+                        sweep->maximumDifference);
+        } else {
+            std::printf("  %-46s %-12.6f %-10.1f %-8d %.4f\n",
+                        sweep->label.c_str(),
+                        sweep->worstChangedFraction,
+                        sweep->worstP999,
+                        sweep->worstStep,
+                        sweep->maximumDifference);
+        }
     }
 
     renderer->waitIdle();
@@ -468,22 +646,26 @@ int main()
     // A transition pops when one step stands far above ordinary motion within the band. The
     // threshold is stated against the control: whatever separation the abrupt scheme produces
     // is what popping looks like here, and the production path must stay well below it.
-    constexpr double kPeakRatioLimit = 4.0;
-    const bool noPopping = sweepProduction.peakRatio < kPeakRatioLimit;
-    const bool sweepDiscriminates = sweepControl.peakRatio > kPeakRatioLimit;
+    // A pop is a visible amount of the screen changing visibly in one frame. Two tenths of one
+    // percent of a 1280x720 frame is about 1 800 pixels — a band of that size jumping by more
+    // than 6% luminance between adjacent frames is what "detectable" means here, and it is
+    // stated in perceptual terms rather than derived from whichever run was measured first.
+    constexpr double kChangedFractionLimit = 0.002;
+    const bool noPopping = sweepProduction.worstChangedFraction < kChangedFractionLimit;
+    const bool sweepDiscriminates = sweepControl.worstChangedFraction > kChangedFractionLimit;
     // A bounded working set. The buffers are allocated once at capacity, so the expectation is
     // a flat line; anything trending upward over 600 steps is a leak.
     const bool memoryBounded = std::abs(production.memoryTrendBytesPerStep) < 1024.0
                                && production.maxDeviceBytes == production.minDeviceBytes;
     std::printf("\nVerdicts\n");
-    std::printf("  no detectable popping            %s  (peak/median %.2fx, limit %.1fx)\n",
+    std::printf("  no detectable popping            %s  (%.4f%% of pixels, limit %.2f%%)\n",
                 noPopping ? "PASS" : "FAIL",
-                sweepProduction.peakRatio,
-                kPeakRatioLimit);
+                sweepProduction.worstChangedFraction * 100.0,
+                kChangedFractionLimit * 100.0);
     std::printf("  bounded device memory            %s\n", memoryBounded ? "PASS" : "FAIL");
-    std::printf("  control pops (must exceed %.1fx)  %.2fx — %s\n",
-                kPeakRatioLimit,
-                sweepControl.peakRatio,
+    std::printf("  control pops (must exceed %.2f%%)  %.4f%% — %s\n",
+                kChangedFractionLimit * 100.0,
+                sweepControl.worstChangedFraction * 100.0,
                 sweepDiscriminates ? "detector discriminates"
                                    : "DETECTOR BLIND; the result above is untrustworthy");
     std::printf("  descent roughness, prod vs ctrl  median %.4f vs %.4f, max %.4f vs %.4f\n",
