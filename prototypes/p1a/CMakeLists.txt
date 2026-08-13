@@ -8,6 +8,7 @@
 
 add_subdirectory(Harness)
 add_subdirectory(Frames)
+add_subdirectory(Orbit)
 
 # Scenario output goes to the build tree by default. Evidence runs redirect it to
 # evidence/p1a/A1/raw/, which .gitignore excludes.
@@ -98,6 +99,59 @@ sol_add_frames_scenario(PrecisionBudget)
 
 # Conversion cost, for P1b to budget against.
 sol_add_frames_scenario(FrameModelCost)
+
+# --------------------------------------------------------------------------------------
+# Increment A3 -- hybrid orbit and time warp.
+# --------------------------------------------------------------------------------------
+
+#[[
+Declares an increment A3 prototype, which links the orbit library on top of the frame library.
+
+Kept separate from sol_add_frames_prototype for the same reason that one was kept separate from
+sol_add_prototype: a target must not acquire a dependency by accident, and A2's targets must
+stay buildable and runnable without anything A3 added.
+]]
+function(sol_add_orbit_prototype name)
+    add_executable(${name} ${name}/Main.cpp)
+    sol_apply_project_options(${name})
+    target_link_libraries(${name} PRIVATE sol::proto::harness sol::proto::orbit)
+endfunction()
+
+function(sol_add_orbit_scenario name)
+    sol_add_orbit_prototype(${name})
+    add_test(NAME ${name}
+             COMMAND ${name} --out "${SOL_SCENARIO_OUTPUT_DIR}/${name}.json")
+    set_tests_properties(${name} PROPERTIES LABELS "p1a;a3")
+endfunction()
+
+# Guards the orbit library, as FramesSelfCheck guards the frame library. Emits no report.
+sol_add_orbit_prototype(OrbitSelfCheck)
+add_test(NAME OrbitSelfCheck COMMAND OrbitSelfCheck)
+set_tests_properties(OrbitSelfCheck PROPERTIES LABELS "p1a;a3;orbit")
+
+# The accepted 100 m one-orbit gate, and the long-run energy behaviour it cannot see.
+sol_add_orbit_scenario(ReferenceOrbit)
+
+# The accepted 1 m / 1 mm/s handoff gate, and the rejection coverage A3 requires.
+sol_add_orbit_scenario(HybridHandoff)
+
+# Sphere-of-influence entry and exit: the only structurally nonzero transition in the contract.
+sol_add_orbit_scenario(SoiCrossing)
+
+# The accepted warp-equivalence gate, and ADR 0011's own no-decay validation item.
+sol_add_orbit_scenario(WarpEquivalence)
+
+# A3's numbers are physical and its results sections carry no timing except ReferenceOrbit's,
+# so the handoff, crossing, and warp scenarios are pinned across process launches exactly as
+# A2 pinned FrameRoundTrip.
+foreach(scenario HybridHandoff SoiCrossing WarpEquivalence)
+    add_test(NAME ${scenario}AcrossRuns
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DSOL_SCENARIO_EXE=$<TARGET_FILE:${scenario}>"
+                     "-DSOL_WORK_DIR=${SOL_SCENARIO_OUTPUT_DIR}/${scenario}-across-runs"
+                     -P "${CMAKE_SOURCE_DIR}/cmake/RunDeterminismCheck.cmake")
+    set_tests_properties(${scenario}AcrossRuns PROPERTIES LABELS "p1a;a3;determinism")
+endforeach()
 
 # A2's numbers are physical, so they are worth pinning across runs. A1 deferred this
 # deliberately: pinning goldens against an arbitrary synthetic workload would have proved

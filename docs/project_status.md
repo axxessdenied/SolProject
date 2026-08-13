@@ -1,14 +1,14 @@
 # Project Status
 
-**Phase:** P1a — Precision and orbit prototypes; increments A1 and A2 complete, A2 awaiting review
+**Phase:** P1a — Precision and orbit prototypes; increments A1, A2, and A3 complete, A3 awaiting review
 
 **Planning gate:** Approved on 2026-08-12
 
-**Implementation authorization:** **Granted on 2026-08-12** by user direction, scoped to the [P1a milestone plan](../SolProjectNotes/Milestones/P1a-Precision-and-Orbit.md). Extended to increment A2 on 2026-08-12 by direct user instruction.
+**Implementation authorization:** **Granted on 2026-08-12** by user direction, scoped to the [P1a milestone plan](../SolProjectNotes/Milestones/P1a-Precision-and-Orbit.md). Extended to increment A2, and then to increment A3, on 2026-08-12 by direct user instruction.
 
-**Single writer:** Claude. A1 landed as PR #1 from `feature/p1a-precision-and-orbit`; A2 is uncommitted in the `dev` working tree, because branch creation was not requested.
+**Single writer:** Claude. A1 landed as PR #1 from `feature/p1a-precision-and-orbit`; A2 landed as PR #2 from the `dev` working tree. A3 is in progress on `feature/p1a-hybrid-orbit-and-warp`, branched from `dev` at the user's explicit request.
 
-**Implementation:** Started — P1a increments A1 (measurement and build harness) and A2 (reference frames and numerical precision)
+**Implementation:** Started — P1a increments A1 (measurement and build harness), A2 (reference frames and numerical precision), and A3 (hybrid orbit and time warp) are complete
 
 This is the single source of truth for project phase, milestone state, blockers, planning-gate state, and implementation authorization. Design intent belongs in `SolProjectNotes/`; implemented technical truth will belong in `docs/architecture.md`.
 
@@ -38,6 +38,10 @@ This is the single source of truth for project phase, milestone state, blockers,
 - P1a increment A2 selected the **hierarchical parent-relative frame graph** over a single global root, on measured evidence recorded in [`docs/architecture.md`](architecture.md) and [`evidence/p1a/A2/Index.md`](../evidence/p1a/A2/Index.md). Both candidates met every accepted threshold; the selection turned on a ~4,500× precision gap for conversions below barycentric magnitude.
 - The pinned ADR 0008 reference fixtures now exist under `fixtures/p1a/` with SHA-256 digests verified at load and full [provenance](../fixtures/p1a/Provenance.md). The UTC/TAI/TT/TDB boundary is driven entirely by the pinned leap-second kernel and agrees with JPL Horizons to the fixtures' printed 0.1 ms.
 - One ULP of a `double` is 0.98 mm at Neptune's distance. A global-root double therefore has no millimetre headroom beyond roughly Jupiter, which is the measured constraint on how far the roadmap can extend before a frame decision would have to be revisited. The selected model is not subject to it.
+- P1a increment A3 selected the **hybrid transition contract** — one authoritative regime at a time, an analytical coast anchored on the state it is handed, sphere-of-influence crossings as discrete refined events, and eligibility rejected by named reason — recorded in [`docs/architecture.md`](architecture.md) with evidence in [`evidence/p1a/A3/Index.md`](../evidence/p1a/A3/Index.md). The local-to-analytical handoff is exactly lossless, and an anchored coast is bit-identical at every warp factor.
+- **ADR 0011 is confirmed from measurement and was not amended.** Every validation item it named is met, including no secular altitude change over 100 days of warped coast. The atmosphere limit it assigned to A3 is recorded at 140 km, chosen as a physics-regime boundary rather than derived from a tolerance.
+- **RK4 is selected for the local numerical regime.** The symplectic candidates keep their energy error bounded where RK4's accumulates, but the hybrid contract never integrates a stable orbit for long, and RK4 clears the accepted one-orbit gate at three times less cost.
+- Time warp is safe under a **quantisation** rule rather than a prohibition: warp ticks must be integer multiples of the fixed local physics step, and the analytical coast must be anchored rather than stepped. Warp under thrust is not a determinism problem, which is what the open-questions register previously assumed.
 
 ## Planning gate
 
@@ -45,7 +49,9 @@ This is the single source of truth for project phase, milestone state, blockers,
 
 **Implementation authorization followed on 2026-08-12**, separately and explicitly, scoped to P1a. The user granted authorization, named Claude as the single writer, and authorized creating `feature/p1a-precision-and-orbit` from `dev`. Authorization does not extend to committing, pushing, merging, tagging, or opening a pull request; each still requires explicit user direction per `AGENTS.md`.
 
-Scope granted now covers **P1a increments A1 and A2**. The user instructed implementation of A2 directly on 2026-08-12; that instruction is the authorization, and it superseded the earlier note that A2 would be scoped only after A1's evidence was reviewed. Increment A3 is planned but not started and is **not** authorized.
+Scope granted now covers **P1a increments A1, A2, and A3**. The user instructed implementation of A2, and later of A3, directly on 2026-08-12; each instruction is the authorization for its increment. The A2 instruction superseded the earlier note that A2 would be scoped only after A1's evidence was reviewed, and the A3 instruction superseded the note that A3 was unauthorized.
+
+For A3 the user additionally and explicitly requested the branch `feature/p1a-hybrid-orbit-and-warp` from `dev`. Authorization still does not extend to committing, pushing, merging, tagging, or opening a pull request; each remains a separate explicit request under `AGENTS.md`.
 
 ### Required before approval
 
@@ -95,7 +101,7 @@ The planning set was reviewed after gate approval and revised with user authoriz
 | Stage | State | Outcome |
 |---|---|---|
 | P0 — Product and architecture planning | Complete | Planning foundation reviewed, gate approved, and plan revised 2026-08-12; no implementation delivered |
-| P1a — Precision and orbit prototypes | A1 and A2 complete; A3 not started | Headless evidence for frame conversion, precision budget, and hybrid propagation under warp |
+| P1a — Precision and orbit prototypes | A1, A2, and A3 complete; `complete-milestone` review not yet run | Headless evidence for frame conversion, precision budget, and hybrid propagation under warp |
 | P1b — Renderer and craft prototypes | Blocked on P1a; not authorized | Vulkan surface-to-orbit precision evidence and constructed-craft feasibility |
 | P2 — First-playable production | Not started | Design-build-fly-explore-research-company loop |
 | P3 — Orbital company | Not started | Persistent operations, stations, people, maintenance, logistics, and manufacturing |
@@ -108,7 +114,13 @@ The planning set was reviewed after gate approval and revised with user authoriz
 
 P0 has no remaining planning blockers, and P1a's authorization prerequisites are satisfied: implementation is authorized, Claude is the named single writer, and the branch/base are recorded above.
 
-P1a increments A1 and A2 are complete and awaiting user review of their evidence ([A1](../evidence/p1a/A1/Index.md), [A2](../evidence/p1a/A2/Index.md)). A3 is not authorized. P1a needs no GPU hardware; the reference-hardware evidence plan is a P1b prerequisite. Product and architecture questions that belong to later milestones remain tracked in [Open Questions](../SolProjectNotes/Open-Questions.md); they do not authorize implementation-time guessing.
+All three P1a increments are complete, with evidence at [A1](../evidence/p1a/A1/Index.md), [A2](../evidence/p1a/A2/Index.md), and [A3](../evidence/p1a/A3/Index.md). A3's evidence is **awaiting user review**, and the `complete-milestone` review the P1a plan requires before P1a may be marked complete has **not been run**. P1b remains blocked on that review and is not authorized.
+
+P1a needs no GPU hardware; the reference-hardware evidence plan is a P1b prerequisite. Product and architecture questions that belong to later milestones remain tracked in [Open Questions](../SolProjectNotes/Open-Questions.md); they do not authorize implementation-time guessing.
+
+A3 discharged the obligation A2 carried forward: celestial origin motion is now ADR 0011 conic propagation rather than linear extrapolation. It was added in the orbit library rather than by editing A2's frame library, so A2's committed evidence stays reproducible and the difference between the two models is itself a measured result.
+
+**No open decision requires a user ruling.** A3 raised six findings; all were resolved within the increment. Three were defects in A3's own code or claims, fixed before the numbers were treated as evidence, and are recorded in [A3's handoff](../evidence/p1a/A3/Handoff.md).
 
 **No open decisions.** The four raised by increments A1 and A2 were all resolved by the user on 2026-08-12:
 

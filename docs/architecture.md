@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** Mostly proposed pre-production architecture. The [Implemented build foundation](#implemented-build-foundation) and [Selected reference-frame model](#selected-reference-frame-model) sections below are implemented technical truth as of P1a increments A1 and A2; everything else remains proposed and is not implemented. Accepted decisions are recorded in `docs/decisions/`.
+**Status:** Mostly proposed pre-production architecture. The [Implemented build foundation](#implemented-build-foundation), [Selected reference-frame model](#selected-reference-frame-model), and [Selected hybrid propagation and transition contract](#selected-hybrid-propagation-and-transition-contract) sections below are implemented technical truth as of P1a increments A1, A2, and A3; everything else remains proposed and is not implemented. Accepted decisions are recorded in `docs/decisions/`.
 
 ## Implemented build foundation
 
@@ -158,8 +158,9 @@ the fixtures' printed 0.1 ms resolution.
   Adequate for measuring a rotating boundary's numerics; not a navigation model. The production
   Earth orientation model remains open.
 - **Origin motion.** A2 extrapolates celestial origins linearly from one fixture epoch. That is
-  self-consistent frame kinematics, not an ephemeris. Propagation belongs to increment A3 under
-  ADR 0011.
+  self-consistent frame kinematics, not an ephemeris. **Superseded by A3**, which propagates
+  celestial origins as ADR 0011 conics; see [Celestial origin motion](#celestial-origin-motion)
+  below. A2's own code is deliberately unchanged, so its committed evidence stays reproducible.
 - **Which ellipsoid, beyond P1.** ADR 0008 was amended after A2 to define the anchor 5 m above
   the reference ellipsoid, and A2 adopts the IAU `pck00011` value. WGS84 places the same anchor
   0.403 m away and may be preferable later for interoperability with real geospatial data;
@@ -172,6 +173,137 @@ the fixtures' printed 0.1 ms resolution.
 
 P1b increment B1 evaluates the screen-space jitter gate against this model. The P1a plan makes a
 B1 failure a reason to revisit this decision rather than a P1a failure.
+
+## Selected hybrid propagation and transition contract
+
+Delivered by P1a increment A3 and verified against the evidence in
+[`evidence/p1a/A3/Index.md`](../evidence/p1a/A3/Index.md). This section records a measured
+selection, not a proposal. It does not yet describe production code: A3's implementation lives in
+`prototypes/p1a/Orbit/` and is disposable under the P1a plan.
+
+The gravity baseline itself is [ADR 0011](decisions/0011-gravity-and-orbit-baseline.md) — patched
+conics with spheres of influence, no perturbations, no decay. What follows is the *contract* for
+moving a craft between the two regimes that model implies.
+
+### One owner at a time
+
+Exactly one regime is authoritative for a craft's state at any instant:
+
+| Regime | What it is | When it applies |
+|---|---|---|
+| Local numerical | Fixed-step integration | Ascent, thrust, atmospheric flight — anywhere a non-gravitational force acts |
+| Analytical coast | Closed-form conic about the central body | Everywhere else |
+
+There is no interval during which both run and are reconciled. Reconciling two authoritative
+states is how discontinuities are introduced, so the contract removes the possibility rather than
+bounding the consequence.
+
+### The handoff is lossless because the coast anchors on the state it is handed
+
+Beginning a coast stores the handed-over position and velocity verbatim as the conic's anchor,
+and every later evaluation propagates **from that anchor by total elapsed time**. Nothing is
+recomputed at the transition, so the discontinuity is exactly zero — measured as exactly zero, bit
+for bit, at 64 orbital phases across three orbits, and unchanged after 100 000 transition cycles.
+
+Anchoring on classical elements instead was measured as the realistic alternative, since elements
+are what an orbital map draws and what a save file wants to hold. It costs at most 0.88 µm per
+transition and reaches a bitwise fixed point within six transitions, so it cannot random-walk
+either. **Both are safe; the representation is a storage and legibility decision, not a numerical
+one.**
+
+Returning to the local regime has no eligibility rules of its own. The asymmetry is deliberate:
+the integrator is a superset of what the conic can represent, so that direction is always valid.
+
+### Eligibility is explicit, named, and re-checked after every change of primary
+
+A coast may begin only when the craft is outside the atmosphere limit, above the surface, inside
+the sphere of influence it claims, not under thrust, and on a non-degenerate conic. Each failure
+returns the reason that names the condition rather than a boolean.
+
+**Eligibility is re-checked after every sphere-of-influence crossing.** A state that is a valid
+conic about Earth can be radial about the Moon, and a radial trajectory has no conic at all. When
+the new conic is degenerate the craft drops to the local integrator, which represents radial
+motion without difficulty. A3 found this by producing a physically impossible result before the
+check existed.
+
+### Crossings are discrete scheduled events
+
+Sphere-of-influence crossings are placed to the nanosecond by bisection on the conic, and
+ownership passes at that single instant with the coast re-anchored against the new primary. Three
+properties make the placement reproducible:
+
+- **The crossing predicate is a pure function of the instant** — the probe propagates from the
+  coast anchor, not from wherever the current increment began. Without this, runs at different
+  warp factors disagreed about when a boundary was crossed by up to 1 387 s over a three-day
+  escape.
+- **Increments are subdivided until a boundary is provably unreachable within them.** Sampling
+  only at increment ends lets a warp tick step over a short excursion entirely, which A3 measured.
+- **A hysteresis band of 10⁻⁴ of each sphere radius** stops ownership changing hands on rounding.
+  Defensible because the Laplace radius is a switching convention rather than a physical surface.
+
+With these, the same crossing is found at the identical nanosecond across warp granularities
+spanning four orders of magnitude, and the state discontinuity of the re-expression is 4.0 µm at
+Earth's boundary and 15 nm at the Moon's.
+
+**The gravitational hierarchy is not the frame hierarchy.** The frame graph parents Earth and the
+Moon to the Earth-Moon barycentre, which is right for coordinates. A barycentre has no mass and
+owns no sphere of influence, so for gravity the Moon's primary is Earth, Earth's is the Sun, and
+the Sun is the root. Both relations are carried explicitly.
+
+### Time warp
+
+| Rule | Why |
+|---|---|
+| Anchor the coast; never step it | An anchored coast never composes increments, so it is **bit-identical** at every warp factor. A stepped coast differs by ~1 mm over ten orbits and buys nothing. |
+| Constrain warp ticks to integer multiples of the fixed local step | The local regime is then bit-identical too, because the step sequence is unchanged. Unaligned ticks differ by micrometres and are not reproducible. |
+| Accumulate campaign time as integer nanoseconds | Two runs cannot be compared unless they reach the same instant. ADR 0010 requires this; A3 demonstrates the negative control. |
+
+The consequence for gameplay is a constraint rather than a prohibition: **warp under thrust is not
+a determinism problem, it is a quantisation problem.** Whether powered warp is desirable for
+control-authority reasons is a P2/M5 question.
+
+### Celestial origin motion
+
+Celestial frame origins move by ADR 0011 conic propagation about each body's gravitational
+primary: the Moon about Earth with μ = GM_Earth + GM_Moon, Earth and the Moon split about their
+barycentre by mass ratio, and that barycentre about the Sun. This replaces A2's linear
+extrapolation, from which it departs by more than 1 000 km within a day.
+
+The Sun's motion about the Solar System barycentre **remains linear**, because ADR 0011 gives the
+Sun no gravitational primary — its barycentric wobble is driven by the perturbations the ADR
+excludes. This affects only the `SsbIcrf`-to-`SunIcrf` boundary, which nothing A3 gates on
+crosses.
+
+### Selected supporting values
+
+| Choice | Value | Basis |
+|---|---|---|
+| Local integrator | **RK4** | Clears the 100 m one-orbit gate at a 64 s step for 332 acceleration evaluations, 3× cheaper than the nearest symplectic candidate. Its energy error is secular, which does not decide the choice because the hybrid contract never integrates a stable orbit for long — and the measured fifty-orbit drift is 136 µm. |
+| Earth atmosphere limit | **140 km** altitude | A gameplay and physics-regime boundary, not a tolerance-derived one. Deriving it from the handoff tolerance gives ~450 km, which would make the first playable's own contract orbit un-warpable — a sign the derivation asks the wrong question, since ADR 0011 *defines* orbits as drag-free rather than approximating a drag-affected trajectory. |
+| Boundary hysteresis | 10⁻⁴ of sphere radius | Tuned against chattering only, not against gameplay. |
+
+### What this section does not decide
+
+- **Attitude, torque, and control authority.** A3 models a point mass throughout.
+- **Encounter prediction.** The machinery exists — crossings are found by bisection and are
+  reproducible to the nanosecond — but predicting an encounter ahead of time is a search over
+  future conics that A3 does not perform.
+- **Marginal captures.** A trajectory tangent to a sphere boundary has no well-conditioned
+  crossing time, which is a property of the physics rather than of the implementation. A3
+  measures the cost and does not gate it; the rule a game needs is most likely a deliberate one
+  about when the simulation commits to a capture.
+- **Gameplay tolerances.** A3's tolerances are engineering tolerances met by six orders of
+  magnitude. What a player perceives is a different question.
+- **Promotion.** Nothing in `prototypes/p1a/Orbit/` is production code, and like the frame library
+  it carries domain concepts.
+
+### What would reopen it
+
+Adding perturbations to the propagation — which ADR 0011 names as its most likely future upgrade —
+reopens **every part** of this contract, because the analytical coast would stop being exact and
+each tolerance above is built on its being exact. Putting a craft on the numerical integrator for
+a long continuous span, such as a multi-day low-thrust transfer, reopens the integrator choice
+alone.
 
 ## Proposed architecture
 

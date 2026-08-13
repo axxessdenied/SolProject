@@ -46,10 +46,25 @@ The boundary is: below the atmospheric limit, an active craft is integrated nume
 
 ## Validation
 
-- Increment A3 measures the numerical integrator against the Kepler analytic reference over one 200 km orbit period and meets the accepted 100 m gate.
-- Sphere-of-influence radii are computed from pinned ADR 0008 reference data and checked into fixtures with provenance.
-- Sphere-of-influence crossings preserve state within the 1 m and 1 mm/s handoff tolerance and are ordered deterministically under time warp per ADR 0010.
-- A scenario confirms that a 200 km circular orbit shows no secular altitude change over an extended warped coast, since decay is not modelled.
+**Completed by P1a increment A3 on 2026-08-12.** Evidence: [`evidence/p1a/A3/Index.md`](../../evidence/p1a/A3/Index.md). This ADR is **confirmed from measurement**; nothing in it was amended.
+
+| Validation item | Result |
+|---|---|
+| Increment A3 measures the numerical integrator against the Kepler analytic reference over one 200 km orbit period and meets the accepted 100 m gate. | **Met.** 44.6 m at a 64 s RK4 step; 0.5 mm at 4 s. The eccentric 200 × 2000 km case gives the same ordering. |
+| Sphere-of-influence radii are computed from pinned ADR 0008 reference data. | **Met.** Earth 9.2918 × 10⁸ m, Moon 6.6195 × 10⁷ m, derived from `gm_de440.tpc` and the checksummed Horizons tables rather than copied from a published figure. They are computed at load from the existing fixtures rather than checked in as new ones, so no fixture with separate provenance was added. |
+| Sphere-of-influence crossings preserve state within the 1 m and 1 mm/s handoff tolerance and are ordered deterministically under time warp per ADR 0010. | **Met.** Worst discontinuity 4.0 µm at Earth's boundary and 15 nm at the Moon's. Crossing instants are identical to the nanosecond across warp granularities from 1 s to 10 000 s — for trajectories that cross the boundary decisively. See the exception below. |
+| A scenario confirms that a 200 km circular orbit shows no secular altitude change over an extended warped coast, since decay is not modelled. | **Met.** Over 100 days of warped coast the semi-major axis moves −5.8 µm, periapsis −13.2 µm, apoapsis +1.7 µm. That is arithmetic, not decay. |
+
+### One measured exception, recorded rather than waived
+
+A trajectory captured into an orbit that runs *tangent* to a sphere-of-influence boundary — a marginal capture — has no well-conditioned crossing time. An arbitrarily small change of state moves a crossing arbitrarily far in time or removes it, so no sampling scheme reproduces the chronology across warp factors. A3 measured 6, 6, 4, 2, and 2 crossings for the same trajectory at five warp granularities.
+
+This is a property of the physics under this ADR's model, not a defect in the propagator, and it does not affect the state tolerance: those crossings still hand the state over within 34 nanometres. Deterministic ordering under warp therefore holds for decisive crossings and does not hold for tangent ones. The response a game needs is most likely a deliberate rule about when the simulation commits to a capture, and is tracked in [Open Questions](../../SolProjectNotes/Open-Questions.md).
+
+### What A3 settled that this ADR had left open
+
+- **The atmosphere limit** — which this ADR explicitly assigned to increment A3 — is **140 km** above Earth's reference-ellipsoid equatorial radius. It is a physics-regime boundary rather than a tolerance-derived one; deriving it from the handoff tolerance gives roughly 450 km, which would make a 200 km orbit permanently un-warpable. The reasoning is in [`docs/architecture.md`](../architecture.md) and Finding 1 of A3's evidence index. Final tuning belongs to P2/M5.
+- **The handoff behaviour across that boundary** is the transition contract recorded in [`docs/architecture.md`](../architecture.md).
 
 ## Sources
 
