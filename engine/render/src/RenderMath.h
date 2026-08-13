@@ -162,4 +162,32 @@ inline Mat4f reversedZInfinitePerspective(
     return projection;
 }
 
+/// Conventional perspective projection: near maps to 0, far maps to 1, finite far plane.
+///
+/// **This exists only as the depth gate's negative control.** It is the arrangement the
+/// reversed-Z infinite projection replaced, and it is here so that the gate can be shown to
+/// fail rather than only to pass. A depth test that cannot fail measures nothing — the same
+/// lesson the jitter gate's sub-pixel control taught.
+///
+/// Its failure mode is the point: depth precision is spent at the far plane, where a float's
+/// exponent gives almost nothing back, so two distinct distances at long range collapse to the
+/// same stored value. That is exactly the "depth collapse" the P1b threshold names.
+inline Mat4f conventionalPerspective(
+    double verticalFovRadians,
+    double aspect,
+    double nearPlaneMetres,
+    double farPlaneMetres)
+{
+    const double focal = 1.0 / std::tan(verticalFovRadians * 0.5);
+    const double range = nearPlaneMetres - farPlaneMetres;
+
+    Mat4f projection;
+    projection.m[0][0] = static_cast<float>(focal / aspect);
+    projection.m[1][1] = static_cast<float>(-focal);
+    projection.m[2][2] = static_cast<float>(farPlaneMetres / range);
+    projection.m[2][3] = -1.0F;
+    projection.m[3][2] = static_cast<float>(farPlaneMetres * nearPlaneMetres / range);
+    return projection;
+}
+
 } // namespace sol::render::detail

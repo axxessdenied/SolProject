@@ -40,3 +40,12 @@ sol_apply_project_options(SolJitterHarness)
 target_link_libraries(SolJitterHarness PRIVATE sol::render sol::platform)
 add_test(NAME render.jitter-gate COMMAND SolJitterHarness)
 set_tests_properties(render.jitter-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+
+# The depth gate. Carries its own negative control: a conventional finite-far projection run
+# through the identical harness, which must collapse. A depth test that cannot fail would say
+# nothing about the one that passes.
+add_executable(SolDepthGate DepthGateMain.cpp)
+sol_apply_project_options(SolDepthGate)
+target_link_libraries(SolDepthGate PRIVATE sol::render sol::platform)
+add_test(NAME render.depth-gate COMMAND SolDepthGate)
+set_tests_properties(render.depth-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)

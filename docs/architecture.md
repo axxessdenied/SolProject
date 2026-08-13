@@ -505,9 +505,61 @@ bearing rather than incidental:
   profile decays below the detection threshold on its own, and the centroid weight is
   background-subtracted so a pixel at the threshold contributes zero.
 
-**Still not measured:** the depth gate has no result. Nothing yet compares rendered depth
-behaviour against an expectation across the full surface-to-orbit path, and LOD continuity does
-not exist to measure. Frames presenting is not evidence that the depth range behaves.
+### Depth: second gating result
+
+**Measured 2026-08-13 on the RTX 4060 Laptop GPU, Release**, with the camera held at
+Earth-radius magnitude throughout so the sweep exercises real world coordinates.
+
+Under the reversed-Z infinite projection the stored depth is an analytic function of distance,
+`depth = nearPlane / distance`, so a depth value converts back to a distance exactly. That is
+what turns this threshold from an inspection into a measurement. Depth is read back from the
+buffer and three things are checked across nine orders of magnitude, from 1 m to 10 000 km:
+
+| Distance | Depth | Predicted | Relative error | Resolvable separation | Separation / distance |
+|---|---|---|---|---|---|
+| 1 m | 1.052632e-1 | 1.052632e-1 | 7.8e-8 | 60 nm | 5.96e-8 |
+| 1 km | 1.052632e-4 | 1.052632e-4 | 5.1e-8 | 31 µm | 3.05e-8 |
+| 100 km | 1.052632e-6 | 1.052632e-6 | 7.7e-8 | 3.9 mm | 3.91e-8 |
+| 1 000 km | 1.052632e-7 | 1.052632e-7 | 3.1e-8 | 94 mm | 9.38e-8 |
+| 6 378 km | 1.650375e-8 | 1.650375e-8 | 1.0e-7 | 150 mm | 2.35e-8 |
+| 10 000 km | 1.052632e-8 | 1.052632e-8 | 2.8e-9 | 500 mm | 5.00e-8 |
+
+- **Depth matches the prediction** to within 1e-7 relative everywhere — float round-off, not
+  model error.
+- **No collapse anywhere.** Two distinct distances always produce two distinct stored depths.
+  The resolvable separation is measured by bisection rather than asserted; z-fighting is the
+  same phenomenon, so this measures the z-fighting threshold too.
+- **No near/far discontinuity.** The resolvable separation tracks distance *linearly* — the
+  ratio stays in a 2.4e-8 to 9.4e-8 band across the whole range, a 4× spread that is accounted
+  for by a float's ULP doubling within each binade plus the bisection's bracket.
+
+In practical terms: **depth resolves about 6 cm at 1 000 km and 15 cm at Earth's radius**, and
+the figure scales with distance rather than degrading.
+
+**The negative control is what makes those numbers mean something.** A conventional finite-far
+projection — what reversed-Z replaced — is run through the identical harness, differing only in
+the projection matrix, the depth compare op, and the clear value. It degrades monotonically and
+then fails outright:
+
+| Distance | Separation / distance, conventional |
+|---|---|
+| 1 m | 5.96e-8 |
+| 10 m | 2.62e-6 |
+| 100 m | 3.70e-5 |
+| 1 km | 1.80e-4 |
+| 10 km and beyond | **collapsed** |
+
+That degradation curve *is* the near/far discontinuity the threshold names, and the production
+path does not have it. A depth test that could not produce this failure would say nothing about
+the one that passes.
+
+**Still not measured:** LOD continuity does not exist to measure, and the capability-reporting
+gate's synthetic profiles remain unverified against real device reports.
+
+**Cost recorded rather than absorbed:** the depth attachment now uses `STORE` rather than
+`DONT_CARE` so the buffer survives the render pass for readback. A production renderer without
+readback would discard it. That write bandwidth is included in any frame-time figure this
+renderer produces. Frames presenting is not evidence that the depth range behaves.
 
 ## Proposed architecture
 

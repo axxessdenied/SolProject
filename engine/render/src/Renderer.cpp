@@ -99,7 +99,12 @@ struct Renderer::Impl {
 
     VkRenderPass renderPass = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+    /// Reversed-Z: depth compares GREATER and clears to 0.
     VkPipeline pipeline = VK_NULL_HANDLE;
+    /// Conventional: depth compares LESS and clears to 1. Negative control only. Vulkan 1.2
+    /// has no dynamic depth-compare state, so the control needs its own pipeline rather than
+    /// a state change — which is a fair price for a test that can fail.
+    VkPipeline conventionalPipeline = VK_NULL_HANDLE;
 
     VkBuffer vertexBuffer = VK_NULL_HANDLE;
     VmaAllocation vertexAllocation = VK_NULL_HANDLE;
@@ -111,6 +116,11 @@ struct Renderer::Impl {
     VmaAllocation captureAllocation = VK_NULL_HANDLE;
     void* captureMapped = nullptr;
     VkDeviceSize captureSize = 0;
+
+    VkBuffer depthCaptureBuffer = VK_NULL_HANDLE;
+    VmaAllocation depthCaptureAllocation = VK_NULL_HANDLE;
+    void* depthCaptureMapped = nullptr;
+    VkDeviceSize depthCaptureSize = 0;
 
     VkCommandPool commandPool = VK_NULL_HANDLE;
     std::array<VkCommandBuffer, kFramesInFlight> commandBuffers{};
@@ -170,6 +180,13 @@ struct Renderer::Impl {
             captureMapped = nullptr;
             captureSize = 0;
         }
+        if (depthCaptureBuffer != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(allocator, depthCaptureBuffer, depthCaptureAllocation);
+            depthCaptureBuffer = VK_NULL_HANDLE;
+            depthCaptureAllocation = VK_NULL_HANDLE;
+            depthCaptureMapped = nullptr;
+            depthCaptureSize = 0;
+        }
     }
 
     void destroy()
@@ -193,6 +210,9 @@ struct Renderer::Impl {
             }
             if (pipeline != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device, pipeline, nullptr);
+            }
+            if (conventionalPipeline != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device, conventionalPipeline, nullptr);
             }
             if (pipelineLayout != VK_NULL_HANDLE) {
                 vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -374,7 +394,10 @@ std::expected<void, std::string> Renderer::Impl::buildSwapchain()
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        // TRANSFER_SRC so the depth gate can read the buffer back and measure it. A depth
+        // value under the reversed-Z projection is an analytic function of distance, so
+        // reading it turns "does depth behave" from an inspection into a measurement.
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
@@ -458,6 +481,29 @@ std::expected<void, std::string> Renderer::Impl::buildSwapchain()
     }
     captureMapped = captureAllocationInfo.pMappedData;
 
+    depthCaptureSize = static_cast<VkDeviceSize>(extent.width) * extent.height * sizeof(float);
+    const VkBufferCreateInfo depthCaptureInfo{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .size = depthCaptureSize,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+    };
+    VmaAllocationInfo depthCaptureAllocationInfo{};
+    if (const VkResult result = vmaCreateBuffer(allocator,
+                                                &depthCaptureInfo,
+                                                &captureAllocInfo,
+                                                &depthCaptureBuffer,
+                                                &depthCaptureAllocation,
+                                                &depthCaptureAllocationInfo);
+        result != VK_SUCCESS) {
+        return std::unexpected(fail("Allocating the depth readback buffer failed", result));
+    }
+    depthCaptureMapped = depthCaptureAllocationInfo.pMappedData;
+
     renderFinished.reserve(swapchainImages.size());
     for (std::size_t i = 0; i < swapchainImages.size(); ++i) {
         const VkSemaphoreCreateInfo semaphoreInfo{
@@ -495,9 +541,11 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
         return std::unexpected(fail("Beginning the command buffer failed", result));
     }
 
+    // Reversed Z clears depth to 0 (far); the conventional control clears to 1.
+    const bool reversedZ = camera.projection == ProjectionMode::ReversedZInfinite;
     const std::array<VkClearValue, 2> clearValues{
         VkClearValue{.color = {{0.01F, 0.012F, 0.02F, 1.0F}}},
-        VkClearValue{.depthStencil = {kFarDepth, 0}},
+        VkClearValue{.depthStencil = {reversedZ ? kFarDepth : 1.0F, 0}},
     };
 
     const VkRenderPassBeginInfo renderPassInfo{
@@ -523,7 +571,9 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindPipeline(commandBuffer,
+                      VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      reversedZ ? pipeline : conventionalPipeline);
 
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
@@ -532,8 +582,13 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
     const double aspect =
         static_cast<double>(extent.width) / static_cast<double>(extent.height);
     const Mat4f view = detail::cameraRelativeView(camera.forward, camera.up);
-    const Mat4f projection = detail::reversedZInfinitePerspective(
-        camera.verticalFovRadians, aspect, camera.nearPlaneMetres);
+    const Mat4f projection =
+        reversedZ ? detail::reversedZInfinitePerspective(
+                        camera.verticalFovRadians, aspect, camera.nearPlaneMetres)
+                  : detail::conventionalPerspective(camera.verticalFovRadians,
+                                                    aspect,
+                                                    camera.nearPlaneMetres,
+                                                    camera.farPlaneMetres);
     const Mat4f viewProjection = detail::multiply(projection, view);
 
     for (const SceneObject& object : scene) {
@@ -619,6 +674,59 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
                 0,
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+
+        // Depth, the same way. The render pass stored it and left it in the attachment
+        // layout, so it only has to move to TRANSFER_SRC and back.
+        const auto depthBarrier = [&](VkImageLayout from,
+                                      VkImageLayout to,
+                                      VkAccessFlags srcAccess,
+                                      VkAccessFlags dstAccess,
+                                      VkPipelineStageFlags srcStage,
+                                      VkPipelineStageFlags dstStage) {
+            const VkImageMemoryBarrier imageBarrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = srcAccess,
+                .dstAccessMask = dstAccess,
+                .oldLayout = from,
+                .newLayout = to,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = depthImage,
+                .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+            };
+            vkCmdPipelineBarrier(
+                commandBuffer, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier);
+        };
+
+        depthBarrier(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_ACCESS_TRANSFER_READ_BIT,
+                     VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+        const VkBufferImageCopy depthRegion{
+            .bufferOffset = 0,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
+            .imageOffset = {0, 0, 0},
+            .imageExtent = {extent.width, extent.height, 1},
+        };
+        vkCmdCopyImageToBuffer(commandBuffer,
+                               depthImage,
+                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               depthCaptureBuffer,
+                               1,
+                               &depthRegion);
+
+        depthBarrier(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                     VK_ACCESS_TRANSFER_READ_BIT,
+                     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT);
     }
 
     if (const VkResult result = vkEndCommandBuffer(commandBuffer); result != VK_SUCCESS) {
@@ -657,6 +765,11 @@ CapturedFrame Renderer::Impl::readCapture() const
             frame.rgba[i + 2] = source[i + 2];
         }
         frame.rgba[i + 3] = source[i + 3];
+    }
+
+    if (depthCaptureMapped != nullptr && depthCaptureSize > 0) {
+        frame.depth.resize(static_cast<std::size_t>(extent.width) * extent.height);
+        std::memcpy(frame.depth.data(), depthCaptureMapped, static_cast<std::size_t>(depthCaptureSize));
     }
 
     return frame;
@@ -860,7 +973,11 @@ std::expected<Renderer, std::string> Renderer::create(
             .format = VK_FORMAT_D32_SFLOAT,
             .samples = VK_SAMPLE_COUNT_1_BIT,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            // STORE, not DONT_CARE, so the depth gate can read the buffer after the pass. A
+            // production renderer with no readback would discard it; this costs write
+            // bandwidth every frame and is therefore included in any frame-time figure this
+            // renderer produces, which is recorded rather than quietly absorbed.
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
             .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1101,11 +1218,25 @@ std::expected<Renderer, std::string> Renderer::create(
     const VkResult pipelineResult = vkCreateGraphicsPipelines(
         impl->device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &impl->pipeline);
 
+    // The negative control's pipeline differs in exactly one field, which is the point: it
+    // isolates the depth arrangement and changes nothing else about the render.
+    VkPipelineDepthStencilStateCreateInfo conventionalDepth = depthStencil;
+    conventionalDepth.depthCompareOp = VK_COMPARE_OP_LESS;
+    VkGraphicsPipelineCreateInfo conventionalInfo = pipelineInfo;
+    conventionalInfo.pDepthStencilState = &conventionalDepth;
+
+    const VkResult conventionalResult = vkCreateGraphicsPipelines(
+        impl->device, VK_NULL_HANDLE, 1, &conventionalInfo, nullptr, &impl->conventionalPipeline);
+
     vkDestroyShaderModule(impl->device, *vertexModule, nullptr);
     vkDestroyShaderModule(impl->device, *fragmentModule, nullptr);
 
     if (pipelineResult != VK_SUCCESS) {
         return std::unexpected(fail("Creating the graphics pipeline failed", pipelineResult));
+    }
+    if (conventionalResult != VK_SUCCESS) {
+        return std::unexpected(
+            fail("Creating the depth negative-control pipeline failed", conventionalResult));
     }
 
     // --- Geometry ----------------------------------------------------------------------
@@ -1279,6 +1410,11 @@ std::expected<CapturedFrame, std::string> Renderer::renderFrameCaptured(
             m_impl->allocator, m_impl->captureAllocation, 0, m_impl->captureSize);
         result != VK_SUCCESS) {
         return std::unexpected(fail("Invalidating the readback buffer failed", result));
+    }
+    if (const VkResult result = vmaInvalidateAllocation(
+            m_impl->allocator, m_impl->depthCaptureAllocation, 0, m_impl->depthCaptureSize);
+        result != VK_SUCCESS) {
+        return std::unexpected(fail("Invalidating the depth readback buffer failed", result));
     }
 
     return m_impl->readCapture();

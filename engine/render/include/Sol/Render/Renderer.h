@@ -35,12 +35,28 @@ struct SurfaceTarget {
 /// Position is `double` and world-space; the renderer subtracts it before anything reaches the
 /// GPU. @ref nearPlaneMetres is the only depth-precision control, because the projection has
 /// no far plane — see the reversed-Z rationale in the implementation.
+/// How depth is distributed across the view frustum.
+enum class ProjectionMode : std::uint8_t {
+    /// The production arrangement: near maps to 1, far to 0, no far plane.
+    ReversedZInfinite,
+    /// Near maps to 0, far to 1, finite far plane.
+    ///
+    /// **Negative control only.** This is what reversed-Z replaced, and it exists so the depth
+    /// gate can be demonstrated to fail rather than only to pass. Never select it for anything
+    /// that produces a result about the renderer's real behaviour.
+    ConventionalFinite,
+};
+
 struct CameraState {
     WorldVec3 position;
     WorldVec3 forward{0.0, 0.0, -1.0};
     WorldVec3 up{0.0, 1.0, 0.0};
     double verticalFovRadians = 1.0472; // 60 degrees
     double nearPlaneMetres = 0.1;
+
+    ProjectionMode projection = ProjectionMode::ReversedZInfinite;
+    /// Used only by @ref ProjectionMode::ConventionalFinite.
+    double farPlaneMetres = 1.0e7;
 };
 
 /// One object in the reference scene.
@@ -79,7 +95,23 @@ struct CapturedFrame {
     /// channel order. Empty when the frame was skipped.
     std::vector<std::uint8_t> rgba;
 
+    /// Row-major depth values, one per pixel, exactly as the depth buffer holds them.
+    ///
+    /// Under the reversed-Z infinite projection these are `nearPlaneMetres / distance`, so a
+    /// depth value converts back to a distance analytically. That is what lets the depth gate
+    /// be a measurement rather than an inspection.
+    std::vector<float> depth;
+
     [[nodiscard]] bool empty() const { return rgba.empty(); }
+
+    /// Depth at one pixel, or a negative value when out of range.
+    [[nodiscard]] float depthAt(std::uint32_t x, std::uint32_t y) const
+    {
+        if (x >= width || y >= height) {
+            return -1.0F;
+        }
+        return depth[static_cast<std::size_t>(y) * width + x];
+    }
 };
 
 /// A device, swapchain, and frame loop presenting to one window.

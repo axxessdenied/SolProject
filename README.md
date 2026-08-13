@@ -25,9 +25,10 @@ the production tree: `engine/platform/` holds `sol::platform` and `engine/render
 `sol::render`, the only module permitted to see Vulkan types. It enumerates and reports device
 capabilities, rejects unsupported devices with actionable diagnostics, and presents a reference
 scene through a reversed-Z depth buffer spanning half a metre to planetary distance. The
-screen-space jitter gate is the first P1b threshold with a result: 0.000000 px at both required
-reference views, with a control confirming the measurement reflects precision rather than only
-stability. The depth, LOD-continuity, and capability-reporting gates remain unmeasured.
+screen-space jitter and depth gates both pass — jitter at 0.000000 px at both required reference
+views, and depth with no collapse and linearly-scaling resolution from 1 m to 10 000 km. Each
+carries a negative control that fails, which is what makes the passes evidence. LOD continuity
+and capability reporting remain unmeasured.
 
 Nothing in the repository is a game yet. P1a's executables are **disposable measurement
 prototypes** under `prototypes/p1a/`, deliberately kept out of `engine/` and `game/`; they
