@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** Mostly proposed pre-production architecture. The [Implemented build foundation](#implemented-build-foundation), [Selected reference-frame model](#selected-reference-frame-model), and [Selected hybrid propagation and transition contract](#selected-hybrid-propagation-and-transition-contract) sections below are implemented technical truth as of P1a increments A1, A2, and A3; everything else remains proposed and is not implemented. Accepted decisions are recorded in `docs/decisions/`.
+**Status:** Mostly proposed pre-production architecture. The [Implemented build foundation](#implemented-build-foundation), [Selected reference-frame model](#selected-reference-frame-model), and [Selected hybrid propagation and transition contract](#selected-hybrid-propagation-and-transition-contract) sections below are implemented technical truth as of P1a increments A1, A2, and A3, and the [Implemented renderer foundation](#implemented-renderer-foundation) is implemented technical truth as far as P1b increment B1 has progressed. Everything else remains proposed and is not implemented. Accepted decisions are recorded in `docs/decisions/`.
 
 ## Implemented build foundation
 
@@ -68,8 +68,11 @@ shortest round-trip, and any value whose reproducibility matters is additionally
 raw IEEE-754 bit pattern. Peak process memory and allocation counts are mandatory in every
 report.
 
-No third-party dependency is used. Scenarios are plain executables registered with CTest, so
-ADR 0007's dependency workflow has not yet been triggered and no `vcpkg.json` exists.
+P1a's own scenarios use no third-party dependency and are plain executables registered with
+CTest. That remains true of everything under `prototypes/p1a/`. It is **no longer true of the
+repository**: P1b increment B1 triggered ADR 0007's dependency workflow, and `vcpkg.json` now
+exists. See [Dependencies](dependencies.md) and the [renderer foundation](#implemented-renderer-foundation)
+below.
 
 ## Selected reference-frame model
 
@@ -312,6 +315,82 @@ reopens **every part** of this contract, because the analytical coast would stop
 each tolerance above is built on its being exact. Putting a craft on the numerical integrator for
 a long continuous span, such as a multi-day low-thrust transfer, reopens the integrator choice
 alone.
+
+## Implemented renderer foundation
+
+Delivered by P1b increment B1, which is **in progress**. This section records only what exists
+and passes tests today; it grows as the increment does. Unlike the P1a sections above, this is
+production code from the first commit, by the user decision recorded in the P1b milestone plan.
+
+### Production tree
+
+```
+engine/render/   sol::render   the only module permitted to see Vulkan types
+tests/render/    sol::test     capability tests and the headless capability report
+```
+
+`game/` and `editor/` do not exist yet.
+
+### How the ADR 0002 boundary is enforced
+
+Vulkan appears in no public header. `sol::render`'s Vulkan dependencies are linked `PRIVATE`
+and `VulkanInstance` hides its implementation behind a pointer, so a consumer that wanted a
+`VkDevice` could not name one. The boundary is a compile error rather than a convention.
+
+The load-bearing consequence is `DeviceCapabilities`: a plain struct describing a device in
+`std::` types, with no Vulkan handle in it. It exists because the boundary demanded it, and it
+turned out to be what makes the capability gate measurable at all — see below.
+
+### Capability model
+
+Three things kept separate, because only the third needs a GPU:
+
+| Piece | What it is |
+|---|---|
+| `CapabilityRequirement` | What the renderer demands, declared as data |
+| `checkCapabilities()` | A pure function of (requirement, capabilities) returning every unmet requirement |
+| `VulkanInstance::enumerateDevices()` | Queries real devices into plain values |
+
+This separation is required by the accepted [reference-hardware evidence plan](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md).
+Both GPUs available to this project exceed the Vulkan 1.2 candidate floor and satisfy every
+requirement, so on real hardware the rejection path is code no run would ever enter — and a
+gate that is never exercised is not a gate. Hand-written capability values are how it is
+exercised.
+
+The requirement set B1 imposes is deliberately small, because each entry narrows the hardware
+the game runs on and ADR 0002 forbids undemonstrated requirements:
+
+- Vulkan API 1.2, the ADR 0002 candidate floor;
+- `VK_KHR_swapchain`, since core Vulkan has no presentation;
+- `VK_FORMAT_D32_SFLOAT` usable as a depth/stencil attachment — the one hard hardware demand,
+  because a 24-bit normalised depth buffer cannot hold a surface-to-orbit range without
+  collapse and the depth gate is measured against reversed-Z 32-bit float;
+- one queue family with both graphics and presentation;
+- `maxImageDimension2D` of at least 4096, which is Vulkan's own guaranteed minimum and so can
+  only reject a non-conformant implementation.
+
+No device *feature* is required. `shaderFloat64` is specifically not required: camera-relative
+rendering exists precisely so the GPU never needs double precision, and requiring it would
+contradict the frame model selected in P1a increment A2.
+
+### Loader failure is a value, not a crash
+
+Nothing links `vulkan-1.lib`. volk resolves entry points at runtime, so a machine with no
+Vulkan driver produces a diagnostic the renderer chose to write rather than an OS-level
+"DLL not found" before any project code runs. ADR 0002 requires the shipped game to detect the
+loader and fail clearly; this is the mechanism.
+
+### Measured on this machine, 2026-08-13
+
+Both present devices meet the requirement set. Recorded under their own names — neither is a
+baseline class, and neither may be reported as a proxy for one:
+
+| Device | Kind | Device API | Driver | Queue families |
+|---|---|---|---|---|
+| NVIDIA GeForce RTX 4060 Laptop GPU | discrete | 1.4.312 | 581.15.0.0 | 6, one graphics+present |
+| Intel UHD Graphics (Alder Lake-P) | integrated | 1.4.323 | 101.7082 | 2, one graphics+present |
+
+Loader instance API 1.4.357, validation layer installed and active.
 
 ## Proposed architecture
 

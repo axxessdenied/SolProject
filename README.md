@@ -20,6 +20,11 @@ code is the
 evidence indexed at [`evidence/p1a/`](evidence/p1a/Index.md); the next stage is
 [P1b renderer and craft](SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md).
 
+**P1b increment B1 — the Vulkan renderer — is in progress**, and is the first work written in
+the production tree: `engine/render/` holds `sol::render`, the only module permitted to see
+Vulkan types. It currently enumerates and reports device capabilities and rejects unsupported
+devices with actionable diagnostics; there is no rendering yet.
+
 Nothing in the repository is a game yet. P1a's executables are **disposable measurement
 prototypes** under `prototypes/p1a/`, deliberately kept out of `engine/` and `game/`; they
 exist to produce evidence, and promoting any of them requires an explicit review.
@@ -38,8 +43,25 @@ exist to produce evidence, and promoting any of them requires an explicit review
 
 ## Building
 
-Requires Windows x64, MSVC 19.51 or later, CMake 3.28 or later, and Ninja. P1a declares no
-third-party dependencies, so no package manager is needed and there is no `vcpkg.json` yet.
+Requires Windows x64, MSVC 19.51 or later, CMake 3.28 or later, and Ninja, plus two
+prerequisites introduced by P1b increment B1:
+
+- **vcpkg**, which supplies every compiled and linked dependency from the pinned baseline in
+  `vcpkg.json`. Clone it to `C:\vcpkg` (or set `VCPKG_ROOT`); no admin rights are needed.
+
+  ```powershell
+  git clone https://github.com/microsoft/vcpkg C:\vcpkg
+  C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+  ```
+
+- **The Vulkan SDK**, 1.4.357.0 or newer: `winget install --id LunarG.VulkanSDK --exact`. It
+  supplies `glslc` and the validation and profiles layers. It contributes no headers and no
+  link inputs, so a compiled artifact depends on the checked-in manifest rather than on which
+  installer you ran — but the build still requires it, because P1b's gates are measured with
+  those tools.
+
+Both are reviewed in [dependencies](docs/dependencies.md). Configuration fails with an
+actionable message if either is missing.
 
 From a shell with the MSVC environment loaded (`Launch-VsDevShell.ps1 -Arch amd64` if
 `INCLUDE` and `LIB` are not already set):
