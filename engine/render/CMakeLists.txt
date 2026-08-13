@@ -1,0 +1,50 @@
+# sol::render — the only module permitted to see Vulkan types (ADR 0002).
+#
+# The Vulkan dependencies below are linked PRIVATE without exception. That is not a style
+# preference: it is the mechanism that enforces ADR 0002's boundary requirement. A public link
+# would propagate Vulkan's include directories to every consumer, and the rule would then hold
+# only by everyone's continued good intentions. Linking privately makes a violation a compile
+# error in the offending target instead.
+
+add_library(SolRender STATIC
+    include/Sol/Render/CapabilityRequirement.h
+    include/Sol/Render/DeviceCapabilities.h
+    include/Sol/Render/VulkanInstance.h
+    src/CapabilityRequirement.cpp
+    src/DeviceCapabilities.cpp
+    src/VolkImplementation.cpp
+    src/VulkanInstance.cpp)
+
+add_library(sol::render ALIAS SolRender)
+
+sol_apply_project_options(SolRender)
+
+target_include_directories(SolRender
+    PUBLIC include
+    PRIVATE src)
+
+find_package(volk CONFIG REQUIRED)
+
+target_link_libraries(SolRender
+    PRIVATE
+        volk::volk_headers)
+
+# vulkan-memory-allocator is declared in vcpkg.json and reviewed in docs/dependencies.md, but
+# is deliberately not linked here. B1 creates no VkDevice yet and therefore allocates nothing,
+# and ADR 0002 says not to select an allocator "until their owning prototype increment
+# demonstrates the need". Linking a library no translation unit includes would assert a
+# demonstration that has not happened. The link edge is added by the increment that allocates.
+
+# volk dispatches through function pointers it loads itself, so nothing links vulkan-1.lib.
+# An absent loader then becomes a value this module can inspect and report, rather than a
+# process that fails to start with an OS-level "vulkan-1.dll not found". ADR 0002 requires the
+# shipped game to "detect the installed Vulkan loader/driver and fail clearly"; this is where
+# that becomes possible.
+target_compile_definitions(SolRender PRIVATE VK_NO_PROTOTYPES VK_USE_PLATFORM_WIN32_KHR)
+
+# volk's implementation body is third-party code and does not compile clean under the /W4 /WX
+# policy sol_apply_project_options applies to project-owned code. The relaxation is confined
+# to that one file so the rest of the module keeps warnings-as-errors, and it is stated here
+# rather than inside the source so the exception is visible in the build description.
+set_source_files_properties(src/VolkImplementation.cpp
+    PROPERTIES COMPILE_OPTIONS "/W0")

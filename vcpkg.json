@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "solproject",
+  "version": "0.0.0",
+  "description": "SolEngine and Frontiers of Sol. Dependency acquisition follows ADR 0007; every package here is reviewed in docs/dependencies.md.",
+  "homepage": "https://github.com/NickSlusarczyk/SolProject",
+  "builtin-baseline": "2273a28f34ce5aac8be50b3b6b44da7fc1722e06",
+  "dependencies": [
+    {
+      "name": "vulkan-headers",
+      "version>=": "1.4.357.0"
+    },
+    {
+      "name": "volk",
+      "version>=": "1.4.357.0"
+    },
+    "vulkan-memory-allocator",
+    "glfw3"
+  ]
+}

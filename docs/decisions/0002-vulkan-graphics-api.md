@@ -6,6 +6,8 @@
 
 **Revised:** 2026-08-12 — required evidence rebalanced toward precision and capability; frame-time confirmation moved to P2/M2; Direct3D 12 spike replaced with a documented analysis. See [P1b — Renderer and Craft Prototypes](../../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md).
 
+> **Hardware caveat, added 2026-08-13.** Every claim in this ADR about the GTX 1060 6 GB, RX 580 8 GB, UHD 630, and Vega 8 classes is **unverified on hardware**. None of those devices is available to this project, and no AMD device or driver stack of any kind is — so no clause here may be read as asserting AMD driver behaviour. What can be obtained is set out in the accepted [reference-hardware evidence plan](../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md); this ADR may close on precision, capability, tooling, and the documented Direct3D 12 analysis, but not on baseline-class driver evidence.
+
 ## Context
 
 SolEngine needs explicit control over large-world rendering, terrain/atmosphere level of detail, GPU memory, synchronization, diagnostics, and scalable graphics settings. Windows x64 is the first platform, but Vulkan is the user's preferred API. The discrete baseline targets 60 FPS at 1080p on an Intel Core i5-8400 or Ryzen 5 2600, GTX 1060 6 GB or RX 580 8 GB, 16 GB RAM, and SSD. Intel UHD 630 and AMD Vega 8-class integrated graphics are investigation targets for 30 FPS at 720p/low; support remains conditional on P1 driver/capability/performance evidence.
@@ -46,8 +48,9 @@ Frame time measured in a scene with placeholder geometry, no production part mes
 
 ### Recorded, not gating
 
-- Full frame-time distribution — p50, p95, p99, maximum, CPU and GPU separately — at 1920×1080 low/medium on GTX 1060 6 GB and RX 580 8 GB classes.
-- The same distribution at 1280×720 low on UHD 630 and Vega 8-class systems where accessible, including driver, Vulkan capabilities, visual compromises, and any unsupported status.
+- Full frame-time distribution — p50, p95, p99, maximum, CPU and GPU separately — at 1920×1080 low/medium on GTX 1060 6 GB and RX 580 8 GB classes. **Neither device is available; unmeasured is recorded as a state, not as a pass.**
+- The same distribution at 1280×720 low on UHD 630 and Vega 8-class systems where accessible, including driver, Vulkan capabilities, visual compromises, and any unsupported status. **Neither is accessible.**
+- What is measurable instead, recorded under its own name and never as a proxy for a baseline class: an RTX 4060 Laptop GPU and an Alder Lake-P Intel UHD, both on a single thermally-constrained laptop with variable GPU power.
 - Peak CPU and GPU memory, allocation counts, and upload volume.
 
 ### Deferred to P2/M2
