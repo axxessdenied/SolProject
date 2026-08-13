@@ -63,20 +63,18 @@ set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 # the popping half is not trustworthy yet, and marking it disabled with a reason is honest
 # where either leaving the suite permanently red or quietly deleting the test would not be.
 #
-# The metric has since been rebuilt and is now believed correct: per-pixel change distribution
-# rather than the frame mean, and a transition the harness locates for itself from the
-# renderer's patch count instead of a hand-picked altitude band. What blocks the gate is no
-# longer the instrument.
+# The harness now works. With the terrain steepened at grid scale it separates the two
+# configurations cleanly: 13 pops with morphing disabled against 2 with it enabled, and a worst
+# pop magnitude of 0.2822 against 0.0030 — a 94-fold reduction. Morphing is doing its job and
+# the measurement can see it doing so.
 #
-# It is the scene. Across four quality settings and three altitude bands, disabling LOD
-# morphing produces **no pixel anywhere changing by more than 15 of 255 luminance levels** in
-# any single step. The transitions are geometrically too small to see: a level change adds
-# roughly 180 m of detail at a distance of 18 km, and even under derivative-based lighting that
-# moves the image by about a luminance level. The control therefore cannot demonstrate popping,
-# and a "no popping" verdict measured against a control that never fires certifies nothing.
+# The gate fails on something else, and the failure is the useful part. Both of production's
+# two pops occur at the same descent steps as the control's first two, and morphing is the only
+# difference between the runs — so those two cannot be caused by it. They are a second popping
+# source, almost certainly the horizon cull in TerrainLod.cpp, which admits or drops a patch on
+# a hard threshold with no blend. Fixing that is the next step; it is a real defect the gate
+# found rather than an artefact of measuring it.
 #
-# What would make this measurable is terrain with far steeper relief at grid scale — the
-# fine-octave amplitude here is about 180 m over a 4 km wavelength, a 2.5-degree slope, where
-# real terrain is far rougher. That is a change to the test scene, not to the renderer or the
-# metric, and it is the next thing to try.
+# Kept DISABLED so one known-failing gate does not mask regressions in the other twenty-five
+# tests. The failure is recorded here and in docs/architecture.md rather than hidden by it.
 set_tests_properties(render.lod-gate PROPERTIES DISABLED TRUE)

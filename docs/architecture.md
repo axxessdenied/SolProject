@@ -612,19 +612,35 @@ The **metric has since been rebuilt** and is believed correct:
 - **Terrain is lit** by a normal recovered from screen-space derivatives, because facet
   orientation changes sharply at a tessellation change even where height barely moves.
 
-What blocks the gate is **no longer the instrument — it is the scene.** Across four quality
-settings and three altitude bands, disabling morphing produces *no pixel anywhere* changing by
-more than 15 of 255 luminance levels in any single step. The transitions are geometrically too
-small to see: a level change adds roughly 180 m of detail at 18 km distance, which even under
-lighting moves the image by about one luminance level. The control cannot demonstrate popping,
-and a "no popping" verdict measured against a control that never fires certifies nothing.
+The scene then had to be steepened before any of that could register. A level change uncovers
+exactly the terrain energy between the two grids' spacings — about 1.6 km and 3.1 km at the
+levels this test exercises — and the spectrum had no energy below 4 km. Ten octaves reaching
+230 m, a slower amplitude falloff, and a stress relief of 20 km put real slope where the grids
+differ. The stress scene is deliberately far rougher than Earth: if morphing keeps transitions
+invisible on terrain this rough it keeps them invisible on gentler terrain, whereas a pass on
+gentle terrain would imply nothing.
 
-The fine-octave relief here is about 180 m over a 4 km wavelength — a 2.5° slope, where real
-terrain is far rougher. Making this measurable is a change to the **test scene**, not to the
-renderer or the metric, and it is the next thing to try.
+#### The measurement, and what it found
 
-The test is registered and `DISABLED` with that reasoning recorded in the build description, so
-the suite stays honest in both directions.
+**Morphing works, and is now measured doing so.** Over the 600-step descent:
+
+| | Pops detected | Worst pop magnitude |
+|---|---|---|
+| Continuous morphing | 2 | 0.0030 |
+| Morphing disabled (control) | 13 | 0.2822 |
+
+Eleven of thirteen pops eliminated, and the worst surviving one reduced 94-fold.
+
+**The gate nonetheless fails, on a different mechanism.** Production's two pops fall at the
+same descent steps as the control's first two — around 255 km altitude — and morphing is the
+only difference between the runs, so morphing cannot be their cause. They are a second popping
+source: almost certainly the **horizon cull**, which admits or drops a patch on a hard
+threshold with no blend, so a patch appears or vanishes in one frame. Continuous LOD morphing
+does not address visibility changes, only tessellation changes.
+
+That is a real defect the gate found, and fixing it is the next step. The test stays registered
+and `DISABLED` so one known-failing gate does not mask regressions across the other
+twenty-five, with the reason recorded in the build description rather than hidden by it.
 
 **Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
 simple analytic shell, and the capability-reporting gate's synthetic profiles.

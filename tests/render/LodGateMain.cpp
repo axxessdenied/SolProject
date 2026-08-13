@@ -52,6 +52,19 @@ constexpr int kTraverseSteps = 600;
 /// this gate tests anything.
 constexpr double kQualitySubdivisionFactor = 0.6;
 
+/// Relief for the LOD stress scene, in metres.
+///
+/// Far rougher than Earth, and deliberately so. This is a stress case, not a landscape: the
+/// gate asks whether LOD transitions are detectable, and a scene whose transitions are
+/// sub-pixel answers that question by making it unaskable rather than by passing it. At 8 km
+/// of relief the geometry a level change uncovers moved the image by about one luminance
+/// level, below anything a viewer could see and below anything an instrument can certify.
+///
+/// The logic runs the safe direction. If continuous morphing keeps transitions invisible on
+/// terrain this rough, it keeps them invisible on terrain that is gentler; a pass here implies
+/// a pass on Earth-like relief, while a pass on Earth-like relief implies nothing at all.
+constexpr double kStressReliefMetres = 20000.0;
+
 /// Neighbourhood width for the local-median comparison, in steps.
 constexpr int kWindowRadius = 12;
 /// A step is a pop when its frame difference exceeds this multiple of the local median.
@@ -75,6 +88,16 @@ struct TraverseResult {
     std::uint32_t maxPatches = 0;
     std::uint32_t maxVertices = 0;
     double memoryTrendBytesPerStep = 0.0;
+
+    /// Concentration metric across the whole descent, not just a chosen band.
+    ///
+    /// Selecting a band by largest patch-count change turned out to find transitions among
+    /// distant horizon patches, which are tiny on screen. The descent visits every transition
+    /// there is, so measuring concentration across all of it asks the question without first
+    /// having to guess where the answer lives.
+    double worstChangedFraction = 0.0;
+    int worstChangedStep = -1;
+    double altitudeAtWorst = 0.0;
 };
 
 double meanLuminance(const std::vector<std::uint8_t>& rgba, std::size_t index)
@@ -270,7 +293,7 @@ double findTransitionAltitude(sol::platform::Window& window, sol::render::Render
     sol::render::TerrainSettings terrain;
     terrain.centre = {0.0, 0.0, 0.0};
     terrain.radiusMetres = kPlanetRadiusMetres;
-    terrain.reliefMetres = 8000.0;
+    terrain.reliefMetres = kStressReliefMetres;
     terrain.maxLevel = 10;
     terrain.subdivisionFactor = kQualitySubdivisionFactor;
     terrain.morphEnabled = true;
@@ -337,7 +360,7 @@ SweepResult runTransitionSweep(
     sol::render::TerrainSettings terrain;
     terrain.centre = {0.0, 0.0, 0.0};
     terrain.radiusMetres = kPlanetRadiusMetres;
-    terrain.reliefMetres = 8000.0;
+    terrain.reliefMetres = kStressReliefMetres;
     terrain.maxLevel = 10;
     terrain.subdivisionFactor = kQualitySubdivisionFactor;
     terrain.morphEnabled = morphEnabled;
@@ -399,7 +422,7 @@ TraverseResult runTraverse(
     sol::render::TerrainSettings terrain;
     terrain.centre = {0.0, 0.0, 0.0};
     terrain.radiusMetres = kPlanetRadiusMetres;
-    terrain.reliefMetres = 8000.0;
+    terrain.reliefMetres = kStressReliefMetres;
     terrain.maxLevel = 10;
     terrain.subdivisionFactor = kQualitySubdivisionFactor;
     terrain.morphEnabled = morphEnabled;
@@ -438,7 +461,13 @@ TraverseResult runTraverse(
         }
 
         if (!previous.empty()) {
-            result.differences.push_back(frameDifference(previous, captured->rgba));
+            const StepChange change = stepChange(previous, captured->rgba);
+            result.differences.push_back(change.mean);
+            if (change.changedFraction > result.worstChangedFraction) {
+                result.worstChangedFraction = change.changedFraction;
+                result.worstChangedStep = step;
+                result.altitudeAtWorst = altitude;
+            }
         }
         previous = captured->rgba;
         ++result.samples;
@@ -459,7 +488,7 @@ void collectResourceStats(
     sol::render::TerrainSettings terrain;
     terrain.centre = {0.0, 0.0, 0.0};
     terrain.radiusMetres = kPlanetRadiusMetres;
-    terrain.reliefMetres = 8000.0;
+    terrain.reliefMetres = kStressReliefMetres;
     terrain.maxLevel = 10;
     terrain.subdivisionFactor = kQualitySubdivisionFactor;
     terrain.morphEnabled = morphEnabled;
@@ -551,6 +580,15 @@ void report(const TraverseResult& result)
                 static_cast<double>(result.maxDeviceBytes) / (1024.0 * 1024.0),
                 static_cast<double>(result.finalDeviceBytes) / (1024.0 * 1024.0));
     std::printf("  memory trend           %.1f bytes/step\n", result.memoryTrendBytesPerStep);
+    if (result.worstChangedStep >= 0) {
+        std::printf("  worst concentration    %.6f of pixels at step %d (%.0f m altitude)\n",
+                    result.worstChangedFraction,
+                    result.worstChangedStep,
+                    result.altitudeAtWorst);
+    } else {
+        std::printf("  worst concentration    none — no step moved any pixel by >%d levels\n",
+                    kPerceptibleDelta);
+    }
 }
 
 } // namespace
@@ -650,24 +688,51 @@ int main()
     // percent of a 1280x720 frame is about 1 800 pixels — a band of that size jumping by more
     // than 6% luminance between adjacent frames is what "detectable" means here, and it is
     // stated in perceptual terms rather than derived from whichever run was measured first.
-    constexpr double kChangedFractionLimit = 0.002;
-    const bool noPopping = sweepProduction.worstChangedFraction < kChangedFractionLimit;
-    const bool sweepDiscriminates = sweepControl.worstChangedFraction > kChangedFractionLimit;
+    // The verdict comes from the descent's local-outlier count, which is the measurement that
+    // demonstrably separates the two configurations once the terrain is rough enough to have
+    // something to pop. The band sweep and the concentration metric are both retained and
+    // reported, but neither discriminates: the sweep keeps landing on transitions among
+    // distant horizon patches, and concentration is confounded by morphing's own continuous
+    // deformation, which moves more pixels slightly than an abrupt switch moves sharply.
+    const bool noPopping = production.popIndices.empty();
+    const bool sweepDiscriminates =
+        control.popIndices.size() > production.popIndices.size() * 2 + 2;
+
+    // Pops at the same step in both configurations cannot be caused by morphing, since that is
+    // the only thing that differs between the runs. Naming them separately keeps a residual
+    // popping source from being either hidden inside the pass or blamed on the LOD scheme.
+    std::vector<int> sharedPops;
+    for (int step : production.popIndices) {
+        if (std::ranges::find(control.popIndices, step) != control.popIndices.end()) {
+            sharedPops.push_back(step);
+        }
+    }
     // A bounded working set. The buffers are allocated once at capacity, so the expectation is
     // a flat line; anything trending upward over 600 steps is a leak.
     const bool memoryBounded = std::abs(production.memoryTrendBytesPerStep) < 1024.0
                                && production.maxDeviceBytes == production.minDeviceBytes;
     std::printf("\nVerdicts\n");
-    std::printf("  no detectable popping            %s  (%.4f%% of pixels, limit %.2f%%)\n",
+    std::printf("  no detectable popping            %s  (%zu pops on the descent)\n",
                 noPopping ? "PASS" : "FAIL",
-                sweepProduction.worstChangedFraction * 100.0,
-                kChangedFractionLimit * 100.0);
+                production.popIndices.size());
     std::printf("  bounded device memory            %s\n", memoryBounded ? "PASS" : "FAIL");
-    std::printf("  control pops (must exceed %.2f%%)  %.4f%% — %s\n",
-                kChangedFractionLimit * 100.0,
-                sweepControl.worstChangedFraction * 100.0,
+    std::printf("  control pops more than production %zu vs %zu — %s\n",
+                control.popIndices.size(),
+                production.popIndices.size(),
                 sweepDiscriminates ? "detector discriminates"
                                    : "DETECTOR BLIND; the result above is untrustworthy");
+    std::printf("  worst pop magnitude, prod vs ctrl %.4f vs %.4f\n",
+                production.worstRatioDifference,
+                control.worstRatioDifference);
+    if (!sharedPops.empty()) {
+        std::printf("  pops present in BOTH runs        %zu (steps ", sharedPops.size());
+        for (int step : sharedPops) {
+            std::printf("%d ", step);
+        }
+        std::printf(")\n    These cannot be LOD morphing — it is the only difference between\n"
+                    "    the runs. A separate mechanism, most likely horizon culling making a\n"
+                    "    patch appear or vanish, which morphing does not address.\n");
+    }
     std::printf("  descent roughness, prod vs ctrl  median %.4f vs %.4f, max %.4f vs %.4f\n",
                 production.medianDifference,
                 control.medianDifference,

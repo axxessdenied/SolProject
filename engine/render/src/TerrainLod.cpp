@@ -129,27 +129,33 @@ double subdivisionRange(const QuadtreeNode& node, const TerrainConfig& config)
 
 double terrainHeight(const Vec3d& unitDirection, const TerrainConfig& config)
 {
-    // Seven octaves spanning roughly 1 200 km down to 4 km of wavelength.
+    // Ten octaves spanning roughly 1 200 km down to 230 m of wavelength.
     //
     // The high-frequency end is not decoration, it is what lets the LOD gate measure anything
-    // at all. A patch's fine and coarse grids differ only where the terrain varies *between*
-    // adjacent grid samples; with relief only at continental wavelengths both grids sample
-    // nearly the same height, the two geometries are near-identical, and a LOD transition has
-    // nothing to show even when it switches abruptly. An earlier four-octave version topped
-    // out near 1 000 km and produced exactly that: a traverse whose frame-to-frame difference
-    // never rose above 0.03 of one luminance level, in which no scheme could pop.
+    // at all, and the requirement is specific rather than general. A patch's fine and coarse
+    // grids differ only where the terrain varies *between* adjacent grid samples, so what a
+    // transition can reveal is exactly the energy between the two grids' spacings. At the
+    // levels this test exercises those spacings are about 1.6 km and 3.1 km.
     //
-    // Amplitude falls at 0.62 per octave rather than 0.5, so the finest octave still carries
-    // about 2% of the relief — a real slope at grid scale rather than a rounding error.
+    // Two earlier spectra failed for that reason and are worth recording. Four octaves topped
+    // out near 1 000 km: frame differences never reached 0.03 of a luminance level and no
+    // scheme could pop. Seven octaves reached 4 km — visible terrain at last, but still no
+    // energy in the 1.6-3.1 km band the transition actually uncovers, so disabling morphing
+    // changed no pixel by more than 15 of 255 levels at any quality setting tried.
+    //
+    // Amplitude now falls at 0.72 per octave rather than 0.62, which puts roughly 4% of the
+    // relief at 3 km wavelength instead of 2% at 4 km. Combined with the stress-scene relief
+    // the LOD harness selects, that is a real slope where the grids differ rather than a
+    // rounding error.
     double amplitude = 1.0;
     double frequency = 32.0;
     double sum = 0.0;
     double normalisation = 0.0;
 
-    for (int octave = 0; octave < 7; ++octave) {
+    for (int octave = 0; octave < 10; ++octave) {
         sum += amplitude * valueNoise(unitDirection * frequency);
         normalisation += amplitude;
-        amplitude *= 0.62;
+        amplitude *= 0.72;
         frequency *= 2.6;
     }
 
