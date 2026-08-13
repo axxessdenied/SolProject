@@ -553,8 +553,63 @@ That degradation curve *is* the near/far discontinuity the threshold names, and 
 path does not have it. A depth test that could not produce this failure would say nothing about
 the one that passes.
 
-**Still not measured:** LOD continuity does not exist to measure, and the capability-reporting
-gate's synthetic profiles remain unverified against real device reports.
+### Terrain and level of detail
+
+A real-scale planet cannot be one mesh — Earth's surface at one-metre resolution is on the
+order of 10^14 vertices — so the renderer chooses each frame which parts of the surface to
+represent finely. The scheme is CDLOD on a cube-sphere: six quadtrees, subdividing when the
+camera is inside a level's range, with **every vertex carrying both its own position and the
+position it would occupy one level coarser**. A per-patch morph factor blends between them, so
+a fine mesh continuously *becomes* the coarse one and the switch happens when the two are
+already identical.
+
+Terrain vertices are emitted **camera-relative**, subtracted in `double` on the CPU. A
+planet-relative position is ~6.4e6 m, where a `float` quantises to half a metre; subtracting
+the camera in the shader would be catastrophic cancellation and the terrain would visibly
+quantise near the viewer.
+
+Shading is a function of terrain height only, never of LOD level. Colouring by level would
+paint a hard seam at exactly the transitions the gate measures.
+
+### LOD gate: memory measured, popping not yet
+
+**Memory passes and is measured.** Over a 600-step descent from 300 km to 3 km, device
+allocation held constant at 125.22 MiB — minimum, maximum, and final identical, with a
+least-squares trend of 0.0 bytes per step. Peak 874 terrain patches and 70 794 vertices. The
+buffers are allocated once at capacity and written in place, so a bounded working set is
+structural rather than incidental, and the measurement confirms it.
+
+**The popping half has no trustworthy result, and the gate is recorded as incomplete rather
+than passed.** Building it found two real defects, both of which would have produced a
+confident false pass:
+
+- **The morph factor was always exactly 1.0.** A node is emitted precisely when `distance >=
+  range`, and the factor was computed against that same `range` — so every emitted node sat
+  past the end of its own band. Terrain rendered permanently at the coarse position, morphing
+  nothing. The factor must be measured against the *parent's* range, at twice the distance,
+  because that is where the node is actually replaced. With the bug, enabling and disabling
+  morphing produced identical frame-difference statistics to four decimal places, and a naive
+  reading called that "no popping".
+- **The terrain had no detail at the scale LOD operates on.** Relief topped out near 1 000 km
+  of wavelength while the finest patches span kilometres, so fine and coarse grids sampled
+  nearly the same height and no scheme could pop. Frame-to-frame differences never exceeded
+  0.03 of one luminance level. Seven octaves reaching ~4 km wavelength raised the traverse's
+  median difference from 0.0009 to 0.076.
+
+What remains wrong is the **metric**, not the renderer. Mean frame-to-frame image difference
+cannot separate morphed from unmorphed transitions, because morphing deliberately substitutes
+many small continuous deformations for one large discrete jump — so it frequently produces
+*more* total image change. Measured across two altitude bands, the ordering of the two
+configurations reversed depending on the band, which is the signature of a metric that is not
+measuring what it names. Popping is spatially concentrated: a silhouette snapping across a few
+pixels. The next attempt should measure a high per-pixel percentile, or the count of pixels
+changing by more than a perceptible step, rather than the mean over the frame.
+
+The test is registered and `DISABLED` with that reason recorded, so the suite stays honest in
+both directions.
+
+**Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
+simple analytic shell, and the capability-reporting gate's synthetic profiles.
 
 **Cost recorded rather than absorbed:** the depth attachment now uses `STORE` rather than
 `DONT_CARE` so the buffer survives the render pass for readback. A production renderer without

@@ -16,6 +16,8 @@ add_library(SolRender STATIC
     src/DeviceCapabilities.cpp
     src/RenderMath.h
     src/Renderer.cpp
+    src/TerrainLod.cpp
+    src/TerrainLod.h
     src/VmaImplementation.cpp
     src/VolkImplementation.cpp
     src/VulkanInstance.cpp
@@ -52,7 +54,9 @@ target_compile_definitions(SolRender
 sol_add_shaders(SolRender
     SOURCES
         shaders/Reference.vert
-        shaders/Reference.frag)
+        shaders/Reference.frag
+        shaders/Terrain.vert
+        shaders/Terrain.frag)
 
 # volk dispatches through function pointers it loads itself, so nothing links vulkan-1.lib.
 # An absent loader then becomes a value this module can inspect and report, rather than a

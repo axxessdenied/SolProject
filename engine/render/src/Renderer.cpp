@@ -2,6 +2,7 @@
 
 #include "Sol/Render/CapabilityRequirement.h"
 #include "RenderMath.h"
+#include "TerrainLod.h"
 #include "VulkanInstanceImpl.h"
 
 #include <vk_mem_alloc.h>
@@ -47,6 +48,21 @@ constexpr std::uint32_t kReferenceVertexSpv[] =
 constexpr std::uint32_t kReferenceFragmentSpv[] =
 #include "shaders/Reference.frag.inc"
     ;
+
+constexpr std::uint32_t kTerrainVertexSpv[] =
+#include "shaders/Terrain.vert.inc"
+    ;
+
+constexpr std::uint32_t kTerrainFragmentSpv[] =
+#include "shaders/Terrain.frag.inc"
+    ;
+
+/// Terrain geometry is regenerated every frame as the camera moves, so its buffers are sized
+/// once for the worst case rather than reallocated per frame. Reallocation would both cost
+/// time and make the LOD gate's memory measurement meaningless — a working set that churns
+/// cannot be shown to be bounded.
+constexpr VkDeviceSize kTerrainVertexCapacity = 3'000'000;
+constexpr VkDeviceSize kTerrainIndexCapacity = 6'000'000;
 
 /// Push constant block, matching Reference.vert exactly.
 struct PushConstants {
@@ -126,6 +142,17 @@ struct Renderer::Impl {
     std::array<VkCommandBuffer, kFramesInFlight> commandBuffers{};
     std::array<VkSemaphore, kFramesInFlight> imageAvailable{};
     std::array<VkFence, kFramesInFlight> inFlight{};
+
+    VkPipeline terrainPipeline = VK_NULL_HANDLE;
+    VkBuffer terrainVertexBuffer = VK_NULL_HANDLE;
+    VmaAllocation terrainVertexAllocation = VK_NULL_HANDLE;
+    void* terrainVertexMapped = nullptr;
+    VkBuffer terrainIndexBuffer = VK_NULL_HANDLE;
+    VmaAllocation terrainIndexAllocation = VK_NULL_HANDLE;
+    void* terrainIndexMapped = nullptr;
+
+    std::optional<TerrainSettings> terrain;
+    detail::TerrainFrame terrainFrame;
 
     std::vector<SceneObject> scene;
     std::uint32_t frameSlot = 0;
@@ -213,6 +240,15 @@ struct Renderer::Impl {
             }
             if (conventionalPipeline != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device, conventionalPipeline, nullptr);
+            }
+            if (terrainPipeline != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device, terrainPipeline, nullptr);
+            }
+            if (terrainVertexBuffer != VK_NULL_HANDLE) {
+                vmaDestroyBuffer(allocator, terrainVertexBuffer, terrainVertexAllocation);
+            }
+            if (terrainIndexBuffer != VK_NULL_HANDLE) {
+                vmaDestroyBuffer(allocator, terrainIndexBuffer, terrainIndexAllocation);
             }
             if (pipelineLayout != VK_NULL_HANDLE) {
                 vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -615,6 +651,29 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
                            &push);
         vkCmdDrawIndexed(
             commandBuffer, static_cast<std::uint32_t>(kReferenceIndices.size()), 1, 0, 0, 0);
+    }
+
+    if (terrain.has_value() && !terrainFrame.patches.empty()) {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainPipeline);
+        const VkDeviceSize terrainOffset = 0;
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &terrainVertexBuffer, &terrainOffset);
+        vkCmdBindIndexBuffer(commandBuffer, terrainIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+        for (const detail::TerrainPatch& patch : terrainFrame.patches) {
+            PushConstants push{};
+            push.viewProjection = viewProjection;
+            push.colour[0] = patch.morph;
+            push.colour[1] = static_cast<float>(patch.level);
+
+            vkCmdPushConstants(commandBuffer,
+                               pipelineLayout,
+                               VK_SHADER_STAGE_VERTEX_BIT,
+                               0,
+                               sizeof(PushConstants),
+                               &push);
+            vkCmdDrawIndexed(
+                commandBuffer, patch.indexCount, 1, patch.firstIndex, patch.vertexOffset, 0);
+        }
     }
 
     vkCmdEndRenderPass(commandBuffer);
@@ -1239,6 +1298,94 @@ std::expected<Renderer, std::string> Renderer::create(
             fail("Creating the depth negative-control pipeline failed", conventionalResult));
     }
 
+    // --- Terrain pipeline ---------------------------------------------------------------
+    {
+        auto terrainVertex =
+            createShaderModule(impl->device, kTerrainVertexSpv, sizeof(kTerrainVertexSpv));
+        if (!terrainVertex.has_value()) {
+            return std::unexpected(terrainVertex.error());
+        }
+        auto terrainFragment =
+            createShaderModule(impl->device, kTerrainFragmentSpv, sizeof(kTerrainFragmentSpv));
+        if (!terrainFragment.has_value()) {
+            vkDestroyShaderModule(impl->device, *terrainVertex, nullptr);
+            return std::unexpected(terrainFragment.error());
+        }
+
+        const std::array<VkPipelineShaderStageCreateInfo, 2> terrainStages{
+            VkPipelineShaderStageCreateInfo{
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+                .stage = VK_SHADER_STAGE_VERTEX_BIT,
+                .module = *terrainVertex,
+                .pName = "main",
+                .pSpecializationInfo = nullptr,
+            },
+            VkPipelineShaderStageCreateInfo{
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+                .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+                .module = *terrainFragment,
+                .pName = "main",
+                .pSpecializationInfo = nullptr,
+            },
+        };
+
+        const VkVertexInputBindingDescription terrainBinding{
+            .binding = 0,
+            .stride = sizeof(detail::TerrainVertex),
+            .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+        };
+        const std::array<VkVertexInputAttributeDescription, 4> terrainAttributes{
+            VkVertexInputAttributeDescription{
+                .location = 0,
+                .binding = 0,
+                .format = VK_FORMAT_R32G32B32_SFLOAT,
+                .offset = offsetof(detail::TerrainVertex, position)},
+            VkVertexInputAttributeDescription{
+                .location = 1,
+                .binding = 0,
+                .format = VK_FORMAT_R32G32B32_SFLOAT,
+                .offset = offsetof(detail::TerrainVertex, coarsePosition)},
+            VkVertexInputAttributeDescription{
+                .location = 2,
+                .binding = 0,
+                .format = VK_FORMAT_R32_SFLOAT,
+                .offset = offsetof(detail::TerrainVertex, heightUnit)},
+            VkVertexInputAttributeDescription{
+                .location = 3,
+                .binding = 0,
+                .format = VK_FORMAT_R32_SFLOAT,
+                .offset = offsetof(detail::TerrainVertex, coarseHeightUnit)},
+        };
+        const VkPipelineVertexInputStateCreateInfo terrainVertexInput{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &terrainBinding,
+            .vertexAttributeDescriptionCount =
+                static_cast<std::uint32_t>(terrainAttributes.size()),
+            .pVertexAttributeDescriptions = terrainAttributes.data(),
+        };
+
+        VkGraphicsPipelineCreateInfo terrainInfo = pipelineInfo;
+        terrainInfo.pStages = terrainStages.data();
+        terrainInfo.pVertexInputState = &terrainVertexInput;
+
+        const VkResult terrainResult = vkCreateGraphicsPipelines(
+            impl->device, VK_NULL_HANDLE, 1, &terrainInfo, nullptr, &impl->terrainPipeline);
+
+        vkDestroyShaderModule(impl->device, *terrainVertex, nullptr);
+        vkDestroyShaderModule(impl->device, *terrainFragment, nullptr);
+
+        if (terrainResult != VK_SUCCESS) {
+            return std::unexpected(fail("Creating the terrain pipeline failed", terrainResult));
+        }
+    }
+
     // --- Geometry ----------------------------------------------------------------------
     const auto uploadBuffer = [&impl](const void* data,
                                       VkDeviceSize size,
@@ -1292,6 +1439,58 @@ std::expected<Renderer, std::string> Renderer::create(
                                      impl->indexAllocation);
         !uploaded.has_value()) {
         return std::unexpected(uploaded.error());
+    }
+
+    // Terrain buffers: allocated once at worst-case capacity and written in place each frame.
+    // Growing them on demand would make the LOD gate's memory half untestable, because a
+    // working set that reallocates cannot be shown to be bounded.
+    {
+        const auto createPersistent = [&impl](VkDeviceSize size,
+                                              VkBufferUsageFlags usage,
+                                              VkBuffer& buffer,
+                                              VmaAllocation& allocation,
+                                              void*& mapped) -> std::expected<void, std::string> {
+            const VkBufferCreateInfo bufferInfo{
+                .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+                .size = size,
+                .usage = usage,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .queueFamilyIndexCount = 0,
+                .pQueueFamilyIndices = nullptr,
+            };
+            const VmaAllocationCreateInfo allocInfo{
+                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
+                         | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                .usage = VMA_MEMORY_USAGE_AUTO,
+            };
+            VmaAllocationInfo allocationInfo{};
+            if (const VkResult result = vmaCreateBuffer(
+                    impl->allocator, &bufferInfo, &allocInfo, &buffer, &allocation, &allocationInfo);
+                result != VK_SUCCESS) {
+                return std::unexpected(fail("Allocating a terrain buffer failed", result));
+            }
+            mapped = allocationInfo.pMappedData;
+            return {};
+        };
+
+        if (auto created = createPersistent(kTerrainVertexCapacity * sizeof(detail::TerrainVertex),
+                                            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                            impl->terrainVertexBuffer,
+                                            impl->terrainVertexAllocation,
+                                            impl->terrainVertexMapped);
+            !created.has_value()) {
+            return std::unexpected(created.error());
+        }
+        if (auto created = createPersistent(kTerrainIndexCapacity * sizeof(std::uint32_t),
+                                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                            impl->terrainIndexBuffer,
+                                            impl->terrainIndexAllocation,
+                                            impl->terrainIndexMapped);
+            !created.has_value()) {
+            return std::unexpected(created.error());
+        }
     }
 
     // --- Commands and synchronisation ---------------------------------------------------
@@ -1364,6 +1563,11 @@ const DeviceCapabilities& Renderer::selectedDevice() const
 void Renderer::setScene(std::vector<SceneObject> objects)
 {
     m_impl->scene = std::move(objects);
+}
+
+void Renderer::setTerrain(std::optional<TerrainSettings> terrain)
+{
+    m_impl->terrain = std::move(terrain);
 }
 
 void Renderer::notifyResized(std::uint32_t width, std::uint32_t height)
@@ -1477,6 +1681,49 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
         return std::unexpected(fail("Resetting the command buffer failed", result));
     }
 
+    // Terrain is selected and generated on the CPU before recording, because the camera
+    // position determines which patches exist at all. The buffers are written in place; the
+    // fence waited on above guarantees the GPU is done with the previous frame's contents.
+    if (impl.terrain.has_value()) {
+        detail::TerrainConfig config;
+        config.radiusMetres = impl.terrain->radiusMetres;
+        config.reliefMetres = impl.terrain->reliefMetres;
+        config.maxLevel = impl.terrain->maxLevel;
+        config.morphEnabled = impl.terrain->morphEnabled;
+
+        const detail::Vec3d cameraPlanetRelative{
+            camera.position.x - impl.terrain->centre.x,
+            camera.position.y - impl.terrain->centre.y,
+            camera.position.z - impl.terrain->centre.z,
+        };
+
+        detail::buildTerrain(config, cameraPlanetRelative, impl.terrainFrame);
+
+        if (impl.terrainFrame.vertices.size() > kTerrainVertexCapacity
+            || impl.terrainFrame.indices.size() > kTerrainIndexCapacity) {
+            return std::unexpected(std::format(
+                "Terrain selection produced {} vertices and {} indices, over the {} / {} "
+                "capacity.\n"
+                "  Silently dropping patches would corrupt the LOD gate's measurement, so this "
+                "is reported instead.",
+                impl.terrainFrame.vertices.size(),
+                impl.terrainFrame.indices.size(),
+                kTerrainVertexCapacity,
+                kTerrainIndexCapacity));
+        }
+
+        std::memcpy(impl.terrainVertexMapped,
+                    impl.terrainFrame.vertices.data(),
+                    impl.terrainFrame.vertices.size() * sizeof(detail::TerrainVertex));
+        std::memcpy(impl.terrainIndexMapped,
+                    impl.terrainFrame.indices.data(),
+                    impl.terrainFrame.indices.size() * sizeof(std::uint32_t));
+
+        stats.terrainPatches = static_cast<std::uint32_t>(impl.terrainFrame.patches.size());
+        stats.terrainNodesVisited = impl.terrainFrame.nodesVisited;
+        stats.terrainVertices = static_cast<std::uint32_t>(impl.terrainFrame.vertices.size());
+    }
+
     if (auto recorded = impl.recordFrame(impl.commandBuffers[slot], imageIndex, camera, capture);
         !recorded.has_value()) {
         return std::unexpected(recorded.error());
@@ -1515,6 +1762,15 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
         impl.needsRebuild = true;
     } else if (presentResult != VK_SUCCESS) {
         return std::unexpected(fail("Presenting the frame failed", presentResult));
+    }
+
+    // Device memory actually held, from the allocator rather than from process memory. The
+    // LOD gate's memory half needs a figure that reflects the renderer's own working set;
+    // process memory is too noisy to show boundedness over a long traverse.
+    {
+        VmaTotalStatistics statistics{};
+        vmaCalculateStatistics(impl.allocator, &statistics);
+        stats.deviceAllocatedBytes = statistics.total.statistics.allocationBytes;
     }
 
     impl.lastSubmittedSlot = slot;

@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -79,12 +80,37 @@ struct SceneObject {
     bool smoothMarker = false;
 };
 
+/// Planet terrain settings, or absent for no terrain.
+struct TerrainSettings {
+    /// Planet centre in the authoritative world frame.
+    WorldVec3 centre;
+    double radiusMetres = 6378136.6;
+    double reliefMetres = 8000.0;
+    std::uint32_t maxLevel = 12;
+
+    /// Continuous LOD morphing. Disabling it is the LOD gate's negative control: the same
+    /// traverse must then produce detectable popping, and a detector that cannot see it is not
+    /// measuring anything.
+    bool morphEnabled = true;
+};
+
 /// What one presented frame did, for the performance and jitter reports.
 struct FrameStats {
     /// Frames presented since creation.
     std::uint64_t frameIndex = 0;
     /// True when the swapchain was rebuilt this frame, which invalidates timing for it.
     bool swapchainRebuilt = false;
+
+    /// Terrain patches drawn and quadtree nodes visited this frame. A selection that thrashes
+    /// between levels shows up in these counts before it shows up as a visible pop.
+    std::uint32_t terrainPatches = 0;
+    std::uint32_t terrainNodesVisited = 0;
+    std::uint32_t terrainVertices = 0;
+
+    /// Bytes currently allocated through the renderer's device allocator. The LOD gate's
+    /// memory half is measured from this rather than from process memory, which is too noisy
+    /// to show a bounded working set.
+    std::uint64_t deviceAllocatedBytes = 0;
 };
 
 /// A presented frame's pixels, read back from the swapchain image.
@@ -144,6 +170,9 @@ public:
 
     /// Replaces the reference scene.
     void setScene(std::vector<SceneObject> objects);
+
+    /// Enables planet terrain with continuous LOD, or disables it when passed no value.
+    void setTerrain(std::optional<TerrainSettings> terrain);
 
     /// Tells the renderer the framebuffer changed size. The swapchain is rebuilt on the next
     /// frame rather than immediately, so a burst of resize events costs one rebuild.
