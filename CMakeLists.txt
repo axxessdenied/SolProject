@@ -38,6 +38,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 include(SolProjectOptions)
+include(SolShaders)
 include(SolToolchainFacts)
 include(SolVulkanSdk)
 

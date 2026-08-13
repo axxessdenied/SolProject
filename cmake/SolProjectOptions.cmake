@@ -130,10 +130,19 @@ function(sol_apply_project_options target)
 
     target_compile_options(${target} PRIVATE ${SOL_PROJECT_COMPILE_OPTIONS})
 
-    # Windows headers: keep the surface minimal and free of the min/max macros.
+    # Windows headers: keep the surface minimal and free of macros that collide with ordinary
+    # identifiers.
+    #
+    # NOGDI is not optional housekeeping. `wingdi.h` defines `DeviceCapabilities` as a macro
+    # aliasing `DeviceCapabilitiesW`, which silently rewrites `sol::render::DeviceCapabilities`
+    # in any translation unit that reaches Windows headers — and every Vulkan Win32 surface
+    # does. WIN32_LEAN_AND_MEAN does not exclude GDI; only this does. The project renders with
+    # Vulkan and uses no GDI, so excluding it costs nothing and removes a whole family of
+    # collisions of the same kind NOMINMAX already handles.
     target_compile_definitions(${target} PRIVATE
         WIN32_LEAN_AND_MEAN
         NOMINMAX
+        NOGDI
         UNICODE
         _UNICODE)
 

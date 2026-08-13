@@ -325,11 +325,30 @@ production code from the first commit, by the user decision recorded in the P1b 
 ### Production tree
 
 ```
-engine/render/   sol::render   the only module permitted to see Vulkan types
-tests/render/    sol::test     capability tests and the headless capability report
+engine/platform/ sol::platform  window and OS integration; owns GLFW, never sees Vulkan
+engine/render/   sol::render    the only module permitted to see Vulkan types
+tests/render/    sol::test      capability tests, capability report, and the render loop
 ```
 
 `game/` and `editor/` do not exist yet.
+
+The two engine modules meet at plain OS handles. `sol::platform` hands over `HWND`/`HINSTANCE`
+as `void*`; `sol::render` builds the Win32 surface from them. GLFW can create a Vulkan surface
+directly and doing so would have been shorter — it would also have put a Vulkan type in the
+platform module's interface, which is the thing ADR 0002 forbids.
+
+**Windows headers are excluded down to `NOGDI`.** `wingdi.h` defines `DeviceCapabilities` as a
+macro, which silently rewrites `sol::render::DeviceCapabilities` in any translation unit that
+reaches Windows headers — and every Vulkan Win32 surface does. `WIN32_LEAN_AND_MEAN` does not
+exclude GDI. This is the same class of collision `NOMINMAX` already handles.
+
+### Shader pipeline
+
+GLSL is compiled to SPIR-V at build time by `glslc` from the pinned SDK, with
+`--target-env=vulkan1.2` so a shader reaching for a later feature fails the build rather than
+the one machine that lacks it. The SPIR-V is emitted as a C initialiser list and embedded in
+the binary, so there is no runtime file I/O, no path resolution, and no shader-packaging
+decision — that belongs to a later milestone.
 
 ### How the ADR 0002 boundary is enforced
 
@@ -406,6 +425,41 @@ clean-validation gate.
 
 These numbers live here mid-increment under the lightweight-lane rule in `AGENTS.md`. There is
 no `evidence/p1b/` yet; full evidence with raw-output locations attaches at increment closure.
+
+### Presentation and depth
+
+The renderer presents through a classic render pass — not dynamic rendering, which would have
+meant requiring a capability above the 1.2 floor for convenience. Two frames in flight; one
+present semaphore **per swapchain image** rather than per frame, because a per-frame signal
+semaphore can still be owned by an outstanding present when the driver returns images out of
+order.
+
+Present mode is **FIFO**, and that is a measurement decision rather than a default. FIFO is the
+only mode Vulkan guarantees, and it presents every frame exactly once at a fixed cadence; a
+mode that drops frames would inject presentation variance into the screen-space jitter gate,
+which measures per-frame centroids and is supposed to isolate the renderer.
+
+Depth is **reversed-Z with an infinite far plane**, in a 32-bit float buffer:
+
+- Near maps to 1 and far to 0, so floating-point depth's precision — which is concentrated near
+  zero — lands at the near plane where it is needed instead of at the far plane where it is
+  not. This is why the capability set demands a float depth format rather than a normalised
+  one, and it is the mechanism the depth gate rests on.
+- There is no far clip. Choosing a far distance for a scene holding both a launch pad and a
+  planet is a choice between clipping the planet and destroying near precision; the infinite
+  form costs nothing once Z is reversed.
+- The depth compare is `GREATER`, and depth clears to 0.
+
+The GPU never receives a world coordinate. Object positions are subtracted from the camera
+position in `double` and only then narrowed to `float`, in one function, so there is a single
+line to audit when the jitter gate is measured. The view matrix has no translation term at all:
+the camera *is* the origin. A conventional view matrix would reintroduce the camera's world
+magnitude in `float`, which is exactly what the frame model selected in A2 exists to prevent.
+
+**What this does not yet show.** The render loop presents and validation is clean, but no
+depth-gate measurement has been taken: nothing has read back a framebuffer or compared a
+rendered result against an expectation. Frames presenting is not evidence that the depth range
+behaves — that measurement arrives with the jitter harness, which needs the same readback path.
 
 ## Proposed architecture
 

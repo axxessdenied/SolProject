@@ -60,8 +60,8 @@ Updating the baseline is a reviewed dependency change, not maintenance.
 |---|---|---|---|---|---|---|
 | `vulkan-headers` | `version>=1.4.357.0` | 1.4.357.0 | Apache-2.0 OR MIT | defaults only | `SolRender` (private) | Vulkan types never leave `sol::render` |
 | `volk` | `version>=1.4.357.0` | 1.4.357.0 | MIT | defaults only | `SolRender` (private) | ditto |
-| `vulkan-memory-allocator` | baseline | 3.4.0 | MIT | defaults only | **declared, not linked** | ditto, when linked |
-| `glfw3` | baseline | 3.5.1 | Zlib | defaults only | **declared, not linked** | window/surface behind a `sol::platform` interface |
+| `vulkan-memory-allocator` | baseline | 3.4.0 | MIT | defaults only | `SolRender` (private) | ditto |
+| `glfw3` | baseline | 3.5.1 | Zlib | defaults only | `SolPlatform` (private) | native handles only; no GLFW type in any public header |
 
 No package enables a non-default vcpkg port feature. `version>=` is a floor rather than a pin;
 the checked-in baseline supplies the resolved versions above, and `vulkan-headers` and `volk`
@@ -120,18 +120,21 @@ one translation unit, at the cost of the clean-failure behaviour above.
 
 ### vulkan-memory-allocator
 
-**Status: declared but not yet linked.** B1 creates no `VkDevice` yet and therefore allocates
-nothing. An earlier revision of this entry justified VMA in the present tense — "B1 creates
-depth images, vertex and index buffers, and staging buffers" — describing work that is not in
-the branch, and the package was linked to `SolRender` while no translation unit included it.
-Both are corrected: the entry below is explicitly forward-looking, and the link edge is added
-by the increment that allocates.
+**Status: linked, as of the render path.** The link edge was withheld until the renderer
+actually created a `VkDevice`, because ADR 0002 forbids selecting an allocator before an
+increment demonstrates the need. That demonstration now exists: the renderer allocates the
+depth image and the reference geometry buffers through VMA.
 
-**Anticipated need.** Vulkan requires the application to suballocate device memory itself; the
-driver exposes a small number of large allocations and a hard cap on allocation count. The
-render path will create depth images, vertex and index buffers, and staging buffers, and P1b
-makes "allocation counts and upload volume" mandatory measurements — VMA's budget and
-statistics API reports both directly.
+**Need.** Vulkan requires the application to suballocate device memory itself; the driver
+exposes a small number of large allocations and a hard cap on allocation count. P1b also makes
+"allocation counts and upload volume" mandatory measurements — VMA's budget and statistics API
+reports both directly.
+
+**Integration note.** VMA resolves Vulkan entry points through function pointers handed to it
+at allocator creation (`VMA_STATIC_VULKAN_FUNCTIONS=0`, `VMA_DYNAMIC_VULKAN_FUNCTIONS=1`),
+because nothing in this project links `vulkan-1.lib` — volk loads them. The macros are set on
+the target rather than in the implementation file so every translation unit that includes the
+header agrees with the one that defines `VMA_IMPLEMENTATION`.
 
 **Alternative weighed:** a hand-written suballocator. Realistic in the long run and roughly
 two to three weeks to get correct, against a 6-week increment box whose purpose is precision
@@ -149,11 +152,17 @@ any `sol::render` public header.
 
 ### glfw3
 
-**Need.** Window creation, Win32 surface creation, and keyboard/mouse input for the camera
-paths that the depth and LOD gates traverse.
+**Need.** Window creation and keyboard input for the camera paths that the depth and LOD gates
+traverse.
 
-**Status: declared but not yet linked.** The manifest resolves it so the dependency review
-lands with the rest of B1's stack, but no target consumes it until the swapchain work begins.
+**Status: linked to `SolPlatform`, as of the render path.**
+
+**Boundary.** GLFW does *not* create the Vulkan surface, although it can. `sol::platform`
+hands over the OS's own `HWND`/`HINSTANCE` as `void*`, and `sol::render` builds the Win32
+surface itself. That keeps GLFW out of the renderer and Vulkan out of the platform module —
+neither library appears in the other's headers, and the seam is plain OS handles. Letting GLFW
+create the surface would have been two lines shorter and would have put a Vulkan type in the
+platform module's interface.
 
 **Alternative weighed:** SDL3 (3.4.14, Zlib). Larger, and covers audio and gamepad input that
 the project will eventually want. Rejected for now because those are separate milestone-owned
@@ -197,7 +206,7 @@ from the deliberate warning relaxation on `VolkImplementation.cpp`. No other war
 | Vulkan SDK 1.4.357.0 as the reviewed version | Confirmed | The version the user installed; matched to `vulkan-headers` so headers and validation layer share a revision | User installed 2026-08-13 |
 | `volk` over linking `vulkan-1.lib` | Confirmed | Absent-loader failure becomes a diagnostic the renderer writes, which ADR 0002 requires | Writer, 2026-08-13 |
 | `glfw3` over SDL3 | Confirmed | Smaller surface, easier to keep behind a narrow boundary; audio/gamepad are separate milestone-owned decisions that a window-library choice should not pre-empt | Writer, 2026-08-13 |
-| VMA as the allocator | **Proposed** | Reviewed and declared, but the need is anticipated rather than demonstrated; not linked until the first `VkDevice` | Writer, 2026-08-13 |
+| VMA as the allocator | Confirmed for B1 | Linked once the renderer created a device and allocated a depth image and geometry buffers, which is the demonstration ADR 0002 requires. Not a production commitment; M2 may revisit with real asset volumes | Writer, 2026-08-13 |
 | Licence notices file | **Open** | Nothing is distributed yet; must be settled before any build leaves the machine | This document |
 
 These are writer selections made under an accepted policy (ADR 0007), not user rulings, except

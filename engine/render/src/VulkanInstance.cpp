@@ -1,6 +1,6 @@
 #include "Sol/Render/VulkanInstance.h"
 
-#include <volk.h>
+#include "VulkanInstanceImpl.h"
 
 #include <algorithm>
 #include <array>
@@ -29,66 +29,6 @@ constexpr std::array kQueriedFormats{
     QueriedFormat{"VK_FORMAT_B8G8R8A8_SRGB", VK_FORMAT_B8G8R8A8_SRGB},
     QueriedFormat{"VK_FORMAT_R16G16B16A16_SFLOAT", VK_FORMAT_R16G16B16A16_SFLOAT},
 };
-
-std::string describeResult(VkResult result)
-{
-    switch (result) {
-    case VK_SUCCESS:
-        return "success";
-    case VK_INCOMPLETE:
-        return "the result buffer was too small";
-    case VK_ERROR_OUT_OF_HOST_MEMORY:
-        return "the host is out of memory";
-    case VK_ERROR_OUT_OF_DEVICE_MEMORY:
-        return "the device is out of memory";
-    case VK_ERROR_INITIALIZATION_FAILED:
-        return "initialisation failed";
-    case VK_ERROR_LAYER_NOT_PRESENT:
-        return "a requested layer is not installed";
-    case VK_ERROR_EXTENSION_NOT_PRESENT:
-        return "a requested extension is not installed";
-    case VK_ERROR_INCOMPATIBLE_DRIVER:
-        return "the installed driver is incompatible with the requested API version";
-    default:
-        return std::format("VkResult {}", static_cast<std::int32_t>(result));
-    }
-}
-
-/// Runs Vulkan's two-call enumeration idiom correctly.
-///
-/// Three things this gets right that the obvious spelling does not. VK_INCOMPLETE is a
-/// *success* code, returned when the count grew between the two calls, and the documented
-/// response is to retry rather than to give up. The driver may write fewer entries than the
-/// buffer holds, so the vector is resized to what was actually written — otherwise the tail
-/// is value-initialised and, for name arrays, appends empty strings that look like real
-/// entries. And a failed query is reported rather than silently yielding an empty list, which
-/// would otherwise be indistinguishable from a device that genuinely has none.
-template <typename T, typename Query>
-VkResult enumerateInto(std::vector<T>& out, Query&& query)
-{
-    for (;;) {
-        std::uint32_t count = 0;
-        if (const VkResult result = query(&count, nullptr); result != VK_SUCCESS) {
-            return result;
-        }
-
-        out.assign(count, T{});
-        if (count == 0) {
-            return VK_SUCCESS;
-        }
-
-        const VkResult result = query(&count, out.data());
-        if (result == VK_INCOMPLETE) {
-            continue;
-        }
-        if (result != VK_SUCCESS) {
-            return result;
-        }
-
-        out.resize(count);
-        return VK_SUCCESS;
-    }
-}
 
 ApiVersion unpackApiVersion(std::uint32_t packed)
 {
@@ -163,71 +103,6 @@ std::string_view describeSeverity(VkDebugUtilsMessageSeverityFlagBitsEXT severit
     return "VERBOSE";
 }
 
-} // namespace
-
-bool LoaderInfo::hasValidationLayer() const
-{
-    return std::ranges::find(availableLayers, kValidationLayerName) != availableLayers.end();
-}
-
-struct VulkanInstance::Impl {
-    VkInstance instance = VK_NULL_HANDLE;
-    VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
-    LoaderInfo loader;
-    bool validationEnabled = false;
-    std::vector<std::string> validationMessages;
-
-    /// Validation callback. Appends to the owning Impl's message list.
-    ///
-    /// A static member rather than a free function because `Impl` is a private nested type
-    /// that nothing outside the class may name.
-    ///
-    /// The layer invokes this synchronously on whichever thread made the offending Vulkan
-    /// call. VulkanInstance documents single-threaded use, so no lock is taken; if that
-    /// contract is ever relaxed this is the first thing that needs one.
-    static VKAPI_ATTR VkBool32 VKAPI_CALL onValidationMessage(
-        VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-        VkDebugUtilsMessageTypeFlagsEXT types,
-        const VkDebugUtilsMessengerCallbackDataEXT* data,
-        void* userData);
-
-    ~Impl()
-    {
-        if (messenger != VK_NULL_HANDLE) {
-            vkDestroyDebugUtilsMessengerEXT(instance, messenger, nullptr);
-        }
-        if (instance != VK_NULL_HANDLE) {
-            vkDestroyInstance(instance, nullptr);
-        }
-    }
-
-    Impl() = default;
-    Impl(const Impl&) = delete;
-    Impl& operator=(const Impl&) = delete;
-    Impl(Impl&&) = delete;
-    Impl& operator=(Impl&&) = delete;
-};
-
-VKAPI_ATTR VkBool32 VKAPI_CALL VulkanInstance::Impl::onValidationMessage(
-    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-    VkDebugUtilsMessageTypeFlagsEXT /*types*/,
-    const VkDebugUtilsMessengerCallbackDataEXT* data,
-    void* userData)
-{
-    auto* impl = static_cast<Impl*>(userData);
-    if (impl != nullptr && data != nullptr) {
-        impl->validationMessages.push_back(std::format(
-            "[{}] {}: {}",
-            describeSeverity(severity),
-            data->pMessageIdName != nullptr ? data->pMessageIdName : "(unnamed)",
-            data->pMessage != nullptr ? data->pMessage : "(no text)"));
-    }
-    // VK_FALSE: report, do not abort the call that triggered it.
-    return VK_FALSE;
-}
-
-namespace {
-
 VkDebugUtilsMessengerCreateInfoEXT makeMessengerCreateInfo(
     PFN_vkDebugUtilsMessengerCallbackEXT callback,
     void* userData)
@@ -248,6 +123,195 @@ VkDebugUtilsMessengerCreateInfoEXT makeMessengerCreateInfo(
 
 } // namespace
 
+namespace detail {
+
+std::string describeResult(VkResult result)
+{
+    switch (result) {
+    case VK_SUCCESS:
+        return "success";
+    case VK_INCOMPLETE:
+        return "the result buffer was too small";
+    case VK_SUBOPTIMAL_KHR:
+        return "the swapchain no longer matches the surface exactly";
+    case VK_ERROR_OUT_OF_DATE_KHR:
+        return "the swapchain no longer matches the surface";
+    case VK_ERROR_SURFACE_LOST_KHR:
+        return "the window surface was lost";
+    case VK_ERROR_OUT_OF_HOST_MEMORY:
+        return "the host is out of memory";
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+        return "the device is out of memory";
+    case VK_ERROR_INITIALIZATION_FAILED:
+        return "initialisation failed";
+    case VK_ERROR_LAYER_NOT_PRESENT:
+        return "a requested layer is not installed";
+    case VK_ERROR_EXTENSION_NOT_PRESENT:
+        return "a requested extension is not installed";
+    case VK_ERROR_FEATURE_NOT_PRESENT:
+        return "a requested feature is not supported";
+    case VK_ERROR_DEVICE_LOST:
+        return "the device was lost";
+    case VK_ERROR_INCOMPATIBLE_DRIVER:
+        return "the installed driver is incompatible with the requested API version";
+    default:
+        return std::format("VkResult {}", static_cast<std::int32_t>(result));
+    }
+}
+
+std::expected<DeviceCapabilities, std::string> describeDevice(VkPhysicalDevice handle)
+{
+    DeviceCapabilities capabilities;
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(handle, &properties);
+
+    capabilities.deviceName = properties.deviceName;
+    capabilities.vendorId = properties.vendorID;
+    capabilities.deviceId = properties.deviceID;
+    capabilities.kind = toDeviceKind(properties.deviceType);
+    capabilities.apiVersion = unpackApiVersion(properties.apiVersion);
+    capabilities.driverVersionText =
+        decodeDriverVersion(properties.vendorID, properties.driverVersion);
+
+    capabilities.limits.maxImageDimension2D = properties.limits.maxImageDimension2D;
+    capabilities.limits.maxSamplerAnisotropy = properties.limits.maxSamplerAnisotropy;
+    capabilities.limits.maxViewports = properties.limits.maxViewports;
+    capabilities.limits.bufferImageGranularity = properties.limits.bufferImageGranularity;
+    capabilities.limits.timestampPeriodNanoseconds = properties.limits.timestampPeriod;
+
+    // The 1.2 feature struct may only be chained at a device that supports 1.2. Chaining it
+    // unconditionally is invalid usage the validation layer reports, and a driver that ignores
+    // the unrecognised sType returns a value-initialised struct — making "unsupported"
+    // indistinguishable from "never answered". This matters specifically because the evidence
+    // plan requires exercising sub-floor devices through the profiles layer, which is exactly
+    // when the guard fires.
+    const bool supportsVulkan12 = properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0);
+
+    VkPhysicalDeviceVulkan12Features vulkan12Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+    };
+    VkPhysicalDeviceFeatures2 features2{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = supportsVulkan12 ? &vulkan12Features : nullptr,
+    };
+
+    // vkGetPhysicalDeviceFeatures2 is core in 1.1. Below that, fall back to the 1.0 call.
+    if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
+        vkGetPhysicalDeviceFeatures2(handle, &features2);
+    } else {
+        vkGetPhysicalDeviceFeatures(handle, &features2.features);
+    }
+
+    capabilities.features.samplerAnisotropy = features2.features.samplerAnisotropy == VK_TRUE;
+    capabilities.features.depthClamp = features2.features.depthClamp == VK_TRUE;
+    capabilities.features.fillModeNonSolid = features2.features.fillModeNonSolid == VK_TRUE;
+    capabilities.features.independentBlend = features2.features.independentBlend == VK_TRUE;
+    capabilities.features.timelineSemaphore =
+        supportsVulkan12 && vulkan12Features.timelineSemaphore == VK_TRUE;
+
+    std::vector<VkExtensionProperties> extensionProperties;
+    if (const VkResult result = enumerateInto(
+            extensionProperties,
+            [handle](std::uint32_t* count, VkExtensionProperties* data) {
+                return vkEnumerateDeviceExtensionProperties(handle, nullptr, count, data);
+            });
+        result != VK_SUCCESS) {
+        return std::unexpected(std::format(
+            "Enumerating device extensions for '{}' failed: {}.\n"
+            "  The device cannot be evaluated, and reporting it as lacking an extension would "
+            "blame the hardware for a failed query.",
+            capabilities.deviceName,
+            describeResult(result)));
+    }
+    capabilities.extensions.reserve(extensionProperties.size());
+    for (const VkExtensionProperties& extension : extensionProperties) {
+        capabilities.extensions.emplace_back(extension.extensionName);
+    }
+    // Sorted so that two reports from the same device compare cleanly. The loader's own order
+    // is not guaranteed stable across driver updates.
+    std::ranges::sort(capabilities.extensions);
+
+    std::uint32_t familyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(handle, &familyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> familyProperties(familyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(handle, &familyCount, familyProperties.data());
+    familyProperties.resize(familyCount);
+
+    const auto familyTotal = static_cast<std::uint32_t>(familyProperties.size());
+    capabilities.queueFamilies.reserve(familyTotal);
+    for (std::uint32_t index = 0; index < familyTotal; ++index) {
+        const VkQueueFamilyProperties& family = familyProperties[index];
+        capabilities.queueFamilies.push_back({
+            .index = index,
+            .count = family.queueCount,
+            .graphics = (family.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0,
+            .compute = (family.queueFlags & VK_QUEUE_COMPUTE_BIT) != 0,
+            .transfer = (family.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0,
+            // Asks the driver whether this family could present to *any* Win32 surface. This
+            // needs no window, which is what lets the capability report run headless and be
+            // usable as a diagnostic before the renderer starts. A specific surface is checked
+            // separately at device selection.
+            .presentation =
+                vkGetPhysicalDeviceWin32PresentationSupportKHR(handle, index) == VK_TRUE,
+        });
+    }
+
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+    vkGetPhysicalDeviceMemoryProperties(handle, &memoryProperties);
+    capabilities.memoryHeaps.reserve(memoryProperties.memoryHeapCount);
+    for (std::uint32_t index = 0; index < memoryProperties.memoryHeapCount; ++index) {
+        const VkMemoryHeap& heap = memoryProperties.memoryHeaps[index];
+        capabilities.memoryHeaps.push_back({
+            .index = index,
+            .sizeBytes = heap.size,
+            .deviceLocal = (heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0,
+        });
+    }
+
+    capabilities.formats.reserve(kQueriedFormats.size());
+    for (const QueriedFormat& queried : kQueriedFormats) {
+        VkFormatProperties formatProperties{};
+        vkGetPhysicalDeviceFormatProperties(handle, queried.format, &formatProperties);
+        const VkFormatFeatureFlags optimal = formatProperties.optimalTilingFeatures;
+        capabilities.formats.push_back({
+            .name = queried.name,
+            .optimalTilingDepthStencilAttachment =
+                (optimal & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0,
+            .optimalTilingColorAttachment =
+                (optimal & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0,
+            .optimalTilingSampledImage = (optimal & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0,
+        });
+    }
+
+    return capabilities;
+}
+
+} // namespace detail
+
+bool LoaderInfo::hasValidationLayer() const
+{
+    return std::ranges::find(availableLayers, kValidationLayerName) != availableLayers.end();
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL VulkanInstance::Impl::onValidationMessage(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT /*types*/,
+    const VkDebugUtilsMessengerCallbackDataEXT* data,
+    void* userData)
+{
+    auto* impl = static_cast<Impl*>(userData);
+    if (impl != nullptr && data != nullptr) {
+        impl->validationMessages.push_back(std::format(
+            "[{}] {}: {}",
+            describeSeverity(severity),
+            data->pMessageIdName != nullptr ? data->pMessageIdName : "(unnamed)",
+            data->pMessage != nullptr ? data->pMessage : "(no text)"));
+    }
+    // VK_FALSE: report, do not abort the call that triggered it.
+    return VK_FALSE;
+}
+
 std::expected<VulkanInstance, std::string> VulkanInstance::create(const InstanceConfig& config)
 {
     // volkInitialize is where an absent loader is discovered. Because nothing links
@@ -259,7 +323,7 @@ std::expected<VulkanInstance, std::string> VulkanInstance::create(const Instance
             "graphics driver rather than with Windows.\n"
             "  Install or update the driver from your GPU vendor (NVIDIA, AMD, or Intel) and "
             "run the game again.\n"
-            "  Detail: " + describeResult(result));
+            "  Detail: " + detail::describeResult(result));
     }
 
     auto impl = std::make_unique<Impl>();
@@ -267,7 +331,7 @@ std::expected<VulkanInstance, std::string> VulkanInstance::create(const Instance
     impl->loader.instanceVersion = unpackApiVersion(volkGetInstanceVersion());
 
     std::vector<VkLayerProperties> layerProperties;
-    if (const VkResult result = enumerateInto(
+    if (const VkResult result = detail::enumerateInto(
             layerProperties,
             [](std::uint32_t* count, VkLayerProperties* data) {
                 return vkEnumerateInstanceLayerProperties(count, data);
@@ -276,14 +340,14 @@ std::expected<VulkanInstance, std::string> VulkanInstance::create(const Instance
         return std::unexpected(std::format(
             "Querying the Vulkan loader's layer list failed: {}.\n"
             "  This usually indicates a corrupt driver or SDK installation.",
-            describeResult(result)));
+            detail::describeResult(result)));
     }
     for (const VkLayerProperties& layer : layerProperties) {
         impl->loader.availableLayers.emplace_back(layer.layerName);
     }
 
     std::vector<VkExtensionProperties> extensionProperties;
-    if (const VkResult result = enumerateInto(
+    if (const VkResult result = detail::enumerateInto(
             extensionProperties,
             [](std::uint32_t* count, VkExtensionProperties* data) {
                 return vkEnumerateInstanceExtensionProperties(nullptr, count, data);
@@ -291,7 +355,7 @@ std::expected<VulkanInstance, std::string> VulkanInstance::create(const Instance
         result != VK_SUCCESS) {
         return std::unexpected(std::format(
             "Querying the Vulkan loader's instance extension list failed: {}.",
-            describeResult(result)));
+            detail::describeResult(result)));
     }
     for (const VkExtensionProperties& extension : extensionProperties) {
         impl->loader.availableExtensions.emplace_back(extension.extensionName);
@@ -374,7 +438,7 @@ std::expected<VulkanInstance, std::string> VulkanInstance::create(const Instance
         return std::unexpected(std::format(
             "Creating the Vulkan instance failed: {}.\n"
             "  Requested API {} with {} layer(s) and {} extension(s).",
-            describeResult(result),
+            detail::describeResult(result),
             toString(requested),
             layers.size(),
             extensions.size()));
@@ -389,9 +453,9 @@ std::expected<VulkanInstance, std::string> VulkanInstance::create(const Instance
             return std::unexpected(std::format(
                 "The validation layer loaded but its message callback could not be created: "
                 "{}.\n"
-                "  Continuing would report validation as active while discarding every "
-                "message it produced.",
-                describeResult(result)));
+                "  Continuing would report validation as active while discarding every message "
+                "it produced.",
+                detail::describeResult(result)));
         }
     }
 
@@ -426,7 +490,7 @@ std::expected<std::vector<DeviceCapabilities>, std::string>
 VulkanInstance::enumerateDevices() const
 {
     std::vector<VkPhysicalDevice> handles;
-    if (const VkResult result = enumerateInto(
+    if (const VkResult result = detail::enumerateInto(
             handles,
             [this](std::uint32_t* count, VkPhysicalDevice* data) {
                 return vkEnumeratePhysicalDevices(m_impl->instance, count, data);
@@ -436,138 +500,18 @@ VulkanInstance::enumerateDevices() const
             "Enumerating Vulkan physical devices failed: {}.\n"
             "  A loader is installed and an instance was created, so this is a driver-level "
             "failure rather than an absent GPU.",
-            describeResult(result)));
+            detail::describeResult(result)));
     }
 
     std::vector<DeviceCapabilities> devices;
     devices.reserve(handles.size());
 
     for (VkPhysicalDevice handle : handles) {
-        DeviceCapabilities capabilities;
-
-        VkPhysicalDeviceProperties properties{};
-        vkGetPhysicalDeviceProperties(handle, &properties);
-
-        capabilities.deviceName = properties.deviceName;
-        capabilities.vendorId = properties.vendorID;
-        capabilities.deviceId = properties.deviceID;
-        capabilities.kind = toDeviceKind(properties.deviceType);
-        capabilities.apiVersion = unpackApiVersion(properties.apiVersion);
-        capabilities.driverVersionText =
-            decodeDriverVersion(properties.vendorID, properties.driverVersion);
-
-        capabilities.limits.maxImageDimension2D = properties.limits.maxImageDimension2D;
-        capabilities.limits.maxSamplerAnisotropy = properties.limits.maxSamplerAnisotropy;
-        capabilities.limits.maxViewports = properties.limits.maxViewports;
-        capabilities.limits.bufferImageGranularity = properties.limits.bufferImageGranularity;
-        capabilities.limits.timestampPeriodNanoseconds = properties.limits.timestampPeriod;
-
-        // The 1.2 feature struct may only be chained at a device that supports 1.2. Chaining
-        // it unconditionally is invalid usage the validation layer reports, and a driver that
-        // ignores the unrecognised sType returns a value-initialised struct — making
-        // "unsupported" indistinguishable from "never answered". This matters specifically
-        // because the evidence plan requires exercising sub-floor devices through the
-        // profiles layer, which is exactly when the guard fires.
-        const bool supportsVulkan12 =
-            properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0);
-
-        VkPhysicalDeviceVulkan12Features vulkan12Features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-        };
-        VkPhysicalDeviceFeatures2 features2{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-            .pNext = supportsVulkan12 ? &vulkan12Features : nullptr,
-        };
-
-        // vkGetPhysicalDeviceFeatures2 is core in 1.1. Below that, fall back to the 1.0 call.
-        if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
-            vkGetPhysicalDeviceFeatures2(handle, &features2);
-        } else {
-            vkGetPhysicalDeviceFeatures(handle, &features2.features);
+        auto described = detail::describeDevice(handle);
+        if (!described.has_value()) {
+            return std::unexpected(described.error());
         }
-
-        capabilities.features.samplerAnisotropy = features2.features.samplerAnisotropy == VK_TRUE;
-        capabilities.features.depthClamp = features2.features.depthClamp == VK_TRUE;
-        capabilities.features.fillModeNonSolid = features2.features.fillModeNonSolid == VK_TRUE;
-        capabilities.features.independentBlend = features2.features.independentBlend == VK_TRUE;
-        capabilities.features.timelineSemaphore =
-            supportsVulkan12 && vulkan12Features.timelineSemaphore == VK_TRUE;
-
-        std::vector<VkExtensionProperties> extensionProperties;
-        if (const VkResult result = enumerateInto(
-                extensionProperties,
-                [handle](std::uint32_t* count, VkExtensionProperties* data) {
-                    return vkEnumerateDeviceExtensionProperties(handle, nullptr, count, data);
-                });
-            result != VK_SUCCESS) {
-            return std::unexpected(std::format(
-                "Enumerating device extensions for '{}' failed: {}.\n"
-                "  The device cannot be evaluated, and reporting it as lacking an extension "
-                "would blame the hardware for a failed query.",
-                capabilities.deviceName,
-                describeResult(result)));
-        }
-        capabilities.extensions.reserve(extensionProperties.size());
-        for (const VkExtensionProperties& extension : extensionProperties) {
-            capabilities.extensions.emplace_back(extension.extensionName);
-        }
-        // Sorted so that two reports from the same device compare cleanly. The loader's own
-        // order is not guaranteed stable across driver updates.
-        std::ranges::sort(capabilities.extensions);
-
-        std::uint32_t familyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(handle, &familyCount, nullptr);
-        std::vector<VkQueueFamilyProperties> familyProperties(familyCount);
-        vkGetPhysicalDeviceQueueFamilyProperties(handle, &familyCount, familyProperties.data());
-        familyProperties.resize(familyCount);
-
-        const auto familyTotal = static_cast<std::uint32_t>(familyProperties.size());
-        capabilities.queueFamilies.reserve(familyTotal);
-        for (std::uint32_t index = 0; index < familyTotal; ++index) {
-            const VkQueueFamilyProperties& family = familyProperties[index];
-            capabilities.queueFamilies.push_back({
-                .index = index,
-                .count = family.queueCount,
-                .graphics = (family.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0,
-                .compute = (family.queueFlags & VK_QUEUE_COMPUTE_BIT) != 0,
-                .transfer = (family.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0,
-                // Asks the driver whether this family could present to *any* Win32 surface.
-                // This needs no window, which is what lets the capability report run headless
-                // and be usable as a diagnostic before the renderer starts.
-                .presentation =
-                    vkGetPhysicalDeviceWin32PresentationSupportKHR(handle, index) == VK_TRUE,
-            });
-        }
-
-        VkPhysicalDeviceMemoryProperties memoryProperties{};
-        vkGetPhysicalDeviceMemoryProperties(handle, &memoryProperties);
-        capabilities.memoryHeaps.reserve(memoryProperties.memoryHeapCount);
-        for (std::uint32_t index = 0; index < memoryProperties.memoryHeapCount; ++index) {
-            const VkMemoryHeap& heap = memoryProperties.memoryHeaps[index];
-            capabilities.memoryHeaps.push_back({
-                .index = index,
-                .sizeBytes = heap.size,
-                .deviceLocal = (heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0,
-            });
-        }
-
-        capabilities.formats.reserve(kQueriedFormats.size());
-        for (const QueriedFormat& queried : kQueriedFormats) {
-            VkFormatProperties formatProperties{};
-            vkGetPhysicalDeviceFormatProperties(handle, queried.format, &formatProperties);
-            const VkFormatFeatureFlags optimal = formatProperties.optimalTilingFeatures;
-            capabilities.formats.push_back({
-                .name = queried.name,
-                .optimalTilingDepthStencilAttachment =
-                    (optimal & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0,
-                .optimalTilingColorAttachment =
-                    (optimal & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0,
-                .optimalTilingSampledImage =
-                    (optimal & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0,
-            });
-        }
-
-        devices.push_back(std::move(capabilities));
+        devices.push_back(std::move(*described));
     }
 
     return devices;

@@ -21,9 +21,11 @@ evidence indexed at [`evidence/p1a/`](evidence/p1a/Index.md); the next stage is
 [P1b renderer and craft](SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md).
 
 **P1b increment B1 — the Vulkan renderer — is in progress**, and is the first work written in
-the production tree: `engine/render/` holds `sol::render`, the only module permitted to see
-Vulkan types. It currently enumerates and reports device capabilities and rejects unsupported
-devices with actionable diagnostics; there is no rendering yet.
+the production tree: `engine/platform/` holds `sol::platform` and `engine/render/` holds
+`sol::render`, the only module permitted to see Vulkan types. It enumerates and reports device
+capabilities, rejects unsupported devices with actionable diagnostics, and presents a reference
+scene through a reversed-Z depth buffer spanning half a metre to planetary distance. None of
+P1b's gating thresholds has been measured yet.
 
 Nothing in the repository is a game yet. P1a's executables are **disposable measurement
 prototypes** under `prototypes/p1a/`, deliberately kept out of `engine/` and `game/`; they

@@ -124,6 +124,11 @@ private:
     struct Impl;
     explicit VulkanInstance(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> m_impl;
+
+    /// The renderer needs the underlying instance handle to create a surface and a device.
+    /// Friendship keeps that access inside the module rather than adding a public accessor
+    /// that would either name a Vulkan type or return one disguised as `void*`.
+    friend class Renderer;
 };
 
 } // namespace sol::render

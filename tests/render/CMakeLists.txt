@@ -22,3 +22,12 @@ add_test(NAME render.capability-report COMMAND SolRenderCapabilityReport)
 # would have exercised real Vulkan, and that pass is counted in a suite total quoted as
 # evidence. 77 makes the absence visible in the summary instead.
 set_tests_properties(render.capability-report PROPERTIES SKIP_RETURN_CODE 77)
+
+# Opens a real window and presents real frames. Registered as a test because a renderer that
+# cannot complete a frame is the most useful thing to find out about automatically, but it
+# needs both a display and a loader, so it reports a skip when either is missing.
+add_executable(SolRenderLoop RenderLoopMain.cpp)
+sol_apply_project_options(SolRenderLoop)
+target_link_libraries(SolRenderLoop PRIVATE sol::render sol::platform)
+add_test(NAME render.loop COMMAND SolRenderLoop)
+set_tests_properties(render.loop PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)

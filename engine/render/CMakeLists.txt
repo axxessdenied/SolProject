@@ -9,11 +9,17 @@
 add_library(SolRender STATIC
     include/Sol/Render/CapabilityRequirement.h
     include/Sol/Render/DeviceCapabilities.h
+    include/Sol/Render/Renderer.h
     include/Sol/Render/VulkanInstance.h
+    include/Sol/Render/WorldVec3.h
     src/CapabilityRequirement.cpp
     src/DeviceCapabilities.cpp
+    src/RenderMath.h
+    src/Renderer.cpp
+    src/VmaImplementation.cpp
     src/VolkImplementation.cpp
-    src/VulkanInstance.cpp)
+    src/VulkanInstance.cpp
+    src/VulkanInstanceImpl.h)
 
 add_library(sol::render ALIAS SolRender)
 
@@ -24,16 +30,29 @@ target_include_directories(SolRender
     PRIVATE src)
 
 find_package(volk CONFIG REQUIRED)
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 
 target_link_libraries(SolRender
     PRIVATE
-        volk::volk_headers)
+        volk::volk_headers
+        GPUOpen::VulkanMemoryAllocator)
 
-# vulkan-memory-allocator is declared in vcpkg.json and reviewed in docs/dependencies.md, but
-# is deliberately not linked here. B1 creates no VkDevice yet and therefore allocates nothing,
-# and ADR 0002 says not to select an allocator "until their owning prototype increment
-# demonstrates the need". Linking a library no translation unit includes would assert a
-# demonstration that has not happened. The link edge is added by the increment that allocates.
+# The allocator's link edge is earned here rather than assumed: the renderer now creates a
+# VkDevice, a depth image, and geometry buffers, which is the demonstration ADR 0002 asks for
+# before an allocator may be selected. See docs/dependencies.md.
+#
+# VMA resolves Vulkan entry points through the function pointers it is handed, because nothing
+# in this project links vulkan-1.lib — volk loads them. These are set on the target so every
+# translation unit including the header agrees with the one that defines VMA_IMPLEMENTATION.
+target_compile_definitions(SolRender
+    PRIVATE
+        VMA_STATIC_VULKAN_FUNCTIONS=0
+        VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
+
+sol_add_shaders(SolRender
+    SOURCES
+        shaders/Reference.vert
+        shaders/Reference.frag)
 
 # volk dispatches through function pointers it loads itself, so nothing links vulkan-1.lib.
 # An absent loader then becomes a value this module can inspect and report, rather than a
@@ -46,5 +65,5 @@ target_compile_definitions(SolRender PRIVATE VK_NO_PROTOTYPES VK_USE_PLATFORM_WI
 # policy sol_apply_project_options applies to project-owned code. The relaxation is confined
 # to that one file so the rest of the module keeps warnings-as-errors, and it is stated here
 # rather than inside the source so the exception is visible in the build description.
-set_source_files_properties(src/VolkImplementation.cpp
+set_source_files_properties(src/VolkImplementation.cpp src/VmaImplementation.cpp
     PROPERTIES COMPILE_OPTIONS "/W0")
