@@ -1,14 +1,14 @@
 # Project Status
 
-**Phase:** P1a — Precision and orbit prototypes: **complete**, reviewed and closed on 2026-08-12. P1b is the next stage and is not yet authorized.
+**Phase:** P1b — Renderer and craft prototypes: **authorized and in progress**, scoped to increment B1. P1a is **complete**, reviewed and closed on 2026-08-12 and integrated into `dev` on 2026-08-13.
 
 **Planning gate:** Approved on 2026-08-12
 
-**Implementation authorization:** **Granted on 2026-08-12** by user direction, scoped to the [P1a milestone plan](../SolProjectNotes/Milestones/P1a-Precision-and-Orbit.md). Extended to increment A2, and then to increment A3, on 2026-08-12 by direct user instruction. **That scope is now spent:** P1a is closed, and P1b requires a new and separate authorization.
+**Implementation authorization:** **Granted on 2026-08-13** by user direction, scoped to **increment B1 (Vulkan large-world renderer)** of the [P1b milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md). Increment B2 is **not** authorized and needs its own explicit instruction. The earlier P1a grant is spent and closed.
 
-**Single writer:** Claude. A1 landed as PR #1 from `feature/p1a-precision-and-orbit`; A2 landed as PR #2 from the `dev` working tree. A3 and the milestone-review corrections landed as **PR #3** from `feature/p1a-hybrid-orbit-and-warp`, merged into `dev` on 2026-08-13 as `bf18c33`.
+**Single writer:** Claude, on branch **`feature/p1b-vulkan-renderer`** from base `dev`. Prior P1a history: A1 landed as PR #1 from `feature/p1a-precision-and-orbit`; A2 landed as PR #2 from the `dev` working tree; A3 and the milestone-review corrections landed as PR #3 from `feature/p1a-hybrid-orbit-and-warp`, merged into `dev` on 2026-08-13 as `bf18c33`.
 
-**Implementation:** P1a complete — increments A1 (measurement and build harness), A2 (reference frames and numerical precision), and A3 (hybrid orbit and time warp), all closed against their accepted thresholds with evidence indexed at [`evidence/p1a/Index.md`](../evidence/p1a/Index.md)
+**Implementation:** P1a complete — increments A1 (measurement and build harness), A2 (reference frames and numerical precision), and A3 (hybrid orbit and time warp), all closed against their accepted thresholds with evidence indexed at [`evidence/p1a/Index.md`](../evidence/p1a/Index.md). P1b increment B1 is starting; it is the first code written **in the production tree** rather than under `prototypes/`.
 
 This is the single source of truth for project phase, milestone state, blockers, planning-gate state, and implementation authorization. Design intent belongs in `SolProjectNotes/`; implemented technical truth will belong in `docs/architecture.md`.
 
@@ -35,6 +35,7 @@ This is the single source of truth for project phase, milestone state, blockers,
 - FactoryProject has been consulted for workflow patterns and remains reference-only.
 - Agent contracts and the initial planning-document set are established.
 - P1a increment A1 is building the first CMake project and disposable headless prototype targets under `prototypes/p1a/`. No runtime assets and no dependency declarations exist; P1a is deliberately dependency-free, so `vcpkg.json` remains absent.
+- **The named baseline GPU classes are unavailable.** The only machine is an i7-12650H laptop with an RTX 4060 Laptop GPU and Alder Lake-P Intel UHD Graphics; no GTX 1060, RX 580, UHD 630, or Vega 8 — and no AMD device or driver stack of any kind — is present. The user accepted a documented [reference-hardware evidence plan](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) on 2026-08-13 in place of the hardware. **Baseline-tier support claims are therefore unverified on hardware** until borrowed or remote evidence exists, and no RTX 4060 measurement may be reported as a baseline-class result.
 - P1a increment A2 selected the **hierarchical parent-relative frame graph** over a single global root, on measured evidence recorded in [`docs/architecture.md`](architecture.md) and [`evidence/p1a/A2/Index.md`](../evidence/p1a/A2/Index.md). Both candidates met every accepted threshold; the selection turned on a ~4,500× precision gap for conversions below barycentric magnitude.
 - The pinned ADR 0008 reference fixtures now exist under `fixtures/p1a/` with SHA-256 digests verified at load and full [provenance](../fixtures/p1a/Provenance.md). The UTC/TAI/TT/TDB boundary is driven entirely by the pinned leap-second kernel and agrees with JPL Horizons to the fixtures' printed 0.1 ms.
 - One ULP of a `double` is 0.98 mm at Neptune's distance. A global-root double therefore has no millimetre headroom beyond roughly Jupiter, which is the measured constraint on how far the roadmap can extend before a frame decision would have to be revisited. The selected model is not subject to it.
@@ -55,7 +56,19 @@ Scope granted covered **P1a increments A1, A2, and A3**. The user instructed imp
 
 For A3 the user additionally and explicitly requested the branch `feature/p1a-hybrid-orbit-and-warp` from `dev`. On 2026-08-12 the user instructed the `complete-milestone` review, then directed that its findings be fixed and P1a marked complete; that instruction authorized the review's corrections, which touched the A3 prototype code, the frame library's reference-data loader, ADR 0011's radius clause, and the documentation set.
 
-**This scope is now spent.** Authorization never extended to committing, pushing, merging, tagging, or opening a pull request, and it does not extend to P1b. Each remains a separate explicit request under `AGENTS.md`.
+**That P1a scope is now spent.** It never extended to committing, pushing, merging, tagging, or opening a pull request; each remains a separate explicit request under `AGENTS.md`.
+
+### P1b implementation authorization, 2026-08-13
+
+**Granted by the user on 2026-08-13.** The user authorized P1b and named Claude the single writer. In the same instruction the user set three terms:
+
+- **Scope: increment B1 only** — the Vulkan large-world renderer, under its 6-week time box and its narrow-or-reject trigger. **Increment B2 (constructed craft and resource networks) is not authorized**, matching how P1a was run one increment at a time.
+- **Branch: `feature/p1b-vulkan-renderer` from base `dev`.**
+- **Reference hardware:** the user accepted a documented evidence plan rather than acquiring baseline hardware or amending the baseline classes. That plan is [P1b — Reference Hardware Evidence Plan](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) and it is binding on B1's reporting.
+
+This satisfies every authorization prerequisite in the P1b plan: P1a is complete with its frame model selected and recorded; the gate is Approved and authorization is Granted; the writer, branch, and base are recorded above; and the hardware prerequisite is discharged through the accepted evidence plan. The remaining prerequisite — that each third-party package complete ADR 0007's dependency workflow before its declaration is added — is a per-package gate that applies as B1 proceeds. B1 will be the first increment to need dependencies at all, so `vcpkg.json` will be created under that workflow rather than assumed.
+
+**This authorization does not extend to** increment B2, to committing, pushing, merging, tagging, or opening a pull request, or to any change beyond B1's declared deliverables. Each remains a separate explicit request under `AGENTS.md`.
 
 ### Required before approval
 
@@ -106,7 +119,7 @@ The planning set was reviewed after gate approval and revised with user authoriz
 |---|---|---|
 | P0 — Product and architecture planning | Complete | Planning foundation reviewed, gate approved, and plan revised 2026-08-12; no implementation delivered |
 | P1a — Precision and orbit prototypes | **Complete** — reviewed and closed 2026-08-12; **integrated into `dev`** 2026-08-13 via PR #3; not released | Headless evidence for frame conversion, precision budget, and hybrid propagation under warp |
-| P1b — Renderer and craft prototypes | Blocked on P1a; not authorized | Vulkan surface-to-orbit precision evidence and constructed-craft feasibility |
+| P1b — Renderer and craft prototypes | **In progress** — authorized 2026-08-13, scoped to increment B1; B2 not authorized | Vulkan surface-to-orbit precision evidence and constructed-craft feasibility |
 | P2 — First-playable production | Not started | Design-build-fly-explore-research-company loop |
 | P3 — Orbital company | Not started | Persistent operations, stations, people, maintenance, logistics, and manufacturing |
 | P4 — Solar economy | Not started | Mining, markets, corporations, nations, and strategic command |
@@ -122,7 +135,14 @@ P0 has no remaining planning blockers, and P1a's authorization prerequisites are
 
 The review re-ran both configurations from the checked-in presets — **20/20 tests passing in each** — and re-derived the reported measurements from fresh output rather than reading them from the evidence documents. Three of the four A3 scenarios reproduced byte-identically; the fourth differed only in its timing fields. It raised eight findings, **all resolved before closure and none invalidating a threshold result or reversing a selection**. Three changed code, and A2's and A3's raw evidence was regenerated; no physical number moved in either increment.
 
-**P1b is not authorized.** P1a's authorization scope is spent, and P1b needs a new and explicit grant naming its own single writer and branch. P1b also needs the reference-hardware evidence plan, which P1a did not require. Product and architecture questions belonging to later milestones remain tracked in [Open Questions](../SolProjectNotes/Open-Questions.md); they do not authorize implementation-time guessing.
+**P1b increment B1 is authorized and has no blockers.** Its prerequisites are recorded in the [P1b authorization section](#p1b-implementation-authorization-2026-08-13) above. Product and architecture questions belonging to later milestones remain tracked in [Open Questions](../SolProjectNotes/Open-Questions.md); they do not authorize implementation-time guessing.
+
+**B1 carries two known limitations from the start, neither of which blocks it:**
+
+- **No baseline-class or AMD hardware evidence is obtainable.** The accepted [evidence plan](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) keeps every gating threshold in force — jitter, depth, LOD continuity, and validation output are properties of the implementation, not of GPU throughput — but the capability-reporting gate needs a negative control and synthetic baseline profiles to be testable at all, since both present GPUs exceed the Vulkan 1.2 floor. ADR 0002 may close on precision, capability, tooling, and the documented Direct3D 12 analysis; it may not close on any clause asserting AMD driver behavior.
+- **The frame-time rows are laptop measurements.** Dynamic Boost, variable TGP, thermal limits, and hybrid adapter selection mean the RTX 4060 result is not a fixed-hardware quantity. Frame time was already non-gating in P1b by user decision, so this affects the quality of the M2 baseline rather than any P1b verdict.
+
+**Increment B2 is not authorized.** It needs its own explicit instruction. B2 also inherits an open question the evidence plan deliberately did not pre-decide: its 4 ms and 1 ms gates are specified against i5-8400 / Ryzen 5 2600 CPU classes, and the available i7-12650H is materially faster, so the same no-substitution rule applies on the CPU side.
 
 **P1a is integrated, not released.** These are different states and the distinction is deliberate. A3 and the review corrections were committed as `d314dad` and `1e8f6ea`, opened as PR #3, and merged into `dev` on 2026-08-13 as `bf18c33`; a clean rebuild of `dev` passes 20/20 in both configurations. Nothing is tagged, nothing is on `main`, and no release exists. Tagging and any promotion to `main` remain separate explicit user requests under `AGENTS.md`.
 

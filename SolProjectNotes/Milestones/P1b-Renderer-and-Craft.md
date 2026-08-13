@@ -1,8 +1,8 @@
 # P1b — Renderer and Craft Prototypes
 
-**Status:** Planned; not authorized to implement
+**Status:** **Increment B1 authorized to implement** on 2026-08-13. Increment B2 remains planned and not authorized. Authorization state is owned by [`docs/project_status.md`](../../docs/project_status.md); this line reflects it and does not grant it.
 
-**Outcome owner:** Unassigned until implementation is authorized. One Codex or Claude feature owner must hold the branch/worktree and remain the only writer.
+**Outcome owner:** **Claude**, sole writer, on branch `feature/p1b-vulkan-renderer` from base `dev`.
 
 **Planning source:** User approval on 2026-08-12; scope split and revision approved 2026-08-12
 
@@ -40,6 +40,8 @@ Implementation of P1b remains forbidden until all of the following are true:
 - the single writer, branch, and base are recorded;
 - required baseline GPU hardware is available, or the user accepts a documented evidence plan for unavailable devices;
 - each third-party package has an accepted need and completes ADR 0007's dependency workflow before its declaration is added.
+
+For increment B1 these are satisfied as of 2026-08-13. The hardware prerequisite is discharged by the second branch, not the first: none of the four named device classes is present, and the user accepted the [P1b Reference Hardware Evidence Plan](P1b-Reference-Hardware-Evidence-Plan.md), which is binding on B1's measurement and reporting. The dependency prerequisite is a per-package gate that applies as B1 proceeds.
 
 ## Boundaries
 
@@ -81,6 +83,8 @@ Implementation of P1b remains forbidden until all of the following are true:
 | Resource networks | At 300 parts, p95 fluid/electrical solve no greater than 1 ms in the representative network mutation scenario | Yes |
 | Discrete frame time | Recorded at 1920×1080 low/medium on GTX 1060 6 GB and RX 580 8 GB classes | **No — recorded as data; gated at M2** |
 | Integrated frame time | Recorded at 1280×720 low on UHD 630 and Vega 8 classes where accessible | **No — recorded as data; investigation tier** |
+
+None of the four device classes in the last two rows is available. See the [Reference Hardware Evidence Plan](P1b-Reference-Hardware-Evidence-Plan.md) for what is measured instead, why the gating rows above still gate, and why the capability-reporting row needs a negative control to be testable at all.
 
 Peak process memory, committed GPU memory, allocation counts, and upload volume are mandatory measurements. Production memory caps are deferred until representative assets exist.
 
@@ -219,5 +223,8 @@ Each increment closure records:
 | 300-part 4 ms physics and 1 ms resource-network gates | Confirmed | User approved recommendation |
 | Integrated tier remains an investigation target through M2 | Confirmed | User approved 2026-08-12 |
 | Per-increment time boxes with narrow-or-reject triggers | Confirmed | User approved 2026-08-12 |
+| Increment B1 authorized; Claude sole writer on `feature/p1b-vulkan-renderer` from `dev` | Confirmed | User authorized 2026-08-13, scoped to B1 only |
+| Baseline GPU hardware replaced by a documented evidence plan | Confirmed | User accepted 2026-08-13; no named device class is available. See [the plan](P1b-Reference-Hardware-Evidence-Plan.md) |
+| Increment B2 authorization | Open | Requires its own explicit user instruction after B1's evidence |
 | Vulkan 1.2 candidate floor with queried optional capabilities | Confirmed for P1 | ADR 0002 |
 | Exact production libraries | Open by owning increment | Must follow evidence and ADR 0007 |
