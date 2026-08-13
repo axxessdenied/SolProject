@@ -1,8 +1,10 @@
 # ADR 0011 — Gravity and orbit baseline
 
-**Status:** Accepted
+**Status:** Accepted, amended 2026-08-12
 
 **Date:** 2026-08-12
+
+**Amendment, 2026-08-12 (P1a milestone review):** one clause below described sphere-of-influence radii as "recorded as fixtures". They are computed at load from the already-pinned ADR 0008 data instead, which the P1a review found and this ADR now states. The model itself is unchanged and remains **confirmed from measurement**.
 
 ## Context
 
@@ -16,7 +18,7 @@ Use **patched conics with spheres of influence** as the authoritative orbital mo
 
 - Exactly one body exerts gravity on an object at any instant: the body whose sphere of influence currently contains it.
 - Analytical coast is Kepler propagation of a conic section about that body.
-- Sphere-of-influence radii use the Laplace formulation, `r = a·(m/M)^(2/5)`, computed from the ADR 0008 reference data and recorded as fixtures.
+- Sphere-of-influence radii use the Laplace formulation, `r = a·(m/M)^(2/5)`, computed at load from the pinned ADR 0008 reference data. They are **derived, not stored**: the semi-major axis comes from the checksummed Horizons tables and the mass ratio from `gm_de440.tpc`, so the radii inherit those fixtures' provenance and cannot drift out of agreement with them. Recording them as separate fixtures would create a second copy with its own provenance that could disagree with the data it came from.
 - Sphere-of-influence crossings are discrete, scheduled events with explicit state ownership on each side of the boundary.
 - **No perturbations enter the orbital propagation.** No J2 oblateness, no third-body effects, no solar radiation pressure, and no atmospheric drag above the local-physics regime.
 - Orbits do not decay. A 200 km circular orbit is stable indefinitely in campaign time.
@@ -51,7 +53,7 @@ The boundary is: below the atmospheric limit, an active craft is integrated nume
 | Validation item | Result |
 |---|---|
 | Increment A3 measures the numerical integrator against the Kepler analytic reference over one 200 km orbit period and meets the accepted 100 m gate. | **Met.** 44.6 m at a 64 s RK4 step; 0.5 mm at 4 s. The eccentric 200 × 2000 km case gives the same ordering. |
-| Sphere-of-influence radii are computed from pinned ADR 0008 reference data. | **Met.** Earth 9.2918 × 10⁸ m, Moon 6.6195 × 10⁷ m, derived from `gm_de440.tpc` and the checksummed Horizons tables rather than copied from a published figure. They are computed at load from the existing fixtures rather than checked in as new ones, so no fixture with separate provenance was added. |
+| Sphere-of-influence radii are computed from pinned ADR 0008 reference data. | **Met.** Earth 9.2918 × 10⁸ m, Moon 6.6195 × 10⁷ m, derived from `gm_de440.tpc` and the checksummed Horizons tables rather than copied from a published figure. They are computed at load rather than checked in as new fixtures; the decision clause above was amended to say so, since it had described the opposite. |
 | Sphere-of-influence crossings preserve state within the 1 m and 1 mm/s handoff tolerance and are ordered deterministically under time warp per ADR 0010. | **Met.** Worst discontinuity 4.0 µm at Earth's boundary and 15 nm at the Moon's. Crossing instants are identical to the nanosecond across warp granularities from 1 s to 10 000 s — for trajectories that cross the boundary decisively. See the exception below. |
 | A scenario confirms that a 200 km circular orbit shows no secular altitude change over an extended warped coast, since decay is not modelled. | **Met.** Over 100 days of warped coast the semi-major axis moves −5.8 µm, periapsis −13.2 µm, apoapsis +1.7 µm. That is arithmetic, not decay. |
 

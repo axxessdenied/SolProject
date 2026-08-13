@@ -71,14 +71,16 @@ BodySystem BodySystem::fromReferenceData(const ReferenceData& data)
 
     const frames::Ellipsoid& earthEllipsoid = data.earthEllipsoid();
 
+    // Surface radii from the pinned planetary-constants kernel, which carries BODY10_RADII and
+    // BODY301_RADII alongside Earth's. An earlier revision left the Sun's and the Moon's at zero
+    // on the belief the kernel did not supply them; it does. Zero was not a neutral placeholder
+    // either -- the below-surface eligibility rejection is guarded on a positive radius, so a
+    // zero silently disabled it, and a lunar coast could pass through the Moon unremarked.
     GravitationalBody sun;
     sun.naifId = kNaifSun;
     sun.name = "Sun";
     sun.gravitationalParameter = muSun;
-    // The kernel pinned for A2 carries BODY399 radii; it does not carry the Sun's. A3 never
-    // needs a solar surface -- nothing in this increment flies near it -- so the radius is left
-    // at zero rather than filled with a plausible literal that no fixture supports.
-    sun.meanRadiusMetres = 0.0;
+    sun.surfaceRadiusMetres = data.equatorialRadiusMetres(kNaifSun);
     sun.sphereOfInfluenceRadiusMetres = std::numeric_limits<double>::infinity();
     sun.atmosphereLimitRadiusMetres = 0.0;
 
@@ -86,20 +88,18 @@ BodySystem BodySystem::fromReferenceData(const ReferenceData& data)
     earth.naifId = kNaifEarth;
     earth.name = "Earth";
     earth.gravitationalParameter = muEarth;
-    earth.meanRadiusMetres = earthEllipsoid.equatorialRadiusMetres();
+    earth.surfaceRadiusMetres = earthEllipsoid.equatorialRadiusMetres();
     earth.sphereOfInfluenceRadiusMetres =
         barycentreElements.semiMajorAxis
         * std::pow((muEarth + muMoon) / muSun, 0.4);
     earth.atmosphereLimitRadiusMetres =
-        earth.meanRadiusMetres + kEarthAtmosphereLimitAltitudeMetres;
+        earth.surfaceRadiusMetres + kEarthAtmosphereLimitAltitudeMetres;
 
     GravitationalBody moon;
     moon.naifId = kNaifMoon;
     moon.name = "Moon";
     moon.gravitationalParameter = muMoon;
-    // Also absent from the pinned kernels used here. The Moon appears in A3 only as the owner
-    // of a sphere of influence to cross, never as a surface to reach.
-    moon.meanRadiusMetres = 0.0;
+    moon.surfaceRadiusMetres = data.equatorialRadiusMetres(kNaifMoon);
     moon.sphereOfInfluenceRadiusMetres =
         moonElements.semiMajorAxis * std::pow(muMoon / muEarth, 0.4);
     // Airless. Zero here is a physical statement, not a missing value: the eligibility rules

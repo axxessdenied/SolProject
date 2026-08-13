@@ -20,5 +20,5 @@ Allowed status values are **Proposed**, **Accepted**, **Superseded**, and **Reje
 | [0008](0008-astronomical-reference-data-and-time-boundary.md) | Accepted, amended 2026-08-12 | DE440/DE441 reference data, UTC/TDB boundary, and a fixed P1 launch anchor defined against the reference ellipsoid |
 | [0009](0009-persistence-artifacts-and-migration-window.md) | Accepted | JSON-facing artifacts, chunked campaign saves, and migration window |
 | [0010](0010-determinism-and-floating-point.md) | Accepted | Same-machine bit-exact determinism; `/fp:precise` and `/arch:AVX2` |
-| [0011](0011-gravity-and-orbit-baseline.md) | Accepted | Patched conics with spheres of influence; no perturbations or decay |
+| [0011](0011-gravity-and-orbit-baseline.md) | Accepted, amended 2026-08-12 | Patched conics with spheres of influence; no perturbations or decay. Confirmed from P1a evidence; the sphere-of-influence radius clause corrected to state that radii are derived at load rather than stored as fixtures |
 | [0012](0012-asset-pipeline.md) | Accepted | Blender authoring, glTF 2.0, procedural geometry, build-time bake |

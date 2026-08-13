@@ -17,9 +17,17 @@ namespace sol::proto::orbit {
 /// and if the clock accumulated in doubles those two would not reach the same instant. The
 /// comparison would then be measuring the clock rather than the propagation.
 ///
-/// Conversion to seconds is exact for every interval A3 uses. A double holds every integer up
-/// to 2^53, which is about 104 days of nanoseconds, and the longest span this increment
-/// propagates is measured in days.
+/// Conversion to seconds is exact for every interval A3 uses, and **only** for those. A double
+/// holds every integer up to 2^53, which is 104.25 days of nanoseconds; A3's longest span is the
+/// 100-day no-decay coast, at 96% of that window. OrbitSelfCheck pins the boundary directly.
+///
+/// This is a real constraint on anything longer, and a campaign is measured in years. Past the
+/// window the integer instants stay distinct and the clock loses no time -- what degrades is
+/// seconds(), which can no longer resolve individual nanoseconds. Determinism is unaffected,
+/// because the same integer always converts to the same double; exactness of representation is
+/// not. A production clock will need either a coarser tick, a split representation, or elapsed
+/// times taken relative to a moving anchor rather than the campaign epoch. Recorded in A3's
+/// evidence as a limitation for P2 rather than left here to be discovered.
 class CampaignDuration {
 public:
     constexpr CampaignDuration() noexcept = default;

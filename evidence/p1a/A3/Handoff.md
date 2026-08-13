@@ -49,15 +49,31 @@ Modified: `prototypes/p1a/CMakeLists.txt`, `docs/project_status.md`, `docs/archi
 `docs/changelog.md`, `docs/decisions/0011-gravity-and-orbit-baseline.md`,
 `SolProjectNotes/Open-Questions.md`.
 
+Modified during the P1a milestone review: `README.md`, `docs/decisions/README.md`,
+`prototypes/p1a/Frames/{include/Sol/Proto/Frames/ReferenceData.h,src/ReferenceData.cpp}`, and
+A3's own `Integrator`, `TwoBody`, `BodySystem`, `HybridPropagator`, `CampaignClock`,
+`OrbitSelfCheck`, and `ReferenceOrbit`. Added: `evidence/p1a/Index.md`.
+
 Deleted: none.
 
-**A2's `prototypes/p1a/Frames/` is untouched.** That is deliberate. A3 replaces A2's linear
+**A2's origin-motion model is untouched.** That is deliberate. A3 replaces A2's linear
 origin-motion model, but it does so by adding `ConicEphemeris` in the orbit library rather than by
 editing `frames::buildSnapshot`. Editing it would have changed the numbers A2's committed
 evidence reports, and the replacement is more useful as a measured comparison than as a silent
 substitution: `OrbitSelfCheck` asserts that the A3 snapshot leaves A2's launch-site boundary
 bit-identical while changing Earth's origin, so any A2-to-A3 difference is attributable to origin
 motion alone.
+
+**One additive change to `Frames/` was made during the P1a milestone review**, and it is recorded
+here rather than folded in silently. `ReferenceData` now also parses `BODY10_RADII` and
+`BODY301_RADII` from the already-pinned planetary-constants kernel and exposes
+`equatorialRadiusMetres(naifId)`, because `BodySystem` had been leaving the Sun's and the Moon's
+surface radii at zero on the mistaken belief the kernel did not carry them — which silently
+disabled the below-surface eligibility rejection for both bodies. No conversion, transform, or
+frame boundary was altered. A2's scenarios were re-run to confirm it: `FrameRoundTrip`,
+`AscentSampling`, and `PrecisionBudget` are byte-identical, and `ReferenceFixtures` differs only
+by **+6 allocations and +168 bytes** from the three extra kernel lookups at load. No A2 physical
+number moved.
 
 **Dependency changes: none.** P1a remains dependency-free and no `vcpkg.json` exists, so ADR
 0007's workflow was not triggered. A3 adds no fixtures either; it uses A2's pinned ADR 0008 data
@@ -105,7 +121,7 @@ Twelve tests from A1 and A2, plus eight added by A3: `OrbitSelfCheck`, `Referenc
 `HybridHandoff`, `SoiCrossing`, `WarpEquivalence`, and the three cross-run determinism goldens
 `HybridHandoffAcrossRuns`, `SoiCrossingAcrossRuns`, and `WarpEquivalenceAcrossRuns`.
 
-`OrbitSelfCheck` alone runs 118 checks; `SoiCrossing` runs 153. The A1 caveat still applies: do
+`OrbitSelfCheck` alone runs 122 checks; `SoiCrossing` runs 153. The A1 caveat still applies: do
 **not** run `ctest --preset windows-msvc-release-negcontrol-contract`, which fails
 `ToolchainReport` by design.
 
@@ -172,6 +188,16 @@ the unaligned-tick case added, which turned a wrong warning into a usable constr
   6.6 km at the Moon. It is defensible because the Laplace radius is a switching convention
   rather than a physical surface, but it has not been tuned against gameplay, only against
   chattering.
+- **The campaign clock's seconds conversion is exact only to 2^53 ns = 104.25 days.** The clock
+  accumulates as an exact integer without bound, but `seconds()` converts through a double, which
+  stops resolving individual nanoseconds past that point. A3's longest run — the 100-day no-decay
+  coast — sits at 96% of the window, so every number in this increment is exact. A campaign is
+  measured in years and will not be. Determinism is unaffected either side of the boundary, since
+  the same integer always converts to the same double; what degrades is exactness of
+  representation. A production clock needs a coarser tick, a split representation, or elapsed
+  times taken against a moving anchor rather than the campaign epoch. Added by the P1a milestone
+  review, which found this recorded only in `CampaignClock.h`; `OrbitSelfCheck` now pins the
+  boundary with four checks.
 - **Single-machine evidence.** One i7-12650H. ADR 0010 promises only same-machine bit-exactness,
   so this is in scope, but A3 now pins three cross-run goldens that will need tolerance-based
   equivalents the first time this runs on other hardware — the same debt A2 recorded, now larger.
@@ -196,14 +222,19 @@ not apply.
 
 ## Smallest next action
 
-**P1a's exit criteria are now satisfiable.** A1, A2, and A3 are complete, every accepted threshold
-has a reproducible result, ADR 0011 is confirmed from evidence, and one index links each
-increment's raw results, scenario definitions, toolchain metadata, and conclusions. The next
-action is the `complete-milestone` review, which the P1a plan requires before project status may
-mark P1a complete. **That review has not been run, and A3's evidence has not been reviewed by the
-user.**
+**P1a's exit criteria are met and the milestone is closed.** A1, A2, and A3 are complete, every
+accepted threshold has a reproducible result, ADR 0011 is confirmed from evidence, and
+[`evidence/p1a/Index.md`](../Index.md) links each increment's raw results, scenario definitions,
+toolchain metadata, accepted failures, and conclusions.
 
-P1b is blocked on that review and is **not** authorized.
+The `complete-milestone` review ran on 2026-08-12. It re-ran both configurations (20/20 in each),
+re-derived the reported numbers from fresh output, and raised eight findings — four against this
+increment, all resolved before closure, none invalidating a threshold or reversing a selection.
+The review record is in the milestone index.
+
+P1a is **implementation-complete and reviewed**, not integrated into `dev` and not released. The
+smallest next action is a user decision on Git: this branch has never been committed. P1b remains
+**not** authorized and needs an explicit authorization of its own.
 
 Four questions are handed to P2/M5 rather than answered here, and each is recorded in
 [Open Questions](../../../SolProjectNotes/Open-Questions.md):

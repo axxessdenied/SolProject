@@ -288,6 +288,18 @@ ReferenceData ReferenceData::loadFromDirectory(const std::filesystem::path& fixt
     data.m_earthEllipsoid =
         Ellipsoid::fromRadiiKilometres("IAU Earth (pck00011 BODY399_RADII)", radii[0], radii[2]);
 
+    // Equatorial radii for the bodies that need a surface but not a full ellipsoid.
+    //
+    // The kernel carries BODY10_RADII and BODY301_RADII alongside Earth's; the Sun and the Moon
+    // are both spherical there, so the equatorial radius is the radius. Read rather than left at
+    // zero, because a zero surface radius silently disables the below-surface eligibility
+    // rejection for the body it belongs to.
+    for (const int naifId : {10, 301, 399}) {
+        const std::vector<double> bodyRadii =
+            planetaryConstants.numbers("BODY" + std::to_string(naifId) + "_RADII", 3);
+        data.m_equatorialRadii.emplace_back(naifId, bodyRadii[0] * 1.0e3);
+    }
+
     const std::vector<double> poleRa = planetaryConstants.numbers("BODY399_POLE_RA", 3);
     const std::vector<double> poleDec = planetaryConstants.numbers("BODY399_POLE_DEC", 3);
     const std::vector<double> primeMeridian = planetaryConstants.numbers("BODY399_PM", 3);
@@ -332,6 +344,17 @@ double ReferenceData::gravitationalParameter(int naifId) const
         [naifId](const std::pair<int, double>& entry) { return entry.first == naifId; });
     if (found == m_gravitationalParameters.end()) {
         throw std::runtime_error("ReferenceData: no GM for NAIF id " + std::to_string(naifId));
+    }
+    return found->second;
+}
+
+double ReferenceData::equatorialRadiusMetres(int naifId) const
+{
+    const auto found = std::find_if(
+        m_equatorialRadii.begin(), m_equatorialRadii.end(),
+        [naifId](const std::pair<int, double>& entry) { return entry.first == naifId; });
+    if (found == m_equatorialRadii.end()) {
+        throw std::runtime_error("ReferenceData: no radii for NAIF id " + std::to_string(naifId));
     }
     return found->second;
 }

@@ -176,12 +176,21 @@ struct IntegratorResults {
     std::vector<StepResult> steps;
     /// The largest step size that still meets the gate, or zero when none does.
     double largestPassingStepSeconds{0.0};
-    /// Acceleration evaluations one orbit costs at that step.
+    /// Acceleration evaluations one orbit costs at that step, as this prototype performs them.
     ///
     /// The honest cost comparison. Comparing candidates at a common step size credits the
     /// cheap-per-step ones for accuracy they do not have; comparing them at the step each one
     /// actually needs to pass the gate is the question a budget has to answer.
     std::uint64_t accelerationEvaluationsAtLargestPassingStep{0};
+    /// The same count with each integrator's inherent per-step cost rather than this
+    /// implementation's.
+    ///
+    /// This is the figure that compares *integrators*, and it differs only for velocity Verlet,
+    /// whose end-of-step acceleration a stateful loop would carry into the next step. A3's
+    /// stateless integrateStep cannot, so quoting the implementation's count as the method's
+    /// would overstate velocity Verlet by exactly 2x. Both are reported; the relative-cost
+    /// conclusion is drawn from this one.
+    std::uint64_t minimumAccelerationEvaluationsAtLargestPassingStep{0};
 };
 
 /// Energy behaviour over a long run: the property the one-orbit gate cannot see.
@@ -212,7 +221,7 @@ int main(int argc, char** argv)
 
         const GravitationalBody& earth = system.body(kNaifEarth);
         const double mu = earth.gravitationalParameter;
-        const double earthRadius = earth.meanRadiusMetres;
+        const double earthRadius = earth.surfaceRadiusMetres;
 
         HybridPropagator::Settings baseSettings;
         baseSettings.campaignEpochTdb =
@@ -311,6 +320,10 @@ int main(int argc, char** argv)
                         results.largestPassingStepSeconds = stepSeconds;
                         results.accelerationEvaluationsAtLargestPassingStep =
                             stepResult.accelerationEvaluations;
+                        results.minimumAccelerationEvaluationsAtLargestPassingStep =
+                            stepResult.integratorSteps
+                            * static_cast<std::uint64_t>(
+                                minimumAccelerationEvaluationsPerStep(kind));
                     }
                     results.steps.push_back(stepResult);
                 }
@@ -468,9 +481,14 @@ int main(int argc, char** argv)
                     writer.write("accelerationEvaluationsPerStep",
                                  static_cast<std::int64_t>(
                                      accelerationEvaluationsPerStep(results.kind)));
+                    writer.write("minimumAccelerationEvaluationsPerStep",
+                                 static_cast<std::int64_t>(
+                                     minimumAccelerationEvaluationsPerStep(results.kind)));
                     writer.write("largestPassingStepSeconds", results.largestPassingStepSeconds);
                     writer.write("accelerationEvaluationsAtLargestPassingStep",
                                  results.accelerationEvaluationsAtLargestPassingStep);
+                    writer.write("minimumAccelerationEvaluationsAtLargestPassingStep",
+                                 results.minimumAccelerationEvaluationsAtLargestPassingStep);
 
                     writer.beginArray("steps");
                     for (const StepResult& step : results.steps) {
@@ -527,10 +545,19 @@ int main(int argc, char** argv)
 
             writer.beginObject("howToReadThis");
             writer.write("costComparison",
-                         "Compare integrators by accelerationEvaluationsAtLargestPassingStep, "
-                         "not by error at a common step size. Each candidate needs a different "
-                         "step to clear the same gate, and the cost that matters is the cost of "
-                         "clearing it.");
+                         "Compare integrators by "
+                         "minimumAccelerationEvaluationsAtLargestPassingStep, not by error at a "
+                         "common step size. Each candidate needs a different step to clear the "
+                         "same gate, and the cost that matters is the cost of clearing it.");
+            writer.write("whyTwoEvaluationCountsAreReported",
+                         "accelerationEvaluations* counts what this prototype performed; "
+                         "minimumAccelerationEvaluations* counts what the integrator inherently "
+                         "requires. They differ only for velocity Verlet, whose end-of-step "
+                         "acceleration is evaluated at the next step's start position and would "
+                         "be carried forward by a stateful loop. A3's integrateStep is "
+                         "stateless and cannot, so the implementation count overstates velocity "
+                         "Verlet by exactly 2x. The conclusion is drawn from the minimum, which "
+                         "is the property of the method rather than of this code.");
             writer.write("whyTheSymplecticPropertyDoesNotDecideThis",
                          "The long run shows RK4's energy error is secular and the symplectic "
                          "candidates' is bounded, which is the classical reason to prefer a "

@@ -156,7 +156,7 @@ int main(int argc, char** argv)
         const ConicEphemeris ephemeris = ConicEphemeris::fromReferenceData(data, system);
 
         const GravitationalBody& earth = system.body(kNaifEarth);
-        const double earthRadius = earth.meanRadiusMetres;
+        const double earthRadius = earth.surfaceRadiusMetres;
         const double earthSoi = earth.sphereOfInfluenceRadiusMetres;
         const double moonSoi = system.body(kNaifMoon).sphereOfInfluenceRadiusMetres;
 

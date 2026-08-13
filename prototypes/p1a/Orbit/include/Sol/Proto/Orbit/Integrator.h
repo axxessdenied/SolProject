@@ -59,7 +59,24 @@ inline constexpr std::array<IntegratorKind, 3> kIntegratorCandidates{
 /// VelocityVerlet is reported as 2 because that is what this implementation performs. A
 /// production loop would carry the end-of-step acceleration into the next step and pay 1,
 /// which is a real factor-of-two the evidence must not claim by asserting it here.
+///
+/// Use this to count the work a run actually did. Use
+/// minimumAccelerationEvaluationsPerStep to compare the *integrators*.
 [[nodiscard]] int accelerationEvaluationsPerStep(IntegratorKind kind) noexcept;
+
+/// Acceleration evaluations a step inherently requires, independent of this implementation.
+///
+/// The difference from accelerationEvaluationsPerStep is entirely VelocityVerlet's, and it is
+/// not a rounding detail: its end-of-step acceleration is evaluated at exactly the position the
+/// next step begins at, so a stateful loop reuses it and pays 1 rather than 2. Yoshida4's three
+/// kicks are at three distinct positions and RK4's four stages at four, so neither reuses
+/// anything and both are unchanged.
+///
+/// A3's stateless integrateStep API cannot perform that reuse, which is a property of the
+/// prototype rather than of the method. Quoting the implementation's count as the integrator's
+/// cost would overstate VelocityVerlet by exactly 2x, so the equal-cost comparison in
+/// ReferenceOrbit is computed from this function and reports the other alongside it.
+[[nodiscard]] int minimumAccelerationEvaluationsPerStep(IntegratorKind kind) noexcept;
 
 /// Advances @p state by exactly @p stepSeconds under ADR 0011 two-body gravity.
 ///

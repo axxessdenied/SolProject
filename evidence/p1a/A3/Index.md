@@ -8,6 +8,16 @@
 three were defects in A3's own code or claims, found and fixed before the numbers were treated as
 evidence. **No open decision requires a user ruling.**
 
+> **Addendum, 2026-08-12 — P1a milestone review.** The `complete-milestone` review re-ran both
+> configurations and re-derived every number below from fresh output; all reproduced. It raised
+> four findings against this increment, corrected here rather than left standing: the velocity
+> Verlet cost figure was **16×, not 32×** (see [Integrator cost](#why-the-symplectic-property-does-not-decide-this));
+> `rebaseTo` now performs the post-rebase eligibility re-check itself; the Sun and Moon now carry
+> real surface radii from the pinned kernel; and the campaign clock's 104-day exactness window is
+> recorded as a limitation. **No physical result changed** — `HybridHandoff`, `SoiCrossing`, and
+> `WarpEquivalence` are byte-identical before and after. `OrbitSelfCheck` grew from 118 to 122
+> checks. The milestone-level record is [`evidence/p1a/Index.md`](../Index.md).
+
 Raw measurement output lives in `raw/`, which `.gitignore` excludes. It is reproducible from the
 commands in [Handoff.md](Handoff.md); this index and the handoff are the durable record.
 
@@ -101,11 +111,23 @@ Position error after one orbit, in metres:
 Cost of clearing the 100 m gate, in acceleration evaluations per orbit — the honest comparison,
 since each candidate needs a different step to clear the same bar:
 
-| Integrator | Largest passing step | Evaluations per orbit | Relative cost |
-|---|---|---|---|
-| **RK4** | 64 s | **332** | 1.0× |
-| Yoshida 4 (symplectic) | 16 s | 996 | 3.0× |
-| Velocity Verlet (symplectic) | 1 s | 10 620 | 32× |
+| Integrator | Largest passing step | Evaluations per orbit | Relative cost | As this prototype runs it |
+|---|---|---|---|---|
+| **RK4** | 64 s | **332** | 1.0× | 332 |
+| Yoshida 4 (symplectic) | 16 s | 996 | 3.0× | 996 |
+| Velocity Verlet (symplectic) | 1 s | 5 310 | 16× | 10 620 |
+
+The last column is the count A3's `integrateStep` actually performs, and it differs for velocity
+Verlet alone. Its end-of-step acceleration is evaluated at exactly the position the next step
+begins at, so a stateful loop carries it forward and pays one evaluation per step; A3's stateless
+API cannot, and pays two. Yoshida's three kicks are at three distinct positions and RK4's four
+stages at four, so neither reuses anything.
+
+**The comparison uses the method's cost, not this implementation's**, because the question is
+which integrator to select rather than how this prototype was written. An earlier revision of
+this index quoted 10 620 and called velocity Verlet 32× — an overstatement by exactly two, found
+by the P1a milestone review. `ReferenceOrbit` now reports both counts so the distinction cannot
+be lost again. **The selection is unaffected:** 16× is still five times Yoshida's 3.0×.
 
 The eccentric 200 × 2000 km case gives the same ordering and the same passing steps, so the
 result is not an artefact of the circular case being easy.
@@ -135,7 +157,7 @@ The second is magnitude: RK4's fifty-orbit semi-major axis drift is 136 micromet
 linearly, a full year of continuous integration would move it under two centimetres.
 
 **Recommendation: RK4 for the local numerical regime**, at three times less cost than the nearest
-symplectic candidate that clears the same gate. What would reopen it is any decision that puts a
+symplectic candidate that clears the same gate, and sixteen times less than the other. What would reopen it is any decision that puts a
 craft on the numerical integrator for a long continuous span — low-thrust transfers held under
 power for days, or an atmosphere limit raised until the reference orbit falls inside it.
 
@@ -355,7 +377,7 @@ one.
 
 ## Validation performed
 
-`OrbitSelfCheck` runs **118 checks** in both configurations before any measurement is trusted,
+`OrbitSelfCheck` runs **122 checks** in both configurations before any measurement is trusted,
 following the A1 and A2 pattern. It covers:
 
 - Stumpff functions against closed-form values at z = π² and z = −4, and the series and closed
@@ -379,6 +401,10 @@ following the A1 and A2 pattern. It covers:
   exactly the same instant as one hour, and 3 600 accumulations of 0.1 s in a double do not reach
   360 s. The warp comparison is meaningless without the first, and the second demonstrates why
   ADR 0010 requires it rather than asserting it;
+- **the campaign clock's exactness window, pinned rather than described**: the seconds conversion
+  resolves individual nanoseconds only to 2^53 ns = 104.25 days, and the checks assert both that
+  the boundary is where the header says and that A3's longest run lies inside it. Added by the
+  P1a milestone review, which found the limit recorded only in a comment;
 - every eligibility rejection, every handoff invariant, and 1 000 coast begin/end cycles leaving
   the state bit-identical.
 

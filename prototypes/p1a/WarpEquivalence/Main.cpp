@@ -116,7 +116,7 @@ int main(int argc, char** argv)
 
         const GravitationalBody& earth = system.body(kNaifEarth);
         const double mu = earth.gravitationalParameter;
-        const double orbitRadius = earth.meanRadiusMetres + 200.0e3;
+        const double orbitRadius = earth.surfaceRadiusMetres + 200.0e3;
 
         HybridPropagator::Settings baseSettings;
         baseSettings.campaignEpochTdb =

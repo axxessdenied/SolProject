@@ -448,7 +448,7 @@ void checkBodySystem(CheckContext& checks, const BodySystem& system)
                  "the Moon's mass fraction of the Earth-Moon system is near 0.0121");
 
     const GravitationalBody& earth = system.body(kNaifEarth);
-    checks.check(std::abs(earth.atmosphereLimitRadiusMetres - earth.meanRadiusMetres
+    checks.check(std::abs(earth.atmosphereLimitRadiusMetres - earth.surfaceRadiusMetres
                           - kEarthAtmosphereLimitAltitudeMetres)
                      < 1.0e-6,
                  "Earth's atmosphere limit is its equatorial radius plus the chosen altitude");
@@ -581,6 +581,35 @@ void checkCampaignClock(CheckContext& checks, const ReferenceData& data)
                      < 1.0e-9,
                  "converting a campaign instant to TDB advances the ephemeris scale by the same "
                  "interval");
+
+    // --- the exactness window, pinned rather than left in a comment -----------------------
+    //
+    // The clock accumulates as an exact integer without bound, but nanoseconds() -> seconds()
+    // converts through a double, which represents every integer only up to 2^53 ns == 104.25
+    // days. A3's longest run is the 100-day no-decay coast, at 96% of that window, so every
+    // number this increment reports is exact. A campaign is measured in years and is not, so
+    // the boundary is asserted here rather than described, and it is recorded in the evidence
+    // as a limitation P2 has to design around rather than discover.
+    //
+    // Reproducibility is unaffected either side of the boundary: two runs that reach the same
+    // integer instant convert it to the same double whatever its magnitude, which is why the
+    // warp-equivalence results hold regardless. What is lost past the boundary is exactness of
+    // representation, not determinism.
+    constexpr std::int64_t kExactIntegerLimit = 1LL << 53;
+    const CampaignInstant lastExact = CampaignInstant::fromNanoseconds(kExactIntegerLimit);
+    const CampaignInstant justPast = CampaignInstant::fromNanoseconds(kExactIntegerLimit + 1);
+    checks.check(lastExact.secondsPastCampaignEpoch() * 1.0e9 == static_cast<double>(kExactIntegerLimit),
+                 "2^53 nanoseconds converts to seconds exactly");
+    checks.check(lastExact.secondsPastCampaignEpoch() == justPast.secondsPastCampaignEpoch(),
+                 "one nanosecond past 2^53 is not distinguishable in the seconds conversion, "
+                 "which is the documented 104.25-day exactness window");
+    checks.check(lastExact != justPast,
+                 "the underlying integer instants remain distinct past the window, so the clock "
+                 "itself does not lose time");
+
+    constexpr std::int64_t kHundredDaysNanoseconds = 100LL * 86'400LL * 1'000'000'000LL;
+    checks.check(kHundredDaysNanoseconds < kExactIntegerLimit,
+                 "A3's longest run, the 100-day warped coast, lies inside the exactness window");
 }
 
 // ------------------------------------------------------------------------------------------
@@ -592,7 +621,7 @@ void checkCampaignClock(CheckContext& checks, const ReferenceData& data)
                                        CampaignInstant instant)
 {
     const GravitationalBody& earth = system.body(kNaifEarth);
-    const double r = earth.meanRadiusMetres + altitudeMetres;
+    const double r = earth.surfaceRadiusMetres + altitudeMetres;
 
     CraftState craft;
     craft.state.position = Vec3{r, 0.0, 0.0};

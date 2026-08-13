@@ -29,18 +29,25 @@ struct TwoBodyState {
 /// One gravitating body in the patched-conic hierarchy.
 ///
 /// Every field is sourced or derived rather than invented. The gravitational parameter comes
-/// from the pinned gm_de440 kernel, the mean radius from the pinned planetary-constants
+/// from the pinned gm_de440 kernel, the surface radius from the pinned planetary-constants
 /// kernel, and the sphere-of-influence radius from ADR 0011's Laplace formulation applied to
 /// those two. The atmosphere limit is the one number A3 chooses rather than derives; see
-/// SphereOfInfluence.h for why it cannot be derived from the handoff tolerance.
+/// BodySystem.h for why it cannot be derived from the handoff tolerance.
 struct GravitationalBody {
     /// NAIF integer body code, e.g. 399 for Earth.
     int naifId{0};
     std::string name;
     /// GM, in m^3/s^2.
     double gravitationalParameter{0.0};
-    /// Mean equatorial radius, in metres. The surface reference for altitude reporting.
-    double meanRadiusMetres{0.0};
+    /// Equatorial radius, in metres: the surface reference for altitude and the below-surface
+    /// eligibility test.
+    ///
+    /// Equatorial and not mean, which for Earth differ by 7.1 km. The equatorial radius is the
+    /// larger, so a below-surface test against it fires no later than the true surface does at
+    /// any latitude -- the conservative direction for a gate that means "the craft has already
+    /// arrived". ADR 0011's 140 km atmosphere limit is likewise an altitude above this radius,
+    /// and says so.
+    double surfaceRadiusMetres{0.0};
     /// Radius of the Laplace sphere of influence, in metres. Infinite for the hierarchy root,
     /// which by construction is not inside anything.
     double sphereOfInfluenceRadiusMetres{0.0};

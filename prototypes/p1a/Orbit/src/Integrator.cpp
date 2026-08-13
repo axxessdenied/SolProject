@@ -119,6 +119,21 @@ int accelerationEvaluationsPerStep(IntegratorKind kind) noexcept
     return 0;
 }
 
+int minimumAccelerationEvaluationsPerStep(IntegratorKind kind) noexcept
+{
+    switch (kind) {
+    case IntegratorKind::RungeKutta4:    return 4;
+    // The kick-drift-kick form evaluates the acceleration at the start and end position of the
+    // step. The end position is the next step's start position exactly, so a stateful loop
+    // carries it forward and evaluates once per step.
+    case IntegratorKind::VelocityVerlet: return 1;
+    // Three kicks at three distinct intermediate positions; the last is not the next step's
+    // first, because a drift follows it.
+    case IntegratorKind::Yoshida4:       return 3;
+    }
+    return 0;
+}
+
 TwoBodyState integrateStep(IntegratorKind kind, const TwoBodyState& state,
                            double gravitationalParameter, double stepSeconds) noexcept
 {

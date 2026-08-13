@@ -116,7 +116,7 @@ std::expected<void, HandoffRejection> HybridPropagator::coastEligibility(
     }
 
     const double r = radius(craft.state);
-    if (r <= body->meanRadiusMetres && body->meanRadiusMetres > 0.0) {
+    if (r <= body->surfaceRadiusMetres && body->surfaceRadiusMetres > 0.0) {
         return std::unexpected(HandoffRejection::BelowSurface);
     }
     if (r < body->atmosphereLimitRadiusMetres) {
@@ -213,6 +213,31 @@ std::expected<CraftState, HandoffRejection> HybridPropagator::rebaseTo(
         rebased.anchor.state = rebased.state;
         rebased.anchor.instant = rebased.instant;
         rebased.anchor.centralBodyNaifId = newCentralBodyNaifId;
+
+        // Re-validate against the *new* central body, here rather than in the caller.
+        //
+        // Eligibility was checked when the coast began, against the body the craft was orbiting
+        // then. A change of primary can invalidate it: a state that describes a perfectly good
+        // conic about Earth can be radial about the Moon, and a radial trajectory has no conic
+        // at all. A3 found this the hard way -- a lunar approach on an exactly head-on course
+        // was handed to the Moon and coasted on a degenerate conic, producing positions that
+        // were smooth, plausible, and meaningless.
+        //
+        // This lives in rebaseTo and not in advanceTo because rebaseTo is the only operation
+        // that changes a craft's central body, and a guarantee that holds only on the path
+        // advanceTo happens to take is not a guarantee. Any caller that rebases gets it.
+        //
+        // Ending the coast is the right response rather than refusing the crossing. The
+        // numerical integrator represents radial motion without difficulty; it is only the
+        // closed-form conic that cannot. So ownership passes to the new body as physics
+        // requires, and the regime drops to the one that can actually propagate the state.
+        CraftState asIfLocal = rebased;
+        asIfLocal.regime = PropagationRegime::LocalNumerical;
+        if (!coastEligibility(asIfLocal).has_value()) {
+            if (const auto ended = endCoast(rebased); ended.has_value()) {
+                rebased = ended.value();
+            }
+        }
     }
     return rebased;
 }
@@ -553,40 +578,23 @@ AdvanceResult HybridPropagator::advanceTo(const CraftState& craft, CampaignInsta
         result.events.push_back(event);
         result.craft = rebased.value();
 
-        // Re-validate the coast against the *new* central body.
-        //
-        // Eligibility was checked when the coast began, against the body the craft was orbiting
-        // then. A change of primary can invalidate it: a state that describes a perfectly good
-        // conic about Earth can be radial about the Moon, and a radial trajectory has no conic
-        // at all. A3 found this the hard way -- a lunar approach on an exactly head-on course
-        // was handed to the Moon and coasted on a degenerate conic, producing positions that
-        // were smooth, plausible, and meaningless.
-        //
-        // Ending the coast is the right response rather than refusing the crossing. The
-        // numerical integrator represents radial motion without difficulty; it is only the
-        // closed-form conic that cannot. So ownership passes to the new body as physics
-        // requires, and the regime drops to the one that can actually propagate the state.
-        if (result.craft.regime == PropagationRegime::AnalyticalCoast) {
-            CraftState asIfLocal = result.craft;
-            asIfLocal.regime = PropagationRegime::LocalNumerical;
-            if (!coastEligibility(asIfLocal).has_value()) {
-                if (const auto ended = endCoast(result.craft); ended.has_value()) {
-                    TransitionEvent coastEnded;
-                    coastEnded.kind = EventKind::CoastEnded;
-                    coastEnded.instant = crossing;
-                    coastEnded.sequence = sequence++;
-                    coastEnded.fromCentralBodyNaifId = newOwner;
-                    coastEnded.toCentralBodyNaifId = newOwner;
-                    // Handing the state to the integrator changes nothing about it, so this is
-                    // measured as zero rather than assumed to be.
-                    coastEnded.positionDiscontinuityMetres =
-                        positionDifference(result.craft.state, ended.value().state);
-                    coastEnded.velocityDiscontinuityMetresPerSecond =
-                        velocityDifference(result.craft.state, ended.value().state);
-                    result.events.push_back(coastEnded);
-                    result.craft = ended.value();
-                }
-            }
+        // rebaseTo re-validates eligibility against the new central body and drops a craft whose
+        // new conic is degenerate back to the numerical integrator. Detect that here so the
+        // chronology records it; the decision itself belongs to rebaseTo, so that a caller which
+        // rebases without going through advanceTo gets the same guarantee.
+        if (atCrossing.regime == PropagationRegime::AnalyticalCoast
+            && result.craft.regime == PropagationRegime::LocalNumerical) {
+            TransitionEvent coastEnded;
+            coastEnded.kind = EventKind::CoastEnded;
+            coastEnded.instant = crossing;
+            coastEnded.sequence = sequence++;
+            coastEnded.fromCentralBodyNaifId = newOwner;
+            coastEnded.toCentralBodyNaifId = newOwner;
+            // Zero, and not merely reported as zero: endCoast changes no component of the state,
+            // which OrbitSelfCheck asserts bitwise both once and over 1000 begin/end cycles.
+            coastEnded.positionDiscontinuityMetres = 0.0;
+            coastEnded.velocityDiscontinuityMetresPerSecond = 0.0;
+            result.events.push_back(coastEnded);
         }
     }
 

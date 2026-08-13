@@ -258,6 +258,14 @@ the Sun is the root. Both relations are carried explicitly.
 | Constrain warp ticks to integer multiples of the fixed local step | The local regime is then bit-identical too, because the step sequence is unchanged. Unaligned ticks differ by micrometres and are not reproducible. |
 | Accumulate campaign time as integer nanoseconds | Two runs cannot be compared unless they reach the same instant. ADR 0010 requires this; A3 demonstrates the negative control. |
 
+**Known limit on the campaign clock.** The nanosecond count accumulates exactly without bound,
+but converting it to seconds goes through a `double`, which resolves individual nanoseconds only
+to 2^53 ns = **104.25 days**. Every P1a measurement is inside that window; a multi-year campaign
+is not. Determinism is unaffected either side of it — the same integer always converts to the
+same `double` — so what degrades is exactness of representation, not reproducibility. A
+production clock needs a coarser tick, a split representation, or elapsed times measured against
+a moving anchor rather than the campaign epoch. This is a P2 design input, not an open question.
+
 The consequence for gameplay is a constraint rather than a prohibition: **warp under thrust is not
 a determinism problem, it is a quantisation problem.** Whether powered warp is desirable for
 control-authority reasons is a P2/M5 question.
@@ -278,7 +286,7 @@ crosses.
 
 | Choice | Value | Basis |
 |---|---|---|
-| Local integrator | **RK4** | Clears the 100 m one-orbit gate at a 64 s step for 332 acceleration evaluations, 3× cheaper than the nearest symplectic candidate. Its energy error is secular, which does not decide the choice because the hybrid contract never integrates a stable orbit for long — and the measured fifty-orbit drift is 136 µm. |
+| Local integrator | **RK4** | Clears the 100 m one-orbit gate at a 64 s step for 332 acceleration evaluations — 3× cheaper than Yoshida 4 and 16× cheaper than velocity Verlet, each compared at the step it needs to clear the same gate. Its energy error is secular, which does not decide the choice because the hybrid contract never integrates a stable orbit for long — and the measured fifty-orbit drift is 136 µm. |
 | Earth atmosphere limit | **140 km** altitude | A gameplay and physics-regime boundary, not a tolerance-derived one. Deriving it from the handoff tolerance gives ~450 km, which would make the first playable's own contract orbit un-warpable — a sign the derivation asks the wrong question, since ADR 0011 *defines* orbits as drag-free rather than approximating a drag-affected trajectory. |
 | Boundary hysteresis | 10⁻⁴ of sphere radius | Tuned against chattering only, not against gameplay. |
 

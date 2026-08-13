@@ -281,6 +281,13 @@ public:
     /// The operation a sphere-of-influence crossing performs. State ownership passes from one
     /// body to the other at a single instant with no overlap, which is what ADR 0011's "discrete,
     /// scheduled events with explicit state ownership on each side" means in code.
+    ///
+    /// A coasting craft is re-anchored against the new body, and its eligibility is **re-checked
+    /// against that body**: a state that is a valid conic about Earth can be radial about the
+    /// Moon. When the new conic is degenerate the returned craft is in LocalNumerical, which
+    /// represents radial motion without difficulty. This is the only operation that changes a
+    /// craft's central body, so performing the re-check here rather than in advanceTo makes the
+    /// guarantee hold for every caller instead of one call site.
     [[nodiscard]] std::expected<CraftState, HandoffRejection> rebaseTo(
         const CraftState& craft, int newCentralBodyNaifId) const;
 
