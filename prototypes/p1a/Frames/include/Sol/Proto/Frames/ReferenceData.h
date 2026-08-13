@@ -74,6 +74,14 @@ public:
     /// Gravitational parameters, converted from the kernel's km^3/s^2 to m^3/s^2.
     [[nodiscard]] double gravitationalParameter(int naifId) const;
 
+    /// Equatorial radius from the pinned kernel's BODY<id>_RADII, in metres. Throws when absent.
+    ///
+    /// The equatorial rather than mean radius, deliberately: it is the largest, so a
+    /// below-surface test built on it triggers no later than the true surface at any latitude.
+    /// Available for the Sun (10), the Moon (301), and Earth (399); the Sun and Moon are
+    /// spherical in this kernel, so for them the distinction does not arise.
+    [[nodiscard]] double equatorialRadiusMetres(int naifId) const;
+
     /// The body state fixtures, in load order.
     [[nodiscard]] const std::vector<BodyStateFixture>& bodyStates() const noexcept
     {
@@ -107,6 +115,7 @@ private:
     double m_poleDec[3]{};
     double m_primeMeridian[3]{};
     std::vector<std::pair<int, double>> m_gravitationalParameters;
+    std::vector<std::pair<int, double>> m_equatorialRadii;
     std::vector<BodyStateFixture> m_bodyStates;
     std::vector<FixtureProvenance> m_provenance;
     TdbEpoch m_fixtureEpoch{};

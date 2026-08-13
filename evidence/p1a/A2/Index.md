@@ -7,6 +7,17 @@
 **Result:** All A2 done criteria met. One frame model selected. Four findings recorded; the two
 that needed a user decision were resolved on 2026-08-12 and are marked below.
 
+> **Addendum, 2026-08-12 — P1a milestone review.** The review re-ran A2's scenarios against this
+> increment's recorded output; every measurement reproduced. It then made one additive change to
+> the frame library: `ReferenceData` also parses `BODY10_RADII` and `BODY301_RADII` from the
+> already-pinned planetary-constants kernel, so that increment A3's `BodySystem` stops leaving the
+> Sun's and the Moon's surface radii at zero. No conversion, transform, or frame boundary was
+> altered, and **no A2 physical number changed**: `FrameRoundTrip`, `AscentSampling`, and
+> `PrecisionBudget` are byte-identical, and `ReferenceFixtures` differs only in its scenario
+> allocation counters — **4 418 → 4 424 allocations, 1 747 079 → 1 747 247 bytes** — from the three
+> extra kernel lookups at load. `raw/` has been regenerated. The milestone-level record is
+> [`evidence/p1a/Index.md`](../Index.md).
+
 Raw measurement output lives in `raw/`, which `.gitignore` excludes. It is reproducible from the
 commands in [Handoff.md](Handoff.md); this index and the handoff are the durable record.
 

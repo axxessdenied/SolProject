@@ -207,4 +207,9 @@ Each increment closure records:
 | Same-machine bit-exact determinism | Confirmed | ADR 0010 |
 | 1 m/1 mm/s handoff and 100 m one-orbit gates | Confirmed | User approved recommendation |
 | Per-increment time boxes with narrow-or-reject triggers | Confirmed | User approved 2026-08-12; the original plan had quality gates but no cost gates |
+| Hybrid transition contract: one authoritative regime, state-anchored coast, refined crossing events, named rejections | Confirmed | A3 evidence; recorded in `docs/architecture.md` |
+| RK4 for the local numerical regime | Confirmed | A3 evidence: clears the 100 m gate at 3× less cost than the nearest symplectic candidate (16× less than the other), and the hybrid contract never integrates a stable orbit long enough for secular energy error to matter |
+| Earth atmosphere limit of 140 km | Confirmed for P1a, tuning deferred to P2/M5 | A3 evidence; recorded in ADR 0011's validation section. A tolerance-derived boundary would be ~450 km and would make the first playable's contract orbit un-warpable |
+| Warp ticks constrained to integer multiples of the local physics step | Confirmed | A3 evidence: this is what makes the local regime reproducible under warp, and it replaces the assumption that powered warp is unsafe |
+| Coast anchor representation: Cartesian state or classical elements | Open, and safe either way | A3 measured both inside tolerance by six orders of magnitude, with the element path reaching a bitwise fixed point. The decision is storage and legibility, not numerics |
 | Exact production libraries and reusable code | Open by owning increment | Must follow evidence and ADR 0007 rather than be selected globally |
