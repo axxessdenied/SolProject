@@ -150,6 +150,15 @@ addenda in the affected indexes.
 
 ## State
 
-P1a is **implementation-complete and reviewed**. It is **not** integrated into `dev` and **not**
-released; the work sits on `feature/p1a-hybrid-orbit-and-warp` and every Git action beyond that
-remains a separate explicit user request under `AGENTS.md`.
+P1a is **implementation-complete, reviewed, and integrated into `dev`**. It is **not released**.
+
+| State | Reached | How |
+|---|---|---|
+| Implementation-complete | 2026-08-12 | A1, A2, and A3 closed against their accepted thresholds |
+| Reviewed | 2026-08-12 | `complete-milestone`, recorded above |
+| Integrated into `dev` | 2026-08-13 | PR #3 from `feature/p1a-hybrid-orbit-and-warp`, merged as `bf18c33` |
+| Released | — | No tag, nothing on `main`, no release artifact exists |
+
+The three commits are `d314dad` (A3 as delivered), `1e8f6ea` (milestone closure), and the merge
+`bf18c33`. A clean rebuild of `dev` passes 20/20 in both configurations. Tagging and any
+promotion to `main` remain separate explicit user requests under `AGENTS.md`.
