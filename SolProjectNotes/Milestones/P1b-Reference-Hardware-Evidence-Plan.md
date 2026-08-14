@@ -1,8 +1,10 @@
 # P1b — Reference Hardware Evidence Plan
 
-**Status:** Accepted by the user on 2026-08-13, as the documented evidence plan required by the [P1b milestone plan](P1b-Renderer-and-Craft.md)'s authorization prerequisites.
+**Status:** Accepted by the user on 2026-08-13, as the documented evidence plan required by the [P1b milestone plan](P1b-Renderer-and-Craft.md)'s authorization prerequisites. **Extended on 2026-08-14** with the [CPU section for increment B2](#cpu-evidence-for-increment-b2), which was left open by design in the original and settled when B2 was authorized.
 
 **Purpose:** P1b's authorization prerequisites require that the named baseline GPU hardware be available, **or** that the user accept a documented evidence plan for unavailable devices. None of the four named device classes is present. This document is that plan. It defines what will be measured, on what, what those measurements may and may not be used to claim, and how the unverified claims are discharged later.
+
+The 2026-08-14 extension applies the same treatment to the **baseline CPU classes** that increment B2's gates are specified against, which are equally absent.
 
 This plan does not change any accepted threshold. Thresholds are owned by the [P1b milestone plan](P1b-Renderer-and-Craft.md) and may only be changed by a user-approved planning update.
 
@@ -72,9 +74,47 @@ Frame time was already non-gating in P1b by user decision; it is recorded as the
 
 Peak process memory, committed GPU memory, allocation counts, and upload volume remain mandatory and are recorded per device.
 
-### Deferred to increment B2
+## CPU evidence for increment B2
 
-The craft-physics (4 ms p95 at 300 parts) and resource-network (1 ms p95) gates are specified against "the accepted baseline CPU classes" — i5-8400 and Ryzen 5 2600. The available i7-12650H is materially faster than both, so the same substitution rule applies on the CPU side. B2 is not authorized as of this plan; its CPU evidence approach is an open item to be settled when B2 is authorized, and this plan does not pre-decide it.
+**Added 2026-08-14, when the user authorized increment B2.** The original plan left this open deliberately: the craft-physics (4 ms p95 at 300 parts) and resource-network (1 ms p95) gates are specified against "the accepted baseline CPU classes" — i5-8400 and Ryzen 5 2600 — the available i7-12650H is materially faster than both, and the same no-substitution rule applies on the CPU side. Deciding it before B2 was authorized would have pre-empted that authorization.
+
+The user settled it by **extending this plan rather than amending the baseline CPU classes**, consistent with the same choice declined on the GPU side on 2026-08-13. The thresholds are unchanged.
+
+### The gap, stated precisely
+
+| Plan class | Cores / threads | Base / boost | Available? | Usable as a substitute? |
+|---|---|---|---|---|
+| Intel Core i5-8400 | 6C / 6T, homogeneous Coffee Lake | 2.8 / 4.0 GHz | **No** | **No.** Four microarchitecture generations older, no SMT, DDR4. |
+| AMD Ryzen 5 2600 | 6C / 12T, Zen+ | 3.4 / 3.9 GHz | **No** | **No.** No AMD CPU is present, as no AMD device of any kind is. |
+| Intel Core i7-12650H | 6 P-cores / 12 threads + 4 E-cores, hybrid Alder Lake | 2.3 / 4.7 GHz P-core | Present | **No.** Faster per clock and per core, hybrid rather than homogeneous, DDR5, larger caches. |
+
+The hybrid topology is the part that makes this harder than the GPU case rather than merely analogous to it. An i5-8400 has six identical cores; the i7-12650H has two core types with different IPC, different clock ceilings, and a scheduler that moves work between them. A thread that migrates from a P-core to an E-core mid-measurement produces a p99 that reflects Windows' scheduling policy, not the craft solver.
+
+### What is measured
+
+1. **Unconstrained run, under its own name.** Full distribution — p50, p95, p99, maximum, at least 10 000 post-warm-up samples per the shared measurement rules — on the i7-12650H, reported as an i7-12650H result. This is the primary datum and it is **not** a baseline-class result.
+2. **Constrained-CPU control.** The same scenarios with the process pinned to **6 P-cores, one thread per core** (SMT siblings and all E-cores excluded by affinity mask) and the processor's maximum performance state capped so the sustained clock approximates the i5-8400's envelope. This is the analogue of B1's synthetic capability profiles: it makes a gate testable that the available hardware would otherwise pass trivially.
+3. **Both are reported for both craft representations**, at both 150 and 300 parts. A comparison run on a differently-constrained machine compares nothing.
+
+Every report records the affinity mask actually applied, the achieved sustained clock read back rather than requested, the power plan, AC/battery state, and whether the run thermally throttled — the laptop hazards below bite far harder on a sustained CPU benchmark than on a GPU one.
+
+### What a constrained result may and may not claim
+
+**A constrained run is not an i5-8400.** Core count and clock are the two variables this method can control; they are not the two that dominate the difference. Golden Cove's IPC advantage over Coffee Lake, DDR5 against DDR4 bandwidth and latency, and a materially larger cache hierarchy all survive the constraint, and all favour the present machine. A physics solver at 300 parts is cache- and memory-sensitive, so this residual is not small.
+
+The constrained figure is therefore a **bound from one direction with named residuals**, not a proxy. Concretely:
+
+- **Constrained run passes:** the baseline-class claim is supported by a constrained bound, recorded with its residuals, and remains **unverified on hardware** until discharged as below. It is not written as a baseline-class pass.
+- **Constrained run fails while the unconstrained run passes:** that is a real result and the strongest signal this hardware can produce. It triggers the P1b plan's narrow-or-reject conversation for B2 rather than being averaged away or reported as a pass.
+- **Unconstrained run fails:** the representation is rejected outright. No constraint can rescue it, since the available machine is the faster one.
+
+### How the unverified CPU claim is discharged
+
+The same three paths as the GPU classes, with the same preference order: borrowed or remote measurement on a real i5-8400 or Ryzen 5 2600; a user-approved change to the baseline CPU classes; or a recorded deliberate deferral. An i7-12650H result, constrained or not, is never a discharge for any of them.
+
+### Determinism interaction
+
+ADR 0010's bit-exactness guarantee is per-build and per-machine, and affinity pinning must not disturb it. If B2's solvers are single-threaded, this is trivially satisfied and should be stated rather than assumed. If any solver is threaded, the determinism runs required by B2's done criteria are performed under both the constrained and unconstrained configurations, since a work-distribution scheme that is deterministic on twelve threads and not on six is a defect this increment should surface rather than inherit into P2.
 
 ## Measurement hazards
 
@@ -93,6 +133,8 @@ Jitter, depth, LOD, and capability results are unaffected by throttling. Only th
 - Reporting an RTX 4060 result as a baseline-class result, or a "conservative" one, in any document.
 - Closing ADR 0002 on a claim that requires AMD driver evidence. ADR 0002's disposition may close on precision, capability, tooling, and the documented Direct3D 12 analysis — all of which are obtainable here — but any clause asserting AMD driver behavior must be stated as unverified or omitted.
 - Treating the synthetic capability profiles as device testing.
+- Claiming support, or a performance floor, for the i5-8400 or Ryzen 5 2600 classes on the strength of an i7-12650H measurement, constrained or unconstrained.
+- Reporting a constrained-CPU run as a baseline-class result, or treating the constraint as having removed the IPC, memory, and cache differences it cannot touch.
 
 ## How the unverified claims are discharged
 
@@ -119,5 +161,7 @@ The P1b evidence index must carry an explicit, prominent statement of which devi
 | Capability rejection verified by negative control and synthetic baseline profiles | Confirmed | No present device triggers the rejection path; the gate would otherwise be untestable | This plan |
 | Baseline-tier support claims marked unverified on hardware until borrowed/remote evidence exists | Confirmed | Prevents an availability gap from silently becoming a support claim | This plan |
 | No AMD driver evidence is obtainable in P1b | Confirmed | No AMD device is present | Hardware inventory above |
-| B2's CPU-class substitution question | Open | B2 is not authorized; deciding it now would pre-empt its authorization | This plan |
+| B2's CPU-class substitution question | **Confirmed** — settled by extending this plan with a [CPU section](#cpu-evidence-for-increment-b2), not by amending the baseline CPU classes | Mirrors the GPU side: measure under the device's own name, and make the gate testable by a constrained-CPU control as the analogue of the synthetic capability profiles. Amending the classes was declined on the GPU side and is declined here for the same reason | User, 2026-08-14, at B2's authorization |
+| A constrained-CPU run is a bound with named residuals, never a proxy | Confirmed | Affinity and clock are controllable; IPC, DDR5 bandwidth, and cache size are not, and all favour the present machine. A constrained pass leaves the baseline claim unverified on hardware | User, 2026-08-14 |
+| Baseline CPU classes themselves | Unchanged | Same position as the GPU classes: amending them is a planning change the user declined | User, 2026-08-14 |
 | Baseline GPU classes themselves | Unchanged | Amending them is a planning change the user declined to make at authorization time | User, 2026-08-13 |

@@ -22,6 +22,11 @@ unestablished claims as prominently as the passes.
   the same instruction that granted implementation authorization on 2026-08-13.
 - Authorization is scoped to **B1 only**. Increment B2 — constructed craft and resource networks —
   is **not authorized** and needs its own explicit instruction.
+  - **Addendum, 2026-08-14:** B2 has since been authorized, on its own branch
+    `feature/p1b-craft-and-resources` from `dev`. This changes nothing about B1's scope or state:
+    the user directed that **B1 be finished first**, and B2 is authorized and queued rather than
+    started. No B1 gate is waived by it. See
+    [`docs/project_status.md`](../../../docs/project_status.md#p1b-increment-b2-implementation-authorization-2026-08-14).
 - Open as **PR #6** against `dev`, not merged. Nothing is tagged and nothing is on `main`.
 
 ## Reproducing the evidence

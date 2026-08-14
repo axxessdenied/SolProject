@@ -1,8 +1,8 @@
 # P1b — Renderer and Craft Prototypes
 
-**Status:** **Increment B1 authorized to implement** on 2026-08-13. Increment B2 remains planned and not authorized. Authorization state is owned by [`docs/project_status.md`](../../docs/project_status.md); this line reflects it and does not grant it.
+**Status:** **Increment B1 authorized to implement** on 2026-08-13 and active. **Increment B2 authorized to implement** on 2026-08-14, to start after B1 closes. Authorization state is owned by [`docs/project_status.md`](../../docs/project_status.md); this line reflects it and does not grant it.
 
-**Outcome owner:** **Claude**, sole writer, on branch `feature/p1b-vulkan-renderer` from base `dev`.
+**Outcome owner:** **Claude**, sole writer — on branch `feature/p1b-vulkan-renderer` from base `dev` for B1, and on `feature/p1b-craft-and-resources` from base `dev` for B2 (authorized 2026-08-14, not yet created).
 
 **Planning source:** User approval on 2026-08-12; scope split and revision approved 2026-08-12
 
@@ -42,6 +42,10 @@ Implementation of P1b remains forbidden until all of the following are true:
 - each third-party package has an accepted need and completes ADR 0007's dependency workflow before its declaration is added.
 
 For increment B1 these are satisfied as of 2026-08-13. The hardware prerequisite is discharged by the second branch, not the first: none of the four named device classes is present, and the user accepted the [P1b Reference Hardware Evidence Plan](P1b-Reference-Hardware-Evidence-Plan.md), which is binding on B1's measurement and reporting. The dependency prerequisite is a per-package gate that applies as B1 proceeds.
+
+**For increment B2 these are satisfied as of 2026-08-14**, when the user authorized it. The writer, branch, and base are recorded above and in [`docs/project_status.md`](../../docs/project_status.md). The hardware prerequisite is again discharged by the second branch: neither baseline CPU class is present, and the user extended the evidence plan with a [CPU section](P1b-Reference-Hardware-Evidence-Plan.md#cpu-evidence-for-increment-b2) rather than amending the baseline classes. The dependency prerequisite applies per package as B2 proceeds — a physics or graph library must complete ADR 0007's workflow before architectural acceptance.
+
+B2's authorization carries one sequencing term set by the user in the same instruction: **B1 stays open and is finished first.** B2 is authorized and queued, not started, and its branch is not created until B1 closes. Authorizing B2 waives no B1 gate.
 
 ## Boundaries
 
@@ -213,9 +217,15 @@ The original plan set a 4 ms budget without naming the representation under test
 
 The comparison must report, for each: p95 physics time at 150 and 300 parts, structural behavior under a representative launch load, staging correctness, re-partition cost where applicable, and determinism.
 
+### CPU evidence
+
+The 4 ms and 1 ms gates are specified against the accepted baseline CPU classes, and **neither is present**. The thresholds are unchanged — the user did not amend them at B2's authorization — but what a measurement on the available i7-12650H may be used to *claim* is governed by the [evidence plan's CPU section](P1b-Reference-Hardware-Evidence-Plan.md#cpu-evidence-for-increment-b2), approved 2026-08-14, which is binding on B2's reporting exactly as the GPU sections are on B1's.
+
+The short form: measure on the i7-12650H under its own name, add a constrained-CPU control as the analogue of B1's synthetic capability profiles, and report a constrained result as a **bound, not a proxy**. An unconstrained i7-12650H pass is not a baseline-class pass and must never be written as one.
+
 ### Done criteria and validation
 
-- at least one representation meets the 4 ms p95 craft-physics and 1 ms p95 resource-network gates at 300 parts on the baseline CPU classes;
+- at least one representation meets the 4 ms p95 craft-physics and 1 ms p95 resource-network gates at 300 parts on the baseline CPU classes — measured and reported under the [CPU evidence](#cpu-evidence) rules above, since neither baseline class is available;
 - one representation is recommended with measured justification, and the rejected one's evidence is retained;
 - staging preserves or changes mass, momentum, resources, connectivity, and identity according to the scenario oracle;
 - repeated runs preserve event ordering and remain bit-identical per ADR 0010;
@@ -285,6 +295,8 @@ Each increment closure records:
 | Per-increment time boxes with narrow-or-reject triggers | Confirmed | User approved 2026-08-12 |
 | Increment B1 authorized; Claude sole writer on `feature/p1b-vulkan-renderer` from `dev` | Confirmed | User authorized 2026-08-13, scoped to B1 only |
 | Baseline GPU hardware replaced by a documented evidence plan | Confirmed | User accepted 2026-08-13; no named device class is available. See [the plan](P1b-Reference-Hardware-Evidence-Plan.md) |
-| Increment B2 authorization | Open | Requires its own explicit user instruction after B1's evidence |
+| Increment B2 authorized; Claude sole writer on `feature/p1b-craft-and-resources` from `dev` | Confirmed | User authorized 2026-08-14. A new branch from `dev` rather than a continuation of B1's, because B2 is disposable by plan and does not build on B1's production-tree renderer |
+| B1 stays open and is finished first; B2 is authorized and queued | Confirmed | User directed 2026-08-14. Authorizing a later increment waives no B1 gate, and one active increment at a time is how P1a ran |
+| B2's CPU-class question settled by extending the evidence plan, not by amending the baseline CPU classes | Confirmed | User chose this on 2026-08-14. Mirrors the GPU side: measure under the device's own name with a constrained-CPU control as the analogue of the synthetic capability profiles. Amending the classes was declined on the GPU side on 2026-08-13 and is declined here for the same reason |
 | Vulkan 1.2 candidate floor with queried optional capabilities | Confirmed for P1 | ADR 0002 |
 | Exact production libraries | Open by owning increment | Must follow evidence and ADR 0007 |

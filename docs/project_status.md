@@ -1,14 +1,14 @@
 # Project Status
 
-**Phase:** P1b — Renderer and craft prototypes: **authorized and in progress**, scoped to increment B1. P1a is **complete**, reviewed and closed on 2026-08-12 and integrated into `dev` on 2026-08-13.
+**Phase:** P1b — Renderer and craft prototypes: **authorized and in progress**. Both increments are now authorized — **B1 is the active increment**, and **B2 was authorized on 2026-08-14** to start after B1 closes. P1a is **complete**, reviewed and closed on 2026-08-12 and integrated into `dev` on 2026-08-13.
 
 **Planning gate:** Approved on 2026-08-12
 
-**Implementation authorization:** **Granted on 2026-08-13** by user direction, scoped to **increment B1 (Vulkan large-world renderer)** of the [P1b milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md). Increment B2 is **not** authorized and needs its own explicit instruction. The earlier P1a grant is spent and closed.
+**Implementation authorization:** **Granted for increment B1 on 2026-08-13**, and **for increment B2 on 2026-08-14**, each by separate explicit user direction, against the [P1b milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md). B1 is the Vulkan large-world renderer; B2 is constructed craft and resource networks. **B1 remains the active increment** — the user directed at B2's authorization that B1 be finished first, so B2 is authorized and not started. The earlier P1a grant is spent and closed.
 
-**Single writer:** Claude, on branch **`feature/p1b-vulkan-renderer`** from base `dev`. Prior P1a history: A1 landed as PR #1 from `feature/p1a-precision-and-orbit`; A2 landed as PR #2 from the `dev` working tree; A3 and the milestone-review corrections landed as PR #3 from `feature/p1a-hybrid-orbit-and-warp`, merged into `dev` on 2026-08-13 as `bf18c33`.
+**Single writer:** Claude — on branch **`feature/p1b-vulkan-renderer`** from base `dev` for B1, and on **`feature/p1b-craft-and-resources`** from base `dev` for B2. The B2 branch is authorized as of 2026-08-14 and **has not been created**, because B1 is finished first. Prior P1a history: A1 landed as PR #1 from `feature/p1a-precision-and-orbit`; A2 landed as PR #2 from the `dev` working tree; A3 and the milestone-review corrections landed as PR #3 from `feature/p1a-hybrid-orbit-and-warp`, merged into `dev` on 2026-08-13 as `bf18c33`.
 
-**Implementation:** P1a complete — increments A1 (measurement and build harness), A2 (reference frames and numerical precision), and A3 (hybrid orbit and time warp), all closed against their accepted thresholds with evidence indexed at [`evidence/p1a/Index.md`](../evidence/p1a/Index.md). **P1b increment B1 is in progress**; it is the first code written **in the production tree** rather than under `prototypes/`. Its state is recorded in the [B1 progress and handoff](#p1b-increment-b1-progress-and-handoff) section below.
+**Implementation:** P1a complete — increments A1 (measurement and build harness), A2 (reference frames and numerical precision), and A3 (hybrid orbit and time warp), all closed against their accepted thresholds with evidence indexed at [`evidence/p1a/Index.md`](../evidence/p1a/Index.md). **P1b increment B1 is in progress**; it is the first code written **in the production tree** rather than under `prototypes/`. Its state is recorded in the [B1 progress and handoff](#p1b-increment-b1-progress-and-handoff) section below. **Increment B2 is authorized as of 2026-08-14 but not started**; it returns to disposable prototype code by plan, and its authorization terms are in the [B2 authorization section](#p1b-increment-b2-implementation-authorization-2026-08-14).
 
 This is the single source of truth for project phase, milestone state, blockers, planning-gate state, and implementation authorization. Design intent belongs in `SolProjectNotes/`; implemented technical truth will belong in `docs/architecture.md`.
 
@@ -62,13 +62,33 @@ For A3 the user additionally and explicitly requested the branch `feature/p1a-hy
 
 **Granted by the user on 2026-08-13.** The user authorized P1b and named Claude the single writer. In the same instruction the user set three terms:
 
-- **Scope: increment B1 only** — the Vulkan large-world renderer, under its 6-week time box and its narrow-or-reject trigger. **Increment B2 (constructed craft and resource networks) is not authorized**, matching how P1a was run one increment at a time.
+- **Scope: increment B1 only** — the Vulkan large-world renderer, under its 6-week time box and its narrow-or-reject trigger. **Increment B2 (constructed craft and resource networks) was not authorized** by this grant, matching how P1a was run one increment at a time. *(B2 was authorized separately on 2026-08-14; this bullet records the 2026-08-13 grant's terms and is not the current state.)*
 - **Branch: `feature/p1b-vulkan-renderer` from base `dev`.**
 - **Reference hardware:** the user accepted a documented evidence plan rather than acquiring baseline hardware or amending the baseline classes. That plan is [P1b — Reference Hardware Evidence Plan](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) and it is binding on B1's reporting.
 
 This satisfies every authorization prerequisite in the P1b plan: P1a is complete with its frame model selected and recorded; the gate is Approved and authorization is Granted; the writer, branch, and base are recorded above; and the hardware prerequisite is discharged through the accepted evidence plan. The remaining prerequisite — that each third-party package complete ADR 0007's dependency workflow before its declaration is added — is a per-package gate that applies as B1 proceeds. B1 is the first increment to need dependencies at all; `vcpkg.json` and the four reviewed packages were added under that workflow on 2026-08-13 and are recorded in [dependencies](dependencies.md).
 
-**This authorization does not extend to** increment B2, to committing, pushing, merging, tagging, or opening a pull request, or to any change beyond B1's declared deliverables. Each remains a separate explicit request under `AGENTS.md`.
+**This authorization did not extend to** increment B2, to committing, pushing, merging, tagging, or opening a pull request, or to any change beyond B1's declared deliverables. Each remained a separate explicit request under `AGENTS.md`. B2 received its own grant a day later, recorded immediately below; the commit/push/merge/tag/PR exclusion is unchanged by it.
+
+### P1b increment B2 implementation authorization, 2026-08-14
+
+**Granted by the user on 2026-08-14.** The instruction was to authorize increment B2 — constructed craft and resource networks. This is the separate explicit instruction the B1 grant, the P1b plan, and the reference-hardware evidence plan all said B2 would require. Three terms were set in the same exchange, in answer to questions the plans deliberately left open until this moment:
+
+- **Branch: `feature/p1b-craft-and-resources` from base `dev`.** A new branch rather than a continuation of `feature/p1b-vulkan-renderer`, because B2 is disposable prototype code by plan and B1's branch carries production-tree renderer code. B2 does not build on B1: it is headless craft physics. The branch is authorized and **not yet created**, since B1 is finished first.
+- **Sequencing: B1 stays open and is finished first.** Authorizing B2 does not close B1, waive any B1 gate, or start B2 work. B1's outstanding items — the unmeasured Intel UHD across every gate, the capability-reporting gate that cannot close until the synthetic profiles are reconciled, quality tiers, and both-device performance evidence — remain open and are worked to closure before B2 begins. This keeps one active increment at a time, as P1a ran.
+- **CPU evidence: the reference-hardware evidence plan is extended with a CPU section.** See below.
+
+**Scope granted** is increment B2 as the [P1b milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) defines it, including its 4-week time box and its narrow-or-reject trigger, and specifically including the **two-way craft representation comparison** — per-part dynamic bodies against welded aggregates with breakable groups — which is the increment's most consequential deliverable and not an optional half.
+
+**This authorization does not extend to** committing, pushing, merging, tagging, or opening a pull request, to creating the B2 branch before B1 closes, or to any change beyond B2's declared deliverables. Each remains a separate explicit request under `AGENTS.md`. A physics or graph library recommendation still completes ADR 0007's dependency workflow before architectural acceptance, exactly as B1's four packages did.
+
+#### B2's CPU-class evidence approach
+
+B2's two gating thresholds — 4 ms p95 craft physics and 1 ms p95 resource-network solve, both at 300 parts — are specified against the accepted baseline CPU classes, i5-8400 and Ryzen 5 2600. Neither is present; the available i7-12650H is materially faster than both, and the P1b plan's no-substitution rule applies on the CPU side exactly as it does on the GPU side. Both the P1b plan and the [reference-hardware evidence plan](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) recorded this as **Open**, to be settled when B2 was authorized rather than pre-decided.
+
+**The user settled it on 2026-08-14** by extending the reference-hardware evidence plan with a CPU section, mirroring how the GPU side was handled: measure on the i7-12650H under its own name, never as a baseline-class result, and make the gate testable by a **constrained-CPU control** — a pinned core count and capped frequency — as the analogue of the synthetic capability profiles. The full method is owned by [that plan's CPU section](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md#cpu-evidence-for-increment-b2) and is binding on B2's reporting.
+
+Stated with the decision rather than left to be inferred: **a constrained run is not an i5-8400.** It bounds the budget from a direction the unconstrained machine cannot, and it is reported as a bound, not a proxy. Amending the baseline CPU classes was **not** chosen, consistent with the user declining the equivalent move on the GPU side on 2026-08-13.
 
 ### Required before approval
 
@@ -119,7 +139,7 @@ The planning set was reviewed after gate approval and revised with user authoriz
 |---|---|---|
 | P0 — Product and architecture planning | Complete | Planning foundation reviewed, gate approved, and plan revised 2026-08-12; no implementation delivered |
 | P1a — Precision and orbit prototypes | **Complete** — reviewed and closed 2026-08-12; **integrated into `dev`** 2026-08-13 via PR #3; not released | Headless evidence for frame conversion, precision budget, and hybrid propagation under warp |
-| P1b — Renderer and craft prototypes | **In progress** — authorized 2026-08-13, scoped to increment B1; B2 not authorized | Vulkan surface-to-orbit precision evidence and constructed-craft feasibility |
+| P1b — Renderer and craft prototypes | **In progress** — B1 authorized 2026-08-13 and active; **B2 authorized 2026-08-14**, starting after B1 closes | Vulkan surface-to-orbit precision evidence and constructed-craft feasibility |
 | P2 — First-playable production | Not started | Design-build-fly-explore-research-company loop |
 | P3 — Orbital company | Not started | Persistent operations, stations, people, maintenance, logistics, and manufacturing |
 | P4 — Solar economy | Not started | Mining, markets, corporations, nations, and strategic command |
@@ -136,6 +156,8 @@ P0 has no remaining planning blockers, and P1a's authorization prerequisites are
 The review re-ran both configurations from the checked-in presets — **20/20 tests passing in each** — and re-derived the reported measurements from fresh output rather than reading them from the evidence documents. Three of the four A3 scenarios reproduced byte-identically; the fourth differed only in its timing fields. It raised eight findings, **all resolved before closure and none invalidating a threshold result or reversing a selection**. Three changed code, and A2's and A3's raw evidence was regenerated; no physical number moved in either increment.
 
 **P1b increment B1 is authorized and has no blockers.** Its prerequisites are recorded in the [P1b authorization section](#p1b-implementation-authorization-2026-08-13) above. Product and architecture questions belonging to later milestones remain tracked in [Open Questions](../SolProjectNotes/Open-Questions.md); they do not authorize implementation-time guessing.
+
+**P1b increment B2 is authorized as of 2026-08-14 and has no blockers, but is deliberately not started.** The user directed that B1 be finished first, so B2's state is *authorized, queued* rather than *in progress*. Its one open prerequisite at authorization — the CPU-class substitution question — was settled in the same instruction and is recorded in the [B2 authorization section](#p1b-increment-b2-implementation-authorization-2026-08-14). B2's authorization does **not** relax any B1 gate; nothing about B1's outstanding work changes because a later increment was authorized.
 
 **B1 carries two known limitations from the start, neither of which blocks it:**
 
@@ -383,7 +405,7 @@ terrain finding with them.
   [P1b index](../evidence/p1b/Index.md). This is the mid-increment form: full closure evidence
   still requires the increment to be finished.
 
-**Increment B2 is not authorized.** It needs its own explicit instruction. B2 also inherits an open question the evidence plan deliberately did not pre-decide: its 4 ms and 1 ms gates are specified against i5-8400 / Ryzen 5 2600 CPU classes, and the available i7-12650H is materially faster, so the same no-substitution rule applies on the CPU side.
+**Increment B2 is authorized as of 2026-08-14** and starts after B1 closes; see the [B2 authorization section](#p1b-increment-b2-implementation-authorization-2026-08-14) for its branch, sequencing, and scope. The open question it inherited — its 4 ms and 1 ms gates being specified against i5-8400 / Ryzen 5 2600 CPU classes while the available i7-12650H is materially faster — was settled at authorization by extending the reference-hardware evidence plan with a CPU section, rather than by amending the baseline classes.
 
 **P1a is integrated, not released.** These are different states and the distinction is deliberate. A3 and the review corrections were committed as `d314dad` and `1e8f6ea`, opened as PR #3, and merged into `dev` on 2026-08-13 as `bf18c33`; a clean rebuild of `dev` passes 20/20 in both configurations. Nothing is tagged, nothing is on `main`, and no release exists. Tagging and any promotion to `main` remain separate explicit user requests under `AGENTS.md`.
 

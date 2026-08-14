@@ -1,8 +1,9 @@
 # P1b — milestone evidence index
 
 **Milestone:** P1b, renderer and craft prototypes
-**State:** **In progress.** Increment B1 is authorized and under way; increment B2 is **not
-authorized** and requires its own explicit user instruction.
+**State:** **In progress.** Increment B1 is authorized and under way. Increment B2 was
+**authorized on 2026-08-14** and is deliberately **not started** — the user directed that B1 be
+finished first, so B2 is authorized and queued.
 
 This is the milestone-level record. Per-increment detail lives below it, and the authoritative
 statement of phase and authorization is [`docs/project_status.md`](../../docs/project_status.md).
@@ -10,7 +11,7 @@ statement of phase and authorization is [`docs/project_status.md`](../../docs/pr
 | Increment | Scope | State | Evidence |
 |---|---|---|---|
 | B1 | Vulkan large-world renderer | **In progress** — not closed | [B1/Index.md](B1/Index.md), [B1/Handoff.md](B1/Handoff.md) |
-| B2 | Constructed craft and resource networks | **Not authorized** | — |
+| B2 | Constructed craft and resource networks | **Authorized 2026-08-14, not started** — starts after B1 closes | — |
 
 ## What P1b can and cannot close
 
@@ -30,6 +31,12 @@ plan](../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) 
 - **Frame time is non-gating in P1b** by user decision, and every figure recorded is a laptop
   measurement subject to Dynamic Boost, variable TGP and thermal limits — not a fixed-hardware
   quantity.
+- **Neither baseline CPU class is available either**, which reaches B2's 4 ms and 1 ms gates. The
+  evidence plan was extended on 2026-08-14 with a [CPU
+  section](../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md#cpu-evidence-for-increment-b2):
+  the i7-12650H is measured under its own name, with a constrained-CPU control as a bound. A
+  constrained pass is **not** a baseline-class pass — affinity and clock are controllable, IPC,
+  memory bandwidth and cache size are not.
 
 ## Milestone-level state, 2026-08-14
 
