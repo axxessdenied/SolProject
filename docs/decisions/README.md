@@ -11,7 +11,7 @@ Allowed status values are **Proposed**, **Accepted**, **Superseded**, and **Reje
 | ADR | Status | Decision |
 |---|---|---|
 | [0001](0001-cpp23-msvc-cmake-ninja.md) | Accepted | C++23, MSVC, CMake, and separate Ninja builds |
-| [0002](0002-vulkan-graphics-api.md) | Proposed | Prefer Vulkan if the P1b renderer prototype satisfies the precision and capability evidence |
+| [0002](0002-vulkan-graphics-api.md) | Accepted | Vulkan is the SolEngine graphics API. Accepted 2026-08-14 on P1b B1 evidence, on one device, and not on baseline-class or AMD driver behaviour |
 | [0003](0003-cpp-naming-conventions.md) | Accepted | `sol` namespace and project-owned C++ naming conventions |
 | [0004](0004-persistence-versioning-and-compatibility.md) | Accepted | Version from first persistence; guarantee migrations from public alpha |
 | [0005](0005-engine-linkage-and-extension-boundary.md) | Accepted | Internal static engine libraries; no stable C++ ABI for mods |

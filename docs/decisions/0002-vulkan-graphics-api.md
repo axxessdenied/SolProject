@@ -1,10 +1,12 @@
 # ADR 0002 — Prefer Vulkan for the renderer
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-08-12
 
 **Revised:** 2026-08-12 — required evidence rebalanced toward precision and capability; frame-time confirmation moved to P2/M2; Direct3D 12 spike replaced with a documented analysis. See [P1b — Renderer and Craft Prototypes](../../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md).
+
+**Accepted 2026-08-14** by the user, on the P1b increment B1 evidence indexed at [`evidence/p1b/B1/`](../../evidence/p1b/B1/Index.md). Every gating clause below is met; the disposition and its limits are recorded in [Gating evidence disposition](#gating-evidence-disposition). **Acceptance is on precision, capability, tooling and the documented Direct3D 12 analysis, and on one device.** It does not assert baseline-class or AMD driver behaviour, which the hardware caveat below continues to exclude, and it does not close the deferred P2/M2 frame-time gates.
 
 > **Hardware caveat, added 2026-08-13.** Every claim in this ADR about the GTX 1060 6 GB, RX 580 8 GB, UHD 630, and Vega 8 classes is **unverified on hardware**. None of those devices is available to this project, and no AMD device or driver stack of any kind is — so no clause here may be read as asserting AMD driver behaviour. What can be obtained is set out in the accepted [reference-hardware evidence plan](../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md); this ADR may close on precision, capability, tooling, and the documented Direct3D 12 analysis, but not on baseline-class driver evidence.
 
@@ -45,6 +47,22 @@ Frame time measured in a scene with placeholder geometry, no production part mes
 - Clean validation-layer output for the exercised path, or an explanation and acceptance of every remaining message, plus a usable RenderDoc/capture workflow.
 - Vulkan types confined to renderer-owned interfaces, demonstrated by inspection of the module boundary.
 - A documented Direct3D 12 comparison analysis covering driver coverage on the baseline GPU classes, tooling maturity, shader toolchain, and the cost of a future backend swap behind the renderer interface.
+
+### Gating evidence disposition
+
+Recorded 2026-08-14 at acceptance. Every figure is from the RTX 4060 Laptop GPU unless stated, and the hardware caveat above governs what that permits anyone to claim.
+
+| Gating clause | Disposition |
+|---|---|
+| Camera-relative rendering and depth, surface to orbit | **Met.** No collapse; resolution scales linearly from 1 m to 10 000 km, matching the analytic prediction to between 3e-9 and 1e-7. A conventional finite-far projection through the identical harness collapses past 10 km, which is what makes the pass evidence rather than an assertion |
+| ≤ 0.25 px stationary jitter at both reference views | **Met.** 0.000000 px, frames bit-identical, with a sub-pixel response control confirming precision rather than only stability |
+| Stable LOD transitions, no detectable popping, no unbounded memory growth over a 30-minute traverse | **Met**, under two measurement methods that did not exist when this clause was written — neither named a statistic or a limit. Both were defined and ratified by the user on 2026-08-14 as separate decisions. Popping: 0.000101 of the frame at the worst step against a 0.0020 limit, control separating 4.4×. Memory: second-half trend 15.9 KiB/min against a 64 limit and 0.98 MiB growth against a 2 MiB backstop, with an 8-byte-per-frame leak demonstrated to fail both. **The popping pass is a margin and a response, not a rescue** — the control is itself below the perceptual limit. **The memory pass bounds a rate; it does not prove an asymptote** |
+| Startup capability reporting and graceful rejection with actionable diagnostics | **Met.** The renderer enumerates loader, device version, features, extensions, formats, queues, limits and memory, and rejects unsupported devices by named reason with a negative control proving the rejection path fires. **Narrower than it looks:** the four synthetic device profiles are hand-authored and near-identical across every field the requirement consults, so they are one assertion rather than four until reconciled against real reports. That reconciliation bears on baseline-class support claims, which this ADR does not make, so it does not block acceptance — it is tracked in `docs/project_status.md` |
+| Clean validation output, or explanation and acceptance of every message, plus a usable capture workflow | **Met.** Zero messages originate from this project; three `LLP_LAYER_3` loader warnings come from a third-party overlay layer installed on the machine and fall in this clause's "explained and accepted" category. The capture workflow is **GFXReconstruct from the pinned Vulkan SDK**, not RenderDoc — it adds no dependency, and was verified end to end on 2026-08-14 by a 240-frame capture, `gfxrecon-info` inspection, and a clean 240-frame replay. RenderDoc remains the better interactive frame debugger and is not installed here |
+| Vulkan types confined to renderer-owned interfaces, by inspection | **Met, and tighter than required.** Four files include a Vulkan header, all under `engine/render/src/`. **No public header contains a Vulkan type at all**, including the renderer's own; the only `Vk*` occurrences in `engine/render/include/` are three comments explaining what the interface deliberately does not mirror. Enforced by the build rather than convention — every Vulkan-facing package is linked privately, so an escaping type is a compile error |
+| Documented Direct3D 12 comparison analysis | **Met.** [P1b — Direct3D 12 comparison analysis](../../SolProjectNotes/Milestones/P1b-Direct3D12-Comparison-Analysis.md), 2026-08-14. Driver coverage is equivalent across all four baseline classes and the one genuine coverage risk — AMD's legacy driver track for GCN 4 and Raven Ridge — is API-neutral. Tooling favours Direct3D 12 modestly. Shader toolchains are equivalent. The backend-swap cost is bounded and measured at the module boundary. Recommendation: retain Vulkan |
+
+**What acceptance does not settle**, restated so a later reader cannot infer more than was measured: nothing is verified on any baseline-class device or on any AMD hardware; the Intel UHD is unmeasured; frame time is neither gated nor claimed here; and the deferred P2/M2 gates below are untouched.
 
 ### Recorded, not gating
 

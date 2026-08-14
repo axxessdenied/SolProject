@@ -170,10 +170,10 @@ Each increment carries a cost gate. Exceeding the box is itself a result: it tri
 - a Vulkan 1.2 path that queries all required device capabilities and rejects unsupported configurations clearly;
 - minimal full-scale Earth, atmosphere/sky transition, depth stress geometry, and camera-relative rendering built on the frame model selected in P1a increment A2;
 - representative scalable quality settings, including a conservative low tier;
-- validation-layer and graphics-capture workflow;
+- validation-layer and graphics-capture workflow — **delivered 2026-08-14**, capture via GFXReconstruct from the pinned Vulkan SDK;
 - the screen-space jitter harness described above;
 - capability and performance reports for both discrete baseline GPU classes and both integrated investigation classes when accessible;
-- an evidence-based Direct3D 12 comparison analysis sufficient to close ADR 0002.
+- an evidence-based Direct3D 12 comparison analysis sufficient to close ADR 0002 — **delivered 2026-08-14**: [P1b — Direct3D 12 comparison analysis](P1b-Direct3D12-Comparison-Analysis.md).
 
 ### Done criteria and validation
 
@@ -229,7 +229,7 @@ Record the recommended craft representation and resource-network boundaries, mea
 ## Exit criteria
 
 - every P1b-gating threshold has a reproducible result or an approved documented revision;
-- ADR 0002 has a clear disposition;
+- ADR 0002 has a clear disposition — **met: Accepted 2026-08-14**, on one device and not on baseline-class or AMD driver behaviour;
 - the craft representation has a recommendation backed by a two-way comparison;
 - integrated-graphics status is honest and does not block closure;
 - frame-time data is recorded and carried forward as the M2 baseline without being treated as a P1b pass or fail;

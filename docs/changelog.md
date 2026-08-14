@@ -57,6 +57,10 @@ All notable user-visible changes will be documented here after implementation be
 
 - `TimingScenario`, the synthetic timing loop A1 built to prove the measurement pipeline and marked disposable. `FrameModelCost` now demonstrates the same pipeline against real frame conversions; A1's evidence retains the record.
 
+### Decided
+
+- **Vulkan is now the graphics API, not just the preferred direction.** ADR 0002 had been open since the start, waiting on evidence a prototype could uniquely provide, and it is now accepted: the renderer holds precision and depth from a launch pad to orbit, its level-of-detail transitions are stable by both of the measures that were defined for them, it reports what a device can do and refuses one that cannot, and a frame can be captured and replayed. Written alongside it, because the decision required it, is a comparison against Direct3D 12 — the conclusion being that on the four PC classes this game targets both APIs are supported, the one real coverage risk belongs to a graphics vendor's driver support lifetime rather than to either API, and switching later would be an addition behind an unchanged interface rather than an engine rewrite. **What was accepted is narrower than "Vulkan works":** everything was measured on one laptop GPU, and the ADR says in its own text that it asserts nothing about the older cards the game is meant to run on, none of which anyone here has.
+
 ### Documentation
 
 - Established the initial SolProject product vision, planning gate, engine proposal, GDD, roadmap, and AI-agent workflow.

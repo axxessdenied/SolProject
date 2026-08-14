@@ -977,8 +977,31 @@ behaviour for the CPU and says nothing about the GPU, so nothing constrains that
 configurations run the full suite, so every gate result exists in two variants from two different
 shader binaries. The string is baked in from the same CMake variable that builds the `glslc`
 command line, so the reported flags cannot drift from the invoked ones. This **records** the
-divergence rather than removing it; the Debug shaders stay unoptimised because a capture workflow
-is an outstanding B1 deliverable.
+divergence rather than removing it; the Debug shaders stay unoptimised so that a capture stays
+readable, which the GFXReconstruct workflow below now exercises.
+
+### Frame capture
+
+ADR 0002's capture clause is satisfied by **GFXReconstruct**, which ships with the already-pinned
+Vulkan SDK 1.4.357.0 and therefore adds no dependency. Capture is driven entirely by environment,
+so nothing in the renderer knows about it:
+
+```
+VK_INSTANCE_LAYERS=VK_LAYER_LUNARG_gfxreconstruct \
+GFXRECON_CAPTURE_FILE=<out>.gfxr  SolRenderLoop.exe
+gfxrecon-info  <out>.gfxr      # application, device, resolution, frame count
+gfxrecon-replay <out>.gfxr     # replays the recorded stream
+```
+
+Verified end to end on 2026-08-14, Release: 240 frames captured from `SolRenderLoop`, the file
+self-describing its application, RTX 4060 device and 1280×720 resolution, and a clean 240-frame
+replay at 104.6 fps whose only warnings are the same third-party overlay messages the validation
+output already explains. Raw output in `evidence/p1b/B1/raw/release-CaptureWorkflow.txt`.
+
+RenderDoc is the better *interactive* frame debugger and is not installed on this machine. The
+clause asks for a usable capture workflow rather than for RenderDoc specifically, and a
+capture/replay round trip is the part that makes a rendering defect reproducible away from the
+machine that saw it.
 
 **All gate results on this branch are from one device**: the NVIDIA RTX 4060 Laptop GPU, driver
 581.15.0.0, at 1280×720, Release. The accepted evidence plan requires gating thresholds to be
@@ -1035,7 +1058,7 @@ authoritative for the literal values.
 - Orbital propagation uses patched conics with spheres of influence. No perturbations, drag, or decay enter the propagation; aerodynamic forces still act on active craft inside the atmosphere in the local regime (ADR 0011).
 - Assets are authored in Blender, interchanged as glTF 2.0 with metric units and explicit axis conversion, generated procedurally where parametric, and baked at build time into an engine-ready runtime format. The runtime loads only baked assets (ADR 0012).
 
-Vulkan is the preferred graphics direction, not yet an accepted production implementation dependency. P1b uses Vulkan 1.2 as the candidate floor, queries actual device capabilities, and treats later capabilities as optional. It must establish surface-to-orbit render precision, depth behavior, LOD continuity, baseline discrete-GPU capability support, UHD 630/Vega 8-class status, and a validation/capture workflow. ADR 0002 closes on that evidence plus a documented Direct3D 12 analysis; a comparison spike is not required.
+**Vulkan is the accepted SolEngine graphics API — ADR 0002 was accepted on 2026-08-14** on P1b increment B1 evidence: surface-to-orbit precision and depth, LOD continuity in both halves, capability reporting with a negative control, explained validation output, a verified capture workflow, the enforced renderer boundary, and the documented [Direct3D 12 comparison analysis](../SolProjectNotes/Milestones/P1b-Direct3D12-Comparison-Analysis.md). Vulkan 1.2 remains the candidate floor with capabilities queried per device and later capabilities optional. **Acceptance is on one device and asserts nothing about baseline-class or AMD driver behaviour**; UHD 630/Vega 8-class status and the frame-time gates remain open at M2.
 
 Renderer frame time is recorded in P1b but **gated in M2**, where the scene contains representative assets: p95 no greater than 16.67 ms at 1080p low/medium on the discrete baseline, with a spike criterion of p99 no greater than 25 ms and no frame exceeding 33 ms. The integrated investigation tier is measured against 33.3 ms p95 at 720p/low and its support status is decided at M2. See ADR 0002 and the P1b milestone plan.
 

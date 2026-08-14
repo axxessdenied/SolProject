@@ -200,7 +200,17 @@ its own output.
 Three messages, identical in every run, all `LLP_LAYER_3` loader warnings naming
 `GalaxyOverlayVkLayer` — a third-party overlay layer installed on this machine, not this
 project's Vulkan usage. This is ADR 0002's "explained and accepted" category. **Zero messages
-originate from SolRender.** A capture/RenderDoc workflow is not yet established.
+originate from SolRender.**
+
+**A capture workflow is established** as of 2026-08-14, satisfying ADR 0002's capture clause. It
+uses **GFXReconstruct**, which ships with the already-pinned Vulkan SDK 1.4.357.0, rather than
+RenderDoc — so it adds no dependency. Verified end to end on `SolRenderLoop`, Release: 240 frames
+captured, `gfxrecon-info` reporting application, device and resolution from the file, and
+`gfxrecon-replay` replaying all 240 frames clean at 104.6 fps. The only replay warnings are the
+same third-party overlay messages explained above. Raw output in `raw/release-CaptureWorkflow.txt`.
+
+RenderDoc remains the better *interactive* frame debugger and is not installed on this machine.
+The clause asks for a usable capture workflow, not specifically for RenderDoc.
 
 ### Renderer contract tests
 

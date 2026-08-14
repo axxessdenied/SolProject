@@ -25,7 +25,7 @@ plan](../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) 
 - **The gating thresholds still gate.** Jitter, depth, LOD continuity and validation output are
   properties of the implementation rather than of GPU throughput, so the absent hardware does not
   excuse them.
-- **ADR 0002 may close** on precision, capability, tooling and the documented Direct3D 12 analysis.
+- **ADR 0002 was accepted on 2026-08-14** on precision, capability, tooling and the documented Direct3D 12 analysis.
   It **may not close** on any clause asserting AMD driver behaviour.
 - **Frame time is non-gating in P1b** by user decision, and every figure recorded is a laptop
   measurement subject to Dynamic Boost, variable TGP and thermal limits — not a fixed-hardware

@@ -19,7 +19,7 @@ This is the single source of truth for project phase, milestone state, blockers,
 - Windows x64, single-player, real-scale seamless surface-to-space travel, modular part construction, and a hybrid simulation model are confirmed.
 - The initial campaign epoch is fixed at 2026-01-01 00:00:00 UTC in the real Solar System, using real astronomical names/data and fictional companies and politics. DE440/DE441 and NAIF data and an explicit UTC-to-TDB boundary own reference fixtures. P1 uses a fixed launch anchor at 28.0° N, 80.5° W, 5 m above the reference ellipsoid; final fictional terrain placement and regulatory context remain open (ADR 0008).
 - The first playable uses external third-person flight, instruments, and an orbital map. Cockpit/IVA is later; walking inside ships is deferred beyond the current roadmap.
-- C++23, MSVC, CMake, and Ninja are accepted. Vulkan 1.2 is the accepted P1 candidate floor with per-device capability queries; final production adoption remains Proposed until ADR 0002 receives P1 evidence.
+- C++23, MSVC, CMake, and Ninja are accepted. **Vulkan is the accepted SolEngine graphics API — ADR 0002 was accepted on 2026-08-14** on P1b increment B1 evidence, with Vulkan 1.2 as the candidate floor and per-device capability queries. Acceptance rests on precision, capability, tooling and the documented Direct3D 12 analysis, measured on one device; it asserts nothing about baseline-class or AMD driver behaviour and does not close the P2/M2 frame-time gates.
 - The baseline PC is an Intel Core i5-8400 or Ryzen 5 2600, GTX 1060 6 GB or RX 580 8 GB, 16 GB RAM, and an SSD, targeting 60 FPS at 1080p on low/medium settings. Intel UHD 630 and AMD Vega 8-class integrated graphics are investigation targets for 30 FPS at 720p/low.
 - Keyboard/mouse is the first input target. The remappable defaults use W/S for pitch, A/D for yaw, Q/E for roll, Shift/Ctrl for throttle increase/decrease, Z/X for full/cut throttle, Space for staging, T for stability assist, M for the orbital map, right-mouse drag to orbit the external camera, and the wheel to zoom. Initial capability also includes attitude-rate damping, throttle hold, heading/prograde/retrograde indicators, maneuver guidance, and staging warnings. Automated launch, maneuver execution, rendezvous/docking, and mission scripting are research-gated.
 - The first contract, **Orbital Environmental Survey**, uses an uncrewed craft to reach an approximately 200 km by 200 km orbit, remain in a stable orbit for one complete revolution, collect radiation, magnetic-field, and upper-atmosphere observations, and transmit valid data. Reentry and recovery are not required.
@@ -89,7 +89,7 @@ This satisfies every authorization prerequisite in the P1b plan: P1a is complete
 - [x] Exact initial flight bindings and external camera behavior selected.
 - [x] Initial world identity, scale, and present-day start selected.
 - [x] C++ standard, compiler, and build generator accepted through ADR 0001.
-- [x] Vulkan 1.2 P1 candidate floor, capability strategy, hardware tiers, and conditional fallback accepted; final production Vulkan adoption remains Proposed in ADR 0002 until P1 evidence.
+- [x] Vulkan 1.2 P1 candidate floor, capability strategy, hardware tiers, and conditional fallback accepted; **production Vulkan adoption accepted in ADR 0002 on 2026-08-14** on P1b B1 evidence, on one device and not on baseline-class or AMD driver behaviour.
 - [x] Initial dependency acquisition and pinning policy accepted through ADR 0007; individual libraries remain milestone-owned.
 - [x] First-playable scope and non-goals accepted.
 - [x] Technical risk prototypes and measurable pass/fail criteria accepted in the P1a and P1b milestone plans.
@@ -139,7 +139,7 @@ The review re-ran both configurations from the checked-in presets — **20/20 te
 
 **B1 carries two known limitations from the start, neither of which blocks it:**
 
-- **No baseline-class or AMD hardware evidence is obtainable.** The accepted [evidence plan](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) keeps every gating threshold in force — jitter, depth, LOD continuity, and validation output are properties of the implementation, not of GPU throughput — but the capability-reporting gate needs a negative control and synthetic baseline profiles to be testable at all, since both present GPUs exceed the Vulkan 1.2 floor. ADR 0002 may close on precision, capability, tooling, and the documented Direct3D 12 analysis; it may not close on any clause asserting AMD driver behavior.
+- **No baseline-class or AMD hardware evidence is obtainable.** The accepted [evidence plan](../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) keeps every gating threshold in force — jitter, depth, LOD continuity, and validation output are properties of the implementation, not of GPU throughput — but the capability-reporting gate needs a negative control and synthetic baseline profiles to be testable at all, since both present GPUs exceed the Vulkan 1.2 floor. ADR 0002 **was accepted on 2026-08-14** on precisely that basis — precision, capability, tooling, and the documented Direct3D 12 analysis — and it asserts no clause about AMD driver behavior.
 - **The frame-time rows are laptop measurements.** Dynamic Boost, variable TGP, thermal limits, and hybrid adapter selection mean the RTX 4060 result is not a fixed-hardware quantity. Frame time was already non-gating in P1b by user decision, so this affects the quality of the M2 baseline rather than any P1b verdict.
 
 ## P1b increment B1 progress and handoff
@@ -160,7 +160,7 @@ is the smaller thing: enough state that nobody has to re-derive it from commit m
 | Depth behaviour | **Passes on the RTX 4060 only.** No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7, with a conventional-projection control failing as expected. Guaranteed separation is ~7 cm at 1 000 km and ~69 cm at Earth's radius. The Intel UHD is unmeasured. |
 | LOD continuity | **Both halves satisfied and ratified 2026-08-14, on the RTX 4060 only.** `render.lod-gate` is enabled and passing on the RTX 4060 in both configurations. Popping is certified against an isolated transition by the [method now written into the milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md): the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit — a 20× margin — with the control separating by 4.4×. The user ratified both the method and its narrower reading: because the control is itself below the limit, the pass is a margin and a response rather than a rescue. The **30-minute memory traverse passes** under a method ratified the same day and separately from the popping one — second-half trend 15.9 KiB/min against a 64 limit, 0.98 MiB growth against a 2 MiB backstop, with an 8-byte-per-frame control demonstrated to fail both. A pass bounds the settled growth rate; it does not prove an asymptote. See [architecture](architecture.md). |
 | Capability reporting | Implemented with a negative control; **cannot close** until the synthetic device profiles are reconciled against real reports. |
-| Validation output | Clean from this project. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category. A capture/RenderDoc workflow is not yet established. |
+| Validation output | Clean from this project. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category. A capture workflow **is established** as of 2026-08-14, using GFXReconstruct from the pinned Vulkan SDK rather than RenderDoc, verified end to end by a 240-frame capture, inspection and clean replay. |
 
 ### Where the LOD investigation stands
 
@@ -309,8 +309,8 @@ harness code in a disabled gate and is not covered; it is named below rather tha
   bakes the flags in from the same CMake variable that builds the `glslc` command line — so the
   reported and invoked flags cannot drift — and all three gates print it beside the device, e.g.
   `glslc --target-env=vulkan1.2 -g -O0 (Debug)`. This records the divergence rather than removing
-  it; the Debug shaders stay unoptimised because a readable RenderDoc capture is an outstanding
-  B1 deliverable.
+  it; the Debug shaders stay unoptimised so that a capture remains readable, which the
+  GFXReconstruct workflow established on 2026-08-14 now exercises.
 
 - **Terrain was culled against the horizon but not the view frustum**, so patches behind the
   camera were selected, subdivided to full depth, uploaded and drawn. Now culled against both,
@@ -372,7 +372,7 @@ terrain finding with them.
 - Performance and memory evidence on both available devices, recorded under their own names and
   never as baseline-class proxies. Note the depth attachment currently uses `STORE` rather than
   `DONT_CARE` to support readback; that bandwidth is included in any frame-time figure.
-- The documented Direct3D 12 comparison analysis, and ADR 0002's disposition.
+- ~~The documented Direct3D 12 comparison analysis, and ADR 0002's disposition.~~ **Done 2026-08-14:** the [analysis](../SolProjectNotes/Milestones/P1b-Direct3D12-Comparison-Analysis.md) is written and ADR 0002 is Accepted. A capture workflow was established alongside it, using GFXReconstruct from the pinned Vulkan SDK rather than RenderDoc, verified by a 240-frame capture and replay.
 - Reconciling the four synthetic baseline device profiles against real capability reports.
 - Licence notices for the four packages, before anything is distributed.
 - `evidence/p1b/B1/` **now exists**, created 2026-08-14: an [index](../evidence/p1b/B1/Index.md), a
