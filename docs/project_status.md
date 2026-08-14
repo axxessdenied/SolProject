@@ -205,9 +205,64 @@ on the wrong frame — invisible because every pixel harness accidentally serial
 wedge** on reachable error paths, a missing **flush**, a depth **write-after-write** hazard, and
 terrain capacities that left ~55 MB unreachable (now 43.03 MiB total, down from 125.22).
 
+### Second review round, 2026-08-13
+
+A `review-cpp-change` pass over the whole open PR #6 diff — including `59e29dc`, which the three
+earlier reviewers never saw, since it *was* their output. Ten findings; four fixed, six open.
+
+**Fixed, with the caveat that none of the three renderer fixes has a test.** All were verified by
+construction and by no-regression runs, which is a weaker claim than the gates usually carry and
+is stated that way deliberately:
+
+- **Root terrain patches were pinned to full coarse morph.** A zero-width morph band — the CPU's
+  way of saying "level 0 has no parent" — was widened to a `1e-6` epsilon before dividing, so the
+  factor pinned to 1. Detail in [architecture](architecture.md). Unreachable by any harness;
+  reachable in the renderer from geostationary altitude or beyond.
+- **A minimised window returned the previous frame's pixels from the capture path**, as a
+  well-formed non-empty frame. `FrameStats::presented` now distinguishes a skipped frame, and the
+  capture path discards on it. Same defect class as the dropped-frame fix in `59e29dc`: that one
+  closed the consumer side, this one the producer side.
+- **The LOD gate's transition scan trusted skipped frames and a scan that found nothing.** A
+  skipped frame reports zero patches, which against a real previous count is the largest delta the
+  scan can see, so the sweep would centre wherever the window was minimised; and a scan finding no
+  transition returned altitude zero, putting the sweep camera underneath the terrain and printing
+  the result as data. The scan now skips unpresented frames, drops the stale previous sample, and
+  returns no value rather than zero.
+- **The public terrain quality default was 2.5, below the scheme's own ~2.8 validity floor**, while
+  the gate measured at 3.0 and a comment claimed 3.0 *was* the default. The default is now 3.0 and
+  a `static_assert` in the gate holds the two together.
+
+**Open, in rough priority order.** None blocks the increment; all are recorded so they are not
+rediscovered:
+
+- `vmaCalculateStatistics` runs every frame, including in `renderFrame` — the function documented
+  as the only valid source of frame-time evidence. VMA's own guidance is that it traverses all
+  internal structures and is for debugging, with `vmaGetHeapBudgets` for per-frame use. Latent
+  today because nothing measures frame time yet; it will contaminate the first figure that does.
+- The swapchain surface format is chosen with a preference for sRGB but no check, while the code
+  states that a UNORM surface would make the jitter gate measure through a wrong tone response,
+  and the 4-bytes-per-pixel readback assumes a 32-bit format.
+- `cameraRelativeView` returns a degenerate matrix when forward is parallel to up, rendering an
+  empty frame with no error. Every current harness camera avoids it; a straight-down camera does
+  not.
+- The LOD gate's `sweepDiscriminates` verdict is computed from the descent, not from the sweep it
+  is named after. The value is intended; the name is not.
+- Terrain is rebuilt every frame with no frustum culling and a ten-octave noise evaluation per
+  vertex — roughly 11 million hash evaluations per frame at the measured peak, single-threaded.
+- Debug and Release compile different SPIR-V (`-O0` against `-O`) with nothing constraining
+  floating-point association in the shader, and the configuration that produced each published
+  number is not recorded alongside it. ADR 0010 governs MSVC and says nothing about this.
+
 ### Outstanding for B1
 
-- The two undiagnosed LOD pops, and re-enabling `render.lod-gate`.
+- Re-enabling `render.lod-gate`, which still needs a control that can fire. The two pops it used
+  to fail on are diagnosed and fixed; the blocker is now that at a valid quality setting neither
+  configuration pops at all.
+- Test coverage for the three renderer defects fixed in the second review round. All three are
+  correct by construction and none is exercised: the level-0 morph needs a traverse step at
+  ~40 000 km, the stale-capture path needs a minimised window, and the transition scan's
+  no-transition branch needs a scan that finds nothing. The first is the cheap one and would have
+  caught the original defect.
 - The atmosphere — the P1b plan's narrowing option permits a simple analytic shell. Note that a
   shell has no LOD transitions, so "atmosphere LOD popping" becomes vacuous under that option,
   which should be stated rather than quietly satisfied.

@@ -57,20 +57,27 @@ constexpr std::uint32_t kTerrainFragmentSpv[] =
 #include "shaders/Terrain.frag.inc"
     ;
 
-/// Terrain geometry is regenerated every frame as the camera moves, so its buffers are sized
-/// once for the worst case rather than reallocated per frame. Reallocation would both cost
-/// time and make the LOD gate's memory measurement meaningless — a working set that churns
-/// cannot be shown to be bounded.
 /// Terrain buffer capacity, expressed as a patch budget so the two sizes cannot drift apart.
+///
+/// Terrain geometry is regenerated every frame as the camera moves, so its buffers are sized
+/// once for the worst case rather than reallocated per frame. Reallocation would both cost time
+/// and make the LOD gate's memory measurement meaningless — a working set that churns cannot be
+/// shown to be bounded.
 ///
 /// Previously the vertex and index capacities were independent round numbers in a 2:1 ratio,
 /// while a patch emits 81 vertices and 384 indices — 4.74:1. The index buffer therefore always
 /// exhausted first, at 15 625 patches, and roughly 55 MB of the vertex allocation could never
 /// be addressed at any camera position.
 ///
-/// 4 096 patches is about 4.7x the measured peak of 874, which is margin without being an
-/// order of magnitude of dead allocation. At 32 bytes per vertex and 4 bytes per index that is
-/// ~10.1 MiB and ~6.0 MiB, and there is one set **per frame in flight**.
+/// 4 096 patches is 4.06x the peak of 1 008 measured on the LOD gate's descent, which is margin
+/// without being an order of magnitude of dead allocation. At 32 bytes per vertex and 4 bytes per
+/// index that is ~10.1 MiB and ~6.0 MiB, and there is one set **per frame in flight**.
+///
+/// The peak is a function of the quality setting, not a constant, so it has to be re-measured
+/// when that setting moves. The 874 this replaces was recorded in the same commit that raised the
+/// gate's `subdivisionFactor` from 0.6 to 3.0 and does not correspond to any measurement at 3.0 —
+/// a stale number carried past the change that invalidated it, which is the failure this note
+/// exists to stop repeating.
 constexpr VkDeviceSize kMaxTerrainPatches = 4096;
 constexpr VkDeviceSize kTerrainVerticesPerPatch = 81;  // (grid + 1)^2 for grid = 8
 constexpr VkDeviceSize kTerrainIndicesPerPatch = 384;  // grid^2 * 6
@@ -1648,10 +1655,18 @@ std::expected<CapturedFrame, std::string> Renderer::renderFrameCaptured(
     if (!stats.has_value()) {
         return std::unexpected(stats.error());
     }
-    if (stats->swapchainRebuilt) {
+    if (stats->swapchainRebuilt || !stats->presented) {
         // The frame was skipped or the swapchain changed under it; there is nothing valid to
         // read. Returning an empty capture lets the caller discard the sample rather than
         // measure a stale or half-sized buffer.
+        //
+        // `presented` is the half that was missing. A minimised window returns early from
+        // `submitFrame` without rebuilding anything, so `swapchainRebuilt` stays false, and the
+        // capture buffers still hold the *previous* frame — which this path would then wait on
+        // an already-signalled fence for, invalidate, and hand back as a full, non-empty frame.
+        // The jitter gate would count the duplicate as a sample with zero centroid deviation;
+        // the LOD gate would score a zero difference and pull down the median that its outlier
+        // floor and every ratio are measured against.
         return CapturedFrame{};
     }
 
@@ -1854,6 +1869,10 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
     impl.frameSlot = (slot + 1) % kFramesInFlight;
     ++impl.frameIndex;
     stats.frameIndex = impl.frameIndex;
+    // Set here and nowhere else: this is the only point reached with an image submitted and
+    // presented, so every early return above leaves it false by construction rather than by
+    // each path remembering to clear it.
+    stats.presented = true;
     return stats;
 }
 

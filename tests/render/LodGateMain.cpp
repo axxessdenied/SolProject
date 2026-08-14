@@ -31,6 +31,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -59,6 +60,16 @@ constexpr int kTraverseSteps = 600;
 /// where the morph is sound is exactly what makes transitions sub-pixel, so the control cannot
 /// fire. Visibility and validity pull against each other through this one parameter.
 constexpr double kQualitySubdivisionFactor = 3.0;
+
+// The "not a special test configuration" claim above, checked rather than asserted.
+//
+// It was false when written: the public default was 2.5, below the scheme's own validity floor,
+// while the gate quietly measured at 3.0. A comment cannot keep the two in step, so the compiler
+// does it. If the renderer's default moves, this gate stops building until someone decides
+// whether the threshold is still defined at the setting the renderer actually ships.
+static_assert(sol::render::TerrainSettings{}.subdivisionFactor == kQualitySubdivisionFactor,
+              "The LOD gate must be measured at the renderer's default quality setting, since "
+              "the P1b threshold is defined \"at the recorded quality setting\".");
 
 /// Relief for the LOD stress scene, in metres.
 ///
@@ -288,7 +299,13 @@ struct SweepResult {
 ///
 /// The renderer already reports how many patches it drew, and a transition is by definition a
 /// change in that number. Scanning for it removes the guesswork entirely.
-double findTransitionAltitude(sol::platform::Window& window, sol::render::Renderer& renderer)
+/// Returns no value when the scan found no transition at all, which is a real outcome rather
+/// than an error: a sweep centred on a transition that does not exist measures nothing, and a
+/// zero altitude would put the camera on the reference radius, underneath the terrain. Reporting
+/// the absence is the same discipline this file applies to `worstStep < 0`.
+std::optional<double> findTransitionAltitude(
+    sol::platform::Window& window,
+    sol::render::Renderer& renderer)
 {
     constexpr int kScanSteps = 400;
 
@@ -306,6 +323,9 @@ double findTransitionAltitude(sol::platform::Window& window, sol::render::Render
     std::uint32_t bestDelta = 0;
     std::uint32_t previousPatches = 0;
     double previousAltitude = 0.0;
+    // An explicit sentinel rather than `previousPatches != 0`, which cannot tell "no sample yet"
+    // apart from "a sample that drew no patches".
+    bool havePrevious = false;
 
     for (int step = 0; step < kScanSteps; ++step) {
         const double t = static_cast<double>(step) / static_cast<double>(kScanSteps - 1);
@@ -325,7 +345,17 @@ double findTransitionAltitude(sol::platform::Window& window, sol::render::Render
         if (!frame.has_value()) {
             break;
         }
-        if (previousPatches != 0) {
+        if (!frame->presented) {
+            // A skipped frame reports zero patches, and zero against a real previous count is
+            // the largest delta this scan can possibly see — so the sweep would be centred
+            // wherever the window happened to be minimised. Dropping the previous sample too
+            // keeps the next comparison from spanning two altitude steps, which is the same
+            // defect that manufactured a pop in the descent.
+            havePrevious = false;
+            continue;
+        }
+
+        if (havePrevious) {
             const std::uint32_t delta = frame->terrainPatches > previousPatches
                                             ? frame->terrainPatches - previousPatches
                                             : previousPatches - frame->terrainPatches;
@@ -336,6 +366,14 @@ double findTransitionAltitude(sol::platform::Window& window, sol::render::Render
         }
         previousPatches = frame->terrainPatches;
         previousAltitude = altitude;
+        havePrevious = true;
+    }
+
+    if (bestDelta == 0) {
+        std::printf("Transition scan: the drawn patch count never changed across %d steps, so "
+                    "there is no transition to centre a sweep on.\n",
+                    kScanSteps);
+        return std::nullopt;
     }
 
     std::printf("Transition scan: largest patch-count change is %u patches at %.0f m altitude\n",
@@ -661,39 +699,47 @@ int main()
 
     // The gate's actual popping verdict comes from crossing a single boundary slowly, for the
     // reason set out at runTransitionSweep: on a full descent the transitions overlap.
-    const double transitionAltitude = findTransitionAltitude(*window, *renderer);
-    const SweepResult sweepProduction = runTransitionSweep(
-        *window, *renderer, true, transitionAltitude, "Transition sweep, morphing enabled");
-    const SweepResult sweepControl = runTransitionSweep(
-        *window, *renderer, false, transitionAltitude,
-        "Transition sweep, morphing DISABLED (control)");
+    const std::optional<double> transitionAltitude = findTransitionAltitude(*window, *renderer);
+    if (!transitionAltitude.has_value()) {
+        // No sweep rather than a sweep at altitude zero. The band is a fraction either side of
+        // the centre, so an absent centre collapses it onto the reference radius — the camera
+        // would sit underneath the terrain and the table would print that as a measurement.
+        std::printf("\nSingle-transition sweep: not run — the scan found no transition to centre "
+                    "it on.\n");
+    } else {
+        const SweepResult sweepProduction = runTransitionSweep(
+            *window, *renderer, true, *transitionAltitude, "Transition sweep, morphing enabled");
+        const SweepResult sweepControl = runTransitionSweep(
+            *window, *renderer, false, *transitionAltitude,
+            "Transition sweep, morphing DISABLED (control)");
 
-    std::printf("\nSingle-transition sweep: +/-6%% around %.0f m altitude, 300 steps\n",
-                transitionAltitude);
-    std::printf("  %-46s %-12s %-10s %-8s %s\n",
-                "configuration",
-                "worst px frac",
-                "p999 delta",
-                "at step",
-                "mean max");
-    for (const SweepResult* sweep : {&sweepProduction, &sweepControl}) {
-        // A step of -1 means no step ever exceeded the perceptible threshold, so the p999 and
-        // step fields hold their initial values rather than measurements. Printing those as if
-        // they were data would be the same class of mistake this whole gate keeps catching.
-        if (sweep->worstStep < 0) {
-            std::printf("  %-46s %-12.6f %-10s %-8s %.4f\n",
-                        sweep->label.c_str(),
-                        sweep->worstChangedFraction,
-                        "n/a",
-                        "none",
-                        sweep->maximumDifference);
-        } else {
-            std::printf("  %-46s %-12.6f %-10.1f %-8d %.4f\n",
-                        sweep->label.c_str(),
-                        sweep->worstChangedFraction,
-                        sweep->worstP999,
-                        sweep->worstStep,
-                        sweep->maximumDifference);
+        std::printf("\nSingle-transition sweep: +/-6%% around %.0f m altitude, 300 steps\n",
+                    *transitionAltitude);
+        std::printf("  %-46s %-12s %-10s %-8s %s\n",
+                    "configuration",
+                    "worst px frac",
+                    "p999 delta",
+                    "at step",
+                    "mean max");
+        for (const SweepResult* sweep : {&sweepProduction, &sweepControl}) {
+            // A step of -1 means no step ever exceeded the perceptible threshold, so the p999
+            // and step fields hold their initial values rather than measurements. Printing those
+            // as if they were data would be the same class of mistake this gate keeps catching.
+            if (sweep->worstStep < 0) {
+                std::printf("  %-46s %-12.6f %-10s %-8s %.4f\n",
+                            sweep->label.c_str(),
+                            sweep->worstChangedFraction,
+                            "n/a",
+                            "none",
+                            sweep->maximumDifference);
+            } else {
+                std::printf("  %-46s %-12.6f %-10.1f %-8d %.4f\n",
+                            sweep->label.c_str(),
+                            sweep->worstChangedFraction,
+                            sweep->worstP999,
+                            sweep->worstStep,
+                            sweep->maximumDifference);
+            }
         }
     }
 

@@ -439,6 +439,18 @@ only mode Vulkan guarantees, and it presents every frame exactly once at a fixed
 mode that drops frames would inject presentation variance into the screen-space jitter gate,
 which measures per-frame centroids and is supposed to isolate the renderer.
 
+A frame that renders reports `FrameStats::presented`, and every path that returns without drawing
+leaves it false. This is a measurement contract, not bookkeeping. The readback buffers are
+persistently mapped and keep their previous contents, so a caller that cannot tell a skipped frame
+from a rendered one reads the *last* frame's pixels and scores the duplicate as a sample — which
+is silent, because the duplicate is a well-formed frame. A minimised window was exactly that hole
+until 2026-08-13: it returned early without rebuilding anything, so the existing
+`swapchainRebuilt` flag stayed false and the capture path handed back stale pixels. In the jitter
+gate a duplicate contributes zero centroid deviation and strengthens the bit-identical reading; in
+the LOD gate it contributes a zero frame difference and pulls down the median that the outlier
+floor and every ratio are measured against. The flag is set at one point, after a successful
+present, so every early return is false by construction rather than by each path remembering.
+
 Depth is **reversed-Z with an infinite far plane**, in a 32-bit float buffer:
 
 - Near maps to 1 and far to 0, so floating-point depth's precision — which is concentrated near
@@ -450,11 +462,18 @@ Depth is **reversed-Z with an infinite far plane**, in a 32-bit float buffer:
   form costs nothing once Z is reversed.
 - The depth compare is `GREATER`, and depth clears to 0.
 
-The GPU never receives a world coordinate. Object positions are subtracted from the camera
-position in `double` and only then narrowed to `float`, in one function, so there is a single
-line to audit when the jitter gate is measured. The view matrix has no translation term at all:
-the camera *is* the origin. A conventional view matrix would reintroduce the camera's world
-magnitude in `float`, which is exactly what the frame model selected in A2 exists to prevent.
+Object *origins* are subtracted from the camera position in `double` and only then narrowed to
+`float`, in one function, so there is a single line to audit when the jitter gate is measured.
+The view matrix has no translation term at all: the camera *is* the origin. A conventional view
+matrix would reintroduce the camera's world magnitude in `float`, which is exactly what the
+frame model selected in A2 exists to prevent.
+
+This paragraph previously opened "the GPU never receives a world coordinate", which is false and
+was withdrawn on 2026-08-13. It holds for terrain, which narrows per vertex on the CPU. It does
+not hold for the reference objects: their vertex positions are formed *on the GPU* as
+`origin + unitCube * radius`, so a planet-sized object's vertices carry its own radius as their
+magnitude. The retraction was recorded in the changelog and in the status handoff at the time
+and did not reach this document, which is the same drift that entry was itself about.
 
 ### Screen-space jitter: first gating result
 
@@ -589,9 +608,11 @@ A real-scale planet cannot be one mesh — Earth's surface at one-metre resoluti
 order of 10^14 vertices — so the renderer chooses each frame which parts of the surface to
 represent finely. The scheme is CDLOD on a cube-sphere: six quadtrees, subdividing when the
 camera is inside a level's range, with **every vertex carrying both its own position and the
-position it would occupy one level coarser**. A per-patch morph factor blends between them, so
-a fine mesh continuously *becomes* the coarse one and the switch happens when the two are
-already identical.
+position it would occupy one level coarser**. A morph factor evaluated **per vertex, in the
+vertex shader, from that vertex's own camera distance** blends between them, so a fine mesh
+continuously *becomes* the coarse one and the switch happens when the two are already identical.
+(This paragraph said "per-patch" until 2026-08-13, describing the arrangement the same section
+goes on to record as a defect. Per patch is precisely what does not work.)
 
 Terrain vertices are emitted **camera-relative**, subtracted in `double` on the CPU. A
 planet-relative position is ~6.4e6 m, where a `float` quantises to half a metre; subtracting
@@ -622,8 +643,14 @@ also cannot see host-side, descriptor-pool, or driver-side growth, since VMA doe
 Capacity was sized from a patch budget after review found the vertex and index capacities
 inconsistent — they were independent round numbers in a 2:1 ratio while a patch emits 81
 vertices and 384 indices, so the index buffer always exhausted first and roughly 55 MB of the
-vertex allocation was unreachable at any camera position. The budget is now 4 096 patches, about
-4× the measured peak, and total device allocation is 43.03 MiB.
+vertex allocation was unreachable at any camera position. The budget is now 4 096 patches against
+a measured peak of 1 008 on the gate's descent — 4.06× — and total device allocation is 43.03 MiB.
+
+The peak was published as 874 until 2026-08-13. That figure was recorded in the same commit that
+raised the gate's `subdivisionFactor` from 0.6 to 3.0 and does not correspond to any measurement
+at 3.0: the peak scales with the quality setting, and the number was carried past the change that
+invalidated it. The headroom it argued for was never in doubt — 4.06× is still ample — but the
+margin was overstated by 15%, and a capacity justified by a stale peak is justified by nothing.
 
 **The popping half has no trustworthy result, and the gate is recorded as incomplete rather
 than passed.** Building it found two real defects, both of which would have produced a
@@ -691,8 +718,26 @@ Fixing it exposed a constraint the per-patch version had hidden. The morph band 
 level's range, which is `subdivisionFactor` patch-widths, and a smooth per-vertex morph needs it
 wider than about 2.8 of them. The 0.6 factor previously used — and wrongly described in code as
 "what a shipping renderer would use for performance" — is below that floor; at 0.6 the
-per-vertex morph measured *worse* than no morphing. The factor is now 3.0, which is also the
-renderer's default rather than a test-only setting.
+per-vertex morph measured *worse* than no morphing. The factor is now 3.0. That it is *also* the
+renderer's default, rather than a test-only setting, became true only on 2026-08-13 — it was
+asserted here before it was — and is recorded under "Recorded quality setting" below.
+
+A third morph defect was found by review on 2026-08-13, after the per-vertex fix and outside the
+gate's reach. **Root patches were pinned to full coarse morph.** A level-0 node has no parent, and
+the CPU says so by emitting a zero-width morph band; the shader widened that degenerate band to a
+`1e-6` epsilon before dividing, which drives the factor to 1 for any distance above a micrometre.
+A root patch therefore rendered permanently at its coarse grid and jumped to its fine grid at the
+instant its children took over — a discontinuity sitting inside the mechanism that exists to
+remove discontinuities. The shader now treats a zero-width band as "no parent" and returns a
+factor of 0.
+
+**No measurement on this branch is affected, and the fix is unverified.** Level 0 is emitted only
+beyond `2R × subdivisionFactor`, about 38 000 km, while every harness runs 3–300 km at
+`maxLevel 10` where level 0 always subdivides — so no gate could have seen it and none does now.
+The LOD gate's output is byte-identical either side of the change. The defect is reachable in the
+renderer rather than in the gate: any view of a planet from geostationary altitude or beyond, or
+any caller passing `maxLevel = 0`. Covering it needs a traverse step out at ~40 000 km, which
+does not exist yet.
 
 **The gate still cannot be certified, and the reason has moved again.** At a factor where the
 morph is well-conditioned, transitions are sub-pixel: both configurations now record **zero
@@ -722,8 +767,21 @@ Two earlier candidate causes were tested and neither was it, recorded so they ar
 
 The LOD threshold is defined "at the recorded quality setting", and the setting was previously
 recorded nowhere. It is `subdivisionFactor = 3.0` with `gridResolution = 8` and, for the gate's
-stress scene only, 20 km of relief. The first two are the renderer's defaults; the relief is a
-deliberately extreme test configuration and is labelled as such.
+stress scene only, 20 km of relief. The relief is a deliberately extreme test configuration and
+is labelled as such.
+
+**"The renderer's default" became true on 2026-08-13 and was not true when first written.** The
+public `TerrainSettings::subdivisionFactor` defaulted to **2.5** while the gate measured at 3.0 —
+so the gate was not measured at the shipped setting, and worse, 2.5 is below the ~2.8 floor the
+scheme needs, meaning every caller taking the default got an ill-conditioned configuration. The
+default is now 3.0. `gridResolution = 8` is an internal `TerrainConfig` default and is not
+reachable through the public settings struct at all, which is why it cannot drift.
+
+The correspondence is now checked by the compiler rather than asserted by this paragraph: the LOD
+gate carries a `static_assert` tying its quality constant to `TerrainSettings{}.subdivisionFactor`,
+so moving the renderer's default fails the gate's build until someone decides whether the
+threshold is still defined at the setting the renderer ships. That assertion was verified to fire
+by setting the default to 2.9 and confirming the build broke.
 
 **All gate results on this branch are from one device**: the NVIDIA RTX 4060 Laptop GPU, driver
 581.15.0.0, at 1280×720, Release. The accepted evidence plan requires gating thresholds to be

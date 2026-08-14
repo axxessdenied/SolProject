@@ -98,7 +98,14 @@ struct TerrainSettings {
     /// distrusting. A representative setting keeps the geometric error near the perceptual
     /// limit, which is where a shipping renderer would put it for performance and where
     /// morphing is actually load-bearing.
-    double subdivisionFactor = 2.5;
+    ///
+    /// **There is a hard lower bound of roughly 2.8, and this default sits just above it.** The
+    /// morph band is at most this many patch-widths, and a per-vertex morph needs the band wide
+    /// compared with a patch or the factor sweeps 0 to 1 across a single patch and distorts it.
+    /// Measured: at 0.6 the per-vertex morph produced *more* popping than no morphing at all.
+    /// The default was 2.5 — below the floor — which handed every caller an ill-conditioned
+    /// configuration; it is 3.0 to match the value the LOD gate is measured at.
+    double subdivisionFactor = 3.0;
 
     /// Continuous LOD morphing. Disabling it is the LOD gate's negative control: the same
     /// traverse must then produce detectable popping, and a detector that cannot see it is not
@@ -112,6 +119,15 @@ struct FrameStats {
     std::uint64_t frameIndex = 0;
     /// True when the swapchain was rebuilt this frame, which invalidates timing for it.
     bool swapchainRebuilt = false;
+
+    /// True only when this call actually rendered and presented an image.
+    ///
+    /// False for every path that returns without drawing — a minimised window most of all,
+    /// which @ref Renderer::renderFrame documents as a normal state rather than an error. The
+    /// distinction has to be visible to the caller: the readback buffers keep their previous
+    /// contents, so a measurement harness that cannot tell a skipped frame from a rendered one
+    /// will read the last frame's pixels again and score the duplicate as a sample.
+    bool presented = false;
 
     /// Terrain patches drawn and quadtree nodes visited this frame. A selection that thrashes
     /// between levels shows up in these counts before it shows up as a visible pop.

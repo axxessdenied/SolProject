@@ -40,8 +40,23 @@ void main()
     float distance = length(inPosition);
     float bandStart = push.params.x;
     float bandEnd = push.params.y;
-    float band = max(bandEnd - bandStart, 1e-6);
-    float morph = push.params.z * clamp((distance - bandStart) / band, 0.0, 1.0);
+
+    // A zero-width band means "no parent", not "an infinitely sharp band".
+    //
+    // A level-0 node has nothing to morph toward, and the CPU says so by emitting
+    // start == end == 0. Widening a degenerate band to a small epsilon instead — which is what
+    // this did — drives the factor to 1 for any distance above a micrometre, so a root patch
+    // renders permanently at its coarse grid and then jumps to its fine grid at the instant its
+    // children take over. That is exactly the discontinuity the morph exists to remove, sitting
+    // inside the mechanism meant to prevent it.
+    //
+    // Out of reach of the LOD gate, which runs 3-300 km at maxLevel 10 where level 0 always
+    // subdivides. In reach of the renderer: level 0 emits beyond `2R * subdivisionFactor`, about
+    // 38 000 km, so any view of the planet from geostationary altitude or further hits it.
+    float morph = 0.0;
+    if (bandEnd > bandStart) {
+        morph = push.params.z * clamp((distance - bandStart) / (bandEnd - bandStart), 0.0, 1.0);
+    }
 
     vec3 position = mix(inPosition, inCoarsePosition, morph);
     float height = mix(inHeightUnit, inCoarseHeightUnit, morph);
