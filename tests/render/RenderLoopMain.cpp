@@ -102,10 +102,9 @@ int main(int argc, char** argv)
 
     renderer->setScene(referenceScene());
 
-    // Positioned at the launch-anchor scale, looking along -Z at the reference objects. The
-    // camera's world position is deliberately large — 6378 km from the world origin — because
-    // that is the magnitude camera-relative rendering exists to absorb. If the frame model
-    // were wrong, this is where it would show.
+    // Near the world origin, deliberately. This loop exists to prove the frame loop presents,
+    // not to exercise world magnitude — the jitter and depth harnesses do that, and an earlier
+    // comment here claimed a 6378 km camera position that the code never set.
     sol::render::CameraState camera{
         .position = {0.0, 5.0, 0.0},
         .forward = {0.0, 0.0, -1.0},

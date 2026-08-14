@@ -38,6 +38,12 @@ All notable user-visible changes will be documented here after implementation be
 - Amended ADR 0011 in one clause: sphere-of-influence radii are derived at load from the pinned ADR 0008 data, not recorded as fixtures of their own. The model is unchanged and remains confirmed from measurement.
 - Recorded the campaign clock's exactness window — the integer nanosecond count converts to seconds exactly only to 104.25 days — as an architectural limit for P2 rather than a comment in a header. Every P1a measurement falls inside it; a multi-year campaign will not, and determinism is unaffected either way.
 
+### Corrected
+
+- Three entries above were overtaken by later work on the same branch and are superseded here rather than rewritten. `vulkan-memory-allocator` and `glfw3` are now linked, not merely declared. `engine/platform/` exists alongside `engine/render/`. And the LOD measurement is no longer "not trustworthy" — it works, and what it reports is that the gate cannot be certified, because the control it needs in order to mean anything does not fire.
+- Corrected a claim that the renderer never hands a world coordinate to the GPU. It holds for terrain, which narrows per vertex, and not for the reference objects, whose vertex positions are formed on the GPU from an origin and a radius — so a planet-sized object''s vertices carry its own radius as their magnitude.
+- Corrected the depth-resolution figures. The measured separations were best-case draws from a rounding boundary rather than the guaranteed step; the figure at which two surfaces are always distinguishable is one full unit in the last place, roughly 7 cm at 1 000 km and 69 cm at Earth''s radius.
+
 ### Removed
 
 - `TimingScenario`, the synthetic timing loop A1 built to prove the measurement pipeline and marked disposable. `FrameModelCost` now demonstrates the same pipeline against real frame conversions; A1's evidence retains the record.

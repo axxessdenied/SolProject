@@ -17,13 +17,20 @@
 /// Run at two reference views: the surface anchor, and a 200 km orbital vantage. Both must
 /// satisfy the gate.
 ///
-/// **What this actually tests.** Nothing in the renderer moves between frames — the camera is
-/// a constant and the scene is a constant — so an ideal renderer would produce byte-identical
-/// frames and exactly zero jitter. Any deviation is the renderer's own numerics: the
-/// double-to-float narrowing in the camera-relative transform, the projection, and the GPU's
-/// rasterisation. That is precisely the quantity the gate is about, and it is why the camera
-/// is placed at Earth-radius magnitude rather than near the world origin. A test at the origin
-/// would pass trivially and prove nothing about the frame model selected in P1a increment A2.
+/// **What this actually tests, and what it does not.** Nothing moves between frames — camera
+/// and scene are both constants — so an ideal renderer produces byte-identical frames and
+/// exactly zero jitter. The gate therefore measures **temporal stability only**.
+///
+/// It is worth being blunt that the gate is *magnitude-inert*. The marker sits at
+/// `camera + offset`, so every component the offset does not touch is bit-identical in both
+/// operands and subtracts to exactly zero — in `float` as much as in `double`. Placing the
+/// camera at Earth-radius magnitude does not by itself make the frame model observable here;
+/// an earlier version of this comment claimed it did, and was wrong.
+///
+/// The **sub-pixel response control** below is what carries the precision claim, and it only
+/// does so because it steps along the axis that carries the large magnitude. Read the two
+/// results together: the gate says the renderer is stable, the control says it is stable for
+/// the right reason.
 
 #include "Sol/Platform/Window.h"
 #include "Sol/Render/Renderer.h"
@@ -273,7 +280,7 @@ ViewResult measureView(
 /// smoothly. With `double` world coordinates the response is continuous and matches the
 /// geometric prediction. With `float` world coordinates every step would fall inside the same
 /// representable value, and the centroid would either not move at all or jump by the full
-/// quantisation step — which at Earth-radius magnitude is roughly 0.76 m, or about 12 pixels
+/// quantisation step — which at Earth-radius magnitude is 0.5 m, or about 8.5 pixels
 /// at this marker distance. The two outcomes are not subtle, which is what makes this a
 /// discriminating control rather than a second stability check.
 struct ResponseResult {
@@ -342,7 +349,8 @@ ResponseResult measureSubPixelResponse(
     // one, inflating the measured response by a factor that looks like a real scale error.
     struct Sample {
         int step = 0;
-        double centroidX = 0.0;
+        /// Tracks the screen axis the camera now moves along.
+        double centroid = 0.0;
     };
     std::vector<Sample> samples;
     samples.reserve(kSteps);
@@ -355,9 +363,20 @@ ResponseResult measureSubPixelResponse(
             .verticalFovRadians = 1.0472,
             .nearPlaneMetres = 0.1,
         };
-        // Move the camera, not the marker: this is the frame model's job, and moving the
-        // marker instead would exercise a different code path from the one under test.
-        camera.position.x += static_cast<double>(step) * kStepMetres;
+        // Step along Y — the axis carrying the large world magnitude — and not along X.
+        //
+        // This is the whole discriminating power of the control, and an earlier version had it
+        // backwards. The marker sits at `camera + offset`, so every component the offset does
+        // not touch is *bit-identical* in both operands and subtracts to exactly zero — in
+        // `float` just as in `double`. Stepping along X moved a component whose magnitude is
+        // at most 0.11 m, where a float ULP is ~1e-8 m; a fully-float world pipeline tracked
+        // the geometric prediction to within 4e-9 px and passed the control identically.
+        //
+        // Along Y the camera sits at 6 378 141.6 m, where a float ULP is 0.5 m. A 10 mm step
+        // is 1/50 of that, so a float pipeline rounds camera and marker to the same value and
+        // produces *exactly zero* screen motion for fifty consecutive steps. Only a pipeline
+        // that subtracts in double before narrowing responds at all.
+        camera.position.y += static_cast<double>(step) * kStepMetres;
 
         window.pollEvents();
         auto captured = renderer.renderFrameCaptured(camera);
@@ -369,7 +388,7 @@ ResponseResult measureSubPixelResponse(
 
         const auto centroid = markerCentroid(*captured);
         if (centroid.has_value()) {
-            samples.push_back({step, centroid->x});
+            samples.push_back({step, centroid->y});
         }
     }
 
@@ -387,14 +406,20 @@ ResponseResult measureSubPixelResponse(
         return result;
     }
 
-    // Moving the camera +X moves the marker -X on screen.
+    // The sign is taken from the data rather than asserted, because which way a +Y camera step
+    // moves the marker on screen depends on the projection's Y flip. What matters is that the
+    // motion is consistent and matches the predicted magnitude — a float pipeline would give
+    // exactly zero here, not a sign error.
+    const double firstDelta = samples[1].centroid - samples[0].centroid;
+    const double direction = firstDelta >= 0.0 ? 1.0 : -1.0;
+
     result.monotonic = true;
     double totalShift = 0.0;
     int totalSteps = 0;
     double worstError = 0.0;
     for (std::size_t i = 1; i < samples.size(); ++i) {
         const int stepSpan = samples[i].step - samples[i - 1].step;
-        const double delta = samples[i - 1].centroidX - samples[i].centroidX;
+        const double delta = (samples[i].centroid - samples[i - 1].centroid) * direction;
         if (delta <= 0.0) {
             result.monotonic = false;
         }

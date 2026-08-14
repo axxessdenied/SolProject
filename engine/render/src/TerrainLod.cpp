@@ -177,7 +177,7 @@ void buildTerrain(
     const std::uint32_t verticesPerEdge = grid + 1;
 
     // Emits one node as a patch, generating its grid and its coarse-level counterpart.
-    const auto emit = [&](const QuadtreeNode& node, double morph) {
+    const auto emit = [&](const QuadtreeNode& node, double morphStart, double morphEnd) {
         const CubeFace& face = kCubeFaces[node.face];
         const auto baseVertex = static_cast<std::int32_t>(out.vertices.size());
         const auto firstIndex = static_cast<std::uint32_t>(out.indices.size());
@@ -246,7 +246,9 @@ void buildTerrain(
             .firstIndex = firstIndex,
             .indexCount = grid * grid * 6,
             .vertexOffset = baseVertex,
-            .morph = config.morphEnabled ? static_cast<float>(morph) : 0.0F,
+            .morphStartDistance = static_cast<float>(morphStart),
+            .morphEndDistance = static_cast<float>(morphEnd),
+            .morphEnabled = config.morphEnabled ? 1.0F : 0.0F,
             .level = node.level,
         });
     };
@@ -286,26 +288,30 @@ void buildTerrain(
             continue;
         }
 
-        // Morph factor, measured against the *parent's* range rather than this node's.
+        // The morph *band*, in distance. The factor itself is evaluated per vertex on the GPU.
         //
-        // The distinction is the whole mechanism, and getting it wrong is silent. A node is
-        // emitted precisely when `distance >= range`, so morphing against `range` puts every
-        // emitted node past the end of its own band and pins the factor at 1 — the terrain
-        // then renders permanently at the coarse position, morphing nothing, and a popping
-        // test sees a consistent image either way and reports no pops. That is a passing
-        // result from a mechanism that is not running.
+        // Two things have to be right here and both were wrong before.
         //
-        // The node actually survives until its *parent* would stop subdividing, at twice this
-        // range. Blending across the top of that interval means the geometry has already
-        // become the parent's by the time the parent takes over, which is what leaves nothing
-        // to pop.
-        double morph = 0.0;
+        // The band is measured against the *parent's* range, not this node's. A node is
+        // emitted precisely when `distance >= range`, so a band computed from `range` puts
+        // every emitted node past its own end and pins the factor at 1 — terrain then renders
+        // permanently coarse, morphing nothing, while a popping test sees a consistent image
+        // either way and reports success from a mechanism that is not running.
+        //
+        // And the band is handed to the shader rather than collapsed to a number here. A
+        // per-patch factor taken from the node centre differs between neighbouring patches, so
+        // their shared edge is drawn as two different polylines and cracks; and because the
+        // subdivision event is governed by the *parent's* centre distance while each child's
+        // factor came from its own, a near-side child could still be short of full morph at
+        // the instant its parent handed over. Per vertex, both problems disappear: the factor
+        // is a continuous function of position, so adjacent patches agree on shared vertices
+        // by construction.
+        double morphStart = 0.0;
+        double morphEnd = 0.0;
         if (node.level > 0) {
             const double parentRange = range * 2.0;
-            const double bandStart = parentRange * (1.0 - config.morphBand);
-            if (distance > bandStart && parentRange > bandStart) {
-                morph = std::clamp((distance - bandStart) / (parentRange - bandStart), 0.0, 1.0);
-            }
+            morphStart = parentRange * (1.0 - config.morphBand);
+            morphEnd = parentRange;
         }
 
         // Cull nodes hidden behind the planet, conservatively.
@@ -347,7 +353,7 @@ void buildTerrain(
             }
         }
 
-        emit(node, morph);
+        emit(node, morphStart, morphEnd);
     }
 }
 

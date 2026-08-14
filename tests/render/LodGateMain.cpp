@@ -45,12 +45,20 @@ constexpr int kTraverseSteps = 600;
 
 /// The recorded quality setting the gate is measured at.
 ///
-/// Deliberately aggressive. At the 2.5 default, a LOD transition displaces geometry by roughly
-/// half a pixel at the distance it occurs, so nothing pops with or without morphing and the
-/// gate passes for a reason unrelated to the LOD scheme. A setting near the perceptual limit
-/// is both what a shipping renderer would use for performance and the only setting at which
-/// this gate tests anything.
-constexpr double kQualitySubdivisionFactor = 0.6;
+/// This is the value the renderer defaults to, not a special test configuration, and it is
+/// pinned near the bottom of the range where the LOD scheme is well-conditioned.
+///
+/// An earlier version used 0.6 and described it as "deliberately aggressive… what a shipping
+/// renderer would use for performance". That was wrong twice over: it was an unevidenced
+/// production claim, and 0.6 is below the scheme's validity floor. The morph band is at most
+/// `subdivisionFactor` patch-widths, and a smooth per-vertex morph needs it wider than about
+/// 2.8 of them; at 0.6 the factor sweeps 0 to 1 within a single patch and the per-vertex morph
+/// measured *worse* than no morphing at all.
+///
+/// The uncomfortable consequence is recorded rather than tuned around: raising the factor to
+/// where the morph is sound is exactly what makes transitions sub-pixel, so the control cannot
+/// fire. Visibility and validity pull against each other through this one parameter.
+constexpr double kQualitySubdivisionFactor = 3.0;
 
 /// Relief for the LOD stress scene, in metres.
 ///
@@ -114,32 +122,19 @@ double meanLuminance(const std::vector<std::uint8_t>& rgba, std::size_t index)
     return (0.299 * rgba[index]) + (0.587 * rgba[index + 1]) + (0.114 * rgba[index + 2]);
 }
 
-double frameDifference(
-    const std::vector<std::uint8_t>& previous,
-    const std::vector<std::uint8_t>& current)
-{
-    if (previous.size() != current.size() || previous.empty()) {
-        return 0.0;
-    }
-    double total = 0.0;
-    const std::size_t pixels = previous.size() / 4;
-    for (std::size_t i = 0; i < previous.size(); i += 4) {
-        total += std::abs(meanLuminance(current, i) - meanLuminance(previous, i));
-    }
-    return total / static_cast<double>(pixels);
-}
-
 /// What changed between two frames, described by the distribution rather than the average.
 ///
-/// The mean was the wrong instrument and the reason is structural. Continuous LOD morphing
-/// *deliberately* spreads a transition across many frames as many tiny deformations; an abrupt
-/// switch concentrates it into one frame as a large displacement of a few thousand pixels.
-/// Averaged over a million pixels those can produce the same number — and measurement showed
-/// the morphed path frequently producing the *larger* one, since it is always deforming
-/// slightly while the abrupt path is perfectly still between jumps.
+/// Both a mean and a concentration measure are computed, and the verdict uses the **mean**,
+/// through the local-outlier test in detectPops.
 ///
-/// Popping is a concentration, so it is measured as one: how many pixels moved by a visible
-/// amount in a single step.
+/// An earlier revision dismissed the mean as "structurally wrong" — reasoning that morphing
+/// spreads a transition into many tiny deformations while an abrupt switch concentrates it,
+/// so the two could average alike. That reasoning was retracted by measurement: on smooth
+/// terrain the mean failed because there was nothing to detect, not because it was the wrong
+/// statistic, and on terrain with grid-scale relief it is the mean that discriminates while
+/// the concentration measure does not. Concentration is confounded by morphing's own
+/// continuous deformation, which moves many pixels slightly where an abrupt switch moves few
+/// pixels sharply. The concentration figures are retained as diagnostics.
 struct StepChange {
     double mean = 0.0;
     /// Fraction of pixels whose luminance changed by more than a perceptible step.

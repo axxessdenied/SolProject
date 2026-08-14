@@ -81,8 +81,23 @@ struct TerrainPatch {
     std::uint32_t firstIndex = 0;
     std::uint32_t indexCount = 0;
     std::int32_t vertexOffset = 0;
-    /// 0 = use the fine position, 1 = fully morphed to the coarse position.
-    float morph = 0.0F;
+    /// The distance band over which this patch morphs toward its parent, in metres.
+    ///
+    /// A *band*, not a factor, because the morph must be evaluated **per vertex** rather than
+    /// per patch. CDLOD's continuity guarantee depends on two adjacent patches agreeing along
+    /// their shared edge, and they only do so if each vertex's factor comes from that vertex's
+    /// own distance. A single per-patch factor taken from the node centre differs between
+    /// neighbours — by up to the whole band at the quality settings the LOD gate uses — so the
+    /// shared edge is drawn as two different polylines and the patches crack.
+    ///
+    /// The same defect explains a discontinuity at subdivision: the replacement is governed by
+    /// the *parent's* centre distance, while each child's factor came from its *own* centre,
+    /// and those differ by up to a third of a patch width. A near-side child could therefore
+    /// still be well short of full morph at the instant its parent handed over.
+    float morphStartDistance = 0.0F;
+    float morphEndDistance = 0.0F;
+    /// 0 disables morphing entirely — the LOD gate's negative control.
+    float morphEnabled = 1.0F;
     /// Quadtree depth, recorded so the harness can see how detail is distributed.
     std::uint32_t level = 0;
 };
@@ -107,15 +122,20 @@ struct TerrainConfig {
     double reliefMetres = 8000.0;
     /// Grid resolution per patch edge. Vertex count per patch is (grid + 1)^2.
     ///
-    /// Eight rather than sixteen. Terrain is regenerated on the CPU every frame, so vertex
-    /// count is the dominant cost; and a coarser grid makes the difference between adjacent
-    /// LOD levels *larger*, which is the property the LOD gate needs to be able to detect.
+    /// Grid resolution per patch edge. Vertex count per patch is (grid + 1)^2.
     std::uint32_t gridResolution = 8;
     /// Deepest quadtree level. Sets the finest ground resolution.
     std::uint32_t maxLevel = 10;
     /// Distance, in multiples of a node's world size, within which that node subdivides.
     /// Larger means detail persists further out, at more triangles.
-    double subdivisionFactor = 2.5;
+    ///
+    /// **Has a hard lower bound of roughly 2.8**, which only became visible once morphing was
+    /// evaluated per vertex. A smooth morph needs its band to be wide compared with a patch,
+    /// or the factor sweeps from 0 to 1 across a single patch and distorts it. The band is at
+    /// most the level's range, which is this many patch-widths — so below about 2.8 the scheme
+    /// is not well-conditioned at all. Measured: at 0.6 the per-vertex morph produced *more*
+    /// popping than no morphing.
+    double subdivisionFactor = 3.0;
     /// Fraction of a level's range over which the morph runs. The blend must complete before
     /// the switch, so this cannot be zero without reintroducing a pop.
     double morphBand = 0.35;

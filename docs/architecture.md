@@ -487,10 +487,29 @@ centroid is required to track the geometric prediction:
 | Monotonic | yes |
 
 With `float` world coordinates every step would fall inside one representable value and the
-response would be either nil or a ~12-pixel jump. Resolving motion fifty times below the float
-floor, smoothly and to a fraction of a percent, is what makes the zero-jitter result evidence
-about precision rather than only about stability. **A2's frame-model selection is confirmed
-under the renderer, not merely assumed compatible with it.**
+response would be nil. Resolving motion fifty times below the float floor, smoothly and to a
+fraction of a percent, is what makes the zero-jitter result evidence about precision rather
+than only about stability.
+
+**Two corrections, because both were published wrong.** The control originally stepped the
+camera along an axis whose magnitude *cancels exactly* — the marker sits at `camera + offset`,
+so every untouched component is bit-identical in both operands and subtracts to zero in `float`
+just as in `double`. A fully `float` pipeline passed it to within 4e-9 px. It now steps the
+axis that carries the 6 378 km magnitude, where a 10 mm step is 1/50 of a `float` ULP, so a
+`float` pipeline produces exactly zero response. Only now does the control discriminate.
+
+And this **does not confirm A2's selected model**, as an earlier version claimed. It confirms
+that camera-relative rendering with `double` world coordinates survives the renderer.
+`WorldVec3` is a bare `double` triple with no frame identity, no parent and no epoch; nothing
+here walks a frame graph to a lowest common ancestor or checks an epoch. What is exercised —
+subtract in `double`, then narrow — is common to A2's hierarchical model *and* to the
+global-root candidate A2 rejected, and a single unlabelled `double` world frame inherits exactly
+the global-root limit A2 recorded. The P1b done-criterion that A2's model supports the jitter
+gate is **not yet met**.
+
+The gate itself is also magnitude-inert for the same reason the old control was: with the
+camera stationary, `cameraRelative()` returns a constant, bitwise identical to running at the
+world origin. The gate measures stability; the control is what carries precision.
 
 Two measurement-method details were forced by getting this wrong first, and both are load
 bearing rather than incidental:
@@ -530,11 +549,22 @@ buffer and three things are checked across nine orders of magnitude, from 1 m to
   The resolvable separation is measured by bisection rather than asserted; z-fighting is the
   same phenomenon, so this measures the z-fighting threshold too.
 - **No near/far discontinuity.** The resolvable separation tracks distance *linearly* — the
-  ratio stays in a 2.4e-8 to 9.4e-8 band across the whole range, a 4× spread that is accounted
-  for by a float's ULP doubling within each binade plus the bisection's bracket.
+  ratio stays in a 2.4e-8 to 9.4e-8 band across the whole range.
 
-In practical terms: **depth resolves about 6 cm at 1 000 km and 15 cm at Earth's radius**, and
-the figure scales with distance rather than degrading.
+**Correction to the figures in that table.** The bisection finds the distance to the next
+*rounding boundary*, which lands anywhere within one ULP depending on where the probe sits —
+not the quantisation step. Those numbers are therefore best-case draws, and the 4× spread is
+that rounding lottery, not binade doubling: binades can only produce 1.6×. The bisection-bracket
+half of the old explanation was wrong by four orders of magnitude, since the search converges to
+1e-12 of the distance.
+
+The figure that matters for z-fighting is the **guaranteed** separation — one full ULP, at which
+two surfaces are always distinguishable — and it is roughly **7 cm at 1 000 km and 69 cm at
+Earth's radius**. An earlier version quoted the best-case draws as the result, and gave 94 mm
+and "about 6 cm" for the same quantity in two different places.
+
+The conclusions are unaffected: depth still never collapses, and the separation still scales
+with distance rather than degrading. Only the quoted magnitudes were optimistic.
 
 **The negative control is what makes those numbers mean something.** A conventional finite-far
 projection — what reversed-Z replaced — is run through the identical harness, differing only in
@@ -571,13 +601,29 @@ quantise near the viewer.
 Shading is a function of terrain height only, never of LOD level. Colouring by level would
 paint a hard seam at exactly the transitions the gate measures.
 
-### LOD gate: memory measured, popping not yet
+### LOD gate: not satisfied, and not certifiable as measured
 
-**Memory passes and is measured.** Over a 600-step descent from 300 km to 3 km, device
-allocation held constant at 125.22 MiB — minimum, maximum, and final identical, with a
-least-squares trend of 0.0 bytes per step. Peak 874 terrain patches and 70 794 vertices. The
-buffers are allocated once at capacity and written in place, so a bounded working set is
-structural rather than incidental, and the measurement confirms it.
+**Memory is bounded structurally. It is not measured, and the earlier claim that it was is
+withdrawn.** Two independent reasons, both of which the previous wording obscured:
+
+- **The criterion is a 30-minute traverse.** What runs is 600 render steps — tens of seconds.
+  Substituting a shorter test for the stated duration is exactly the kind of threshold change
+  the P1b plan says may only be made by a documented, user-approved planning update. It was
+  made silently.
+- **The number cannot vary.** Device allocation is reported from VMA over the whole allocator,
+  and every allocation happens once during creation; nothing is allocated or freed during a
+  traverse. `max == min` with a zero trend is therefore a tautology, not an observation. The
+  reported total is arithmetically identical to the sum of the fixed allocations.
+
+What *is* true, and is the honest form of the claim: the terrain buffers are allocated once at
+a fixed capacity and written in place, so a bounded working set is structural. The instrument
+also cannot see host-side, descriptor-pool, or driver-side growth, since VMA does not own those.
+
+Capacity was sized from a patch budget after review found the vertex and index capacities
+inconsistent — they were independent round numbers in a 2:1 ratio while a patch emits 81
+vertices and 384 indices, so the index buffer always exhausted first and roughly 55 MB of the
+vertex allocation was unreachable at any camera position. The budget is now 4 096 patches, about
+4× the measured peak, and total device allocation is 43.03 MiB.
 
 **The popping half has no trustworthy result, and the gate is recorded as incomplete rather
 than passed.** Building it found two real defects, both of which would have produced a
@@ -622,21 +668,40 @@ gentle terrain would imply nothing.
 
 #### The measurement, and what it found
 
-**Morphing works, and is now measured doing so.** Over the 600-step descent:
+An intermediate measurement, retained because the reasoning drawn from it was wrong and the
+correction matters more than the numbers: 13 pops without morphing against 2 with it, worst
+magnitude 0.2822 against 0.0030.
 
-| | Pops detected | Worst pop magnitude |
-|---|---|---|
-| Continuous morphing | 2 | 0.0030 |
-| Morphing disabled (control) | 13 | 0.2822 |
+**The two surviving pops were caused by morphing after all, and the inference recorded here
+previously was invalid.** That inference ran: they occur at the same steps in both runs,
+morphing is the only difference between the runs, therefore morphing is not the cause. It does
+not follow. An *incomplete* morph leaves a residual discontinuity at the same step in both runs
+— large without morphing, small with it — and 0.2822 against 0.0030 is precisely that signature.
 
-Eleven of thirteen pops eliminated, and the worst surviving one reduced 94-fold.
+The defect: **the morph factor was computed per patch rather than per vertex.** CDLOD's
+continuity guarantee depends on each vertex deriving its factor from its own distance, so two
+adjacent patches agree along a shared edge. A single factor from the node centre differs between
+neighbours, so the shared edge becomes two different polylines; and since the subdivision event
+is governed by the *parent's* centre distance while each child's factor came from its own, a
+near-side child could still be short of full morph when its parent handed over. The factor is
+now evaluated in the vertex shader from `length(inPosition)` — the vertex's own camera distance,
+needing no extra data.
 
-**The gate nonetheless fails, on a mechanism that is still unidentified.** Production's two
-pops fall at the same descent steps as the control's first two — around 255 km altitude — and
-morphing is the only difference between the runs, so morphing cannot be their cause. They
-coincide exactly with the first patch-count change of the descent.
+Fixing it exposed a constraint the per-patch version had hidden. The morph band is at most the
+level's range, which is `subdivisionFactor` patch-widths, and a smooth per-vertex morph needs it
+wider than about 2.8 of them. The 0.6 factor previously used — and wrongly described in code as
+"what a shipping renderer would use for performance" — is below that floor; at 0.6 the
+per-vertex morph measured *worse* than no morphing. The factor is now 3.0, which is also the
+renderer's default rather than a test-only setting.
 
-Two candidate causes have been tested, and neither was it:
+**The gate still cannot be certified, and the reason has moved again.** At a factor where the
+morph is well-conditioned, transitions are sub-pixel: both configurations now record **zero
+pops**. Visibility and validity pull against each other through the same parameter — raising the
+factor until the morph is sound is exactly what makes transitions invisible — and a coarser grid
+was tried to break that tie and did not help. The renderer behaves correctly; the control cannot
+demonstrate that it matters.
+
+Two earlier candidate causes were tested and neither was it, recorded so they are not retried:
 
 - **The horizon cull was genuinely broken** and is now fixed. It subtracted a cube-face size
   fraction from a cosine — dimensionally meaningless — and as a result admitted patches roughly
@@ -653,9 +718,25 @@ Two candidate causes have been tested, and neither was it:
   for a permanent seam around every patch. Reverted. Doing it properly needs a one-vertex skirt
   of neighbour data per patch.
 
-The two remaining pops are real, reproducible, and undiagnosed. The gate stays registered and
-`DISABLED` so one known-failing gate does not mask regressions across the other twenty-five,
-with the reasoning recorded in the build description rather than hidden by it.
+### Recorded quality setting, and device attribution
+
+The LOD threshold is defined "at the recorded quality setting", and the setting was previously
+recorded nowhere. It is `subdivisionFactor = 3.0` with `gridResolution = 8` and, for the gate's
+stress scene only, 20 km of relief. The first two are the renderer's defaults; the relief is a
+deliberately extreme test configuration and is labelled as such.
+
+**All gate results on this branch are from one device**: the NVIDIA RTX 4060 Laptop GPU, driver
+581.15.0.0, at 1280×720, Release. The accepted evidence plan requires gating thresholds to be
+measured on *both* available devices, and the Intel UHD (Alder Lake-P) is unmeasured for jitter
+and depth. That is outstanding, not waived. The plan's residual risk also stands: a
+driver-specific shader optimisation could alter precision, so these results are scoped to this
+device and driver. ADR 0010 governs MSVC and CPU floating point and says nothing about GPU or
+driver determinism, on which the bit-identical-frames and exact-depth-inequality results both
+depend.
+
+The gate stays registered and `DISABLED` so one known-failing gate does not mask regressions
+across the other twenty-five, with the reasoning recorded in the build description rather than
+hidden by it.
 
 **Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
 simple analytic shell, and the capability-reporting gate's synthetic profiles.

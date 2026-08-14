@@ -59,35 +59,22 @@ target_link_libraries(SolLodGate PRIVATE sol::render sol::platform)
 add_test(NAME render.lod-gate COMMAND SolLodGate)
 set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 
-# DISABLED, deliberately and temporarily. The memory half of this gate is measured and passing;
-# the popping half is not trustworthy yet, and marking it disabled with a reason is honest
-# where either leaving the suite permanently red or quietly deleting the test would not be.
+# DISABLED, deliberately. The memory half of this gate is bounded structurally but is not
+# measured against its stated 30-minute criterion; the popping half cannot be certified.
 #
-# The harness now works. With the terrain steepened at grid scale it separates the two
-# configurations cleanly: 13 pops with morphing disabled against 2 with it enabled, and a worst
-# pop magnitude of 0.2822 against 0.0030 — a 94-fold reduction. Morphing is doing its job and
-# the measurement can see it doing so.
+# The renderer side is now believed correct. The two pops this gate previously failed on were
+# caused by the morph factor being computed per patch instead of per vertex — CDLOD needs each
+# vertex to derive its factor from its own distance, or adjacent patches disagree along shared
+# edges and a near-side child is short of full morph when its parent hands over. That is fixed,
+# and both configurations now record zero pops.
 #
-# The gate fails on something else. Both of production's two pops occur at the same descent
-# steps as the control's first two, and morphing is the only difference between the runs, so
-# those two cannot be caused by it. They coincide exactly with the first patch-count change of
-# the descent.
+# Which is exactly why it cannot be certified. Fixing the morph forced the subdivision factor
+# above roughly 2.8 — the morph band is at most that many patch-widths, and below it the factor
+# sweeps across a single patch — and at a factor that high the transitions are sub-pixel. So the
+# control does not fire, and a "no popping" reading measured against a control that cannot fire
+# certifies nothing. Visibility and validity pull against each other through one parameter; a
+# coarser grid was tried to break the tie and did not.
 #
-# Two candidate causes have been tested and neither was it:
-#
-#   - The horizon cull was genuinely broken — it subtracted a cube-face size fraction from a
-#     cosine, which is dimensionally meaningless, and admitted patches roughly 78 degrees past
-#     the true horizon at 250 km altitude instead of about 16. It has been replaced with a
-#     correct horizon-plane test, conservative on both radii. That is a real fix, and it left
-#     the pops entirely unchanged.
-#   - Morphed per-vertex normals, replacing the fragment shader's derivative normal, on the
-#     theory that degenerate triangles at full morph give undefined derivatives. Measured
-#     strictly worse: production pops 2 -> 9, separation 13-vs-2 -> 12-vs-9. Reverted; see the
-#     note in TerrainLod.h.
-#
-# The remaining two pops are undiagnosed. They are real and reproducible, at the first
-# subdivision of the descent.
-#
-# Kept DISABLED so one known-failing gate does not mask regressions in the other twenty-five
-# tests. The failure is recorded here and in docs/architecture.md rather than hidden by it.
+# Enabling this would make the suite permanently red and mask regressions across the other
+# twenty-five tests. The state is recorded here and in docs/architecture.md rather than hidden.
 set_tests_properties(render.lod-gate PROPERTIES DISABLED TRUE)

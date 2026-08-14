@@ -14,7 +14,9 @@
 
 layout(push_constant) uniform Push {
     mat4 viewProjection;
-    vec4 params;      // x = morph factor, y = LOD level
+    // x = morph band start distance, y = morph band end distance,
+    // z = 1 when morphing is enabled and 0 for the negative control, w = LOD level.
+    vec4 params;
     vec4 unused;
 } push;
 
@@ -28,7 +30,18 @@ layout(location = 1) out vec3 outViewPosition;
 
 void main()
 {
-    float morph = push.params.x;
+    // Morph evaluated per vertex, from this vertex's own distance to the camera.
+    //
+    // Positions arrive camera-relative, so `length(inPosition)` *is* that distance and no
+    // extra data is needed. This is what makes the factor a continuous function of position:
+    // two adjacent patches evaluate the same value at a shared vertex, so their common edge is
+    // one polyline rather than two, and there is no crack. A single per-patch factor cannot
+    // have that property, because neighbouring patch centres are a patch width apart.
+    float distance = length(inPosition);
+    float bandStart = push.params.x;
+    float bandEnd = push.params.y;
+    float band = max(bandEnd - bandStart, 1e-6);
+    float morph = push.params.z * clamp((distance - bandStart) / band, 0.0, 1.0);
 
     vec3 position = mix(inPosition, inCoarsePosition, morph);
     float height = mix(inHeightUnit, inCoarseHeightUnit, morph);

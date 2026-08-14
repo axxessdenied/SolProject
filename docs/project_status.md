@@ -156,38 +156,54 @@ is the smaller thing: enough state that nobody has to re-derive it from commit m
 
 | Threshold | State |
 |---|---|
-| Screen-space jitter, 0.25 px | **Passes.** 0.000000 px at both required reference views, frames bit-identical. A sub-pixel response control confirms the result reflects precision rather than only stability. |
-| Depth behaviour | **Passes.** No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7. A conventional-projection control fails as expected. |
-| LOD continuity | **Memory half passes** (125.22 MiB flat, 0 bytes/step over 600 steps). **Popping half fails** — see below. |
+| Screen-space jitter, 0.25 px | **Passes on the RTX 4060 only.** 0.000000 px at both required views, frames bit-identical, with a sub-pixel response control confirming precision rather than only stability. The Intel UHD is unmeasured, which the evidence plan requires. Does **not** confirm A2's frame model — see [architecture](architecture.md). |
+| Depth behaviour | **Passes on the RTX 4060 only.** No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7, with a conventional-projection control failing as expected. Guaranteed separation is ~7 cm at 1 000 km and ~69 cm at Earth's radius. The Intel UHD is unmeasured. |
+| LOD continuity | **Not satisfied.** Memory is bounded structurally but is **not measured** against its 30-minute criterion. Popping cannot be certified: the renderer now records zero pops, but so does the control, so the reading proves nothing. |
 | Capability reporting | Implemented with a negative control; **cannot close** until the synthetic device profiles are reconciled against real reports. |
 | Validation output | Clean from this project. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category. A capture/RenderDoc workflow is not yet established. |
 
 ### Where the LOD investigation stands
 
-The harness works and discriminates: **13 pops with morphing disabled against 2 with it
-enabled**, worst pop magnitude 0.2822 against 0.0030. Morphing eliminates eleven of thirteen
-and cuts the worst survivor 94-fold.
+**Resolved.** The two pops were caused by the morph factor being computed **per patch rather
+than per vertex**. CDLOD requires each vertex to derive its factor from its own distance, or
+adjacent patches disagree along shared edges and a near-side child is short of full morph when
+its parent hands over. Fixed in the vertex shader using `length(inPosition)`.
 
-It fails on **two production pops at the first subdivision of the descent** (step 22, ~255 km
-altitude), which coincide exactly with the first patch-count change. Both occur at the same
-steps with morphing disabled, and morphing is the only difference between the runs, so morphing
-cannot be their cause.
+The inference previously recorded here — "the pops occur at the same steps in both runs,
+morphing is the only difference, therefore morphing is not the cause" — was **invalid**. An
+incomplete morph leaves a residual at the same step in both runs, large without morphing and
+small with it, which is exactly what 0.2822 against 0.0030 showed.
 
-**Ruled out by measurement, not by argument:**
+**The gate still cannot be certified.** Fixing the morph forced `subdivisionFactor` above ~2.8
+(the band is at most that many patch-widths), and at that factor transitions are sub-pixel:
+both configurations now record zero pops, so the control cannot fire. Visibility and validity
+pull against each other through one parameter. A coarser grid was tried and did not break the
+tie.
 
-- **Horizon culling.** The cull *was* genuinely broken — it subtracted a cube-face size
-  fraction from a cosine, admitting patches ~78° from nadir where the true horizon is ~16°.
-  Fixed with the exact horizon-plane test. **The pops did not change.**
-- **Degenerate-triangle normals.** Replacing the fragment shader's derivative-recovered normal
-  with morphed per-vertex normals measured **strictly worse**: production pops 2 → 9,
-  separation 13-vs-2 → 12-vs-9, because a child's coarse-normal stencil clamps at its own patch
-  boundary. Reverted. Doing it properly needs a one-vertex skirt of neighbour data per patch.
+Two earlier candidates were ruled out by measurement and should not be retried: the horizon cull
+(genuinely broken, dimensionally wrong, now fixed — but the pops were unchanged), and morphed
+per-vertex normals (measured strictly worse; a child's coarse-normal stencil clamps at its patch
+boundary, so it needs a one-vertex skirt to do properly).
 
-**Recommended next step, and a caution.** Two consecutive hypotheses were wrong. The next
-attempt should start from data rather than theory: capture and inspect the actual frames at
-steps 21–23 and identify what changes, instead of proposing a third mechanism. Full detail is
-in `docs/architecture.md` and in `tests/render/CMakeLists.txt`, where the test is registered and
-`DISABLED` so one known-failing gate does not mask regressions across the other twenty-five.
+### Review findings applied, 2026-08-13
+
+Three canonical reviewers ran against PR #6. Corrections made to **published claims**:
+
+- The jitter **control was defective** — it stepped an axis whose magnitude cancels exactly, so
+  a fully `float` pipeline passed it to within 4e-9 px. Now steps the large axis. The precision
+  claim rested on nothing until this was fixed.
+- "**A2's frame model is confirmed**" was overstated by two steps and is withdrawn. `WorldVec3`
+  is a bare `double` triple; nothing walks a frame graph or checks an epoch.
+- **Depth figures were best-case draws**, not guaranteed separations, and the 4× spread
+  rationale was wrong (binades give 1.6×).
+- The **memory pass is withdrawn** — the 30-minute criterion was never run, and the figure was
+  arithmetically identical to the sum of fixed allocations, so it could not vary.
+- "**The GPU never receives a world coordinate**" is false for the reference-object path.
+
+Defects fixed: a terrain-buffer **data race** (two frames in flight, one buffer, fence waiting
+on the wrong frame — invisible because every pixel harness accidentally serialises), a **fence
+wedge** on reachable error paths, a missing **flush**, a depth **write-after-write** hazard, and
+terrain capacities that left ~55 MB unreachable (now 43.03 MiB total, down from 125.22).
 
 ### Outstanding for B1
 

@@ -61,8 +61,21 @@ constexpr std::uint32_t kTerrainFragmentSpv[] =
 /// once for the worst case rather than reallocated per frame. Reallocation would both cost
 /// time and make the LOD gate's memory measurement meaningless — a working set that churns
 /// cannot be shown to be bounded.
-constexpr VkDeviceSize kTerrainVertexCapacity = 3'000'000;
-constexpr VkDeviceSize kTerrainIndexCapacity = 6'000'000;
+/// Terrain buffer capacity, expressed as a patch budget so the two sizes cannot drift apart.
+///
+/// Previously the vertex and index capacities were independent round numbers in a 2:1 ratio,
+/// while a patch emits 81 vertices and 384 indices — 4.74:1. The index buffer therefore always
+/// exhausted first, at 15 625 patches, and roughly 55 MB of the vertex allocation could never
+/// be addressed at any camera position.
+///
+/// 4 096 patches is about 4.7x the measured peak of 874, which is margin without being an
+/// order of magnitude of dead allocation. At 32 bytes per vertex and 4 bytes per index that is
+/// ~10.1 MiB and ~6.0 MiB, and there is one set **per frame in flight**.
+constexpr VkDeviceSize kMaxTerrainPatches = 4096;
+constexpr VkDeviceSize kTerrainVerticesPerPatch = 81;  // (grid + 1)^2 for grid = 8
+constexpr VkDeviceSize kTerrainIndicesPerPatch = 384;  // grid^2 * 6
+constexpr VkDeviceSize kTerrainVertexCapacity = kMaxTerrainPatches * kTerrainVerticesPerPatch;
+constexpr VkDeviceSize kTerrainIndexCapacity = kMaxTerrainPatches * kTerrainIndicesPerPatch;
 
 /// Push constant block, matching Reference.vert exactly.
 struct PushConstants {
@@ -144,12 +157,24 @@ struct Renderer::Impl {
     std::array<VkFence, kFramesInFlight> inFlight{};
 
     VkPipeline terrainPipeline = VK_NULL_HANDLE;
-    VkBuffer terrainVertexBuffer = VK_NULL_HANDLE;
-    VmaAllocation terrainVertexAllocation = VK_NULL_HANDLE;
-    void* terrainVertexMapped = nullptr;
-    VkBuffer terrainIndexBuffer = VK_NULL_HANDLE;
-    VmaAllocation terrainIndexAllocation = VK_NULL_HANDLE;
-    void* terrainIndexMapped = nullptr;
+    /// One set per frame in flight.
+    ///
+    /// A single shared set was a data race. `submitFrame` waits on `inFlight[slot]`, which is
+    /// the fence for the frame that used that slot *two* submissions ago; the frame submitted
+    /// immediately before is still executing and may still be fetching vertices and indices
+    /// when the CPU overwrites them. The result would be geometry drawn from a mixture of two
+    /// frames, with index and vertex-offset pairs that no longer describe the patch layout
+    /// they were recorded against.
+    ///
+    /// It was invisible to every existing gate, which is the uncomfortable part: all three
+    /// pixel-measuring harnesses go through `renderFrameCaptured`, which waits on the
+    /// just-submitted fence and so accidentally serialises to one frame in flight.
+    std::array<VkBuffer, kFramesInFlight> terrainVertexBuffers{};
+    std::array<VmaAllocation, kFramesInFlight> terrainVertexAllocations{};
+    std::array<void*, kFramesInFlight> terrainVertexMapped{};
+    std::array<VkBuffer, kFramesInFlight> terrainIndexBuffers{};
+    std::array<VmaAllocation, kFramesInFlight> terrainIndexAllocations{};
+    std::array<void*, kFramesInFlight> terrainIndexMapped{};
 
     std::optional<TerrainSettings> terrain;
     detail::TerrainFrame terrainFrame;
@@ -244,11 +269,15 @@ struct Renderer::Impl {
             if (terrainPipeline != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device, terrainPipeline, nullptr);
             }
-            if (terrainVertexBuffer != VK_NULL_HANDLE) {
-                vmaDestroyBuffer(allocator, terrainVertexBuffer, terrainVertexAllocation);
-            }
-            if (terrainIndexBuffer != VK_NULL_HANDLE) {
-                vmaDestroyBuffer(allocator, terrainIndexBuffer, terrainIndexAllocation);
+            for (std::uint32_t i = 0; i < kFramesInFlight; ++i) {
+                if (terrainVertexBuffers[i] != VK_NULL_HANDLE) {
+                    vmaDestroyBuffer(
+                        allocator, terrainVertexBuffers[i], terrainVertexAllocations[i]);
+                }
+                if (terrainIndexBuffers[i] != VK_NULL_HANDLE) {
+                    vmaDestroyBuffer(
+                        allocator, terrainIndexBuffers[i], terrainIndexAllocations[i]);
+                }
             }
             if (pipelineLayout != VK_NULL_HANDLE) {
                 vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -653,17 +682,27 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
             commandBuffer, static_cast<std::uint32_t>(kReferenceIndices.size()), 1, 0, 0, 0);
     }
 
-    if (terrain.has_value() && !terrainFrame.patches.empty()) {
+    // Terrain has only a reversed-Z pipeline. Drawing it under the depth gate's conventional
+    // projection would depth-test GREATER against a buffer cleared to 1.0 and produce
+    // nonsense, so it is skipped rather than drawn wrongly. Latent today — the depth gate uses
+    // no terrain — but the control's whole value is that it differs in exactly one variable,
+    // and a silently broken second variable would destroy that.
+    if (terrain.has_value() && !terrainFrame.patches.empty() && reversedZ) {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainPipeline);
         const VkDeviceSize terrainOffset = 0;
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &terrainVertexBuffer, &terrainOffset);
-        vkCmdBindIndexBuffer(commandBuffer, terrainIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        // This frame's own buffers, not a shared pair — see the note on terrainVertexBuffers.
+        vkCmdBindVertexBuffers(
+            commandBuffer, 0, 1, &terrainVertexBuffers[frameSlot], &terrainOffset);
+        vkCmdBindIndexBuffer(
+            commandBuffer, terrainIndexBuffers[frameSlot], 0, VK_INDEX_TYPE_UINT32);
 
         for (const detail::TerrainPatch& patch : terrainFrame.patches) {
             PushConstants push{};
             push.viewProjection = viewProjection;
-            push.colour[0] = patch.morph;
-            push.colour[1] = static_cast<float>(patch.level);
+            push.colour[0] = patch.morphStartDistance;
+            push.colour[1] = patch.morphEndDistance;
+            push.colour[2] = patch.morphEnabled;
+            push.colour[3] = static_cast<float>(patch.level);
 
             vkCmdPushConstants(commandBuffer,
                                pipelineLayout,
@@ -1060,11 +1099,20 @@ std::expected<Renderer, std::string> Renderer::create(
     const VkSubpassDependency dependency{
         .srcSubpass = VK_SUBPASS_EXTERNAL,
         .dstSubpass = 0,
+        // LATE_FRAGMENT_TESTS as well as EARLY, and a real srcAccessMask.
+        //
+        // One depth image is shared by both frames in flight, and the previous frame writes
+        // depth in both the early and late fragment-test stages. Waiting only on the earlier
+        // of the two, with srcAccessMask = 0, gives an execution dependency without making
+        // those writes available — so the write-after-write hazard against this frame's
+        // LOAD_OP_CLEAR was not correctly scoped.
         .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                        | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+                        | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                        | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
         .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
                         | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-        .srcAccessMask = 0,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                         | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
                          | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
         .dependencyFlags = 0,
@@ -1375,6 +1423,7 @@ std::expected<Renderer, std::string> Renderer::create(
         terrainInfo.pStages = terrainStages.data();
         terrainInfo.pVertexInputState = &terrainVertexInput;
 
+
         const VkResult terrainResult = vkCreateGraphicsPipelines(
             impl->device, VK_NULL_HANDLE, 1, &terrainInfo, nullptr, &impl->terrainPipeline);
 
@@ -1475,21 +1524,24 @@ std::expected<Renderer, std::string> Renderer::create(
             return {};
         };
 
-        if (auto created = createPersistent(kTerrainVertexCapacity * sizeof(detail::TerrainVertex),
-                                            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                            impl->terrainVertexBuffer,
-                                            impl->terrainVertexAllocation,
-                                            impl->terrainVertexMapped);
-            !created.has_value()) {
-            return std::unexpected(created.error());
-        }
-        if (auto created = createPersistent(kTerrainIndexCapacity * sizeof(std::uint32_t),
-                                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                            impl->terrainIndexBuffer,
-                                            impl->terrainIndexAllocation,
-                                            impl->terrainIndexMapped);
-            !created.has_value()) {
-            return std::unexpected(created.error());
+        for (std::uint32_t i = 0; i < kFramesInFlight; ++i) {
+            if (auto created =
+                    createPersistent(kTerrainVertexCapacity * sizeof(detail::TerrainVertex),
+                                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                     impl->terrainVertexBuffers[i],
+                                     impl->terrainVertexAllocations[i],
+                                     impl->terrainVertexMapped[i]);
+                !created.has_value()) {
+                return std::unexpected(created.error());
+            }
+            if (auto created = createPersistent(kTerrainIndexCapacity * sizeof(std::uint32_t),
+                                                VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                                impl->terrainIndexBuffers[i],
+                                                impl->terrainIndexAllocations[i],
+                                                impl->terrainIndexMapped[i]);
+                !created.has_value()) {
+                return std::unexpected(created.error());
+            }
         }
     }
 
@@ -1669,13 +1721,6 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
         return std::unexpected(fail("Acquiring a swapchain image failed", acquireResult));
     }
 
-    // Reset only once the acquire succeeded. Resetting earlier and then returning early on
-    // OUT_OF_DATE leaves an unsignalled fence that the next frame waits on forever.
-    if (const VkResult result = vkResetFences(impl.device, 1, &impl.inFlight[slot]);
-        result != VK_SUCCESS) {
-        return std::unexpected(fail("Resetting the frame fence failed", result));
-    }
-
     if (const VkResult result = vkResetCommandBuffer(impl.commandBuffers[slot], 0);
         result != VK_SUCCESS) {
         return std::unexpected(fail("Resetting the command buffer failed", result));
@@ -1713,12 +1758,30 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
                 kTerrainIndexCapacity));
         }
 
-        std::memcpy(impl.terrainVertexMapped,
-                    impl.terrainFrame.vertices.data(),
-                    impl.terrainFrame.vertices.size() * sizeof(detail::TerrainVertex));
-        std::memcpy(impl.terrainIndexMapped,
-                    impl.terrainFrame.indices.data(),
-                    impl.terrainFrame.indices.size() * sizeof(std::uint32_t));
+        const VkDeviceSize vertexBytes =
+            impl.terrainFrame.vertices.size() * sizeof(detail::TerrainVertex);
+        const VkDeviceSize indexBytes =
+            impl.terrainFrame.indices.size() * sizeof(std::uint32_t);
+
+        std::memcpy(impl.terrainVertexMapped[slot], impl.terrainFrame.vertices.data(),
+                    static_cast<std::size_t>(vertexBytes));
+        std::memcpy(impl.terrainIndexMapped[slot], impl.terrainFrame.indices.data(),
+                    static_cast<std::size_t>(indexBytes));
+
+        // Flush. VMA may place these on host-visible memory that is not host-coherent, which
+        // is legal and does happen; without the flush the writes are not guaranteed visible to
+        // the device. The one-shot reference-geometry upload already did this and the
+        // per-frame path did not.
+        if (const VkResult result = vmaFlushAllocation(
+                impl.allocator, impl.terrainVertexAllocations[slot], 0, vertexBytes);
+            result != VK_SUCCESS) {
+            return std::unexpected(fail("Flushing the terrain vertex buffer failed", result));
+        }
+        if (const VkResult result = vmaFlushAllocation(
+                impl.allocator, impl.terrainIndexAllocations[slot], 0, indexBytes);
+            result != VK_SUCCESS) {
+            return std::unexpected(fail("Flushing the terrain index buffer failed", result));
+        }
 
         stats.terrainPatches = static_cast<std::uint32_t>(impl.terrainFrame.patches.size());
         stats.terrainNodesVisited = impl.terrainFrame.nodesVisited;
@@ -1728,6 +1791,19 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
     if (auto recorded = impl.recordFrame(impl.commandBuffers[slot], imageIndex, camera, capture);
         !recorded.has_value()) {
         return std::unexpected(recorded.error());
+    }
+
+    // Reset the fence last, immediately before the submit that will signal it again.
+    //
+    // Every step between a reset and its submit is a place where an error return leaves the
+    // fence unsignalled with nothing left to signal it — and the next frame landing on this
+    // slot then blocks in `vkWaitForFences(..., UINT64_MAX)` for ever. The terrain-capacity
+    // check is a reachable example: it reports an error the caller is invited to log and carry
+    // on from, and carrying on would deadlock. Narrowing the window to the submit call itself
+    // removes every one of those paths.
+    if (const VkResult result = vkResetFences(impl.device, 1, &impl.inFlight[slot]);
+        result != VK_SUCCESS) {
+        return std::unexpected(fail("Resetting the frame fence failed", result));
     }
 
     const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
