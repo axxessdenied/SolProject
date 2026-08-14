@@ -135,10 +135,25 @@ struct FrameStats {
     std::uint32_t terrainNodesVisited = 0;
     std::uint32_t terrainVertices = 0;
 
-    /// Bytes currently allocated through the renderer's device allocator. The LOD gate's
-    /// memory half is measured from this rather than from process memory, which is too noisy
-    /// to show a bounded working set.
+    /// Bytes currently allocated through the renderer's device allocator.
+    ///
+    /// **This one cannot vary under the current design**, and saying so is the point. Every
+    /// allocation happens once during creation and capacity is fixed, so a flat line here is
+    /// arithmetic rather than an observation — which is why the earlier "memory is bounded"
+    /// claim was withdrawn. The three fields below exist so the measurement has instruments that
+    /// *can* move.
     std::uint64_t deviceAllocatedBytes = 0;
+
+    /// Bytes the allocator has actually reserved from Vulkan, across all heaps.
+    ///
+    /// Distinct from @ref deviceAllocatedBytes: VMA suballocates from larger blocks, so a leak
+    /// that fits inside existing blocks moves the allocation total while a leak that exhausts
+    /// them moves this one. A working set that grows shows up in one or the other.
+    std::uint64_t deviceBlockBytes = 0;
+    /// Live allocations and blocks held by the allocator. Integer counts, so a per-frame leak of
+    /// even one object is visible here long before the byte totals drift.
+    std::uint32_t deviceAllocationCount = 0;
+    std::uint32_t deviceBlockCount = 0;
 };
 
 /// A presented frame's pixels, read back from the swapchain image.

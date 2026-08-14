@@ -2004,11 +2004,13 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
         std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
         vmaGetHeapBudgets(impl.allocator, budgets.data());
 
-        std::uint64_t allocated = 0;
         for (std::uint32_t heap = 0; heap < impl.memoryHeapCount; ++heap) {
-            allocated += budgets[heap].statistics.allocationBytes;
+            const VmaStatistics& heapStatistics = budgets[heap].statistics;
+            stats.deviceAllocatedBytes += heapStatistics.allocationBytes;
+            stats.deviceBlockBytes += heapStatistics.blockBytes;
+            stats.deviceAllocationCount += heapStatistics.allocationCount;
+            stats.deviceBlockCount += heapStatistics.blockCount;
         }
-        stats.deviceAllocatedBytes = allocated;
     }
 
     impl.lastSubmittedSlot = slot;

@@ -854,11 +854,12 @@ int main()
                         kPerceptiblePopFraction);
         }
     }
-    // Structural, and NOT the milestone's 30-minute criterion, which has never been run. Naming
-    // it precisely here so that enabling this gate does not quietly re-assert a claim the
-    // project withdrew on 2026-08-13.
+    // Structural, and NOT the milestone's 30-minute criterion, which `render.memory-traverse`
+    // measures separately and on a different instrument. Naming it precisely here so that this
+    // gate does not quietly re-assert the claim the project withdrew on 2026-08-13: the figure
+    // below cannot vary under a fixed-capacity design, whatever duration it is read over.
     std::printf("  device allocation flat           %s  (structural over %d steps; the stated "
-                "30-minute criterion is NOT run)\n",
+                "30-minute criterion is measured by render.memory-traverse, not here)\n",
                 memoryBounded ? "PASS" : "FAIL",
                 kTraverseSteps);
     std::printf("  descent pops, prod vs ctrl       %zu vs %zu (diagnostic only — the descent "

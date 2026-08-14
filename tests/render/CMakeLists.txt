@@ -70,6 +70,20 @@ target_link_libraries(SolLodGate PRIVATE sol::render sol::platform)
 add_test(NAME render.lod-gate COMMAND SolLodGate)
 set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 
+# The LOD threshold's memory half. Separate from the gate above because the gate's memory reading
+# was withdrawn for two reasons and only one was duration: the figure it read could not vary, so
+# running it for thirty minutes would have produced thirty minutes of the same tautology. This
+# measures process commit charge, which can.
+#
+# Registered at 45 seconds so the suite keeps a working instrument under test without paying half
+# an hour for it. The 30-minute run the milestone names is performed deliberately and its output
+# recorded under evidence/p1b/B1/raw/; `--minutes 30` reproduces it.
+add_executable(SolMemoryTraverse MemoryTraverseMain.cpp)
+sol_apply_project_options(SolMemoryTraverse)
+target_link_libraries(SolMemoryTraverse PRIVATE sol::render sol::platform psapi)
+add_test(NAME render.memory-traverse COMMAND SolMemoryTraverse --seconds 45)
+set_tests_properties(render.memory-traverse PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+
 # Enabled on 2026-08-14, after the verdict moved off an instrument that could not work.
 #
 # It sat DISABLED because both configurations recorded zero pops, so the control could not fire
@@ -88,5 +102,6 @@ set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 # What the gate now certifies is narrower than "morphing prevents visible popping", and it says
 # so in its own output: the control is itself below the perceptual limit, so this scene does not
 # pop visibly either way. What is certified is a 20x margin under the limit and a 4.4x response
-# to switching the morph off. The memory half still reports as structural and still states that
-# the milestone's 30-minute criterion has not been run.
+# to switching the morph off. The memory half still reports as structural and now points at
+# render.memory-traverse above, which measures the milestone's 30-minute criterion on an
+# instrument that can actually move.

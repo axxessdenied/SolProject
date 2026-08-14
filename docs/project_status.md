@@ -150,7 +150,7 @@ rule in `AGENTS.md`. The lightweight lane puts full evidence records at incremen
 is the smaller thing: enough state that nobody has to re-derive it from commit messages.
 
 **Owner:** Claude. **Branch:** `feature/p1b-vulkan-renderer`, 7 commits ahead of `dev`.
-**Validation at time of writing:** 27/27 tests pass in both configurations, none disabled.
+**Validation at time of writing:** 28/28 tests pass in both configurations, none disabled.
 
 ### Gating thresholds
 
@@ -158,7 +158,7 @@ is the smaller thing: enough state that nobody has to re-derive it from commit m
 |---|---|
 | Screen-space jitter, 0.25 px | **Passes on the RTX 4060 only.** 0.000000 px at both required views, frames bit-identical, with a sub-pixel response control confirming precision rather than only stability. The Intel UHD is unmeasured, which the evidence plan requires. Does **not** confirm A2's frame model — see [architecture](architecture.md). |
 | Depth behaviour | **Passes on the RTX 4060 only.** No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7, with a conventional-projection control failing as expected. Guaranteed separation is ~7 cm at 1 000 km and ~69 cm at Earth's radius. The Intel UHD is unmeasured. |
-| LOD continuity | **Popping half satisfied and ratified 2026-08-14; memory half outstanding.** `render.lod-gate` is enabled and passing on the RTX 4060 in both configurations. Popping is certified against an isolated transition by the [method now written into the milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md): the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit — a 20× margin — with the control separating by 4.4×. The user ratified both the method and its narrower reading: because the control is itself below the limit, the pass is a margin and a response rather than a rescue. **The 30-minute memory criterion has never been run**, is untouched by that ratification, and the gate states so in its own output. See [architecture](architecture.md). |
+| LOD continuity | **Popping half satisfied and ratified 2026-08-14; memory half outstanding.** `render.lod-gate` is enabled and passing on the RTX 4060 in both configurations. Popping is certified against an isolated transition by the [method now written into the milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md): the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit — a 20× margin — with the control separating by 4.4×. The user ratified both the method and its narrower reading: because the control is itself below the limit, the pass is a margin and a response rather than a rescue. The **30-minute memory traverse has now run** (0.37 MiB growth after warm-up, 17.9 KiB/min trend, device-side figures constant), but the clause names no statistic and no limit, so it produced a measurement rather than a verdict. See [architecture](architecture.md). |
 | Capability reporting | Implemented with a negative control; **cannot close** until the synthetic device profiles are reconciled against real reports. |
 | Validation output | Clean from this project. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category. A capture/RenderDoc workflow is not yet established. |
 
@@ -207,8 +207,10 @@ what a pass means are now accepted, under the P1b rule that a threshold may be c
 documented planning update the user approves. The method is written into the [P1b milestone
 plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the screen-space jitter
 method it parallels, with three entries in that plan's decisions table. **The ratification does
-not extend to the 30-minute memory clause**, which stands exactly as originally written and has
-never been run.
+not extend to the 30-minute memory clause**, which stands exactly as originally written. That
+traverse has since been run — 2026-08-14, under `render.memory-traverse` — but the clause names
+no statistic and no limit, so what exists is a measurement and not a verdict. See [Outstanding
+for B1](#outstanding-for-b1).
 
 Two earlier candidates were ruled out by measurement and should not be retried: the horizon cull
 (genuinely broken, dimensionally wrong, now fixed — but the pops were unchanged), and morphed
@@ -339,11 +341,23 @@ terrain finding with them.
 
 ### Outstanding for B1
 
-- **The 30-minute memory criterion, still never run.** The gate reports device allocation as flat
-  over 600 steps and states in its own output that this is structural and not the stated
-  criterion. Enabling the gate did not change that, the 2026-08-14 ratification explicitly did not
-  touch it, and neither must be read as having closed it. This is now the only part of the LOD
-  threshold still outstanding.
+- **Defining what the 30-minute memory clause requires.** The traverse itself **has now run** —
+  `render.memory-traverse`, Release, 2026-08-14: 258 939 frames over 29.9 minutes, 0.37 MiB of
+  process commit growth after a 120 s warm-up, a 17.9 KiB/minute trend, and every device-side
+  figure constant. Details in [B1's evidence index](../evidence/p1b/B1/Index.md).
+
+  What does not exist is a way to grade it. "No unbounded memory growth" names no statistic and
+  no limit — the identical gap the popping half had before its method was defined and ratified on
+  2026-08-14 — so the program prints its figures and explicitly declines to rule. Two things are
+  wanted: a documented planning update fixing the statistic and the limit, and, before that, the
+  sample series recorded so a flattening curve can be told apart from a slow line. The fitted
+  slope implies ~0.49 MiB over the window while the endpoints differ by 0.37 MiB, which hints at
+  deceleration without establishing it.
+
+  The measurement deliberately does **not** use the figure the earlier claim was withdrawn over.
+  Device allocation is constant by construction under a fixed-capacity design, so it was replaced
+  as the primary instrument by process commit charge, which can move and which is the only thing
+  that can see a host-side leak at all.
 - The LOD gate's transition scan has no coverage for its no-transition branch. It needs a scan
   that finds nothing, and it lives inside a harness that is itself `DISABLED`, so a test would not
   run even if written. The two renderer defects from the same round are covered by

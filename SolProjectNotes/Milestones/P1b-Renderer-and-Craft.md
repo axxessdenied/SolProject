@@ -118,7 +118,9 @@ Measured at the shipping 60° vertical field of view, at the recorded quality se
 
 **What a pass under this method does and does not mean.** If the control is itself below 0.002, the scene does not pop visibly with or without morphing, and the pass means the production path sits well under the limit and the metric responds strongly to disabling the morph — a margin and a response, not a demonstration that morphing rescues a visibly broken picture. The gate must print that qualification whenever it holds. Strengthening it requires a scene where the abrupt scheme pops visibly at a quality setting where the morph is well-conditioned; none has been found.
 
-**The memory clause is unchanged.** The 30-minute traverse stands exactly as written above and has never been run. What the harness reports is device allocation flat over 600 steps, which is structural rather than the stated criterion, and it says so in its own output. Enabling the gate does not close that clause.
+**The memory clause is unchanged by this ratification**, and is measured separately. The 30-minute traverse stands exactly as written above. It ran for the first time on 2026-08-14 under `render.memory-traverse`, deliberately as its own program: the LOD gate's memory reading was withdrawn on two grounds and only one was duration, the other being that device allocation *cannot vary* under a fixed-capacity design, so repeating it for thirty minutes would repeat a tautology. The traverse measures process commit charge instead, which can move and which is the only instrument that can see a host-side leak at all.
+
+Measured: 258 939 frames over 29.9 minutes, 0.37 MiB of commit growth after a 120 s warm-up, a 17.9 KiB/minute trend, and every device-side figure constant. **That is a measurement, not a verdict.** This clause names no statistic and no limit, exactly as the popping clause did not, and defining one requires its own documented planning update — preferably after the sample series is recorded, so a flattening curve can be distinguished from a slow line.
 
 ## Time boxes
 
@@ -240,7 +242,7 @@ Each increment closure records:
 | Screen-space jitter measurement method defined above | Confirmed | The original gate was unmeasurable as written |
 | LOD continuity measurement method defined above; verdict measured on an isolated transition rather than a descent | Confirmed | User ratified 2026-08-14. The original gate was unmeasurable as written, and the descent instrument was shown by measurement to be blind rather than insensitive |
 | A LOD pass whose control is also below the perceptual limit is accepted as a margin and a response, not as a rescue | Confirmed | User ratified 2026-08-14; no scene has been found where the abrupt scheme pops visibly at a well-conditioned quality setting, and the gate prints the qualification |
-| 30-minute LOD memory traverse | Open | Unchanged by the 2026-08-14 ratification and never run; what is reported is structural flatness over 600 steps |
+| 30-minute LOD memory traverse | Run 2026-08-14; **pass criterion still Open** | The traverse now exists and has run for its stated duration — 0.37 MiB of process commit growth after warm-up, 17.9 KiB/minute. The clause names no statistic and no limit, so it yields a measurement and not a verdict; fixing a limit needs a planning update of the same kind as the popping method |
 | Two-way craft representation comparison required | Confirmed | User approved 2026-08-12; the representation choice outweighs the physics-library choice |
 | 0.25-pixel jitter gate | Confirmed | User approved recommendation |
 | 300-part 4 ms physics and 1 ms resource-network gates | Confirmed | User approved recommendation |

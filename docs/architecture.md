@@ -715,7 +715,25 @@ What *is* true, and is the honest form of the claim: the terrain buffers are all
 a fixed capacity and written in place, so a bounded working set is structural. The instrument
 also cannot see host-side, descriptor-pool, or driver-side growth, since VMA does not own those.
 
-The figure is sampled per frame with `vmaGetHeapBudgets`, summed across heaps. It was
+The 30-minute clause is measured by `render.memory-traverse`, a separate program, and the
+separation is the point. Repeating the gate's reading for thirty minutes would have repeated its
+tautology, so the traverse measures **process commit charge** — which can move, and which is the
+only instrument that can see a host-side leak at all, since VMA does not own host memory. It runs
+on wall clock rather than step count, sweeping 3 km to 300 km altitude every 90 s while orbiting,
+so terrain is reselected every frame and a per-rebuild leak would accumulate.
+
+Measured 2026-08-14, Release, RTX 4060: 258 939 frames over 29.9 minutes, process private bytes
+379.19 → 396.88 MiB, **0.37 MiB of growth after a 120 s warm-up**, a **17.9 KiB/minute** trend,
+and allocator bytes, blocks and live object counts exactly constant throughout. 0.37 MiB across
+258 939 frames is about 1.5 bytes per frame, below any per-frame object this renderer allocates.
+
+**No verdict follows**, and the program says so itself: the clause names no statistic and no
+limit. The shape of the growth is also unrecorded — the fitted slope implies ~0.49 MiB over the
+window against a 0.37 MiB endpoint difference, hinting at deceleration without establishing it —
+so a flattening curve and a slow line are not yet distinguishable. Both gaps are tracked in
+`docs/project_status.md`.
+
+The per-frame figure is sampled with `vmaGetHeapBudgets`, summed across heaps. It was
 `vmaCalculateStatistics` until 2026-08-13 — the call VMA names "calculate" rather than "get"
 because it walks every block and allocation under the allocator's mutexes, and documents for
 debugging rather than per-frame use. That put a full allocator traversal inside `renderFrame`,
@@ -865,8 +883,9 @@ differing SPIR-V:
 **Two qualifications, and the gate prints both itself.** The control is *also* below the
 perceptual limit, so this scene does not pop visibly with or without morphing — what is certified
 is a 20× margin under the limit and a 4.4× response to switching the morph off, which is a margin
-and a response rather than a rescue. And the memory half remains structural: the stated 30-minute
-criterion has never been run, and the gate's output says so rather than reporting a bare PASS.
+and a response rather than a rescue. And the memory figure this gate reads remains structural: it
+cannot vary under a fixed-capacity design, so the gate's output names it as such rather than
+reporting a bare PASS, and points at `render.memory-traverse` for the stated 30-minute criterion.
 
 Making the first qualification go away needs a scene where the abrupt scheme pops visibly at a
 quality setting where the morph is well-conditioned. None has been found, and the earlier
@@ -876,7 +895,9 @@ sub-pixel explanation for why is now known to be the wrong account.
 reading of what a pass means. The method is recorded in the [P1b milestone
 plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the screen-space jitter
 method it parallels, which is where P1b requires a threshold change to live. The ratification does
-**not** extend to the 30-minute memory clause; that stands as written and remains unrun.
+**not** extend to the 30-minute memory clause; that stands exactly as written. The traverse it
+names has since been run — see above — but produced a measurement and no verdict, because the
+clause still names no statistic and no limit.
 
 #### The earlier state, retained
 
@@ -943,10 +964,12 @@ device and driver. ADR 0010 governs MSVC and CPU floating point and says nothing
 driver determinism, on which the bit-identical-frames and exact-depth-inequality results both
 depend.
 
-The gate is **enabled** as of 2026-08-14 and passes in both configurations, so the suite is 27 of
-27 with none disabled. It had been registered but `DISABLED` so that one known-failing gate could
-not mask regressions across the others; that is no longer needed, and the reasoning for both the
-disabling and the re-enabling stays in the build description rather than hidden by it.
+The gate is **enabled** as of 2026-08-14 and passes in both configurations, so the suite is 28 of
+28 with none disabled — the twenty-eighth being `render.memory-traverse`, which measures the LOD
+threshold's memory half separately and is described earlier in this section. It had been
+registered but `DISABLED` so that one known-failing gate could not mask regressions across the
+others; that is no longer needed, and the reasoning for both the disabling and the re-enabling
+stays in the build description rather than hidden by it.
 
 **Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
 simple analytic shell, and the capability-reporting gate's synthetic profiles.

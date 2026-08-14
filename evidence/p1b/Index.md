@@ -38,6 +38,8 @@ close yet. The LOD continuity threshold's measurement method was undefined as or
 and was **ratified by the user on 2026-08-14**, recorded in the [milestone
 plan](../../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the screen-space jitter
 method it parallels. That ratification deliberately did **not** extend to the threshold's
-30-minute memory clause, which stands as written and has never been run.
+30-minute memory clause, which stands as written. That traverse has since been run, on
+2026-08-14; because the clause names no statistic and no limit, it yielded a measurement rather
+than a verdict, recorded in [B1's evidence index](B1/Index.md).
 
 No P1b increment is closed, and no milestone review has run.

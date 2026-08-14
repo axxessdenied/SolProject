@@ -26,7 +26,9 @@ commands in [Handoff.md](Handoff.md); this index and the handoff are the durable
    resolvable separation scaling linearly rather than degrading. The conventional projection run
    through the identical harness **collapses at 10 km** and fails three of the checks, which is
    what makes the pass evidence rather than an assertion.
-3. **Debug and Release produce byte-identical output across all seven render executables.** This
+3. **Debug and Release produce byte-identical output across all seven deterministic render
+   executables** — every one whose output is a function of its inputs; `SolMemoryTraverse` is
+   driven by wall clock and reports process memory, so it is excluded rather than failing. This
    was not expected and it retires a recorded risk: the two configurations compile different
    SPIR-V (`-g -O0` against `-O`), `spirv-opt` may reassociate floating-point arithmetic, and ADR
    0010 governs MSVC while saying nothing about the GPU. Measured, the divergence changes nothing.
@@ -63,7 +65,7 @@ result here is a baseline-tier claim.
 | Screen-space jitter, 0.25 px | **PASS**, RTX 4060 only | `raw/{debug,release}-JitterHarness.txt` |
 | Depth behaviour | **PASS**, RTX 4060 only | `raw/{debug,release}-DepthGate.txt` |
 | LOD continuity — popping | **PASS** under the ratified method, RTX 4060 only | `raw/{debug,release}-LodGate.txt` |
-| LOD continuity — memory | **NOT MEASURED** against its 30-minute criterion | as above |
+| LOD continuity — memory | **MEASURED** 2026-08-14; no threshold defined to judge it against | `raw/release-MemoryTraverse-30min.txt` |
 | Capability reporting | **Cannot close** until synthetic profiles are reconciled | `raw/*-RenderCapabilityTests.txt`, `raw/*-RenderCapabilityReport.txt` |
 | Validation output | **PASS with an explained exception** | every raw file |
 
@@ -121,11 +123,45 @@ descent **cannot** isolate a transition and is not the verdict — established b
 argued: re-running at a 20° field of view tripled the screen-space error, grew every other
 statistic's separation by roughly 3×, and still produced exactly zero pops in both configurations.
 
-**Memory is not measured against its criterion.** The stated threshold is a 30-minute traverse.
-What runs is 600 steps, and device allocation is flat at 43.03 MiB min, max and final with a
-0.0 bytes/step trend — which is *structural* rather than observed, because every allocation
-happens once at creation and capacity is fixed. `max == min` is a tautology under that design.
-The gate says so in its output. This clause is open.
+**Memory has now been measured over the stated 30 minutes** — by a separate program, because the
+gate's reading was withdrawn for two reasons and only one of them was duration. The other was
+that the figure it read *could not vary*: every device allocation happens once at creation and
+capacity is fixed, so `max == min` is arithmetic. Running that same reading for thirty minutes
+would have produced thirty minutes of the same tautology, so `render.memory-traverse` measures
+**process commit charge**, which can move, and which is also the only instrument that can see a
+host-side leak at all — VMA cannot, because VMA does not own host memory.
+
+Release build, 2026-08-14, RTX 4060, wall-clock driven rather than step-driven:
+
+| | |
+|---|---|
+| Duration | 29.9 minutes, 258 939 frames presented, 0 skipped |
+| Camera path | 3 km ↔ 300 km altitude every 90 s while orbiting at 0.004 rad/s |
+| Terrain reselected throughout | 90 to 238 patches |
+| Process private bytes, start → end | 379.19 → 396.88 MiB |
+| Growth after the 120 s warm-up | **0.37 MiB** |
+| Trend after warm-up | **17.9 KiB/minute** over 27.9 minutes |
+| Device allocated / block bytes | 43.03 MiB / 131.75 MiB, **constant** |
+| Live allocations / blocks | 9 / 4, **constant** |
+
+0.37 MiB over 258 939 frames is about **1.5 bytes per frame**, which is far below any per-frame
+object this renderer allocates and is more consistent with heap or driver behaviour than with a
+leak in this code. The four device-side figures were exactly constant for the whole run, which is
+expected under the fixed-capacity design and is recorded as falsification rather than as
+confirmation.
+
+**Two things this run does not settle, stated because the number alone reads stronger than it is.**
+
+- **The shape of the growth is not recorded.** The program reports the endpoints and a fitted
+  slope, not the sample series, so a curve that is flattening cannot be distinguished from a line
+  that is not. The fitted slope implies about 0.49 MiB over the window while the endpoints differ
+  by 0.37 MiB, which hints at deceleration but does not establish it. Resolving this needs the
+  series dumped and the run repeated.
+- **There is still no threshold.** "No unbounded memory growth" names no statistic and no limit,
+  exactly as the popping half named none before its method was defined and ratified on
+  2026-08-14. The program prints its figures and explicitly declines to rule. Turning 17.9
+  KiB/minute into a pass or a fail is a user decision requiring the same kind of documented
+  planning update.
 
 ### Capability reporting
 
@@ -185,7 +221,9 @@ write bandwidth is included in any frame-time figure this renderer produces and 
 Recorded here so that a reader of the passes above does not infer more than was measured.
 
 - **Nothing is measured on the Intel UHD**, and no baseline-class or AMD hardware exists here.
-- **The 30-minute memory criterion has never been run.**
+- **The 30-minute memory traverse has now run, but no threshold exists to judge it against**, and
+  the shape of the 0.37 MiB growth is unrecorded, so bounded and slowly-growing are not yet
+  distinguishable from this evidence.
 - **The capability profiles are unreconciled** against real reports.
 - **A2's frame model is not confirmed by this increment.** `WorldVec3` is a bare `double` triple;
   nothing walks a frame graph to a lowest common ancestor or checks an epoch. What is exercised —
