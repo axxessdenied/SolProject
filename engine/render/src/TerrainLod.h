@@ -158,10 +158,12 @@ struct TerrainConfig {
 ///
 /// @param config      planet shape and detail settings
 /// @param cameraPlanetRelative  camera position relative to the planet centre, metres
+/// @param viewFrustum this frame's frustum, in camera-relative space
 /// @param out         reused between frames so the allocation does not churn per frame
 void buildTerrain(
     const TerrainConfig& config,
     const Vec3d& cameraPlanetRelative,
+    const Frustum& viewFrustum,
     TerrainFrame& out);
 
 } // namespace sol::render::detail

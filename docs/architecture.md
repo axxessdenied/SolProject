@@ -662,12 +662,40 @@ costing a second ten-octave noise evaluation per vertex for a value already in m
 measured on the LOD gate at **8 m 29.6 s → 5 m 26.0 s**, 36% of total wall time on a run that is
 substantially GPU work and readback.
 
-Terrain is culled against the horizon but **not against the view frustum**, so patches behind the
-camera are still generated and drawn. That is a known cost, deliberately left: a frustum cull adds
-a second mechanism that makes patches appear and disappear, and the horizon cull — the first such
-mechanism — was itself found to be a pop source when it was wrong. Adding another while the
-instrument that would detect the resulting pops cannot fire is the wrong order of work. Tracked in
-`docs/project_status.md`.
+Terrain is culled against **both** the horizon and the view frustum. The frustum planes are
+extracted from the frame's view-projection by Gribb-Hartmann; because the view matrix is
+camera-relative and carries no translation, they arrive in camera-relative space, which is the
+space terrain is emitted in. The matrix is computed once per frame and handed to both the
+selection and the draw, so the frustum culled against is by construction the frustum rasterised
+with.
+
+The infinite far plane appears as a **degenerate row**: under reversed Z the `z >= 0` clip
+condition reduces to `near >= 0`, whose xyz part is exactly zero, because there is no far clip to
+impose. Dropping zero-length normals is how that missing plane is handled — five planes under the
+production projection, six under the conventional control, from the same function.
+
+Culling happens **before** the subdivision decision, so a rejected node takes its whole subtree
+with it; a node's children lie within its own extent, so the bounding sphere that bounds the node
+bounds the subtree.
+
+This was added while the LOD gate's pop detector cannot fire, which normally would be the wrong
+order of work — a visibility cull is exactly the kind of change that makes patches appear and
+disappear, and the horizon cull was itself a pop source when it was wrong. What makes it
+verifiable anyway is that a conservative cull removes only geometry that was never visible, so
+**the rendered image must be unchanged**. That is the acceptance test, and it holds: across the
+gate's 600-step descent in both configurations, every image-derived statistic is identical —
+pops, worst local ratio 5.53×, medians 0.0832 and 0.0885, maxima 0.2014 and 0.3222, and both
+worst-concentration figures. Only the counts moved: **peak patches 1 008 → 240**, peak vertices
+81 648 → 19 440, and gate wall time **5 m 26.0 s → 1 m 59.2 s**. Device allocation is unchanged at
+43.03 MiB, since capacity is fixed rather than demand-driven.
+
+One second-order effect is worth recording, because it looks like a regression and is not. The
+gate's transition *sweep* reports different numbers, because `findTransitionAltitude` locates its
+band by the largest patch-count change and the counts moved — so the scan selected a different
+transition (213 432 m against 140 866 m) and the sweep measured a different one. The sweep is
+therefore not stable under changes to patch selection, which is a property of that instrument
+rather than of the renderer, and another reason the descent rather than the sweep carries the
+verdict.
 
 ### LOD gate: not satisfied, and not certifiable as measured
 

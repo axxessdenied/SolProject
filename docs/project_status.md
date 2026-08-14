@@ -280,23 +280,38 @@ harness code in a disabled gate and is not covered; it is named below rather tha
   it; the Debug shaders stay unoptimised because a readable RenderDoc capture is an outstanding
   B1 deliverable.
 
-**Open: none.** All ten findings from this round are applied. The frustum-culling half of the
-terrain finding is deliberately **not** done, and is recorded under "Outstanding for B1" rather
-than here, because it is a change to what geometry is emitted rather than a cost fix.
+- **Terrain was culled against the horizon but not the view frustum**, so patches behind the
+  camera were selected, subdivided to full depth, uploaded and drawn. Now culled against both,
+  from planes extracted out of the frame's own view-projection, and culled *before* the
+  subdivision decision so a rejected node takes its subtree with it.
+
+  This was initially deferred on the argument that a visibility cull is exactly the kind of
+  change that makes patches appear and disappear, and that adding one while the pop detector
+  cannot fire is the wrong order of work. The user directed it be done. The concern is answered
+  by construction rather than waived: a conservative cull removes only what was never visible, so
+  **the image must be unchanged**, and that is checkable without a pop detector. Across the
+  gate's 600-step descent in both configurations every image-derived statistic is identical —
+  pops, worst ratio 5.53×, medians 0.0832 and 0.0885, maxima 0.2014 and 0.3222, both
+  concentrations. Only counts moved: **peak patches 1 008 → 240**, vertices 81 648 → 19 440, gate
+  wall time **5 m 26.0 s → 1 m 59.2 s**.
+
+  Second-order effect, recorded because it looks like a regression and is not: the gate's
+  transition *sweep* reports different numbers, because `findTransitionAltitude` picks its band
+  by the largest patch-count change and the counts moved, so it selected a different transition
+  (213 432 m against 140 866 m). The sweep is not stable under changes to patch selection — a
+  property of that instrument, and another reason the descent carries the verdict.
+
+  Taken together with the coarse-sample reuse above, the LOD gate went from **8 m 29.6 s to
+  1 m 59.2 s** across this round — 4.3×, with byte-identical descent imagery throughout.
+
+**Open: none.** All ten findings from this round are applied, and the frustum-culling half of the
+terrain finding with them.
 
 ### Outstanding for B1
 
 - Re-enabling `render.lod-gate`, which still needs a control that can fire. The two pops it used
   to fail on are diagnosed and fixed; the blocker is now that at a valid quality setting neither
   configuration pops at all.
-- **Frustum culling, deliberately deferred behind the LOD gate.** Terrain is culled against the
-  horizon but not the view frustum, so patches behind the camera are generated and drawn. The
-  cost is real and the fix is standard — but it adds a second mechanism that makes patches appear
-  and disappear, and the *first* one, the horizon cull, was already found to be a pop source when
-  it was wrong. Adding another visibility cull while the instrument that would detect the
-  resulting pops cannot fire is the wrong order of work. This is a sequencing decision, not a
-  scope cut: it wants doing once the gate's control works, and it is recorded here so it is not
-  silently lost with the review finding it came from.
 - The LOD gate's transition scan has no coverage for its no-transition branch. It needs a scan
   that finds nothing, and it lives inside a harness that is itself `DISABLED`, so a test would not
   run even if written. The two renderer defects from the same round are covered by

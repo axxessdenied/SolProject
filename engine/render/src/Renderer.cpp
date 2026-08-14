@@ -131,6 +131,27 @@ std::string describeSurfaceFormat(VkFormat format)
     }
 }
 
+/// The matrix this frame draws with.
+///
+/// Computed in one place and handed to both the terrain selection and the draw, rather than
+/// derived twice. The frustum the selection culls against has to be the frustum the draw
+/// rasterises with; recomputing it from the same inputs would *usually* agree, and a cull that
+/// disagrees with its own draw removes visible geometry.
+Mat4f viewProjectionFor(const CameraState& camera, VkExtent2D extent)
+{
+    const double aspect = static_cast<double>(extent.width) / static_cast<double>(extent.height);
+    const Mat4f view = detail::cameraRelativeView(camera.forward, camera.up);
+    const Mat4f projection =
+        camera.projection == ProjectionMode::ReversedZInfinite
+            ? detail::reversedZInfinitePerspective(
+                  camera.verticalFovRadians, aspect, camera.nearPlaneMetres)
+            : detail::conventionalPerspective(camera.verticalFovRadians,
+                                              aspect,
+                                              camera.nearPlaneMetres,
+                                              camera.farPlaneMetres);
+    return detail::multiply(projection, view);
+}
+
 std::string fail(std::string_view what, VkResult result)
 {
     return std::format("{}: {}.", what, detail::describeResult(result));
@@ -357,6 +378,7 @@ struct Renderer::Impl {
         VkCommandBuffer commandBuffer,
         std::uint32_t imageIndex,
         const CameraState& camera,
+        const Mat4f& viewProjection,
         bool capture);
     [[nodiscard]] std::expected<FrameStats, std::string> submitFrame(
         const CameraState& camera,
@@ -640,6 +662,7 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
     VkCommandBuffer commandBuffer,
     std::uint32_t imageIndex,
     const CameraState& camera,
+    const Mat4f& viewProjection,
     bool capture)
 {
     const VkCommandBufferBeginInfo beginInfo{
@@ -690,18 +713,6 @@ std::expected<void, std::string> Renderer::Impl::recordFrame(
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
     vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-
-    const double aspect =
-        static_cast<double>(extent.width) / static_cast<double>(extent.height);
-    const Mat4f view = detail::cameraRelativeView(camera.forward, camera.up);
-    const Mat4f projection =
-        reversedZ ? detail::reversedZInfinitePerspective(
-                        camera.verticalFovRadians, aspect, camera.nearPlaneMetres)
-                  : detail::conventionalPerspective(camera.verticalFovRadians,
-                                                    aspect,
-                                                    camera.nearPlaneMetres,
-                                                    camera.farPlaneMetres);
-    const Mat4f viewProjection = detail::multiply(projection, view);
 
     for (const SceneObject& object : scene) {
         const Vec3f relative = detail::cameraRelative(object.worldPosition, camera.position);
@@ -1852,6 +1863,10 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
         return std::unexpected(fail("Resetting the command buffer failed", result));
     }
 
+    // One matrix for the whole frame: the frustum terrain is culled against below, and the
+    // matrix the draw rasterises with, are the same object rather than two derivations.
+    const Mat4f viewProjection = viewProjectionFor(camera, impl.extent);
+
     // Terrain is selected and generated on the CPU before recording, because the camera
     // position determines which patches exist at all. The buffers are written in place; the
     // fence waited on above guarantees the GPU is done with the previous frame's contents.
@@ -1869,7 +1884,10 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
             camera.position.z - impl.terrain->centre.z,
         };
 
-        detail::buildTerrain(config, cameraPlanetRelative, impl.terrainFrame);
+        detail::buildTerrain(config,
+                             cameraPlanetRelative,
+                             detail::extractFrustum(viewProjection),
+                             impl.terrainFrame);
 
         if (impl.terrainFrame.vertices.size() > kTerrainVertexCapacity
             || impl.terrainFrame.indices.size() > kTerrainIndexCapacity) {
@@ -1914,7 +1932,8 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
         stats.terrainVertices = static_cast<std::uint32_t>(impl.terrainFrame.vertices.size());
     }
 
-    if (auto recorded = impl.recordFrame(impl.commandBuffers[slot], imageIndex, camera, capture);
+    if (auto recorded = impl.recordFrame(
+            impl.commandBuffers[slot], imageIndex, camera, viewProjection, capture);
         !recorded.has_value()) {
         return std::unexpected(recorded.error());
     }

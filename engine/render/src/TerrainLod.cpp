@@ -166,6 +166,7 @@ double terrainHeight(const Vec3d& unitDirection, const TerrainConfig& config)
 void buildTerrain(
     const TerrainConfig& config,
     const Vec3d& cameraPlanetRelative,
+    const Frustum& viewFrustum,
     TerrainFrame& out)
 {
     out.vertices.clear();
@@ -286,6 +287,31 @@ void buildTerrain(
         const double distance = length(centre - cameraPlanetRelative);
         const double range = subdivisionRange(node, config);
 
+        // Half the node's diagonal across the sphere, plus the relief band. The 0.75 factor
+        // covers a square patch's corner-to-centre distance with margin: a node's edge is at
+        // most `node.size` of a face's arc, about 1.571R, against a nodeWorldSize of 2R — so
+        // half the diagonal is ~0.56 of it, and 0.75 leaves room for the sphere's curvature at
+        // the coarsest levels. Shared by both culls below.
+        const double nodeWorldSize = node.size * config.radiusMetres * 2.0;
+        const double boundingRadius = (nodeWorldSize * 0.75) + config.reliefMetres;
+
+        // Cull nodes outside the view frustum, before deciding whether to subdivide.
+        //
+        // Pruning here rather than at emit removes the whole subtree, which is where the cost
+        // is: a node behind the camera was previously subdivided to full depth and every one of
+        // its patches generated and drawn. Because a node's children lie within its own extent,
+        // the bounding sphere above bounds the entire subtree, so rejecting the parent cannot
+        // drop a visible descendant.
+        //
+        // The safety argument is the same shape as the horizon cull's, and it matters more here
+        // because the LOD gate's pop detector cannot currently fire: the test rejects only when
+        // the sphere lies *wholly* beyond a plane, and the radius overestimates the node, so
+        // nothing that could contribute a pixel is ever removed. The check on that claim is
+        // that the rendered image must be unchanged — only the patch counts may fall.
+        if (sphereOutsideFrustum(viewFrustum, centre - cameraPlanetRelative, boundingRadius)) {
+            continue;
+        }
+
         const bool canSubdivide = node.level < config.maxLevel;
         if (canSubdivide && distance < range) {
             const double half = node.size * 0.5;
@@ -355,11 +381,6 @@ void buildTerrain(
         if (cameraDistance > occluderRadius) {
             const Vec3d cameraDirection = normalise(cameraPlanetRelative);
             const double horizonPlane = (occluderRadius * occluderRadius) / cameraDistance;
-
-            // Half the node's diagonal across the sphere, plus the relief band. The 0.75
-            // factor covers a square patch's corner-to-centre distance with margin.
-            const double nodeWorldSize = node.size * config.radiusMetres * 2.0;
-            const double boundingRadius = (nodeWorldSize * 0.75) + config.reliefMetres;
 
             if (dot(centre, cameraDirection) + boundingRadius < horizonPlane) {
                 continue;

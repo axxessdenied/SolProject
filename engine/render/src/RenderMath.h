@@ -16,6 +16,7 @@
 
 #include "Sol/Render/WorldVec3.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 
@@ -216,6 +217,100 @@ inline Mat4f conventionalPerspective(
     projection.m[2][3] = -1.0F;
     projection.m[3][2] = static_cast<float>(farPlaneMetres * nearPlaneMetres / range);
     return projection;
+}
+
+/// A view frustum as inward-facing half-spaces, in the space its matrix consumes.
+///
+/// Because the view matrix is camera-relative and carries no translation, the planes extracted
+/// from a view-projection come out in **camera-relative world space** — the same space terrain
+/// vertices are emitted in, so a node's centre needs only the camera subtracted before testing.
+struct Frustum {
+    struct Plane {
+        /// Unit-length, pointing into the frustum. `dot(normal, p) + distance >= 0` is inside.
+        Vec3d normal;
+        double distance = 0.0;
+    };
+
+    /// Five planes under the reversed-Z infinite projection, six under the conventional control.
+    std::array<Plane, 6> planes{};
+    std::uint32_t count = 0;
+};
+
+/// Gribb-Hartmann plane extraction, skipping planes the projection does not actually impose.
+///
+/// The clip conditions are `-w <= x,y <= w` and `0 <= z <= w`, and each becomes a row combination
+/// of the matrix. The **infinite far plane shows up as a degenerate row**: under reversed Z the
+/// `z >= 0` condition reduces to `near >= 0`, whose xyz part is exactly zero, because there is no
+/// far clip to impose. Dropping zero-length normals is therefore not defensive coding against a
+/// case that cannot happen — it is how the infinite projection's missing plane is handled, and it
+/// is also what lets the same function serve the conventional control, where that row is a real
+/// far plane and six planes come back instead of five.
+inline Frustum extractFrustum(const Mat4f& viewProjection)
+{
+    const auto row = [&viewProjection](int r) {
+        return std::array<double, 4>{
+            static_cast<double>(viewProjection.m[0][r]),
+            static_cast<double>(viewProjection.m[1][r]),
+            static_cast<double>(viewProjection.m[2][r]),
+            static_cast<double>(viewProjection.m[3][r]),
+        };
+    };
+    const std::array<double, 4> r0 = row(0);
+    const std::array<double, 4> r1 = row(1);
+    const std::array<double, 4> r2 = row(2);
+    const std::array<double, 4> r3 = row(3);
+
+    const auto combine = [](const std::array<double, 4>& a,
+                            const std::array<double, 4>& b,
+                            double sign) {
+        return std::array<double, 4>{
+            a[0] + (sign * b[0]),
+            a[1] + (sign * b[1]),
+            a[2] + (sign * b[2]),
+            a[3] + (sign * b[3]),
+        };
+    };
+
+    const std::array<std::array<double, 4>, 6> candidates{
+        combine(r3, r0, 1.0),   // left:   w + x >= 0
+        combine(r3, r0, -1.0),  // right:  w - x >= 0
+        combine(r3, r1, 1.0),   // bottom: w + y >= 0
+        combine(r3, r1, -1.0),  // top:    w - y >= 0
+        r2,                     // z >= 0: degenerate under the infinite projection
+        combine(r3, r2, -1.0),  // w - z >= 0: the near plane under reversed Z
+    };
+
+    Frustum frustum;
+    for (const std::array<double, 4>& candidate : candidates) {
+        const Vec3d normal{candidate[0], candidate[1], candidate[2]};
+        const double magnitude = length(normal);
+        if (!(magnitude > 0.0)) {
+            continue;
+        }
+        const double scale = 1.0 / magnitude;
+        frustum.planes[frustum.count] = Frustum::Plane{normal * scale, candidate[3] * scale};
+        ++frustum.count;
+    }
+    return frustum;
+}
+
+/// Whether a sphere lies wholly outside the frustum, and is therefore certainly invisible.
+///
+/// Conservative in the direction that matters: it rejects only when the sphere is entirely
+/// beyond a plane, so a sphere straddling one is kept. Combined with a bounding radius that
+/// overestimates a node's extent, nothing that could contribute a pixel is ever removed — which
+/// is the property that makes culling safe to add while the LOD gate's pop detector cannot fire.
+[[nodiscard]] inline bool sphereOutsideFrustum(
+    const Frustum& frustum,
+    const Vec3d& centre,
+    double radius)
+{
+    for (std::uint32_t i = 0; i < frustum.count; ++i) {
+        if (dot(frustum.planes[i].normal, centre) + frustum.planes[i].distance < -radius) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace sol::render::detail

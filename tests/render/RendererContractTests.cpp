@@ -199,6 +199,79 @@ void checkSkippedFrameYieldsNoPixels(
                  "capture recovers once the framebuffer has area again");
 }
 
+/// Terrain outside the view frustum is not generated.
+///
+/// Turning the camera away from the planet must collapse the patch count. Before the frustum
+/// cull only the horizon test applied, which removes the far side of the planet and nothing
+/// else — so every near-side patch was still selected, subdivided to full depth, uploaded and
+/// drawn while sitting behind the camera.
+///
+/// The image was already blank in that case, which is exactly why this went unnoticed: the
+/// defect was pure cost, invisible in every pixel measurement. The count is therefore what is
+/// asserted, and the blank image is asserted alongside it so that a cull which started removing
+/// *visible* geometry would show up here rather than as a mystery elsewhere.
+void checkTerrainOutsideTheFrustumIsNotBuilt(
+    sol::test::CheckContext& checks,
+    sol::platform::Window& window,
+    sol::render::Renderer& renderer)
+{
+    sol::render::TerrainSettings terrain;
+    terrain.centre = {0.0, 0.0, 0.0};
+    terrain.radiusMetres = kPlanetRadiusMetres;
+    terrain.reliefMetres = kStressReliefMetres;
+    terrain.maxLevel = 6;
+
+    renderer.setScene({});
+    renderer.setTerrain(terrain);
+
+    const sol::render::WorldVec3 position{0.0, kPlanetRadiusMetres * 1.5, 0.0};
+    sol::render::CameraState toward{
+        .position = position,
+        .forward = {0.0, -1.0, 0.0},
+        .up = {0.0, 0.0, 1.0},
+        .verticalFovRadians = 1.0472,
+        .nearPlaneMetres = 100.0,
+    };
+    // Straight down would be parallel to that up axis, so tilt slightly — the same shape of
+    // camera the gates use, and a live check that the view-basis guard tolerates it.
+    toward.forward = {0.30, -0.95, 0.0};
+
+    sol::render::CameraState away = toward;
+    away.forward = {-0.30, 0.95, 0.0};
+
+    window.pollEvents();
+    const auto towardFrame = renderer.renderFrame(toward);
+    window.pollEvents();
+    const auto awayFrame = renderer.renderFrame(away);
+
+    if (!towardFrame.has_value() || !awayFrame.has_value()) {
+        checks.check(false, "frustum-cull test could not render both directions");
+        return;
+    }
+
+    std::printf("  frustum cull: %u patches looking at the planet, %u looking away\n",
+                towardFrame->terrainPatches,
+                awayFrame->terrainPatches);
+
+    checks.check(towardFrame->terrainPatches > 0,
+                 "looking at the planet must select terrain, or the comparison is vacuous");
+    checks.check(awayFrame->terrainPatches * 5 < towardFrame->terrainPatches,
+                 "looking away from the planet must collapse the selected patch count");
+
+    // And the frame that draws nothing must genuinely draw nothing, so a cull that began
+    // removing visible geometry would not hide inside a passing count.
+    const auto awayCapture = captureSettled(window, renderer, away);
+    renderer.setTerrain(std::nullopt);
+    const auto blank = captureSettled(window, renderer, away);
+    if (awayCapture.has_value() && blank.has_value()) {
+        checks.checkEqual(differingPixels(*awayCapture, *blank),
+                          std::size_t{0},
+                          "a planet entirely behind the camera contributes no pixel");
+    } else {
+        checks.check(false, "frustum-cull test could not capture the away view");
+    }
+}
+
 /// A camera whose forward and up are parallel is refused, not guessed at.
 ///
 /// The side axis is the cross product of the two, so when they are parallel it is zero and the
@@ -312,6 +385,7 @@ int main()
     checkRootPatchMorphIsANoOp(checks, *window, *renderer);
     checkSkippedFrameYieldsNoPixels(checks, *window, *renderer, nearCamera);
     checkDegenerateViewBasisIsRefused(checks, *window, *renderer);
+    checkTerrainOutsideTheFrustumIsNotBuilt(checks, *window, *renderer);
 
     renderer->waitIdle();
 
