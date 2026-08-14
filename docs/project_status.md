@@ -208,7 +208,7 @@ terrain capacities that left ~55 MB unreachable (now 43.03 MiB total, down from 
 ### Second review round, 2026-08-13
 
 A `review-cpp-change` pass over the whole open PR #6 diff — including `59e29dc`, which the three
-earlier reviewers never saw, since it *was* their output. Ten findings; six fixed, four open.
+earlier reviewers never saw, since it *was* their output. **Ten findings, all ten applied.**
 
 **Fixed.** Two of the three renderer fixes are covered by a new test, `render.renderer-contract`,
 each verified against the defect by reverting the fix and confirming the test fails. The third is
@@ -249,26 +249,54 @@ harness code in a disabled gate and is not covered; it is named below rather tha
   the same total. Latent rather than harmful — nothing times frames yet — which is why it never
   showed up as a number.
 
-**Open, in rough priority order.** None blocks the increment; all are recorded so they are not
-rediscovered. Four remain: the two highest-priority of the original six — the per-frame allocator
-query and the unchecked surface format — are fixed and recorded above.
+- **A degenerate camera basis rendered an empty frame with no error.** With forward parallel to
+  up — a straight-down camera with a default up axis — the side axis is the cross product of
+  parallel vectors, `normalise` returns zero by design, and the basis collapses silently.
+  `renderFrame` now refuses it with a diagnostic. Refused rather than resolved with a substitute
+  up axis, because a substitute renders a plausible image at an arbitrary roll and a centroid
+  measured in a rotated frame is still a number. Covered by `render.renderer-contract`, which
+  also pins that the guard does not reject the steeply-down camera the harnesses actually use.
+- **The LOD gate's `sweepDiscriminates` was named after a measurement it does not read.** It is
+  computed from the descent's pop counts; `sweepProduction` and `sweepControl` sit a few lines
+  above, computed, printed, and read by no verdict. Renamed `descentControlDiscriminates`. The
+  value was always the intended one — the name pointed at the wrong instrument, in the one file
+  whose job is stopping a reader from confusing two measurements.
+- **Terrain recomputed every coarse sample from scratch.** A vertex's coarse counterpart is the
+  same vertex snapped to even indices, and `surfacePoint` there evaluates the identical
+  expression on identical operands as the fine sample already computed at that position — so it
+  was a second ten-octave noise evaluation for a value already in memory, and only 25 of a 9×9
+  patch's coarse samples are distinct while each was recomputed up to four times. The fine grid
+  is now computed once and the coarse sample read out of it: **162 `surfacePoint` calls per patch
+  become 81**, exactly half, with bit-identical output. Measured on the LOD gate: **8 m 29.6 s to
+  5 m 26.0 s**, a 36% reduction in total wall time on a run that is substantially GPU work and
+  readback. Output byte-identical across the change.
+- **Nothing recorded which shader binary produced a published number.** Debug compiles `-g -O0`
+  and Release `-O`, `spirv-opt` may reassociate floating-point arithmetic, and ADR 0010 governs
+  MSVC and says nothing about the GPU. Both configurations run the full suite, so every gate
+  result exists in two variants from two different shader binaries. `sol::render::shaderBuildDescription()`
+  bakes the flags in from the same CMake variable that builds the `glslc` command line — so the
+  reported and invoked flags cannot drift — and all three gates print it beside the device, e.g.
+  `glslc --target-env=vulkan1.2 -g -O0 (Debug)`. This records the divergence rather than removing
+  it; the Debug shaders stay unoptimised because a readable RenderDoc capture is an outstanding
+  B1 deliverable.
 
-- `cameraRelativeView` returns a degenerate matrix when forward is parallel to up, rendering an
-  empty frame with no error. Every current harness camera avoids it; a straight-down camera does
-  not.
-- The LOD gate's `sweepDiscriminates` verdict is computed from the descent, not from the sweep it
-  is named after. The value is intended; the name is not.
-- Terrain is rebuilt every frame with no frustum culling and a ten-octave noise evaluation per
-  vertex — roughly 11 million hash evaluations per frame at the measured peak, single-threaded.
-- Debug and Release compile different SPIR-V (`-O0` against `-O`) with nothing constraining
-  floating-point association in the shader, and the configuration that produced each published
-  number is not recorded alongside it. ADR 0010 governs MSVC and says nothing about this.
+**Open: none.** All ten findings from this round are applied. The frustum-culling half of the
+terrain finding is deliberately **not** done, and is recorded under "Outstanding for B1" rather
+than here, because it is a change to what geometry is emitted rather than a cost fix.
 
 ### Outstanding for B1
 
 - Re-enabling `render.lod-gate`, which still needs a control that can fire. The two pops it used
   to fail on are diagnosed and fixed; the blocker is now that at a valid quality setting neither
   configuration pops at all.
+- **Frustum culling, deliberately deferred behind the LOD gate.** Terrain is culled against the
+  horizon but not the view frustum, so patches behind the camera are generated and drawn. The
+  cost is real and the fix is standard — but it adds a second mechanism that makes patches appear
+  and disappear, and the *first* one, the horizon cull, was already found to be a pop source when
+  it was wrong. Adding another visibility cull while the instrument that would detect the
+  resulting pops cannot fire is the wrong order of work. This is a sequencing decision, not a
+  scope cut: it wants doing once the gate's control works, and it is recorded here so it is not
+  silently lost with the review finding it came from.
 - The LOD gate's transition scan has no coverage for its no-transition branch. It needs a scan
   that finds nothing, and it lives inside a harness that is itself `DISABLED`, so a test would not
   run even if written. The two renderer defects from the same round are covered by

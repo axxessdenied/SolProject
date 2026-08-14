@@ -34,6 +34,7 @@
 
 #include "Sol/Platform/Window.h"
 #include "Sol/Render/Renderer.h"
+#include "Sol/Render/ShaderBuild.h"
 #include "Sol/Render/VulkanInstance.h"
 
 #include <algorithm>
@@ -524,6 +525,10 @@ int main()
 
     std::printf("Screen-space jitter gate — method fixed in the P1b milestone plan\n");
     std::printf("Device:      %s\n", renderer->selectedDevice().deviceName.c_str());
+    // Which of two shader binaries produced the numbers below. Debug and Release compile
+    // different SPIR-V, and nothing constrains what spirv-opt does to float association.
+    std::printf("Shaders:     %s\n",
+                std::string(sol::render::shaderBuildDescription()).c_str());
     std::printf("Resolution:  %ux%u\n", size.width, size.height);
     std::printf("Frames:      %d measured after %d warm-up, per view\n",
                 kMeasuredFrames,

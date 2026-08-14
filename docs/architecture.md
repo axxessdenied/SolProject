@@ -439,6 +439,13 @@ only mode Vulkan guarantees, and it presents every frame exactly once at a fixed
 mode that drops frames would inject presentation variance into the screen-space jitter gate,
 which measures per-frame centroids and is supposed to isolate the renderer.
 
+A camera whose forward and up are parallel, or either of which is zero, is **refused rather than
+resolved**. The side axis is their cross product, so the camera's roll about its own view
+direction is undefined and there is no correct value to pick. Until 2026-08-13 `normalise`
+returned a zero vector by design and the frame rendered as a bare clear with no error. The
+tempting fix is a fallback up axis, and it is the wrong one here: it renders a plausible image at
+an arbitrary roll, and a centroid measured in a rotated frame is still a number.
+
 The surface colour format is a **requirement, not a preference**: presenting needs
 `B8G8R8A8_SRGB` or `R8G8B8A8_SRGB` in `SRGB_NONLINEAR`, and device creation fails otherwise with a
 diagnostic naming both the requirement and what the surface offered. Two things depend on it and
@@ -645,6 +652,23 @@ quantise near the viewer.
 Shading is a function of terrain height only, never of LOD level. Colouring by level would
 paint a hard seam at exactly the transitions the gate measures.
 
+Each patch's grid is sampled once. A vertex's coarse counterpart is that vertex snapped to even
+indices, which is how the parent grid samples the patch — and `surfacePoint` there evaluates the
+identical expression on identical operands as the fine sample already computed at that position,
+so it is read out of the fine grid rather than recomputed. Until 2026-08-13 it was recomputed,
+costing a second ten-octave noise evaluation per vertex for a value already in memory, with only
+25 of a 9×9 patch's coarse samples distinct and each recomputed up to four times. That is
+**162 `surfacePoint` calls per patch reduced to 81**, exactly half, with bit-identical output —
+measured on the LOD gate at **8 m 29.6 s → 5 m 26.0 s**, 36% of total wall time on a run that is
+substantially GPU work and readback.
+
+Terrain is culled against the horizon but **not against the view frustum**, so patches behind the
+camera are still generated and drawn. That is a known cost, deliberately left: a frustum cull adds
+a second mechanism that makes patches appear and disappear, and the horizon cull — the first such
+mechanism — was itself found to be a pop source when it was wrong. Adding another while the
+instrument that would detect the resulting pops cannot fire is the wrong order of work. Tracked in
+`docs/project_status.md`.
+
 ### LOD gate: not satisfied, and not certifiable as measured
 
 **Memory is bounded structurally. It is not measured, and the earlier claim that it was is
@@ -822,6 +846,17 @@ gate carries a `static_assert` tying its quality constant to `TerrainSettings{}.
 so moving the renderer's default fails the gate's build until someone decides whether the
 threshold is still defined at the setting the renderer ships. That assertion was verified to fire
 by setting the default to 2.9 and confirming the build broke.
+
+Every gate also prints the shader binary that produced its numbers, e.g.
+`glslc --target-env=vulkan1.2 -g -O0 (Debug)`. Debug and Release do not run the same SPIR-V —
+Debug compiles `-g -O0` to keep a RenderDoc capture readable, Release `-O`, and `spirv-opt` is
+free to reassociate floating-point arithmetic while doing so. ADR 0010 pins MSVC's floating-point
+behaviour for the CPU and says nothing about the GPU, so nothing constrains that. Both
+configurations run the full suite, so every gate result exists in two variants from two different
+shader binaries. The string is baked in from the same CMake variable that builds the `glslc`
+command line, so the reported flags cannot drift from the invoked ones. This **records** the
+divergence rather than removing it; the Debug shaders stay unoptimised because a capture workflow
+is an outstanding B1 deliverable.
 
 **All gate results on this branch are from one device**: the NVIDIA RTX 4060 Laptop GPU, driver
 581.15.0.0, at 1280×720, Release. The accepted evidence plan requires gating thresholds to be

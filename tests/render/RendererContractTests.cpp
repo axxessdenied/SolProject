@@ -199,6 +199,59 @@ void checkSkippedFrameYieldsNoPixels(
                  "capture recovers once the framebuffer has area again");
 }
 
+/// A camera whose forward and up are parallel is refused, not guessed at.
+///
+/// The side axis is the cross product of the two, so when they are parallel it is zero and the
+/// camera's roll about its own view direction is undefined — there is no correct answer to pick.
+/// Before 2026-08-13 `normalise` returned a zero vector by design, the basis collapsed, and the
+/// frame rendered as a bare clear with no error returned.
+///
+/// The failure mode this guards is not a black screen, which someone would notice. It is the
+/// tempting fix: substituting a fallback up axis renders a plausible image at an arbitrary roll,
+/// and a centroid measured in a rotated frame is still a number.
+void checkDegenerateViewBasisIsRefused(
+    sol::test::CheckContext& checks,
+    sol::platform::Window& window,
+    sol::render::Renderer& renderer)
+{
+    window.pollEvents();
+
+    // Forward parallel to up, which is what a straight-down camera with a default up axis is.
+    const sol::render::CameraState parallel{
+        .position = {0.0, 5.0, 0.0},
+        .forward = {0.0, -1.0, 0.0},
+        .up = {0.0, 1.0, 0.0},
+        .verticalFovRadians = 1.0472,
+        .nearPlaneMetres = 0.1,
+    };
+    const auto parallelFrame = renderer.renderFrame(parallel);
+    checks.check(!parallelFrame.has_value(),
+                 "a camera with forward parallel to up is refused rather than rendered");
+
+    const sol::render::CameraState zeroUp{
+        .position = {0.0, 5.0, 0.0},
+        .forward = {0.0, 0.0, -1.0},
+        .up = {0.0, 0.0, 0.0},
+        .verticalFovRadians = 1.0472,
+        .nearPlaneMetres = 0.1,
+    };
+    checks.check(!renderer.renderFrame(zeroUp).has_value(),
+                 "a camera with a zero up vector is refused rather than rendered");
+
+    // And the guard must not be so eager that it rejects ordinary cameras: the harnesses look
+    // steeply down at (0.30, -0.95, 0) against an up of (0, 0, 1), which is nowhere near
+    // parallel but is steep enough to be worth pinning.
+    const sol::render::CameraState steep{
+        .position = {0.0, 5.0, 0.0},
+        .forward = {0.30, -0.95, 0.0},
+        .up = {0.0, 0.0, 1.0},
+        .verticalFovRadians = 1.0472,
+        .nearPlaneMetres = 0.1,
+    };
+    checks.check(renderer.renderFrame(steep).has_value(),
+                 "a steeply-down camera with a valid up axis still renders");
+}
+
 } // namespace
 
 int main()
@@ -258,6 +311,7 @@ int main()
     sol::test::CheckContext checks("render.renderer-contract");
     checkRootPatchMorphIsANoOp(checks, *window, *renderer);
     checkSkippedFrameYieldsNoPixels(checks, *window, *renderer, nearCamera);
+    checkDegenerateViewBasisIsRefused(checks, *window, *renderer);
 
     renderer->waitIdle();
 

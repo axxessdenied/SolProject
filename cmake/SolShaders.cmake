@@ -57,6 +57,16 @@ function(sol_add_shaders target)
         set(_sol_shader_flags -O)
     endif()
 
+    # The same flags, as a string the renderer can report at runtime.
+    #
+    # "Both record which was used" was an aspiration in this file's header comment and nothing
+    # implemented it, so every published gate number was silent about which of two different
+    # shader binaries produced it. Derived from the variable that builds the command line rather
+    # than from NDEBUG, so the reported flags cannot drift from the invoked ones.
+    string(REPLACE ";" " " _sol_shader_flag_text "${_sol_shader_flags}")
+    set(_sol_shader_description
+        "glslc --target-env=vulkan1.2 ${_sol_shader_flag_text} (${CMAKE_BUILD_TYPE})")
+
     foreach(_sol_source IN LISTS SOL_SHADER_SOURCES)
         get_filename_component(_sol_name "${_sol_source}" NAME)
         set(_sol_output "${_sol_shader_dir}/${_sol_name}.inc")
@@ -81,6 +91,8 @@ function(sol_add_shaders target)
     add_dependencies(${target} ${target}_shaders)
     target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
     target_sources(${target} PRIVATE ${SOL_SHADER_SOURCES})
+    target_compile_definitions(${target}
+        PRIVATE "SOL_SHADER_BUILD_FLAGS=\"${_sol_shader_description}\"")
 
     # Shader sources are inputs to a custom command, not to the C++ compiler.
     set_source_files_properties(${SOL_SHADER_SOURCES} PROPERTIES HEADER_FILE_ONLY TRUE)

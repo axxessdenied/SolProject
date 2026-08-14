@@ -176,32 +176,45 @@ void buildTerrain(
     const std::uint32_t grid = config.gridResolution;
     const std::uint32_t verticesPerEdge = grid + 1;
 
+    // Scratch for one patch's surface samples, reused across patches so the allocation happens
+    // once per frame rather than once per patch.
+    std::vector<SurfaceSample> samples;
+
     // Emits one node as a patch, generating its grid and its coarse-level counterpart.
     const auto emit = [&](const QuadtreeNode& node, double morphStart, double morphEnd) {
         const CubeFace& face = kCubeFaces[node.face];
         const auto baseVertex = static_cast<std::int32_t>(out.vertices.size());
         const auto firstIndex = static_cast<std::uint32_t>(out.indices.size());
 
+        // Every sample this patch needs, computed once.
+        //
+        // The coarse counterpart of a vertex is the same vertex snapped to even indices, which is
+        // exactly how the parent grid samples this patch — and `surfacePoint` at those snapped
+        // indices evaluates the identical expression on the identical operands as the fine sample
+        // already computed there. Reading it out of this grid is therefore not an approximation:
+        // it is the same `double` bit pattern, and the emitted vertices are unchanged.
+        //
+        // Recomputing it cost a second ten-octave noise evaluation for every vertex — 160 hashes
+        // per vertex rather than 80, for a value already sitting in memory. Only 25 of a 9x9
+        // patch's coarse samples are distinct, and each was being recomputed up to four times.
+        samples.resize(static_cast<std::size_t>(verticesPerEdge) * verticesPerEdge);
         for (std::uint32_t j = 0; j < verticesPerEdge; ++j) {
             for (std::uint32_t i = 0; i < verticesPerEdge; ++i) {
                 const double fu = static_cast<double>(i) / static_cast<double>(grid);
                 const double fv = static_cast<double>(j) / static_cast<double>(grid);
+                samples[(static_cast<std::size_t>(j) * verticesPerEdge) + i] = surfacePoint(
+                    face, node.u0 + (fu * node.size), node.v0 + (fv * node.size), config);
+            }
+        }
 
-                const double u = node.u0 + (fu * node.size);
-                const double v = node.v0 + (fv * node.size);
-
-                // The coarse counterpart: the same vertex sampled on a grid of half the
-                // resolution, which is where this vertex lands one level up. Snapping the
-                // index to even values is exactly how the parent grid samples this patch.
+        for (std::uint32_t j = 0; j < verticesPerEdge; ++j) {
+            for (std::uint32_t i = 0; i < verticesPerEdge; ++i) {
                 const std::uint32_t ci = i & ~1U;
                 const std::uint32_t cj = j & ~1U;
-                const double cfu = static_cast<double>(ci) / static_cast<double>(grid);
-                const double cfv = static_cast<double>(cj) / static_cast<double>(grid);
-                const double cu = node.u0 + (cfu * node.size);
-                const double cv = node.v0 + (cfv * node.size);
 
-                const SurfaceSample fine = surfacePoint(face, u, v, config);
-                const SurfaceSample coarse = surfacePoint(face, cu, cv, config);
+                const SurfaceSample& fine = samples[(static_cast<std::size_t>(j) * verticesPerEdge) + i];
+                const SurfaceSample& coarse =
+                    samples[(static_cast<std::size_t>(cj) * verticesPerEdge) + ci];
 
                 // The one narrowing point. Both operands are ~6.4e6 m and their difference is
                 // small near the viewer; subtracting in double and only then converting keeps

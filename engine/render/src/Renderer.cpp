@@ -1789,6 +1789,26 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
     Impl& impl = *this;
     FrameStats stats{.frameIndex = impl.frameIndex, .swapchainRebuilt = false};
 
+    // Checked before anything else, including the minimised early return, so a malformed camera
+    // is reported the first time it is passed rather than the first time the window happens to
+    // have area. See isViewBasisWellFormed for why this is refused rather than fixed up.
+    if (!detail::isViewBasisWellFormed(camera.forward, camera.up)) {
+        return std::unexpected(std::format(
+            "The camera's forward and up vectors do not define a view basis.\n"
+            "  forward = ({}, {}, {}), up = ({}, {}, {})\n"
+            "  They are parallel, or one of them is zero, so the camera's roll about its own "
+            "view direction is undefined rather than merely awkward.\n"
+            "  This is refused rather than resolved with a substitute up axis, because a "
+            "substitute would render a plausible image at an arbitrary roll — and a measurement "
+            "taken in a rotated frame is still a number.",
+            camera.forward.x,
+            camera.forward.y,
+            camera.forward.z,
+            camera.up.x,
+            camera.up.y,
+            camera.up.z));
+    }
+
     if (impl.pendingWidth == 0 || impl.pendingHeight == 0) {
         return stats; // Minimised: a normal state, not an error.
     }

@@ -10,12 +10,14 @@ add_library(SolRender STATIC
     include/Sol/Render/CapabilityRequirement.h
     include/Sol/Render/DeviceCapabilities.h
     include/Sol/Render/Renderer.h
+    include/Sol/Render/ShaderBuild.h
     include/Sol/Render/VulkanInstance.h
     include/Sol/Render/WorldVec3.h
     src/CapabilityRequirement.cpp
     src/DeviceCapabilities.cpp
     src/RenderMath.h
     src/Renderer.cpp
+    src/ShaderBuild.cpp
     src/TerrainLod.cpp
     src/TerrainLod.h
     src/VmaImplementation.cpp

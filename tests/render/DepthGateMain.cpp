@@ -33,6 +33,7 @@
 
 #include "Sol/Platform/Window.h"
 #include "Sol/Render/Renderer.h"
+#include "Sol/Render/ShaderBuild.h"
 #include "Sol/Render/VulkanInstance.h"
 
 #include <algorithm>
@@ -280,6 +281,10 @@ int main()
 
     std::printf("Depth gate — surface-to-orbit depth behaviour\n");
     std::printf("Device:      %s\n", renderer->selectedDevice().deviceName.c_str());
+    // Which of two shader binaries produced the numbers below. Debug and Release compile
+    // different SPIR-V, and nothing constrains what spirv-opt does to float association.
+    std::printf("Shaders:     %s\n",
+                std::string(sol::render::shaderBuildDescription()).c_str());
     std::printf("Format:      VK_FORMAT_D32_SFLOAT, reversed-Z, infinite far plane\n");
     std::printf("Near plane:  %.3f m\n", kNearPlaneMetres);
     std::printf("Camera at:   %.1f km from world origin\n", kEarthRadiusMetres / 1000.0);

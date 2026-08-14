@@ -102,12 +102,40 @@ inline Mat4f multiply(const Mat4f& a, const Mat4f& b)
     return result;
 }
 
+/// Whether a forward/up pair defines a view basis at all.
+///
+/// Two ways it does not: either vector being zero, or the two being parallel. In both cases the
+/// side axis is the cross product of parallel vectors — zero — and the roll of the camera about
+/// its own view direction is genuinely undefined rather than merely hard to compute.
+///
+/// This is checked rather than papered over. Substituting a fallback up axis would produce a
+/// perfectly plausible image at an arbitrary roll, and for a renderer whose whole purpose this
+/// increment is measurement, an arbitrary roll is a silently wrong answer: a centroid measured
+/// in a rotated frame is still a number. @ref cameraRelativeView carries this as a
+/// precondition, and `Renderer` refuses the frame instead of guessing.
+///
+/// The threshold is on the sine of the angle between the normalised vectors, so it is an
+/// angular tolerance rather than a magnitude one: 1e-6 is about 0.2 arc-seconds.
+inline bool isViewBasisWellFormed(const Vec3d& forward, const Vec3d& worldUp)
+{
+    const double forwardLength = length(forward);
+    const double upLength = length(worldUp);
+    if (!(forwardLength > 0.0) || !(upLength > 0.0)) {
+        return false;
+    }
+    return length(cross(forward * (1.0 / forwardLength), worldUp * (1.0 / upLength))) > 1.0e-6;
+}
+
 /// A view matrix with the camera at the origin.
 ///
 /// There is deliberately no translation term. The camera *is* the origin, so geometry arrives
 /// already relative to it. A conventional view matrix would translate by the camera's world
 /// position — reintroducing, in `float`, exactly the large magnitude the frame model exists to
 /// keep out of the GPU.
+///
+/// @pre @ref isViewBasisWellFormed holds for @p forward and @p worldUp. With parallel or zero
+/// inputs `normalise` returns a zero vector by design and the basis collapses silently, which is
+/// why the caller checks first rather than this function returning something defensible.
 inline Mat4f cameraRelativeView(const Vec3d& forward, const Vec3d& worldUp)
 {
     const Vec3d f = normalise(forward);

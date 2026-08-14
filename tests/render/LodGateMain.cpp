@@ -25,6 +25,7 @@
 
 #include "Sol/Platform/Window.h"
 #include "Sol/Render/Renderer.h"
+#include "Sol/Render/ShaderBuild.h"
 #include "Sol/Render/VulkanInstance.h"
 
 #include <algorithm>
@@ -684,6 +685,10 @@ int main()
 
     std::printf("LOD continuity gate — fixed observer descent\n");
     std::printf("Device:     %s\n", renderer->selectedDevice().deviceName.c_str());
+    // Which of two shader binaries produced the numbers below. Debug and Release compile
+    // different SPIR-V, and nothing constrains what spirv-opt does to float association.
+    std::printf("Shaders:    %s\n",
+                std::string(sol::render::shaderBuildDescription()).c_str());
     std::printf("Traverse:   %.0f km to %.0f km altitude, %d logarithmic steps\n",
                 kStartAltitudeMetres / 1000.0,
                 kEndAltitudeMetres / 1000.0,
@@ -759,7 +764,14 @@ int main()
     // distant horizon patches, and concentration is confounded by morphing's own continuous
     // deformation, which moves more pixels slightly than an abrupt switch moves sharply.
     const bool noPopping = production.popIndices.empty();
-    const bool sweepDiscriminates =
+
+    // Named for the measurement it is actually computed from, which is the *descent*, not the
+    // sweep. It was called `sweepDiscriminates` while reading the descent's pop counts — and
+    // `sweepProduction` and `sweepControl` sit a few lines above, computed, printed, and read by
+    // no verdict at all. The value was always the intended one; the name pointed at the wrong
+    // instrument, in the one file whose entire job is stopping a reader from confusing two
+    // measurements.
+    const bool descentControlDiscriminates =
         control.popIndices.size() > production.popIndices.size() * 2 + 2;
 
     // Pops at the same step in both configurations cannot be caused by morphing, since that is
@@ -783,7 +795,7 @@ int main()
     std::printf("  control pops more than production %zu vs %zu — %s\n",
                 control.popIndices.size(),
                 production.popIndices.size(),
-                sweepDiscriminates ? "detector discriminates"
+                descentControlDiscriminates ? "detector discriminates"
                                    : "DETECTOR BLIND; the result above is untrustworthy");
     std::printf("  worst pop magnitude, prod vs ctrl %.4f vs %.4f\n",
                 production.worstRatioDifference,
@@ -809,7 +821,7 @@ int main()
         std::printf("  %s\n", message.c_str());
     }
 
-    const bool passed = noPopping && memoryBounded && sweepDiscriminates;
+    const bool passed = noPopping && memoryBounded && descentControlDiscriminates;
     std::printf("\n%s\n",
                 passed ? "LOD GATE PASSED." : "LOD GATE FAILED — see the verdicts above.");
     return passed ? 0 : 1;
