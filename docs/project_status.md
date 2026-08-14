@@ -208,7 +208,7 @@ terrain capacities that left ~55 MB unreachable (now 43.03 MiB total, down from 
 ### Second review round, 2026-08-13
 
 A `review-cpp-change` pass over the whole open PR #6 diff — including `59e29dc`, which the three
-earlier reviewers never saw, since it *was* their output. Ten findings; five fixed, five open.
+earlier reviewers never saw, since it *was* their output. Ten findings; six fixed, four open.
 
 **Fixed.** Two of the three renderer fixes are covered by a new test, `render.renderer-contract`,
 each verified against the defect by reverting the fix and confirming the test fails. The third is
@@ -231,6 +231,16 @@ harness code in a disabled gate and is not covered; it is named below rather tha
 - **The public terrain quality default was 2.5, below the scheme's own ~2.8 validity floor**, while
   the gate measured at 3.0 and a comment claimed 3.0 *was* the default. The default is now 3.0 and
   a `static_assert` in the gate holds the two together.
+- **The swapchain surface format was preferred, not required.** The search preferred sRGB but
+  fell back to `formats.front()`, so a surface offering no sRGB format was accepted anyway —
+  while the code beside it stated that a UNORM surface would make every pixel gate measure
+  through a tone response nothing models, and the capture path assumed 4 bytes per pixel.
+  Presenting now requires `B8G8R8A8_SRGB` or `R8G8B8A8_SRGB` and fails device creation otherwise,
+  naming both the requirement and what the surface offered. **This was closer than it read:** on
+  the RTX 4060 `formats.front()` is `B8G8R8A8_UNORM`, so the fallback was the gamma-doubling
+  format, and the surface also offers `A2B10G10R10_UNORM_PACK32`, which would have satisfied the
+  4-byte stride while breaking the byte triples. The old code was correct only because the sRGB
+  format happened to be offered.
 - **The per-frame device-allocation query was the expensive one.** `vmaCalculateStatistics` walks
   every block and allocation under the allocator's mutexes and is documented by VMA for debugging
   use; it ran in `renderFrame`, the function designated as the only valid source of frame-time
@@ -240,12 +250,9 @@ harness code in a disabled gate and is not covered; it is named below rather tha
   showed up as a number.
 
 **Open, in rough priority order.** None blocks the increment; all are recorded so they are not
-rediscovered. Five remain of the original six — the per-frame allocator query was the highest
-priority and is now fixed, above:
+rediscovered. Four remain: the two highest-priority of the original six — the per-frame allocator
+query and the unchecked surface format — are fixed and recorded above.
 
-- The swapchain surface format is chosen with a preference for sRGB but no check, while the code
-  states that a UNORM surface would make the jitter gate measure through a wrong tone response,
-  and the 4-bytes-per-pixel readback assumes a 32-bit format.
 - `cameraRelativeView` returns a degenerate matrix when forward is parallel to up, rendering an
   empty frame with no error. Every current harness camera avoids it; a straight-down camera does
   not.

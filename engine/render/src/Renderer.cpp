@@ -94,6 +94,43 @@ static_assert(sizeof(PushConstants) == 96,
               "Push constant block must match the shader's layout and stay within the 128-byte "
               "minimum every Vulkan implementation guarantees.");
 
+/// Surface colour formats this renderer will present through, in preference order.
+///
+/// A closed list rather than a preference, because two separate things depend on it and both
+/// fail silently rather than loudly:
+///
+/// - **sRGB.** An sRGB surface makes the display hardware apply the transfer function, so shader
+///   output stays linear. A UNORM surface double-applies gamma, and every pixel gate — the
+///   jitter centroid especially — would then be measured through a tone response nothing in the
+///   harness models. The measurement would still produce a number.
+/// - **32 bits, 8 per channel.** @ref Renderer::Impl::readCapture sizes its staging buffer at
+///   4 bytes per pixel and reads back byte triples. A wider surface such as
+///   `R16G16B16A16_SFLOAT` would make the buffer-image copy exceed the allocation.
+///
+/// Widening this list means revisiting the readback path with it. A later milestone may want a
+/// UNORM entry with an explicit shader-side transfer function, once presentation is a product
+/// concern rather than a measurement one; today it is a measurement one.
+constexpr std::array kAcceptedSurfaceFormats{
+    VK_FORMAT_B8G8R8A8_SRGB,
+    VK_FORMAT_R8G8B8A8_SRGB,
+};
+
+/// Names the formats this renderer reasons about; anything else prints as its numeric value.
+///
+/// Deliberately not a general `VkFormat` table. This exists for one diagnostic, and a table
+/// covering every format would be a maintenance burden that the one caller does not need.
+std::string describeSurfaceFormat(VkFormat format)
+{
+    switch (format) {
+    case VK_FORMAT_B8G8R8A8_SRGB: return "VK_FORMAT_B8G8R8A8_SRGB";
+    case VK_FORMAT_R8G8B8A8_SRGB: return "VK_FORMAT_R8G8B8A8_SRGB";
+    case VK_FORMAT_B8G8R8A8_UNORM: return "VK_FORMAT_B8G8R8A8_UNORM";
+    case VK_FORMAT_R8G8B8A8_UNORM: return "VK_FORMAT_R8G8B8A8_UNORM";
+    case VK_FORMAT_R16G16B16A16_SFLOAT: return "VK_FORMAT_R16G16B16A16_SFLOAT";
+    default: return std::format("VkFormat {}", static_cast<int>(format));
+    }
+}
+
 std::string fail(std::string_view what, VkResult result)
 {
     return std::format("{}: {}.", what, detail::describeResult(result));
@@ -859,8 +896,13 @@ CapturedFrame Renderer::Impl::readCapture() const
     // The surface is very likely B8G8R8A8, so the bytes arrive as B, G, R, A. Normalising to
     // RGBA here means the harness never has to know the surface's channel order — and a
     // harness that guessed wrong would compute a centroid from the wrong channel.
-    const bool swapRedAndBlue = swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB
-                                || swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM;
+    //
+    // Only the two formats in kAcceptedSurfaceFormats can reach here, and device creation fails
+    // otherwise — which is what makes the 4-bytes-per-pixel stride above a fact rather than an
+    // assumption. The UNORM case this used to test for is unreachable by construction now, and
+    // testing for it would suggest the stride had been thought about for a format that never
+    // arrives.
+    const bool swapRedAndBlue = swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB;
 
     for (std::size_t i = 0; i < frame.rgba.size(); i += 4) {
         if (swapRedAndBlue) {
@@ -1058,16 +1100,55 @@ std::expected<Renderer, std::string> Renderer::create(
                 "or compositor fault rather than an unsupported device.");
         }
 
-        VkSurfaceFormatKHR chosen = formats.front();
-        for (const VkSurfaceFormatKHR& candidate : formats) {
-            if (candidate.format == VK_FORMAT_B8G8R8A8_SRGB
-                && candidate.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-                chosen = candidate;
+        const VkSurfaceFormatKHR* chosen = nullptr;
+        for (const VkFormat accepted : kAcceptedSurfaceFormats) {
+            for (const VkSurfaceFormatKHR& candidate : formats) {
+                if (candidate.format == accepted
+                    && candidate.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                    chosen = &candidate;
+                    break;
+                }
+            }
+            if (chosen != nullptr) {
                 break;
             }
         }
-        impl->swapchainFormat = chosen.format;
-        impl->swapchainColorSpace = chosen.colorSpace;
+
+        // Rejected rather than accepted-and-quietly-wrong. The previous version fell back to
+        // `formats.front()`, so a surface offering neither accepted format was taken anyway —
+        // and the two consequences are exactly the ones the comment above and the capture path
+        // depend on not happening. A silent wrong tone response is worse than a refusal to
+        // start, because the refusal is visible and the tone response is not.
+        //
+        // How close that was: on the RTX 4060 this surface lists, in order,
+        // B8G8R8A8_UNORM, B8G8R8A8_SRGB, R8G8B8A8_UNORM, R8G8B8A8_SRGB, A2B10G10R10_UNORM_PACK32.
+        // `formats.front()` is the **UNORM** entry. The old code reached the correct format only
+        // because the sRGB one happened to be offered and its search found it first; the
+        // fallback it would otherwise have taken is precisely the gamma-doubling case, and the
+        // packed 10-bit entry would have kept the 4-byte stride while breaking the byte triples.
+        if (chosen == nullptr) {
+            std::string offered;
+            for (const VkSurfaceFormatKHR& candidate : formats) {
+                offered += std::format("  {} in colour space {}\n",
+                                       describeSurfaceFormat(candidate.format),
+                                       static_cast<int>(candidate.colorSpace));
+            }
+            return std::unexpected(std::format(
+                "This window surface offers no colour format the renderer can present through.\n"
+                "  Required: VK_FORMAT_B8G8R8A8_SRGB or VK_FORMAT_R8G8B8A8_SRGB, in "
+                "VK_COLOR_SPACE_SRGB_NONLINEAR_KHR.\n"
+                "  An sRGB surface is required so the display hardware applies the transfer "
+                "function and shader output stays linear; a UNORM surface would double-apply "
+                "gamma and every pixel measurement would be taken through a tone response "
+                "nothing models.\n"
+                "  A 32-bit, 8-bit-per-channel format is required because the capture path "
+                "sizes its staging buffer at 4 bytes per pixel.\n"
+                "  This surface offered:\n{}",
+                offered));
+        }
+
+        impl->swapchainFormat = chosen->format;
+        impl->swapchainColorSpace = chosen->colorSpace;
     }
 
     // --- Render pass -------------------------------------------------------------------

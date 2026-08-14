@@ -439,6 +439,22 @@ only mode Vulkan guarantees, and it presents every frame exactly once at a fixed
 mode that drops frames would inject presentation variance into the screen-space jitter gate,
 which measures per-frame centroids and is supposed to isolate the renderer.
 
+The surface colour format is a **requirement, not a preference**: presenting needs
+`B8G8R8A8_SRGB` or `R8G8B8A8_SRGB` in `SRGB_NONLINEAR`, and device creation fails otherwise with a
+diagnostic naming both the requirement and what the surface offered. Two things depend on it and
+both fail silently rather than loudly. An sRGB surface makes the display hardware apply the
+transfer function so shader output stays linear; a UNORM surface double-applies gamma, and every
+pixel gate — the jitter centroid especially — would then be measured through a tone response
+nothing in the harness models, while still producing a number. And the capture path sizes its
+staging buffer at 4 bytes per pixel and reads back byte triples, which a wider format would
+overrun.
+
+Until 2026-08-13 this was a preference with a `formats.front()` fallback, and the margin was
+thinner than it read: on the RTX 4060 the surface lists `B8G8R8A8_UNORM` **first**, so the
+fallback was precisely the gamma-doubling case, and the list also offers
+`A2B10G10R10_UNORM_PACK32`, which would have satisfied the 4-byte stride while breaking the byte
+triples. The old code reached the right format only because the sRGB one happened to be offered.
+
 A frame that renders reports `FrameStats::presented`, and every path that returns without drawing
 leaves it false. This is a measurement contract, not bookkeeping. The readback buffers are
 persistently mapped and keep their previous contents, so a caller that cannot tell a skipped frame
