@@ -208,7 +208,7 @@ terrain capacities that left ~55 MB unreachable (now 43.03 MiB total, down from 
 ### Second review round, 2026-08-13
 
 A `review-cpp-change` pass over the whole open PR #6 diff — including `59e29dc`, which the three
-earlier reviewers never saw, since it *was* their output. Ten findings; four fixed, six open.
+earlier reviewers never saw, since it *was* their output. Ten findings; five fixed, five open.
 
 **Fixed.** Two of the three renderer fixes are covered by a new test, `render.renderer-contract`,
 each verified against the defect by reverting the fix and confirming the test fails. The third is
@@ -231,14 +231,18 @@ harness code in a disabled gate and is not covered; it is named below rather tha
 - **The public terrain quality default was 2.5, below the scheme's own ~2.8 validity floor**, while
   the gate measured at 3.0 and a comment claimed 3.0 *was* the default. The default is now 3.0 and
   a `static_assert` in the gate holds the two together.
+- **The per-frame device-allocation query was the expensive one.** `vmaCalculateStatistics` walks
+  every block and allocation under the allocator's mutexes and is documented by VMA for debugging
+  use; it ran in `renderFrame`, the function designated as the only valid source of frame-time
+  evidence, so the measurement carried a full allocator traversal inside it. Replaced with
+  `vmaGetHeapBudgets`, which VMA documents as fast enough to call every frame and which reports
+  the same total. Latent rather than harmful — nothing times frames yet — which is why it never
+  showed up as a number.
 
 **Open, in rough priority order.** None blocks the increment; all are recorded so they are not
-rediscovered:
+rediscovered. Five remain of the original six — the per-frame allocator query was the highest
+priority and is now fixed, above:
 
-- `vmaCalculateStatistics` runs every frame, including in `renderFrame` — the function documented
-  as the only valid source of frame-time evidence. VMA's own guidance is that it traverses all
-  internal structures and is for debugging, with `vmaGetHeapBudgets` for per-frame use. Latent
-  today because nothing measures frame time yet; it will contaminate the first figure that does.
 - The swapchain surface format is chosen with a preference for sRGB but no check, while the code
   states that a UNORM surface would make the jitter gate measure through a wrong tone response,
   and the 4-bytes-per-pixel readback assumes a 32-bit format.

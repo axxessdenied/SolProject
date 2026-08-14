@@ -113,6 +113,9 @@ struct Renderer::Impl {
     VkDevice device = VK_NULL_HANDLE;
     VkQueue queue = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
+    /// Heaps on the selected device. Read once, because the per-frame allocation query writes
+    /// one budget per heap and summing past the count would add uninitialised entries.
+    std::uint32_t memoryHeapCount = 0;
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     /// Chosen once, before the render pass is created, and never re-chosen. The render pass
@@ -1026,6 +1029,13 @@ std::expected<Renderer, std::string> Renderer::create(
         return std::unexpected(fail("Creating the memory allocator failed", result));
     }
 
+    // Heap count, read once here rather than per frame — see the allocation query in submitFrame.
+    {
+        const VkPhysicalDeviceMemoryProperties* memoryProperties = nullptr;
+        vmaGetMemoryProperties(impl->allocator, &memoryProperties);
+        impl->memoryHeapCount = memoryProperties->memoryHeapCount;
+    }
+
     // --- Surface format ----------------------------------------------------------------
     // Chosen before the render pass, because the render pass bakes the colour format in.
     // An sRGB surface makes the display hardware apply the transfer function, so shader output
@@ -1859,10 +1869,26 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
     // Device memory actually held, from the allocator rather than from process memory. The
     // LOD gate's memory half needs a figure that reflects the renderer's own working set;
     // process memory is too noisy to show boundedness over a long traverse.
+    //
+    // `vmaGetHeapBudgets`, not `vmaCalculateStatistics`, and the distinction is VMA's own: the
+    // one named "calculate" has to walk every block and allocation under the allocator's mutexes
+    // and is documented for debugging use, while the one named "get" is documented as fast
+    // enough to call every frame. This runs in `renderFrame`, which is the function the header
+    // designates as the *only* valid source of frame-time evidence — so the expensive form put a
+    // full allocator traversal inside the measurement it was going to be measured by. Nothing
+    // times frames yet, which is the only reason this never showed up as a number.
+    //
+    // The figure is the same one either way: summing `allocationBytes` across heaps is what the
+    // total in `VmaTotalStatistics` is. Verified unchanged at 43.03 MiB against the LOD gate.
     {
-        VmaTotalStatistics statistics{};
-        vmaCalculateStatistics(impl.allocator, &statistics);
-        stats.deviceAllocatedBytes = statistics.total.statistics.allocationBytes;
+        std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
+        vmaGetHeapBudgets(impl.allocator, budgets.data());
+
+        std::uint64_t allocated = 0;
+        for (std::uint32_t heap = 0; heap < impl.memoryHeapCount; ++heap) {
+            allocated += budgets[heap].statistics.allocationBytes;
+        }
+        stats.deviceAllocatedBytes = allocated;
     }
 
     impl.lastSubmittedSlot = slot;

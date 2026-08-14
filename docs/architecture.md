@@ -647,6 +647,15 @@ What *is* true, and is the honest form of the claim: the terrain buffers are all
 a fixed capacity and written in place, so a bounded working set is structural. The instrument
 also cannot see host-side, descriptor-pool, or driver-side growth, since VMA does not own those.
 
+The figure is sampled per frame with `vmaGetHeapBudgets`, summed across heaps. It was
+`vmaCalculateStatistics` until 2026-08-13 — the call VMA names "calculate" rather than "get"
+because it walks every block and allocation under the allocator's mutexes, and documents for
+debugging rather than per-frame use. That put a full allocator traversal inside `renderFrame`,
+which is the function designated as the only valid source of frame-time evidence: the instrument
+was sitting inside the measurement it was going to be measured by. Nothing times frames yet, so
+it cost nothing that was ever read. The two calls report the same total, verified by the LOD
+gate's output being byte-identical across the change.
+
 Capacity was sized from a patch budget after review found the vertex and index capacities
 inconsistent — they were independent round numbers in a 2:1 ratio while a patch emits 81
 vertices and 384 indices, so the index buffer always exhausted first and roughly 55 MB of the
