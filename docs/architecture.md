@@ -872,6 +872,12 @@ Making the first qualification go away needs a scene where the abrupt scheme pop
 quality setting where the morph is well-conditioned. None has been found, and the earlier
 sub-pixel explanation for why is now known to be the wrong account.
 
+**Ratified by the user on 2026-08-14**, covering both the measurement method and the narrower
+reading of what a pass means. The method is recorded in the [P1b milestone
+plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the screen-space jitter
+method it parallels, which is where P1b requires a threshold change to live. The ratification does
+**not** extend to the 30-minute memory clause; that stands as written and remains unrun.
+
 #### The earlier state, retained
 
 At a factor where the morph is well-conditioned, both configurations record **zero

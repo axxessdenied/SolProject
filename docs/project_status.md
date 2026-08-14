@@ -158,7 +158,7 @@ is the smaller thing: enough state that nobody has to re-derive it from commit m
 |---|---|
 | Screen-space jitter, 0.25 px | **Passes on the RTX 4060 only.** 0.000000 px at both required views, frames bit-identical, with a sub-pixel response control confirming precision rather than only stability. The Intel UHD is unmeasured, which the evidence plan requires. Does **not** confirm A2's frame model — see [architecture](architecture.md). |
 | Depth behaviour | **Passes on the RTX 4060 only.** No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7, with a conventional-projection control failing as expected. Guaranteed separation is ~7 cm at 1 000 km and ~69 cm at Earth's radius. The Intel UHD is unmeasured. |
-| LOD continuity | **Partially satisfied, and `render.lod-gate` is enabled and passing** on the RTX 4060 in both configurations. Popping is now certified against an isolated transition: the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit, a 20× margin, and the control separates from it by 4.4×. **Two qualifications stand.** The control is itself below the limit, so this scene does not pop visibly even without morphing — what is certified is a margin and a response, not a rescue. And memory is still only structural: the stated 30-minute criterion has never been run, and the gate says so in its own output. See [architecture](architecture.md). |
+| LOD continuity | **Popping half satisfied and ratified 2026-08-14; memory half outstanding.** `render.lod-gate` is enabled and passing on the RTX 4060 in both configurations. Popping is certified against an isolated transition by the [method now written into the milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md): the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit — a 20× margin — with the control separating by 4.4×. The user ratified both the method and its narrower reading: because the control is itself below the limit, the pass is a margin and a response rather than a rescue. **The 30-minute memory criterion has never been run**, is untouched by that ratification, and the gate states so in its own output. See [architecture](architecture.md). |
 | Capability reporting | Implemented with a negative control; **cannot close** until the synthetic device profiles are reconciled against real reports. |
 | Validation output | Clean from this project. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category. A capture/RenderDoc workflow is not yet established. |
 
@@ -200,8 +200,15 @@ not planned together; the second happened to unblock the first.
 qualification itself.** The control is below the perceptual limit too, so this scene does not pop
 visibly with or without morphing. The pass therefore means the production path sits 20× under the
 limit and the metric responds 4.4× to switching the morph off — a margin and a response, not a
-rescue. Ratifying whether that satisfies P1b's LOD clause is a user decision, not this
-document's.
+rescue.
+
+**Ratified by the user on 2026-08-14.** Both the measurement method and the narrower reading of
+what a pass means are now accepted, under the P1b rule that a threshold may be changed only by a
+documented planning update the user approves. The method is written into the [P1b milestone
+plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the screen-space jitter
+method it parallels, with three entries in that plan's decisions table. **The ratification does
+not extend to the 30-minute memory clause**, which stands exactly as originally written and has
+never been run.
 
 Two earlier candidates were ruled out by measurement and should not be retried: the horizon cull
 (genuinely broken, dimensionally wrong, now fixed — but the pops were unchanged), and morphed
@@ -332,14 +339,11 @@ terrain finding with them.
 
 ### Outstanding for B1
 
-- **Ratifying what the LOD gate now certifies.** It is enabled and passing, but the control sits
-  below the perceptual limit, so the pass is a margin and a response rather than a demonstration
-  that morphing rescues a visibly broken picture. Whether that satisfies P1b's LOD clause is a
-  user decision. Making it a stronger claim needs a scene where the abrupt scheme pops visibly at
-  a quality setting where the morph is well-conditioned, and no such scene has been found.
 - **The 30-minute memory criterion, still never run.** The gate reports device allocation as flat
   over 600 steps and states in its own output that this is structural and not the stated
-  criterion. Enabling the gate did not change that, and must not be read as having closed it.
+  criterion. Enabling the gate did not change that, the 2026-08-14 ratification explicitly did not
+  touch it, and neither must be read as having closed it. This is now the only part of the LOD
+  threshold still outstanding.
 - The LOD gate's transition scan has no coverage for its no-transition branch. It needs a scan
   that finds nothing, and it lives inside a harness that is itself `DISABLED`, so a test would not
   run even if written. The two renderer defects from the same round are covered by

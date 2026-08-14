@@ -76,7 +76,7 @@ For increment B1 these are satisfied as of 2026-08-13. The hardware prerequisite
 |---|---|---|
 | Render precision | Stationary surface and orbital reference views exhibit no more than 0.25 pixels of screen-space jitter, measured as defined below | Yes |
 | Depth behavior | No depth collapse, z-fighting, or near/far discontinuity across the full surface-to-orbit path | Yes |
-| LOD continuity | Terrain and atmosphere LOD transitions produce no popping that a fixed observer path can detect at the recorded quality setting, and no unbounded memory growth over a 30-minute traverse | Yes |
+| LOD continuity | Terrain and atmosphere LOD transitions produce no popping detectable **as defined below** at the recorded quality setting, and no unbounded memory growth over a 30-minute traverse | Yes |
 | Capability reporting | Startup enumerates loader, device version, features, extensions, formats, queues, limits, and memory; unsupported devices are rejected with actionable diagnostics | Yes |
 | Validation output | Exercised validation-layer output is clean, or every remaining message is explained and accepted | Yes |
 | Craft physics | At 300 parts, p95 60 Hz craft-physics work no greater than 4 ms on the accepted baseline CPU classes | Yes |
@@ -99,6 +99,26 @@ The original plan asserted a 0.25-pixel gate without defining how to measure it.
 5. Jitter is the maximum absolute deviation of the per-frame centroid from the mean centroid, reported per axis in pixels. Report both the maximum and the p99.
 
 Run this at two reference views: the surface anchor, and a 200 km orbital vantage. Both must satisfy the gate.
+
+### LOD continuity measurement method
+
+**Approved by the user on 2026-08-14**, under the rule above that a threshold may be changed only by a documented planning update. Like the jitter gate before it, "popping that a fixed observer path can detect" was unmeasurable as written: it named no statistic, no threshold, and no way to tell a renderer that does not pop from an instrument that cannot see popping.
+
+The accepted method measures **one transition at a time**, not a descent:
+
+1. Locate an altitude at which the drawn patch count actually changes, by scanning the traverse rather than deriving a band from the subdivision arithmetic. If no transition is found, the gate reports that and fails; it does not sweep an arbitrary band.
+2. Sweep ±6% of that altitude in 300 steps, capturing the presented frame at each.
+3. Between consecutive frames, compute the fraction of pixels whose Rec. 601 luma changes by more than 16 of 255 — a change large enough to be visible on adjacent frames.
+4. **Pass criterion:** that fraction must stay below **0.002** at every step — about 1 843 pixels of a 1280×720 frame, a visible amount of the screen changing visibly in one frame.
+5. **Control:** the same sweep with morphing disabled must exceed the production path by at least **3×**. A pass measured against a control that does not respond certifies nothing.
+
+Measured at the shipping 60° vertical field of view, at the recorded quality setting, on the stress scene. Field of view is part of the recorded setting because screen-space error is an angle: a narrower view silently makes the test stricter.
+
+**Why the descent is not the instrument.** A local-outlier test over a continuous descent cannot work, and this was established by measurement rather than argued: at a 20° field of view, which magnifies screen-space error about threefold, every other statistic separated further while both configurations still recorded exactly zero pops. An instrument that is merely insensitive responds when the signal triples. A transition must be isolated to be detectable as an event, and on a descent with hundreds of patches on screen they overlap continuously.
+
+**What a pass under this method does and does not mean.** If the control is itself below 0.002, the scene does not pop visibly with or without morphing, and the pass means the production path sits well under the limit and the metric responds strongly to disabling the morph — a margin and a response, not a demonstration that morphing rescues a visibly broken picture. The gate must print that qualification whenever it holds. Strengthening it requires a scene where the abrupt scheme pops visibly at a quality setting where the morph is well-conditioned; none has been found.
+
+**The memory clause is unchanged.** The 30-minute traverse stands exactly as written above and has never been run. What the harness reports is device allocation flat over 600 steps, which is structural rather than the stated criterion, and it says so in its own output. Enabling the gate does not close that clause.
 
 ## Time boxes
 
@@ -218,6 +238,9 @@ Each increment closure records:
 | Direct3D 12 spike withdrawn in favor of documented analysis | Confirmed | User approved; a spike cannot realistically change a Windows-only decision |
 | Renderer built in the production tree; craft physics disposable | Confirmed | User approved 2026-08-12; a working Vulkan bootstrap is never discarded in practice |
 | Screen-space jitter measurement method defined above | Confirmed | The original gate was unmeasurable as written |
+| LOD continuity measurement method defined above; verdict measured on an isolated transition rather than a descent | Confirmed | User ratified 2026-08-14. The original gate was unmeasurable as written, and the descent instrument was shown by measurement to be blind rather than insensitive |
+| A LOD pass whose control is also below the perceptual limit is accepted as a margin and a response, not as a rescue | Confirmed | User ratified 2026-08-14; no scene has been found where the abrupt scheme pops visibly at a well-conditioned quality setting, and the gate prints the qualification |
+| 30-minute LOD memory traverse | Open | Unchanged by the 2026-08-14 ratification and never run; what is reported is structural flatness over 600 steps |
 | Two-way craft representation comparison required | Confirmed | User approved 2026-08-12; the representation choice outweighs the physics-library choice |
 | 0.25-pixel jitter gate | Confirmed | User approved recommendation |
 | 300-part 4 ms physics and 1 ms resource-network gates | Confirmed | User approved recommendation |
