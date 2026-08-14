@@ -359,8 +359,13 @@ terrain finding with them.
 - The documented Direct3D 12 comparison analysis, and ADR 0002's disposition.
 - Reconciling the four synthetic baseline device profiles against real capability reports.
 - Licence notices for the four packages, before anything is distributed.
-- `evidence/p1b/B1/` does not exist yet. Measurements currently live in `docs/architecture.md`
-  under the lightweight lane; full evidence with raw-output locations attaches at closure.
+- `evidence/p1b/B1/` **now exists**, created 2026-08-14: an [index](../evidence/p1b/B1/Index.md), a
+  [handoff record](../evidence/p1b/B1/Handoff.md), and `raw/` holding the output of all seven
+  render executables in both configurations, captured directly because CTest records pass or fail
+  rather than the printed measurements. `raw/` is excluded by `.gitignore`, as P1a's is, and is
+  reproducible from the commands in the handoff. There is also a milestone-level
+  [P1b index](../evidence/p1b/Index.md). This is the mid-increment form: full closure evidence
+  still requires the increment to be finished.
 
 **Increment B2 is not authorized.** It needs its own explicit instruction. B2 also inherits an open question the evidence plan deliberately did not pre-decide: its 4 ms and 1 ms gates are specified against i5-8400 / Ryzen 5 2600 CPU classes, and the available i7-12650H is materially faster, so the same no-substitution rule applies on the CPU side.
 
