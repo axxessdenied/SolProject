@@ -722,16 +722,41 @@ only instrument that can see a host-side leak at all, since VMA does not own hos
 on wall clock rather than step count, sweeping 3 km to 300 km altitude every 90 s while orbiting,
 so terrain is reselected every frame and a per-rebuild leak would accumulate.
 
-Measured 2026-08-14, Release, RTX 4060: 258 939 frames over 29.9 minutes, process private bytes
-379.19 → 396.88 MiB, **0.37 MiB of growth after a 120 s warm-up**, a **17.9 KiB/minute** trend,
-and allocator bytes, blocks and live object counts exactly constant throughout. 0.37 MiB across
-258 939 frames is about 1.5 bytes per frame, below any per-frame object this renderer allocates.
+The clause named no statistic and no limit, so one was defined and **ratified by the user on
+2026-08-14**, recorded in the [P1b milestone
+plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the popping method it
+parallels: the least-squares trend of private bytes over the **second half** of the post-warm-up
+window must stay under **64 KiB/minute**, with total growth after warm-up under **2 MiB** as a
+backstop. Both are gated; the whole-window trend is reported and not gated. A graded 30-minute run
+that breaches either fails the suite; shorter runs report without ruling.
 
-**No verdict follows**, and the program says so itself: the clause names no statistic and no
-limit. The shape of the growth is also unrecorded — the fitted slope implies ~0.49 MiB over the
-window against a 0.37 MiB endpoint difference, hinting at deceleration without establishing it —
-so a flattening curve and a slow line are not yet distinguishable. Both gaps are tracked in
-`docs/project_status.md`.
+**Why the second half, and not the whole window.** Measurement, not preference. Across four clean
+runs of the same build the whole-window figure fitted 17.9, 40.7, 56.8 and 25.7 KiB/minute — a
+3.2× spread that would fail clean runs — against a gated second-half statistic that sat at 12.2,
+2.1 and 15.9 over the same runs. On one graded run the whole-window figure is also *larger than
+either half it spans*, 56.8 against 15.3 and 2.1, which is the signature of a discrete step rather
+than an arithmetic error: a line fitted across a jump sits above lines fitted either side of it.
+Total growth on that run was 1.00 MiB, so essentially all of it was one step — what a
+fixed-capacity design settling looks like, and what a whole-window slope would have reported as a
+steady leak.
+
+Measured under that method 2026-08-14, Release, RTX 4060: 256 954 frames over a graded 30.0
+minutes, private bytes 363.84 → 382.03 MiB, **second-half trend 15.9 KiB/minute**, **0.98 MiB of
+growth after a 120 s warm-up**, and allocator bytes, blocks and live object counts exactly
+constant. **The gate passes**, which closes the memory half of the LOD continuity threshold on this
+device.
+
+Sensitivity is demonstrated rather than derived: a deliberate 8-byte-per-frame leak fits 271.7
+KiB/minute on the second half and grows 6.47 MiB, failing both criteria. The same leak at a
+3-minute duration fits −60.2 KiB/minute — noise — which is why the clause's 30 minutes is
+load-bearing and why shorter runs report without ruling. The suite additionally runs a gross
+4 KiB/frame control at 45 s so the gate's ability to fail is verified continuously; the program
+exits non-zero if a deliberate leak passes.
+
+**What the pass does and does not mean**, which the program prints with the result: it bounds the
+settled growth rate and shows the rate is not increasing. It does **not** prove an asymptote — no
+finite window can — and it cannot see growth below the instrument's noise floor at 30 minutes.
+Like every other B1 gate result it is also single-device.
 
 The per-frame figure is sampled with `vmaGetHeapBudgets`, summed across heaps. It was
 `vmaCalculateStatistics` until 2026-08-13 — the call VMA names "calculate" rather than "get"
@@ -895,9 +920,9 @@ sub-pixel explanation for why is now known to be the wrong account.
 reading of what a pass means. The method is recorded in the [P1b milestone
 plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the screen-space jitter
 method it parallels, which is where P1b requires a threshold change to live. The ratification does
-**not** extend to the 30-minute memory clause; that stands exactly as written. The traverse it
-names has since been run — see above — but produced a measurement and no verdict, because the
-clause still names no statistic and no limit.
+**not** extend to the 30-minute memory clause. That clause was given its own statistic and limit
+in a separate planning update, ratified the same day and recorded above; the two were approved as
+distinct decisions and should not be read as one.
 
 #### The earlier state, retained
 
@@ -964,12 +989,13 @@ device and driver. ADR 0010 governs MSVC and CPU floating point and says nothing
 driver determinism, on which the bit-identical-frames and exact-depth-inequality results both
 depend.
 
-The gate is **enabled** as of 2026-08-14 and passes in both configurations, so the suite is 28 of
-28 with none disabled — the twenty-eighth being `render.memory-traverse`, which measures the LOD
-threshold's memory half separately and is described earlier in this section. It had been
-registered but `DISABLED` so that one known-failing gate could not mask regressions across the
-others; that is no longer needed, and the reasoning for both the disabling and the re-enabling
-stays in the build description rather than hidden by it.
+The gate is **enabled** as of 2026-08-14 and passes in both configurations, so the suite is 29 of
+29 with none disabled — the last two being `render.memory-traverse`, which measures the LOD
+threshold's memory half separately and is described earlier in this section, and
+`render.memory-traverse-control`, its negative control. It had been registered but `DISABLED` so
+that one known-failing gate could not mask regressions across the others; that is no longer
+needed, and the reasoning for both the disabling and the re-enabling stays in the build
+description rather than hidden by it.
 
 **Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
 simple analytic shell, and the capability-reporting gate's synthetic profiles.

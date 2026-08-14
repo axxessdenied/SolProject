@@ -84,6 +84,22 @@ target_link_libraries(SolMemoryTraverse PRIVATE sol::render sol::platform psapi)
 add_test(NAME render.memory-traverse COMMAND SolMemoryTraverse --seconds 45)
 set_tests_properties(render.memory-traverse PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
 
+# The memory gate's negative control, and the reason it leaks 4 KiB per frame rather than the
+# 8 bytes the measurement method names. Leak size and run duration trade against each other: an
+# 8-byte-per-frame leak is 240 KiB/min over a graded 30-minute run and -60 KiB/min over a
+# 3-minute one, where the instrument's own noise swamps it. A control that fits inside the suite
+# has to leak hard enough to clear that noise floor in 45 seconds, so this one is deliberately
+# gross - about 35 MiB/min.
+#
+# What it verifies is therefore narrower than the method's sensitivity claim, and the two are not
+# interchangeable: this proves continuously that the gate CAN fail, while the 8-byte control
+# establishing how small a leak it catches is run deliberately at 30 minutes and recorded under
+# evidence/p1b/B1/raw/. The program exits non-zero if a deliberate leak PASSES, so a gate that
+# stopped being able to fail would break the suite here rather than keep awarding passes.
+add_test(NAME render.memory-traverse-control
+         COMMAND SolMemoryTraverse --seconds 45 --leak 4096)
+set_tests_properties(render.memory-traverse-control PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+
 # Enabled on 2026-08-14, after the verdict moved off an instrument that could not work.
 #
 # It sat DISABLED because both configurations recorded zero pops, so the control could not fire

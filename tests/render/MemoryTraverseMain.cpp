@@ -30,6 +30,25 @@
 /// during its first seconds for reasons that are not leaks: driver lazy initialisation, first
 /// touch of the swapchain, allocator block growth to its steady size. Fitting a line through that
 /// would report a leak that stops.
+///
+/// **The threshold this grades against was ratified by the user on 2026-08-14**, and the constants
+/// block below carries its full derivation. P1b requires a gate to be given its number by a
+/// documented planning update the user approves; that document is the LOD memory measurement
+/// method in `SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md`.
+///
+/// **A graded run that breaches the threshold fails.** A run shorter than the graded duration
+/// reports every figure and exits 0 regardless, because a 45-second sample cannot certify a
+/// clause stated in thirty minutes — and, as the constants below record, cannot even see the leak
+/// the sensitivity claim rests on. Short runs keep the instrument under test; only a 30-minute run
+/// rules on the clause.
+///
+/// **`--leak N` is the negative control.** It leaks N bytes per frame deliberately and inverts the
+/// verdict: a control that PASSES the threshold is a failure, reported as such and exited
+/// non-zero, because a limit a real leak passes certifies nothing. The suite runs a gross 4 KiB
+/// per frame at 45 s to verify continuously that the gate can fail; the 8-byte-per-frame run that
+/// establishes how *small* a leak it catches needs the full 30 minutes and is performed
+/// deliberately. Leak size and duration trade against each other, which is the whole reason the
+/// clause's 30 minutes matters — see the constants below.
 
 #include "Sol/Platform/Window.h"
 #include "Sol/Render/Renderer.h"
@@ -43,10 +62,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -72,6 +94,67 @@ constexpr double kWarmUpSeconds = 120.0;
 
 /// Sampling interval. Frequent enough for a meaningful fit over the shortest useful run.
 constexpr double kSampleIntervalSeconds = 5.0;
+
+// ---------------------------------------------------------------------------------------------
+// The threshold.
+//
+// **Ratified by the user on 2026-08-14**, under P1b's rule that a gate may be given a number only
+// by a documented planning update the user approves — the same route the popping half took. The
+// definition and its derivation are recorded in the milestone plan; this block is the derivation
+// in the place it is enforced.
+//
+// "No unbounded memory growth" cannot be proven over any finite window — thirty minutes of flat
+// line does not establish an asymptote. What a finite run *can* do is bound the rate where the
+// curve has settled, and show the rate is not increasing. Two gated conditions:
+//
+//   1. The fitted trend over the **second half** of the post-warm-up window stays under the
+//      limit. This is the primary statistic, and deliberately not the whole-window trend: see
+//      below.
+//   2. Total growth after warm-up stays under a cap. Guards a large single step that a slope fit
+//      would average away, and bounds the run even if the rate itself is small.
+//
+// The whole-window trend is **reported and not gated**, because measurement showed it is
+// contaminated. On clean 30-minute runs the first half fits well above the second — the process is
+// still settling past the 120 s warm-up cut — and the headline figure varied 17.9, 40.7, 56.8 and
+// 25.7 KiB/minute across four runs of the same build for that reason, against a second-half
+// statistic that sat at 12.2, 2.1 and 15.9 over the same runs. On one of them the whole-window fit
+// exceeded *both* halves it spans, 56.8 against 15.3 and 2.1, which is what a discrete settling
+// step does to a line fitted across it rather than an arithmetic error. Gating
+// on a statistic with that spread would fail clean runs. The second half is both the steadier
+// measurement and the one that speaks to where the curve is heading, which is what "unbounded"
+// asks about. The warm-up cut stays at 120 s rather than being extended to make the whole-window
+// figure behave: moving a cut until a number looks better is a threshold change wearing a
+// tuning detail's clothes.
+//
+// **Where the limit comes from — both bounds, because either alone lands somewhere arbitrary.**
+//
+// *Sensitivity (the binding one).* The limit must be low enough that a real leak fails, and this
+// is demonstrated rather than derived: a deliberate 8-byte-per-frame leak — the smallest thing
+// worth calling a leak, one small object per frame — fits 271.7 KiB/minute on the second half
+// over a graded run, 4.2x above the limit. Note that the same control at a 3-minute duration
+// fitted -60.2 KiB/minute, pure noise, which is why the clause's 30 minutes is not negotiable and
+// why a short run reports without grading.
+//
+// *Session tolerance (the loose one).* 64 KiB/minute extrapolates to about 23 MiB over a
+// six-hour session, negligible against the 16 GB baseline machine. Anchoring on this alone would
+// have allowed roughly 360 KiB/minute, which the demonstrated leak would pass — so the tighter
+// bound governs and this one is recorded as the sanity check it is.
+//
+// The limit therefore sits inside a measured separation band: 15.9 KiB/min on the worst clean run
+// against 271.7 KiB/min leaked, with the limit 4.0x above the former and 4.2x below the latter. It
+// is not drawn around the number that happened to be observed.
+constexpr double kMaxTrendKiBPerMinute = 64.0;
+constexpr double kMaxGrowthAfterWarmUpMiB = 2.0;
+
+/// The duration the milestone clause names. A shorter run still reports every figure, but is not
+/// graded: the suite's 45-second registration exists to keep the instrument working, not to
+/// certify the clause.
+constexpr double kGradedDurationSeconds = 30.0 * 60.0;
+
+/// The negative control's default. At this run's frame rate a 64-byte-per-frame leak is roughly
+/// 541 KiB/minute, comfortably over the limit — so if the control does not fail, the gate cannot
+/// fail, and this program reports that as an error rather than as a pass.
+constexpr std::size_t kDefaultLeakBytesPerFrame = 64;
 
 struct Sample {
     double seconds = 0.0;
@@ -111,8 +194,11 @@ double toMiB(std::uint64_t bytes)
     return static_cast<double>(bytes) / (1024.0 * 1024.0);
 }
 
-/// Least-squares slope of private bytes against time, in bytes per minute.
-double trendBytesPerMinute(const std::vector<Sample>& samples, double fromSeconds)
+/// Least-squares slope of private bytes against time over [fromSeconds, toSeconds), in bytes per
+/// minute. The window is a half-open range so the two halves of a split cannot share a sample.
+double trendBytesPerMinute(const std::vector<Sample>& samples,
+                           double fromSeconds,
+                           double toSeconds = std::numeric_limits<double>::infinity())
 {
     double n = 0.0;
     double sumX = 0.0;
@@ -120,7 +206,7 @@ double trendBytesPerMinute(const std::vector<Sample>& samples, double fromSecond
     double sumXY = 0.0;
     double sumXX = 0.0;
     for (const Sample& sample : samples) {
-        if (sample.seconds < fromSeconds) {
+        if (sample.seconds < fromSeconds || sample.seconds >= toSeconds) {
             continue;
         }
         const double x = sample.seconds / 60.0;
@@ -145,14 +231,31 @@ double trendBytesPerMinute(const std::vector<Sample>& samples, double fromSecond
 
 int main(int argc, char** argv)
 {
-    double durationSeconds = 30.0 * 60.0;
+    double durationSeconds = kGradedDurationSeconds;
+    std::size_t leakBytesPerFrame = 0;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--minutes") == 0 && i + 1 < argc) {
             durationSeconds = std::atof(argv[++i]) * 60.0;
         } else if (std::strcmp(argv[i], "--seconds") == 0 && i + 1 < argc) {
             durationSeconds = std::atof(argv[++i]);
+        } else if (std::strcmp(argv[i], "--leak") == 0) {
+            leakBytesPerFrame = (i + 1 < argc && argv[i + 1][0] != '-')
+                                    ? static_cast<std::size_t>(std::atoll(argv[++i]))
+                                    : kDefaultLeakBytesPerFrame;
         }
     }
+
+    if (durationSeconds <= 0.0) {
+        std::printf("FAILED: a run of %.1f seconds measures nothing.\n", durationSeconds);
+        return 1;
+    }
+
+    // The negative control. A host-side leak of the shape the file comment names — a container
+    // that grows every frame — held rather than orphaned, so the run ends without an actual leak
+    // while still committing the pages. Touched, because untouched pages need not be committed
+    // and an instrument reading commit charge would not see them.
+    const bool leakControl = leakBytesPerFrame > 0;
+    std::vector<std::unique_ptr<char[]>> leaked;
 
     auto window = sol::platform::Window::create("Memory traverse", 1280, 720);
     if (!window.has_value()) {
@@ -208,11 +311,21 @@ int main(int argc, char** argv)
                 durationSeconds / 60.0,
                 kSampleIntervalSeconds,
                 kWarmUpSeconds);
-    std::printf("Path:       %.0f km to %.0f km altitude every %.0f s, orbiting at %.4f rad/s\n\n",
+    std::printf("Path:       %.0f km to %.0f km altitude every %.0f s, orbiting at %.4f rad/s\n",
                 kLowAltitudeMetres / 1000.0,
                 kHighAltitudeMetres / 1000.0,
                 kSweepPeriodSeconds,
                 kAngularRateRadiansPerSecond);
+    std::printf("Threshold:  second-half trend <= %.0f KiB/min, growth <= %.1f MiB  (ratified "
+                "2026-08-14)\n",
+                kMaxTrendKiBPerMinute,
+                kMaxGrowthAfterWarmUpMiB);
+    if (leakControl) {
+        std::printf("Mode:       NEGATIVE CONTROL — leaking %zu bytes/frame deliberately. This "
+                    "run MUST fail the threshold.\n",
+                    leakBytesPerFrame);
+    }
+    std::printf("\n");
 
     const auto started = std::chrono::steady_clock::now();
     std::vector<Sample> samples;
@@ -264,6 +377,12 @@ int main(int argc, char** argv)
         }
         ++frames;
 
+        if (leakControl) {
+            auto block = std::make_unique<char[]>(leakBytesPerFrame);
+            std::memset(block.get(), 1, leakBytesPerFrame);
+            leaked.push_back(std::move(block));
+        }
+
         if (elapsed >= nextSampleAt) {
             nextSampleAt += kSampleIntervalSeconds;
             const ProcessMemory memory = readProcessMemory();
@@ -282,6 +401,13 @@ int main(int argc, char** argv)
 
     renderer->waitIdle();
 
+    // The run's own length, not the last sample's timestamp. Sampling every 5 s leaves the final
+    // sample up to one interval short of the target, so grading on `samples.back().seconds` made
+    // a 30-minute run report 29.9 and fail a `>= 30` check that it had in fact satisfied — a gate
+    // that could never certify the clause it exists for.
+    const double runSeconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+
     if (samples.size() < 3) {
         std::printf("FAILED: %zu samples is too few to say anything about a trend.\n",
                     samples.size());
@@ -295,6 +421,13 @@ int main(int argc, char** argv)
 
     const double warmUpEnd = std::min(kWarmUpSeconds, samples.back().seconds * 0.5);
     const double slope = trendBytesPerMinute(samples, warmUpEnd);
+
+    // The shape test. Splitting the post-warm-up window in half and fitting each separately is
+    // what distinguishes a curve that is flattening from a line that is not — the thing the first
+    // run of this program could not do, and the reason it produced a number nobody could grade.
+    const double windowMidpoint = warmUpEnd + ((samples.back().seconds - warmUpEnd) * 0.5);
+    const double firstHalfSlope = trendBytesPerMinute(samples, warmUpEnd, windowMidpoint);
+    const double secondHalfSlope = trendBytesPerMinute(samples, windowMidpoint);
 
     const Sample* firstAfterWarmUp = nullptr;
     for (const Sample& sample : samples) {
@@ -329,6 +462,21 @@ int main(int argc, char** argv)
                 toMiB(growthAfterWarmUp),
                 warmUpEnd);
     std::printf("  trend after warm-up    %.1f KiB/minute\n", slope / 1024.0);
+    std::printf("  trend, first half      %.1f KiB/minute (%.0f–%.0f s)\n",
+                firstHalfSlope / 1024.0,
+                warmUpEnd,
+                windowMidpoint);
+    std::printf("  trend, second half     %.1f KiB/minute (%.0f s onward)\n",
+                secondHalfSlope / 1024.0,
+                windowMidpoint);
+    if (std::abs(firstHalfSlope) > 1.0) {
+        const double ratio = secondHalfSlope / firstHalfSlope;
+        std::printf("  shape                  second half is %.2fx the first — %s\n",
+                    ratio,
+                    ratio < 0.5    ? "flattening"
+                        : ratio < 1.5 ? "close to linear"
+                                      : "ACCELERATING");
+    }
     std::printf("  working set at end     %.2f MiB (reported, not judged — the OS trims it)\n",
                 toMiB(samples.back().workingSetBytes));
 
@@ -364,15 +512,82 @@ int main(int argc, char** argv)
         std::printf("  %s\n", message.c_str());
     }
 
-    std::printf("\nMeasured result\n");
-    std::printf("  private-bytes trend after warm-up: %.1f KiB/minute over %.1f minutes\n",
-                slope / 1024.0,
-                (samples.back().seconds - warmUpEnd) / 60.0);
-    std::printf("  total growth after warm-up:        %.2f MiB\n", toMiB(growthAfterWarmUp));
-    std::printf("\n  This program reports; it does not rule. \"No unbounded memory growth\" names\n"
-                "  no statistic and no limit, exactly as the popping half named none before its\n"
-                "  method was defined and ratified. Whether these figures satisfy the P1b clause\n"
-                "  is a user decision, and turning them into a pass or fail needs the same kind\n"
-                "  of documented planning update.\n");
-    return 0;
+    // The series itself, so the shape is recoverable from the record rather than only the two
+    // fitted slopes above. Every sample, because a reader checking whether the curve flattens
+    // needs the points and not a summary of them.
+    std::printf("\nSample series (s, private MiB, working set MiB, patches)\n");
+    for (const Sample& sample : samples) {
+        std::printf("  %7.1f  %9.2f  %9.2f  %5u%s\n",
+                    sample.seconds,
+                    toMiB(sample.privateBytes),
+                    toMiB(sample.workingSetBytes),
+                    sample.terrainPatches,
+                    sample.seconds < warmUpEnd ? "  (warm-up)" : "");
+    }
+
+    const double trendKiB = slope / 1024.0;
+    const double secondHalfKiB = secondHalfSlope / 1024.0;
+    const double growthMiB = toMiB(growthAfterWarmUp);
+
+    const bool secondHalfHolds = secondHalfKiB <= kMaxTrendKiBPerMinute;
+    const bool growthHolds = growthMiB <= kMaxGrowthAfterWarmUpMiB;
+    const bool graded = runSeconds >= kGradedDurationSeconds;
+    const bool holds = secondHalfHolds && growthHolds;
+
+    std::printf("\nAgainst the ratified threshold\n");
+    std::printf("  trend over second half %8.1f <= %.0f KiB/min   %s\n",
+                secondHalfKiB,
+                kMaxTrendKiBPerMinute,
+                secondHalfHolds ? "PASS" : "FAIL");
+    std::printf("  growth after warm-up   %8.2f <= %.1f MiB       %s\n",
+                growthMiB,
+                kMaxGrowthAfterWarmUpMiB,
+                growthHolds ? "PASS" : "FAIL");
+    std::printf("  trend over window      %8.1f                   reported, NOT gated — the "
+                "first half is still settling\n",
+                trendKiB);
+    std::printf("  graded duration        %8.1f >= %.0f minutes    %s\n",
+                runSeconds / 60.0,
+                kGradedDurationSeconds / 60.0,
+                graded ? "yes" : "NO — reported only");
+
+    if (leakControl) {
+        // A control that passes is the failure. If a deliberate leak of this size does not move
+        // the verdict, the threshold cannot detect a real one and every pass it has awarded is
+        // worthless — which is the same argument that kept render.lod-gate disabled.
+        std::printf("\nNEGATIVE CONTROL: %s\n",
+                    holds ? "*** BROKEN — the deliberate leak PASSED ***"
+                          : "the deliberate leak FAILED the threshold, as required");
+        if (holds) {
+            std::printf("  Leaking %zu bytes/frame did not breach a %.0f KiB/min limit. The gate\n"
+                        "  cannot fail, so it cannot certify anything either.\n",
+                        leakBytesPerFrame,
+                        kMaxTrendKiBPerMinute);
+            return 1;
+        }
+        std::printf("  The threshold responds to a leak of %zu bytes/frame, so a pass on the\n"
+                    "  production path is a measurement rather than an instrument that is deaf.\n",
+                    leakBytesPerFrame);
+        return 0;
+    }
+
+    if (!graded) {
+        std::printf("\n  %s, but NOT GRADED — this run keeps the instrument under test; the\n"
+                    "  milestone clause is ruled on only by a %.0f-minute run, which is also the\n"
+                    "  shortest duration at which the sensitivity control can be seen at all.\n",
+                    holds ? "Holds" : "Does not hold",
+                    kGradedDurationSeconds / 60.0);
+        return 0;
+    }
+
+    std::printf("\n  %s\n",
+                holds ? "PASS. No unbounded memory growth over the 30-minute traverse, under the "
+                        "method ratified 2026-08-14."
+                      : "FAIL. The 30-minute traverse breaches the ratified memory threshold.");
+    std::printf("\n  What a pass here does and does not mean: it bounds the settled growth rate\n"
+                "  and shows the rate is not increasing. It does NOT prove an asymptote — no\n"
+                "  finite window can — and it cannot see growth below this instrument's noise\n"
+                "  floor at %.0f minutes. Quote it with those limits attached.\n",
+                kGradedDurationSeconds / 60.0);
+    return holds ? 0 : 1;
 }

@@ -33,13 +33,12 @@ plan](../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) 
 
 ## Milestone-level state, 2026-08-14
 
-Three of B1's gating thresholds are met on the single device used; one is met in part; one cannot
-close yet. The LOD continuity threshold's measurement method was undefined as originally written
-and was **ratified by the user on 2026-08-14**, recorded in the [milestone
+Three of B1's gating thresholds are met on the single device used, and one cannot close yet. Both
+halves of the LOD continuity threshold were unmeasurable as originally written — neither named a
+statistic or a limit — and both were given measurement methods **ratified by the user on
+2026-08-14**, as two separate decisions, recorded in the [milestone
 plan](../../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the screen-space jitter
-method it parallels. That ratification deliberately did **not** extend to the threshold's
-30-minute memory clause, which stands as written. That traverse has since been run, on
-2026-08-14; because the clause names no statistic and no limit, it yielded a measurement rather
-than a verdict, recorded in [B1's evidence index](B1/Index.md).
+method they parallel. Both now pass on the RTX 4060, each with a negative control that fails.
+Recorded in [B1's evidence index](B1/Index.md).
 
 No P1b increment is closed, and no milestone review has run.

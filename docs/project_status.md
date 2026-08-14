@@ -150,7 +150,7 @@ rule in `AGENTS.md`. The lightweight lane puts full evidence records at incremen
 is the smaller thing: enough state that nobody has to re-derive it from commit messages.
 
 **Owner:** Claude. **Branch:** `feature/p1b-vulkan-renderer`, 7 commits ahead of `dev`.
-**Validation at time of writing:** 28/28 tests pass in both configurations, none disabled.
+**Validation at time of writing:** 29/29 tests pass in both configurations, none disabled.
 
 ### Gating thresholds
 
@@ -158,7 +158,7 @@ is the smaller thing: enough state that nobody has to re-derive it from commit m
 |---|---|
 | Screen-space jitter, 0.25 px | **Passes on the RTX 4060 only.** 0.000000 px at both required views, frames bit-identical, with a sub-pixel response control confirming precision rather than only stability. The Intel UHD is unmeasured, which the evidence plan requires. Does **not** confirm A2's frame model — see [architecture](architecture.md). |
 | Depth behaviour | **Passes on the RTX 4060 only.** No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7, with a conventional-projection control failing as expected. Guaranteed separation is ~7 cm at 1 000 km and ~69 cm at Earth's radius. The Intel UHD is unmeasured. |
-| LOD continuity | **Popping half satisfied and ratified 2026-08-14; memory half outstanding.** `render.lod-gate` is enabled and passing on the RTX 4060 in both configurations. Popping is certified against an isolated transition by the [method now written into the milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md): the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit — a 20× margin — with the control separating by 4.4×. The user ratified both the method and its narrower reading: because the control is itself below the limit, the pass is a margin and a response rather than a rescue. The **30-minute memory traverse has now run** (0.37 MiB growth after warm-up, 17.9 KiB/min trend, device-side figures constant), but the clause names no statistic and no limit, so it produced a measurement rather than a verdict. See [architecture](architecture.md). |
+| LOD continuity | **Both halves satisfied and ratified 2026-08-14, on the RTX 4060 only.** `render.lod-gate` is enabled and passing on the RTX 4060 in both configurations. Popping is certified against an isolated transition by the [method now written into the milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md): the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit — a 20× margin — with the control separating by 4.4×. The user ratified both the method and its narrower reading: because the control is itself below the limit, the pass is a margin and a response rather than a rescue. The **30-minute memory traverse passes** under a method ratified the same day and separately from the popping one — second-half trend 15.9 KiB/min against a 64 limit, 0.98 MiB growth against a 2 MiB backstop, with an 8-byte-per-frame control demonstrated to fail both. A pass bounds the settled growth rate; it does not prove an asymptote. See [architecture](architecture.md). |
 | Capability reporting | Implemented with a negative control; **cannot close** until the synthetic device profiles are reconciled against real reports. |
 | Validation output | Clean from this project. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category. A capture/RenderDoc workflow is not yet established. |
 
@@ -341,18 +341,20 @@ terrain finding with them.
 
 ### Outstanding for B1
 
-- **Defining what the 30-minute memory clause requires.** The traverse itself **has now run** —
-  `render.memory-traverse`, Release, 2026-08-14: 258 939 frames over 29.9 minutes, 0.37 MiB of
-  process commit growth after a 120 s warm-up, a 17.9 KiB/minute trend, and every device-side
-  figure constant. Details in [B1's evidence index](../evidence/p1b/B1/Index.md).
+- **The Intel UHD is unmeasured for the memory clause too**, as it is for every other gate. The
+  memory half is otherwise **closed on the RTX 4060**: the measurement method was defined and
+  **ratified by the user on 2026-08-14**, recorded in the [P1b milestone
+  plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the popping method it
+  parallels, and the traverse passes under it — 256 954 frames over a graded 30.0 minutes,
+  second-half trend 15.9 KiB/minute against a 64 limit, 0.98 MiB of growth against a 2 MiB
+  backstop, every device-side figure constant, with an 8-byte-per-frame control failing both
+  criteria. Details in [B1's evidence index](../evidence/p1b/B1/Index.md).
 
-  What does not exist is a way to grade it. "No unbounded memory growth" names no statistic and
-  no limit — the identical gap the popping half had before its method was defined and ratified on
-  2026-08-14 — so the program prints its figures and explicitly declines to rule. Two things are
-  wanted: a documented planning update fixing the statistic and the limit, and, before that, the
-  sample series recorded so a flattening curve can be told apart from a slow line. The fitted
-  slope implies ~0.49 MiB over the window while the endpoints differ by 0.37 MiB, which hints at
-  deceleration without establishing it.
+  Stated with the pass rather than left to be inferred: it bounds the settled growth rate and does
+  **not** prove an asymptote, since no finite window can, and it cannot see growth below the
+  instrument's noise floor at 30 minutes. The gated statistic also has only three clean
+  observations so far — 12.2, 2.1 and 15.9 KiB/minute — all inside the limit, worst case a 4×
+  margin.
 
   The measurement deliberately does **not** use the figure the earlier claim was withdrawn over.
   Device allocation is constant by construction under a fixed-capacity design, so it was replaced

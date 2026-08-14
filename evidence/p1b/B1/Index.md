@@ -65,7 +65,7 @@ result here is a baseline-tier claim.
 | Screen-space jitter, 0.25 px | **PASS**, RTX 4060 only | `raw/{debug,release}-JitterHarness.txt` |
 | Depth behaviour | **PASS**, RTX 4060 only | `raw/{debug,release}-DepthGate.txt` |
 | LOD continuity — popping | **PASS** under the ratified method, RTX 4060 only | `raw/{debug,release}-LodGate.txt` |
-| LOD continuity — memory | **MEASURED** 2026-08-14; no threshold defined to judge it against | `raw/release-MemoryTraverse-30min.txt` |
+| LOD continuity — memory | **PASS** under the method ratified 2026-08-14, RTX 4060 only | `raw/release-MemoryTraverse-30min*.txt`, `raw/release-MemoryTraverse-control-45s.txt` |
 | Capability reporting | **Cannot close** until synthetic profiles are reconciled | `raw/*-RenderCapabilityTests.txt`, `raw/*-RenderCapabilityReport.txt` |
 | Validation output | **PASS with an explained exception** | every raw file |
 
@@ -133,35 +133,55 @@ host-side leak at all — VMA cannot, because VMA does not own host memory.
 
 Release build, 2026-08-14, RTX 4060, wall-clock driven rather than step-driven:
 
-| | |
-|---|---|
-| Duration | 29.9 minutes, 258 939 frames presented, 0 skipped |
-| Camera path | 3 km ↔ 300 km altitude every 90 s while orbiting at 0.004 rad/s |
-| Terrain reselected throughout | 90 to 238 patches |
-| Process private bytes, start → end | 379.19 → 396.88 MiB |
-| Growth after the 120 s warm-up | **0.37 MiB** |
-| Trend after warm-up | **17.9 KiB/minute** over 27.9 minutes |
-| Device allocated / block bytes | 43.03 MiB / 131.75 MiB, **constant** |
-| Live allocations / blocks | 9 / 4, **constant** |
+Graded against the method **ratified by the user on 2026-08-14**:
 
-0.37 MiB over 258 939 frames is about **1.5 bytes per frame**, which is far below any per-frame
-object this renderer allocates and is more consistent with heap or driver behaviour than with a
-leak in this code. The four device-side figures were exactly constant for the whole run, which is
-expected under the fixed-capacity design and is recorded as falsification rather than as
-confirmation.
+| | production | 8 B/frame control |
+|---|---|---|
+| Duration | 30.0 min graded, 256 954 frames | 30.0 min graded, 256 628 frames |
+| Process private bytes, start → end | 363.84 → 382.03 MiB | — |
+| **Second-half trend** (gated, ≤ 64 KiB/min) | **15.9** — PASS | **271.7** — FAIL |
+| **Growth after 120 s warm-up** (gated, ≤ 2 MiB) | **0.98 MiB** — PASS | **6.47 MiB** — FAIL |
+| Whole-window trend (reported, not gated) | 25.7 KiB/min | 247.9 KiB/min |
+| Device allocated / block bytes | 43.03 / 131.75 MiB, **constant** | constant |
+| Live allocations / blocks | 9 / 4, **constant** | constant |
 
-**Two things this run does not settle, stated because the number alone reads stronger than it is.**
+Camera path 3 km ↔ 300 km altitude every 90 s while orbiting at 0.004 rad/s, terrain reselected
+throughout. Raw output in `raw/release-MemoryTraverse-30min.txt` and
+`raw/release-MemoryTraverse-30min-leak8.txt`; the suite's 45-second control is
+`raw/release-MemoryTraverse-control-45s.txt`.
 
-- **The shape of the growth is not recorded.** The program reports the endpoints and a fitted
-  slope, not the sample series, so a curve that is flattening cannot be distinguished from a line
-  that is not. The fitted slope implies about 0.49 MiB over the window while the endpoints differ
-  by 0.37 MiB, which hints at deceleration but does not establish it. Resolving this needs the
-  series dumped and the run repeated.
-- **There is still no threshold.** "No unbounded memory growth" names no statistic and no limit,
-  exactly as the popping half named none before its method was defined and ratified on
-  2026-08-14. The program prints its figures and explicitly declines to rule. Turning 17.9
-  KiB/minute into a pass or a fail is a user decision requiring the same kind of documented
-  planning update.
+**The gate passes and the control fails**, which is what makes the pass a measurement rather than
+an instrument that is deaf.
+
+**Why the whole-window trend is reported and not gated**, since it is the figure a reader would
+otherwise take as the headline. It is contaminated by settling that continues past the 120 s cut,
+and it is unstable: across four clean runs of the same build it fitted **17.9, 40.7, 56.8 and
+25.7** KiB/minute, a 3.2× spread. The gated second-half statistic over the same runs sits at
+**12.2, 2.1 and 15.9**, comfortably inside a 64 limit each time.
+
+On one graded run the whole-window figure also came out *larger than either half it spans* — 56.8
+against a first half of 15.3 and a second half of 2.1. That is the signature of a discrete step,
+not an arithmetic error: a line fitted across a jump sits above lines fitted either side. Growth
+after warm-up on that run was 1.00 MiB, so essentially all of it was one step — what a
+fixed-capacity design settling looks like, and what a whole-window slope would have reported as a
+steady 56.8 KiB/minute leak.
+
+The four device-side figures were exactly constant for the whole run, expected under the
+fixed-capacity design and recorded as falsification rather than confirmation.
+
+**What this does not settle, stated because the numbers alone read stronger than they are.**
+
+- **A pass does not prove an asymptote.** No finite window can, and the gate cannot see growth
+  below its noise floor at 30 minutes. Both are properties of bounding a rate over a finite run,
+  and the program prints them with the verdict rather than leaving them to be inferred.
+- **One device, as everywhere else in B1.** The Intel UHD is unmeasured for this clause too.
+- **The clean sample is small.** The gated second-half statistic has three observations — 12.2,
+  2.1 and 15.9 KiB/minute — all inside a 64 limit, worst case a 4× margin. Firmer with more runs.
+- **Duration is load-bearing, and the two controls are not interchangeable.** The 8-byte leak fits
+  271.7 KiB/minute at 30 minutes and **−60.2** at 3 minutes, where noise swamps it entirely. The
+  suite's continuously-run control leaks a gross 4 KiB/frame (35 451 KiB/minute) to clear the
+  short-run noise floor; it proves the gate *can* fail, while how *small* a leak it catches rests
+  on the 8-byte run at graded duration.
 
 ### Capability reporting
 
@@ -221,9 +241,8 @@ write bandwidth is included in any frame-time figure this renderer produces and 
 Recorded here so that a reader of the passes above does not infer more than was measured.
 
 - **Nothing is measured on the Intel UHD**, and no baseline-class or AMD hardware exists here.
-- **The 30-minute memory traverse has now run, but no threshold exists to judge it against**, and
-  the shape of the 0.37 MiB growth is unrecorded, so bounded and slowly-growing are not yet
-  distinguishable from this evidence.
+- **The memory pass bounds a rate, it does not prove an asymptote**, and cannot see growth below
+  its noise floor at 30 minutes.
 - **The capability profiles are unreconciled** against real reports.
 - **A2's frame model is not confirmed by this increment.** `WorldVec3` is a bare `double` triple;
   nothing walks a frame graph to a lowest common ancestor or checks an epoch. What is exercised —

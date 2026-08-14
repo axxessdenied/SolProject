@@ -118,9 +118,41 @@ Measured at the shipping 60° vertical field of view, at the recorded quality se
 
 **What a pass under this method does and does not mean.** If the control is itself below 0.002, the scene does not pop visibly with or without morphing, and the pass means the production path sits well under the limit and the metric responds strongly to disabling the morph — a margin and a response, not a demonstration that morphing rescues a visibly broken picture. The gate must print that qualification whenever it holds. Strengthening it requires a scene where the abrupt scheme pops visibly at a quality setting where the morph is well-conditioned; none has been found.
 
-**The memory clause is unchanged by this ratification**, and is measured separately. The 30-minute traverse stands exactly as written above. It ran for the first time on 2026-08-14 under `render.memory-traverse`, deliberately as its own program: the LOD gate's memory reading was withdrawn on two grounds and only one was duration, the other being that device allocation *cannot vary* under a fixed-capacity design, so repeating it for thirty minutes would repeat a tautology. The traverse measures process commit charge instead, which can move and which is the only instrument that can see a host-side leak at all.
+**The memory clause is unchanged by this ratification**, and is measured separately by the method defined below.
 
-Measured: 258 939 frames over 29.9 minutes, 0.37 MiB of commit growth after a 120 s warm-up, a 17.9 KiB/minute trend, and every device-side figure constant. **That is a measurement, not a verdict.** This clause names no statistic and no limit, exactly as the popping clause did not, and defining one requires its own documented planning update — preferably after the sample series is recorded, so a flattening curve can be distinguished from a slow line.
+### LOD memory measurement method
+
+**Approved by the user on 2026-08-14**, under the rule above that a threshold may be changed only by a documented planning update. A graded 30-minute run that breaches it now fails the suite; shorter runs report without ruling.
+
+Like the popping clause before it, "no unbounded memory growth over a 30-minute traverse" named no statistic and no limit. It is measured by `render.memory-traverse`, deliberately a separate program from the LOD gate: that gate's memory reading was withdrawn on two grounds and only one was duration, the other being that device allocation *cannot vary* under a fixed-capacity design, so repeating it for thirty minutes would repeat a tautology. The traverse measures **process commit charge**, which can move and which is the only instrument that can see a host-side leak at all.
+
+The accepted method:
+
+1. Fly a wall-clock-driven traverse for **30 minutes**, sweeping 3 km to 300 km altitude every 90 s while orbiting at 0.004 rad/s, so terrain is reselected and rebuilt every frame against a view that never repeats. A traverse that revisited the same view would let a leak hide behind a steady state.
+2. Sample process private bytes every 5 s. Discard the first **120 s** as warm-up — driver lazy initialisation, first touch of the swapchain, allocator blocks reaching steady size — and record the full sample series so the shape of any growth is recoverable.
+3. **Pass criterion, primary:** the least-squares trend of private bytes over the **second half** of the post-warm-up window must stay below **64 KiB/minute**.
+4. **Pass criterion, backstop:** total growth after warm-up must stay below **2 MiB**, guarding a large single step that a slope fit would average away.
+5. **Control:** a deliberate leak of **8 bytes per frame** must fail both criteria. A limit that a real leak passes certifies nothing.
+
+Reported but **not** gated: the trend over the whole post-warm-up window, and the device allocator's bytes, blocks and live object counts. The latter four are constant by construction under a fixed-capacity design and are recorded to falsify that, not to confirm it.
+
+**Why the second half rather than the whole window**, which is the one substantive design choice here and was settled by measurement. The whole-window figure is contaminated by settling that continues past the 120 s cut, and it is unstable: across four clean runs of the same build it fitted **17.9, 40.7, 56.8 and 25.7 KiB/minute**, a 3.2× spread. The gated second-half statistic over the same runs sits at **12.2, 2.1 and 15.9**, inside the limit every time. Gating the contaminated one would fail clean runs.
+
+On one graded run it also came out **larger than either half it spans** — 56.8 against a first half of 15.3 and a second half of 2.1. That is not an arithmetic error but the signature of a step: a discrete jump between the halves lifts a line fitted across both above either fitted separately. Total growth after warm-up on that run was 1.00 MiB, so essentially all of it was one step rather than accumulation — which is what a fixed-capacity design settling should look like, and which a whole-window slope would have reported as a steady 56.8 KiB/minute leak. The second half is both steadier and the half that speaks to where the curve is heading, which is what "unbounded" asks about.
+
+The warm-up cut stays at 120 s rather than being extended until the whole-window figure behaves, because moving a cut until a number looks better is a threshold change wearing a tuning detail's clothes.
+
+**Where 64 KiB/minute comes from — two bounds, the tighter governing.** *Sensitivity:* demonstrated, not derived. The 8-byte-per-frame control fits **271.7 KiB/minute** on the second half of a graded run and grows 6.47 MiB, failing both criteria, at 4.2× above the limit. *Session tolerance:* 64 KiB/minute is about 23 MiB over a six-hour session, negligible against the 16 GB baseline machine; anchoring there alone would have permitted roughly 360 KiB/minute, which the demonstrated leak would pass. The limit therefore sits inside a measured separation band — **15.9 KiB/minute on the worst clean run against 271.7 leaked** — rather than being drawn around the number that happened to be observed.
+
+**Why 30 minutes is not negotiable.** The same 8-byte-per-frame control run for 3 minutes fitted **−60.2** KiB/minute: at that duration the instrument's own noise swamps the leak entirely. A short run reports every figure and is explicitly not graded. The suite registers a 45-second run to keep the instrument under test; only a 30-minute run can certify the clause.
+
+Leak size and duration trade against each other, so the suite's control and the sensitivity demonstration are **not interchangeable**. `render.memory-traverse-control` leaks a deliberately gross 4 KiB per frame at 45 s — 35 449 KiB/minute, far above the short-run noise floor — and exists to prove continuously that the gate *can* fail. How *small* a leak the gate catches is established only by the 8-byte control at the graded duration. The program exits non-zero if a deliberate leak passes, so a gate that lost the ability to fail breaks the suite rather than continuing to award passes.
+
+**Measured under this method on 2026-08-14**, Release, RTX 4060, and recorded in [B1's evidence index](../../evidence/p1b/B1/Index.md): the production run **passes** — 256 954 frames over a graded 30.0 minutes, second-half trend **15.9 KiB/minute** against the 64 limit, growth **0.98 MiB** against the 2 MiB backstop, every device-side figure constant. The 8-byte control fails both criteria on the same build.
+
+**This closes the memory half of the LOD continuity threshold on the RTX 4060.** It does not close the threshold: like every other B1 gate result, it is a single-device measurement, and the accepted [reference-hardware evidence plan](P1b-Reference-Hardware-Evidence-Plan.md) requires both available devices. The Intel UHD is unmeasured here as elsewhere.
+
+**What a pass under this method would and would not mean.** It bounds the settled growth rate and shows the rate is not increasing. It does **not** prove an asymptote — no finite window can — and it cannot see growth slower than the noise floor at 30 minutes. Both limits are properties of measuring a bound over a finite window, and should be stated wherever the result is quoted.
 
 ## Time boxes
 
@@ -242,7 +274,10 @@ Each increment closure records:
 | Screen-space jitter measurement method defined above | Confirmed | The original gate was unmeasurable as written |
 | LOD continuity measurement method defined above; verdict measured on an isolated transition rather than a descent | Confirmed | User ratified 2026-08-14. The original gate was unmeasurable as written, and the descent instrument was shown by measurement to be blind rather than insensitive |
 | A LOD pass whose control is also below the perceptual limit is accepted as a margin and a response, not as a rescue | Confirmed | User ratified 2026-08-14; no scene has been found where the abrupt scheme pops visibly at a well-conditioned quality setting, and the gate prints the qualification |
-| 30-minute LOD memory traverse | Run 2026-08-14; **pass criterion still Open** | The traverse now exists and has run for its stated duration — 0.37 MiB of process commit growth after warm-up, 17.9 KiB/minute. The clause names no statistic and no limit, so it yields a measurement and not a verdict; fixing a limit needs a planning update of the same kind as the popping method |
+| LOD memory measurement method defined above; second-half trend under 64 KiB/min plus a 2 MiB growth backstop | Confirmed | User ratified 2026-08-14. The clause named no statistic and no limit, exactly as the popping clause did not. An 8-byte-per-frame control is demonstrated to fail it, so the limit is one a real leak breaches |
+| Memory gate uses the second-half trend, not the whole-window trend | Confirmed | User ratified 2026-08-14. Settled by measurement rather than preference: the whole-window figure fitted 17.9, 40.7, 56.8 and 25.7 KiB/min across four clean runs of the same build, and on one exceeded both halves it spans — the signature of a settling step, which gating it would have reported as a steady leak. The second-half statistic sat at 12.2, 2.1 and 15.9 over the same runs |
+| The 30-minute duration is load-bearing, not conventional | Confirmed | User ratified 2026-08-14. The same 8-byte-per-frame control fits −60.2 KiB/min at 3 minutes — noise swamps the leak — and 271.7 KiB/min at 30. Shorter runs report without ruling |
+| A pass bounds the settled growth rate; it does not prove an asymptote | Confirmed | User ratified 2026-08-14 as part of the method. No finite window can establish an asymptote, and the gate cannot see growth below its noise floor at 30 minutes. Both limits must be quoted with the result |
 | Two-way craft representation comparison required | Confirmed | User approved 2026-08-12; the representation choice outweighs the physics-library choice |
 | 0.25-pixel jitter gate | Confirmed | User approved recommendation |
 | 300-part 4 ms physics and 1 ms resource-network gates | Confirmed | User approved recommendation |
