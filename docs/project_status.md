@@ -150,7 +150,7 @@ rule in `AGENTS.md`. The lightweight lane puts full evidence records at incremen
 is the smaller thing: enough state that nobody has to re-derive it from commit messages.
 
 **Owner:** Claude. **Branch:** `feature/p1b-vulkan-renderer`, 7 commits ahead of `dev`.
-**Validation at time of writing:** 25/25 tests pass in both configurations, 1 disabled.
+**Validation at time of writing:** 26/26 tests pass in both configurations, 1 disabled.
 
 ### Gating thresholds
 
@@ -210,9 +210,9 @@ terrain capacities that left ~55 MB unreachable (now 43.03 MiB total, down from 
 A `review-cpp-change` pass over the whole open PR #6 diff — including `59e29dc`, which the three
 earlier reviewers never saw, since it *was* their output. Ten findings; four fixed, six open.
 
-**Fixed, with the caveat that none of the three renderer fixes has a test.** All were verified by
-construction and by no-regression runs, which is a weaker claim than the gates usually carry and
-is stated that way deliberately:
+**Fixed.** Two of the three renderer fixes are covered by a new test, `render.renderer-contract`,
+each verified against the defect by reverting the fix and confirming the test fails. The third is
+harness code in a disabled gate and is not covered; it is named below rather than glossed:
 
 - **Root terrain patches were pinned to full coarse morph.** A zero-width morph band — the CPU's
   way of saying "level 0 has no parent" — was widened to a `1e-6` epsilon before dividing, so the
@@ -258,11 +258,11 @@ rediscovered:
 - Re-enabling `render.lod-gate`, which still needs a control that can fire. The two pops it used
   to fail on are diagnosed and fixed; the blocker is now that at a valid quality setting neither
   configuration pops at all.
-- Test coverage for the three renderer defects fixed in the second review round. All three are
-  correct by construction and none is exercised: the level-0 morph needs a traverse step at
-  ~40 000 km, the stale-capture path needs a minimised window, and the transition scan's
-  no-transition branch needs a scan that finds nothing. The first is the cheap one and would have
-  caught the original defect.
+- The LOD gate's transition scan has no coverage for its no-transition branch. It needs a scan
+  that finds nothing, and it lives inside a harness that is itself `DISABLED`, so a test would not
+  run even if written. The two renderer defects from the same round are covered by
+  `render.renderer-contract`; this one is left deliberately and is the weakest point of that
+  round.
 - The atmosphere — the P1b plan's narrowing option permits a simple analytic shell. Note that a
   shell has no LOD transitions, so "atmosphere LOD popping" becomes vacuous under that option,
   which should be stated rather than quietly satisfied.

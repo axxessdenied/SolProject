@@ -32,6 +32,17 @@ target_link_libraries(SolRenderLoop PRIVATE sol::render sol::platform)
 add_test(NAME render.loop COMMAND SolRenderLoop)
 set_tests_properties(render.loop PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+# Renderer contracts the gates depend on but none of them measures: that a root terrain patch
+# has nothing to morph toward, and that a frame which drew nothing says so instead of handing
+# back the last frame's pixels. Both were broken while the whole suite was green, which is the
+# argument for testing them separately from any threshold.
+add_executable(SolRendererContract RendererContractTests.cpp)
+sol_apply_project_options(SolRendererContract)
+target_link_libraries(SolRendererContract PRIVATE sol::render sol::platform)
+target_include_directories(SolRendererContract PRIVATE "${CMAKE_SOURCE_DIR}/tests")
+add_test(NAME render.renderer-contract COMMAND SolRendererContract)
+set_tests_properties(render.renderer-contract PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
 # The screen-space jitter gate. Registered as a test because it is a pass/fail threshold, not
 # a benchmark: it either holds 0.25 px or it does not, and a regression should break the build
 # rather than wait to be noticed in a report.
@@ -76,5 +87,5 @@ set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 # coarser grid was tried to break the tie and did not.
 #
 # Enabling this would make the suite permanently red and mask regressions across the other
-# twenty-five tests. The state is recorded here and in docs/architecture.md rather than hidden.
+# twenty-six tests. The state is recorded here and in docs/architecture.md rather than hidden.
 set_tests_properties(render.lod-gate PROPERTIES DISABLED TRUE)

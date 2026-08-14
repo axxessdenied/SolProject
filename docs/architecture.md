@@ -451,6 +451,13 @@ the LOD gate it contributes a zero frame difference and pulls down the median th
 floor and every ratio are measured against. The flag is set at one point, after a successful
 present, so every early return is false by construction rather than by each path remembering.
 
+Covered by `render.renderer-contract`, which reaches the zero-area path through
+`notifyResized(0, 0)` rather than asking a window manager to minimise a window on cue. It asserts
+that the frame reports `presented == false`, that the capture comes back empty, and — if it does
+not — that the returned pixels are byte-identical to the previous frame, so a failure names the
+stale-readback defect instead of merely reporting a wrong size. Verified by reverting the guard,
+against which all three assertions fire.
+
 Depth is **reversed-Z with an infinite far plane**, in a 32-bit float buffer:
 
 - Near maps to 1 and far to 0, so floating-point depth's precision — which is concentrated near
@@ -731,13 +738,21 @@ instant its children took over — a discontinuity sitting inside the mechanism 
 remove discontinuities. The shader now treats a zero-width band as "no parent" and returns a
 factor of 0.
 
-**No measurement on this branch is affected, and the fix is unverified.** Level 0 is emitted only
-beyond `2R × subdivisionFactor`, about 38 000 km, while every harness runs 3–300 km at
-`maxLevel 10` where level 0 always subdivides — so no gate could have seen it and none does now.
-The LOD gate's output is byte-identical either side of the change. The defect is reachable in the
-renderer rather than in the gate: any view of a planet from geostationary altitude or beyond, or
-any caller passing `maxLevel = 0`. Covering it needs a traverse step out at ~40 000 km, which
-does not exist yet.
+**No measurement on this branch is affected.** Level 0 is emitted only beyond
+`2R × subdivisionFactor`, about 38 000 km, while every gate runs 3–300 km at `maxLevel 10` where
+level 0 always subdivides — so no gate could have seen it, and the LOD gate's output is
+byte-identical either side of the fix. The defect was reachable in the renderer rather than in the
+gate: any view of a planet from geostationary altitude or beyond, or any caller passing
+`maxLevel = 0`.
+
+**It is now covered by `render.renderer-contract`**, as an invariance test rather than a threshold.
+With `maxLevel = 0` every emitted patch is a root, so enabling and disabling the morph must produce
+*the same image, byte for byte* — there is no coarser level to blend toward. That reaches the
+defect from any camera distance and runs in under a second, where a traverse step at 40 000 km
+would have been slow and would still only have measured a spike. The test carries a vacuity guard,
+since two identical blank frames would satisfy the invariant while proving nothing: terrain must
+first be shown to cover more than 5% of the frame, and it covers 22%. Verified against the defect
+by reverting the shader guard, which moved 58 720 of 66 062 terrain pixels — 89% of the planet.
 
 **The gate still cannot be certified, and the reason has moved again.** At a factor where the
 morph is well-conditioned, transitions are sub-pixel: both configurations now record **zero
@@ -793,7 +808,7 @@ driver determinism, on which the bit-identical-frames and exact-depth-inequality
 depend.
 
 The gate stays registered and `DISABLED` so one known-failing gate does not mask regressions
-across the other twenty-five, with the reasoning recorded in the build description rather than
+across the other twenty-six, with the reasoning recorded in the build description rather than
 hidden by it.
 
 **Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
