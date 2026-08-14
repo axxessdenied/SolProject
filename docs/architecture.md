@@ -697,7 +697,7 @@ therefore not stable under changes to patch selection, which is a property of th
 rather than of the renderer, and another reason the descent rather than the sweep carries the
 verdict.
 
-### LOD gate: not satisfied, and not certifiable as measured
+### LOD gate: enabled and passing, with two qualifications
 
 **Memory is bounded structurally. It is not measured, and the earlier claim that it was is
 withdrawn.** Two independent reasons, both of which the previous wording obscured:
@@ -831,9 +831,51 @@ since two identical blank frames would satisfy the invariant while proving nothi
 first be shown to cover more than 5% of the frame, and it covers 22%. Verified against the defect
 by reverting the shader guard, which moved 58 720 of 66 062 terrain pixels — 89% of the planet.
 
-**The gate still cannot be certified, and the reason has moved again.** At a factor where the
-morph is well-conditioned, transitions are sub-pixel: both configurations now record **zero
-pops**. Visibility and validity pull against each other through the same parameter — raising the
+#### The verdict moved off an instrument that could not work
+
+`render.lod-gate` was `DISABLED` because both configurations recorded zero pops, so the control
+could not fire and a "no popping" reading certified nothing. The recorded explanation was that a
+well-conditioned morph forces `subdivisionFactor` high enough that transitions become sub-pixel —
+visibility and validity pulling against each other through one parameter.
+
+**That diagnosis was wrong, and the measurement that settled it is worth keeping.** Re-running at
+a 20° field of view magnifies screen-space error roughly threefold, because that error is an angle
+and pixels per degree scale inversely with field of view. Every other statistic separated further:
+the sweep's concentration figure went from 4.4× to 12×, its mean from 3.2× to 11.8×. And **both
+configurations still recorded exactly zero pops.** An instrument that is merely insensitive
+responds when the signal triples. This one did not, because the quantity it measures is not
+present: a local-outlier test needs a transition to be an isolated event, and on a descent with
+hundreds of patches on screen they are not — an abrupt scheme raises the whole baseline rather
+than spiking.
+
+The verdict therefore comes from the **isolated-transition sweep**, which was built for precisely
+this and had been unusable for an unrelated reason: it located its band by the largest patch-count
+change and kept landing on horizon patches that are tiny on screen. Frustum culling fixed that as
+a side effect — off-screen patches are no longer drawn, so they no longer attract the scan. The
+two pieces of work were not planned together.
+
+Measured at the shipping 60° field of view, identically in both build configurations despite the
+differing SPIR-V:
+
+| | production | control | |
+|---|---|---|---|
+| Worst fraction of frame changing perceptibly in one step | 0.000101 | 0.000447 | limit 0.0020 |
+| Mean maximum difference | 0.0150 | 0.0484 | |
+
+**Two qualifications, and the gate prints both itself.** The control is *also* below the
+perceptual limit, so this scene does not pop visibly with or without morphing — what is certified
+is a 20× margin under the limit and a 4.4× response to switching the morph off, which is a margin
+and a response rather than a rescue. And the memory half remains structural: the stated 30-minute
+criterion has never been run, and the gate's output says so rather than reporting a bare PASS.
+
+Making the first qualification go away needs a scene where the abrupt scheme pops visibly at a
+quality setting where the morph is well-conditioned. None has been found, and the earlier
+sub-pixel explanation for why is now known to be the wrong account.
+
+#### The earlier state, retained
+
+At a factor where the morph is well-conditioned, both configurations record **zero
+pops** on the descent. Visibility and validity pull against each other through the same parameter — raising the
 factor until the morph is sound is exactly what makes transitions invisible — and a coarser grid
 was tried to break that tie and did not help. The renderer behaves correctly; the control cannot
 demonstrate that it matters.
@@ -895,9 +937,10 @@ device and driver. ADR 0010 governs MSVC and CPU floating point and says nothing
 driver determinism, on which the bit-identical-frames and exact-depth-inequality results both
 depend.
 
-The gate stays registered and `DISABLED` so one known-failing gate does not mask regressions
-across the other twenty-six, with the reasoning recorded in the build description rather than
-hidden by it.
+The gate is **enabled** as of 2026-08-14 and passes in both configurations, so the suite is 27 of
+27 with none disabled. It had been registered but `DISABLED` so that one known-failing gate could
+not mask regressions across the others; that is no longer needed, and the reasoning for both the
+disabling and the re-enabling stays in the build description rather than hidden by it.
 
 **Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
 simple analytic shell, and the capability-reporting gate's synthetic profiles.

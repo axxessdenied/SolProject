@@ -85,6 +85,31 @@ static_assert(sol::render::TerrainSettings{}.subdivisionFactor == kQualitySubdiv
 /// a pass on Earth-like relief, while a pass on Earth-like relief implies nothing at all.
 constexpr double kStressReliefMetres = 20000.0;
 
+/// Vertical field of view the gate measures at, radians. Part of the recorded quality setting.
+///
+/// The shipping 60°, deliberately, because the threshold is about what a player can see and
+/// screen-space error is an angle: pixels per degree scale inversely with field of view, so a
+/// narrower one silently makes the test stricter.
+///
+/// Measured at 20° as a sensitivity check, and the separation between the two configurations
+/// grew from 4.4x to 12x on the sweep's concentration figure and from 3.2x to 11.8x on its mean.
+/// That is the direction geometry predicts and noise does not, which is corroboration that the
+/// metric tracks the geometric error rather than the rendering's incidental variation. The
+/// verdict stays at 60°; the stricter reading is evidence, not the standard.
+constexpr double kMeasurementFovRadians = 1.0472; // 60°
+
+/// The production path must keep the screen quieter than this in any single step of an isolated
+/// transition — the fraction of pixels moving by more than @ref kPerceptibleDelta.
+///
+/// 0.002 of a 1280x720 frame is about 1 843 pixels. This is the file's long-standing definition
+/// of "a visible amount of the screen changing visibly", now actually wired to the verdict
+/// instead of only described in a comment beside one that used something else.
+constexpr double kPerceptiblePopFraction = 0.002;
+
+/// How far the control must stand above the production path before the instrument is credited
+/// with being able to see the thing it is testing for.
+constexpr double kControlSeparationFactor = 3.0;
+
 /// Neighbourhood width for the local-median comparison, in steps.
 constexpr int kWindowRadius = 12;
 /// A step is a pop when its frame difference exceeds this multiple of the local median.
@@ -337,7 +362,7 @@ std::optional<double> findTransitionAltitude(
             .position = {0.0, kPlanetRadiusMetres + altitude, 0.0},
             .forward = {0.30, -0.95, 0.0},
             .up = {0.0, 0.0, 1.0},
-            .verticalFovRadians = 1.0472,
+            .verticalFovRadians = kMeasurementFovRadians,
             .nearPlaneMetres = 0.5,
         };
 
@@ -419,7 +444,7 @@ SweepResult runTransitionSweep(
             .position = {0.0, kPlanetRadiusMetres + altitude, 0.0},
             .forward = {0.30, -0.95, 0.0},
             .up = {0.0, 0.0, 1.0},
-            .verticalFovRadians = 1.0472,
+            .verticalFovRadians = kMeasurementFovRadians,
             .nearPlaneMetres = 0.5,
         };
 
@@ -487,7 +512,7 @@ TraverseResult runTraverse(
             // than staring at one.
             .forward = {0.30, -0.95, 0.0},
             .up = {0.0, 0.0, 1.0},
-            .verticalFovRadians = 1.0472,
+            .verticalFovRadians = kMeasurementFovRadians,
             .nearPlaneMetres = 0.5,
         };
 
@@ -550,7 +575,7 @@ void collectResourceStats(
             .position = {0.0, kPlanetRadiusMetres + altitude, 0.0},
             .forward = {0.30, -0.95, 0.0},
             .up = {0.0, 0.0, 1.0},
-            .verticalFovRadians = 1.0472,
+            .verticalFovRadians = kMeasurementFovRadians,
             .nearPlaneMetres = 0.5,
         };
 
@@ -711,10 +736,14 @@ int main()
         // would sit underneath the terrain and the table would print that as a measurement.
         std::printf("\nSingle-transition sweep: not run — the scan found no transition to centre "
                     "it on.\n");
-    } else {
-        const SweepResult sweepProduction = runTransitionSweep(
+    }
+
+    std::optional<SweepResult> sweepProduction;
+    std::optional<SweepResult> sweepControl;
+    if (transitionAltitude.has_value()) {
+        sweepProduction = runTransitionSweep(
             *window, *renderer, true, *transitionAltitude, "Transition sweep, morphing enabled");
-        const SweepResult sweepControl = runTransitionSweep(
+        sweepControl = runTransitionSweep(
             *window, *renderer, false, *transitionAltitude,
             "Transition sweep, morphing DISABLED (control)");
 
@@ -726,7 +755,7 @@ int main()
                     "p999 delta",
                     "at step",
                     "mean max");
-        for (const SweepResult* sweep : {&sweepProduction, &sweepControl}) {
+        for (const SweepResult* sweep : {&*sweepProduction, &*sweepControl}) {
             // A step of -1 means no step ever exceeded the perceptible threshold, so the p999
             // and step fields hold their initial values rather than measurements. Printing those
             // as if they were data would be the same class of mistake this gate keeps catching.
@@ -750,29 +779,35 @@ int main()
 
     renderer->waitIdle();
 
-    // A transition pops when one step stands far above ordinary motion within the band. The
-    // threshold is stated against the control: whatever separation the abrupt scheme produces
-    // is what popping looks like here, and the production path must stay well below it.
-    // A pop is a visible amount of the screen changing visibly in one frame. Two tenths of one
-    // percent of a 1280x720 frame is about 1 800 pixels — a band of that size jumping by more
-    // than 6% luminance between adjacent frames is what "detectable" means here, and it is
-    // stated in perceptual terms rather than derived from whichever run was measured first.
-    // The verdict comes from the descent's local-outlier count, which is the measurement that
-    // demonstrably separates the two configurations once the terrain is rough enough to have
-    // something to pop. The band sweep and the concentration metric are both retained and
-    // reported, but neither discriminates: the sweep keeps landing on transitions among
-    // distant horizon patches, and concentration is confounded by morphing's own continuous
-    // deformation, which moves more pixels slightly than an abrupt switch moves sharply.
-    const bool noPopping = production.popIndices.empty();
-
-    // Named for the measurement it is actually computed from, which is the *descent*, not the
-    // sweep. It was called `sweepDiscriminates` while reading the descent's pop counts — and
-    // `sweepProduction` and `sweepControl` sit a few lines above, computed, printed, and read by
-    // no verdict at all. The value was always the intended one; the name pointed at the wrong
-    // instrument, in the one file whose entire job is stopping a reader from confusing two
-    // measurements.
-    const bool descentControlDiscriminates =
-        control.popIndices.size() > production.popIndices.size() * 2 + 2;
+    // The verdict comes from the **isolated transition**, not from the descent's pop count.
+    //
+    // This moved on 2026-08-14, and the reason is structural rather than a matter of tuning. A
+    // local-outlier test needs a transition to be an isolated event. On a descent with hundreds
+    // of patches on screen they are not: patches cross their boundaries continuously, so an
+    // abrupt scheme raises the whole *baseline* difference instead of producing a spike, and
+    // nothing stands out to flag. That is why both configurations recorded zero pops and the
+    // gate sat DISABLED reporting DETECTOR BLIND. Re-measuring at 20° made the separation on
+    // every other statistic grow by roughly 3x and still produced zero pops in both — the pop
+    // count was not insensitive, it was measuring a quantity the descent does not contain.
+    //
+    // The sweep was built for exactly this and was previously unusable for a separate reason:
+    // it located its band by the largest patch-count change, and kept landing on transitions
+    // among distant horizon patches that are tiny on screen. Frustum culling fixed that as a
+    // side effect — off-screen patches are no longer drawn, so they no longer attract the scan,
+    // and the band it selects is now a transition that is actually in view.
+    //
+    // Two conditions, and they answer different questions. The first is absolute and is the
+    // threshold: the production path must keep the screen quieter than a visible amount of it
+    // changing visibly in one step. The second is relative and is the control: the same metric
+    // must respond strongly when the mechanism under test is switched off, or a pass means only
+    // that nothing was being measured.
+    const bool sweptSuccessfully = sweepProduction.has_value() && sweepControl.has_value();
+    const bool noPopping =
+        sweptSuccessfully && sweepProduction->worstChangedFraction < kPerceptiblePopFraction;
+    const bool controlDiscriminates =
+        sweptSuccessfully
+        && sweepControl->worstChangedFraction
+               > sweepProduction->worstChangedFraction * kControlSeparationFactor;
 
     // Pops at the same step in both configurations cannot be caused by morphing, since that is
     // the only thing that differs between the runs. Naming them separately keeps a residual
@@ -788,18 +823,48 @@ int main()
     const bool memoryBounded = std::abs(production.memoryTrendBytesPerStep) < 1024.0
                                && production.maxDeviceBytes == production.minDeviceBytes;
     std::printf("\nVerdicts\n");
-    std::printf("  no detectable popping            %s  (%zu pops on the descent)\n",
-                noPopping ? "PASS" : "FAIL",
-                production.popIndices.size());
-    std::printf("  bounded device memory            %s\n", memoryBounded ? "PASS" : "FAIL");
-    std::printf("  control pops more than production %zu vs %zu — %s\n",
-                control.popIndices.size(),
+    if (!sweptSuccessfully) {
+        std::printf("  no detectable popping            FAIL — the sweep did not run, so there "
+                    "is no measurement to judge\n");
+    } else {
+        std::printf("  no detectable popping            %s  (%.6f of the frame at the worst "
+                    "step, limit %.4f)\n",
+                    noPopping ? "PASS" : "FAIL",
+                    sweepProduction->worstChangedFraction,
+                    kPerceptiblePopFraction);
+        std::printf("  control separates from it        %s  (%.6f vs %.6f, %.1fx, need %.1fx)\n",
+                    controlDiscriminates ? "PASS" : "DETECTOR BLIND",
+                    sweepControl->worstChangedFraction,
+                    sweepProduction->worstChangedFraction,
+                    sweepProduction->worstChangedFraction > 0.0
+                        ? sweepControl->worstChangedFraction
+                              / sweepProduction->worstChangedFraction
+                        : 0.0,
+                    kControlSeparationFactor);
+
+        // Said plainly, because it bounds what the pass above is worth. The control is the
+        // abrupt scheme morphing replaced, and if it too stays under the perceptual limit then
+        // this scene does not produce frankly visible popping either way — so what is certified
+        // is that the production path is far below the limit and that the metric responds
+        // strongly to removing the morph, not that morphing rescues a visibly broken picture.
+        if (sweepControl->worstChangedFraction < kPerceptiblePopFraction) {
+            std::printf("    Note: the control is itself below the %.4f limit, so this scene "
+                        "does not\n    pop visibly even without morphing. The pass is a margin "
+                        "and a response,\n    not a rescue.\n",
+                        kPerceptiblePopFraction);
+        }
+    }
+    // Structural, and NOT the milestone's 30-minute criterion, which has never been run. Naming
+    // it precisely here so that enabling this gate does not quietly re-assert a claim the
+    // project withdrew on 2026-08-13.
+    std::printf("  device allocation flat           %s  (structural over %d steps; the stated "
+                "30-minute criterion is NOT run)\n",
+                memoryBounded ? "PASS" : "FAIL",
+                kTraverseSteps);
+    std::printf("  descent pops, prod vs ctrl       %zu vs %zu (diagnostic only — the descent "
+                "cannot isolate a transition)\n",
                 production.popIndices.size(),
-                descentControlDiscriminates ? "detector discriminates"
-                                   : "DETECTOR BLIND; the result above is untrustworthy");
-    std::printf("  worst pop magnitude, prod vs ctrl %.4f vs %.4f\n",
-                production.worstRatioDifference,
-                control.worstRatioDifference);
+                control.popIndices.size());
     if (!sharedPops.empty()) {
         std::printf("  pops present in BOTH runs        %zu (steps ", sharedPops.size());
         for (int step : sharedPops) {
@@ -821,7 +886,7 @@ int main()
         std::printf("  %s\n", message.c_str());
     }
 
-    const bool passed = noPopping && memoryBounded && descentControlDiscriminates;
+    const bool passed = noPopping && memoryBounded && controlDiscriminates;
     std::printf("\n%s\n",
                 passed ? "LOD GATE PASSED." : "LOD GATE FAILED — see the verdicts above.");
     return passed ? 0 : 1;

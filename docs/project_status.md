@@ -150,7 +150,7 @@ rule in `AGENTS.md`. The lightweight lane puts full evidence records at incremen
 is the smaller thing: enough state that nobody has to re-derive it from commit messages.
 
 **Owner:** Claude. **Branch:** `feature/p1b-vulkan-renderer`, 7 commits ahead of `dev`.
-**Validation at time of writing:** 26/26 tests pass in both configurations, 1 disabled.
+**Validation at time of writing:** 27/27 tests pass in both configurations, none disabled.
 
 ### Gating thresholds
 
@@ -158,7 +158,7 @@ is the smaller thing: enough state that nobody has to re-derive it from commit m
 |---|---|
 | Screen-space jitter, 0.25 px | **Passes on the RTX 4060 only.** 0.000000 px at both required views, frames bit-identical, with a sub-pixel response control confirming precision rather than only stability. The Intel UHD is unmeasured, which the evidence plan requires. Does **not** confirm A2's frame model — see [architecture](architecture.md). |
 | Depth behaviour | **Passes on the RTX 4060 only.** No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7, with a conventional-projection control failing as expected. Guaranteed separation is ~7 cm at 1 000 km and ~69 cm at Earth's radius. The Intel UHD is unmeasured. |
-| LOD continuity | **Not satisfied.** Memory is bounded structurally but is **not measured** against its 30-minute criterion. Popping cannot be certified: the renderer now records zero pops, but so does the control, so the reading proves nothing. |
+| LOD continuity | **Partially satisfied, and `render.lod-gate` is enabled and passing** on the RTX 4060 in both configurations. Popping is now certified against an isolated transition: the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit, a 20× margin, and the control separates from it by 4.4×. **Two qualifications stand.** The control is itself below the limit, so this scene does not pop visibly even without morphing — what is certified is a margin and a response, not a rescue. And memory is still only structural: the stated 30-minute criterion has never been run, and the gate says so in its own output. See [architecture](architecture.md). |
 | Capability reporting | Implemented with a negative control; **cannot close** until the synthetic device profiles are reconciled against real reports. |
 | Validation output | Clean from this project. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category. A capture/RenderDoc workflow is not yet established. |
 
@@ -174,11 +174,34 @@ morphing is the only difference, therefore morphing is not the cause" — was **
 incomplete morph leaves a residual at the same step in both runs, large without morphing and
 small with it, which is exactly what 0.2822 against 0.0030 showed.
 
-**The gate still cannot be certified.** Fixing the morph forced `subdivisionFactor` above ~2.8
-(the band is at most that many patch-widths), and at that factor transitions are sub-pixel:
-both configurations now record zero pops, so the control cannot fire. Visibility and validity
-pull against each other through one parameter. A coarser grid was tried and did not break the
-tie.
+**Closed on 2026-08-14. The gate is enabled and passing, and the diagnosis it was blocked on was
+wrong.** The recorded explanation was that fixing the morph forced `subdivisionFactor` above ~2.8
+and that at that factor transitions are sub-pixel, so nothing could pop and the control could not
+fire — visibility and validity pulling against each other through one parameter.
+
+That is not what was happening. The zero pop counts were a property of the *instrument*, not of
+the scene. A local-outlier test needs a transition to be an isolated event, and on a descent with
+hundreds of patches on screen they are not: patches cross their boundaries continuously, so an
+abrupt scheme raises the whole baseline instead of spiking and there is nothing to flag. The
+decisive measurement was re-running at a 20° field of view, which magnifies screen-space error
+threefold: every other statistic separated further — the sweep's concentration went from 4.4× to
+12×, its mean from 3.2× to 11.8× — and **both configurations still recorded exactly zero pops**.
+An instrument that is merely insensitive responds when the signal is tripled. This one did not,
+because the quantity it measures is not present on a descent.
+
+The verdict therefore moved to the isolated-transition sweep, which was built for exactly this and
+had been unusable for an unrelated reason: it located its band by the largest patch-count change
+and kept landing on horizon patches that are tiny on screen. **Frustum culling fixed that as a
+side effect** — off-screen patches are no longer drawn, so they can no longer attract the scan,
+and the band it selects is now a transition that is genuinely in view. The two pieces of work were
+not planned together; the second happened to unblock the first.
+
+**What is certified is narrower than the threshold's plain reading, and the gate prints the
+qualification itself.** The control is below the perceptual limit too, so this scene does not pop
+visibly with or without morphing. The pass therefore means the production path sits 20× under the
+limit and the metric responds 4.4× to switching the morph off — a margin and a response, not a
+rescue. Ratifying whether that satisfies P1b's LOD clause is a user decision, not this
+document's.
 
 Two earlier candidates were ruled out by measurement and should not be retried: the horizon cull
 (genuinely broken, dimensionally wrong, now fixed — but the pops were unchanged), and morphed
@@ -309,9 +332,14 @@ terrain finding with them.
 
 ### Outstanding for B1
 
-- Re-enabling `render.lod-gate`, which still needs a control that can fire. The two pops it used
-  to fail on are diagnosed and fixed; the blocker is now that at a valid quality setting neither
-  configuration pops at all.
+- **Ratifying what the LOD gate now certifies.** It is enabled and passing, but the control sits
+  below the perceptual limit, so the pass is a margin and a response rather than a demonstration
+  that morphing rescues a visibly broken picture. Whether that satisfies P1b's LOD clause is a
+  user decision. Making it a stronger claim needs a scene where the abrupt scheme pops visibly at
+  a quality setting where the morph is well-conditioned, and no such scene has been found.
+- **The 30-minute memory criterion, still never run.** The gate reports device allocation as flat
+  over 600 steps and states in its own output that this is structural and not the stated
+  criterion. Enabling the gate did not change that, and must not be read as having closed it.
 - The LOD gate's transition scan has no coverage for its no-transition branch. It needs a scan
   that finds nothing, and it lives inside a harness that is itself `DISABLED`, so a test would not
   run even if written. The two renderer defects from the same round are covered by

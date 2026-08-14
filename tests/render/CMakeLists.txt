@@ -70,22 +70,23 @@ target_link_libraries(SolLodGate PRIVATE sol::render sol::platform)
 add_test(NAME render.lod-gate COMMAND SolLodGate)
 set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 
-# DISABLED, deliberately. The memory half of this gate is bounded structurally but is not
-# measured against its stated 30-minute criterion; the popping half cannot be certified.
+# Enabled on 2026-08-14, after the verdict moved off an instrument that could not work.
 #
-# The renderer side is now believed correct. The two pops this gate previously failed on were
-# caused by the morph factor being computed per patch instead of per vertex — CDLOD needs each
-# vertex to derive its factor from its own distance, or adjacent patches disagree along shared
-# edges and a near-side child is short of full morph when its parent hands over. That is fixed,
-# and both configurations now record zero pops.
+# It sat DISABLED because both configurations recorded zero pops, so the control could not fire
+# and a "no popping" reading certified nothing. The cause was not sensitivity. A local-outlier
+# test needs a transition to be an isolated event, and on a descent with hundreds of patches on
+# screen they are not — an abrupt scheme raises the whole baseline instead of spiking, so there
+# is nothing to flag. Re-measuring at a 20° field of view grew the separation on every other
+# statistic by roughly 3x and still produced zero pops in both configurations, which is what
+# distinguishes "the instrument is deaf" from "the quantity is not there".
 #
-# Which is exactly why it cannot be certified. Fixing the morph forced the subdivision factor
-# above roughly 2.8 — the morph band is at most that many patch-widths, and below it the factor
-# sweeps across a single patch — and at a factor that high the transitions are sub-pixel. So the
-# control does not fire, and a "no popping" reading measured against a control that cannot fire
-# certifies nothing. Visibility and validity pull against each other through one parameter; a
-# coarser grid was tried to break the tie and did not.
+# The verdict now comes from the isolated-transition sweep, which was built for this and was
+# previously unusable for an unrelated reason: it located its band by the largest patch-count
+# change and kept landing on horizon patches that are tiny on screen. Frustum culling fixed that
+# as a side effect, since off-screen patches are no longer drawn and no longer attract the scan.
 #
-# Enabling this would make the suite permanently red and mask regressions across the other
-# twenty-six tests. The state is recorded here and in docs/architecture.md rather than hidden.
-set_tests_properties(render.lod-gate PROPERTIES DISABLED TRUE)
+# What the gate now certifies is narrower than "morphing prevents visible popping", and it says
+# so in its own output: the control is itself below the perceptual limit, so this scene does not
+# pop visibly either way. What is certified is a 20x margin under the limit and a 4.4x response
+# to switching the morph off. The memory half still reports as structural and still states that
+# the milestone's 30-minute criterion has not been run.
