@@ -5,6 +5,7 @@ add_library(sol_sim STATIC
     src/flight.cpp
     src/power.cpp
     src/steering.cpp
+    src/universe.cpp
     src/weapons.cpp
 )
 add_library(sol::sim ALIAS sol_sim)

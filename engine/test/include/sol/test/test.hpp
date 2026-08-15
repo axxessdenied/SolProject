@@ -37,3 +37,13 @@ struct Registrar
             sol::test::reportFailure(#__VA_ARGS__, __FILE__, __LINE__);                                      \
         }                                                                                                    \
     } while (0)
+
+// As SOL_CHECK, but bails out of the test on failure — for guards whose
+// failure would make the following checks unsafe (e.g. out-of-range indexing).
+#define SOL_REQUIRE(...)                                                                                     \
+    do {                                                                                                     \
+        if (!(__VA_ARGS__)) {                                                                                \
+            sol::test::reportFailure(#__VA_ARGS__, __FILE__, __LINE__);                                      \
+            return;                                                                                          \
+        }                                                                                                    \
+    } while (0)
