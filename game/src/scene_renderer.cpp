@@ -20,7 +20,16 @@ namespace {
         }                                                                                                    \
     } while (0)
 
-constexpr VkClearColorValue kSpaceClearColor = {{0.004f, 0.006f, 0.015f, 1.0f}};
+constexpr VkClearColorValue kSpaceClearColor = {{0.0f, 0.0f, 0.0f, 1.0f}};
+constexpr VkFormat kHdrFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+constexpr float kVerticalFov = core::radians(70.0f);
+constexpr std::uint64_t kStarfieldSeed = 1337;
+
+// Provisional lighting/tuning until materials are data-driven.
+constexpr float kSunIntensity = 3.2f;
+constexpr float kAmbient = 0.012f;
+constexpr float kSkyIntensity = 1.0f;
 
 } // namespace
 
@@ -30,10 +39,16 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
     m_context = &context;
     m_swapchain = &swapchain;
 
-    if (!m_meshRenderer.initialize(context, swapchain.imageFormat(), VK_FORMAT_D32_SFLOAT,
-                                   shaderDirectory)) {
+    if (!m_meshRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
+        !m_skyRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
+                                  kStarfieldSeed) ||
+        !m_impostorRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
+        !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat,
+                                      shaderDirectory)) {
         return false;
     }
+    m_hdrColor = rhi::createColorTarget(context, swapchain.extent(), kHdrFormat);
+    m_tonemapRenderer.setSource(m_hdrColor.view);
 
     // Assets
     assets::MeshData cubeData;
@@ -100,6 +115,9 @@ bool SceneRenderer::onSwapchainRecreated()
     destroyPerImageSemaphores();
     rhi::destroyImage(*m_context, m_depth);
     m_depth = rhi::createDepthImage(*m_context, m_swapchain->extent());
+    rhi::destroyImage(*m_context, m_hdrColor);
+    m_hdrColor = rhi::createColorTarget(*m_context, m_swapchain->extent(), kHdrFormat);
+    m_tonemapRenderer.setSource(m_hdrColor.view);
     return createPerImageSemaphores();
 }
 
@@ -119,32 +137,40 @@ void SceneRenderer::shutdown()
     }
 
     rhi::destroyImage(*m_context, m_depth);
+    rhi::destroyImage(*m_context, m_hdrColor);
     m_meshRenderer.destroyTexture(m_checkerTexture);
     m_meshRenderer.destroyMesh(m_cubeMesh);
     m_meshRenderer.shutdown();
+    m_skyRenderer.shutdown();
+    m_impostorRenderer.shutdown();
+    m_tonemapRenderer.shutdown();
     m_context = nullptr;
     m_swapchain = nullptr;
 }
 
 void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
                                    const CameraFrame& camera,
-                                   std::span<const RenderInstance> instances)
+                                   std::span<const RenderInstance> instances,
+                                   const SceneInfo& scene)
 {
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     GAME_VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
-    renderer::beginScenePass(commandBuffer, *m_swapchain, imageIndex, m_depth, kSpaceClearColor);
-
     const VkExtent2D extent = m_swapchain->extent();
-    m_meshRenderer.bind(commandBuffer, extent);
-
     const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
-    const core::Mat4 projection =
-        core::perspectiveInfiniteReversedZ(core::radians(70.0f), aspect, 0.05f);
+    const core::Mat4 projection = core::perspectiveInfiniteReversedZ(kVerticalFov, aspect, 0.05f);
     const core::Mat4 viewProjection = projection * camera.viewRotation();
 
+    // The sun is far enough away to treat as a directional light.
+    const core::Vec3 sunDirection = toVec3(normalize(scene.sun.position - camera.position));
+
+    // --- HDR scene pass ---
+    renderer::beginHdrScenePass(commandBuffer, m_hdrColor, m_depth, kSpaceClearColor);
+
+    m_meshRenderer.setSunlight(sunDirection, kSunIntensity, kAmbient);
+    m_meshRenderer.bind(commandBuffer, extent);
     m_drawCallCount = 0;
     for (const RenderInstance& instance : instances) {
         // Camera-relative: demote sim-space positions to float only after
@@ -156,16 +182,41 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         ++m_drawCallCount;
     }
 
+    renderer::ImpostorRenderer::Body planet = {};
+    planet.centerRelative = (scene.planet.position - camera.position).toVec3();
+    planet.radius = static_cast<float>(scene.planet.radius);
+    planet.colorA = {0.06f, 0.11f, 0.18f}; // oceans
+    planet.colorB = {0.30f, 0.26f, 0.18f}; // continents
+    planet.sunDirection = sunDirection;
+    m_impostorRenderer.drawPlanet(commandBuffer, viewProjection, planet);
+
+    // Sky after opaques (passes only at the far clear), star glow over the sky.
+    m_skyRenderer.draw(commandBuffer, extent, camera.orientation, kVerticalFov, aspect,
+                       kSkyIntensity);
+
+    renderer::ImpostorRenderer::Body star = {};
+    star.centerRelative = (scene.sun.position - camera.position).toVec3();
+    star.radius = static_cast<float>(scene.sun.radius);
+    star.colorA = {14.0f, 12.5f, 10.5f}; // disc, HDR
+    star.colorB = {5.0f, 3.6f, 2.2f};    // glow, HDR
+    m_impostorRenderer.drawStar(commandBuffer, viewProjection, star);
+
+    renderer::endHdrScenePass(commandBuffer, m_hdrColor);
+
+    // --- Present pass: tonemap + dev UI ---
+    renderer::beginPresentPass(commandBuffer, *m_swapchain, imageIndex, m_depth);
+    m_tonemapRenderer.draw(commandBuffer, extent, scene.exposure);
     if (m_devUi != nullptr) {
         m_devUi->render(commandBuffer);
     }
+    renderer::endPresentPass(commandBuffer, *m_swapchain, imageIndex);
 
-    renderer::endScenePass(commandBuffer, *m_swapchain, imageIndex);
     GAME_VK_CHECK(vkEndCommandBuffer(commandBuffer));
 }
 
 SceneRenderer::DrawResult SceneRenderer::drawFrame(const CameraFrame& camera,
-                                                   std::span<const RenderInstance> instances)
+                                                   std::span<const RenderInstance> instances,
+                                                   const SceneInfo& scene)
 {
     const VkDevice device = m_context->device();
     FrameResources& frame = m_frames[m_frameIndex];
@@ -184,7 +235,7 @@ SceneRenderer::DrawResult SceneRenderer::drawFrame(const CameraFrame& camera,
 
     GAME_VK_CHECK(vkResetFences(device, 1, &frame.inFlight));
     GAME_VK_CHECK(vkResetCommandPool(device, frame.commandPool, 0));
-    recordCommands(frame.commandBuffer, imageIndex, camera, instances);
+    recordCommands(frame.commandBuffer, imageIndex, camera, instances, scene);
 
     VkSemaphoreSubmitInfo waitSemaphoreInfo = {};
     waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;

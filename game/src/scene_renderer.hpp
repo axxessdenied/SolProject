@@ -1,7 +1,10 @@
 #pragma once
 
 #include "sol/core/math/math.hpp"
+#include "sol/renderer/impostor_renderer.hpp"
 #include "sol/renderer/mesh_renderer.hpp"
+#include "sol/renderer/sky_renderer.hpp"
+#include "sol/renderer/tonemap_renderer.hpp"
 #include "sol/rhi/context.hpp"
 #include "sol/rhi/resources.hpp"
 #include "sol/rhi/swapchain.hpp"
@@ -35,8 +38,24 @@ struct RenderInstance
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
 };
 
-// Textured-cube scene renderer: draws whatever instances the caller passes,
-// depth-tested, camera-relative.
+// Sim-space celestial body handed to the impostor pass each frame.
+struct CelestialDraw
+{
+    sol::core::DVec3 position;
+    double radius = 0.0;
+};
+
+// Everything scene-wide the renderer needs for one frame.
+struct SceneInfo
+{
+    CelestialDraw sun;
+    CelestialDraw planet;
+    float exposure = 1.0f;
+};
+
+// Space-scene renderer: HDR pass (sun-lit meshes, planet/star impostors,
+// starfield sky) resolved to the swapchain via exposure + tonemap, dev UI on
+// top. All positions camera-relative (large-world rule).
 class SceneRenderer
 {
 public:
@@ -52,13 +71,18 @@ public:
     void shutdown();
 
     [[nodiscard]] DrawResult drawFrame(const CameraFrame& camera,
-                                       std::span<const RenderInstance> instances);
+                                       std::span<const RenderInstance> instances,
+                                       const SceneInfo& scene);
 
     // Call after the swapchain has been recreated (device must be idle).
     [[nodiscard]] bool onSwapchainRecreated();
 
-    // Recreates the mesh pipeline from SPIR-V on disk (device must be idle).
-    [[nodiscard]] bool reloadShaders() { return m_meshRenderer.reloadPipeline(); }
+    // Recreates every pipeline from SPIR-V on disk (device must be idle).
+    [[nodiscard]] bool reloadShaders()
+    {
+        return m_meshRenderer.reloadPipeline() && m_skyRenderer.reloadPipeline() &&
+               m_impostorRenderer.reloadPipeline() && m_tonemapRenderer.reloadPipeline();
+    }
 
     [[nodiscard]] std::uint32_t drawCallCount() const { return m_drawCallCount; }
 
@@ -79,15 +103,20 @@ private:
     [[nodiscard]] bool createPerImageSemaphores();
     void destroyPerImageSemaphores();
     void recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
-                        const CameraFrame& camera, std::span<const RenderInstance> instances);
+                        const CameraFrame& camera, std::span<const RenderInstance> instances,
+                        const SceneInfo& scene);
 
     sol::rhi::Context* m_context = nullptr;
     sol::rhi::Swapchain* m_swapchain = nullptr;
 
     sol::renderer::MeshRenderer m_meshRenderer;
+    sol::renderer::SkyRenderer m_skyRenderer;
+    sol::renderer::ImpostorRenderer m_impostorRenderer;
+    sol::renderer::TonemapRenderer m_tonemapRenderer;
     sol::renderer::GpuMesh m_cubeMesh;
     sol::renderer::GpuTexture m_checkerTexture;
     sol::rhi::Image m_depth;
+    sol::rhi::Image m_hdrColor;
 
     sol::ui::DevUi* m_devUi = nullptr;
     FrameResources m_frames[kFramesInFlight];

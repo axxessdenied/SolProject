@@ -16,11 +16,19 @@ struct VertexAttribute
     std::uint32_t offset = 0;
 };
 
+enum class BlendMode
+{
+    Opaque,
+    Alpha,    // premultiplied-style: src.rgb + dst.rgb * (1 - src.a)
+    Additive, // src.rgb + dst.rgb
+};
+
 struct GraphicsPipelineDesc
 {
     VkShaderModule vertexShader = VK_NULL_HANDLE;
     VkShaderModule fragmentShader = VK_NULL_HANDLE;
     VkFormat colorFormat = VK_FORMAT_UNDEFINED;
+    BlendMode blendMode = BlendMode::Opaque;
 
     // Zero attributeCount = no vertex input (fullscreen/procedural vertices).
     std::uint32_t vertexStride = 0;

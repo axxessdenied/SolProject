@@ -12,6 +12,12 @@ set(SOL_SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/bin/shaders)
 set(SOL_SHADER_SOURCES
     mesh.vert
     mesh.frag
+    fullscreen.vert
+    tonemap.frag
+    sky.vert
+    sky.frag
+    impostor.vert
+    impostor.frag
 )
 
 set(SOL_SHADER_OUTPUTS "")

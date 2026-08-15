@@ -41,6 +41,10 @@ void destroyBuffer(Context& context, Buffer& buffer);
 // recorded per frame by the caller.
 [[nodiscard]] Image createDepthImage(Context& context, VkExtent2D extent);
 
+// Renderable + sampleable color target (e.g. the HDR scene buffer); layout
+// transitions are recorded per frame by the caller.
+[[nodiscard]] Image createColorTarget(Context& context, VkExtent2D extent, VkFormat format);
+
 struct TextureUploadDesc
 {
     std::uint32_t width = 0;
@@ -55,10 +59,19 @@ struct TextureUploadDesc
 // SHADER_READ_ONLY_OPTIMAL.
 [[nodiscard]] Image createSampledTexture(Context& context, const TextureUploadDesc& desc);
 
+// Creates a cubemap from six equally-sized face payloads (+X,-X,+Y,-Y,+Z,-Z),
+// uploads via staging, and leaves it in SHADER_READ_ONLY_OPTIMAL. One mip.
+[[nodiscard]] Image createSampledCubemap(Context& context, std::uint32_t faceSize, VkFormat format,
+                                         const std::uint8_t* const faceData[6],
+                                         std::uint32_t faceByteSize);
+
 void destroyImage(Context& context, Image& image);
 
 // Trilinear repeat sampler covering the given mip count.
 [[nodiscard]] VkSampler createSampler(Context& context, std::uint32_t mipLevels);
+
+// Linear clamp-to-edge sampler, single mip (fullscreen sources, cubemaps).
+[[nodiscard]] VkSampler createClampSampler(Context& context);
 
 // One-shot command helpers: begin, record, then end (submits and waits).
 [[nodiscard]] VkCommandBuffer beginOneShotCommands(Context& context);

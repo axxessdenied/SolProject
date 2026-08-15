@@ -122,7 +122,10 @@ bool hasRequiredFeatures(VkPhysicalDevice physicalDevice)
     features2.pNext = &features13;
 
     vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
-    return features13.dynamicRendering == VK_TRUE && features13.synchronization2 == VK_TRUE;
+    // shaderDemoteToHelperInvocation: glslc targeting vulkan1.3 compiles
+    // fragment `discard` to OpDemoteToHelperInvocation.
+    return features13.dynamicRendering == VK_TRUE && features13.synchronization2 == VK_TRUE &&
+           features13.shaderDemoteToHelperInvocation == VK_TRUE;
 }
 
 } // namespace
@@ -254,6 +257,7 @@ bool Context::initialize(const ContextDesc& desc, const platform::NativeWindowHa
     enabledFeatures13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     enabledFeatures13.dynamicRendering = VK_TRUE;
     enabledFeatures13.synchronization2 = VK_TRUE;
+    enabledFeatures13.shaderDemoteToHelperInvocation = VK_TRUE;
 
     VkPhysicalDeviceFeatures2 enabledFeatures2 = {};
     enabledFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;

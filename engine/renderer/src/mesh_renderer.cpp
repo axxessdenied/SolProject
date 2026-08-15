@@ -12,10 +12,16 @@ namespace sol::renderer {
 
 namespace {
 
+// The model's upper 3x3 (normal transform) rides as three vec4 columns whose
+// .w lanes carry the lighting scalars, keeping the whole block within the
+// guaranteed 128-byte push constant minimum.
 struct PushConstants
 {
     core::Mat4 mvp;
-    core::Mat4 model;
+    core::Vec4 modelColumn0; // .w = ambient
+    core::Vec4 modelColumn1; // .w = emissive
+    core::Vec4 modelColumn2; // .w = sun intensity
+    core::Vec4 sunDirection; // .xyz = surface-to-sun, world space
 };
 static_assert(sizeof(PushConstants) == 128, "must fit the guaranteed push constant minimum");
 
@@ -183,9 +189,17 @@ void MeshRenderer::bind(VkCommandBuffer commandBuffer, VkExtent2D extent) const
 }
 
 void MeshRenderer::draw(VkCommandBuffer commandBuffer, const GpuMesh& mesh, const GpuTexture& texture,
-                        const core::Mat4& mvp, const core::Mat4& model) const
+                        const core::Mat4& mvp, const core::Mat4& model, float emissive) const
 {
-    PushConstants push = {mvp, model};
+    PushConstants push = {};
+    push.mvp = mvp;
+    push.modelColumn0 = model.column(0);
+    push.modelColumn0.w = m_ambient;
+    push.modelColumn1 = model.column(1);
+    push.modelColumn1.w = emissive;
+    push.modelColumn2 = model.column(2);
+    push.modelColumn2.w = m_sunIntensity;
+    push.sunDirection = {m_sunDirection.x, m_sunDirection.y, m_sunDirection.z, 0.0f};
     vkCmdPushConstants(commandBuffer, m_pipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                        &push);

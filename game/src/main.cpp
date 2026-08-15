@@ -268,16 +268,9 @@ int main(int argc, char** argv)
         const bool includeShip = cameraMode != game::CameraMode::FirstPerson;
         world.buildRenderInstances(simAlpha, includeShip, renderInstances);
 
-        // Placeholder celestial rendering until the impostor pass lands:
-        // planet and sun as giant cubes (positions still fully camera-relative).
-        renderInstances.push_back(game::RenderInstance{
-            .position = world.planet().position,
-            .scale = sol::core::Vec3{1.0f, 1.0f, 1.0f} * static_cast<float>(world.planet().radius),
-        });
-        renderInstances.push_back(game::RenderInstance{
-            .position = world.sun().position,
-            .scale = sol::core::Vec3{1.0f, 1.0f, 1.0f} * static_cast<float>(world.sun().radius),
-        });
+        game::SceneInfo sceneInfo;
+        sceneInfo.sun = {world.sun().position, world.sun().radius};
+        sceneInfo.planet = {world.planet().position, world.planet().radius};
 
         // World save/load round trip: F9 saves, F10 loads (edge-triggered).
         const bool f9Down = window.isKeyDown(sol::platform::Key::F9);
@@ -327,7 +320,7 @@ int main(int argc, char** argv)
             devUi.discardFrame();
         }
         if (!needRecreate) {
-            switch (renderer.drawFrame(camera, renderInstances)) {
+            switch (renderer.drawFrame(camera, renderInstances, sceneInfo)) {
             case game::SceneRenderer::DrawResult::Success:
                 ++frameCount;
                 break;
