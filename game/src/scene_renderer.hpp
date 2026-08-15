@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sol/core/math/math.hpp"
+#include "sol/renderer/debug_draw_renderer.hpp"
 #include "sol/renderer/impostor_renderer.hpp"
 #include "sol/renderer/mesh_renderer.hpp"
 #include "sol/renderer/sky_renderer.hpp"
@@ -15,6 +16,9 @@
 #include <vector>
 
 namespace game {
+
+// One vertical FOV for the scene, the sky ray setup, and HUD projection.
+inline constexpr float kCameraVerticalFov = sol::core::radians(70.0f);
 
 // A camera pose in sim space; rendering is camera-relative, so only the
 // rotation part ever becomes a matrix (large-world rule).
@@ -90,13 +94,18 @@ public:
     [[nodiscard]] bool reloadShaders()
     {
         return m_meshRenderer.reloadPipeline() && m_skyRenderer.reloadPipeline() &&
-               m_impostorRenderer.reloadPipeline() && m_tonemapRenderer.reloadPipeline();
+               m_impostorRenderer.reloadPipeline() && m_tonemapRenderer.reloadPipeline() &&
+               m_debugDraw.reloadPipeline();
     }
 
     [[nodiscard]] std::uint32_t drawCallCount() const { return m_drawCallCount; }
 
     // Optional dev overlay, rendered inside the scene pass.
     void setDevUi(sol::ui::DevUi* devUi) { m_devUi = devUi; }
+
+    // Add camera-relative debug lines each frame before drawFrame; the list
+    // is drawn inside the HDR pass and cleared afterwards.
+    [[nodiscard]] sol::renderer::DebugDrawRenderer& debugDraw() { return m_debugDraw; }
 
 private:
     static constexpr std::uint32_t kFramesInFlight = 2;
@@ -122,6 +131,7 @@ private:
     sol::renderer::SkyRenderer m_skyRenderer;
     sol::renderer::ImpostorRenderer m_impostorRenderer;
     sol::renderer::TonemapRenderer m_tonemapRenderer;
+    sol::renderer::DebugDrawRenderer m_debugDraw;
     sol::renderer::GpuMesh m_cubeMesh;
     sol::renderer::GpuMesh m_stationMesh;
     sol::renderer::GpuMesh m_shipMesh;

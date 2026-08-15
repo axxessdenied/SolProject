@@ -22,6 +22,23 @@ struct OverlayStats
     float simAlpha = 0.0f;
 };
 
+// Provisional flight HUD (engine plan 2.9: ImGui until the real game UI
+// exists; Phase 4 teaches us what the HUD needs).
+struct FlightHud
+{
+    bool active = false;
+    float speedMetersPerSecond = 0.0f;
+    bool assist = true;
+    bool boost = false;
+    bool cruise = false;
+    const char* cameraMode = "";
+    const char* targetName = "";
+    double targetDistanceMeters = 0.0;
+    float closingSpeedMetersPerSecond = 0.0f;
+    core::Vec3 targetDirectionCamera; // unit, camera space (-Z forward)
+    float tanHalfFovY = 1.0f;
+};
+
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).
 class DevUi
 {
@@ -31,8 +48,9 @@ public:
                                   std::uint32_t swapchainImageCount);
     void shutdown();
 
-    // Once per frame, before recording; builds the overlay + console windows.
-    void beginFrame(const OverlayStats& stats);
+    // Once per frame, before recording; builds the overlay + console windows
+    // and, when hud.active, the flight HUD.
+    void beginFrame(const OverlayStats& stats, const FlightHud& hud = {});
 
     // Records draw data; must be called inside the scene's dynamic rendering pass.
     void render(VkCommandBuffer commandBuffer);
@@ -42,6 +60,7 @@ public:
 
 private:
     void buildWindows(const OverlayStats& stats);
+    void buildFlightHud(const FlightHud& hud);
 
     bool m_initialized = false;
     bool m_frameOpen = false;

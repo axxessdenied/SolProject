@@ -29,6 +29,7 @@ struct GraphicsPipelineDesc
     VkShaderModule fragmentShader = VK_NULL_HANDLE;
     VkFormat colorFormat = VK_FORMAT_UNDEFINED;
     BlendMode blendMode = BlendMode::Opaque;
+    VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
     // Zero attributeCount = no vertex input (fullscreen/procedural vertices).
     std::uint32_t vertexStride = 0;

@@ -18,6 +18,8 @@ set(SOL_SHADER_SOURCES
     sky.frag
     impostor.vert
     impostor.frag
+    debug_line.vert
+    debug_line.frag
 )
 
 set(SOL_SHADER_OUTPUTS "")

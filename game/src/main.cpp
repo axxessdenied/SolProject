@@ -182,11 +182,13 @@ int main(int argc, char** argv)
                  length(world.planet().position - world.currentTarget().position) / 1000.0);
 
     float smoothedFps = 0.0f;
+    bool previousF3 = false;
     bool previousF5 = false;
     bool previousF9 = false;
     bool previousF10 = false;
     bool previousV = false;
     bool previousT = false;
+    bool showDebugDraw = false;
 
     SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse steer, WASD/QE/Space/Ctrl thrust, "
                  "Shift boost, Tab cruise, X assist, V camera, T target, ESC quits.",
@@ -272,6 +274,35 @@ int main(int argc, char** argv)
         sceneInfo.sun = {world.sun().position, world.sun().radius};
         sceneInfo.planet = {world.planet().position, world.planet().radius};
 
+        // Debug draw (F3): ship axes, velocity arrow, target ray.
+        const bool f3Down = window.isKeyDown(sol::platform::Key::F3);
+        if (f3Down && !previousF3) {
+            showDebugDraw = !showDebugDraw;
+        }
+        previousF3 = f3Down;
+
+        const sol::sim::ShipState shipState = world.shipState();
+        const game::NavTarget& target = world.currentTarget();
+        const sol::core::DVec3 toTargetWorld = target.position - shipState.position;
+        const double targetDistance =
+            sol::core::clamp(length(toTargetWorld) - target.surfaceRadius, 0.0, 1.0e18);
+        const sol::core::DVec3 targetDirection = normalize(toTargetWorld);
+
+        if (showDebugDraw) {
+            sol::renderer::DebugDrawRenderer& debugDraw = renderer.debugDraw();
+            const sol::core::Vec3 shipRelative =
+                (shipTransform.position - camera.position).toVec3();
+            debugDraw.axes(shipRelative, shipTransform.orientation, 12.0f);
+            const double speed = length(shipState.velocity);
+            if (speed > 0.5) {
+                const sol::core::Vec3 velocityDirection = toVec3(normalize(shipState.velocity));
+                debugDraw.arrow(shipRelative, shipRelative + velocityDirection * 25.0f,
+                                {0.3f, 1.0f, 0.4f, 1.0f});
+            }
+            debugDraw.line(shipRelative, shipRelative + toVec3(targetDirection) * 60.0f,
+                           {1.0f, 0.8f, 0.3f, 1.0f});
+        }
+
         // World save/load round trip: F9 saves, F10 loads (edge-triggered).
         const bool f9Down = window.isKeyDown(sol::platform::Key::F9);
         if (f9Down && !previousF9) {
@@ -308,12 +339,31 @@ int main(int argc, char** argv)
         stats.fps = smoothedFps;
         stats.frameMilliseconds = deltaSeconds * 1000.0f;
         stats.cameraPosition = camera.position;
-        stats.cameraSpeed = static_cast<float>(length(world.shipState().velocity));
+        stats.cameraSpeed = static_cast<float>(length(shipState.velocity));
         stats.drawCalls = renderer.drawCallCount();
         stats.simTicks = simLoop.tickCount();
         stats.simEntities = world.entityCount();
         stats.simAlpha = simAlpha;
-        devUi.beginFrame(stats);
+
+        sol::ui::FlightHud hud;
+        hud.active = true;
+        hud.speedMetersPerSecond = stats.cameraSpeed;
+        hud.assist = world.shipInput().assist;
+        hud.boost = world.shipInput().boost;
+        hud.cruise = world.shipInput().cruise;
+        switch (cameraMode) {
+        case game::CameraMode::FirstPerson: hud.cameraMode = "COCKPIT"; break;
+        case game::CameraMode::ThirdPerson: hud.cameraMode = "CHASE"; break;
+        case game::CameraMode::Free: hud.cameraMode = "FREECAM"; break;
+        }
+        hud.targetName = target.name;
+        hud.targetDistanceMeters = targetDistance;
+        hud.closingSpeedMetersPerSecond =
+            static_cast<float>(dot(shipState.velocity, targetDirection));
+        hud.targetDirectionCamera =
+            rotate(conjugate(camera.orientation), toVec3(targetDirection));
+        hud.tanHalfFovY = std::tan(game::kCameraVerticalFov * 0.5f);
+        devUi.beginFrame(stats, hud);
 
         bool needRecreate = window.consumeResize();
         if (needRecreate) {

@@ -23,7 +23,6 @@ namespace {
 constexpr VkClearColorValue kSpaceClearColor = {{0.0f, 0.0f, 0.0f, 1.0f}};
 constexpr VkFormat kHdrFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
-constexpr float kVerticalFov = core::radians(70.0f);
 constexpr std::uint64_t kStarfieldSeed = 1337;
 
 // Provisional lighting/tuning until materials are data-driven.
@@ -44,7 +43,9 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
                                   kStarfieldSeed) ||
         !m_impostorRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
         !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat,
-                                      shaderDirectory)) {
+                                      shaderDirectory) ||
+        !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
+                                kFramesInFlight)) {
         return false;
     }
     m_hdrColor = rhi::createColorTarget(context, swapchain.extent(), kHdrFormat);
@@ -156,6 +157,7 @@ void SceneRenderer::shutdown()
     m_skyRenderer.shutdown();
     m_impostorRenderer.shutdown();
     m_tonemapRenderer.shutdown();
+    m_debugDraw.shutdown();
     m_context = nullptr;
     m_swapchain = nullptr;
 }
@@ -172,7 +174,8 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
 
     const VkExtent2D extent = m_swapchain->extent();
     const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
-    const core::Mat4 projection = core::perspectiveInfiniteReversedZ(kVerticalFov, aspect, 0.05f);
+    const core::Mat4 projection =
+        core::perspectiveInfiniteReversedZ(kCameraVerticalFov, aspect, 0.05f);
     const core::Mat4 viewProjection = projection * camera.viewRotation();
 
     // The sun is far enough away to treat as a directional light.
@@ -217,7 +220,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     m_impostorRenderer.drawPlanet(commandBuffer, viewProjection, planet);
 
     // Sky after opaques (passes only at the far clear), star glow over the sky.
-    m_skyRenderer.draw(commandBuffer, extent, camera.orientation, kVerticalFov, aspect,
+    m_skyRenderer.draw(commandBuffer, extent, camera.orientation, kCameraVerticalFov, aspect,
                        kSkyIntensity);
 
     renderer::ImpostorRenderer::Body star = {};
@@ -226,6 +229,9 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     star.colorA = {14.0f, 12.5f, 10.5f}; // disc, HDR
     star.colorB = {5.0f, 3.6f, 2.2f};    // glow, HDR
     m_impostorRenderer.drawStar(commandBuffer, viewProjection, star);
+
+    m_debugDraw.draw(commandBuffer, m_frameIndex, viewProjection);
+    m_debugDraw.clear();
 
     renderer::endHdrScenePass(commandBuffer, m_hdrColor);
 

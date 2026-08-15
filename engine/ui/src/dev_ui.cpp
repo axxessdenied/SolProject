@@ -8,6 +8,9 @@
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -137,7 +140,7 @@ void DevUi::shutdown()
     m_initialized = false;
 }
 
-void DevUi::beginFrame(const OverlayStats& stats)
+void DevUi::beginFrame(const OverlayStats& stats, const FlightHud& hud)
 {
     ImGui_ImplVulkan_NewFrame();
     devUiPlatformNewFrame();
@@ -145,6 +148,9 @@ void DevUi::beginFrame(const OverlayStats& stats)
     m_frameOpen = true;
 
     buildWindows(stats);
+    if (hud.active) {
+        buildFlightHud(hud);
+    }
 }
 
 void DevUi::buildWindows(const OverlayStats& stats)
@@ -193,6 +199,124 @@ void DevUi::buildWindows(const OverlayStats& stats)
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
         m_showConsole = !m_showConsole;
     }
+}
+
+namespace {
+
+void formatDistance(double meters, char* buffer, std::size_t size)
+{
+    if (meters < 10'000.0) {
+        std::snprintf(buffer, size, "%.0f m", meters);
+    } else if (meters < 1.0e9) {
+        std::snprintf(buffer, size, "%.1f km", meters / 1000.0);
+    } else {
+        std::snprintf(buffer, size, "%.2f Mkm", meters / 1.0e9);
+    }
+}
+
+void formatSpeed(float metersPerSecond, char* buffer, std::size_t size)
+{
+    if (metersPerSecond < 10'000.0f) {
+        std::snprintf(buffer, size, "%.1f m/s", metersPerSecond);
+    } else {
+        std::snprintf(buffer, size, "%.0f km/s", metersPerSecond / 1000.0f);
+    }
+}
+
+void formatSpeedSigned(float metersPerSecond, char* buffer, std::size_t size)
+{
+    if (std::abs(metersPerSecond) < 10'000.0f) {
+        std::snprintf(buffer, size, "%+.1f m/s", metersPerSecond);
+    } else {
+        std::snprintf(buffer, size, "%+.0f km/s", metersPerSecond / 1000.0f);
+    }
+}
+
+} // namespace
+
+void DevUi::buildFlightHud(const FlightHud& hud)
+{
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const ImVec2 center = {display.x * 0.5f, display.y * 0.5f};
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+
+    // Boresight crosshair.
+    const ImU32 hudColor = IM_COL32(140, 220, 160, 200);
+    draw->AddCircle(center, 10.0f, hudColor, 0, 1.5f);
+    draw->AddLine({center.x - 18.0f, center.y}, {center.x - 10.0f, center.y}, hudColor, 1.5f);
+    draw->AddLine({center.x + 10.0f, center.y}, {center.x + 18.0f, center.y}, hudColor, 1.5f);
+    draw->AddLine({center.x, center.y - 18.0f}, {center.x, center.y - 10.0f}, hudColor, 1.5f);
+
+    // Target marker: project the camera-space direction; clamp to a screen
+    // ring when the target is outside the view (or behind).
+    {
+        const core::Vec3 d = hud.targetDirectionCamera;
+        const float focal = (display.y * 0.5f) / hud.tanHalfFovY;
+        const ImU32 targetColor = IM_COL32(255, 200, 80, 220);
+        bool onScreen = false;
+        ImVec2 marker = center;
+        if (d.z < -0.01f) {
+            marker = {center.x + (d.x / -d.z) * focal, center.y - (d.y / -d.z) * focal};
+            const float margin = 24.0f;
+            onScreen = marker.x > margin && marker.x < (display.x - margin) && marker.y > margin &&
+                       marker.y < (display.y - margin);
+        }
+        if (onScreen) {
+            draw->AddCircle(marker, 14.0f, targetColor, 4, 2.0f); // diamond
+            char distance[32];
+            formatDistance(hud.targetDistanceMeters, distance, sizeof(distance));
+            char closing[32];
+            formatSpeedSigned(hud.closingSpeedMetersPerSecond, closing, sizeof(closing));
+            char label[96];
+            std::snprintf(label, sizeof(label), "%s  %s  %s", hud.targetName, distance, closing);
+            draw->AddText({marker.x + 18.0f, marker.y - 6.0f}, targetColor, label);
+        } else {
+            // Edge arrow toward the target.
+            const float screenX = d.x;
+            const float screenY = -d.y; // screen y grows downward
+            const float len = std::sqrt((screenX * screenX) + (screenY * screenY));
+            const float nx = len > 0.0001f ? screenX / len : 0.0f;
+            const float ny = len > 0.0001f ? screenY / len : -1.0f;
+            const float ringRadius = std::min(display.x, display.y) * 0.38f;
+            const ImVec2 tip = {center.x + nx * ringRadius, center.y + ny * ringRadius};
+            const ImVec2 back = {center.x + nx * (ringRadius - 16.0f),
+                                 center.y + ny * (ringRadius - 16.0f)};
+            const ImVec2 side = {-ny * 7.0f, nx * 7.0f};
+            draw->AddTriangleFilled(tip, {back.x + side.x, back.y + side.y},
+                                    {back.x - side.x, back.y - side.y}, targetColor);
+        }
+    }
+
+    // Readout strip, bottom center.
+    ImGui::SetNextWindowPos({center.x, display.y - 16.0f}, ImGuiCond_Always, {0.5f, 1.0f});
+    ImGui::SetNextWindowBgAlpha(0.4f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("flight##hud", nullptr, flags)) {
+        char speed[32];
+        formatSpeed(hud.speedMetersPerSecond, speed, sizeof(speed));
+        ImGui::Text("SPD %s", speed);
+        ImGui::SameLine(0.0f, 24.0f);
+        ImGui::TextColored(hud.assist ? ImVec4{0.55f, 0.86f, 0.63f, 1.0f}
+                                      : ImVec4{1.0f, 0.55f, 0.4f, 1.0f},
+                           hud.assist ? "ASSIST" : "MANUAL");
+        if (hud.boost) {
+            ImGui::SameLine(0.0f, 24.0f);
+            ImGui::TextColored({1.0f, 0.8f, 0.3f, 1.0f}, "BOOST");
+        }
+        if (hud.cruise) {
+            ImGui::SameLine(0.0f, 24.0f);
+            ImGui::TextColored({0.5f, 0.75f, 1.0f, 1.0f}, "CRUISE");
+        }
+        ImGui::SameLine(0.0f, 24.0f);
+        char distance[32];
+        formatDistance(hud.targetDistanceMeters, distance, sizeof(distance));
+        ImGui::Text("TGT %s  %s", hud.targetName, distance);
+        ImGui::SameLine(0.0f, 24.0f);
+        ImGui::TextDisabled("%s", hud.cameraMode);
+    }
+    ImGui::End();
 }
 
 void DevUi::render(VkCommandBuffer commandBuffer)
