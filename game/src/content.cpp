@@ -168,6 +168,24 @@ bool jumpToSystem(GameContent& content, const std::string& destination)
     return content.world().jumpToSystem(destination.c_str());
 }
 
+// Autopilot to the selected target, arriving arrivalRangeMeters out
+// (<= 0 keeps the current setting; the F key reuses it too).
+bool autopilotEngage(GameContent& content, double arrivalRangeMeters)
+{
+    SpaceWorld& world = content.world();
+    if (arrivalRangeMeters > 0.0) {
+        world.setAutopilotArrivalRange(arrivalRangeMeters);
+    }
+    return world.engageAutopilot();
+}
+
+bool autopilotOff(GameContent& content)
+{
+    const bool wasActive = content.world().autopilotActive();
+    content.world().disengageAutopilot();
+    return wasActive;
+}
+
 // "idle/in-transit" agent counts: direct evidence the NPC layer is hauling.
 std::string traderStats(GameContent& content)
 {
@@ -303,6 +321,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listGates>("sol", "gates", this);
     m_vm.registerFunction<&jumpToSystem>("sol", "jump_to", this);
     m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
+    m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
+    m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
 }
 
 bool GameContent::reloadDefs()

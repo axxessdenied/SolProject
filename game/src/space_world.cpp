@@ -261,6 +261,7 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     despawnSystem();
     m_currentSystem = systemIndex;
     m_dockedStation = kNoIndex;
+    m_autopilotActive = false; // the target list is about to change under it
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
     instantiateSystemEntities(spec);
     rebuildSystemSideData(spec);
@@ -751,12 +752,78 @@ sim::ShipState SpaceWorld::shipState() const
     };
 }
 
+bool SpaceWorld::engageAutopilot()
+{
+    if (isDocked() || (m_targets.empty() && m_spawnedShips.empty())) {
+        return false;
+    }
+    m_autopilotActive = true;
+    SOL_LOG_INFO("Autopilot: flying to '%s' (arrive %.1f km out)",
+                 currentTargetInfo().nav.name.c_str(), m_autopilotRange / 1000.0);
+    return true;
+}
+
+void SpaceWorld::setAutopilotArrivalRange(double meters)
+{
+    m_autopilotRange = core::clamp(meters, 100.0, 1.0e7);
+}
+
+sim::FlightInput SpaceWorld::autopilotInput()
+{
+    // Any manual steering/thrust interrupts (the mapper's assist/cruise
+    // toggles alone don't); the threshold ignores mouse-stick noise.
+    const auto deflected = [](const core::Vec3& v) {
+        return std::fabs(v.x) > 0.25f || std::fabs(v.y) > 0.25f || std::fabs(v.z) > 0.25f;
+    };
+    if (deflected(m_shipInput.linear) || deflected(m_shipInput.angular) || m_shipInput.boost) {
+        m_autopilotActive = false;
+        SOL_LOG_INFO("Autopilot: cancelled by manual input");
+        return m_shipInput;
+    }
+
+    const TargetInfo target = currentTargetInfo();
+    if (target.nav.name.empty()) {
+        m_autopilotActive = false;
+        return m_shipInput;
+    }
+
+    // Stand off by the surface plus the arrival range; big bodies get at
+    // least half a radius of clearance so the goal sits outside their
+    // avoidance shell.
+    const double effectiveRange =
+        target.nav.surfaceRadius + std::max(m_autopilotRange, target.nav.surfaceRadius * 0.5);
+    const core::DVec3 targetVelocity = target.isShip ? target.velocity : core::DVec3{};
+    const sim::ShipState state = shipState();
+    const double remaining = length(target.nav.position - state.position) - effectiveRange;
+    if (remaining <= 0.0 && length(state.velocity - targetVelocity) < 25.0) {
+        m_autopilotActive = false;
+        SOL_LOG_INFO("Autopilot: arrived at '%s'", target.nav.name.c_str());
+        return m_shipInput;
+    }
+
+    // The destination's own sphere must not deflect the final approach.
+    m_autopilotObstacles.clear();
+    for (const sim::AvoidanceSphere& sphere : m_obstacles) {
+        if (length(sphere.position - target.nav.position) > sphere.radius + effectiveRange) {
+            m_autopilotObstacles.push_back(sphere);
+        }
+    }
+
+    sim::FlightInput input = sim::steerTravel(state, shipTuning(), target.nav.position,
+                                              targetVelocity, effectiveRange,
+                                              m_autopilotObstacles);
+    input.assist = true;
+    return input;
+}
+
 void SpaceWorld::tick(double dt)
 {
     const std::uint32_t playerIndex = playerEntityIndex();
     if (isDocked()) {
         // Parked: flight input is ignored and the ship stays pinned to the
         // pad (collision impulses must not drift a docked ship).
+        m_autopilotActive = false;
+        m_appliedInput = sim::FlightInput{};
         m_registry.storage<ShipControl>().get(playerIndex).input = sim::FlightInput{};
         Transform& transform = m_registry.storage<Transform>().get(playerIndex);
         const core::DVec3 pad = dockPoint(m_dockedStation);
@@ -764,7 +831,8 @@ void SpaceWorld::tick(double dt)
         transform.previousPosition = pad;
         m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     } else {
-        m_registry.storage<ShipControl>().get(playerIndex).input = m_shipInput;
+        m_appliedInput = m_autopilotActive ? autopilotInput() : m_shipInput;
+        m_registry.storage<ShipControl>().get(playerIndex).input = m_appliedInput;
     }
 
     // NPC pilots: C++ steering flies whatever state Lua's pilot_think chose.
@@ -1168,7 +1236,7 @@ void SpaceWorld::tick(double dt)
     }
 
     // Thruster visuals are player-only for now (NPC plumes: Phase 6 feedback).
-    m_thrusters.tick(shipState(), shipTuning(), m_shipInput, dt);
+    m_thrusters.tick(shipState(), shipTuning(), m_appliedInput, dt);
 
     // Coarse-layer economy: galaxy-wide, same clock as everything else
     // (decisions/005 — no time compression).

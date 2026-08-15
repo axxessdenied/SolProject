@@ -88,8 +88,8 @@ public:
         m_stick.y = sol::core::clamp(m_stick.y * recenter, -1.0f, 1.0f);
 
         sol::sim::FlightInput input;
-        input.angular.x = m_stick.x;
-        input.angular.y = m_stick.y;
+        input.angular.x = applyDeadZone(m_stick.x);
+        input.angular.y = applyDeadZone(m_stick.y);
         if (window.isKeyDown(Key::Up)) input.angular.x += 1.0f;
         if (window.isKeyDown(Key::Down)) input.angular.x -= 1.0f;
         if (window.isKeyDown(Key::Left)) input.angular.y += 1.0f;
@@ -126,8 +126,21 @@ private:
         return edge;
     }
 
+    // Small deflections command nothing (easier fine alignment; also kills
+    // the drift the recenter exponential never quite decays away); the
+    // response is rescaled past the edge so it stays continuous.
+    [[nodiscard]] static float applyDeadZone(float value)
+    {
+        const float magnitude = std::fabs(value);
+        if (magnitude <= kStickDeadZone) {
+            return 0.0f;
+        }
+        return std::copysign((magnitude - kStickDeadZone) / (1.0f - kStickDeadZone), value);
+    }
+
     static constexpr float kStickSensitivity = 0.0035f;
     static constexpr float kRecenterRate = 2.5f;
+    static constexpr float kStickDeadZone = 0.08f;
 
     sol::core::Vec2 m_stick;
     bool m_assist = true;
@@ -237,6 +250,7 @@ int main(int argc, char** argv)
     bool previousT = false;
     bool previousJ = false;
     bool previousG = false;
+    bool previousF = false;
     bool previousPip1 = false;
     bool previousPip2 = false;
     bool previousPip3 = false;
@@ -244,7 +258,7 @@ int main(int argc, char** argv)
     bool showDebugDraw = false;
 
     SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse steer, WASD/QE/Space/Ctrl thrust, "
-                 "Shift boost, Tab cruise, X assist, V camera, T target, ESC quits.",
+                 "Shift boost, Tab cruise, X assist, F autopilot, V camera, T target, ESC quits.",
                  window.width(), window.height());
 
     double lastFrameTime = sol::platform::timeSeconds();
@@ -302,6 +316,18 @@ int main(int argc, char** argv)
             }
         }
         previousJ = jDown;
+
+        // Autopilot to the selected target (F toggles; manual input cancels).
+        const bool fDown = window.isKeyDown(sol::platform::Key::F);
+        if (fDown && !previousF) {
+            if (world.autopilotActive()) {
+                world.disengageAutopilot();
+                SOL_LOG_INFO("Autopilot: disengaged");
+            } else if (!world.engageAutopilot()) {
+                SOL_LOG_INFO("Autopilot: no target (or docked)");
+            }
+        }
+        previousF = fDown;
 
         // Dock/undock at the nearest station (G toggles).
         const bool gDown = window.isKeyDown(sol::platform::Key::G);
@@ -453,6 +479,7 @@ int main(int argc, char** argv)
         hud.assist = world.shipInput().assist;
         hud.boost = world.shipInput().boost;
         hud.cruise = world.shipInput().cruise;
+        hud.autopilot = world.autopilotActive();
         switch (cameraMode) {
         case game::CameraMode::FirstPerson: hud.cameraMode = "COCKPIT"; break;
         case game::CameraMode::ThirdPerson: hud.cameraMode = "CHASE"; break;

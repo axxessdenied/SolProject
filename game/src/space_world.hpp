@@ -243,6 +243,15 @@ public:
     void setShipInput(const sol::sim::FlightInput& input) { m_shipInput = input; }
     void tick(double dt);
 
+    // --- Autopilot (playtest QoL): flies the ship to the selected nav target
+    // and stops at the arrival range; any manual steering/thrust cancels it.
+    // Engage fails while docked or with nothing targeted.
+    bool engageAutopilot();
+    void disengageAutopilot() { m_autopilotActive = false; }
+    [[nodiscard]] bool autopilotActive() const { return m_autopilotActive; }
+    [[nodiscard]] double autopilotArrivalRange() const { return m_autopilotRange; }
+    void setAutopilotArrivalRange(double meters);
+
     // Interpolated blend of previous->current tick state at alpha.
     [[nodiscard]] Transform shipRenderTransform(float alpha) const;
     [[nodiscard]] sol::sim::ShipState shipState() const;
@@ -250,7 +259,9 @@ public:
     {
         return m_registry.storage<ShipControl>().get(playerEntityIndex()).tuning;
     }
-    [[nodiscard]] const sol::sim::FlightInput& shipInput() const { return m_shipInput; }
+    // The input the ship actually flew last tick (autopilot's when engaged,
+    // the player's otherwise) — what the HUD flags should reflect.
+    [[nodiscard]] const sol::sim::FlightInput& shipInput() const { return m_appliedInput; }
 
     // Player pip triage (keys 1/2/3, 4 to balance).
     void playerAddPip(sol::sim::PowerSystem system);
@@ -381,9 +392,17 @@ private:
     {
         return m_registry.storage<PlayerShip>().entityIndices()[0];
     }
+    // The autopilot's flight input for this tick, or the player's when it is
+    // off/cancelled; also arrives/disengages as a side effect.
+    [[nodiscard]] sol::sim::FlightInput autopilotInput();
+
     sol::ecs::Registry m_registry;
     std::vector<SpawnedShip> m_spawnedShips;
-    sol::sim::FlightInput m_shipInput; // player input latch, applied in tick
+    sol::sim::FlightInput m_shipInput;    // player input latch, applied in tick
+    sol::sim::FlightInput m_appliedInput; // what the ship flew last tick
+    bool m_autopilotActive = false;
+    double m_autopilotRange = 1'500.0; // arrival standoff, meters (see engage)
+    std::vector<sol::sim::AvoidanceSphere> m_autopilotObstacles; // per-tick scratch
     ThrusterParticles m_thrusters;
     CombatEffects m_combatEffects;
     float m_playerDamageTimer = 0.0f;

@@ -36,6 +36,7 @@ struct FlightHud
     bool assist = true;
     bool boost = false;
     bool cruise = false;
+    bool autopilot = false;
     const char* cameraMode = "";
     const char* targetName = "";
     double targetDistanceMeters = 0.0;

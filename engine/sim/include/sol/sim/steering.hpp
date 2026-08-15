@@ -28,6 +28,19 @@ struct AvoidanceSphere
                                       const core::DVec3& targetPosition,
                                       const core::DVec3& targetVelocity, double desiredRange);
 
+// Long-haul travel (player autopilot): fly to targetPosition and arrive
+// velocity-matched at arrivalRange meters from it. Commands the cruise drive
+// while the remaining distance affords braking (a two-regime speed profile:
+// the cruise drive sheds speed down to the normal envelope, maneuvering
+// thrusters finish the stop — mirroring the flight model's interruptible
+// cruise), and holds sub-cruise speed until the nose is roughly on target.
+// Obstacles deflect the sub-cruise approach only; at cruise speeds a tick
+// crosses them entirely.
+[[nodiscard]] FlightInput steerTravel(const ShipState& state, const ShipTuning& tuning,
+                                      const core::DVec3& targetPosition,
+                                      const core::DVec3& targetVelocity, double arrivalRange,
+                                      std::span<const AvoidanceSphere> obstacles = {});
+
 // Run from a threat, weaving; weavePhase advances with sim time (rad).
 // Boosts while the threat is close.
 [[nodiscard]] FlightInput steerEvade(const ShipState& state, const ShipTuning& tuning,

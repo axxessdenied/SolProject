@@ -67,6 +67,64 @@ FlightInput steerPursue(const ShipState& state, const ShipTuning& tuning,
     return steerAimAndMove(state, tuning, targetPosition, desiredVelocity);
 }
 
+FlightInput steerTravel(const ShipState& state, const ShipTuning& tuning,
+                        const DVec3& targetPosition, const DVec3& targetVelocity,
+                        double arrivalRange, std::span<const AvoidanceSphere> obstacles)
+{
+    const DVec3 toTarget = targetPosition - state.position;
+    const double distance = length(toTarget);
+    const double remaining = distance - arrivalRange;
+    if (remaining <= 0.0) {
+        // Inside the arrival bubble: match the target's velocity, nose on it.
+        return steerAimAndMove(state, tuning, targetPosition, targetVelocity);
+    }
+    const DVec3 direction = toTarget * (1.0 / distance);
+
+    // Braking-limited speed profile at half the available deceleration
+    // (margin for the controller lag), two regimes to mirror flight.cpp's
+    // cruise exit: above the normal envelope the cruise drive brakes
+    // (reverseAccel * cruiseAccelScale), below it the thrusters do.
+    const double envelopeSpeed = static_cast<double>(tuning.maxSpeed) * 2.0;
+    const double normalBrake = 0.5 * tuning.reverseAccel;
+    const double cruiseBrake = normalBrake * tuning.cruiseAccelScale;
+    const double envelopeDistance = envelopeSpeed * envelopeSpeed / (2.0 * normalBrake);
+    double desiredSpeed =
+        remaining <= envelopeDistance
+            ? std::sqrt(2.0 * normalBrake * remaining)
+            : std::sqrt(envelopeSpeed * envelopeSpeed + 2.0 * cruiseBrake * (remaining - envelopeDistance));
+    const double cruiseMaxSpeed = static_cast<double>(tuning.maxSpeed) * tuning.cruiseSpeedScale;
+    desiredSpeed = std::min(desiredSpeed, cruiseMaxSpeed);
+
+    // Cruise only once the nose is roughly on target; until then close at
+    // normal speed while the turn completes.
+    bool cruise = desiredSpeed > static_cast<double>(tuning.maxSpeed);
+    if (cruise && aimError(state, targetPosition) > 0.35) {
+        cruise = false;
+        desiredSpeed = static_cast<double>(tuning.maxSpeed);
+    }
+
+    DVec3 desiredVelocity = targetVelocity + direction * desiredSpeed;
+    if (!cruise) {
+        avoidObstacles(desiredVelocity, state, obstacles, 6.0);
+    }
+
+    FlightInput input = steerAimAndMove(state, tuning, targetPosition, desiredVelocity);
+    if (cruise) {
+        // Re-derive the velocity command against the cruise envelope;
+        // steerAimAndMove clamps to the normal one.
+        const Vec3 velocityBody = rotate(conjugate(state.orientation),
+                                         toVec3(clampLength(desiredVelocity, cruiseMaxSpeed)));
+        const float scale = tuning.maxSpeed * tuning.cruiseSpeedScale;
+        input.linear = {
+            core::clamp(velocityBody.x / scale, -1.0f, 1.0f),
+            core::clamp(velocityBody.y / scale, -1.0f, 1.0f),
+            core::clamp(velocityBody.z / scale, -1.0f, 1.0f),
+        };
+        input.cruise = true;
+    }
+    return input;
+}
+
 FlightInput steerEvade(const ShipState& state, const ShipTuning& tuning,
                        const DVec3& threatPosition, double weavePhase)
 {

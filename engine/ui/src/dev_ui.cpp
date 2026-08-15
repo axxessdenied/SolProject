@@ -466,6 +466,10 @@ void DevUi::buildFlightHud(const FlightHud& hud)
             ImGui::SameLine(0.0f, 24.0f);
             ImGui::TextColored({0.5f, 0.75f, 1.0f, 1.0f}, "CRUISE");
         }
+        if (hud.autopilot) {
+            ImGui::SameLine(0.0f, 24.0f);
+            ImGui::TextColored({0.8f, 0.6f, 1.0f, 1.0f}, "AUTO");
+        }
         ImGui::SameLine(0.0f, 24.0f);
         char distance[32];
         formatDistance(hud.targetDistanceMeters, distance, sizeof(distance));
