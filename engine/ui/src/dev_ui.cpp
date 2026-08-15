@@ -169,7 +169,8 @@ void DevUi::buildWindows(const OverlayStats& stats)
         ImGui::Text("sim  tick %llu   entities %u   alpha %.2f",
                     static_cast<unsigned long long>(stats.simTicks), stats.simEntities,
                     stats.simAlpha);
-        ImGui::TextDisabled("RMB look, WASD move, F1 console, F5 reload shaders");
+        ImGui::TextDisabled("RMB steer, WASD thrust, Tab cruise, X assist, V camera, T target");
+        ImGui::TextDisabled("F1 console, F3 debug draw, F5 shaders, F9/F10 save/load");
     }
     ImGui::End();
 
