@@ -78,8 +78,15 @@ Vendored third-party code lives in `third_party/`, is never modified in place, a
 
 ## 6. Git Workflow
 
+Branching model:
+
+- **`main` is releases only.** It never receives direct commits or feature merges; it only advances when the user explicitly asks to cut a release from `dev`.
+- **`dev` is the integration branch** (and the GitHub default). All work lands here.
+- **All development happens on feature branches** cut from `dev` (`feat/<topic>`, `fix/<topic>`, `chore/<topic>`) and merges back into `dev` once locally verified (build + tests green). Do not commit directly to `dev` or `main`.
+
+Commit conventions:
+
 - Small, focused commits; imperative mood subject lines ≤ 72 chars (e.g. `Add swapchain recreation on resize`), body explains *why* when non-obvious.
-- Multi-commit work happens on a feature branch (`feat/<topic>`, `fix/<topic>`), not `main`.
 - Never commit or push unless the user asks. Never force-push. Never rewrite published history.
 - Never commit: build output, IDE state, cooked assets, secrets, large binaries (source assets get a policy decision — ask before adding files > 1 MB).
 

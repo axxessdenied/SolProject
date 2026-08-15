@@ -3,7 +3,7 @@ name: CI
 # Advisory only - local build/test is the definition of done (AGENTS.md section 2).
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
 
