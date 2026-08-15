@@ -3,7 +3,10 @@
 # Pure capability-check tests. No Vulkan loader, no device, no window: this executable runs
 # anywhere, which is the property that lets it exercise device classes the project does not
 # own. It is the negative control the P1b evidence plan requires.
-add_executable(SolRenderCapabilityTests CapabilityCheckTests.cpp BaselineDeviceProfiles.h)
+add_executable(SolRenderCapabilityTests
+               CapabilityCheckTests.cpp
+               BaselineDeviceProfiles.h
+               LunarGBaselineProfiles.h)
 sol_apply_project_options(SolRenderCapabilityTests)
 target_link_libraries(SolRenderCapabilityTests PRIVATE sol::render)
 target_include_directories(SolRenderCapabilityTests PRIVATE "${CMAKE_SOURCE_DIR}/tests")

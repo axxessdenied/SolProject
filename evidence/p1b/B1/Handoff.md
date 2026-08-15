@@ -10,9 +10,12 @@ Build a Vulkan renderer that holds precision and depth from a planetary surface 
 continuous terrain level of detail and honest capability reporting — the first code in the
 production tree rather than under `prototypes/`.
 
-**Outcome: partial, and the boundary is sharp.** Three gating thresholds are met on the one
-device available; one is met in part and one cannot close. Several declared deliverables have not
-been built. What is measured and what is not is set out in [Index.md](Index.md), which states the
+**Outcome: partial, and the boundary is sharp.** As of 2026-08-14 **all five gating thresholds are
+met** — the first four on both available devices, each with a negative control demonstrated on its
+own device, and capability reporting closed by user decision on real-derived intersection profiles.
+**Gates met is not increment complete:** several declared deliverables have not been built, and one
+residual (per-device reconciliation of the four named classes) is carried forward rather than
+waived. What is measured and what is not is set out in [Index.md](Index.md), which states the
 unestablished claims as prominently as the passes.
 
 ## Owner, branch, base
@@ -126,8 +129,15 @@ by reverting the fix and confirming the test fails.
   one, the gate cannot see growth below its noise floor at 30 minutes, and the gated second-half
   statistic has only three clean observations so far (12.2, 2.1 and 15.9 KiB/minute). The method states
   these limits and the program prints them with the verdict.
-- **The capability profiles are hand-authored** and near-identical across every field the
-  requirement consults. They are one assertion, not four, until reconciled against real reports.
+- **The capability gate is closed, and its per-device half is not.** Closed 2026-08-14 by user
+  decision on a second profile family from the pinned SDK's `VP_LUNARG_desktop_baseline.json` —
+  four intersections of real gpuinfo.org report collections, at a recorded digest, spanning Vulkan
+  1.1 to 1.4 so both accept and reject paths are exercised with real-derived data. The
+  hand-authored device-class four remain one assertion, not four, and **the four named device
+  classes are still not individually verified**: LunarG does not enumerate its collections, and
+  vulkan.gpuinfo.org returns HTTP 403 to this environment on every path including its documented
+  API. That residual is a recorded follow-up bearing on baseline-class support claims — which
+  nothing in P1b makes — not a waived gate.
 - **GPU determinism is assumed.** ADR 0010 governs MSVC and the CPU. The bit-identical-frames and
   exact-depth-inequality results both depend on GPU and driver behaviour that no accepted decision
   covers. The Debug/Release byte-identity above is evidence against the risk, on one driver.

@@ -10,7 +10,7 @@ statement of phase and authorization is [`docs/project_status.md`](../../docs/pr
 
 | Increment | Scope | State | Evidence |
 |---|---|---|---|
-| B1 | Vulkan large-world renderer | **In progress** — not closed | [B1/Index.md](B1/Index.md), [B1/Handoff.md](B1/Handoff.md) |
+| B1 | Vulkan large-world renderer | **In progress** — all five gating thresholds met 2026-08-14; deliverables outstanding, so not closed | [B1/Index.md](B1/Index.md), [B1/Handoff.md](B1/Handoff.md) |
 | B2 | Constructed craft and resource networks | **Authorized 2026-08-14, not started** — starts after B1 closes | — |
 
 ## What P1b can and cannot close
@@ -49,7 +49,13 @@ demonstrated on its own device rather than inherited from the other. Before that
 chose its device internally, so every B1 result was single-device by construction rather than by
 choice; the evidence plan's both-devices requirement was unreachable, not merely unmet.
 
-Three of B1's gating thresholds are met, and one cannot close yet. Both
+**All five of B1's gating thresholds are met as of 2026-08-14.** Capability reporting was the last
+and closed by user decision on real-derived intersection profiles from the pinned SDK, with the
+per-device reconciliation of the four *named* classes carried forward as a recorded follow-up —
+vulkan.gpuinfo.org returns HTTP 403 to this environment on every path including its documented API.
+Gates met is **not** increment complete: B1 has declared deliverables still unbuilt.
+
+Both
 halves of the LOD continuity threshold were unmeasurable as originally written — neither named a
 statistic or a limit — and both were given measurement methods **ratified by the user on
 2026-08-14**, as two separate decisions, recorded in the [milestone

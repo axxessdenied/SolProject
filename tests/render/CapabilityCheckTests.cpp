@@ -10,8 +10,10 @@
 #include "Sol/Render/CapabilityRequirement.h"
 #include "Support/TestCheck.h"
 #include "render/BaselineDeviceProfiles.h"
+#include "render/LunarGBaselineProfiles.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 
@@ -281,15 +283,103 @@ void testBaselineClassesAreNotExcluded(sol::test::CheckContext& context)
     }
 }
 
+/// Checks the requirement set against LunarG's desktop-baseline intersection profiles.
+///
+/// This is what the hand-authored device-class profiles above could not be. Each profile is the
+/// intersection of a collection of real vulkan.gpuinfo.org reports, shipped in the pinned SDK
+/// at a recorded digest, so a pass here says every device in that collection clears our
+/// requirement — not that four values someone typed clear requirements the same person wrote.
+///
+/// The four profiles span Vulkan 1.1 to 1.4, so **both signs are exercised with real-derived
+/// data**: the 2022 intersection must be rejected for being below ADR 0002's floor, and the
+/// rest must be accepted. The expectation travels with each profile rather than being derived
+/// from what the code currently does, so a change in either the requirement set or the SDK has
+/// to be looked at rather than silently re-baselined.
+void testLunarGIntersectionProfiles(sol::test::CheckContext& context)
+{
+    for (const auto& profile : sol::test::allLunarGProfiles()) {
+        const auto rejections = checkCapabilities(sol::test::profileAnswerableRequirement(),
+                                                  profile.capabilities);
+        const bool acceptable = rejections.empty();
+
+        context.checkEqual(acceptable,
+                           profile.expectedAcceptable,
+                           profile.label + " — " + profile.expectation);
+
+        // A rejection has to be for the reason claimed. "Rejected" alone would also be
+        // satisfied by a profile failing on a transcription slip in some unrelated field,
+        // which would look like the floor doing its job while proving nothing about it.
+        if (!profile.expectedAcceptable) {
+            context.check(mentions(rejections, "Vulkan API"),
+                          profile.label + " — rejected specifically on the API version");
+        }
+
+        if (!rejections.empty() && profile.expectedAcceptable) {
+            std::printf("        %s\n",
+                        sol::render::formatRejections(profile.label, rejections).c_str());
+        }
+    }
+}
+
+/// Pins which requirements a profile check drops, and why that set is exactly these two.
+///
+/// `profileAnswerableRequirement()` removes the graphics-and-present queue clause and the
+/// device-local memory floor, because the Vulkan profile schema describes neither. That is a
+/// legitimate reduction, and it is also the kind of reduction that quietly grows: a requirement
+/// added later that profiles cannot answer would either be dropped without anyone noticing, or
+/// would start failing every profile for a schema reason reported as a hardware one.
+///
+/// So the reduction is asserted rather than trusted. If this test fails, the right response is
+/// to decide what the new requirement means for profile-based evidence — not to widen the
+/// reduction until it passes.
+void testProfileReductionIsExactlyWhatWeThink(sol::test::CheckContext& context)
+{
+    const CapabilityRequirement full = baselineRequirement();
+    const CapabilityRequirement reduced = sol::test::profileAnswerableRequirement();
+
+    context.check(full.requiresGraphicsAndPresentQueue && !reduced.requiresGraphicsAndPresentQueue,
+                  "the queue-family clause is the one a profile cannot answer, and is dropped");
+
+    // Everything a profile *can* answer must survive the reduction untouched. Compared by size
+    // and content rather than by trusting that the copy left them alone.
+    context.checkEqual(reduced.minimumApiVersion,
+                       full.minimumApiVersion,
+                       "profile reduction preserves the API-version floor");
+    context.checkEqual(reduced.extensions.size(),
+                       full.extensions.size(),
+                       "profile reduction preserves every required extension");
+    context.checkEqual(reduced.formats.size(),
+                       full.formats.size(),
+                       "profile reduction preserves every required format");
+    context.checkEqual(reduced.features.size(),
+                       full.features.size(),
+                       "profile reduction preserves every required feature");
+    context.checkEqual(reduced.minimumMaxImageDimension2D,
+                       full.minimumMaxImageDimension2D,
+                       "profile reduction preserves the image-dimension floor");
+
+    // The memory floor is dropped, and is currently zero anyway. Asserting it is zero in the
+    // full requirement keeps this test honest: if a later increment sets a real floor, the
+    // reduction starts hiding something and this line is where that becomes visible.
+    context.checkEqual(full.minimumDeviceLocalMemoryBytes,
+                       std::uint64_t{0},
+                       "no device-local memory floor is set, so dropping it hides nothing");
+}
+
 } // namespace
 
 int main()
 {
     std::printf("Vulkan capability requirement checks\n");
-    std::printf("  NOTE: baseline-class profiles are synthetic and unverified. They check the\n"
-                "        requirement declaration, not any driver, and across the fields the\n"
-                "        requirement consults the four profiles are near-identical -- treat\n"
-                "        them as one assertion, not four. See BaselineDeviceProfiles.h.\n");
+    std::printf("  Two profile families are checked here and they are NOT equivalent:\n"
+                "    device-class profiles (BaselineDeviceProfiles.h) are hand-authored from\n"
+                "      published specifications, still unverified per device, and near-identical\n"
+                "      across every field the requirement consults -- one assertion, not four.\n"
+                "    LunarG intersection profiles (LunarGBaselineProfiles.h) are transcribed from\n"
+                "      the pinned SDK's VP_LUNARG_desktop_baseline.json at a recorded digest, each\n"
+                "      the intersection of a collection of real gpuinfo.org reports. A pass there\n"
+                "      holds for every device in the collection.\n"
+                "  Neither is a driver test. No baseline-class device is present on this machine.\n");
 
     sol::test::CheckContext context("render.capability-check");
 
@@ -306,6 +396,8 @@ int main()
     testConformantDeviceWithoutD32IsStillRejected(context);
     testMalformedFeatureRequirementIsNotBlamedOnTheDevice(context);
     testBaselineClassesAreNotExcluded(context);
+    testProfileReductionIsExactlyWhatWeThink(context);
+    testLunarGIntersectionProfiles(context);
 
     return context.finish();
 }
