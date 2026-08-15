@@ -1,5 +1,6 @@
 add_library(sol_core STATIC
     src/inflate.cpp
+    src/jobs.cpp
     src/json.cpp
     src/log.cpp
     src/version.cpp

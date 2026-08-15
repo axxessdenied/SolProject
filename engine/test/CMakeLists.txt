@@ -10,6 +10,7 @@ target_link_libraries(sol_test_harness PUBLIC sol_options)
 # Unit test executables, one per engine module under test.
 add_executable(sol_core_tests
     core/inflate_tests.cpp
+    core/jobs_tests.cpp
     core/json_tests.cpp
     core/math_tests.cpp
     core/version_tests.cpp
