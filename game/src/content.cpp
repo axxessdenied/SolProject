@@ -101,12 +101,12 @@ std::string listShips(GameContent& content)
 
 std::string targetName(GameContent& content)
 {
-    return content.world().currentTarget().name;
+    return content.world().currentTargetInfo().nav.name;
 }
 
 double targetDistance(GameContent& content)
 {
-    const NavTarget& target = content.world().currentTarget();
+    const NavTarget target = content.world().currentTargetInfo().nav;
     const double distance =
         length(target.position - content.world().shipState().position) - target.surfaceRadius;
     return distance > 0.0 ? distance : 0.0;

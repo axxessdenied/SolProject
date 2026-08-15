@@ -102,9 +102,9 @@ void SpaceWorld::spawn()
     m_sun = {.name = "Sol", .position = {}, .radius = kSunRadius};
     m_planet = {.name = "Aster", .position = kPlanetPosition, .radius = kPlanetRadius};
     m_targets = {
-        {.name = "Aster Gateway", .position = kStationPosition, .surfaceRadius = 0.0},
-        {.name = "Aster", .position = kPlanetPosition, .surfaceRadius = kPlanetRadius},
-        {.name = "Sol", .position = {}, .surfaceRadius = kSunRadius},
+        NavTarget{.name = "Aster Gateway", .position = kStationPosition, .surfaceRadius = 0.0},
+        NavTarget{.name = "Aster", .position = kPlanetPosition, .surfaceRadius = kPlanetRadius},
+        NavTarget{.name = "Sol", .position = {}, .surfaceRadius = kSunRadius},
     };
     m_targetIndex = 0;
 
@@ -242,8 +242,43 @@ ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def,
     m_registry.emplace<ShipDefense>(e);
     m_registry.emplace<ShipWeapon>(e);
     applyShipDef(e.index, def, defs);
-    m_spawnedShips.push_back({.entity = e, .defId = def.id});
+    m_spawnedShips.push_back({.entity = e, .defId = def.id, .name = def.name});
     return e;
+}
+
+TargetInfo SpaceWorld::currentTargetInfo() const
+{
+    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    // m_targetIndex can go stale when a targeted ship dies; wrap it here.
+    const std::size_t index = total > 0 ? m_targetIndex % total : 0;
+
+    TargetInfo info;
+    if (index < m_targets.size()) {
+        info.nav = m_targets[index];
+        return info;
+    }
+    const SpawnedShip& ship = m_spawnedShips[index - m_targets.size()];
+    const Transform& transform = m_registry.storage<Transform>().get(ship.entity.index);
+    info.nav = NavTarget{.name = ship.name, .position = transform.position, .surfaceRadius = 0.0};
+    info.isShip = true;
+    info.velocity = m_registry.storage<FlightBody>().get(ship.entity.index).velocity;
+    if (const ShipDefense* defense = m_registry.tryGet<ShipDefense>(ship.entity)) {
+        const float strength =
+            defense->tuning.shieldStrength > 0.0f ? defense->tuning.shieldStrength : 1.0f;
+        info.shieldFore = defense->state.shieldFore / strength;
+        info.shieldAft = defense->state.shieldAft / strength;
+        info.hull =
+            defense->tuning.hull > 0.0f ? defense->state.hull / defense->tuning.hull : 0.0f;
+    }
+    return info;
+}
+
+void SpaceWorld::cycleTarget()
+{
+    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    if (total > 0) {
+        m_targetIndex = (m_targetIndex % total + 1) % total;
+    }
 }
 
 ecs::Entity SpaceWorld::spawnPilotFromDef(const assets::ShipDef& def,
@@ -584,6 +619,10 @@ void SpaceWorld::tick(double dt)
         const sim::ShieldFacing facing = sim::facingForHit(orientation, toSource);
         const sim::DamageResult result = sim::applyDamage(
             defense->state, defense->tuning, facing, static_cast<float>(damage));
+        noteDamage(entityIndex,
+                   m_collisionBodies[bodySlot].position +
+                       toSource * m_collisionBodies[bodySlot].radius,
+                   result);
         if (result.destroyed) {
             destroyedShips.push_back(entityIndex);
         }
@@ -636,6 +675,10 @@ void SpaceWorld::tick(double dt)
                         m_registry.storage<Transform>().get(targetIndex).orientation, toSource);
                     const sim::DamageResult result = sim::applyDamage(
                         defense->state, defense->tuning, facing, projectile.damage);
+                    noteDamage(targetIndex,
+                               transform.previousPosition +
+                                   (transform.position - transform.previousPosition) * bestT,
+                               result);
                     if (result.destroyed) {
                         destroyedShips.push_back(targetIndex);
                     }
@@ -721,6 +764,7 @@ void SpaceWorld::tick(double dt)
                         forwardD * -1.0);
                     const sim::DamageResult result = sim::applyDamage(
                         defense->state, defense->tuning, facing, weapon.damage);
+                    noteDamage(bestTarget, muzzle + (beamEnd - muzzle) * bestT, result);
                     if (result.destroyed) {
                         destroyedShips.push_back(bestTarget); // deferred: mid-iteration
                     }
@@ -758,12 +802,34 @@ void SpaceWorld::tick(double dt)
                                                      .shooterIndex = bolt.shooterIndex});
     }
 
+    // Feedback bookkeeping.
+    m_combatEffects.tick(dt);
+    if (m_playerDamageTimer > 0.0f) {
+        m_playerDamageTimer -= static_cast<float>(dt);
+        if (m_playerDamageTimer < 0.0f) {
+            m_playerDamageTimer = 0.0f;
+        }
+    }
+
     // Thruster visuals are player-only for now (NPC plumes: Phase 6 feedback).
     m_thrusters.tick(shipState(), shipTuning(), m_shipInput, dt);
 }
 
+void SpaceWorld::noteDamage(std::uint32_t targetIndex, const core::DVec3& hitPosition,
+                            const sim::DamageResult& result)
+{
+    const bool shieldHit = result.shieldAbsorbed >= result.armorAbsorbed + result.hullDamage;
+    m_combatEffects.spawnImpact(hitPosition, shieldHit);
+    if (targetIndex == playerEntityIndex()) {
+        m_playerDamageTimer = kDamageFlashSeconds;
+    }
+}
+
 void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex)
 {
+    // Fireball at the wreck site, scaled by the hull.
+    m_combatEffects.spawnExplosion(m_registry.storage<Transform>().get(entityIndex).position,
+                                   m_registry.storage<RenderShape>().get(entityIndex).scale.x);
     if (entityIndex == playerEntityIndex()) {
         // GDD death rule (respawn at last dock, insurance cost) arrives with
         // docking; until then: reset at the spawn point with full defenses.

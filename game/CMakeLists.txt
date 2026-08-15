@@ -1,4 +1,5 @@
 add_executable(sol_game
+    src/combat_effects.cpp
     src/content.cpp
     src/main.cpp
     src/scene_renderer.cpp

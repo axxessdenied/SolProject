@@ -1,5 +1,6 @@
 #pragma once
 
+#include "combat_effects.hpp"
 #include "scene_renderer.hpp"
 #include "thruster_particles.hpp"
 
@@ -140,9 +141,20 @@ struct CelestialBody
 
 struct NavTarget
 {
-    const char* name = "";
+    std::string name;
     sol::core::DVec3 position;
     double surfaceRadius = 0.0; // 0 for point targets (station)
+};
+
+// Snapshot of the selected nav/combat target for HUD and weapons.
+struct TargetInfo
+{
+    NavTarget nav;
+    bool isShip = false;
+    sol::core::DVec3 velocity;  // ships only
+    float shieldFore = 0.0f;    // fractions, ships only
+    float shieldAft = 0.0f;
+    float hull = 0.0f;
 };
 
 // The player flies this def; mods can override it (Phase 5 data pipeline).
@@ -186,9 +198,20 @@ public:
     [[nodiscard]] const CelestialBody& sun() const { return m_sun; }
     [[nodiscard]] const CelestialBody& planet() const { return m_planet; }
 
-    // Cycling nav targets for the provisional HUD (station, planet, sun).
-    [[nodiscard]] const NavTarget& currentTarget() const { return m_targets[m_targetIndex]; }
-    void cycleTarget() { m_targetIndex = (m_targetIndex + 1) % m_targets.size(); }
+    // Cycling targets: the static nav points (station, planet, sun) then
+    // every live pilot ship (combat targets with shield/hull readouts).
+    [[nodiscard]] TargetInfo currentTargetInfo() const;
+    void cycleTarget();
+
+    [[nodiscard]] const ShipWeapon& playerWeapon() const
+    {
+        return m_registry.storage<ShipWeapon>().get(playerEntityIndex());
+    }
+    // 1 right after the player takes a hit, decaying to 0 (HUD flash).
+    [[nodiscard]] float playerDamageFlash() const
+    {
+        return m_playerDamageTimer > 0.0f ? m_playerDamageTimer / kDamageFlashSeconds : 0.0f;
+    }
 
     // One instance per RenderShape entity, interpolated; ship excluded when
     // includeShip is false (first-person view).
@@ -197,6 +220,7 @@ public:
     void buildParticleInstances(float alpha, std::vector<ParticleInstance>& out) const
     {
         m_thrusters.buildInstances(alpha, out);
+        m_combatEffects.appendInstances(alpha, out);
     }
 
     [[nodiscard]] std::uint32_t entityCount() const
@@ -245,7 +269,15 @@ private:
     {
         sol::ecs::Entity entity;
         std::string defId;
+        std::string name; // display name for targeting
     };
+
+    static constexpr float kDamageFlashSeconds = 0.45f;
+
+    // Records feedback for a damage result (sparks, player flash, explosion
+    // on a kill is handled by handleShipDestroyed).
+    void noteDamage(std::uint32_t targetIndex, const sol::core::DVec3& hitPosition,
+                    const sol::sim::DamageResult& result);
 
     void applyShipDef(std::uint32_t entityIndex, const sol::assets::ShipDef& def,
                       const sol::assets::DefDatabase& defs);
@@ -258,6 +290,8 @@ private:
     std::vector<SpawnedShip> m_spawnedShips;
     sol::sim::FlightInput m_shipInput; // player input latch, applied in tick
     ThrusterParticles m_thrusters;
+    CombatEffects m_combatEffects;
+    float m_playerDamageTimer = 0.0f;
 
     // Per-tick collision scratch + last tick's contacts (damage model input).
     std::vector<sol::sim::CollisionBody> m_collisionBodies;

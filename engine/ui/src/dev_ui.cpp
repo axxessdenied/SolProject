@@ -302,8 +302,11 @@ void DevUi::buildFlightHud(const FlightHud& hud)
     const ImVec2 center = {display.x * 0.5f, display.y * 0.5f};
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
 
-    // Boresight crosshair.
-    const ImU32 hudColor = IM_COL32(140, 220, 160, 200);
+    // Boresight crosshair; flashes red while taking hits.
+    const float flash = hud.damageFlash;
+    const ImU32 hudColor = IM_COL32(140 + static_cast<int>(115.0f * flash),
+                                    220 - static_cast<int>(140.0f * flash),
+                                    160 - static_cast<int>(100.0f * flash), 200);
     draw->AddCircle(center, 10.0f, hudColor, 0, 1.5f);
     draw->AddLine({center.x - 18.0f, center.y}, {center.x - 10.0f, center.y}, hudColor, 1.5f);
     draw->AddLine({center.x + 10.0f, center.y}, {center.x + 18.0f, center.y}, hudColor, 1.5f);
@@ -324,6 +327,20 @@ void DevUi::buildFlightHud(const FlightHud& hud)
         };
         shieldArc(hud.shieldFore, true);
         shieldArc(hud.shieldAft, false);
+    }
+
+    // Projectile lead marker: aim here to land shots on the target's path.
+    if (hud.hasLead) {
+        const core::Vec3 d = hud.leadDirectionCamera;
+        if (d.z < -0.01f) {
+            const float focal = (display.y * 0.5f) / hud.tanHalfFovY;
+            const ImVec2 lead = {center.x + (d.x / -d.z) * focal,
+                                 center.y - (d.y / -d.z) * focal};
+            const ImU32 leadColor = IM_COL32(255, 130, 90, 230);
+            draw->AddCircle(lead, 5.0f, leadColor, 0, 1.8f);
+            draw->AddLine({lead.x - 9.0f, lead.y}, {lead.x - 5.0f, lead.y}, leadColor, 1.5f);
+            draw->AddLine({lead.x + 5.0f, lead.y}, {lead.x + 9.0f, lead.y}, leadColor, 1.5f);
+        }
     }
 
     // Target marker: project the camera-space direction; clamp to a screen
@@ -392,6 +409,13 @@ void DevUi::buildFlightHud(const FlightHud& hud)
         char distance[32];
         formatDistance(hud.targetDistanceMeters, distance, sizeof(distance));
         ImGui::Text("TGT %s  %s", hud.targetName, distance);
+        if (hud.targetIsShip) {
+            ImGui::SameLine(0.0f, 8.0f);
+            ImGui::TextColored({1.0f, 0.78f, 0.31f, 1.0f}, "[S %d/%d H %d%%]",
+                               static_cast<int>(hud.targetShieldFore * 100.0f + 0.5f),
+                               static_cast<int>(hud.targetShieldAft * 100.0f + 0.5f),
+                               static_cast<int>(hud.targetHull * 100.0f + 0.5f));
+        }
         ImGui::SameLine(0.0f, 24.0f);
         // Pips as filled/empty bars, WEP charge as a percentage.
         auto pipBar = [&](const char* name, int pips, ImVec4 color) {

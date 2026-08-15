@@ -10,6 +10,7 @@
 #include "sol/sim/fixed_loop.hpp"
 #include "sol/sim/flight.hpp"
 #include "sol/sim/power.hpp"
+#include "sol/sim/weapons.hpp"
 #include "sol/platform/file_io.hpp"
 #include "sol/platform/platform.hpp"
 #include "sol/platform/time.hpp"
@@ -205,7 +206,8 @@ int main(int argc, char** argv)
     std::vector<game::ParticleInstance> particleInstances;
     SOL_LOG_INFO("Space world: %u entities. Ship at Aster Gateway; planet %.0f km out.",
                  world.entityCount(),
-                 length(world.planet().position - world.currentTarget().position) / 1000.0);
+                 length(world.planet().position - world.currentTargetInfo().nav.position) /
+                     1000.0);
 
     float smoothedFps = 0.0f;
     bool previousF3 = false;
@@ -265,7 +267,7 @@ int main(int argc, char** argv)
         const bool tDown = window.isKeyDown(sol::platform::Key::T);
         if (tDown && !previousT) {
             world.cycleTarget();
-            SOL_LOG_INFO("Target: %s", world.currentTarget().name);
+            SOL_LOG_INFO("Target: %s", world.currentTargetInfo().nav.name.c_str());
         }
         previousT = tDown;
 
@@ -331,10 +333,10 @@ int main(int argc, char** argv)
         previousF3 = f3Down;
 
         const sol::sim::ShipState shipState = world.shipState();
-        const game::NavTarget& target = world.currentTarget();
-        const sol::core::DVec3 toTargetWorld = target.position - shipState.position;
+        const game::TargetInfo target = world.currentTargetInfo();
+        const sol::core::DVec3 toTargetWorld = target.nav.position - shipState.position;
         const double targetDistance =
-            sol::core::clamp(length(toTargetWorld) - target.surfaceRadius, 0.0, 1.0e18);
+            sol::core::clamp(length(toTargetWorld) - target.nav.surfaceRadius, 0.0, 1.0e18);
         const sol::core::DVec3 targetDirection = normalize(toTargetWorld);
 
         if (showDebugDraw) {
@@ -408,7 +410,7 @@ int main(int argc, char** argv)
         case game::CameraMode::ThirdPerson: hud.cameraMode = "CHASE"; break;
         case game::CameraMode::Free: hud.cameraMode = "FREECAM"; break;
         }
-        hud.targetName = target.name;
+        hud.targetName = target.nav.name.c_str();
         hud.targetDistanceMeters = targetDistance;
         hud.closingSpeedMetersPerSecond =
             static_cast<float>(dot(shipState.velocity, targetDirection));
@@ -429,6 +431,22 @@ int main(int argc, char** argv)
                             ? defense.state.shieldAft / defense.tuning.shieldStrength
                             : 0.0f;
         hud.hull = defense.tuning.hull > 0.0f ? defense.state.hull / defense.tuning.hull : 0.0f;
+        hud.damageFlash = world.playerDamageFlash();
+        hud.targetIsShip = target.isShip;
+        hud.targetShieldFore = target.shieldFore;
+        hud.targetShieldAft = target.shieldAft;
+        hud.targetHull = target.hull;
+        const game::ShipWeapon& playerWeapon = world.playerWeapon();
+        if (target.isShip && playerWeapon.kind == game::WeaponKind::Projectile &&
+            playerWeapon.projectileSpeed > 1.0f) {
+            sol::core::DVec3 leadDirection;
+            (void)sol::sim::computeInterceptDirection(
+                shipState.position, shipState.velocity, target.nav.position, target.velocity,
+                static_cast<double>(playerWeapon.projectileSpeed), leadDirection);
+            hud.leadDirectionCamera =
+                rotate(conjugate(camera.orientation), toVec3(leadDirection));
+            hud.hasLead = true;
+        }
         devUi.beginFrame(stats, hud);
 
         bool needRecreate = window.consumeResize();

@@ -54,6 +54,16 @@ struct FlightHud
     float shieldFore = 1.0f;
     float shieldAft = 1.0f;
     float hull = 1.0f;
+
+    // Combat feedback: targeted-ship readout, projectile lead marker, and a
+    // crosshair flash while the player is taking hits.
+    bool targetIsShip = false;
+    float targetShieldFore = 0.0f;
+    float targetShieldAft = 0.0f;
+    float targetHull = 0.0f;
+    bool hasLead = false;
+    core::Vec3 leadDirectionCamera; // unit, camera space
+    float damageFlash = 0.0f;       // 0..1
 };
 
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).
