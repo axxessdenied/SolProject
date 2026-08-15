@@ -122,6 +122,18 @@ int entityCount(GameContent& content)
     return static_cast<int>(content.world().entityCount());
 }
 
+std::string systemName(GameContent& content)
+{
+    return content.world().currentSystemName();
+}
+
+// Dev shortcut: jump via the nearest gate regardless of range (real play
+// gates through main.cpp's activation-range check on the J key).
+bool jumpNearestGate(GameContent& content)
+{
+    return content.world().jumpNearestGate(1.0e30);
+}
+
 } // namespace
 
 bool GameContent::initialize(const std::string& dataDirectory, const std::string& modsDirectory,
@@ -155,6 +167,7 @@ bool GameContent::initialize(const std::string& dataDirectory, const std::string
         return false; // boot data must be valid; the error was logged
     }
     m_world->applyDefs(m_defs);
+    m_world->generateUniverse(m_defs); // defs feed the generator params
     runBootScripts();
     rebuildWatchList();
     SOL_LOG_INFO("content: %zu layer(s), %zu ship / %zu weapon / %zu faction def(s)",
@@ -177,6 +190,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&pilotIdle>("sol", "pilot_idle", this);
     m_vm.registerFunction<&pilotPatrolOffset>("sol", "pilot_patrol_offset", this);
     m_vm.registerFunction<&pilotHull>("sol", "pilot_hull", this);
+    m_vm.registerFunction<&systemName>("sol", "system", this);
+    m_vm.registerFunction<&jumpNearestGate>("sol", "jump", this);
 }
 
 bool GameContent::reloadDefs()

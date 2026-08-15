@@ -64,6 +64,11 @@ struct FlightHud
     bool hasLead = false;
     core::Vec3 leadDirectionCamera; // unit, camera space
     float damageFlash = 0.0f;       // 0..1
+
+    // Universe context (Phase 7): current system, and a jump prompt while
+    // the ship is within a gate's activation range.
+    const char* systemName = "";
+    bool gateInRange = false;
 };
 
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).

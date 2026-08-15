@@ -446,6 +446,12 @@ void DevUi::buildFlightHud(const FlightHud& hud)
                            "HUL %d%%", static_cast<int>(hullFraction * 100.0f + 0.5f));
         ImGui::SameLine(0.0f, 24.0f);
         ImGui::TextDisabled("%s", hud.cameraMode);
+        ImGui::SameLine(0.0f, 24.0f);
+        ImGui::TextDisabled("SYS %s", hud.systemName);
+        if (hud.gateInRange) {
+            ImGui::SameLine(0.0f, 24.0f);
+            ImGui::TextColored({0.5f, 0.9f, 1.0f, 1.0f}, "[J] JUMP");
+        }
     }
     ImGui::End();
 }

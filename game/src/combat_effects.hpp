@@ -22,6 +22,9 @@ public:
     void tick(double dt);
     void appendInstances(float alpha, std::vector<ParticleInstance>& out) const;
 
+    // Drop everything in flight (system change: effects belong to the old one).
+    void clear() { m_particles.clear(); }
+
 private:
     struct Particle
     {

@@ -215,13 +215,25 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         ++m_drawCallCount;
     }
 
-    renderer::ImpostorRenderer::Body planet = {};
-    planet.centerRelative = (scene.planet.position - camera.position).toVec3();
-    planet.radius = static_cast<float>(scene.planet.radius);
-    planet.colorA = {0.06f, 0.11f, 0.18f}; // oceans
-    planet.colorB = {0.30f, 0.26f, 0.18f}; // continents
-    planet.sunDirection = sunDirection;
-    m_impostorRenderer.drawPlanet(commandBuffer, viewProjection, planet);
+    // Small fixed palette; CelestialDraw::palette indexes it (mod count).
+    static constexpr core::Vec3 kPlanetPalette[][2] = {
+        {{0.06f, 0.11f, 0.18f}, {0.30f, 0.26f, 0.18f}}, // ocean world
+        {{0.20f, 0.12f, 0.07f}, {0.42f, 0.30f, 0.18f}}, // desert
+        {{0.10f, 0.16f, 0.10f}, {0.26f, 0.32f, 0.20f}}, // jungle
+        {{0.16f, 0.17f, 0.20f}, {0.32f, 0.33f, 0.36f}}, // barren rock
+        {{0.22f, 0.16f, 0.09f}, {0.38f, 0.33f, 0.24f}}, // gas banding
+    };
+    constexpr std::uint32_t kPaletteCount =
+        static_cast<std::uint32_t>(std::size(kPlanetPalette));
+    for (const CelestialDraw& body : scene.planets) {
+        renderer::ImpostorRenderer::Body planet = {};
+        planet.centerRelative = (body.position - camera.position).toVec3();
+        planet.radius = static_cast<float>(body.radius);
+        planet.colorA = kPlanetPalette[body.palette % kPaletteCount][0];
+        planet.colorB = kPlanetPalette[body.palette % kPaletteCount][1];
+        planet.sunDirection = sunDirection;
+        m_impostorRenderer.drawPlanet(commandBuffer, viewProjection, planet);
+    }
 
     // Sky after opaques (passes only at the far clear), star glow over the sky.
     m_skyRenderer.draw(commandBuffer, extent, camera.orientation, kCameraVerticalFov, aspect,

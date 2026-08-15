@@ -8,6 +8,7 @@
 #include "sol/ecs/snapshot.hpp"
 #include "sol/platform/file_io.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <span>
@@ -20,18 +21,18 @@ using namespace sol;
 
 namespace {
 
-// System layout (meters, sim space, origin = sun).
-constexpr core::DVec3 kPlanetPosition = {0.0, 0.0, -1.0e11}; // ~0.67 AU
-constexpr double kPlanetRadius = 6.371e6;
-constexpr core::DVec3 kStationPosition = {0.0, 0.0, kPlanetPosition.z + 1.5e8}; // 150,000 km sunward
-constexpr double kSunRadius = 6.96e8;
-
 // Impact damage: k * v^2 (50 m/s ram = 25 damage); scrapes below ~10 m/s
 // are ignored so docking bumps stay free.
 constexpr double kImpactDamageFactor = 0.01;
 constexpr double kImpactDamageMinimum = 1.0;
 
-constexpr core::DVec3 kPlayerStart = kStationPosition + core::DVec3{0.0, 0.0, 800.0};
+// Save format: header (magic, version, universe seed, current system) then
+// the ECS snapshot. Bump the version on any layout change; old saves are
+// rejected cleanly by the magic/version check.
+constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
+constexpr std::uint32_t kSaveVersion = 1;
+
+constexpr std::uint32_t kNoSystem = 0xffff'ffffu;
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -97,55 +98,194 @@ sim::ShipTuning toShipTuning(const assets::ShipFlightTuning& flight)
 
 } // namespace
 
-void SpaceWorld::spawn()
+void SpaceWorld::spawn(std::uint64_t universeSeed)
 {
-    m_sun = {.name = "Sol", .position = {}, .radius = kSunRadius};
-    m_planet = {.name = "Aster", .position = kPlanetPosition, .radius = kPlanetRadius};
-    m_targets = {
-        NavTarget{.name = "Aster Gateway", .position = kStationPosition, .surfaceRadius = 0.0},
-        NavTarget{.name = "Aster", .position = kPlanetPosition, .surfaceRadius = kPlanetRadius},
-        NavTarget{.name = "Sol", .position = {}, .surfaceRadius = kSunRadius},
-    };
-    m_targetIndex = 0;
+    m_universeSeed = universeSeed;
+    // Placeholder star so rendering before generateUniverse stays sane.
+    m_star = {.name = "(void)", .position = {}, .radius = 6.96e8};
 
-    auto addStatic = [&](core::DVec3 position, core::Quat orientation, core::Vec3 scale,
-                         ModelId model) {
+    const ecs::Entity e = m_registry.create();
+    m_registry.emplace<Transform>(e);
+    m_registry.emplace<FlightBody>(e);
+    m_registry.emplace<RenderShape>(e, RenderShape{.model = ModelId::Ship});
+    m_registry.emplace<PlayerShip>(e);
+    m_registry.emplace<ShipControl>(e);
+    m_registry.emplace<ShipPower>(e);
+    m_registry.emplace<ShipDefense>(e);
+    m_registry.emplace<ShipWeapon>(e);
+}
+
+void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
+{
+    m_galaxyParams = sim::GalaxyParams{};
+    m_galaxyParams.seed = m_universeSeed;
+    m_galaxyParams.factionCount = static_cast<std::uint32_t>(defs.factions().size());
+    // Station archetype rules arrive with the economy defs; until then every
+    // station is archetype 0.
+    m_galaxy = sim::generateGalaxy(m_galaxyParams);
+
+    // Start in the first core system with a station (deterministic per seed).
+    std::uint32_t start = 0;
+    for (std::uint32_t i = 0; i < m_galaxy.systems.size(); ++i) {
+        if (m_galaxy.systems[i].region == sim::Region::Core &&
+            !m_galaxy.systems[i].stations.empty()) {
+            start = i;
+            break;
+        }
+    }
+    loadSystem(start, kNoSystem);
+    SOL_LOG_INFO("universe: seed %llu, %zu systems, %zu lanes; starting in '%s'",
+                 static_cast<unsigned long long>(m_universeSeed), m_galaxy.systems.size(),
+                 m_galaxy.links.size(), currentSystemName());
+}
+
+void SpaceWorld::despawnSystem()
+{
+    const std::uint32_t playerIndex = playerEntityIndex();
+    std::vector<ecs::Entity> doomed;
+    const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
+    for (std::size_t i = 0; i < transforms.size(); ++i) {
+        const std::uint32_t entityIndex = transforms.entityIndices()[i];
+        if (entityIndex != playerIndex) {
+            doomed.push_back(m_registry.entityFromIndex(entityIndex));
+        }
+    }
+    for (const ecs::Entity entity : doomed) {
+        m_registry.destroy(entity);
+    }
+    m_spawnedShips.clear();
+    m_combatEffects.clear();
+    m_thrusters.clear();
+}
+
+void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
+{
+    auto addStatic = [&](core::DVec3 position, core::Vec3 scale, ModelId model) {
         const ecs::Entity e = m_registry.create();
         m_registry.emplace<Transform>(e, Transform{.position = position,
-                                                   .previousPosition = position,
-                                                   .orientation = orientation,
-                                                   .previousOrientation = orientation});
+                                                   .previousPosition = position});
         m_registry.emplace<RenderShape>(e, RenderShape{.scale = scale, .model = model});
     };
-
-    // Station "Aster Gateway" (mesh authored in meters, ~200 m across).
-    addStatic(kStationPosition, core::Quat::identity(), {1.0f, 1.0f, 1.0f}, ModelId::Station);
-
-    // Waypoint cubes marching toward the planet, then an arrival cluster just
-    // above the surface: precision canaries at both ends of the flight.
-    for (const double kilometers : {2.0, 5.0, 10.0, 25.0, 50.0}) {
-        addStatic(kStationPosition + core::DVec3{120.0, 40.0, -kilometers * 1000.0},
-                  core::Quat::identity(), {12.0f, 12.0f, 12.0f}, ModelId::Cube);
+    for (const sim::StationSpec& station : spec.stations) {
+        addStatic(station.position, {1.0f, 1.0f, 1.0f}, ModelId::Station);
     }
-    for (int i = 0; i < 3; ++i) {
-        const core::DVec3 arrival =
-            kPlanetPosition + core::DVec3{i * 400.0, 0.0, kPlanetRadius + 2.0e5};
-        addStatic(arrival, core::Quat::identity(), {40.0f, 40.0f, 40.0f}, ModelId::Cube);
+    // Gates render as flat frames (provisional visual: a squashed cube).
+    for (const sim::GateSpec& gate : spec.gates) {
+        addStatic(gate.position, {70.0f, 70.0f, 10.0f}, ModelId::Cube);
+    }
+}
+
+void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
+{
+    m_star = {.name = spec.name, .position = {}, .radius = spec.starRadius};
+    m_planets.clear();
+    for (const sim::PlanetSpec& planet : spec.planets) {
+        m_planets.push_back(
+            {.name = planet.name, .position = planet.position, .radius = planet.radius});
+    }
+    m_gates.clear();
+    for (const sim::GateSpec& gate : spec.gates) {
+        m_gates.push_back({.name = "Gate: " + m_galaxy.systems[gate.toSystem].name,
+                           .toSystem = gate.toSystem,
+                           .position = gate.position});
     }
 
-    // The player ship, 800 m sunward of the station, nose (-Z) toward it.
-    {
-        const ecs::Entity e = m_registry.create();
-        m_registry.emplace<Transform>(
-            e, Transform{.position = kPlayerStart, .previousPosition = kPlayerStart});
-        m_registry.emplace<FlightBody>(e);
-        m_registry.emplace<RenderShape>(e, RenderShape{.model = ModelId::Ship});
-        m_registry.emplace<PlayerShip>(e);
-        m_registry.emplace<ShipControl>(e);
-        m_registry.emplace<ShipPower>(e);
-        m_registry.emplace<ShipDefense>(e);
-        m_registry.emplace<ShipWeapon>(e);
+    // Target cycle: stations, gates, planets, star. Lua's stationPosition()
+    // anchor is m_targets[0], so stations must stay first.
+    m_targets.clear();
+    for (const sim::StationSpec& station : spec.stations) {
+        m_targets.push_back(
+            {.name = station.name, .position = station.position, .surfaceRadius = 0.0});
     }
+    for (const GateInstance& gate : m_gates) {
+        m_targets.push_back({.name = gate.name, .position = gate.position, .surfaceRadius = 0.0});
+    }
+    for (const CelestialBody& planet : m_planets) {
+        m_targets.push_back(
+            {.name = planet.name, .position = planet.position, .surfaceRadius = planet.radius});
+    }
+    m_targets.push_back(
+        {.name = m_star.name, .position = m_star.position, .surfaceRadius = m_star.radius});
+    m_targetIndex = 0;
+
+    // Steering obstacles for NPC avoidance: stations plus every celestial.
+    m_obstacles.clear();
+    for (const sim::StationSpec& station : spec.stations) {
+        m_obstacles.push_back({.position = station.position, .radius = 130.0});
+    }
+    for (const CelestialBody& planet : m_planets) {
+        m_obstacles.push_back({.position = planet.position, .radius = planet.radius});
+    }
+    m_obstacles.push_back({.position = m_star.position, .radius = m_star.radius});
+}
+
+void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
+{
+    despawnSystem();
+    m_currentSystem = systemIndex;
+    const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
+    instantiateSystemEntities(spec);
+    rebuildSystemSideData(spec);
+
+    // Arrival point: off the gate we came through, facing the playfield; on
+    // a fresh start, just off the first station (or the hub failing that).
+    const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
+    core::DVec3 arrival = hub + core::DVec3{0.0, 0.0, 2.0e5};
+    if (fromSystem != kNoSystem) {
+        for (const sim::GateSpec& gate : spec.gates) {
+            if (gate.toSystem == fromSystem) {
+                arrival = gate.position + normalize(hub - gate.position) * 500.0;
+                break;
+            }
+        }
+    } else if (!spec.stations.empty()) {
+        arrival = spec.stations[0].position + core::DVec3{0.0, 0.0, 800.0};
+    }
+    m_playerSpawn = arrival;
+
+    const std::uint32_t playerIndex = playerEntityIndex();
+    Transform& transform = m_registry.storage<Transform>().get(playerIndex);
+    transform.position = arrival;
+    transform.previousPosition = arrival;
+    transform.previousOrientation = transform.orientation;
+    m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
+    m_playerDamageTimer = 0.0f;
+}
+
+bool SpaceWorld::jumpNearestGate(double activationRange)
+{
+    const core::DVec3 playerPosition = shipState().position;
+    const GateInstance* nearest = nullptr;
+    double nearestDistance = activationRange;
+    for (const GateInstance& gate : m_gates) {
+        const double distance = length(gate.position - playerPosition);
+        if (distance <= nearestDistance) {
+            nearestDistance = distance;
+            nearest = &gate;
+        }
+    }
+    if (nearest == nullptr) {
+        return false;
+    }
+    const std::uint32_t destination = nearest->toSystem;
+    SOL_LOG_INFO("jumping: %s -> %s", currentSystemName(),
+                 m_galaxy.systems[destination].name.c_str());
+    loadSystem(destination, m_currentSystem);
+    return true;
+}
+
+double SpaceWorld::nearestGateDistance() const
+{
+    if (m_gates.empty()) {
+        return -1.0;
+    }
+    const core::DVec3 playerPosition =
+        m_registry.storage<Transform>().get(playerEntityIndex()).position;
+    double nearest = 1.0e30;
+    for (const GateInstance& gate : m_gates) {
+        nearest = std::min(nearest, length(gate.position - playerPosition));
+    }
+    return nearest;
 }
 
 void SpaceWorld::playerAddPip(sim::PowerSystem system)
@@ -415,11 +555,7 @@ void SpaceWorld::tick(double dt)
     // NPC pilots: C++ steering flies whatever state Lua's pilot_think chose.
     {
         ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
-        const sim::AvoidanceSphere obstacles[] = {
-            {.position = m_targets[0].position, .radius = 130.0}, // station
-            {.position = m_planet.position, .radius = m_planet.radius},
-            {.position = m_sun.position, .radius = m_sun.radius},
-        };
+        const std::span<const sim::AvoidanceSphere> obstacles = m_obstacles;
         for (std::size_t i = 0; i < pilots.size(); ++i) {
             ShipPilot& pilot = pilots.values()[i];
             const std::uint32_t entityIndex = pilots.entityIndices()[i];
@@ -580,11 +716,16 @@ void SpaceWorld::tick(double dt)
              .radius = modelBaseRadius(shape.model) * static_cast<double>(shape.scale.x),
              .inverseMass = 0.0});
     }
-    for (const CelestialBody* celestial : {&m_sun, &m_planet}) {
-        m_collisionBodies.push_back({.previousPosition = celestial->position,
-                                     .position = celestial->position,
+    m_collisionBodies.push_back({.previousPosition = m_star.position,
+                                 .position = m_star.position,
+                                 .velocity = {},
+                                 .radius = m_star.radius,
+                                 .inverseMass = 0.0});
+    for (const CelestialBody& planet : m_planets) {
+        m_collisionBodies.push_back({.previousPosition = planet.position,
+                                     .position = planet.position,
                                      .velocity = {},
-                                     .radius = celestial->radius,
+                                     .radius = planet.radius,
                                      .inverseMass = 0.0});
     }
 
@@ -832,10 +973,10 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex)
                                    m_registry.storage<RenderShape>().get(entityIndex).scale.x);
     if (entityIndex == playerEntityIndex()) {
         // GDD death rule (respawn at last dock, insurance cost) arrives with
-        // docking; until then: reset at the spawn point with full defenses.
-        SOL_LOG_WARN("ship destroyed - respawning at Aster Gateway");
+        // docking; until then: reset at the system spawn point, full defenses.
+        SOL_LOG_WARN("ship destroyed - respawning in %s", currentSystemName());
         Transform& transform = m_registry.storage<Transform>().get(entityIndex);
-        transform = Transform{.position = kPlayerStart, .previousPosition = kPlayerStart};
+        transform = Transform{.position = m_playerSpawn, .previousPosition = m_playerSpawn};
         m_registry.storage<FlightBody>().get(entityIndex) = FlightBody{};
         ShipDefense& defense = m_registry.storage<ShipDefense>().get(entityIndex);
         sim::resetDefense(defense.state, defense.tuning);
@@ -898,6 +1039,10 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip,
 bool SpaceWorld::saveTo(const char* path)
 {
     core::BinaryWriter writer;
+    writer.write(kSaveMagic);
+    writer.write(kSaveVersion);
+    writer.write(m_universeSeed);
+    writer.write(m_currentSystem);
     makeSnapshotSchema().save(m_registry, writer);
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
 }
@@ -908,9 +1053,29 @@ bool SpaceWorld::loadFrom(const char* path)
     if (!platform::readFileBytes(path, bytes)) {
         return false;
     }
-    ecs::Registry fresh;
     core::BinaryReader reader(
         std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
+    std::uint32_t magic = 0;
+    std::uint32_t version = 0;
+    std::uint64_t seed = 0;
+    std::uint32_t systemIndex = 0;
+    if (!reader.read(magic) || magic != kSaveMagic || !reader.read(version) ||
+        version != kSaveVersion || !reader.read(seed) || !reader.read(systemIndex)) {
+        return false; // pre-galaxy or foreign save: rejected cleanly
+    }
+
+    // Same seed => same galaxy, so the galaxy itself regenerates instead of
+    // being serialized (dynamic state — the economy — saves separately).
+    if (seed != m_universeSeed || m_galaxy.systems.empty()) {
+        m_universeSeed = seed;
+        m_galaxyParams.seed = seed;
+        m_galaxy = sim::generateGalaxy(m_galaxyParams);
+    }
+    if (systemIndex >= m_galaxy.systems.size()) {
+        return false;
+    }
+
+    ecs::Registry fresh;
     if (!makeSnapshotSchema().load(fresh, reader)) {
         return false;
     }
@@ -921,6 +1086,17 @@ bool SpaceWorld::loadFrom(const char* path)
     // Def-spawned entities were replaced wholesale; their def association is
     // gone (visuals persist via the saved RenderShape).
     m_spawnedShips.clear();
+    m_combatEffects.clear();
+    m_thrusters.clear();
+
+    // The snapshot carries the system's statics; only the non-ECS side data
+    // (celestials, targets, gates, spawn anchor) needs rebuilding.
+    m_currentSystem = systemIndex;
+    const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
+    rebuildSystemSideData(spec);
+    m_playerSpawn = !spec.stations.empty()
+                        ? spec.stations[0].position + core::DVec3{0.0, 0.0, 800.0}
+                        : spec.planets[spec.primaryPlanet].position + core::DVec3{0.0, 0.0, 2.0e5};
     return true;
 }
 

@@ -20,6 +20,9 @@ public:
 
     void buildInstances(float alpha, std::vector<ParticleInstance>& out) const;
 
+    // Drop everything in flight (system change: plumes belong to the old one).
+    void clear() { m_particles.clear(); }
+
 private:
     struct Particle
     {

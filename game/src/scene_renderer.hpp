@@ -60,18 +60,20 @@ struct ParticleInstance
     sol::core::Vec4 color; // rgb = linear HDR, a = fade
 };
 
-// Sim-space celestial body handed to the impostor pass each frame.
+// Sim-space celestial body handed to the impostor pass each frame; palette
+// picks one of the renderer's planet color pairs (deterministic per body).
 struct CelestialDraw
 {
     sol::core::DVec3 position;
     double radius = 0.0;
+    std::uint32_t palette = 0;
 };
 
 // Everything scene-wide the renderer needs for one frame.
 struct SceneInfo
 {
     CelestialDraw sun;
-    CelestialDraw planet;
+    std::vector<CelestialDraw> planets;
     float exposure = 1.0f;
 };
 

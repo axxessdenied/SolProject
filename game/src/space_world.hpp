@@ -11,17 +11,22 @@
 #include "sol/sim/damage.hpp"
 #include "sol/sim/flight.hpp"
 #include "sol/sim/power.hpp"
+#include "sol/sim/steering.hpp"
+#include "sol/sim/universe.hpp"
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace game {
 
-// Phase 4 vertical-slice world: one star system in double-precision sim
-// space — sun at the origin, a planet ~0.67 AU out, a station 150,000 km
-// sunward of it, and the player ship. Positions are meters (large-world rule:
-// DVec3 in sim, camera-relative floats only at render time).
+// The live game world (Phase 7): a seeded procedural galaxy of which exactly
+// one system — the player's — is instantiated at full fidelity (sim-LOD
+// bubble); jumping through a gate demotes the old system to specs and
+// promotes the destination. Positions are meters in the current system's
+// barycenter frame (large-world rule: DVec3 in sim, camera-relative floats
+// only at render time).
 
 struct Transform
 {
@@ -134,9 +139,18 @@ struct RenderShape
 // Non-entity scenery: rendered as impostors, referenced as nav targets.
 struct CelestialBody
 {
-    const char* name = "";
+    std::string name;
     sol::core::DVec3 position;
     double radius = 0.0; // meters
+};
+
+// A jump gate in the current system (decisions/004: gates are the baseline
+// inter-system travel).
+struct GateInstance
+{
+    std::string name; // "Gate: <destination>"
+    std::uint32_t toSystem = 0;
+    sol::core::DVec3 position;
 };
 
 struct NavTarget
@@ -163,9 +177,32 @@ inline constexpr const char* kPlayerShipDefId = "sol.shuttle";
 class SpaceWorld
 {
 public:
-    // Spawns with hardcoded defaults; GameContent::initialize applies the
-    // data-driven tuning/visuals right after via applyDefs.
-    void spawn();
+    // Creates the player ship only; the universe arrives via
+    // generateUniverse once GameContent has loaded the defs (faction count
+    // and, later, station archetypes feed the generator params).
+    void spawn(std::uint64_t universeSeed);
+
+    // Generates the galaxy from the stored seed + defs and instantiates the
+    // starting system (first core system with a station). Called once by
+    // GameContent::initialize after defs load.
+    void generateUniverse(const sol::assets::DefDatabase& defs);
+
+    // Jumps through the nearest gate within activationRange meters of the
+    // player: despawns this system, instantiates the destination, and places
+    // the player at the arrival gate. Returns false if no gate is in range.
+    [[nodiscard]] bool jumpNearestGate(double activationRange);
+
+    // Distance to the nearest gate, or a negative value with no gates.
+    [[nodiscard]] double nearestGateDistance() const;
+
+    [[nodiscard]] const sol::sim::Galaxy& galaxy() const { return m_galaxy; }
+    [[nodiscard]] std::uint32_t currentSystemIndex() const { return m_currentSystem; }
+    [[nodiscard]] const char* currentSystemName() const
+    {
+        return m_currentSystem < m_galaxy.systems.size()
+                   ? m_galaxy.systems[m_currentSystem].name.c_str()
+                   : "(void)";
+    }
 
     void setShipInput(const sol::sim::FlightInput& input) { m_shipInput = input; }
     void tick(double dt);
@@ -195,8 +232,9 @@ public:
         return m_registry.storage<ShipDefense>().get(playerEntityIndex());
     }
 
-    [[nodiscard]] const CelestialBody& sun() const { return m_sun; }
-    [[nodiscard]] const CelestialBody& planet() const { return m_planet; }
+    [[nodiscard]] const CelestialBody& sun() const { return m_star; }
+    [[nodiscard]] std::span<const CelestialBody> planets() const { return m_planets; }
+    [[nodiscard]] std::span<const GateInstance> gates() const { return m_gates; }
 
     // Cycling targets: the static nav points (station, planet, sun) then
     // every live pilot ship (combat targets with shield/hull readouts).
@@ -253,7 +291,12 @@ public:
     bool pilotIdle(sol::ecs::Entity entity);
     bool pilotPatrolTo(sol::ecs::Entity entity, sol::core::DVec3 waypoint);
     [[nodiscard]] double shipHullFraction(sol::ecs::Entity entity) const;
-    [[nodiscard]] sol::core::DVec3 stationPosition() const { return m_targets[0].position; }
+    // The playfield anchor Lua patrol offsets are relative to: the first
+    // station of the current system, or the first nav target without one.
+    [[nodiscard]] sol::core::DVec3 stationPosition() const
+    {
+        return m_targets.empty() ? sol::core::DVec3{} : m_targets[0].position;
+    }
 
     // Decrements think timers by dt and collects pilots due for a Lua think.
     struct PilotThink
@@ -273,6 +316,18 @@ private:
     };
 
     static constexpr float kDamageFlashSeconds = 0.45f;
+
+    // Instantiates systemIndex (statics + side data) and moves the player
+    // there: at the gate arriving from fromSystem, or near the first station
+    // when fromSystem is kNoFaction-tagged invalid (new game / load).
+    void loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem);
+    // Destroys every entity of the current system except the player.
+    void despawnSystem();
+    // ECS statics (stations, gates) for a system spec.
+    void instantiateSystemEntities(const sol::sim::SystemSpec& spec);
+    // Non-ECS state (celestials, nav targets, gate list) for a system spec;
+    // used alone after a snapshot load, which already carries the statics.
+    void rebuildSystemSideData(const sol::sim::SystemSpec& spec);
 
     // Records feedback for a damage result (sparks, player flash, explosion
     // on a kill is handled by handleShipDestroyed).
@@ -298,8 +353,16 @@ private:
     std::vector<std::uint32_t> m_collisionShipIndices;
     std::vector<sol::sim::Contact> m_contacts;
 
-    CelestialBody m_sun;
-    CelestialBody m_planet;
+    std::uint64_t m_universeSeed = 0;
+    sol::sim::Galaxy m_galaxy;
+    sol::sim::GalaxyParams m_galaxyParams; // kept for regeneration on load
+    std::uint32_t m_currentSystem = 0;
+    sol::core::DVec3 m_playerSpawn; // respawn point in the current system
+
+    CelestialBody m_star;
+    std::vector<CelestialBody> m_planets;
+    std::vector<GateInstance> m_gates;
+    std::vector<sol::sim::AvoidanceSphere> m_obstacles; // stations + celestials
     std::vector<NavTarget> m_targets;
     std::size_t m_targetIndex = 0;
 };
