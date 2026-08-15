@@ -2,7 +2,7 @@ add_executable(sol_game
     src/main.cpp
     src/scene_renderer.cpp
     src/shader_watcher.cpp
-    src/sim_world.cpp
+    src/space_world.cpp
 )
 set_target_properties(sol_game PROPERTIES OUTPUT_NAME sol)
 

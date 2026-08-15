@@ -1,5 +1,7 @@
 #pragma once
 
+#include "scene_renderer.hpp"
+
 #include "sol/core/math/math.hpp"
 #include "sol/platform/window.hpp"
 
@@ -56,6 +58,9 @@ public:
 
     [[nodiscard]] sol::core::DVec3 position() const { return m_position; }
     [[nodiscard]] float speed() const { return m_speed; }
+
+    [[nodiscard]] CameraFrame frame() const { return {m_position, orientation()}; }
+    void setPosition(sol::core::DVec3 position) { m_position = position; }
 
 private:
     static constexpr float kLookSensitivity = 0.0025f;

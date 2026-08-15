@@ -125,6 +125,15 @@ public:
         return poolFor<T>();
     }
 
+    // Const access requires the pool to already exist.
+    template <typename T>
+    [[nodiscard]] const Pool<T>& storage() const
+    {
+        const Pool<T>* pool = poolIfExists<T>();
+        SOL_ASSERT(pool != nullptr);
+        return *pool;
+    }
+
 private:
     friend class Snapshot; // world save/load reads and restores entity slots
 

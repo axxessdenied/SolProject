@@ -1,7 +1,5 @@
 #pragma once
 
-#include "fly_camera.hpp"
-
 #include "sol/core/math/math.hpp"
 #include "sol/renderer/mesh_renderer.hpp"
 #include "sol/rhi/context.hpp"
@@ -14,6 +12,19 @@
 #include <vector>
 
 namespace game {
+
+// A camera pose in sim space; rendering is camera-relative, so only the
+// rotation part ever becomes a matrix (large-world rule).
+struct CameraFrame
+{
+    sol::core::DVec3 position;
+    sol::core::Quat orientation = sol::core::Quat::identity();
+
+    [[nodiscard]] sol::core::Mat4 viewRotation() const
+    {
+        return transpose(toMat4(orientation));
+    }
+};
 
 // One drawable produced by the sim for the current frame; positions are
 // sim-space doubles, made camera-relative at record time (large-world rule).
@@ -40,7 +51,7 @@ public:
                                   const char* shaderDirectory, const char* cookedDirectory);
     void shutdown();
 
-    [[nodiscard]] DrawResult drawFrame(const FlyCamera& camera,
+    [[nodiscard]] DrawResult drawFrame(const CameraFrame& camera,
                                        std::span<const RenderInstance> instances);
 
     // Call after the swapchain has been recreated (device must be idle).
@@ -68,7 +79,7 @@ private:
     [[nodiscard]] bool createPerImageSemaphores();
     void destroyPerImageSemaphores();
     void recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
-                        const FlyCamera& camera, std::span<const RenderInstance> instances);
+                        const CameraFrame& camera, std::span<const RenderInstance> instances);
 
     sol::rhi::Context* m_context = nullptr;
     sol::rhi::Swapchain* m_swapchain = nullptr;

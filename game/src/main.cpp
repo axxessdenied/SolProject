@@ -1,12 +1,13 @@
 #include "fly_camera.hpp"
 #include "scene_renderer.hpp"
 #include "shader_watcher.hpp"
-#include "sim_world.hpp"
+#include "ship_camera.hpp"
+#include "space_world.hpp"
 
-#include "sol/core/jobs.hpp"
 #include "sol/core/log.hpp"
 #include "sol/core/version.hpp"
 #include "sol/sim/fixed_loop.hpp"
+#include "sol/sim/flight.hpp"
 #include "sol/platform/file_io.hpp"
 #include "sol/platform/platform.hpp"
 #include "sol/platform/time.hpp"
@@ -15,6 +16,7 @@
 #include "sol/rhi/swapchain.hpp"
 #include "sol/ui/dev_ui.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -39,6 +41,79 @@ std::uint64_t parseMaxFrames(int argc, char** argv)
     }
     return 0;
 }
+
+// Latches per-frame window state into a flight-model input. Rotation combines
+// a self-centering virtual stick fed by the mouse (hold RMB) with full-deflection
+// arrow keys; Q/E roll. WASD + Space/Ctrl thrust, Shift boost, Tab toggles
+// cruise, X toggles assist.
+class ShipInputMapper
+{
+public:
+    [[nodiscard]] sol::sim::FlightInput update(sol::platform::Window& window, float deltaSeconds)
+    {
+        using sol::platform::Key;
+        using sol::platform::MouseButton;
+
+        const bool steering = window.isMouseButtonDown(MouseButton::Right);
+        window.setCursorLocked(steering);
+        if (steering) {
+            const sol::core::Vec2 delta = window.mouseDelta();
+            m_stick.x -= delta.y * kStickSensitivity; // mouse up = nose up
+            m_stick.y -= delta.x * kStickSensitivity; // mouse left = yaw left
+        }
+        // Self-centering, Elite-style relative mouse.
+        const float recenter = std::exp(-kRecenterRate * deltaSeconds);
+        m_stick.x = sol::core::clamp(m_stick.x * recenter, -1.0f, 1.0f);
+        m_stick.y = sol::core::clamp(m_stick.y * recenter, -1.0f, 1.0f);
+
+        sol::sim::FlightInput input;
+        input.angular.x = m_stick.x;
+        input.angular.y = m_stick.y;
+        if (window.isKeyDown(Key::Up)) input.angular.x += 1.0f;
+        if (window.isKeyDown(Key::Down)) input.angular.x -= 1.0f;
+        if (window.isKeyDown(Key::Left)) input.angular.y += 1.0f;
+        if (window.isKeyDown(Key::Right)) input.angular.y -= 1.0f;
+        if (window.isKeyDown(Key::Q)) input.angular.z -= 1.0f; // roll left
+        if (window.isKeyDown(Key::E)) input.angular.z += 1.0f;
+
+        if (window.isKeyDown(Key::W)) input.linear.z -= 1.0f; // main drive
+        if (window.isKeyDown(Key::S)) input.linear.z += 1.0f;
+        if (window.isKeyDown(Key::A)) input.linear.x -= 1.0f;
+        if (window.isKeyDown(Key::D)) input.linear.x += 1.0f;
+        if (window.isKeyDown(Key::Space)) input.linear.y += 1.0f;
+        if (window.isKeyDown(Key::LeftControl)) input.linear.y -= 1.0f;
+
+        input.boost = window.isKeyDown(Key::LeftShift);
+        if (pressed(window, Key::X, m_previousAssistKey)) {
+            m_assist = !m_assist;
+        }
+        if (pressed(window, Key::Tab, m_previousCruiseKey)) {
+            m_cruise = !m_cruise;
+        }
+        input.assist = m_assist;
+        input.cruise = m_cruise;
+        return input;
+    }
+
+private:
+    [[nodiscard]] static bool pressed(sol::platform::Window& window, sol::platform::Key key,
+                                      bool& previous)
+    {
+        const bool down = window.isKeyDown(key);
+        const bool edge = down && !previous;
+        previous = down;
+        return edge;
+    }
+
+    static constexpr float kStickSensitivity = 0.0035f;
+    static constexpr float kRecenterRate = 2.5f;
+
+    sol::core::Vec2 m_stick;
+    bool m_assist = true;
+    bool m_cruise = false;
+    bool m_previousAssistKey = false;
+    bool m_previousCruiseKey = false;
+};
 
 } // namespace
 
@@ -93,23 +168,29 @@ int main(int argc, char** argv)
 #endif
     game::ShaderWatcher shaderWatcher(SOL_SHADER_SOURCE_DIR, SOL_GLSLC_PATH, shaderDirectory);
 
-    game::FlyCamera camera;
+    // Phase 4 vertical slice: one system, one ship, station -> planet flight.
+    sol::sim::FixedLoop simLoop(60.0);
+    game::SpaceWorld world;
+    world.spawn();
+    ShipInputMapper inputMapper;
+    game::ShipCamera shipCamera;
+    game::FlyCamera freeCamera;
+    game::CameraMode cameraMode = game::CameraMode::ThirdPerson;
+    std::vector<game::RenderInstance> renderInstances;
+    SOL_LOG_INFO("Space world: %u entities. Ship at Aster Gateway; planet %.0f km out.",
+                 world.entityCount(),
+                 length(world.planet().position - world.currentTarget().position) / 1000.0);
+
     float smoothedFps = 0.0f;
     bool previousF5 = false;
     bool previousF9 = false;
     bool previousF10 = false;
+    bool previousV = false;
+    bool previousT = false;
 
-    // Phase 3: 10k+ entities on a 60 Hz fixed timestep, rendered with
-    // interpolation at uncapped framerate.
-    sol::core::JobSystem jobs;
-    sol::sim::FixedLoop simLoop(60.0);
-    game::SimWorld world;
-    world.spawn(10'000, 1337);
-    std::vector<game::RenderInstance> renderInstances;
-    SOL_LOG_INFO("Sim world: %u entities, %u job workers", world.entityCount(), jobs.workerCount());
-
-    SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse look, WASD move, ESC quits.", window.width(),
-                 window.height());
+    SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse steer, WASD/QE/Space/Ctrl thrust, "
+                 "Shift boost, Tab cruise, X assist, V camera, T target, ESC quits.",
+                 window.width(), window.height());
 
     double lastFrameTime = sol::platform::timeSeconds();
     std::uint64_t frameCount = 0;
@@ -129,16 +210,74 @@ int main(int argc, char** argv)
         const float deltaSeconds = sol::core::clamp(static_cast<float>(now - lastFrameTime), 0.0f, 0.1f);
         lastFrameTime = now;
 
-        camera.update(window, deltaSeconds);
+        // Camera mode cycle (V): first person -> chase -> free.
+        const bool vDown = window.isKeyDown(sol::platform::Key::V);
+        if (vDown && !previousV) {
+            switch (cameraMode) {
+            case game::CameraMode::FirstPerson:
+                cameraMode = game::CameraMode::ThirdPerson;
+                shipCamera.snapTo(world.shipRenderTransform(simLoop.alpha()));
+                break;
+            case game::CameraMode::ThirdPerson:
+                cameraMode = game::CameraMode::Free;
+                freeCamera.setPosition(
+                    shipCamera.thirdPerson(world.shipRenderTransform(simLoop.alpha()), 0.0f).position);
+                break;
+            case game::CameraMode::Free:
+                cameraMode = game::CameraMode::FirstPerson;
+                break;
+            }
+        }
+        previousV = vDown;
+
+        const bool tDown = window.isKeyDown(sol::platform::Key::T);
+        if (tDown && !previousT) {
+            world.cycleTarget();
+            SOL_LOG_INFO("Target: %s", world.currentTarget().name);
+        }
+        previousT = tDown;
+
+        // In free-cam mode the mouse/keys drive the debug camera, not the ship.
+        if (cameraMode == game::CameraMode::Free) {
+            freeCamera.update(window, deltaSeconds);
+            world.setShipInput({});
+        } else {
+            world.setShipInput(inputMapper.update(window, deltaSeconds));
+        }
 
         simLoop.beginFrame(deltaSeconds);
         while (simLoop.shouldTick()) {
-            world.tick(jobs, simLoop.tickDelta());
+            world.tick(simLoop.tickDelta());
         }
         const float simAlpha = simLoop.alpha();
-        const double interpolatedSimTime =
-            simLoop.simTimeSeconds() + static_cast<double>(simAlpha) * simLoop.tickDelta();
-        world.buildRenderInstances(jobs, simAlpha, interpolatedSimTime, renderInstances);
+
+        const game::Transform shipTransform = world.shipRenderTransform(simAlpha);
+        game::CameraFrame camera;
+        switch (cameraMode) {
+        case game::CameraMode::FirstPerson:
+            camera = shipCamera.firstPerson(shipTransform);
+            break;
+        case game::CameraMode::ThirdPerson:
+            camera = shipCamera.thirdPerson(shipTransform, deltaSeconds);
+            break;
+        case game::CameraMode::Free:
+            camera = freeCamera.frame();
+            break;
+        }
+
+        const bool includeShip = cameraMode != game::CameraMode::FirstPerson;
+        world.buildRenderInstances(simAlpha, includeShip, renderInstances);
+
+        // Placeholder celestial rendering until the impostor pass lands:
+        // planet and sun as giant cubes (positions still fully camera-relative).
+        renderInstances.push_back(game::RenderInstance{
+            .position = world.planet().position,
+            .scale = sol::core::Vec3{1.0f, 1.0f, 1.0f} * static_cast<float>(world.planet().radius),
+        });
+        renderInstances.push_back(game::RenderInstance{
+            .position = world.sun().position,
+            .scale = sol::core::Vec3{1.0f, 1.0f, 1.0f} * static_cast<float>(world.sun().radius),
+        });
 
         // World save/load round trip: F9 saves, F10 loads (edge-triggered).
         const bool f9Down = window.isKeyDown(sol::platform::Key::F9);
@@ -175,8 +314,8 @@ int main(int argc, char** argv)
         sol::ui::OverlayStats stats;
         stats.fps = smoothedFps;
         stats.frameMilliseconds = deltaSeconds * 1000.0f;
-        stats.cameraPosition = camera.position();
-        stats.cameraSpeed = camera.speed();
+        stats.cameraPosition = camera.position;
+        stats.cameraSpeed = static_cast<float>(length(world.shipState().velocity));
         stats.drawCalls = renderer.drawCallCount();
         stats.simTicks = simLoop.tickCount();
         stats.simEntities = world.entityCount();

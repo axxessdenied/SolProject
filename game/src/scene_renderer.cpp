@@ -127,7 +127,7 @@ void SceneRenderer::shutdown()
 }
 
 void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
-                                   const FlyCamera& camera,
+                                   const CameraFrame& camera,
                                    std::span<const RenderInstance> instances)
 {
     VkCommandBufferBeginInfo beginInfo = {};
@@ -149,7 +149,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     for (const RenderInstance& instance : instances) {
         // Camera-relative: demote sim-space positions to float only after
         // subtracting the camera position (the large-world rule).
-        const core::Vec3 relative = (instance.position - camera.position()).toVec3();
+        const core::Vec3 relative = (instance.position - camera.position).toVec3();
         const core::Mat4 model =
             core::translation(relative) * toMat4(instance.rotation) * core::scale(instance.scale);
         m_meshRenderer.draw(commandBuffer, m_cubeMesh, m_checkerTexture, viewProjection * model, model);
@@ -164,7 +164,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     GAME_VK_CHECK(vkEndCommandBuffer(commandBuffer));
 }
 
-SceneRenderer::DrawResult SceneRenderer::drawFrame(const FlyCamera& camera,
+SceneRenderer::DrawResult SceneRenderer::drawFrame(const CameraFrame& camera,
                                                    std::span<const RenderInstance> instances)
 {
     const VkDevice device = m_context->device();
