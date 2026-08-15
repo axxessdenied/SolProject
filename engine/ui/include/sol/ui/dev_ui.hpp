@@ -48,6 +48,12 @@ struct FlightHud
     int pipsShields = 2;
     int pipMax = 4;
     float weaponCharge = 1.0f;
+
+    // Defenses (decisions/002), all 0..1: fore/aft shield arcs around the
+    // crosshair plus hull in the readout strip.
+    float shieldFore = 1.0f;
+    float shieldAft = 1.0f;
+    float hull = 1.0f;
 };
 
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).

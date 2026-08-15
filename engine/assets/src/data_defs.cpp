@@ -144,10 +144,23 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     reader.optionalFloat("cruise_speed_scale", flight.cruiseSpeedScale);
     reader.optionalFloat("cruise_accel_scale", flight.cruiseAccelScale);
 
+    ShipDefenseTuning& defense = def.defense;
+    reader.optionalFloat("shield_strength", defense.shieldStrength);
+    reader.optionalFloat("shield_regen", defense.shieldRegen);
+    reader.optionalFloat("shield_regen_delay", defense.shieldRegenDelay);
+    reader.optionalFloat("armor", defense.armor);
+    reader.optionalFloat("hull", defense.hull);
+
+    ShipPowerTuning& power = def.power;
+    reader.optionalFloat("weapon_capacitor", power.weaponCapacitor);
+    reader.optionalFloat("weapon_recharge", power.weaponRecharge);
+
     reader.rejectUnknownKeys({"id", "name", "model", "scale", "forward_accel", "reverse_accel",
                               "lateral_accel", "vertical_accel", "max_speed", "max_turn_rate",
                               "angular_accel", "boost_accel_scale", "boost_speed_scale",
-                              "cruise_speed_scale", "cruise_accel_scale"});
+                              "cruise_speed_scale", "cruise_accel_scale", "shield_strength",
+                              "shield_regen", "shield_regen_delay", "armor", "hull",
+                              "weapon_capacitor", "weapon_recharge"});
     if (!reader.failed && def.scale <= 0.0f) {
         reader.fail("'scale' must be > 0");
     }

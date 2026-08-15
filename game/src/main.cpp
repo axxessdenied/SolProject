@@ -418,6 +418,14 @@ int main(int argc, char** argv)
         hud.pipsShields = power.pips.shields;
         hud.pipMax = world.powerTuning().maxPerSystem;
         hud.weaponCharge = power.weaponCharge / world.powerTuning().weaponCapacitor;
+        const game::ShipDefense& defense = world.playerDefense();
+        hud.shieldFore = defense.tuning.shieldStrength > 0.0f
+                             ? defense.state.shieldFore / defense.tuning.shieldStrength
+                             : 0.0f;
+        hud.shieldAft = defense.tuning.shieldStrength > 0.0f
+                            ? defense.state.shieldAft / defense.tuning.shieldStrength
+                            : 0.0f;
+        hud.hull = defense.tuning.hull > 0.0f ? defense.state.hull / defense.tuning.hull : 0.0f;
         devUi.beginFrame(stats, hud);
 
         bool needRecreate = window.consumeResize();

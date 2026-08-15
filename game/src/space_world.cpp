@@ -24,9 +24,12 @@ constexpr double kPlanetRadius = 6.371e6;
 constexpr core::DVec3 kStationPosition = {0.0, 0.0, kPlanetPosition.z + 1.5e8}; // 150,000 km sunward
 constexpr double kSunRadius = 6.96e8;
 
-// One shared power curve until ship defs grow power stats (task: damage
-// model def-schema pass).
-constexpr sim::PowerTuning kPowerTuning{};
+// Impact damage: k * v^2 (50 m/s ram = 25 damage); scrapes below ~10 m/s
+// are ignored so docking bumps stay free.
+constexpr double kImpactDamageFactor = 0.01;
+constexpr double kImpactDamageMinimum = 1.0;
+
+constexpr core::DVec3 kPlayerStart = kStationPosition + core::DVec3{0.0, 0.0, 800.0};
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -52,6 +55,7 @@ ecs::Snapshot makeSnapshotSchema()
     schema.component<PlayerShip>(13);
     schema.component<ShipControl>(14);
     schema.component<ShipPower>(15);
+    schema.component<ShipDefense>(16);
     return schema;
 }
 
@@ -126,33 +130,28 @@ void SpaceWorld::spawn()
 
     // The player ship, 800 m sunward of the station, nose (-Z) toward it.
     {
-        const core::DVec3 start = kStationPosition + core::DVec3{0.0, 0.0, 800.0};
         const ecs::Entity e = m_registry.create();
         m_registry.emplace<Transform>(
-            e, Transform{.position = start, .previousPosition = start});
+            e, Transform{.position = kPlayerStart, .previousPosition = kPlayerStart});
         m_registry.emplace<FlightBody>(e);
         m_registry.emplace<RenderShape>(e, RenderShape{.model = ModelId::Ship});
         m_registry.emplace<PlayerShip>(e);
         m_registry.emplace<ShipControl>(e);
         m_registry.emplace<ShipPower>(e);
+        m_registry.emplace<ShipDefense>(e);
     }
 }
 
 void SpaceWorld::playerAddPip(sim::PowerSystem system)
 {
-    sim::PowerState& power = m_registry.storage<ShipPower>().get(playerEntityIndex()).state;
-    sim::addPip(power.pips, system, kPowerTuning);
+    ShipPower& power = m_registry.storage<ShipPower>().get(playerEntityIndex());
+    sim::addPip(power.state.pips, system, power.tuning);
 }
 
 void SpaceWorld::playerBalancePips()
 {
-    sim::PowerState& power = m_registry.storage<ShipPower>().get(playerEntityIndex()).state;
-    sim::balancePips(power.pips, kPowerTuning);
-}
-
-const sim::PowerTuning& SpaceWorld::powerTuning() const
-{
-    return kPowerTuning;
+    ShipPower& power = m_registry.storage<ShipPower>().get(playerEntityIndex());
+    sim::balancePips(power.state.pips, power.tuning);
 }
 
 void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
@@ -177,6 +176,22 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
     shape.scale = {def.scale, def.scale, def.scale};
     shape.model = modelIdFromName(def.model);
     m_registry.storage<ShipControl>().get(entityIndex).tuning = toShipTuning(def.flight);
+
+    ShipPower& power = m_registry.storage<ShipPower>().get(entityIndex);
+    power.tuning.weaponCapacitor = def.power.weaponCapacitor;
+    power.tuning.weaponRechargeRate = def.power.weaponRecharge;
+    if (power.state.weaponCharge > power.tuning.weaponCapacitor) {
+        power.state.weaponCharge = power.tuning.weaponCapacitor;
+    }
+
+    // Def edits (and hot-reloads) refit the defenses at full strength.
+    ShipDefense& defense = m_registry.storage<ShipDefense>().get(entityIndex);
+    defense.tuning = sim::DefenseTuning{.shieldStrength = def.defense.shieldStrength,
+                                        .shieldRegenRate = def.defense.shieldRegen,
+                                        .shieldRegenDelay = def.defense.shieldRegenDelay,
+                                        .armor = def.defense.armor,
+                                        .hull = def.defense.hull};
+    sim::resetDefense(defense.state, defense.tuning);
 }
 
 ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def)
@@ -199,6 +214,7 @@ ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def)
     // pilot (Phase 6 AI) writes real commands.
     m_registry.emplace<ShipControl>(e);
     m_registry.emplace<ShipPower>(e);
+    m_registry.emplace<ShipDefense>(e);
     applyShipDef(e.index, def);
     m_spawnedShips.push_back({.entity = e, .defId = def.id});
     return e;
@@ -224,8 +240,10 @@ void SpaceWorld::tick(double dt)
 
     // Step every flying ship with its own tuning and commanded input (NPC
     // input is written by pilots — zero/station-keeping until Phase 6 AI).
-    // ENG pips scale the flight envelope; WEP pips recharge the capacitor.
+    // ENG pips scale the flight envelope; WEP pips recharge the capacitor;
+    // SYS pips scale shield regen.
     ecs::Pool<ShipPower>& powers = m_registry.storage<ShipPower>();
+    ecs::Pool<ShipDefense>& defenses = m_registry.storage<ShipDefense>();
     m_registry.view<Transform, FlightBody, ShipControl>().each(
         [&](ecs::Entity entity, Transform& transform, FlightBody& body, ShipControl& control) {
             transform.previousPosition = transform.position;
@@ -233,8 +251,16 @@ void SpaceWorld::tick(double dt)
 
             sim::ShipTuning tuning = control.tuning;
             if (ShipPower* power = powers.tryGet(entity.index)) {
-                sim::stepPower(power->state, kPowerTuning, dt);
-                tuning = sim::applyEnginePips(control.tuning, power->state.pips, kPowerTuning);
+                sim::stepPower(power->state, power->tuning, dt);
+                tuning = sim::applyEnginePips(control.tuning, power->state.pips, power->tuning);
+            }
+            if (ShipDefense* defense = defenses.tryGet(entity.index)) {
+                const ShipPower* power = powers.tryGet(entity.index);
+                const float regenScale =
+                    power != nullptr
+                        ? sim::shieldRegenScale(power->state.pips, power->tuning)
+                        : 1.0f;
+                sim::stepDefense(defense->state, defense->tuning, regenScale, dt);
             }
 
             sim::ShipState state = {
@@ -310,8 +336,67 @@ void SpaceWorld::tick(double dt)
         m_registry.storage<FlightBody>().get(entityIndex).velocity = body.velocity;
     }
 
+    // Impact damage (k*v^2) through the facing the hit arrived on.
+    const std::size_t shipCount = m_collisionShipIndices.size();
+    std::vector<std::uint32_t> destroyedShips;
+    auto applyImpact = [&](std::uint32_t bodySlot, core::DVec3 toSource, double impactSpeed) {
+        if (bodySlot >= shipCount) {
+            return;
+        }
+        const double damage = kImpactDamageFactor * impactSpeed * impactSpeed;
+        if (damage < kImpactDamageMinimum) {
+            return;
+        }
+        const std::uint32_t entityIndex = m_collisionShipIndices[bodySlot];
+        ShipDefense* defense = defenses.tryGet(entityIndex);
+        if (defense == nullptr || !defense->state.alive()) {
+            return;
+        }
+        const core::Quat orientation =
+            m_registry.storage<Transform>().get(entityIndex).orientation;
+        const sim::ShieldFacing facing = sim::facingForHit(orientation, toSource);
+        const sim::DamageResult result = sim::applyDamage(
+            defense->state, defense->tuning, facing, static_cast<float>(damage));
+        if (result.destroyed) {
+            destroyedShips.push_back(entityIndex);
+        }
+    };
+    for (const sim::Contact& contact : m_contacts) {
+        applyImpact(contact.bodyA, -contact.normal, contact.impactSpeed);
+        applyImpact(contact.bodyB, contact.normal, contact.impactSpeed);
+    }
+    for (const std::uint32_t entityIndex : destroyedShips) {
+        handleShipDestroyed(entityIndex);
+    }
+
     // Thruster visuals are player-only for now (NPC plumes: Phase 6 feedback).
     m_thrusters.tick(shipState(), shipTuning(), m_shipInput, dt);
+}
+
+void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex)
+{
+    if (entityIndex == playerEntityIndex()) {
+        // GDD death rule (respawn at last dock, insurance cost) arrives with
+        // docking; until then: reset at the spawn point with full defenses.
+        SOL_LOG_WARN("ship destroyed - respawning at Aster Gateway");
+        Transform& transform = m_registry.storage<Transform>().get(entityIndex);
+        transform = Transform{.position = kPlayerStart, .previousPosition = kPlayerStart};
+        m_registry.storage<FlightBody>().get(entityIndex) = FlightBody{};
+        ShipDefense& defense = m_registry.storage<ShipDefense>().get(entityIndex);
+        sim::resetDefense(defense.state, defense.tuning);
+        ShipPower& power = m_registry.storage<ShipPower>().get(entityIndex);
+        power.state = sim::PowerState{.weaponCharge = power.tuning.weaponCapacitor};
+        return;
+    }
+
+    for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
+        if (m_spawnedShips[i].entity.index == entityIndex) {
+            SOL_LOG_INFO("'%s' destroyed", m_spawnedShips[i].defId.c_str());
+            m_registry.destroy(m_spawnedShips[i].entity);
+            m_spawnedShips.erase(m_spawnedShips.begin() + static_cast<std::ptrdiff_t>(i));
+            return;
+        }
+    }
 }
 
 Transform SpaceWorld::shipRenderTransform(float alpha) const

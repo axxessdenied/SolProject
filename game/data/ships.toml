@@ -18,6 +18,13 @@ boost_accel_scale = 3.0
 boost_speed_scale = 1.75
 cruise_speed_scale = 25000.0
 cruise_accel_scale = 12000.0
+shield_strength = 100.0
+shield_regen = 8.0
+shield_regen_delay = 4.0
+armor = 50.0
+hull = 100.0
+weapon_capacitor = 100.0
+weapon_recharge = 15.0
 
 [[ship]]
 id = "sol.interceptor"
@@ -33,6 +40,13 @@ max_turn_rate = [2.4, 1.9, 3.6]
 angular_accel = [11.0, 8.0, 15.0]
 boost_accel_scale = 3.5
 boost_speed_scale = 2.0
+shield_strength = 70.0
+shield_regen = 12.0
+shield_regen_delay = 3.0
+armor = 25.0
+hull = 60.0
+weapon_capacitor = 90.0
+weapon_recharge = 18.0
 
 [[ship]]
 id = "sol.freighter"
@@ -48,3 +62,10 @@ max_turn_rate = [0.5, 0.4, 0.8]
 angular_accel = [1.5, 1.2, 2.2]
 boost_accel_scale = 2.0
 boost_speed_scale = 1.4
+shield_strength = 160.0
+shield_regen = 5.0
+shield_regen_delay = 6.0
+armor = 140.0
+hull = 320.0
+weapon_capacitor = 60.0
+weapon_recharge = 8.0

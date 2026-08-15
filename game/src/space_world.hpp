@@ -7,6 +7,7 @@
 #include "sol/core/math/math.hpp"
 #include "sol/ecs/ecs.hpp"
 #include "sol/sim/collision.hpp"
+#include "sol/sim/damage.hpp"
 #include "sol/sim/flight.hpp"
 #include "sol/sim/power.hpp"
 
@@ -52,11 +53,19 @@ struct ShipControl
     sol::sim::FlightInput input;
 };
 
-// Per-ship power state (decisions/003: Elite-style pips). ENG allocation
-// scales the flight envelope each tick; WEP feeds the weapon capacitor.
+// Per-ship power tuning + state (decisions/003: Elite-style pips). ENG
+// allocation scales the flight envelope each tick; WEP feeds the capacitor.
 struct ShipPower
 {
+    sol::sim::PowerTuning tuning;
     sol::sim::PowerState state;
+};
+
+// Per-ship defenses (decisions/002: directional shields) fed from the def.
+struct ShipDefense
+{
+    sol::sim::DefenseTuning tuning;
+    sol::sim::DefenseState state;
 };
 
 struct RenderShape
@@ -109,7 +118,14 @@ public:
     {
         return m_registry.storage<ShipPower>().get(playerEntityIndex()).state;
     }
-    [[nodiscard]] const sol::sim::PowerTuning& powerTuning() const;
+    [[nodiscard]] const sol::sim::PowerTuning& powerTuning() const
+    {
+        return m_registry.storage<ShipPower>().get(playerEntityIndex()).tuning;
+    }
+    [[nodiscard]] const ShipDefense& playerDefense() const
+    {
+        return m_registry.storage<ShipDefense>().get(playerEntityIndex());
+    }
 
     [[nodiscard]] const CelestialBody& sun() const { return m_sun; }
     [[nodiscard]] const CelestialBody& planet() const { return m_planet; }
@@ -152,6 +168,7 @@ private:
     };
 
     void applyShipDef(std::uint32_t entityIndex, const sol::assets::ShipDef& def);
+    void handleShipDestroyed(std::uint32_t entityIndex);
     [[nodiscard]] std::uint32_t playerEntityIndex() const
     {
         return m_registry.storage<PlayerShip>().entityIndices()[0];

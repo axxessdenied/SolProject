@@ -304,6 +304,23 @@ void DevUi::buildFlightHud(const FlightHud& hud)
     draw->AddLine({center.x + 10.0f, center.y}, {center.x + 18.0f, center.y}, hudColor, 1.5f);
     draw->AddLine({center.x, center.y - 18.0f}, {center.x, center.y - 10.0f}, hudColor, 1.5f);
 
+    // Shield facings (decisions/002): fore arc above the crosshair, aft arc
+    // below; arc length tracks the facing's remaining strength.
+    {
+        constexpr float kPi = 3.14159265f;
+        auto shieldArc = [&](float fraction, bool fore) {
+            if (fraction <= 0.0f) {
+                return;
+            }
+            const float halfSpan = (kPi * 0.35f) * fraction;
+            const float centerAngle = fore ? -kPi * 0.5f : kPi * 0.5f;
+            draw->PathArcTo(center, 24.0f, centerAngle - halfSpan, centerAngle + halfSpan, 24);
+            draw->PathStroke(IM_COL32(120, 190, 255, 210), 0, 2.5f);
+        };
+        shieldArc(hud.shieldFore, true);
+        shieldArc(hud.shieldAft, false);
+    }
+
     // Target marker: project the camera-space direction; clamp to a screen
     // ring when the target is outside the view (or behind).
     {
@@ -389,6 +406,15 @@ void DevUi::buildFlightHud(const FlightHud& hud)
         pipBar("ENG", hud.pipsEngines, {0.55f, 0.86f, 0.63f, 1.0f});
         pipBar("SYS", hud.pipsShields, {0.5f, 0.75f, 1.0f, 1.0f});
         ImGui::Text("CAP %d%%", static_cast<int>(hud.weaponCharge * 100.0f + 0.5f));
+        ImGui::SameLine(0.0f, 24.0f);
+        ImGui::TextColored({0.47f, 0.75f, 1.0f, 1.0f}, "SHD %d/%d",
+                           static_cast<int>(hud.shieldFore * 100.0f + 0.5f),
+                           static_cast<int>(hud.shieldAft * 100.0f + 0.5f));
+        ImGui::SameLine(0.0f, 12.0f);
+        const float hullFraction = hud.hull;
+        ImGui::TextColored(hullFraction > 0.5f ? ImVec4{0.8f, 0.85f, 0.8f, 1.0f}
+                                               : ImVec4{1.0f, 0.45f, 0.35f, 1.0f},
+                           "HUL %d%%", static_cast<int>(hullFraction * 100.0f + 0.5f));
         ImGui::SameLine(0.0f, 24.0f);
         ImGui::TextDisabled("%s", hud.cameraMode);
     }

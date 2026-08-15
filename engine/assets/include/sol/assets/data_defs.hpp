@@ -33,6 +33,23 @@ struct ShipFlightTuning
     float cruiseAccelScale = 12'000.0f;
 };
 
+// Mirrors sim::DefenseTuning (directional shields per decisions/002).
+struct ShipDefenseTuning
+{
+    float shieldStrength = 100.0f; // hp per facing
+    float shieldRegen = 8.0f;      // hp/s before pips scaling
+    float shieldRegenDelay = 4.0f; // seconds after a hit
+    float armor = 50.0f;           // ablative
+    float hull = 100.0f;
+};
+
+// Mirrors the def-driven part of sim::PowerTuning (pips per decisions/003).
+struct ShipPowerTuning
+{
+    float weaponCapacitor = 100.0f;
+    float weaponRecharge = 15.0f; // units/s at scale 1
+};
+
 struct ShipDef
 {
     std::string id;   // stable, namespaced, e.g. "sol.shuttle"
@@ -40,6 +57,8 @@ struct ShipDef
     std::string model = "ship";
     float scale = 1.0f;
     ShipFlightTuning flight;
+    ShipDefenseTuning defense;
+    ShipPowerTuning power;
     std::string source; // document that last defined this id (diagnostics)
 };
 
