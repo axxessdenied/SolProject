@@ -182,7 +182,7 @@ Each phase ends with a runnable milestone and explicit exit criteria. Phases are
 Repo layout above; root CMake + presets (dev/release, MSVC+Ninja); `.clang-format`, `.editorconfig`, `.gitignore`; minimal test harness + CTest wired; GitHub Actions CI (Windows: configure, build, test); empty `sol_platform` → `game` executable that prints and exits.
 **Exit**: `cmake --preset dev && cmake --build --preset dev && ctest --preset dev` green in CI; a committed decision record template.
 
-### Phase 1 — Platform + First Triangle
+### Phase 1 — Platform + First Triangle ✅ (completed 2026-08-15)
 Win32 window + message pump + keyboard/mouse input behind portable API; high-res timing; logging/assert; Vulkan bootstrap in RHI (instance, validation, device/queues, swapchain, one graphics pipeline); triangle on screen; clean resize + shutdown (zero validation errors).
 **Exit**: colored triangle, resizable window, validation-clean, ESC quits.
 

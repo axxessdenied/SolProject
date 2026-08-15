@@ -1,4 +1,5 @@
 add_library(sol_core STATIC
+    src/log.cpp
     src/version.cpp
 )
 add_library(sol::core ALIAS sol_core)

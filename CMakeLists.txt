@@ -32,7 +32,12 @@ if(MSVC)
         /GR-        # RTTI off
         /utf-8
     )
-    target_compile_definitions(sol_options INTERFACE _HAS_EXCEPTIONS=0)
+    target_compile_definitions(sol_options INTERFACE
+        _HAS_EXCEPTIONS=0
+        _CRT_SECURE_NO_WARNINGS # portable C stdio (fopen et al.) without MSVC nagging
+        UNICODE
+        _UNICODE
+    )
 else()
     target_compile_options(sol_options INTERFACE
         -Wall -Wextra -Werror
@@ -41,7 +46,10 @@ else()
     )
 endif()
 
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
 enable_testing()
 
 add_subdirectory(engine)
+add_subdirectory(shaders)
 add_subdirectory(game)
