@@ -45,7 +45,9 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
         !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat,
                                       shaderDirectory) ||
         !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
-                                kFramesInFlight)) {
+                                kFramesInFlight) ||
+        !m_particleRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
+                                       kFramesInFlight)) {
         return false;
     }
     m_hdrColor = rhi::createColorTarget(context, swapchain.extent(), kHdrFormat);
@@ -158,6 +160,7 @@ void SceneRenderer::shutdown()
     m_impostorRenderer.shutdown();
     m_tonemapRenderer.shutdown();
     m_debugDraw.shutdown();
+    m_particleRenderer.shutdown();
     m_context = nullptr;
     m_swapchain = nullptr;
 }
@@ -165,6 +168,7 @@ void SceneRenderer::shutdown()
 void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
                                    const CameraFrame& camera,
                                    std::span<const RenderInstance> instances,
+                                   std::span<const ParticleInstance> particles,
                                    const SceneInfo& scene)
 {
     VkCommandBufferBeginInfo beginInfo = {};
@@ -230,6 +234,17 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     star.colorB = {5.0f, 3.6f, 2.2f};    // glow, HDR
     m_impostorRenderer.drawStar(commandBuffer, viewProjection, star);
 
+    m_particleScratch.clear();
+    for (const ParticleInstance& particle : particles) {
+        m_particleScratch.push_back({
+            .position = (particle.position - camera.position).toVec3(),
+            .size = particle.size,
+            .color = particle.color,
+        });
+    }
+    m_particleRenderer.draw(commandBuffer, m_frameIndex, viewProjection, camera.orientation,
+                            m_particleScratch);
+
     m_debugDraw.draw(commandBuffer, m_frameIndex, viewProjection);
     m_debugDraw.clear();
 
@@ -248,6 +263,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
 
 SceneRenderer::DrawResult SceneRenderer::drawFrame(const CameraFrame& camera,
                                                    std::span<const RenderInstance> instances,
+                                                   std::span<const ParticleInstance> particles,
                                                    const SceneInfo& scene)
 {
     const VkDevice device = m_context->device();
@@ -267,7 +283,7 @@ SceneRenderer::DrawResult SceneRenderer::drawFrame(const CameraFrame& camera,
 
     GAME_VK_CHECK(vkResetFences(device, 1, &frame.inFlight));
     GAME_VK_CHECK(vkResetCommandPool(device, frame.commandPool, 0));
-    recordCommands(frame.commandBuffer, imageIndex, camera, instances, scene);
+    recordCommands(frame.commandBuffer, imageIndex, camera, instances, particles, scene);
 
     VkSemaphoreSubmitInfo waitSemaphoreInfo = {};
     waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;

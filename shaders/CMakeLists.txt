@@ -20,6 +20,8 @@ set(SOL_SHADER_SOURCES
     impostor.frag
     debug_line.vert
     debug_line.frag
+    particle.vert
+    particle.frag
 )
 
 set(SOL_SHADER_OUTPUTS "")

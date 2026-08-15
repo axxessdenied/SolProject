@@ -4,6 +4,7 @@
 #include "sol/renderer/debug_draw_renderer.hpp"
 #include "sol/renderer/impostor_renderer.hpp"
 #include "sol/renderer/mesh_renderer.hpp"
+#include "sol/renderer/particle_renderer.hpp"
 #include "sol/renderer/sky_renderer.hpp"
 #include "sol/renderer/tonemap_renderer.hpp"
 #include "sol/rhi/context.hpp"
@@ -51,6 +52,14 @@ struct RenderInstance
     ModelId model = ModelId::Cube;
 };
 
+// One additive billboard in sim space (thruster exhaust etc.).
+struct ParticleInstance
+{
+    sol::core::DVec3 position;
+    float size = 0.5f;
+    sol::core::Vec4 color; // rgb = linear HDR, a = fade
+};
+
 // Sim-space celestial body handed to the impostor pass each frame.
 struct CelestialDraw
 {
@@ -85,6 +94,7 @@ public:
 
     [[nodiscard]] DrawResult drawFrame(const CameraFrame& camera,
                                        std::span<const RenderInstance> instances,
+                                       std::span<const ParticleInstance> particles,
                                        const SceneInfo& scene);
 
     // Call after the swapchain has been recreated (device must be idle).
@@ -95,7 +105,7 @@ public:
     {
         return m_meshRenderer.reloadPipeline() && m_skyRenderer.reloadPipeline() &&
                m_impostorRenderer.reloadPipeline() && m_tonemapRenderer.reloadPipeline() &&
-               m_debugDraw.reloadPipeline();
+               m_debugDraw.reloadPipeline() && m_particleRenderer.reloadPipeline();
     }
 
     [[nodiscard]] std::uint32_t drawCallCount() const { return m_drawCallCount; }
@@ -122,7 +132,7 @@ private:
     void destroyPerImageSemaphores();
     void recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
                         const CameraFrame& camera, std::span<const RenderInstance> instances,
-                        const SceneInfo& scene);
+                        std::span<const ParticleInstance> particles, const SceneInfo& scene);
 
     sol::rhi::Context* m_context = nullptr;
     sol::rhi::Swapchain* m_swapchain = nullptr;
@@ -132,6 +142,8 @@ private:
     sol::renderer::ImpostorRenderer m_impostorRenderer;
     sol::renderer::TonemapRenderer m_tonemapRenderer;
     sol::renderer::DebugDrawRenderer m_debugDraw;
+    sol::renderer::ParticleRenderer m_particleRenderer;
+    std::vector<sol::renderer::ParticleRenderer::Particle> m_particleScratch;
     sol::renderer::GpuMesh m_cubeMesh;
     sol::renderer::GpuMesh m_stationMesh;
     sol::renderer::GpuMesh m_shipMesh;

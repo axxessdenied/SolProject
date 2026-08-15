@@ -118,6 +118,8 @@ void SpaceWorld::tick(double dt)
     transform.orientation = state.orientation;
     body.velocity = state.velocity;
     body.angularVelocity = state.angularVelocity;
+
+    m_thrusters.tick(state, m_tuning, m_shipInput, dt);
 }
 
 Transform SpaceWorld::shipRenderTransform(float alpha) const

@@ -177,6 +177,7 @@ int main(int argc, char** argv)
     game::FlyCamera freeCamera;
     game::CameraMode cameraMode = game::CameraMode::ThirdPerson;
     std::vector<game::RenderInstance> renderInstances;
+    std::vector<game::ParticleInstance> particleInstances;
     SOL_LOG_INFO("Space world: %u entities. Ship at Aster Gateway; planet %.0f km out.",
                  world.entityCount(),
                  length(world.planet().position - world.currentTarget().position) / 1000.0);
@@ -269,6 +270,7 @@ int main(int argc, char** argv)
 
         const bool includeShip = cameraMode != game::CameraMode::FirstPerson;
         world.buildRenderInstances(simAlpha, includeShip, renderInstances);
+        world.buildParticleInstances(simAlpha, particleInstances);
 
         game::SceneInfo sceneInfo;
         sceneInfo.sun = {world.sun().position, world.sun().radius};
@@ -370,7 +372,7 @@ int main(int argc, char** argv)
             devUi.discardFrame();
         }
         if (!needRecreate) {
-            switch (renderer.drawFrame(camera, renderInstances, sceneInfo)) {
+            switch (renderer.drawFrame(camera, renderInstances, particleInstances, sceneInfo)) {
             case game::SceneRenderer::DrawResult::Success:
                 ++frameCount;
                 break;

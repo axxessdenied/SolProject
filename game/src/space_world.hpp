@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scene_renderer.hpp"
+#include "thruster_particles.hpp"
 
 #include "sol/core/math/math.hpp"
 #include "sol/ecs/ecs.hpp"
@@ -78,6 +79,11 @@ public:
     // includeShip is false (first-person view).
     void buildRenderInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const;
 
+    void buildParticleInstances(float alpha, std::vector<ParticleInstance>& out) const
+    {
+        m_thrusters.buildInstances(alpha, out);
+    }
+
     [[nodiscard]] std::uint32_t entityCount() const
     {
         return static_cast<std::uint32_t>(m_registry.aliveCount());
@@ -88,9 +94,9 @@ public:
 
 private:
     sol::ecs::Registry m_registry;
-    sol::ecs::Entity m_ship = {};
     sol::sim::ShipTuning m_tuning;
     sol::sim::FlightInput m_shipInput;
+    ThrusterParticles m_thrusters;
 
     CelestialBody m_sun;
     CelestialBody m_planet;
