@@ -30,7 +30,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 2; // v2: docking state joined the header
+constexpr std::uint32_t kSaveVersion = 3; // v3: economy + player credits/cargo
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -118,9 +118,48 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     m_galaxyParams = sim::GalaxyParams{};
     m_galaxyParams.seed = m_universeSeed;
     m_galaxyParams.factionCount = static_cast<std::uint32_t>(defs.factions().size());
-    // Station archetype rules arrive with the economy defs; until then every
-    // station is archetype 0.
+    for (const assets::StationDef& station : defs.stations()) {
+        m_galaxyParams.stationRules.push_back(
+            {{station.weightCore, station.weightFrontier, station.weightFringe}});
+    }
     m_galaxy = sim::generateGalaxy(m_galaxyParams);
+
+    // Economy: commodities + archetype rates from the defs (unknown
+    // commodity ids in a rate list are warnings, not errors — a mod may
+    // remove a commodity a base station references).
+    m_economyParams = sim::EconomyParams{};
+    m_commodityIds.clear();
+    for (const assets::CommodityDef& commodity : defs.commodities()) {
+        m_economyParams.commodities.push_back({.basePrice = commodity.basePrice});
+        m_commodityIds.push_back(commodity.id);
+    }
+    const std::uint32_t commodityCount =
+        static_cast<std::uint32_t>(m_commodityIds.size());
+    for (const assets::StationDef& station : defs.stations()) {
+        sim::EconomyArchetype archetype;
+        archetype.production.assign(commodityCount, 0.0f);
+        archetype.consumption.assign(commodityCount, 0.0f);
+        archetype.stockCapacity = station.stockCapacity;
+        const auto applyRates = [&](const std::vector<assets::StationRate>& rates,
+                                    std::vector<float>& out) {
+            for (const assets::StationRate& rate : rates) {
+                const std::uint32_t index = commodityIndex(rate.commodityId.c_str());
+                if (index < commodityCount) {
+                    out[index] = rate.rate;
+                } else {
+                    SOL_LOG_WARN("station '%s': unknown commodity '%s'", station.id.c_str(),
+                                 rate.commodityId.c_str());
+                }
+            }
+        };
+        applyRates(station.produces, archetype.production);
+        applyRates(station.consumes, archetype.consumption);
+        m_economyParams.archetypes.push_back(std::move(archetype));
+    }
+    if (!m_economyParams.commodities.empty()) {
+        m_economy.initialize(m_galaxy, m_economyParams, m_universeSeed);
+    }
+    m_playerCargo.assign(commodityCount, 0.0f);
 
     // Start in the first core system with a station (deterministic per seed).
     std::uint32_t start = 0;
@@ -347,6 +386,62 @@ const char* SpaceWorld::dockedStationName() const
     return m_galaxy.systems[m_currentSystem].stations[m_dockedStation].name.c_str();
 }
 
+std::uint32_t SpaceWorld::commodityIndex(const char* id) const
+{
+    for (std::uint32_t i = 0; i < m_commodityIds.size(); ++i) {
+        if (m_commodityIds[i] == id) {
+            return i;
+        }
+    }
+    return kNoIndex;
+}
+
+float SpaceWorld::playerCargoTotal() const
+{
+    float total = 0.0f;
+    for (const float units : m_playerCargo) {
+        total += units;
+    }
+    return total;
+}
+
+std::uint32_t SpaceWorld::dockedMarket() const
+{
+    return isDocked() ? m_economy.marketFor(m_currentSystem, m_dockedStation) : kNoIndex;
+}
+
+sim::TradeResult SpaceWorld::playerBuy(std::uint32_t commodity, float units)
+{
+    const std::uint32_t market = dockedMarket();
+    if (market >= m_economy.markets().size() || commodity >= m_playerCargo.size() ||
+        units <= 0.0f) {
+        return {};
+    }
+    units = std::min(units, m_playerCargoCapacity - playerCargoTotal());
+    const float unitPrice = m_economy.price(market, commodity);
+    if (unitPrice > 0.0f) {
+        units = std::min(units, static_cast<float>(m_playerCredits / unitPrice));
+    }
+    const sim::TradeResult result = m_economy.buy(market, commodity, units);
+    m_playerCredits -= result.credits;
+    m_playerCargo[commodity] += result.units;
+    return result;
+}
+
+sim::TradeResult SpaceWorld::playerSell(std::uint32_t commodity, float units)
+{
+    const std::uint32_t market = dockedMarket();
+    if (market >= m_economy.markets().size() || commodity >= m_playerCargo.size() ||
+        units <= 0.0f) {
+        return {};
+    }
+    units = std::min(units, m_playerCargo[commodity]);
+    const sim::TradeResult result = m_economy.sell(market, commodity, units);
+    m_playerCredits += result.credits;
+    m_playerCargo[commodity] -= result.units;
+    return result;
+}
+
 double SpaceWorld::nearestStationDistance() const
 {
     if (m_currentSystem >= m_galaxy.systems.size()) {
@@ -414,6 +509,9 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
     shape.scale = {def.scale, def.scale, def.scale};
     shape.model = modelIdFromName(def.model);
     m_registry.storage<ShipControl>().get(entityIndex).tuning = toShipTuning(def.flight);
+    if (entityIndex == playerEntityIndex()) {
+        m_playerCargoCapacity = def.cargoCapacity;
+    }
 
     ShipPower& power = m_registry.storage<ShipPower>().get(entityIndex);
     power.tuning.weaponCapacitor = def.power.weaponCapacitor;
@@ -1057,6 +1155,10 @@ void SpaceWorld::tick(double dt)
     // Thruster visuals are player-only for now (NPC plumes: Phase 6 feedback).
     m_thrusters.tick(shipState(), shipTuning(), m_shipInput, dt);
 
+    // Coarse-layer economy: galaxy-wide, same clock as everything else
+    // (decisions/005 — no time compression).
+    m_economy.tick(m_galaxy, dt);
+
     // Deferred death respawn into the last-dock system (see member comment).
     if (m_pendingRespawnSystem != kNoIndex) {
         const std::uint32_t system = m_pendingRespawnSystem;
@@ -1175,6 +1277,12 @@ bool SpaceWorld::saveTo(const char* path)
     writer.write(m_dockedStation);
     writer.write(m_lastDockSystem);
     writer.write(m_lastDockStation);
+    writer.write(m_playerCredits);
+    writer.write(static_cast<std::uint32_t>(m_playerCargo.size()));
+    for (const float units : m_playerCargo) {
+        writer.write(units);
+    }
+    m_economy.save(writer);
     makeSnapshotSchema().save(m_registry, writer);
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
 }
@@ -1203,13 +1311,37 @@ bool SpaceWorld::loadFrom(const char* path)
 
     // Same seed => same galaxy, so the galaxy itself regenerates instead of
     // being serialized (dynamic state — the economy — saves separately).
-    if (seed != m_universeSeed || m_galaxy.systems.empty()) {
+    const bool galaxyChanged = seed != m_universeSeed || m_galaxy.systems.empty();
+    if (galaxyChanged) {
         m_universeSeed = seed;
         m_galaxyParams.seed = seed;
         m_galaxy = sim::generateGalaxy(m_galaxyParams);
     }
     if (systemIndex >= m_galaxy.systems.size()) {
         return false;
+    }
+
+    double credits = 0.0;
+    std::uint32_t cargoCount = 0;
+    if (!reader.read(credits) || !reader.read(cargoCount) ||
+        cargoCount != m_playerCargo.size()) {
+        return false; // commodity roster changed since the save
+    }
+    std::vector<float> cargo(cargoCount, 0.0f);
+    for (float& units : cargo) {
+        if (!reader.read(units)) {
+            return false;
+        }
+    }
+    // The economy layout is derived from galaxy+params; rebuild it against
+    // the (possibly regenerated) galaxy, then restore its dynamic state.
+    if (!m_economyParams.commodities.empty()) {
+        if (galaxyChanged) {
+            m_economy.initialize(m_galaxy, m_economyParams, seed);
+        }
+        if (!m_economy.load(reader)) {
+            return false;
+        }
     }
 
     ecs::Registry fresh;
@@ -1225,6 +1357,8 @@ bool SpaceWorld::loadFrom(const char* path)
     m_spawnedShips.clear();
     m_combatEffects.clear();
     m_thrusters.clear();
+    m_playerCredits = credits;
+    m_playerCargo = std::move(cargo);
 
     // The snapshot carries the system's statics; only the non-ECS side data
     // (celestials, targets, gates, spawn anchor) needs rebuilding.

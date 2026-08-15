@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <initializer_list>
 #include <utility>
 
@@ -90,6 +91,42 @@ struct FieldReader
         }
     }
 
+    // "commodity_id:rate" strings, e.g. produces = ["sol.food:0.5"].
+    void optionalRateList(const char* key, std::vector<StationRate>& out)
+    {
+        const TomlValue* value = table.find(key);
+        if (value == nullptr) {
+            return;
+        }
+        if (!value->isArray()) {
+            fail(std::string("key '") + key + "' must be an array of \"id:rate\" strings");
+            return;
+        }
+        for (std::size_t i = 0; i < value->size(); ++i) {
+            const TomlValue& element = (*value)[i];
+            if (!element.isString()) {
+                fail(std::string("key '") + key + "' must be an array of \"id:rate\" strings");
+                return;
+            }
+            const std::string& text = element.asString();
+            const std::size_t colon = text.rfind(':');
+            StationRate rate;
+            char* end = nullptr;
+            if (colon == std::string::npos || colon == 0 || colon + 1 >= text.size()) {
+                fail(std::string("'") + key + "' entry '" + text + "' is not \"id:rate\"");
+                return;
+            }
+            rate.commodityId = text.substr(0, colon);
+            rate.rate = std::strtof(text.c_str() + colon + 1, &end);
+            if (end != text.c_str() + text.size() || rate.rate < 0.0f) {
+                fail(std::string("'") + key + "' entry '" + text +
+                     "' needs a non-negative numeric rate");
+                return;
+            }
+            out.push_back(std::move(rate));
+        }
+    }
+
     // Strict schema: any key outside the allowed set is an error.
     void rejectUnknownKeys(std::initializer_list<const char*> allowed)
     {
@@ -155,13 +192,14 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     reader.optionalFloat("weapon_capacitor", power.weaponCapacitor);
     reader.optionalFloat("weapon_recharge", power.weaponRecharge);
     reader.optionalString("weapon", def.weaponId);
+    reader.optionalFloat("cargo", def.cargoCapacity);
 
     reader.rejectUnknownKeys({"id", "name", "model", "scale", "forward_accel", "reverse_accel",
                               "lateral_accel", "vertical_accel", "max_speed", "max_turn_rate",
                               "angular_accel", "boost_accel_scale", "boost_speed_scale",
                               "cruise_speed_scale", "cruise_accel_scale", "shield_strength",
                               "shield_regen", "shield_regen_delay", "armor", "hull",
-                              "weapon_capacitor", "weapon_recharge", "weapon"});
+                              "weapon_capacitor", "weapon_recharge", "weapon", "cargo"});
     if (!reader.failed && def.scale <= 0.0f) {
         reader.fail("'scale' must be > 0");
     }
@@ -226,6 +264,62 @@ bool parseFaction(const TomlValue& table, const char* sourceName, std::vector<Fa
     return true;
 }
 
+bool parseCommodity(const TomlValue& table, const char* sourceName,
+                    std::vector<CommodityDef>& out, std::string* outError)
+{
+    CommodityDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": commodity '" + def.id + "'";
+    }
+    reader.requireString("name", def.name);
+    reader.optionalFloat("base_price", def.basePrice);
+
+    reader.rejectUnknownKeys({"id", "name", "base_price"});
+    if (!reader.failed && def.basePrice <= 0.0f) {
+        reader.fail("'base_price' must be > 0");
+    }
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
+bool parseStation(const TomlValue& table, const char* sourceName, std::vector<StationDef>& out,
+                  std::string* outError)
+{
+    StationDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": station '" + def.id + "'";
+    }
+    reader.requireString("name", def.name);
+    reader.optionalFloat("weight_core", def.weightCore);
+    reader.optionalFloat("weight_frontier", def.weightFrontier);
+    reader.optionalFloat("weight_fringe", def.weightFringe);
+    reader.optionalRateList("produces", def.produces);
+    reader.optionalRateList("consumes", def.consumes);
+    reader.optionalFloat("stock_capacity", def.stockCapacity);
+
+    reader.rejectUnknownKeys({"id", "name", "weight_core", "weight_frontier", "weight_fringe",
+                              "produces", "consumes", "stock_capacity"});
+    if (!reader.failed && def.stockCapacity <= 0.0f) {
+        reader.fail("'stock_capacity' must be > 0");
+    }
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
 } // namespace
 
 void DefDatabase::clear()
@@ -233,6 +327,8 @@ void DefDatabase::clear()
     m_ships.clear();
     m_weapons.clear();
     m_factions.clear();
+    m_commodities.clear();
+    m_stations.clear();
 }
 
 bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* sourceName,
@@ -251,6 +347,8 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     std::vector<ShipDef> ships = m_ships;
     std::vector<WeaponDef> weapons = m_weapons;
     std::vector<FactionDef> factions = m_factions;
+    std::vector<CommodityDef> commodities = m_commodities;
+    std::vector<StationDef> stations = m_stations;
 
     for (const auto& [key, value] : root.members()) {
         bool (*parse)(const TomlValue&, const char*, void*, std::string*) = nullptr;
@@ -270,10 +368,20 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
                 return parseFaction(t, s, *static_cast<std::vector<FactionDef>*>(v), e);
             };
             target = &factions;
+        } else if (key == "commodity") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseCommodity(t, s, *static_cast<std::vector<CommodityDef>*>(v), e);
+            };
+            target = &commodities;
+        } else if (key == "station") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseStation(t, s, *static_cast<std::vector<StationDef>*>(v), e);
+            };
+            target = &stations;
         } else {
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
-                            "' (expected ship, weapon, or faction)";
+                            "' (expected ship, weapon, faction, commodity, or station)";
             }
             return false;
         }
@@ -295,6 +403,8 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     m_ships = std::move(ships);
     m_weapons = std::move(weapons);
     m_factions = std::move(factions);
+    m_commodities = std::move(commodities);
+    m_stations = std::move(stations);
     return true;
 }
 
@@ -340,6 +450,20 @@ const FactionDef* DefDatabase::findFaction(const char* id) const
     const auto it = std::find_if(m_factions.begin(), m_factions.end(),
                                  [&](const FactionDef& d) { return d.id == id; });
     return it != m_factions.end() ? &*it : nullptr;
+}
+
+const CommodityDef* DefDatabase::findCommodity(const char* id) const
+{
+    const auto it = std::find_if(m_commodities.begin(), m_commodities.end(),
+                                 [&](const CommodityDef& d) { return d.id == id; });
+    return it != m_commodities.end() ? &*it : nullptr;
+}
+
+const StationDef* DefDatabase::findStation(const char* id) const
+{
+    const auto it = std::find_if(m_stations.begin(), m_stations.end(),
+                                 [&](const StationDef& d) { return d.id == id; });
+    return it != m_stations.end() ? &*it : nullptr;
 }
 
 } // namespace sol::assets

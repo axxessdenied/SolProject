@@ -155,3 +155,55 @@ SOL_TEST(data_defs_failed_merge_preserves_previous_layers)
     SOL_CHECK(db.ships().size() == 2);
     SOL_CHECK(db.findShip("sol.shuttle")->name == "Shuttle");
 }
+
+SOL_TEST(data_defs_parse_commodities_and_stations)
+{
+    DefDatabase db;
+    std::string error;
+    const char* toml = R"(
+[[commodity]]
+id = "sol.food"
+name = "Foodstuffs"
+base_price = 8.0
+
+[[station]]
+id = "sol.station_agri"
+name = "Agricultural Station"
+weight_frontier = 1.5
+produces = ["sol.food:0.8"]
+consumes = ["sol.machinery:0.1"]
+stock_capacity = 1200.0
+)";
+    SOL_CHECK(merge(db, toml, "economy.toml", &error));
+    const sol::assets::CommodityDef* food = db.findCommodity("sol.food");
+    SOL_CHECK(food != nullptr);
+    SOL_CHECK(food->basePrice == 8.0f);
+
+    const sol::assets::StationDef* agri = db.findStation("sol.station_agri");
+    SOL_CHECK(agri != nullptr);
+    SOL_CHECK(agri->weightFrontier == 1.5f);
+    SOL_CHECK(agri->weightCore == 1.0f); // default
+    SOL_CHECK(agri->produces.size() == 1);
+    SOL_CHECK(agri->produces[0].commodityId == "sol.food");
+    SOL_CHECK(agri->produces[0].rate == 0.8f);
+    SOL_CHECK(agri->consumes.size() == 1);
+    SOL_CHECK(agri->stockCapacity == 1200.0f);
+
+    // Malformed rate strings are load errors and leave the db untouched.
+    SOL_CHECK(!merge(db, R"(
+[[station]]
+id = "sol.bad"
+name = "Bad"
+produces = ["sol.food"]
+)",
+                     "bad.toml", &error));
+    SOL_CHECK(error.find("id:rate") != std::string::npos);
+    SOL_CHECK(db.findStation("sol.bad") == nullptr);
+    SOL_CHECK(!merge(db, R"(
+[[station]]
+id = "sol.bad2"
+name = "Bad"
+produces = ["sol.food:-1"]
+)",
+                     "bad2.toml", &error));
+}

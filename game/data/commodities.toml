@@ -1,0 +1,17 @@
+# Trade goods (Phase 7 economy). base_price is credits/unit at neutral
+# stock; live prices swing between 0.5x (glut) and 2x (scarcity).
+
+[[commodity]]
+id = "sol.food"
+name = "Foodstuffs"
+base_price = 8.0
+
+[[commodity]]
+id = "sol.ore"
+name = "Raw Ore"
+base_price = 12.0
+
+[[commodity]]
+id = "sol.machinery"
+name = "Machinery"
+base_price = 25.0

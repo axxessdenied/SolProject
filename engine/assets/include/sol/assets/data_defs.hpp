@@ -59,8 +59,9 @@ struct ShipDef
     ShipFlightTuning flight;
     ShipDefenseTuning defense;
     ShipPowerTuning power;
-    std::string weaponId; // weapon def id; empty = unarmed
-    std::string source;   // document that last defined this id (diagnostics)
+    std::string weaponId;        // weapon def id; empty = unarmed
+    float cargoCapacity = 50.0f; // trade goods, units
+    std::string source;          // document that last defined this id (diagnostics)
 };
 
 struct WeaponDef
@@ -85,6 +86,36 @@ struct FactionDef
     std::string source;
 };
 
+struct CommodityDef
+{
+    std::string id;
+    std::string name;
+    float basePrice = 10.0f; // credits/unit at neutral stock
+    std::string source;
+};
+
+// One production or consumption line on a station ("sol.food:0.5" in TOML).
+struct StationRate
+{
+    std::string commodityId;
+    float rate = 0.0f; // units/s
+};
+
+// A station archetype: how often the galaxy generator places it per region
+// tier, and what its market produces/consumes (Phase 7 economy).
+struct StationDef
+{
+    std::string id;
+    std::string name;
+    float weightCore = 1.0f;
+    float weightFrontier = 1.0f;
+    float weightFringe = 1.0f;
+    std::vector<StationRate> produces;
+    std::vector<StationRate> consumes;
+    float stockCapacity = 1'000.0f; // per commodity
+    std::string source;
+};
+
 class DefDatabase
 {
 public:
@@ -103,17 +134,23 @@ public:
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;
     [[nodiscard]] const FactionDef* findFaction(const char* id) const;
+    [[nodiscard]] const CommodityDef* findCommodity(const char* id) const;
+    [[nodiscard]] const StationDef* findStation(const char* id) const;
 
     // First-definition order; later layers replace elements in place, so
     // indices stay stable across a reload that only edits values.
     [[nodiscard]] const std::vector<ShipDef>& ships() const { return m_ships; }
     [[nodiscard]] const std::vector<WeaponDef>& weapons() const { return m_weapons; }
     [[nodiscard]] const std::vector<FactionDef>& factions() const { return m_factions; }
+    [[nodiscard]] const std::vector<CommodityDef>& commodities() const { return m_commodities; }
+    [[nodiscard]] const std::vector<StationDef>& stations() const { return m_stations; }
 
 private:
     std::vector<ShipDef> m_ships;
     std::vector<WeaponDef> m_weapons;
     std::vector<FactionDef> m_factions;
+    std::vector<CommodityDef> m_commodities;
+    std::vector<StationDef> m_stations;
 };
 
 } // namespace sol::assets

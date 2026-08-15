@@ -1,0 +1,32 @@
+# Station archetypes: placement weights per region tier feed the galaxy
+# generator; produces/consumes ("commodity:units_per_second") feed the
+# market sim. The three archetypes form a production triangle -
+# food -> mines, ore -> factories, machinery -> farms - so trade routes
+# exist everywhere.
+
+[[station]]
+id = "sol.station_agri"
+name = "Agricultural Station"
+weight_core = 1.0
+weight_frontier = 1.5
+weight_fringe = 0.5
+produces = ["sol.food:0.8"]
+consumes = ["sol.machinery:0.1"]
+
+[[station]]
+id = "sol.station_mine"
+name = "Mining Outpost"
+weight_core = 0.5
+weight_frontier = 1.5
+weight_fringe = 2.0
+produces = ["sol.ore:0.6"]
+consumes = ["sol.food:0.3"]
+
+[[station]]
+id = "sol.station_factory"
+name = "Fabricator Yard"
+weight_core = 2.0
+weight_frontier = 1.0
+weight_fringe = 0.3
+produces = ["sol.machinery:0.3"]
+consumes = ["sol.ore:0.5", "sol.food:0.2"]

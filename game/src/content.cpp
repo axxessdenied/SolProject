@@ -150,6 +150,59 @@ std::string dockedAt(GameContent& content)
     return content.world().dockedStationName();
 }
 
+// --- Trading (works while docked; market = the docked station) ---
+
+std::string listCommodities(GameContent& content)
+{
+    std::string ids;
+    for (const std::string& id : content.world().commodityIds()) {
+        if (!ids.empty()) {
+            ids += ", ";
+        }
+        ids += id;
+    }
+    return ids;
+}
+
+double commodityPrice(GameContent& content, const std::string& id)
+{
+    SpaceWorld& world = content.world();
+    return world.economy().price(world.dockedMarket(), world.commodityIndex(id.c_str()));
+}
+
+double commodityStock(GameContent& content, const std::string& id)
+{
+    SpaceWorld& world = content.world();
+    return world.economy().stock(world.dockedMarket(), world.commodityIndex(id.c_str()));
+}
+
+double buyCommodity(GameContent& content, const std::string& id, double units)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::TradeResult result =
+        world.playerBuy(world.commodityIndex(id.c_str()), static_cast<float>(units));
+    return result.units;
+}
+
+double sellCommodity(GameContent& content, const std::string& id, double units)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::TradeResult result =
+        world.playerSell(world.commodityIndex(id.c_str()), static_cast<float>(units));
+    return result.units;
+}
+
+double playerCredits(GameContent& content)
+{
+    return content.world().playerCredits();
+}
+
+double playerCargo(GameContent& content, const std::string& id)
+{
+    SpaceWorld& world = content.world();
+    return world.playerCargo(world.commodityIndex(id.c_str()));
+}
+
 } // namespace
 
 bool GameContent::initialize(const std::string& dataDirectory, const std::string& modsDirectory,
@@ -211,6 +264,13 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&dockNearest>("sol", "dock", this);
     m_vm.registerFunction<&undock>("sol", "undock", this);
     m_vm.registerFunction<&dockedAt>("sol", "docked_at", this);
+    m_vm.registerFunction<&listCommodities>("sol", "commodities", this);
+    m_vm.registerFunction<&commodityPrice>("sol", "price", this);
+    m_vm.registerFunction<&commodityStock>("sol", "stock", this);
+    m_vm.registerFunction<&buyCommodity>("sol", "buy", this);
+    m_vm.registerFunction<&sellCommodity>("sol", "sell", this);
+    m_vm.registerFunction<&playerCredits>("sol", "credits", this);
+    m_vm.registerFunction<&playerCargo>("sol", "cargo", this);
 }
 
 bool GameContent::reloadDefs()

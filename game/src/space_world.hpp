@@ -9,6 +9,7 @@
 #include "sol/ecs/ecs.hpp"
 #include "sol/sim/collision.hpp"
 #include "sol/sim/damage.hpp"
+#include "sol/sim/economy.hpp"
 #include "sol/sim/flight.hpp"
 #include "sol/sim/power.hpp"
 #include "sol/sim/steering.hpp"
@@ -206,6 +207,25 @@ public:
     // Distance to the nearest station, or a negative value with none.
     [[nodiscard]] double nearestStationDistance() const;
 
+    // --- Trading (Phase 7 economy; player trades ride the same markets the
+    // NPC agents move) ---
+    [[nodiscard]] const sol::sim::Economy& economy() const { return m_economy; }
+    [[nodiscard]] const std::vector<std::string>& commodityIds() const { return m_commodityIds; }
+    [[nodiscard]] std::uint32_t commodityIndex(const char* id) const;
+    [[nodiscard]] double playerCredits() const { return m_playerCredits; }
+    [[nodiscard]] float playerCargo(std::uint32_t commodity) const
+    {
+        return commodity < m_playerCargo.size() ? m_playerCargo[commodity] : 0.0f;
+    }
+    [[nodiscard]] float playerCargoTotal() const;
+    [[nodiscard]] float playerCargoCapacity() const { return m_playerCargoCapacity; }
+    // Market of the docked station, or an invalid index while flying.
+    [[nodiscard]] std::uint32_t dockedMarket() const;
+    // Buy/sell at the docked station, clamped to stock, cargo space, and
+    // credits; returns what actually moved.
+    sol::sim::TradeResult playerBuy(std::uint32_t commodity, float units);
+    sol::sim::TradeResult playerSell(std::uint32_t commodity, float units);
+
     [[nodiscard]] const sol::sim::Galaxy& galaxy() const { return m_galaxy; }
     [[nodiscard]] std::uint32_t currentSystemIndex() const { return m_currentSystem; }
     [[nodiscard]] const char* currentSystemName() const
@@ -371,6 +391,12 @@ private:
     std::uint64_t m_universeSeed = 0;
     sol::sim::Galaxy m_galaxy;
     sol::sim::GalaxyParams m_galaxyParams; // kept for regeneration on load
+    sol::sim::Economy m_economy;
+    sol::sim::EconomyParams m_economyParams; // kept for re-init on load
+    std::vector<std::string> m_commodityIds; // economy index -> def id
+    double m_playerCredits = 1'000.0;
+    std::vector<float> m_playerCargo; // per commodity
+    float m_playerCargoCapacity = 50.0f;
     std::uint32_t m_currentSystem = 0;
     sol::core::DVec3 m_playerSpawn; // respawn point in the current system
 
