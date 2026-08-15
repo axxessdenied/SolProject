@@ -4,10 +4,15 @@
 **Owner:** Claude (single writer)
 **Branch / base:** `feature/p1b-vulkan-renderer`, branched from `dev` — see [Handoff.md](Handoff.md)
 **Date:** 2026-08-14
-**Result:** **B1 is not closed.** Three of the four gating thresholds it can reach are met and one
-is met in part; several declared deliverables have not been built. This index is the evidence
-record as it stands, written so the increment survives a fresh session, and it is explicit
-throughout about which claims are measured and which are not.
+**Result:** **B1 is not closed.** Four of the five gating thresholds are met **on both available
+devices** as of 2026-08-14 — jitter, depth, LOD continuity in both halves, and validation output
+— and capability reporting cannot close until the synthetic profiles are reconciled. Several
+declared deliverables have not been built. This index is the evidence record as it stands, written
+so the increment survives a fresh session, and it is explicit throughout about which claims are
+measured and which are not.
+
+Two devices is what the accepted evidence plan asks for. It is **not** the four named baseline
+classes, none of which exists on this machine, and no result here is a baseline-tier claim.
 
 Raw measurement output lives in `raw/`, which `.gitignore` excludes. It is reproducible from the
 commands in [Handoff.md](Handoff.md); this index and the handoff are the durable record.
@@ -48,26 +53,51 @@ commands in [Handoff.md](Handoff.md); this index and the handoff are the durable
 | Loader | instance API 1.4.357, 19 layers, validation installed and active |
 | OS | Windows 10.0.26200 |
 | CPU | 12th Gen Intel Core i7-12650H |
-| GPUs present | NVIDIA RTX 4060 Laptop (discrete, API 1.4.312, driver 581.15.0.0) and Intel UHD Graphics (Alder Lake-P) |
-| Device used for every gate | **RTX 4060 Laptop only** |
+| GPUs present | NVIDIA RTX 4060 Laptop (discrete, API 1.4.312, driver 581.15.0.0) and Intel UHD Graphics (Alder Lake-P, integrated, API 1.4.323) |
+| Devices measured | **Both**, as of 2026-08-14 — each under its own name |
 | Resolution | 1280×720, except the contract tests at 640×480 |
 
-**Every gate result below is from one device.** The accepted [reference-hardware evidence
-plan](../../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) requires the
-gating thresholds on *both* available devices, and the Intel UHD is unmeasured. That is
-outstanding, not waived. No baseline-class or AMD hardware exists on this machine at all, so no
-result here is a baseline-tier claim.
+**Both available devices are now measured for the jitter, depth and LOD-popping gates**, which
+the accepted [reference-hardware evidence
+plan](../../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) requires. This
+was impossible until 2026-08-14: `Renderer::create` chose a device internally with no way to ask
+for a specific one, so every earlier result in this increment is an RTX 4060 result by
+construction rather than by choice. See [Device selection](#device-selection) below.
+
+**No result here is a baseline-tier claim.** No baseline-class or AMD hardware exists on this
+machine at all. Two measured devices is what the evidence plan asks for; it is not the same as
+the four named classes, and the plan's discharge paths remain open.
 
 ## Gate results
 
-| Gate | Verdict | Evidence |
-|---|---|---|
-| Screen-space jitter, 0.25 px | **PASS**, RTX 4060 only | `raw/{debug,release}-JitterHarness.txt` |
-| Depth behaviour | **PASS**, RTX 4060 only | `raw/{debug,release}-DepthGate.txt` |
-| LOD continuity — popping | **PASS** under the ratified method, RTX 4060 only | `raw/{debug,release}-LodGate.txt` |
-| LOD continuity — memory | **PASS** under the method ratified 2026-08-14, RTX 4060 only | `raw/release-MemoryTraverse-30min*.txt`, `raw/release-MemoryTraverse-control-45s.txt` |
-| Capability reporting | **Cannot close** until synthetic profiles are reconciled | `raw/*-RenderCapabilityTests.txt`, `raw/*-RenderCapabilityReport.txt` |
-| Validation output | **PASS with an explained exception** | every raw file |
+| Gate | RTX 4060 | Intel UHD | Evidence |
+|---|---|---|---|
+| Screen-space jitter, 0.25 px | **PASS** | **PASS** | `raw/release-JitterHarness-{nvidia,intel}.txt` |
+| Depth behaviour | **PASS** | **PASS** | `raw/release-DepthGate-{nvidia,intel}.txt` |
+| LOD continuity — popping | **PASS** under the ratified method | **PASS** | `raw/release-LodGate-{nvidia,intel}.txt` |
+| LOD continuity — memory | **PASS** under the method ratified 2026-08-14 | **PASS**, flatter still | `raw/release-MemoryTraverse-30min*.txt` |
+| Capability reporting | **Cannot close** until synthetic profiles are reconciled | same | `raw/*-RenderCapabilityTests.txt`, `raw/*-RenderCapabilityReport.txt` |
+| Validation output | **PASS with an explained exception** | **PASS**, identical exception | every raw file |
+
+The single-device files without a device suffix — `raw/{debug,release}-JitterHarness.txt` and so
+on — are the earlier runs, kept because the Debug/Release byte-identity result rests on them.
+They are RTX 4060 runs.
+
+### Device selection
+
+Every gate result recorded before 2026-08-14 is an RTX 4060 result **because nothing could ask
+for the other device**. `Renderer::create` selected internally, preferring a discrete GPU, and
+the harnesses took what they were given. The evidence plan's requirement to measure both devices
+was therefore not merely unmet, it was unreachable.
+
+`DeviceSelection` and the shared `--device` harness option close that. The design decision worth
+recording is what happens when a selection matches nothing: **it fails, and never falls back.**
+A run launched as the integrated GPU that silently received the discrete one would produce a
+complete and internally consistent report — real device name, real frame counts, real statistics
+— describing the wrong hardware, and nothing downstream could detect it because every field
+would agree with every other field. `render.renderer-contract` pins this in both directions:
+an unmatched request fails with a diagnostic naming the request and the devices actually present,
+and a request that names the working device returns that same device.
 
 ### Screen-space jitter
 
@@ -80,6 +110,22 @@ a `float` ULP is ~1e-8 m — a fully `float` pipeline passed it to within 4e-9 p
 axis carrying the world magnitude, 6 378 141.6 m, where one `float` ULP is **0.5 m against a
 10 mm step**, so a `float` pipeline would produce exactly zero screen motion for fifty
 consecutive steps. Only then does a smooth response discriminate.
+
+**Both devices, Release, same binary:**
+
+| | RTX 4060 | Intel UHD | |
+|---|---|---|---|
+| Jitter, max and p99, both axes, both views | 0.000000 px | 0.000000 px | gate 0.25 px |
+| Frames bit-identical | yes | yes | |
+| Control: predicted shift | 0.169439 px/step | 0.169439 px/step | geometry, so identical by construction |
+| Control: observed shift | 0.169654 px/step | 0.169535 px/step | |
+| Control: worst step error | 0.002529 px | 0.004423 px | |
+| Control: monotonic | yes | yes | |
+
+The Intel tracks the geometric prediction about 1.7× less closely than the NVIDIA and is still
+three orders of magnitude inside the gate. The two observed shifts differing at the fourth
+decimal is the useful part of this table: it confirms the runs are genuinely different rasterisers
+rather than one device being measured twice under two names.
 
 ### Depth behaviour
 
@@ -96,9 +142,35 @@ which is the property the threshold names. The **negative control**, a conventio
 projection through the same harness, degrades from 5.96e-08 m at 1 m to 0.18 m at 1 km and
 **collapses entirely at 10 km**; the harness records three collapses and fails the run.
 
+The table above is the RTX 4060 column, and it reproduced exactly on 2026-08-14 from the current
+build — 0.0937507 m at 1 000 km and 0.150005 m at 6 378 km, matching what is printed here.
+
 Note that these separations are the *guaranteed* figures, one full ULP. An earlier revision
 published best-case draws from a rounding boundary — 6 cm at 1 000 km and 15 cm at Earth's radius
 — and those were withdrawn on 2026-08-13.
+
+**Both devices, Release, same binary.** Both select `VK_FORMAT_D32_SFLOAT`.
+
+| | RTX 4060 | Intel UHD |
+|---|---|---|
+| Relative-resolution band | 2.35e-08 to 9.38e-08 (spread 3.99×) | 2.35e-08 to 1.17e-07 (spread 4.98×) |
+| Resolvable separation at 1 000 km | 0.0938 m | 0.0313 m |
+| Resolvable separation at 6 378 km | 0.150 m | 0.150 m |
+| Control collapses | 3 distances | 5 distances |
+| Verdict | PASS | PASS |
+
+Two things in that table are worth reading carefully rather than as a quality ranking.
+
+The **separations swap direction** — the Intel is 3× coarser at 100 km and 3× finer at 1 000 km.
+These are one-ULP figures at a sampled distance, so they depend on where that distance's depth
+value happens to land inside its binade. A 3× difference is one to two binades of placement, not
+a difference in depth-buffer quality, and the `sep/dist` band is the statistic the threshold
+actually names.
+
+The **control collapses at more distances on the Intel** — five against three. The control is a
+conventional finite-far projection and is *meant* to collapse; collapsing harder on the weaker
+device makes the reversed-Z argument stronger there, not weaker. It is recorded because a reader
+scanning for differences will find it and should not have to guess which direction it points.
 
 ### LOD continuity
 
@@ -117,8 +189,21 @@ the scene does not pop visibly with or without morphing. What is certified is th
 path sits far under the limit and that the metric responds strongly when the morph is switched
 off. The gate prints this in its own output rather than leaving it to be found here.
 
+**Both devices, Release, same binary.** The gated statistics are identical to three significant
+figures — production 0.000101, control 0.000447, 4.4× — and the transition scan locates the same
+altitude, 140 866 m at a 17-patch change, on both.
+
+That identity is expected rather than suspicious, and the reason is worth stating because an
+identical number across two vendors normally *is* suspicious. The scan counts terrain patches,
+which is CPU-side quadtree selection and carries no device dependence at all. The sweep metric
+counts pixels whose luma moves by more than 16 of 255 — a coarse threshold that small
+rasterisation differences do not push pixels across. The underlying images do differ, and the
+ungated statistics show it: mean maximum difference 0.0150 against 0.0149 production, 0.0484
+against 0.0488 control, and descent maxima 0.2014/0.3222 against 0.2034/0.3261.
+
 Descent statistics, retained as diagnostics: 600 steps, 0 pops in both configurations, median
-frame difference 0.0832 production against 0.0885 control, maxima 0.2014 against 0.3222. The
+frame difference 0.0832 production against 0.0885 control, maxima 0.2014 against 0.3222 on the
+RTX 4060; 0.0828/0.0885 and 0.2034/0.3261 on the Intel. The
 descent **cannot** isolate a transition and is not the verdict — established by measurement, not
 argued: re-running at a 20° field of view tripled the screen-space error, grew every other
 statistic's separation by roughly 3×, and still produced exactly zero pops in both configurations.
@@ -153,6 +238,43 @@ throughout. Raw output in `raw/release-MemoryTraverse-30min.txt` and
 **The gate passes and the control fails**, which is what makes the pass a measurement rather than
 an instrument that is deaf.
 
+#### The same clause on the Intel UHD, 2026-08-14
+
+| | RTX 4060 | Intel UHD |
+|---|---|---|
+| Frames presented over 30.0 min | 256 954 | **316 689** |
+| **Second-half trend** (gated, ≤ 64 KiB/min) | 15.9 — PASS | **0.4** — PASS |
+| **Growth after warm-up** (gated, ≤ 2 MiB) | 0.98 MiB — PASS | **0.00 MiB** — PASS |
+| Whole-window trend (reported) | 25.7 KiB/min | −0.6 KiB/min |
+| Private bytes, start → end | 363.84 → 382.03 MiB | 284.34 → 285.50 MiB |
+| Shape | settling step, then flat | flat throughout (second half −0.22× the first) |
+
+The Intel result is **flatter than the RTX 4060's by every statistic**, which is a stronger pass
+and is exactly why it needed a control before it could be reported at all. A perfectly flat
+reading is what the *withdrawn* memory claim looked like, and the reason that claim was withdrawn
+was that its instrument could not vary. So the question "is this device's reading flat because
+nothing is leaking, or because nothing is being measured?" is not rhetorical here.
+
+Both controls were re-run on the Intel rather than argued across from the RTX 4060:
+
+| Control | RTX 4060 | Intel UHD | |
+|---|---|---|---|
+| 4 KiB/frame, 45 s (suite's) | 35 449 KiB/min, — | **37 102.9 KiB/min, 12.67 MiB** | must FAIL — does |
+| 8 B/frame, graded 30 min | 271.7 KiB/min, 6.47 MiB | **531.2 KiB/min, 10.09 MiB** | must FAIL — does |
+
+The second row is the one that had to be measured rather than inherited. Leak size and duration
+already trade against each other in this method — the same 8-byte leak fits −60.2 KiB/min at three
+minutes — and **frame rate is a third term in that trade**. Carrying a sensitivity figure across
+devices would have assumed it away silently.
+
+The direction it moved inverts the assumption worth recording rather than quietly dropping:
+**the Intel presented more frames than the RTX 4060**, 316 689 against 256 954 over the same
+wall-clock 30 minutes. A per-frame leak scales with frame count, so the Intel fails *harder* —
+8.3× above the limit against the RTX 4060's 4.2× — and the RTX 4060 is the conservative device of
+the two. That the slower GPU renders more frames says the traverse is not GPU-bound, and the
+evidence plan's *display topology* hazard is the likely explanation: the integrated GPU drives the
+internal panel directly, while presenting from the discrete GPU may involve a cross-adapter copy.
+
 **Why the whole-window trend is reported and not gated**, since it is the figure a reader would
 otherwise take as the headline. It is contaminated by settling that continues past the 120 s cut,
 and it is unstable: across four clean runs of the same build it fitted **17.9, 40.7, 56.8 and
@@ -174,9 +296,11 @@ fixed-capacity design and recorded as falsification rather than confirmation.
 - **A pass does not prove an asymptote.** No finite window can, and the gate cannot see growth
   below its noise floor at 30 minutes. Both are properties of bounding a rate over a finite run,
   and the program prints them with the verdict rather than leaving them to be inferred.
-- **One device, as everywhere else in B1.** The Intel UHD is unmeasured for this clause too.
-- **The clean sample is small.** The gated second-half statistic has three observations — 12.2,
-  2.1 and 15.9 KiB/minute — all inside a 64 limit, worst case a 4× margin. Firmer with more runs.
+- **Two devices as of 2026-08-14**, each with a control run on itself. Still neither is a baseline
+  class, and no AMD driver stack exists here.
+- **The clean sample is small.** The gated second-half statistic has four observations — 12.2, 2.1
+  and 15.9 KiB/minute on the RTX 4060 and 0.4 on the Intel — all inside a 64 limit, worst case a
+  4× margin. Firmer with more runs.
 - **Duration is load-bearing, and the two controls are not interchangeable.** The 8-byte leak fits
   271.7 KiB/minute at 30 minutes and **−60.2** at 3 minutes, where noise swamps it entirely. The
   suite's continuously-run control leaks a gross 4 KiB/frame (35 451 KiB/minute) to clear the

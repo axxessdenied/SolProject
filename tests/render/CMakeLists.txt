@@ -29,6 +29,7 @@ set_tests_properties(render.capability-report PROPERTIES SKIP_RETURN_CODE 77)
 add_executable(SolRenderLoop RenderLoopMain.cpp)
 sol_apply_project_options(SolRenderLoop)
 target_link_libraries(SolRenderLoop PRIVATE sol::render sol::platform)
+target_include_directories(SolRenderLoop PRIVATE "${CMAKE_SOURCE_DIR}/tests")
 add_test(NAME render.loop COMMAND SolRenderLoop)
 set_tests_properties(render.loop PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
@@ -49,6 +50,7 @@ set_tests_properties(render.renderer-contract PROPERTIES SKIP_RETURN_CODE 77 TIM
 add_executable(SolJitterHarness JitterHarnessMain.cpp)
 sol_apply_project_options(SolJitterHarness)
 target_link_libraries(SolJitterHarness PRIVATE sol::render sol::platform)
+target_include_directories(SolJitterHarness PRIVATE "${CMAKE_SOURCE_DIR}/tests")
 add_test(NAME render.jitter-gate COMMAND SolJitterHarness)
 set_tests_properties(render.jitter-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 
@@ -58,6 +60,7 @@ set_tests_properties(render.jitter-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 3
 add_executable(SolDepthGate DepthGateMain.cpp)
 sol_apply_project_options(SolDepthGate)
 target_link_libraries(SolDepthGate PRIVATE sol::render sol::platform)
+target_include_directories(SolDepthGate PRIVATE "${CMAKE_SOURCE_DIR}/tests")
 add_test(NAME render.depth-gate COMMAND SolDepthGate)
 set_tests_properties(render.depth-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
 
@@ -67,6 +70,7 @@ set_tests_properties(render.depth-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
 add_executable(SolLodGate LodGateMain.cpp)
 sol_apply_project_options(SolLodGate)
 target_link_libraries(SolLodGate PRIVATE sol::render sol::platform)
+target_include_directories(SolLodGate PRIVATE "${CMAKE_SOURCE_DIR}/tests")
 add_test(NAME render.lod-gate COMMAND SolLodGate)
 set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 
@@ -81,6 +85,7 @@ set_tests_properties(render.lod-gate PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 add_executable(SolMemoryTraverse MemoryTraverseMain.cpp)
 sol_apply_project_options(SolMemoryTraverse)
 target_link_libraries(SolMemoryTraverse PRIVATE sol::render sol::platform psapi)
+target_include_directories(SolMemoryTraverse PRIVATE "${CMAKE_SOURCE_DIR}/tests")
 add_test(NAME render.memory-traverse COMMAND SolMemoryTraverse --seconds 45)
 set_tests_properties(render.memory-traverse PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
 

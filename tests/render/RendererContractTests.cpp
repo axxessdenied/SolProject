@@ -325,6 +325,100 @@ void checkDegenerateViewBasisIsRefused(
                  "a steeply-down camera with a valid up axis still renders");
 }
 
+/// A device selection that matches nothing fails, and never quietly falls back.
+///
+/// This is the load-bearing property of `DeviceSelection`, and it is a property about
+/// *evidence* rather than about rendering. The P1b evidence plan requires each gate to be
+/// measured on both available devices under their own names. If an unmatched request silently
+/// returned the production device, a run launched as the integrated GPU would produce a
+/// complete, internally consistent report — correct frame counts, correct statistics, a real
+/// device name — describing the wrong hardware. Nothing downstream could detect it, because
+/// every field would agree with every other field.
+///
+/// So the test does not merely check that a bogus request errors. It checks that a request
+/// which *could* plausibly be satisfied by the wrong device is not satisfied by it: the failure
+/// has to come from the selection, not from the renderer being unable to start at all.
+/// @note Each renderer here is created and destroyed before the next one, deliberately. Two
+/// swapchains on a single window may legitimately fail with `VK_ERROR_NATIVE_WINDOW_IN_USE_KHR`,
+/// so overlapping them would make this test's outcome a driver policy rather than a statement
+/// about selection.
+void checkDeviceSelectionContract(
+    sol::test::CheckContext& checks,
+    const sol::render::VulkanInstance& instance,
+    const sol::render::SurfaceTarget& target)
+{
+    // What the production policy picks on this machine. Everything below is measured against
+    // it, and if this cannot be created the test has nothing to say and says so rather than
+    // reporting passes.
+    std::string workingDevice;
+    {
+        auto baseline = sol::render::Renderer::create(instance, target);
+        if (!baseline.has_value()) {
+            checks.check(false,
+                         "the unconstrained renderer must be creatable for the selection "
+                         "contract to mean anything");
+            return;
+        }
+        workingDevice = baseline->selectedDevice().deviceName;
+    }
+
+    // A name no real device carries. The renderer is known to work on this machine from the
+    // block above, so a failure here can only come from the selection.
+    std::string rejectionError;
+    {
+        const sol::render::DeviceSelection absent{.nameContains = "NoSuchDeviceZZ"};
+        auto rejected = sol::render::Renderer::create(instance, target, absent);
+        checks.check(!rejected.has_value(),
+                     "a device selection matching no device fails rather than falling back");
+        if (!rejected.has_value()) {
+            rejectionError = rejected.error();
+        }
+    }
+
+    // The diagnostic has to be actionable, which for this failure means naming what was asked
+    // for and what the machine actually offers. A bare "no device matched" would leave the
+    // reader unable to work out what to type instead.
+    if (!rejectionError.empty()) {
+        checks.check(rejectionError.find("NoSuchDeviceZZ") != std::string::npos,
+                     "the diagnostic repeats the selection that failed");
+        checks.check(rejectionError.find(workingDevice) != std::string::npos,
+                     "the diagnostic lists the devices the system does report");
+    }
+
+    // The positive half. Without it, the check above would also pass if selection were broken
+    // outright and rejected everything — which is the same defect wearing the opposite sign.
+    {
+        const sol::render::DeviceSelection byName{.nameContains = workingDevice};
+        auto reselected = sol::render::Renderer::create(instance, target, byName);
+        checks.check(reselected.has_value(),
+                     "selecting the working device by its own name succeeds");
+        if (reselected.has_value()) {
+            checks.checkEqual(reselected->selectedDevice().deviceName,
+                              workingDevice,
+                              "selecting by name returns the device that was named");
+        }
+    }
+
+    // Kind selection has to agree with the name the device reports for itself. This is the
+    // form the evidence runs actually use — `--device integrated` — so a mismatch between the
+    // requested kind and the delivered device is the exact error that would mislabel a report.
+    {
+        const sol::render::DeviceSelection integrated{
+            .kind = sol::render::DeviceKind::IntegratedGpu};
+        auto result = sol::render::Renderer::create(instance, target, integrated);
+        if (result.has_value()) {
+            checks.checkEqual(result->selectedDevice().kind,
+                              sol::render::DeviceKind::IntegratedGpu,
+                              "requesting an integrated GPU returns an integrated GPU");
+        } else {
+            // A machine with no integrated GPU is a legitimate configuration, and the contract
+            // there is that it fails rather than substituting the discrete one.
+            checks.check(result.error().find("No Vulkan device matches") != std::string::npos,
+                         "with no integrated GPU present, the request fails as unmatched");
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -347,14 +441,20 @@ int main()
     }
 
     const auto size = window->framebufferSize();
-    auto renderer = sol::render::Renderer::create(
-        *instance,
-        sol::render::SurfaceTarget{
-            .nativeWindow = window->nativeHandle().window,
-            .nativeInstance = window->nativeHandle().instance,
-            .width = size.width,
-            .height = size.height,
-        });
+    const sol::render::SurfaceTarget target{
+        .nativeWindow = window->nativeHandle().window,
+        .nativeInstance = window->nativeHandle().instance,
+        .width = size.width,
+        .height = size.height,
+    };
+
+    sol::test::CheckContext checks("render.renderer-contract");
+
+    // Runs before the renderer this file's other checks share, because it creates and destroys
+    // renderers of its own and two swapchains on one window may not coexist.
+    checkDeviceSelectionContract(checks, *instance, target);
+
+    auto renderer = sol::render::Renderer::create(*instance, target);
     if (!renderer.has_value()) {
         std::printf("Renderer creation failed.\n\n%s\n", renderer.error().c_str());
         return 1;
@@ -381,7 +481,6 @@ int main()
         }
     }
 
-    sol::test::CheckContext checks("render.renderer-contract");
     checkRootPatchMorphIsANoOp(checks, *window, *renderer);
     checkSkippedFrameYieldsNoPixels(checks, *window, *renderer, nearCamera);
     checkDegenerateViewBasisIsRefused(checks, *window, *renderer);

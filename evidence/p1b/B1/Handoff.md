@@ -61,6 +61,27 @@ build/windows-msvc-release/tests/render/SolMemoryTraverse.exe --minutes 30 --lea
   > evidence/p1b/B1/raw/release-MemoryTraverse-30min-leak8.txt
 ```
 
+### Per-device runs, added 2026-08-14
+
+Every presenting harness accepts `--device`, which takes `discrete`, `integrated`, or a
+case-insensitive substring of the device name. Without it the renderer's production policy
+applies, which prefers a discrete GPU — so every run recorded before this date is an RTX 4060 run.
+An unmatched selection **fails** rather than falling back, so a file produced by these commands
+cannot be describing a device other than the one in its name.
+
+```
+R=build/windows-msvc-release/tests/render
+for dev in nvidia intel; do
+  [ "$dev" = nvidia ] && SEL=discrete || SEL=integrated
+  for exe in JitterHarness DepthGate LodGate; do
+    $R/Sol$exe.exe --device $SEL > evidence/p1b/B1/raw/release-$exe-$dev.txt 2>&1
+  done
+done
+
+$R/SolMemoryTraverse.exe --device integrated --minutes 30 \
+  > evidence/p1b/B1/raw/release-MemoryTraverse-30min-intel.txt
+```
+
 They re-measure rather than reproduce: the figures are process memory over wall clock, so a repeat
 run gives close but not identical numbers. The whole-window trend in particular has fitted 17.9,
 40.7, 56.8 and 25.7 KiB/minute across four clean runs, which is why the gated statistic is the
@@ -89,10 +110,14 @@ by reverting the fix and confirming the test fails.
 
 ## Remaining risks
 
-- **One device.** Every gate result is from the RTX 4060 Laptop GPU. The Intel UHD is unmeasured,
-  which the accepted evidence plan requires and which is therefore outstanding rather than waived.
-  No baseline-class or AMD hardware exists on this machine, so nothing here supports a
-  baseline-tier claim.
+- **Two devices now, and neither is a baseline class.** As of 2026-08-14 the jitter, depth,
+  LOD-continuity (both halves) and validation-output gates pass on both the RTX 4060 Laptop GPU
+  and the Intel UHD Graphics, each recorded under its own name from the same binary, each with a
+  control demonstrated on its own device. This satisfies the evidence plan's both-devices
+  requirement for every gate B1 can reach,
+  and satisfies nothing about the four named baseline classes: no baseline-class or AMD hardware
+  exists on this machine, so nothing here supports a baseline-tier claim and the plan's discharge
+  paths stay open.
 - **The LOD pass is narrower than its plain reading.** The control is below the perceptual limit,
   so the scene does not pop visibly either way. Ratified on that basis; strengthening it needs a
   scene where the abrupt scheme pops visibly at a well-conditioned quality setting, and none has

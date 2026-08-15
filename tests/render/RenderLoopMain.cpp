@@ -13,6 +13,7 @@
 #include "Sol/Platform/Window.h"
 #include "Sol/Render/Renderer.h"
 #include "Sol/Render/VulkanInstance.h"
+#include "Support/DeviceOption.h"
 
 #include <cstdio>
 #include <cstring>
@@ -57,6 +58,8 @@ std::vector<sol::render::SceneObject> referenceScene()
 
 int main(int argc, char** argv)
 {
+    const auto selection = sol::testing::parseDeviceOption(argc, argv);
+
     bool interactive = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--interactive") == 0) {
@@ -89,12 +92,13 @@ int main(int argc, char** argv)
         .height = size.height,
     };
 
-    auto renderer = sol::render::Renderer::create(*instance, target);
+    auto renderer = sol::render::Renderer::create(*instance, target, selection);
     if (!renderer.has_value()) {
         std::printf("Renderer creation failed.\n\n%s\n", renderer.error().c_str());
         return 1;
     }
 
+    std::printf("Requested:    %s\n", sol::render::toString(selection).c_str());
     std::printf("Rendering on: %s\n", renderer->selectedDevice().deviceName.c_str());
     std::printf("Validation:   %s\n", instance->validationEnabled() ? "active" : "not active");
     std::printf("Mode:         %s\n",

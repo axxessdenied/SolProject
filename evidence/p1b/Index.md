@@ -22,7 +22,9 @@ plan](../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) 
 - **No named baseline device class is available.** The only machine carries an RTX 4060 Laptop GPU
   and Intel UHD Graphics. There is no GTX 1060, RX 580, UHD 630 or Vega 8, and no AMD device or
   driver stack of any kind. **No measurement here is a baseline-tier result**, and none may be
-  reported as a proxy for one.
+  reported as a proxy for one. Both *present* devices are measured as of 2026-08-14 for four of
+  the gates, which is what the plan asks for and is not the same thing as measuring the four
+  named classes.
 - **The gating thresholds still gate.** Jitter, depth, LOD continuity and validation output are
   properties of the implementation rather than of GPU throughput, so the absent hardware does not
   excuse them.
@@ -40,7 +42,14 @@ plan](../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md) 
 
 ## Milestone-level state, 2026-08-14
 
-Three of B1's gating thresholds are met on the single device used, and one cannot close yet. Both
+**Device selection landed 2026-08-14, and every gate B1 can reach now has a both-device result** —
+jitter, depth, LOD continuity in both halves, and validation output, each passing on the RTX 4060
+and the Intel UHD from the same binary under their own names, and each with a negative control
+demonstrated on its own device rather than inherited from the other. Before that date the renderer
+chose its device internally, so every B1 result was single-device by construction rather than by
+choice; the evidence plan's both-devices requirement was unreachable, not merely unmet.
+
+Three of B1's gating thresholds are met, and one cannot close yet. Both
 halves of the LOD continuity threshold were unmeasurable as originally written — neither named a
 statistic or a limit — and both were given measurement methods **ratified by the user on
 2026-08-14**, as two separate decisions, recorded in the [milestone

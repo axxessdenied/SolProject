@@ -35,6 +35,7 @@
 #include "Sol/Render/Renderer.h"
 #include "Sol/Render/ShaderBuild.h"
 #include "Sol/Render/VulkanInstance.h"
+#include "Support/DeviceOption.h"
 
 #include <algorithm>
 #include <cmath>
@@ -246,8 +247,10 @@ void reportSweep(const char* title, const std::vector<RangeResult>& results, boo
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    const auto selection = sol::testing::parseDeviceOption(argc, argv);
+
     auto window = sol::platform::Window::create("Depth gate", 1280, 720);
     if (!window.has_value()) {
         std::printf("%s\n\nSKIPPED: no window system.\n", window.error().c_str());
@@ -273,13 +276,15 @@ int main()
             .nativeInstance = window->nativeHandle().instance,
             .width = size.width,
             .height = size.height,
-        });
+        },
+        selection);
     if (!renderer.has_value()) {
         std::printf("Renderer creation failed.\n\n%s\n", renderer.error().c_str());
         return 1;
     }
 
     std::printf("Depth gate — surface-to-orbit depth behaviour\n");
+    std::printf("%s\n", sol::testing::describeDeviceRequest(selection).c_str());
     std::printf("Device:      %s\n", renderer->selectedDevice().deviceName.c_str());
     // Which of two shader binaries produced the numbers below. Debug and Release compile
     // different SPIR-V, and nothing constrains what spirv-opt does to float association.

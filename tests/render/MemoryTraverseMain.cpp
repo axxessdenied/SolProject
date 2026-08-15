@@ -54,6 +54,7 @@
 #include "Sol/Render/Renderer.h"
 #include "Sol/Render/ShaderBuild.h"
 #include "Sol/Render/VulkanInstance.h"
+#include "Support/DeviceOption.h"
 
 #include <windows.h>
 
@@ -231,6 +232,8 @@ double trendBytesPerMinute(const std::vector<Sample>& samples,
 
 int main(int argc, char** argv)
 {
+    const auto selection = sol::testing::parseDeviceOption(argc, argv);
+
     double durationSeconds = kGradedDurationSeconds;
     std::size_t leakBytesPerFrame = 0;
     for (int i = 1; i < argc; ++i) {
@@ -282,7 +285,8 @@ int main(int argc, char** argv)
             .nativeInstance = window->nativeHandle().instance,
             .width = size.width,
             .height = size.height,
-        });
+        },
+        selection);
     if (!renderer.has_value()) {
         std::printf("Renderer creation failed.\n\n%s\n", renderer.error().c_str());
         return 1;
@@ -303,6 +307,7 @@ int main(int argc, char** argv)
     renderer->setTerrain(terrain);
 
     std::printf("LOD memory traverse — unbounded-growth check\n");
+    std::printf("%s\n", sol::testing::describeDeviceRequest(selection).c_str());
     std::printf("Device:     %s\n", renderer->selectedDevice().deviceName.c_str());
     std::printf("Shaders:    %s\n",
                 std::string(sol::render::shaderBuildDescription()).c_str());

@@ -756,7 +756,25 @@ exits non-zero if a deliberate leak passes.
 **What the pass does and does not mean**, which the program prints with the result: it bounds the
 settled growth rate and shows the rate is not increasing. It does **not** prove an asymptote — no
 finite window can — and it cannot see growth below the instrument's noise floor at 30 minutes.
-Like every other B1 gate result it is also single-device.
+
+**Measured on both available devices as of 2026-08-14.** The Intel UHD is flatter than the RTX
+4060 on every statistic — second-half trend 0.4 KiB/min against 15.9, growth 0.00 MiB against 0.98
+— and that flatness is why it was not reported until a control had been run *on that device*: a
+perfectly flat reading is the shape the withdrawn memory claim had, and the reason that claim was
+withdrawn was an instrument that could not vary. The 4 KiB/frame control on the Intel fails at
+37 102 KiB/min and 12.67 MiB, so the instrument moves there.
+
+The 8-byte-per-frame sensitivity control was re-run on the Intel rather than argued across from
+the RTX 4060, and it fails there too: **531.2 KiB/minute and 10.09 MiB over a graded 30 minutes**,
+against 271.7 and 6.47 on the RTX 4060 — 8.3× above the limit rather than 4.2×. Leak size and
+duration already trade against each other in this method; frame rate is a third term, and
+inheriting a sensitivity figure across devices would have quietly assumed it away.
+
+That the Intel fails *harder* follows from it presenting **more** frames over the same wall clock,
+316 689 against 256 954. A per-frame leak scales with frame count, so the RTX 4060 is the
+conservative device of the two. That the slower GPU renders more frames says the traverse is not
+GPU-bound, and points at the evidence plan's display-topology hazard — the integrated GPU drives
+the internal panel, while presenting from the discrete GPU may involve a cross-adapter copy.
 
 The per-frame figure is sampled with `vmaGetHeapBudgets`, summed across heaps. It was
 `vmaCalculateStatistics` until 2026-08-13 — the call VMA names "calculate" rather than "get"
@@ -1003,14 +1021,24 @@ clause asks for a usable capture workflow rather than for RenderDoc specifically
 capture/replay round trip is the part that makes a rendering defect reproducible away from the
 machine that saw it.
 
-**All gate results on this branch are from one device**: the NVIDIA RTX 4060 Laptop GPU, driver
-581.15.0.0, at 1280×720, Release. The accepted evidence plan requires gating thresholds to be
-measured on *both* available devices, and the Intel UHD (Alder Lake-P) is unmeasured for jitter
-and depth. That is outstanding, not waived. The plan's residual risk also stands: a
-driver-specific shader optimisation could alter precision, so these results are scoped to this
-device and driver. ADR 0010 governs MSVC and CPU floating point and says nothing about GPU or
-driver determinism, on which the bit-identical-frames and exact-depth-inequality results both
-depend.
+**Both available devices are measured as of 2026-08-14** for the jitter, depth, LOD-popping and
+validation-output gates: the NVIDIA RTX 4060 Laptop GPU (driver 581.15.0.0) and the Intel UHD
+Graphics (Alder Lake-P), each at 1280×720, Release, from the same binary and each recorded under
+its own name. All four pass on both. The LOD threshold's **memory** half remains RTX 4060 only.
+
+This became possible only when device selection did. Until 2026-08-14 `Renderer::create` chose a
+physical device internally — preferring a discrete GPU — and nothing could ask for the other one,
+so every earlier result on this branch is a single-device result by construction. `DeviceSelection`
+now carries an optional name substring and device kind, and **an unmatched selection fails rather
+than falling back**: a harness that requested the integrated GPU and silently received the discrete
+one would publish an internally consistent report about the wrong hardware, which no downstream
+check could detect. `render.renderer-contract` pins the failure and the success directions both.
+
+The plan's residual risk still stands, narrowed rather than removed: a driver-specific shader
+optimisation could alter precision, and two drivers agreeing is weaker evidence than a
+specification guarantee. ADR 0010 governs MSVC and CPU floating point and says nothing about GPU
+or driver determinism, on which the bit-identical-frames and exact-depth-inequality results both
+depend. Neither device is a baseline class, and no AMD driver stack exists on this machine.
 
 The gate is **enabled** as of 2026-08-14 and passes in both configurations, so the suite is 29 of
 29 with none disabled — the last two being `render.memory-traverse`, which measures the LOD
@@ -1021,7 +1049,8 @@ needed, and the reasoning for both the disabling and the re-enabling stays in th
 description rather than hidden by it.
 
 **Also still unmeasured:** the atmosphere, which the P1b plan's narrowing option permits as a
-simple analytic shell, and the capability-reporting gate's synthetic profiles.
+simple analytic shell, the capability-reporting gate's synthetic profiles, and the LOD memory
+clause on the Intel UHD.
 
 **Cost recorded rather than absorbed:** the depth attachment now uses `STORE` rather than
 `DONT_CARE` so the buffer survives the render pass for readback. A production renderer without

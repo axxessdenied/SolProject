@@ -9,8 +9,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <format>
+#include <string_view>
 
 namespace sol::render {
 namespace {
@@ -936,9 +938,62 @@ CapturedFrame Renderer::Impl::readCapture() const
     return frame;
 }
 
+namespace {
+
+/// Case-insensitive substring test, ASCII only.
+///
+/// ASCII is sufficient and is stated rather than assumed: Vulkan device names come from the
+/// driver and are conventionally ASCII, and the alternative — a locale-aware fold — would make
+/// which device a harness selects depend on the machine's locale, which is not a property any
+/// evidence report should carry.
+bool containsNoCase(std::string_view haystack, std::string_view needle)
+{
+    if (needle.empty()) {
+        return true;
+    }
+    const auto lower = [](unsigned char c) { return static_cast<char>(std::tolower(c)); };
+    const auto it = std::search(
+        haystack.begin(),
+        haystack.end(),
+        needle.begin(),
+        needle.end(),
+        [&lower](char a, char b) { return lower(static_cast<unsigned char>(a))
+                                       == lower(static_cast<unsigned char>(b)); });
+    return it != haystack.end();
+}
+
+bool matchesSelection(const DeviceSelection& selection, const DeviceCapabilities& device)
+{
+    if (selection.kind.has_value() && device.kind != *selection.kind) {
+        return false;
+    }
+    return containsNoCase(device.deviceName, selection.nameContains);
+}
+
+} // namespace
+
+std::string toString(const DeviceSelection& selection)
+{
+    if (selection.unconstrained()) {
+        return "no constraint (production policy: prefer a discrete GPU)";
+    }
+    std::string text;
+    if (selection.kind.has_value()) {
+        text += std::format("kind={}", toString(*selection.kind));
+    }
+    if (!selection.nameContains.empty()) {
+        if (!text.empty()) {
+            text += ", ";
+        }
+        text += std::format("name contains \"{}\"", selection.nameContains);
+    }
+    return text;
+}
+
 std::expected<Renderer, std::string> Renderer::create(
     const VulkanInstance& instance,
-    const SurfaceTarget& target)
+    const SurfaceTarget& target,
+    const DeviceSelection& selection)
 {
     auto impl = std::make_unique<Impl>();
     impl->instance = instance.m_impl->instance;
@@ -972,12 +1027,26 @@ std::expected<Renderer, std::string> Renderer::create(
 
     const CapabilityRequirement requirement = baselineRequirement();
     std::string rejectionReport;
+    std::string enumeratedReport;
     bool selected = false;
 
     for (VkPhysicalDevice handle : handles) {
         auto described = detail::describeDevice(handle);
         if (!described.has_value()) {
             return std::unexpected(described.error());
+        }
+
+        // Every enumerated device is listed, matched or not, so that a selection which finds
+        // nothing can say what was actually on the machine. Without this the diagnostic can
+        // only report the absence, which does not tell the reader what to ask for instead.
+        enumeratedReport +=
+            std::format("  {} ({})\n", described->deviceName, toString(described->kind));
+
+        // A device the caller did not ask for is skipped silently rather than added to the
+        // rejection report: it was not rejected on capability, and listing it as though it
+        // were would bury a real capability failure among devices that were never candidates.
+        if (!matchesSelection(selection, *described)) {
+            continue;
         }
 
         const auto rejections = checkCapabilities(requirement, *described);
@@ -1010,22 +1079,49 @@ std::expected<Renderer, std::string> Renderer::create(
             continue;
         }
 
-        // Prefer a discrete GPU, but accept the first acceptable device otherwise. On a hybrid
-        // laptop this choice is recorded rather than assumed, because which device serves a
-        // surface is a driver policy and every evidence report must name the one used.
-        const bool better = !selected || described->kind == DeviceKind::DiscreteGpu;
+        // Unconstrained, this prefers a discrete GPU and accepts the first acceptable device
+        // otherwise. On a hybrid laptop that choice is recorded rather than assumed, because
+        // which device serves a surface is a driver policy and every evidence report must name
+        // the one used.
+        //
+        // Constrained, the preference is dropped and the first match in loader order wins. A
+        // caller that named a device has already expressed the preference, and applying the
+        // discrete bias on top of it would let `--device intel` select an NVIDIA GPU on a
+        // machine whose driver happened to report one whose name also matched.
+        const bool better =
+            !selected || (selection.unconstrained() && described->kind == DeviceKind::DiscreteGpu);
         if (better) {
             impl->physicalDevice = handle;
             impl->capabilities = std::move(*described);
             impl->queueFamilyIndex = chosenFamily;
             selected = true;
-            if (impl->capabilities.kind == DeviceKind::DiscreteGpu) {
+            if (!selection.unconstrained()
+                || impl->capabilities.kind == DeviceKind::DiscreteGpu) {
                 break;
             }
         }
     }
 
     if (!selected) {
+        // The two failures are kept apart because they call for different actions. "Nothing
+        // matched what you asked for" is fixed by asking for something else; "nothing here can
+        // run the renderer" is a capability result about the machine.
+        if (!selection.unconstrained()) {
+            return std::unexpected(std::format(
+                "No Vulkan device matches the requested selection: {}.\n\n"
+                "Devices this system reports:\n{}\n"
+                "{}"
+                "A device selection is never silently ignored. A measurement that asked for one "
+                "device and was handed another would publish its result under the wrong device "
+                "name, and every other field of the report would agree with it.\n",
+                toString(selection),
+                enumeratedReport,
+                rejectionReport.empty()
+                    ? std::string{}
+                    : std::format(
+                          "Matching devices that were then rejected on capability:\n{}\n",
+                          rejectionReport)));
+        }
         return std::unexpected(std::format(
             "No Vulkan device on this system can run the renderer.\n\n{}", rejectionReport));
     }

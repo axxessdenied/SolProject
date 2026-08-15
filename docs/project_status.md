@@ -178,11 +178,11 @@ is the smaller thing: enough state that nobody has to re-derive it from commit m
 
 | Threshold | State |
 |---|---|
-| Screen-space jitter, 0.25 px | **Passes on the RTX 4060 only.** 0.000000 px at both required views, frames bit-identical, with a sub-pixel response control confirming precision rather than only stability. The Intel UHD is unmeasured, which the evidence plan requires. Does **not** confirm A2's frame model — see [architecture](architecture.md). |
-| Depth behaviour | **Passes on the RTX 4060 only.** No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7, with a conventional-projection control failing as expected. Guaranteed separation is ~7 cm at 1 000 km and ~69 cm at Earth's radius. The Intel UHD is unmeasured. |
-| LOD continuity | **Both halves satisfied and ratified 2026-08-14, on the RTX 4060 only.** `render.lod-gate` is enabled and passing on the RTX 4060 in both configurations. Popping is certified against an isolated transition by the [method now written into the milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md): the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit — a 20× margin — with the control separating by 4.4×. The user ratified both the method and its narrower reading: because the control is itself below the limit, the pass is a margin and a response rather than a rescue. The **30-minute memory traverse passes** under a method ratified the same day and separately from the popping one — second-half trend 15.9 KiB/min against a 64 limit, 0.98 MiB growth against a 2 MiB backstop, with an 8-byte-per-frame control demonstrated to fail both. A pass bounds the settled growth rate; it does not prove an asymptote. See [architecture](architecture.md). |
+| Screen-space jitter, 0.25 px | **Passes on both available devices**, as of 2026-08-14. 0.000000 px at both required views on each, frames bit-identical, with a sub-pixel response control confirming precision rather than only stability. Does **not** confirm A2's frame model — see [architecture](architecture.md). |
+| Depth behaviour | **Passes on both available devices**, as of 2026-08-14. No collapse, linearly-scaling resolution from 1 m to 10 000 km, matching the analytic prediction to 1e-7, with a conventional-projection control failing as expected on each. Guaranteed separation is **9.4 cm at 1 000 km and 15.0 cm at Earth's radius** on the RTX 4060. *(These two figures previously read "~7 cm" and "~69 cm" here; both were wrong. Debug, the original Release run, and a fresh 2026-08-14 Release run all print 0.0937507 m and 0.150005 m, which is also what [B1's evidence index](../evidence/p1b/B1/Index.md) has always recorded. The error was in this summary only.)* |
+| LOD continuity | **Both halves pass on both available devices as of 2026-08-14.** The gated popping statistics are identical to three significant figures across the two devices — production 0.000101, control 0.000447, 4.4× — and the transition scan locates the same 140 866 m altitude on each, because patch selection is CPU-side and the pixel metric's threshold is coarser than the rasterisation difference. `render.lod-gate` is enabled and passing on both devices in both configurations. Popping is certified against an isolated transition by the [method now written into the milestone plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md): the production path moves 0.000101 of the frame at its worst step against a 0.0020 perceptual limit — a 20× margin — with the control separating by 4.4×. The user ratified both the method and its narrower reading: because the control is itself below the limit, the pass is a margin and a response rather than a rescue. The **30-minute memory traverse passes on both devices** under a method ratified the same day and separately from the popping one — RTX 4060 second-half trend 15.9 KiB/min and 0.98 MiB growth, Intel UHD 0.4 KiB/min and 0.00 MiB, against a 64 KiB/min limit and a 2 MiB backstop. Both negative controls were re-run on the Intel rather than inherited — 8 bytes/frame fails at 531.2 KiB/min and 10.09 MiB there against 271.7 and 6.47 on the RTX 4060 — so neither device's pass rests on the other's instrument. That the same control's sensitivity moves 2× between two devices running the same binary is itself the finding: frame rate is a term in it. A pass bounds the settled growth rate; it does not prove an asymptote. See [architecture](architecture.md). |
 | Capability reporting | Implemented with a negative control; **cannot close** until the synthetic device profiles are reconciled against real reports. |
-| Validation output | Clean from this project. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category. A capture workflow **is established** as of 2026-08-14, using GFXReconstruct from the pinned Vulkan SDK rather than RenderDoc, verified end to end by a 240-frame capture, inspection and clean replay. |
+| Validation output | Clean from this project **on both available devices**, verified 2026-08-14. Three `LLP_LAYER_3` loader warnings come from a third-party overlay layer (`GalaxyOverlayVkLayer`) installed on the machine, which falls in ADR 0002's "explained and accepted" category; they are loader messages and appear identically on both devices. A capture workflow **is established** as of 2026-08-14, using GFXReconstruct from the pinned Vulkan SDK rather than RenderDoc, verified end to end by a 240-frame capture, inspection and clean replay. |
 
 ### Where the LOD investigation stands
 
@@ -363,8 +363,37 @@ terrain finding with them.
 
 ### Outstanding for B1
 
-- **The Intel UHD is unmeasured for the memory clause too**, as it is for every other gate. The
-  memory half is otherwise **closed on the RTX 4060**: the measurement method was defined and
+- ~~**The Intel UHD is unmeasured.**~~ **Closed 2026-08-14. Every gate B1 can reach now has a
+  both-device result**, and the reason it could not before was structural rather than a matter of
+  effort: `Renderer::create` selected a physical device internally, preferring a discrete GPU, so
+  no harness could ask for the other one. Every earlier B1 result is an RTX 4060 result *by
+  construction rather than by choice*, and the evidence plan's both-devices requirement was
+  unreachable rather than merely outstanding. `DeviceSelection` and a shared `--device` harness
+  option close it.
+
+  The design point worth recording is the failure mode: **an unmatched selection fails and never
+  falls back.** A run launched as the integrated GPU that silently got the discrete one would emit
+  a complete, internally consistent report describing the wrong hardware, and nothing downstream
+  could catch it because every field would agree with every other field. `render.renderer-contract`
+  pins both directions.
+
+  Two results from the second device are worth carrying forward rather than filing as duplicates.
+  **The Intel's memory reading is flatter than the RTX 4060's on every statistic** — second-half
+  trend 0.4 KiB/min against 15.9, growth 0.00 MiB against 0.98 — which is precisely the shape the
+  *withdrawn* memory claim had, so it was not reported until both negative controls had been run
+  on that device and failed there.
+
+  And **the Intel presented more frames than the RTX 4060**, 316 689 against 256 954 over the same
+  30 minutes. That says the traverse is not GPU-bound and points at the evidence plan's
+  display-topology hazard — the integrated GPU drives the internal panel while the discrete one may
+  need a cross-adapter copy — but its sharper consequence is methodological: a per-frame leak
+  scales with frame count, so the 8-byte control's sensitivity is **2× different on the two
+  devices** running the same binary (531.2 KiB/min against 271.7). A control's sensitivity is a
+  property of the run, not of the code, which is the reason B2's constrained-CPU controls are
+  specified to run under the same constraint as the measurement they certify.
+
+- The
+  memory half is **closed on both devices**: the measurement method was defined and
   **ratified by the user on 2026-08-14**, recorded in the [P1b milestone
   plan](../SolProjectNotes/Milestones/P1b-Renderer-and-Craft.md) beside the popping method it
   parallels, and the traverse passes under it — 256 954 frames over a graded 30.0 minutes,

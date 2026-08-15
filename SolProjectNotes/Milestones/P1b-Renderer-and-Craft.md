@@ -154,7 +154,7 @@ Leak size and duration trade against each other, so the suite's control and the 
 
 **Measured under this method on 2026-08-14**, Release, RTX 4060, and recorded in [B1's evidence index](../../evidence/p1b/B1/Index.md): the production run **passes** — 256 954 frames over a graded 30.0 minutes, second-half trend **15.9 KiB/minute** against the 64 limit, growth **0.98 MiB** against the 2 MiB backstop, every device-side figure constant. The 8-byte control fails both criteria on the same build.
 
-**This closes the memory half of the LOD continuity threshold on the RTX 4060.** It does not close the threshold: like every other B1 gate result, it is a single-device measurement, and the accepted [reference-hardware evidence plan](P1b-Reference-Hardware-Evidence-Plan.md) requires both available devices. The Intel UHD is unmeasured here as elsewhere.
+**This closes the memory half of the LOD continuity threshold on the RTX 4060.** It does not close the threshold: the accepted [reference-hardware evidence plan](P1b-Reference-Hardware-Evidence-Plan.md) requires both available devices. As of 2026-08-14 the popping half, and the jitter, depth and validation-output gates, **do** have both-device results; the memory clause is the one place where the Intel UHD is still unmeasured.
 
 **What a pass under this method would and would not mean.** It bounds the settled growth rate and shows the rate is not increasing. It does **not** prove an asymptote — no finite window can — and it cannot see growth slower than the noise floor at 30 minutes. Both limits are properties of measuring a bound over a finite window, and should be stated wherever the result is quoted.
 
@@ -177,6 +177,7 @@ Each increment carries a cost gate. Exceeding the box is itself a result: it tri
 - validation-layer and graphics-capture workflow — **delivered 2026-08-14**, capture via GFXReconstruct from the pinned Vulkan SDK;
 - the screen-space jitter harness described above;
 - capability and performance reports for both discrete baseline GPU classes and both integrated investigation classes when accessible;
+- an explicit renderer device selection, so that "measured on both available devices" is something a harness can actually do — **delivered 2026-08-14**. Before it, the renderer chose internally and preferred a discrete GPU, which made every gate result single-device by construction. An unmatched selection fails rather than falling back, so a report's device name cannot diverge from the device that produced it;
 - an evidence-based Direct3D 12 comparison analysis sufficient to close ADR 0002 — **delivered 2026-08-14**: [P1b — Direct3D 12 comparison analysis](P1b-Direct3D12-Comparison-Analysis.md).
 
 ### Done criteria and validation

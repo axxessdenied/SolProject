@@ -31,6 +31,38 @@ struct SurfaceTarget {
     std::uint32_t height = 0;
 };
 
+/// Which physical device to use, when the default policy is not what a measurement needs.
+///
+/// The default — every field empty — is the production policy: prefer a discrete GPU, and
+/// accept the first otherwise-acceptable device when there is none. Constraining it exists for
+/// the P1b [reference-hardware evidence
+/// plan](../../SolProjectNotes/Milestones/P1b-Reference-Hardware-Evidence-Plan.md), which
+/// requires every gating threshold to be measured on **both** available devices under their own
+/// names. No shipping code path has a reason to set it.
+///
+/// @warning **A constraint that matches nothing is an error, never a fallback.** A harness that
+/// asked for the integrated GPU and silently received the discrete one would publish its
+/// numbers under the wrong device name — which is the exact failure the evidence plan exists to
+/// prevent, and it would be invisible in the output because every other field of the report
+/// would be internally consistent. @ref Renderer::create fails with a diagnostic naming what was
+/// requested and every device that was enumerated.
+struct DeviceSelection {
+    /// Case-insensitive substring of the device name. Empty imposes no name constraint.
+    std::string nameContains;
+
+    /// Restrict to one device category. Absent imposes no kind constraint.
+    std::optional<DeviceKind> kind;
+
+    /// True when this imposes no constraint at all, which selects the production policy.
+    [[nodiscard]] bool unconstrained() const
+    {
+        return nameContains.empty() && !kind.has_value();
+    }
+};
+
+/// Renders a selection as the diagnostic prints it, e.g. `kind=IntegratedGpu, name contains "UHD"`.
+std::string toString(const DeviceSelection& selection);
+
 /// Camera pose in the authoritative world frame.
 ///
 /// Position is `double` and world-space; the renderer subtracts it before anything reaches the
@@ -190,14 +222,18 @@ class Renderer {
 public:
     /// Selects a device, creates the swapchain, and prepares the frame loop.
     ///
-    /// @param instance must outlive the renderer.
-    /// @param target   the window to present to.
+    /// @param instance  must outlive the renderer.
+    /// @param target    the window to present to.
+    /// @param selection which device to use; the default is the production policy. See
+    ///                  @ref DeviceSelection for why a request that matches nothing fails
+    ///                  rather than falling back.
     ///
     /// Fails with an actionable diagnostic when no device meets the requirement set, naming
     /// every unmet requirement per device rather than reporting a bare "unsupported".
     [[nodiscard]] static std::expected<Renderer, std::string> create(
         const VulkanInstance& instance,
-        const SurfaceTarget& target);
+        const SurfaceTarget& target,
+        const DeviceSelection& selection = {});
 
     ~Renderer();
 
