@@ -187,12 +187,12 @@ Win32 window + message pump + keyboard/mouse input behind portable API; high-res
 **Exit**: colored triangle, resizable window, validation-clean, ESC quits.
 
 ### Phase 2 — Renderer Foundations ✅ (completed 2026-08-15)
-Math library complete + fully unit-tested; cooker v0 (glTF mesh + PNG→BC1 texture → individual cooked files; pack files deferred to Phase 3 alongside async loading); runtime asset loading (sync); depth buffer (reversed-Z), perspective camera, push-constant transforms; textured mesh rendering; Dear ImGui integrated (perf overlay, log console); free-fly camera; shader build pipeline in CMake + dev hot-reload (mtime watch → glslc → pipeline reload, F5 to force).
+Math library complete + fully unit-tested; cooker v0 (glTF mesh + PNG→BC1 texture → individual cooked files; pack files + async loading deferred to the Phase 4–6 asset work, when new content first demands them); runtime asset loading (sync); depth buffer (reversed-Z), perspective camera, push-constant transforms; textured mesh rendering; Dear ImGui integrated (perf overlay, log console); free-fly camera; shader build pipeline in CMake + dev hot-reload (mtime watch → glslc → pipeline reload, F5 to force).
 **Exit**: fly around a textured scene at high framerate with ImGui stats; math test suite green. *(Verified: 145+ fps cube scene with overlay/console, live shader hot-reload demonstrated, all suites green, validation clean.)*
 
-### Phase 3 — Core Systems
+### Phase 3 — Core Systems ✅ (completed 2026-08-15)
 ECS storage spike (benchmark archetype vs. sparse-set on representative workloads; record decision) then implementation: handles, queries, command buffers; job system + parallel-for; event bus; fixed-timestep loop with render interpolation; binary serialization with versioning; TOML parser; PRNG streams.
-**Exit**: 10k+ moving entities simulated at 60 Hz sim / uncapped render with interpolation; world state round-trips through save/load; all core tests green.
+**Exit**: 10k+ moving entities simulated at 60 Hz sim / uncapped render with interpolation; world state round-trips through save/load; all core tests green. *(Verified: sparse-set ECS chosen via spike — see `docs/decisions/001-ecs-storage-model.md`; 10,001-entity orbital swarm at ~400 fps release / 60 Hz sim with interpolation, validation clean; world save/load round-trips live via F9/F10 and byte-identically in tests; all suites green. Deferred within scope: pack files + async asset loading ride along with the Phase 4-6 asset work; system-level job-graph parallelism stays "fixed order first" per 2.5.)*
 
 ### Phase 4 — Space Flight Vertical Slice ★
 The proof-of-concept milestone. `DVec3` sim space + camera-relative rendering proven at solar-system distances; 6-DoF Newtonian flight + assists, ship controllable in first/third person; starfield cubemap, one planet impostor, one station mesh, sun light + HDR; thruster particles (CPU); ImGui-based provisional HUD (velocity, orientation, target); debug draw.
