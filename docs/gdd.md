@@ -46,7 +46,7 @@ Progression is horizontal as much as vertical: a mining barge, a fast smuggler, 
 
 - **Galaxy**: procedurally generated from a seed at new-game — 50–150 star systems (target; tune for density of interest, not raw size) connected by jump-gate lanes forming a graph with regions: civilized core, contested frontier, lawless fringe. Difficulty and opportunity rise toward the fringe (Avorion-style gradient). **[core]**
 - **Systems**: each system is a flat-ish playfield of real 3D space — star, planets (scenery + orbit anchors), stations, asteroid fields, gates, points of interest. Distances in the hundreds of thousands of km; in-system **cruise drive** (superlight throttle mode, interruptible) covers them. **[likely]**
-- **Travel**: jump gates between systems as baseline; player-owned jump drives as a late-game unlock is **[open]** (Q1, §10).
+- **Travel**: jump gates between systems as baseline; player-owned jump drive as a late-game unlock (decided, `decisions/004`). No time compression — the game runs at 1× real time, with cruise speed and system layout tuned so legs stay short (decided, `decisions/005`). **[core]**
 - **Handcrafted over procedural**: faction identities, ship/weapon rosters, economy rules, story anchors (unique stations, derelicts, questlines) are authored; the generator *places* them according to rules. Procedural breadth, authored flavor. **[core]**
 - **Persistence**: one continuous save-game world; full state (economy, faction relations, wrecks that matter) persists. Same seed + same content version ⇒ same starting galaxy. **[core]**
 
@@ -105,10 +105,10 @@ Explicitly **out** for the first shipped version (revisit only after v1):
 
 | # | Question | Leaning | Decide by |
 |---|---|---|---|
-| Q1 | Player jump drives (free travel) vs. gates-only | Gates baseline; drive as late-game unlock | Phase 7 |
+| Q1 | Player jump drives (free travel) vs. gates-only | ✅ Decided: gates baseline, drive as late-game unlock (`decisions/004`) | Phase 7 |
 | Q2 | Shield facings (directional) vs. single bubble | ✅ Decided: directional (`decisions/002`) | Phase 6 |
 | Q3 | Power management UI (pips vs. module toggles) | ✅ Decided: Elite-style pips (`decisions/003`) | Phase 6 |
-| Q4 | Time compression out of combat (SETA-like) | Yes, needed at these distances | Phase 7 |
+| Q4 | Time compression out of combat (SETA-like) | ✅ Decided: no — 1× real time, tune cruise/layout instead (`decisions/005`) | Phase 7 |
 | Q5 | Crew/officers as passive bonuses | Post-v1 unless trivial | Phase 8 |
 | Q6 | Death penalty severity / ironman modes | Insurance default + optional hardcore | Phase 8 |
 | Q7 | Story campaign vs. pure sandbox + anchors | Sandbox + authored anchor questlines | Phase 8 |

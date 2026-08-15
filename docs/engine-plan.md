@@ -222,6 +222,6 @@ Tracked here so they're decided consciously (record outcomes in `docs/decisions/
 1. ECS storage model — ✅ decided: sparse-set (`docs/decisions/001-ecs-storage-model.md`).
 2. Fixed-point vs. double for sim positions — default double; revisit only with evidence.
 3. Render graph — introduce when pass management hurts (est. Phase 4–6), not speculatively.
-4. Travel model baseline (gates + cruise vs. charged jump drive) — GDD open question; engine supports either.
+4. Travel model baseline — ✅ decided: gates + cruise, drive as late-game unlock; no time compression (`docs/decisions/004-travel-model.md`, `docs/decisions/005-time-compression.md`).
 5. Audio decoder dependency (ogg) — decide at Phase 8; requires user approval per dependency policy.
 6. GPU particles, atmosphere shaders, planet detail — post-Phase 7 polish tier.
