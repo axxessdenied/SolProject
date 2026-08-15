@@ -64,8 +64,8 @@ Newtonian 6-DoF under the hood; layered assists on top (Elite's proven compromis
 ## 5. Combat **[likely]**
 
 - Readable, positional dogfighting and gunline fights — Starsector's clarity in 3D. Encounter sizes: 1–20 ships, not hundreds.
-- **Defense layers**: shields (regenerating, directional facings **[open]** Q2) → armor (ablative, locational) → hull (systems damage: engines, weapons can be knocked out before destruction).
-- **Weapons**: projectile (travel time, lead indicator), beam (instant, power-hungry), missiles (countermeasures exist). Hardpoint sizes/classes per ship; energy weapons draw from the ship power budget — power management (weapons/engines/shields pips or similar **[open]** Q3) is the pilot's tactical dial.
+- **Defense layers**: shields (regenerating, **directional facings** — ✅ Q2, `docs/decisions/002-shield-facings.md`) → armor (ablative, locational) → hull (systems damage: engines, weapons can be knocked out before destruction).
+- **Weapons**: projectile (travel time, lead indicator), beam (instant, power-hungry), missiles (countermeasures exist). Hardpoint sizes/classes per ship; energy weapons draw from the ship power budget — power management (**Elite-style WEP/ENG/SYS pips** — ✅ Q3, `docs/decisions/003-power-management.md`) is the pilot's tactical dial.
 - Death: ship destroyed → respawn at last dock with insurance cost; harsher modes later. **[likely]**
 
 ## 6. Economy & Trading **[core]**
@@ -106,8 +106,8 @@ Explicitly **out** for the first shipped version (revisit only after v1):
 | # | Question | Leaning | Decide by |
 |---|---|---|---|
 | Q1 | Player jump drives (free travel) vs. gates-only | Gates baseline; drive as late-game unlock | Phase 7 |
-| Q2 | Shield facings (directional) vs. single bubble | Directional (rewards positioning) | Phase 6 |
-| Q3 | Power management UI (pips vs. module toggles) | Pips-style triage | Phase 6 |
+| Q2 | Shield facings (directional) vs. single bubble | ✅ Decided: directional (`decisions/002`) | Phase 6 |
+| Q3 | Power management UI (pips vs. module toggles) | ✅ Decided: Elite-style pips (`decisions/003`) | Phase 6 |
 | Q4 | Time compression out of combat (SETA-like) | Yes, needed at these distances | Phase 7 |
 | Q5 | Crew/officers as passive bonuses | Post-v1 unless trivial | Phase 8 |
 | Q6 | Death penalty severity / ironman modes | Insurance default + optional hardcore | Phase 8 |
