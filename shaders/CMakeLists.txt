@@ -10,8 +10,8 @@ endif()
 set(SOL_SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/bin/shaders)
 
 set(SOL_SHADER_SOURCES
-    triangle.vert
-    triangle.frag
+    mesh.vert
+    mesh.frag
 )
 
 set(SOL_SHADER_OUTPUTS "")

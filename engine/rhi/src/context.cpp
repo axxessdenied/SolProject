@@ -272,11 +272,21 @@ bool Context::initialize(const ContextDesc& desc, const platform::NativeWindowHa
     SOL_VK_CHECK(vkCreateDevice(m_physicalDevice, &deviceCreateInfo, nullptr, &m_device));
     vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &m_graphicsQueue);
 
+    VkCommandPoolCreateInfo poolCreateInfo = {};
+    poolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolCreateInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    poolCreateInfo.queueFamilyIndex = m_graphicsQueueFamily;
+    SOL_VK_CHECK(vkCreateCommandPool(m_device, &poolCreateInfo, nullptr, &m_transientCommandPool));
+
     return true;
 }
 
 void Context::shutdown()
 {
+    if (m_transientCommandPool != VK_NULL_HANDLE) {
+        vkDestroyCommandPool(m_device, m_transientCommandPool, nullptr);
+        m_transientCommandPool = VK_NULL_HANDLE;
+    }
     if (m_device != VK_NULL_HANDLE) {
         vkDestroyDevice(m_device, nullptr);
         m_device = VK_NULL_HANDLE;

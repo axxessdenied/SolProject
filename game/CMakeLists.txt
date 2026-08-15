@@ -1,6 +1,6 @@
 add_executable(sol_game
     src/main.cpp
-    src/triangle_renderer.cpp
+    src/scene_renderer.cpp
 )
 set_target_properties(sol_game PROPERTIES OUTPUT_NAME sol)
 
@@ -8,6 +8,8 @@ target_link_libraries(sol_game PRIVATE
     sol::core
     sol::platform
     sol::rhi
+    sol::renderer
+    sol::assets
 )
 
 add_dependencies(sol_game sol_shaders sol_cook_assets)

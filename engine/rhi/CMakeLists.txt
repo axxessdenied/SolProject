@@ -2,7 +2,9 @@ find_package(Vulkan REQUIRED)
 
 add_library(sol_rhi STATIC
     src/context.cpp
+    src/descriptors.cpp
     src/pipeline.cpp
+    src/resources.cpp
     src/swapchain.cpp
 )
 add_library(sol::rhi ALIAS sol_rhi)

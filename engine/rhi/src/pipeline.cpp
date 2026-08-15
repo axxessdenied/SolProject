@@ -32,15 +32,27 @@ VkShaderModule createShaderModuleFromFile(VkDevice device, const char* path)
     return shaderModule;
 }
 
-bool createGraphicsPipeline(VkDevice device,
-                            const GraphicsPipelineDesc& desc,
-                            VkPipelineLayout& outLayout,
-                            VkPipeline& outPipeline)
+VkPipelineLayout createPipelineLayout(VkDevice device, const VkDescriptorSetLayout* setLayouts,
+                                      std::uint32_t setLayoutCount, std::uint32_t pushConstantSize)
 {
+    VkPushConstantRange pushRange = {};
+    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushRange.size = pushConstantSize;
+
     VkPipelineLayoutCreateInfo layoutCreateInfo = {};
     layoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    SOL_VK_CHECK(vkCreatePipelineLayout(device, &layoutCreateInfo, nullptr, &outLayout));
+    layoutCreateInfo.setLayoutCount = setLayoutCount;
+    layoutCreateInfo.pSetLayouts = setLayouts;
+    layoutCreateInfo.pushConstantRangeCount = pushConstantSize > 0 ? 1u : 0u;
+    layoutCreateInfo.pPushConstantRanges = pushConstantSize > 0 ? &pushRange : nullptr;
 
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    SOL_VK_CHECK(vkCreatePipelineLayout(device, &layoutCreateInfo, nullptr, &layout));
+    return layout;
+}
+
+bool createGraphicsPipeline(VkDevice device, const GraphicsPipelineDesc& desc, VkPipeline& outPipeline)
+{
     VkPipelineShaderStageCreateInfo stages[2] = {};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -51,8 +63,27 @@ bool createGraphicsPipeline(VkDevice device,
     stages[1].module = desc.fragmentShader;
     stages[1].pName = "main";
 
+    VkVertexInputBindingDescription binding = {};
+    binding.binding = 0;
+    binding.stride = desc.vertexStride;
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    std::vector<VkVertexInputAttributeDescription> attributes(desc.attributeCount);
+    for (std::uint32_t i = 0; i < desc.attributeCount; ++i) {
+        attributes[i].location = desc.attributes[i].location;
+        attributes[i].binding = 0;
+        attributes[i].format = desc.attributes[i].format;
+        attributes[i].offset = desc.attributes[i].offset;
+    }
+
     VkPipelineVertexInputStateCreateInfo vertexInput = {};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    if (desc.attributeCount > 0) {
+        vertexInput.vertexBindingDescriptionCount = 1;
+        vertexInput.pVertexBindingDescriptions = &binding;
+        vertexInput.vertexAttributeDescriptionCount = desc.attributeCount;
+        vertexInput.pVertexAttributeDescriptions = attributes.data();
+    }
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -66,13 +97,20 @@ bool createGraphicsPipeline(VkDevice device,
     VkPipelineRasterizationStateCreateInfo rasterization = {};
     rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterization.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterization.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterization.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterization.cullMode = desc.cullBackFaces ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+    rasterization.frontFace = desc.frontFaceCounterClockwise ? VK_FRONT_FACE_COUNTER_CLOCKWISE
+                                                             : VK_FRONT_FACE_CLOCKWISE;
     rasterization.lineWidth = 1.0f;
 
     VkPipelineMultisampleStateCreateInfo multisample = {};
     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = desc.depthTest ? VK_TRUE : VK_FALSE;
+    depthStencil.depthWriteEnable = desc.depthWrite ? VK_TRUE : VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL; // reversed-Z
 
     VkPipelineColorBlendAttachmentState blendAttachment = {};
     blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -93,6 +131,7 @@ bool createGraphicsPipeline(VkDevice device,
     renderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     renderingCreateInfo.colorAttachmentCount = 1;
     renderingCreateInfo.pColorAttachmentFormats = &desc.colorFormat;
+    renderingCreateInfo.depthAttachmentFormat = desc.depthFormat;
 
     VkGraphicsPipelineCreateInfo pipelineCreateInfo = {};
     pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -104,9 +143,11 @@ bool createGraphicsPipeline(VkDevice device,
     pipelineCreateInfo.pViewportState = &viewportState;
     pipelineCreateInfo.pRasterizationState = &rasterization;
     pipelineCreateInfo.pMultisampleState = &multisample;
+    pipelineCreateInfo.pDepthStencilState = desc.depthFormat != VK_FORMAT_UNDEFINED ? &depthStencil
+                                                                                    : nullptr;
     pipelineCreateInfo.pColorBlendState = &colorBlend;
     pipelineCreateInfo.pDynamicState = &dynamicState;
-    pipelineCreateInfo.layout = outLayout;
+    pipelineCreateInfo.layout = desc.layout;
 
     SOL_VK_CHECK(
         vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &outPipeline));

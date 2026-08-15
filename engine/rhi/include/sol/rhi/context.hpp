@@ -35,6 +35,9 @@ public:
     [[nodiscard]] std::uint32_t graphicsQueueFamily() const { return m_graphicsQueueFamily; }
     [[nodiscard]] VkQueue graphicsQueue() const { return m_graphicsQueue; }
 
+    // Pool for short-lived one-shot command buffers (uploads).
+    [[nodiscard]] VkCommandPool transientCommandPool() const { return m_transientCommandPool; }
+
     void waitIdle() const;
 
     // Validation warnings + errors observed by the debug messenger since startup.
@@ -48,6 +51,7 @@ private:
     VkDevice m_device = VK_NULL_HANDLE;
     std::uint32_t m_graphicsQueueFamily = 0;
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
+    VkCommandPool m_transientCommandPool = VK_NULL_HANDLE;
 };
 
 } // namespace sol::rhi

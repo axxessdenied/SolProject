@@ -1,4 +1,5 @@
-#include "triangle_renderer.hpp"
+#include "fly_camera.hpp"
+#include "scene_renderer.hpp"
 
 #include "sol/core/log.hpp"
 #include "sol/core/version.hpp"
@@ -61,16 +62,25 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
-    game::TriangleRenderer renderer;
-    const std::string shaderDirectory = sol::platform::executableDirectory() + "shaders/";
-    if (!renderer.initialize(context, swapchain, shaderDirectory.c_str())) {
+    const std::string executableDir = sol::platform::executableDirectory();
+    const std::string shaderDirectory = executableDir + "shaders/";
+    const std::string cookedDirectory = executableDir + "cooked/";
+
+    game::SceneRenderer renderer;
+    if (!renderer.initialize(context, swapchain, shaderDirectory.c_str(), cookedDirectory.c_str())) {
         return EXIT_FAILURE;
     }
 
-    SOL_LOG_INFO("Entering frame loop (%ux%u, ESC to quit)", window.width(), window.height());
+    game::FlyCamera camera;
 
+    SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse look, WASD move, ESC quits.", window.width(),
+                 window.height());
+
+    const double startTime = sol::platform::timeSeconds();
+    double lastFrameTime = startTime;
     std::uint64_t frameCount = 0;
     bool failed = false;
+
     while (true) {
         window.pumpEvents();
         if (window.shouldClose() || window.isKeyDown(sol::platform::Key::Escape)) {
@@ -81,16 +91,22 @@ int main(int argc, char** argv)
             continue;
         }
 
+        const double now = sol::platform::timeSeconds();
+        const float deltaSeconds = sol::core::clamp(static_cast<float>(now - lastFrameTime), 0.0f, 0.1f);
+        lastFrameTime = now;
+
+        camera.update(window, deltaSeconds);
+
         bool needRecreate = window.consumeResize();
         if (!needRecreate) {
-            switch (renderer.drawFrame()) {
-            case game::TriangleRenderer::DrawResult::Success:
+            switch (renderer.drawFrame(camera, now - startTime)) {
+            case game::SceneRenderer::DrawResult::Success:
                 ++frameCount;
                 break;
-            case game::TriangleRenderer::DrawResult::NeedSwapchainRecreate:
+            case game::SceneRenderer::DrawResult::NeedSwapchainRecreate:
                 needRecreate = true;
                 break;
-            case game::TriangleRenderer::DrawResult::Failure:
+            case game::SceneRenderer::DrawResult::Failure:
                 failed = true;
                 break;
             }
