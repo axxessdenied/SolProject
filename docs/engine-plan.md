@@ -98,7 +98,7 @@ Built on the RHI, consumes ECS render components:
 
 ### 2.5 ECS (`sol::ecs`)
 
-Custom ECS; final storage design chosen via a short spike in Phase 3 (archetype/SoA vs. sparse-set — decide with a benchmark of our actual access patterns: thousands of ships/projectiles iterated linearly per sim tick, sparse component churn on projectiles).
+Custom ECS with **sparse-set storage** — chosen via the Phase 3 spike benchmark of our actual access patterns (thousands of ships/projectiles iterated linearly per sim tick, sparse component churn on projectiles); see `docs/decisions/001-ecs-storage-model.md` for the numbers and the archetype comparison.
 
 - Entities are generational handles. Components are plain structs (POD-leaning, serializable).
 - Systems are free functions scheduled explicitly (fixed order first; job-graph parallelism later, using the core job system).
@@ -219,7 +219,7 @@ Faction simulation (relations, territory shifts, patrols/raids) and player reput
 
 Tracked here so they're decided consciously (record outcomes in `docs/decisions/`):
 
-1. ECS storage model — Phase 3 spike (archetype vs. sparse-set).
+1. ECS storage model — ✅ decided: sparse-set (`docs/decisions/001-ecs-storage-model.md`).
 2. Fixed-point vs. double for sim positions — default double; revisit only with evidence.
 3. Render graph — introduce when pass management hurts (est. Phase 4–6), not speculatively.
 4. Travel model baseline (gates + cruise vs. charged jump drive) — GDD open question; engine supports either.

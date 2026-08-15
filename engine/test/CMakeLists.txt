@@ -16,3 +16,10 @@ add_executable(sol_core_tests
 )
 target_link_libraries(sol_core_tests PRIVATE sol::test sol::core)
 add_test(NAME core.unit COMMAND sol_core_tests)
+
+# Phase 3 ECS storage spike benchmark; run manually in the release preset,
+# results recorded in docs/decisions/. Not registered with CTest.
+add_executable(sol_ecs_storage_bench
+    bench/ecs_storage_bench.cpp
+)
+target_link_libraries(sol_ecs_storage_bench PRIVATE sol_options)
