@@ -59,7 +59,8 @@ struct ShipDef
     ShipFlightTuning flight;
     ShipDefenseTuning defense;
     ShipPowerTuning power;
-    std::string source; // document that last defined this id (diagnostics)
+    std::string weaponId; // weapon def id; empty = unarmed
+    std::string source;   // document that last defined this id (diagnostics)
 };
 
 struct WeaponDef
@@ -71,6 +72,7 @@ struct WeaponDef
     float rateOfFire = 1.0f;        // shots/s
     float range = 1'000.0f;         // meters
     float projectileSpeed = 0.0f;   // m/s; 0 for hitscan
+    float energyCost = 10.0f;       // capacitor draw per shot
     std::string source;
 };
 

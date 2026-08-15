@@ -30,7 +30,7 @@ scripting::EntityHandle spawnShip(GameContent& content, const std::string& id)
         SOL_LOG_WARN("spawn_ship: no ship def '%s' (try print(sol.ships()))", id.c_str());
         return {};
     }
-    const ecs::Entity entity = content.world().spawnShipFromDef(*def);
+    const ecs::Entity entity = content.world().spawnShipFromDef(*def, content.defs());
     SOL_LOG_INFO("spawned '%s' (%s)", def->name.c_str(), def->id.c_str());
     return scripting::toHandle(entity);
 }

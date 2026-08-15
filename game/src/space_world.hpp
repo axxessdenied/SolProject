@@ -68,6 +68,34 @@ struct ShipDefense
     sol::sim::DefenseState state;
 };
 
+enum class WeaponKind : std::uint32_t
+{
+    None = 0,
+    Projectile,
+    Hitscan,
+};
+
+// The ship's mounted weapon, flattened from its def (POD for the snapshot).
+struct ShipWeapon
+{
+    WeaponKind kind = WeaponKind::None;
+    float damage = 0.0f;
+    float rateOfFire = 1.0f;      // shots/s
+    float range = 1'000.0f;       // meters
+    float projectileSpeed = 0.0f; // m/s (projectile kind)
+    float energyCost = 0.0f;      // capacitor draw per shot
+    float cooldown = 0.0f;        // seconds until the next shot
+};
+
+// A live bolt: Transform carries the position, this the rest.
+struct Projectile
+{
+    sol::core::DVec3 velocity; // sim space, m/s
+    double lifetime = 0.0;     // seconds remaining
+    float damage = 0.0f;
+    std::uint32_t shooterIndex = 0; // entity index; never hits its shooter
+};
+
 struct RenderShape
 {
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
@@ -156,9 +184,10 @@ public:
     // hot-reload so stat edits land without a restart.
     void applyDefs(const sol::assets::DefDatabase& defs);
 
-    // Spawns a def-driven ship just ahead of the player (no FlightBody until
-    // Phase 6 gives NPCs pilots). Returns the new entity.
-    sol::ecs::Entity spawnShipFromDef(const sol::assets::ShipDef& def);
+    // Spawns a flyable def-driven ship just ahead of the player (pilots
+    // arrive with the Phase 6 AI pass). Returns the new entity.
+    sol::ecs::Entity spawnShipFromDef(const sol::assets::ShipDef& def,
+                                      const sol::assets::DefDatabase& defs);
 
 private:
     struct SpawnedShip
@@ -167,7 +196,8 @@ private:
         std::string defId;
     };
 
-    void applyShipDef(std::uint32_t entityIndex, const sol::assets::ShipDef& def);
+    void applyShipDef(std::uint32_t entityIndex, const sol::assets::ShipDef& def,
+                      const sol::assets::DefDatabase& defs);
     void handleShipDestroyed(std::uint32_t entityIndex);
     [[nodiscard]] std::uint32_t playerEntityIndex() const
     {

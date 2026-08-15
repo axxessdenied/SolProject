@@ -288,7 +288,10 @@ int main(int argc, char** argv)
             freeCamera.update(window, deltaSeconds);
             world.setShipInput({});
         } else {
-            world.setShipInput(inputMapper.update(window, deltaSeconds));
+            sol::sim::FlightInput input = inputMapper.update(window, deltaSeconds);
+            input.trigger = window.isMouseButtonDown(sol::platform::MouseButton::Left) &&
+                            !devUi.wantsMouseCapture();
+            world.setShipInput(input);
         }
 
         simLoop.beginFrame(deltaSeconds);

@@ -214,6 +214,11 @@ void DevUi::setCommandHandler(CommandHandler handler, void* userData)
     m_commandUserData = userData;
 }
 
+bool DevUi::wantsMouseCapture() const
+{
+    return m_initialized && ImGui::GetIO().WantCaptureMouse;
+}
+
 int DevUi::consoleTextCallback(ImGuiInputTextCallbackData* data)
 {
     auto* ui = static_cast<DevUi*>(data->UserData);

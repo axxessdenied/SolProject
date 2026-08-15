@@ -59,6 +59,9 @@ struct FlightInput
     bool assist = true;
     bool boost = false;
     bool cruise = false;
+    // Weapon trigger; ignored by the flight model, consumed by the game's
+    // weapon pass (one input struct serves player and NPC pilots alike).
+    bool trigger = false;
 };
 
 // Advances one fixed sim tick of semi-implicit Euler. Orientation is

@@ -62,6 +62,14 @@ public:
         return m_generations.size() - m_freeList.size();
     }
 
+    // Rebuilds the full handle for a slot (pools store bare indices; callers
+    // iterating a pool need this to destroy or re-reference entities).
+    [[nodiscard]] Entity entityFromIndex(std::uint32_t index) const
+    {
+        SOL_ASSERT(index < m_generations.size());
+        return {index, m_generations[index]};
+    }
+
     template <typename T, typename... Args>
     T& emplace(Entity entity, Args&&... args)
     {

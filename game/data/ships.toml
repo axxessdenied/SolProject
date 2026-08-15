@@ -25,6 +25,7 @@ armor = 50.0
 hull = 100.0
 weapon_capacitor = 100.0
 weapon_recharge = 15.0
+weapon = "sol.pulse_cannon"
 
 [[ship]]
 id = "sol.interceptor"
@@ -47,6 +48,7 @@ armor = 25.0
 hull = 60.0
 weapon_capacitor = 90.0
 weapon_recharge = 18.0
+weapon = "sol.pulse_cannon"
 
 [[ship]]
 id = "sol.freighter"
@@ -69,3 +71,4 @@ armor = 140.0
 hull = 320.0
 weapon_capacitor = 60.0
 weapon_recharge = 8.0
+weapon = "sol.mining_laser"

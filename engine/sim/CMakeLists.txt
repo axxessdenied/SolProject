@@ -4,6 +4,7 @@ add_library(sol_sim STATIC
     src/fixed_loop.cpp
     src/flight.cpp
     src/power.cpp
+    src/weapons.cpp
 )
 add_library(sol::sim ALIAS sol_sim)
 

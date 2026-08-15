@@ -154,13 +154,14 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     ShipPowerTuning& power = def.power;
     reader.optionalFloat("weapon_capacitor", power.weaponCapacitor);
     reader.optionalFloat("weapon_recharge", power.weaponRecharge);
+    reader.optionalString("weapon", def.weaponId);
 
     reader.rejectUnknownKeys({"id", "name", "model", "scale", "forward_accel", "reverse_accel",
                               "lateral_accel", "vertical_accel", "max_speed", "max_turn_rate",
                               "angular_accel", "boost_accel_scale", "boost_speed_scale",
                               "cruise_speed_scale", "cruise_accel_scale", "shield_strength",
                               "shield_regen", "shield_regen_delay", "armor", "hull",
-                              "weapon_capacitor", "weapon_recharge"});
+                              "weapon_capacitor", "weapon_recharge", "weapon"});
     if (!reader.failed && def.scale <= 0.0f) {
         reader.fail("'scale' must be > 0");
     }
@@ -188,9 +189,10 @@ bool parseWeapon(const TomlValue& table, const char* sourceName, std::vector<Wea
     reader.optionalFloat("rate_of_fire", def.rateOfFire);
     reader.optionalFloat("range", def.range);
     reader.optionalFloat("projectile_speed", def.projectileSpeed);
+    reader.optionalFloat("energy_cost", def.energyCost);
 
-    reader.rejectUnknownKeys(
-        {"id", "name", "kind", "damage", "rate_of_fire", "range", "projectile_speed"});
+    reader.rejectUnknownKeys({"id", "name", "kind", "damage", "rate_of_fire", "range",
+                              "projectile_speed", "energy_cost"});
     if (!reader.failed && def.kind != "projectile" && def.kind != "hitscan") {
         reader.fail("'kind' must be \"projectile\" or \"hitscan\"");
     }

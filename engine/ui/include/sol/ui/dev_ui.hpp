@@ -80,6 +80,10 @@ public:
     using CommandHandler = void (*)(const char* command, void* userData);
     void setCommandHandler(CommandHandler handler, void* userData);
 
+    // True while ImGui wants the mouse (e.g. clicking the console) - game
+    // actions like the weapon trigger should stand down.
+    [[nodiscard]] bool wantsMouseCapture() const;
+
 private:
     void buildWindows(const OverlayStats& stats);
     void buildConsoleInput();
