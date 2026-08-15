@@ -1,5 +1,6 @@
 #include "space_world.hpp"
 
+#include "sol/core/log.hpp"
 #include "sol/core/serialize.hpp"
 #include "sol/ecs/snapshot.hpp"
 #include "sol/platform/file_io.hpp"
@@ -31,6 +32,37 @@ ecs::Snapshot makeSnapshotSchema()
     schema.component<FlightBody>(11);
     schema.component<RenderShape>(12);
     return schema;
+}
+
+ModelId modelIdFromName(const std::string& name)
+{
+    if (name == "cube") {
+        return ModelId::Cube;
+    }
+    if (name == "station") {
+        return ModelId::Station;
+    }
+    if (name != "ship") {
+        SOL_LOG_WARN("unknown model '%s' in ship def; using 'ship'", name.c_str());
+    }
+    return ModelId::Ship;
+}
+
+sim::ShipTuning toShipTuning(const assets::ShipFlightTuning& flight)
+{
+    return {
+        .forwardAccel = flight.forwardAccel,
+        .reverseAccel = flight.reverseAccel,
+        .lateralAccel = flight.lateralAccel,
+        .verticalAccel = flight.verticalAccel,
+        .maxSpeed = flight.maxSpeed,
+        .maxTurnRate = {flight.maxTurnRate[0], flight.maxTurnRate[1], flight.maxTurnRate[2]},
+        .angularAccel = {flight.angularAccel[0], flight.angularAccel[1], flight.angularAccel[2]},
+        .boostAccelScale = flight.boostAccelScale,
+        .boostSpeedScale = flight.boostSpeedScale,
+        .cruiseSpeedScale = flight.cruiseSpeedScale,
+        .cruiseAccelScale = flight.cruiseAccelScale,
+    };
 }
 
 } // namespace
@@ -80,6 +112,50 @@ void SpaceWorld::spawn()
         m_registry.emplace<FlightBody>(e);
         m_registry.emplace<RenderShape>(e, RenderShape{.model = ModelId::Ship});
     }
+}
+
+void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
+{
+    const assets::ShipDef* playerDef = defs.findShip(kPlayerShipDefId);
+    if (playerDef != nullptr) {
+        m_tuning = toShipTuning(playerDef->flight);
+        applyShipVisuals(playerEntityIndex(), *playerDef);
+    } else {
+        SOL_LOG_WARN("player ship def '%s' missing; keeping current tuning", kPlayerShipDefId);
+    }
+
+    for (const SpawnedShip& spawned : m_spawnedShips) {
+        if (const assets::ShipDef* def = defs.findShip(spawned.defId.c_str())) {
+            applyShipVisuals(spawned.entity.index, *def);
+        }
+    }
+}
+
+void SpaceWorld::applyShipVisuals(std::uint32_t entityIndex, const assets::ShipDef& def)
+{
+    RenderShape& shape = m_registry.storage<RenderShape>().get(entityIndex);
+    shape.scale = {def.scale, def.scale, def.scale};
+    shape.model = modelIdFromName(def.model);
+}
+
+ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def)
+{
+    const sim::ShipState player = shipState();
+    const core::Vec3 forward = rotate(player.orientation, core::Vec3{0.0f, 0.0f, -1.0f});
+    const double distance = 150.0 + 100.0 * static_cast<double>(def.scale);
+    const core::DVec3 position =
+        player.position + core::DVec3{forward.x * distance, forward.y * distance,
+                                      forward.z * distance};
+
+    const ecs::Entity e = m_registry.create();
+    m_registry.emplace<Transform>(e, Transform{.position = position,
+                                               .previousPosition = position,
+                                               .orientation = player.orientation,
+                                               .previousOrientation = player.orientation});
+    m_registry.emplace<RenderShape>(e, RenderShape{});
+    applyShipVisuals(e.index, def);
+    m_spawnedShips.push_back({.entity = e, .defId = def.id});
+    return e;
 }
 
 sim::ShipState SpaceWorld::shipState() const
@@ -188,6 +264,9 @@ bool SpaceWorld::loadFrom(const char* path)
         return false; // not a slice-world save
     }
     m_registry = std::move(fresh);
+    // Def-spawned entities were replaced wholesale; their def association is
+    // gone (visuals persist via the saved RenderShape).
+    m_spawnedShips.clear();
     return true;
 }
 

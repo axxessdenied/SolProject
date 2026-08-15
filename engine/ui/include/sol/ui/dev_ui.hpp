@@ -7,6 +7,10 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <string>
+#include <vector>
+
+struct ImGuiInputTextCallbackData;
 
 namespace sol::ui {
 
@@ -58,15 +62,28 @@ public:
     // Call instead of render() when the frame is abandoned (swapchain out of date).
     void discardFrame();
 
+    // Console command line: submitted text goes to the handler (e.g. a Lua
+    // VM); without one the input line is hidden and the console is log-only.
+    using CommandHandler = void (*)(const char* command, void* userData);
+    void setCommandHandler(CommandHandler handler, void* userData);
+
 private:
     void buildWindows(const OverlayStats& stats);
+    void buildConsoleInput();
     void buildFlightHud(const FlightHud& hud);
+    static int consoleTextCallback(ImGuiInputTextCallbackData* data);
 
     bool m_initialized = false;
     bool m_frameOpen = false;
     bool m_showConsole = true;
     VkDevice m_device = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+
+    CommandHandler m_commandHandler = nullptr;
+    void* m_commandUserData = nullptr;
+    char m_commandBuffer[512] = {};
+    std::vector<std::string> m_commandHistory;
+    int m_historyIndex = -1; // -1 = editing a fresh line
 };
 
 } // namespace sol::ui

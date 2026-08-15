@@ -1,3 +1,4 @@
+#include "content.hpp"
 #include "fly_camera.hpp"
 #include "scene_renderer.hpp"
 #include "shader_watcher.hpp"
@@ -115,6 +116,11 @@ private:
     bool m_previousCruiseKey = false;
 };
 
+void consoleCommandHandler(const char* command, void* userData)
+{
+    static_cast<game::GameContent*>(userData)->executeConsole(command);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -172,6 +178,24 @@ int main(int argc, char** argv)
     sol::sim::FixedLoop simLoop(60.0);
     game::SpaceWorld world;
     world.spawn();
+
+    // Phase 5 data-driven content: defs + Lua from the source tree in dev
+    // builds (hot-reloadable), from the install layout otherwise.
+#if !defined(SOL_DATA_SOURCE_DIR)
+    #define SOL_DATA_SOURCE_DIR ""
+#endif
+#if !defined(SOL_MODS_SOURCE_DIR)
+    #define SOL_MODS_SOURCE_DIR ""
+#endif
+    const std::string dataDirectory =
+        std::strlen(SOL_DATA_SOURCE_DIR) > 0 ? SOL_DATA_SOURCE_DIR : executableDir + "data";
+    const std::string modsDirectory =
+        std::strlen(SOL_MODS_SOURCE_DIR) > 0 ? SOL_MODS_SOURCE_DIR : executableDir + "mods";
+    game::GameContent content;
+    if (!content.initialize(dataDirectory, modsDirectory, &world)) {
+        return EXIT_FAILURE;
+    }
+    devUi.setCommandHandler(&consoleCommandHandler, &content);
     ShipInputMapper inputMapper;
     game::ShipCamera shipCamera;
     game::FlyCamera freeCamera;
@@ -251,6 +275,7 @@ int main(int argc, char** argv)
         simLoop.beginFrame(deltaSeconds);
         while (simLoop.shouldTick()) {
             world.tick(simLoop.tickDelta());
+            content.tick(simLoop.tickDelta());
         }
         const float simAlpha = simLoop.alpha();
 
@@ -331,6 +356,9 @@ int main(int argc, char** argv)
                 SOL_LOG_ERROR("pipeline reload failed; keeping previous shaders");
             }
         }
+
+        // Data-def + Lua script hot-reload (automatic on file change).
+        content.poll(now);
 
         if (deltaSeconds > 0.0f) {
             const float instantFps = 1.0f / deltaSeconds;

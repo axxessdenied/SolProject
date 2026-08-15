@@ -1,5 +1,6 @@
 add_library(sol_assets STATIC
     src/asset_loader.cpp
+    src/data_defs.cpp
 )
 add_library(sol::assets ALIAS sol_assets)
 

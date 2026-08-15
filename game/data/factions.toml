@@ -1,0 +1,19 @@
+# Faction defs (identity only until Phase 6+ gives them AI and relations).
+
+[[faction]]
+id = "sol.navy"
+name = "Solar Navy"
+description = "System security; patrols the gate lanes."
+color = [0.25, 0.45, 1.0]
+
+[[faction]]
+id = "sol.guild"
+name = "Freight Guild"
+description = "Traders and haulers; owns most stations."
+color = [0.95, 0.75, 0.2]
+
+[[faction]]
+id = "sol.corsairs"
+name = "Corsairs"
+description = "Pirates working the edges of the shipping lanes."
+color = [0.9, 0.2, 0.15]

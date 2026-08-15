@@ -178,7 +178,9 @@ void DevUi::buildWindows(const OverlayStats& stats)
         ImGui::SetNextWindowSize({560.0f, 220.0f}, ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos({12.0f, 120.0f}, ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Console", &m_showConsole)) {
-            if (ImGui::BeginChild("##log", {0, 0}, ImGuiChildFlags_None,
+            const float inputHeight =
+                m_commandHandler != nullptr ? ImGui::GetFrameHeightWithSpacing() : 0.0f;
+            if (ImGui::BeginChild("##log", {0, -inputHeight}, ImGuiChildFlags_None,
                                   ImGuiWindowFlags_HorizontalScrollbar)) {
                 for (const auto& [level, text] : g_console.lines) {
                     ImGui::PushStyleColor(ImGuiCol_Text, levelColor(level));
@@ -192,6 +194,9 @@ void DevUi::buildWindows(const OverlayStats& stats)
                 g_console.scrollToBottom = false;
             }
             ImGui::EndChild();
+            if (m_commandHandler != nullptr) {
+                buildConsoleInput();
+            }
         }
         ImGui::End();
     }
@@ -199,6 +204,56 @@ void DevUi::buildWindows(const OverlayStats& stats)
     // F1 toggles the console.
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
         m_showConsole = !m_showConsole;
+    }
+}
+
+void DevUi::setCommandHandler(CommandHandler handler, void* userData)
+{
+    m_commandHandler = handler;
+    m_commandUserData = userData;
+}
+
+int DevUi::consoleTextCallback(ImGuiInputTextCallbackData* data)
+{
+    auto* ui = static_cast<DevUi*>(data->UserData);
+    if (data->EventFlag != ImGuiInputTextFlags_CallbackHistory || ui->m_commandHistory.empty()) {
+        return 0;
+    }
+    const int count = static_cast<int>(ui->m_commandHistory.size());
+    if (data->EventKey == ImGuiKey_UpArrow) {
+        ui->m_historyIndex = ui->m_historyIndex < 0 ? count - 1
+                                                    : (ui->m_historyIndex > 0 ? ui->m_historyIndex - 1
+                                                                              : 0);
+    } else if (data->EventKey == ImGuiKey_DownArrow) {
+        if (ui->m_historyIndex < 0) {
+            return 0;
+        }
+        ++ui->m_historyIndex;
+        if (ui->m_historyIndex >= count) {
+            ui->m_historyIndex = -1;
+        }
+    }
+    data->DeleteChars(0, data->BufTextLen);
+    if (ui->m_historyIndex >= 0) {
+        data->InsertChars(0, ui->m_commandHistory[ui->m_historyIndex].c_str());
+    }
+    return 0;
+}
+
+void DevUi::buildConsoleInput()
+{
+    ImGui::SetNextItemWidth(-1.0f);
+    const ImGuiInputTextFlags flags =
+        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory;
+    if (ImGui::InputText("##command", m_commandBuffer, sizeof m_commandBuffer, flags,
+                         &DevUi::consoleTextCallback, this)) {
+        if (m_commandBuffer[0] != '\0') {
+            m_commandHistory.emplace_back(m_commandBuffer);
+            m_commandHandler(m_commandBuffer, m_commandUserData);
+            m_commandBuffer[0] = '\0';
+        }
+        m_historyIndex = -1;
+        ImGui::SetKeyboardFocusHere(-1); // keep typing without re-clicking
     }
 }
 

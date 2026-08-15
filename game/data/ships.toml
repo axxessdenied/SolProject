@@ -1,0 +1,50 @@
+# Base-game ship defs (mod zero). Flat snake_case keys; unspecified flight
+# keys fall back to engine defaults (see sol/assets/data_defs.hpp).
+# Edits hot-reload into a running dev build.
+
+[[ship]]
+id = "sol.shuttle"           # the player's ship (game/src/space_world.hpp)
+name = "Shuttle"
+model = "ship"
+scale = 1.0
+forward_accel = 60.0
+reverse_accel = 40.0
+lateral_accel = 30.0
+vertical_accel = 30.0
+max_speed = 220.0
+max_turn_rate = [1.6, 1.2, 2.6]
+angular_accel = [6.0, 4.5, 9.0]
+boost_accel_scale = 3.0
+boost_speed_scale = 1.75
+cruise_speed_scale = 25000.0
+cruise_accel_scale = 12000.0
+
+[[ship]]
+id = "sol.interceptor"
+name = "Interceptor"
+model = "ship"
+scale = 0.8
+forward_accel = 110.0
+reverse_accel = 60.0
+lateral_accel = 55.0
+vertical_accel = 55.0
+max_speed = 340.0
+max_turn_rate = [2.4, 1.9, 3.6]
+angular_accel = [11.0, 8.0, 15.0]
+boost_accel_scale = 3.5
+boost_speed_scale = 2.0
+
+[[ship]]
+id = "sol.freighter"
+name = "Freighter"
+model = "ship"
+scale = 4.0
+forward_accel = 18.0
+reverse_accel = 10.0
+lateral_accel = 8.0
+vertical_accel = 8.0
+max_speed = 120.0
+max_turn_rate = [0.5, 0.4, 0.8]
+angular_accel = [1.5, 1.2, 2.2]
+boost_accel_scale = 2.0
+boost_speed_scale = 1.4

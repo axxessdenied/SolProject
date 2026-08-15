@@ -3,11 +3,13 @@
 #include "scene_renderer.hpp"
 #include "thruster_particles.hpp"
 
+#include "sol/assets/data_defs.hpp"
 #include "sol/core/math/math.hpp"
 #include "sol/ecs/ecs.hpp"
 #include "sol/sim/flight.hpp"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace game {
@@ -54,9 +56,14 @@ struct NavTarget
     double surfaceRadius = 0.0; // 0 for point targets (station)
 };
 
+// The player flies this def; mods can override it (Phase 5 data pipeline).
+inline constexpr const char* kPlayerShipDefId = "sol.shuttle";
+
 class SpaceWorld
 {
 public:
+    // Spawns with hardcoded defaults; GameContent::initialize applies the
+    // data-driven tuning/visuals right after via applyDefs.
     void spawn();
 
     void setShipInput(const sol::sim::FlightInput& input) { m_shipInput = input; }
@@ -92,8 +99,30 @@ public:
     [[nodiscard]] bool saveTo(const char* path);
     [[nodiscard]] bool loadFrom(const char* path);
 
+    // Re-reads the player def's tuning and visuals plus every def-spawned
+    // ship's visuals from the (re)loaded database; called after data
+    // hot-reload so stat edits land without a restart.
+    void applyDefs(const sol::assets::DefDatabase& defs);
+
+    // Spawns a def-driven ship just ahead of the player (no FlightBody until
+    // Phase 6 gives NPCs pilots). Returns the new entity.
+    sol::ecs::Entity spawnShipFromDef(const sol::assets::ShipDef& def);
+
 private:
+    struct SpawnedShip
+    {
+        sol::ecs::Entity entity;
+        std::string defId;
+    };
+
+    void applyShipVisuals(std::uint32_t entityIndex, const sol::assets::ShipDef& def);
+    // The player is the single FlightBody entity (until Phase 6 NPCs fly).
+    [[nodiscard]] std::uint32_t playerEntityIndex() const
+    {
+        return m_registry.storage<FlightBody>().entityIndices()[0];
+    }
     sol::ecs::Registry m_registry;
+    std::vector<SpawnedShip> m_spawnedShips;
     sol::sim::ShipTuning m_tuning;
     sol::sim::FlightInput m_shipInput;
     ThrusterParticles m_thrusters;

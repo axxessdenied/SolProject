@@ -1,4 +1,5 @@
 add_executable(sol_game
+    src/content.cpp
     src/main.cpp
     src/scene_renderer.cpp
     src/shader_watcher.cpp
@@ -11,11 +12,19 @@ target_link_libraries(sol_game PRIVATE
     sol::core
     sol::ecs
     sol::sim
+    sol::scripting
     sol::platform
     sol::rhi
     sol::renderer
     sol::assets
     sol::ui
+)
+
+# Data defs + Lua scripts load straight from the source tree in dev builds so
+# edits hot-reload; shipping layouts fall back to dirs beside the executable.
+target_compile_definitions(sol_game PRIVATE
+    SOL_DATA_SOURCE_DIR="${CMAKE_SOURCE_DIR}/game/data"
+    SOL_MODS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/game/mods"
 )
 
 # Shader hot-reload (dev): recompile changed GLSL at runtime with glslc.
