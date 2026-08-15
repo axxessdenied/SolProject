@@ -21,7 +21,8 @@ SolProject is a single-player 3D space sandbox game (working title: **Sol**) bui
   cmake --build --preset dev
   ctest --preset dev
   ```
-- **Definition of done**: the project configures, builds with zero warnings (warnings are errors), and all tests pass. Run these yourself before declaring work complete. For renderer/gameplay changes with no test coverage, run the app and state what you observed.
+- **Definition of done**: the project configures, builds with zero warnings (warnings are errors), and all tests pass **locally**. Run these yourself before declaring work complete. For renderer/gameplay changes with no test coverage, run the app and state what you observed.
+- **CI is advisory, never a gate.** Do not wait on GitHub Actions results to declare work done, merge, or push — local verification is authoritative. (Actions on this repo may be unavailable due to account limits.)
 - Never commit anything under `build/` or other generated output.
 
 ## 3. Language & Style
