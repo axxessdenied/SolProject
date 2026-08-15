@@ -30,9 +30,10 @@ struct Registrar
     static sol::test::Registrar solTestRegistrar_##name{solTestCase_##name};                                \
     static void solTestFn_##name()
 
-#define SOL_CHECK(expression)                                                                                \
+// Variadic so brace-initializer commas in the expression survive preprocessing.
+#define SOL_CHECK(...)                                                                                       \
     do {                                                                                                     \
-        if (!(expression)) {                                                                                 \
-            sol::test::reportFailure(#expression, __FILE__, __LINE__);                                       \
+        if (!(__VA_ARGS__)) {                                                                                \
+            sol::test::reportFailure(#__VA_ARGS__, __FILE__, __LINE__);                                      \
         }                                                                                                    \
     } while (0)
