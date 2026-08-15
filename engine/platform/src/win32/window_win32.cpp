@@ -21,6 +21,9 @@ Key translateVirtualKey(WPARAM virtualKey)
     if (virtualKey >= '0' && virtualKey <= '9') {
         return static_cast<Key>(static_cast<int>(Key::Num0) + static_cast<int>(virtualKey - '0'));
     }
+    if (virtualKey >= VK_F1 && virtualKey <= VK_F12) {
+        return static_cast<Key>(static_cast<int>(Key::F1) + static_cast<int>(virtualKey - VK_F1));
+    }
 
     switch (virtualKey) {
     case VK_ESCAPE: return Key::Escape;

@@ -50,6 +50,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 enable_testing()
 
+add_subdirectory(third_party)
 add_subdirectory(engine)
 add_subdirectory(tools/cooker)
 add_subdirectory(shaders)

@@ -174,6 +174,10 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         ++m_drawCallCount;
     }
 
+    if (m_devUi != nullptr) {
+        m_devUi->render(commandBuffer);
+    }
+
     renderer::endScenePass(commandBuffer, *m_swapchain, imageIndex);
     GAME_VK_CHECK(vkEndCommandBuffer(commandBuffer));
 }

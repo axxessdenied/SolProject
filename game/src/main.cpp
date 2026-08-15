@@ -1,5 +1,6 @@
 #include "fly_camera.hpp"
 #include "scene_renderer.hpp"
+#include "shader_watcher.hpp"
 
 #include "sol/core/log.hpp"
 #include "sol/core/version.hpp"
@@ -9,6 +10,7 @@
 #include "sol/platform/window.hpp"
 #include "sol/rhi/context.hpp"
 #include "sol/rhi/swapchain.hpp"
+#include "sol/ui/dev_ui.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -71,7 +73,24 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
+    sol::ui::DevUi devUi;
+    if (!devUi.initialize(window, context, swapchain.imageFormat(), VK_FORMAT_D32_SFLOAT,
+                          swapchain.imageCount())) {
+        return EXIT_FAILURE;
+    }
+    renderer.setDevUi(&devUi);
+
+#if !defined(SOL_SHADER_SOURCE_DIR)
+    #define SOL_SHADER_SOURCE_DIR ""
+#endif
+#if !defined(SOL_GLSLC_PATH)
+    #define SOL_GLSLC_PATH ""
+#endif
+    game::ShaderWatcher shaderWatcher(SOL_SHADER_SOURCE_DIR, SOL_GLSLC_PATH, shaderDirectory);
+
     game::FlyCamera camera;
+    float smoothedFps = 0.0f;
+    bool previousF5 = false;
 
     SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse look, WASD move, ESC quits.", window.width(),
                  window.height());
@@ -97,7 +116,34 @@ int main(int argc, char** argv)
 
         camera.update(window, deltaSeconds);
 
+        // Shader hot-reload: automatic on file change, F5 to force.
+        const bool f5Down = window.isKeyDown(sol::platform::Key::F5);
+        const bool forceReload = f5Down && !previousF5;
+        previousF5 = f5Down;
+        if (shaderWatcher.poll(now, forceReload)) {
+            context.waitIdle();
+            if (!renderer.reloadShaders()) {
+                SOL_LOG_ERROR("pipeline reload failed; keeping previous shaders");
+            }
+        }
+
+        if (deltaSeconds > 0.0f) {
+            const float instantFps = 1.0f / deltaSeconds;
+            smoothedFps = smoothedFps == 0.0f ? instantFps
+                                              : sol::core::lerp(smoothedFps, instantFps, 0.05f);
+        }
+        sol::ui::OverlayStats stats;
+        stats.fps = smoothedFps;
+        stats.frameMilliseconds = deltaSeconds * 1000.0f;
+        stats.cameraPosition = camera.position();
+        stats.cameraSpeed = camera.speed();
+        stats.drawCalls = renderer.drawCallCount();
+        devUi.beginFrame(stats);
+
         bool needRecreate = window.consumeResize();
+        if (needRecreate) {
+            devUi.discardFrame();
+        }
         if (!needRecreate) {
             switch (renderer.drawFrame(camera, now - startTime)) {
             case game::SceneRenderer::DrawResult::Success:
@@ -105,6 +151,7 @@ int main(int argc, char** argv)
                 break;
             case game::SceneRenderer::DrawResult::NeedSwapchainRecreate:
                 needRecreate = true;
+                devUi.discardFrame();
                 break;
             case game::SceneRenderer::DrawResult::Failure:
                 failed = true;
@@ -132,6 +179,7 @@ int main(int argc, char** argv)
     }
 
     context.waitIdle();
+    devUi.shutdown();
     renderer.shutdown();
     swapchain.destroy();
     context.shutdown();

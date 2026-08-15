@@ -14,6 +14,10 @@ enum class LogLevel
 // Printf-style. Fatal flushes all output and aborts the process.
 void logMessage(LogLevel level, const char* format, ...);
 
+// Optional secondary consumer of every formatted message (e.g. dev console).
+using LogSink = void (*)(LogLevel level, const char* message, void* userData);
+void setLogSink(LogSink sink, void* userData);
+
 } // namespace sol::core
 
 #define SOL_LOG_TRACE(...) ::sol::core::logMessage(::sol::core::LogLevel::Trace, __VA_ARGS__)

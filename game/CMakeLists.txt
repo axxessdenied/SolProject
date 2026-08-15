@@ -1,6 +1,7 @@
 add_executable(sol_game
     src/main.cpp
     src/scene_renderer.cpp
+    src/shader_watcher.cpp
 )
 set_target_properties(sol_game PROPERTIES OUTPUT_NAME sol)
 
@@ -10,7 +11,16 @@ target_link_libraries(sol_game PRIVATE
     sol::rhi
     sol::renderer
     sol::assets
+    sol::ui
 )
+
+# Shader hot-reload (dev): recompile changed GLSL at runtime with glslc.
+if(SOL_GLSLC)
+    target_compile_definitions(sol_game PRIVATE
+        SOL_SHADER_SOURCE_DIR="${CMAKE_SOURCE_DIR}/shaders"
+        SOL_GLSLC_PATH="${SOL_GLSLC}"
+    )
+endif()
 
 add_dependencies(sol_game sol_shaders sol_cook_assets)
 

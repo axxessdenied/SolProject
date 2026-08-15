@@ -49,12 +49,12 @@ The engine is strictly layered (full definitions in `docs/engine-plan.md`):
 ```
 game (C++ glue + Lua scripts)
   └── engine: ui → scripting → sim → ecs → assets → renderer → rhi
-        └── core (math, memory, jobs, log, events)
-              └── platform (window, input, fs, time)
+        └── platform (window, input, fs, time)
+              └── core (math, memory, jobs, log, events)
 ```
 
 - A module may depend only on modules **below** it. No upward or sideways includes; no cycles.
-- **Platform-specific code lives only in the platform layer**, behind portable interfaces. No `#include <windows.h>` or `#ifdef _WIN32` anywhere else, with one sanctioned exception: native Vulkan surface creation lives in `engine/rhi/src/win32/` (see engine plan §2.1). Windows is the first target, but nothing may lock us to it.
+- **Platform-specific code lives only in the platform layer**, behind portable interfaces. No `#include <windows.h>` or `#ifdef _WIN32` anywhere else, with two sanctioned exceptions: native Vulkan surface creation in `engine/rhi/src/win32/` and the Dear ImGui platform-backend bridge in `engine/ui/src/win32/`. Windows is the first target, but nothing may lock us to it.
 - **Engine code never includes game code.** The engine is a library; the game is its client.
 - Rendering talks to Vulkan **only through the RHI**. No raw `vk*` calls above `sol::rhi`.
 - Game logic (missions, faction decisions, economy tuning, UI flow) belongs in **Lua**; C++ is for the engine, performance-critical simulation, and the binding layer. When in doubt which side logic belongs on, check `docs/engine-plan.md` §Scripting, or ask.

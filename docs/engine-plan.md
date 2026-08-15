@@ -44,18 +44,18 @@ Strict layering; a module depends only on layers below it.
 │   renderer   scene rendering, materials, passes      │
 │   rhi        thin Vulkan wrapper                     │
 ├─────────────────────────────────────────────────────┤
-│   core       math, memory, containers, jobs,         │
-│              log/assert, events, serialization       │
-├─────────────────────────────────────────────────────┤
 │   platform   window, input, filesystem, time, dylib  │
 │              (win32/ backend now, linux/ later)      │
+├─────────────────────────────────────────────────────┤
+│   core       math, memory, containers, jobs,         │
+│              log/assert, events, serialization       │
 └─────────────────────────────────────────────────────┘
 tools/cooker/   offline asset compiler (own executable)
 ```
 
 ### 2.1 Platform layer (`sol::platform`)
 
-Window creation, input (keyboard/mouse first; gamepad/HOTAS later), filesystem paths + file IO + change watching (for hot-reload), high-resolution clock, dynamic library loading. Portable API in public headers; `win32/` implementation selected at compile time (no virtual dispatch needed — one backend per build). Vulkan surface creation is the one sanctioned platform↔rhi touch point.
+Window creation, input (keyboard/mouse first; gamepad/HOTAS later), filesystem paths + file IO + change watching (for hot-reload), high-resolution clock, dynamic library loading. Portable API in public headers; `win32/` implementation selected at compile time (no virtual dispatch needed — one backend per build). Sits directly above `core` (uses its math/log/assert). Sanctioned platform-specific touch points outside this module: Vulkan surface creation (`engine/rhi/src/win32/`) and the ImGui platform backend bridge (`engine/ui/src/win32/`).
 
 ### 2.2 Core layer (`sol::core`)
 
@@ -186,9 +186,9 @@ Repo layout above; root CMake + presets (dev/release, MSVC+Ninja); `.clang-forma
 Win32 window + message pump + keyboard/mouse input behind portable API; high-res timing; logging/assert; Vulkan bootstrap in RHI (instance, validation, device/queues, swapchain, one graphics pipeline); triangle on screen; clean resize + shutdown (zero validation errors).
 **Exit**: colored triangle, resizable window, validation-clean, ESC quits.
 
-### Phase 2 — Renderer Foundations
-Math library complete + fully unit-tested; cooker v0 (glTF mesh + PNG→BCn texture → pack file); runtime asset registry (sync loading fine for now); depth buffer, perspective camera, transform uniforms; textured mesh rendering; Dear ImGui integrated (perf overlay, console); free-fly camera; shader build pipeline in CMake + dev hot-reload.
-**Exit**: fly around a textured scene at high framerate with ImGui stats; math test suite green.
+### Phase 2 — Renderer Foundations ✅ (completed 2026-08-15)
+Math library complete + fully unit-tested; cooker v0 (glTF mesh + PNG→BC1 texture → individual cooked files; pack files deferred to Phase 3 alongside async loading); runtime asset loading (sync); depth buffer (reversed-Z), perspective camera, push-constant transforms; textured mesh rendering; Dear ImGui integrated (perf overlay, log console); free-fly camera; shader build pipeline in CMake + dev hot-reload (mtime watch → glslc → pipeline reload, F5 to force).
+**Exit**: fly around a textured scene at high framerate with ImGui stats; math test suite green. *(Verified: 145+ fps cube scene with overlay/console, live shader hot-reload demonstrated, all suites green, validation clean.)*
 
 ### Phase 3 — Core Systems
 ECS storage spike (benchmark archetype vs. sparse-set on representative workloads; record decision) then implementation: handles, queries, command buffers; job system + parallel-for; event bus; fixed-timestep loop with render interpolation; binary serialization with versioning; TOML parser; PRNG streams.

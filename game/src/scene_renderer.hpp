@@ -7,6 +7,7 @@
 #include "sol/rhi/context.hpp"
 #include "sol/rhi/resources.hpp"
 #include "sol/rhi/swapchain.hpp"
+#include "sol/ui/dev_ui.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -37,6 +38,9 @@ public:
     [[nodiscard]] bool reloadShaders() { return m_meshRenderer.reloadPipeline(); }
 
     [[nodiscard]] std::uint32_t drawCallCount() const { return m_drawCallCount; }
+
+    // Optional dev overlay, rendered inside the scene pass.
+    void setDevUi(sol::ui::DevUi* devUi) { m_devUi = devUi; }
 
 private:
     static constexpr std::uint32_t kFramesInFlight = 2;
@@ -71,6 +75,7 @@ private:
     sol::rhi::Image m_depth;
     std::vector<Instance> m_instances;
 
+    sol::ui::DevUi* m_devUi = nullptr;
     FrameResources m_frames[kFramesInFlight];
     std::vector<VkSemaphore> m_renderFinished;
     std::uint32_t m_frameIndex = 0;

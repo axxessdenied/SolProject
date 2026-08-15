@@ -22,7 +22,7 @@ VkDescriptorSetLayout createTextureSetLayout(VkDevice device)
     return layout;
 }
 
-VkDescriptorPool createTextureDescriptorPool(VkDevice device, std::uint32_t maxSets)
+VkDescriptorPool createTextureDescriptorPool(VkDevice device, std::uint32_t maxSets, bool allowFree)
 {
     VkDescriptorPoolSize poolSize = {};
     poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -30,6 +30,7 @@ VkDescriptorPool createTextureDescriptorPool(VkDevice device, std::uint32_t maxS
 
     VkDescriptorPoolCreateInfo createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    createInfo.flags = allowFree ? VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT : 0u;
     createInfo.maxSets = maxSets;
     createInfo.poolSizeCount = 1;
     createInfo.pPoolSizes = &poolSize;

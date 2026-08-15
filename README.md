@@ -22,4 +22,4 @@ The game executable lands at `build/dev/bin/sol.exe`. GPU-dependent tests are ex
 
 ## Status
 
-Phase 1 complete (window + Vulkan bootstrap + first triangle, validation-clean) — next up: Phase 2, renderer foundations (math library, asset cooker v0, textured meshes, ImGui). See the [roadmap](docs/engine-plan.md#4-roadmap).
+Phase 2 complete (math library, asset cooker, textured meshes with depth, Dear ImGui overlay, fly camera, shader hot-reload) — next up: Phase 3, core systems (ECS, job system, fixed-timestep sim loop, serialization). See the [roadmap](docs/engine-plan.md#4-roadmap).
