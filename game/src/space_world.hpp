@@ -195,6 +195,17 @@ public:
     // Distance to the nearest gate, or a negative value with no gates.
     [[nodiscard]] double nearestGateDistance() const;
 
+    // --- Docking (GDD: request -> autodock; manual flight optional later) ---
+    // Docks at the nearest station within range: ship parks at the station's
+    // dock point, flight input is ignored until undock, and the station
+    // becomes the death-rule respawn point (last dock).
+    [[nodiscard]] bool tryDockNearestStation(double range);
+    [[nodiscard]] bool undock();
+    [[nodiscard]] bool isDocked() const { return m_dockedStation != kNoIndex; }
+    [[nodiscard]] const char* dockedStationName() const;
+    // Distance to the nearest station, or a negative value with none.
+    [[nodiscard]] double nearestStationDistance() const;
+
     [[nodiscard]] const sol::sim::Galaxy& galaxy() const { return m_galaxy; }
     [[nodiscard]] std::uint32_t currentSystemIndex() const { return m_currentSystem; }
     [[nodiscard]] const char* currentSystemName() const
@@ -316,6 +327,10 @@ private:
     };
 
     static constexpr float kDamageFlashSeconds = 0.45f;
+    static constexpr std::uint32_t kNoIndex = 0xffff'ffffu;
+
+    // The parked-ship position for a station (clear of its collision sphere).
+    [[nodiscard]] sol::core::DVec3 dockPoint(std::uint32_t stationIndex) const;
 
     // Instantiates systemIndex (statics + side data) and moves the player
     // there: at the gate arriving from fromSystem, or near the first station
@@ -358,6 +373,14 @@ private:
     sol::sim::GalaxyParams m_galaxyParams; // kept for regeneration on load
     std::uint32_t m_currentSystem = 0;
     sol::core::DVec3 m_playerSpawn; // respawn point in the current system
+
+    // Docking state; last dock is the death-rule respawn (system, station).
+    std::uint32_t m_dockedStation = kNoIndex; // station index in current system
+    std::uint32_t m_lastDockSystem = kNoIndex;
+    std::uint32_t m_lastDockStation = kNoIndex;
+    // Death respawn into another system defers to end-of-tick: loadSystem
+    // mid-tick would invalidate the pass scratch (collision slots, pools).
+    std::uint32_t m_pendingRespawnSystem = kNoIndex;
 
     CelestialBody m_star;
     std::vector<CelestialBody> m_planets;

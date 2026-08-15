@@ -30,9 +30,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 1;
-
-constexpr std::uint32_t kNoSystem = 0xffff'ffffu;
+constexpr std::uint32_t kSaveVersion = 2; // v2: docking state joined the header
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -133,7 +131,7 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
             break;
         }
     }
-    loadSystem(start, kNoSystem);
+    loadSystem(start, kNoIndex);
     SOL_LOG_INFO("universe: seed %llu, %zu systems, %zu lanes; starting in '%s'",
                  static_cast<unsigned long long>(m_universeSeed), m_galaxy.systems.size(),
                  m_galaxy.links.size(), currentSystemName());
@@ -223,6 +221,7 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
 {
     despawnSystem();
     m_currentSystem = systemIndex;
+    m_dockedStation = kNoIndex;
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
     instantiateSystemEntities(spec);
     rebuildSystemSideData(spec);
@@ -231,7 +230,7 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     // a fresh start, just off the first station (or the hub failing that).
     const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
     core::DVec3 arrival = hub + core::DVec3{0.0, 0.0, 2.0e5};
-    if (fromSystem != kNoSystem) {
+    if (fromSystem != kNoIndex) {
         for (const sim::GateSpec& gate : spec.gates) {
             if (gate.toSystem == fromSystem) {
                 arrival = gate.position + normalize(hub - gate.position) * 500.0;
@@ -254,6 +253,9 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
 
 bool SpaceWorld::jumpNearestGate(double activationRange)
 {
+    if (isDocked()) {
+        return false; // undock first
+    }
     const core::DVec3 playerPosition = shipState().position;
     const GateInstance* nearest = nullptr;
     double nearestDistance = activationRange;
@@ -272,6 +274,95 @@ bool SpaceWorld::jumpNearestGate(double activationRange)
                  m_galaxy.systems[destination].name.c_str());
     loadSystem(destination, m_currentSystem);
     return true;
+}
+
+sol::core::DVec3 SpaceWorld::dockPoint(std::uint32_t stationIndex) const
+{
+    // 250 m above the station: outside its ~100 m collision sphere, close
+    // enough to read as "parked at the pad".
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    return spec.stations[stationIndex].position + core::DVec3{0.0, 250.0, 0.0};
+}
+
+bool SpaceWorld::tryDockNearestStation(double range)
+{
+    if (isDocked() || m_currentSystem >= m_galaxy.systems.size()) {
+        return false;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    const core::DVec3 playerPosition = shipState().position;
+    std::uint32_t nearest = kNoIndex;
+    double nearestDistance = range;
+    for (std::uint32_t i = 0; i < spec.stations.size(); ++i) {
+        const double distance = length(spec.stations[i].position - playerPosition);
+        if (distance <= nearestDistance) {
+            nearestDistance = distance;
+            nearest = i;
+        }
+    }
+    if (nearest == kNoIndex) {
+        return false;
+    }
+    m_dockedStation = nearest;
+    m_lastDockSystem = m_currentSystem;
+    m_lastDockStation = nearest;
+
+    // Autodock: park at the pad, kill relative motion, refresh the spawn
+    // anchor (the death rule respawns at the last dock).
+    const std::uint32_t playerIndex = playerEntityIndex();
+    Transform& transform = m_registry.storage<Transform>().get(playerIndex);
+    const core::DVec3 pad = dockPoint(nearest);
+    transform.position = pad;
+    transform.previousPosition = pad;
+    m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
+    m_playerSpawn = pad;
+    SOL_LOG_INFO("docked at '%s'", spec.stations[nearest].name.c_str());
+    return true;
+}
+
+bool SpaceWorld::undock()
+{
+    if (!isDocked()) {
+        return false;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    const std::uint32_t playerIndex = playerEntityIndex();
+    Transform& transform = m_registry.storage<Transform>().get(playerIndex);
+    // Release 500 m off the pad so the station sphere is comfortably clear.
+    const core::DVec3 release =
+        spec.stations[m_dockedStation].position + core::DVec3{0.0, 500.0, 0.0};
+    transform.position = release;
+    transform.previousPosition = release;
+    m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
+    SOL_LOG_INFO("undocked from '%s'", spec.stations[m_dockedStation].name.c_str());
+    m_dockedStation = kNoIndex;
+    return true;
+}
+
+const char* SpaceWorld::dockedStationName() const
+{
+    if (!isDocked()) {
+        return "";
+    }
+    return m_galaxy.systems[m_currentSystem].stations[m_dockedStation].name.c_str();
+}
+
+double SpaceWorld::nearestStationDistance() const
+{
+    if (m_currentSystem >= m_galaxy.systems.size()) {
+        return -1.0;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    if (spec.stations.empty()) {
+        return -1.0;
+    }
+    const core::DVec3 playerPosition =
+        m_registry.storage<Transform>().get(playerEntityIndex()).position;
+    double nearest = 1.0e30;
+    for (const sim::StationSpec& station : spec.stations) {
+        nearest = std::min(nearest, length(station.position - playerPosition));
+    }
+    return nearest;
 }
 
 double SpaceWorld::nearestGateDistance() const
@@ -550,7 +641,18 @@ sim::ShipState SpaceWorld::shipState() const
 void SpaceWorld::tick(double dt)
 {
     const std::uint32_t playerIndex = playerEntityIndex();
-    m_registry.storage<ShipControl>().get(playerIndex).input = m_shipInput;
+    if (isDocked()) {
+        // Parked: flight input is ignored and the ship stays pinned to the
+        // pad (collision impulses must not drift a docked ship).
+        m_registry.storage<ShipControl>().get(playerIndex).input = sim::FlightInput{};
+        Transform& transform = m_registry.storage<Transform>().get(playerIndex);
+        const core::DVec3 pad = dockPoint(m_dockedStation);
+        transform.position = pad;
+        transform.previousPosition = pad;
+        m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
+    } else {
+        m_registry.storage<ShipControl>().get(playerIndex).input = m_shipInput;
+    }
 
     // NPC pilots: C++ steering flies whatever state Lua's pilot_think chose.
     {
@@ -954,6 +1056,22 @@ void SpaceWorld::tick(double dt)
 
     // Thruster visuals are player-only for now (NPC plumes: Phase 6 feedback).
     m_thrusters.tick(shipState(), shipTuning(), m_shipInput, dt);
+
+    // Deferred death respawn into the last-dock system (see member comment).
+    if (m_pendingRespawnSystem != kNoIndex) {
+        const std::uint32_t system = m_pendingRespawnSystem;
+        m_pendingRespawnSystem = kNoIndex;
+        loadSystem(system, kNoIndex);
+        if (m_lastDockStation != kNoIndex &&
+            m_lastDockStation < m_galaxy.systems[system].stations.size()) {
+            m_dockedStation = m_lastDockStation;
+            const core::DVec3 pad = dockPoint(m_dockedStation);
+            Transform& transform = m_registry.storage<Transform>().get(playerEntityIndex());
+            transform.position = pad;
+            transform.previousPosition = pad;
+            m_playerSpawn = pad;
+        }
+    }
 }
 
 void SpaceWorld::noteDamage(std::uint32_t targetIndex, const core::DVec3& hitPosition,
@@ -972,9 +1090,20 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex)
     m_combatEffects.spawnExplosion(m_registry.storage<Transform>().get(entityIndex).position,
                                    m_registry.storage<RenderShape>().get(entityIndex).scale.x);
     if (entityIndex == playerEntityIndex()) {
-        // GDD death rule (respawn at last dock, insurance cost) arrives with
-        // docking; until then: reset at the system spawn point, full defenses.
-        SOL_LOG_WARN("ship destroyed - respawning in %s", currentSystemName());
+        // GDD death rule: wake up docked at the last dock (insurance cost
+        // arrives with outfitting, Phase 8). Never docked yet: the system
+        // spawn point stands in. Cross-system respawn defers to end of tick.
+        if (m_lastDockSystem != kNoIndex && m_lastDockSystem != m_currentSystem) {
+            SOL_LOG_WARN("ship destroyed - waking at last dock in '%s'",
+                         m_galaxy.systems[m_lastDockSystem].name.c_str());
+            m_pendingRespawnSystem = m_lastDockSystem;
+        } else if (m_lastDockSystem == m_currentSystem && m_lastDockStation != kNoIndex) {
+            SOL_LOG_WARN("ship destroyed - waking at the last dock");
+            m_dockedStation = m_lastDockStation;
+            m_playerSpawn = dockPoint(m_dockedStation);
+        } else {
+            SOL_LOG_WARN("ship destroyed - respawning in %s", currentSystemName());
+        }
         Transform& transform = m_registry.storage<Transform>().get(entityIndex);
         transform = Transform{.position = m_playerSpawn, .previousPosition = m_playerSpawn};
         m_registry.storage<FlightBody>().get(entityIndex) = FlightBody{};
@@ -1043,6 +1172,9 @@ bool SpaceWorld::saveTo(const char* path)
     writer.write(kSaveVersion);
     writer.write(m_universeSeed);
     writer.write(m_currentSystem);
+    writer.write(m_dockedStation);
+    writer.write(m_lastDockSystem);
+    writer.write(m_lastDockStation);
     makeSnapshotSchema().save(m_registry, writer);
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
 }
@@ -1059,8 +1191,13 @@ bool SpaceWorld::loadFrom(const char* path)
     std::uint32_t version = 0;
     std::uint64_t seed = 0;
     std::uint32_t systemIndex = 0;
+    std::uint32_t dockedStation = 0;
+    std::uint32_t lastDockSystem = 0;
+    std::uint32_t lastDockStation = 0;
     if (!reader.read(magic) || magic != kSaveMagic || !reader.read(version) ||
-        version != kSaveVersion || !reader.read(seed) || !reader.read(systemIndex)) {
+        version != kSaveVersion || !reader.read(seed) || !reader.read(systemIndex) ||
+        !reader.read(dockedStation) || !reader.read(lastDockSystem) ||
+        !reader.read(lastDockStation)) {
         return false; // pre-galaxy or foreign save: rejected cleanly
     }
 
@@ -1094,9 +1231,16 @@ bool SpaceWorld::loadFrom(const char* path)
     m_currentSystem = systemIndex;
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
     rebuildSystemSideData(spec);
-    m_playerSpawn = !spec.stations.empty()
-                        ? spec.stations[0].position + core::DVec3{0.0, 0.0, 800.0}
-                        : spec.planets[spec.primaryPlanet].position + core::DVec3{0.0, 0.0, 2.0e5};
+    m_dockedStation =
+        dockedStation < spec.stations.size() ? dockedStation : kNoIndex;
+    m_lastDockSystem = lastDockSystem;
+    m_lastDockStation = lastDockStation;
+    m_pendingRespawnSystem = kNoIndex;
+    m_playerSpawn =
+        isDocked() ? dockPoint(m_dockedStation)
+        : !spec.stations.empty()
+            ? spec.stations[0].position + core::DVec3{0.0, 0.0, 800.0}
+            : spec.planets[spec.primaryPlanet].position + core::DVec3{0.0, 0.0, 2.0e5};
     return true;
 }
 

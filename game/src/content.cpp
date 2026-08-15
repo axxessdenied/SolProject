@@ -134,6 +134,22 @@ bool jumpNearestGate(GameContent& content)
     return content.world().jumpNearestGate(1.0e30);
 }
 
+// Dev shortcut: dock at the nearest station regardless of range.
+bool dockNearest(GameContent& content)
+{
+    return content.world().tryDockNearestStation(1.0e30);
+}
+
+bool undock(GameContent& content)
+{
+    return content.world().undock();
+}
+
+std::string dockedAt(GameContent& content)
+{
+    return content.world().dockedStationName();
+}
+
 } // namespace
 
 bool GameContent::initialize(const std::string& dataDirectory, const std::string& modsDirectory,
@@ -192,6 +208,9 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&pilotHull>("sol", "pilot_hull", this);
     m_vm.registerFunction<&systemName>("sol", "system", this);
     m_vm.registerFunction<&jumpNearestGate>("sol", "jump", this);
+    m_vm.registerFunction<&dockNearest>("sol", "dock", this);
+    m_vm.registerFunction<&undock>("sol", "undock", this);
+    m_vm.registerFunction<&dockedAt>("sol", "docked_at", this);
 }
 
 bool GameContent::reloadDefs()

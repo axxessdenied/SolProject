@@ -452,6 +452,14 @@ void DevUi::buildFlightHud(const FlightHud& hud)
             ImGui::SameLine(0.0f, 24.0f);
             ImGui::TextColored({0.5f, 0.9f, 1.0f, 1.0f}, "[J] JUMP");
         }
+        if (hud.docked) {
+            ImGui::SameLine(0.0f, 24.0f);
+            ImGui::TextColored({0.55f, 0.86f, 0.63f, 1.0f}, "DOCKED %s  [G] UNDOCK",
+                               hud.dockedStationName);
+        } else if (hud.dockInRange) {
+            ImGui::SameLine(0.0f, 24.0f);
+            ImGui::TextColored({0.5f, 0.9f, 1.0f, 1.0f}, "[G] DOCK");
+        }
     }
     ImGui::End();
 }

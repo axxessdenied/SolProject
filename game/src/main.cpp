@@ -60,6 +60,9 @@ std::uint64_t parseUniverseSeed(int argc, char** argv)
 // A gate accepts a jump inside this range (provisional until docking tuning).
 constexpr double kGateActivationRange = 10'000.0;
 
+// A station accepts a dock request inside this range.
+constexpr double kDockRange = 2'000.0;
+
 // Latches per-frame window state into a flight-model input. Rotation combines
 // a self-centering virtual stick fed by the mouse (hold RMB) with full-deflection
 // arrow keys; Q/E roll. WASD + Space/Ctrl thrust, Shift boost, Tab toggles
@@ -232,6 +235,7 @@ int main(int argc, char** argv)
     bool previousV = false;
     bool previousT = false;
     bool previousJ = false;
+    bool previousG = false;
     bool previousPip1 = false;
     bool previousPip2 = false;
     bool previousPip3 = false;
@@ -297,6 +301,17 @@ int main(int argc, char** argv)
             }
         }
         previousJ = jDown;
+
+        // Dock/undock at the nearest station (G toggles).
+        const bool gDown = window.isKeyDown(sol::platform::Key::G);
+        if (gDown && !previousG) {
+            if (world.isDocked()) {
+                (void)world.undock();
+            } else if (!world.tryDockNearestStation(kDockRange)) {
+                SOL_LOG_INFO("No station within %.0f km", kDockRange / 1000.0);
+            }
+        }
+        previousG = gDown;
 
         // Power triage (decisions/003): 1/2/3 pip WEP/ENG/SYS, 4 balances.
         const bool pip1 = window.isKeyDown(sol::platform::Key::Num1);
@@ -467,6 +482,11 @@ int main(int argc, char** argv)
         hud.systemName = world.currentSystemName();
         const double gateDistance = world.nearestGateDistance();
         hud.gateInRange = gateDistance >= 0.0 && gateDistance <= kGateActivationRange;
+        hud.docked = world.isDocked();
+        hud.dockedStationName = world.dockedStationName();
+        const double stationDistance = world.nearestStationDistance();
+        hud.dockInRange =
+            !hud.docked && stationDistance >= 0.0 && stationDistance <= kDockRange;
         hud.targetIsShip = target.isShip;
         hud.targetShieldFore = target.shieldFore;
         hud.targetShieldAft = target.shieldAft;

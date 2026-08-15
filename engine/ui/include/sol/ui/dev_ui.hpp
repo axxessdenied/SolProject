@@ -65,10 +65,13 @@ struct FlightHud
     core::Vec3 leadDirectionCamera; // unit, camera space
     float damageFlash = 0.0f;       // 0..1
 
-    // Universe context (Phase 7): current system, and a jump prompt while
-    // the ship is within a gate's activation range.
+    // Universe context (Phase 7): current system, and jump/dock prompts
+    // while the ship is within activation range.
     const char* systemName = "";
     bool gateInRange = false;
+    bool dockInRange = false;
+    bool docked = false;
+    const char* dockedStationName = "";
 };
 
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).
