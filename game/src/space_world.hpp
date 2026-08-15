@@ -8,6 +8,7 @@
 #include "sol/ecs/ecs.hpp"
 #include "sol/sim/collision.hpp"
 #include "sol/sim/flight.hpp"
+#include "sol/sim/power.hpp"
 
 #include <cstdint>
 #include <string>
@@ -49,6 +50,13 @@ struct ShipControl
 {
     sol::sim::ShipTuning tuning;
     sol::sim::FlightInput input;
+};
+
+// Per-ship power state (decisions/003: Elite-style pips). ENG allocation
+// scales the flight envelope each tick; WEP feeds the weapon capacitor.
+struct ShipPower
+{
+    sol::sim::PowerState state;
 };
 
 struct RenderShape
@@ -93,6 +101,15 @@ public:
         return m_registry.storage<ShipControl>().get(playerEntityIndex()).tuning;
     }
     [[nodiscard]] const sol::sim::FlightInput& shipInput() const { return m_shipInput; }
+
+    // Player pip triage (keys 1/2/3, 4 to balance).
+    void playerAddPip(sol::sim::PowerSystem system);
+    void playerBalancePips();
+    [[nodiscard]] const sol::sim::PowerState& playerPower() const
+    {
+        return m_registry.storage<ShipPower>().get(playerEntityIndex()).state;
+    }
+    [[nodiscard]] const sol::sim::PowerTuning& powerTuning() const;
 
     [[nodiscard]] const CelestialBody& sun() const { return m_sun; }
     [[nodiscard]] const CelestialBody& planet() const { return m_planet; }

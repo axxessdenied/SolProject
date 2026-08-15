@@ -170,6 +170,7 @@ void DevUi::buildWindows(const OverlayStats& stats)
                     static_cast<unsigned long long>(stats.simTicks), stats.simEntities,
                     stats.simAlpha);
         ImGui::TextDisabled("RMB steer, WASD thrust, Tab cruise, X assist, V camera, T target");
+        ImGui::TextDisabled("1/2/3 pips WEP/ENG/SYS, 4 balance");
         ImGui::TextDisabled("F1 console, F3 debug draw, F5 shaders, F9/F10 save/load");
     }
     ImGui::End();
@@ -369,6 +370,25 @@ void DevUi::buildFlightHud(const FlightHud& hud)
         char distance[32];
         formatDistance(hud.targetDistanceMeters, distance, sizeof(distance));
         ImGui::Text("TGT %s  %s", hud.targetName, distance);
+        ImGui::SameLine(0.0f, 24.0f);
+        // Pips as filled/empty bars, WEP charge as a percentage.
+        auto pipBar = [&](const char* name, int pips, ImVec4 color) {
+            char bar[16];
+            int i = 0;
+            for (; i < pips && i < hud.pipMax && i < 15; ++i) {
+                bar[i] = '|';
+            }
+            for (; i < hud.pipMax && i < 15; ++i) {
+                bar[i] = '.';
+            }
+            bar[i] = '\0';
+            ImGui::TextColored(color, "%s %s", name, bar);
+            ImGui::SameLine(0.0f, 12.0f);
+        };
+        pipBar("WEP", hud.pipsWeapons, {1.0f, 0.6f, 0.45f, 1.0f});
+        pipBar("ENG", hud.pipsEngines, {0.55f, 0.86f, 0.63f, 1.0f});
+        pipBar("SYS", hud.pipsShields, {0.5f, 0.75f, 1.0f, 1.0f});
+        ImGui::Text("CAP %d%%", static_cast<int>(hud.weaponCharge * 100.0f + 0.5f));
         ImGui::SameLine(0.0f, 24.0f);
         ImGui::TextDisabled("%s", hud.cameraMode);
     }

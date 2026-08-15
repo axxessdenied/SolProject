@@ -24,6 +24,10 @@ constexpr double kPlanetRadius = 6.371e6;
 constexpr core::DVec3 kStationPosition = {0.0, 0.0, kPlanetPosition.z + 1.5e8}; // 150,000 km sunward
 constexpr double kSunRadius = 6.96e8;
 
+// One shared power curve until ship defs grow power stats (task: damage
+// model def-schema pass).
+constexpr sim::PowerTuning kPowerTuning{};
+
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
 constexpr double kCollisionRestitution = 0.15;
@@ -47,6 +51,7 @@ ecs::Snapshot makeSnapshotSchema()
     schema.component<RenderShape>(12);
     schema.component<PlayerShip>(13);
     schema.component<ShipControl>(14);
+    schema.component<ShipPower>(15);
     return schema;
 }
 
@@ -129,7 +134,25 @@ void SpaceWorld::spawn()
         m_registry.emplace<RenderShape>(e, RenderShape{.model = ModelId::Ship});
         m_registry.emplace<PlayerShip>(e);
         m_registry.emplace<ShipControl>(e);
+        m_registry.emplace<ShipPower>(e);
     }
+}
+
+void SpaceWorld::playerAddPip(sim::PowerSystem system)
+{
+    sim::PowerState& power = m_registry.storage<ShipPower>().get(playerEntityIndex()).state;
+    sim::addPip(power.pips, system, kPowerTuning);
+}
+
+void SpaceWorld::playerBalancePips()
+{
+    sim::PowerState& power = m_registry.storage<ShipPower>().get(playerEntityIndex()).state;
+    sim::balancePips(power.pips, kPowerTuning);
+}
+
+const sim::PowerTuning& SpaceWorld::powerTuning() const
+{
+    return kPowerTuning;
 }
 
 void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
@@ -175,6 +198,7 @@ ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def)
     // Default input is assist-on with zero commands = station-keeping until a
     // pilot (Phase 6 AI) writes real commands.
     m_registry.emplace<ShipControl>(e);
+    m_registry.emplace<ShipPower>(e);
     applyShipDef(e.index, def);
     m_spawnedShips.push_back({.entity = e, .defId = def.id});
     return e;
@@ -200,10 +224,18 @@ void SpaceWorld::tick(double dt)
 
     // Step every flying ship with its own tuning and commanded input (NPC
     // input is written by pilots — zero/station-keeping until Phase 6 AI).
+    // ENG pips scale the flight envelope; WEP pips recharge the capacitor.
+    ecs::Pool<ShipPower>& powers = m_registry.storage<ShipPower>();
     m_registry.view<Transform, FlightBody, ShipControl>().each(
-        [&](ecs::Entity, Transform& transform, FlightBody& body, ShipControl& control) {
+        [&](ecs::Entity entity, Transform& transform, FlightBody& body, ShipControl& control) {
             transform.previousPosition = transform.position;
             transform.previousOrientation = transform.orientation;
+
+            sim::ShipTuning tuning = control.tuning;
+            if (ShipPower* power = powers.tryGet(entity.index)) {
+                sim::stepPower(power->state, kPowerTuning, dt);
+                tuning = sim::applyEnginePips(control.tuning, power->state.pips, kPowerTuning);
+            }
 
             sim::ShipState state = {
                 .position = transform.position,
@@ -211,7 +243,7 @@ void SpaceWorld::tick(double dt)
                 .orientation = transform.orientation,
                 .angularVelocity = body.angularVelocity,
             };
-            sim::stepShipFlight(state, control.tuning, control.input, dt);
+            sim::stepShipFlight(state, tuning, control.input, dt);
 
             transform.position = state.position;
             transform.orientation = state.orientation;

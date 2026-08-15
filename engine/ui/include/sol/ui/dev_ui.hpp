@@ -41,6 +41,13 @@ struct FlightHud
     float closingSpeedMetersPerSecond = 0.0f;
     core::Vec3 targetDirectionCamera; // unit, camera space (-Z forward)
     float tanHalfFovY = 1.0f;
+
+    // Power pips (decisions/003); pipMax caps each bar, charge is 0..1.
+    int pipsWeapons = 2;
+    int pipsEngines = 2;
+    int pipsShields = 2;
+    int pipMax = 4;
+    float weaponCharge = 1.0f;
 };
 
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).

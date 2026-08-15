@@ -2,6 +2,7 @@ add_library(sol_sim STATIC
     src/collision.cpp
     src/fixed_loop.cpp
     src/flight.cpp
+    src/power.cpp
 )
 add_library(sol::sim ALIAS sol_sim)
 

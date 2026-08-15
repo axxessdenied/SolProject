@@ -9,6 +9,7 @@
 #include "sol/core/version.hpp"
 #include "sol/sim/fixed_loop.hpp"
 #include "sol/sim/flight.hpp"
+#include "sol/sim/power.hpp"
 #include "sol/platform/file_io.hpp"
 #include "sol/platform/platform.hpp"
 #include "sol/platform/time.hpp"
@@ -213,6 +214,10 @@ int main(int argc, char** argv)
     bool previousF10 = false;
     bool previousV = false;
     bool previousT = false;
+    bool previousPip1 = false;
+    bool previousPip2 = false;
+    bool previousPip3 = false;
+    bool previousPip4 = false;
     bool showDebugDraw = false;
 
     SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse steer, WASD/QE/Space/Ctrl thrust, "
@@ -263,6 +268,20 @@ int main(int argc, char** argv)
             SOL_LOG_INFO("Target: %s", world.currentTarget().name);
         }
         previousT = tDown;
+
+        // Power triage (decisions/003): 1/2/3 pip WEP/ENG/SYS, 4 balances.
+        const bool pip1 = window.isKeyDown(sol::platform::Key::Num1);
+        const bool pip2 = window.isKeyDown(sol::platform::Key::Num2);
+        const bool pip3 = window.isKeyDown(sol::platform::Key::Num3);
+        const bool pip4 = window.isKeyDown(sol::platform::Key::Num4);
+        if (pip1 && !previousPip1) world.playerAddPip(sol::sim::PowerSystem::Weapons);
+        if (pip2 && !previousPip2) world.playerAddPip(sol::sim::PowerSystem::Engines);
+        if (pip3 && !previousPip3) world.playerAddPip(sol::sim::PowerSystem::Shields);
+        if (pip4 && !previousPip4) world.playerBalancePips();
+        previousPip1 = pip1;
+        previousPip2 = pip2;
+        previousPip3 = pip3;
+        previousPip4 = pip4;
 
         // In free-cam mode the mouse/keys drive the debug camera, not the ship.
         if (cameraMode == game::CameraMode::Free) {
@@ -393,6 +412,12 @@ int main(int argc, char** argv)
         hud.targetDirectionCamera =
             rotate(conjugate(camera.orientation), toVec3(targetDirection));
         hud.tanHalfFovY = std::tan(game::kCameraVerticalFov * 0.5f);
+        const sol::sim::PowerState& power = world.playerPower();
+        hud.pipsWeapons = power.pips.weapons;
+        hud.pipsEngines = power.pips.engines;
+        hud.pipsShields = power.pips.shields;
+        hud.pipMax = world.powerTuning().maxPerSystem;
+        hud.weaponCharge = power.weaponCharge / world.powerTuning().weaponCapacitor;
         devUi.beginFrame(stats, hud);
 
         bool needRecreate = window.consumeResize();
