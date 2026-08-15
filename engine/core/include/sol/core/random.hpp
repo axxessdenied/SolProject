@@ -80,6 +80,19 @@ public:
         return min + (max - min) * nextFloat01();
     }
 
+    // Raw generator state, for serialization (determinism across save/load).
+    struct RawState
+    {
+        std::uint64_t state = 0;
+        std::uint64_t inc = 1;
+    };
+    [[nodiscard]] RawState rawState() const { return {m_state, m_inc}; }
+    void setRawState(RawState raw)
+    {
+        m_state = raw.state;
+        m_inc = raw.inc | 1u; // inc must stay odd for PCG correctness
+    }
+
 private:
     std::uint64_t m_state = 0;
     std::uint64_t m_inc = 1;
