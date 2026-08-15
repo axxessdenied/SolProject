@@ -50,6 +50,39 @@ struct Window::Impl
     bool minimized = false;
     bool resized = false;
     bool keyDown[static_cast<int>(Key::Count)] = {};
+    bool mouseDown[static_cast<int>(MouseButton::Count)] = {};
+    float mouseDeltaX = 0.0f;
+    float mouseDeltaY = 0.0f;
+    float wheel = 0.0f;
+    bool cursorLocked = false;
+    bool cursorHidden = false;
+    MessageHook messageHook = nullptr;
+
+    void clearInput()
+    {
+        for (bool& down : keyDown) {
+            down = false;
+        }
+        for (bool& down : mouseDown) {
+            down = false;
+        }
+    }
+
+    void applyCursorClip() const
+    {
+        if (cursorLocked && hwnd != nullptr) {
+            RECT clientRect = {};
+            GetClientRect(hwnd, &clientRect);
+            POINT topLeft = {clientRect.left, clientRect.top};
+            POINT bottomRight = {clientRect.right, clientRect.bottom};
+            ClientToScreen(hwnd, &topLeft);
+            ClientToScreen(hwnd, &bottomRight);
+            const RECT screenRect = {topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
+            ClipCursor(&screenRect);
+        } else {
+            ClipCursor(nullptr);
+        }
+    }
 
     static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 };
@@ -67,6 +100,12 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
+    if (impl->messageHook != nullptr &&
+        impl->messageHook(hwnd, message, static_cast<std::uint64_t>(wParam),
+                          static_cast<std::int64_t>(lParam))) {
+        return 0;
+    }
+
     switch (message) {
     case WM_CLOSE:
         impl->closeRequested = true;
@@ -81,8 +120,48 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
             impl->height = newHeight;
             impl->resized = true;
         }
+        impl->applyCursorClip();
         return 0;
     }
+
+    case WM_INPUT: {
+        RAWINPUT raw = {};
+        UINT size = sizeof(raw);
+        if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, &raw, &size,
+                            sizeof(RAWINPUTHEADER)) != static_cast<UINT>(-1) &&
+            raw.header.dwType == RIM_TYPEMOUSE &&
+            (raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
+            impl->mouseDeltaX += static_cast<float>(raw.data.mouse.lLastX);
+            impl->mouseDeltaY += static_cast<float>(raw.data.mouse.lLastY);
+        }
+        break; // let DefWindowProc do cleanup
+    }
+
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN: {
+        const MouseButton button = (message == WM_LBUTTONDOWN)   ? MouseButton::Left
+                                   : (message == WM_RBUTTONDOWN) ? MouseButton::Right
+                                                                 : MouseButton::Middle;
+        impl->mouseDown[static_cast<int>(button)] = true;
+        SetCapture(hwnd);
+        return 0;
+    }
+
+    case WM_LBUTTONUP:
+    case WM_RBUTTONUP:
+    case WM_MBUTTONUP: {
+        const MouseButton button = (message == WM_LBUTTONUP)   ? MouseButton::Left
+                                   : (message == WM_RBUTTONUP) ? MouseButton::Right
+                                                               : MouseButton::Middle;
+        impl->mouseDown[static_cast<int>(button)] = false;
+        ReleaseCapture();
+        return 0;
+    }
+
+    case WM_MOUSEWHEEL:
+        impl->wheel += static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
+        return 0;
 
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN: {
@@ -103,10 +182,13 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
     }
 
     case WM_KILLFOCUS:
-        // Avoid stuck keys when focus is lost mid-press.
-        for (bool& down : impl->keyDown) {
-            down = false;
-        }
+        // Avoid stuck input when focus is lost mid-press.
+        impl->clearInput();
+        ClipCursor(nullptr);
+        break;
+
+    case WM_SETFOCUS:
+        impl->applyCursorClip();
         break;
 
     default:
@@ -168,6 +250,16 @@ bool Window::create(const WindowDesc& desc)
         return false;
     }
 
+    // Raw mouse input for game-quality look deltas.
+    RAWINPUTDEVICE rawMouse = {};
+    rawMouse.usUsagePage = 0x01; // generic desktop
+    rawMouse.usUsage = 0x02;     // mouse
+    rawMouse.hwndTarget = m_impl->hwnd;
+    if (RegisterRawInputDevices(&rawMouse, 1, sizeof(rawMouse)) == FALSE) {
+        SOL_LOG_WARN("RegisterRawInputDevices failed (error %lu); mouse look unavailable",
+                     GetLastError());
+    }
+
     RECT clientRect = {};
     GetClientRect(m_impl->hwnd, &clientRect);
     m_impl->width = static_cast<std::uint32_t>(clientRect.right - clientRect.left);
@@ -180,6 +272,7 @@ bool Window::create(const WindowDesc& desc)
 void Window::destroy()
 {
     if (m_impl && m_impl->hwnd != nullptr) {
+        setCursorLocked(false);
         DestroyWindow(m_impl->hwnd);
         m_impl->hwnd = nullptr;
     }
@@ -187,6 +280,10 @@ void Window::destroy()
 
 void Window::pumpEvents()
 {
+    m_impl->mouseDeltaX = 0.0f;
+    m_impl->mouseDeltaY = 0.0f;
+    m_impl->wheel = 0.0f;
+
     MSG message = {};
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != 0) {
         if (message.message == WM_QUIT) {
@@ -229,6 +326,50 @@ bool Window::isKeyDown(Key key) const
 {
     SOL_ASSERT(key < Key::Count);
     return m_impl->keyDown[static_cast<int>(key)];
+}
+
+bool Window::isMouseButtonDown(MouseButton button) const
+{
+    SOL_ASSERT(button < MouseButton::Count);
+    return m_impl->mouseDown[static_cast<int>(button)];
+}
+
+core::Vec2 Window::mouseDelta() const
+{
+    return {m_impl->mouseDeltaX, m_impl->mouseDeltaY};
+}
+
+float Window::wheelDelta() const
+{
+    return m_impl->wheel;
+}
+
+void Window::setCursorLocked(bool locked)
+{
+    if (m_impl->cursorLocked == locked) {
+        return;
+    }
+    m_impl->cursorLocked = locked;
+    m_impl->applyCursorClip();
+
+    // ShowCursor is counted; toggle exactly once per state change.
+    if (locked && !m_impl->cursorHidden) {
+        ShowCursor(FALSE);
+        m_impl->cursorHidden = true;
+    } else if (!locked && m_impl->cursorHidden) {
+        ShowCursor(TRUE);
+        m_impl->cursorHidden = false;
+    }
+}
+
+bool Window::isCursorLocked() const
+{
+    return m_impl->cursorLocked;
+}
+
+void Window::setMessageHook(MessageHook hook)
+{
+    m_impl->messageHook = hook;
 }
 
 NativeWindowHandle Window::nativeHandle() const

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sol/core/math/vec.hpp"
+
 #include <cstdint>
 #include <memory>
 
@@ -23,12 +25,27 @@ enum class Key : std::uint8_t
     Count
 };
 
+enum class MouseButton : std::uint8_t
+{
+    Left = 0,
+    Right,
+    Middle,
+    Count
+};
+
 struct WindowDesc
 {
     const char* title = "Sol";
     std::uint32_t width = 1280;
     std::uint32_t height = 720;
 };
+
+// Native OS message hook: return true to consume the message (used by dev UI).
+// Parameters mirror (HWND, UINT, WPARAM, LPARAM) without exposing Win32 types.
+using MessageHook = bool (*)(void* windowHandle,
+                             std::uint32_t message,
+                             std::uint64_t wParam,
+                             std::int64_t lParam);
 
 class Window
 {
@@ -54,6 +71,19 @@ public:
     [[nodiscard]] bool consumeResize();
 
     [[nodiscard]] bool isKeyDown(Key key) const;
+    [[nodiscard]] bool isMouseButtonDown(MouseButton button) const;
+
+    // Raw mouse movement accumulated since the previous pumpEvents call.
+    [[nodiscard]] core::Vec2 mouseDelta() const;
+
+    // Wheel movement in notches accumulated since the previous pumpEvents call.
+    [[nodiscard]] float wheelDelta() const;
+
+    // Hides the cursor and confines it to the client area (mouse-look mode).
+    void setCursorLocked(bool locked);
+    [[nodiscard]] bool isCursorLocked() const;
+
+    void setMessageHook(MessageHook hook);
 
     [[nodiscard]] NativeWindowHandle nativeHandle() const;
 

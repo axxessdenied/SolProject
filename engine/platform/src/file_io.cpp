@@ -4,6 +4,17 @@
 
 namespace sol::platform {
 
+bool writeFileBytes(const char* path, const void* data, std::size_t size)
+{
+    std::FILE* file = std::fopen(path, "wb");
+    if (file == nullptr) {
+        return false;
+    }
+    const std::size_t written = std::fwrite(data, 1, size, file);
+    std::fclose(file);
+    return written == size;
+}
+
 bool readFileBytes(const char* path, std::vector<std::uint8_t>& outBytes)
 {
     outBytes.clear();
