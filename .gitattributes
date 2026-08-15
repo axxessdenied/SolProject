@@ -1,2 +1,15 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Store LF in the repo and check out LF everywhere (matches .editorconfig).
+* text=auto eol=lf
+
+# Windows scripts that genuinely need CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets — never normalize
+*.png binary
+*.ktx binary
+*.wav binary
+*.ogg binary
+*.glb binary
+*.bin binary
+*.spv binary

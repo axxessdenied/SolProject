@@ -178,7 +178,7 @@ Each engine module is a CMake static library target (`sol_core`, `sol_rhi`, ...)
 
 Each phase ends with a runnable milestone and explicit exit criteria. Phases are sequential but late-phase design questions (marked ⚑) should be kept in mind early.
 
-### Phase 0 — Scaffolding
+### Phase 0 — Scaffolding ✅ (completed 2026-08-15)
 Repo layout above; root CMake + presets (dev/release, MSVC+Ninja); `.clang-format`, `.editorconfig`, `.gitignore`; minimal test harness + CTest wired; GitHub Actions CI (Windows: configure, build, test); empty `sol_platform` → `game` executable that prints and exits.
 **Exit**: `cmake --preset dev && cmake --build --preset dev && ctest --preset dev` green in CI; a committed decision record template.
 
