@@ -42,6 +42,7 @@ target_link_libraries(sol_scripting_tests PRIVATE sol::test sol::scripting)
 add_test(NAME scripting.unit COMMAND sol_scripting_tests)
 
 add_executable(sol_sim_tests
+    sim/collision_tests.cpp
     sim/fixed_loop_tests.cpp
     sim/flight_tests.cpp
 )

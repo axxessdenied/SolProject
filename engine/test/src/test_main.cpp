@@ -1,6 +1,11 @@
 #include "sol/test/test.hpp"
 
 #include <cstdio>
+#include <cstdlib>
+
+#if defined(_MSC_VER)
+    #include <crtdbg.h>
+#endif
 
 namespace sol::test {
 
@@ -54,5 +59,14 @@ int runAllTests()
 
 int main()
 {
+#if defined(_MSC_VER)
+    // Debug-CRT assertions (e.g. vector subscript out of range) must fail the
+    // process on stderr, not block forever in an invisible dialog box.
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     return sol::test::runAllTests();
 }

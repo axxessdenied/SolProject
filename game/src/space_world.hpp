@@ -6,6 +6,7 @@
 #include "sol/assets/data_defs.hpp"
 #include "sol/core/math/math.hpp"
 #include "sol/ecs/ecs.hpp"
+#include "sol/sim/collision.hpp"
 #include "sol/sim/flight.hpp"
 
 #include <cstdint>
@@ -142,6 +143,11 @@ private:
     std::vector<SpawnedShip> m_spawnedShips;
     sol::sim::FlightInput m_shipInput; // player input latch, applied in tick
     ThrusterParticles m_thrusters;
+
+    // Per-tick collision scratch + last tick's contacts (damage model input).
+    std::vector<sol::sim::CollisionBody> m_collisionBodies;
+    std::vector<std::uint32_t> m_collisionShipIndices;
+    std::vector<sol::sim::Contact> m_contacts;
 
     CelestialBody m_sun;
     CelestialBody m_planet;

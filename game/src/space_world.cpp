@@ -2,6 +2,7 @@
 
 #include "sol/core/log.hpp"
 #include "sol/core/serialize.hpp"
+#include "sol/sim/collision.hpp"
 #include "sol/ecs/snapshot.hpp"
 #include "sol/platform/file_io.hpp"
 
@@ -22,6 +23,19 @@ constexpr core::DVec3 kPlanetPosition = {0.0, 0.0, -1.0e11}; // ~0.67 AU
 constexpr double kPlanetRadius = 6.371e6;
 constexpr core::DVec3 kStationPosition = {0.0, 0.0, kPlanetPosition.z + 1.5e8}; // 150,000 km sunward
 constexpr double kSunRadius = 6.96e8;
+
+// Bounding-sphere radii per model at scale 1 (meters); collision radius =
+// base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
+constexpr double kCollisionRestitution = 0.15;
+[[nodiscard]] double modelBaseRadius(ModelId model)
+{
+    switch (model) {
+    case ModelId::Cube: return 1.0;
+    case ModelId::Station: return 100.0;
+    case ModelId::Ship: return 8.0;
+    }
+    return 8.0;
+}
 
 // Stable component ids for the save format; never reuse or renumber. Ids 1-3
 // belonged to the retired Phase 3 swarm-world format.
@@ -204,6 +218,65 @@ void SpaceWorld::tick(double dt)
             body.velocity = state.velocity;
             body.angularVelocity = state.angularVelocity;
         });
+
+    // Collision pass: ships (movers) vs each other, scenery, and celestials.
+    // Swept spheres, so cruise speeds cannot tunnel through the planet.
+    m_collisionBodies.clear();
+    m_collisionShipIndices.clear();
+
+    // Ships first, so body slot i corresponds to m_collisionShipIndices[i];
+    // statics (scenery without FlightBody, then celestials) follow.
+    const ecs::Pool<FlightBody>& bodies = m_registry.storage<FlightBody>();
+    const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
+    const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
+    for (std::size_t i = 0; i < shapes.size(); ++i) {
+        const std::uint32_t entityIndex = shapes.entityIndices()[i];
+        if (!bodies.contains(entityIndex)) {
+            continue;
+        }
+        const RenderShape& shape = shapes.values()[i];
+        const Transform& transform = transforms.get(entityIndex);
+        const double scale = static_cast<double>(shape.scale.x);
+        m_collisionShipIndices.push_back(entityIndex);
+        m_collisionBodies.push_back({
+            .previousPosition = transform.previousPosition,
+            .position = transform.position,
+            .velocity = bodies.get(entityIndex).velocity,
+            .radius = modelBaseRadius(shape.model) * scale,
+            .inverseMass = 1.0 / (scale * scale * scale), // mass ~ volume
+        });
+    }
+    for (std::size_t i = 0; i < shapes.size(); ++i) {
+        const std::uint32_t entityIndex = shapes.entityIndices()[i];
+        if (bodies.contains(entityIndex)) {
+            continue;
+        }
+        const RenderShape& shape = shapes.values()[i];
+        const Transform& transform = transforms.get(entityIndex);
+        m_collisionBodies.push_back(
+            {.previousPosition = transform.position,
+             .position = transform.position,
+             .velocity = {},
+             .radius = modelBaseRadius(shape.model) * static_cast<double>(shape.scale.x),
+             .inverseMass = 0.0});
+    }
+    for (const CelestialBody* celestial : {&m_sun, &m_planet}) {
+        m_collisionBodies.push_back({.previousPosition = celestial->position,
+                                     .position = celestial->position,
+                                     .velocity = {},
+                                     .radius = celestial->radius,
+                                     .inverseMass = 0.0});
+    }
+
+    m_contacts.clear();
+    sim::resolveCollisions(m_collisionBodies, kCollisionRestitution, m_contacts);
+
+    for (std::size_t i = 0; i < m_collisionShipIndices.size(); ++i) {
+        const sim::CollisionBody& body = m_collisionBodies[i];
+        const std::uint32_t entityIndex = m_collisionShipIndices[i];
+        m_registry.storage<Transform>().get(entityIndex).position = body.position;
+        m_registry.storage<FlightBody>().get(entityIndex).velocity = body.velocity;
+    }
 
     // Thruster visuals are player-only for now (NPC plumes: Phase 6 feedback).
     m_thrusters.tick(shipState(), shipTuning(), m_shipInput, dt);
