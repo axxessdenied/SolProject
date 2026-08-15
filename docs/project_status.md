@@ -419,7 +419,22 @@ terrain finding with them.
 - The atmosphere — the P1b plan's narrowing option permits a simple analytic shell. Note that a
   shell has no LOD transitions, so "atmosphere LOD popping" becomes vacuous under that option,
   which should be stated rather than quietly satisfied.
-- Representative scalable quality settings including a conservative low tier (ADR 0002).
+- ~~Representative scalable quality settings including a conservative low tier (ADR 0002).~~
+  **Delivered 2026-08-14.** Three tiers — Low (`maxLevel` 8, grid 4), Medium (10, 8, the shipped
+  default and the setting every other gate is measured at) and High (12, 8) — **each validated by
+  running `render.lod-gate` at it**, because the LOD threshold is defined "at the recorded quality
+  setting" and a tier the gate never ran at is a setting nobody may claim. Peak patch counts 199 /
+  240 / 431 against the 4 096 buffer capacity, which also re-measures the capacity comment's own
+  warning that the peak moves with the quality setting. Figures in
+  [B1's evidence index](../evidence/p1b/B1/Index.md).
+
+  **The knob that reads like the quality lever cannot scale down.** `subdivisionFactor` has a hard
+  validity floor near 2.8 against a 3.0 default, so its entire downward range is ~7% and the bottom
+  of it is ill-conditioned; measured at 0.6 it produced *more* popping than no morphing. All three
+  tiers therefore sit at 3.0 and scale on `maxLevel` and the newly-exposed `gridResolution`.
+
+  **One open decision came out of this and is left for the user** — see
+  [Current blockers and open decisions](#current-blockers-and-open-decisions).
 - Performance and memory evidence on both available devices, recorded under their own names and
   never as baseline-class proxies. Note the depth attachment currently uses `STORE` rather than
   `DONT_CARE` to support readback; that bandwidth is included in any frame-time figure.
@@ -455,7 +470,33 @@ terrain finding with them.
 
 A3 discharged the obligation A2 carried forward: celestial origin motion is now ADR 0011 conic propagation rather than linear extrapolation. It was added in the orbit library rather than by editing A2's frame library, so A2's committed evidence stays reproducible and the difference between the two models is itself a measured result.
 
-**No open decision requires a user ruling.** A3 raised six findings; all were resolved within the increment. Three were defects in A3's own code or claims, fixed before the numbers were treated as evidence, and are recorded in [A3's handoff](../evidence/p1a/A3/Handoff.md).
+**One open decision requires a user ruling, raised 2026-08-14 by the quality-tier work.**
+
+The P1b plan records that the LOD continuity pass is "a margin and a response, not a rescue",
+because in the measured scene the control is itself below the perceptual limit, and states:
+*"Strengthening it requires a scene where the abrupt scheme pops visibly at a quality setting where
+the morph is well-conditioned; none has been found."*
+
+**One has now been found.** At `subdivisionFactor` 4.0 — comfortably above the scheme's 2.8
+conditioning floor — the transition scan locates a much lower transition at 17 240 m where the
+abrupt scheme genuinely pops: control **0.002410 against the 0.0020 limit**, while the production
+path stays under it at **0.001117**. That is morphing rescuing a visibly broken picture, which is
+the demonstration the threshold was written to hope for.
+
+**The gate rejects it**, on the control-separation criterion: the ratio is 2.2× against a required
+3×. The ratio compresses *precisely because* production sits just under a limit the control just
+exceeds — so the closer a result comes to being a true rescue, the smaller its ratio tends to be.
+A criterion written to guarantee the detector responds is, in this regime, rejecting the strongest
+response measured so far.
+
+Nothing was changed on the strength of this. The threshold stands as written, the 4.0 run is
+recorded as a **failure** rather than relabelled, its raw output is retained, and the shipped High
+tier uses 3.0. **The decision is whether to amend the control criterion** — for instance accepting
+"control exceeds the perceptual limit while production stays below it" as an alternative
+satisfaction of the 3× ratio, which would let the LOD threshold be certified as a rescue rather
+than only a margin. That is a documented planning update under the rule that owns P1b thresholds.
+
+**No other open decision requires a user ruling.** A3 raised six findings; all were resolved within the increment. Three were defects in A3's own code or claims, fixed before the numbers were treated as evidence, and are recorded in [A3's handoff](../evidence/p1a/A3/Handoff.md).
 
 **No open decisions.** The four raised by increments A1 and A2 were all resolved by the user on 2026-08-12:
 

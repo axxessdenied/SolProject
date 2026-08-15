@@ -395,6 +395,78 @@ breaks that test rather than quietly shrinking what these profiles certify. The 
 populating a plausible queue family — would convert "the profile is silent" into "the profile says
 so", which is the exact failure this whole exercise is correcting.
 
+### Quality tiers
+
+Delivered 2026-08-14, satisfying the P1b deliverable "representative scalable quality settings,
+including a conservative low tier" and ADR 0002's "a conservative required baseline for older
+hardware and optional visual features for stronger GPUs".
+
+| Tier | `maxLevel` | grid | verts/patch | `subdivisionFactor` | peak patches | peak vertices | popping (limit 0.0020) | control |
+|---|---|---|---|---|---|---|---|---|
+| Low | 8 | 4 | 25 | 3.0 | 199 | 4 975 | **0.000037** PASS | 5.4× |
+| Medium | 10 | 8 | 81 | 3.0 | 240 | 19 440 | **0.000101** PASS | 4.4× |
+| High | 12 | 8 | 81 | 3.0 | 431 | 34 911 | **0.000101** PASS | 4.4× |
+
+RTX 4060, Release, 2026-08-14. **Every tier is gate-validated**, which is not a formality: the LOD
+continuity threshold is defined "at the recorded quality setting", so a tier the gate has never run
+at is a setting nobody may claim. `render.lod-gate --quality {low,medium,high}` reproduces each row.
+
+Peak patch counts are all far below the 4 096-patch buffer capacity, which resolves a concern the
+capacity comment raises explicitly — *"the peak is a function of the quality setting, not a
+constant, so it has to be re-measured when that setting moves."* It has been, at every tier.
+
+Medium and High record identical popping figures because the transition scan selects the same
+governing transition at 140 866 m in both; the two extra quadtree levels change geometry close to
+the ground, which that transition does not exercise. The tiers differ in cost — 240 patches against
+431, 19 440 vertices against 34 911 — not in continuity.
+
+#### The knob that cannot scale down
+
+`subdivisionFactor` is the control that reads like the quality lever — *"detail persists further
+out, at more triangles"* — and it is **unavailable as a low-tier lever**. It has a hard validity
+floor at roughly 2.8, because a per-vertex morph needs its band wide compared with a patch or the
+factor sweeps 0 to 1 across a single patch and distorts it; measured at 0.6 it produced *more*
+popping than no morphing at all. Against a 3.0 default that leaves about 7% of downward range whose
+bottom is ill-conditioned.
+
+So all three tiers sit at 3.0 and scale on `maxLevel` and `gridResolution` instead — the latter
+newly exposed, and the one that scales cost quadratically without touching how the morph is
+conditioned. This is a property of the CDLOD scheme rather than a preference, and it is recorded
+because "just lower the subdivision factor" is the first thing anyone will try.
+
+#### Rejected candidate: High at `subdivisionFactor` 4.0
+
+Raised to 4.0, the High tier **fails the gate**, and the failure is not what it looks like. Raw
+output retained at `raw/release-LodGate-nvidia-high-factor4-REJECTED.txt`, per the P1b rule that a
+rejected candidate's evidence is preserved.
+
+| | production | control | |
+|---|---|---|---|
+| Worst fraction of frame changing perceptibly | **0.001117** | **0.002410** | limit 0.0020 |
+| Verdict | PASS — under the limit | **exceeds the limit** | ratio 2.2×, need 3.0× |
+
+**The renderer is not at fault here; the gate's control criterion is mis-calibrated for this
+regime.** At 4.0 the transition scan locates a much lower transition — 17 240 m rather than
+140 866 m — where the abrupt scheme *genuinely pops*: the control crosses the perceptual limit
+while the production path stays under it. That is morphing rescuing a visibly broken picture.
+
+It is also **exactly the scene the milestone plan says has never been found**. The plan's own
+words: *"Strengthening it requires a scene where the abrupt scheme pops visibly at a quality
+setting where the morph is well-conditioned; none has been found."* At 4.0 the morph is
+well-conditioned — comfortably above the 2.8 floor — and the abrupt scheme pops.
+
+The gate rejects it because the control-separation criterion asks for a 3× ratio and this is 2.2×.
+The ratio compresses **precisely because** the production path is held just under a limit the
+control just exceeds; the closer a result comes to being a true rescue, the smaller its ratio
+tends to be. A criterion written to guarantee the detector responds is, in this regime, rejecting
+the strongest response the project has measured.
+
+**Not resolved here, and deliberately.** The threshold stands as written, the result is recorded as
+a failure rather than relabelled, and High ships at 3.0. Whether to amend the control criterion —
+for instance accepting "control exceeds the perceptual limit while production stays below it" as an
+alternative satisfaction of the 3× ratio — is a documented planning update requiring user approval
+under the P1b rule that owns thresholds.
+
 ### Validation output
 
 Three messages, identical in every run, all `LLP_LAYER_3` loader warnings naming

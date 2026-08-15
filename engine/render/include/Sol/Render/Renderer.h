@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace sol::render {
@@ -112,6 +113,41 @@ struct SceneObject {
     bool smoothMarker = false;
 };
 
+/// Named scalable quality tiers.
+///
+/// ADR 0002 requires "a conservative required baseline for older hardware and optional visual
+/// features for stronger GPUs", and the P1b plan lists "representative scalable quality
+/// settings, including a conservative low tier" as a B1 deliverable.
+///
+/// @par The knob that cannot scale down
+/// The intuitive quality control is @ref TerrainSettings::subdivisionFactor — "detail persists
+/// further out, at more triangles" — and it is **unavailable as a low-tier lever**. It has a
+/// hard validity floor at roughly 2.8, because a per-vertex morph needs its band wide compared
+/// with a patch or the factor sweeps 0 to 1 across a single patch and distorts it. The default
+/// is 3.0, so the entire downward range is about 7% before the scheme stops being
+/// well-conditioned. Measured at 0.6, the morph produced *more* popping than no morphing.
+///
+/// So every tier scales on @ref TerrainSettings::maxLevel and @ref TerrainSettings::gridResolution
+/// instead, and **`subdivisionFactor` is 3.0 at all three**. It cannot go down, and raising it for
+/// the high tier was measured and rejected — see @ref TerrainSettings::withQuality. This is a
+/// property of the CDLOD scheme rather than a choice, and it is recorded here because "just lower
+/// the subdivision factor" is the first thing anyone will try.
+///
+/// @par Every tier is gate-validated
+/// The LOD continuity threshold is defined "at the recorded quality setting", so a tier is only
+/// usable once `render.lod-gate` has been run at it. All three below have been, on the RTX 4060,
+/// Release, 2026-08-14; the figures are in `evidence/p1b/B1/Index.md`.
+enum class QualityTier : std::uint8_t {
+    /// The conservative baseline ADR 0002 requires. Coarsest terrain, fewest vertices per patch.
+    Low,
+    /// The tier every other B1 gate result is measured at, and the shipped default.
+    Medium,
+    /// Optional detail for stronger GPUs: two more quadtree levels, same patch grid.
+    High,
+};
+
+std::string_view toString(QualityTier tier);
+
 /// Planet terrain settings, or absent for no terrain.
 struct TerrainSettings {
     /// Planet centre in the authoritative world frame.
@@ -139,10 +175,27 @@ struct TerrainSettings {
     /// configuration; it is 3.0 to match the value the LOD gate is measured at.
     double subdivisionFactor = 3.0;
 
+    /// Grid resolution per patch edge; vertices per patch are `(gridResolution + 1)^2`.
+    ///
+    /// A quality lever that scales cost quadratically without touching the LOD scheme's
+    /// conditioning, which is what makes it usable for the low tier where `subdivisionFactor`
+    /// is not. Morphing is per-vertex, so a coarser grid changes how much geometry each patch
+    /// carries, not whether the morph is continuous across a transition.
+    std::uint32_t gridResolution = 8;
+
     /// Continuous LOD morphing. Disabling it is the LOD gate's negative control: the same
     /// traverse must then produce detectable popping, and a detector that cannot see it is not
     /// measuring anything.
     bool morphEnabled = true;
+
+    /// The settings for @p tier, leaving @ref centre, @ref radiusMetres and @ref reliefMetres
+    /// at their current values — those describe the world, not the quality level.
+    ///
+    /// @note This returns settings; it does not validate them against the LOD gate. A tier is
+    /// only usable once the gate has been run at it, because the LOD continuity threshold is
+    /// defined "at the recorded quality setting" and a tier nobody measured is a setting nobody
+    /// can claim.
+    [[nodiscard]] TerrainSettings withQuality(QualityTier tier) const;
 };
 
 /// What one presented frame did, for the performance and jitter reports.

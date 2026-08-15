@@ -120,7 +120,25 @@ Measured at the shipping 60° vertical field of view, at the recorded quality se
 
 **Why the descent is not the instrument.** A local-outlier test over a continuous descent cannot work, and this was established by measurement rather than argued: at a 20° field of view, which magnifies screen-space error about threefold, every other statistic separated further while both configurations still recorded exactly zero pops. An instrument that is merely insensitive responds when the signal triples. A transition must be isolated to be detectable as an event, and on a descent with hundreds of patches on screen they overlap continuously.
 
-**What a pass under this method does and does not mean.** If the control is itself below 0.002, the scene does not pop visibly with or without morphing, and the pass means the production path sits well under the limit and the metric responds strongly to disabling the morph — a margin and a response, not a demonstration that morphing rescues a visibly broken picture. The gate must print that qualification whenever it holds. Strengthening it requires a scene where the abrupt scheme pops visibly at a quality setting where the morph is well-conditioned; none has been found.
+**What a pass under this method does and does not mean.** If the control is itself below 0.002, the scene does not pop visibly with or without morphing, and the pass means the production path sits well under the limit and the metric responds strongly to disabling the morph — a margin and a response, not a demonstration that morphing rescues a visibly broken picture. The gate must print that qualification whenever it holds. Strengthening it requires a scene where the abrupt scheme pops visibly at a quality setting where the morph is well-conditioned; ~~none has been found~~ **one was found on 2026-08-14, and this method rejects it — see below.**
+
+#### The rescue case, found and rejected by this method's own control criterion
+
+**Open, awaiting a user ruling.** Recorded here rather than acted on, because this method's numbers may only be changed by a documented planning update the user approves.
+
+Running the gate at `subdivisionFactor` 4.0 — comfortably above the scheme's ~2.8 conditioning floor, so the morph is well-conditioned — makes the transition scan select a much lower transition, 17 240 m rather than 140 866 m. There the abrupt scheme **genuinely pops**:
+
+| | production | control | |
+|---|---|---|---|
+| Worst fraction of frame changing perceptibly | **0.001117** | **0.002410** | limit 0.0020 |
+
+The control crosses the perceptual limit; the production path does not. That is precisely the rescue this section says had never been found.
+
+**The gate fails it anyway**, on criterion 5: the control must exceed production by 3×, and this is 2.2×. The ratio compresses *because* production is held just under a limit the control just exceeds — so the closer a result comes to a true rescue, the smaller its ratio tends to be. A criterion written to guarantee the detector responds is, in this regime, rejecting the strongest response measured.
+
+The candidate was **narrowed rather than relabelled**, per the risk register: the shipped High tier uses 3.0, the 4.0 run is recorded as a failure, and its raw output is retained at `evidence/p1b/B1/raw/release-LodGate-nvidia-high-factor4-REJECTED.txt`.
+
+**The decision available** is whether criterion 5 should accept, as an alternative to the 3× ratio, the stronger condition *"the control exceeds 0.002 while the production path stays below it"* — which is a demonstration rather than a proxy for one. That would let the LOD threshold be certified as a rescue rather than only as a margin.
 
 **The memory clause is unchanged by this ratification**, and is measured separately by the method defined below.
 
@@ -173,7 +191,7 @@ Each increment carries a cost gate. Exceeding the box is itself a result: it tri
 
 - a Vulkan 1.2 path that queries all required device capabilities and rejects unsupported configurations clearly;
 - minimal full-scale Earth, atmosphere/sky transition, depth stress geometry, and camera-relative rendering built on the frame model selected in P1a increment A2;
-- representative scalable quality settings, including a conservative low tier;
+- representative scalable quality settings, including a conservative low tier — **delivered 2026-08-14**: Low / Medium / High, each validated by running the LOD gate at it, since this plan defines the LOD threshold "at the recorded quality setting". `subdivisionFactor` is 3.0 at every tier because it cannot scale *down* — its ~2.8 conditioning floor leaves ~7% of range against a 3.0 default — so the tiers scale on `maxLevel` and `gridResolution`;
 - validation-layer and graphics-capture workflow — **delivered 2026-08-14**, capture via GFXReconstruct from the pinned Vulkan SDK;
 - the screen-space jitter harness described above;
 - capability and performance reports for both discrete baseline GPU classes and both integrated investigation classes when accessible;
@@ -296,6 +314,8 @@ Each increment closure records:
 | Per-increment time boxes with narrow-or-reject triggers | Confirmed | User approved 2026-08-12 |
 | Increment B1 authorized; Claude sole writer on `feature/p1b-vulkan-renderer` from `dev` | Confirmed | User authorized 2026-08-13, scoped to B1 only |
 | Baseline GPU hardware replaced by a documented evidence plan | Confirmed | User accepted 2026-08-13; no named device class is available. See [the plan](P1b-Reference-Hardware-Evidence-Plan.md) |
+| Quality tiers scale on `maxLevel` and `gridResolution`; `subdivisionFactor` stays 3.0 at every tier | Confirmed | Measured 2026-08-14. The knob that reads like the quality lever cannot scale down: a ~2.8 conditioning floor against a 3.0 default leaves ~7% of range, and at 0.6 the per-vertex morph produced *more* popping than none. Each tier is separately gate-validated, since the LOD threshold is defined at the recorded quality setting |
+| Whether the LOD control criterion should accept a demonstrated rescue in place of its 3× ratio | **Open** | Raised 2026-08-14 by the quality-tier work. At `subdivisionFactor` 4.0 the control exceeds the 0.0020 perceptual limit (0.002410) while production stays below it (0.001117) — the rescue this plan says had never been found — but the ratio is 2.2× and the gate fails it. Requires a user ruling; nothing was changed on the strength of it |
 | Capability-reporting gate closed on real-derived intersection profiles rather than per-device reports | Confirmed | User decided 2026-08-14. The four hand-authored device-class profiles were one assertion evaluated four times; LunarG's `VP_LUNARG_desktop_baseline` intersections are traceable to a pinned digest, conservative (a requirement the intersection meets, every device in its collection meets), and span Vulkan 1.1–1.4 so both accept and reject paths fire on real-derived data. Per-device reconciliation of the four *named* classes stays open as a follow-up: vulkan.gpuinfo.org is unreachable from the project environment, and the residual bears on baseline-class support claims that P1b does not make |
 | Increment B2 authorized; Claude sole writer on `feature/p1b-craft-and-resources` from `dev` | Confirmed | User authorized 2026-08-14. A new branch from `dev` rather than a continuation of B1's, because B2 is disposable by plan and does not build on B1's production-tree renderer |
 | B1 stays open and is finished first; B2 is authorized and queued | Confirmed | User directed 2026-08-14. Authorizing a later increment waives no B1 gate, and one active increment at a time is how P1a ran |

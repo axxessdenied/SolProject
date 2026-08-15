@@ -697,6 +697,37 @@ therefore not stable under changes to patch selection, which is a property of th
 rather than of the renderer, and another reason the descent rather than the sweep carries the
 verdict.
 
+### Quality tiers
+
+Implemented 2026-08-14 as `sol::render::QualityTier` and `TerrainSettings::withQuality`,
+satisfying ADR 0002's requirement for "a conservative required baseline for older hardware and
+optional visual features for stronger GPUs".
+
+| Tier | `maxLevel` | `gridResolution` | verts/patch | `subdivisionFactor` | peak patches |
+|---|---|---|---|---|---|
+| Low | 8 | 4 | 25 | 3.0 | 199 |
+| Medium | 10 | 8 | 81 | 3.0 | 240 |
+| High | 12 | 8 | 81 | 3.0 | 431 |
+
+**Each tier is separately validated by running the LOD gate at it.** The continuity threshold is
+defined "at the recorded quality setting", so a tier the gate has never run at is a setting nobody
+may claim — `render.lod-gate --quality {low,medium,high}` reproduces each. The peak patch counts
+also re-measure what the terrain buffer capacity comment demands be re-measured whenever the
+quality setting moves; all three are far below the 4 096-patch budget.
+
+**`subdivisionFactor` is 3.0 at every tier, and that is forced rather than chosen.** It is the
+knob that reads like the quality lever — larger means detail persists further from the camera — but
+it has a hard conditioning floor near 2.8: a per-vertex morph needs its band wide compared with a
+patch, or the factor sweeps 0 to 1 across a single patch and distorts it. Measured at 0.6 it
+produced *more* popping than no morphing. Against a 3.0 default that leaves roughly 7% of usable
+downward range, so a low tier cannot come from it. Cost is taken out of `maxLevel` and
+`gridResolution` instead; the latter scales vertices per patch quadratically without touching how
+the morph is conditioned, which is exactly why it works where `subdivisionFactor` does not.
+
+Raising it to 4.0 for the High tier was measured and rejected — the renderer behaved correctly and
+the *gate* failed, for reasons recorded in [B1's evidence
+index](../evidence/p1b/B1/Index.md) and open for a user ruling.
+
 ### LOD gate: enabled and passing, with two qualifications
 
 **Memory is bounded structurally. It is not measured, and the earlier claim that it was is

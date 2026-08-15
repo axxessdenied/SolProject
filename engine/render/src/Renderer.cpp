@@ -972,6 +972,61 @@ bool matchesSelection(const DeviceSelection& selection, const DeviceCapabilities
 
 } // namespace
 
+std::string_view toString(QualityTier tier)
+{
+    switch (tier) {
+    case QualityTier::Low:
+        return "low";
+    case QualityTier::Medium:
+        return "medium";
+    case QualityTier::High:
+        return "high";
+    }
+    return "unknown";
+}
+
+TerrainSettings TerrainSettings::withQuality(QualityTier tier) const
+{
+    TerrainSettings settings = *this;
+    switch (tier) {
+    case QualityTier::Low:
+        // subdivisionFactor stays at the default. It is the knob that looks like the low-tier
+        // lever and is not one: its validity floor is ~2.8 against a 3.0 default, so the whole
+        // downward range is 7% and the bottom of it is ill-conditioned. Cost comes out of
+        // maxLevel and gridResolution instead, which scale geometry without touching how the
+        // morph is conditioned.
+        settings.maxLevel = 8;
+        settings.gridResolution = 4;
+        settings.subdivisionFactor = 3.0;
+        break;
+    case QualityTier::Medium:
+        settings.maxLevel = 10;
+        settings.gridResolution = 8;
+        settings.subdivisionFactor = 3.0;
+        break;
+    case QualityTier::High:
+        // Detail comes from two more quadtree levels, which is finer geometry close to the
+        // ground: peak patches 240 -> 431 on the LOD gate's descent, at the same 81 vertices
+        // per patch.
+        settings.maxLevel = 12;
+        settings.gridResolution = 8;
+        // Stays at 3.0. Raising it to 4.0 was measured and rejected on 2026-08-14, and the
+        // reason is worth reading before anyone raises it again: the renderer was fine and the
+        // *gate* failed. At 4.0 the transition scan locates a much lower transition (17 240 m
+        // rather than 140 866 m), where the abrupt scheme genuinely pops — control 0.002410
+        // against the 0.0020 perceptual limit — while the production path stays under it at
+        // 0.001117. That is morphing doing exactly its job. But the gate's control criterion
+        // asks for a 3x ratio and this is 2.2x, because the ratio necessarily compresses when
+        // the production path is held just under a limit the control just exceeds. So 4.0 fails
+        // a threshold it arguably satisfies better than 3.0 does. Narrowed rather than
+        // relabelled, per the P1b rule that a failed result is not re-described as a pass; the
+        // finding is recorded in evidence/p1b/B1/Index.md for the user to rule on.
+        settings.subdivisionFactor = 3.0;
+        break;
+    }
+    return settings;
+}
+
 std::string toString(const DeviceSelection& selection)
 {
     if (selection.unconstrained()) {
@@ -1971,6 +2026,7 @@ std::expected<FrameStats, std::string> Renderer::Impl::submitFrame(
         config.radiusMetres = impl.terrain->radiusMetres;
         config.reliefMetres = impl.terrain->reliefMetres;
         config.maxLevel = impl.terrain->maxLevel;
+        config.gridResolution = impl.terrain->gridResolution;
         config.subdivisionFactor = impl.terrain->subdivisionFactor;
         config.morphEnabled = impl.terrain->morphEnabled;
 

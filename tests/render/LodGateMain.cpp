@@ -34,7 +34,9 @@
 #include <cmath>
 #include <cstdio>
 #include <optional>
+#include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -72,6 +74,23 @@ constexpr double kQualitySubdivisionFactor = 3.0;
 static_assert(sol::render::TerrainSettings{}.subdivisionFactor == kQualitySubdivisionFactor,
               "The LOD gate must be measured at the renderer's default quality setting, since "
               "the P1b threshold is defined \"at the recorded quality setting\".");
+
+/// The tier this run measures. Selected by `--quality`, defaulting to the shipped Medium.
+///
+/// The P1b threshold is defined "at the recorded quality setting", so a tier the gate has never
+/// been run at is a setting nobody may claim. A file-scope variable rather than a parameter
+/// threaded through six call sites, because every scene in this program must be built at the
+/// same tier or the descent and the sweep would be measuring different renderers.
+sol::render::QualityTier g_tier = sol::render::QualityTier::Medium;
+
+/// Applies the run's tier to a terrain configuration.
+///
+/// Replaces the `maxLevel` / `subdivisionFactor` pair that used to be written out at each of the
+/// four scene setups, so a tier cannot be applied to three of them and forgotten in the fourth.
+void applyTier(sol::render::TerrainSettings& terrain)
+{
+    terrain = terrain.withQuality(g_tier);
+}
 
 /// Relief for the LOD stress scene, in metres.
 ///
@@ -340,8 +359,7 @@ std::optional<double> findTransitionAltitude(
     terrain.centre = {0.0, 0.0, 0.0};
     terrain.radiusMetres = kPlanetRadiusMetres;
     terrain.reliefMetres = kStressReliefMetres;
-    terrain.maxLevel = 10;
-    terrain.subdivisionFactor = kQualitySubdivisionFactor;
+    applyTier(terrain);
     terrain.morphEnabled = true;
     renderer.setTerrain(terrain);
     renderer.setScene({});
@@ -428,8 +446,7 @@ SweepResult runTransitionSweep(
     terrain.centre = {0.0, 0.0, 0.0};
     terrain.radiusMetres = kPlanetRadiusMetres;
     terrain.reliefMetres = kStressReliefMetres;
-    terrain.maxLevel = 10;
-    terrain.subdivisionFactor = kQualitySubdivisionFactor;
+    applyTier(terrain);
     terrain.morphEnabled = morphEnabled;
     renderer.setTerrain(terrain);
     renderer.setScene({});
@@ -490,8 +507,7 @@ TraverseResult runTraverse(
     terrain.centre = {0.0, 0.0, 0.0};
     terrain.radiusMetres = kPlanetRadiusMetres;
     terrain.reliefMetres = kStressReliefMetres;
-    terrain.maxLevel = 10;
-    terrain.subdivisionFactor = kQualitySubdivisionFactor;
+    applyTier(terrain);
     terrain.morphEnabled = morphEnabled;
     renderer.setTerrain(terrain);
     renderer.setScene({});
@@ -556,8 +572,7 @@ void collectResourceStats(
     terrain.centre = {0.0, 0.0, 0.0};
     terrain.radiusMetres = kPlanetRadiusMetres;
     terrain.reliefMetres = kStressReliefMetres;
-    terrain.maxLevel = 10;
-    terrain.subdivisionFactor = kQualitySubdivisionFactor;
+    applyTier(terrain);
     terrain.morphEnabled = morphEnabled;
     renderer.setTerrain(terrain);
 
@@ -680,6 +695,23 @@ int main(int argc, char** argv)
 {
     const auto selection = sol::testing::parseDeviceOption(argc, argv);
 
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--quality") != 0 || i + 1 >= argc) {
+            continue;
+        }
+        const std::string_view tier = argv[++i];
+        if (tier == "low") {
+            g_tier = sol::render::QualityTier::Low;
+        } else if (tier == "medium") {
+            g_tier = sol::render::QualityTier::Medium;
+        } else if (tier == "high") {
+            g_tier = sol::render::QualityTier::High;
+        } else {
+            std::printf("Unknown --quality '%s'. Expected low, medium or high.\n", argv[i]);
+            return 1;
+        }
+    }
+
     auto window = sol::platform::Window::create("LOD gate", 1280, 720);
     if (!window.has_value()) {
         std::printf("%s\n\nSKIPPED: no window system.\n", window.error().c_str());
@@ -715,6 +747,16 @@ int main(int argc, char** argv)
     std::printf("LOD continuity gate — fixed observer descent\n");
     std::printf("%s\n", sol::testing::describeDeviceRequest(selection).c_str());
     std::printf("Device:     %s\n", renderer->selectedDevice().deviceName.c_str());
+    {
+        const auto tierSettings = sol::render::TerrainSettings{}.withQuality(g_tier);
+        std::printf("Quality:    %s tier — maxLevel %u, grid %u (%u verts/patch), "
+                    "subdivisionFactor %.1f\n",
+                    std::string(sol::render::toString(g_tier)).c_str(),
+                    tierSettings.maxLevel,
+                    tierSettings.gridResolution,
+                    (tierSettings.gridResolution + 1) * (tierSettings.gridResolution + 1),
+                    tierSettings.subdivisionFactor);
+    }
     // Which of two shader binaries produced the numbers below. Debug and Release compile
     // different SPIR-V, and nothing constrains what spirv-opt does to float association.
     std::printf("Shaders:    %s\n",
