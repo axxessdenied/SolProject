@@ -35,6 +35,21 @@ struct FlightBody
     sol::core::Vec3 angularVelocity; // rad/s, body space
 };
 
+// Marks the player's ship; exactly one alive at a time. Serialized so player
+// identity survives save/load now that NPCs fly too (Phase 6).
+struct PlayerShip
+{
+    std::uint8_t reserved = 0; // no state yet; explicit byte keeps the POD honest
+};
+
+// Per-ship flight tuning and commanded input. The player's input is latched
+// from the input mapper each tick; NPC input comes from pilots (Phase 6 AI).
+struct ShipControl
+{
+    sol::sim::ShipTuning tuning;
+    sol::sim::FlightInput input;
+};
+
 struct RenderShape
 {
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
@@ -72,7 +87,10 @@ public:
     // Interpolated blend of previous->current tick state at alpha.
     [[nodiscard]] Transform shipRenderTransform(float alpha) const;
     [[nodiscard]] sol::sim::ShipState shipState() const;
-    [[nodiscard]] const sol::sim::ShipTuning& shipTuning() const { return m_tuning; }
+    [[nodiscard]] const sol::sim::ShipTuning& shipTuning() const
+    {
+        return m_registry.storage<ShipControl>().get(playerEntityIndex()).tuning;
+    }
     [[nodiscard]] const sol::sim::FlightInput& shipInput() const { return m_shipInput; }
 
     [[nodiscard]] const CelestialBody& sun() const { return m_sun; }
@@ -115,16 +133,14 @@ private:
         std::string defId;
     };
 
-    void applyShipVisuals(std::uint32_t entityIndex, const sol::assets::ShipDef& def);
-    // The player is the single FlightBody entity (until Phase 6 NPCs fly).
+    void applyShipDef(std::uint32_t entityIndex, const sol::assets::ShipDef& def);
     [[nodiscard]] std::uint32_t playerEntityIndex() const
     {
-        return m_registry.storage<FlightBody>().entityIndices()[0];
+        return m_registry.storage<PlayerShip>().entityIndices()[0];
     }
     sol::ecs::Registry m_registry;
     std::vector<SpawnedShip> m_spawnedShips;
-    sol::sim::ShipTuning m_tuning;
-    sol::sim::FlightInput m_shipInput;
+    sol::sim::FlightInput m_shipInput; // player input latch, applied in tick
     ThrusterParticles m_thrusters;
 
     CelestialBody m_sun;

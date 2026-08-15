@@ -31,6 +31,8 @@ ecs::Snapshot makeSnapshotSchema()
     schema.component<Transform>(10);
     schema.component<FlightBody>(11);
     schema.component<RenderShape>(12);
+    schema.component<PlayerShip>(13);
+    schema.component<ShipControl>(14);
     return schema;
 }
 
@@ -111,6 +113,8 @@ void SpaceWorld::spawn()
             e, Transform{.position = start, .previousPosition = start});
         m_registry.emplace<FlightBody>(e);
         m_registry.emplace<RenderShape>(e, RenderShape{.model = ModelId::Ship});
+        m_registry.emplace<PlayerShip>(e);
+        m_registry.emplace<ShipControl>(e);
     }
 }
 
@@ -118,24 +122,24 @@ void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
 {
     const assets::ShipDef* playerDef = defs.findShip(kPlayerShipDefId);
     if (playerDef != nullptr) {
-        m_tuning = toShipTuning(playerDef->flight);
-        applyShipVisuals(playerEntityIndex(), *playerDef);
+        applyShipDef(playerEntityIndex(), *playerDef);
     } else {
         SOL_LOG_WARN("player ship def '%s' missing; keeping current tuning", kPlayerShipDefId);
     }
 
     for (const SpawnedShip& spawned : m_spawnedShips) {
         if (const assets::ShipDef* def = defs.findShip(spawned.defId.c_str())) {
-            applyShipVisuals(spawned.entity.index, *def);
+            applyShipDef(spawned.entity.index, *def);
         }
     }
 }
 
-void SpaceWorld::applyShipVisuals(std::uint32_t entityIndex, const assets::ShipDef& def)
+void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& def)
 {
     RenderShape& shape = m_registry.storage<RenderShape>().get(entityIndex);
     shape.scale = {def.scale, def.scale, def.scale};
     shape.model = modelIdFromName(def.model);
+    m_registry.storage<ShipControl>().get(entityIndex).tuning = toShipTuning(def.flight);
 }
 
 ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def)
@@ -153,17 +157,20 @@ ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def)
                                                .orientation = player.orientation,
                                                .previousOrientation = player.orientation});
     m_registry.emplace<RenderShape>(e, RenderShape{});
-    applyShipVisuals(e.index, def);
+    m_registry.emplace<FlightBody>(e);
+    // Default input is assist-on with zero commands = station-keeping until a
+    // pilot (Phase 6 AI) writes real commands.
+    m_registry.emplace<ShipControl>(e);
+    applyShipDef(e.index, def);
     m_spawnedShips.push_back({.entity = e, .defId = def.id});
     return e;
 }
 
 sim::ShipState SpaceWorld::shipState() const
 {
-    const ecs::Pool<FlightBody>& bodies = m_registry.storage<FlightBody>();
-    const std::uint32_t shipIndex = bodies.entityIndices()[0];
+    const std::uint32_t shipIndex = playerEntityIndex();
     const Transform& transform = m_registry.storage<Transform>().get(shipIndex);
-    const FlightBody& body = bodies.values()[0];
+    const FlightBody& body = m_registry.storage<FlightBody>().get(shipIndex);
     return {
         .position = transform.position,
         .velocity = body.velocity,
@@ -174,34 +181,37 @@ sim::ShipState SpaceWorld::shipState() const
 
 void SpaceWorld::tick(double dt)
 {
-    ecs::Pool<FlightBody>& bodies = m_registry.storage<FlightBody>();
-    const std::uint32_t shipIndex = bodies.entityIndices()[0];
-    Transform& transform = m_registry.storage<Transform>().get(shipIndex);
-    FlightBody& body = bodies.values()[0];
+    const std::uint32_t playerIndex = playerEntityIndex();
+    m_registry.storage<ShipControl>().get(playerIndex).input = m_shipInput;
 
-    transform.previousPosition = transform.position;
-    transform.previousOrientation = transform.orientation;
+    // Step every flying ship with its own tuning and commanded input (NPC
+    // input is written by pilots — zero/station-keeping until Phase 6 AI).
+    m_registry.view<Transform, FlightBody, ShipControl>().each(
+        [&](ecs::Entity, Transform& transform, FlightBody& body, ShipControl& control) {
+            transform.previousPosition = transform.position;
+            transform.previousOrientation = transform.orientation;
 
-    sim::ShipState state = {
-        .position = transform.position,
-        .velocity = body.velocity,
-        .orientation = transform.orientation,
-        .angularVelocity = body.angularVelocity,
-    };
-    sim::stepShipFlight(state, m_tuning, m_shipInput, dt);
+            sim::ShipState state = {
+                .position = transform.position,
+                .velocity = body.velocity,
+                .orientation = transform.orientation,
+                .angularVelocity = body.angularVelocity,
+            };
+            sim::stepShipFlight(state, control.tuning, control.input, dt);
 
-    transform.position = state.position;
-    transform.orientation = state.orientation;
-    body.velocity = state.velocity;
-    body.angularVelocity = state.angularVelocity;
+            transform.position = state.position;
+            transform.orientation = state.orientation;
+            body.velocity = state.velocity;
+            body.angularVelocity = state.angularVelocity;
+        });
 
-    m_thrusters.tick(state, m_tuning, m_shipInput, dt);
+    // Thruster visuals are player-only for now (NPC plumes: Phase 6 feedback).
+    m_thrusters.tick(shipState(), shipTuning(), m_shipInput, dt);
 }
 
 Transform SpaceWorld::shipRenderTransform(float alpha) const
 {
-    const ecs::Pool<FlightBody>& bodies = m_registry.storage<FlightBody>();
-    const std::uint32_t shipIndex = bodies.entityIndices()[0];
+    const std::uint32_t shipIndex = playerEntityIndex();
     const Transform& transform = m_registry.storage<Transform>().get(shipIndex);
 
     Transform blended = transform;
@@ -216,8 +226,7 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip,
 {
     const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
     const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
-    const ecs::Pool<FlightBody>& bodies = m_registry.storage<FlightBody>();
-    const std::uint32_t shipIndex = bodies.entityIndices()[0];
+    const std::uint32_t shipIndex = playerEntityIndex();
 
     const std::uint32_t count = static_cast<std::uint32_t>(shapes.size());
     const std::uint32_t* entityIndices = shapes.entityIndices().data();
@@ -260,8 +269,8 @@ bool SpaceWorld::loadFrom(const char* path)
     if (!makeSnapshotSchema().load(fresh, reader)) {
         return false;
     }
-    if (fresh.storage<FlightBody>().size() != 1) {
-        return false; // not a slice-world save
+    if (fresh.storage<PlayerShip>().size() != 1) {
+        return false; // not a current-format save (or player identity lost)
     }
     m_registry = std::move(fresh);
     // Def-spawned entities were replaced wholesale; their def association is
