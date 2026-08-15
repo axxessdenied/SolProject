@@ -60,7 +60,7 @@ public:
 private:
     static constexpr float kLookSensitivity = 0.0025f;
 
-    sol::core::DVec3 m_position = {0.0, 2.5, 10.0};
+    sol::core::DVec3 m_position = {0.0, 25.0, 110.0};
     float m_yaw = 0.0f;
     float m_pitch = -0.15f;
     float m_speed = 6.0f;

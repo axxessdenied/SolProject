@@ -116,6 +116,15 @@ public:
         return View<Ts...>(m_generations, poolFor<Ts>()...);
     }
 
+    // System-level access to a component pool's dense arrays for bulk or
+    // job-parallel iteration (e.g. parallelFor over chunks). Structural
+    // changes remain forbidden while iterating. Creates the pool on first use.
+    template <typename T>
+    [[nodiscard]] Pool<T>& storage()
+    {
+        return poolFor<T>();
+    }
+
 private:
     template <typename T>
     [[nodiscard]] Pool<T>& poolFor()

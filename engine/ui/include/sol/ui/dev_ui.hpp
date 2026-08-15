@@ -17,6 +17,9 @@ struct OverlayStats
     core::DVec3 cameraPosition;
     float cameraSpeed = 0.0f;
     std::uint32_t drawCalls = 0;
+    std::uint64_t simTicks = 0;
+    std::uint32_t simEntities = 0;
+    float simAlpha = 0.0f;
 };
 
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).

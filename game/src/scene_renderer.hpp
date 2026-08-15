@@ -10,11 +10,22 @@
 #include "sol/ui/dev_ui.hpp"
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace game {
 
-// Phase 2 test scene: textured cubes with depth, drawn camera-relatively.
+// One drawable produced by the sim for the current frame; positions are
+// sim-space doubles, made camera-relative at record time (large-world rule).
+struct RenderInstance
+{
+    sol::core::DVec3 position;
+    sol::core::Quat rotation = sol::core::Quat::identity();
+    sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
+};
+
+// Textured-cube scene renderer: draws whatever instances the caller passes,
+// depth-tested, camera-relative.
 class SceneRenderer
 {
 public:
@@ -29,7 +40,8 @@ public:
                                   const char* shaderDirectory, const char* cookedDirectory);
     void shutdown();
 
-    [[nodiscard]] DrawResult drawFrame(const FlyCamera& camera, double timeSeconds);
+    [[nodiscard]] DrawResult drawFrame(const FlyCamera& camera,
+                                       std::span<const RenderInstance> instances);
 
     // Call after the swapchain has been recreated (device must be idle).
     [[nodiscard]] bool onSwapchainRecreated();
@@ -53,18 +65,10 @@ private:
         VkFence inFlight = VK_NULL_HANDLE;
     };
 
-    struct Instance
-    {
-        sol::core::DVec3 position;
-        sol::core::Quat rotation = sol::core::Quat::identity();
-        sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
-        bool spins = false;
-    };
-
     [[nodiscard]] bool createPerImageSemaphores();
     void destroyPerImageSemaphores();
     void recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
-                        const FlyCamera& camera, double timeSeconds);
+                        const FlyCamera& camera, std::span<const RenderInstance> instances);
 
     sol::rhi::Context* m_context = nullptr;
     sol::rhi::Swapchain* m_swapchain = nullptr;
@@ -73,7 +77,6 @@ private:
     sol::renderer::GpuMesh m_cubeMesh;
     sol::renderer::GpuTexture m_checkerTexture;
     sol::rhi::Image m_depth;
-    std::vector<Instance> m_instances;
 
     sol::ui::DevUi* m_devUi = nullptr;
     FrameResources m_frames[kFramesInFlight];

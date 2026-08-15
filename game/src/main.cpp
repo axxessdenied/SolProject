@@ -1,9 +1,12 @@
 #include "fly_camera.hpp"
 #include "scene_renderer.hpp"
 #include "shader_watcher.hpp"
+#include "sim_world.hpp"
 
+#include "sol/core/jobs.hpp"
 #include "sol/core/log.hpp"
 #include "sol/core/version.hpp"
+#include "sol/sim/fixed_loop.hpp"
 #include "sol/platform/file_io.hpp"
 #include "sol/platform/platform.hpp"
 #include "sol/platform/time.hpp"
@@ -16,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -92,11 +96,19 @@ int main(int argc, char** argv)
     float smoothedFps = 0.0f;
     bool previousF5 = false;
 
+    // Phase 3: 10k+ entities on a 60 Hz fixed timestep, rendered with
+    // interpolation at uncapped framerate.
+    sol::core::JobSystem jobs;
+    sol::sim::FixedLoop simLoop(60.0);
+    game::SimWorld world;
+    world.spawn(10'000, 1337);
+    std::vector<game::RenderInstance> renderInstances;
+    SOL_LOG_INFO("Sim world: %u entities, %u job workers", world.entityCount(), jobs.workerCount());
+
     SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse look, WASD move, ESC quits.", window.width(),
                  window.height());
 
-    const double startTime = sol::platform::timeSeconds();
-    double lastFrameTime = startTime;
+    double lastFrameTime = sol::platform::timeSeconds();
     std::uint64_t frameCount = 0;
     bool failed = false;
 
@@ -115,6 +127,15 @@ int main(int argc, char** argv)
         lastFrameTime = now;
 
         camera.update(window, deltaSeconds);
+
+        simLoop.beginFrame(deltaSeconds);
+        while (simLoop.shouldTick()) {
+            world.tick(jobs, simLoop.tickDelta());
+        }
+        const float simAlpha = simLoop.alpha();
+        const double interpolatedSimTime =
+            simLoop.simTimeSeconds() + static_cast<double>(simAlpha) * simLoop.tickDelta();
+        world.buildRenderInstances(jobs, simAlpha, interpolatedSimTime, renderInstances);
 
         // Shader hot-reload: automatic on file change, F5 to force.
         const bool f5Down = window.isKeyDown(sol::platform::Key::F5);
@@ -138,6 +159,9 @@ int main(int argc, char** argv)
         stats.cameraPosition = camera.position();
         stats.cameraSpeed = camera.speed();
         stats.drawCalls = renderer.drawCallCount();
+        stats.simTicks = simLoop.tickCount();
+        stats.simEntities = world.entityCount();
+        stats.simAlpha = simAlpha;
         devUi.beginFrame(stats);
 
         bool needRecreate = window.consumeResize();
@@ -145,7 +169,7 @@ int main(int argc, char** argv)
             devUi.discardFrame();
         }
         if (!needRecreate) {
-            switch (renderer.drawFrame(camera, now - startTime)) {
+            switch (renderer.drawFrame(camera, renderInstances)) {
             case game::SceneRenderer::DrawResult::Success:
                 ++frameCount;
                 break;

@@ -2,11 +2,14 @@ add_executable(sol_game
     src/main.cpp
     src/scene_renderer.cpp
     src/shader_watcher.cpp
+    src/sim_world.cpp
 )
 set_target_properties(sol_game PROPERTIES OUTPUT_NAME sol)
 
 target_link_libraries(sol_game PRIVATE
     sol::core
+    sol::ecs
+    sol::sim
     sol::platform
     sol::rhi
     sol::renderer

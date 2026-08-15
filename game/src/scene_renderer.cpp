@@ -48,20 +48,6 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
 
     m_depth = rhi::createDepthImage(context, swapchain.extent());
 
-    // Test scene: ground slab, cube grid, a spinning marker cube, a tall tower.
-    m_instances.push_back({{0.0, -1.6, 0.0}, core::Quat::identity(), {24.0f, 0.2f, 24.0f}, false});
-    for (int x = -2; x <= 2; ++x) {
-        for (int z = -2; z <= 2; ++z) {
-            m_instances.push_back({{x * 3.0, 0.0, z * 3.0},
-                                   core::fromAxisAngle({0.0f, 1.0f, 0.0f},
-                                                 static_cast<float>(x * 5 + z) * 0.35f),
-                                   {1.0f, 1.0f, 1.0f},
-                                   false});
-        }
-    }
-    m_instances.push_back({{0.0, 2.5, 0.0}, core::Quat::identity(), {0.8f, 0.8f, 0.8f}, true});
-    m_instances.push_back({{8.0, 2.0, -8.0}, core::Quat::identity(), {1.0f, 8.0f, 1.0f}, false});
-
     // Frame resources
     const VkDevice device = context.device();
     for (FrameResources& frame : m_frames) {
@@ -141,7 +127,8 @@ void SceneRenderer::shutdown()
 }
 
 void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
-                                   const FlyCamera& camera, double timeSeconds)
+                                   const FlyCamera& camera,
+                                   std::span<const RenderInstance> instances)
 {
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -159,17 +146,12 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     const core::Mat4 viewProjection = projection * camera.viewRotation();
 
     m_drawCallCount = 0;
-    for (const Instance& instance : m_instances) {
-        core::Quat rotation = instance.rotation;
-        if (instance.spins) {
-            rotation = core::fromAxisAngle({0.0f, 1.0f, 0.0f}, static_cast<float>(timeSeconds) * 0.8f) *
-                       core::fromAxisAngle({1.0f, 0.0f, 0.0f}, static_cast<float>(timeSeconds) * 0.5f);
-        }
+    for (const RenderInstance& instance : instances) {
         // Camera-relative: demote sim-space positions to float only after
         // subtracting the camera position (the large-world rule).
         const core::Vec3 relative = (instance.position - camera.position()).toVec3();
         const core::Mat4 model =
-            core::translation(relative) * toMat4(rotation) * core::scale(instance.scale);
+            core::translation(relative) * toMat4(instance.rotation) * core::scale(instance.scale);
         m_meshRenderer.draw(commandBuffer, m_cubeMesh, m_checkerTexture, viewProjection * model, model);
         ++m_drawCallCount;
     }
@@ -182,7 +164,8 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     GAME_VK_CHECK(vkEndCommandBuffer(commandBuffer));
 }
 
-SceneRenderer::DrawResult SceneRenderer::drawFrame(const FlyCamera& camera, double timeSeconds)
+SceneRenderer::DrawResult SceneRenderer::drawFrame(const FlyCamera& camera,
+                                                   std::span<const RenderInstance> instances)
 {
     const VkDevice device = m_context->device();
     FrameResources& frame = m_frames[m_frameIndex];
@@ -201,7 +184,7 @@ SceneRenderer::DrawResult SceneRenderer::drawFrame(const FlyCamera& camera, doub
 
     GAME_VK_CHECK(vkResetFences(device, 1, &frame.inFlight));
     GAME_VK_CHECK(vkResetCommandPool(device, frame.commandPool, 0));
-    recordCommands(frame.commandBuffer, imageIndex, camera, timeSeconds);
+    recordCommands(frame.commandBuffer, imageIndex, camera, instances);
 
     VkSemaphoreSubmitInfo waitSemaphoreInfo = {};
     waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;

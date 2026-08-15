@@ -160,6 +160,9 @@ void DevUi::buildWindows(const OverlayStats& stats)
         ImGui::Text("cam  %.2f  %.2f  %.2f", stats.cameraPosition.x, stats.cameraPosition.y,
                     stats.cameraPosition.z);
         ImGui::Text("speed %.1f m/s   draws %u", stats.cameraSpeed, stats.drawCalls);
+        ImGui::Text("sim  tick %llu   entities %u   alpha %.2f",
+                    static_cast<unsigned long long>(stats.simTicks), stats.simEntities,
+                    stats.simAlpha);
         ImGui::TextDisabled("RMB look, WASD move, F1 console, F5 reload shaders");
     }
     ImGui::End();
