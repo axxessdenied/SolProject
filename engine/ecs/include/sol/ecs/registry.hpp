@@ -126,6 +126,8 @@ public:
     }
 
 private:
+    friend class Snapshot; // world save/load reads and restores entity slots
+
     template <typename T>
     [[nodiscard]] Pool<T>& poolFor()
     {

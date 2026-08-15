@@ -71,6 +71,7 @@ int main(int argc, char** argv)
     const std::string executableDir = sol::platform::executableDirectory();
     const std::string shaderDirectory = executableDir + "shaders/";
     const std::string cookedDirectory = executableDir + "cooked/";
+    const std::string savePath = executableDir + "world.sav";
 
     game::SceneRenderer renderer;
     if (!renderer.initialize(context, swapchain, shaderDirectory.c_str(), cookedDirectory.c_str())) {
@@ -95,6 +96,8 @@ int main(int argc, char** argv)
     game::FlyCamera camera;
     float smoothedFps = 0.0f;
     bool previousF5 = false;
+    bool previousF9 = false;
+    bool previousF10 = false;
 
     // Phase 3: 10k+ entities on a 60 Hz fixed timestep, rendered with
     // interpolation at uncapped framerate.
@@ -136,6 +139,22 @@ int main(int argc, char** argv)
         const double interpolatedSimTime =
             simLoop.simTimeSeconds() + static_cast<double>(simAlpha) * simLoop.tickDelta();
         world.buildRenderInstances(jobs, simAlpha, interpolatedSimTime, renderInstances);
+
+        // World save/load round trip: F9 saves, F10 loads (edge-triggered).
+        const bool f9Down = window.isKeyDown(sol::platform::Key::F9);
+        if (f9Down && !previousF9) {
+            SOL_LOG_INFO(world.saveTo(savePath.c_str()) ? "world saved to %s"
+                                                        : "world save FAILED (%s)",
+                         savePath.c_str());
+        }
+        previousF9 = f9Down;
+        const bool f10Down = window.isKeyDown(sol::platform::Key::F10);
+        if (f10Down && !previousF10) {
+            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s"
+                                                          : "world load FAILED (%s)",
+                         savePath.c_str());
+        }
+        previousF10 = f10Down;
 
         // Shader hot-reload: automatic on file change, F5 to force.
         const bool f5Down = window.isKeyDown(sol::platform::Key::F5);

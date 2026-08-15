@@ -52,6 +52,10 @@ public:
         return static_cast<std::uint32_t>(m_registry.aliveCount());
     }
 
+    // Versioned binary world snapshot (Phase 3 exit criterion).
+    [[nodiscard]] bool saveTo(const char* path);
+    [[nodiscard]] bool loadFrom(const char* path);
+
 private:
     sol::ecs::Registry m_registry;
 };

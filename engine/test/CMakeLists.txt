@@ -15,6 +15,7 @@ add_executable(sol_core_tests
     core/json_tests.cpp
     core/math_tests.cpp
     core/random_tests.cpp
+    core/serialize_tests.cpp
     core/version_tests.cpp
 )
 target_link_libraries(sol_core_tests PRIVATE sol::test sol::core)
@@ -22,6 +23,7 @@ add_test(NAME core.unit COMMAND sol_core_tests)
 
 add_executable(sol_ecs_tests
     ecs/ecs_tests.cpp
+    ecs/snapshot_tests.cpp
 )
 target_link_libraries(sol_ecs_tests PRIVATE sol::test sol::ecs)
 add_test(NAME ecs.unit COMMAND sol_ecs_tests)

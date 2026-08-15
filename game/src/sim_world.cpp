@@ -1,8 +1,15 @@
 #include "sim_world.hpp"
 
 #include "sol/core/random.hpp"
+#include "sol/core/serialize.hpp"
+#include "sol/ecs/snapshot.hpp"
+#include "sol/platform/file_io.hpp"
 
 #include <cmath>
+#include <cstddef>
+#include <span>
+#include <utility>
+#include <vector>
 
 namespace game {
 
@@ -14,6 +21,16 @@ namespace {
 // orbit with period 2*pi/omega regardless of radius - stable forever under
 // semi-implicit Euler at 60 Hz, and visibly in motion at screenshot scale.
 constexpr double kOrbitOmega = 0.35;
+
+// Stable component ids for the save format; never reuse or renumber.
+ecs::Snapshot makeSnapshotSchema()
+{
+    ecs::Snapshot schema;
+    schema.component<SimTransform>(1);
+    schema.component<LinearVelocity>(2);
+    schema.component<Spin>(3);
+    return schema;
+}
 
 } // namespace
 
@@ -106,6 +123,29 @@ void SimWorld::buildRenderInstances(core::JobSystem& jobs, float alpha, double s
             };
         }
     });
+}
+
+bool SimWorld::saveTo(const char* path)
+{
+    core::BinaryWriter writer;
+    makeSnapshotSchema().save(m_registry, writer);
+    return platform::writeFileBytes(path, writer.data().data(), writer.size());
+}
+
+bool SimWorld::loadFrom(const char* path)
+{
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(path, bytes)) {
+        return false;
+    }
+    ecs::Registry fresh;
+    core::BinaryReader reader(
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
+    if (!makeSnapshotSchema().load(fresh, reader)) {
+        return false;
+    }
+    m_registry = std::move(fresh);
+    return true;
 }
 
 } // namespace game
