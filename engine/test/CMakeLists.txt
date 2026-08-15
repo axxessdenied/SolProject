@@ -29,6 +29,12 @@ add_executable(sol_ecs_tests
 target_link_libraries(sol_ecs_tests PRIVATE sol::test sol::ecs)
 add_test(NAME ecs.unit COMMAND sol_ecs_tests)
 
+add_executable(sol_scripting_tests
+    scripting/vm_tests.cpp
+)
+target_link_libraries(sol_scripting_tests PRIVATE sol::test sol::scripting)
+add_test(NAME scripting.unit COMMAND sol_scripting_tests)
+
 add_executable(sol_sim_tests
     sim/fixed_loop_tests.cpp
     sim/flight_tests.cpp
