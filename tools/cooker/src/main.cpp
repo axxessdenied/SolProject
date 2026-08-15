@@ -1,0 +1,165 @@
+#include "bc1.hpp"
+#include "gltf.hpp"
+#include "png.hpp"
+
+#include "sol/assets/formats.hpp"
+#include "sol/core/log.hpp"
+#include "sol/platform/file_io.hpp"
+
+#include <cctype>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace {
+
+using namespace sol;
+
+std::string fileStem(const std::string& path)
+{
+    const std::size_t slash = path.find_last_of("/\\");
+    const std::size_t start = slash == std::string::npos ? 0 : slash + 1;
+    const std::size_t dot = path.find_last_of('.');
+    return path.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+}
+
+std::string fileExtension(const std::string& path)
+{
+    const std::size_t dot = path.find_last_of('.');
+    std::string extension = dot == std::string::npos ? std::string() : path.substr(dot);
+    for (char& c : extension) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return extension;
+}
+
+bool isUpToDate(const std::string& source, const std::string& output)
+{
+    const std::uint64_t sourceTime = platform::fileModificationTime(source.c_str());
+    const std::uint64_t outputTime = platform::fileModificationTime(output.c_str());
+    return outputTime != 0 && sourceTime != 0 && outputTime >= sourceTime;
+}
+
+bool cookTexture(const std::string& source, const std::string& output)
+{
+    std::vector<std::uint8_t> pngBytes;
+    if (!platform::readFileBytes(source.c_str(), pngBytes)) {
+        SOL_LOG_ERROR("cooker: cannot read %s", source.c_str());
+        return false;
+    }
+    cooker::ImageRgba image;
+    if (!cooker::decodePng(pngBytes.data(), pngBytes.size(), image)) {
+        return false;
+    }
+
+    assets::TextureFileHeader header = {};
+    header.width = image.width;
+    header.height = image.height;
+    header.format = assets::TextureFormat::BC1;
+
+    // Full mip chain, box-filtered.
+    std::vector<std::vector<std::uint8_t>> mips;
+    cooker::ImageRgba level = std::move(image);
+    while (true) {
+        mips.push_back(cooker::encodeBc1(level));
+        if (level.width == 1 && level.height == 1) {
+            break;
+        }
+        level = cooker::downsampleHalf(level);
+    }
+    header.mipCount = static_cast<std::uint32_t>(mips.size());
+
+    std::vector<std::uint8_t> fileBytes(sizeof(header));
+    std::memcpy(fileBytes.data(), &header, sizeof(header));
+    for (const std::vector<std::uint8_t>& mip : mips) {
+        fileBytes.insert(fileBytes.end(), mip.begin(), mip.end());
+    }
+
+    if (!platform::writeFileBytes(output.c_str(), fileBytes.data(), fileBytes.size())) {
+        SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
+        return false;
+    }
+    SOL_LOG_INFO("cooked %s -> %s (%ux%u, %u mips)", source.c_str(), output.c_str(), header.width,
+                 header.height, header.mipCount);
+    return true;
+}
+
+bool cookMesh(const std::string& source, const std::string& output)
+{
+    assets::MeshData mesh;
+    if (!cooker::importGltf(source.c_str(), mesh)) {
+        return false;
+    }
+
+    assets::MeshFileHeader header = {};
+    header.vertexCount = static_cast<std::uint32_t>(mesh.vertices.size());
+    header.indexCount = static_cast<std::uint32_t>(mesh.indices.size());
+
+    std::vector<std::uint8_t> fileBytes(sizeof(header) +
+                                        mesh.vertices.size() * sizeof(assets::MeshVertex) +
+                                        mesh.indices.size() * sizeof(std::uint32_t));
+    std::uint8_t* cursor = fileBytes.data();
+    std::memcpy(cursor, &header, sizeof(header));
+    cursor += sizeof(header);
+    std::memcpy(cursor, mesh.vertices.data(), mesh.vertices.size() * sizeof(assets::MeshVertex));
+    cursor += mesh.vertices.size() * sizeof(assets::MeshVertex);
+    std::memcpy(cursor, mesh.indices.data(), mesh.indices.size() * sizeof(std::uint32_t));
+
+    if (!platform::writeFileBytes(output.c_str(), fileBytes.data(), fileBytes.size())) {
+        SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
+        return false;
+    }
+    SOL_LOG_INFO("cooked %s -> %s (%u vertices, %u indices)", source.c_str(), output.c_str(),
+                 header.vertexCount, header.indexCount);
+    return true;
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    if (argc != 3) {
+        SOL_LOG_ERROR("usage: cooker <source-assets-dir> <output-dir>");
+        return 1;
+    }
+    const std::string sourceDirectory = argv[1];
+    const std::string outputDirectory = argv[2];
+
+    if (!platform::createDirectories(outputDirectory.c_str())) {
+        SOL_LOG_ERROR("cooker: cannot create output directory %s", outputDirectory.c_str());
+        return 1;
+    }
+
+    int cooked = 0;
+    int skipped = 0;
+    int failed = 0;
+
+    for (const std::string& source : platform::listFiles(sourceDirectory.c_str())) {
+        const std::string extension = fileExtension(source);
+        std::string output;
+        bool (*cook)(const std::string&, const std::string&) = nullptr;
+
+        if (extension == ".png") {
+            output = outputDirectory + "/" + fileStem(source) + ".stex";
+            cook = &cookTexture;
+        } else if (extension == ".gltf" || extension == ".glb") {
+            output = outputDirectory + "/" + fileStem(source) + ".smesh";
+            cook = &cookMesh;
+        } else {
+            continue; // .gitkeep, .bin buffers referenced by gltf, etc.
+        }
+
+        if (isUpToDate(source, output)) {
+            ++skipped;
+            continue;
+        }
+        if (cook(source, output)) {
+            ++cooked;
+        } else {
+            ++failed;
+        }
+    }
+
+    SOL_LOG_INFO("cooker: %d cooked, %d up to date, %d failed", cooked, skipped, failed);
+    return failed == 0 ? 0 : 1;
+}

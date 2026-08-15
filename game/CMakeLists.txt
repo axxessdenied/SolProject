@@ -10,7 +10,16 @@ target_link_libraries(sol_game PRIVATE
     sol::rhi
 )
 
-add_dependencies(sol_game sol_shaders)
+add_dependencies(sol_game sol_shaders sol_cook_assets)
+
+# Cook source assets into the runtime directory on every build; the cooker
+# itself skips files whose outputs are already up to date.
+add_custom_target(sol_cook_assets
+    COMMAND $<TARGET_FILE:sol_cooker> ${CMAKE_SOURCE_DIR}/assets ${CMAKE_BINARY_DIR}/bin/cooked
+    COMMENT "Cooking assets"
+    VERBATIM
+)
+add_dependencies(sol_cook_assets sol_cooker)
 
 # Needs a GPU + Vulkan driver, so it is excluded from the default test presets
 # (label "gpu"); run locally with: ctest --preset dev-gpu
