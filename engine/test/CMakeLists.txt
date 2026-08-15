@@ -31,6 +31,7 @@ add_test(NAME ecs.unit COMMAND sol_ecs_tests)
 
 add_executable(sol_sim_tests
     sim/fixed_loop_tests.cpp
+    sim/flight_tests.cpp
 )
 target_link_libraries(sol_sim_tests PRIVATE sol::test sol::sim)
 add_test(NAME sim.unit COMMAND sol_sim_tests)
