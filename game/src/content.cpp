@@ -150,6 +150,35 @@ std::string dockedAt(GameContent& content)
     return content.world().dockedStationName();
 }
 
+// Destinations reachable from this system's gates, comma-separated.
+std::string listGates(GameContent& content)
+{
+    std::string names;
+    for (const GateInstance& gate : content.world().gates()) {
+        if (!names.empty()) {
+            names += ", ";
+        }
+        names += content.world().galaxy().systems[gate.toSystem].name;
+    }
+    return names;
+}
+
+bool jumpToSystem(GameContent& content, const std::string& destination)
+{
+    return content.world().jumpToSystem(destination.c_str());
+}
+
+// "idle/in-transit" agent counts: direct evidence the NPC layer is hauling.
+std::string traderStats(GameContent& content)
+{
+    int idle = 0;
+    int transit = 0;
+    for (const sol::sim::EconomyTrader& trader : content.world().economy().traders()) {
+        (trader.phase == sol::sim::TraderPhase::InTransit ? transit : idle) += 1;
+    }
+    return std::to_string(idle) + " idle, " + std::to_string(transit) + " in transit";
+}
+
 // --- Trading (works while docked; market = the docked station) ---
 
 std::string listCommodities(GameContent& content)
@@ -271,6 +300,9 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&sellCommodity>("sol", "sell", this);
     m_vm.registerFunction<&playerCredits>("sol", "credits", this);
     m_vm.registerFunction<&playerCargo>("sol", "cargo", this);
+    m_vm.registerFunction<&listGates>("sol", "gates", this);
+    m_vm.registerFunction<&jumpToSystem>("sol", "jump_to", this);
+    m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
 }
 
 bool GameContent::reloadDefs()

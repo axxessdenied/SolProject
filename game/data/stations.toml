@@ -10,8 +10,8 @@ name = "Agricultural Station"
 weight_core = 1.0
 weight_frontier = 1.5
 weight_fringe = 0.5
-produces = ["sol.food:0.8"]
-consumes = ["sol.machinery:0.1"]
+produces = ["sol.food:3.0"]
+consumes = ["sol.machinery:0.5"]
 
 [[station]]
 id = "sol.station_mine"
@@ -19,8 +19,8 @@ name = "Mining Outpost"
 weight_core = 0.5
 weight_frontier = 1.5
 weight_fringe = 2.0
-produces = ["sol.ore:0.6"]
-consumes = ["sol.food:0.3"]
+produces = ["sol.ore:2.5"]
+consumes = ["sol.food:1.2"]
 
 [[station]]
 id = "sol.station_factory"
@@ -28,5 +28,5 @@ name = "Fabricator Yard"
 weight_core = 2.0
 weight_frontier = 1.0
 weight_fringe = 0.3
-produces = ["sol.machinery:0.3"]
-consumes = ["sol.ore:0.5", "sol.food:0.2"]
+produces = ["sol.machinery:1.5"]
+consumes = ["sol.ore:2.0", "sol.food:0.8"]

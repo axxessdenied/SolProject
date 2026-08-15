@@ -460,6 +460,21 @@ double SpaceWorld::nearestStationDistance() const
     return nearest;
 }
 
+bool SpaceWorld::jumpToSystem(const char* destinationName)
+{
+    if (isDocked()) {
+        return false;
+    }
+    for (const GateInstance& gate : m_gates) {
+        if (m_galaxy.systems[gate.toSystem].name == destinationName) {
+            SOL_LOG_INFO("jumping: %s -> %s", currentSystemName(), destinationName);
+            loadSystem(gate.toSystem, m_currentSystem);
+            return true;
+        }
+    }
+    return false;
+}
+
 double SpaceWorld::nearestGateDistance() const
 {
     if (m_gates.empty()) {

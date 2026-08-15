@@ -196,6 +196,11 @@ public:
     // Distance to the nearest gate, or a negative value with no gates.
     [[nodiscard]] double nearestGateDistance() const;
 
+    // Jumps via this system's gate to the named destination system,
+    // regardless of distance (dev/console path; the J key stays
+    // range-gated). Returns false if no gate leads there.
+    [[nodiscard]] bool jumpToSystem(const char* destinationName);
+
     // --- Docking (GDD: request -> autodock; manual flight optional later) ---
     // Docks at the nearest station within range: ship parks at the station's
     // dock point, flight input is ignored until undock, and the station
