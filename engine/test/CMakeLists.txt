@@ -47,6 +47,7 @@ add_executable(sol_sim_tests
     sim/fixed_loop_tests.cpp
     sim/flight_tests.cpp
     sim/power_tests.cpp
+    sim/steering_tests.cpp
     sim/weapons_tests.cpp
 )
 target_link_libraries(sol_sim_tests PRIVATE sol::test sol::sim)

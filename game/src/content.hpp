@@ -57,9 +57,12 @@ private:
     sol::scripting::ScriptVm m_vm;
     SpaceWorld* m_world = nullptr;
     std::vector<WatchedFile> m_watched;
+    std::vector<SpaceWorld::PilotThink> m_pilotThinks; // per-tick scratch
     double m_lastPollTime = -1.0;
     bool m_hasTickHook = false;
     bool m_tickHookFailed = false; // logged once; reset on script reload
+    bool m_hasPilotHook = false;
+    bool m_pilotHookFailed = false;
 };
 
 } // namespace game

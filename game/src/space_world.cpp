@@ -3,6 +3,7 @@
 #include "sol/core/log.hpp"
 #include "sol/core/serialize.hpp"
 #include "sol/sim/collision.hpp"
+#include "sol/sim/steering.hpp"
 #include "sol/sim/weapons.hpp"
 #include "sol/ecs/snapshot.hpp"
 #include "sol/platform/file_io.hpp"
@@ -59,6 +60,7 @@ ecs::Snapshot makeSnapshotSchema()
     schema.component<ShipDefense>(16);
     schema.component<Projectile>(17);
     schema.component<ShipWeapon>(18);
+    schema.component<ShipPilot>(19);
     return schema;
 }
 
@@ -244,6 +246,119 @@ ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def,
     return e;
 }
 
+ecs::Entity SpaceWorld::spawnPilotFromDef(const assets::ShipDef& def,
+                                          const assets::DefDatabase& defs, PilotRole role)
+{
+    const ecs::Entity e = spawnShipFromDef(def, defs);
+    m_registry.emplace<ShipPilot>(e, ShipPilot{.role = role});
+    return e;
+}
+
+namespace {
+
+// Role/state pip policies (decisions/003 consequence: simple per-role triage).
+sim::PowerPips pipsForPilot(PilotState state)
+{
+    switch (state) {
+    case PilotState::Attack: return {3, 2, 1};
+    case PilotState::Flee: return {0, 4, 2};
+    case PilotState::Idle:
+    case PilotState::Patrol: break;
+    }
+    return {2, 2, 2};
+}
+
+} // namespace
+
+bool SpaceWorld::pilotAttackPlayer(ecs::Entity entity)
+{
+    ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    if (pilot == nullptr) {
+        return false;
+    }
+    pilot->state = PilotState::Attack;
+    pilot->targetIndex = playerEntityIndex();
+    pilot->hasTarget = 1;
+    if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
+        power->state.pips = pipsForPilot(pilot->state);
+    }
+    return true;
+}
+
+bool SpaceWorld::pilotFlee(ecs::Entity entity)
+{
+    ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    if (pilot == nullptr) {
+        return false;
+    }
+    pilot->state = PilotState::Flee;
+    if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
+        power->state.pips = pipsForPilot(pilot->state);
+    }
+    return true;
+}
+
+bool SpaceWorld::pilotIdle(ecs::Entity entity)
+{
+    ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    if (pilot == nullptr) {
+        return false;
+    }
+    pilot->state = PilotState::Idle;
+    if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
+        power->state.pips = pipsForPilot(pilot->state);
+    }
+    return true;
+}
+
+bool SpaceWorld::pilotPatrolTo(ecs::Entity entity, core::DVec3 waypoint)
+{
+    ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    if (pilot == nullptr) {
+        return false;
+    }
+    pilot->state = PilotState::Patrol;
+    pilot->waypoint = waypoint;
+    if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
+        power->state.pips = pipsForPilot(pilot->state);
+    }
+    return true;
+}
+
+double SpaceWorld::shipHullFraction(ecs::Entity entity) const
+{
+    if (!m_registry.isAlive(entity)) {
+        return 0.0;
+    }
+    const ShipDefense* defense = m_registry.tryGet<ShipDefense>(entity);
+    if (defense == nullptr || defense->tuning.hull <= 0.0f) {
+        return 0.0;
+    }
+    return static_cast<double>(defense->state.hull / defense->tuning.hull);
+}
+
+void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
+{
+    static constexpr const char* kRoleNames[] = {"fighter", "trader", "patrol"};
+    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee"};
+    constexpr float kThinkInterval = 0.5f; // 2 Hz strategy; steering runs at 60
+
+    ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        ShipPilot& pilot = pilots.values()[i];
+        pilot.thinkTimer -= static_cast<float>(dt);
+        if (pilot.thinkTimer > 0.0f) {
+            continue;
+        }
+        pilot.thinkTimer = kThinkInterval;
+        out.push_back({
+            .entity = m_registry.entityFromIndex(pilots.entityIndices()[i]),
+            .role = kRoleNames[static_cast<std::uint32_t>(pilot.role) % 3],
+            .state = kStateNames[static_cast<std::uint32_t>(pilot.state) % 4],
+        });
+    }
+}
+
 sim::ShipState SpaceWorld::shipState() const
 {
     const std::uint32_t shipIndex = playerEntityIndex();
@@ -261,6 +376,93 @@ void SpaceWorld::tick(double dt)
 {
     const std::uint32_t playerIndex = playerEntityIndex();
     m_registry.storage<ShipControl>().get(playerIndex).input = m_shipInput;
+
+    // NPC pilots: C++ steering flies whatever state Lua's pilot_think chose.
+    {
+        ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
+        const sim::AvoidanceSphere obstacles[] = {
+            {.position = m_targets[0].position, .radius = 130.0}, // station
+            {.position = m_planet.position, .radius = m_planet.radius},
+            {.position = m_sun.position, .radius = m_sun.radius},
+        };
+        for (std::size_t i = 0; i < pilots.size(); ++i) {
+            ShipPilot& pilot = pilots.values()[i];
+            const std::uint32_t entityIndex = pilots.entityIndices()[i];
+            ShipControl* control = m_registry.storage<ShipControl>().tryGet(entityIndex);
+            const Transform* transform = m_registry.storage<Transform>().tryGet(entityIndex);
+            const FlightBody* body = m_registry.storage<FlightBody>().tryGet(entityIndex);
+            if (control == nullptr || transform == nullptr || body == nullptr) {
+                continue;
+            }
+            const sim::ShipState self = {
+                .position = transform->position,
+                .velocity = body->velocity,
+                .orientation = transform->orientation,
+                .angularVelocity = body->angularVelocity,
+            };
+
+            sim::FlightInput input; // Idle default: assist-on station keeping
+            switch (pilot.state) {
+            case PilotState::Idle:
+                break;
+            case PilotState::Patrol:
+                if (length(pilot.waypoint - self.position) < 120.0) {
+                    pilot.state = PilotState::Idle; // arrived; Lua picks the next leg
+                    break;
+                }
+                input = sim::steerPursue(self, control->tuning, pilot.waypoint, {}, 50.0);
+                break;
+            case PilotState::Attack: {
+                const Transform* targetTransform =
+                    m_registry.storage<Transform>().tryGet(pilot.targetIndex);
+                const FlightBody* targetBody =
+                    m_registry.storage<FlightBody>().tryGet(pilot.targetIndex);
+                if (pilot.hasTarget == 0 || targetTransform == nullptr ||
+                    targetBody == nullptr) {
+                    pilot.state = PilotState::Idle;
+                    break;
+                }
+                const core::DVec3 toTarget = targetTransform->position - self.position;
+                const double distance = length(toTarget);
+                const core::DVec3 direction =
+                    distance > 1.0 ? toTarget * (1.0 / distance) : core::DVec3{0.0, 0.0, -1.0};
+                core::DVec3 desiredVelocity =
+                    targetBody->velocity + direction * ((distance - 250.0) * 0.5);
+                sim::avoidObstacles(desiredVelocity, self, obstacles, 8.0);
+
+                const ShipWeapon* weapon = m_registry.storage<ShipWeapon>().tryGet(entityIndex);
+                const double projectileSpeed =
+                    weapon != nullptr && weapon->projectileSpeed > 1.0f
+                        ? static_cast<double>(weapon->projectileSpeed)
+                        : 1.0e9; // hitscan: effectively instant
+                core::DVec3 aimDirection;
+                (void)sim::computeInterceptDirection(self.position, self.velocity,
+                                                     targetTransform->position,
+                                                     targetBody->velocity, projectileSpeed,
+                                                     aimDirection);
+                const core::DVec3 aimPoint =
+                    self.position + aimDirection * (distance > 100.0 ? distance : 100.0);
+                input = sim::steerAimAndMove(self, control->tuning, aimPoint, desiredVelocity);
+                if (weapon != nullptr && weapon->kind != WeaponKind::None) {
+                    input.trigger = sim::aimError(self, aimPoint) < 0.06 &&
+                                    distance < static_cast<double>(weapon->range) * 0.9;
+                }
+                break;
+            }
+            case PilotState::Flee: {
+                const Transform* threatTransform =
+                    m_registry.storage<Transform>().tryGet(pilot.targetIndex);
+                const core::DVec3 threat = threatTransform != nullptr
+                                               ? threatTransform->position
+                                               : self.position + core::DVec3{0.0, 0.0, 1.0};
+                pilot.weavePhase += static_cast<float>(dt) * 3.0f;
+                input = sim::steerEvade(self, control->tuning, threat, pilot.weavePhase);
+                break;
+            }
+            }
+            control->input = input;
+        }
+    }
 
     // Step every flying ship with its own tuning and commanded input (NPC
     // input is written by pilots — zero/station-keeping until Phase 6 AI).

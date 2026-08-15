@@ -35,6 +35,58 @@ scripting::EntityHandle spawnShip(GameContent& content, const std::string& id)
     return scripting::toHandle(entity);
 }
 
+scripting::EntityHandle spawnPilot(GameContent& content, const std::string& id,
+                                   const std::string& role)
+{
+    const assets::ShipDef* def = content.defs().findShip(id.c_str());
+    if (def == nullptr) {
+        SOL_LOG_WARN("spawn_pilot: no ship def '%s'", id.c_str());
+        return {};
+    }
+    PilotRole pilotRole = PilotRole::Fighter;
+    if (role == "trader") {
+        pilotRole = PilotRole::Trader;
+    } else if (role == "patrol") {
+        pilotRole = PilotRole::Patrol;
+    } else if (role != "fighter") {
+        SOL_LOG_WARN("spawn_pilot: unknown role '%s' (fighter/trader/patrol); using fighter",
+                     role.c_str());
+    }
+    const ecs::Entity entity =
+        content.world().spawnPilotFromDef(*def, content.defs(), pilotRole);
+    SOL_LOG_INFO("spawned %s pilot '%s' (%s)", role.c_str(), def->name.c_str(), def->id.c_str());
+    return scripting::toHandle(entity);
+}
+
+bool pilotAttackPlayer(GameContent& content, scripting::EntityHandle ship)
+{
+    return content.world().pilotAttackPlayer(scripting::toEntity(ship));
+}
+
+bool pilotFlee(GameContent& content, scripting::EntityHandle ship)
+{
+    return content.world().pilotFlee(scripting::toEntity(ship));
+}
+
+bool pilotIdle(GameContent& content, scripting::EntityHandle ship)
+{
+    return content.world().pilotIdle(scripting::toEntity(ship));
+}
+
+// Waypoint given relative to the station (Lua has no absolute-coordinate
+// source, and everything interesting orbits the station anyway).
+bool pilotPatrolOffset(GameContent& content, scripting::EntityHandle ship, double dx, double dy,
+                       double dz)
+{
+    const core::DVec3 waypoint = content.world().stationPosition() + core::DVec3{dx, dy, dz};
+    return content.world().pilotPatrolTo(scripting::toEntity(ship), waypoint);
+}
+
+double pilotHull(GameContent& content, scripting::EntityHandle ship)
+{
+    return content.world().shipHullFraction(scripting::toEntity(ship));
+}
+
 std::string listShips(GameContent& content)
 {
     std::string ids;
@@ -119,6 +171,12 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&targetDistance>("sol", "target_distance", this);
     m_vm.registerFunction<&shipSpeed>("sol", "speed", this);
     m_vm.registerFunction<&entityCount>("sol", "entity_count", this);
+    m_vm.registerFunction<&spawnPilot>("sol", "spawn_pilot", this);
+    m_vm.registerFunction<&pilotAttackPlayer>("sol", "pilot_attack_player", this);
+    m_vm.registerFunction<&pilotFlee>("sol", "pilot_flee", this);
+    m_vm.registerFunction<&pilotIdle>("sol", "pilot_idle", this);
+    m_vm.registerFunction<&pilotPatrolOffset>("sol", "pilot_patrol_offset", this);
+    m_vm.registerFunction<&pilotHull>("sol", "pilot_hull", this);
 }
 
 bool GameContent::reloadDefs()
@@ -153,6 +211,10 @@ void GameContent::runBootScripts()
     m_hasTickHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_tickHookFailed = false;
+    lua_getglobal(state, "pilot_think");
+    m_hasPilotHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_pilotHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -217,13 +279,28 @@ void GameContent::poll(double nowSeconds)
 
 void GameContent::tick(double dt)
 {
-    if (!m_hasTickHook || m_tickHookFailed) {
-        return;
+    if (m_hasTickHook && !m_tickHookFailed) {
+        std::string error;
+        if (!m_vm.callGlobal("on_tick", &error, dt)) {
+            SOL_LOG_ERROR("on_tick disabled until scripts reload: %s", error.c_str());
+            m_tickHookFailed = true;
+        }
     }
-    std::string error;
-    if (!m_vm.callGlobal("on_tick", &error, dt)) {
-        SOL_LOG_ERROR("on_tick disabled until scripts reload: %s", error.c_str());
-        m_tickHookFailed = true;
+
+    // Pilot strategy: Lua thinks at 2 Hz per pilot; C++ steering flies the
+    // chosen state every tick inside SpaceWorld.
+    if (m_hasPilotHook && !m_pilotHookFailed) {
+        m_pilotThinks.clear();
+        m_world->collectDuePilotThinks(dt, m_pilotThinks);
+        for (const SpaceWorld::PilotThink& think : m_pilotThinks) {
+            std::string error;
+            if (!m_vm.callGlobal("pilot_think", &error, scripting::toHandle(think.entity),
+                                 think.role, think.state)) {
+                SOL_LOG_ERROR("pilot_think disabled until scripts reload: %s", error.c_str());
+                m_pilotHookFailed = true;
+                break;
+            }
+        }
     }
 }
 

@@ -96,6 +96,34 @@ struct Projectile
     std::uint32_t shooterIndex = 0; // entity index; never hits its shooter
 };
 
+enum class PilotRole : std::uint32_t
+{
+    Fighter = 0,
+    Trader,
+    Patrol,
+};
+
+enum class PilotState : std::uint32_t
+{
+    Idle = 0,
+    Patrol, // fly to waypoint
+    Attack, // pursue + shoot target
+    Flee,   // evade target
+};
+
+// An NPC pilot: Lua's pilot_think picks the state (strategy); C++ steering
+// flies it every tick (engine plan §Scripting split).
+struct ShipPilot
+{
+    PilotRole role = PilotRole::Fighter;
+    PilotState state = PilotState::Idle;
+    std::uint32_t targetIndex = 0;
+    std::uint32_t hasTarget = 0;
+    sol::core::DVec3 waypoint;
+    float thinkTimer = 0.0f; // counts down to the next Lua think
+    float weavePhase = 0.0f;
+};
+
 struct RenderShape
 {
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
@@ -184,10 +212,33 @@ public:
     // hot-reload so stat edits land without a restart.
     void applyDefs(const sol::assets::DefDatabase& defs);
 
-    // Spawns a flyable def-driven ship just ahead of the player (pilots
-    // arrive with the Phase 6 AI pass). Returns the new entity.
+    // Spawns a flyable def-driven ship just ahead of the player. Returns the
+    // new entity.
     sol::ecs::Entity spawnShipFromDef(const sol::assets::ShipDef& def,
                                       const sol::assets::DefDatabase& defs);
+
+    // As above, plus an AI pilot in the given role (starts Idle until Lua's
+    // pilot_think assigns work).
+    sol::ecs::Entity spawnPilotFromDef(const sol::assets::ShipDef& def,
+                                       const sol::assets::DefDatabase& defs, PilotRole role);
+
+    // --- Pilot commands (the Lua-facing strategy API, called via bindings) ---
+    // All return false for a dead/pilotless entity.
+    bool pilotAttackPlayer(sol::ecs::Entity entity);
+    bool pilotFlee(sol::ecs::Entity entity);
+    bool pilotIdle(sol::ecs::Entity entity);
+    bool pilotPatrolTo(sol::ecs::Entity entity, sol::core::DVec3 waypoint);
+    [[nodiscard]] double shipHullFraction(sol::ecs::Entity entity) const;
+    [[nodiscard]] sol::core::DVec3 stationPosition() const { return m_targets[0].position; }
+
+    // Decrements think timers by dt and collects pilots due for a Lua think.
+    struct PilotThink
+    {
+        sol::ecs::Entity entity;
+        const char* role = "";
+        const char* state = "";
+    };
+    void collectDuePilotThinks(double dt, std::vector<PilotThink>& out);
 
 private:
     struct SpawnedShip
