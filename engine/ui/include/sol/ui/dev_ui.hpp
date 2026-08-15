@@ -104,6 +104,61 @@ struct TradePanel
     TradeAction action; // out
 };
 
+// Catalog/inventory row for the outfitting, shipyard, and crew tabs
+// (Phase 8a; still the provisional dev UI).
+struct OutfitRow
+{
+    const char* id = "";
+    const char* name = "";
+    const char* detail = ""; // slot/kind/role + stat summary, prebuilt
+    float price = 0.0f;
+    int fitted = 0; // instances currently on the active ship (catalogs)
+};
+
+struct FleetRow
+{
+    const char* name = "";
+    bool active = false;
+    bool storedHere = false; // stored at THIS station (switch/sell allowed)
+    float value = 0.0f;      // hull + fit at list price
+};
+
+// What the player clicked this frame; the game executes it.
+struct StationAction
+{
+    enum class Kind : std::uint32_t
+    {
+        None = 0,
+        BuyModule,
+        SellModule,
+        BuyWeapon,
+        BuyShip,
+        SellShip,
+        SwitchShip,
+        HireCrew,
+        FireCrew,
+    };
+    Kind kind = Kind::None;
+    const char* id = ""; // def id (module/weapon/ship/crew actions)
+    int index = -1;      // fleet index (sell/switch ship)
+};
+
+// The docked-station screen: Trade plus the Phase 8a Outfitting, Shipyard,
+// and Crew tabs.
+struct StationPanel
+{
+    TradePanel trade;
+    const char* fitSummary = "";  // active ship fit + budgets, prebuilt
+    double deductible = 0.0;      // current insurance quote
+    std::span<const OutfitRow> modules; // catalog
+    std::span<const OutfitRow> weapons; // catalog ("fitted" flags the mount)
+    std::span<const OutfitRow> crewCatalog;
+    std::span<const OutfitRow> crewAboard;
+    std::span<const OutfitRow> shipCatalog;
+    std::span<const FleetRow> fleet;
+    StationAction action; // out
+};
+
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).
 class DevUi
 {
@@ -114,10 +169,10 @@ public:
     void shutdown();
 
     // Once per frame, before recording; builds the overlay + console windows
-    // and, when hud.active, the flight HUD. A non-null trade panel (docked)
-    // also builds the provisional trade screen.
+    // and, when hud.active, the flight HUD. A non-null station panel (docked)
+    // also builds the provisional trade/outfitting/shipyard/crew screen.
     void beginFrame(const OverlayStats& stats, const FlightHud& hud = {},
-                    TradePanel* trade = nullptr);
+                    StationPanel* station = nullptr);
 
     // Records draw data; must be called inside the scene's dynamic rendering pass.
     void render(VkCommandBuffer commandBuffer);
@@ -138,7 +193,11 @@ private:
     void buildWindows(const OverlayStats& stats);
     void buildConsoleInput();
     void buildFlightHud(const FlightHud& hud);
-    void buildTradePanel(TradePanel& trade);
+    void buildStationPanel(StationPanel& station);
+    void buildTradeTab(TradePanel& trade);
+    void buildOutfittingTab(StationPanel& station);
+    void buildShipyardTab(StationPanel& station);
+    void buildCrewTab(StationPanel& station);
     static int consoleTextCallback(ImGuiInputTextCallbackData* data);
 
     bool m_initialized = false;

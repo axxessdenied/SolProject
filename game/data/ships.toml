@@ -26,6 +26,14 @@ hull = 100.0
 weapon_capacitor = 100.0
 weapon_recharge = 15.0
 weapon = "sol.pulse_cannon"
+price = 8000.0
+mass = 10000.0
+power_output = 6.0
+slots_shield = 1
+slots_engine = 1
+slots_cargo = 1
+slots_utility = 1
+crew_berths = 1
 
 [[ship]]
 id = "sol.interceptor"
@@ -49,6 +57,14 @@ hull = 60.0
 weapon_capacitor = 90.0
 weapon_recharge = 18.0
 weapon = "sol.pulse_cannon"
+price = 24000.0
+mass = 8000.0
+power_output = 8.0
+slots_shield = 1
+slots_engine = 2
+slots_cargo = 0
+slots_utility = 1
+crew_berths = 1
 
 [[ship]]
 id = "sol.freighter"
@@ -72,3 +88,12 @@ hull = 320.0
 weapon_capacitor = 60.0
 weapon_recharge = 8.0
 weapon = "sol.mining_laser"
+cargo = 200.0
+price = 60000.0
+mass = 40000.0
+power_output = 10.0
+slots_shield = 1
+slots_engine = 1
+slots_cargo = 3
+slots_utility = 2
+crew_berths = 2

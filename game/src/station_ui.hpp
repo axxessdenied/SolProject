@@ -1,0 +1,30 @@
+#pragma once
+
+#include "space_world.hpp"
+
+#include "sol/assets/data_defs.hpp"
+#include "sol/ui/dev_ui.hpp"
+
+#include <deque>
+#include <string>
+#include <vector>
+
+namespace game {
+
+// Fills the Phase 8a tabs of the docked-station panel (outfitting, shipyard,
+// crew) from the world and defs. `text` backs the generated detail strings —
+// a deque so growth never moves entries the rows already point at. All row
+// vectors are cleared and rebuilt; spans in `panel` are set to them.
+void fillStationOutfitting(const SpaceWorld& world, const sol::assets::DefDatabase& defs,
+                           std::deque<std::string>& text, sol::ui::StationPanel& panel,
+                           std::vector<sol::ui::OutfitRow>& moduleRows,
+                           std::vector<sol::ui::OutfitRow>& weaponRows,
+                           std::vector<sol::ui::OutfitRow>& crewCatalogRows,
+                           std::vector<sol::ui::OutfitRow>& crewAboardRows,
+                           std::vector<sol::ui::OutfitRow>& shipRows,
+                           std::vector<sol::ui::FleetRow>& fleetRows);
+
+// Executes the (at most one) station-panel click of this frame.
+void executeStationAction(SpaceWorld& world, const sol::ui::StationAction& action);
+
+} // namespace game

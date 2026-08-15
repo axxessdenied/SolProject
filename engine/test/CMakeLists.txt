@@ -31,6 +31,7 @@ add_test(NAME ecs.unit COMMAND sol_ecs_tests)
 
 add_executable(sol_assets_tests
     assets/data_defs_tests.cpp
+    assets/loadout_tests.cpp
 )
 target_link_libraries(sol_assets_tests PRIVATE sol::test sol::assets)
 add_test(NAME assets.unit COMMAND sol_assets_tests)

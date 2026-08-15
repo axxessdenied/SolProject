@@ -1,0 +1,96 @@
+# Outfitting modules (Phase 8a). slot: shield | engine | cargo | utility.
+# Modifiers: <stat>_add applies before <stat>_mul; module mass dilutes
+# accelerations (mass / (mass + fitted mass)); power_draw sums against the
+# ship's power_output. Edits hot-reload into a running dev build.
+
+[[module]]
+id = "sol.shield_booster_mk1"
+name = "Shield Booster Mk1"
+slot = "shield"
+price = 800.0
+mass = 400.0
+power_draw = 2.0
+shield_strength_mul = 1.25
+
+[[module]]
+id = "sol.shield_booster_mk2"
+name = "Shield Booster Mk2"
+slot = "shield"
+price = 2400.0
+mass = 700.0
+power_draw = 3.0
+shield_strength_mul = 1.5
+shield_regen_mul = 1.2
+
+[[module]]
+id = "sol.engine_tuner_mk1"
+name = "Engine Tuner Mk1"
+slot = "engine"
+price = 1000.0
+mass = 200.0
+power_draw = 1.5
+max_speed_mul = 1.15
+forward_accel_mul = 1.15
+
+[[module]]
+id = "sol.engine_tuner_mk2"
+name = "Engine Tuner Mk2"
+slot = "engine"
+price = 3000.0
+mass = 300.0
+power_draw = 2.5
+max_speed_mul = 1.3
+forward_accel_mul = 1.25
+turn_rate_mul = 1.1
+
+[[module]]
+id = "sol.cruise_charger"
+name = "Cruise Charger"
+slot = "engine"
+price = 2000.0
+mass = 250.0
+power_draw = 2.0
+cruise_speed_scale_mul = 1.25
+
+[[module]]
+id = "sol.cargo_pod_mk1"
+name = "Cargo Pod Mk1"
+slot = "cargo"
+price = 600.0
+mass = 800.0
+cargo_add = 25.0
+
+[[module]]
+id = "sol.cargo_pod_mk2"
+name = "Cargo Pod Mk2"
+slot = "cargo"
+price = 1800.0
+mass = 1400.0
+power_draw = 0.5
+cargo_add = 60.0
+
+[[module]]
+id = "sol.armor_plating"
+name = "Armor Plating"
+slot = "utility"
+price = 1200.0
+mass = 1500.0
+armor_mul = 1.6
+
+[[module]]
+id = "sol.capacitor_bank"
+name = "Capacitor Bank"
+slot = "utility"
+price = 900.0
+mass = 300.0
+power_draw = 1.5
+weapon_capacitor_mul = 1.4
+
+[[module]]
+id = "sol.regen_amplifier"
+name = "Regen Amplifier"
+slot = "utility"
+price = 1500.0
+mass = 200.0
+power_draw = 2.0
+shield_regen_mul = 1.5

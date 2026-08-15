@@ -100,6 +100,16 @@ std::vector<std::string> listFiles(const char* directory)
     return files;
 }
 
+bool deleteFile(const char* path)
+{
+    const std::wstring widePath = utf8ToWide(path);
+    if (DeleteFileW(widePath.c_str()) != 0) {
+        return true;
+    }
+    const DWORD error = GetLastError();
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+}
+
 bool createDirectories(const char* path)
 {
     const std::wstring widePath = utf8ToWide(path);

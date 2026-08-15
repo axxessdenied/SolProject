@@ -172,8 +172,20 @@ struct TargetInfo
     float hull = 0.0f;
 };
 
-// The player flies this def; mods can override it (Phase 5 data pipeline).
+// The new-game starter ship def; mods can override it (Phase 5 data pipeline).
 inline constexpr const char* kPlayerShipDefId = "sol.shuttle";
+
+// One ship the player owns (Phase 8a outfitting): its def, fit, crew, and —
+// unless it is the active ship — where it is stored.
+struct OwnedShip
+{
+    std::string defId;
+    std::string weaponId;               // fitted weapon; empty = unarmed mount
+    std::vector<std::string> moduleIds; // fitted modules (order irrelevant)
+    std::vector<std::string> crewIds;   // hired crew aboard
+    std::uint32_t storedSystem = 0xffff'ffffu;  // active ship ignores these
+    std::uint32_t storedStation = 0xffff'ffffu;
+};
 
 class SpaceWorld
 {
@@ -209,6 +221,8 @@ public:
     [[nodiscard]] bool undock();
     [[nodiscard]] bool isDocked() const { return m_dockedStation != kNoIndex; }
     [[nodiscard]] const char* dockedStationName() const;
+    // Station index in the current system, or ~0u while flying.
+    [[nodiscard]] std::uint32_t dockedStationIndex() const { return m_dockedStation; }
     // Distance to the nearest station, or a negative value with none.
     [[nodiscard]] double nearestStationDistance() const;
 
@@ -230,6 +244,42 @@ public:
     // credits; returns what actually moved.
     sol::sim::TradeResult playerBuy(std::uint32_t commodity, float units);
     sol::sim::TradeResult playerSell(std::uint32_t commodity, float units);
+
+    // --- Outfitting & fleet (Phase 8a; decisions/006 crew, /007 death) ---
+    // Every mutation below requires being docked and returns false with a
+    // logged reason (and outError, if given) when refused.
+    static constexpr double kInsuranceRate = 0.05; // deductible, of ship value
+    static constexpr double kResaleRate = 0.5;     // sell-back, of list price
+
+    [[nodiscard]] const std::vector<OwnedShip>& fleet() const { return m_fleet; }
+    [[nodiscard]] std::size_t activeShipIndex() const { return m_activeShip; }
+    [[nodiscard]] const OwnedShip& activeShip() const { return m_fleet[m_activeShip]; }
+    // Hull + fitted modules + weapon at list price (crew hires excluded).
+    [[nodiscard]] double shipValue(const OwnedShip& ship) const;
+    [[nodiscard]] double insuranceDeductible() const
+    {
+        return kInsuranceRate * shipValue(activeShip());
+    }
+
+    bool buyModule(const char* moduleId, std::string* outError = nullptr);
+    bool sellModule(const char* moduleId, std::string* outError = nullptr);
+    bool buyWeapon(const char* weaponId, std::string* outError = nullptr);
+    bool buyShip(const char* shipDefId, std::string* outError = nullptr);
+    bool sellShip(std::size_t fleetIndex, std::string* outError = nullptr);
+    bool switchShip(std::size_t fleetIndex, std::string* outError = nullptr);
+    bool hireCrew(const char* crewId, std::string* outError = nullptr);
+    bool fireCrew(const char* crewId, std::string* outError = nullptr);
+
+    // Hardcore/ironman (decisions/007): set at new game, carried by the save.
+    void setHardcore(bool hardcore) { m_hardcore = hardcore; }
+    [[nodiscard]] bool hardcore() const { return m_hardcore; }
+    // True once after a hardcore death; the caller deletes the save file.
+    [[nodiscard]] bool consumeHardcoreDeath()
+    {
+        const bool pending = m_hardcoreDeathPending;
+        m_hardcoreDeathPending = false;
+        return pending;
+    }
 
     [[nodiscard]] const sol::sim::Galaxy& galaxy() const { return m_galaxy; }
     [[nodiscard]] std::uint32_t currentSystemIndex() const { return m_currentSystem; }
@@ -387,6 +437,16 @@ private:
 
     void applyShipDef(std::uint32_t entityIndex, const sol::assets::ShipDef& def,
                       const sol::assets::DefDatabase& defs);
+    // The ship's base def with its fit and crew resolved (Phase 8a); falls
+    // back to the base def when ids have gone missing from the data.
+    [[nodiscard]] sol::assets::ShipDef resolvedShipDef(const OwnedShip& ship) const;
+    // Re-applies the active ship's resolved def to the player entity
+    // (refit/switch/def-reload; resets defenses like any def application).
+    void applyActiveLoadout();
+    // Shared refusal path for outfitting mutations.
+    bool refuse(const std::string& reason, std::string* outError) const;
+    // Resets the fleet to the single new-game starter ship.
+    void resetFleetToStarter();
     void handleShipDestroyed(std::uint32_t entityIndex);
     [[nodiscard]] std::uint32_t playerEntityIndex() const
     {
@@ -411,6 +471,15 @@ private:
     std::vector<sol::sim::CollisionBody> m_collisionBodies;
     std::vector<std::uint32_t> m_collisionShipIndices;
     std::vector<sol::sim::Contact> m_contacts;
+
+    // Fleet (Phase 8a): index 0 exists from generateUniverse on; m_defs is
+    // the database applyDefs last saw (owned by GameContent, outlives us).
+    std::vector<OwnedShip> m_fleet;
+    std::size_t m_activeShip = 0;
+    const sol::assets::DefDatabase* m_defs = nullptr;
+    bool m_hardcore = false;
+    bool m_hardcoreDeathPending = false;
+    std::uint32_t m_startSystem = 0; // new-game system; hardcore respawn
 
     std::uint64_t m_universeSeed = 0;
     sol::sim::Galaxy m_galaxy;

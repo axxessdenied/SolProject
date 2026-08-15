@@ -231,7 +231,7 @@ Implements GDD §8 Outfitting **[core]** plus the two decisions that live here: 
 
 **Death (decisions/007).** Default: respawn at last dock in the same ship + fit + crew, cargo lost, deductible = fixed fraction of (hull price + fitted module and weapon prices) charged, clamped at zero credits. Hardcore: new-game flag (`--hardcore`), stored in the save header; death deletes the save and starts a fresh run. Deductible fraction and resale fraction are game-side constants for now (tuning levers; move to data when a settings def exists).
 
-**UI & console.** The docked ImGui screen grows Shipyard / Outfitting / Crew tabs beside Trade (still the provisional dev UI — the custom game UI is its own Phase 8 item). Console API: `sol.modules`, `sol.fit`, `sol.buy_module`, `sol.sell_module`, `sol.buy_weapon`, `sol.buy_ship`, `sol.sell_ship`, `sol.ships`, `sol.select_ship`, `sol.hire_crew`, `sol.fire_crew`, `sol.insurance_quote`.
+**UI & console.** The docked ImGui screen grows Shipyard / Outfitting / Crew tabs beside Trade (still the provisional dev UI — the custom game UI is its own Phase 8 item). Console API: `sol.modules`, `sol.crew_defs`, `sol.fit`, `sol.fleet`, `sol.buy_module`, `sol.sell_module`, `sol.buy_weapon`, `sol.buy_ship`, `sol.sell_ship`, `sol.select_ship` (fleet indices 1-based), `sol.hire_crew`, `sol.fire_crew`, `sol.insurance_quote`.
 
 **Save v4.** Header gains the hardcore flag; body gains the fleet (active index; per ship: def id, weapon id, module ids, crew ids, stored system/station). On load the active fit re-resolves and re-applies, so def edits between sessions land coherently (same rule as hot-reload).
 

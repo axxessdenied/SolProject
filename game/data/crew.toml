@@ -1,0 +1,26 @@
+# Hireable crew (decisions/006: trivial passive bonuses). One-time hire fee;
+# bonuses apply while aboard; each occupies one berth. Same modifier keys as
+# modules, but no mass or power_draw.
+
+[[crew]]
+id = "sol.crew_engineer"
+name = "Engineer"
+role = "Engineer"
+price = 1500.0
+shield_regen_mul = 1.15
+weapon_recharge_mul = 1.1
+
+[[crew]]
+id = "sol.crew_navigator"
+name = "Navigator"
+role = "Navigator"
+price = 1200.0
+cruise_speed_scale_mul = 1.1
+turn_rate_mul = 1.05
+
+[[crew]]
+id = "sol.crew_quartermaster"
+name = "Quartermaster"
+role = "Quartermaster"
+price = 1000.0
+cargo_mul = 1.1

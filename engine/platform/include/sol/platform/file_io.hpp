@@ -24,6 +24,10 @@ namespace sol::platform {
 // Creates the directory and any missing parents; true if it exists afterwards.
 [[nodiscard]] bool createDirectories(const char* path);
 
+// Deletes a regular file; true if it no longer exists afterwards (including
+// when it was already missing).
+[[nodiscard]] bool deleteFile(const char* path);
+
 // Runs a command line synchronously; returns the process exit code, or -1
 // if the process could not be started.
 [[nodiscard]] int runProcess(const char* commandLine);

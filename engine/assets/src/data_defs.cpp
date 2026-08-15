@@ -15,6 +15,14 @@ using core::TomlValue;
 
 namespace {
 
+// TOML key stems for the FitStat enum, in enum order (Phase 8a modifiers:
+// "<stem>_add" / "<stem>_mul" on modules and crew).
+constexpr const char* kFitStatKeys[kFitStatCount] = {
+    "forward_accel",  "reverse_accel", "lateral_accel",   "vertical_accel", "max_speed",
+    "turn_rate",      "cruise_speed_scale", "shield_strength", "shield_regen", "armor",
+    "hull",           "weapon_capacitor", "weapon_recharge", "cargo",
+};
+
 // Accumulates the first error and short-circuits later reads.
 struct FieldReader
 {
@@ -127,12 +135,44 @@ struct FieldReader
         }
     }
 
+    void optionalUint(const char* key, std::uint32_t& out)
+    {
+        const TomlValue* value = table.find(key);
+        if (value == nullptr) {
+            return;
+        }
+        if (!value->isInteger() || value->asInteger() < 0) {
+            fail(std::string("key '") + key + "' must be a non-negative integer");
+            return;
+        }
+        out = static_cast<std::uint32_t>(value->asInteger());
+    }
+
+    // Reads every "<stat>_add"/"<stat>_mul" modifier key (Phase 8a).
+    void optionalModifiers(StatModifiers& out)
+    {
+        for (std::size_t i = 0; i < kFitStatCount; ++i) {
+            const std::string addKey = std::string(kFitStatKeys[i]) + "_add";
+            const std::string mulKey = std::string(kFitStatKeys[i]) + "_mul";
+            optionalFloat(addKey.c_str(), out.add[i]);
+            optionalFloat(mulKey.c_str(), out.mul[i]);
+        }
+    }
+
     // Strict schema: any key outside the allowed set is an error.
-    void rejectUnknownKeys(std::initializer_list<const char*> allowed)
+    // allowModifiers additionally accepts the stat modifier vocabulary.
+    void rejectUnknownKeys(std::initializer_list<const char*> allowed,
+                           bool allowModifiers = false)
     {
         for (const auto& [key, value] : table.members()) {
-            const bool known = std::any_of(allowed.begin(), allowed.end(),
-                                           [&](const char* k) { return key == k; });
+            bool known = std::any_of(allowed.begin(), allowed.end(),
+                                     [&](const char* k) { return key == k; });
+            if (!known && allowModifiers) {
+                for (std::size_t i = 0; i < kFitStatCount && !known; ++i) {
+                    known = key == std::string(kFitStatKeys[i]) + "_add" ||
+                            key == std::string(kFitStatKeys[i]) + "_mul";
+                }
+            }
             if (!known) {
                 fail("unknown key '" + key + "'");
                 return;
@@ -194,14 +234,28 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     reader.optionalString("weapon", def.weaponId);
     reader.optionalFloat("cargo", def.cargoCapacity);
 
+    reader.optionalFloat("price", def.price);
+    reader.optionalFloat("mass", def.mass);
+    reader.optionalFloat("power_output", def.powerOutput);
+    reader.optionalUint("slots_shield", def.slotsShield);
+    reader.optionalUint("slots_engine", def.slotsEngine);
+    reader.optionalUint("slots_cargo", def.slotsCargo);
+    reader.optionalUint("slots_utility", def.slotsUtility);
+    reader.optionalUint("crew_berths", def.crewBerths);
+
     reader.rejectUnknownKeys({"id", "name", "model", "scale", "forward_accel", "reverse_accel",
                               "lateral_accel", "vertical_accel", "max_speed", "max_turn_rate",
                               "angular_accel", "boost_accel_scale", "boost_speed_scale",
                               "cruise_speed_scale", "cruise_accel_scale", "shield_strength",
                               "shield_regen", "shield_regen_delay", "armor", "hull",
-                              "weapon_capacitor", "weapon_recharge", "weapon", "cargo"});
+                              "weapon_capacitor", "weapon_recharge", "weapon", "cargo", "price",
+                              "mass", "power_output", "slots_shield", "slots_engine",
+                              "slots_cargo", "slots_utility", "crew_berths"});
     if (!reader.failed && def.scale <= 0.0f) {
         reader.fail("'scale' must be > 0");
+    }
+    if (!reader.failed && def.mass <= 0.0f) {
+        reader.fail("'mass' must be > 0");
     }
     if (reader.failed) {
         return false;
@@ -228,9 +282,10 @@ bool parseWeapon(const TomlValue& table, const char* sourceName, std::vector<Wea
     reader.optionalFloat("range", def.range);
     reader.optionalFloat("projectile_speed", def.projectileSpeed);
     reader.optionalFloat("energy_cost", def.energyCost);
+    reader.optionalFloat("price", def.price);
 
     reader.rejectUnknownKeys({"id", "name", "kind", "damage", "rate_of_fire", "range",
-                              "projectile_speed", "energy_cost"});
+                              "projectile_speed", "energy_cost", "price"});
     if (!reader.failed && def.kind != "projectile" && def.kind != "hitscan") {
         reader.fail("'kind' must be \"projectile\" or \"hitscan\"");
     }
@@ -320,6 +375,74 @@ bool parseStation(const TomlValue& table, const char* sourceName, std::vector<St
     return true;
 }
 
+bool parseModule(const TomlValue& table, const char* sourceName, std::vector<ModuleDef>& out,
+                 std::string* outError)
+{
+    ModuleDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": module '" + def.id + "'";
+    }
+    reader.requireString("name", def.name);
+    std::string slot;
+    reader.requireString("slot", slot);
+    reader.optionalFloat("price", def.price);
+    reader.optionalFloat("mass", def.mass);
+    reader.optionalFloat("power_draw", def.powerDraw);
+    reader.optionalModifiers(def.modifiers);
+
+    reader.rejectUnknownKeys({"id", "name", "slot", "price", "mass", "power_draw"},
+                             /*allowModifiers=*/true);
+    if (!reader.failed) {
+        if (slot == "shield") {
+            def.slot = ModuleSlot::Shield;
+        } else if (slot == "engine") {
+            def.slot = ModuleSlot::Engine;
+        } else if (slot == "cargo") {
+            def.slot = ModuleSlot::Cargo;
+        } else if (slot == "utility") {
+            def.slot = ModuleSlot::Utility;
+        } else {
+            reader.fail("'slot' must be \"shield\", \"engine\", \"cargo\", or \"utility\"");
+        }
+    }
+    if (!reader.failed && (def.mass < 0.0f || def.powerDraw < 0.0f)) {
+        reader.fail("'mass' and 'power_draw' must be >= 0");
+    }
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
+bool parseCrew(const TomlValue& table, const char* sourceName, std::vector<CrewDef>& out,
+               std::string* outError)
+{
+    CrewDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": crew '" + def.id + "'";
+    }
+    reader.requireString("name", def.name);
+    reader.requireString("role", def.role);
+    reader.optionalFloat("price", def.price);
+    reader.optionalModifiers(def.modifiers);
+
+    reader.rejectUnknownKeys({"id", "name", "role", "price"}, /*allowModifiers=*/true);
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
 } // namespace
 
 void DefDatabase::clear()
@@ -329,6 +452,8 @@ void DefDatabase::clear()
     m_factions.clear();
     m_commodities.clear();
     m_stations.clear();
+    m_modules.clear();
+    m_crew.clear();
 }
 
 bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* sourceName,
@@ -349,6 +474,8 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     std::vector<FactionDef> factions = m_factions;
     std::vector<CommodityDef> commodities = m_commodities;
     std::vector<StationDef> stations = m_stations;
+    std::vector<ModuleDef> modules = m_modules;
+    std::vector<CrewDef> crew = m_crew;
 
     for (const auto& [key, value] : root.members()) {
         bool (*parse)(const TomlValue&, const char*, void*, std::string*) = nullptr;
@@ -378,10 +505,20 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
                 return parseStation(t, s, *static_cast<std::vector<StationDef>*>(v), e);
             };
             target = &stations;
+        } else if (key == "module") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseModule(t, s, *static_cast<std::vector<ModuleDef>*>(v), e);
+            };
+            target = &modules;
+        } else if (key == "crew") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseCrew(t, s, *static_cast<std::vector<CrewDef>*>(v), e);
+            };
+            target = &crew;
         } else {
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
-                            "' (expected ship, weapon, faction, commodity, or station)";
+                            "' (expected ship, weapon, faction, commodity, station, module, or crew)";
             }
             return false;
         }
@@ -405,6 +542,8 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     m_factions = std::move(factions);
     m_commodities = std::move(commodities);
     m_stations = std::move(stations);
+    m_modules = std::move(modules);
+    m_crew = std::move(crew);
     return true;
 }
 
@@ -464,6 +603,20 @@ const StationDef* DefDatabase::findStation(const char* id) const
     const auto it = std::find_if(m_stations.begin(), m_stations.end(),
                                  [&](const StationDef& d) { return d.id == id; });
     return it != m_stations.end() ? &*it : nullptr;
+}
+
+const ModuleDef* DefDatabase::findModule(const char* id) const
+{
+    const auto it = std::find_if(m_modules.begin(), m_modules.end(),
+                                 [&](const ModuleDef& d) { return d.id == id; });
+    return it != m_modules.end() ? &*it : nullptr;
+}
+
+const CrewDef* DefDatabase::findCrew(const char* id) const
+{
+    const auto it = std::find_if(m_crew.begin(), m_crew.end(),
+                                 [&](const CrewDef& d) { return d.id == id; });
+    return it != m_crew.end() ? &*it : nullptr;
 }
 
 } // namespace sol::assets

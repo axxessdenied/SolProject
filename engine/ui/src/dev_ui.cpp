@@ -140,7 +140,7 @@ void DevUi::shutdown()
     m_initialized = false;
 }
 
-void DevUi::beginFrame(const OverlayStats& stats, const FlightHud& hud, TradePanel* trade)
+void DevUi::beginFrame(const OverlayStats& stats, const FlightHud& hud, StationPanel* station)
 {
     ImGui_ImplVulkan_NewFrame();
     devUiPlatformNewFrame();
@@ -151,23 +151,182 @@ void DevUi::beginFrame(const OverlayStats& stats, const FlightHud& hud, TradePan
     if (hud.active) {
         buildFlightHud(hud);
     }
-    if (trade != nullptr) {
-        buildTradePanel(*trade);
+    if (station != nullptr) {
+        buildStationPanel(*station);
     }
 }
 
-void DevUi::buildTradePanel(TradePanel& trade)
+void DevUi::buildStationPanel(StationPanel& station)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos({viewport->WorkSize.x - 12.0f, 60.0f}, ImGuiCond_FirstUseEver,
                             {1.0f, 0.0f});
-    ImGui::SetNextWindowSize({460.0f, 0.0f}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({520.0f, 0.0f}, ImGuiCond_FirstUseEver);
     char title[128];
-    std::snprintf(title, sizeof(title), "Trade - %s###trade", trade.stationName);
+    std::snprintf(title, sizeof(title), "Station - %s###station", station.trade.stationName);
     if (ImGui::Begin(title, nullptr, ImGuiWindowFlags_NoCollapse)) {
-        ImGui::Text("Credits %.0f", trade.credits);
+        ImGui::Text("Credits %.0f", station.trade.credits);
         ImGui::SameLine(0.0f, 24.0f);
-        ImGui::Text("Cargo %.0f / %.0f", trade.cargoUsed, trade.cargoCapacity);
+        ImGui::Text("Cargo %.0f / %.0f", station.trade.cargoUsed, station.trade.cargoCapacity);
+        if (ImGui::BeginTabBar("station_tabs")) {
+            if (ImGui::BeginTabItem("Trade")) {
+                buildTradeTab(station.trade);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Outfitting")) {
+                buildOutfittingTab(station);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Shipyard")) {
+                buildShipyardTab(station);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Crew")) {
+                buildCrewTab(station);
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+    }
+    ImGui::End();
+}
+
+namespace {
+
+// A catalog table: Name | Detail | Price | <action button>. Returns the
+// clicked row, or -1. fitted > 0 renders a count tag after the name.
+int outfitCatalog(const char* tableId, std::span<const OutfitRow> rows, const char* action)
+{
+    int clicked = -1;
+    if (rows.empty()) {
+        ImGui::TextDisabled("(nothing available)");
+        return clicked;
+    }
+    if (ImGui::BeginTable(tableId, 4,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+        ImGui::TableSetupColumn("Detail", ImGuiTableColumnFlags_WidthStretch, 2.2f);
+        ImGui::TableSetupColumn("Price", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        ImGui::TableHeadersRow();
+        for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
+            const OutfitRow& item = rows[static_cast<std::size_t>(row)];
+            ImGui::TableNextRow();
+            ImGui::PushID(row);
+            ImGui::TableNextColumn();
+            if (item.fitted > 0) {
+                ImGui::Text("%s (x%d)", item.name, item.fitted);
+            } else {
+                ImGui::TextUnformatted(item.name);
+            }
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(item.detail);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.0f", item.price);
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton(action)) {
+                clicked = row;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    return clicked;
+}
+
+} // namespace
+
+void DevUi::buildOutfittingTab(StationPanel& station)
+{
+    ImGui::TextWrapped("%s", station.fitSummary);
+    ImGui::TextDisabled("Insurance deductible at current fit: %.0f cr", station.deductible);
+    ImGui::SeparatorText("Modules (Sell removes one fitted instance at resale)");
+    if (const int row = outfitCatalog("modules", station.modules, "Buy"); row >= 0) {
+        station.action = {StationAction::Kind::BuyModule, station.modules[row].id, row};
+    }
+    // Selling goes through the same catalog rows: one Sell button per fitted id.
+    for (int row = 0; row < static_cast<int>(station.modules.size()); ++row) {
+        const OutfitRow& item = station.modules[static_cast<std::size_t>(row)];
+        if (item.fitted <= 0) {
+            continue;
+        }
+        ImGui::PushID(1000 + row);
+        if (ImGui::SmallButton("Sell")) {
+            station.action = {StationAction::Kind::SellModule, item.id, row};
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s (x%d fitted)", item.name, item.fitted);
+        ImGui::PopID();
+    }
+    ImGui::SeparatorText("Weapon mount (swap sells the old weapon at resale)");
+    if (const int row = outfitCatalog("weapons", station.weapons, "Mount"); row >= 0) {
+        station.action = {StationAction::Kind::BuyWeapon, station.weapons[row].id, row};
+    }
+}
+
+void DevUi::buildShipyardTab(StationPanel& station)
+{
+    ImGui::SeparatorText("Your fleet");
+    if (ImGui::BeginTable("fleet", 3,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Ship", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableHeadersRow();
+        for (int row = 0; row < static_cast<int>(station.fleet.size()); ++row) {
+            const FleetRow& ship = station.fleet[static_cast<std::size_t>(row)];
+            ImGui::TableNextRow();
+            ImGui::PushID(row);
+            ImGui::TableNextColumn();
+            ImGui::Text("%s%s", ship.name,
+                        ship.active ? " (active)" : ship.storedHere ? "" : " (elsewhere)");
+            ImGui::TableNextColumn();
+            ImGui::Text("%.0f", ship.value);
+            ImGui::TableNextColumn();
+            if (!ship.active && ship.storedHere) {
+                if (ImGui::SmallButton("Switch")) {
+                    station.action = {StationAction::Kind::SwitchShip, "", row};
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Sell")) {
+                    station.action = {StationAction::Kind::SellShip, "", row};
+                }
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::SeparatorText("For sale (new ships store here until you switch)");
+    if (const int row = outfitCatalog("ships", station.shipCatalog, "Buy"); row >= 0) {
+        station.action = {StationAction::Kind::BuyShip, station.shipCatalog[row].id, row};
+    }
+}
+
+void DevUi::buildCrewTab(StationPanel& station)
+{
+    ImGui::SeparatorText("Aboard");
+    if (station.crewAboard.empty()) {
+        ImGui::TextDisabled("(no crew aboard)");
+    }
+    for (int row = 0; row < static_cast<int>(station.crewAboard.size()); ++row) {
+        const OutfitRow& member = station.crewAboard[static_cast<std::size_t>(row)];
+        ImGui::PushID(row);
+        if (ImGui::SmallButton("Dismiss")) {
+            station.action = {StationAction::Kind::FireCrew, member.id, row};
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s - %s", member.name, member.detail);
+        ImGui::PopID();
+    }
+    ImGui::SeparatorText("For hire (one-time fee, no refund)");
+    if (const int row = outfitCatalog("crew", station.crewCatalog, "Hire"); row >= 0) {
+        station.action = {StationAction::Kind::HireCrew, station.crewCatalog[row].id, row};
+    }
+}
+
+void DevUi::buildTradeTab(TradePanel& trade)
+{
+    {
         if (ImGui::BeginTable("goods", 6,
                               ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("Commodity", ImGuiTableColumnFlags_WidthStretch, 2.0f);
@@ -211,7 +370,6 @@ void DevUi::buildTradePanel(TradePanel& trade)
         }
         ImGui::TextDisabled("Prices move with stock; NPC traders share this market.");
     }
-    ImGui::End();
 }
 
 void DevUi::buildWindows(const OverlayStats& stats)

@@ -1,7 +1,7 @@
 #pragma once
 
-// Human-authored game data definitions (engine plan Phase 5): ships, weapons
-// (defs only until Phase 6), and factions, parsed from TOML and validated
+// Human-authored game data definitions (engine plan Phase 5): ships, weapons,
+// factions, commodities, stations, modules, and crew, parsed from TOML and validated
 // against a strict schema (unknown or mistyped keys are errors, so typos die
 // at load time, not silently at play time). Documents merge in layer order —
 // a def re-using an earlier id replaces it wholesale, which is what gives mod
@@ -10,11 +10,52 @@
 // Defs use flat snake_case keys inside [[ship]] / [[weapon]] / [[faction]]
 // array-of-table elements; see game/data/ for the base-game examples.
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace sol::assets {
+
+// The stats outfitting modifiers may touch (engine plan Phase 8a). TurnRate
+// applies uniformly to all three max_turn_rate axes.
+enum class FitStat : std::uint32_t
+{
+    ForwardAccel = 0,
+    ReverseAccel,
+    LateralAccel,
+    VerticalAccel,
+    MaxSpeed,
+    TurnRate,
+    CruiseSpeedScale,
+    ShieldStrength,
+    ShieldRegen,
+    Armor,
+    Hull,
+    WeaponCapacitor,
+    WeaponRecharge,
+    Cargo,
+    Count,
+};
+
+inline constexpr std::size_t kFitStatCount = static_cast<std::size_t>(FitStat::Count);
+
+// Shared modifier vocabulary for modules and crew ("<stat>_add"/"<stat>_mul"
+// def keys). Resolution is order-independent: adds sum onto the base stat,
+// then muls multiply the result (see loadout.hpp).
+struct StatModifiers
+{
+    static constexpr std::array<float, kFitStatCount> ones()
+    {
+        std::array<float, kFitStatCount> a{};
+        a.fill(1.0f);
+        return a;
+    }
+
+    std::array<float, kFitStatCount> add{};
+    std::array<float, kFitStatCount> mul = ones();
+};
 
 // Mirrors sim::ShipTuning field-for-field as plain floats (assets sits below
 // sim in the layering, so it cannot include the sim type; the game converts).
@@ -61,7 +102,54 @@ struct ShipDef
     ShipPowerTuning power;
     std::string weaponId;        // weapon def id; empty = unarmed
     float cargoCapacity = 50.0f; // trade goods, units
-    std::string source;          // document that last defined this id (diagnostics)
+    // Outfitting (engine plan Phase 8a): hull price, fitting budgets, slots.
+    float price = 10'000.0f;
+    float mass = 10'000.0f;    // kg; module mass dilutes accelerations
+    float powerOutput = 10.0f; // fit budget: sum of module power_draw
+    std::uint32_t slotsShield = 1;
+    std::uint32_t slotsEngine = 1;
+    std::uint32_t slotsCargo = 1;
+    std::uint32_t slotsUtility = 1;
+    std::uint32_t crewBerths = 1;
+    std::string source; // document that last defined this id (diagnostics)
+};
+
+enum class ModuleSlot : std::uint32_t
+{
+    Shield = 0,
+    Engine,
+    Cargo,
+    Utility,
+    Count,
+};
+
+inline constexpr std::size_t kModuleSlotCount = static_cast<std::size_t>(ModuleSlot::Count);
+
+// An outfitting module: occupies one typed slot, costs power from the ship's
+// budget, adds mass, and modifies stats (engine plan Phase 8a).
+struct ModuleDef
+{
+    std::string id;
+    std::string name;
+    ModuleSlot slot = ModuleSlot::Utility;
+    float price = 100.0f;
+    float mass = 0.0f;      // kg
+    float powerDraw = 0.0f; // against ShipDef::powerOutput
+    StatModifiers modifiers;
+    std::string source;
+};
+
+// A hireable crew member (decisions/006: trivial passive bonuses): occupies a
+// berth, costs a one-time hire fee, and modifies stats like a module without
+// mass or power draw.
+struct CrewDef
+{
+    std::string id;
+    std::string name;
+    std::string role; // display flavor, e.g. "Engineer"
+    float price = 200.0f;
+    StatModifiers modifiers;
+    std::string source;
 };
 
 struct WeaponDef
@@ -74,6 +162,7 @@ struct WeaponDef
     float range = 1'000.0f;         // meters
     float projectileSpeed = 0.0f;   // m/s; 0 for hitscan
     float energyCost = 10.0f;       // capacitor draw per shot
+    float price = 500.0f;           // shipyard price (Phase 8a outfitting)
     std::string source;
 };
 
@@ -136,6 +225,8 @@ public:
     [[nodiscard]] const FactionDef* findFaction(const char* id) const;
     [[nodiscard]] const CommodityDef* findCommodity(const char* id) const;
     [[nodiscard]] const StationDef* findStation(const char* id) const;
+    [[nodiscard]] const ModuleDef* findModule(const char* id) const;
+    [[nodiscard]] const CrewDef* findCrew(const char* id) const;
 
     // First-definition order; later layers replace elements in place, so
     // indices stay stable across a reload that only edits values.
@@ -144,6 +235,8 @@ public:
     [[nodiscard]] const std::vector<FactionDef>& factions() const { return m_factions; }
     [[nodiscard]] const std::vector<CommodityDef>& commodities() const { return m_commodities; }
     [[nodiscard]] const std::vector<StationDef>& stations() const { return m_stations; }
+    [[nodiscard]] const std::vector<ModuleDef>& modules() const { return m_modules; }
+    [[nodiscard]] const std::vector<CrewDef>& crew() const { return m_crew; }
 
 private:
     std::vector<ShipDef> m_ships;
@@ -151,6 +244,8 @@ private:
     std::vector<FactionDef> m_factions;
     std::vector<CommodityDef> m_commodities;
     std::vector<StationDef> m_stations;
+    std::vector<ModuleDef> m_modules;
+    std::vector<CrewDef> m_crew;
 };
 
 } // namespace sol::assets

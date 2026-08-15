@@ -1,5 +1,6 @@
 #include "space_world.hpp"
 
+#include "sol/assets/loadout.hpp"
 #include "sol/core/log.hpp"
 #include "sol/core/serialize.hpp"
 #include "sol/sim/collision.hpp"
@@ -30,7 +31,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 3; // v3: economy + player credits/cargo
+constexpr std::uint32_t kSaveVersion = 4; // v4: hardcore flag + fleet/fits/crew
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -170,6 +171,8 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
             break;
         }
     }
+    m_startSystem = start;
+    resetFleetToStarter();
     loadSystem(start, kNoIndex);
     SOL_LOG_INFO("universe: seed %llu, %zu systems, %zu lanes; starting in '%s'",
                  static_cast<unsigned long long>(m_universeSeed), m_galaxy.systems.size(),
@@ -504,8 +507,11 @@ void SpaceWorld::playerBalancePips()
 
 void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
 {
-    const assets::ShipDef* playerDef = defs.findShip(kPlayerShipDefId);
-    if (playerDef != nullptr) {
+    m_defs = &defs;
+    if (!m_fleet.empty()) {
+        applyActiveLoadout();
+    } else if (const assets::ShipDef* playerDef = defs.findShip(kPlayerShipDefId)) {
+        // Pre-universe (fleet not initialized yet): raw starter def.
         applyShipDef(playerEntityIndex(), *playerDef, defs);
     } else {
         SOL_LOG_WARN("player ship def '%s' missing; keeping current tuning", kPlayerShipDefId);
@@ -516,6 +522,319 @@ void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
             applyShipDef(spawned.entity.index, *def, defs);
         }
     }
+}
+
+// --- Outfitting & fleet (Phase 8a) ---
+
+namespace {
+
+[[nodiscard]] std::vector<const assets::ModuleDef*> fitModules(const assets::DefDatabase& defs,
+                                                               const OwnedShip& ship)
+{
+    std::vector<const assets::ModuleDef*> modules;
+    modules.reserve(ship.moduleIds.size());
+    for (const std::string& id : ship.moduleIds) {
+        const assets::ModuleDef* module = defs.findModule(id.c_str());
+        if (module == nullptr) {
+            SOL_LOG_WARN("fit: module def '%s' missing; ignoring", id.c_str());
+        }
+        modules.push_back(module); // nulls are skipped by the loadout math
+    }
+    return modules;
+}
+
+[[nodiscard]] std::vector<const assets::CrewDef*> fitCrew(const assets::DefDatabase& defs,
+                                                          const OwnedShip& ship)
+{
+    std::vector<const assets::CrewDef*> crew;
+    crew.reserve(ship.crewIds.size());
+    for (const std::string& id : ship.crewIds) {
+        const assets::CrewDef* member = defs.findCrew(id.c_str());
+        if (member == nullptr) {
+            SOL_LOG_WARN("fit: crew def '%s' missing; ignoring", id.c_str());
+        }
+        crew.push_back(member);
+    }
+    return crew;
+}
+
+} // namespace
+
+void SpaceWorld::resetFleetToStarter()
+{
+    m_fleet.clear();
+    m_activeShip = 0;
+    OwnedShip starter{.defId = kPlayerShipDefId};
+    if (m_defs != nullptr) {
+        if (const assets::ShipDef* def = m_defs->findShip(kPlayerShipDefId)) {
+            starter.weaponId = def->weaponId;
+        }
+    }
+    m_fleet.push_back(std::move(starter));
+}
+
+assets::ShipDef SpaceWorld::resolvedShipDef(const OwnedShip& ship) const
+{
+    if (m_defs == nullptr) {
+        return assets::ShipDef{.id = ship.defId};
+    }
+    const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
+    if (base == nullptr) {
+        SOL_LOG_WARN("fleet: ship def '%s' missing; using defaults", ship.defId.c_str());
+        return assets::ShipDef{.id = ship.defId};
+    }
+    const std::vector<const assets::ModuleDef*> modules = fitModules(*m_defs, ship);
+    const std::vector<const assets::CrewDef*> crew = fitCrew(*m_defs, ship);
+    assets::ShipDef effective = assets::resolveLoadout(*base, modules, crew);
+    effective.weaponId = ship.weaponId;
+    return effective;
+}
+
+void SpaceWorld::applyActiveLoadout()
+{
+    if (m_defs == nullptr || m_fleet.empty()) {
+        return;
+    }
+    applyShipDef(playerEntityIndex(), resolvedShipDef(activeShip()), *m_defs);
+}
+
+bool SpaceWorld::refuse(const std::string& reason, std::string* outError) const
+{
+    SOL_LOG_WARN("outfitting: %s", reason.c_str());
+    if (outError != nullptr) {
+        *outError = reason;
+    }
+    return false;
+}
+
+double SpaceWorld::shipValue(const OwnedShip& ship) const
+{
+    if (m_defs == nullptr) {
+        return 0.0;
+    }
+    double value = 0.0;
+    if (const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str())) {
+        value += base->price;
+    }
+    for (const std::string& id : ship.moduleIds) {
+        if (const assets::ModuleDef* module = m_defs->findModule(id.c_str())) {
+            value += module->price;
+        }
+    }
+    if (!ship.weaponId.empty()) {
+        if (const assets::WeaponDef* weapon = m_defs->findWeapon(ship.weaponId.c_str())) {
+            value += weapon->price;
+        }
+    }
+    return value;
+}
+
+bool SpaceWorld::buyModule(const char* moduleId, std::string* outError)
+{
+    if (!isDocked() || m_defs == nullptr || m_fleet.empty()) {
+        return refuse("must be docked to refit", outError);
+    }
+    const assets::ModuleDef* module = m_defs->findModule(moduleId);
+    if (module == nullptr) {
+        return refuse(std::string("no module def '") + moduleId + "'", outError);
+    }
+    OwnedShip& ship = m_fleet[m_activeShip];
+    const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
+    if (base == nullptr) {
+        return refuse("active ship def '" + ship.defId + "' missing", outError);
+    }
+    std::vector<const assets::ModuleDef*> modules = fitModules(*m_defs, ship);
+    modules.push_back(module);
+    std::string reason;
+    if (!assets::validateLoadout(*base, modules, fitCrew(*m_defs, ship), &reason)) {
+        return refuse(reason, outError);
+    }
+    if (m_playerCredits < module->price) {
+        return refuse("insufficient credits", outError);
+    }
+    m_playerCredits -= module->price;
+    ship.moduleIds.push_back(module->id);
+    applyActiveLoadout();
+    SOL_LOG_INFO("fitted '%s' (-%.0f cr)", module->name.c_str(),
+                 static_cast<double>(module->price));
+    return true;
+}
+
+bool SpaceWorld::sellModule(const char* moduleId, std::string* outError)
+{
+    if (!isDocked() || m_fleet.empty()) {
+        return refuse("must be docked to refit", outError);
+    }
+    OwnedShip& ship = m_fleet[m_activeShip];
+    const auto it = std::find(ship.moduleIds.begin(), ship.moduleIds.end(), moduleId);
+    if (it == ship.moduleIds.end()) {
+        return refuse(std::string("module '") + moduleId + "' is not fitted", outError);
+    }
+    // Refuse a removal that would strand cargo over the reduced capacity.
+    OwnedShip candidate = ship;
+    candidate.moduleIds.erase(candidate.moduleIds.begin() +
+                              (it - ship.moduleIds.begin()));
+    if (resolvedShipDef(candidate).cargoCapacity < playerCargoTotal()) {
+        return refuse("cargo hold would overflow; sell cargo first", outError);
+    }
+    double refund = 0.0;
+    if (m_defs != nullptr) {
+        if (const assets::ModuleDef* module = m_defs->findModule(moduleId)) {
+            refund = kResaleRate * module->price;
+        }
+    }
+    ship.moduleIds.erase(it);
+    m_playerCredits += refund;
+    applyActiveLoadout();
+    SOL_LOG_INFO("removed '%s' (+%.0f cr)", moduleId, refund);
+    return true;
+}
+
+bool SpaceWorld::buyWeapon(const char* weaponId, std::string* outError)
+{
+    if (!isDocked() || m_defs == nullptr || m_fleet.empty()) {
+        return refuse("must be docked to refit", outError);
+    }
+    const assets::WeaponDef* weapon = m_defs->findWeapon(weaponId);
+    if (weapon == nullptr) {
+        return refuse(std::string("no weapon def '") + weaponId + "'", outError);
+    }
+    OwnedShip& ship = m_fleet[m_activeShip];
+    if (ship.weaponId == weaponId) {
+        return refuse("already fitted", outError);
+    }
+    // The old weapon sells back at the resale rate in the same transaction.
+    double resale = 0.0;
+    if (!ship.weaponId.empty()) {
+        if (const assets::WeaponDef* old = m_defs->findWeapon(ship.weaponId.c_str())) {
+            resale = kResaleRate * old->price;
+        }
+    }
+    if (m_playerCredits + resale < weapon->price) {
+        return refuse("insufficient credits", outError);
+    }
+    m_playerCredits += resale - weapon->price;
+    ship.weaponId = weapon->id;
+    applyActiveLoadout();
+    SOL_LOG_INFO("mounted '%s' (net %.0f cr)", weapon->name.c_str(), resale - weapon->price);
+    return true;
+}
+
+bool SpaceWorld::buyShip(const char* shipDefId, std::string* outError)
+{
+    if (!isDocked() || m_defs == nullptr) {
+        return refuse("must be docked to buy ships", outError);
+    }
+    const assets::ShipDef* def = m_defs->findShip(shipDefId);
+    if (def == nullptr) {
+        return refuse(std::string("no ship def '") + shipDefId + "'", outError);
+    }
+    if (m_playerCredits < def->price) {
+        return refuse("insufficient credits", outError);
+    }
+    m_playerCredits -= def->price;
+    m_fleet.push_back(OwnedShip{.defId = def->id,
+                                .weaponId = def->weaponId,
+                                .storedSystem = m_currentSystem,
+                                .storedStation = m_dockedStation});
+    SOL_LOG_INFO("bought '%s' (-%.0f cr); stored at %s", def->name.c_str(),
+                 static_cast<double>(def->price), dockedStationName());
+    return true;
+}
+
+bool SpaceWorld::sellShip(std::size_t fleetIndex, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("must be docked to sell ships", outError);
+    }
+    if (fleetIndex >= m_fleet.size() || fleetIndex == m_activeShip) {
+        return refuse("can only sell a stored ship", outError);
+    }
+    const OwnedShip& ship = m_fleet[fleetIndex];
+    if (ship.storedSystem != m_currentSystem || ship.storedStation != m_dockedStation) {
+        return refuse("that ship is stored elsewhere", outError);
+    }
+    const double refund = kResaleRate * shipValue(ship);
+    SOL_LOG_INFO("sold '%s' (+%.0f cr)", ship.defId.c_str(), refund);
+    m_playerCredits += refund;
+    m_fleet.erase(m_fleet.begin() + static_cast<std::ptrdiff_t>(fleetIndex));
+    if (m_activeShip > fleetIndex) {
+        --m_activeShip;
+    }
+    return true;
+}
+
+bool SpaceWorld::switchShip(std::size_t fleetIndex, std::string* outError)
+{
+    if (!isDocked() || m_defs == nullptr) {
+        return refuse("must be docked to switch ships", outError);
+    }
+    if (fleetIndex >= m_fleet.size() || fleetIndex == m_activeShip) {
+        return refuse("pick a stored ship", outError);
+    }
+    OwnedShip& target = m_fleet[fleetIndex];
+    if (target.storedSystem != m_currentSystem || target.storedStation != m_dockedStation) {
+        return refuse("that ship is stored elsewhere", outError);
+    }
+    if (resolvedShipDef(target).cargoCapacity < playerCargoTotal()) {
+        return refuse("cargo would not fit that ship's hold", outError);
+    }
+    OwnedShip& current = m_fleet[m_activeShip];
+    current.storedSystem = m_currentSystem;
+    current.storedStation = m_dockedStation;
+    target.storedSystem = kNoIndex;
+    target.storedStation = kNoIndex;
+    m_activeShip = fleetIndex;
+    applyActiveLoadout();
+    SOL_LOG_INFO("now flying '%s'", m_fleet[m_activeShip].defId.c_str());
+    return true;
+}
+
+bool SpaceWorld::hireCrew(const char* crewId, std::string* outError)
+{
+    if (!isDocked() || m_defs == nullptr || m_fleet.empty()) {
+        return refuse("must be docked to hire crew", outError);
+    }
+    const assets::CrewDef* member = m_defs->findCrew(crewId);
+    if (member == nullptr) {
+        return refuse(std::string("no crew def '") + crewId + "'", outError);
+    }
+    OwnedShip& ship = m_fleet[m_activeShip];
+    const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
+    if (base == nullptr) {
+        return refuse("active ship def '" + ship.defId + "' missing", outError);
+    }
+    std::vector<const assets::CrewDef*> crew = fitCrew(*m_defs, ship);
+    crew.push_back(member);
+    std::string reason;
+    if (!assets::validateLoadout(*base, fitModules(*m_defs, ship), crew, &reason)) {
+        return refuse(reason, outError);
+    }
+    if (m_playerCredits < member->price) {
+        return refuse("insufficient credits", outError);
+    }
+    m_playerCredits -= member->price;
+    ship.crewIds.push_back(member->id);
+    applyActiveLoadout();
+    SOL_LOG_INFO("hired %s '%s' (-%.0f cr)", member->role.c_str(), member->name.c_str(),
+                 static_cast<double>(member->price));
+    return true;
+}
+
+bool SpaceWorld::fireCrew(const char* crewId, std::string* outError)
+{
+    if (!isDocked() || m_fleet.empty()) {
+        return refuse("must be docked to dismiss crew", outError);
+    }
+    OwnedShip& ship = m_fleet[m_activeShip];
+    const auto it = std::find(ship.crewIds.begin(), ship.crewIds.end(), crewId);
+    if (it == ship.crewIds.end()) {
+        return refuse(std::string("crew '") + crewId + "' is not aboard", outError);
+    }
+    ship.crewIds.erase(it); // hires are one-time fees: no refund
+    applyActiveLoadout();
+    SOL_LOG_INFO("dismissed '%s'", crewId);
+    return true;
 }
 
 void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& def,
@@ -1275,19 +1594,42 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex)
     m_combatEffects.spawnExplosion(m_registry.storage<Transform>().get(entityIndex).position,
                                    m_registry.storage<RenderShape>().get(entityIndex).scale.x);
     if (entityIndex == playerEntityIndex()) {
-        // GDD death rule: wake up docked at the last dock (insurance cost
-        // arrives with outfitting, Phase 8). Never docked yet: the system
-        // spawn point stands in. Cross-system respawn defers to end of tick.
-        if (m_lastDockSystem != kNoIndex && m_lastDockSystem != m_currentSystem) {
-            SOL_LOG_WARN("ship destroyed - waking at last dock in '%s'",
-                         m_galaxy.systems[m_lastDockSystem].name.c_str());
+        // Cargo is lost either way (decisions/007).
+        std::fill(m_playerCargo.begin(), m_playerCargo.end(), 0.0f);
+        if (m_hardcore) {
+            // Hardcore: the run is over — the caller deletes the save (see
+            // consumeHardcoreDeath) and a fresh run starts at the new-game
+            // system in the starter ship. The world itself keeps running.
+            SOL_LOG_WARN("ship destroyed - HARDCORE: run over; save will be deleted");
+            m_hardcoreDeathPending = true;
+            m_playerCredits = 1'000.0;
+            resetFleetToStarter();
+            m_lastDockSystem = kNoIndex;
+            m_lastDockStation = kNoIndex;
+            m_dockedStation = kNoIndex;
+            m_pendingRespawnSystem = m_startSystem;
+            applyActiveLoadout();
+        } else if (m_lastDockSystem != kNoIndex && m_lastDockSystem != m_currentSystem) {
+            // Default death rule: wake at the last dock, insurance deductible
+            // charged (never docked yet: the system spawn point stands in).
+            // Cross-system respawn defers to end of tick.
+            const double deductible = std::min(insuranceDeductible(), m_playerCredits);
+            m_playerCredits -= deductible;
+            SOL_LOG_WARN("ship destroyed - waking at last dock in '%s' (insurance %.0f cr)",
+                         m_galaxy.systems[m_lastDockSystem].name.c_str(), deductible);
             m_pendingRespawnSystem = m_lastDockSystem;
         } else if (m_lastDockSystem == m_currentSystem && m_lastDockStation != kNoIndex) {
-            SOL_LOG_WARN("ship destroyed - waking at the last dock");
+            const double deductible = std::min(insuranceDeductible(), m_playerCredits);
+            m_playerCredits -= deductible;
+            SOL_LOG_WARN("ship destroyed - waking at the last dock (insurance %.0f cr)",
+                         deductible);
             m_dockedStation = m_lastDockStation;
             m_playerSpawn = dockPoint(m_dockedStation);
         } else {
-            SOL_LOG_WARN("ship destroyed - respawning in %s", currentSystemName());
+            const double deductible = std::min(insuranceDeductible(), m_playerCredits);
+            m_playerCredits -= deductible;
+            SOL_LOG_WARN("ship destroyed - respawning in %s (insurance %.0f cr)",
+                         currentSystemName(), deductible);
         }
         Transform& transform = m_registry.storage<Transform>().get(entityIndex);
         transform = Transform{.position = m_playerSpawn, .previousPosition = m_playerSpawn};
@@ -1360,10 +1702,28 @@ bool SpaceWorld::saveTo(const char* path)
     writer.write(m_dockedStation);
     writer.write(m_lastDockSystem);
     writer.write(m_lastDockStation);
+    writer.write(static_cast<std::uint8_t>(m_hardcore ? 1 : 0));
     writer.write(m_playerCredits);
     writer.write(static_cast<std::uint32_t>(m_playerCargo.size()));
     for (const float units : m_playerCargo) {
         writer.write(units);
+    }
+    // Fleet (v4): fits and crew as def-id strings; stored location per ship.
+    writer.write(static_cast<std::uint32_t>(m_fleet.size()));
+    writer.write(static_cast<std::uint32_t>(m_activeShip));
+    for (const OwnedShip& ship : m_fleet) {
+        writer.writeString(ship.defId);
+        writer.writeString(ship.weaponId);
+        writer.write(static_cast<std::uint32_t>(ship.moduleIds.size()));
+        for (const std::string& id : ship.moduleIds) {
+            writer.writeString(id);
+        }
+        writer.write(static_cast<std::uint32_t>(ship.crewIds.size()));
+        for (const std::string& id : ship.crewIds) {
+            writer.writeString(id);
+        }
+        writer.write(ship.storedSystem);
+        writer.write(ship.storedStation);
     }
     m_economy.save(writer);
     makeSnapshotSchema().save(m_registry, writer);
@@ -1385,11 +1745,12 @@ bool SpaceWorld::loadFrom(const char* path)
     std::uint32_t dockedStation = 0;
     std::uint32_t lastDockSystem = 0;
     std::uint32_t lastDockStation = 0;
+    std::uint8_t hardcore = 0;
     if (!reader.read(magic) || magic != kSaveMagic || !reader.read(version) ||
         version != kSaveVersion || !reader.read(seed) || !reader.read(systemIndex) ||
         !reader.read(dockedStation) || !reader.read(lastDockSystem) ||
-        !reader.read(lastDockStation)) {
-        return false; // pre-galaxy or foreign save: rejected cleanly
+        !reader.read(lastDockStation) || !reader.read(hardcore)) {
+        return false; // pre-fleet or foreign save: rejected cleanly
     }
 
     // Same seed => same galaxy, so the galaxy itself regenerates instead of
@@ -1413,6 +1774,40 @@ bool SpaceWorld::loadFrom(const char* path)
     std::vector<float> cargo(cargoCount, 0.0f);
     for (float& units : cargo) {
         if (!reader.read(units)) {
+            return false;
+        }
+    }
+    // Fleet (v4).
+    std::uint32_t fleetCount = 0;
+    std::uint32_t activeIndex = 0;
+    if (!reader.read(fleetCount) || !reader.read(activeIndex) || fleetCount == 0 ||
+        activeIndex >= fleetCount) {
+        return false;
+    }
+    std::vector<OwnedShip> fleet(fleetCount);
+    for (OwnedShip& ship : fleet) {
+        std::uint32_t moduleCount = 0;
+        std::uint32_t crewCount = 0;
+        if (!reader.readString(ship.defId) || !reader.readString(ship.weaponId) ||
+            !reader.read(moduleCount)) {
+            return false;
+        }
+        ship.moduleIds.resize(moduleCount);
+        for (std::string& id : ship.moduleIds) {
+            if (!reader.readString(id)) {
+                return false;
+            }
+        }
+        if (!reader.read(crewCount)) {
+            return false;
+        }
+        ship.crewIds.resize(crewCount);
+        for (std::string& id : ship.crewIds) {
+            if (!reader.readString(id)) {
+                return false;
+            }
+        }
+        if (!reader.read(ship.storedSystem) || !reader.read(ship.storedStation)) {
             return false;
         }
     }
@@ -1442,6 +1837,26 @@ bool SpaceWorld::loadFrom(const char* path)
     m_thrusters.clear();
     m_playerCredits = credits;
     m_playerCargo = std::move(cargo);
+    m_hardcore = hardcore != 0;
+    m_hardcoreDeathPending = false;
+    m_fleet = std::move(fleet);
+    m_activeShip = activeIndex;
+    if (galaxyChanged) {
+        // Recompute the new-game anchor (hardcore respawn) for this galaxy.
+        m_startSystem = 0;
+        for (std::uint32_t i = 0; i < m_galaxy.systems.size(); ++i) {
+            if (m_galaxy.systems[i].region == sim::Region::Core &&
+                !m_galaxy.systems[i].stations.empty()) {
+                m_startSystem = i;
+                break;
+            }
+        }
+    }
+    // The ECS snapshot already carries the fitted tuning exactly; only the
+    // non-ECS cargo capacity derives from the fit and must be recomputed.
+    if (m_defs != nullptr && !m_fleet.empty()) {
+        m_playerCargoCapacity = resolvedShipDef(activeShip()).cargoCapacity;
+    }
 
     // The snapshot carries the system's statics; only the non-ECS side data
     // (celestials, targets, gates, spawn anchor) needs rebuilding.

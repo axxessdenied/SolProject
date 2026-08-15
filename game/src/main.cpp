@@ -4,6 +4,7 @@
 #include "shader_watcher.hpp"
 #include "ship_camera.hpp"
 #include "space_world.hpp"
+#include "station_ui.hpp"
 
 #include "sol/core/log.hpp"
 #include "sol/core/version.hpp"
@@ -23,6 +24,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -55,6 +57,17 @@ std::uint64_t parseUniverseSeed(int argc, char** argv)
         }
     }
     return kDefaultUniverseSeed;
+}
+
+// --hardcore: ironman mode (decisions/007) — death deletes the save.
+bool parseHardcore(int argc, char** argv)
+{
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--hardcore") == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // A gate accepts a jump inside this range (provisional until docking tuning).
@@ -212,6 +225,10 @@ int main(int argc, char** argv)
     sol::sim::FixedLoop simLoop(60.0);
     game::SpaceWorld world;
     world.spawn(parseUniverseSeed(argc, argv));
+    world.setHardcore(parseHardcore(argc, argv));
+    if (world.hardcore()) {
+        SOL_LOG_INFO("HARDCORE run: death deletes the save");
+    }
 
     // Phase 5 data-driven content: defs + Lua from the source tree in dev
     // builds (hot-reloadable), from the install layout otherwise.
@@ -238,6 +255,13 @@ int main(int argc, char** argv)
     std::vector<game::ParticleInstance> particleInstances;
     game::SceneInfo sceneInfo;
     std::vector<sol::ui::TradeRow> tradeRows;
+    std::vector<sol::ui::OutfitRow> moduleRows;
+    std::vector<sol::ui::OutfitRow> weaponRows;
+    std::vector<sol::ui::OutfitRow> crewCatalogRows;
+    std::vector<sol::ui::OutfitRow> crewAboardRows;
+    std::vector<sol::ui::OutfitRow> shipRows;
+    std::vector<sol::ui::FleetRow> fleetRows;
+    std::deque<std::string> stationText; // backs generated row text per frame
     SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).", world.entityCount(),
                  world.currentSystemName(), world.galaxy().systems.size());
 
@@ -428,6 +452,15 @@ int main(int argc, char** argv)
                            {1.0f, 0.8f, 0.3f, 1.0f});
         }
 
+        // Hardcore death (decisions/007): the save goes with the run.
+        if (world.consumeHardcoreDeath()) {
+            if (sol::platform::deleteFile(savePath.c_str())) {
+                SOL_LOG_WARN("hardcore death: save deleted (%s)", savePath.c_str());
+            } else {
+                SOL_LOG_ERROR("hardcore death: save delete FAILED (%s)", savePath.c_str());
+            }
+        }
+
         // World save/load round trip: F9 saves, F10 loads (edge-triggered).
         const bool f9Down = window.isKeyDown(sol::platform::Key::F9);
         if (f9Down && !previousF9) {
@@ -530,11 +563,11 @@ int main(int argc, char** argv)
                 rotate(conjugate(camera.orientation), toVec3(leadDirection));
             hud.hasLead = true;
         }
-        // Provisional trade screen while docked (engine plan: real game UI
-        // replaces the ImGui screens in Phase 8).
-        sol::ui::TradePanel tradePanel;
-        const bool showTrade = world.isDocked();
-        if (showTrade) {
+        // Provisional docked-station screen: Trade + Phase 8a Outfitting /
+        // Shipyard / Crew tabs (engine plan: real game UI is its own item).
+        sol::ui::StationPanel stationPanel;
+        const bool showStation = world.isDocked();
+        if (showStation) {
             const std::uint32_t market = world.dockedMarket();
             tradeRows.clear();
             for (std::uint32_t i = 0;
@@ -549,21 +582,27 @@ int main(int argc, char** argv)
                     .cargo = world.playerCargo(i),
                 });
             }
-            tradePanel.stationName = world.dockedStationName();
-            tradePanel.credits = world.playerCredits();
-            tradePanel.cargoUsed = world.playerCargoTotal();
-            tradePanel.cargoCapacity = world.playerCargoCapacity();
-            tradePanel.rows = tradeRows;
+            stationPanel.trade.stationName = world.dockedStationName();
+            stationPanel.trade.credits = world.playerCredits();
+            stationPanel.trade.cargoUsed = world.playerCargoTotal();
+            stationPanel.trade.cargoCapacity = world.playerCargoCapacity();
+            stationPanel.trade.rows = tradeRows;
+            game::fillStationOutfitting(world, content.defs(), stationText, stationPanel,
+                                        moduleRows, weaponRows, crewCatalogRows, crewAboardRows,
+                                        shipRows, fleetRows);
         }
-        devUi.beginFrame(stats, hud, showTrade ? &tradePanel : nullptr);
-        if (showTrade && tradePanel.action.row >= 0) {
+        devUi.beginFrame(stats, hud, showStation ? &stationPanel : nullptr);
+        if (showStation && stationPanel.trade.action.row >= 0) {
             const std::uint32_t commodity =
-                static_cast<std::uint32_t>(tradePanel.action.row);
-            if (tradePanel.action.isBuy) {
-                (void)world.playerBuy(commodity, tradePanel.action.units);
+                static_cast<std::uint32_t>(stationPanel.trade.action.row);
+            if (stationPanel.trade.action.isBuy) {
+                (void)world.playerBuy(commodity, stationPanel.trade.action.units);
             } else {
-                (void)world.playerSell(commodity, tradePanel.action.units);
+                (void)world.playerSell(commodity, stationPanel.trade.action.units);
             }
+        }
+        if (showStation) {
+            game::executeStationAction(world, stationPanel.action);
         }
 
         bool needRecreate = window.consumeResize();

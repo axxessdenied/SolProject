@@ -1,4 +1,4 @@
-# Weapon defs (data only until Phase 6 wires combat).
+# Weapon defs. price is the shipyard cost (Phase 8a outfitting).
 
 [[weapon]]
 id = "sol.pulse_cannon"
@@ -9,6 +9,7 @@ rate_of_fire = 4.0
 range = 2500.0
 projectile_speed = 900.0
 energy_cost = 8.0
+price = 1200.0
 
 [[weapon]]
 id = "sol.mining_laser"
@@ -18,3 +19,15 @@ damage = 3.0
 rate_of_fire = 10.0
 range = 800.0
 energy_cost = 2.0
+price = 600.0
+
+[[weapon]]
+id = "sol.heavy_cannon"
+name = "Heavy Cannon"
+kind = "projectile"
+damage = 20.0
+rate_of_fire = 2.5
+range = 3000.0
+projectile_speed = 850.0
+energy_cost = 14.0
+price = 4000.0

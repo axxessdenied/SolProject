@@ -250,6 +250,129 @@ double playerCargo(GameContent& content, const std::string& id)
     return world.playerCargo(world.commodityIndex(id.c_str()));
 }
 
+// --- Outfitting & fleet (Phase 8a; all mutations require being docked) ---
+
+std::string listModules(GameContent& content)
+{
+    std::string lines;
+    for (const assets::ModuleDef& def : content.defs().modules()) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        constexpr const char* kSlotNames[] = {"shield", "engine", "cargo", "utility"};
+        lines += def.id + " (" + kSlotNames[static_cast<std::size_t>(def.slot)] + ", " +
+                 std::to_string(static_cast<int>(def.price)) + " cr)";
+    }
+    return lines;
+}
+
+std::string listCrewDefs(GameContent& content)
+{
+    std::string lines;
+    for (const assets::CrewDef& def : content.defs().crew()) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        lines += def.id + " (" + def.role + ", " +
+                 std::to_string(static_cast<int>(def.price)) + " cr)";
+    }
+    return lines;
+}
+
+// The active ship's fit: def, weapon, modules, crew, value, deductible.
+std::string fitInfo(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const game::OwnedShip& ship = world.activeShip();
+    std::string info = ship.defId + " | weapon: " + (ship.weaponId.empty() ? "-" : ship.weaponId);
+    info += " | modules:";
+    if (ship.moduleIds.empty()) {
+        info += " -";
+    }
+    for (const std::string& id : ship.moduleIds) {
+        info += " " + id;
+    }
+    info += " | crew:";
+    if (ship.crewIds.empty()) {
+        info += " -";
+    }
+    for (const std::string& id : ship.crewIds) {
+        info += " " + id;
+    }
+    info += " | value " + std::to_string(static_cast<int>(world.shipValue(ship))) +
+            " cr, deductible " + std::to_string(static_cast<int>(world.insuranceDeductible())) +
+            " cr";
+    return info;
+}
+
+// Fleet listing, 1-based to match the select_ship/sell_ship arguments.
+std::string listFleet(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    for (std::size_t i = 0; i < world.fleet().size(); ++i) {
+        const game::OwnedShip& ship = world.fleet()[i];
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        lines += std::to_string(i + 1) + ": " + ship.defId;
+        if (i == world.activeShipIndex()) {
+            lines += " (active)";
+        } else {
+            const auto& systems = world.galaxy().systems;
+            lines += ship.storedSystem < systems.size()
+                         ? " (stored: " + systems[ship.storedSystem].name + ")"
+                         : " (stored)";
+        }
+    }
+    return lines;
+}
+
+bool buyModule(GameContent& content, const std::string& id)
+{
+    return content.world().buyModule(id.c_str());
+}
+
+bool sellModule(GameContent& content, const std::string& id)
+{
+    return content.world().sellModule(id.c_str());
+}
+
+bool buyWeapon(GameContent& content, const std::string& id)
+{
+    return content.world().buyWeapon(id.c_str());
+}
+
+bool buyShip(GameContent& content, const std::string& id)
+{
+    return content.world().buyShip(id.c_str());
+}
+
+bool sellShip(GameContent& content, double index)
+{
+    return content.world().sellShip(static_cast<std::size_t>(index) - 1);
+}
+
+bool selectShip(GameContent& content, double index)
+{
+    return content.world().switchShip(static_cast<std::size_t>(index) - 1);
+}
+
+bool hireCrew(GameContent& content, const std::string& id)
+{
+    return content.world().hireCrew(id.c_str());
+}
+
+bool fireCrew(GameContent& content, const std::string& id)
+{
+    return content.world().fireCrew(id.c_str());
+}
+
+double insuranceQuote(GameContent& content)
+{
+    return content.world().insuranceDeductible();
+}
+
 } // namespace
 
 bool GameContent::initialize(const std::string& dataDirectory, const std::string& modsDirectory,
@@ -323,6 +446,19 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
+    m_vm.registerFunction<&listModules>("sol", "modules", this);
+    m_vm.registerFunction<&listCrewDefs>("sol", "crew_defs", this);
+    m_vm.registerFunction<&fitInfo>("sol", "fit", this);
+    m_vm.registerFunction<&listFleet>("sol", "fleet", this);
+    m_vm.registerFunction<&buyModule>("sol", "buy_module", this);
+    m_vm.registerFunction<&sellModule>("sol", "sell_module", this);
+    m_vm.registerFunction<&buyWeapon>("sol", "buy_weapon", this);
+    m_vm.registerFunction<&buyShip>("sol", "buy_ship", this);
+    m_vm.registerFunction<&sellShip>("sol", "sell_ship", this);
+    m_vm.registerFunction<&selectShip>("sol", "select_ship", this);
+    m_vm.registerFunction<&hireCrew>("sol", "hire_crew", this);
+    m_vm.registerFunction<&fireCrew>("sol", "fire_crew", this);
+    m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);
 }
 
 bool GameContent::reloadDefs()
