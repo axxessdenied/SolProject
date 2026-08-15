@@ -3,6 +3,7 @@ add_library(sol_core STATIC
     src/jobs.cpp
     src/json.cpp
     src/log.cpp
+    src/toml.cpp
     src/version.cpp
 )
 add_library(sol::core ALIAS sol_core)

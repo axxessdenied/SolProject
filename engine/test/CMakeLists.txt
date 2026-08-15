@@ -16,6 +16,7 @@ add_executable(sol_core_tests
     core/math_tests.cpp
     core/random_tests.cpp
     core/serialize_tests.cpp
+    core/toml_tests.cpp
     core/version_tests.cpp
 )
 target_link_libraries(sol_core_tests PRIVATE sol::test sol::core)
