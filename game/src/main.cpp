@@ -224,6 +224,7 @@ int main(int argc, char** argv)
     std::vector<game::RenderInstance> renderInstances;
     std::vector<game::ParticleInstance> particleInstances;
     game::SceneInfo sceneInfo;
+    std::vector<sol::ui::TradeRow> tradeRows;
     SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).", world.entityCount(),
                  world.currentSystemName(), world.galaxy().systems.size());
 
@@ -502,7 +503,41 @@ int main(int argc, char** argv)
                 rotate(conjugate(camera.orientation), toVec3(leadDirection));
             hud.hasLead = true;
         }
-        devUi.beginFrame(stats, hud);
+        // Provisional trade screen while docked (engine plan: real game UI
+        // replaces the ImGui screens in Phase 8).
+        sol::ui::TradePanel tradePanel;
+        const bool showTrade = world.isDocked();
+        if (showTrade) {
+            const std::uint32_t market = world.dockedMarket();
+            tradeRows.clear();
+            for (std::uint32_t i = 0;
+                 i < static_cast<std::uint32_t>(world.commodityIds().size()); ++i) {
+                const sol::assets::CommodityDef* def =
+                    content.defs().findCommodity(world.commodityIds()[i].c_str());
+                tradeRows.push_back({
+                    .name = def != nullptr ? def->name.c_str()
+                                           : world.commodityIds()[i].c_str(),
+                    .price = world.economy().price(market, i),
+                    .stock = world.economy().stock(market, i),
+                    .cargo = world.playerCargo(i),
+                });
+            }
+            tradePanel.stationName = world.dockedStationName();
+            tradePanel.credits = world.playerCredits();
+            tradePanel.cargoUsed = world.playerCargoTotal();
+            tradePanel.cargoCapacity = world.playerCargoCapacity();
+            tradePanel.rows = tradeRows;
+        }
+        devUi.beginFrame(stats, hud, showTrade ? &tradePanel : nullptr);
+        if (showTrade && tradePanel.action.row >= 0) {
+            const std::uint32_t commodity =
+                static_cast<std::uint32_t>(tradePanel.action.row);
+            if (tradePanel.action.isBuy) {
+                (void)world.playerBuy(commodity, tradePanel.action.units);
+            } else {
+                (void)world.playerSell(commodity, tradePanel.action.units);
+            }
+        }
 
         bool needRecreate = window.consumeResize();
         if (needRecreate) {

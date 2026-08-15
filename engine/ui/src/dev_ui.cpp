@@ -140,7 +140,7 @@ void DevUi::shutdown()
     m_initialized = false;
 }
 
-void DevUi::beginFrame(const OverlayStats& stats, const FlightHud& hud)
+void DevUi::beginFrame(const OverlayStats& stats, const FlightHud& hud, TradePanel* trade)
 {
     ImGui_ImplVulkan_NewFrame();
     devUiPlatformNewFrame();
@@ -151,6 +151,67 @@ void DevUi::beginFrame(const OverlayStats& stats, const FlightHud& hud)
     if (hud.active) {
         buildFlightHud(hud);
     }
+    if (trade != nullptr) {
+        buildTradePanel(*trade);
+    }
+}
+
+void DevUi::buildTradePanel(TradePanel& trade)
+{
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkSize.x - 12.0f, 60.0f}, ImGuiCond_FirstUseEver,
+                            {1.0f, 0.0f});
+    ImGui::SetNextWindowSize({460.0f, 0.0f}, ImGuiCond_FirstUseEver);
+    char title[128];
+    std::snprintf(title, sizeof(title), "Trade - %s###trade", trade.stationName);
+    if (ImGui::Begin(title, nullptr, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::Text("Credits %.0f", trade.credits);
+        ImGui::SameLine(0.0f, 24.0f);
+        ImGui::Text("Cargo %.0f / %.0f", trade.cargoUsed, trade.cargoCapacity);
+        if (ImGui::BeginTable("goods", 6,
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Commodity", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+            ImGui::TableSetupColumn("Price", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("Stock", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("Held", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("Buy", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+            ImGui::TableSetupColumn("Sell", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+            ImGui::TableHeadersRow();
+            for (int row = 0; row < static_cast<int>(trade.rows.size()); ++row) {
+                const TradeRow& goods = trade.rows[static_cast<std::size_t>(row)];
+                ImGui::TableNextRow();
+                ImGui::PushID(row);
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(goods.name);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f", goods.price);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.0f", goods.stock);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.0f", goods.cargo);
+                ImGui::TableNextColumn();
+                if (ImGui::SmallButton("1")) {
+                    trade.action = {row, 1.0f, true};
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("10")) {
+                    trade.action = {row, 10.0f, true};
+                }
+                ImGui::TableNextColumn();
+                if (ImGui::SmallButton("1##s")) {
+                    trade.action = {row, 1.0f, false};
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("10##s")) {
+                    trade.action = {row, 10.0f, false};
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::TextDisabled("Prices move with stock; NPC traders share this market.");
+    }
+    ImGui::End();
 }
 
 void DevUi::buildWindows(const OverlayStats& stats)

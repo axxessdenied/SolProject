@@ -7,6 +7,7 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -74,6 +75,34 @@ struct FlightHud
     const char* dockedStationName = "";
 };
 
+// Provisional trade screen (Phase 7; replaced by real game UI in Phase 8).
+// The game fills rows from the docked market; a clicked button reports back
+// through `action` for the game to execute against the world.
+struct TradeRow
+{
+    const char* name = "";
+    float price = 0.0f; // credits/unit right now
+    float stock = 0.0f; // station stock, units
+    float cargo = 0.0f; // in the player's hold, units
+};
+
+struct TradeAction
+{
+    int row = -1; // index into rows; -1 = no click this frame
+    float units = 0.0f;
+    bool isBuy = false;
+};
+
+struct TradePanel
+{
+    const char* stationName = "";
+    double credits = 0.0;
+    float cargoUsed = 0.0f;
+    float cargoCapacity = 0.0f;
+    std::span<const TradeRow> rows;
+    TradeAction action; // out
+};
+
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).
 class DevUi
 {
@@ -84,8 +113,10 @@ public:
     void shutdown();
 
     // Once per frame, before recording; builds the overlay + console windows
-    // and, when hud.active, the flight HUD.
-    void beginFrame(const OverlayStats& stats, const FlightHud& hud = {});
+    // and, when hud.active, the flight HUD. A non-null trade panel (docked)
+    // also builds the provisional trade screen.
+    void beginFrame(const OverlayStats& stats, const FlightHud& hud = {},
+                    TradePanel* trade = nullptr);
 
     // Records draw data; must be called inside the scene's dynamic rendering pass.
     void render(VkCommandBuffer commandBuffer);
@@ -106,6 +137,7 @@ private:
     void buildWindows(const OverlayStats& stats);
     void buildConsoleInput();
     void buildFlightHud(const FlightHud& hud);
+    void buildTradePanel(TradePanel& trade);
     static int consoleTextCallback(ImGuiInputTextCallbackData* data);
 
     bool m_initialized = false;
