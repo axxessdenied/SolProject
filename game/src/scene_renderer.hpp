@@ -29,6 +29,14 @@ struct CameraFrame
     }
 };
 
+// The slice's fixed model catalog; data-driven assets arrive in Phase 5.
+enum class ModelId : std::uint32_t
+{
+    Cube,
+    Station,
+    Ship,
+};
+
 // One drawable produced by the sim for the current frame; positions are
 // sim-space doubles, made camera-relative at record time (large-world rule).
 struct RenderInstance
@@ -36,6 +44,7 @@ struct RenderInstance
     sol::core::DVec3 position;
     sol::core::Quat rotation = sol::core::Quat::identity();
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
+    ModelId model = ModelId::Cube;
 };
 
 // Sim-space celestial body handed to the impostor pass each frame.
@@ -114,7 +123,10 @@ private:
     sol::renderer::ImpostorRenderer m_impostorRenderer;
     sol::renderer::TonemapRenderer m_tonemapRenderer;
     sol::renderer::GpuMesh m_cubeMesh;
+    sol::renderer::GpuMesh m_stationMesh;
+    sol::renderer::GpuMesh m_shipMesh;
     sol::renderer::GpuTexture m_checkerTexture;
+    sol::renderer::GpuTexture m_hullTexture;
     sol::rhi::Image m_depth;
     sol::rhi::Image m_hdrColor;
 

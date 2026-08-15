@@ -52,14 +52,23 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
 
     // Assets
     assets::MeshData cubeData;
+    assets::MeshData stationData;
+    assets::MeshData shipData;
     assets::TextureData checkerData;
+    assets::TextureData hullData;
     const std::string cookedBase = cookedDirectory;
     if (!assets::loadMesh((cookedBase + "cube.smesh").c_str(), cubeData) ||
-        !assets::loadTexture((cookedBase + "checker.stex").c_str(), checkerData)) {
+        !assets::loadMesh((cookedBase + "station.smesh").c_str(), stationData) ||
+        !assets::loadMesh((cookedBase + "ship.smesh").c_str(), shipData) ||
+        !assets::loadTexture((cookedBase + "checker.stex").c_str(), checkerData) ||
+        !assets::loadTexture((cookedBase + "hull.stex").c_str(), hullData)) {
         return false;
     }
     m_cubeMesh = m_meshRenderer.createMesh(cubeData);
+    m_stationMesh = m_meshRenderer.createMesh(stationData);
+    m_shipMesh = m_meshRenderer.createMesh(shipData);
     m_checkerTexture = m_meshRenderer.createTexture(checkerData);
+    m_hullTexture = m_meshRenderer.createTexture(hullData);
 
     m_depth = rhi::createDepthImage(context, swapchain.extent());
 
@@ -139,7 +148,10 @@ void SceneRenderer::shutdown()
     rhi::destroyImage(*m_context, m_depth);
     rhi::destroyImage(*m_context, m_hdrColor);
     m_meshRenderer.destroyTexture(m_checkerTexture);
+    m_meshRenderer.destroyTexture(m_hullTexture);
     m_meshRenderer.destroyMesh(m_cubeMesh);
+    m_meshRenderer.destroyMesh(m_stationMesh);
+    m_meshRenderer.destroyMesh(m_shipMesh);
     m_meshRenderer.shutdown();
     m_skyRenderer.shutdown();
     m_impostorRenderer.shutdown();
@@ -178,7 +190,21 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         const core::Vec3 relative = (instance.position - camera.position).toVec3();
         const core::Mat4 model =
             core::translation(relative) * toMat4(instance.rotation) * core::scale(instance.scale);
-        m_meshRenderer.draw(commandBuffer, m_cubeMesh, m_checkerTexture, viewProjection * model, model);
+
+        const renderer::GpuMesh* mesh = &m_cubeMesh;
+        const renderer::GpuTexture* texture = &m_checkerTexture;
+        switch (instance.model) {
+        case ModelId::Cube: break;
+        case ModelId::Station:
+            mesh = &m_stationMesh;
+            texture = &m_hullTexture;
+            break;
+        case ModelId::Ship:
+            mesh = &m_shipMesh;
+            texture = &m_hullTexture;
+            break;
+        }
+        m_meshRenderer.draw(commandBuffer, *mesh, *texture, viewProjection * model, model);
         ++m_drawCallCount;
     }
 

@@ -46,48 +46,29 @@ void SpaceWorld::spawn()
     };
     m_targetIndex = 0;
 
-    auto addStatic = [&](core::DVec3 position, core::Quat orientation, core::Vec3 scale) {
+    auto addStatic = [&](core::DVec3 position, core::Quat orientation, core::Vec3 scale,
+                         ModelId model) {
         const ecs::Entity e = m_registry.create();
         m_registry.emplace<Transform>(e, Transform{.position = position,
                                                    .previousPosition = position,
                                                    .orientation = orientation,
                                                    .previousOrientation = orientation});
-        m_registry.emplace<RenderShape>(e, RenderShape{.scale = scale});
+        m_registry.emplace<RenderShape>(e, RenderShape{.scale = scale, .model = model});
     };
 
-    // Station "Aster Gateway": a compound of cubes until a cooked station
-    // mesh lands — core, habitat ring, spokes, panels.
-    {
-        const core::DVec3 s = kStationPosition;
-        addStatic(s, core::Quat::identity(), {30.0f, 30.0f, 30.0f});
-        constexpr int kRingSegments = 8;
-        for (int i = 0; i < kRingSegments; ++i) {
-            const float angle = static_cast<float>(i) * (core::kTwoPi / kRingSegments);
-            const double radius = 95.0;
-            const core::DVec3 offset = {radius * std::cos(angle), 0.0, radius * std::sin(angle)};
-            const core::Quat facing = core::fromAxisAngle({0.0f, 1.0f, 0.0f}, -angle);
-            addStatic(s + offset, facing, {14.0f, 10.0f, 30.0f});
-        }
-        for (int i = 0; i < 4; ++i) {
-            const float angle = static_cast<float>(i) * (core::kTwoPi / 4) + core::kPi / 4.0f;
-            const core::Quat facing = core::fromAxisAngle({0.0f, 1.0f, 0.0f}, -angle);
-            const core::DVec3 offset = {45.0 * std::cos(angle), 0.0, 45.0 * std::sin(angle)};
-            addStatic(s + offset, facing, {4.0f, 4.0f, 42.0f});
-        }
-        addStatic(s + core::DVec3{0.0, 70.0, 0.0}, core::Quat::identity(), {60.0f, 2.0f, 22.0f});
-        addStatic(s + core::DVec3{0.0, -70.0, 0.0}, core::Quat::identity(), {60.0f, 2.0f, 22.0f});
-    }
+    // Station "Aster Gateway" (mesh authored in meters, ~200 m across).
+    addStatic(kStationPosition, core::Quat::identity(), {1.0f, 1.0f, 1.0f}, ModelId::Station);
 
     // Waypoint cubes marching toward the planet, then an arrival cluster just
     // above the surface: precision canaries at both ends of the flight.
     for (const double kilometers : {2.0, 5.0, 10.0, 25.0, 50.0}) {
         addStatic(kStationPosition + core::DVec3{120.0, 40.0, -kilometers * 1000.0},
-                  core::Quat::identity(), {12.0f, 12.0f, 12.0f});
+                  core::Quat::identity(), {12.0f, 12.0f, 12.0f}, ModelId::Cube);
     }
     for (int i = 0; i < 3; ++i) {
         const core::DVec3 arrival =
             kPlanetPosition + core::DVec3{i * 400.0, 0.0, kPlanetRadius + 2.0e5};
-        addStatic(arrival, core::Quat::identity(), {40.0f, 40.0f, 40.0f});
+        addStatic(arrival, core::Quat::identity(), {40.0f, 40.0f, 40.0f}, ModelId::Cube);
     }
 
     // The player ship, 800 m sunward of the station, nose (-Z) toward it.
@@ -97,7 +78,7 @@ void SpaceWorld::spawn()
         m_registry.emplace<Transform>(
             e, Transform{.position = start, .previousPosition = start});
         m_registry.emplace<FlightBody>(e);
-        m_registry.emplace<RenderShape>(e, RenderShape{.scale = {3.0f, 1.5f, 6.0f}});
+        m_registry.emplace<RenderShape>(e, RenderShape{.model = ModelId::Ship});
     }
 }
 
@@ -177,6 +158,7 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip,
                         (transform.position - transform.previousPosition) * alphaD,
             .rotation = nlerp(transform.previousOrientation, transform.orientation, alpha),
             .scale = shape[i].scale,
+            .model = shape[i].model,
         });
     }
 }

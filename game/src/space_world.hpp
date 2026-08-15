@@ -35,6 +35,7 @@ struct FlightBody
 struct RenderShape
 {
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
+    ModelId model = ModelId::Cube;
 };
 
 // Non-entity scenery: rendered as impostors, referenced as nav targets.
