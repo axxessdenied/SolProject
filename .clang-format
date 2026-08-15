@@ -1,0 +1,71 @@
+# Sol Engine C++ style — see AGENTS.md §3 for naming conventions
+# Requires clang-format 17+
+BasedOnStyle: LLVM
+Standard: c++20
+
+ColumnLimit: 110
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+AccessModifierOffset: -4
+
+PointerAlignment: Left
+ReferenceAlignment: Left
+QualifierAlignment: Left
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterStruct: true
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: false
+  AfterControlStatement: Never
+  BeforeElse: false
+  BeforeCatch: false
+
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+
+AlwaysBreakTemplateDeclarations: Yes
+BinPackArguments: false
+BinPackParameters: false
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: None
+AlignTrailingComments:
+  Kind: Always
+
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+PackConstructorInitializers: NextLine
+BreakConstructorInitializers: BeforeComma
+
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Same-module and other engine headers
+  - Regex: '^"sol/'
+    Priority: 2
+  # Third-party
+  - Regex: '^<(vulkan|lua|imgui)'
+    Priority: 3
+  # C++ standard library
+  - Regex: '^<[a-z_]+>$'
+    Priority: 4
+  # Everything else quoted (matching header gets priority 1 automatically)
+  - Regex: '^".*'
+    Priority: 1
+SortIncludes: CaseSensitive
+
+NamespaceIndentation: None
+FixNamespaceComments: true
+CompactNamespaces: false
+
+SpaceAfterTemplateKeyword: true
+SpacesInParens: Never
+SpaceBeforeParens: ControlStatements
+
+SeparateDefinitionBlocks: Always
+EmptyLineBeforeAccessModifier: LogicalBlock
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1

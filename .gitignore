@@ -1,0 +1,35 @@
+# Build output
+build/
+out/
+cooked/
+
+# CMake user files
+CMakeUserPresets.json
+
+# IDE / editor state
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.sln.docstates
+
+# Compiled / generated
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+*.spv
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs and local scratch
+*.log
+.cache/
