@@ -196,6 +196,68 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
     panel.factions = factionRows;
 }
 
+namespace {
+
+// Poster + current objective (+ progress/deadline) for a board or journal row.
+[[nodiscard]] std::string missionDetail(const SpaceWorld& world,
+                                        const sol::sim::Mission& mission)
+{
+    const sol::sim::MissionObjective& objective =
+        mission.objectives[mission.currentObjective];
+    std::string detail = mission.poster < world.factions().size()
+                             ? world.factions()[mission.poster].name + ": "
+                             : std::string();
+    detail += objective.text;
+    if (objective.kind == sol::sim::ObjectiveKind::Kill) {
+        detail += " (" + std::to_string(objective.kills) + " left)";
+    } else if (objective.kind == sol::sim::ObjectiveKind::Deliver) {
+        detail += " (" + std::to_string(static_cast<int>(objective.units)) + " units)";
+    }
+    if (mission.objectives.size() > 1) {
+        detail += " [" + std::to_string(mission.currentObjective + 1) + "/" +
+                  std::to_string(mission.objectives.size()) + "]";
+    }
+    if (mission.deadline > 0.0) {
+        detail += " - " + std::to_string(static_cast<int>(mission.deadline)) + "s";
+    }
+    if (mission.minRep > -100.0f) {
+        detail += " - rep " + std::to_string(static_cast<int>(mission.minRep)) + "+";
+    }
+    return detail;
+}
+
+} // namespace
+
+void fillStationMissions(const SpaceWorld& world, std::deque<std::string>& text,
+                         sol::ui::StationPanel& panel,
+                         std::vector<sol::ui::MissionRow>& offerRows,
+                         std::vector<sol::ui::MissionRow>& journalRows)
+{
+    offerRows.clear();
+    journalRows.clear();
+    const sol::sim::MissionSim& missions = world.missionSim();
+    for (const sol::sim::Mission& offer : missions.offers()) {
+        const float standing = offer.poster < world.factions().size()
+                                   ? world.factionSim().standing(offer.poster)
+                                   : 0.0f;
+        offerRows.push_back({.title = offer.title.c_str(),
+                             .detail = store(text, missionDetail(world, offer)),
+                             .reward = static_cast<float>(offer.rewardCredits),
+                             .acceptable = standing >= offer.minRep,
+                             .campaign = offer.campaign()});
+    }
+    for (std::size_t i = 0; i < missions.active().size(); ++i) {
+        const sol::sim::Mission& mission = missions.active()[i];
+        journalRows.push_back({.title = mission.title.c_str(),
+                               .detail = store(text, missionDetail(world, mission)),
+                               .reward = static_cast<float>(mission.rewardCredits),
+                               .campaign = mission.campaign(),
+                               .tracked = i == missions.tracked()});
+    }
+    panel.missionOffers = offerRows;
+    panel.missionJournal = journalRows;
+}
+
 void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
 {
     using Kind = ui::StationAction::Kind;
@@ -225,6 +287,15 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
         break;
     case Kind::FireCrew:
         (void)world.fireCrew(action.id);
+        break;
+    case Kind::AcceptMission:
+        (void)world.acceptMission(static_cast<std::uint32_t>(action.index));
+        break;
+    case Kind::AbandonMission:
+        (void)world.abandonMission(static_cast<std::uint32_t>(action.index));
+        break;
+    case Kind::TrackMission:
+        world.missionSim().setTracked(static_cast<std::uint32_t>(action.index));
         break;
     }
 }

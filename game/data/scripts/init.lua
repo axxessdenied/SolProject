@@ -17,6 +17,11 @@
 --   sol.faction_raid(faction, system)  commit one (validated against reach)
 --   sol.ships() / sol.target_name() / sol.target_distance() / sol.speed()
 --   sol.entity_count()              live sim entities
+--   sol.mission_board() / sol.missions()   offers at the docked station / journal
+--   sol.accept_mission(i) / sol.abandon_mission(i) / sol.track_mission(i)
+--   sol.mission_candidates()        raw shortage/bounty candidates (dev)
+--   sol.campaign_stage() / sol.set_campaign_stage(n)  spine progress (dev)
+--   sol.mission_begin/deadline/min_rep/obj_*/post     board-hook builder
 
 local announceInterval = 20.0 -- seconds; edit + save to see hot-reload
 local timer = 0.0
@@ -122,6 +127,87 @@ function faction_think(faction, name, pirate, aggression, forgiveness, roll)
     if bestSystem ~= nil and sol.faction_raid(faction, bestSystem) then
         print(string.format("[factions] %s raids %s (relation %.0f)",
             name, bestName, bestRelation))
+    end
+end
+
+-- Mission board (Phase 8c). Called when the player docks (and on the docked
+-- refresh cadence) with candidates enumerated from live sim state — market
+-- shortages and warm raid sites — plus one seeded roll, the only entropy.
+-- The C++ side validates every post against the same candidates, so this
+-- policy only decides selection and pricing. Campaign offers ride the same
+-- board via campaign_offer (scripts/campaign.lua, loaded after init).
+--
+-- Haul entry:   system:station:commodityId:units:severity:jumps:sysName:stName
+-- Bounty entry: system:clan:intensity:jumps:systemName:clanName
+function mission_board(stationName, owner, ownerName, ownerPirate, hauls, bounties, roll)
+    if campaign_offer ~= nil and not ownerPirate then
+        campaign_offer(owner, ownerName)
+    end
+
+    -- Haul contracts: worst shortages first, up to three. The contract asks
+    -- for a playable slice of the gap; pay scales with volume, distance, and
+    -- how empty the shelves are; the worst offers are rep-gated tiers.
+    local haulList = {}
+    for entry in string.gmatch(hauls, "[^;]+") do
+        local system, station, commodity, units, severity, jumps, sysName, stName =
+            string.match(entry, "^(%d+):(%d+):([^:]+):([%d%.]+):([%d%.]+):(%d+):([^:]+):([^:]+)$")
+        if system ~= nil then
+            haulList[#haulList + 1] = {
+                system = tonumber(system), station = tonumber(station),
+                commodity = commodity, units = tonumber(units),
+                severity = tonumber(severity), jumps = tonumber(jumps),
+                sysName = sysName, stName = stName,
+            }
+        end
+    end
+    table.sort(haulList, function(a, b) return a.severity > b.severity end)
+    for i = 1, math.min(3, #haulList) do
+        local h = haulList[i]
+        local units = math.floor(math.min(h.units, 30 + 25 * h.jumps))
+        local reward = math.floor(units * (6 + 4 * h.jumps) * (1 + h.severity)
+                                  * (0.9 + 0.2 * roll))
+        if sol.mission_begin(string.format("Haul: %d %s to %s", units,
+                                           string.gsub(h.commodity, "^sol%.", ""), h.stName),
+                             owner, reward, 2 + h.jumps, 2, "") then
+            sol.mission_deadline(480 + 420 * h.jumps)
+            if h.severity > 0.92 and units > 60 then
+                sol.mission_min_rep(10) -- the best contracts go to trusted pilots
+            end
+            sol.mission_obj_deliver(h.system, h.station, h.commodity, units,
+                                    string.format("Deliver %d %s to %s (%s)", units,
+                                                  string.gsub(h.commodity, "^sol%.", ""),
+                                                  h.stName, h.sysName))
+            sol.mission_post()
+        end
+    end
+
+    -- Bounties: the warmest raid sites, up to two. Kill counts scale with
+    -- the standing raid intensity.
+    local bountyList = {}
+    for entry in string.gmatch(bounties, "[^;]+") do
+        local system, clan, intensity, jumps, sysName, clanName =
+            string.match(entry, "^(%d+):(%d+):([%d%.]+):(%d+):([^:]+):([^:]+)$")
+        if system ~= nil then
+            bountyList[#bountyList + 1] = {
+                system = tonumber(system), clan = tonumber(clan),
+                intensity = tonumber(intensity), jumps = tonumber(jumps),
+                sysName = sysName, clanName = clanName,
+            }
+        end
+    end
+    table.sort(bountyList, function(a, b) return a.intensity > b.intensity end)
+    for i = 1, math.min(2, #bountyList) do
+        local b = bountyList[i]
+        local kills = math.min(2 + math.floor(b.intensity), 4)
+        local reward = math.floor(kills * (350 + 150 * b.jumps + 120 * b.intensity)
+                                  * (0.9 + 0.2 * roll))
+        if sol.mission_begin(string.format("Bounty: %s in %s", b.clanName, b.sysName),
+                             owner, reward, 3 + b.jumps, 2, "") then
+            sol.mission_obj_kill(b.clan, kills, b.system,
+                                 string.format("Destroy %d %s raiders in %s", kills,
+                                               b.clanName, b.sysName))
+            sol.mission_post()
+        end
     end
 end
 

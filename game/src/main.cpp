@@ -262,6 +262,9 @@ int main(int argc, char** argv)
     std::vector<sol::ui::OutfitRow> shipRows;
     std::vector<sol::ui::FleetRow> fleetRows;
     std::vector<sol::ui::FactionRow> factionRows;
+    std::vector<sol::ui::MissionRow> missionOfferRows;
+    std::vector<sol::ui::MissionRow> missionJournalRows;
+    std::string missionHudObjective;
     std::deque<std::string> stationText; // backs generated row text per frame
     SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).", world.entityCount(),
                  world.currentSystemName(), world.galaxy().systems.size());
@@ -555,6 +558,23 @@ int main(int argc, char** argv)
         hud.targetHull = target.hull;
         hud.targetFaction = target.factionName.c_str();
         hud.targetAttitude = target.attitude;
+        // Tracked mission line (Phase 8c).
+        const sol::sim::MissionSim& missions = world.missionSim();
+        if (missions.tracked() < missions.active().size()) {
+            const sol::sim::Mission& tracked = missions.active()[missions.tracked()];
+            const sol::sim::MissionObjective& objective =
+                tracked.objectives[tracked.currentObjective];
+            missionHudObjective = objective.text;
+            if (objective.kind == sol::sim::ObjectiveKind::Kill) {
+                missionHudObjective += " (" + std::to_string(objective.kills) + " left)";
+            } else if (objective.kind == sol::sim::ObjectiveKind::Deliver) {
+                missionHudObjective +=
+                    " (" + std::to_string(static_cast<int>(objective.units)) + " units)";
+            }
+            hud.missionTitle = tracked.title.c_str();
+            hud.missionObjective = missionHudObjective.c_str();
+            hud.missionDeadline = tracked.deadline;
+        }
         const game::ShipWeapon& playerWeapon = world.playerWeapon();
         if (target.isShip && playerWeapon.kind == game::WeaponKind::Projectile &&
             playerWeapon.projectileSpeed > 1.0f) {
@@ -593,6 +613,8 @@ int main(int argc, char** argv)
             game::fillStationOutfitting(world, content.defs(), stationText, stationPanel,
                                         moduleRows, weaponRows, crewCatalogRows, crewAboardRows,
                                         shipRows, fleetRows, factionRows);
+            game::fillStationMissions(world, stationText, stationPanel, missionOfferRows,
+                                      missionJournalRows); // after: shares stationText
         }
         devUi.beginFrame(stats, hud, showStation ? &stationPanel : nullptr);
         if (showStation && stationPanel.trade.action.row >= 0) {

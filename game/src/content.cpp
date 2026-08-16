@@ -720,6 +720,13 @@ double currentSystemIndex(GameContent& content)
     return content.world().currentSystemIndex();
 }
 
+// 0-based station index while docked (mission dock objectives), or -1.
+double dockedStationIndex(GameContent& content)
+{
+    const std::uint32_t station = content.world().dockedStationIndex();
+    return station == 0xffff'ffffu ? -1.0 : static_cast<double>(station);
+}
+
 // --- The mission builder (Lua board hook assembles a draft, then posts) ---
 
 bool missionBegin(GameContent& content, const std::string& title, double posterIndex,
@@ -973,6 +980,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&gateDestination>("sol", "gate_destination", this);
     m_vm.registerFunction<&stationCount>("sol", "station_count", this);
     m_vm.registerFunction<&currentSystemIndex>("sol", "system_index", this);
+    m_vm.registerFunction<&dockedStationIndex>("sol", "docked_station_index", this);
     m_vm.registerFunction<&missionBegin>("sol", "mission_begin", this);
     m_vm.registerFunction<&missionDeadline>("sol", "mission_deadline", this);
     m_vm.registerFunction<&missionMinRep>("sol", "mission_min_rep", this);
@@ -1260,7 +1268,8 @@ void GameContent::runMissionBoard()
     std::string error;
     if (!m_vm.callGlobal("mission_board", &error, world.dockedStationName(),
                          static_cast<double>(owner + 1),
-                         world.factions()[owner].name.c_str(), hauls.c_str(),
+                         world.factions()[owner].name.c_str(),
+                         world.factions()[owner].pirate, hauls.c_str(),
                          bounties.c_str(), static_cast<double>(missions.boardRoll()))) {
         SOL_LOG_ERROR("mission_board disabled until scripts reload: %s", error.c_str());
         m_boardHookFailed = true;

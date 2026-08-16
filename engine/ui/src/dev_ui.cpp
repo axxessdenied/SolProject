@@ -185,6 +185,10 @@ void DevUi::buildStationPanel(StationPanel& station)
                 buildCrewTab(station);
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Missions")) {
+                buildMissionsTab(station);
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Factions")) {
                 buildFactionsTab(station);
                 ImGui::EndTabItem();
@@ -325,6 +329,84 @@ void DevUi::buildCrewTab(StationPanel& station)
     ImGui::SeparatorText("For hire (one-time fee, no refund)");
     if (const int row = outfitCatalog("crew", station.crewCatalog, "Hire"); row >= 0) {
         station.action = {StationAction::Kind::HireCrew, station.crewCatalog[row].id, row};
+    }
+}
+
+void DevUi::buildMissionsTab(StationPanel& station)
+{
+    ImGui::SeparatorText("Board");
+    if (station.missionOffers.empty()) {
+        ImGui::TextDisabled("(no offers)");
+    } else if (ImGui::BeginTable("mission_offers", 4,
+                                 ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Contract", ImGuiTableColumnFlags_WidthStretch, 2.4f);
+        ImGui::TableSetupColumn("Detail", ImGuiTableColumnFlags_WidthStretch, 3.2f);
+        ImGui::TableSetupColumn("Reward", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("##accept", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < static_cast<int>(station.missionOffers.size()); ++i) {
+            const MissionRow& offer = station.missionOffers[i];
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (offer.campaign) {
+                ImGui::TextColored({0.95f, 0.8f, 0.35f, 1.0f}, "%s", offer.title);
+            } else {
+                ImGui::TextUnformatted(offer.title);
+            }
+            ImGui::TableNextColumn();
+            ImGui::TextWrapped("%s", offer.detail);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.0f cr", offer.reward);
+            ImGui::TableNextColumn();
+            ImGui::PushID(i);
+            ImGui::BeginDisabled(!offer.acceptable);
+            if (ImGui::SmallButton("Accept")) {
+                station.action = {.kind = StationAction::Kind::AcceptMission, .index = i};
+            }
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::SeparatorText("Journal");
+    if (station.missionJournal.empty()) {
+        ImGui::TextDisabled("(no active missions)");
+    } else if (ImGui::BeginTable("mission_journal", 3,
+                                 ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Mission", ImGuiTableColumnFlags_WidthStretch, 2.4f);
+        ImGui::TableSetupColumn("Objective", ImGuiTableColumnFlags_WidthStretch, 3.6f);
+        ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < static_cast<int>(station.missionJournal.size()); ++i) {
+            const MissionRow& mission = station.missionJournal[i];
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (mission.campaign) {
+                ImGui::TextColored({0.95f, 0.8f, 0.35f, 1.0f}, "%s", mission.title);
+            } else {
+                ImGui::TextUnformatted(mission.title);
+            }
+            if (mission.tracked) {
+                ImGui::SameLine(0.0f, 6.0f);
+                ImGui::TextDisabled("*");
+            }
+            ImGui::TableNextColumn();
+            ImGui::TextWrapped("%s", mission.detail);
+            ImGui::TableNextColumn();
+            ImGui::PushID(i);
+            if (!mission.tracked && ImGui::SmallButton("Track")) {
+                station.action = {.kind = StationAction::Kind::TrackMission, .index = i};
+            }
+            if (!mission.tracked) {
+                ImGui::SameLine();
+            }
+            if (ImGui::SmallButton("Abandon")) {
+                station.action = {.kind = StationAction::Kind::AbandonMission, .index = i};
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
     }
 }
 
@@ -730,6 +812,17 @@ void DevUi::buildFlightHud(const FlightHud& hud)
         } else if (hud.dockInRange) {
             ImGui::SameLine(0.0f, 24.0f);
             ImGui::TextColored({0.5f, 0.9f, 1.0f, 1.0f}, "[G] DOCK");
+        }
+        if (hud.missionTitle[0] != '\0') {
+            ImGui::TextColored({0.95f, 0.8f, 0.35f, 1.0f}, "MSN %s:", hud.missionTitle);
+            ImGui::SameLine(0.0f, 8.0f);
+            ImGui::TextUnformatted(hud.missionObjective);
+            if (hud.missionDeadline > 0.0) {
+                ImGui::SameLine(0.0f, 8.0f);
+                ImGui::TextColored({0.9f, 0.55f, 0.3f, 1.0f}, "(%d:%02d)",
+                                   static_cast<int>(hud.missionDeadline) / 60,
+                                   static_cast<int>(hud.missionDeadline) % 60);
+            }
         }
     }
     ImGui::End();

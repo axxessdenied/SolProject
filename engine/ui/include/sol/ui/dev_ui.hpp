@@ -72,6 +72,11 @@ struct FlightHud
     const char* targetFaction = "";
     const char* targetAttitude = "";
 
+    // Tracked mission (Phase 8c): title + current objective, empty = none.
+    const char* missionTitle = "";
+    const char* missionObjective = "";
+    double missionDeadline = 0.0; // seconds left; 0 = no deadline
+
     // Universe context (Phase 7): current system, and jump/dock prompts
     // while the ship is within activation range.
     const char* systemName = "";
@@ -137,6 +142,18 @@ struct FactionRow
     const char* attitude = ""; // "hostile"/"neutral"/"friendly"
 };
 
+// One mission line for the Missions tab (Phase 8c): a board offer or a
+// journal entry, detail prebuilt by the game.
+struct MissionRow
+{
+    const char* title = "";
+    const char* detail = "";  // poster, objective/progress, deadline
+    float reward = 0.0f;      // credits on completion
+    bool acceptable = true;   // offers: standing clears the min_rep tier
+    bool campaign = false;
+    bool tracked = false;     // journal: shown on the HUD
+};
+
 // What the player clicked this frame; the game executes it.
 struct StationAction
 {
@@ -151,10 +168,13 @@ struct StationAction
         SwitchShip,
         HireCrew,
         FireCrew,
+        AcceptMission,
+        AbandonMission,
+        TrackMission,
     };
     Kind kind = Kind::None;
     const char* id = ""; // def id (module/weapon/ship/crew actions)
-    int index = -1;      // fleet index (sell/switch ship)
+    int index = -1;      // fleet index, or mission offer/journal index
 };
 
 // The docked-station screen: Trade plus the Phase 8a Outfitting, Shipyard,
@@ -172,6 +192,8 @@ struct StationPanel
     std::span<const FleetRow> fleet;
     std::span<const FactionRow> factions; // standings (Phase 8b)
     const char* factionNotes = "";        // recent raids summary, prebuilt
+    std::span<const MissionRow> missionOffers;  // the board (Phase 8c)
+    std::span<const MissionRow> missionJournal; // active missions
     StationAction action; // out
 };
 
@@ -215,6 +237,7 @@ private:
     void buildShipyardTab(StationPanel& station);
     void buildCrewTab(StationPanel& station);
     void buildFactionsTab(StationPanel& station);
+    void buildMissionsTab(StationPanel& station);
     static int consoleTextCallback(ImGuiInputTextCallbackData* data);
 
     bool m_initialized = false;

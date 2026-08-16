@@ -27,6 +27,13 @@ void fillStationOutfitting(const SpaceWorld& world, const sol::assets::DefDataba
                            std::vector<sol::ui::FleetRow>& fleetRows,
                            std::vector<sol::ui::FactionRow>& factionRows);
 
+// Fills the Missions tab (Phase 8c): the board's offers (with the min_rep
+// tier gate evaluated against player standing) and the journal.
+void fillStationMissions(const SpaceWorld& world, std::deque<std::string>& text,
+                         sol::ui::StationPanel& panel,
+                         std::vector<sol::ui::MissionRow>& offerRows,
+                         std::vector<sol::ui::MissionRow>& journalRows);
+
 // Executes the (at most one) station-panel click of this frame.
 void executeStationAction(SpaceWorld& world, const sol::ui::StationAction& action);
 
