@@ -80,6 +80,19 @@ struct FlightHud
     int sitesOpen = 0;           // identified and still holding something
     bool salvageInRange = false;
     const char* routeNextHop = ""; // next system on the plotted route
+
+    // Mining (Phase 8f). Prospecting reads whatever the boresight is on — a
+    // field holds dozens of rocks, so a rock is read off the crosshair rather
+    // than through the target cycle — and the collector ticks over as chunks
+    // arrive in the hold.
+    const char* prospectName = ""; // ore (or wreck) under the boresight
+    bool prospectIsWreck = false;
+    bool prospectInRange = false;  // inside the fitted beam's reach
+    float prospectLeft = 0.0f;     // units still in it
+    float prospectTotal = 0.0f;    // units when it was whole
+    double prospectDistance = 0.0; // meters
+    float collectedUnits = 0.0f;   // gathered just now; 0 = idle
+    const char* collectedName = "";
 };
 
 // One commodity line on the station's Trade tab. The game fills rows from the
@@ -201,6 +214,8 @@ struct MapMarkerRow
         Station,
         Gate,
         Signal,
+        Field, // Phase 8f: an asteroid field
+        Wreck,
     };
     Kind kind = Kind::Star;
     const char* name = "";
@@ -258,10 +273,28 @@ struct StationAction
         AbandonMission,
         TrackMission,
         SellSurveyData, // Phase 8e: the whole ledger, at any station
+        OrderRefine,    // Phase 8f: units carries the order size
+        CollectRefined,
     };
     Kind kind = Kind::None;
     const char* id = ""; // def id (module/weapon/ship/crew actions)
     int index = -1;      // fleet index, or mission offer/journal index
+    float units = 0.0f;  // refinery order size
+};
+
+// The docked station's refinery service (Phase 8f). Absent — refines false —
+// at every station whose archetype does not refine anything.
+struct RefinePanel
+{
+    bool refines = false;
+    const char* inputName = "";  // what it takes
+    const char* outputName = ""; // what it gives back
+    float inputHeld = 0.0f;      // units of input in the hold
+    float ratio = 0.0f;          // output units per input unit
+    float feePerUnit = 0.0f;
+    float readyUnits = 0.0f;  // finished output waiting here
+    double waitSeconds = -1.0; // on the soonest unfinished order; < 0 = none
+    float cargoSpace = 0.0f;   // room left in the hold
 };
 
 // The docked-station screen: Trade plus the Phase 8a Outfitting, Shipyard,
@@ -283,6 +316,7 @@ struct StationPanel
     std::span<const MissionRow> missionJournal; // active missions
     std::span<const SurveyRow> surveyData;      // unsold ledger (Phase 8e)
     double surveyValue = 0.0;                   // what the ledger pays today
+    RefinePanel refinery;                       // refining service (Phase 8f)
     StationAction action; // out
 };
 

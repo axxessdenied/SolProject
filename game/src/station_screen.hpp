@@ -19,6 +19,7 @@ struct StationScreenState
         Factions,
         Missions,
         Survey,
+        Refinery,
         TabCount,
     };
 

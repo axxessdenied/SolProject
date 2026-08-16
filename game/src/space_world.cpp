@@ -1007,6 +1007,7 @@ void SpaceWorld::initializeMining()
                         static_cast<std::uint32_t>(m_commodityIds.size()), m_universeSeed);
     m_fields.clear();
     m_wreckEvents.clear();
+    m_rockEvents.clear();
     m_collectTicker = 0.0f;
     m_collectTickerAge = 0.0;
     m_collectName.clear();
@@ -1208,10 +1209,16 @@ bool SpaceWorld::mineAhead()
         return false;
     }
     // Dev path: one press empties what the beam would take a while to grind.
-    const float taken = isWreck ? cutWreck(entityIndex, 1.0e6f) : cutRock(entityIndex, 1.0e6f);
-    if (!isWreck && taken <= 0.0f) {
+    if (isWreck) {
+        (void)cutWreck(entityIndex, 1.0e6f);
+        return true;
+    }
+    const MineableRock rock = m_registry.storage<MineableRock>().get(entityIndex);
+    if (cutRock(entityIndex, 1.0e6f) <= 0.0f) {
         return false;
     }
+    m_registry.destroy(m_registry.entityFromIndex(entityIndex));
+    m_rockEvents.push_back({.commodity = rock.commodity, .units = rock.totalUnits});
     return true;
 }
 
@@ -1224,6 +1231,12 @@ void SpaceWorld::takeWreckEvents(std::vector<WreckEvent>& out)
 {
     out.insert(out.end(), m_wreckEvents.begin(), m_wreckEvents.end());
     m_wreckEvents.clear();
+}
+
+void SpaceWorld::takeRockEvents(std::vector<RockEvent>& out)
+{
+    out.insert(out.end(), m_rockEvents.begin(), m_rockEvents.end());
+    m_rockEvents.clear();
 }
 
 sim::SignalLoot SpaceWorld::defaultWreckLoot(const assets::ShipDef* def, std::uint64_t seed) const
@@ -3218,11 +3231,13 @@ void SpaceWorld::tick(double dt)
         }
         const std::uint32_t field = rock->field;
         const std::uint32_t index = rock->index;
+        const std::uint32_t commodity = rock->commodity;
         const float total = rock->totalUnits;
         (void)cutRock(cut.entityIndex, cut.units);
         m_combatEffects.spawnImpact(cut.impact, false);
         if (m_mining.unitsLeft(m_currentSystem, field, index, total) <= 0.0f) {
             m_registry.destroy(m_registry.entityFromIndex(cut.entityIndex)); // it broke up
+            m_rockEvents.push_back({.commodity = commodity, .units = total});
         }
     }
     for (const PendingBolt& bolt : newBolts) {

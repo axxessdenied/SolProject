@@ -47,6 +47,9 @@ public:
     // can only ever write the loot it was called about (Phase 8e).
     [[nodiscard]] std::uint32_t lootSystem() const { return m_lootSystem; }
     [[nodiscard]] std::uint32_t lootSignal() const { return m_lootSignal; }
+    // The wreck whose wreck_loot hook is running right now (Phase 8f); 0 when
+    // none is. Wrecks and sites share sol.set_loot — it is the same loot.
+    [[nodiscard]] std::uint32_t lootWreck() const { return m_lootWreck; }
 
 private:
     struct WatchedFile
@@ -97,6 +100,14 @@ private:
     bool m_lootHookFailed = false;
     bool m_hasSignalFoundHook = false;
     bool m_signalFoundHookFailed = false;
+    // Mining & salvage hooks (Phase 8f).
+    std::vector<WreckEvent> m_wreckEvents; // per-tick scratch
+    std::vector<RockEvent> m_rockEvents;   // per-tick scratch
+    std::uint32_t m_lootWreck = 0;
+    bool m_hasWreckLootHook = false;
+    bool m_wreckLootHookFailed = false;
+    bool m_hasRockMinedHook = false;
+    bool m_rockMinedHookFailed = false;
 };
 
 } // namespace game

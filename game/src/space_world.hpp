@@ -248,6 +248,15 @@ struct WreckEvent
     std::uint64_t seed = 0;
 };
 
+// A rock cut to nothing (Phase 8f). Fired once, when the rock breaks up,
+// rather than per bite of the beam: a hook at the weapon's rate of fire would
+// be noise, and "that rock is finished" is the moment worth flavoring.
+struct RockEvent
+{
+    std::uint32_t commodity = 0;
+    float units = 0.0f; // what the rock held when it was whole
+};
+
 // What the beam is pointed at, for the HUD's prospecting readout (Phase 8f).
 struct ProspectInfo
 {
@@ -509,6 +518,7 @@ public:
     // Wreck loot composed by the Lua hook (validated in MiningSim).
     bool applyWreckLoot(std::uint32_t id, sol::sim::SignalLoot loot);
     void takeWreckEvents(std::vector<WreckEvent>& out);
+    void takeRockEvents(std::vector<RockEvent>& out);
 
     // Refining: the docked station takes ore off your hands and hands back
     // metal later, at the market you ordered it from.
@@ -910,6 +920,7 @@ private:
     sol::sim::MiningParams m_miningParams;
     std::vector<sol::sim::AsteroidFieldSpec> m_fields; // current system
     std::vector<WreckEvent> m_wreckEvents;
+    std::vector<RockEvent> m_rockEvents;
     float m_collectorRange = 250.0f; // from the active fit; see applyShipDef
     float m_collectTicker = 0.0f;    // units collected, for the HUD readout
     double m_collectTickerAge = 0.0;

@@ -69,6 +69,10 @@ namespace {
         return ui::MapMarkerRow::Kind::Star;
     case SpaceWorld::NavKind::Signal:
         return ui::MapMarkerRow::Kind::Signal;
+    case SpaceWorld::NavKind::Field:
+        return ui::MapMarkerRow::Kind::Field;
+    case SpaceWorld::NavKind::Wreck:
+        return ui::MapMarkerRow::Kind::Wreck;
     }
     return ui::MapMarkerRow::Kind::Station;
 }
@@ -166,6 +170,32 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
         if (kind == SpaceWorld::NavKind::Signal || kind == SpaceWorld::NavKind::Planet
             || kind == SpaceWorld::NavKind::Star) {
             detail += scanned ? " - scanned" : " - unscanned";
+        } else if (kind == SpaceWorld::NavKind::Field) {
+            // What is still in the field, so a picked-over one is visibly not
+            // worth the leg (Phase 8f).
+            const std::uint32_t field = world.navTargetField(i);
+            std::vector<sim::RockSpec> rocks;
+            world.mining().rocksFor(galaxy, world.currentSystemIndex(), field, rocks);
+            float left = 0.0f;
+            std::uint32_t standing = 0;
+            for (std::uint32_t r = 0; r < rocks.size(); ++r) {
+                const float remaining =
+                    world.mining().unitsLeft(world.currentSystemIndex(), field, r,
+                                             rocks[r].yieldUnits);
+                left += remaining;
+                standing += remaining > 0.0f ? 1u : 0u;
+            }
+            detail += " - " + std::to_string(standing) + " rocks, "
+                      + std::to_string(static_cast<int>(left)) + " units";
+        } else if (kind == SpaceWorld::NavKind::Wreck) {
+            const sim::WreckRecord* wreck = world.mining().wreck(world.navTargetWreck(i));
+            float cargo = 0.0f;
+            if (wreck != nullptr) {
+                for (const sim::SignalCargo& stack : wreck->contents.cargo) {
+                    cargo += stack.units;
+                }
+            }
+            detail += " - " + std::to_string(static_cast<int>(cargo)) + " units aboard";
         }
         markerRows.push_back({.kind = toMarkerKind(kind),
                               .name = targets[i].name.c_str(),

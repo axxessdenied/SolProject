@@ -294,6 +294,7 @@ int main(int argc, char** argv)
     std::vector<sol::ui::MapMarkerRow> mapMarkerRows;
     std::string missionHudObjective;
     std::string routeHopName;
+    game::ProspectInfo prospect; // backs the HUD's mining readout per frame
     std::deque<std::string> stationText; // backs generated row text per frame
     std::deque<std::string> mapText;     // same, for the map screen
     SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).", world.entityCount(),
@@ -692,6 +693,18 @@ int main(int argc, char** argv)
             routeHopName = world.galaxy().systems[nextHop].name;
             hud.routeNextHop = routeHopName.c_str();
         }
+        // Prospecting and collection (Phase 8f).
+        prospect = world.prospectAhead();
+        if (prospect.valid) {
+            hud.prospectName = prospect.name.c_str();
+            hud.prospectIsWreck = prospect.wreck;
+            hud.prospectInRange = prospect.inRange;
+            hud.prospectLeft = prospect.unitsLeft;
+            hud.prospectTotal = prospect.unitsTotal;
+            hud.prospectDistance = prospect.distance;
+        }
+        hud.collectedUnits = world.lastCollectedUnits();
+        hud.collectedName = world.lastCollectedName();
         // Tracked mission line (Phase 8c).
         const sol::sim::MissionSim& missions = world.missionSim();
         if (missions.tracked() < missions.active().size()) {
@@ -771,6 +784,30 @@ int main(int argc, char** argv)
             }
             stationPanel.surveyData = surveyRows;
             stationPanel.surveyValue = world.survey().ledgerValue();
+
+            // Refining (Phase 8f): a service, not a market — only stations
+            // whose archetype refines something offer it at all.
+            sol::ui::RefinePanel& refinery = stationPanel.refinery;
+            refinery.refines = world.dockedStationRefines();
+            if (refinery.refines) {
+                const std::uint32_t input = world.refineInputCommodity();
+                const std::uint32_t output = world.refineOutputCommodity();
+                const auto commodityName = [&](std::uint32_t index) {
+                    const sol::assets::CommodityDef* def =
+                        index < world.commodityIds().size()
+                            ? content.defs().findCommodity(world.commodityIds()[index].c_str())
+                            : nullptr;
+                    return def != nullptr ? def->name.c_str() : "?";
+                };
+                refinery.inputName = commodityName(input);
+                refinery.outputName = commodityName(output);
+                refinery.inputHeld = world.playerCargo(input);
+                refinery.ratio = world.mining().params().refineRatio;
+                refinery.feePerUnit = world.mining().params().refineFeePerUnit;
+                refinery.readyUnits = world.refinedReadyHere();
+                refinery.waitSeconds = world.refineWaitHere();
+                refinery.cargoSpace = world.playerCargoCapacity() - world.playerCargoTotal();
+            }
         }
         // The map screen (Phase 8e) reads only what the player knows.
         sol::ui::MapPanel mapPanel;

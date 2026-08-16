@@ -65,6 +65,10 @@ constexpr const char* const kTabLabels[MapScreenState::TabCount] = {"Galaxy", "S
         return rgba(0xB48CE0FFu);
     case MapMarkerRow::Kind::Signal:
         return marker.scanned ? rgba(0x69C48CFFu) : rgba(0xE68C4DFFu);
+    case MapMarkerRow::Kind::Field:
+        return rgba(0x9C8F7AFFu); // rock
+    case MapMarkerRow::Kind::Wreck:
+        return rgba(0xC4696CFFu); // something died here
     }
     return ui.theme().textDim;
 }

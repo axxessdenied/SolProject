@@ -658,6 +658,139 @@ double sellSurvey(GameContent& content)
     return content.world().sellSurveyData();
 }
 
+// --- Mining, salvage & refining (Phase 8f) -----------------------------------
+
+std::string listFields(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::vector<sol::sim::AsteroidFieldSpec> fields;
+    world.mining().fieldsFor(world.galaxy(), world.currentSystemIndex(), fields);
+    const sol::core::DVec3 ship = world.shipState().position;
+    std::string lines;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        char buffer[128];
+        std::snprintf(buffer, sizeof(buffer), "%zu: %u rocks, r %.0f km, %.0f km away", i + 1,
+                      fields[i].rockCount, fields[i].radius / 1000.0,
+                      sol::core::length(fields[i].center - ship) / 1000.0);
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    char summary[96];
+    std::snprintf(summary, sizeof(summary), "%zu field(s) in %s", fields.size(),
+                  world.currentSystemName());
+    return lines.empty() ? std::string(summary) : lines + "\n" + summary;
+}
+
+// Rocks of one field (1-based, as the field listing prints them), with what
+// each still holds — the readout that proves depletion survived a jump.
+std::string listRocks(GameContent& content, double fieldNumber)
+{
+    SpaceWorld& world = content.world();
+    const std::uint32_t field = fieldNumber >= 1.0 ? static_cast<std::uint32_t>(fieldNumber) - 1
+                                                   : 0;
+    std::vector<sol::sim::RockSpec> rocks;
+    world.mining().rocksFor(world.galaxy(), world.currentSystemIndex(), field, rocks);
+    if (rocks.empty()) {
+        return "no such field";
+    }
+    const sol::core::DVec3 ship = world.shipState().position;
+    std::string lines;
+    float left = 0.0f;
+    float total = 0.0f;
+    for (std::size_t i = 0; i < rocks.size(); ++i) {
+        const float remaining = world.mining().unitsLeft(world.currentSystemIndex(), field,
+                                                         static_cast<std::uint32_t>(i),
+                                                         rocks[i].yieldUnits);
+        left += remaining;
+        total += rocks[i].yieldUnits;
+        if (remaining <= 0.0f) {
+            continue; // spent rocks are gone; listing them is noise
+        }
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer), "%zu: %s %.1f/%.1f, r %.0f m, %.0f km", i + 1,
+                      world.commodityIds()[rocks[i].commodity < world.commodityIds().size()
+                                               ? rocks[i].commodity
+                                               : 0]
+                          .c_str(),
+                      static_cast<double>(remaining), static_cast<double>(rocks[i].yieldUnits),
+                      rocks[i].radius, sol::core::length(rocks[i].position - ship) / 1000.0);
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    char summary[96];
+    std::snprintf(summary, sizeof(summary), "field %u: %.0f of %.0f units left",
+                  field + 1, static_cast<double>(left), static_cast<double>(total));
+    return lines.empty() ? std::string(summary) : lines + "\n" + summary;
+}
+
+std::string listWrecks(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    for (const sol::sim::WreckRecord& wreck : world.mining().wrecks()) {
+        float cargo = 0.0f;
+        for (const sol::sim::SignalCargo& stack : wreck.contents.cargo) {
+            cargo += stack.units;
+        }
+        char buffer[192];
+        std::snprintf(buffer, sizeof(buffer), "#%u %s in %s: %.0f units, %.0f cr%s, %.0f s left",
+                      wreck.id, wreck.name.c_str(),
+                      wreck.system < world.galaxy().systems.size()
+                          ? world.galaxy().systems[wreck.system].name.c_str()
+                          : "?",
+                      static_cast<double>(cargo), wreck.contents.credits,
+                      wreck.contents.moduleId.empty() ? "" : ", module",
+                      wreck.decayRemaining);
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    return lines.empty() ? std::string("(no wrecks)") : lines;
+}
+
+// Dev pacing: empties whatever the boresight is on without holding the beam.
+bool mineAhead(GameContent& content)
+{
+    return content.world().mineAhead();
+}
+
+bool orderRefine(GameContent& content, double units)
+{
+    std::string error;
+    if (!content.world().orderRefine(static_cast<float>(units), &error)) {
+        SOL_LOG_WARN("refine: %s", error.c_str());
+        return false;
+    }
+    return true;
+}
+
+double collectRefined(GameContent& content)
+{
+    return static_cast<double>(content.world().collectRefined());
+}
+
+std::string listRefineJobs(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    for (const sol::sim::RefineJob& job : world.mining().refineJobs()) {
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer), "market %u: %.0f %s -> %.0f %s, %s", job.market,
+                      static_cast<double>(job.inputUnits),
+                      job.inputCommodity < world.commodityIds().size()
+                          ? world.commodityIds()[job.inputCommodity].c_str()
+                          : "?",
+                      static_cast<double>(job.outputUnits),
+                      job.outputCommodity < world.commodityIds().size()
+                          ? world.commodityIds()[job.outputCommodity].c_str()
+                          : "?",
+                      job.secondsRemaining > 0.0 ? "running" : "ready");
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+        if (job.secondsRemaining > 0.0) {
+            char wait[48];
+            std::snprintf(wait, sizeof(wait), " (%.0f s)", job.secondsRemaining);
+            lines += wait;
+        }
+    }
+    return lines.empty() ? std::string("(no refinery orders)") : lines;
+}
+
 // Plots a gate route to a named system and returns the summary.
 std::string plotRoute(GameContent& content, const char* systemName)
 {
@@ -697,8 +830,8 @@ bool chartSystem(GameContent& content, const char* systemName)
 bool setSignalLoot(GameContent& content, const char* cargoSpec, double credits,
                    const char* moduleId)
 {
-    if (content.lootSignal() == 0xffff'ffffu) {
-        SOL_LOG_WARN("set_loot: only valid inside signal_loot");
+    if (content.lootSignal() == 0xffff'ffffu && content.lootWreck() == 0) {
+        SOL_LOG_WARN("set_loot: only valid inside signal_loot or wreck_loot");
         return false;
     }
     SpaceWorld& world = content.world();
@@ -733,6 +866,9 @@ bool setSignalLoot(GameContent& content, const char* cargoSpec, double credits,
             return false;
         }
         loot.moduleId = moduleId;
+    }
+    if (content.lootWreck() != 0) {
+        return world.applyWreckLoot(content.lootWreck(), std::move(loot));
     }
     return world.applySignalLoot(content.lootSystem(), content.lootSignal(), std::move(loot));
 }
@@ -1223,6 +1359,15 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&plotRoute>("sol", "route", this);
     m_vm.registerFunction<&chartSystem>("sol", "chart", this);
     m_vm.registerFunction<&setSignalLoot>("sol", "set_loot", this);
+    // Mining, salvage & refining (Phase 8f). sol.set_loot above doubles as the
+    // wreck_loot builder; these are read-outs plus one dev lever (mine).
+    m_vm.registerFunction<&listFields>("sol", "fields", this);
+    m_vm.registerFunction<&listRocks>("sol", "rocks", this);
+    m_vm.registerFunction<&listWrecks>("sol", "wrecks", this);
+    m_vm.registerFunction<&mineAhead>("sol", "mine", this);
+    m_vm.registerFunction<&orderRefine>("sol", "refine", this);
+    m_vm.registerFunction<&collectRefined>("sol", "collect", this);
+    m_vm.registerFunction<&listRefineJobs>("sol", "refine_jobs", this);
 }
 
 bool GameContent::reloadDefs()
@@ -1297,6 +1442,14 @@ void GameContent::runBootScripts()
     m_hasSignalFoundHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_signalFoundHookFailed = false;
+    lua_getglobal(state, "wreck_loot");
+    m_hasWreckLootHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_wreckLootHookFailed = false;
+    lua_getglobal(state, "rock_mined");
+    m_hasRockMinedHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_rockMinedHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -1497,6 +1650,47 @@ void GameContent::tick(double dt)
         }
         m_lootSystem = 0xffff'ffffu;
         m_lootSignal = 0xffff'ffffu;
+    }
+
+    // Salvage (Phase 8f): a fresh wreck already holds the scriptless default
+    // composed from the ship that died, and wreck_loot may replace it through
+    // the same sol.set_loot — until the beam has been into it.
+    m_wreckEvents.clear();
+    m_world->takeWreckEvents(m_wreckEvents);
+    for (const WreckEvent& event : m_wreckEvents) {
+        if (!m_hasWreckLootHook || m_wreckLootHookFailed) {
+            continue;
+        }
+        const char* systemName = event.system < m_world->galaxy().systems.size()
+                                     ? m_world->galaxy().systems[event.system].name.c_str()
+                                     : "";
+        m_lootWreck = event.id;
+        std::string error;
+        if (!m_vm.callGlobal("wreck_loot", &error, event.defId.c_str(), systemName,
+                             event.factionName.c_str(),
+                             static_cast<double>(event.seed >> 11) * 0x1.0p-53)) {
+            SOL_LOG_ERROR("wreck_loot disabled until scripts reload: %s", error.c_str());
+            m_wreckLootHookFailed = true;
+        }
+        m_lootWreck = 0;
+    }
+
+    // Flavor: a rock finished. Fired once per rock rather than per bite, so a
+    // held beam does not print ten lines a second.
+    m_rockEvents.clear();
+    m_world->takeRockEvents(m_rockEvents);
+    for (const RockEvent& event : m_rockEvents) {
+        if (!m_hasRockMinedHook || m_rockMinedHookFailed) {
+            continue;
+        }
+        const std::vector<std::string>& ids = m_world->commodityIds();
+        std::string error;
+        if (!m_vm.callGlobal("rock_mined", &error,
+                             event.commodity < ids.size() ? ids[event.commodity].c_str() : "",
+                             static_cast<double>(event.units))) {
+            SOL_LOG_ERROR("rock_mined disabled until scripts reload: %s", error.c_str());
+            m_rockMinedHookFailed = true;
+        }
     }
 }
 

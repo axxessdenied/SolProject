@@ -27,7 +27,11 @@
 --   sol.salvage()                   empty the nearest resolved site in range
 --   sol.survey_ledger() / sol.sell_survey()   unsold scan data / sell it here
 --   sol.route(systemName) / sol.chart(systemName)  plot a route / dev cheat
---   sol.set_loot(cargo, credits, module)      inside signal_loot only
+--   sol.set_loot(cargo, credits, module)      inside signal_loot / wreck_loot
+--   sol.fields() / sol.rocks(n)     asteroid fields here / one field's rocks (Phase 8f)
+--   sol.wrecks() / sol.mine()       known wrecks / cut what the nose is on (dev)
+--   sol.refine(units) / sol.collect()         order refining here / take the output
+--   sol.refine_jobs()               outstanding refinery orders, anywhere
 
 local announceInterval = 20.0 -- seconds; edit + save to see hot-reload
 local timer = 0.0
@@ -246,4 +250,24 @@ end
 
 function signal_found(kind, system)
     print(string.format("[scan] contact in %s", system))
+end
+
+-- Salvage (Phase 8f). Same shape as signal_loot, for a hull that died where
+-- you could see it: C++ composes a default from the ship that actually died,
+-- then calls this with the wreck's own seeded roll. Once the beam has been
+-- into the hull nothing can rewrite it, so this is the only moment.
+function wreck_loot(shipDef, system, faction, roll)
+    -- Pirates carry what they took; everyone else carries what they were
+    -- hauling. Scrap is the hull, and C++ has already valued that.
+    local pirateHaul = {"sol.metal", "sol.machinery"}
+    if faction ~= "" and roll > 0.6 then
+        local commodity = pirateHaul[1 + math.floor(roll * #pirateHaul) % #pirateHaul]
+        sol.set_loot(string.format("sol.ore:%d,%s:%d", math.floor(6 + 10 * roll),
+                                   commodity, math.floor(2 + 8 * roll)),
+                     math.floor(80 + 400 * roll), "")
+    end
+end
+
+function rock_mined(commodity, units)
+    print(string.format("[mining] rock finished: %.0f units of %s", units, commodity))
 end

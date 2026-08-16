@@ -515,11 +515,16 @@ void drawScannerPanel(DrawList& list, const Styles& styles, Vec2 screenSize,
 {
     const bool scanning = has(hud.scanTarget);
     const bool contacts = hud.contactsUnresolved > 0 || hud.sitesOpen > 0;
-    if (!scanning && !contacts && hud.pulseCharge >= 1.0f && !has(hud.routeNextHop)) {
+    // Prospecting (Phase 8f): what the nose is on, and what is still in it.
+    const bool prospecting = has(hud.prospectName);
+    const bool collecting = hud.collectedUnits > 0.0f;
+    if (!scanning && !contacts && !prospecting && !collecting && hud.pulseCharge >= 1.0f
+        && !has(hud.routeNextHop)) {
         return; // nothing to say: keep the view clear
     }
     constexpr float kWidth = 268.0f;
     const float rows = 1.0f + (scanning ? 1.0f : 0.0f) + (contacts ? 1.0f : 0.0f)
+                       + (prospecting ? 2.0f : 0.0f) + (collecting ? 1.0f : 0.0f)
                        + (has(hud.routeNextHop) ? 1.0f : 0.0f);
     const float height = kPadding + rows * 20.0f + kPadding * 0.5f;
     const float top = targetPanel.max.y + (targetPanel.height() > 0.0f ? 8.0f : 0.0f);
@@ -556,6 +561,38 @@ void drawScannerPanel(DrawList& list, const Styles& styles, Vec2 screenSize,
         std::snprintf(buffer, sizeof(buffer), "%d unidentified - %d site(s) open",
                       hud.contactsUnresolved, hud.sitesOpen);
         list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, buffer, kWarning);
+        y += 20.0f;
+    }
+    if (prospecting) {
+        // In range reads in accent, out of range dim: the whole readout is
+        // there to answer "can I cut this from here, and is it worth it".
+        const Color tone = hud.prospectInRange ? kAccent : kTextDim;
+        list.addTextInBox(*styles.small, {{left, y}, {right - 70.0f, y + 20.0f}},
+                          hud.prospectName, tone);
+        char range[32] = {};
+        std::snprintf(range, sizeof(range), "%.1f km", hud.prospectDistance / 1000.0);
+        list.addTextInBox(*styles.small, {{right - 68.0f, y}, {right, y + 20.0f}}, range, tone,
+                          TextAlign::Right);
+        y += 20.0f;
+        char amount[64] = {};
+        std::snprintf(amount, sizeof(amount), hud.prospectIsWreck ? "%.0f units aboard"
+                                                                  : "%.0f of %.0f units left",
+                      static_cast<double>(hud.prospectLeft),
+                      static_cast<double>(hud.prospectTotal));
+        list.addTextInBox(*styles.small, {{left, y}, {right - 46.0f, y + 20.0f}}, amount,
+                          kTextPrimary);
+        if (!hud.prospectIsWreck && hud.prospectTotal > 0.0f) {
+            const float meterY2 = y + (20.0f - kMeterHeight) * 0.5f;
+            drawMeter(list, {{right - 44.0f, meterY2}, {right, meterY2 + kMeterHeight}},
+                      clamp01(hud.prospectLeft / hud.prospectTotal), tone);
+        }
+        y += 20.0f;
+    }
+    if (collecting) {
+        char buffer[96] = {};
+        std::snprintf(buffer, sizeof(buffer), "+%.1f %s", static_cast<double>(hud.collectedUnits),
+                      hud.collectedName);
+        list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, buffer, kAccent);
         y += 20.0f;
     }
     if (has(hud.routeNextHop)) {

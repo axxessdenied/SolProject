@@ -39,7 +39,7 @@ constexpr float kNumberWidth = 82.0f;
 constexpr Color kCampaign = rgba(0xF2CC59FFu);
 
 constexpr const char* const kTabLabels[StationScreenState::TabCount] = {
-    "Trade", "Outfitting", "Shipyard", "Crew", "Factions", "Missions", "Survey"};
+    "Trade", "Outfitting", "Shipyard", "Crew", "Factions", "Missions", "Survey", "Refinery"};
 
 // The amounts a trade button moves. Fixed steps rather than a text field: the
 // world clamps to credits, hold space, and stock anyway, so "buy 100" means
@@ -641,6 +641,85 @@ void buildSurveyTab(UiContext& ui, StationPanel& panel, StationScreenState& stat
     ui.endScroll();
 }
 
+// --- Refinery (Phase 8f) ---
+
+// Refining is a service, not a market: you hand over ore and come back for
+// metal. The tab is therefore two facts (what it takes, what it pays) and two
+// buttons — order, and collect what a previous order finished.
+void buildRefineryTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
+                      const Rect& content)
+{
+    const auto& theme = ui.theme();
+    const sol::ui::RefinePanel& refinery = panel.refinery;
+    const float contentHeight = kSectionHeight + theme.spacing + kRowHeight * 5.0f
+                                + theme.spacing * 5.0f;
+    const Rect list =
+        ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Refinery]);
+    Column column(list, 0.0f, theme.spacing);
+
+    if (!refinery.refines) {
+        sectionHeader(ui, column.row(kSectionHeight), "Refining");
+        emptyNote(ui, column, "(this station refines nothing)");
+        ui.endScroll();
+        return;
+    }
+
+    char buffer[160] = {};
+    std::snprintf(buffer, sizeof(buffer), "%s to %s", refinery.inputName, refinery.outputName);
+    sectionHeader(ui, column.row(kSectionHeight), buffer);
+
+    const auto factRow = [&](const char* label, const char* value) {
+        const Rect row = column.row(kRowHeight);
+        Row cursor(row, theme.spacing);
+        const Rect valueCell = cursor.cellFromRight(row.width() * 0.5f);
+        clipped(ui, cursor.remaining(), label, theme.textDim);
+        clipped(ui, valueCell, value, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
+    };
+
+    std::snprintf(buffer, sizeof(buffer), "%.2f %s per unit, %.0f cr fee",
+                  static_cast<double>(refinery.ratio), refinery.outputName,
+                  static_cast<double>(refinery.feePerUnit));
+    factRow("Rate", buffer);
+    std::snprintf(buffer, sizeof(buffer), "%.0f units", static_cast<double>(refinery.inputHeld));
+    factRow("Aboard", buffer);
+    if (refinery.waitSeconds >= 0.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.0f s", refinery.waitSeconds);
+        factRow("Next order ready in", buffer);
+    } else {
+        factRow("Next order ready in", "-");
+    }
+
+    // Orders move in the same fixed steps trading uses; the world clamps to
+    // what is actually in the hold.
+    const Rect orderRow = column.row(kRowHeight);
+    Row order(orderRow, theme.spacing);
+    clipped(ui, order.cell(orderRow.width() * 0.4f), "Refine", theme.textPrimary,
+            theme.strongStyle);
+    for (int i = 0; i < kTradeAmountCount; ++i) {
+        const Rect cell = order.cell(kButtonWidth);
+        ui.pushId(i);
+        if (ui.button(inset(cell, 2.0f), kTradeAmountLabels[i], refinery.inputHeld > 0.0f)) {
+            panel.action = {.kind = StationAction::Kind::OrderRefine,
+                            .index = -1,
+                            .units = kTradeAmounts[i]};
+        }
+        ui.popId();
+    }
+
+    const Rect collectRow = column.row(kRowHeight);
+    Row collect(collectRow, theme.spacing);
+    const Rect collectCell = collect.cellFromRight(kButtonWidth + 40.0f);
+    std::snprintf(buffer, sizeof(buffer), "%.0f %s waiting", static_cast<double>(refinery.readyUnits),
+                  refinery.outputName);
+    clipped(ui, collect.remaining(), buffer, theme.accent, theme.strongStyle, TextAlign::Right);
+    if (ui.button(inset(collectCell, 2.0f), "Collect",
+                  refinery.readyUnits > 0.0f && refinery.cargoSpace > 0.0f)) {
+        panel.action = {.kind = StationAction::Kind::CollectRefined, .index = -1};
+    }
+
+    ui.endScroll();
+}
+
 } // namespace
 
 bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& state)
@@ -706,6 +785,9 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
     case StationScreenState::Survey:
         buildSurveyTab(ui, panel, state, content);
         break;
+    case StationScreenState::Refinery:
+        buildRefineryTab(ui, panel, state, content);
+        break;
     default:
         break;
     }
@@ -719,6 +801,7 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
         "Standing moves with what you do in a faction's space.",
         "Accepting a contract starts its clock; abandoning one costs standing.",
         "Scan data sells anywhere; the further out it was taken, the more it pays.",
+        "Refining takes time: leave the order and come back for it.",
     };
 
     Row footer(footerRow, theme.spacing);

@@ -300,6 +300,12 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
     case Kind::SellSurveyData:
         (void)world.sellSurveyData();
         break;
+    case Kind::OrderRefine:
+        (void)world.orderRefine(action.units);
+        break;
+    case Kind::CollectRefined:
+        (void)world.collectRefined();
+        break;
     }
 }
 
