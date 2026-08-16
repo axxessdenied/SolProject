@@ -750,6 +750,29 @@ bool mineAhead(GameContent& content)
     return content.world().mineAhead();
 }
 
+bool warpToRock(GameContent& content)
+{
+    return content.world().warpToNearestRock();
+}
+
+// Selects a nav target by name fragment (T-cycling is the player path). Useful
+// for anything the cycle reaches: a field, a wreck, a gate, a station.
+bool selectTargetByName(GameContent& content, const char* namePart)
+{
+    SpaceWorld& world = content.world();
+    const std::string_view want(namePart != nullptr ? namePart : "");
+    if (want.empty()) {
+        return false;
+    }
+    const std::span<const NavTarget> targets = world.navTargets();
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        if (targets[i].name.find(want) != std::string::npos) {
+            return world.selectTarget(i);
+        }
+    }
+    return false;
+}
+
 bool orderRefine(GameContent& content, double units)
 {
     std::string error;
@@ -1365,6 +1388,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listRocks>("sol", "rocks", this);
     m_vm.registerFunction<&listWrecks>("sol", "wrecks", this);
     m_vm.registerFunction<&mineAhead>("sol", "mine", this);
+    m_vm.registerFunction<&warpToRock>("sol", "warp_rock", this);
+    m_vm.registerFunction<&selectTargetByName>("sol", "target", this);
     m_vm.registerFunction<&orderRefine>("sol", "refine", this);
     m_vm.registerFunction<&collectRefined>("sol", "collect", this);
     m_vm.registerFunction<&listRefineJobs>("sol", "refine_jobs", this);

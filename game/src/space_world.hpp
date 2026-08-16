@@ -497,7 +497,8 @@ public:
     // One verb: hold a beam with mining_power on a rock or a wreck and what
     // comes off drifts as ore chunks the ship then has to gather.
     static constexpr double kChunkLifetimeSeconds = 90.0;
-    static constexpr double kChunkDriftSpeed = 18.0;
+    static constexpr double kChunkDriftSpeed = 30.0;
+    static constexpr double kChunkSpread = 0.45; // how far off "toward you"
     static constexpr float kChunkUnitCeiling = 6.0f; // one chunk never holds more
     // Standing paid for a refinery order, per credit of fee.
     static constexpr double kRefineStandingRate = 0.0008;
@@ -514,6 +515,10 @@ public:
     [[nodiscard]] const char* lastCollectedName() const { return m_collectName.c_str(); }
     // Dev/console: empties the rock the boresight is on into the hold.
     bool mineAhead();
+    // Dev/console (sol.warp_rock): parks the ship just off the nearest rock
+    // with the nose on it — test pacing for the beam, in the same spirit as
+    // sol.warp. False while docked or with no rock in the system.
+    bool warpToNearestRock();
 
     // Wreck loot composed by the Lua hook (validated in MiningSim).
     bool applyWreckLoot(std::uint32_t id, sol::sim::SignalLoot loot);
@@ -801,6 +806,10 @@ private:
     // drifting chunks. Returns what actually came out.
     float cutRock(std::uint32_t entityIndex, float units);
     float cutWreck(std::uint32_t entityIndex, float units);
+    // One chunk off a cut surface: it leaves toward whoever is cutting, with
+    // a spread, so mining is gathering rather than chasing.
+    void spawnCutChunk(const sol::core::DVec3& origin, double surface, std::uint32_t commodity,
+                       float units);
     void spawnOreChunk(const sol::core::DVec3& position, const sol::core::DVec3& velocity,
                        std::uint32_t commodity, float units);
     // Fits a salvaged module if it is legal on the active ship; used by both
@@ -814,6 +823,10 @@ private:
                                                         std::uint64_t seed) const;
     // The docked station archetype's refinery pair, resolved from the defs.
     bool dockedRefinePair(std::uint32_t& input, std::uint32_t& output) const;
+    // Creates the mining component pools up front. Const storage<T>() asserts
+    // the pool exists, and the read-only paths (the HUD's prospect readout)
+    // run in systems that may hold no rock, no wreck, and no loose ore.
+    void ensureMiningPools();
     // Pulse cooldown plus target-scan progress for the player's current
     // target; resolves the target when the scan completes.
     void tickScanning(double dt);

@@ -981,8 +981,16 @@ bool SpaceWorld::tryFitSalvagedModule(const std::string& moduleId, std::string& 
     return true;
 }
 
+void SpaceWorld::ensureMiningPools()
+{
+    (void)m_registry.storage<MineableRock>();
+    (void)m_registry.storage<WreckMarker>();
+    (void)m_registry.storage<OreChunk>();
+}
+
 void SpaceWorld::initializeMining()
 {
+    ensureMiningPools();
     m_miningParams = sim::MiningParams{};
     m_miningParams.ores.clear();
     // What a rock can be made of is a data question: any commodity whose def
@@ -1040,6 +1048,24 @@ void SpaceWorld::instantiateMiningEntities()
     }
 }
 
+void SpaceWorld::spawnCutChunk(const core::DVec3& origin, double surface,
+                               std::uint32_t commodity, float units)
+{
+    // Ore breaks off *toward the beam* — with a spread, but not at random.
+    // Scattering it evenly means most of what you cut simply leaves, and the
+    // loop becomes chasing debris rather than mining.
+    const core::DVec3 toShip = shipState().position - origin;
+    const double distance = length(toShip);
+    core::DVec3 direction = distance > 1.0 ? toShip * (1.0 / distance)
+                                           : sim::randomPlayfieldDirection(m_chunkRng);
+    direction = direction + sim::randomPlayfieldDirection(m_chunkRng) * kChunkSpread;
+    const double spread = length(direction);
+    direction = spread > 1.0e-6 ? direction * (1.0 / spread) : core::DVec3{0.0, 0.0, 1.0};
+    spawnOreChunk(origin + direction * surface,
+                  direction * (kChunkDriftSpeed * (0.6 + 0.8 * m_chunkRng.nextDouble01())),
+                  commodity, units);
+}
+
 void SpaceWorld::spawnOreChunk(const core::DVec3& position, const core::DVec3& velocity,
                                std::uint32_t commodity, float units)
 {
@@ -1074,10 +1100,7 @@ float SpaceWorld::cutRock(std::uint32_t entityIndex, float units)
     while (remaining > 0.0f) {
         const float chunk = std::min(remaining, kChunkUnitCeiling);
         remaining -= chunk;
-        const core::DVec3 direction = sim::randomPlayfieldDirection(m_chunkRng);
-        spawnOreChunk(origin + direction * surface,
-                      direction * (kChunkDriftSpeed * (0.4 + 0.6 * m_chunkRng.nextDouble01())),
-                      rock->commodity, chunk);
+        spawnCutChunk(origin, surface, rock->commodity, chunk);
     }
     return taken;
 }
@@ -1096,10 +1119,7 @@ float SpaceWorld::cutWreck(std::uint32_t entityIndex, float units)
         while (remaining > 0.0f) {
             const float chunk = std::min(remaining, kChunkUnitCeiling);
             remaining -= chunk;
-            const core::DVec3 direction = sim::randomPlayfieldDirection(m_chunkRng);
-            spawnOreChunk(origin + direction * 25.0,
-                          direction * (kChunkDriftSpeed * (0.4 + 0.6 * m_chunkRng.nextDouble01())),
-                          commodity, chunk);
+            spawnCutChunk(origin, 25.0, commodity, chunk);
         }
         return taken;
     }
@@ -1219,6 +1239,61 @@ bool SpaceWorld::mineAhead()
     }
     m_registry.destroy(m_registry.entityFromIndex(entityIndex));
     m_rockEvents.push_back({.commodity = rock.commodity, .units = rock.totalUnits});
+    return true;
+}
+
+bool SpaceWorld::warpToNearestRock()
+{
+    if (isDocked()) {
+        return false;
+    }
+    const core::DVec3 position = shipState().position;
+    const ecs::Pool<MineableRock>& rocks = m_registry.storage<MineableRock>();
+    const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
+    const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
+    std::uint32_t best = kNoIndex;
+    double bestDistance = 0.0;
+    for (std::size_t i = 0; i < rocks.size(); ++i) {
+        const std::uint32_t entityIndex = rocks.entityIndices()[i];
+        const double distance = length(transforms.get(entityIndex).position - position);
+        if (best == kNoIndex || distance < bestDistance) {
+            best = entityIndex;
+            bestDistance = distance;
+        }
+    }
+    if (best == kNoIndex) {
+        return false;
+    }
+    const core::DVec3 target = transforms.get(best).position;
+    const double standoff =
+        static_cast<double>(shapes.get(best).scale.x) + 400.0; // clear of the hull
+    // Approach from wherever the ship already is, so the parked view looks
+    // like an arrival rather than a fixed camera angle.
+    core::DVec3 approach = position - target;
+    const double length2 = length(approach);
+    approach = length2 > 1.0 ? approach * (1.0 / length2) : core::DVec3{0.0, 0.0, 1.0};
+    const core::DVec3 parked = target + approach * standoff;
+
+    m_autopilotActive = false;
+    Transform& transform = m_registry.storage<Transform>().get(playerEntityIndex());
+    transform.position = parked;
+    transform.previousPosition = parked;
+    // Point the nose at the rock: the rotation taking -Z to the look vector.
+    const core::Vec3 look = toVec3(approach * -1.0);
+    const core::Vec3 nose{0.0f, 0.0f, -1.0f};
+    const float alignment = dot(look, nose);
+    core::Quat orientation = core::Quat::identity();
+    if (alignment < 0.9999f) {
+        core::Vec3 axis = cross(nose, look);
+        if (length(axis) < 1.0e-5f) {
+            axis = {0.0f, 1.0f, 0.0f}; // exactly behind: any perpendicular does
+        }
+        orientation = core::fromAxisAngle(normalize(axis), std::acos(std::clamp(alignment, -1.0f, 1.0f)));
+    }
+    transform.orientation = orientation;
+    transform.previousOrientation = orientation;
+    m_registry.storage<FlightBody>().get(playerEntityIndex()) = FlightBody{};
+    SOL_LOG_WARN("dev warp: parked %.0f m off a rock", standoff);
     return true;
 }
 
@@ -3640,6 +3715,7 @@ bool SpaceWorld::loadFrom(const char* path)
         return false; // not a current-format save (or player identity lost)
     }
     m_registry = std::move(fresh);
+    ensureMiningPools(); // the snapshot only carries pools the save had in it
     // Def-spawned entities were replaced wholesale; their def association is
     // gone (visuals persist via the saved RenderShape).
     m_spawnedShips.clear();

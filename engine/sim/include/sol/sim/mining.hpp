@@ -105,10 +105,12 @@ struct MiningParams
     // so reaching one stays inside the decisions/005 cruise budget.
     double fieldMinDistance = 8.0e7;
     double fieldMaxDistance = 4.0e8;
-    // A field is small enough to fly across in well under a minute: it is a
-    // place you are *inside*, not another cruise leg.
-    double fieldRadiusMin = 2.0e4;
-    double fieldRadiusMax = 6.0e4;
+    // A field is small enough to fly across in well under a minute at normal
+    // thrust: it is a place you are *inside*, not another cruise leg. At this
+    // radius a few dozen rocks sit roughly a kilometre apart, so arriving at
+    // the field puts several of them in front of you.
+    double fieldRadiusMin = 2.0e3;
+    double fieldRadiusMax = 6.0e3;
     double rockRadiusMin = 45.0;
     double rockRadiusMax = 240.0;
     float yieldMin = 25.0f;

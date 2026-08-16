@@ -30,6 +30,8 @@
 --   sol.set_loot(cargo, credits, module)      inside signal_loot / wreck_loot
 --   sol.fields() / sol.rocks(n)     asteroid fields here / one field's rocks (Phase 8f)
 --   sol.wrecks() / sol.mine()       known wrecks / cut what the nose is on (dev)
+--   sol.target(namePart)            select any nav target by name
+--   sol.warp_rock()                 dev: park just off the nearest rock, nose on it
 --   sol.refine(units) / sol.collect()         order refining here / take the output
 --   sol.refine_jobs()               outstanding refinery orders, anywhere
 

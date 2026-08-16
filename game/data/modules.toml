@@ -117,7 +117,7 @@ slot = "utility"
 price = 1100.0
 mass = 350.0
 power_draw = 1.5
-collector_range_mul = 3.0
+collector_range_mul = 2.5
 
 [[module]]
 id = "sol.collector_mk2"

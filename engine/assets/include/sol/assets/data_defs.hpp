@@ -119,8 +119,10 @@ struct ShipDef
     float scanRange = 2.5e8f;  // meters
     float scanSpeed = 1.0f;    // target-scan progress multiplier
     // Mining (engine plan Phase 8f): how far loose ore is drawn in from.
-    // Small by default, so a collector rig is what makes a mining ship.
-    float collectorRange = 250.0f; // meters
+    // Deliberately far shorter than a mining beam reaches, so an unfitted ship
+    // has to fly in and scoop what it cut; a collector rig is what buys the
+    // right to sit still and mine.
+    float collectorRange = 120.0f; // meters
     // Outfitting (engine plan Phase 8a): hull price, fitting budgets, slots.
     float price = 10'000.0f;
     float mass = 10'000.0f;    // kg; module mass dilutes accelerations
