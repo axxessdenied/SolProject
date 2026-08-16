@@ -47,6 +47,7 @@ add_executable(sol_sim_tests
     sim/damage_tests.cpp
     sim/economy_tests.cpp
     sim/faction_sim_tests.cpp
+    sim/mission_tests.cpp
     sim/fixed_loop_tests.cpp
     sim/flight_tests.cpp
     sim/power_tests.cpp

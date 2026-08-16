@@ -109,6 +109,11 @@ public:
     TradeResult buy(std::uint32_t market, std::uint32_t commodity, float units);
     TradeResult sell(std::uint32_t market, std::uint32_t commodity, float units);
 
+    // A mission hand-in (Phase 8c): units arrive in a station's stock without
+    // a market trade — the haul contract pays instead, and the refilled stock
+    // moves prices like any other supply.
+    void deliver(std::uint32_t market, std::uint32_t commodity, float units);
+
     // A faction raid (Phase 8b): every market in the system loses
     // stockFraction of each commodity, and traders hauling toward the system
     // lose their cargo (they arrive empty) — piracy propagates into

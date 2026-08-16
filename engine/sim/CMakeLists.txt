@@ -5,6 +5,7 @@ add_library(sol_sim STATIC
     src/faction_sim.cpp
     src/fixed_loop.cpp
     src/flight.cpp
+    src/missions.cpp
     src/power.cpp
     src/steering.cpp
     src/universe.cpp

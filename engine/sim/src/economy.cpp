@@ -150,6 +150,19 @@ TradeResult Economy::sell(std::uint32_t market, std::uint32_t commodity, float u
     return result;
 }
 
+void Economy::deliver(std::uint32_t market, std::uint32_t commodity, float units)
+{
+    if (market >= m_markets.size() || commodity >= m_params.commodities.size() ||
+        units <= 0.0f) {
+        return;
+    }
+    StationMarket& station = m_markets[market];
+    const float capacity = station.archetype < m_params.archetypes.size()
+                               ? m_params.archetypes[station.archetype].stockCapacity
+                               : 0.0f;
+    station.stock[commodity] = std::min(station.stock[commodity] + units, capacity);
+}
+
 void Economy::raidSystem(std::uint32_t systemIndex, float stockFraction)
 {
     const float keep = 1.0f - core::clamp(stockFraction, 0.0f, 1.0f);

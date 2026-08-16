@@ -122,6 +122,8 @@ public:
         return standing(faction) > m_params.friendlyThreshold;
     }
     void setStanding(std::uint32_t faction, float value); // dev cheat
+    // Clamped relative change (mission rewards/penalties, Phase 8c).
+    void addStanding(std::uint32_t faction, float delta);
     // The player destroyed one of victimFaction's ships: standing falls with
     // the owner and rises with its enemies, scaled by how deep the enmity is.
     void recordShipKill(std::uint32_t victimFaction);

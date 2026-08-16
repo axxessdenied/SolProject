@@ -236,6 +236,13 @@ void FactionSim::setStanding(std::uint32_t faction, float value)
     }
 }
 
+void FactionSim::addStanding(std::uint32_t faction, float delta)
+{
+    if (faction < m_count) {
+        m_standings[faction] = clampScore(m_standings[faction] + delta);
+    }
+}
+
 void FactionSim::recordShipKill(std::uint32_t victimFaction)
 {
     if (victimFaction >= m_count) {
