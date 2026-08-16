@@ -7,7 +7,6 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -27,176 +26,6 @@ struct OverlayStats
     float simAlpha = 0.0f;
 };
 
-// Provisional flight HUD (engine plan 2.9: ImGui until the real game UI
-// exists; Phase 4 teaches us what the HUD needs).
-struct FlightHud
-{
-    bool active = false;
-    float speedMetersPerSecond = 0.0f;
-    bool assist = true;
-    bool boost = false;
-    bool cruise = false;
-    bool autopilot = false;
-    const char* cameraMode = "";
-    const char* targetName = "";
-    double targetDistanceMeters = 0.0;
-    float closingSpeedMetersPerSecond = 0.0f;
-    core::Vec3 targetDirectionCamera; // unit, camera space (-Z forward)
-    float tanHalfFovY = 1.0f;
-
-    // Power pips (decisions/003); pipMax caps each bar, charge is 0..1.
-    int pipsWeapons = 2;
-    int pipsEngines = 2;
-    int pipsShields = 2;
-    int pipMax = 4;
-    float weaponCharge = 1.0f;
-
-    // Defenses (decisions/002), all 0..1: fore/aft shield arcs around the
-    // crosshair plus hull in the readout strip.
-    float shieldFore = 1.0f;
-    float shieldAft = 1.0f;
-    float hull = 1.0f;
-
-    // Combat feedback: targeted-ship readout, projectile lead marker, and a
-    // crosshair flash while the player is taking hits.
-    bool targetIsShip = false;
-    float targetShieldFore = 0.0f;
-    float targetShieldAft = 0.0f;
-    float targetHull = 0.0f;
-    bool hasLead = false;
-    core::Vec3 leadDirectionCamera; // unit, camera space
-    float damageFlash = 0.0f;       // 0..1
-
-    // Target allegiance (Phase 8b): faction display name and the player's
-    // attitude tag ("hostile"/"neutral"/"friendly"); empty for unaffiliated.
-    const char* targetFaction = "";
-    const char* targetAttitude = "";
-
-    // Tracked mission (Phase 8c): title + current objective, empty = none.
-    const char* missionTitle = "";
-    const char* missionObjective = "";
-    double missionDeadline = 0.0; // seconds left; 0 = no deadline
-
-    // Universe context (Phase 7): current system, and jump/dock prompts
-    // while the ship is within activation range.
-    const char* systemName = "";
-    bool gateInRange = false;
-    bool dockInRange = false;
-    bool docked = false;
-    const char* dockedStationName = "";
-};
-
-// Provisional trade screen (Phase 7; replaced by real game UI in Phase 8).
-// The game fills rows from the docked market; a clicked button reports back
-// through `action` for the game to execute against the world.
-struct TradeRow
-{
-    const char* name = "";
-    float price = 0.0f; // credits/unit right now
-    float stock = 0.0f; // station stock, units
-    float cargo = 0.0f; // in the player's hold, units
-};
-
-struct TradeAction
-{
-    int row = -1; // index into rows; -1 = no click this frame
-    float units = 0.0f;
-    bool isBuy = false;
-};
-
-struct TradePanel
-{
-    const char* stationName = "";
-    double credits = 0.0;
-    float cargoUsed = 0.0f;
-    float cargoCapacity = 0.0f;
-    std::span<const TradeRow> rows;
-    TradeAction action; // out
-};
-
-// Catalog/inventory row for the outfitting, shipyard, and crew tabs
-// (Phase 8a; still the provisional dev UI).
-struct OutfitRow
-{
-    const char* id = "";
-    const char* name = "";
-    const char* detail = ""; // slot/kind/role + stat summary, prebuilt
-    float price = 0.0f;
-    int fitted = 0; // instances currently on the active ship (catalogs)
-};
-
-struct FleetRow
-{
-    const char* name = "";
-    bool active = false;
-    bool storedHere = false; // stored at THIS station (switch/sell allowed)
-    float value = 0.0f;      // hull + fit at list price
-};
-
-// One faction's standing line for the Factions tab (Phase 8b).
-struct FactionRow
-{
-    const char* name = "";
-    const char* detail = "";   // kind + war list, prebuilt
-    float standing = 0.0f;     // -100..100
-    const char* attitude = ""; // "hostile"/"neutral"/"friendly"
-};
-
-// One mission line for the Missions tab (Phase 8c): a board offer or a
-// journal entry, detail prebuilt by the game.
-struct MissionRow
-{
-    const char* title = "";
-    const char* detail = "";  // poster, objective/progress, deadline
-    float reward = 0.0f;      // credits on completion
-    bool acceptable = true;   // offers: standing clears the min_rep tier
-    bool campaign = false;
-    bool tracked = false;     // journal: shown on the HUD
-};
-
-// What the player clicked this frame; the game executes it.
-struct StationAction
-{
-    enum class Kind : std::uint32_t
-    {
-        None = 0,
-        BuyModule,
-        SellModule,
-        BuyWeapon,
-        BuyShip,
-        SellShip,
-        SwitchShip,
-        HireCrew,
-        FireCrew,
-        AcceptMission,
-        AbandonMission,
-        TrackMission,
-    };
-    Kind kind = Kind::None;
-    const char* id = ""; // def id (module/weapon/ship/crew actions)
-    int index = -1;      // fleet index, or mission offer/journal index
-};
-
-// The docked-station screen: Trade plus the Phase 8a Outfitting, Shipyard,
-// and Crew tabs.
-struct StationPanel
-{
-    TradePanel trade;
-    const char* fitSummary = "";  // active ship fit + budgets, prebuilt
-    double deductible = 0.0;      // current insurance quote
-    std::span<const OutfitRow> modules; // catalog
-    std::span<const OutfitRow> weapons; // catalog ("fitted" flags the mount)
-    std::span<const OutfitRow> crewCatalog;
-    std::span<const OutfitRow> crewAboard;
-    std::span<const OutfitRow> shipCatalog;
-    std::span<const FleetRow> fleet;
-    std::span<const FactionRow> factions; // standings (Phase 8b)
-    const char* factionNotes = "";        // recent raids summary, prebuilt
-    std::span<const MissionRow> missionOffers;  // the board (Phase 8c)
-    std::span<const MissionRow> missionJournal; // active missions
-    StationAction action; // out
-};
-
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).
 class DevUi
 {
@@ -206,11 +35,10 @@ public:
                                   std::uint32_t swapchainImageCount);
     void shutdown();
 
-    // Once per frame, before recording; builds the overlay + console windows
-    // and, when hud.active, the flight HUD. A non-null station panel (docked)
-    // also builds the provisional trade/outfitting/shipyard/crew screen.
-    void beginFrame(const OverlayStats& stats, const FlightHud& hud = {},
-                    StationPanel* station = nullptr);
+    // Once per frame, before recording; builds the overlay + console windows.
+    // Player-facing screens are not this class's business: they live on the
+    // custom UI stack (`sol::ui::UiContext`, `sol/ui/screens.hpp`).
+    void beginFrame(const OverlayStats& stats);
 
     // Records draw data; must be called inside the scene's dynamic rendering pass.
     void render(VkCommandBuffer commandBuffer);
@@ -230,14 +58,6 @@ public:
 private:
     void buildWindows(const OverlayStats& stats);
     void buildConsoleInput();
-    void buildFlightHud(const FlightHud& hud);
-    void buildStationPanel(StationPanel& station);
-    void buildTradeTab(TradePanel& trade);
-    void buildOutfittingTab(StationPanel& station);
-    void buildShipyardTab(StationPanel& station);
-    void buildCrewTab(StationPanel& station);
-    void buildFactionsTab(StationPanel& station);
-    void buildMissionsTab(StationPanel& station);
     static int consoleTextCallback(ImGuiInputTextCallbackData* data);
 
     bool m_initialized = false;

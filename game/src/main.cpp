@@ -22,6 +22,7 @@
 #include "sol/rhi/context.hpp"
 #include "sol/rhi/swapchain.hpp"
 #include "sol/ui/dev_ui.hpp"
+#include "sol/ui/screens.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -813,11 +814,9 @@ int main(int argc, char** argv)
             state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
         }
 
-        // The provisional ImGui station screen is off: the custom one replaces
-        // it, and the two overlap on screen, so there is nothing to compare
-        // side by side the way the HUD still is. Its code goes with the
-        // provisional HUD in the cleanup that ends this phase.
-        devUi.beginFrame(stats, hud, nullptr);
+        // Dev overlay and console only: every player-facing screen is on the
+        // custom stack now.
+        devUi.beginFrame(stats);
         if (showStation && stationPanel.trade.action.row >= 0) {
             const std::uint32_t commodity =
                 static_cast<std::uint32_t>(stationPanel.trade.action.row);
