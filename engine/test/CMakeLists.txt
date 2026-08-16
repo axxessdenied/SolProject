@@ -31,6 +31,7 @@ add_test(NAME ecs.unit COMMAND sol_ecs_tests)
 
 add_executable(sol_assets_tests
     assets/data_defs_tests.cpp
+    assets/font_tests.cpp
     assets/loadout_tests.cpp
     assets/truetype_tests.cpp
 )
