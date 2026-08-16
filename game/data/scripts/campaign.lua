@@ -18,17 +18,17 @@ local function firstClan()
 end
 
 local function neighborWithStation()
-    local i = 1
-    while true do
-        local dest = sol.gate_destination(i)
-        if dest < 0 then
-            return nil
-        end
-        if sol.station_count(dest) > 0 then
-            return dest
-        end
-        i = i + 1
+    local names = {}
+    for g in string.gmatch(sol.gates(), "[^,]+") do
+        names[#names + 1] = g:gsub("^%s+", "")
     end
+    for i = 1, #names do
+        local dest = sol.gate_destination(i)
+        if dest >= 0 and sol.station_count(dest) > 0 then
+            return dest, names[i]
+        end
+    end
+    return nil, nil
 end
 
 -- One entry per stage; build() assembles the objectives for the station the
@@ -69,12 +69,12 @@ local act = {
         intro = "Dispatch: 'The raids left a neighbor system short on food. Buy 15 units and get them there.'",
         outro = "Relief coordinator: 'Shelves are stocked. You were seen doing this, pilot.'",
         build = function()
-            local dest = neighborWithStation()
+            local dest, name = neighborWithStation()
             if dest == nil then
-                dest = sol.system_index() -- isolated system: hand in at home
+                dest, name = sol.system_index(), sol.system() -- isolated: home
             end
             sol.mission_obj_deliver(dest, 0, "sol.food", 15,
-                                    "Deliver 15 food to the neighboring system")
+                                    string.format("Deliver 15 food to %s", name))
         end,
     },
     {
