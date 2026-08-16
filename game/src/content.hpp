@@ -43,6 +43,11 @@ public:
     [[nodiscard]] bool missionDraftOpen() const { return m_missionDraftOpen; }
     void setMissionDraftOpen(bool open) { m_missionDraftOpen = open; }
 
+    // The site whose signal_loot hook is running right now, so sol.set_loot
+    // can only ever write the loot it was called about (Phase 8e).
+    [[nodiscard]] std::uint32_t lootSystem() const { return m_lootSystem; }
+    [[nodiscard]] std::uint32_t lootSignal() const { return m_lootSignal; }
+
 private:
     struct WatchedFile
     {
@@ -84,6 +89,14 @@ private:
     bool m_boardHookFailed = false;
     bool m_hasMissionEventHook = false;
     bool m_missionEventHookFailed = false;
+    // Exploration hooks (Phase 8e).
+    std::vector<SurveyEvent> m_surveyEvents; // per-tick scratch
+    std::uint32_t m_lootSystem = 0xffff'ffffu;
+    std::uint32_t m_lootSignal = 0xffff'ffffu;
+    bool m_hasLootHook = false;
+    bool m_lootHookFailed = false;
+    bool m_hasSignalFoundHook = false;
+    bool m_signalFoundHookFailed = false;
 };
 
 } // namespace game

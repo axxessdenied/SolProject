@@ -22,6 +22,12 @@
 --   sol.mission_candidates()        raw shortage/bounty candidates (dev)
 --   sol.campaign_stage() / sol.set_campaign_stage(n)  spine progress (dev)
 --   sol.mission_begin/deadline/min_rep/obj_*/post     board-hook builder
+--   sol.knowledge() / sol.signals()  what is known / found sites here (Phase 8e)
+--   sol.pulse() / sol.scan()        fire a scan pulse / resolve the target (dev)
+--   sol.salvage()                   empty the nearest resolved site in range
+--   sol.survey_ledger() / sol.sell_survey()   unsold scan data / sell it here
+--   sol.route(systemName) / sol.chart(systemName)  plot a route / dev cheat
+--   sol.set_loot(cargo, credits, module)      inside signal_loot only
 
 local announceInterval = 20.0 -- seconds; edit + save to see hot-reload
 local timer = 0.0
@@ -212,3 +218,32 @@ function mission_board(stationName, owner, ownerName, ownerPirate, hauls, bounti
 end
 
 print("init.lua ready - ships: " .. sol.ships())
+
+-- Exploration (Phase 8e). C++ resolves a site and fills in a default table
+-- first, then calls this with the site's own seeded roll — the only entropy,
+-- so what a wreck holds is fixed by the world seed rather than by when you
+-- happened to scan it. sol.set_loot(cargo, credits, module) replaces the
+-- default; returning without calling it keeps the C++ table.
+local derelictCargo = {"sol.machinery", "sol.ore", "sol.machinery"}
+local cacheCargo = {"sol.machinery", "sol.food"}
+
+function signal_loot(kind, system, region, roll)
+    local depth = (region == "fringe" and 2.0) or (region == "frontier" and 1.4) or 1.0
+    if kind == "Cache" then
+        local commodity = cacheCargo[1 + math.floor(roll * #cacheCargo) % #cacheCargo]
+        local units = math.floor((6 + 14 * roll) * depth)
+        sol.set_loot(string.format("%s:%d", commodity, units),
+                     math.floor((150 + 900 * roll) * depth), "")
+    else
+        local commodity = derelictCargo[1 + math.floor(roll * #derelictCargo) % #derelictCargo]
+        local units = math.floor((8 + 18 * roll) * depth)
+        -- A quarter of derelicts in real frontier space still have a module
+        -- bolted on; the scanner is the one worth flying out for.
+        local salvage = (roll > 0.75 and region ~= "core") and "sol.survey_scanner_mk1" or ""
+        sol.set_loot(string.format("%s:%d", commodity, units), 0, salvage)
+    end
+end
+
+function signal_found(kind, system)
+    print(string.format("[scan] contact in %s", system))
+end

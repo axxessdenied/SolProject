@@ -523,6 +523,220 @@ double setStanding(GameContent& content, double factionIndex, double value)
     return world.factionSim().standing(static_cast<std::uint32_t>(faction));
 }
 
+// --- Exploration & scanning (Phase 8e) ---
+
+[[nodiscard]] const char* regionWord(sol::sim::Region region)
+{
+    switch (region) {
+    case sol::sim::Region::Core:
+        return "core";
+    case sol::sim::Region::Frontier:
+        return "frontier";
+    case sol::sim::Region::Fringe:
+        return "fringe";
+    }
+    return "?";
+}
+
+// What the player knows, in the order the ladder runs. Unknown systems are
+// absent on purpose: the console is not a way around the fog.
+std::string listKnowledge(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    std::uint32_t known = 0;
+    for (std::uint32_t i = 0; i < world.galaxy().systems.size(); ++i) {
+        const sol::sim::KnowledgeState state = world.survey().knowledge(i);
+        if (state == sol::sim::KnowledgeState::Unknown) {
+            continue;
+        }
+        ++known;
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        lines += world.galaxy().systems[i].name + ": ";
+        switch (state) {
+        case sol::sim::KnowledgeState::Charted:
+            lines += "charted";
+            break;
+        case sol::sim::KnowledgeState::Visited:
+            lines += "visited";
+            break;
+        case sol::sim::KnowledgeState::Surveyed:
+            lines += "SURVEYED";
+            break;
+        case sol::sim::KnowledgeState::Unknown:
+            break;
+        }
+        if (i == world.currentSystemIndex()) {
+            lines += " [here]";
+        }
+    }
+    return lines.empty() ? "(nothing known)"
+                         : lines + "\n" + std::to_string(known) + " of "
+                               + std::to_string(world.galaxy().systems.size()) + " systems";
+}
+
+// Every site in this system the player has found, with its state and range.
+std::string listSignals(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const std::uint32_t system = world.currentSystemIndex();
+    const sol::core::DVec3 position = world.shipState().position;
+    std::string lines;
+    for (const SignalInstance& signal : world.signals()) {
+        if (!world.survey().signalDiscovered(system, signal.index)) {
+            continue;
+        }
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        char buffer[96];
+        std::snprintf(buffer, sizeof(buffer), "%u: %s, %.0f km", signal.index + 1,
+                      world.survey().signalResolved(system, signal.index)
+                          ? sol::sim::signalKindName(signal.kind)
+                          : "unidentified contact",
+                      length(signal.position - position) / 1000.0);
+        lines += buffer;
+        if (world.survey().signalEmptied(system, signal.index)) {
+            lines += " (emptied)";
+        }
+    }
+    char summary[96];
+    std::snprintf(summary, sizeof(summary), "%zu site(s) in %s, %u found",
+                  world.signals().size(), world.currentSystemName(),
+                  static_cast<std::uint32_t>(std::count_if(
+                      world.signals().begin(), world.signals().end(),
+                      [&](const SignalInstance& s) {
+                          return world.survey().signalDiscovered(system, s.index);
+                      })));
+    return lines.empty() ? std::string(summary) : lines + "\n" + summary;
+}
+
+double pulseScan(GameContent& content)
+{
+    return static_cast<double>(content.world().pulseScan());
+}
+
+// Dev pacing: resolves whatever is targeted without flying into range.
+bool scanTarget(GameContent& content)
+{
+    return content.world().scanCurrentTarget();
+}
+
+bool salvageNearest(GameContent& content)
+{
+    return content.world().trySalvageNearest(SpaceWorld::kSalvageRange);
+}
+
+std::string surveyLedger(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    for (const sol::sim::SurveyEntry& entry : world.survey().ledger()) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        const char* kind = entry.kind == sol::sim::SurveyKind::System   ? "system"
+                           : entry.kind == sol::sim::SurveyKind::Body   ? "body"
+                           : entry.kind == sol::sim::SurveyKind::Site   ? "site"
+                                                                        : "completion";
+        char buffer[128];
+        std::snprintf(buffer, sizeof(buffer), "%s: %s (%s%s) %.0f cr",
+                      world.galaxy().systems[entry.system].name.c_str(), kind,
+                      regionWord(entry.region), entry.firstDiscovery ? ", uncharted" : "",
+                      entry.value);
+        lines += buffer;
+    }
+    char total[64];
+    std::snprintf(total, sizeof(total), "total %.0f cr", world.survey().ledgerValue());
+    return lines.empty() ? std::string("(ledger empty)") : lines + "\n" + total;
+}
+
+double sellSurvey(GameContent& content)
+{
+    return content.world().sellSurveyData();
+}
+
+// Plots a gate route to a named system and returns the summary.
+std::string plotRoute(GameContent& content, const char* systemName)
+{
+    SpaceWorld& world = content.world();
+    for (std::uint32_t i = 0; i < world.galaxy().systems.size(); ++i) {
+        if (world.galaxy().systems[i].name != systemName) {
+            continue;
+        }
+        if (!world.plotRoute(i)) {
+            return "no route";
+        }
+        std::string summary;
+        for (const std::uint32_t hop : world.survey().route()) {
+            summary += (summary.empty() ? "" : " > ") + world.galaxy().systems[hop].name;
+        }
+        return summary;
+    }
+    return "no such system";
+}
+
+// Dev cheat: marks a system visited without flying there (map/route testing).
+bool chartSystem(GameContent& content, const char* systemName)
+{
+    SpaceWorld& world = content.world();
+    for (std::uint32_t i = 0; i < world.galaxy().systems.size(); ++i) {
+        if (world.galaxy().systems[i].name == systemName) {
+            world.survey().setKnowledge(world.galaxy(), i, sol::sim::KnowledgeState::Visited);
+            return true;
+        }
+    }
+    return false;
+}
+
+// The signal_loot hook's builder: "commodityId:units,commodityId:units" plus
+// credits and an optional module id. Validated here against the defs and the
+// sim's caps - a script cannot invent a commodity or overfill a wreck.
+bool setSignalLoot(GameContent& content, const char* cargoSpec, double credits,
+                   const char* moduleId)
+{
+    if (content.lootSignal() == 0xffff'ffffu) {
+        SOL_LOG_WARN("set_loot: only valid inside signal_loot");
+        return false;
+    }
+    SpaceWorld& world = content.world();
+    sol::sim::SignalLoot loot;
+    loot.credits = credits > 0.0 ? credits : 0.0;
+    std::string_view spec(cargoSpec != nullptr ? cargoSpec : "");
+    while (!spec.empty()) {
+        const std::size_t comma = spec.find(',');
+        const std::string_view entry = spec.substr(0, comma);
+        const std::size_t colon = entry.find(':');
+        if (colon == std::string_view::npos) {
+            SOL_LOG_WARN("set_loot: bad cargo entry '%.*s'", static_cast<int>(entry.size()),
+                         entry.data());
+            return false;
+        }
+        const std::string id(entry.substr(0, colon));
+        const std::uint32_t commodity = world.commodityIndex(id.c_str());
+        if (commodity >= world.commodityIds().size()) {
+            SOL_LOG_WARN("set_loot: unknown commodity '%s'", id.c_str());
+            return false;
+        }
+        const double units = std::strtod(std::string(entry.substr(colon + 1)).c_str(), nullptr);
+        loot.cargo.push_back({.commodity = commodity, .units = static_cast<float>(units)});
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        spec.remove_prefix(comma + 1);
+    }
+    if (moduleId != nullptr && moduleId[0] != '\0') {
+        if (content.defs().findModule(moduleId) == nullptr) {
+            SOL_LOG_WARN("set_loot: unknown module '%s'", moduleId);
+            return false;
+        }
+        loot.moduleId = moduleId;
+    }
+    return world.applySignalLoot(content.lootSystem(), content.lootSignal(), std::move(loot));
+}
+
 // Raid candidates for faction_think:
 // "systemIndex:systemName:relation:ownerKind;..." with ownerKind m|p
 // (system indices are the engine's 0-based ids, fed back to faction_raid).
@@ -997,6 +1211,18 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&missionObjKill>("sol", "mission_obj_kill", this);
     m_vm.registerFunction<&missionObjFlyTo>("sol", "mission_obj_flyto", this);
     m_vm.registerFunction<&missionPost>("sol", "mission_post", this);
+    // Exploration (Phase 8e). sol.set_loot is the signal_loot hook's builder;
+    // the rest are read-outs plus two dev levers (scan, chart).
+    m_vm.registerFunction<&listKnowledge>("sol", "knowledge", this);
+    m_vm.registerFunction<&listSignals>("sol", "signals", this);
+    m_vm.registerFunction<&pulseScan>("sol", "pulse", this);
+    m_vm.registerFunction<&scanTarget>("sol", "scan", this);
+    m_vm.registerFunction<&salvageNearest>("sol", "salvage", this);
+    m_vm.registerFunction<&surveyLedger>("sol", "survey_ledger", this);
+    m_vm.registerFunction<&sellSurvey>("sol", "sell_survey", this);
+    m_vm.registerFunction<&plotRoute>("sol", "route", this);
+    m_vm.registerFunction<&chartSystem>("sol", "chart", this);
+    m_vm.registerFunction<&setSignalLoot>("sol", "set_loot", this);
 }
 
 bool GameContent::reloadDefs()
@@ -1063,6 +1289,14 @@ void GameContent::runBootScripts()
     m_hasMissionEventHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_missionEventHookFailed = false;
+    lua_getglobal(state, "signal_loot");
+    m_hasLootHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_lootHookFailed = false;
+    lua_getglobal(state, "signal_found");
+    m_hasSignalFoundHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_signalFoundHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -1219,6 +1453,50 @@ void GameContent::tick(double dt)
                 break;
             }
         }
+    }
+
+    // Exploration (Phase 8e): a resolved site already holds the scriptless
+    // default loot, and signal_loot may replace it through sol.set_loot - the
+    // same "C++ enumerates, Lua composes, C++ validates" shape the board uses.
+    // The signal's own seeded roll is the only entropy the hook gets.
+    m_surveyEvents.clear();
+    m_world->takeSurveyEvents(m_surveyEvents);
+    for (const SurveyEvent& event : m_surveyEvents) {
+        const char* systemName = event.system < m_world->galaxy().systems.size()
+                                     ? m_world->galaxy().systems[event.system].name.c_str()
+                                     : "";
+        if (event.kind == SurveyEvent::Kind::SignalDiscovered) {
+            if (m_hasSignalFoundHook && !m_signalFoundHookFailed) {
+                std::string error;
+                if (!m_vm.callGlobal("signal_found", &error,
+                                     sol::sim::signalKindName(event.signalKind), systemName)) {
+                    SOL_LOG_ERROR("signal_found disabled until scripts reload: %s",
+                                  error.c_str());
+                    m_signalFoundHookFailed = true;
+                }
+            }
+            continue;
+        }
+        if (event.kind != SurveyEvent::Kind::SignalResolved || !m_hasLootHook
+            || m_lootHookFailed) {
+            continue;
+        }
+        const sol::sim::Region region =
+            event.system < m_world->galaxy().systems.size()
+                ? m_world->galaxy().systems[event.system].region
+                : sol::sim::Region::Core;
+        m_lootSystem = event.system;
+        m_lootSignal = event.index;
+        std::string error;
+        if (!m_vm.callGlobal("signal_loot", &error,
+                             sol::sim::signalKindName(event.signalKind), systemName,
+                             regionWord(region),
+                             static_cast<double>(event.seed >> 11) * 0x1.0p-53)) {
+            SOL_LOG_ERROR("signal_loot disabled until scripts reload: %s", error.c_str());
+            m_lootHookFailed = true;
+        }
+        m_lootSystem = 0xffff'ffffu;
+        m_lootSignal = 0xffff'ffffu;
     }
 }
 
