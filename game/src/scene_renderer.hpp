@@ -43,6 +43,7 @@ enum class ModelId : std::uint32_t
     Cube,
     Station,
     Ship,
+    Asteroid, // Phase 8f: authored at radius 1 m, scaled per rock
 };
 
 // One drawable produced by the sim for the current frame; positions are
@@ -167,6 +168,7 @@ private:
     sol::renderer::GpuMesh m_cubeMesh;
     sol::renderer::GpuMesh m_stationMesh;
     sol::renderer::GpuMesh m_shipMesh;
+    sol::renderer::GpuMesh m_asteroidMesh;
     sol::renderer::GpuTexture m_checkerTexture;
     sol::renderer::GpuTexture m_hullTexture;
     sol::rhi::Image m_depth;

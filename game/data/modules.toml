@@ -108,6 +108,27 @@ scan_range_mul = 2.4
 scan_speed_mul = 1.6
 min_rep = 10.0
 
+# Collector rigs (Phase 8f): mined ore drifts free, and this is what pulls
+# it in. Without one you have to fly through every chunk yourself.
+[[module]]
+id = "sol.collector_mk1"
+name = "Collector Rig Mk1"
+slot = "utility"
+price = 1100.0
+mass = 350.0
+power_draw = 1.5
+collector_range_mul = 3.0
+
+[[module]]
+id = "sol.collector_mk2"
+name = "Wide-Field Collector"
+slot = "utility"
+price = 3600.0
+mass = 550.0
+power_draw = 2.5
+collector_range_mul = 7.0
+cargo_add = 10.0
+
 [[module]]
 id = "sol.regen_amplifier"
 name = "Regen Amplifier"

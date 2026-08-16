@@ -32,6 +32,7 @@ float statValue(const ShipDef& def, FitStat stat)
     case FitStat::Cargo: return def.cargoCapacity;
     case FitStat::ScanRange: return def.scanRange;
     case FitStat::ScanSpeed: return def.scanSpeed;
+    case FitStat::CollectorRange: return def.collectorRange;
     case FitStat::Count: break;
     }
     return 0.0f;
@@ -56,6 +57,7 @@ void setStatValue(ShipDef& def, FitStat stat, float value)
     case FitStat::Cargo: def.cargoCapacity = value; return;
     case FitStat::ScanRange: def.scanRange = value; return;
     case FitStat::ScanSpeed: def.scanSpeed = value; return;
+    case FitStat::CollectorRange: def.collectorRange = value; return;
     case FitStat::Count: break;
     }
 }

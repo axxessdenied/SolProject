@@ -59,12 +59,14 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
     assets::MeshData cubeData;
     assets::MeshData stationData;
     assets::MeshData shipData;
+    assets::MeshData asteroidData;
     assets::TextureData checkerData;
     assets::TextureData hullData;
     const std::string cookedBase = cookedDirectory;
     if (!assets::loadMesh((cookedBase + "cube.smesh").c_str(), cubeData) ||
         !assets::loadMesh((cookedBase + "station.smesh").c_str(), stationData) ||
         !assets::loadMesh((cookedBase + "ship.smesh").c_str(), shipData) ||
+        !assets::loadMesh((cookedBase + "asteroid.smesh").c_str(), asteroidData) ||
         !assets::loadTexture((cookedBase + "checker.stex").c_str(), checkerData) ||
         !assets::loadTexture((cookedBase + "hull.stex").c_str(), hullData)) {
         return false;
@@ -72,6 +74,7 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
     m_cubeMesh = m_meshRenderer.createMesh(cubeData);
     m_stationMesh = m_meshRenderer.createMesh(stationData);
     m_shipMesh = m_meshRenderer.createMesh(shipData);
+    m_asteroidMesh = m_meshRenderer.createMesh(asteroidData);
     m_checkerTexture = m_meshRenderer.createTexture(checkerData);
     m_hullTexture = m_meshRenderer.createTexture(hullData);
 
@@ -179,6 +182,7 @@ void SceneRenderer::shutdown()
     m_meshRenderer.destroyMesh(m_cubeMesh);
     m_meshRenderer.destroyMesh(m_stationMesh);
     m_meshRenderer.destroyMesh(m_shipMesh);
+    m_meshRenderer.destroyMesh(m_asteroidMesh);
     m_meshRenderer.shutdown();
     m_skyRenderer.shutdown();
     m_impostorRenderer.shutdown();
@@ -238,6 +242,10 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
             break;
         case ModelId::Ship:
             mesh = &m_shipMesh;
+            texture = &m_hullTexture;
+            break;
+        case ModelId::Asteroid:
+            mesh = &m_asteroidMesh;
             texture = &m_hullTexture;
             break;
         }

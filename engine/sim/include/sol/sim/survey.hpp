@@ -95,6 +95,12 @@ struct SignalLoot
     std::string moduleId; // empty = none
 };
 
+// Shared loot validation: known commodities, positive unit amounts,
+// non-negative credits, and a stack ceiling. Phase 8f wrecks are composed
+// game-side exactly as signal loot is, so they answer to the same rule.
+[[nodiscard]] bool validSignalLoot(const SignalLoot& loot, std::uint32_t commodityCount,
+                                   std::uint32_t maxCargoStacks);
+
 struct SurveyParams
 {
     // Signals per system, [min, max] by region tier (Core, Frontier, Fringe):

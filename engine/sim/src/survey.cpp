@@ -17,24 +17,6 @@ constexpr std::uint64_t kSignalStream = 401;
 // below this, and initialize() asserts it rather than trusting the comment.
 constexpr std::uint32_t kMaskBits = 32;
 
-[[nodiscard]] core::DVec3 randomUnitDisc(core::Rng& rng)
-{
-    constexpr double kTau = 6.283185307179586476925;
-    const double theta = kTau * rng.nextDouble01();
-    const double y = 0.25 * (rng.nextDouble01() * 2.0 - 1.0);
-    return core::normalize(core::DVec3{std::cos(theta), y, std::sin(theta)});
-}
-
-[[nodiscard]] core::DVec3 playfieldHub(const SystemSpec& spec)
-{
-    if (spec.planets.empty()) {
-        return {};
-    }
-    const std::size_t index =
-        std::min<std::size_t>(spec.primaryPlanet, spec.planets.size() - 1);
-    return spec.planets[index].position;
-}
-
 [[nodiscard]] std::uint32_t countInRange(core::Rng& rng, std::uint32_t low, std::uint32_t high)
 {
     return low + (high > low ? rng.range(high - low + 1) : 0);
@@ -98,7 +80,7 @@ void SurveySim::signalsFor(const Galaxy& galaxy, std::uint32_t system,
         const double distance =
             m_params.signalMinDistance
             + (m_params.signalMaxDistance - m_params.signalMinDistance) * rng.nextDouble01();
-        signal.position = hub + randomUnitDisc(rng) * distance;
+        signal.position = hub + randomPlayfieldDirection(rng) * distance;
         signal.seed = rng.nextU64();
         out.push_back(std::move(signal));
     }
@@ -334,18 +316,27 @@ std::size_t SurveySim::findLoot(std::uint32_t system, std::uint32_t signal) cons
     return m_loot.size();
 }
 
+bool validSignalLoot(const SignalLoot& loot, std::uint32_t commodityCount,
+                     std::uint32_t maxCargoStacks)
+{
+    if (loot.cargo.size() > maxCargoStacks || loot.credits < 0.0) {
+        return false;
+    }
+    for (const SignalCargo& cargo : loot.cargo) {
+        if (cargo.commodity >= commodityCount || !(cargo.units > 0.0f)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool SurveySim::setLoot(std::uint32_t system, std::uint32_t signal, SignalLoot loot)
 {
     if (!signalResolved(system, signal) || signalEmptied(system, signal)) {
         return false;
     }
-    if (loot.cargo.size() > m_params.maxCargoStacks || loot.credits < 0.0) {
+    if (!validSignalLoot(loot, m_commodityCount, m_params.maxCargoStacks)) {
         return false;
-    }
-    for (const SignalCargo& cargo : loot.cargo) {
-        if (cargo.commodity >= m_commodityCount || !(cargo.units > 0.0f)) {
-            return false;
-        }
     }
     const std::size_t index = findLoot(system, signal);
     if (index < m_loot.size()) {

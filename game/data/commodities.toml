@@ -1,5 +1,7 @@
 # Trade goods (Phase 7 economy). base_price is credits/unit at neutral
 # stock; live prices swing between 0.5x (glut) and 2x (scarcity).
+# ore_weight_* (Phase 8f) is how often an asteroid in that region tier is
+# made of this; all zero means it is not something you mine.
 
 [[commodity]]
 id = "sol.food"
@@ -10,8 +12,18 @@ base_price = 8.0
 id = "sol.ore"
 name = "Raw Ore"
 base_price = 12.0
+ore_weight_core = 1.0
+ore_weight_frontier = 1.0
+ore_weight_fringe = 1.0
 
+[[commodity]]
+id = "sol.metal"
+name = "Refined Metal"
+base_price = 32.0
+
+# Machinery is one step further down the chain than it was before Phase 8f
+# (ore -> metal -> machinery), so it prices off refined metal, not raw ore.
 [[commodity]]
 id = "sol.machinery"
 name = "Machinery"
-base_price = 25.0
+base_price = 45.0

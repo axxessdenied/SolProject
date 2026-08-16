@@ -38,6 +38,7 @@ enum class FitStat : std::uint32_t
     Cargo,
     ScanRange, // Phase 8e: pulse/target-scan reach
     ScanSpeed, // Phase 8e: target-scan progress rate
+    CollectorRange, // Phase 8f: how far mined ore is drawn in from
     Count,
 };
 
@@ -117,6 +118,9 @@ struct ShipDef
     // target scan resolves. Scanner modules move both like any other stat.
     float scanRange = 2.5e8f;  // meters
     float scanSpeed = 1.0f;    // target-scan progress multiplier
+    // Mining (engine plan Phase 8f): how far loose ore is drawn in from.
+    // Small by default, so a collector rig is what makes a mining ship.
+    float collectorRange = 250.0f; // meters
     // Outfitting (engine plan Phase 8a): hull price, fitting budgets, slots.
     float price = 10'000.0f;
     float mass = 10'000.0f;    // kg; module mass dilutes accelerations
@@ -180,6 +184,10 @@ struct WeaponDef
     float range = 1'000.0f;         // meters
     float projectileSpeed = 0.0f;   // m/s; 0 for hitscan
     float energyCost = 10.0f;       // capacitor draw per shot
+    // Mining (engine plan Phase 8f): yield units cut out of a rock or wreck
+    // per second of held beam. 0 leaves a weapon a weapon — a mining laser is
+    // an ordinary hardpoint choice, not a mode.
+    float miningPower = 0.0f;
     float price = 500.0f;           // shipyard price (Phase 8a outfitting)
     CatalogGate gate;
     std::string source;
@@ -222,6 +230,11 @@ struct CommodityDef
     std::string id;
     std::string name;
     float basePrice = 10.0f; // credits/unit at neutral stock
+    // How often asteroids in each region tier are made of this (Phase 8f).
+    // All zero — the default — means it is not something you mine.
+    float oreWeightCore = 0.0f;
+    float oreWeightFrontier = 0.0f;
+    float oreWeightFringe = 0.0f;
     std::string source;
 };
 
@@ -244,6 +257,11 @@ struct StationDef
     std::vector<StationRate> produces;
     std::vector<StationRate> consumes;
     float stockCapacity = 1'000.0f; // per commodity
+    // Refinery service (Phase 8f): the archetype takes refine_input off the
+    // player's hands and hands back refine_output later. Both empty — the
+    // default — means the station refines nothing.
+    std::string refineInput;
+    std::string refineOutput;
     std::string source;
 };
 

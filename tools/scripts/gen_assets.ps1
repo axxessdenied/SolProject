@@ -1,5 +1,5 @@
 # Regenerates the procedural source assets (textures: checker.png, hull.png;
-# meshes: cube.gltf, station.gltf, ship.gltf). Windows PowerShell 7+,
+# meshes: cube.gltf, station.gltf, ship.gltf, asteroid.gltf). Windows PowerShell 7+,
 # System.Drawing. NOTE: parenthesize all arithmetic inside array literals -
 # the comma binds tighter than + and silently corrupts data otherwise.
 $ErrorActionPreference = 'Stop'
@@ -302,3 +302,83 @@ Add-FlatTriangle $ship $r[0] $r[2] $r[3] @(0, 0) @(1, 1) @(0, 1)
 Add-FlatTriangle $ship @(0, 1.7, 1) @(0, 3.8, 4.6) @(0, 2.0, 5) @(0, 0) @(0.5, 1) @(1, 0)
 Add-FlatTriangle $ship @(0, 1.7, 1) @(0, 2.0, 5) @(0, 3.8, 4.6) @(0, 0) @(1, 0) @(0.5, 1)
 Write-Gltf $ship 'ship' "$repo\assets\meshes\ship.gltf"
+
+# --- asteroid.gltf: noise-displaced icosphere, faceted, unit radius ~1 m ---
+# The game scales one mesh per rock (RenderShape scale = the rock's radius in
+# meters), so this is authored at radius 1 and every asteroid in the galaxy is
+# the same hull at a different size and tumble.
+function Normalize3($p) {
+    $len = [Math]::Sqrt(($p[0] * $p[0]) + ($p[1] * $p[1]) + ($p[2] * $p[2]))
+    if ($len -le 0) { return @(0, 0, 0) }
+    return @(($p[0] / $len), ($p[1] / $len), ($p[2] / $len))
+}
+
+# Displacement is keyed on the (rounded) unit direction so vertices shared by
+# neighboring triangles always agree and the hull stays closed.
+$script:rockRadii = @{}
+function Get-RockRadius($p) {
+    $key = '{0:F4}|{1:F4}|{2:F4}' -f $p[0], $p[1], $p[2]
+    if ($script:rockRadii.ContainsKey($key)) { return $script:rockRadii[$key] }
+    $h = [uint32]2166136261
+    foreach ($ch in $key.ToCharArray()) {
+        # 0xFFFFFFFFL, not 0xFFFFFFFF: the unsuffixed literal parses as Int32
+        # -1, so the mask would be a no-op and the cast would overflow.
+        $h = [uint32]((($h -bxor [uint32][int]$ch) * 16777619) -band 0xFFFFFFFFL)
+    }
+    $jitter = ($h % 10000) / 10000.0
+    # Low-frequency lobes on top of the per-vertex jitter, so the rock reads as
+    # a lumpy body rather than a sphere with sandpaper on it.
+    $lump = (0.13 * [Math]::Sin((3.1 * $p[0]) + 1.7)) +
+            (0.11 * [Math]::Sin((2.6 * $p[1]) + 0.4)) +
+            (0.09 * [Math]::Sin((3.7 * $p[2]) + 2.3))
+    $radius = 0.80 + (0.17 * $jitter) + $lump
+    $script:rockRadii[$key] = $radius
+    return $radius
+}
+
+$phi = (1 + [Math]::Sqrt(5)) / 2
+$icoVerts = @(
+    @(-1, $phi, 0), @(1, $phi, 0), @(-1, (-$phi), 0), @(1, (-$phi), 0),
+    @(0, -1, $phi), @(0, 1, $phi), @(0, -1, (-$phi)), @(0, 1, (-$phi)),
+    @($phi, 0, -1), @($phi, 0, 1), @((-$phi), 0, -1), @((-$phi), 0, 1)
+)
+$icoFaces = @(
+    @(0, 11, 5), @(0, 5, 1), @(0, 1, 7), @(0, 7, 10), @(0, 10, 11),
+    @(1, 5, 9), @(5, 11, 4), @(11, 10, 2), @(10, 7, 6), @(7, 1, 8),
+    @(3, 9, 4), @(3, 4, 2), @(3, 2, 6), @(3, 6, 8), @(3, 8, 9),
+    @(4, 9, 5), @(2, 4, 11), @(6, 2, 10), @(8, 6, 7), @(9, 8, 1)
+)
+
+$tris = New-Object System.Collections.Generic.List[object]
+foreach ($face in $icoFaces) {
+    $tris.Add(@((Normalize3 $icoVerts[$face[0]]),
+                (Normalize3 $icoVerts[$face[1]]),
+                (Normalize3 $icoVerts[$face[2]])))
+}
+for ($step = 0; $step -lt 2; $step++) {
+    $next = New-Object System.Collections.Generic.List[object]
+    foreach ($tri in $tris) {
+        $a = $tri[0]; $b = $tri[1]; $c = $tri[2]
+        $ab = Normalize3 @((($a[0] + $b[0]) / 2), (($a[1] + $b[1]) / 2), (($a[2] + $b[2]) / 2))
+        $bc = Normalize3 @((($b[0] + $c[0]) / 2), (($b[1] + $c[1]) / 2), (($b[2] + $c[2]) / 2))
+        $ca = Normalize3 @((($c[0] + $a[0]) / 2), (($c[1] + $a[1]) / 2), (($c[2] + $a[2]) / 2))
+        $next.Add(@($a, $ab, $ca))
+        $next.Add(@($ab, $b, $bc))
+        $next.Add(@($ca, $bc, $c))
+        $next.Add(@($ab, $bc, $ca))
+    }
+    $tris = $next
+}
+
+$asteroid = New-MeshBuilder
+foreach ($tri in $tris) {
+    $corners = @()
+    $uvs2 = @()
+    foreach ($dir in $tri) {
+        $radius = Get-RockRadius $dir
+        $corners += , @(($dir[0] * $radius), ($dir[1] * $radius), ($dir[2] * $radius))
+        $uvs2 += , @((($dir[0] * 0.5) + 0.5), (($dir[2] * 0.5) + 0.5))
+    }
+    Add-FlatTriangle $asteroid $corners[0] $corners[1] $corners[2] $uvs2[0] $uvs2[1] $uvs2[2]
+}
+Write-Gltf $asteroid 'asteroid' "$repo\assets\meshes\asteroid.gltf"

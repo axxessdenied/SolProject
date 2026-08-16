@@ -32,7 +32,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 7; // v7: survey knowledge/ledger block
+constexpr std::uint32_t kSaveVersion = 8; // v8: mining depletion/wrecks/refining
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -43,6 +43,7 @@ constexpr double kCollisionRestitution = 0.15;
     case ModelId::Cube: return 1.0;
     case ModelId::Station: return 100.0;
     case ModelId::Ship: return 8.0;
+    case ModelId::Asteroid: return 1.0; // authored at radius 1; scale is meters
     }
     return 8.0;
 }
@@ -62,6 +63,9 @@ ecs::Snapshot makeSnapshotSchema()
     schema.component<Projectile>(17);
     schema.component<ShipWeapon>(18);
     schema.component<ShipPilot>(19);
+    schema.component<MineableRock>(20);
+    schema.component<WreckMarker>(21);
+    schema.component<OreChunk>(22);
     return schema;
 }
 
@@ -180,6 +184,7 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     resetFleetToStarter();
     initializeFactions(); // before loadSystem: ambient wings need the table
     initializeSurvey();   // before loadSystem: arrival writes the first entry
+    initializeMining();   // before loadSystem: it instantiates the rocks
     loadSystem(start, kNoIndex);
     SOL_LOG_INFO("universe: seed %llu, %zu systems, %zu lanes, %zu faction(s) "
                  "(%zu clans); starting in '%s'",
@@ -464,7 +469,7 @@ void SpaceWorld::initializeSurvey()
                         static_cast<std::uint32_t>(m_commodityIds.size()), m_universeSeed);
     m_surveyEvents.clear();
     m_signals.clear();
-    m_signalTargetSlots.clear();
+    m_dynamicTargets.clear();
     m_pulseCooldown = 0.0;
     m_scanProgress = 0.0f;
     m_scanActive = false;
@@ -495,34 +500,98 @@ std::string signalTargetName(const SignalInstance& signal, bool resolved, bool e
 
 } // namespace
 
-void SpaceWorld::rebuildSignalTargets()
+void SpaceWorld::rebuildDynamicTargets()
 {
     // Slots are append-only in discovery order: a scan in flight and the
     // player's target index both point into this tail, so nothing may shift
-    // under them when a later pulse finds a lower-numbered site.
-    for (const SignalInstance& signal : m_signals) {
-        if (!m_survey.signalDiscovered(m_currentSystem, signal.index)) {
-            continue;
+    // under them when a later pulse finds a lower-numbered site or a fight
+    // leaves a new wreck. Only a slot whose object is gone (a wreck that
+    // decayed) is removed, and the indices that pointed past it follow.
+    auto hasSlot = [&](NavKind kind, std::uint32_t index) {
+        for (const DynamicTarget& slot : m_dynamicTargets) {
+            if (slot.kind == kind && slot.index == index) {
+                return true;
+            }
         }
-        if (std::find(m_signalTargetSlots.begin(), m_signalTargetSlots.end(), signal.index)
-            == m_signalTargetSlots.end()) {
-            m_signalTargetSlots.push_back(signal.index);
+        return false;
+    };
+
+    for (const SignalInstance& signal : m_signals) {
+        if (m_survey.signalDiscovered(m_currentSystem, signal.index)
+            && !hasSlot(NavKind::Signal, signal.index)) {
+            m_dynamicTargets.push_back({.kind = NavKind::Signal, .index = signal.index});
         }
     }
+    // Fields need no finding: an asteroid field is a visible thing in the
+    // playfield, and it is the field you fly to, not the individual rock.
+    for (std::uint32_t i = 0; i < m_fields.size(); ++i) {
+        if (!hasSlot(NavKind::Field, i)) {
+            m_dynamicTargets.push_back({.kind = NavKind::Field, .index = i});
+        }
+    }
+    std::vector<std::uint32_t> wreckIds;
+    m_mining.wrecksIn(m_currentSystem, wreckIds);
+    for (const std::uint32_t id : wreckIds) {
+        if (!hasSlot(NavKind::Wreck, id)) {
+            m_dynamicTargets.push_back({.kind = NavKind::Wreck, .index = id});
+        }
+    }
+
+    // Compact slots whose object is gone, carrying the player's selection and
+    // any scan in flight with them.
+    std::size_t write = 0;
+    for (std::size_t read = 0; read < m_dynamicTargets.size(); ++read) {
+        const DynamicTarget& slot = m_dynamicTargets[read];
+        const bool alive =
+            slot.kind == NavKind::Signal   ? slot.index < m_signals.size()
+            : slot.kind == NavKind::Field  ? slot.index < m_fields.size()
+                                           : m_mining.wreck(slot.index) != nullptr;
+        if (!alive) {
+            const std::size_t removed = m_signalTargetBase + write;
+            if (m_targetIndex > removed) {
+                --m_targetIndex;
+            }
+            if (m_scanActive && m_scanTarget > removed) {
+                --m_scanTarget;
+            }
+            continue;
+        }
+        m_dynamicTargets[write++] = slot;
+    }
+    m_dynamicTargets.resize(write);
+
     if (m_targets.size() > m_signalTargetBase) {
         m_targets.resize(m_signalTargetBase);
     }
-    for (std::size_t slot = 0; slot < m_signalTargetSlots.size(); ++slot) {
-        const std::uint32_t index = m_signalTargetSlots[slot];
-        if (index >= m_signals.size()) {
-            continue;
+    std::size_t signalSlot = 0;
+    for (const DynamicTarget& slot : m_dynamicTargets) {
+        switch (slot.kind) {
+        case NavKind::Signal: {
+            const SignalInstance& signal = m_signals[slot.index];
+            m_targets.push_back(
+                {.name = signalTargetName(signal,
+                                          m_survey.signalResolved(m_currentSystem, slot.index),
+                                          m_survey.signalEmptied(m_currentSystem, slot.index),
+                                          signalSlot++),
+                 .position = signal.position,
+                 .surfaceRadius = 0.0});
+            break;
         }
-        const SignalInstance& signal = m_signals[index];
-        m_targets.push_back(
-            {.name = signalTargetName(signal, m_survey.signalResolved(m_currentSystem, index),
-                                      m_survey.signalEmptied(m_currentSystem, index), slot),
-             .position = signal.position,
-             .surfaceRadius = 0.0});
+        case NavKind::Field: {
+            const sim::AsteroidFieldSpec& field = m_fields[slot.index];
+            m_targets.push_back({.name = "Asteroid Field " + std::to_string(slot.index + 1),
+                                 .position = field.center,
+                                 .surfaceRadius = 0.0});
+            break;
+        }
+        default: {
+            const sim::WreckRecord* wreck = m_mining.wreck(slot.index);
+            m_targets.push_back({.name = "Wreck: " + wreck->name,
+                                 .position = wreck->position,
+                                 .surfaceRadius = 0.0});
+            break;
+        }
+        }
     }
 }
 
@@ -536,7 +605,8 @@ std::uint32_t SpaceWorld::targetSignalIndex() const
     if (index < m_signalTargetBase || index >= m_targets.size()) {
         return kNoIndex;
     }
-    return m_signalTargetSlots[index - m_signalTargetBase];
+    const DynamicTarget& slot = m_dynamicTargets[index - m_signalTargetBase];
+    return slot.kind == NavKind::Signal ? slot.index : kNoIndex;
 }
 
 std::uint32_t SpaceWorld::targetBodyIndex() const
@@ -596,7 +666,7 @@ int SpaceWorld::pulseScan()
         }
     }
     if (found > 0) {
-        rebuildSignalTargets();
+        rebuildDynamicTargets();
     }
     SOL_LOG_INFO("scan pulse: %d new contact(s) within %.0f km", found, range / 1000.0);
     return found;
@@ -680,7 +750,7 @@ void SpaceWorld::tickScanning(double dt)
                                       .signalKind = signal.kind,
                                       .seed = signal.seed,
                                       .name = sim::signalKindName(signal.kind)});
-            rebuildSignalTargets();
+            rebuildDynamicTargets();
             SOL_LOG_INFO("scan resolved: %s", sim::signalKindName(signal.kind));
         }
         return;
@@ -711,7 +781,7 @@ bool SpaceWorld::scanCurrentTarget()
                                   .signalKind = signal.kind,
                                   .seed = signal.seed,
                                   .name = sim::signalKindName(signal.kind)});
-        rebuildSignalTargets();
+        rebuildDynamicTargets();
         return true;
     }
     const std::uint32_t bodyIndex = targetBodyIndex();
@@ -825,21 +895,8 @@ bool SpaceWorld::trySalvageNearest(double range)
     remaining.cargo = std::move(left);
 
     std::string moduleTaken;
-    if (!remaining.moduleId.empty() && m_defs != nullptr && !m_fleet.empty()) {
-        const assets::ModuleDef* module = m_defs->findModule(remaining.moduleId.c_str());
-        const assets::ShipDef* base = m_defs->findShip(m_fleet[m_activeShip].defId.c_str());
-        if (module != nullptr && base != nullptr) {
-            std::vector<const assets::ModuleDef*> modules = fitModules(*m_defs, m_fleet[m_activeShip]);
-            modules.push_back(module);
-            if (assets::validateLoadout(*base, modules, fitCrew(*m_defs, m_fleet[m_activeShip]))) {
-                m_fleet[m_activeShip].moduleIds.push_back(module->id);
-                applyActiveLoadout();
-                moduleTaken = module->name;
-                remaining.moduleId.clear();
-            }
-        } else {
-            remaining.moduleId.clear(); // the def is gone; nothing to salvage
-        }
+    if (tryFitSalvagedModule(remaining.moduleId, moduleTaken)) {
+        remaining.moduleId.clear();
     }
 
     const bool empty = remaining.cargo.empty() && remaining.moduleId.empty();
@@ -848,7 +905,7 @@ bool SpaceWorld::trySalvageNearest(double range)
     } else {
         (void)m_survey.setLoot(m_currentSystem, best->index, remaining);
     }
-    rebuildSignalTargets();
+    rebuildDynamicTargets();
     SOL_LOG_INFO("salvaged %s: %.0f units, %.0f cr%s%s", sim::signalKindName(best->kind),
                  static_cast<double>(unitsTaken), credits,
                  moduleTaken.empty() ? "" : ", fitted ", moduleTaken.c_str());
@@ -885,6 +942,553 @@ bool SpaceWorld::plotRoute(std::uint32_t destination)
     }
     m_survey.setRoute(sim::routeBetween(m_galaxy, m_currentSystem, destination));
     return !m_survey.route().empty();
+}
+
+// --- Mining, salvage & refining (Phase 8f) -----------------------------------
+
+namespace {
+
+// Display name for a commodity id, falling back to the id when the def has
+// gone (a mod may drop a commodity a save still carries in the hold).
+[[nodiscard]] std::string commodityDisplayName(const assets::DefDatabase& defs,
+                                               const std::string& id)
+{
+    const assets::CommodityDef* def = defs.findCommodity(id.c_str());
+    return def != nullptr ? def->name : id;
+}
+
+} // namespace
+
+bool SpaceWorld::tryFitSalvagedModule(const std::string& moduleId, std::string& outName)
+{
+    outName.clear();
+    if (moduleId.empty() || m_defs == nullptr || m_fleet.empty()) {
+        return false;
+    }
+    const assets::ModuleDef* module = m_defs->findModule(moduleId.c_str());
+    const assets::ShipDef* base = m_defs->findShip(m_fleet[m_activeShip].defId.c_str());
+    if (module == nullptr || base == nullptr) {
+        return true; // the def is gone; there is nothing left to salvage
+    }
+    std::vector<const assets::ModuleDef*> modules = fitModules(*m_defs, m_fleet[m_activeShip]);
+    modules.push_back(module);
+    if (!assets::validateLoadout(*base, modules, fitCrew(*m_defs, m_fleet[m_activeShip]))) {
+        return false; // no legal slot, power, or mass for it: it stays put
+    }
+    m_fleet[m_activeShip].moduleIds.push_back(module->id);
+    applyActiveLoadout();
+    outName = module->name;
+    return true;
+}
+
+void SpaceWorld::initializeMining()
+{
+    m_miningParams = sim::MiningParams{};
+    m_miningParams.ores.clear();
+    // What a rock can be made of is a data question: any commodity whose def
+    // carries an ore weight is something the galaxy has deposits of.
+    if (m_defs != nullptr) {
+        for (std::uint32_t i = 0; i < m_commodityIds.size(); ++i) {
+            const assets::CommodityDef* def = m_defs->findCommodity(m_commodityIds[i].c_str());
+            if (def == nullptr
+                || (def->oreWeightCore <= 0.0f && def->oreWeightFrontier <= 0.0f
+                    && def->oreWeightFringe <= 0.0f)) {
+                continue;
+            }
+            sim::OreEntry entry;
+            entry.commodity = i;
+            entry.weight[0] = def->oreWeightCore;
+            entry.weight[1] = def->oreWeightFrontier;
+            entry.weight[2] = def->oreWeightFringe;
+            m_miningParams.ores.push_back(entry);
+        }
+    }
+    m_mining.initialize(m_galaxy, m_miningParams,
+                        static_cast<std::uint32_t>(m_commodityIds.size()), m_universeSeed);
+    m_fields.clear();
+    m_wreckEvents.clear();
+    m_collectTicker = 0.0f;
+    m_collectTickerAge = 0.0;
+    m_collectName.clear();
+}
+
+void SpaceWorld::instantiateMiningEntities()
+{
+    std::vector<sim::RockSpec> rocks;
+    for (std::uint32_t field = 0; field < m_fields.size(); ++field) {
+        m_mining.rocksFor(m_galaxy, m_currentSystem, field, rocks);
+        for (std::uint32_t index = 0; index < rocks.size(); ++index) {
+            const sim::RockSpec& rock = rocks[index];
+            if (m_mining.unitsLeft(m_currentSystem, field, index, rock.yieldUnits) <= 0.0f) {
+                continue; // cut to nothing on an earlier visit; it broke up
+            }
+            const ecs::Entity entity = m_registry.create();
+            m_registry.emplace<Transform>(entity, Transform{.position = rock.position,
+                                                            .previousPosition = rock.position});
+            const float scale = static_cast<float>(rock.radius);
+            m_registry.emplace<RenderShape>(
+                entity, RenderShape{.scale = {scale, scale, scale}, .model = ModelId::Asteroid});
+            m_registry.emplace<MineableRock>(entity,
+                                             MineableRock{.field = field,
+                                                          .index = index,
+                                                          .commodity = rock.commodity,
+                                                          .totalUnits = rock.yieldUnits,
+                                                          .tumbleAxis = rock.tumbleAxis,
+                                                          .tumbleRate = rock.tumbleRate});
+        }
+    }
+}
+
+void SpaceWorld::spawnOreChunk(const core::DVec3& position, const core::DVec3& velocity,
+                               std::uint32_t commodity, float units)
+{
+    const ecs::Entity entity = m_registry.create();
+    m_registry.emplace<Transform>(
+        entity, Transform{.position = position, .previousPosition = position});
+    m_registry.emplace<RenderShape>(
+        entity, RenderShape{.scale = {6.0f, 6.0f, 6.0f}, .model = ModelId::Cube});
+    m_registry.emplace<OreChunk>(entity, OreChunk{.velocity = velocity,
+                                                  .lifetime = kChunkLifetimeSeconds,
+                                                  .commodity = commodity,
+                                                  .units = units});
+}
+
+float SpaceWorld::cutRock(std::uint32_t entityIndex, float units)
+{
+    MineableRock* rock = m_registry.storage<MineableRock>().tryGet(entityIndex);
+    if (rock == nullptr) {
+        return 0.0f;
+    }
+    const float taken = m_mining.mineRock(m_currentSystem, rock->field, rock->index,
+                                          rock->totalUnits, units);
+    if (taken <= 0.0f) {
+        return 0.0f;
+    }
+    // What comes off drifts: the beam breaks the rock, the ship still has to
+    // go and get it. Chunks are capped so a fat bite arrives as several.
+    const core::DVec3 origin = m_registry.storage<Transform>().get(entityIndex).position;
+    const double surface =
+        static_cast<double>(m_registry.storage<RenderShape>().get(entityIndex).scale.x);
+    float remaining = taken;
+    while (remaining > 0.0f) {
+        const float chunk = std::min(remaining, kChunkUnitCeiling);
+        remaining -= chunk;
+        const core::DVec3 direction = sim::randomPlayfieldDirection(m_chunkRng);
+        spawnOreChunk(origin + direction * surface,
+                      direction * (kChunkDriftSpeed * (0.4 + 0.6 * m_chunkRng.nextDouble01())),
+                      rock->commodity, chunk);
+    }
+    return taken;
+}
+
+float SpaceWorld::cutWreck(std::uint32_t entityIndex, float units)
+{
+    const WreckMarker* marker = m_registry.storage<WreckMarker>().tryGet(entityIndex);
+    if (marker == nullptr) {
+        return 0.0f;
+    }
+    std::uint32_t commodity = 0;
+    const float taken = m_mining.cutWreckCargo(marker->id, units, &commodity);
+    const core::DVec3 origin = m_registry.storage<Transform>().get(entityIndex).position;
+    if (taken > 0.0f) {
+        float remaining = taken;
+        while (remaining > 0.0f) {
+            const float chunk = std::min(remaining, kChunkUnitCeiling);
+            remaining -= chunk;
+            const core::DVec3 direction = sim::randomPlayfieldDirection(m_chunkRng);
+            spawnOreChunk(origin + direction * 25.0,
+                          direction * (kChunkDriftSpeed * (0.4 + 0.6 * m_chunkRng.nextDouble01())),
+                          commodity, chunk);
+        }
+        return taken;
+    }
+
+    // Nothing left to cut loose: the hull gives up what it was carrying that
+    // does not float — credits and, if it fits, a module off its own mounts.
+    const sim::WreckRecord* wreck = m_mining.wreck(marker->id);
+    if (wreck == nullptr) {
+        return 0.0f;
+    }
+    const double credits = wreck->contents.credits;
+    const std::string moduleId = wreck->contents.moduleId;
+    const std::string name = wreck->name;
+    m_playerCredits += credits;
+    std::string moduleTaken;
+    (void)tryFitSalvagedModule(moduleId, moduleTaken);
+    (void)m_mining.removeWreck(marker->id);
+    SOL_LOG_INFO("cut open the wreck of %s: %.0f cr%s%s", name.c_str(), credits,
+                 moduleTaken.empty() ? "" : ", fitted ", moduleTaken.c_str());
+    return 0.0f;
+}
+
+std::uint32_t SpaceWorld::entityAhead(double range, bool& outIsWreck) const
+{
+    outIsWreck = false;
+    if (isDocked() || range <= 0.0) {
+        return kNoIndex;
+    }
+    const sim::ShipState state = shipState();
+    const core::Vec3 forward = rotate(state.orientation, core::Vec3{0.0f, 0.0f, -1.0f});
+    const core::DVec3 muzzle = state.position;
+    const core::DVec3 beamEnd = muzzle + toDVec3(forward) * range;
+
+    const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
+    const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
+    const ecs::Pool<MineableRock>& rocks = m_registry.storage<MineableRock>();
+    const ecs::Pool<WreckMarker>& wrecks = m_registry.storage<WreckMarker>();
+    double bestT = 2.0;
+    std::uint32_t best = kNoIndex;
+    const auto sweep = [&](std::uint32_t entityIndex, bool isWreck) {
+        const RenderShape& shape = shapes.get(entityIndex);
+        const double radius = modelBaseRadius(shape.model) * static_cast<double>(shape.scale.x);
+        double hitT = 0.0;
+        if (sim::segmentHitsSphere(muzzle, beamEnd, transforms.get(entityIndex).position, radius,
+                                   hitT)
+            && hitT < bestT) {
+            bestT = hitT;
+            best = entityIndex;
+            outIsWreck = isWreck;
+        }
+    };
+    for (std::size_t i = 0; i < rocks.size(); ++i) {
+        sweep(rocks.entityIndices()[i], false);
+    }
+    for (std::size_t i = 0; i < wrecks.size(); ++i) {
+        sweep(wrecks.entityIndices()[i], true);
+    }
+    return best;
+}
+
+ProspectInfo SpaceWorld::prospectAhead() const
+{
+    ProspectInfo info;
+    // The scanner is what lets you read a rock at a distance; the beam is what
+    // lets you cut it. Reading further than you can cut is the point.
+    const double readRange = std::max(targetScanRange(), 5'000.0);
+    bool isWreck = false;
+    const std::uint32_t entityIndex = entityAhead(readRange, isWreck);
+    if (entityIndex == kNoIndex) {
+        return info;
+    }
+    info.valid = true;
+    info.wreck = isWreck;
+    info.distance =
+        length(m_registry.storage<Transform>().get(entityIndex).position - shipState().position);
+    const ShipWeapon& weapon = playerWeapon();
+    info.inRange = weapon.miningPower > 0.0f
+                   && info.distance <= static_cast<double>(weapon.range);
+    if (isWreck) {
+        const WreckMarker& marker = m_registry.storage<WreckMarker>().get(entityIndex);
+        const sim::WreckRecord* wreck = m_mining.wreck(marker.id);
+        if (wreck == nullptr) {
+            info.valid = false;
+            return info;
+        }
+        info.name = wreck->name;
+        for (const sim::SignalCargo& cargo : wreck->contents.cargo) {
+            info.unitsLeft += cargo.units;
+        }
+        info.unitsTotal = info.unitsLeft;
+        return info;
+    }
+    const MineableRock& rock = m_registry.storage<MineableRock>().get(entityIndex);
+    info.name = rock.commodity < m_commodityIds.size() && m_defs != nullptr
+                    ? commodityDisplayName(*m_defs, m_commodityIds[rock.commodity])
+                    : "Ore";
+    info.unitsTotal = rock.totalUnits;
+    info.unitsLeft = m_mining.unitsLeft(m_currentSystem, rock.field, rock.index, rock.totalUnits);
+    return info;
+}
+
+bool SpaceWorld::mineAhead()
+{
+    bool isWreck = false;
+    const std::uint32_t entityIndex = entityAhead(std::max(targetScanRange(), 5'000.0), isWreck);
+    if (entityIndex == kNoIndex) {
+        return false;
+    }
+    // Dev path: one press empties what the beam would take a while to grind.
+    const float taken = isWreck ? cutWreck(entityIndex, 1.0e6f) : cutRock(entityIndex, 1.0e6f);
+    if (!isWreck && taken <= 0.0f) {
+        return false;
+    }
+    return true;
+}
+
+bool SpaceWorld::applyWreckLoot(std::uint32_t id, sim::SignalLoot loot)
+{
+    return m_mining.setWreckContents(id, std::move(loot));
+}
+
+void SpaceWorld::takeWreckEvents(std::vector<WreckEvent>& out)
+{
+    out.insert(out.end(), m_wreckEvents.begin(), m_wreckEvents.end());
+    m_wreckEvents.clear();
+}
+
+sim::SignalLoot SpaceWorld::defaultWreckLoot(const assets::ShipDef* def, std::uint64_t seed) const
+{
+    sim::SignalLoot loot;
+    const std::uint32_t commodityCount = static_cast<std::uint32_t>(m_commodityIds.size());
+    if (commodityCount == 0) {
+        return loot;
+    }
+    core::Rng rng(seed, 11);
+    // Scrap: the hull itself, as ore, scaled by how big the ship was.
+    const float hullScrap =
+        def != nullptr ? std::max(4.0f, def->mass * 0.0016f) : 8.0f;
+    const std::uint32_t ore = commodityIndex("sol.ore");
+    loot.cargo.push_back({.commodity = ore < commodityCount ? ore : 0,
+                          .units = hullScrap * (0.7f + 0.6f * rng.nextFloat01())});
+    // Whatever it was hauling, sometimes.
+    if (rng.nextFloat01() < 0.5f) {
+        loot.cargo.push_back({.commodity = rng.range(commodityCount),
+                              .units = static_cast<float>(3 + rng.range(15))});
+    }
+    loot.credits = 40.0 + 260.0 * rng.nextDouble01();
+    // Its own hardware, at salvage odds: the gun or a module off its mounts.
+    if (def != nullptr && !def->weaponId.empty() && rng.nextFloat01() < 0.2f && m_defs != nullptr
+        && !m_defs->modules().empty()) {
+        const std::vector<assets::ModuleDef>& modules = m_defs->modules();
+        loot.moduleId = modules[rng.range(static_cast<std::uint32_t>(modules.size()))].id;
+    }
+    return loot;
+}
+
+bool SpaceWorld::dockedRefinePair(std::uint32_t& input, std::uint32_t& output) const
+{
+    input = kNoIndex;
+    output = kNoIndex;
+    if (!isDocked() || m_defs == nullptr || m_currentSystem >= m_galaxy.systems.size()) {
+        return false;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    if (m_dockedStation >= spec.stations.size()) {
+        return false;
+    }
+    const std::vector<assets::StationDef>& stations = m_defs->stations();
+    const std::uint32_t archetype = spec.stations[m_dockedStation].archetype;
+    if (archetype >= stations.size()) {
+        return false;
+    }
+    const assets::StationDef& def = stations[archetype];
+    if (def.refineInput.empty() || def.refineOutput.empty()) {
+        return false; // this archetype offers no refining service
+    }
+    const std::uint32_t in = commodityIndex(def.refineInput.c_str());
+    const std::uint32_t out = commodityIndex(def.refineOutput.c_str());
+    if (in == kNoIndex || out == kNoIndex) {
+        return false; // the commodity defs went away under the station def
+    }
+    input = in;
+    output = out;
+    return true;
+}
+
+bool SpaceWorld::dockedStationRefines() const
+{
+    std::uint32_t input = kNoIndex;
+    std::uint32_t output = kNoIndex;
+    return dockedRefinePair(input, output);
+}
+
+std::uint32_t SpaceWorld::refineInputCommodity() const
+{
+    std::uint32_t input = kNoIndex;
+    std::uint32_t output = kNoIndex;
+    (void)dockedRefinePair(input, output);
+    return input;
+}
+
+std::uint32_t SpaceWorld::refineOutputCommodity() const
+{
+    std::uint32_t input = kNoIndex;
+    std::uint32_t output = kNoIndex;
+    (void)dockedRefinePair(input, output);
+    return output;
+}
+
+float SpaceWorld::refinedReadyHere() const
+{
+    std::uint32_t input = kNoIndex;
+    std::uint32_t output = kNoIndex;
+    if (!dockedRefinePair(input, output)) {
+        return 0.0f;
+    }
+    return m_mining.readyAt(dockedMarket(), output);
+}
+
+double SpaceWorld::refineWaitHere() const
+{
+    if (!dockedStationRefines()) {
+        return -1.0;
+    }
+    return m_mining.soonestAt(dockedMarket());
+}
+
+bool SpaceWorld::orderRefine(float units, std::string* outError)
+{
+    std::uint32_t input = kNoIndex;
+    std::uint32_t output = kNoIndex;
+    if (!dockedRefinePair(input, output)) {
+        return refuse("no refinery here", outError);
+    }
+    const float available = playerCargo(input);
+    const float order = std::min(units, available);
+    if (!(order > 0.0f)) {
+        return refuse("no ore aboard to refine", outError);
+    }
+    const double fee = m_mining.refineFee(order);
+    if (fee > m_playerCredits) {
+        return refuse("cannot afford the refining fee", outError);
+    }
+    if (!m_mining.startRefineJob(dockedMarket(), input, order, output)) {
+        return refuse("the refinery queue is full", outError);
+    }
+    m_playerCargo[input] -= order;
+    m_playerCredits -= fee;
+    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    if (owner < m_factionTable.size()) {
+        m_factionSim.addStanding(owner, static_cast<float>(fee * kRefineStandingRate));
+    }
+    SOL_LOG_INFO("refining %.0f units for %.0f cr; ready in %.0f s", static_cast<double>(order),
+                 fee, m_mining.refineDuration(order));
+    return true;
+}
+
+float SpaceWorld::collectRefined()
+{
+    std::uint32_t input = kNoIndex;
+    std::uint32_t output = kNoIndex;
+    if (!dockedRefinePair(input, output)) {
+        return 0.0f;
+    }
+    const float space = m_playerCargoCapacity - playerCargoTotal();
+    if (!(space > 0.0f)) {
+        SOL_LOG_WARN("no hold space for the refined metal; it waits here");
+        return 0.0f;
+    }
+    const float taken = m_mining.collectAt(dockedMarket(), output, space);
+    if (taken <= 0.0f) {
+        return 0.0f;
+    }
+    m_playerCargo[output] += taken;
+    SOL_LOG_INFO("collected %.0f units of refined output", static_cast<double>(taken));
+    return taken;
+}
+
+void SpaceWorld::tickMining(double dt)
+{
+    // Coarse layer first: wrecks age and refinery orders cook whether the
+    // player is watching them or three systems away (decisions/005).
+    m_mining.tick(dt);
+
+    // Rocks tumble. It is the cheapest thing that makes a field read as a
+    // place rather than a diagram.
+    ecs::Pool<MineableRock>& rocks = m_registry.storage<MineableRock>();
+    ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
+    for (std::size_t i = 0; i < rocks.size(); ++i) {
+        const MineableRock& rock = rocks.values()[i];
+        Transform& transform = transforms.get(rocks.entityIndices()[i]);
+        transform.previousOrientation = transform.orientation;
+        transform.orientation = normalize(
+            transform.orientation
+            * core::fromAxisAngle(rock.tumbleAxis, rock.tumbleRate * static_cast<float>(dt)));
+    }
+
+    // Chunks drift, are gathered, or are lost.
+    const core::DVec3 shipPosition = shipState().position;
+    const double collectRange = static_cast<double>(m_collectorRange);
+    float space = m_playerCargoCapacity - playerCargoTotal();
+    ecs::Pool<OreChunk>& chunks = m_registry.storage<OreChunk>();
+    std::vector<std::uint32_t> spent;
+    for (std::size_t i = 0; i < chunks.size(); ++i) {
+        const std::uint32_t entityIndex = chunks.entityIndices()[i];
+        OreChunk& chunk = chunks.values()[i];
+        Transform& transform = transforms.get(entityIndex);
+        transform.previousPosition = transform.position;
+        transform.position = transform.position + chunk.velocity * dt;
+        chunk.lifetime -= dt;
+        if (chunk.lifetime <= 0.0) {
+            spent.push_back(entityIndex);
+            continue;
+        }
+        if (isDocked() || length(transform.position - shipPosition) > collectRange) {
+            continue;
+        }
+        // A full hold cannot gather: the chunks keep drifting until they are
+        // lost, which is the pressure that sends a miner home.
+        const float take = std::min(chunk.units, space > 0.0f ? space : 0.0f);
+        if (take <= 0.0f) {
+            continue;
+        }
+        if (chunk.commodity < m_playerCargo.size()) {
+            m_playerCargo[chunk.commodity] += take;
+            space -= take;
+            m_collectTicker += take;
+            m_collectTickerAge = 0.0;
+            m_collectName = m_defs != nullptr && chunk.commodity < m_commodityIds.size()
+                                ? commodityDisplayName(*m_defs, m_commodityIds[chunk.commodity])
+                                : "ore";
+        }
+        chunk.units -= take;
+        if (chunk.units <= 0.001f) {
+            spent.push_back(entityIndex);
+        }
+    }
+    for (const std::uint32_t entityIndex : spent) {
+        m_registry.destroy(m_registry.entityFromIndex(entityIndex));
+    }
+
+    // Reconcile wreck entities with the sim: newly killed ships get a hull to
+    // cut, decayed and emptied ones stop being there. Done here rather than
+    // in handleShipDestroyed so no pool changes shape mid-iteration.
+    bool wrecksChanged = false;
+    ecs::Pool<WreckMarker>& markers = m_registry.storage<WreckMarker>();
+    std::vector<std::uint32_t> goneEntities;
+    std::vector<std::uint32_t> present;
+    for (std::size_t i = 0; i < markers.size(); ++i) {
+        const std::uint32_t entityIndex = markers.entityIndices()[i];
+        const std::uint32_t id = markers.values()[i].id;
+        if (m_mining.wreck(id) == nullptr) {
+            goneEntities.push_back(entityIndex);
+        } else {
+            present.push_back(id);
+        }
+    }
+    for (const std::uint32_t entityIndex : goneEntities) {
+        m_registry.destroy(m_registry.entityFromIndex(entityIndex));
+        wrecksChanged = true;
+    }
+    std::vector<std::uint32_t> here;
+    m_mining.wrecksIn(m_currentSystem, here);
+    for (const std::uint32_t id : here) {
+        if (std::find(present.begin(), present.end(), id) != present.end()) {
+            continue;
+        }
+        const sim::WreckRecord* wreck = m_mining.wreck(id);
+        const ecs::Entity entity = m_registry.create();
+        m_registry.emplace<Transform>(entity, Transform{.position = wreck->position,
+                                                        .previousPosition = wreck->position});
+        // No wreck mesh yet: a dead hull is the ship model, oversized and
+        // adrift. A proper broken hull is polish, not mechanism.
+        m_registry.emplace<RenderShape>(
+            entity, RenderShape{.scale = {1.4f, 1.4f, 1.4f}, .model = ModelId::Ship});
+        m_registry.emplace<WreckMarker>(entity, WreckMarker{.id = id});
+        wrecksChanged = true;
+    }
+    if (wrecksChanged) {
+        rebuildDynamicTargets();
+    }
+
+    // The collection ticker is a HUD readout, not state: it fades.
+    if (m_collectTicker > 0.0f) {
+        m_collectTickerAge += dt;
+        if (m_collectTickerAge > 2.0) {
+            m_collectTicker = 0.0f;
+            m_collectTickerAge = 0.0;
+        }
+    }
 }
 
 void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::SystemSpec& spec)
@@ -1012,7 +1616,7 @@ void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
     m_planetTargetBase = spec.stations.size() + m_gates.size();
     m_starTargetIndex = m_targets.size() - 1;
     m_signalTargetBase = m_targets.size();
-    m_signalTargetSlots.clear();
+    m_dynamicTargets.clear();
     m_targetIndex = 0;
 
     // Scannable sites (Phase 8e): content regenerates from the system seed;
@@ -1026,7 +1630,10 @@ void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
                              .position = signalSpecs[i].position,
                              .seed = signalSpecs[i].seed});
     }
-    rebuildSignalTargets();
+    // Asteroid fields (Phase 8f) regenerate from the seed the same way, and
+    // are known on sight — a field is a visible thing, not a contact.
+    m_mining.fieldsFor(m_galaxy, m_currentSystem, m_fields);
+    rebuildDynamicTargets();
 
     // Steering obstacles for NPC avoidance: stations plus every celestial.
     m_obstacles.clear();
@@ -1051,6 +1658,9 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
     instantiateSystemEntities(spec);
     rebuildSystemSideData(spec);
+    // Rocks and wrecks (Phase 8f): rebuildSystemSideData has just refreshed
+    // m_fields, and depletion decides which rocks are still there to spawn.
+    instantiateMiningEntities();
 
     // Arrival point: off the gate we came through, facing the playfield; on
     // a fresh start, just off the first station (or the hub failing that).
@@ -1669,6 +2279,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
         m_playerCargoCapacity = def.cargoCapacity;
         m_scanRange = def.scanRange > 0.0f ? def.scanRange : 1.0f;
         m_scanSpeed = def.scanSpeed > 0.0f ? def.scanSpeed : 1.0f;
+        m_collectorRange = def.collectorRange > 0.0f ? def.collectorRange : 1.0f;
     }
 
     ShipPower& power = m_registry.storage<ShipPower>().get(entityIndex);
@@ -1698,6 +2309,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
             weapon.range = weaponDef->range;
             weapon.projectileSpeed = weaponDef->projectileSpeed;
             weapon.energyCost = weaponDef->energyCost;
+            weapon.miningPower = weaponDef->miningPower;
         } else {
             SOL_LOG_WARN("ship '%s': unknown weapon def '%s'", def.id.c_str(),
                          def.weaponId.c_str());
@@ -1788,7 +2400,13 @@ SpaceWorld::NavKind SpaceWorld::navTargetKind(std::size_t index) const
     if (index < m_planetTargetBase + m_planets.size()) {
         return NavKind::Planet;
     }
-    return index == m_starTargetIndex ? NavKind::Star : NavKind::Signal;
+    if (index == m_starTargetIndex) {
+        return NavKind::Star;
+    }
+    const std::size_t slot = index - m_signalTargetBase;
+    return index >= m_signalTargetBase && slot < m_dynamicTargets.size()
+               ? m_dynamicTargets[slot].kind
+               : NavKind::Signal;
 }
 
 std::uint32_t SpaceWorld::navTargetBody(std::size_t index) const
@@ -1802,12 +2420,42 @@ std::uint32_t SpaceWorld::navTargetBody(std::size_t index) const
     return kNoIndex;
 }
 
+namespace {
+
+// One accessor per dynamic kind: a slot only answers for what it actually is.
+[[nodiscard]] std::uint32_t slotIndexOfKind(SpaceWorld::NavKind want, SpaceWorld::NavKind got,
+                                            std::uint32_t index)
+{
+    return want == got ? index : 0xffff'ffffu;
+}
+
+} // namespace
+
 std::uint32_t SpaceWorld::navTargetSignal(std::size_t index) const
 {
     if (index < m_signalTargetBase || index >= m_targets.size()) {
         return kNoIndex;
     }
-    return m_signalTargetSlots[index - m_signalTargetBase];
+    const DynamicTarget& slot = m_dynamicTargets[index - m_signalTargetBase];
+    return slotIndexOfKind(NavKind::Signal, slot.kind, slot.index);
+}
+
+std::uint32_t SpaceWorld::navTargetField(std::size_t index) const
+{
+    if (index < m_signalTargetBase || index >= m_targets.size()) {
+        return kNoIndex;
+    }
+    const DynamicTarget& slot = m_dynamicTargets[index - m_signalTargetBase];
+    return slotIndexOfKind(NavKind::Field, slot.kind, slot.index);
+}
+
+std::uint32_t SpaceWorld::navTargetWreck(std::size_t index) const
+{
+    if (index < m_signalTargetBase || index >= m_targets.size()) {
+        return kNoIndex;
+    }
+    const DynamicTarget& slot = m_dynamicTargets[index - m_signalTargetBase];
+    return slotIndexOfKind(NavKind::Wreck, slot.kind, slot.index);
 }
 
 std::size_t SpaceWorld::currentTargetIndex() const
@@ -2272,10 +2920,14 @@ void SpaceWorld::tick(double dt)
         });
     }
     ecs::Pool<Projectile>& projectiles = m_registry.storage<Projectile>();
+    const ecs::Pool<OreChunk>& oreChunks = m_registry.storage<OreChunk>();
     for (std::size_t i = 0; i < shapes.size(); ++i) {
         const std::uint32_t entityIndex = shapes.entityIndices()[i];
-        if (bodies.contains(entityIndex) || projectiles.contains(entityIndex)) {
-            continue; // ships were pushed above; bolts never block anything
+        if (bodies.contains(entityIndex) || projectiles.contains(entityIndex)
+            || oreChunks.contains(entityIndex)) {
+            // Ships were pushed above; bolts and loose ore never block
+            // anything — you fly through your own ore to collect it.
+            continue;
         }
         const RenderShape& shape = shapes.values()[i];
         const Transform& transform = transforms.get(entityIndex);
@@ -2422,6 +3074,16 @@ void SpaceWorld::tick(double dt)
         std::uint32_t shooterIndex;
     };
     std::vector<PendingBolt> newBolts;
+    // Mining beams land after the loop: cutting spawns ore chunks and can
+    // break a rock up, and a structural change mid-iteration corrupts pools.
+    struct PendingCut
+    {
+        std::uint32_t entityIndex;
+        core::DVec3 impact;
+        float units;
+        bool wreck;
+    };
+    std::vector<PendingCut> pendingCuts;
     for (std::size_t w = 0; w < weapons.size(); ++w) {
         ShipWeapon& weapon = weapons.values()[w];
         const std::uint32_t entityIndex = weapons.entityIndices()[w];
@@ -2452,6 +3114,36 @@ void SpaceWorld::tick(double dt)
         if (weapon.kind == WeaponKind::Hitscan) {
             // Instant pulse along the boresight; first ship hit takes it.
             const core::DVec3 beamEnd = muzzle + forwardD * static_cast<double>(weapon.range);
+            // A beam with mining_power cuts rock and hulls too (Phase 8f).
+            // Whichever is nearer along the beam is what it lands on, so you
+            // cannot mine through a fighter that flew into the line.
+            double miningT = 2.0;
+            std::uint32_t miningEntity = kNoIndex;
+            bool miningWreck = false;
+            if (weapon.miningPower > 0.0f && entityIndex == playerEntityIndex()) {
+                const ecs::Pool<MineableRock>& rockPool = m_registry.storage<MineableRock>();
+                const ecs::Pool<WreckMarker>& wreckPool = m_registry.storage<WreckMarker>();
+                const auto sweepCuttable = [&](std::uint32_t candidate, bool isWreck) {
+                    const RenderShape& candidateShape =
+                        m_registry.storage<RenderShape>().get(candidate);
+                    const double radius = modelBaseRadius(candidateShape.model)
+                                          * static_cast<double>(candidateShape.scale.x);
+                    double hitT = 0.0;
+                    if (sim::segmentHitsSphere(muzzle, beamEnd,
+                                               transforms.get(candidate).position, radius, hitT)
+                        && hitT < miningT) {
+                        miningT = hitT;
+                        miningEntity = candidate;
+                        miningWreck = isWreck;
+                    }
+                };
+                for (std::size_t r = 0; r < rockPool.size(); ++r) {
+                    sweepCuttable(rockPool.entityIndices()[r], false);
+                }
+                for (std::size_t r = 0; r < wreckPool.size(); ++r) {
+                    sweepCuttable(wreckPool.entityIndices()[r], true);
+                }
+            }
             double bestT = 2.0;
             std::uint32_t bestTarget = 0;
             bool hit = false;
@@ -2469,7 +3161,18 @@ void SpaceWorld::tick(double dt)
                     hit = true;
                 }
             }
-            if (hit) {
+            if (miningEntity != kNoIndex && (!hit || miningT <= bestT)) {
+                // Per shot, so the yield works out to mining_power per second
+                // of held beam whatever the weapon's rate of fire is. The cut
+                // itself is deferred: it spawns chunk entities, and nothing
+                // may change a pool's shape while this loop walks one.
+                pendingCuts.push_back(
+                    {.entityIndex = miningEntity,
+                     .impact = muzzle + (beamEnd - muzzle) * miningT,
+                     .units = weapon.miningPower
+                              / (weapon.rateOfFire > 0.01f ? weapon.rateOfFire : 0.01f),
+                     .wreck = miningWreck});
+            } else if (hit) {
                 if (ShipDefense* defense = defenses.tryGet(bestTarget);
                     defense != nullptr && defense->state.alive() &&
                     !isDamageImmune(bestTarget)) {
@@ -2503,6 +3206,25 @@ void SpaceWorld::tick(double dt)
     for (const DestroyedShip& destroyed : destroyedShips) {
         handleShipDestroyed(destroyed.victim, destroyed.attacker);
     }
+    for (const PendingCut& cut : pendingCuts) {
+        if (cut.wreck) {
+            (void)cutWreck(cut.entityIndex, cut.units);
+            m_combatEffects.spawnImpact(cut.impact, false);
+            continue;
+        }
+        const MineableRock* rock = m_registry.storage<MineableRock>().tryGet(cut.entityIndex);
+        if (rock == nullptr) {
+            continue; // two beams on one rock in a tick; the first broke it up
+        }
+        const std::uint32_t field = rock->field;
+        const std::uint32_t index = rock->index;
+        const float total = rock->totalUnits;
+        (void)cutRock(cut.entityIndex, cut.units);
+        m_combatEffects.spawnImpact(cut.impact, false);
+        if (m_mining.unitsLeft(m_currentSystem, field, index, total) <= 0.0f) {
+            m_registry.destroy(m_registry.entityFromIndex(cut.entityIndex)); // it broke up
+        }
+    }
     for (const PendingBolt& bolt : newBolts) {
         const ecs::Entity e = m_registry.create();
         m_registry.emplace<Transform>(e, Transform{.position = bolt.position,
@@ -2528,6 +3250,10 @@ void SpaceWorld::tick(double dt)
 
     // Thruster visuals are player-only for now (NPC plumes: Phase 6 feedback).
     m_thrusters.tick(shipState(), shipTuning(), m_appliedInput, dt);
+
+    // Mining (Phase 8f): rock tumble, chunk drift and collection, wreck decay
+    // and reconciliation, refinery orders.
+    tickMining(dt);
 
     // Coarse-layer economy: galaxy-wide, same clock as everything else
     // (decisions/005 — no time compression).
@@ -2646,12 +3372,46 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
     }
 
     for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
-        if (m_spawnedShips[i].entity.index == entityIndex) {
-            SOL_LOG_INFO("'%s' destroyed", m_spawnedShips[i].defId.c_str());
-            m_registry.destroy(m_spawnedShips[i].entity);
-            m_spawnedShips.erase(m_spawnedShips.begin() + static_cast<std::ptrdiff_t>(i));
-            return;
+        if (m_spawnedShips[i].entity.index != entityIndex) {
+            continue;
         }
+        SOL_LOG_INFO("'%s' destroyed", m_spawnedShips[i].defId.c_str());
+
+        // A wreck stays where it fell (Phase 8f). The record is what persists
+        // — the entity to cut is materialized by tickMining, here and after a
+        // jump back or a reload — and its contents are composed now, from the
+        // ship that actually died, so a later def edit cannot rewrite it.
+        const core::DVec3 where = m_registry.storage<Transform>().get(entityIndex).position;
+        const std::string defId = m_spawnedShips[i].defId;
+        const std::string name = m_spawnedShips[i].name;
+        const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
+        const std::uint32_t faction = pilot != nullptr ? pilot->factionIndex : kNoIndex;
+        const std::uint64_t seed = core::Rng(m_universeSeed ^ (static_cast<std::uint64_t>(
+                                                 entityIndex + 1)
+                                                 * 0x9e37'79b9'7f4a'7c15ull),
+                                             13)
+                                       .nextU64();
+        const std::uint32_t wreckId =
+            m_mining.addWreck(m_currentSystem, where, defId, name, seed);
+        if (wreckId != 0) {
+            const assets::ShipDef* def =
+                m_defs != nullptr ? m_defs->findShip(defId.c_str()) : nullptr;
+            // Scriptless default first, so a hull always holds something even
+            // if no script answers; the Lua hook may replace it before it is
+            // cut into.
+            (void)m_mining.setWreckContents(wreckId, defaultWreckLoot(def, seed));
+            m_wreckEvents.push_back({.id = wreckId,
+                                     .system = m_currentSystem,
+                                     .defId = defId,
+                                     .factionName = faction < m_factionTable.size()
+                                                        ? m_factionTable[faction].name
+                                                        : std::string(),
+                                     .seed = seed});
+        }
+
+        m_registry.destroy(m_spawnedShips[i].entity);
+        m_spawnedShips.erase(m_spawnedShips.begin() + static_cast<std::ptrdiff_t>(i));
+        return;
     }
 }
 
@@ -2733,6 +3493,7 @@ bool SpaceWorld::saveTo(const char* path)
     m_factionSim.save(writer); // v5: relations, war flags, standings, raids
     m_missions.save(writer);   // v6: journal, board, campaign stage
     m_survey.save(writer);     // v7: knowledge, signal state, ledger, route
+    m_mining.save(writer);     // v8: rock depletion, wrecks, refinery orders
     makeSnapshotSchema().save(m_registry, writer);
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
 }
@@ -2847,6 +3608,14 @@ bool SpaceWorld::loadFrom(const char* path)
     if (!m_survey.load(reader)) {
         return false;
     }
+    // Mining (v8): depletion, the wreck store, and outstanding refine jobs.
+    // Fields and rocks themselves re-derive from the seed, as ever.
+    if (galaxyChanged) {
+        initializeMining();
+    }
+    if (!m_mining.load(reader)) {
+        return false;
+    }
 
     ecs::Registry fresh;
     if (!makeSnapshotSchema().load(fresh, reader)) {
@@ -2885,6 +3654,7 @@ bool SpaceWorld::loadFrom(const char* path)
         m_playerCargoCapacity = resolved.cargoCapacity;
         m_scanRange = resolved.scanRange > 0.0f ? resolved.scanRange : 1.0f;
         m_scanSpeed = resolved.scanSpeed > 0.0f ? resolved.scanSpeed : 1.0f;
+        m_collectorRange = resolved.collectorRange > 0.0f ? resolved.collectorRange : 1.0f;
     }
 
     // The snapshot carries the system's statics; only the non-ECS side data

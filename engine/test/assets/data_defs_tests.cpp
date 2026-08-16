@@ -304,3 +304,89 @@ produces = ["sol.food:-1"]
 )",
                      "bad2.toml", &error));
 }
+
+SOL_TEST(data_defs_parse_mining_fields)
+{
+    DefDatabase db;
+    std::string error;
+    const char* toml = R"(
+[[commodity]]
+id = "sol.ore"
+name = "Raw Ore"
+base_price = 12.0
+ore_weight_core = 1.0
+ore_weight_fringe = 2.5
+
+[[commodity]]
+id = "sol.metal"
+name = "Refined Metal"
+base_price = 32.0
+
+[[station]]
+id = "sol.station_refinery"
+name = "Refinery"
+produces = ["sol.metal:1.4"]
+consumes = ["sol.ore:2.4"]
+refine_input = "sol.ore"
+refine_output = "sol.metal"
+
+[[weapon]]
+id = "sol.mining_laser"
+name = "Mining Laser"
+kind = "hitscan"
+damage = 3.0
+mining_power = 4.0
+)";
+    SOL_REQUIRE(merge(db, toml, "mining.toml", &error));
+
+    // Ore weights say what a rock can be made of, per region tier; a
+    // commodity that says nothing is simply not mineable.
+    const sol::assets::CommodityDef* ore = db.findCommodity("sol.ore");
+    const sol::assets::CommodityDef* metal = db.findCommodity("sol.metal");
+    SOL_REQUIRE(ore != nullptr && metal != nullptr);
+    SOL_CHECK(ore->oreWeightCore == 1.0f);
+    SOL_CHECK(ore->oreWeightFrontier == 0.0f); // default: not this tier
+    SOL_CHECK(ore->oreWeightFringe == 2.5f);
+    SOL_CHECK(metal->oreWeightCore == 0.0f);
+    SOL_CHECK(metal->oreWeightFringe == 0.0f);
+
+    const sol::assets::StationDef* refinery = db.findStation("sol.station_refinery");
+    SOL_REQUIRE(refinery != nullptr);
+    SOL_CHECK(refinery->refineInput == "sol.ore");
+    SOL_CHECK(refinery->refineOutput == "sol.metal");
+
+    const sol::assets::WeaponDef* laser = db.findWeapon("sol.mining_laser");
+    SOL_REQUIRE(laser != nullptr);
+    SOL_CHECK(laser->miningPower == 4.0f);
+
+    // An ordinary gun mines nothing unless its def says so.
+    SOL_REQUIRE(merge(db, R"(
+[[weapon]]
+id = "sol.pulse_cannon"
+name = "Pulse Cannon"
+kind = "projectile"
+damage = 12.0
+)",
+                      "guns.toml", &error));
+    SOL_CHECK(db.findWeapon("sol.pulse_cannon")->miningPower == 0.0f);
+
+    // Half a refinery is a schema error: the service needs both ends.
+    SOL_CHECK(!merge(db, R"(
+[[station]]
+id = "sol.half_refinery"
+name = "Half Refinery"
+refine_input = "sol.ore"
+)",
+                     "half.toml", &error));
+    SOL_CHECK(error.find("refine_input") != std::string::npos);
+    SOL_CHECK(db.findStation("sol.half_refinery") == nullptr);
+
+    // Negative ore weights are a schema error, not a silent zero.
+    SOL_CHECK(!merge(db, R"(
+[[commodity]]
+id = "sol.bad_ore"
+name = "Bad Ore"
+ore_weight_core = -1.0
+)",
+                     "bad_ore.toml", &error));
+}

@@ -21,7 +21,7 @@ constexpr const char* kFitStatKeys[kFitStatCount] = {
     "forward_accel",  "reverse_accel", "lateral_accel",   "vertical_accel", "max_speed",
     "turn_rate",      "cruise_speed_scale", "shield_strength", "shield_regen", "armor",
     "hull",           "weapon_capacitor", "weapon_recharge", "cargo",
-    "scan_range",     "scan_speed",
+    "scan_range",     "scan_speed",  "collector_range",
 };
 
 // Accumulates the first error and short-circuits later reads.
@@ -304,6 +304,7 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     reader.optionalFloat("cargo", def.cargoCapacity);
     reader.optionalFloat("scan_range", def.scanRange);
     reader.optionalFloat("scan_speed", def.scanSpeed);
+    reader.optionalFloat("collector_range", def.collectorRange);
 
     reader.optionalFloat("price", def.price);
     reader.optionalFloat("mass", def.mass);
@@ -321,7 +322,7 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
                               "cruise_speed_scale", "cruise_accel_scale", "shield_strength",
                               "shield_regen", "shield_regen_delay", "armor", "hull",
                               "weapon_capacitor", "weapon_recharge", "weapon", "cargo",
-                              "scan_range", "scan_speed", "price",
+                              "scan_range", "scan_speed", "collector_range", "price",
                               "mass", "power_output", "slots_shield", "slots_engine",
                               "slots_cargo", "slots_utility", "crew_berths", "factions",
                               "min_rep"});
@@ -356,11 +357,13 @@ bool parseWeapon(const TomlValue& table, const char* sourceName, std::vector<Wea
     reader.optionalFloat("range", def.range);
     reader.optionalFloat("projectile_speed", def.projectileSpeed);
     reader.optionalFloat("energy_cost", def.energyCost);
+    reader.optionalFloat("mining_power", def.miningPower);
     reader.optionalFloat("price", def.price);
     reader.optionalGate(def.gate);
 
     reader.rejectUnknownKeys({"id", "name", "kind", "damage", "rate_of_fire", "range",
-                              "projectile_speed", "energy_cost", "price", "factions", "min_rep"});
+                              "projectile_speed", "energy_cost", "mining_power", "price",
+                              "factions", "min_rep"});
     if (!reader.failed && def.kind != "projectile" && def.kind != "hitscan") {
         reader.fail("'kind' must be \"projectile\" or \"hitscan\"");
     }
@@ -428,10 +431,19 @@ bool parseCommodity(const TomlValue& table, const char* sourceName,
     }
     reader.requireString("name", def.name);
     reader.optionalFloat("base_price", def.basePrice);
+    reader.optionalFloat("ore_weight_core", def.oreWeightCore);
+    reader.optionalFloat("ore_weight_frontier", def.oreWeightFrontier);
+    reader.optionalFloat("ore_weight_fringe", def.oreWeightFringe);
 
-    reader.rejectUnknownKeys({"id", "name", "base_price"});
+    reader.rejectUnknownKeys(
+        {"id", "name", "base_price", "ore_weight_core", "ore_weight_frontier", "ore_weight_fringe"});
     if (!reader.failed && def.basePrice <= 0.0f) {
         reader.fail("'base_price' must be > 0");
+    }
+    if (!reader.failed
+        && (def.oreWeightCore < 0.0f || def.oreWeightFrontier < 0.0f
+            || def.oreWeightFringe < 0.0f)) {
+        reader.fail("'ore_weight_*' must be >= 0");
     }
     if (reader.failed) {
         return false;
@@ -458,11 +470,17 @@ bool parseStation(const TomlValue& table, const char* sourceName, std::vector<St
     reader.optionalRateList("produces", def.produces);
     reader.optionalRateList("consumes", def.consumes);
     reader.optionalFloat("stock_capacity", def.stockCapacity);
+    reader.optionalString("refine_input", def.refineInput);
+    reader.optionalString("refine_output", def.refineOutput);
 
     reader.rejectUnknownKeys({"id", "name", "weight_core", "weight_frontier", "weight_fringe",
-                              "produces", "consumes", "stock_capacity"});
+                              "produces", "consumes", "stock_capacity", "refine_input",
+                              "refine_output"});
     if (!reader.failed && def.stockCapacity <= 0.0f) {
         reader.fail("'stock_capacity' must be > 0");
+    }
+    if (!reader.failed && def.refineInput.empty() != def.refineOutput.empty()) {
+        reader.fail("'refine_input' and 'refine_output' must be given together");
     }
     if (reader.failed) {
         return false;

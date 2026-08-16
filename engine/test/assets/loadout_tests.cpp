@@ -277,3 +277,40 @@ scan_range_add = 1.0e7
     SOL_CHECK(other.scanRange == resolved.scanRange);
     SOL_CHECK(other.scanSpeed == resolved.scanSpeed);
 }
+
+SOL_TEST(loadout_collector_rigs_move_collector_range)
+{
+    constexpr const char* kMinerDefs = R"(
+[[ship]]
+id = "sol.prospector"
+name = "Prospector"
+collector_range = 250.0
+mass = 10000.0
+power_output = 6.0
+slots_utility = 2
+
+[[module]]
+id = "sol.collector_mk1"
+name = "Collector Rig Mk1"
+slot = "utility"
+price = 1100.0
+mass = 0.0
+power_draw = 1.5
+collector_range_mul = 3.0
+)";
+
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kMinerDefs, "miners.toml", &error));
+
+    const ShipDef* ship = db.findShip("sol.prospector");
+    const ModuleDef* collector = db.findModule("sol.collector_mk1");
+    SOL_REQUIRE(ship != nullptr && collector != nullptr);
+    SOL_CHECK(nearlyEqual(ship->collectorRange, 250.0f));
+
+    // A collector rig is an ordinary utility module: it moves collector_range
+    // exactly the way a scanner moves scan_range.
+    const ModuleDef* fit[] = {collector};
+    const ShipDef resolved = sol::assets::resolveLoadout(*ship, fit, {});
+    SOL_CHECK(nearlyEqual(resolved.collectorRange, 750.0f));
+}

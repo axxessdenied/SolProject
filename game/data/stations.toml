@@ -1,8 +1,10 @@
 # Station archetypes: placement weights per region tier feed the galaxy
 # generator; produces/consumes ("commodity:units_per_second") feed the
-# market sim. The three archetypes form a production triangle -
-# food -> mines, ore -> factories, machinery -> farms - so trade routes
-# exist everywhere.
+# market sim. Phase 8f deepened the old production triangle into a chain -
+# food -> mines, ore -> refineries, metal -> factories, machinery -> farms -
+# so raw ore has a buyer of its own and the player's mining feeds it.
+# refine_input/refine_output give an archetype the player-facing refinery
+# service (hand over ore, come back for metal).
 
 [[station]]
 id = "sol.station_agri"
@@ -23,10 +25,21 @@ produces = ["sol.ore:2.5"]
 consumes = ["sol.food:1.2"]
 
 [[station]]
+id = "sol.station_refinery"
+name = "Refinery"
+weight_core = 1.2
+weight_frontier = 1.2
+weight_fringe = 0.6
+produces = ["sol.metal:1.4"]
+consumes = ["sol.ore:2.4", "sol.food:0.5"]
+refine_input = "sol.ore"
+refine_output = "sol.metal"
+
+[[station]]
 id = "sol.station_factory"
 name = "Fabricator Yard"
 weight_core = 2.0
 weight_frontier = 1.0
 weight_fringe = 0.3
 produces = ["sol.machinery:1.5"]
-consumes = ["sol.ore:2.0", "sol.food:0.8"]
+consumes = ["sol.metal:1.6", "sol.food:0.8"]

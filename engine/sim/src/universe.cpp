@@ -348,16 +348,6 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
     return ruleCount - 1;
 }
 
-[[nodiscard]] core::DVec3 randomUnitDisc(core::Rng& rng)
-{
-    // Unit direction biased to the orbital plane (y small): the playfield is
-    // flat-ish per the GDD.
-    constexpr double kTau = 6.283185307179586476925;
-    const double theta = kTau * rng.nextDouble01();
-    const double y = 0.25 * (rng.nextDouble01() * 2.0 - 1.0);
-    return core::normalize(core::DVec3{std::cos(theta), y, std::sin(theta)});
-}
-
 // Star, planets (AU-scale scenery; primary planet hosts the playfield),
 // stations near the primary planet, gates toward each linked neighbor.
 void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec& system,
@@ -372,7 +362,7 @@ void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec&
         planet.name = system.name + " " + kPlanetNumerals[std::min<std::size_t>(
                                               p, std::size(kPlanetNumerals) - 1)];
         planet.radius = 2.5e6 + 4.5e7 * rng.nextDouble01();
-        planet.position = randomUnitDisc(rng) * orbit;
+        planet.position = randomPlayfieldDirection(rng) * orbit;
         orbit *= 1.6 + 0.8 * rng.nextDouble01();
         system.planets.push_back(std::move(planet));
     }
@@ -394,7 +384,7 @@ void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec&
         const double distance =
             params.stationMinDistance
             + (params.stationMaxDistance - params.stationMinDistance) * rng.nextDouble01();
-        station.position = hub + randomUnitDisc(rng) * distance;
+        station.position = hub + randomPlayfieldDirection(rng) * distance;
         system.stations.push_back(std::move(station));
     }
 
@@ -411,6 +401,23 @@ void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec&
 }
 
 } // namespace
+
+core::DVec3 randomPlayfieldDirection(core::Rng& rng)
+{
+    constexpr double kTau = 6.283185307179586476925;
+    const double theta = kTau * rng.nextDouble01();
+    const double y = 0.25 * (rng.nextDouble01() * 2.0 - 1.0);
+    return core::normalize(core::DVec3{std::cos(theta), y, std::sin(theta)});
+}
+
+core::DVec3 playfieldHub(const SystemSpec& spec)
+{
+    if (spec.planets.empty()) {
+        return {};
+    }
+    const std::size_t index = std::min<std::size_t>(spec.primaryPlanet, spec.planets.size() - 1);
+    return spec.planets[index].position;
+}
 
 Galaxy generateGalaxy(const GalaxyParams& params)
 {

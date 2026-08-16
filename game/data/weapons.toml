@@ -11,6 +11,9 @@ projectile_speed = 900.0
 energy_cost = 8.0
 price = 1200.0
 
+# mining_power (Phase 8f) is yield units cut per second of held beam. A
+# mining laser is a poor gun that pays for itself on rock and wrecks; the
+# hardpoint it costs is the whole trade-off.
 [[weapon]]
 id = "sol.mining_laser"
 name = "Mining Laser"
@@ -19,7 +22,19 @@ damage = 3.0
 rate_of_fire = 10.0
 range = 800.0
 energy_cost = 2.0
+mining_power = 4.0
 price = 600.0
+
+[[weapon]]
+id = "sol.mining_laser_mk2"
+name = "Deep Core Laser"
+kind = "hitscan"
+damage = 4.0
+rate_of_fire = 10.0
+range = 1400.0
+energy_cost = 3.0
+mining_power = 9.0
+price = 3200.0
 
 [[weapon]]
 id = "sol.heavy_cannon"

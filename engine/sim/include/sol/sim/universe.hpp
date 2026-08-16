@@ -15,6 +15,7 @@
 // planets remain AU-scale scenery.
 
 #include "sol/core/math/math.hpp"
+#include "sol/core/random.hpp"
 
 #include <cstdint>
 #include <string>
@@ -101,6 +102,16 @@ struct SystemSpec
     std::vector<StationSpec> stations;
     std::vector<GateSpec> gates; // one per link touching this system
 };
+
+// A unit direction biased to the orbital plane (y small): the playfield is
+// flat-ish per the GDD, and every in-system placement — planets, stations,
+// gates, signals, asteroid fields — is scattered with this so a system reads
+// as a disc rather than a ball.
+[[nodiscard]] core::DVec3 randomPlayfieldDirection(core::Rng& rng);
+
+// The primary planet's position: the hub the visitable playfield clusters
+// around. Zero for a system with no planets.
+[[nodiscard]] core::DVec3 playfieldHub(const SystemSpec& spec);
 
 // Undirected jump lane between two system indices (a < b).
 struct GateLink

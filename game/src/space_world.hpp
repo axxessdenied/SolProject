@@ -12,6 +12,7 @@
 #include "sol/sim/economy.hpp"
 #include "sol/sim/faction_sim.hpp"
 #include "sol/sim/flight.hpp"
+#include "sol/sim/mining.hpp"
 #include "sol/sim/missions.hpp"
 #include "sol/sim/power.hpp"
 #include "sol/sim/steering.hpp"
@@ -95,6 +96,7 @@ struct ShipWeapon
     float projectileSpeed = 0.0f; // m/s (projectile kind)
     float energyCost = 0.0f;      // capacitor draw per shot
     float cooldown = 0.0f;        // seconds until the next shot
+    float miningPower = 0.0f;     // Phase 8f: yield units cut per second
 };
 
 // A live bolt: Transform carries the position, this the rest.
@@ -186,6 +188,37 @@ struct SignalInstance
     std::uint64_t seed = 0; // the loot roll for this site
 };
 
+// A rock the beam can cut (Phase 8f). What it is comes from
+// MiningSim::rocksFor — a pure function of the system seed — so the entity is
+// rebuilt per system; only how much has been taken out of it is saved.
+struct MineableRock
+{
+    std::uint32_t field = 0;
+    std::uint32_t index = 0;     // rock index within the field
+    std::uint32_t commodity = 0; // economy commodity index
+    float totalUnits = 0.0f;     // yield of an untouched rock
+    sol::core::Vec3 tumbleAxis{0.0f, 1.0f, 0.0f};
+    float tumbleRate = 0.0f; // rad/s
+};
+
+// A wreck instantiated in the current system (Phase 8f). Unlike a rock, the
+// thing it stands for is a record in MiningSim, not a seed.
+struct WreckMarker
+{
+    std::uint32_t id = 0; // sim::WreckRecord::id
+};
+
+// Ore cut loose and drifting, waiting to be collected (Phase 8f). This is the
+// step that makes mining a place you fly around in rather than a transaction:
+// the beam only breaks the rock, the ship still has to gather what came off.
+struct OreChunk
+{
+    sol::core::DVec3 velocity;   // sim space, m/s
+    double lifetime = 0.0;       // seconds remaining before it is lost
+    std::uint32_t commodity = 0;
+    float units = 0.0f;
+};
+
 // A scan result the game reports outward: GameContent forwards it to Lua for
 // flavor and loot composition, the same queue shape mission events use.
 struct SurveyEvent
@@ -202,6 +235,29 @@ struct SurveyEvent
     sol::sim::SignalKind signalKind = sol::sim::SignalKind::Derelict;
     std::uint64_t seed = 0;
     std::string name;
+};
+
+// A ship died and left something to cut open (Phase 8f). GameContent forwards
+// it to the Lua loot hook, the same queue shape survey events use.
+struct WreckEvent
+{
+    std::uint32_t id = 0;
+    std::uint32_t system = 0;
+    std::string defId;      // the victim's ship def
+    std::string factionName; // empty for unaffiliated spawns
+    std::uint64_t seed = 0;
+};
+
+// What the beam is pointed at, for the HUD's prospecting readout (Phase 8f).
+struct ProspectInfo
+{
+    bool valid = false;
+    bool wreck = false;      // a hull to cut rather than a rock
+    std::string name;        // commodity name, or the wreck's
+    float unitsLeft = 0.0f;
+    float unitsTotal = 0.0f;
+    double distance = 0.0;
+    bool inRange = false;    // inside the fitted weapon's reach
 };
 
 struct NavTarget
@@ -428,6 +484,48 @@ public:
     // there is no route or the destination is where the player already is.
     bool plotRoute(std::uint32_t destination);
 
+    // --- Mining, salvage & refining (Phase 8f) ---
+    // One verb: hold a beam with mining_power on a rock or a wreck and what
+    // comes off drifts as ore chunks the ship then has to gather.
+    static constexpr double kChunkLifetimeSeconds = 90.0;
+    static constexpr double kChunkDriftSpeed = 18.0;
+    static constexpr float kChunkUnitCeiling = 6.0f; // one chunk never holds more
+    // Standing paid for a refinery order, per credit of fee.
+    static constexpr double kRefineStandingRate = 0.0008;
+
+    [[nodiscard]] const sol::sim::MiningSim& mining() const { return m_mining; }
+    [[nodiscard]] sol::sim::MiningSim& mining() { return m_mining; }
+    [[nodiscard]] float collectorRange() const { return m_collectorRange; }
+    // What the boresight is on, for the prospecting readout. Rocks are read
+    // off the crosshair rather than through the target cycle: a field holds
+    // dozens of them, and T-cycling through forty rocks is not a UI.
+    [[nodiscard]] ProspectInfo prospectAhead() const;
+    // Units collected in the last moment, for the HUD ticker (0 when idle).
+    [[nodiscard]] float lastCollectedUnits() const { return m_collectTicker; }
+    [[nodiscard]] const char* lastCollectedName() const { return m_collectName.c_str(); }
+    // Dev/console: empties the rock the boresight is on into the hold.
+    bool mineAhead();
+
+    // Wreck loot composed by the Lua hook (validated in MiningSim).
+    bool applyWreckLoot(std::uint32_t id, sol::sim::SignalLoot loot);
+    void takeWreckEvents(std::vector<WreckEvent>& out);
+
+    // Refining: the docked station takes ore off your hands and hands back
+    // metal later, at the market you ordered it from.
+    [[nodiscard]] bool dockedStationRefines() const;
+    // The docked station archetype's refine_input/refine_output as commodity
+    // indices, or ~0u when this station refines nothing.
+    [[nodiscard]] std::uint32_t refineInputCommodity() const;
+    [[nodiscard]] std::uint32_t refineOutputCommodity() const;
+    // Ore waiting to be collected here, and the wait on the next order.
+    [[nodiscard]] float refinedReadyHere() const;
+    [[nodiscard]] double refineWaitHere() const;
+    // Places an order: takes the ore and the fee, queues the job. False with
+    // a logged reason (and outError) when refused.
+    bool orderRefine(float units, std::string* outError = nullptr);
+    // Collects finished metal into the hold; returns the units taken.
+    float collectRefined();
+
     // Hardcore/ironman (decisions/007): set at new game, carried by the save.
     void setHardcore(bool hardcore) { m_hardcore = hardcore; }
     [[nodiscard]] bool hardcore() const { return m_hardcore; }
@@ -500,6 +598,8 @@ public:
         Planet,
         Star,
         Signal,
+        Field, // Phase 8f: an asteroid field, targeted as a whole
+        Wreck,
     };
 
     // Cycling targets: the static nav points (station, planet, sun) then
@@ -513,6 +613,9 @@ public:
     [[nodiscard]] std::uint32_t navTargetBody(std::size_t index) const;
     // Signal index for a Signal slot; ~0u for anything else.
     [[nodiscard]] std::uint32_t navTargetSignal(std::size_t index) const;
+    // Field index / wreck id for a Field or Wreck slot; ~0u for anything else.
+    [[nodiscard]] std::uint32_t navTargetField(std::size_t index) const;
+    [[nodiscard]] std::uint32_t navTargetWreck(std::size_t index) const;
     [[nodiscard]] std::size_t currentTargetIndex() const;
     // Selects a nav-target slot outright (the map's "Set Target").
     bool selectTarget(std::size_t index);
@@ -669,9 +772,38 @@ private:
     void processMissionEvents();
     // Survey layout for the current galaxy (sized like the economy's).
     void initializeSurvey();
-    // Rebuilds the discovered-signal tail of m_targets. Signals sit after the
-    // statics so station/gate/planet indices never move under Lua or the HUD.
-    void rebuildSignalTargets();
+    // Rebuilds the dynamic tail of m_targets — discovered signals, asteroid
+    // fields, and wrecks. The tail sits after the statics so station/gate/
+    // planet indices never move under Lua or the HUD, and it is append-only
+    // so a site found (or a ship killed) later never shifts a slot the player
+    // or a scan in flight is already pointing at. Slots whose object is gone
+    // (a decayed wreck) are compacted, and the target index follows them.
+    void rebuildDynamicTargets();
+    // Mining layout for the current galaxy (sized like the economy's), and
+    // the ore table read out of the commodity defs.
+    void initializeMining();
+    // Instantiates this system's rocks and wrecks as entities. Rocks come
+    // from the seed; a rock already cut to nothing is simply not spawned.
+    void instantiateMiningEntities();
+    // Advances tumble, chunk drift, and proximity collection.
+    void tickMining(double dt);
+    // Cuts `units` out of a rock or wreck entity and spills what came off as
+    // drifting chunks. Returns what actually came out.
+    float cutRock(std::uint32_t entityIndex, float units);
+    float cutWreck(std::uint32_t entityIndex, float units);
+    void spawnOreChunk(const sol::core::DVec3& position, const sol::core::DVec3& velocity,
+                       std::uint32_t commodity, float units);
+    // Fits a salvaged module if it is legal on the active ship; used by both
+    // site salvage and wreck cutting.
+    bool tryFitSalvagedModule(const std::string& moduleId, std::string& outName);
+    // The rock or wreck entity the boresight is on within `range`, or ~0u.
+    [[nodiscard]] std::uint32_t entityAhead(double range, bool& outIsWreck) const;
+    // Composes a wreck's contents from the victim's fit and cargo (the
+    // scriptless default; the Lua hook may replace it before it is cut).
+    [[nodiscard]] sol::sim::SignalLoot defaultWreckLoot(const sol::assets::ShipDef* def,
+                                                        std::uint64_t seed) const;
+    // The docked station archetype's refinery pair, resolved from the defs.
+    bool dockedRefinePair(std::uint32_t& input, std::uint32_t& output) const;
     // Pulse cooldown plus target-scan progress for the player's current
     // target; resolves the target when the scan completes.
     void tickScanning(double dt);
@@ -754,7 +886,13 @@ private:
     sol::sim::SurveySim m_survey;
     sol::sim::SurveyParams m_surveyParams;
     std::vector<SignalInstance> m_signals;
-    std::vector<std::uint32_t> m_signalTargetSlots; // target tail -> signal
+    // The dynamic target tail: what each slot past the statics stands for.
+    struct DynamicTarget
+    {
+        NavKind kind = NavKind::Signal;
+        std::uint32_t index = 0; // signal index, field index, or wreck id
+    };
+    std::vector<DynamicTarget> m_dynamicTargets;
     std::size_t m_signalTargetBase = 0;
     std::size_t m_planetTargetBase = 0;
     std::size_t m_starTargetIndex = 0;
@@ -765,6 +903,18 @@ private:
     std::size_t m_scanTarget = 0;      // target index the scan is running on
     bool m_scanActive = false;
     std::vector<SurveyEvent> m_surveyEvents;
+
+    // Mining (Phase 8f). Fields and rocks regenerate from the system seed;
+    // only depletion, wrecks, and refine jobs are saved (in MiningSim).
+    sol::sim::MiningSim m_mining;
+    sol::sim::MiningParams m_miningParams;
+    std::vector<sol::sim::AsteroidFieldSpec> m_fields; // current system
+    std::vector<WreckEvent> m_wreckEvents;
+    float m_collectorRange = 250.0f; // from the active fit; see applyShipDef
+    float m_collectTicker = 0.0f;    // units collected, for the HUD readout
+    double m_collectTickerAge = 0.0;
+    std::string m_collectName;
+    sol::core::Rng m_chunkRng{0x51ed'2701ull, 909}; // chunk drift only; not saved
 
     CelestialBody m_star;
     std::vector<CelestialBody> m_planets;
