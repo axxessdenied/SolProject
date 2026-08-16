@@ -177,14 +177,14 @@ int main(int argc, char** argv)
 
     sol::platform::Window window;
     sol::platform::WindowDesc windowDesc = {};
-    windowDesc.title = "Sol";
+    windowDesc.title = "The Stars Don't Wait";
     if (!window.create(windowDesc)) {
         return EXIT_FAILURE;
     }
 
     sol::rhi::Context context;
     sol::rhi::ContextDesc contextDesc = {};
-    contextDesc.appName = "Sol";
+    contextDesc.appName = "The Stars Don't Wait";
     contextDesc.enableValidation = kEnableValidation;
     if (!context.initialize(contextDesc, window.nativeHandle())) {
         return EXIT_FAILURE;

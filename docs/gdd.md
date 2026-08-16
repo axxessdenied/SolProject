@@ -1,6 +1,6 @@
-# Sol — Game Design Document
+# The Stars Don't Wait — Game Design Document
 
-Working title: **Sol** (placeholder). Single-player 3D space sandbox for PC (Windows first). Built on the from-scratch Sol Engine (`docs/engine-plan.md`).
+Title: **The Stars Don't Wait** — *Carve out a life in a galaxy already in motion.* (Internal names: **SolProject** / **Sol Engine**, `docs/engine-plan.md`.) Single-player 3D space sandbox for PC (Windows first).
 
 Confidence markers used below — **[core]**: settled, build against it; **[likely]**: direction set, details open; **[open]**: deliberately undecided, see §10.
 

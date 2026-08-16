@@ -4,7 +4,7 @@ This file governs how AI agents (Claude Code and others) work in this repository
 
 ## 1. What This Project Is
 
-SolProject is a single-player 3D space sandbox game (working title: **Sol**) built on a from-scratch C++20 engine (working name: **Sol Engine**). The player directly pilots a ship (X4 / Elite Dangerous style) in a procedurally generated galaxy with a living, simulated economy and factions.
+SolProject is a single-player 3D space sandbox game — **The Stars Don't Wait** (*Carve out a life in a galaxy already in motion.*) — built on a from-scratch C++20 engine (working name: **Sol Engine**). The player directly pilots a ship (X4 / Elite Dangerous style) in a procedurally generated galaxy with a living, simulated economy and factions.
 
 **Sources of truth** — do not contradict these documents; if a change requires deviating from them, update the document in the same change set and call it out:
 

@@ -1,8 +1,8 @@
-# SolProject
+# The Stars Don't Wait
 
-Carve out a life as an independent starship captain in a living, procedurally generated galaxy.
+Carve out a life in a galaxy already in motion.
 
-A single-player 3D space sandbox game (working title: **Sol**) built on a from-scratch C++20 engine (**Sol Engine**), inspired by X4: Foundations, Elite Dangerous, Starsector, EVE Online, Stellaris, and Avorion.
+A single-player 3D space sandbox game built on a from-scratch C++20 engine (**Sol Engine**), inspired by X4: Foundations, Elite Dangerous, Starsector, EVE Online, Stellaris, and Avorion. (Internal project name: **SolProject**.)
 
 - **Game design**: [docs/gdd.md](docs/gdd.md)
 - **Engine architecture & roadmap**: [docs/engine-plan.md](docs/engine-plan.md)
