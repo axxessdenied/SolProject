@@ -1,0 +1,230 @@
+#include "map_ui.hpp"
+
+#include <algorithm>
+#include <cstdio>
+
+namespace game {
+
+using namespace sol;
+
+namespace {
+
+[[nodiscard]] const char* store(std::deque<std::string>& text, std::string value)
+{
+    text.push_back(std::move(value));
+    return text.back().c_str();
+}
+
+[[nodiscard]] std::string formatDistance(double meters)
+{
+    char buffer[48];
+    if (meters < 10'000.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.0f m", meters);
+    } else if (meters < 1.0e9) {
+        std::snprintf(buffer, sizeof(buffer), "%.0f km", meters / 1000.0);
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%.2f Mkm", meters / 1.0e9);
+    }
+    return buffer;
+}
+
+[[nodiscard]] const char* regionName(sim::Region region)
+{
+    switch (region) {
+    case sim::Region::Core:
+        return "core";
+    case sim::Region::Frontier:
+        return "frontier";
+    case sim::Region::Fringe:
+        return "fringe";
+    }
+    return "?";
+}
+
+[[nodiscard]] ui::MapKnowledge toMapKnowledge(sim::KnowledgeState state)
+{
+    switch (state) {
+    case sim::KnowledgeState::Unknown:
+        return ui::MapKnowledge::Unknown;
+    case sim::KnowledgeState::Charted:
+        return ui::MapKnowledge::Charted;
+    case sim::KnowledgeState::Visited:
+        return ui::MapKnowledge::Visited;
+    case sim::KnowledgeState::Surveyed:
+        return ui::MapKnowledge::Surveyed;
+    }
+    return ui::MapKnowledge::Unknown;
+}
+
+[[nodiscard]] ui::MapMarkerRow::Kind toMarkerKind(SpaceWorld::NavKind kind)
+{
+    switch (kind) {
+    case SpaceWorld::NavKind::Station:
+        return ui::MapMarkerRow::Kind::Station;
+    case SpaceWorld::NavKind::Gate:
+        return ui::MapMarkerRow::Kind::Gate;
+    case SpaceWorld::NavKind::Planet:
+        return ui::MapMarkerRow::Kind::Planet;
+    case SpaceWorld::NavKind::Star:
+        return ui::MapMarkerRow::Kind::Star;
+    case SpaceWorld::NavKind::Signal:
+        return ui::MapMarkerRow::Kind::Signal;
+    }
+    return ui::MapMarkerRow::Kind::Station;
+}
+
+} // namespace
+
+void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::MapPanel& panel,
+                  std::vector<ui::MapSystemRow>& systemRows, std::vector<ui::MapLaneRow>& laneRows,
+                  std::vector<ui::MapMarkerRow>& markerRows)
+{
+    text.clear();
+    systemRows.clear();
+    laneRows.clear();
+    markerRows.clear();
+
+    const sim::Galaxy& galaxy = world.galaxy();
+    const sim::SurveySim& survey = world.survey();
+    const std::vector<std::uint32_t>& route = survey.route();
+
+    for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
+        const sim::SystemSpec& spec = galaxy.systems[i];
+        const sim::KnowledgeState state = survey.knowledge(i);
+        const bool visited = state >= sim::KnowledgeState::Visited;
+        ui::MapSystemRow row;
+        row.name = spec.name.c_str();
+        row.position = {spec.mapPosition.x, spec.mapPosition.z};
+        row.knowledge = toMapKnowledge(state);
+        row.current = i == world.currentSystemIndex();
+        row.onRoute = std::find(route.begin(), route.end(), i) != route.end();
+
+        // Ownership is knowledge too: a system you have only heard of from a
+        // gate does not tell you whose space it is.
+        const std::uint32_t owner = world.systemOwnerFaction(i);
+        if (visited && owner < world.factions().size()) {
+            row.hasOwner = true;
+            row.ownerColor = world.factions()[owner].color;
+        }
+        if (!visited) {
+            row.detail = store(text, spec.name + ": charted only - fly there to survey it");
+        } else {
+            std::uint32_t resolved = 0;
+            const std::uint32_t signals = survey.signalCount(i);
+            for (std::uint32_t s = 0; s < signals; ++s) {
+                resolved += survey.signalResolved(i, s) ? 1u : 0u;
+            }
+            std::string detail = spec.name + ": " + regionName(spec.region);
+            detail += row.hasOwner ? ", " + world.factions()[owner].name : ", unclaimed";
+            detail += ", " + std::to_string(spec.stations.size()) + " station(s)";
+            detail += ", sites " + std::to_string(resolved) + "/" + std::to_string(signals);
+            if (state == sim::KnowledgeState::Surveyed) {
+                detail += " - SURVEYED";
+            }
+            row.detail = store(text, std::move(detail));
+        }
+        systemRows.push_back(row);
+    }
+
+    for (const sim::GateLink& link : galaxy.links) {
+        const bool onRoute = [&]() {
+            for (std::size_t i = 0; i + 1 < route.size(); ++i) {
+                if ((route[i] == link.a && route[i + 1] == link.b)
+                    || (route[i] == link.b && route[i + 1] == link.a)) {
+                    return true;
+                }
+            }
+            return false;
+        }();
+        laneRows.push_back({.from = static_cast<int>(link.a),
+                            .to = static_cast<int>(link.b),
+                            .onRoute = onRoute});
+    }
+
+    // System view: the nav targets, in the order the T key cycles them, so a
+    // map selection and a target cycle land on exactly the same thing.
+    const core::DVec3 hub = world.planets().empty()
+                                ? core::DVec3{}
+                                : world.planets()[std::min<std::size_t>(
+                                      galaxy.systems[world.currentSystemIndex()].primaryPlanet,
+                                      world.planets().size() - 1)]
+                                      .position;
+    const core::DVec3 shipPosition = world.shipState().position;
+    const std::size_t targeted = world.currentTargetIndex();
+    const std::span<const NavTarget> targets = world.navTargets();
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        const SpaceWorld::NavKind kind = world.navTargetKind(i);
+        const core::DVec3 offset = targets[i].position - hub;
+        const double distance = length(targets[i].position - shipPosition);
+        bool scanned = false;
+        if (kind == SpaceWorld::NavKind::Signal) {
+            scanned = survey.signalResolved(world.currentSystemIndex(), world.navTargetSignal(i));
+        } else if (kind == SpaceWorld::NavKind::Planet || kind == SpaceWorld::NavKind::Star) {
+            scanned = survey.bodyScanned(world.currentSystemIndex(), world.navTargetBody(i));
+        }
+        std::string detail = formatDistance(distance);
+        if (kind == SpaceWorld::NavKind::Signal || kind == SpaceWorld::NavKind::Planet
+            || kind == SpaceWorld::NavKind::Star) {
+            detail += scanned ? " - scanned" : " - unscanned";
+        }
+        markerRows.push_back({.kind = toMarkerKind(kind),
+                              .name = targets[i].name.c_str(),
+                              .detail = store(text, std::move(detail)),
+                              .position = {static_cast<float>(offset.x),
+                                           static_cast<float>(offset.z)},
+                              .distanceMeters = distance,
+                              .scanned = scanned,
+                              .targeted = i == targeted});
+    }
+
+    std::string routeSummary;
+    if (route.size() >= 2) {
+        routeSummary = std::to_string(route.size() - 1) + " jump(s): ";
+        for (std::size_t i = 0; i < route.size(); ++i) {
+            routeSummary += (i == 0 ? "" : " > ") + galaxy.systems[route[i]].name;
+        }
+    }
+    panel.routeSummary = store(text, std::move(routeSummary));
+
+    std::uint32_t known = survey.knownSystemCount();
+    panel.knownSummary =
+        store(text, std::to_string(known) + " of " + std::to_string(galaxy.systems.size())
+                        + " systems known - ledger "
+                        + std::to_string(static_cast<int>(survey.ledgerValue())) + " cr");
+    panel.currentSystem = world.currentSystemName();
+    panel.currentIndex = static_cast<int>(world.currentSystemIndex());
+    panel.systems = systemRows;
+    panel.lanes = laneRows;
+    panel.markers = markerRows;
+}
+
+bool executeMapAction(SpaceWorld& world, const ui::MapAction& action)
+{
+    using Kind = ui::MapAction::Kind;
+    switch (action.kind) {
+    case Kind::None:
+    case Kind::Close:
+        break;
+    case Kind::PlotRoute:
+        if (action.index >= 0) {
+            (void)world.plotRoute(static_cast<std::uint32_t>(action.index));
+        }
+        break;
+    case Kind::ClearRoute:
+        world.survey().clearRoute();
+        break;
+    case Kind::SelectMarker:
+        if (action.index >= 0) {
+            (void)world.selectTarget(static_cast<std::size_t>(action.index));
+        }
+        break;
+    case Kind::Autopilot:
+        if (action.index >= 0 && world.selectTarget(static_cast<std::size_t>(action.index))) {
+            return world.engageAutopilot();
+        }
+        break;
+    }
+    return false;
+}
+
+} // namespace game

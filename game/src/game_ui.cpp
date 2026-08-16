@@ -408,8 +408,9 @@ void drawPowerPanel(DrawList& list, const Styles& styles, Vec2 screenSize,
 
 // Top right: who is targeted, whose side they are on, and what shape they are in.
 void drawTargetReadout(DrawList& list, const Styles& styles, Vec2 screenSize,
-                       const sol::ui::FlightHud& hud)
+                       const sol::ui::FlightHud& hud, Rect& panelOut)
 {
+    panelOut = {{screenSize.x - kMargin, kMargin}, {screenSize.x - kMargin, kMargin}};
     if (!has(hud.targetName)) {
         return;
     }
@@ -418,6 +419,7 @@ void drawTargetReadout(DrawList& list, const Styles& styles, Vec2 screenSize,
                          (hud.targetIsShip ? 3.0f * 18.0f + 4.0f : 0.0f) + kPadding * 0.5f;
     const Rect panel = {{screenSize.x - kMargin - kTargetPanelWidth, kMargin},
                         {screenSize.x - kMargin, kMargin + height}};
+    panelOut = panel;
     list.addRoundedRect(panel, 8.0f, kPanel);
     list.addRoundedRect({{panel.max.x - 3.0f, panel.min.y}, {panel.max.x, panel.max.y}}, 1.5f,
                         kTargetMark);
@@ -472,10 +474,13 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
         bool show;
     };
     // Undocking is the station screen's business: this HUD only ever draws in
-    // flight, so a docked prompt here would be unreachable.
+    // flight, so a docked prompt here would be unreachable. Salvage shares the
+    // interact key with docking; a station in range wins, since you cannot be
+    // parked on a pad and inside a wreck at once.
     const Prompt prompts[] = {
         {"[J] JUMP", hud.gateInRange},
         {"[G] DOCK", hud.dockInRange},
+        {"[G] SALVAGE", hud.salvageInRange && !hud.dockInRange},
     };
     constexpr float kChipHeight = 24.0f;
     constexpr float kChipGap = 8.0f;
@@ -499,6 +504,78 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
         }
         x += drawChip(list, font, *styles.small, {x, y}, kChipHeight, prompt.text, kAccent) + kChipGap;
     }
+}
+
+// Scanner block: the pulse's charge, what the held scan is resolving, and how
+// many contacts are still unidentified here. It sits under the target readout
+// because it is the same kind of information - what the sensors have found -
+// and because the top left belongs to the dev overlay in dev builds.
+void drawScannerPanel(DrawList& list, const Styles& styles, Vec2 screenSize,
+                      const Rect& targetPanel, const sol::ui::FlightHud& hud)
+{
+    const bool scanning = has(hud.scanTarget);
+    const bool contacts = hud.contactsUnresolved > 0 || hud.sitesOpen > 0;
+    if (!scanning && !contacts && hud.pulseCharge >= 1.0f && !has(hud.routeNextHop)) {
+        return; // nothing to say: keep the view clear
+    }
+    constexpr float kWidth = 268.0f;
+    const float rows = 1.0f + (scanning ? 1.0f : 0.0f) + (contacts ? 1.0f : 0.0f)
+                       + (has(hud.routeNextHop) ? 1.0f : 0.0f);
+    const float height = kPadding + rows * 20.0f + kPadding * 0.5f;
+    const float top = targetPanel.max.y + (targetPanel.height() > 0.0f ? 8.0f : 0.0f);
+    const Rect panel = {{screenSize.x - kMargin - kWidth, top},
+                        {screenSize.x - kMargin, top + height}};
+    list.addRoundedRect(panel, 8.0f, kPanel);
+    list.pushClip({{panel.min.x + kPadding, panel.min.y}, {panel.max.x - kPadding, panel.max.y}});
+
+    const float left = panel.min.x + kPadding;
+    const float right = panel.max.x - kPadding;
+    float y = panel.min.y + kPadding * 0.5f;
+
+    // [R] reads as ready in accent, charging in dim, with the bar underneath.
+    const bool ready = hud.pulseCharge >= 1.0f;
+    list.addTextInBox(*styles.small, {{left, y}, {left + 90.0f, y + 20.0f}}, "[R] SCAN",
+                      ready ? kAccent : kTextDim);
+    const float meterY = y + (20.0f - kMeterHeight) * 0.5f;
+    drawMeter(list, {{left + 96.0f, meterY}, {right, meterY + kMeterHeight}}, hud.pulseCharge,
+              ready ? kAccent : kTextDim);
+    y += 20.0f;
+
+    if (scanning) {
+        list.addTextInBox(*styles.small, {{left, y}, {right - 46.0f, y + 20.0f}}, hud.scanTarget,
+                          kTextPrimary);
+        char buffer[32] = {};
+        std::snprintf(buffer, sizeof(buffer), "%.0f%%",
+                      static_cast<double>(clamp01(hud.scanProgress) * 100.0f));
+        list.addTextInBox(*styles.small, {{right - 44.0f, y}, {right, y + 20.0f}}, buffer, kAccent,
+                          TextAlign::Right);
+        y += 20.0f;
+    }
+    if (contacts) {
+        char buffer[96] = {};
+        std::snprintf(buffer, sizeof(buffer), "%d unidentified - %d site(s) open",
+                      hud.contactsUnresolved, hud.sitesOpen);
+        list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, buffer, kWarning);
+        y += 20.0f;
+    }
+    if (has(hud.routeNextHop)) {
+        char buffer[128] = {};
+        std::snprintf(buffer, sizeof(buffer), "ROUTE > %s", hud.routeNextHop);
+        list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, buffer, kAccent);
+    }
+    list.popClip();
+}
+
+// A ring closing around the crosshair as the target scan completes: the
+// progress belongs where the player's eye already is, not only in a panel.
+void drawScanRing(DrawList& list, Vec2 center, const sol::ui::FlightHud& hud)
+{
+    if (!has(hud.scanTarget) || hud.scanProgress <= 0.0f) {
+        return;
+    }
+    const float sweep = 2.0f * kPi * clamp01(hud.scanProgress);
+    list.addCircle(center, 32.0f, kAccent.withAlpha(0.18f), 2.0f, 32);
+    list.addArc(center, 32.0f, -kPi * 0.5f, -kPi * 0.5f + sweep, kAccent.withAlpha(0.9f), 2.0f, 32);
 }
 
 // The tracked mission (Phase 8c) rides above the flight panel: title, current
@@ -552,6 +629,7 @@ void buildFlightUi(DrawList& list, const Font& font, Vec2 screenSize, const sol:
     const float focal = (screenSize.y * 0.5f) / tanHalfFov;
 
     drawReticle(list, center, screenSize, hud);
+    drawScanRing(list, center, hud);
     drawLeadMarker(list, center, focal, hud);
     if (has(hud.targetName)) {
         drawTargetMarker(list, styles, center, screenSize, focal, hud);
@@ -559,10 +637,12 @@ void buildFlightUi(DrawList& list, const Font& font, Vec2 screenSize, const sol:
     drawPrompts(list, font, styles, center, hud);
 
     Rect flightPanel = {};
+    Rect targetPanel = {};
     drawFlightPanel(list, font, styles, screenSize, hud, flightPanel);
     drawPowerPanel(list, styles, screenSize, hud);
-    drawTargetReadout(list, styles, screenSize, hud);
+    drawTargetReadout(list, styles, screenSize, hud, targetPanel);
     drawMissionLine(list, styles, flightPanel, hud);
+    drawScannerPanel(list, styles, screenSize, targetPanel, hud);
 }
 
 } // namespace game

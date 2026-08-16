@@ -18,6 +18,7 @@ struct StationScreenState
         Crew,
         Factions,
         Missions,
+        Survey,
         TabCount,
     };
 

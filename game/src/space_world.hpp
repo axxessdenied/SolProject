@@ -15,6 +15,7 @@
 #include "sol/sim/missions.hpp"
 #include "sol/sim/power.hpp"
 #include "sol/sim/steering.hpp"
+#include "sol/sim/survey.hpp"
 #include "sol/sim/universe.hpp"
 
 #include <cstdint>
@@ -172,6 +173,35 @@ struct GateInstance
     std::string name; // "Gate: <destination>"
     std::uint32_t toSystem = 0;
     sol::core::DVec3 position;
+};
+
+// A scannable site instantiated in the current system (Phase 8e). What it is
+// comes from SurveySim::signalsFor — a pure function of the system seed — so
+// this list is rebuilt, never saved.
+struct SignalInstance
+{
+    std::uint32_t index = 0; // position in the system's signal list
+    sol::sim::SignalKind kind = sol::sim::SignalKind::Derelict;
+    sol::core::DVec3 position;
+    std::uint64_t seed = 0; // the loot roll for this site
+};
+
+// A scan result the game reports outward: GameContent forwards it to Lua for
+// flavor and loot composition, the same queue shape mission events use.
+struct SurveyEvent
+{
+    enum class Kind : std::uint32_t
+    {
+        SignalDiscovered = 0, // a pulse found it; still unidentified
+        SignalResolved,       // a target scan identified it
+        BodyScanned,          // a star or planet resolved
+    };
+    Kind kind = Kind::SignalDiscovered;
+    std::uint32_t system = 0;
+    std::uint32_t index = 0; // signal index, or body index (0 = star)
+    sol::sim::SignalKind signalKind = sol::sim::SignalKind::Derelict;
+    std::uint64_t seed = 0;
+    std::string name;
 };
 
 struct NavTarget
@@ -348,6 +378,56 @@ public:
     // already applied; GameContent forwards campaign ones to Lua.
     void takeMissionEvents(std::vector<sol::sim::MissionEvent>& out);
 
+    // --- Exploration & scanning (Phase 8e) ---
+    // Two verbs: a pulse that reveals contacts within the scanner's range,
+    // and a target scan that resolves whatever is held in the reticle. The
+    // knowledge, the ledger, and the loot all live in SurveySim.
+    static constexpr double kPulseCooldownSeconds = 6.0;
+    static constexpr double kTargetScanSeconds = 5.0;
+    // A target scan works far closer than a pulse reaches: you find a contact
+    // from across the playfield, then fly to it to learn what it is.
+    static constexpr double kTargetScanRangeFraction = 0.02;
+    static constexpr double kScanConeCosine = 0.94; // ~20 degrees off boresight
+    static constexpr double kSalvageRange = 2'000.0;
+    // Standing paid for survey data, per credit, on top of the sale.
+    static constexpr double kSurveyStandingRate = 0.001;
+
+    [[nodiscard]] const sol::sim::SurveySim& survey() const { return m_survey; }
+    [[nodiscard]] sol::sim::SurveySim& survey() { return m_survey; }
+    // Every site in the current system, discovered or not (the HUD only ever
+    // shows the ones SurveySim says the player has found).
+    [[nodiscard]] std::span<const SignalInstance> signals() const { return m_signals; }
+    [[nodiscard]] float scanRange() const { return m_scanRange; }
+    [[nodiscard]] float scanSpeed() const { return m_scanSpeed; }
+    [[nodiscard]] double targetScanRange() const
+    {
+        return static_cast<double>(m_scanRange) * kTargetScanRangeFraction;
+    }
+    // 0 right after a pulse, 1 when the next one is ready.
+    [[nodiscard]] float pulseCharge() const;
+    // 0..1 progress of the scan in flight, and what it is resolving.
+    [[nodiscard]] float scanProgress() const { return m_scanProgress; }
+    [[nodiscard]] const char* scanTargetName() const;
+    // Fires a pulse: returns how many new contacts it found, or -1 when the
+    // scanner is still charging (or the ship is docked).
+    int pulseScan();
+    // Dev/console: resolves whatever is targeted without flying to it.
+    bool scanCurrentTarget();
+
+    // Nearest resolved, unemptied site within range, or a negative value.
+    [[nodiscard]] double nearestSalvageDistance() const;
+    // Empties the nearest site into the hold: cargo up to the space left, a
+    // module into a free slot, credits always. A partial take leaves the rest.
+    bool trySalvageNearest(double range);
+    // Sells the survey ledger at the docked station; returns the credits paid.
+    double sellSurveyData();
+    // Loot composed by the Lua hook (validated in SurveySim).
+    bool applySignalLoot(std::uint32_t system, std::uint32_t signal, sol::sim::SignalLoot loot);
+    void takeSurveyEvents(std::vector<SurveyEvent>& out);
+    // Plots a gate route from here to destination (galaxy map); false when
+    // there is no route or the destination is where the player already is.
+    bool plotRoute(std::uint32_t destination);
+
     // Hardcore/ironman (decisions/007): set at new game, carried by the save.
     void setHardcore(bool hardcore) { m_hardcore = hardcore; }
     [[nodiscard]] bool hardcore() const { return m_hardcore; }
@@ -411,10 +491,31 @@ public:
     [[nodiscard]] std::span<const CelestialBody> planets() const { return m_planets; }
     [[nodiscard]] std::span<const GateInstance> gates() const { return m_gates; }
 
+    // What a nav-target slot is, so the map can draw the right glyph and the
+    // scanner can tell a body from a site (Phase 8e).
+    enum class NavKind : std::uint32_t
+    {
+        Station = 0,
+        Gate,
+        Planet,
+        Star,
+        Signal,
+    };
+
     // Cycling targets: the static nav points (station, planet, sun) then
     // every live pilot ship (combat targets with shield/hull readouts).
     [[nodiscard]] TargetInfo currentTargetInfo() const;
     void cycleTarget();
+    // The static nav points of this system, in target-cycle order.
+    [[nodiscard]] std::span<const NavTarget> navTargets() const { return m_targets; }
+    [[nodiscard]] NavKind navTargetKind(std::size_t index) const;
+    // Body index (0 = star) for a Planet/Star slot; ~0u for anything else.
+    [[nodiscard]] std::uint32_t navTargetBody(std::size_t index) const;
+    // Signal index for a Signal slot; ~0u for anything else.
+    [[nodiscard]] std::uint32_t navTargetSignal(std::size_t index) const;
+    [[nodiscard]] std::size_t currentTargetIndex() const;
+    // Selects a nav-target slot outright (the map's "Set Target").
+    bool selectTarget(std::size_t index);
     // Selects the first live spawned ship whose display name contains
     // namePart (dev/console QoL; T-cycling is the player path).
     bool targetShipByName(const char* namePart);
@@ -566,6 +667,21 @@ private:
     // Applies queued mission consequences (payout, standing moves) and
     // buffers the events for GameContent's Lua forwarding.
     void processMissionEvents();
+    // Survey layout for the current galaxy (sized like the economy's).
+    void initializeSurvey();
+    // Rebuilds the discovered-signal tail of m_targets. Signals sit after the
+    // statics so station/gate/planet indices never move under Lua or the HUD.
+    void rebuildSignalTargets();
+    // Pulse cooldown plus target-scan progress for the player's current
+    // target; resolves the target when the scan completes.
+    void tickScanning(double dt);
+    // Signal index of the current target, or kNoIndex when it is not a site.
+    [[nodiscard]] std::uint32_t targetSignalIndex() const;
+    // Body index (0 = star, 1.. = planets) of the current target, or kNoIndex.
+    [[nodiscard]] std::uint32_t targetBodyIndex() const;
+    // The scriptless loot table: deterministic in the signal's own seed, so a
+    // site holds the same thing whenever the player gets around to it.
+    [[nodiscard]] sol::sim::SignalLoot defaultLoot(const SignalInstance& signal) const;
     // Ambient NPC population for a freshly instantiated system: owner
     // patrol/raider wings by region security plus raid-intensity incursions.
     void spawnAmbientPilots(std::uint32_t systemIndex, const sol::sim::SystemSpec& spec);
@@ -632,6 +748,23 @@ private:
     // Death respawn into another system defers to end-of-tick: loadSystem
     // mid-tick would invalidate the pass scratch (collision slots, pools).
     std::uint32_t m_pendingRespawnSystem = kNoIndex;
+
+    // Exploration (Phase 8e). m_signals is rebuilt per system from the seed;
+    // only SurveySim's state bits and ledger are saved.
+    sol::sim::SurveySim m_survey;
+    sol::sim::SurveyParams m_surveyParams;
+    std::vector<SignalInstance> m_signals;
+    std::vector<std::uint32_t> m_signalTargetSlots; // target tail -> signal
+    std::size_t m_signalTargetBase = 0;
+    std::size_t m_planetTargetBase = 0;
+    std::size_t m_starTargetIndex = 0;
+    float m_scanRange = 6.0e7f; // from the active fit; see applyShipDef
+    float m_scanSpeed = 1.0f;
+    double m_pulseCooldown = 0.0;
+    float m_scanProgress = 0.0f;
+    std::size_t m_scanTarget = 0;      // target index the scan is running on
+    bool m_scanActive = false;
+    std::vector<SurveyEvent> m_surveyEvents;
 
     CelestialBody m_star;
     std::vector<CelestialBody> m_planets;

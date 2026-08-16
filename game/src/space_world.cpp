@@ -32,7 +32,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 6; // v6: mission journal/board block
+constexpr std::uint32_t kSaveVersion = 7; // v7: survey knowledge/ledger block
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -179,6 +179,7 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     m_startSystem = start;
     resetFleetToStarter();
     initializeFactions(); // before loadSystem: ambient wings need the table
+    initializeSurvey();   // before loadSystem: arrival writes the first entry
     loadSystem(start, kNoIndex);
     SOL_LOG_INFO("universe: seed %llu, %zu systems, %zu lanes, %zu faction(s) "
                  "(%zu clans); starting in '%s'",
@@ -454,6 +455,438 @@ void SpaceWorld::takeMissionEvents(std::vector<sim::MissionEvent>& out)
     m_missionEvents.clear();
 }
 
+// --- Exploration & scanning (Phase 8e) ---------------------------------------
+
+void SpaceWorld::initializeSurvey()
+{
+    m_surveyParams = sim::SurveyParams{};
+    m_survey.initialize(m_galaxy, m_surveyParams,
+                        static_cast<std::uint32_t>(m_commodityIds.size()), m_universeSeed);
+    m_surveyEvents.clear();
+    m_signals.clear();
+    m_signalTargetSlots.clear();
+    m_pulseCooldown = 0.0;
+    m_scanProgress = 0.0f;
+    m_scanActive = false;
+}
+
+namespace {
+
+// Defined with the outfitting helpers further down: salvaging a module runs
+// through the same fit validation a purchase does.
+[[nodiscard]] std::vector<const assets::ModuleDef*> fitModules(const assets::DefDatabase& defs,
+                                                               const OwnedShip& ship);
+[[nodiscard]] std::vector<const assets::CrewDef*> fitCrew(const assets::DefDatabase& defs,
+                                                          const OwnedShip& ship);
+
+std::string signalTargetName(const SignalInstance& signal, bool resolved, bool emptied,
+                             std::size_t slot)
+{
+    if (!resolved) {
+        return "Contact " + std::to_string(slot + 1);
+    }
+    std::string name =
+        signal.kind == sim::SignalKind::Derelict ? "Derelict Hull" : "Supply Cache";
+    if (emptied) {
+        name += " (empty)";
+    }
+    return name;
+}
+
+} // namespace
+
+void SpaceWorld::rebuildSignalTargets()
+{
+    // Slots are append-only in discovery order: a scan in flight and the
+    // player's target index both point into this tail, so nothing may shift
+    // under them when a later pulse finds a lower-numbered site.
+    for (const SignalInstance& signal : m_signals) {
+        if (!m_survey.signalDiscovered(m_currentSystem, signal.index)) {
+            continue;
+        }
+        if (std::find(m_signalTargetSlots.begin(), m_signalTargetSlots.end(), signal.index)
+            == m_signalTargetSlots.end()) {
+            m_signalTargetSlots.push_back(signal.index);
+        }
+    }
+    if (m_targets.size() > m_signalTargetBase) {
+        m_targets.resize(m_signalTargetBase);
+    }
+    for (std::size_t slot = 0; slot < m_signalTargetSlots.size(); ++slot) {
+        const std::uint32_t index = m_signalTargetSlots[slot];
+        if (index >= m_signals.size()) {
+            continue;
+        }
+        const SignalInstance& signal = m_signals[index];
+        m_targets.push_back(
+            {.name = signalTargetName(signal, m_survey.signalResolved(m_currentSystem, index),
+                                      m_survey.signalEmptied(m_currentSystem, index), slot),
+             .position = signal.position,
+             .surfaceRadius = 0.0});
+    }
+}
+
+std::uint32_t SpaceWorld::targetSignalIndex() const
+{
+    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    if (total == 0) {
+        return kNoIndex;
+    }
+    const std::size_t index = m_targetIndex % total;
+    if (index < m_signalTargetBase || index >= m_targets.size()) {
+        return kNoIndex;
+    }
+    return m_signalTargetSlots[index - m_signalTargetBase];
+}
+
+std::uint32_t SpaceWorld::targetBodyIndex() const
+{
+    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    if (total == 0) {
+        return kNoIndex;
+    }
+    const std::size_t index = m_targetIndex % total;
+    if (index == m_starTargetIndex) {
+        return 0; // body 0 is the star, matching SurveySim's numbering
+    }
+    if (index >= m_planetTargetBase && index < m_planetTargetBase + m_planets.size()) {
+        return static_cast<std::uint32_t>(index - m_planetTargetBase + 1);
+    }
+    return kNoIndex;
+}
+
+float SpaceWorld::pulseCharge() const
+{
+    if (m_pulseCooldown <= 0.0) {
+        return 1.0f;
+    }
+    return static_cast<float>(1.0 - m_pulseCooldown / kPulseCooldownSeconds);
+}
+
+const char* SpaceWorld::scanTargetName() const
+{
+    if (!m_scanActive || m_scanTarget >= m_targets.size()) {
+        return "";
+    }
+    return m_targets[m_scanTarget].name.c_str();
+}
+
+int SpaceWorld::pulseScan()
+{
+    if (isDocked() || m_pulseCooldown > 0.0) {
+        return -1;
+    }
+    m_pulseCooldown = kPulseCooldownSeconds;
+    const core::DVec3 position = shipState().position;
+    const double range = static_cast<double>(m_scanRange);
+    int found = 0;
+    for (const SignalInstance& signal : m_signals) {
+        if (m_survey.signalDiscovered(m_currentSystem, signal.index)
+            || length(signal.position - position) > range) {
+            continue;
+        }
+        if (m_survey.notifySignalDiscovered(m_currentSystem, signal.index)) {
+            ++found;
+            m_surveyEvents.push_back({.kind = SurveyEvent::Kind::SignalDiscovered,
+                                      .system = m_currentSystem,
+                                      .index = signal.index,
+                                      .signalKind = signal.kind,
+                                      .seed = signal.seed,
+                                      .name = "contact"});
+        }
+    }
+    if (found > 0) {
+        rebuildSignalTargets();
+    }
+    SOL_LOG_INFO("scan pulse: %d new contact(s) within %.0f km", found, range / 1000.0);
+    return found;
+}
+
+void SpaceWorld::tickScanning(double dt)
+{
+    if (m_pulseCooldown > 0.0) {
+        m_pulseCooldown -= dt;
+        if (m_pulseCooldown < 0.0) {
+            m_pulseCooldown = 0.0;
+        }
+    }
+    const auto stopScan = [&]() {
+        m_scanActive = false;
+        m_scanProgress = 0.0f;
+    };
+    if (isDocked()) {
+        stopScan();
+        return;
+    }
+    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    if (total == 0) {
+        stopScan();
+        return;
+    }
+    const std::size_t index = m_targetIndex % total;
+    const std::uint32_t signalIndex = targetSignalIndex();
+    const std::uint32_t bodyIndex = targetBodyIndex();
+    const bool scannableSignal =
+        signalIndex != kNoIndex && !m_survey.signalResolved(m_currentSystem, signalIndex);
+    const bool scannableBody =
+        bodyIndex != kNoIndex && !m_survey.bodyScanned(m_currentSystem, bodyIndex);
+    if (!scannableSignal && !scannableBody) {
+        stopScan();
+        return;
+    }
+
+    const sim::ShipState state = shipState();
+    const core::DVec3 toTarget = m_targets[index].position - state.position;
+    const double distance = length(toTarget);
+    // Sites must be approached; bodies are read at whatever range they sit at
+    // (they are AU-scale scenery — a survey scan of a planet is a telescope
+    // pointed at it, not a flyby).
+    if (scannableSignal && distance > targetScanRange()) {
+        stopScan();
+        return;
+    }
+    if (distance > 1.0) {
+        const core::Vec3 forwardF = rotate(state.orientation, core::Vec3{0.0f, 0.0f, -1.0f});
+        const core::DVec3 direction = toTarget * (1.0 / distance);
+        const double aim = static_cast<double>(forwardF.x) * direction.x
+                           + static_cast<double>(forwardF.y) * direction.y
+                           + static_cast<double>(forwardF.z) * direction.z;
+        if (aim < kScanConeCosine) {
+            stopScan(); // scanning is a held aim, not a checkbox
+            return;
+        }
+    }
+
+    if (!m_scanActive || m_scanTarget != index) {
+        m_scanTarget = index;
+        m_scanActive = true;
+        m_scanProgress = 0.0f;
+    }
+    m_scanProgress +=
+        static_cast<float>(dt * static_cast<double>(m_scanSpeed) / kTargetScanSeconds);
+    if (m_scanProgress < 1.0f) {
+        return;
+    }
+    stopScan();
+    if (scannableSignal) {
+        if (m_survey.notifySignalResolved(m_galaxy, m_currentSystem, signalIndex)) {
+            const SignalInstance& signal = m_signals[signalIndex];
+            // Scriptless default first, so a site always holds something even
+            // if no script answers; the Lua hook may replace it this frame.
+            (void)m_survey.setLoot(m_currentSystem, signalIndex, defaultLoot(signal));
+            m_surveyEvents.push_back({.kind = SurveyEvent::Kind::SignalResolved,
+                                      .system = m_currentSystem,
+                                      .index = signalIndex,
+                                      .signalKind = signal.kind,
+                                      .seed = signal.seed,
+                                      .name = sim::signalKindName(signal.kind)});
+            rebuildSignalTargets();
+            SOL_LOG_INFO("scan resolved: %s", sim::signalKindName(signal.kind));
+        }
+        return;
+    }
+    if (m_survey.notifyBodyScanned(m_galaxy, m_currentSystem, bodyIndex)) {
+        m_surveyEvents.push_back({.kind = SurveyEvent::Kind::BodyScanned,
+                                  .system = m_currentSystem,
+                                  .index = bodyIndex,
+                                  .signalKind = sim::SignalKind::Derelict,
+                                  .seed = 0,
+                                  .name = m_targets[index].name});
+        SOL_LOG_INFO("scan resolved: %s", m_targets[index].name.c_str());
+    }
+}
+
+bool SpaceWorld::scanCurrentTarget()
+{
+    const std::uint32_t signalIndex = targetSignalIndex();
+    if (signalIndex != kNoIndex) {
+        if (!m_survey.notifySignalResolved(m_galaxy, m_currentSystem, signalIndex)) {
+            return false;
+        }
+        const SignalInstance& signal = m_signals[signalIndex];
+        (void)m_survey.setLoot(m_currentSystem, signalIndex, defaultLoot(signal));
+        m_surveyEvents.push_back({.kind = SurveyEvent::Kind::SignalResolved,
+                                  .system = m_currentSystem,
+                                  .index = signalIndex,
+                                  .signalKind = signal.kind,
+                                  .seed = signal.seed,
+                                  .name = sim::signalKindName(signal.kind)});
+        rebuildSignalTargets();
+        return true;
+    }
+    const std::uint32_t bodyIndex = targetBodyIndex();
+    if (bodyIndex == kNoIndex || !m_survey.notifyBodyScanned(m_galaxy, m_currentSystem, bodyIndex)) {
+        return false;
+    }
+    m_surveyEvents.push_back({.kind = SurveyEvent::Kind::BodyScanned,
+                              .system = m_currentSystem,
+                              .index = bodyIndex,
+                              .signalKind = sim::SignalKind::Derelict,
+                              .seed = 0,
+                              .name = ""});
+    return true;
+}
+
+sim::SignalLoot SpaceWorld::defaultLoot(const SignalInstance& signal) const
+{
+    sim::SignalLoot loot;
+    const std::uint32_t commodityCount = static_cast<std::uint32_t>(m_commodityIds.size());
+    if (commodityCount == 0) {
+        return loot;
+    }
+    core::Rng rng(signal.seed, 7);
+    const std::uint32_t stacks = signal.kind == sim::SignalKind::Derelict ? 1 + rng.range(2) : 1;
+    for (std::uint32_t i = 0; i < stacks; ++i) {
+        loot.cargo.push_back({.commodity = rng.range(commodityCount),
+                              .units = static_cast<float>(5 + rng.range(21))});
+    }
+    if (signal.kind == sim::SignalKind::Cache) {
+        loot.credits = 200.0 + 1'000.0 * rng.nextDouble01();
+    } else if (m_defs != nullptr && !m_defs->modules().empty() && rng.nextFloat01() < 0.25f) {
+        const std::vector<assets::ModuleDef>& modules = m_defs->modules();
+        loot.moduleId = modules[rng.range(static_cast<std::uint32_t>(modules.size()))].id;
+    }
+    return loot;
+}
+
+bool SpaceWorld::applySignalLoot(std::uint32_t system, std::uint32_t signal, sim::SignalLoot loot)
+{
+    return m_survey.setLoot(system, signal, std::move(loot));
+}
+
+void SpaceWorld::takeSurveyEvents(std::vector<SurveyEvent>& out)
+{
+    out.insert(out.end(), m_surveyEvents.begin(), m_surveyEvents.end());
+    m_surveyEvents.clear();
+}
+
+double SpaceWorld::nearestSalvageDistance() const
+{
+    if (isDocked()) {
+        return -1.0;
+    }
+    const core::DVec3 position = shipState().position;
+    double nearest = -1.0;
+    for (const SignalInstance& signal : m_signals) {
+        if (!m_survey.signalResolved(m_currentSystem, signal.index)
+            || m_survey.signalEmptied(m_currentSystem, signal.index)) {
+            continue;
+        }
+        const double distance = length(signal.position - position);
+        if (nearest < 0.0 || distance < nearest) {
+            nearest = distance;
+        }
+    }
+    return nearest;
+}
+
+bool SpaceWorld::trySalvageNearest(double range)
+{
+    if (isDocked()) {
+        return false;
+    }
+    const core::DVec3 position = shipState().position;
+    const SignalInstance* best = nullptr;
+    double bestDistance = range;
+    for (const SignalInstance& signal : m_signals) {
+        if (!m_survey.signalResolved(m_currentSystem, signal.index)
+            || m_survey.signalEmptied(m_currentSystem, signal.index)) {
+            continue;
+        }
+        const double distance = length(signal.position - position);
+        if (distance <= bestDistance) {
+            bestDistance = distance;
+            best = &signal;
+        }
+    }
+    if (best == nullptr) {
+        return false;
+    }
+    const sim::SignalLoot* stored = m_survey.loot(m_currentSystem, best->index);
+    sim::SignalLoot remaining = stored != nullptr ? *stored : sim::SignalLoot{};
+
+    const double credits = remaining.credits;
+    m_playerCredits += credits;
+    remaining.credits = 0.0;
+
+    float unitsTaken = 0.0f;
+    std::vector<sim::SignalCargo> left;
+    for (const sim::SignalCargo& stack : remaining.cargo) {
+        const float space = m_playerCargoCapacity - playerCargoTotal();
+        const float take = std::min(stack.units, space > 0.0f ? space : 0.0f);
+        if (take > 0.0f && stack.commodity < m_playerCargo.size()) {
+            m_playerCargo[stack.commodity] += take;
+            unitsTaken += take;
+        }
+        if (stack.units - take > 0.001f) {
+            left.push_back({.commodity = stack.commodity, .units = stack.units - take});
+        }
+    }
+    remaining.cargo = std::move(left);
+
+    std::string moduleTaken;
+    if (!remaining.moduleId.empty() && m_defs != nullptr && !m_fleet.empty()) {
+        const assets::ModuleDef* module = m_defs->findModule(remaining.moduleId.c_str());
+        const assets::ShipDef* base = m_defs->findShip(m_fleet[m_activeShip].defId.c_str());
+        if (module != nullptr && base != nullptr) {
+            std::vector<const assets::ModuleDef*> modules = fitModules(*m_defs, m_fleet[m_activeShip]);
+            modules.push_back(module);
+            if (assets::validateLoadout(*base, modules, fitCrew(*m_defs, m_fleet[m_activeShip]))) {
+                m_fleet[m_activeShip].moduleIds.push_back(module->id);
+                applyActiveLoadout();
+                moduleTaken = module->name;
+                remaining.moduleId.clear();
+            }
+        } else {
+            remaining.moduleId.clear(); // the def is gone; nothing to salvage
+        }
+    }
+
+    const bool empty = remaining.cargo.empty() && remaining.moduleId.empty();
+    if (empty) {
+        (void)m_survey.notifySignalEmptied(m_currentSystem, best->index);
+    } else {
+        (void)m_survey.setLoot(m_currentSystem, best->index, remaining);
+    }
+    rebuildSignalTargets();
+    SOL_LOG_INFO("salvaged %s: %.0f units, %.0f cr%s%s", sim::signalKindName(best->kind),
+                 static_cast<double>(unitsTaken), credits,
+                 moduleTaken.empty() ? "" : ", fitted ", moduleTaken.c_str());
+    if (!empty) {
+        SOL_LOG_INFO("salvage: no room for the rest - it stays aboard the wreck");
+    }
+    return true;
+}
+
+double SpaceWorld::sellSurveyData()
+{
+    if (!isDocked()) {
+        return 0.0;
+    }
+    const double credits = m_survey.sellLedger();
+    if (credits <= 0.0) {
+        return 0.0;
+    }
+    m_playerCredits += credits;
+    // Data is commerce: the buyer's faction warms to you like any trade.
+    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    if (owner < m_factionTable.size()) {
+        m_factionSim.addStanding(owner, static_cast<float>(credits * kSurveyStandingRate));
+    }
+    SOL_LOG_INFO("sold survey data for %.0f cr", credits);
+    return credits;
+}
+
+bool SpaceWorld::plotRoute(std::uint32_t destination)
+{
+    if (destination >= m_galaxy.systems.size() || destination == m_currentSystem) {
+        m_survey.clearRoute();
+        return false;
+    }
+    m_survey.setRoute(sim::routeBetween(m_galaxy, m_currentSystem, destination));
+    return !m_survey.route().empty();
+}
+
 void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::SystemSpec& spec)
 {
     if (m_defs == nullptr || m_factionTable.empty()) {
@@ -576,7 +1009,24 @@ void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
     }
     m_targets.push_back(
         {.name = m_star.name, .position = m_star.position, .surfaceRadius = m_star.radius});
+    m_planetTargetBase = spec.stations.size() + m_gates.size();
+    m_starTargetIndex = m_targets.size() - 1;
+    m_signalTargetBase = m_targets.size();
+    m_signalTargetSlots.clear();
     m_targetIndex = 0;
+
+    // Scannable sites (Phase 8e): content regenerates from the system seed;
+    // which ones the player has found comes out of SurveySim.
+    m_signals.clear();
+    std::vector<sim::SignalSpec> signalSpecs;
+    m_survey.signalsFor(m_galaxy, m_currentSystem, signalSpecs);
+    for (std::uint32_t i = 0; i < signalSpecs.size(); ++i) {
+        m_signals.push_back({.index = i,
+                             .kind = signalSpecs[i].kind,
+                             .position = signalSpecs[i].position,
+                             .seed = signalSpecs[i].seed});
+    }
+    rebuildSignalTargets();
 
     // Steering obstacles for NPC avoidance: stations plus every celestial.
     m_obstacles.clear();
@@ -593,6 +1043,9 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
 {
     despawnSystem();
     m_currentSystem = systemIndex;
+    // Knowledge (Phase 8e): being here is what makes a system known, and a
+    // gate names where it leads — the map grows along the lanes you fly.
+    m_survey.notifyArrival(m_galaxy, systemIndex);
     m_dockedStation = kNoIndex;
     m_autopilotActive = false; // the target list is about to change under it
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
@@ -1214,6 +1667,8 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
     m_registry.storage<ShipControl>().get(entityIndex).tuning = toShipTuning(def.flight);
     if (entityIndex == playerEntityIndex()) {
         m_playerCargoCapacity = def.cargoCapacity;
+        m_scanRange = def.scanRange > 0.0f ? def.scanRange : 1.0f;
+        m_scanSpeed = def.scanSpeed > 0.0f ? def.scanSpeed : 1.0f;
     }
 
     ShipPower& power = m_registry.storage<ShipPower>().get(entityIndex);
@@ -1319,6 +1774,55 @@ TargetInfo SpaceWorld::currentTargetInfo() const
             defense->tuning.hull > 0.0f ? defense->state.hull / defense->tuning.hull : 0.0f;
     }
     return info;
+}
+
+SpaceWorld::NavKind SpaceWorld::navTargetKind(std::size_t index) const
+{
+    const std::size_t gateBase = m_planetTargetBase - m_gates.size();
+    if (index < gateBase) {
+        return NavKind::Station;
+    }
+    if (index < m_planetTargetBase) {
+        return NavKind::Gate;
+    }
+    if (index < m_planetTargetBase + m_planets.size()) {
+        return NavKind::Planet;
+    }
+    return index == m_starTargetIndex ? NavKind::Star : NavKind::Signal;
+}
+
+std::uint32_t SpaceWorld::navTargetBody(std::size_t index) const
+{
+    if (index == m_starTargetIndex) {
+        return 0;
+    }
+    if (index >= m_planetTargetBase && index < m_planetTargetBase + m_planets.size()) {
+        return static_cast<std::uint32_t>(index - m_planetTargetBase + 1);
+    }
+    return kNoIndex;
+}
+
+std::uint32_t SpaceWorld::navTargetSignal(std::size_t index) const
+{
+    if (index < m_signalTargetBase || index >= m_targets.size()) {
+        return kNoIndex;
+    }
+    return m_signalTargetSlots[index - m_signalTargetBase];
+}
+
+std::size_t SpaceWorld::currentTargetIndex() const
+{
+    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    return total > 0 ? m_targetIndex % total : 0;
+}
+
+bool SpaceWorld::selectTarget(std::size_t index)
+{
+    if (index >= m_targets.size() + m_spawnedShips.size()) {
+        return false;
+    }
+    m_targetIndex = index;
+    return true;
 }
 
 void SpaceWorld::cycleTarget()
@@ -2042,6 +2546,9 @@ void SpaceWorld::tick(double dt)
     }
     processMissionEvents();
 
+    // Scanning (Phase 8e): pulse recharge plus the held target scan.
+    tickScanning(dt);
+
     // Deferred death respawn into the last-dock system (see member comment).
     if (m_pendingRespawnSystem != kNoIndex) {
         const std::uint32_t system = m_pendingRespawnSystem;
@@ -2225,6 +2732,7 @@ bool SpaceWorld::saveTo(const char* path)
     m_economy.save(writer);
     m_factionSim.save(writer); // v5: relations, war flags, standings, raids
     m_missions.save(writer);   // v6: journal, board, campaign stage
+    m_survey.save(writer);     // v7: knowledge, signal state, ledger, route
     makeSnapshotSchema().save(m_registry, writer);
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
 }
@@ -2332,6 +2840,13 @@ bool SpaceWorld::loadFrom(const char* path)
     if (!m_missions.load(reader)) {
         return false;
     }
+    // Survey (v7): knowledge, per-signal state, ledger, and the plotted route.
+    if (galaxyChanged) {
+        initializeSurvey();
+    }
+    if (!m_survey.load(reader)) {
+        return false;
+    }
 
     ecs::Registry fresh;
     if (!makeSnapshotSchema().load(fresh, reader)) {
@@ -2366,7 +2881,10 @@ bool SpaceWorld::loadFrom(const char* path)
     // The ECS snapshot already carries the fitted tuning exactly; only the
     // non-ECS cargo capacity derives from the fit and must be recomputed.
     if (m_defs != nullptr && !m_fleet.empty()) {
-        m_playerCargoCapacity = resolvedShipDef(activeShip()).cargoCapacity;
+        const assets::ShipDef resolved = resolvedShipDef(activeShip());
+        m_playerCargoCapacity = resolved.cargoCapacity;
+        m_scanRange = resolved.scanRange > 0.0f ? resolved.scanRange : 1.0f;
+        m_scanSpeed = resolved.scanSpeed > 0.0f ? resolved.scanSpeed : 1.0f;
     }
 
     // The snapshot carries the system's statics; only the non-ECS side data
@@ -2379,6 +2897,14 @@ bool SpaceWorld::loadFrom(const char* path)
     m_lastDockSystem = lastDockSystem;
     m_lastDockStation = lastDockStation;
     m_pendingRespawnSystem = kNoIndex;
+    // A scan in flight does not survive a load, and neither does an autopilot
+    // leg: the target list is rebuilt below, so an engaged autopilot would
+    // wake up flying at whatever now sits in slot 0.
+    m_autopilotActive = false;
+    m_scanActive = false;
+    m_scanProgress = 0.0f;
+    m_pulseCooldown = 0.0;
+    m_surveyEvents.clear();
     // Board offers came back with the save; no re-roll on a docked load.
     m_dockEventPending = false;
     m_missionEvents.clear();

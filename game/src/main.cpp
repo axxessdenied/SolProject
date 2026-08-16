@@ -1,6 +1,8 @@
 #include "content.hpp"
 #include "fly_camera.hpp"
 #include "game_ui.hpp"
+#include "map_screen.hpp"
+#include "map_ui.hpp"
 #include "menu_screens.hpp"
 #include "scene_renderer.hpp"
 #include "shader_watcher.hpp"
@@ -227,6 +229,7 @@ int main(int argc, char** argv)
     game::GameState settingsReturnState = game::GameState::MainMenu;
     game::MainMenuState mainMenuState;
     game::StationScreenState stationScreen; // tab + scroll positions, across frames
+    game::MapScreenState mapScreen;         // map tab, scroll, and selection
     mainMenuState.hasSave = sol::platform::fileModificationTime(savePath.c_str()) != 0;
 
     const std::string settingsPath = executableDir + "settings.toml";
@@ -285,8 +288,14 @@ int main(int argc, char** argv)
     std::vector<sol::ui::FactionRow> factionRows;
     std::vector<sol::ui::MissionRow> missionOfferRows;
     std::vector<sol::ui::MissionRow> missionJournalRows;
+    std::vector<sol::ui::SurveyRow> surveyRows;
+    std::vector<sol::ui::MapSystemRow> mapSystemRows;
+    std::vector<sol::ui::MapLaneRow> mapLaneRows;
+    std::vector<sol::ui::MapMarkerRow> mapMarkerRows;
     std::string missionHudObjective;
+    std::string routeHopName;
     std::deque<std::string> stationText; // backs generated row text per frame
+    std::deque<std::string> mapText;     // same, for the map screen
     SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).", world.entityCount(),
                  world.currentSystemName(), world.galaxy().systems.size());
 
@@ -300,6 +309,8 @@ int main(int argc, char** argv)
     bool previousJ = false;
     bool previousG = false;
     bool previousF = false;
+    bool previousR = false;
+    bool previousM = false;
     bool previousPip1 = false;
     bool previousPip2 = false;
     bool previousPip3 = false;
@@ -344,8 +355,11 @@ int main(int argc, char** argv)
         // shops, so the sim keeps running.
         const bool inFlight = state == game::GameState::Flying;
         const bool docked = state == game::GameState::Docked;
-        const bool simRunning = inFlight || docked;
-        const bool uiHasKeys = !inFlight;                 // menus and the station screen
+        const bool onMap = state == game::GameState::Map;
+        // The map is a screen, not a pause: the economy, the factions, and
+        // whatever is shooting at you all keep running while it is open.
+        const bool simRunning = inFlight || docked || onMap;
+        const bool uiHasKeys = !inFlight;                 // menus, station, map
         const bool inMenuScreen = uiHasKeys && !docked;   // where Esc means "back out"
         const auto gameplayKey = [&](sol::platform::Key key) {
             return inFlight && window.isKeyDown(key);
@@ -355,7 +369,9 @@ int main(int argc, char** argv)
         const bool escapeDown = window.isKeyDown(sol::platform::Key::Escape);
         const bool escapeEdge = escapeDown && !previousEscape;
         previousEscape = escapeDown;
-        if (escapeEdge && simRunning) {
+        // The map handles Esc itself (it closes), so it is excluded here even
+        // though its clock is running.
+        if (escapeEdge && (inFlight || docked)) {
             state = game::GameState::Paused;
             window.setCursorLocked(false);
         }
@@ -412,15 +428,43 @@ int main(int argc, char** argv)
 
         // Dock/undock at the nearest station (G toggles). Undocking is the one
         // gameplay key the station screen leaves live, beside its own button.
+        // G is also the salvage key (Phase 8e): one interact key, and a
+        // station in range wins over a wreck.
         const bool gDown = (inFlight || docked) && window.isKeyDown(sol::platform::Key::G);
         if (gDown && !previousG) {
             if (world.isDocked()) {
                 (void)world.undock();
-            } else if (!world.tryDockNearestStation(kDockRange)) {
-                SOL_LOG_INFO("No station within %.0f km", kDockRange / 1000.0);
+            } else if (!world.tryDockNearestStation(kDockRange)
+                       && !world.trySalvageNearest(game::SpaceWorld::kSalvageRange)) {
+                SOL_LOG_INFO("Nothing to dock with or salvage within %.0f km",
+                             kDockRange / 1000.0);
             }
         }
         previousG = gDown;
+
+        // Scan pulse (R): reveals contacts within the fitted scanner's range.
+        const bool rDown = gameplayKey(sol::platform::Key::R);
+        if (rDown && !previousR) {
+            if (world.pulseScan() < 0) {
+                SOL_LOG_INFO("Scanner still charging (%.0f%%)",
+                             static_cast<double>(world.pulseCharge() * 100.0f));
+            }
+        }
+        previousR = rDown;
+
+        // Map (M) opens from flight or from a station and closes from itself.
+        const bool mDown = (inFlight || docked || onMap)
+                           && window.isKeyDown(sol::platform::Key::M)
+                           && !devUi.wantsMouseCapture();
+        if (mDown && !previousM) {
+            if (onMap) {
+                state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
+            } else {
+                state = game::GameState::Map;
+                window.setCursorLocked(false);
+            }
+        }
+        previousM = mDown;
 
         // Power triage (decisions/003): 1/2/3 pip WEP/ENG/SYS, 4 balances.
         const bool pip1 = gameplayKey(sol::platform::Key::Num1);
@@ -624,6 +668,30 @@ int main(int argc, char** argv)
         hud.targetHull = target.hull;
         hud.targetFaction = target.factionName.c_str();
         hud.targetAttitude = target.attitude;
+        // Scanning (Phase 8e): charge, the held scan, and what this system
+        // still has waiting to be identified or emptied.
+        hud.pulseCharge = world.pulseCharge();
+        hud.scanProgress = world.scanProgress();
+        hud.scanTarget = world.scanTargetName();
+        for (const game::SignalInstance& signal : world.signals()) {
+            const std::uint32_t system = world.currentSystemIndex();
+            if (!world.survey().signalDiscovered(system, signal.index)) {
+                continue;
+            }
+            if (!world.survey().signalResolved(system, signal.index)) {
+                ++hud.contactsUnresolved;
+            } else if (!world.survey().signalEmptied(system, signal.index)) {
+                ++hud.sitesOpen;
+            }
+        }
+        const double salvageDistance = world.nearestSalvageDistance();
+        hud.salvageInRange =
+            salvageDistance >= 0.0 && salvageDistance <= game::SpaceWorld::kSalvageRange;
+        const std::uint32_t nextHop = world.survey().nextHop();
+        if (nextHop < world.galaxy().systems.size()) {
+            routeHopName = world.galaxy().systems[nextHop].name;
+            hud.routeNextHop = routeHopName.c_str();
+        }
         // Tracked mission line (Phase 8c).
         const sol::sim::MissionSim& missions = world.missionSim();
         if (missions.tracked() < missions.active().size()) {
@@ -681,6 +749,34 @@ int main(int argc, char** argv)
                                         shipRows, fleetRows, factionRows);
             game::fillStationMissions(world, stationText, stationPanel, missionOfferRows,
                                       missionJournalRows); // after: shares stationText
+            // Survey ledger (Phase 8e): sellable at any station, whole.
+            surveyRows.clear();
+            for (const sol::sim::SurveyEntry& entry : world.survey().ledger()) {
+                const char* kindName = entry.kind == sol::sim::SurveyKind::System ? "system data"
+                                       : entry.kind == sol::sim::SurveyKind::Body ? "body scan"
+                                       : entry.kind == sol::sim::SurveyKind::Site ? "site survey"
+                                                                                  : "full survey";
+                std::string detail = kindName;
+                detail += entry.region == sol::sim::Region::Core       ? ", core"
+                          : entry.region == sol::sim::Region::Frontier ? ", frontier"
+                                                                       : ", fringe";
+                if (entry.firstDiscovery) {
+                    detail += ", uncharted space";
+                }
+                stationText.push_back(std::move(detail));
+                surveyRows.push_back(
+                    {.system = world.galaxy().systems[entry.system].name.c_str(),
+                     .detail = stationText.back().c_str(),
+                     .value = static_cast<float>(entry.value)});
+            }
+            stationPanel.surveyData = surveyRows;
+            stationPanel.surveyValue = world.survey().ledgerValue();
+        }
+        // The map screen (Phase 8e) reads only what the player knows.
+        sol::ui::MapPanel mapPanel;
+        if (state == game::GameState::Map) {
+            game::fillMapPanel(world, mapText, mapPanel, mapSystemRows, mapLaneRows,
+                               mapMarkerRows);
         }
         // --- Custom game UI (Phase 8d), rebuilt every frame ---
         // Everything below works in virtual UI pixels: the layout, the cursor,
@@ -730,6 +826,7 @@ int main(int argc, char** argv)
         ui.beginFrame(uiInput, uiSize);
         game::MenuAction menuAction = game::MenuAction::None;
         bool undockRequested = false;
+        bool mapClosed = false;
         switch (state) {
         case game::GameState::MainMenu:
             menuAction = game::buildMainMenu(ui, mainMenuState);
@@ -748,6 +845,11 @@ int main(int argc, char** argv)
             // Docked, the station screen owns the view; the flight readout has
             // nothing to say about a parked ship.
             undockRequested = game::buildStationScreen(ui, stationPanel, stationScreen);
+            break;
+        case game::GameState::Map:
+            // The map owns the view (it dims what is behind it), but the ship
+            // is still flying under it - this state does not stop the clock.
+            mapClosed = game::buildMapScreen(ui, mapPanel, mapScreen);
             break;
         }
         ui.endFrame();
@@ -809,6 +911,16 @@ int main(int argc, char** argv)
         // shut again on the same frame.
         if (undockRequested) {
             (void)world.undock();
+        }
+        // Map clicks act on the world; engaging the autopilot also drops the
+        // map, since the point of that button is to go there.
+        if (state == game::GameState::Map) {
+            if (game::executeMapAction(world, mapPanel.action)) {
+                mapClosed = true;
+            }
+            if (mapClosed) {
+                state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
+            }
         }
         if (state == game::GameState::Flying || state == game::GameState::Docked) {
             state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;

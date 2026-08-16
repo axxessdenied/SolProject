@@ -16,6 +16,10 @@ enum class GameState : std::uint32_t
     Docked,
     Paused,
     Settings,
+    // The map (Phase 8e). Owns the keyboard like the station screen does, and
+    // like it does *not* stop the clock: a galaxy that pauses while you read
+    // the map is not the galaxy this game is selling.
+    Map,
 };
 
 // Player-facing options, persisted beside the save as TOML. Kept out of the

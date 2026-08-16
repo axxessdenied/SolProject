@@ -297,6 +297,9 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
     case Kind::TrackMission:
         world.missionSim().setTracked(static_cast<std::uint32_t>(action.index));
         break;
+    case Kind::SellSurveyData:
+        (void)world.sellSurveyData();
+        break;
     }
 }
 

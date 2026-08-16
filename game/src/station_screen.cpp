@@ -39,7 +39,7 @@ constexpr float kNumberWidth = 82.0f;
 constexpr Color kCampaign = rgba(0xF2CC59FFu);
 
 constexpr const char* const kTabLabels[StationScreenState::TabCount] = {
-    "Trade", "Outfitting", "Shipyard", "Crew", "Factions", "Missions"};
+    "Trade", "Outfitting", "Shipyard", "Crew", "Factions", "Missions", "Survey"};
 
 // The amounts a trade button moves. Fixed steps rather than a text field: the
 // world clamps to credits, hold space, and stock anyway, so "buy 100" means
@@ -594,6 +594,53 @@ void buildMissionsTab(UiContext& ui, StationPanel& panel, StationScreenState& st
     ui.endScroll();
 }
 
+// --- Survey (Phase 8e) ---
+
+// Survey data is an intangible: it costs no hold space and sells whole, so the
+// tab is a ledger with one button rather than a per-line market.
+void buildSurveyTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
+                    const Rect& content)
+{
+    const auto& theme = ui.theme();
+    const float contentHeight = kSectionHeight + theme.spacing +
+                                listHeight(ui, std::max<std::size_t>(panel.surveyData.size(), 1)) +
+                                kRowHeight + theme.spacing;
+    const Rect list =
+        ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Survey]);
+    Column column(list, 0.0f, theme.spacing);
+
+    sectionHeader(ui, column.row(kSectionHeight), "Unsold survey data");
+    if (panel.surveyData.empty()) {
+        emptyNote(ui, column, "(nothing scanned since your last sale)");
+    }
+    char buffer[64] = {};
+    for (int i = 0; i < static_cast<int>(panel.surveyData.size()); ++i) {
+        const sol::ui::SurveyRow& entry = panel.surveyData[static_cast<std::size_t>(i)];
+        const Rect row = column.row(kRowHeight);
+        rowBackground(ui, row, i);
+        Row cursor(row, theme.spacing);
+        const Rect valueCell = cursor.cellFromRight(kNumberWidth);
+        const Rect rest = cursor.remaining();
+        Row split(rest, theme.spacing);
+        const Rect systemCell = split.cell(rest.width() * 0.34f);
+        clipped(ui, systemCell, entry.system, theme.textPrimary, theme.strongStyle);
+        clipped(ui, split.remaining(), entry.detail, theme.textDim);
+        std::snprintf(buffer, sizeof(buffer), "%.0f cr", static_cast<double>(entry.value));
+        clipped(ui, valueCell, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
+    }
+
+    const Rect totalRow = column.row(kRowHeight);
+    Row totals(totalRow, theme.spacing);
+    const Rect sellCell = totals.cellFromRight(kButtonWidth + 40.0f);
+    std::snprintf(buffer, sizeof(buffer), "Total %.0f cr", panel.surveyValue);
+    clipped(ui, totals.remaining(), buffer, theme.accent, theme.strongStyle, TextAlign::Right);
+    if (ui.button(inset(sellCell, 2.0f), "Sell All", !panel.surveyData.empty())) {
+        panel.action = {.kind = StationAction::Kind::SellSurveyData, .index = -1};
+    }
+
+    ui.endScroll();
+}
+
 } // namespace
 
 bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& state)
@@ -656,6 +703,9 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
     case StationScreenState::Missions:
         buildMissionsTab(ui, panel, state, content);
         break;
+    case StationScreenState::Survey:
+        buildSurveyTab(ui, panel, state, content);
+        break;
     default:
         break;
     }
@@ -668,6 +718,7 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
         "Crew bonuses apply to the ship they are aboard.",
         "Standing moves with what you do in a faction's space.",
         "Accepting a contract starts its clock; abandoning one costs standing.",
+        "Scan data sells anywhere; the further out it was taken, the more it pays.",
     };
 
     Row footer(footerRow, theme.spacing);

@@ -69,6 +69,17 @@ struct FlightHud
     bool dockInRange = false;
     bool docked = false;
     const char* dockedStationName = "";
+
+    // Scanning (Phase 8e). The pulse recharges, a target scan runs while the
+    // contact is held in the reticle, and salvage shares the prompt slot with
+    // jump and dock.
+    float pulseCharge = 1.0f;    // 0..1; 1 = ready to fire
+    float scanProgress = 0.0f;   // 0..1 of the scan in flight
+    const char* scanTarget = ""; // what that scan is resolving; empty = none
+    int contactsUnresolved = 0;  // found by a pulse, not yet identified
+    int sitesOpen = 0;           // identified and still holding something
+    bool salvageInRange = false;
+    const char* routeNextHop = ""; // next system on the plotted route
 };
 
 // One commodity line on the station's Trade tab. The game fills rows from the
@@ -137,6 +148,98 @@ struct MissionRow
     bool tracked = false;     // journal: shown on the HUD
 };
 
+// One line of unsold survey data on the station's Survey tab (Phase 8e).
+struct SurveyRow
+{
+    const char* system = "";
+    const char* detail = ""; // kind + region + first-discovery, prebuilt
+    float value = 0.0f;      // credits this line pays
+};
+
+// --- Map screens (Phase 8e; deferred here out of Phase 8d) -------------------
+
+// How much the player knows about a system, in the order the ladder runs.
+enum class MapKnowledge : std::uint32_t
+{
+    Unknown = 0,
+    Charted, // a gate named it: position and name, nothing else
+    Visited,
+    Surveyed,
+};
+
+// One system on the galaxy map. The game fills these from the galaxy and what
+// SurveySim says is known, so the screen never sees the galaxy itself and
+// cannot leak what the player has not earned.
+struct MapSystemRow
+{
+    const char* name = "";
+    core::Vec2 position; // light-years, galaxy map space
+    MapKnowledge knowledge = MapKnowledge::Unknown;
+    core::Vec3 ownerColor{0.6f, 0.6f, 0.6f};
+    const char* detail = ""; // owner, region, stations, sites - prebuilt
+    bool hasOwner = false;
+    bool current = false;
+    bool onRoute = false;
+};
+
+// A lane between two rows of the system list; drawn only when both ends are
+// known, which is what makes the map grow along the routes actually flown.
+struct MapLaneRow
+{
+    int from = 0;
+    int to = 0;
+    bool onRoute = false;
+};
+
+// One thing in the current system, for the system map.
+struct MapMarkerRow
+{
+    enum class Kind : std::uint32_t
+    {
+        Star = 0,
+        Planet,
+        Station,
+        Gate,
+        Signal,
+    };
+    Kind kind = Kind::Star;
+    const char* name = "";
+    const char* detail = "";
+    core::Vec2 position;       // meters, playfield plane relative to the hub
+    double distanceMeters = 0.0; // from the ship
+    bool scanned = false;      // bodies: surveyed; signals: identified
+    bool targeted = false;
+};
+
+struct MapAction
+{
+    enum class Kind : std::uint32_t
+    {
+        None = 0,
+        PlotRoute,    // index = system row
+        ClearRoute,
+        SelectMarker, // index = marker row: becomes the nav target
+        Autopilot,    // index = marker row: target it and engage
+        Close,
+    };
+    Kind kind = Kind::None;
+    int index = -1;
+};
+
+// The map screen: a galaxy view over the lane graph and a system view of the
+// playfield. Both are filled per frame like every other screen here.
+struct MapPanel
+{
+    const char* currentSystem = "";
+    const char* routeSummary = ""; // "4 jumps: A > B > C", prebuilt
+    const char* knownSummary = ""; // "31 of 80 systems known", prebuilt
+    std::span<const MapSystemRow> systems;
+    std::span<const MapLaneRow> lanes;
+    std::span<const MapMarkerRow> markers;
+    int currentIndex = -1; // row of the system the player is in
+    MapAction action;      // out
+};
+
 // What the player clicked this frame; the game executes it.
 struct StationAction
 {
@@ -154,6 +257,7 @@ struct StationAction
         AcceptMission,
         AbandonMission,
         TrackMission,
+        SellSurveyData, // Phase 8e: the whole ledger, at any station
     };
     Kind kind = Kind::None;
     const char* id = ""; // def id (module/weapon/ship/crew actions)
@@ -177,6 +281,8 @@ struct StationPanel
     const char* factionNotes = "";        // recent raids summary, prebuilt
     std::span<const MissionRow> missionOffers;  // the board (Phase 8c)
     std::span<const MissionRow> missionJournal; // active missions
+    std::span<const SurveyRow> surveyData;      // unsold ledger (Phase 8e)
+    double surveyValue = 0.0;                   // what the ledger pays today
     StationAction action; // out
 };
 
