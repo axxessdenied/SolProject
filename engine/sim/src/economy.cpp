@@ -31,9 +31,14 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
 
     const std::uint32_t commodityCount =
         static_cast<std::uint32_t>(m_params.commodities.size());
+    m_commodityCount = commodityCount;
     m_markets.clear();
+    m_marketOffset.assign(m_systemCount, 0);
+    m_marketCount.assign(m_systemCount, 0);
     for (std::uint32_t s = 0; s < m_systemCount; ++s) {
         const SystemSpec& system = galaxy.systems[s];
+        m_marketOffset[s] = static_cast<std::uint32_t>(m_markets.size());
+        m_marketCount[s] = static_cast<std::uint32_t>(system.stations.size());
         for (std::uint32_t i = 0; i < system.stations.size(); ++i) {
             StationMarket market;
             market.systemIndex = s;
@@ -82,20 +87,23 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
             m_traders.push_back(trader);
         }
     }
+
+    m_tickPrices.assign(m_markets.size() * commodityCount, 0.0f);
+    m_satisfaction.assign(m_markets.size(), 1.0f);
+    m_limiting.assign(m_markets.size(), kNoCommodity);
+    refreshTickPrices();
 }
 
 std::uint32_t Economy::marketFor(std::uint32_t systemIndex, std::uint32_t stationIndex) const
 {
-    for (std::uint32_t i = 0; i < m_markets.size(); ++i) {
-        if (m_markets[i].systemIndex == systemIndex &&
-            m_markets[i].stationIndex == stationIndex) {
-            return i;
-        }
+    if (systemIndex >= m_systemCount || stationIndex >= m_marketCount[systemIndex]) {
+        return kInvalid;
     }
-    return kInvalid;
+    return m_marketOffset[systemIndex] + stationIndex;
 }
 
-float Economy::price(std::uint32_t market, std::uint32_t commodity) const
+float Economy::priceAtStock(std::uint32_t market, std::uint32_t commodity,
+                            float stockUnits) const
 {
     if (market >= m_markets.size() || commodity >= m_params.commodities.size()) {
         return 0.0f;
@@ -104,11 +112,28 @@ float Economy::price(std::uint32_t market, std::uint32_t commodity) const
     const float capacity = station.archetype < m_params.archetypes.size()
                                ? m_params.archetypes[station.archetype].stockCapacity
                                : 0.0f;
-    const float fraction =
-        capacity > 0.0f ? core::clamp(station.stock[commodity] / capacity, 0.0f, 1.0f) : 1.0f;
+    const float fraction = capacity > 0.0f ? core::clamp(stockUnits / capacity, 0.0f, 1.0f) : 1.0f;
     const float scale =
         core::lerp(m_params.maxPriceScale, m_params.minPriceScale, fraction);
     return m_params.commodities[commodity].basePrice * scale;
+}
+
+float Economy::price(std::uint32_t market, std::uint32_t commodity) const
+{
+    if (market >= m_markets.size() || commodity >= m_params.commodities.size()) {
+        return 0.0f;
+    }
+    return priceAtStock(market, commodity, m_markets[market].stock[commodity]);
+}
+
+float Economy::buyPrice(std::uint32_t market, std::uint32_t commodity) const
+{
+    return price(market, commodity) * (1.0f + m_params.priceSpread);
+}
+
+float Economy::sellPrice(std::uint32_t market, std::uint32_t commodity) const
+{
+    return price(market, commodity) * (1.0f - m_params.priceSpread);
 }
 
 float Economy::stock(std::uint32_t market, std::uint32_t commodity) const
@@ -117,6 +142,42 @@ float Economy::stock(std::uint32_t market, std::uint32_t commodity) const
         return 0.0f;
     }
     return m_markets[market].stock[commodity];
+}
+
+float Economy::capacityOf(std::uint32_t market) const
+{
+    if (market >= m_markets.size()) {
+        return 0.0f;
+    }
+    const std::uint32_t archetype = m_markets[market].archetype;
+    return archetype < m_params.archetypes.size()
+               ? m_params.archetypes[archetype].stockCapacity
+               : 0.0f;
+}
+
+float Economy::satisfaction(std::uint32_t market) const
+{
+    return market < m_satisfaction.size() ? m_satisfaction[market] : 1.0f;
+}
+
+std::uint32_t Economy::limitingCommodity(std::uint32_t market) const
+{
+    return market < m_limiting.size() ? m_limiting[market] : kNoCommodity;
+}
+
+float Economy::tickPrice(std::uint32_t market, std::uint32_t commodity) const
+{
+    return m_tickPrices[static_cast<std::size_t>(market) * m_commodityCount + commodity];
+}
+
+void Economy::refreshTickPrices()
+{
+    for (std::uint32_t m = 0; m < m_markets.size(); ++m) {
+        float* row = m_tickPrices.data() + static_cast<std::size_t>(m) * m_commodityCount;
+        for (std::uint32_t c = 0; c < m_commodityCount; ++c) {
+            row[c] = price(m, c);
+        }
+    }
 }
 
 TradeResult Economy::buy(std::uint32_t market, std::uint32_t commodity, float units)
@@ -128,7 +189,15 @@ TradeResult Economy::buy(std::uint32_t market, std::uint32_t commodity, float un
     }
     StationMarket& station = m_markets[market];
     result.units = std::min(units, station.stock[commodity]);
-    result.credits = result.units * price(market, commodity);
+    // Priced at the midpoint of the stock the trade actually moves, not at
+    // the pre-trade marginal price. The curve is linear in stock, so the
+    // midpoint *is* the exact average — and without it a big block clears at
+    // a price that only moves afterwards, which let a buy-and-sell-back at
+    // one station turn a profit that no spread was ever going to cover.
+    result.credits =
+        result.units * priceAtStock(market, commodity,
+                                    station.stock[commodity] - result.units * 0.5f)
+        * (1.0f + m_params.priceSpread);
     station.stock[commodity] -= result.units;
     return result;
 }
@@ -145,7 +214,10 @@ TradeResult Economy::sell(std::uint32_t market, std::uint32_t commodity, float u
                                ? m_params.archetypes[station.archetype].stockCapacity
                                : 0.0f;
     result.units = std::min(units, std::max(0.0f, capacity - station.stock[commodity]));
-    result.credits = result.units * price(market, commodity);
+    result.credits =
+        result.units * priceAtStock(market, commodity,
+                                    station.stock[commodity] + result.units * 0.5f)
+        * (1.0f - m_params.priceSpread);
     station.stock[commodity] += result.units;
     return result;
 }
@@ -182,31 +254,92 @@ void Economy::raidSystem(std::uint32_t systemIndex, float stockFraction)
     }
 }
 
-void Economy::tick(const Galaxy& galaxy, double dt)
+void Economy::tick(const Galaxy& galaxy, double dt, FeedstockSource* source)
 {
     m_accumulator += dt;
     while (m_accumulator >= m_params.tickInterval) {
         m_accumulator -= m_params.tickInterval;
-        step(galaxy, m_params.tickInterval);
+        step(galaxy, m_params.tickInterval, source);
     }
 }
 
-void Economy::step(const Galaxy& galaxy, double dt)
+// One tick of every station's books. The order matters: the satisfaction
+// ratio is read off the stock the station started the tick with, so a
+// station cannot spend the same units twice, and every delta is applied
+// afterwards.
+void Economy::produce(double dt, FeedstockSource* source)
 {
-    // Production/consumption, clamped to [0, capacity].
-    for (StationMarket& market : m_markets) {
+    const float step = static_cast<float>(dt);
+    for (std::uint32_t m = 0; m < m_markets.size(); ++m) {
+        StationMarket& market = m_markets[m];
         if (market.archetype >= m_params.archetypes.size()) {
+            m_satisfaction[m] = 0.0f;
+            m_limiting[m] = kNoCommodity;
             continue;
         }
         const EconomyArchetype& archetype = m_params.archetypes[market.archetype];
+
+        // How much of its nominal output the station can actually make: the
+        // scarcest feedstock decides, and a station with none runs flat out.
+        float ratio = 1.0f;
+        std::uint32_t limiting = kNoCommodity;
         for (std::uint32_t c = 0; c < market.stock.size(); ++c) {
-            const float delta = (rateAt(archetype.production, c) -
-                                 rateAt(archetype.consumption, c)) *
-                                static_cast<float>(dt);
+            const float wanted = rateAt(archetype.feedstock, c) * step;
+            if (wanted <= 0.0f) {
+                continue;
+            }
+            const float have = std::min(1.0f, market.stock[c] / wanted);
+            if (have < ratio) {
+                ratio = have;
+                limiting = c;
+            }
+        }
+
+        for (std::uint32_t c = 0; c < market.stock.size(); ++c) {
+            float delta = 0.0f;
+
+            const float output = rateAt(archetype.production, c) * step * ratio;
+            if (output > 0.0f) {
+                if (archetype.extracts && source != nullptr) {
+                    // An extractor's output is limited by what is left in the
+                    // ground, and extraction is 1:1, so what came back *is*
+                    // what gets made — nothing is drawn and then wasted.
+                    const float drawn = source->draw(m, c, output);
+                    delta += drawn;
+                    if (drawn < output) {
+                        const float rockRatio = output > 0.0f ? drawn / output : 0.0f;
+                        if (rockRatio < ratio) {
+                            ratio = rockRatio;
+                            limiting = c;
+                        }
+                    }
+                } else {
+                    delta += output;
+                }
+            }
+
+            // Feedstock is spent in proportion to what it actually made.
+            delta -= rateAt(archetype.feedstock, c) * step * ratio;
+            // Upkeep burns whether or not anything was produced, and simply
+            // runs out when it runs out (the clamp below).
+            delta -= rateAt(archetype.consumption, c) * step;
+
             market.stock[c] =
                 core::clamp(market.stock[c] + delta, 0.0f, archetype.stockCapacity);
         }
+
+        m_satisfaction[m] = ratio;
+        m_limiting[m] = limiting;
     }
+}
+
+void Economy::step(const Galaxy& galaxy, double dt, FeedstockSource* source)
+{
+    produce(dt, source);
+    // Agents decide against the prices this tick opened with, which keeps
+    // their inner loop a flat array read instead of a price() call per
+    // market per commodity.
+    refreshTickPrices();
 
     for (EconomyTrader& trader : m_traders) {
         switch (trader.phase) {
@@ -234,7 +367,11 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
     const std::uint8_t* hopRow =
         m_hops.data() + static_cast<std::size_t>(here.systemIndex) * m_systemCount;
 
-    // Best profit-per-second over every commodity and reachable market.
+    // Best profit-per-second over every commodity and reachable market. The
+    // margin is measured across the spread — buy high, sell low — so a haul
+    // has to clear the round-trip cost to look worth taking at all.
+    const float buyScale = 1.0f + m_params.priceSpread;
+    const float sellScale = 1.0f - m_params.priceSpread;
     float bestRate = 0.0f;
     std::uint32_t bestMarket = kInvalid;
     std::uint32_t bestCommodity = 0;
@@ -254,7 +391,9 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
             if (available <= 1.0f) {
                 continue;
             }
-            const float profit = (price(m, c) - price(trader.market, c)) * available;
+            const float profit = (tickPrice(m, c) * sellScale -
+                                  tickPrice(trader.market, c) * buyScale) *
+                                 available;
             const float rate = profit / static_cast<float>(travelSeconds);
             if (rate > bestRate) {
                 bestRate = rate;
@@ -276,9 +415,9 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
                 if (m_markets[m].stock[c] <= m_params.traderCargo) {
                     continue;
                 }
-                const float ratio =
-                    price(trader.market, c) > 0.0f ? price(m, c) / price(trader.market, c)
-                                                   : 1.0f;
+                const float ratio = tickPrice(trader.market, c) > 0.0f
+                                        ? tickPrice(m, c) / tickPrice(trader.market, c)
+                                        : 1.0f;
                 if (bestMarket == kInvalid || ratio < cheapest) {
                     cheapest = ratio;
                     bestMarket = m;
@@ -367,6 +506,9 @@ bool Economy::load(core::BinaryReader& reader)
         return false;
     }
     m_rng.setRawState(rngState);
+    // The agents' price snapshot is derived, so it is rebuilt rather than
+    // saved — but it has to exist before the first tick after a load.
+    refreshTickPrices();
     return true;
 }
 

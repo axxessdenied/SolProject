@@ -23,7 +23,10 @@ base_price = 32.0
 
 # Machinery is one step further down the chain than it was before Phase 8f
 # (ore -> metal -> machinery), so it prices off refined metal, not raw ore.
+# The tier has to clear the step that makes it: a Fabricator Yard turns 0.26
+# metal into 0.18 machinery, so at base prices that is 8.3 cr of input for
+# 9.4 cr of output. Below about 50 the last link of the chain destroys value.
 [[commodity]]
 id = "sol.machinery"
 name = "Machinery"
-base_price = 45.0
+base_price = 52.0

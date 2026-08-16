@@ -257,7 +257,22 @@ struct StationDef
     float weightFrontier = 1.0f;
     float weightFringe = 1.0f;
     std::vector<StationRate> produces;
+    // Upkeep (Phase 8g): burned regardless of what the station makes, clamped
+    // at zero, and it never gates production. A hungry station is a hook for a
+    // later unrest mechanic, not a production stall.
     std::vector<StationRate> consumes;
+    // Feedstock (Phase 8g): the thing the station transforms. Production is
+    // throttled by how much of it is on hand, so a refinery with no ore makes
+    // no metal. Kept separate from `consumes` because the production graph is
+    // a cycle (food -> ore -> metal -> machinery -> food) and gating on every
+    // input would let one empty link seize the whole galaxy permanently.
+    std::vector<StationRate> feedstock;
+    // Where the archetype's output comes from (Phase 8g). Empty — the
+    // default — means it is made from stocked feedstock like everything else.
+    // "field" means it comes out of the ground: a Mining Outpost draws ore
+    // from the asteroid fields in its own system, so a system with no rock
+    // supports no mine.
+    std::string producesFrom;
     float stockCapacity = 1'000.0f; // per commodity
     // Refinery service (Phase 8f): the archetype takes refine_input off the
     // player's hands and hands back refine_output later. Both empty — the

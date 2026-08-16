@@ -212,6 +212,75 @@ float MiningSim::mineRock(std::uint32_t system, std::uint32_t field, std::uint32
     return taken;
 }
 
+float MiningSim::drawFromSystem(const Galaxy& galaxy, std::uint32_t system,
+                                std::uint32_t commodity, float units)
+{
+    if (system >= m_systemCount || !(units > 0.0f)) {
+        return 0.0f;
+    }
+    // The bite is spread across every rock still holding this commodity, in
+    // proportion to what each has left. That is what working a field looks
+    // like, and it is what lets regrowth reach an equilibrium at all:
+    // regen is per cut rock, so a field worked evenly sustains a draw of
+    // about rockRegenPerSecond x (rocks in it), while a field eaten one rock
+    // at a time sustains almost nothing. It is also where the region
+    // gradient comes from for free — a fringe system carries several times
+    // the rock of a core one, so it supports several times the outpost.
+    struct Bite
+    {
+        std::uint32_t field = 0;
+        std::uint32_t rock = 0;
+        float total = 0.0f;
+        float left = 0.0f;
+    };
+    std::vector<Bite> bites;
+    std::vector<RockSpec> rocks;
+    float pool = 0.0f;
+    const std::uint32_t fields = fieldCount(system);
+    for (std::uint32_t field = 0; field < fields; ++field) {
+        rocksFor(galaxy, system, field, rocks);
+        for (std::uint32_t rock = 0; rock < rocks.size(); ++rock) {
+            if (rocks[rock].commodity != commodity) {
+                continue;
+            }
+            const float left = unitsLeft(system, field, rock, rocks[rock].yieldUnits);
+            if (left > 0.0f) {
+                bites.push_back({field, rock, rocks[rock].yieldUnits, left});
+                pool += left;
+            }
+        }
+    }
+    if (!(pool > 0.0f)) {
+        return 0.0f; // the system is mined out for this commodity
+    }
+    const float want = std::min(units, pool);
+    float taken = 0.0f;
+    for (const Bite& bite : bites) {
+        taken += mineRock(system, bite.field, bite.rock, bite.total, want * bite.left / pool);
+    }
+    return taken;
+}
+
+float MiningSim::systemStock(const Galaxy& galaxy, std::uint32_t system,
+                             std::uint32_t commodity) const
+{
+    if (system >= m_systemCount) {
+        return 0.0f;
+    }
+    float total = 0.0f;
+    std::vector<RockSpec> rocks;
+    const std::uint32_t fields = fieldCount(system);
+    for (std::uint32_t field = 0; field < fields; ++field) {
+        rocksFor(galaxy, system, field, rocks);
+        for (std::uint32_t rock = 0; rock < rocks.size(); ++rock) {
+            if (rocks[rock].commodity == commodity) {
+                total += unitsLeft(system, field, rock, rocks[rock].yieldUnits);
+            }
+        }
+    }
+    return total;
+}
+
 std::uint32_t MiningSim::addWreck(std::uint32_t system, const core::DVec3& position,
                                   std::string defId, std::string name, std::uint64_t seed)
 {
@@ -421,6 +490,21 @@ void MiningSim::tick(double dt)
             m_wrecks.erase(m_wrecks.begin() + static_cast<std::ptrdiff_t>(i));
         } else {
             ++i;
+        }
+    }
+    // Rocks regrow. A record only exists for a rock somebody has cut, so this
+    // walks a handful of entries however big the galaxy is — and a rock that
+    // has come all the way back drops its record entirely, which is what
+    // keeps the sparse store sparse over a hundred-hour save.
+    const float regen = m_params.rockRegenPerSecond * static_cast<float>(dt);
+    if (regen > 0.0f) {
+        for (std::size_t i = 0; i < m_depletion.size();) {
+            m_depletion[i].unitsTaken -= regen;
+            if (m_depletion[i].unitsTaken <= 0.0f) {
+                m_depletion.erase(m_depletion.begin() + static_cast<std::ptrdiff_t>(i));
+            } else {
+                ++i;
+            }
         }
     }
 }

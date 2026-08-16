@@ -72,6 +72,62 @@ MiningSim lineMining(const Galaxy& galaxy)
 
 } // namespace
 
+SOL_TEST(mining_rocks_regrow_and_drop_their_record)
+{
+    const Galaxy galaxy = lineGalaxy();
+    MiningSim mining = lineMining(galaxy);
+
+    SOL_CHECK(mining.mineRock(2, 0, 1, 40.0f, 10.0f) == 10.0f);
+    SOL_CHECK(mining.depletionRecordCount() == 1);
+
+    // Partway back: still a debt, still a record.
+    mining.tick(100.0); // 0.02/s * 100 = 2 units
+    SOL_CHECK(std::abs(mining.unitsTaken(2, 0, 1) - 8.0f) < 1.0e-3f);
+    SOL_CHECK(mining.depletionRecordCount() == 1);
+
+    // All the way back: the rock is whole and costs nothing to remember,
+    // which is what keeps a hundred-hour save from accumulating them.
+    mining.tick(1'000.0);
+    SOL_CHECK(mining.unitsTaken(2, 0, 1) == 0.0f);
+    SOL_CHECK(mining.depletionRecordCount() == 0);
+}
+
+SOL_TEST(mining_system_draw_spreads_across_rocks_and_runs_out)
+{
+    const Galaxy galaxy = lineGalaxy();
+    MiningSim mining = lineMining(galaxy);
+
+    const float before = mining.systemStock(galaxy, 2, 1);
+    SOL_REQUIRE(before > 0.0f);
+    SOL_CHECK(mining.systemStock(galaxy, 2, 0) == 0.0f); // wrong ore for the fringe
+
+    // Repeated small draws have to work the field evenly rather than eating
+    // one rock: regrowth is per record, so an even field is what lets a
+    // system sustain an outpost at all.
+    // Spread over many rocks, each bite is a sum of small proportional
+    // takes, so it lands within rounding of what was asked rather than on it.
+    float drawn = 0.0f;
+    for (int i = 0; i < 40; ++i) {
+        drawn += mining.drawFromSystem(galaxy, 2, 1, 1.0f);
+    }
+    SOL_CHECK(std::abs(drawn - 40.0f) < 1.0e-2f);
+    SOL_CHECK(std::abs(mining.systemStock(galaxy, 2, 1) - (before - drawn)) < 1.0e-1f);
+    // Every rock holding this ore now carries a debt — that even spread is
+    // what regrowth needs to hold an equilibrium against a steady draw.
+    SOL_CHECK(mining.depletionRecordCount() >= 4); // spread, not one rock drained
+
+    // A commodity that is not in this system's rock yields nothing at all —
+    // an outpost with no rock under it produces nothing, which is the point.
+    SOL_CHECK(mining.drawFromSystem(galaxy, 2, 0, 5.0f) == 0.0f);
+    SOL_CHECK(mining.drawFromSystem(galaxy, 0, 1, 5.0f) == 0.0f);
+
+    // Mined out: the draw reports short rather than inventing units.
+    const float left = mining.systemStock(galaxy, 2, 1);
+    const float taken = mining.drawFromSystem(galaxy, 2, 1, left + 500.0f);
+    SOL_CHECK(std::abs(taken - left) < 1.0e-2f);
+    SOL_CHECK(mining.systemStock(galaxy, 2, 1) < 1.0e-2f);
+}
+
 SOL_TEST(mining_fields_and_rocks_are_deterministic_per_seed)
 {
     const Galaxy galaxy = lineGalaxy();
@@ -380,8 +436,12 @@ SOL_TEST(mining_save_load_restores_depletion_wrecks_and_jobs)
     sol::core::BinaryReader reader(writer.data());
     SOL_REQUIRE(restored.load(reader));
 
-    SOL_CHECK(restored.unitsTaken(2, 0, 3) == 15.0f);
-    SOL_CHECK(restored.unitsTaken(1, 0, 0) == 30.0f);
+    // Against the live sim rather than the amounts originally cut: the tick
+    // above regrew some of it (Phase 8g), and what this test is about is that
+    // a reload lands exactly where the save was taken.
+    SOL_CHECK(restored.unitsTaken(2, 0, 3) == mining.unitsTaken(2, 0, 3));
+    SOL_CHECK(restored.unitsTaken(1, 0, 0) == mining.unitsTaken(1, 0, 0));
+    SOL_CHECK(restored.unitsTaken(2, 0, 3) < 15.0f); // regrowth actually ran
     SOL_CHECK(restored.depletionRecordCount() == mining.depletionRecordCount());
     SOL_REQUIRE(restored.wreck(id) != nullptr);
     SOL_CHECK(restored.wreck(id)->position.z == 9.0);

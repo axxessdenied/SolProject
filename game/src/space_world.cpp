@@ -32,7 +32,41 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 8; // v8: mining depletion/wrecks/refining
+constexpr std::uint32_t kSaveVersion = 9; // v9: market intel memory, world clock
+
+// Market intel (Phase 8g): what a station's market report covers and costs.
+// The radius matches the traders' own horizon (EconomyParams::maxTradeJumps),
+// so what you can buy intel on is what the local economy actually talks to.
+constexpr std::uint32_t kIntelJumpRadius = 3;
+constexpr double kIntelBasePrice = 120.0;
+constexpr double kIntelPricePerMarket = 18.0;
+constexpr std::uint8_t kUnreachableHops = 0xff;
+
+// Hop counts from one system over the gate graph, capped. One BFS instead of
+// a routeBetween() per market — this runs over every market in the galaxy.
+void hopsFrom(const sim::Galaxy& galaxy, std::uint32_t from, std::uint32_t maxHops,
+              std::vector<std::uint8_t>& out)
+{
+    out.assign(galaxy.systems.size(), kUnreachableHops);
+    if (from >= galaxy.systems.size()) {
+        return;
+    }
+    out[from] = 0;
+    std::vector<std::uint32_t> frontier{from};
+    std::vector<std::uint32_t> next;
+    for (std::uint8_t depth = 1; depth <= maxHops && !frontier.empty(); ++depth) {
+        next.clear();
+        for (const std::uint32_t index : frontier) {
+            for (const sim::GateSpec& gate : galaxy.systems[index].gates) {
+                if (out[gate.toSystem] == kUnreachableHops) {
+                    out[gate.toSystem] = depth;
+                    next.push_back(gate.toSystem);
+                }
+            }
+        }
+        frontier.swap(next);
+    }
+}
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -149,6 +183,7 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         sim::EconomyArchetype archetype;
         archetype.production.assign(commodityCount, 0.0f);
         archetype.consumption.assign(commodityCount, 0.0f);
+        archetype.feedstock.assign(commodityCount, 0.0f);
         archetype.stockCapacity = station.stockCapacity;
         const auto applyRates = [&](const std::vector<assets::StationRate>& rates,
                                     std::vector<float>& out) {
@@ -164,11 +199,19 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         };
         applyRates(station.produces, archetype.production);
         applyRates(station.consumes, archetype.consumption);
+        applyRates(station.feedstock, archetype.feedstock);
+        // An archetype that mines is one whose output comes out of the ground
+        // rather than off anyone's dock. The def says so; nothing here keys
+        // off a hard-coded station id.
+        archetype.extracts = station.producesFrom == "field";
         m_economyParams.archetypes.push_back(std::move(archetype));
     }
     if (!m_economyParams.commodities.empty()) {
         m_economy.initialize(m_galaxy, m_economyParams, m_universeSeed);
     }
+    m_feedstock.mining = &m_mining;
+    m_feedstock.galaxy = &m_galaxy;
+    m_feedstock.economy = &m_economy;
     m_playerCargo.assign(commodityCount, 0.0f);
 
     // Start in the first core system with a station (deterministic per seed).
@@ -1414,6 +1457,123 @@ double SpaceWorld::refineWaitHere() const
     return m_mining.soonestAt(dockedMarket());
 }
 
+float SpaceWorld::MiningFeedstock::draw(std::uint32_t market, std::uint32_t commodity,
+                                        float units)
+{
+    if (mining == nullptr || galaxy == nullptr || economy == nullptr
+        || market >= economy->markets().size()) {
+        return 0.0f;
+    }
+    // An outpost works the rock in its own system and nowhere else, which is
+    // what makes "where does ore come from" a question the map can answer.
+    const std::uint32_t system = economy->markets()[market].systemIndex;
+    return mining->drawFromSystem(*galaxy, system, commodity, units);
+}
+
+double SpaceWorld::intelPrice() const
+{
+    // Priced off how much is actually out there to learn, so a package in a
+    // dense core cluster costs more than one on the frontier and a system
+    // with nothing in reach is nearly free.
+    return kIntelBasePrice + kIntelPricePerMarket * static_cast<double>(intelMarketCount());
+}
+
+std::uint32_t SpaceWorld::intelMarketCount() const
+{
+    if (!isDocked()) {
+        return 0;
+    }
+    std::vector<std::uint8_t> hops;
+    hopsFrom(m_galaxy, m_currentSystem, kIntelJumpRadius, hops);
+    std::uint32_t count = 0;
+    for (const sim::StationMarket& market : m_economy.markets()) {
+        const std::uint32_t system = market.systemIndex;
+        // You are standing in the local one; that reading is always free.
+        if (system != m_currentSystem && hops[system] != kUnreachableHops) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool SpaceWorld::buyMarketIntel(std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("not docked", outError);
+    }
+    const std::uint32_t count = intelMarketCount();
+    if (count == 0) {
+        return refuse("no markets in reach to report on", outError);
+    }
+    const double price = intelPrice();
+    if (price > m_playerCredits) {
+        return refuse("cannot afford the market report", outError);
+    }
+    m_playerCredits -= price;
+
+    std::vector<std::uint8_t> hops;
+    hopsFrom(m_galaxy, m_currentSystem, kIntelJumpRadius, hops);
+    std::vector<float> prices(m_commodityIds.size(), 0.0f);
+    for (std::uint32_t m = 0; m < m_economy.markets().size(); ++m) {
+        const std::uint32_t system = m_economy.markets()[m].systemIndex;
+        if (system == m_currentSystem || hops[system] == kUnreachableHops) {
+            continue;
+        }
+        for (std::uint32_t c = 0; c < prices.size(); ++c) {
+            prices[c] = m_economy.price(m, c);
+        }
+        m_survey.recordMarket(m, prices, m_worldSeconds);
+    }
+    SOL_LOG_INFO("bought market data on %u markets within %u jumps for %.0f cr", count,
+                 kIntelJumpRadius, price);
+    return true;
+}
+
+void SpaceWorld::recordDockedMarket()
+{
+    const std::uint32_t market = dockedMarket();
+    if (market == kNoIndex) {
+        return;
+    }
+    std::vector<float> prices(m_commodityIds.size(), 0.0f);
+    for (std::uint32_t c = 0; c < prices.size(); ++c) {
+        prices[c] = m_economy.price(market, c);
+    }
+    m_survey.recordMarket(market, prices, m_worldSeconds);
+}
+
+bool SpaceWorld::bestKnownPrice(std::uint32_t commodity, std::uint32_t* outSystem, float* outPrice,
+                                double* outAge, bool* outStale) const
+{
+    std::uint32_t market = 0;
+    double age = 0.0;
+    if (!m_survey.bestRemembered(commodity, dockedMarket(), m_worldSeconds, &market, outPrice,
+                                 &age)) {
+        return false;
+    }
+    if (outSystem != nullptr) {
+        *outSystem = m_economy.markets()[market].systemIndex;
+    }
+    if (outAge != nullptr) {
+        *outAge = age;
+    }
+    if (outStale != nullptr) {
+        *outStale = age > m_survey.params().intelStaleSeconds;
+    }
+    return true;
+}
+
+float SpaceWorld::marketSatisfaction(std::uint32_t market) const
+{
+    return m_economy.satisfaction(market);
+}
+
+const char* SpaceWorld::marketLimiting(std::uint32_t market) const
+{
+    const std::uint32_t commodity = m_economy.limitingCommodity(market);
+    return commodity < m_commodityIds.size() ? m_commodityIds[commodity].c_str() : "";
+}
+
 bool SpaceWorld::orderRefine(float units, std::string* outError)
 {
     std::uint32_t input = kNoIndex;
@@ -1858,6 +2018,10 @@ bool SpaceWorld::tryDockNearestStation(double range)
     // GameContent to re-open the board.
     m_missions.notifyDock(m_currentSystem, nearest);
     processMissionDeliveries();
+    // Market intel (Phase 8g): standing on the pad is the one price reading
+    // you never have to pay for, and it is what seeds the "elsewhere" column
+    // on every other station's Trade tab.
+    recordDockedMarket();
     m_dockEventPending = true;
     return true;
 }
@@ -2830,6 +2994,10 @@ sim::FlightInput SpaceWorld::autopilotInput()
 
 void SpaceWorld::tick(double dt)
 {
+    // The run's own clock. Market intel is stamped against it, so it advances
+    // whether the player is docked or flying — a price you read an hour ago
+    // is an hour old either way.
+    m_worldSeconds += dt;
     const std::uint32_t playerIndex = playerEntityIndex();
     if (isDocked()) {
         // Parked: flight input is ignored and the ship stays pinned to the
@@ -3346,8 +3514,10 @@ void SpaceWorld::tick(double dt)
     tickMining(dt);
 
     // Coarse-layer economy: galaxy-wide, same clock as everything else
-    // (decisions/005 — no time compression).
-    m_economy.tick(m_galaxy, dt);
+    // (decisions/005 — no time compression). The feedstock source is what
+    // makes a mining outpost's ore come out of its own system's rock
+    // (Phase 8g) instead of out of nothing.
+    m_economy.tick(m_galaxy, dt, &m_feedstock);
 
     // Coarse-layer faction sim (Phase 8b): drift/decay here; due decisions
     // are dispatched by GameContent (Lua faction_think or the default rule).
@@ -3557,6 +3727,7 @@ bool SpaceWorld::saveTo(const char* path)
     writer.write(m_lastDockSystem);
     writer.write(m_lastDockStation);
     writer.write(static_cast<std::uint8_t>(m_hardcore ? 1 : 0));
+    writer.write(m_worldSeconds); // v9: what market intel timestamps mean
     writer.write(m_playerCredits);
     writer.write(static_cast<std::uint32_t>(m_playerCargo.size()));
     for (const float units : m_playerCargo) {
@@ -3604,10 +3775,11 @@ bool SpaceWorld::loadFrom(const char* path)
     std::uint32_t lastDockSystem = 0;
     std::uint32_t lastDockStation = 0;
     std::uint8_t hardcore = 0;
+    double worldSeconds = 0.0;
     if (!reader.read(magic) || magic != kSaveMagic || !reader.read(version) ||
         version != kSaveVersion || !reader.read(seed) || !reader.read(systemIndex) ||
         !reader.read(dockedStation) || !reader.read(lastDockSystem) ||
-        !reader.read(lastDockStation) || !reader.read(hardcore)) {
+        !reader.read(lastDockStation) || !reader.read(hardcore) || !reader.read(worldSeconds)) {
         return false; // pre-fleet or foreign save: rejected cleanly
     }
 
@@ -3724,6 +3896,7 @@ bool SpaceWorld::loadFrom(const char* path)
     m_playerCredits = credits;
     m_playerCargo = std::move(cargo);
     m_hardcore = hardcore != 0;
+    m_worldSeconds = worldSeconds; // intel ages continue where they left off
     m_hardcoreDeathPending = false;
     m_fleet = std::move(fleet);
     m_activeShip = activeIndex;

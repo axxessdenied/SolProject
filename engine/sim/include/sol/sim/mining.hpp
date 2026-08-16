@@ -118,6 +118,15 @@ struct MiningParams
     float regionYieldMultiplier[3] = {1.0f, 1.35f, 1.8f};
     std::vector<OreEntry> ores; // empty => nothing is mineable
 
+    // Rocks regrow (Phase 8g), which 8f recorded as a known gap and named
+    // this as the fix for. It is not optional once mining outposts eat real
+    // rock: a field measured live holds ~2,200 units, so without regrowth
+    // NPC mining is just a countdown to a dead galaxy.
+    // How fast an outpost may draw is not a knob here: it is the archetype's
+    // own production rate in stations.toml, capped by what the rock can
+    // sustain, which is regen x the number of rocks being worked.
+    float rockRegenPerSecond = 0.02f; // units/s returned to a cut rock
+
     // Wrecks: they age out on the coarse clock so a long save is not a
     // junkyard, and the store is capped (oldest evicted first).
     double wreckDecaySeconds = 3'600.0;
@@ -160,6 +169,16 @@ public:
     float mineRock(std::uint32_t system, std::uint32_t field, std::uint32_t rock,
                    float totalUnits, float units);
     [[nodiscard]] std::size_t depletionRecordCount() const { return m_depletion.size(); }
+    // Takes up to `units` of one commodity out of a system's fields, working
+    // rock by rock, and reports what was actually there. This is the path a
+    // mining outpost's production runs through, so an NPC and the player's
+    // beam deplete the same rock through the same accounting — the first
+    // time the sandbox and the economy have touched one finite resource.
+    float drawFromSystem(const Galaxy& galaxy, std::uint32_t system, std::uint32_t commodity,
+                         float units);
+    // Units of a commodity still in the ground across a whole system.
+    [[nodiscard]] float systemStock(const Galaxy& galaxy, std::uint32_t system,
+                                    std::uint32_t commodity) const;
 
     // --- Wrecks ---
     // Records a kill; returns the new wreck id, or 0 on bad input (ids start

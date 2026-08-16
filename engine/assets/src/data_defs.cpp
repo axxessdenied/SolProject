@@ -469,18 +469,23 @@ bool parseStation(const TomlValue& table, const char* sourceName, std::vector<St
     reader.optionalFloat("weight_fringe", def.weightFringe);
     reader.optionalRateList("produces", def.produces);
     reader.optionalRateList("consumes", def.consumes);
+    reader.optionalRateList("feedstock", def.feedstock);
+    reader.optionalString("produces_from", def.producesFrom);
     reader.optionalFloat("stock_capacity", def.stockCapacity);
     reader.optionalString("refine_input", def.refineInput);
     reader.optionalString("refine_output", def.refineOutput);
 
     reader.rejectUnknownKeys({"id", "name", "weight_core", "weight_frontier", "weight_fringe",
-                              "produces", "consumes", "stock_capacity", "refine_input",
-                              "refine_output"});
+                              "produces", "consumes", "feedstock", "produces_from",
+                              "stock_capacity", "refine_input", "refine_output"});
     if (!reader.failed && def.stockCapacity <= 0.0f) {
         reader.fail("'stock_capacity' must be > 0");
     }
     if (!reader.failed && def.refineInput.empty() != def.refineOutput.empty()) {
         reader.fail("'refine_input' and 'refine_output' must be given together");
+    }
+    if (!reader.failed && !def.producesFrom.empty() && def.producesFrom != "field") {
+        reader.fail("'produces_from' must be \"field\" when given");
     }
     if (reader.failed) {
         return false;

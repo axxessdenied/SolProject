@@ -250,6 +250,53 @@ SOL_TEST(survey_route_advances_and_drops)
     SOL_CHECK(survey.route().empty());
 }
 
+SOL_TEST(survey_market_memory_ages_and_finds_the_best_price)
+{
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey = lineSurvey(galaxy);
+    SOL_CHECK(survey.marketMemory().empty());
+    SOL_CHECK(survey.remembered(0) == nullptr);
+
+    survey.recordMarket(0, {10.0f, 30.0f}, 0.0);
+    survey.recordMarket(2, {14.0f, 25.0f}, 100.0);
+    survey.recordMarket(1, {9.0f, 44.0f}, 200.0);
+    SOL_REQUIRE(survey.marketMemory().size() == 3);
+    // Kept in market order so the save is stable and lookups can bisect.
+    SOL_CHECK(survey.marketMemory()[0].market == 0);
+    SOL_CHECK(survey.marketMemory()[1].market == 1);
+    SOL_CHECK(survey.marketMemory()[2].market == 2);
+
+    // Looking again refreshes in place rather than piling up readings.
+    survey.recordMarket(2, {13.0f, 26.0f}, 300.0);
+    SOL_CHECK(survey.marketMemory().size() == 3);
+    SOL_REQUIRE(survey.remembered(2) != nullptr);
+    SOL_CHECK(survey.remembered(2)->takenAt == 300.0);
+    SOL_CHECK(survey.remembered(2)->prices[0] == 13.0f);
+
+    // A snapshot that doesn't match the commodity table is not a snapshot.
+    survey.recordMarket(4, {1.0f}, 300.0);
+    SOL_CHECK(survey.remembered(4) == nullptr);
+
+    // Best price elsewhere, and how old that reading is: this is what the
+    // Trade tab's "elsewhere" column and the map's trade overlay both read.
+    std::uint32_t market = 0;
+    float price = 0.0f;
+    double age = 0.0;
+    SOL_REQUIRE(survey.bestRemembered(1, 0, 400.0, &market, &price, &age));
+    SOL_CHECK(market == 1);
+    SOL_CHECK(price == 44.0f);
+    SOL_CHECK(age == 200.0);
+    // Excluding the winner falls through to the next best.
+    SOL_REQUIRE(survey.bestRemembered(1, 1, 400.0, &market, &price, &age));
+    SOL_CHECK(market == 0);
+    SOL_CHECK(price == 30.0f);
+    SOL_CHECK(!survey.bestRemembered(9, 0, 400.0, &market, &price, &age));
+
+    // Staleness is a fact about the reading, not about the market.
+    SOL_CHECK(!survey.isStale(*survey.remembered(2), 400.0));
+    SOL_CHECK(survey.isStale(*survey.remembered(2), 300.0 + survey.params().intelStaleSeconds + 1.0));
+}
+
 SOL_TEST(survey_save_load_round_trips)
 {
     const Galaxy galaxy = lineGalaxy();
@@ -265,6 +312,7 @@ SOL_TEST(survey_save_load_round_trips)
     loot.moduleId = "sol.scanner_mk2";
     SOL_CHECK(survey.setLoot(2, 0, loot));
     survey.setRoute({2, 1, 0});
+    survey.recordMarket(3, {11.0f, 42.0f}, 640.0);
 
     sol::core::BinaryWriter writer;
     survey.save(writer);
@@ -294,6 +342,10 @@ SOL_TEST(survey_save_load_round_trips)
     SOL_CHECK(restored.loot(2, 0)->cargo[0].units == 7.5f);
     SOL_REQUIRE(restored.route().size() == 3);
     SOL_CHECK(restored.nextHop() == 1);
+    SOL_REQUIRE(restored.remembered(3) != nullptr);
+    SOL_CHECK(restored.remembered(3)->takenAt == 640.0);
+    SOL_REQUIRE(restored.remembered(3)->prices.size() == 2);
+    SOL_CHECK(restored.remembered(3)->prices[1] == 42.0f);
 
     // A mismatched layout is rejected rather than half-read (economy rule).
     GalaxyParams biggerParams;

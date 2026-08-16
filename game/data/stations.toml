@@ -1,10 +1,22 @@
 # Station archetypes: placement weights per region tier feed the galaxy
-# generator; produces/consumes ("commodity:units_per_second") feed the
-# market sim. Phase 8f deepened the old production triangle into a chain -
-# food -> mines, ore -> refineries, metal -> factories, machinery -> farms -
-# so raw ore has a buyer of its own and the player's mining feeds it.
-# refine_input/refine_output give an archetype the player-facing refinery
-# service (hand over ore, come back for metal).
+# generator; the rate lists feed the market sim.
+#
+# Inputs come in two kinds (Phase 8g), and the split is what makes the chain
+# a chain without letting it deadlock:
+#   feedstock - the thing the station transforms. Production is throttled by
+#               how much of it is on hand, so a refinery with no ore makes no
+#               metal and a shortage travels down the chain.
+#   consumes  - upkeep. Burned regardless, never gates production. The
+#               production graph is a cycle (food -> ore -> metal ->
+#               machinery -> food), so if every input gated output a single
+#               empty link could seize the whole galaxy permanently.
+# produces_from = "field" means the output comes out of the ground rather
+# than off anyone's dock: a Mining Outpost draws ore from the asteroid fields
+# in its own system, so a system with no rock supports no mine.
+#
+# The rates below are sized against what the trader fleet can actually move
+# (see EconomyParams): roughly 50 units/s of galaxy-wide demand against ~110
+# units/s of hauling capacity.
 
 [[station]]
 id = "sol.station_agri"
@@ -12,8 +24,8 @@ name = "Agricultural Station"
 weight_core = 1.0
 weight_frontier = 1.5
 weight_fringe = 0.5
-produces = ["sol.food:3.0"]
-consumes = ["sol.machinery:0.5"]
+produces = ["sol.food:0.34"]
+consumes = ["sol.machinery:0.16"]
 
 [[station]]
 id = "sol.station_mine"
@@ -21,8 +33,9 @@ name = "Mining Outpost"
 weight_core = 0.5
 weight_frontier = 1.5
 weight_fringe = 2.0
-produces = ["sol.ore:2.5"]
-consumes = ["sol.food:1.2"]
+produces = ["sol.ore:0.45"]
+produces_from = "field"
+consumes = ["sol.food:0.10"]
 
 [[station]]
 id = "sol.station_refinery"
@@ -30,8 +43,9 @@ name = "Refinery"
 weight_core = 1.2
 weight_frontier = 1.2
 weight_fringe = 0.6
-produces = ["sol.metal:1.4"]
-consumes = ["sol.ore:2.4", "sol.food:0.5"]
+produces = ["sol.metal:0.30"]
+feedstock = ["sol.ore:0.55"]
+consumes = ["sol.food:0.08"]
 refine_input = "sol.ore"
 refine_output = "sol.metal"
 
@@ -41,5 +55,6 @@ name = "Fabricator Yard"
 weight_core = 2.0
 weight_frontier = 1.0
 weight_fringe = 0.3
-produces = ["sol.machinery:1.5"]
-consumes = ["sol.metal:1.6", "sol.food:0.8"]
+produces = ["sol.machinery:0.18"]
+feedstock = ["sol.metal:0.26"]
+consumes = ["sol.food:0.10"]

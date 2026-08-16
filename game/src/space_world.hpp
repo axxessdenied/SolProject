@@ -541,6 +541,29 @@ public:
     // Collects finished metal into the hold; returns the units taken.
     float collectRefined();
 
+    // --- Market intel (Phase 8g) ---
+    // The counterpart to 8e's survey ledger: there the player sells what they
+    // found, here they buy what someone else found.
+    [[nodiscard]] double worldSeconds() const { return m_worldSeconds; }
+    // Cost of the intel package sold at the docked station, and how many
+    // markets it would actually add or refresh.
+    [[nodiscard]] double intelPrice() const;
+    [[nodiscard]] std::uint32_t intelMarketCount() const;
+    // Buys it: writes a price snapshot for every market inside the radius.
+    // False with a logged reason when refused (not docked, or too poor).
+    bool buyMarketIntel(std::string* outError = nullptr);
+    // Snapshots the docked station's own prices into memory. Called on dock:
+    // standing on the pad is the one reading you never have to pay for.
+    void recordDockedMarket();
+    // Best remembered price for a commodity away from the docked station.
+    // False when the player has never seen it anywhere else.
+    bool bestKnownPrice(std::uint32_t commodity, std::uint32_t* outSystem, float* outPrice,
+                        double* outAge, bool* outStale) const;
+    // How much of its nominal output the docked station is managing, and what
+    // is holding it back (empty when nothing is).
+    [[nodiscard]] float marketSatisfaction(std::uint32_t market) const;
+    [[nodiscard]] const char* marketLimiting(std::uint32_t market) const;
+
     // Hardcore/ironman (decisions/007): set at new game, carried by the save.
     void setHardcore(bool hardcore) { m_hardcore = hardcore; }
     [[nodiscard]] bool hardcore() const { return m_hardcore; }
@@ -878,11 +901,29 @@ private:
     bool m_hardcoreDeathPending = false;
     std::uint32_t m_startSystem = 0; // new-game system; hardcore respawn
 
+    // Mining outposts eat real rock (Phase 8g). An extracting archetype's
+    // output is drawn from the asteroid fields in its own system, through the
+    // same MiningSim accounting the player's beam uses — so an outpost and
+    // the player are competing over one finite thing. Installed into
+    // Economy::tick as an abstract source, which is what keeps sim::Economy
+    // from having to know sim::MiningSim exists.
+    struct MiningFeedstock final : sol::sim::FeedstockSource
+    {
+        sol::sim::MiningSim* mining = nullptr;
+        const sol::sim::Galaxy* galaxy = nullptr;
+        const sol::sim::Economy* economy = nullptr;
+        float draw(std::uint32_t market, std::uint32_t commodity, float units) override;
+    };
+
     std::uint64_t m_universeSeed = 0;
+    // Sim seconds since the run began; market intel is stamped against it, so
+    // it has to survive a save like any other world state.
+    double m_worldSeconds = 0.0;
     sol::sim::Galaxy m_galaxy;
     sol::sim::GalaxyParams m_galaxyParams; // kept for regeneration on load
     sol::sim::Economy m_economy;
     sol::sim::EconomyParams m_economyParams; // kept for re-init on load
+    MiningFeedstock m_feedstock;
     std::vector<GameFaction> m_factionTable; // majors + clans, sim order
     sol::sim::FactionSim m_factionSim;
     sol::sim::MissionSim m_missions;

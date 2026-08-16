@@ -101,6 +101,18 @@ struct SignalLoot
 [[nodiscard]] bool validSignalLoot(const SignalLoot& loot, std::uint32_t commodityCount,
                                    std::uint32_t maxCargoStacks);
 
+// What the player remembers about one market's prices, and when they looked
+// (Phase 8g). This lives here rather than in Economy because Economy holds
+// no player state at all — buy()/sell() are pure market operations — and
+// that property is worth keeping; SurveySim is already the home of "what the
+// player knows about the galaxy".
+struct MarketMemory
+{
+    std::uint32_t market = 0;
+    std::vector<float> prices; // mid price per commodity, as seen
+    double takenAt = 0.0;      // sim seconds when the snapshot was taken
+};
+
 struct SurveyParams
 {
     // Signals per system, [min, max] by region tier (Core, Frontier, Fringe):
@@ -121,6 +133,11 @@ struct SurveyParams
     float regionMultiplier[3] = {1.0f, 2.0f, 3.5f};
     float firstDiscoveryBonus = 1.6f; // systems with no station at all
     std::uint32_t maxCargoStacks = 3; // loot validation cap
+    // Market intel (Phase 8g). Past this age a remembered price is shown
+    // greyed: it is still the best guess anyone has, but the market has moved
+    // since and saying so is what keeps bought intel worth re-buying instead
+    // of being a one-time unlock.
+    double intelStaleSeconds = 900.0;
 };
 
 class SurveySim
@@ -177,6 +194,19 @@ public:
     // Sells everything and returns the credits (the caller pays the player).
     double sellLedger();
 
+    // --- Market intel (Phase 8g) ---
+    // Writes (or refreshes) what the player knows about a market's prices.
+    void recordMarket(std::uint32_t market, const std::vector<float>& prices, double now);
+    [[nodiscard]] const std::vector<MarketMemory>& marketMemory() const { return m_marketMemory; }
+    [[nodiscard]] const MarketMemory* remembered(std::uint32_t market) const;
+    [[nodiscard]] bool isStale(const MarketMemory& memory, double now) const;
+    // The best remembered price for a commodity anywhere but `excludeMarket`,
+    // with the market it was seen at and how old that reading is. Returns
+    // false when nothing is remembered. This is what the station Trade tab's
+    // "elsewhere" column and the galaxy map's trade overlay both read.
+    bool bestRemembered(std::uint32_t commodity, std::uint32_t excludeMarket, double now,
+                        std::uint32_t* outMarket, float* outPrice, double* outAge) const;
+
     // --- Plotted route (galaxy map; no auto-jump, decisions/005) ---
     // Stored as the remaining systems including the current one at index 0.
     void setRoute(std::vector<std::uint32_t> route);
@@ -224,6 +254,7 @@ private:
     std::vector<std::uint8_t> m_signalCounts; // per system, from the seed
     std::vector<SurveyEntry> m_ledger;
     std::vector<LootRecord> m_loot;
+    std::vector<MarketMemory> m_marketMemory; // sorted by market index
     std::vector<std::uint32_t> m_route;
     std::uint64_t m_seed = 0;
 };

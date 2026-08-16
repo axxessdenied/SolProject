@@ -369,6 +369,73 @@ double SurveySim::sellLedger()
     return total;
 }
 
+void SurveySim::recordMarket(std::uint32_t market, const std::vector<float>& prices, double now)
+{
+    if (prices.size() != m_commodityCount) {
+        return; // a snapshot that doesn't match the commodity table is no snapshot
+    }
+    const auto at = std::lower_bound(
+        m_marketMemory.begin(), m_marketMemory.end(), market,
+        [](const MarketMemory& record, std::uint32_t value) { return record.market < value; });
+    if (at != m_marketMemory.end() && at->market == market) {
+        at->prices = prices;
+        at->takenAt = now;
+        return;
+    }
+    // Sorted by market index so the save order is stable and a lookup is a
+    // binary search, the same rule the depletion store follows.
+    m_marketMemory.insert(at, MarketMemory{.market = market, .prices = prices, .takenAt = now});
+}
+
+const MarketMemory* SurveySim::remembered(std::uint32_t market) const
+{
+    const auto at = std::lower_bound(
+        m_marketMemory.begin(), m_marketMemory.end(), market,
+        [](const MarketMemory& record, std::uint32_t value) { return record.market < value; });
+    return at != m_marketMemory.end() && at->market == market ? &*at : nullptr;
+}
+
+bool SurveySim::isStale(const MarketMemory& memory, double now) const
+{
+    return now - memory.takenAt > m_params.intelStaleSeconds;
+}
+
+bool SurveySim::bestRemembered(std::uint32_t commodity, std::uint32_t excludeMarket, double now,
+                               std::uint32_t* outMarket, float* outPrice, double* outAge) const
+{
+    if (commodity >= m_commodityCount) {
+        return false;
+    }
+    bool found = false;
+    float best = 0.0f;
+    std::uint32_t bestMarket = 0;
+    double bestAge = 0.0;
+    for (const MarketMemory& memory : m_marketMemory) {
+        if (memory.market == excludeMarket || commodity >= memory.prices.size()) {
+            continue;
+        }
+        const float value = memory.prices[commodity];
+        if (!found || value > best) {
+            found = true;
+            best = value;
+            bestMarket = memory.market;
+            bestAge = now - memory.takenAt;
+        }
+    }
+    if (found) {
+        if (outMarket != nullptr) {
+            *outMarket = bestMarket;
+        }
+        if (outPrice != nullptr) {
+            *outPrice = best;
+        }
+        if (outAge != nullptr) {
+            *outAge = bestAge;
+        }
+    }
+    return found;
+}
+
 void SurveySim::setRoute(std::vector<std::uint32_t> route)
 {
     m_route.clear();
@@ -419,6 +486,14 @@ void SurveySim::save(core::BinaryWriter& writer) const
         }
         writer.write(record.loot.credits);
         writer.writeString(record.loot.moduleId);
+    }
+    writer.write(static_cast<std::uint32_t>(m_marketMemory.size()));
+    for (const MarketMemory& memory : m_marketMemory) {
+        writer.write(memory.market);
+        writer.write(memory.takenAt);
+        for (const float value : memory.prices) {
+            writer.write(value);
+        }
     }
     writer.write(static_cast<std::uint32_t>(m_route.size()));
     for (const std::uint32_t system : m_route) {
@@ -483,6 +558,22 @@ bool SurveySim::load(core::BinaryReader& reader)
         }
         if (!reader.read(record.loot.credits) || !reader.readString(record.loot.moduleId)) {
             return false;
+        }
+    }
+    std::uint32_t memoryCount = 0;
+    if (!reader.read(memoryCount)) {
+        return false;
+    }
+    m_marketMemory.resize(memoryCount);
+    for (MarketMemory& memory : m_marketMemory) {
+        if (!reader.read(memory.market) || !reader.read(memory.takenAt)) {
+            return false;
+        }
+        memory.prices.resize(m_commodityCount);
+        for (float& value : memory.prices) {
+            if (!reader.read(value)) {
+                return false;
+            }
         }
     }
     std::uint32_t routeCount = 0;
