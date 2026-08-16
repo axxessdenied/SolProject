@@ -258,6 +258,20 @@ void fillStationMissions(const SpaceWorld& world, std::deque<std::string>& text,
     panel.missionJournal = journalRows;
 }
 
+std::string formatAge(double seconds)
+{
+    char buffer[32];
+    if (seconds < 60.0) {
+        return "just now";
+    }
+    if (seconds < 3'600.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.0fm ago", seconds / 60.0);
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%.1fh ago", seconds / 3'600.0);
+    }
+    return buffer;
+}
+
 void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
 {
     using Kind = ui::StationAction::Kind;
@@ -305,6 +319,9 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
         break;
     case Kind::CollectRefined:
         (void)world.collectRefined();
+        break;
+    case Kind::BuyMarketIntel:
+        (void)world.buyMarketIntel();
         break;
     }
 }

@@ -296,6 +296,16 @@ int main(int argc, char** argv)
     std::string routeHopName;
     game::ProspectInfo prospect; // backs the HUD's mining readout per frame
     std::deque<std::string> stationText; // backs generated row text per frame
+    // Trade rows get their own buffer: fillStationOutfitting clears
+    // stationText, and it runs after the trade rows are built.
+    std::deque<std::string> tradeText;
+    // Commodity display names for the map's trade overlay. The roster is
+    // fixed for the run, so this is built once rather than every frame.
+    std::vector<const char*> commodityNames;
+    for (const std::string& id : world.commodityIds()) {
+        const sol::assets::CommodityDef* def = content.defs().findCommodity(id.c_str());
+        commodityNames.push_back(def != nullptr ? def->name.c_str() : id.c_str());
+    }
     std::deque<std::string> mapText;     // same, for the map screen
     SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).", world.entityCount(),
                  world.currentSystemName(), world.galaxy().systems.size());
@@ -740,23 +750,41 @@ int main(int argc, char** argv)
         if (showStation) {
             const std::uint32_t market = world.dockedMarket();
             tradeRows.clear();
+            tradeText.clear();
             for (std::uint32_t i = 0;
                  i < static_cast<std::uint32_t>(world.commodityIds().size()); ++i) {
                 const sol::assets::CommodityDef* def =
                     content.defs().findCommodity(world.commodityIds()[i].c_str());
-                tradeRows.push_back({
+                sol::ui::TradeRow row{
                     .name = def != nullptr ? def->name.c_str()
                                            : world.commodityIds()[i].c_str(),
                     .price = world.economy().price(market, i),
                     .stock = world.economy().stock(market, i),
                     .cargo = world.playerCargo(i),
-                });
+                };
+                // Market intel (Phase 8g): the best price this commodity has
+                // been seen at anywhere else, and how old that reading is.
+                std::uint32_t system = 0;
+                double age = 0.0;
+                bool stale = false;
+                if (world.bestKnownPrice(i, &system, &row.elsewherePrice, &age, &stale)) {
+                    row.hasElsewhere = true;
+                    row.elsewhereStale = stale;
+                    row.elsewhereName = world.galaxy().systems[system].name.c_str();
+                    tradeText.push_back(game::formatAge(age));
+                    row.elsewhereAge = tradeText.back().c_str();
+                }
+                tradeRows.push_back(row);
             }
             stationPanel.trade.stationName = world.dockedStationName();
             stationPanel.trade.credits = world.playerCredits();
             stationPanel.trade.cargoUsed = world.playerCargoTotal();
             stationPanel.trade.cargoCapacity = world.playerCargoCapacity();
             stationPanel.trade.rows = tradeRows;
+            stationPanel.trade.intelMarkets = world.intelMarketCount();
+            stationPanel.trade.intelPrice = world.intelPrice();
+            stationPanel.trade.canBuyIntel = stationPanel.trade.intelMarkets > 0 &&
+                                             world.playerCredits() >= stationPanel.trade.intelPrice;
             game::fillStationOutfitting(world, content.defs(), stationText, stationPanel,
                                         moduleRows, weaponRows, crewCatalogRows, crewAboardRows,
                                         shipRows, fleetRows, factionRows);
@@ -812,6 +840,10 @@ int main(int argc, char** argv)
         // The map screen (Phase 8e) reads only what the player knows.
         sol::ui::MapPanel mapPanel;
         if (state == game::GameState::Map) {
+            // The trade overlay's commodity is view state the screen owns
+            // across frames; fillMapPanel reads it to decide what to color by.
+            mapPanel.tradeCommodity = mapScreen.tradeCommodity;
+            mapPanel.commodityNames = commodityNames;
             game::fillMapPanel(world, mapText, mapPanel, mapSystemRows, mapLaneRows,
                                mapMarkerRows);
         }
@@ -952,6 +984,11 @@ int main(int argc, char** argv)
         // Map clicks act on the world; engaging the autopilot also drops the
         // map, since the point of that button is to go there.
         if (state == game::GameState::Map) {
+            // The overlay picker is view state, so it is handled here rather
+            // than in executeMapAction, which acts on the world.
+            if (mapPanel.action.kind == sol::ui::MapAction::Kind::SetTradeCommodity) {
+                mapScreen.tradeCommodity = mapPanel.action.index;
+            }
             if (game::executeMapAction(world, mapPanel.action)) {
                 mapClosed = true;
             }

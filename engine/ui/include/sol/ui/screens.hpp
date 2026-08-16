@@ -103,6 +103,15 @@ struct TradeRow
     float price = 0.0f; // credits/unit right now
     float stock = 0.0f; // station stock, units
     float cargo = 0.0f; // in the player's hold, units
+    // Best price the player has seen anywhere else, and how old that reading
+    // is (Phase 8g). This column is what makes a trade route plannable from
+    // the pad instead of from memory — and standing on a refinery it is what
+    // finally says out loud that the metal is worth more three jumps away.
+    bool hasElsewhere = false;
+    float elsewherePrice = 0.0f;
+    const char* elsewhereName = ""; // system the reading came from
+    const char* elsewhereAge = "";  // prebuilt, e.g. "12m ago"
+    bool elsewhereStale = false;    // past the staleness threshold: shown dim
 };
 
 struct TradeAction
@@ -120,6 +129,11 @@ struct TradePanel
     float cargoCapacity = 0.0f;
     std::span<const TradeRow> rows;
     TradeAction action; // out
+    // The market-report offer (Phase 8g): what it costs, how many markets it
+    // covers, and whether the player can afford it.
+    double intelPrice = 0.0;
+    std::uint32_t intelMarkets = 0;
+    bool canBuyIntel = false;
 };
 
 // Catalog/inventory row for the outfitting, shipyard, and crew tabs (Phase 8a).
@@ -193,6 +207,14 @@ struct MapSystemRow
     bool hasOwner = false;
     bool current = false;
     bool onRoute = false;
+    // Trade overlay (Phase 8g), meaningful only when MapPanel::tradeCommodity
+    // is set. `tradeLevel` is where this price sits between the cheapest and
+    // dearest the player has seen, which is what makes a route legible at a
+    // glance instead of a table to read.
+    bool hasTrade = false;
+    float tradePrice = 0.0f;
+    float tradeLevel = 0.0f; // 0 = cheapest known, 1 = dearest known
+    bool tradeStale = false;
 };
 
 // A lane between two rows of the system list; drawn only when both ends are
@@ -236,6 +258,7 @@ struct MapAction
         SelectMarker, // index = marker row: becomes the nav target
         Autopilot,    // index = marker row: target it and engage
         Close,
+        SetTradeCommodity, // Phase 8g: index = commodity, or -1 to turn it off
     };
     Kind kind = Kind::None;
     int index = -1;
@@ -252,7 +275,12 @@ struct MapPanel
     std::span<const MapLaneRow> lanes;
     std::span<const MapMarkerRow> markers;
     int currentIndex = -1; // row of the system the player is in
-    MapAction action;      // out
+    // Trade overlay (Phase 8g): pick a commodity and the galaxy map colors
+    // every system the player has price data for. -1 is off.
+    std::span<const char* const> commodityNames;
+    int tradeCommodity = -1;
+    const char* tradeSummary = ""; // "Refined Metal: 12 markets known", prebuilt
+    MapAction action;              // out
 };
 
 // What the player clicked this frame; the game executes it.
@@ -275,6 +303,7 @@ struct StationAction
         SellSurveyData, // Phase 8e: the whole ledger, at any station
         OrderRefine,    // Phase 8f: units carries the order size
         CollectRefined,
+        BuyMarketIntel, // Phase 8g: price lists for the markets in reach
     };
     Kind kind = Kind::None;
     const char* id = ""; // def id (module/weapon/ship/crew actions)

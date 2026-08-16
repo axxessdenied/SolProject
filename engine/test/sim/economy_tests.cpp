@@ -1,4 +1,5 @@
 #include <sol/sim/economy.hpp>
+#include <sol/sim/mining.hpp>
 #include <sol/sim/universe.hpp>
 
 #include <sol/core/serialize.hpp>
@@ -12,6 +13,7 @@ using sol::sim::Economy;
 using sol::sim::EconomyArchetype;
 using sol::sim::EconomyCommodity;
 using sol::sim::EconomyParams;
+using sol::sim::EconomyTrader;
 using sol::sim::Galaxy;
 using sol::sim::GateSpec;
 using sol::sim::StationSpec;
@@ -341,6 +343,224 @@ SOL_TEST(economy_spread_costs_a_round_trip)
     const TradeResult flatBought = flat.buy(0, 0, 100.0f);
     const TradeResult flatSold = flat.sell(0, 0, flatBought.units);
     SOL_CHECK(std::abs(flatSold.credits - flatBought.credits) < 1.0e-2f);
+}
+
+namespace {
+
+// The numbers game/data actually ships, mirrored here on purpose: this test
+// is the exit criterion for Phase 8g, and an exit criterion that reads its
+// own inputs from wherever the game happens to have moved them is not one.
+// If stations.toml or commodities.toml change, this changes with them and
+// the band below says whether the change was survivable.
+constexpr float kFoodPrice = 8.0f;
+constexpr float kOrePrice = 12.0f;
+constexpr float kMetalPrice = 32.0f;
+constexpr float kMachineryPrice = 52.0f;
+
+enum Commodity : std::uint32_t
+{
+    Food = 0,
+    Ore,
+    Metal,
+    Machinery,
+    CommodityCount,
+};
+
+enum Archetype : std::uint32_t
+{
+    Agri = 0,
+    Mine,
+    Refinery,
+    Factory,
+};
+
+[[nodiscard]] Galaxy shippedGalaxy()
+{
+    sol::sim::GalaxyParams params;
+    params.seed = 1701; // the seed every phase has been verified against
+    params.factionCount = 5;
+    params.stationRules = {
+        {{1.0f, 1.5f, 0.5f}}, // agri
+        {{0.5f, 1.5f, 2.0f}}, // mine
+        {{0.4f, 1.6f, 1.7f}}, // refinery: sited out where the rock is
+        {{2.0f, 1.0f, 0.3f}}, // factory
+    };
+    return sol::sim::generateGalaxy(params);
+}
+
+[[nodiscard]] EconomyParams shippedParams()
+{
+    EconomyParams params;
+    params.commodities.resize(CommodityCount);
+    params.commodities[Food].basePrice = kFoodPrice;
+    params.commodities[Ore].basePrice = kOrePrice;
+    params.commodities[Metal].basePrice = kMetalPrice;
+    params.commodities[Machinery].basePrice = kMachineryPrice;
+
+    const auto archetype = [](std::initializer_list<float> production,
+                              std::initializer_list<float> consumption,
+                              std::initializer_list<float> feedstock, bool extracts) {
+        EconomyArchetype out;
+        out.production = production;
+        out.consumption = consumption;
+        out.feedstock = feedstock;
+        // Sized to the commodity table so callers can index any of them; the
+        // sim itself reads short vectors as zero, but the test's reporting
+        // subscripts them directly.
+        out.production.resize(CommodityCount, 0.0f);
+        out.consumption.resize(CommodityCount, 0.0f);
+        out.feedstock.resize(CommodityCount, 0.0f);
+        out.extracts = extracts;
+        out.stockCapacity = 2'500.0f;
+        return out;
+    };
+    params.archetypes.resize(4);
+    //                            food   ore  metal  mach
+    params.archetypes[Agri] = archetype({0.26f, 0, 0, 0}, {0, 0, 0, 0.11f}, {}, false);
+    params.archetypes[Mine] = archetype({0, 0.28f, 0, 0}, {0.05f, 0, 0, 0}, {}, true);
+    params.archetypes[Refinery] =
+        archetype({0, 0, 0.11f, 0}, {0.035f, 0, 0, 0}, {0, 0.17f, 0, 0}, false);
+    params.archetypes[Factory] =
+        archetype({0, 0, 0, 0.12f}, {0.05f, 0, 0, 0}, {0, 0, 0.15f, 0}, false);
+    return params;
+}
+
+// Mines draw from the rock in their own system, exactly as the game wires it.
+struct FieldSource final : sol::sim::FeedstockSource
+{
+    sol::sim::MiningSim* mining = nullptr;
+    const Galaxy* galaxy = nullptr;
+    const Economy* economy = nullptr;
+
+    float draw(std::uint32_t market, std::uint32_t commodity, float units) override
+    {
+        const std::uint32_t system = economy->markets()[market].systemIndex;
+        return mining->drawFromSystem(*galaxy, system, commodity, units);
+    }
+};
+
+} // namespace
+
+SOL_TEST(economy_shipped_rates_hold_a_steady_state)
+{
+    // The Phase 8g exit criterion, as arithmetic rather than an impression:
+    // left alone for hours, nothing may be pinned empty or pinned full
+    // galaxy-wide and the total quantity of goods must hold steady. The 8c
+    // finding ("the hour-old economy runs ore and food dry near the core")
+    // was exactly this test failing, before there was one to fail.
+    //
+    // What it turns out to be sensitive to, in rough order of how much it
+    // hurt to learn: warehouse size against how often a hauler calls (a
+    // buffer smaller than the gap between visits starves the station and
+    // throttles its neighbours), fleet size from *above* as well as below
+    // (surplus haulers hoard rather than idle), and production run a little
+    // ahead of consumption so a glut cannot ratchet the whole chain down.
+    const Galaxy galaxy = shippedGalaxy();
+    const EconomyParams params = shippedParams();
+    Economy economy;
+    economy.initialize(galaxy, params, 1701);
+
+    sol::sim::MiningParams miningParams;
+    miningParams.ores = {sol::sim::OreEntry{.commodity = Ore, .weight = {1.0f, 1.0f, 1.0f}}};
+    sol::sim::MiningSim mining;
+    mining.initialize(galaxy, miningParams, CommodityCount, 1701);
+
+    FieldSource source;
+    source.mining = &mining;
+    source.galaxy = &galaxy;
+    source.economy = &economy;
+
+    // Total goods held anywhere — in markets and in transit. If the economy
+    // is stable this is flat; the failure mode this whole test exists to
+    // catch is a slow ratchet downward, which no snapshot of one moment
+    // would ever show.
+    const auto goodsInTheGalaxy = [&]() {
+        double total = 0.0;
+        for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+            for (std::uint32_t c = 0; c < CommodityCount; ++c) {
+                total += economy.stock(m, c);
+            }
+        }
+        for (const EconomyTrader& trader : economy.traders()) {
+            total += trader.cargo;
+        }
+        return total;
+    };
+
+    double afterFirstHour = 0.0;
+    // Four hours, not one: every arrangement of these numbers looks healthy
+    // for the first hour, and the ones that are actually broken only show it
+    // over the next several. Four is where every failure met during tuning
+    // had become unmistakable, and it keeps this (a debug-build sim of a
+    // whole galaxy) from dominating the suite's runtime.
+    for (int second = 0; second < 14'400; ++second) {
+        economy.tick(galaxy, 1.0, &source);
+        mining.tick(1.0);
+        if (second == 3'600) {
+            afterFirstHour = goodsInTheGalaxy();
+        }
+    }
+    const double afterFourHours = goodsInTheGalaxy();
+
+    // Per-commodity fill across every market in the galaxy. "Pinned" is
+    // counted only where it means something: a station starved of an input it
+    // actually needs, or a producer with nowhere left to put its output. A
+    // Fabricator Yard holding no ore is not a symptom — it is a station with
+    // no interest in ore, and counting it would drown the real signal.
+    for (std::uint32_t c = 0; c < CommodityCount; ++c) {
+        double stock = 0.0;
+        double capacity = 0.0;
+        std::uint32_t starved = 0;
+        std::uint32_t wants = 0;
+        std::uint32_t glutted = 0;
+        std::uint32_t makes = 0;
+        for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+            const float units = economy.stock(m, c);
+            const float cap = economy.capacityOf(m);
+            stock += units;
+            capacity += cap;
+            const EconomyArchetype& archetype =
+                params.archetypes[economy.markets()[m].archetype];
+            const bool needs = archetype.feedstock[c] > 0.0f || archetype.consumption[c] > 0.0f;
+            const bool produces = archetype.production[c] > 0.0f;
+            wants += needs ? 1u : 0u;
+            makes += produces ? 1u : 0u;
+            starved += needs && units <= cap * 0.01f ? 1u : 0u;
+            glutted += produces && units >= cap * 0.99f ? 1u : 0u;
+        }
+        const double fill = capacity > 0.0 ? stock / capacity : 0.0;
+        SOL_CHECK(fill > 0.15);
+        SOL_CHECK(fill < 0.85);
+        // Local extremes are the economy working; most of the galaxy at a
+        // stop is the economy broken.
+        SOL_CHECK(starved <= wants / 4);
+        SOL_CHECK(glutted <= makes / 4);
+    }
+
+    // No slow leak. Everything the traders are carrying counts as still in
+    // the galaxy, so this only moves when goods are made or consumed — and
+    // a healthy economy makes about as much as it burns.
+    SOL_CHECK(afterFourHours > afterFirstHour * 0.9);
+    SOL_CHECK(afterFourHours < afterFirstHour * 1.1);
+
+    // The chain has to have actually run: metal and machinery exist only if
+    // ore reached a refinery and metal reached a factory.
+    double metal = 0.0;
+    double machinery = 0.0;
+    for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+        metal += economy.stock(m, Metal);
+        machinery += economy.stock(m, Machinery);
+    }
+    SOL_CHECK(metal > 0.0);
+    SOL_CHECK(machinery > 0.0);
+
+    // And the rock is still there: an hour of NPC mining must not strip the
+    // galaxy, which is what regrowth is for.
+    float ground = 0.0f;
+    for (std::uint32_t s = 0; s < galaxy.systems.size(); ++s) {
+        ground += mining.systemStock(galaxy, s, Ore);
+    }
+    SOL_CHECK(ground > 0.0f);
 }
 
 SOL_TEST(economy_market_lookup_matches_a_scan)

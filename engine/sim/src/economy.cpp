@@ -89,6 +89,7 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
     }
 
     m_tickPrices.assign(m_markets.size() * commodityCount, 0.0f);
+    m_inbound.assign(m_markets.size() * commodityCount, 0.0f);
     m_satisfaction.assign(m_markets.size(), 1.0f);
     m_limiting.assign(m_markets.size(), kNoCommodity);
     refreshTickPrices();
@@ -170,13 +171,34 @@ float Economy::tickPrice(std::uint32_t market, std::uint32_t commodity) const
     return m_tickPrices[static_cast<std::size_t>(market) * m_commodityCount + commodity];
 }
 
+void Economy::refreshMarketPrices(std::uint32_t market)
+{
+    float* row = m_tickPrices.data() + static_cast<std::size_t>(market) * m_commodityCount;
+    for (std::uint32_t c = 0; c < m_commodityCount; ++c) {
+        row[c] = price(market, c);
+    }
+}
+
+float Economy::inbound(std::uint32_t market, std::uint32_t commodity) const
+{
+    return m_inbound[static_cast<std::size_t>(market) * m_commodityCount + commodity];
+}
+
+void Economy::refreshInbound()
+{
+    std::fill(m_inbound.begin(), m_inbound.end(), 0.0f);
+    for (const EconomyTrader& trader : m_traders) {
+        if (trader.phase == TraderPhase::InTransit && trader.cargo > 0.0f) {
+            m_inbound[static_cast<std::size_t>(trader.market) * m_commodityCount
+                      + trader.commodity] += trader.cargo;
+        }
+    }
+}
+
 void Economy::refreshTickPrices()
 {
     for (std::uint32_t m = 0; m < m_markets.size(); ++m) {
-        float* row = m_tickPrices.data() + static_cast<std::size_t>(m) * m_commodityCount;
-        for (std::uint32_t c = 0; c < m_commodityCount; ++c) {
-            row[c] = price(m, c);
-        }
+        refreshMarketPrices(m);
     }
 }
 
@@ -279,19 +301,40 @@ void Economy::produce(double dt, FeedstockSource* source)
         }
         const EconomyArchetype& archetype = m_params.archetypes[market.archetype];
 
-        // How much of its nominal output the station can actually make: the
-        // scarcest feedstock decides, and a station with none runs flat out.
+        // How much of its nominal output the station can actually make. Two
+        // things hold it back and both scale the *whole* station, because a
+        // production line runs or it doesn't:
+        //   - the scarcest feedstock (a station with none runs flat out), and
+        //   - the fullest warehouse. A station with nowhere to put its output
+        //     throttles back rather than making it and throwing it away —
+        //     without which a glutted mining outpost would go on tearing rock
+        //     out of the ground forever, and a glutted refinery would go on
+        //     burning ore for nothing.
         float ratio = 1.0f;
         std::uint32_t limiting = kNoCommodity;
         for (std::uint32_t c = 0; c < market.stock.size(); ++c) {
             const float wanted = rateAt(archetype.feedstock, c) * step;
-            if (wanted <= 0.0f) {
-                continue;
+            if (wanted > 0.0f) {
+                const float have = std::min(1.0f, market.stock[c] / wanted);
+                if (have < ratio) {
+                    ratio = have;
+                    limiting = c;
+                }
             }
-            const float have = std::min(1.0f, market.stock[c] / wanted);
-            if (have < ratio) {
-                ratio = have;
-                limiting = c;
+            const float makes = rateAt(archetype.production, c) * step;
+            if (makes > 0.0f) {
+                const float headroom =
+                    std::max(0.0f, archetype.stockCapacity - market.stock[c]);
+                // Ease off across the top of the warehouse rather than
+                // slamming shut when it is exactly full.
+                const float band = archetype.stockCapacity * m_params.outputTaperFraction;
+                const float room =
+                    band > 0.0f ? core::clamp(headroom / band, 0.0f, 1.0f)
+                                : std::min(1.0f, headroom / makes);
+                if (room < ratio) {
+                    ratio = room;
+                    limiting = c;
+                }
             }
         }
 
@@ -340,6 +383,7 @@ void Economy::step(const Galaxy& galaxy, double dt, FeedstockSource* source)
     // their inner loop a flat array read instead of a price() call per
     // market per commodity.
     refreshTickPrices();
+    refreshInbound();
 
     for (EconomyTrader& trader : m_traders) {
         switch (trader.phase) {
@@ -349,10 +393,18 @@ void Economy::step(const Galaxy& galaxy, double dt, FeedstockSource* source)
         case TraderPhase::InTransit:
             trader.travelRemaining -= dt;
             if (trader.travelRemaining <= 0.0) {
-                // Arrive and sell the haul (whatever the market can absorb;
-                // any overflow is jettisoned — cheap and rare).
-                (void)sell(trader.market, trader.commodity, trader.cargo);
-                trader.cargo = 0.0f;
+                // Arrive and sell what the market can absorb. Whatever will
+                // not fit stays in the hold: a full warehouse is a reason to
+                // carry on somewhere else, not a reason to tip the cargo into
+                // space. (It used to be jettisoned, on the theory that this
+                // was rare. With a fleet this size it is not rare at all —
+                // traders converge on the same starved market, the first few
+                // fill it, and the rest destroyed their entire hold on
+                // arrival. That is a galaxy-wide leak of goods, and it drains
+                // every market in the game given a few hours.)
+                const TradeResult sold = sell(trader.market, trader.commodity, trader.cargo);
+                refreshMarketPrices(trader.market); // same reason as the buy side
+                trader.cargo = std::max(0.0f, trader.cargo - sold.units);
                 trader.phase = TraderPhase::Idle;
             }
             break;
@@ -366,6 +418,39 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
     const StationMarket& here = m_markets[trader.market];
     const std::uint8_t* hopRow =
         m_hops.data() + static_cast<std::size_t>(here.systemIndex) * m_systemCount;
+
+    // Still holding something the last stop could not take: shift it before
+    // thinking about anything else. Room may have opened here since arrival;
+    // if not, carry it to the best-paying market in reach.
+    if (trader.cargo > 0.0f) {
+        const TradeResult sold = sell(trader.market, trader.commodity, trader.cargo);
+        if (sold.units > 0.0f) {
+            refreshMarketPrices(trader.market);
+            trader.cargo -= sold.units;
+        }
+        if (trader.cargo > 0.0f) {
+            float bestPrice = tickPrice(trader.market, trader.commodity);
+            std::uint32_t bestDestination = kInvalid;
+            for (std::uint32_t m = 0; m < m_markets.size(); ++m) {
+                if (m == trader.market || hopRow[m_markets[m].systemIndex] == kUnreachable) {
+                    continue;
+                }
+                const float value = tickPrice(m, trader.commodity);
+                if (value > bestPrice) {
+                    bestPrice = value;
+                    bestDestination = m;
+                }
+            }
+            if (bestDestination != kInvalid) {
+                const std::uint8_t hops = hopRow[m_markets[bestDestination].systemIndex];
+                trader.market = bestDestination;
+                trader.phase = TraderPhase::InTransit;
+                trader.travelRemaining = m_params.traderLegSeconds * 2.0
+                                         + static_cast<double>(hops) * m_params.jumpSeconds;
+            }
+            return; // laden either way: no room aboard for a new haul
+        }
+    }
 
     // Best profit-per-second over every commodity and reachable market. The
     // margin is measured across the spread — buy high, sell low — so a haul
@@ -386,15 +471,35 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
         const double travelSeconds =
             m_params.traderLegSeconds * 2.0 +
             static_cast<double>(hops) * m_params.jumpSeconds;
+        const float destinationCapacity = capacityOf(m);
         for (std::uint32_t c = 0; c < m_params.commodities.size(); ++c) {
             const float available = std::min(m_params.traderCargo, here.stock[c]);
             if (available <= 1.0f) {
                 continue;
             }
+            // Room for this load once everything already flying there has
+            // landed. Without this the whole fleet answers the same shortage
+            // at once and most of them arrive to a warehouse that filled up
+            // while they were in the air.
+            const float room =
+                destinationCapacity - m_markets[m].stock[c] - inbound(m, c);
+            if (room < available) {
+                continue;
+            }
+            const float cost = tickPrice(trader.market, c) * buyScale * available;
+            if (!(cost > 0.0f)) {
+                continue;
+            }
             const float profit = (tickPrice(m, c) * sellScale -
                                   tickPrice(trader.market, c) * buyScale) *
                                  available;
-            const float rate = profit / static_cast<float>(travelSeconds);
+            // Return on capital per second, not credits per second. A hauler
+            // has to *buy* what it carries, so a hold of machinery ties up
+            // roughly ten times the money a hold of ore does — ranking by
+            // absolute profit quietly means nobody ever hauls anything cheap,
+            // however badly it is needed. That is what left mines sitting at
+            // capacity while refineries three jumps away sat empty.
+            const float rate = profit / (cost * static_cast<float>(travelSeconds));
             if (rate > bestRate) {
                 bestRate = rate;
                 bestMarket = m;
@@ -438,6 +543,12 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
 
     const TradeResult bought =
         buy(trader.market, bestCommodity, m_params.traderCargo);
+    // The next trader to think this tick has to see what this one just did,
+    // or the whole fleet reads one stale snapshot and piles onto a single
+    // route together — two hundred traders behaving like one. Refreshing the
+    // row that moved keeps the inner loop a flat array read and restores the
+    // feedback that spreads them out.
+    refreshMarketPrices(trader.market);
     if (bought.units <= 0.0f) {
         return;
     }
@@ -445,6 +556,9 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
     trader.commodity = bestCommodity;
     trader.cargo = bought.units;
     trader.market = bestMarket;
+    // Visible to every trader that thinks after this one, this same tick.
+    m_inbound[static_cast<std::size_t>(bestMarket) * m_commodityCount + bestCommodity] +=
+        bought.units;
     trader.phase = TraderPhase::InTransit;
     trader.travelRemaining = m_params.traderLegSeconds * 2.0 +
                              static_cast<double>(hops) * m_params.jumpSeconds;

@@ -15,6 +15,13 @@ namespace {
     return text.back().c_str();
 }
 
+[[nodiscard]] std::string formatNumber(float value)
+{
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(value));
+    return buffer;
+}
+
 [[nodiscard]] std::string formatDistance(double meters)
 {
     char buffer[48];
@@ -92,6 +99,44 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
     const sim::SurveySim& survey = world.survey();
     const std::vector<std::uint32_t>& route = survey.route();
 
+    // Trade overlay (Phase 8g): the best remembered price per system for the
+    // selected commodity, and the range over the whole galaxy so each system
+    // can be placed inside it. Cheapest and dearest are what make the map
+    // readable — an absolute price means nothing without them.
+    const int tradeCommodity = panel.tradeCommodity;
+    std::vector<float> systemPrice(galaxy.systems.size(), 0.0f);
+    std::vector<std::uint8_t> systemHasPrice(galaxy.systems.size(), 0);
+    std::vector<std::uint8_t> systemStale(galaxy.systems.size(), 0);
+    float cheapest = 0.0f;
+    float dearest = 0.0f;
+    std::uint32_t knownMarkets = 0;
+    if (tradeCommodity >= 0) {
+        const auto commodity = static_cast<std::uint32_t>(tradeCommodity);
+        for (const sim::MarketMemory& memory : survey.marketMemory()) {
+            if (memory.market >= world.economy().markets().size()
+                || commodity >= memory.prices.size()) {
+                continue;
+            }
+            const std::uint32_t system = world.economy().markets()[memory.market].systemIndex;
+            const float price = memory.prices[commodity];
+            ++knownMarkets;
+            // A system can hold several markets; the map shows the best of
+            // them, which is the one a trader would actually use.
+            if (systemHasPrice[system] == 0 || price > systemPrice[system]) {
+                systemPrice[system] = price;
+                systemStale[system] =
+                    survey.isStale(memory, world.worldSeconds()) ? 1u : 0u;
+            }
+            systemHasPrice[system] = 1;
+            if (knownMarkets == 1 || price < cheapest) {
+                cheapest = price;
+            }
+            if (knownMarkets == 1 || price > dearest) {
+                dearest = price;
+            }
+        }
+    }
+
     for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
         const sim::SystemSpec& spec = galaxy.systems[i];
         const sim::KnowledgeState state = survey.knowledge(i);
@@ -127,7 +172,21 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
             }
             row.detail = store(text, std::move(detail));
         }
+        if (tradeCommodity >= 0 && systemHasPrice[i] != 0) {
+            row.hasTrade = true;
+            row.tradePrice = systemPrice[i];
+            row.tradeStale = systemStale[i] != 0;
+            const float span = dearest - cheapest;
+            row.tradeLevel = span > 1.0e-4f ? (systemPrice[i] - cheapest) / span : 0.5f;
+        }
         systemRows.push_back(row);
+    }
+    if (tradeCommodity >= 0) {
+        panel.tradeSummary = store(
+            text, knownMarkets == 0
+                      ? std::string("No price data yet - dock somewhere, or buy a market report")
+                      : std::to_string(knownMarkets) + " markets known: "
+                            + formatNumber(cheapest) + " - " + formatNumber(dearest) + " cr/unit");
     }
 
     for (const sim::GateLink& link : galaxy.links) {
@@ -234,6 +293,7 @@ bool executeMapAction(SpaceWorld& world, const ui::MapAction& action)
     switch (action.kind) {
     case Kind::None:
     case Kind::Close:
+    case Kind::SetTradeCommodity: // view state; main.cpp owns it
         break;
     case Kind::PlotRoute:
         if (action.index >= 0) {

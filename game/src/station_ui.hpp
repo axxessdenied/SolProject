@@ -34,6 +34,11 @@ void fillStationMissions(const SpaceWorld& world, std::deque<std::string>& text,
                          std::vector<sol::ui::MissionRow>& offerRows,
                          std::vector<sol::ui::MissionRow>& journalRows);
 
+// How long ago a market reading was taken, for the intel columns (Phase 8g):
+// "just now", "14m ago", "2h ago". Coarse on purpose — the number that
+// matters is the order of magnitude, not the second.
+[[nodiscard]] std::string formatAge(double seconds);
+
 // Executes the (at most one) station-panel click of this frame.
 void executeStationAction(SpaceWorld& world, const sol::ui::StationAction& action);
 

@@ -814,6 +814,181 @@ std::string listRefineJobs(GameContent& content)
     return lines.empty() ? std::string("(no refinery orders)") : lines;
 }
 
+// --- Economy coherence (Phase 8g) ---
+
+// The galaxy's books on one screen. The exit criteria for this phase are
+// stated against this report rather than against an impression, so it stays
+// in as a live tool rather than being scaffolding that gets deleted.
+std::string economyReport(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::Economy& economy = world.economy();
+    const std::size_t commodities = world.commodityIds().size();
+    if (commodities == 0 || economy.markets().empty()) {
+        return "(no economy)";
+    }
+
+    std::vector<double> stock(commodities, 0.0);
+    std::vector<double> capacity(commodities, 0.0);
+    std::vector<double> production(commodities, 0.0);
+    std::vector<double> consumption(commodities, 0.0);
+    std::vector<std::uint32_t> starved(commodities, 0);
+    std::vector<std::uint32_t> empty(commodities, 0);
+    std::vector<std::uint32_t> full(commodities, 0);
+    std::uint32_t throttled = 0;
+
+    for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+        const sol::sim::StationMarket& market = economy.markets()[m];
+        const float cap = economy.capacityOf(m);
+        if (economy.satisfaction(m) < 0.99f) {
+            ++throttled;
+        }
+        const sol::sim::EconomyArchetype* archetype =
+            market.archetype < economy.params().archetypes.size()
+                ? &economy.params().archetypes[market.archetype]
+                : nullptr;
+        for (std::uint32_t c = 0; c < commodities; ++c) {
+            const float units = economy.stock(m, c);
+            stock[c] += units;
+            capacity[c] += cap;
+            if (units <= cap * 0.01f) {
+                ++empty[c];
+            } else if (units >= cap * 0.99f) {
+                ++full[c];
+            }
+            if (archetype != nullptr) {
+                if (c < archetype->production.size()) {
+                    production[c] += archetype->production[c];
+                }
+                if (c < archetype->consumption.size()) {
+                    consumption[c] += archetype->consumption[c];
+                }
+                if (c < archetype->feedstock.size()) {
+                    consumption[c] += archetype->feedstock[c];
+                }
+            }
+            if (economy.limitingCommodity(m) == c) {
+                ++starved[c];
+            }
+        }
+    }
+
+    std::string lines;
+    char buffer[256];
+    for (std::uint32_t c = 0; c < commodities; ++c) {
+        const double fill = capacity[c] > 0.0 ? 100.0 * stock[c] / capacity[c] : 0.0;
+        std::snprintf(buffer, sizeof(buffer),
+                      "%-14s %5.1f%% full  prod %6.2f  use %6.2f  (%u empty, %u full, "
+                      "%u starved on it)",
+                      world.commodityIds()[c].c_str(), fill, production[c], consumption[c],
+                      empty[c], full[c], starved[c]);
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    std::snprintf(buffer, sizeof(buffer), "%zu markets, %u throttled by feedstock, %.0f s elapsed",
+                  economy.markets().size(), throttled, world.worldSeconds());
+    return lines + "\n" + buffer;
+}
+
+// A station's books: how much of its nominal output it is managing and what
+// is holding it back. Answers "why is this refinery not making anything".
+std::string feedstockReport(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    if (!world.isDocked()) {
+        return "(not docked)";
+    }
+    const std::uint32_t market = world.dockedMarket();
+    const char* limiting = world.marketLimiting(market);
+    char buffer[192];
+    std::snprintf(buffer, sizeof(buffer), "%s: running at %.0f%% of nominal%s%s",
+                  world.dockedStationName(),
+                  static_cast<double>(world.marketSatisfaction(market)) * 100.0,
+                  limiting[0] == '\0' ? "" : ", short of ", limiting);
+    return buffer;
+}
+
+// What is left in the ground in a system, which is what a mining outpost
+// there is actually living on.
+std::string fieldStock(GameContent& content, int systemIndex)
+{
+    SpaceWorld& world = content.world();
+    const auto system = systemIndex < 0
+                            ? world.currentSystemIndex()
+                            : static_cast<std::uint32_t>(systemIndex);
+    if (system >= world.galaxy().systems.size()) {
+        return "(no such system)";
+    }
+    std::string lines;
+    char buffer[192];
+    for (std::uint32_t c = 0; c < world.commodityIds().size(); ++c) {
+        const float units = world.mining().systemStock(world.galaxy(), system, c);
+        if (units <= 0.0f) {
+            continue;
+        }
+        std::snprintf(buffer, sizeof(buffer), "%s: %.0f units in the ground",
+                      world.commodityIds()[c].c_str(), static_cast<double>(units));
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    std::snprintf(buffer, sizeof(buffer), "%s: %u field(s), %zu rock(s) being worked",
+                  world.galaxy().systems[system].name.c_str(),
+                  world.mining().fieldCount(system), world.mining().depletionRecordCount());
+    return (lines.empty() ? std::string("(no rock here)") : lines) + "\n" + buffer;
+}
+
+std::string marketMemory(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    char buffer[256];
+    for (const sol::sim::MarketMemory& memory : world.survey().marketMemory()) {
+        if (memory.market >= world.economy().markets().size()) {
+            continue;
+        }
+        const std::uint32_t system = world.economy().markets()[memory.market].systemIndex;
+        std::string prices;
+        for (std::uint32_t c = 0; c < memory.prices.size(); ++c) {
+            std::snprintf(buffer, sizeof(buffer), "%s%s %.2f", prices.empty() ? "" : ", ",
+                          world.commodityIds()[c].c_str(),
+                          static_cast<double>(memory.prices[c]));
+            prices += buffer;
+        }
+        std::snprintf(buffer, sizeof(buffer), "%s (market %u), %.0f s ago: ",
+                      world.galaxy().systems[system].name.c_str(), memory.market,
+                      world.worldSeconds() - memory.takenAt);
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer) + prices;
+    }
+    return lines.empty() ? std::string("(no market data)") : lines;
+}
+
+bool buyMarketIntel(GameContent& content)
+{
+    return content.world().buyMarketIntel();
+}
+
+std::string bestPrice(GameContent& content, const char* commodityId)
+{
+    SpaceWorld& world = content.world();
+    for (std::uint32_t c = 0; c < world.commodityIds().size(); ++c) {
+        if (world.commodityIds()[c] != commodityId) {
+            continue;
+        }
+        std::uint32_t system = 0;
+        float price = 0.0f;
+        double age = 0.0;
+        bool stale = false;
+        if (!world.bestKnownPrice(c, &system, &price, &age, &stale)) {
+            return "(never seen it anywhere)";
+        }
+        char buffer[192];
+        std::snprintf(buffer, sizeof(buffer), "%s: %.2f at %s, %.0f s ago%s", commodityId,
+                      static_cast<double>(price),
+                      world.galaxy().systems[system].name.c_str(), age,
+                      stale ? " (stale)" : "");
+        return buffer;
+    }
+    return "(no such commodity)";
+}
+
 // Plots a gate route to a named system and returns the summary.
 std::string plotRoute(GameContent& content, const char* systemName)
 {
@@ -1393,6 +1568,15 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&orderRefine>("sol", "refine", this);
     m_vm.registerFunction<&collectRefined>("sol", "collect", this);
     m_vm.registerFunction<&listRefineJobs>("sol", "refine_jobs", this);
+    // Economy coherence (Phase 8g): the report the exit criteria are stated
+    // against, plus the read-outs that explain a station's or a system's
+    // books when the report says something is wrong.
+    m_vm.registerFunction<&economyReport>("sol", "economy_report", this);
+    m_vm.registerFunction<&feedstockReport>("sol", "feedstock", this);
+    m_vm.registerFunction<&fieldStock>("sol", "field_stock", this);
+    m_vm.registerFunction<&marketMemory>("sol", "market_memory", this);
+    m_vm.registerFunction<&buyMarketIntel>("sol", "buy_intel", this);
+    m_vm.registerFunction<&bestPrice>("sol", "best_price", this);
 }
 
 bool GameContent::reloadDefs()

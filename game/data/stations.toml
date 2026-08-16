@@ -15,8 +15,13 @@
 # in its own system, so a system with no rock supports no mine.
 #
 # The rates below are sized against what the trader fleet can actually move
-# (see EconomyParams): roughly 50 units/s of galaxy-wide demand against ~110
-# units/s of hauling capacity.
+# (see EconomyParams), and every producer is deliberately run about a quarter
+# ahead of its customers. That slack is not waste, it is stability: a station
+# with nowhere to put its output stops producing, so an economy balanced to
+# the last decimal ratchets downward - one delivery arrives late, a producer
+# glutts, its output stops, the next link starves, and it never recovers.
+# Surplus means gluts are just cheap goods, which is what a trader wants
+# anyway.
 
 [[station]]
 id = "sol.station_agri"
@@ -24,8 +29,9 @@ name = "Agricultural Station"
 weight_core = 1.0
 weight_frontier = 1.5
 weight_fringe = 0.5
-produces = ["sol.food:0.34"]
-consumes = ["sol.machinery:0.16"]
+produces = ["sol.food:0.26"]
+consumes = ["sol.machinery:0.11"]
+stock_capacity = 2500
 
 [[station]]
 id = "sol.station_mine"
@@ -33,19 +39,26 @@ name = "Mining Outpost"
 weight_core = 0.5
 weight_frontier = 1.5
 weight_fringe = 2.0
-produces = ["sol.ore:0.45"]
+produces = ["sol.ore:0.28"]
 produces_from = "field"
-consumes = ["sol.food:0.10"]
+consumes = ["sol.food:0.05"]
+stock_capacity = 2500
 
+# Sited where the rock is, not where the customers are: raw ore is bulk and
+# cheap, so hauling it to the core costs more than it is worth, and the whole
+# ore leg jams when a mine's nearest buyer is five jumps away. Smelt at the
+# pit and ship the metal - which is compact, valuable, and what the core
+# factories actually want.
 [[station]]
 id = "sol.station_refinery"
 name = "Refinery"
-weight_core = 1.2
-weight_frontier = 1.2
-weight_fringe = 0.6
-produces = ["sol.metal:0.30"]
-feedstock = ["sol.ore:0.55"]
-consumes = ["sol.food:0.08"]
+weight_core = 0.4
+weight_frontier = 1.6
+weight_fringe = 1.7
+produces = ["sol.metal:0.11"]
+feedstock = ["sol.ore:0.17"]
+consumes = ["sol.food:0.035"]
+stock_capacity = 2500
 refine_input = "sol.ore"
 refine_output = "sol.metal"
 
@@ -55,6 +68,7 @@ name = "Fabricator Yard"
 weight_core = 2.0
 weight_frontier = 1.0
 weight_fringe = 0.3
-produces = ["sol.machinery:0.18"]
-feedstock = ["sol.metal:0.26"]
-consumes = ["sol.food:0.10"]
+produces = ["sol.machinery:0.12"]
+feedstock = ["sol.metal:0.15"]
+consumes = ["sol.food:0.05"]
+stock_capacity = 2500

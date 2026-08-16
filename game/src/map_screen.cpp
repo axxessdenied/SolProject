@@ -51,6 +51,31 @@ constexpr const char* const kTabLabels[MapScreenState::TabCount] = {"Galaxy", "S
     return {system.ownerColor.x, system.ownerColor.y, system.ownerColor.z, 1.0f};
 }
 
+// Trade overlay (Phase 8g): cheap is green, dear is red — you buy in the
+// green and sell in the red, which is the whole map in one sentence. A
+// system with no reading at all stays grey rather than pretending to be
+// average, and a stale reading is washed out because the market has moved
+// since the player looked.
+[[nodiscard]] Color tradeColor(const MapSystemRow& system)
+{
+    if (!system.hasTrade) {
+        return rgba(0x44505CFFu);
+    }
+    const float level = system.tradeLevel < 0.0f ? 0.0f
+                        : system.tradeLevel > 1.0f ? 1.0f
+                                                   : system.tradeLevel;
+    const Color cheap = rgba(0x69C48CFFu);
+    const Color dear = rgba(0xE0704CFFu);
+    Color color{cheap.r + (dear.r - cheap.r) * level, cheap.g + (dear.g - cheap.g) * level,
+                cheap.b + (dear.b - cheap.b) * level, 1.0f};
+    return system.tradeStale ? color.withAlpha(0.45f) : color;
+}
+
+[[nodiscard]] Color systemColor(const MapPanel& panel, const MapSystemRow& system)
+{
+    return panel.tradeCommodity >= 0 ? tradeColor(system) : ownerColor(system);
+}
+
 // Marker glyph colors: what a thing is, at a glance, without a legend.
 [[nodiscard]] Color markerColor(const UiContext& ui, const MapMarkerRow& marker)
 {
@@ -116,7 +141,7 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
             continue;
         }
         const Vec2 point = project(system.position);
-        const Color color = ownerColor(system);
+        const Color color = systemColor(panel, system);
         if (system.knowledge == MapKnowledge::Charted) {
             // Hollow: you know it is there and what it is called, no more.
             ui.drawList().addCircle(point, kNodeRadius, color.withAlpha(0.7f), 1.2f, 12);
@@ -219,11 +244,25 @@ void drawSystemList(UiContext& ui, const MapPanel& panel, const Rect& bounds,
         // A dot in the owner's color carries the faction without a column.
         ui.drawList().addRoundedRect({{marker.min.x + 3.0f, marker.min.y + kRowHeight * 0.5f - 4.0f},
                                       {marker.min.x + 11.0f, marker.min.y + kRowHeight * 0.5f + 4.0f}},
-                                     4.0f, ownerColor(system));
+                                     4.0f, systemColor(panel, system));
         if (ui.selectable(name, system.name, static_cast<int>(i) == state.selectedSystem)) {
             state.selectedSystem = static_cast<int>(i);
         }
-        if (system.current) {
+        // With the trade overlay up the right-hand tag is the price, because
+        // that is the thing being compared; without it, where you are and
+        // where you are going.
+        if (panel.tradeCommodity >= 0) {
+            if (system.hasTrade) {
+                char buffer[32] = {};
+                std::snprintf(buffer, sizeof(buffer), "%.2f",
+                              static_cast<double>(system.tradePrice));
+                clipped(ui, name, buffer, tradeColor(system), ui.theme().smallStyle,
+                        TextAlign::Right);
+            } else {
+                clipped(ui, name, "no data", ui.theme().textDisabled, ui.theme().smallStyle,
+                        TextAlign::Right);
+            }
+        } else if (system.current) {
             clipped(ui, name, "here", ui.theme().accent, ui.theme().smallStyle, TextAlign::Right);
         } else if (system.onRoute) {
             clipped(ui, name, "route", kLaneRoute, ui.theme().smallStyle, TextAlign::Right);
@@ -312,7 +351,31 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             || state.selectedSystem >= static_cast<int>(panel.systems.size())) {
             state.selectedSystem = panel.currentIndex;
         }
-        drawSystemList(ui, panel, listBounds, state);
+        // Trade overlay picker (Phase 8g), above the list: "Owners" is the
+        // map as it has always been, and each commodity recolors the galaxy
+        // by what the player knows it costs where.
+        Column listColumn(listBounds, 0.0f, ui.theme().spacing);
+        const Rect overlayRow = listColumn.row(kRowHeight);
+        {
+            Row cursor(overlayRow, 2.0f);
+            const float cellWidth =
+                (overlayRow.max.x - overlayRow.min.x - 2.0f
+                 * static_cast<float>(panel.commodityNames.size()))
+                / static_cast<float>(panel.commodityNames.size() + 1);
+            ui.pushId("overlay");
+            if (ui.selectable(cursor.cell(cellWidth), "Owners", panel.tradeCommodity < 0)) {
+                panel.action = {.kind = MapAction::Kind::SetTradeCommodity, .index = -1};
+            }
+            for (std::size_t c = 0; c < panel.commodityNames.size(); ++c) {
+                const bool on = panel.tradeCommodity == static_cast<int>(c);
+                if (ui.selectable(cursor.cell(cellWidth), panel.commodityNames[c], on)) {
+                    panel.action = {.kind = MapAction::Kind::SetTradeCommodity,
+                                    .index = static_cast<int>(c)};
+                }
+            }
+            ui.popId();
+        }
+        drawSystemList(ui, panel, listColumn.remaining(), state);
         drawGalaxyMap(ui, panel, mapBounds, state.selectedSystem);
 
         // Footer: what the selection is, and what can be done with it.
@@ -326,9 +389,12 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             state.selectedSystem >= 0 && state.selectedSystem < static_cast<int>(panel.systems.size())
                 ? &panel.systems[static_cast<std::size_t>(state.selectedSystem)]
                 : nullptr;
+        // With the overlay up the footer explains the color scale, which is
+        // the thing a player needs to read the map at all.
         clipped(ui, detailCell,
-                selected != nullptr && selected->detail[0] != '\0' ? selected->detail
-                                                                   : panel.routeSummary,
+                panel.tradeCommodity >= 0 ? panel.tradeSummary
+                : selected != nullptr && selected->detail[0] != '\0' ? selected->detail
+                                                                     : panel.routeSummary,
                 ui.theme().textDim);
         const bool plottable = selected != nullptr && !selected->current;
         if (ui.button(plotCell, "Plot Route", plottable)) {

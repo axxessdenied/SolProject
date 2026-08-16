@@ -67,17 +67,28 @@ struct EconomyParams
 {
     std::vector<EconomyCommodity> commodities;
     std::vector<EconomyArchetype> archetypes; // indexed by StationSpec::archetype
-    // The fleet has to be able to actually carry the galaxy's demand
-    // (Phase 8g). One trader delivers traderCargo per round trip of
-    // ~traderLegSeconds*2 + hops*jumpSeconds, so at these numbers it moves
-    // ~0.55 units/s and the fleet ~110 units/s against a galaxy that asks for
-    // roughly 50 — the old 40x50 moved ~10, which is why consumers drained to
-    // zero and stayed there whatever the archetype rates said.
-    std::uint32_t traderCount = 200;
-    float traderCargo = 120.0f;     // units per haul
+    // The fleet is sized to the galaxy's demand from *both* sides, and the
+    // upper bound is the surprising one. Too few and consumers drain to zero
+    // and stay there — that was the old 40x50, which moved about a twentieth
+    // of what the galaxy asked for. But too many is just as bad: a surplus
+    // hauler does not sit idle, it goes on buying and carrying things nobody
+    // needs, and its hold becomes a warehouse the economy cannot reach. At
+    // 260x200 the fleet permanently held a fifth of every good in the
+    // galaxy and the markets starved around it.
+    //
+    // One trader delivers traderCargo per round trip of
+    // ~traderLegSeconds*2 + hops*jumpSeconds. These numbers move roughly
+    // twice the ~36 units/s the galaxy consumes, and tie up well under a
+    // tenth of its goods doing it.
+    std::uint32_t traderCount = 120;
+    float traderCargo = 150.0f;     // units per haul
     double traderLegSeconds = 90.0; // in-system travel per endpoint
     double jumpSeconds = 20.0;      // per gate transit
-    std::uint32_t maxTradeJumps = 3;
+    // How far a hauler will look for a counterparty. Three was too short to
+    // connect the chain: mines cluster in the fringe and refineries in the
+    // core, so at three jumps a great deal of ore had no reachable buyer at
+    // all and simply piled up where it was dug.
+    std::uint32_t maxTradeJumps = 5;
     double tickInterval = 1.0;      // coarse tick, seconds
     // Price scale at empty (max) and full (min) stock; linear in between.
     float maxPriceScale = 2.0f;
@@ -87,6 +98,13 @@ struct EconomyParams
     // is indistinguishable from a good one and a round trip at one station is
     // free, so nothing makes a route worth flying rather than any other.
     float priceSpread = 0.05f;
+    // Over what fraction of its capacity, measured down from full, a station
+    // eases off rather than stopping dead. A hard stop at capacity makes the
+    // whole economy a ratchet: one late delivery glutts a producer, its
+    // output cuts to zero, the next link down starves, and nothing brings it
+    // back. Tapering gives every station a stable working level instead —
+    // stock settles where output matches what the haulers actually collect.
+    float outputTaperFraction = 0.35f;
 };
 
 // One station's market. Station identity is (system, station) in the galaxy;
@@ -186,6 +204,9 @@ private:
     void step(const Galaxy& galaxy, double dt, FeedstockSource* source);
     void produce(double dt, FeedstockSource* source);
     void refreshTickPrices();
+    void refreshMarketPrices(std::uint32_t market);
+    void refreshInbound();
+    [[nodiscard]] float inbound(std::uint32_t market, std::uint32_t commodity) const;
     void traderThink(const Galaxy& galaxy, EconomyTrader& trader);
     [[nodiscard]] float tickPrice(std::uint32_t market, std::uint32_t commodity) const;
 
@@ -205,6 +226,13 @@ private:
     // commodities) inner loop, which is what makes a fleet of a few hundred
     // traders affordable; their trades still clear at the live price.
     std::vector<float> m_tickPrices; // [market * commodityCount + commodity]
+    // Units already flying toward each market. A station with ten freighters
+    // inbound is not short any more, and a fleet that cannot see that piles
+    // onto the same shortage together, fills it, and arrives to find no room
+    // — which at this fleet size is the difference between a working economy
+    // and one that slowly grinds to a halt. Derived from the trader list, so
+    // it is rebuilt rather than saved.
+    std::vector<float> m_inbound; // [market * commodityCount + commodity]
     std::vector<float> m_satisfaction;
     std::vector<std::uint32_t> m_limiting;
     std::uint32_t m_systemCount = 0;

@@ -191,10 +191,15 @@ struct CatalogClick
 
 // --- Trade ---
 
+// Width of the "best price seen elsewhere" column (Phase 8g). It carries a
+// price, a system name, and an age, so it needs more room than a number.
+constexpr float kElsewhereWidth = 190.0f;
+
 struct TradeCells
 {
     Rect name;
     Rect price;
+    Rect elsewhere;
     Rect stock;
     Rect held;
     Rect buy;
@@ -209,6 +214,7 @@ struct TradeCells
     cells.buy = cursor.cellFromRight(kButtonWidth);
     cells.held = cursor.cellFromRight(kNumberWidth);
     cells.stock = cursor.cellFromRight(kNumberWidth);
+    cells.elsewhere = cursor.cellFromRight(kElsewhereWidth);
     cells.price = cursor.cellFromRight(kNumberWidth);
     cells.name = cursor.remaining();
     return cells;
@@ -237,6 +243,25 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
                  TextAlign::Right);
     }
 
+    // The market report (Phase 8g). 8e sells the player's survey data to the
+    // station; this is the same trade the other way round.
+    const Rect intelRow = outer.row(kRowHeight);
+    {
+        Row cursor(intelRow, theme.spacing);
+        char buffer[96] = {};
+        const Rect button = cursor.cellFromRight(kButtonWidth * 1.6f);
+        if (ui.button(inset(button, 2.0f), "Buy data", panel.trade.canBuyIntel)) {
+            panel.action = {.kind = StationAction::Kind::BuyMarketIntel};
+        }
+        if (panel.trade.intelMarkets > 0) {
+            std::snprintf(buffer, sizeof(buffer), "Market report: %u markets nearby, %.0f cr",
+                          panel.trade.intelMarkets, panel.trade.intelPrice);
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "No markets in reach to report on");
+        }
+        ui.label(cursor.remaining(), buffer, theme.textDim, theme.bodyStyle, TextAlign::Right);
+    }
+
     const Rect captionRow = outer.row(24.0f);
     const Rect view = outer.remaining();
     const float contentHeight = listHeight(ui, panel.trade.rows.size());
@@ -245,6 +270,8 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
         tradeCells(ui, {captionRow.min, {captionRow.max.x - barInset, captionRow.max.y}});
     clipped(ui, captions.name, "Commodity", theme.textDim, theme.smallStyle);
     clipped(ui, captions.price, "Price", theme.textDim, theme.smallStyle, TextAlign::Right);
+    clipped(ui, captions.elsewhere, "Best elsewhere", theme.textDim, theme.smallStyle,
+            TextAlign::Right);
     clipped(ui, captions.stock, "Stock", theme.textDim, theme.smallStyle, TextAlign::Right);
     clipped(ui, captions.held, "Held", theme.textDim, theme.smallStyle, TextAlign::Right);
 
@@ -265,6 +292,25 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
         clipped(ui, cells.name, goods.name, theme.textPrimary, theme.strongStyle);
         std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(goods.price));
         clipped(ui, cells.price, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
+
+        // Best price seen elsewhere. Green when it beats the local price by
+        // enough to be worth the trip, dim when the reading has gone stale —
+        // the market has moved since, and pretending otherwise would make
+        // bought intel a one-time unlock instead of something worth
+        // refreshing.
+        if (goods.hasElsewhere) {
+            std::snprintf(buffer, sizeof(buffer), "%.2f  %s  %s",
+                          static_cast<double>(goods.elsewherePrice), goods.elsewhereName,
+                          goods.elsewhereAge);
+            const bool worthIt = goods.elsewherePrice > goods.price * 1.15f;
+            const auto color = goods.elsewhereStale ? theme.textDim
+                               : worthIt            ? theme.positive
+                                                    : theme.textPrimary;
+            clipped(ui, cells.elsewhere, buffer, color, theme.smallStyle, TextAlign::Right);
+        } else {
+            clipped(ui, cells.elsewhere, "-", theme.textDim, theme.smallStyle, TextAlign::Right);
+        }
+
         std::snprintf(buffer, sizeof(buffer), "%.0f", static_cast<double>(goods.stock));
         clipped(ui, cells.stock, buffer, theme.textDim, theme.bodyStyle, TextAlign::Right);
         std::snprintf(buffer, sizeof(buffer), "%.0f", static_cast<double>(goods.cargo));

@@ -20,6 +20,10 @@ struct MapScreenState
     float scroll[TabCount] = {};
     int selectedSystem = -1; // row in MapPanel::systems; -1 = the current one
     int selectedMarker = -1;
+    // Which commodity the galaxy map is colored by (Phase 8g); -1 shows
+    // faction ownership, the way the map has always looked. Pure view state,
+    // so it lives here rather than in the world.
+    int tradeCommodity = -1;
 };
 
 // The map screen (engine plan Phase 8e, deferred here out of Phase 8d): a
