@@ -296,9 +296,11 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     renderer::beginPresentPass(commandBuffer, *m_swapchain, imageIndex, m_depth);
     m_tonemapRenderer.draw(commandBuffer, extent, scene.exposure);
     if (m_uiDrawList != nullptr && !m_uiDrawList->batches().empty()) {
-        const core::Vec2 screenSize = {static_cast<float>(extent.width),
-                                       static_cast<float>(extent.height)};
-        m_uiRenderer.draw(commandBuffer, m_frameIndex, screenSize, m_uiDrawList->vertices(),
+        // The virtual screen the UI was laid out against; dividing here is
+        // what turns the scale setting into visibly larger widgets.
+        const core::Vec2 uiSize = {static_cast<float>(extent.width) / m_uiScale,
+                                   static_cast<float>(extent.height) / m_uiScale};
+        m_uiRenderer.draw(commandBuffer, m_frameIndex, uiSize, extent, m_uiDrawList->vertices(),
                           m_uiDrawList->indices(), m_uiDrawList->batches());
         ++m_drawCallCount;
     }

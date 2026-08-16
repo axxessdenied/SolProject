@@ -3,6 +3,7 @@ add_executable(sol_game
     src/content.cpp
     src/game_ui.cpp
     src/main.cpp
+    src/menu_screens.cpp
     src/scene_renderer.cpp
     src/shader_watcher.cpp
     src/space_world.cpp

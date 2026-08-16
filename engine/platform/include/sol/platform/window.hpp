@@ -77,6 +77,10 @@ public:
     // Raw mouse movement accumulated since the previous pumpEvents call.
     [[nodiscard]] core::Vec2 mouseDelta() const;
 
+    // Cursor position in client pixels, origin top-left. Meaningless while the
+    // cursor is locked for mouse-look; UI screens unlock it.
+    [[nodiscard]] core::Vec2 mousePosition() const;
+
     // Wheel movement in notches accumulated since the previous pumpEvents call.
     [[nodiscard]] float wheelDelta() const;
 

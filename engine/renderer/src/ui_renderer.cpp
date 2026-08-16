@@ -133,12 +133,12 @@ bool UiRenderer::reloadPipeline()
     return true;
 }
 
-void UiRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, core::Vec2 screenSize,
-                      std::span<const Vertex> vertices, std::span<const std::uint16_t> indices,
-                      std::span<const Batch> batches)
+void UiRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, core::Vec2 uiSize,
+                      VkExtent2D framebufferExtent, std::span<const Vertex> vertices,
+                      std::span<const std::uint16_t> indices, std::span<const Batch> batches)
 {
-    if (batches.empty() || vertices.empty() || indices.empty() || screenSize.x <= 0.0f ||
-        screenSize.y <= 0.0f) {
+    if (batches.empty() || vertices.empty() || indices.empty() || uiSize.x <= 0.0f ||
+        uiSize.y <= 0.0f || framebufferExtent.width == 0 || framebufferExtent.height == 0) {
         return;
     }
     if (vertices.size() > kMaxVertices || indices.size() > kMaxIndices) {
@@ -153,7 +153,13 @@ void UiRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, c
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
     PushConstants push = {};
-    push.inverseScreenSize = {1.0f / screenSize.x, 1.0f / screenSize.y};
+    push.inverseScreenSize = {1.0f / uiSize.x, 1.0f / uiSize.y};
+
+    // Clip rectangles arrive in UI pixels; scissors are framebuffer pixels.
+    const float clipScaleX = static_cast<float>(framebufferExtent.width) / uiSize.x;
+    const float clipScaleY = static_cast<float>(framebufferExtent.height) / uiSize.y;
+    const float maxScissorX = static_cast<float>(framebufferExtent.width);
+    const float maxScissorY = static_cast<float>(framebufferExtent.height);
     vkCmdPushConstants(commandBuffer, m_pipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
 
@@ -172,16 +178,15 @@ void UiRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, c
         // so a negative or oversized rect cannot fault the scissor.
         VkRect2D scissor = {};
         if (batch.clipMax.x > batch.clipMin.x && batch.clipMax.y > batch.clipMin.y) {
-            const float minX = std::clamp(batch.clipMin.x, 0.0f, screenSize.x);
-            const float minY = std::clamp(batch.clipMin.y, 0.0f, screenSize.y);
-            const float maxX = std::clamp(batch.clipMax.x, minX, screenSize.x);
-            const float maxY = std::clamp(batch.clipMax.y, minY, screenSize.y);
+            const float minX = std::clamp(batch.clipMin.x * clipScaleX, 0.0f, maxScissorX);
+            const float minY = std::clamp(batch.clipMin.y * clipScaleY, 0.0f, maxScissorY);
+            const float maxX = std::clamp(batch.clipMax.x * clipScaleX, minX, maxScissorX);
+            const float maxY = std::clamp(batch.clipMax.y * clipScaleY, minY, maxScissorY);
             scissor.offset = {static_cast<std::int32_t>(minX), static_cast<std::int32_t>(minY)};
             scissor.extent = {static_cast<std::uint32_t>(maxX - minX),
                               static_cast<std::uint32_t>(maxY - minY)};
         } else {
-            scissor.extent = {static_cast<std::uint32_t>(screenSize.x),
-                              static_cast<std::uint32_t>(screenSize.y)};
+            scissor.extent = framebufferExtent;
         }
         if (scissor.extent.width == 0 || scissor.extent.height == 0) {
             continue; // fully clipped away

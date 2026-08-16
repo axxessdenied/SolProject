@@ -1,6 +1,7 @@
 #include "content.hpp"
 #include "fly_camera.hpp"
 #include "game_ui.hpp"
+#include "menu_screens.hpp"
 #include "scene_renderer.hpp"
 #include "shader_watcher.hpp"
 #include "ship_camera.hpp"
@@ -213,9 +214,21 @@ int main(int argc, char** argv)
     }
     renderer.setDevUi(&devUi);
 
-    // Game-UI geometry, rebuilt every frame; lives out here so its buffers are
-    // reused instead of reallocated per frame.
-    sol::ui::DrawList gameUi;
+    // Game UI (Phase 8d). One context builds every custom surface - the flight
+    // readout and the menu shell - into a single draw list per frame.
+    sol::ui::UiContext ui;
+    ui.setFont(&renderer.uiFont(), renderer.uiFontTexture());
+
+    // The shell the game never had: it boots to a menu instead of straight
+    // into the cockpit.
+    game::GameState state = game::GameState::MainMenu;
+    game::GameState settingsReturnState = game::GameState::MainMenu;
+    game::MainMenuState mainMenuState;
+    mainMenuState.hasSave = sol::platform::fileModificationTime(savePath.c_str()) != 0;
+
+    const std::string settingsPath = executableDir + "settings.toml";
+    game::Settings settings;
+    (void)settings.load(settingsPath.c_str()); // absent is normal on a first run
 
 #if !defined(SOL_SHADER_SOURCE_DIR)
     #define SOL_SHADER_SOURCE_DIR ""
@@ -288,6 +301,14 @@ int main(int argc, char** argv)
     bool previousPip2 = false;
     bool previousPip3 = false;
     bool previousPip4 = false;
+    bool previousEscape = false;
+    bool previousNavTab = false;
+    bool previousNavUp = false;
+    bool previousNavDown = false;
+    bool previousNavActivate = false;
+    bool previousNavSpace = false;
+    bool previousMouseDown = false;
+    bool quitRequested = false;
     bool showDebugDraw = false;
 
     SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse steer, WASD/QE/Space/Ctrl thrust, "
@@ -300,7 +321,7 @@ int main(int argc, char** argv)
 
     while (true) {
         window.pumpEvents();
-        if (window.shouldClose() || window.isKeyDown(sol::platform::Key::Escape)) {
+        if (window.shouldClose() || quitRequested) {
             break;
         }
         if (window.isMinimized()) {
@@ -312,8 +333,26 @@ int main(int argc, char** argv)
         const float deltaSeconds = sol::core::clamp(static_cast<float>(now - lastFrameTime), 0.0f, 0.1f);
         lastFrameTime = now;
 
+        // While a menu is up the ship takes no orders and the sim stands
+        // still. Every gameplay key reads through this, so Tab means "next
+        // widget" in a menu and "cruise" in flight without either fighting
+        // the other.
+        const bool inFlight = state == game::GameState::Flying || state == game::GameState::Docked;
+        const auto gameplayKey = [&](sol::platform::Key key) {
+            return inFlight && window.isKeyDown(key);
+        };
+
+        // Esc opens the pause menu; the menus handle backing out themselves.
+        const bool escapeDown = window.isKeyDown(sol::platform::Key::Escape);
+        const bool escapeEdge = escapeDown && !previousEscape;
+        previousEscape = escapeDown;
+        if (escapeEdge && inFlight) {
+            state = game::GameState::Paused;
+            window.setCursorLocked(false);
+        }
+
         // Camera mode cycle (V): first person -> chase -> free.
-        const bool vDown = window.isKeyDown(sol::platform::Key::V);
+        const bool vDown = gameplayKey(sol::platform::Key::V);
         if (vDown && !previousV) {
             switch (cameraMode) {
             case game::CameraMode::FirstPerson:
@@ -332,7 +371,7 @@ int main(int argc, char** argv)
         }
         previousV = vDown;
 
-        const bool tDown = window.isKeyDown(sol::platform::Key::T);
+        const bool tDown = gameplayKey(sol::platform::Key::T);
         if (tDown && !previousT) {
             world.cycleTarget();
             SOL_LOG_INFO("Target: %s", world.currentTargetInfo().nav.name.c_str());
@@ -340,7 +379,7 @@ int main(int argc, char** argv)
         previousT = tDown;
 
         // Jump through the nearest in-range gate (decisions/004 gate travel).
-        const bool jDown = window.isKeyDown(sol::platform::Key::J);
+        const bool jDown = gameplayKey(sol::platform::Key::J);
         if (jDown && !previousJ) {
             if (world.jumpNearestGate(kGateActivationRange)) {
                 SOL_LOG_INFO("Arrived in '%s'", world.currentSystemName());
@@ -351,7 +390,7 @@ int main(int argc, char** argv)
         previousJ = jDown;
 
         // Autopilot to the selected target (F toggles; manual input cancels).
-        const bool fDown = window.isKeyDown(sol::platform::Key::F);
+        const bool fDown = gameplayKey(sol::platform::Key::F);
         if (fDown && !previousF) {
             if (world.autopilotActive()) {
                 world.disengageAutopilot();
@@ -363,7 +402,7 @@ int main(int argc, char** argv)
         previousF = fDown;
 
         // Dock/undock at the nearest station (G toggles).
-        const bool gDown = window.isKeyDown(sol::platform::Key::G);
+        const bool gDown = gameplayKey(sol::platform::Key::G);
         if (gDown && !previousG) {
             if (world.isDocked()) {
                 (void)world.undock();
@@ -374,10 +413,10 @@ int main(int argc, char** argv)
         previousG = gDown;
 
         // Power triage (decisions/003): 1/2/3 pip WEP/ENG/SYS, 4 balances.
-        const bool pip1 = window.isKeyDown(sol::platform::Key::Num1);
-        const bool pip2 = window.isKeyDown(sol::platform::Key::Num2);
-        const bool pip3 = window.isKeyDown(sol::platform::Key::Num3);
-        const bool pip4 = window.isKeyDown(sol::platform::Key::Num4);
+        const bool pip1 = gameplayKey(sol::platform::Key::Num1);
+        const bool pip2 = gameplayKey(sol::platform::Key::Num2);
+        const bool pip3 = gameplayKey(sol::platform::Key::Num3);
+        const bool pip4 = gameplayKey(sol::platform::Key::Num4);
         if (pip1 && !previousPip1) world.playerAddPip(sol::sim::PowerSystem::Weapons);
         if (pip2 && !previousPip2) world.playerAddPip(sol::sim::PowerSystem::Engines);
         if (pip3 && !previousPip3) world.playerAddPip(sol::sim::PowerSystem::Shields);
@@ -388,7 +427,12 @@ int main(int argc, char** argv)
         previousPip4 = pip4;
 
         // In free-cam mode the mouse/keys drive the debug camera, not the ship.
-        if (cameraMode == game::CameraMode::Free) {
+        if (!inFlight) {
+            // The mapper reads the window directly, so it is skipped entirely
+            // rather than fed neutral input - otherwise Tab would toggle
+            // cruise while the player is tabbing through a menu.
+            world.setShipInput({});
+        } else if (cameraMode == game::CameraMode::Free) {
             freeCamera.update(window, deltaSeconds);
             world.setShipInput({});
         } else {
@@ -398,10 +442,14 @@ int main(int argc, char** argv)
             world.setShipInput(input);
         }
 
-        simLoop.beginFrame(deltaSeconds);
-        while (simLoop.shouldTick()) {
-            world.tick(simLoop.tickDelta());
-            content.tick(simLoop.tickDelta());
+        // A menu stops the clock: no accumulation, so unpausing does not
+        // fast-forward the galaxy by however long the player was reading.
+        if (inFlight) {
+            simLoop.beginFrame(deltaSeconds);
+            while (simLoop.shouldTick()) {
+                world.tick(simLoop.tickDelta());
+                content.tick(simLoop.tickDelta());
+            }
         }
         const float simAlpha = simLoop.alpha();
 
@@ -621,15 +669,124 @@ int main(int argc, char** argv)
             game::fillStationMissions(world, stationText, stationPanel, missionOfferRows,
                                       missionJournalRows); // after: shares stationText
         }
-        // Custom game UI (Phase 8d), built fresh each frame and drawn after
-        // tonemap. The dev HUD stays up beside it during the changeover.
-        gameUi.reset();
-        gameUi.setFont(&renderer.uiFont(), renderer.uiFontTexture());
-        game::buildFlightUi(gameUi, renderer.uiFont(),
-                            {static_cast<float>(swapchain.extent().width),
-                             static_cast<float>(swapchain.extent().height)},
-                            hud);
-        renderer.setUiDrawList(&gameUi);
+        // --- Custom game UI (Phase 8d), rebuilt every frame ---
+        // Everything below works in virtual UI pixels: the layout, the cursor,
+        // and the renderer all divide by the same scale, so the setting moves
+        // widgets and hit-testing together instead of drifting apart.
+        renderer.setUiScale(settings.uiScale);
+        const float uiScale = settings.uiScale > 0.0f ? settings.uiScale : 1.0f;
+        const sol::core::Vec2 uiSize = {static_cast<float>(swapchain.extent().width) / uiScale,
+                                        static_cast<float>(swapchain.extent().height) / uiScale};
+
+        sol::ui::InputState uiInput;
+        const sol::core::Vec2 cursor = window.mousePosition();
+        uiInput.mousePosition = {cursor.x / uiScale, cursor.y / uiScale};
+        uiInput.mouseDown = window.isMouseButtonDown(sol::platform::MouseButton::Left) &&
+                            !devUi.wantsMouseCapture();
+        uiInput.mousePressed = uiInput.mouseDown && !previousMouseDown;
+        uiInput.mouseReleased = !uiInput.mouseDown && previousMouseDown;
+        previousMouseDown = uiInput.mouseDown;
+        uiInput.scrollDelta = window.wheelDelta();
+
+        // Navigation keys are edge-triggered: holding Tab must not race
+        // through every widget on the screen in one frame.
+        const bool inMenu = !inFlight;
+        const auto menuKeyEdge = [&](sol::platform::Key key, bool& previous) {
+            const bool down = inMenu && window.isKeyDown(key) && !devUi.wantsMouseCapture();
+            const bool edge = down && !previous;
+            previous = down;
+            return edge;
+        };
+        const bool tabEdge = menuKeyEdge(sol::platform::Key::Tab, previousNavTab);
+        const bool downEdge = menuKeyEdge(sol::platform::Key::Down, previousNavDown);
+        const bool upEdge = menuKeyEdge(sol::platform::Key::Up, previousNavUp);
+        uiInput.navNext = tabEdge || downEdge;
+        uiInput.navPrevious = upEdge;
+        uiInput.navActivate = menuKeyEdge(sol::platform::Key::Enter, previousNavActivate) ||
+                              menuKeyEdge(sol::platform::Key::Space, previousNavSpace);
+        // Sliders step while held, so left/right stay level-triggered.
+        uiInput.navLeft = inMenu && window.isKeyDown(sol::platform::Key::Left);
+        uiInput.navRight = inMenu && window.isKeyDown(sol::platform::Key::Right);
+        uiInput.navCancel = escapeEdge && inMenu;
+
+        ui.beginFrame(uiInput, uiSize);
+        game::MenuAction menuAction = game::MenuAction::None;
+        switch (state) {
+        case game::GameState::MainMenu:
+            menuAction = game::buildMainMenu(ui, mainMenuState);
+            break;
+        case game::GameState::Paused:
+            menuAction = game::buildPauseMenu(ui, world.hardcore());
+            break;
+        case game::GameState::Settings:
+            menuAction = game::buildSettingsScreen(ui, settings);
+            break;
+        case game::GameState::Flying:
+        case game::GameState::Docked:
+            // The dev HUD stays up beside this one during the changeover.
+            game::buildFlightUi(ui.drawList(), renderer.uiFont(), ui.screenSize(), hud);
+            break;
+        }
+        ui.endFrame();
+        renderer.setUiDrawList(&ui.drawList());
+
+        switch (menuAction) {
+        case game::MenuAction::None:
+            break;
+        case game::MenuAction::NewGame:
+            world.setHardcore(mainMenuState.hardcore);
+            if (world.hardcore()) {
+                SOL_LOG_INFO("HARDCORE run: death deletes the save");
+            }
+            state = game::GameState::Flying;
+            break;
+        case game::MenuAction::ContinueGame:
+            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s"
+                                                          : "world load FAILED (%s)",
+                         savePath.c_str());
+            state = game::GameState::Flying;
+            break;
+        case game::MenuAction::Resume:
+            state = game::GameState::Flying;
+            break;
+        case game::MenuAction::SaveGame:
+            SOL_LOG_INFO(world.saveTo(savePath.c_str()) ? "world saved to %s"
+                                                        : "world save FAILED (%s)",
+                         savePath.c_str());
+            mainMenuState.hasSave = true;
+            state = game::GameState::Flying;
+            break;
+        case game::MenuAction::LoadGame:
+            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s"
+                                                          : "world load FAILED (%s)",
+                         savePath.c_str());
+            state = game::GameState::Flying;
+            break;
+        case game::MenuAction::OpenSettings:
+            settingsReturnState = state;
+            state = game::GameState::Settings;
+            break;
+        case game::MenuAction::CloseSettings:
+            // Settings persist on the way out, so a crash mid-session cannot
+            // lose them and nothing has to remember to save later.
+            if (!settings.save(settingsPath.c_str())) {
+                SOL_LOG_WARN("could not write %s", settingsPath.c_str());
+            }
+            state = settingsReturnState;
+            break;
+        case game::MenuAction::QuitGame:
+            quitRequested = true;
+            break;
+        }
+
+        // Docking is driven by the world, so the state follows it rather than
+        // the menus trying to track it. This tests the state as it stands now,
+        // not `inFlight` from the top of the frame: Esc may have opened the
+        // pause menu since, and re-deriving from a stale flag would slam it
+        // shut again on the same frame.
+        if (state == game::GameState::Flying || state == game::GameState::Docked) {
+            state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
+        }
 
         devUi.beginFrame(stats, hud, showStation ? &stationPanel : nullptr);
         if (showStation && stationPanel.trade.action.row >= 0) {

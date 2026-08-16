@@ -342,6 +342,17 @@ core::Vec2 Window::mouseDelta() const
     return {m_impl->mouseDeltaX, m_impl->mouseDeltaY};
 }
 
+core::Vec2 Window::mousePosition() const
+{
+    // Queried rather than tracked through WM_MOUSEMOVE: raw input drives the
+    // deltas, and those messages do not carry a client position.
+    POINT point = {};
+    if (GetCursorPos(&point) == 0 || ScreenToClient(m_impl->hwnd, &point) == 0) {
+        return {};
+    }
+    return {static_cast<float>(point.x), static_cast<float>(point.y)};
+}
+
 float Window::wheelDelta() const
 {
     return m_impl->wheel;

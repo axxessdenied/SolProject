@@ -123,6 +123,11 @@ public:
     // overlay so ImGui always sits on top. The list is owned by the caller.
     void setUiDrawList(const sol::ui::DrawList* drawList) { m_uiDrawList = drawList; }
 
+    // Player-facing UI scale. The UI is built against a virtual screen of
+    // (pixels / scale) and stretched back over the real one, so one number
+    // resizes every surface without any widget knowing about it.
+    void setUiScale(float scale) { m_uiScale = scale > 0.0f ? scale : 1.0f; }
+
     // The cooked UI font and the texture slot its atlas occupies, for callers
     // building draw lists.
     [[nodiscard]] const sol::assets::Font& uiFont() const { return m_uiFont; }
@@ -173,6 +178,7 @@ private:
     VkSampler m_uiFontSampler = VK_NULL_HANDLE;
     std::uint32_t m_uiFontTexture = 0;
     const sol::ui::DrawList* m_uiDrawList = nullptr;
+    float m_uiScale = 1.0f;
 
     sol::ui::DevUi* m_devUi = nullptr;
     FrameResources m_frames[kFramesInFlight];

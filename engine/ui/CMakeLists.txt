@@ -1,4 +1,5 @@
 add_library(sol_ui STATIC
+    src/context.cpp
     src/dev_ui.cpp
     src/draw_list.cpp
 )

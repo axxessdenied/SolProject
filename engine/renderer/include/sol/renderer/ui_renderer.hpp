@@ -59,9 +59,14 @@ public:
 
     // Uploads this frame's geometry and records the batches. Geometry beyond
     // the fixed capacities is dropped with a warning rather than overrunning.
-    void draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, core::Vec2 screenSize,
-              std::span<const Vertex> vertices, std::span<const std::uint16_t> indices,
-              std::span<const Batch> batches);
+    //
+    // `uiSize` is the virtual screen the geometry was laid out against and
+    // sets the projection; `framebufferExtent` is the real target. They differ
+    // when a UI scale is in effect, and clip rectangles are converted between
+    // them - a scissor is always in real pixels.
+    void draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, core::Vec2 uiSize,
+              VkExtent2D framebufferExtent, std::span<const Vertex> vertices,
+              std::span<const std::uint16_t> indices, std::span<const Batch> batches);
 
 private:
     rhi::Context* m_context = nullptr;

@@ -1,0 +1,161 @@
+#pragma once
+
+#include "sol/ui/draw_list.hpp"
+#include "sol/ui/layout.hpp"
+
+#include <cstdint>
+#include <string_view>
+#include <vector>
+
+namespace sol::ui {
+
+// Widget identity, hashed from the id stack so the same label in two panels
+// never collides. Zero means "no widget".
+using WidgetId = std::uint64_t;
+inline constexpr WidgetId kNoWidget = 0;
+
+// What the player did this frame. The game fills this from the platform
+// layer; the UI never reads input hardware itself.
+struct InputState
+{
+    core::Vec2 mousePosition;
+    bool mouseDown = false;     // held right now
+    bool mousePressed = false;  // went down this frame
+    bool mouseReleased = false; // came up this frame
+    float scrollDelta = 0.0f;
+
+    // Keyboard navigation. Every screen must be fully operable through these
+    // alone - that is a requirement of the phase, and the groundwork for
+    // gamepad support later.
+    bool navNext = false;
+    bool navPrevious = false;
+    bool navActivate = false;
+    bool navCancel = false;
+    bool navLeft = false;
+    bool navRight = false;
+};
+
+// Colors, metrics, and font style names in one place, so a restyle is a data
+// change rather than a hunt through widget code.
+struct Theme
+{
+    Color background = rgba(0x0A0E13F0u);
+    Color panel = rgba(0x0E141ACCu);
+    Color panelEdge = rgba(0x22303EFFu);
+    Color control = rgba(0x1B2733FFu);
+    Color controlHovered = rgba(0x27384AFFu);
+    Color controlActive = rgba(0x35506AFFu);
+    Color controlDisabled = rgba(0x161E27FFu);
+    Color accent = rgba(0x58C8F0FFu);
+    Color textPrimary = rgba(0xE8F0F8FFu);
+    Color textDim = rgba(0x8FA6BCFFu);
+    Color textDisabled = rgba(0x53616EFFu);
+    Color focusRing = rgba(0x58C8F0FFu);
+    Color meterTrack = rgba(0x1E2A36FFu);
+    Color positive = rgba(0x69C48CFFu);
+    Color negative = rgba(0xE0704CFFu);
+
+    float padding = 12.0f;
+    float spacing = 6.0f;
+    float rowHeight = 28.0f;
+    float radius = 6.0f;
+    float focusRingThickness = 2.0f;
+
+    // Style names as cooked into the font asset.
+    const char* headingStyle = "heading";
+    const char* bodyStyle = "body";
+    const char* strongStyle = "body_strong";
+    const char* smallStyle = "hud";
+};
+
+// Immediate-mode UI with retained hover/active/focus - engine plan §2.9's
+// "retained-or-immediate hybrid". Widgets take explicit rectangles and report
+// what the player did, which keeps the game's existing fill-then-execute
+// pattern intact.
+//
+// Holds no GPU state: everything lands in the DrawList, so whole screens can
+// be built and asserted on headlessly.
+class UiContext
+{
+public:
+    void setFont(const assets::Font* font, std::uint32_t fontTexture);
+    void setTheme(const Theme& theme) { m_theme = theme; }
+    [[nodiscard]] const Theme& theme() const { return m_theme; }
+
+    void beginFrame(const InputState& input, core::Vec2 screenSize);
+    void endFrame();
+
+    [[nodiscard]] DrawList& drawList() { return m_drawList; }
+    [[nodiscard]] const DrawList& drawList() const { return m_drawList; }
+    [[nodiscard]] const InputState& input() const { return m_input; }
+    [[nodiscard]] core::Vec2 screenSize() const { return m_screenSize; }
+
+    // Identity scoping. Push a panel name (or a row index) before building
+    // repeated widgets so their ids stay distinct.
+    void pushId(std::string_view name);
+    void pushId(int index);
+    void popId();
+    [[nodiscard]] WidgetId idFor(std::string_view label) const;
+
+    [[nodiscard]] WidgetId focused() const { return m_focusId; }
+    void setFocus(WidgetId id) { m_focusId = id; }
+    [[nodiscard]] bool isFocused(WidgetId id) const { return id != kNoWidget && id == m_focusId; }
+
+    // True on the frame the player dismissed the current screen (Esc, or the
+    // cancel button on a pad).
+    [[nodiscard]] bool cancelRequested() const { return m_input.navCancel; }
+
+    // --- Widgets. Each returns whether the player acted on it this frame. ---
+
+    void label(const Rect& bounds, std::string_view text, TextAlign align = TextAlign::Left);
+    void label(const Rect& bounds, std::string_view text, const Color& color,
+               const char* styleName = nullptr, TextAlign align = TextAlign::Left);
+
+    void panel(const Rect& bounds, std::string_view title = {});
+
+    [[nodiscard]] bool button(const Rect& bounds, std::string_view label, bool enabled = true);
+    [[nodiscard]] bool checkbox(const Rect& bounds, std::string_view label, bool& value);
+    [[nodiscard]] bool slider(const Rect& bounds, std::string_view label, float& value, float minimum,
+                              float maximum);
+    // A selectable row (list entries, tabs when drawn as a strip).
+    [[nodiscard]] bool selectable(const Rect& bounds, std::string_view label, bool selected,
+                                  bool enabled = true);
+
+    void meter(const Rect& bounds, float fraction, const Color& fill);
+
+    // Number of interactive widgets built this frame; the nav order.
+    [[nodiscard]] std::size_t interactiveCount() const { return m_navItems.size(); }
+
+private:
+    // Shared hit-testing and state bookkeeping for every interactive widget.
+    struct Interaction
+    {
+        WidgetId id = kNoWidget;
+        bool hovered = false;
+        bool held = false;
+        bool activated = false;
+        bool focused = false;
+    };
+
+    [[nodiscard]] Interaction interact(std::string_view label, const Rect& bounds, bool enabled);
+    [[nodiscard]] Color controlColor(const Interaction& interaction, bool enabled) const;
+    void drawFocusRing(const Rect& bounds, const Interaction& interaction);
+    [[nodiscard]] const assets::FontStyleRecord* style(const char* name) const;
+
+    DrawList m_drawList;
+    const assets::Font* m_font = nullptr;
+    Theme m_theme;
+
+    InputState m_input;
+    core::Vec2 m_screenSize;
+
+    std::vector<WidgetId> m_idStack;
+    std::vector<WidgetId> m_navItems; // interactive widgets, in build order
+
+    WidgetId m_hotId = kNoWidget;    // under the cursor
+    WidgetId m_activeId = kNoWidget; // being pressed
+    WidgetId m_focusId = kNoWidget;  // keyboard focus
+    bool m_frameOpen = false;
+};
+
+} // namespace sol::ui
