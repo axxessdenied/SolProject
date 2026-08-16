@@ -32,7 +32,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 5; // v5: faction relations/standings block
+constexpr std::uint32_t kSaveVersion = 6; // v6: mission journal/board block
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -278,6 +278,13 @@ void SpaceWorld::initializeFactions()
         }
     }
     m_factionSim.initialize(m_galaxy, params, m_universeSeed);
+    // Missions layout is pinned to the same faction table + commodity roster
+    // (Phase 8c); a save's mission block loads over this fresh state.
+    m_missions.initialize(m_galaxy, sim::MissionParams{}, count,
+                          static_cast<std::uint32_t>(m_commodityIds.size()),
+                          m_universeSeed);
+    m_missionEvents.clear();
+    m_dockEventPending = false;
 }
 
 const char* SpaceWorld::playerAttitudeName(std::uint32_t faction) const
@@ -321,6 +328,110 @@ bool SpaceWorld::commitFactionRaid(std::uint32_t faction, std::uint32_t targetSy
                      m_galaxy.systems[targetSystem].name.c_str());
     }
     return true;
+}
+
+bool SpaceWorld::acceptMission(std::uint32_t offerIndex, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("accept_mission: not docked", outError);
+    }
+    if (offerIndex >= m_missions.offers().size()) {
+        return refuse("accept_mission: no such offer", outError);
+    }
+    const std::uint32_t poster = m_missions.offers()[offerIndex].poster;
+    std::string error;
+    if (!m_missions.accept(offerIndex, m_factionSim.standing(poster), &error)) {
+        return refuse("accept_mission: " + error, outError);
+    }
+    return true;
+}
+
+bool SpaceWorld::abandonMission(std::uint32_t activeIndex)
+{
+    return m_missions.abandon(activeIndex);
+}
+
+void SpaceWorld::processMissionDeliveries()
+{
+    if (!isDocked()) {
+        return;
+    }
+    const std::uint32_t market = dockedMarket();
+    for (std::uint32_t i = 0; i < m_missions.active().size();) {
+        const std::size_t countBefore = m_missions.active().size();
+        const sim::Mission& mission = m_missions.active()[i];
+        const sim::MissionObjective& objective =
+            mission.objectives[mission.currentObjective];
+        const std::uint32_t commodity = objective.commodity;
+        const std::string title = mission.title; // survives a completion
+        const float available =
+            commodity < m_playerCargo.size() ? m_playerCargo[commodity] : 0.0f;
+        const float delivered =
+            m_missions.recordDelivery(i, m_currentSystem, m_dockedStation, available);
+        if (delivered > 0.0f) {
+            m_playerCargo[commodity] -= delivered;
+            if (market < m_economy.markets().size()) {
+                m_economy.deliver(market, commodity, delivered); // fills the shortage
+            }
+            SOL_LOG_INFO("[missions] '%s': handed in %.0f units", title.c_str(),
+                         static_cast<double>(delivered));
+        }
+        if (m_missions.active().size() == countBefore) {
+            ++i;
+        }
+    }
+}
+
+void SpaceWorld::processMissionEvents()
+{
+    m_missionEventScratch.clear();
+    m_missions.takeEvents(m_missionEventScratch);
+    for (const sim::MissionEvent& event : m_missionEventScratch) {
+        const sim::Mission& mission = event.mission;
+        const bool posterValid = mission.poster < m_factionTable.size();
+        switch (event.kind) {
+        case sim::MissionEventKind::Accepted:
+            SOL_LOG_INFO("[missions] accepted '%s': %s", mission.title.c_str(),
+                         mission.objectives.front().text.c_str());
+            break;
+        case sim::MissionEventKind::ObjectiveComplete:
+            if (event.objective + 1 < mission.objectives.size()) {
+                SOL_LOG_INFO("[missions] '%s': %s", mission.title.c_str(),
+                             mission.objectives[event.objective + 1].text.c_str());
+            }
+            break;
+        case sim::MissionEventKind::Completed:
+            m_playerCredits += mission.rewardCredits;
+            if (posterValid) {
+                m_factionSim.addStanding(mission.poster, mission.standingReward);
+            }
+            SOL_LOG_INFO("[missions] completed '%s': +%.0f cr, %s +%.1f rep",
+                         mission.title.c_str(), mission.rewardCredits,
+                         posterValid ? m_factionTable[mission.poster].name.c_str() : "?",
+                         static_cast<double>(mission.standingReward));
+            break;
+        case sim::MissionEventKind::Failed:
+        case sim::MissionEventKind::Abandoned:
+            // Campaign missions charge nothing (decisions/008: the spine is
+            // ignorable); procedural contracts dock standing with the poster.
+            if (!mission.campaign() && posterValid) {
+                m_factionSim.addStanding(mission.poster, -mission.standingPenalty);
+            }
+            SOL_LOG_WARN("[missions] %s '%s'%s",
+                         event.kind == sim::MissionEventKind::Failed ? "failed"
+                                                                     : "abandoned",
+                         mission.title.c_str(),
+                         mission.campaign() ? " (campaign: no penalty)" : "");
+            break;
+        }
+        m_missionEvents.push_back(event);
+    }
+}
+
+void SpaceWorld::takeMissionEvents(std::vector<sim::MissionEvent>& out)
+{
+    out.insert(out.end(), m_missionEvents.begin(), m_missionEvents.end());
+    m_missionEvents.clear();
 }
 
 void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::SystemSpec& spec)
@@ -571,6 +682,12 @@ bool SpaceWorld::tryDockNearestStation(double range)
     m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     m_playerSpawn = pad;
     SOL_LOG_INFO("docked at '%s'", spec.stations[nearest].name.c_str());
+    // Missions (Phase 8c): Dock objectives first, so a following Deliver at
+    // this station can hand in on the same visit; the dock event tells
+    // GameContent to re-open the board.
+    m_missions.notifyDock(m_currentSystem, nearest);
+    processMissionDeliveries();
+    m_dockEventPending = true;
     return true;
 }
 
@@ -1896,6 +2013,15 @@ void SpaceWorld::tick(double dt)
     // are dispatched by GameContent (Lua faction_think or the default rule).
     m_factionSim.tick(dt);
 
+    // Coarse-layer missions (Phase 8c): deadlines and position objectives
+    // here; the board hook and campaign flavor run in GameContent against
+    // the events this drains.
+    m_missions.tick(dt);
+    if (!isDocked()) {
+        m_missions.notifyPosition(m_currentSystem, shipState().position);
+    }
+    processMissionEvents();
+
     // Deferred death respawn into the last-dock system (see member comment).
     if (m_pendingRespawnSystem != kNoIndex) {
         const std::uint32_t system = m_pendingRespawnSystem;
@@ -1909,6 +2035,7 @@ void SpaceWorld::tick(double dt)
             transform.position = pad;
             transform.previousPosition = pad;
             m_playerSpawn = pad;
+            m_dockEventPending = true; // fresh board at the respawn dock
         }
     }
 }
@@ -1960,6 +2087,7 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
                          deductible);
             m_dockedStation = m_lastDockStation;
             m_playerSpawn = dockPoint(m_dockedStation);
+            m_dockEventPending = true; // fresh board at the respawn dock
         } else {
             const double deductible = std::min(insuranceDeductible(), m_playerCredits);
             m_playerCredits -= deductible;
@@ -1982,6 +2110,7 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
         if (const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
             pilot != nullptr && pilot->factionIndex < m_factionTable.size()) {
             m_factionSim.recordShipKill(pilot->factionIndex);
+            m_missions.notifyKill(pilot->factionIndex, m_currentSystem);
             SOL_LOG_INFO("kill vs %s: standing now %.1f (%s)",
                          m_factionTable[pilot->factionIndex].name.c_str(),
                          m_factionSim.standing(pilot->factionIndex),
@@ -2075,6 +2204,7 @@ bool SpaceWorld::saveTo(const char* path)
     }
     m_economy.save(writer);
     m_factionSim.save(writer); // v5: relations, war flags, standings, raids
+    m_missions.save(writer);   // v6: journal, board, campaign stage
     makeSnapshotSchema().save(m_registry, writer);
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
 }
@@ -2178,6 +2308,10 @@ bool SpaceWorld::loadFrom(const char* path)
     if (!m_factionSim.load(reader)) {
         return false;
     }
+    // Missions (v6): same rule — layout re-derives, dynamic state loads.
+    if (!m_missions.load(reader)) {
+        return false;
+    }
 
     ecs::Registry fresh;
     if (!makeSnapshotSchema().load(fresh, reader)) {
@@ -2225,6 +2359,9 @@ bool SpaceWorld::loadFrom(const char* path)
     m_lastDockSystem = lastDockSystem;
     m_lastDockStation = lastDockStation;
     m_pendingRespawnSystem = kNoIndex;
+    // Board offers came back with the save; no re-roll on a docked load.
+    m_dockEventPending = false;
+    m_missionEvents.clear();
     m_playerSpawn =
         isDocked() ? dockPoint(m_dockedStation)
         : !spec.stations.empty()

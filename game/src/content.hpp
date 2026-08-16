@@ -37,6 +37,12 @@ public:
     [[nodiscard]] const sol::assets::DefDatabase& defs() const { return m_defs; }
     [[nodiscard]] SpaceWorld& world() { return *m_world; }
 
+    // Mission-builder draft for the Lua board hook (sol.mission_* bindings
+    // in content.cpp assemble it; sol.mission_post validates and clears it).
+    [[nodiscard]] sol::sim::Mission& missionDraft() { return m_missionDraft; }
+    [[nodiscard]] bool missionDraftOpen() const { return m_missionDraftOpen; }
+    void setMissionDraftOpen(bool open) { m_missionDraftOpen = open; }
+
 private:
     struct WatchedFile
     {
@@ -49,6 +55,9 @@ private:
     void runBootScripts();
     void rebuildWatchList();
     void registerBindings();
+    // Re-opens the docked station's board and runs Lua mission_board over
+    // freshly enumerated candidates (scriptless fallback: an empty board).
+    void runMissionBoard();
 
     static constexpr double kPollIntervalSeconds = 0.5;
 
@@ -59,6 +68,11 @@ private:
     std::vector<WatchedFile> m_watched;
     std::vector<SpaceWorld::PilotThink> m_pilotThinks; // per-tick scratch
     std::vector<sol::sim::FactionDecision> m_factionDecisions; // per-tick scratch
+    std::vector<sol::sim::HaulCandidate> m_haulCandidates;     // per-board scratch
+    std::vector<sol::sim::BountyCandidate> m_bountyCandidates;
+    std::vector<sol::sim::MissionEvent> m_missionEvents; // per-tick scratch
+    sol::sim::Mission m_missionDraft;
+    bool m_missionDraftOpen = false;
     double m_lastPollTime = -1.0;
     bool m_hasTickHook = false;
     bool m_tickHookFailed = false; // logged once; reset on script reload
@@ -66,6 +80,10 @@ private:
     bool m_pilotHookFailed = false;
     bool m_hasFactionHook = false;
     bool m_factionHookFailed = false;
+    bool m_hasBoardHook = false;
+    bool m_boardHookFailed = false;
+    bool m_hasMissionEventHook = false;
+    bool m_missionEventHookFailed = false;
 };
 
 } // namespace game

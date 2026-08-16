@@ -556,6 +556,313 @@ bool factionRaid(GameContent& content, double factionIndex, double systemIndex)
                                              static_cast<std::uint32_t>(systemIndex));
 }
 
+// --- Missions & contracts (Phase 8c) ---
+// Conventions match the faction API: faction indices 1-based (sol.factions),
+// system indices the engine's 0-based ids (as in faction_candidates).
+
+// Human summary of a mission's current objective, for board/journal listings.
+std::string missionObjectiveLine(const sol::sim::Mission& mission)
+{
+    const sol::sim::MissionObjective& objective =
+        mission.objectives[mission.currentObjective];
+    std::string line = objective.text;
+    if (objective.kind == sol::sim::ObjectiveKind::Kill) {
+        line += " (" + std::to_string(objective.kills) + " left)";
+    } else if (objective.kind == sol::sim::ObjectiveKind::Deliver) {
+        line += " (" + std::to_string(static_cast<int>(objective.units)) + " units left)";
+    }
+    return line;
+}
+
+std::string listMissionBoard(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    const std::vector<sol::sim::Mission>& offers = world.missionSim().offers();
+    for (std::size_t i = 0; i < offers.size(); ++i) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        const sol::sim::Mission& offer = offers[i];
+        lines += std::to_string(i + 1) + ": " + offer.title + " (" +
+                 (offer.poster < world.factions().size()
+                      ? world.factions()[offer.poster].name
+                      : std::string("?")) +
+                 ", " + std::to_string(static_cast<int>(offer.rewardCredits)) + " cr";
+        if (offer.minRep > -100.0f) {
+            lines += ", rep " + std::to_string(static_cast<int>(offer.minRep)) + "+";
+        }
+        if (offer.deadline > 0.0) {
+            lines += ", " + std::to_string(static_cast<int>(offer.deadline)) + "s";
+        }
+        lines += offer.campaign() ? ") [campaign]" : ")";
+    }
+    return lines.empty() ? "(no offers)" : lines;
+}
+
+std::string listMissions(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    const std::vector<sol::sim::Mission>& active = world.missionSim().active();
+    for (std::size_t i = 0; i < active.size(); ++i) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        const sol::sim::Mission& mission = active[i];
+        lines += std::to_string(i + 1) + ": " + mission.title + " [" +
+                 std::to_string(mission.currentObjective + 1) + "/" +
+                 std::to_string(mission.objectives.size()) + "] " +
+                 missionObjectiveLine(mission);
+        if (mission.deadline > 0.0) {
+            lines += " (" + std::to_string(static_cast<int>(mission.deadline)) + "s left)";
+        }
+        if (i == world.missionSim().tracked()) {
+            lines += " *";
+        }
+    }
+    return lines.empty() ? "(no active missions)" : lines;
+}
+
+bool acceptMission(GameContent& content, double index)
+{
+    return content.world().acceptMission(static_cast<std::uint32_t>(index) - 1);
+}
+
+bool abandonMission(GameContent& content, double index)
+{
+    return content.world().abandonMission(static_cast<std::uint32_t>(index) - 1);
+}
+
+bool trackMission(GameContent& content, double index)
+{
+    SpaceWorld& world = content.world();
+    const std::uint32_t active = static_cast<std::uint32_t>(index) - 1;
+    if (active >= world.missionSim().active().size()) {
+        return false;
+    }
+    world.missionSim().setTracked(active);
+    return true;
+}
+
+double campaignStage(GameContent& content)
+{
+    return content.world().missionSim().campaignStage();
+}
+
+double setCampaignStage(GameContent& content, double stage)
+{
+    content.world().missionSim().setCampaignStage(
+        stage >= 0.0 ? static_cast<std::uint32_t>(stage) : 0u);
+    return content.world().missionSim().campaignStage();
+}
+
+// Dev listing of the raw candidates behind the docked board.
+std::string missionCandidatesInfo(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    if (!world.isDocked()) {
+        return "(not docked)";
+    }
+    std::string lines;
+    std::vector<sol::sim::HaulCandidate> hauls;
+    world.missionSim().haulCandidates(world.galaxy(), world.economy(),
+                                      world.currentSystemIndex(),
+                                      world.dockedStationIndex(), hauls);
+    for (const sol::sim::HaulCandidate& c : hauls) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer), "haul: %s @ %s needs %.0f %s (%.0f%%, %u jumps)",
+                      world.galaxy().systems[c.system].stations[c.station].name.c_str(),
+                      world.galaxy().systems[c.system].name.c_str(),
+                      static_cast<double>(c.units), world.commodityIds()[c.commodity].c_str(),
+                      static_cast<double>(c.severity) * 100.0, c.jumps);
+        lines += buffer;
+    }
+    std::vector<sol::sim::BountyCandidate> bounties;
+    world.missionSim().bountyCandidates(world.galaxy(), world.factionSim(),
+                                        world.currentSystemIndex(), bounties);
+    for (const sol::sim::BountyCandidate& c : bounties) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer), "bounty: %s raided by %s (%.2f, %u jumps)",
+                      world.galaxy().systems[c.system].name.c_str(),
+                      c.clan < world.factions().size() ? world.factions()[c.clan].name.c_str()
+                                                       : "?",
+                      static_cast<double>(c.intensity), c.jumps);
+        lines += buffer;
+    }
+    return lines.empty() ? "(no candidates)" : lines;
+}
+
+// Navigation helpers for authored content: gates by 1-based index.
+double gateDestination(GameContent& content, double gateIndex)
+{
+    const std::size_t index = static_cast<std::size_t>(gateIndex) - 1;
+    const std::span<const GateInstance> gates = content.world().gates();
+    return index < gates.size() ? static_cast<double>(gates[index].toSystem) : -1.0;
+}
+
+double stationCount(GameContent& content, double systemIndex)
+{
+    const auto& systems = content.world().galaxy().systems;
+    const std::size_t system = static_cast<std::size_t>(systemIndex);
+    return system < systems.size() ? static_cast<double>(systems[system].stations.size())
+                                   : 0.0;
+}
+
+double currentSystemIndex(GameContent& content)
+{
+    return content.world().currentSystemIndex();
+}
+
+// --- The mission builder (Lua board hook assembles a draft, then posts) ---
+
+bool missionBegin(GameContent& content, const std::string& title, double posterIndex,
+                  double rewardCredits, double repReward, double repPenalty,
+                  const std::string& campaignId)
+{
+    const std::size_t poster = static_cast<std::size_t>(posterIndex) - 1;
+    if (poster >= content.world().factions().size()) {
+        SOL_LOG_WARN("mission_begin: poster %d out of range", static_cast<int>(posterIndex));
+        return false;
+    }
+    sol::sim::Mission& draft = content.missionDraft();
+    draft = sol::sim::Mission{};
+    draft.title = title;
+    draft.campaignId = campaignId;
+    draft.poster = static_cast<std::uint32_t>(poster);
+    draft.rewardCredits = rewardCredits;
+    draft.standingReward = static_cast<float>(repReward);
+    draft.standingPenalty = static_cast<float>(repPenalty);
+    content.setMissionDraftOpen(true);
+    return true;
+}
+
+bool missionDeadline(GameContent& content, double seconds)
+{
+    if (!content.missionDraftOpen()) {
+        return false;
+    }
+    content.missionDraft().deadline = seconds > 0.0 ? seconds : 0.0;
+    return true;
+}
+
+bool missionMinRep(GameContent& content, double value)
+{
+    if (!content.missionDraftOpen()) {
+        return false;
+    }
+    content.missionDraft().minRep = static_cast<float>(value);
+    return true;
+}
+
+bool missionObjDock(GameContent& content, double system, double station,
+                    const std::string& text)
+{
+    if (!content.missionDraftOpen()) {
+        return false;
+    }
+    content.missionDraft().objectives.push_back(
+        {.kind = sol::sim::ObjectiveKind::Dock,
+         .system = static_cast<std::uint32_t>(system),
+         .station = static_cast<std::uint32_t>(station),
+         .text = text});
+    return true;
+}
+
+bool missionObjDeliver(GameContent& content, double system, double station,
+                       const std::string& commodityId, double units, const std::string& text)
+{
+    if (!content.missionDraftOpen()) {
+        return false;
+    }
+    const std::uint32_t commodity = content.world().commodityIndex(commodityId.c_str());
+    if (commodity >= content.world().commodityIds().size()) {
+        SOL_LOG_WARN("mission_obj_deliver: unknown commodity '%s'", commodityId.c_str());
+        return false;
+    }
+    content.missionDraft().objectives.push_back(
+        {.kind = sol::sim::ObjectiveKind::Deliver,
+         .system = static_cast<std::uint32_t>(system),
+         .station = static_cast<std::uint32_t>(station),
+         .commodity = commodity,
+         .units = static_cast<float>(units),
+         .text = text});
+    return true;
+}
+
+// count ships of a faction (1-based); system < 0 means anywhere.
+bool missionObjKill(GameContent& content, double factionIndex, double count, double system,
+                    const std::string& text)
+{
+    if (!content.missionDraftOpen()) {
+        return false;
+    }
+    const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
+    if (faction >= content.world().factions().size()) {
+        SOL_LOG_WARN("mission_obj_kill: faction %d out of range",
+                     static_cast<int>(factionIndex));
+        return false;
+    }
+    content.missionDraft().objectives.push_back(
+        {.kind = sol::sim::ObjectiveKind::Kill,
+         .system = system < 0.0 ? sol::sim::kAnySystem : static_cast<std::uint32_t>(system),
+         .faction = static_cast<std::uint32_t>(faction),
+         .kills = static_cast<std::uint32_t>(count),
+         .text = text});
+    return true;
+}
+
+// Position is relative to the target system's first station (or its primary
+// planet when the system has none) — Lua has no absolute-coordinate source.
+bool missionObjFlyTo(GameContent& content, double system, double dx, double dy, double dz,
+                     double radius, const std::string& text)
+{
+    if (!content.missionDraftOpen()) {
+        return false;
+    }
+    const auto& systems = content.world().galaxy().systems;
+    const std::size_t systemIndex = static_cast<std::size_t>(system);
+    if (systemIndex >= systems.size()) {
+        SOL_LOG_WARN("mission_obj_flyto: system %d out of range", static_cast<int>(system));
+        return false;
+    }
+    const sol::sim::SystemSpec& spec = systems[systemIndex];
+    const core::DVec3 anchor = !spec.stations.empty()
+                                   ? spec.stations[0].position
+                                   : spec.planets[spec.primaryPlanet].position;
+    content.missionDraft().objectives.push_back(
+        {.kind = sol::sim::ObjectiveKind::FlyTo,
+         .system = static_cast<std::uint32_t>(systemIndex),
+         .position = anchor + core::DVec3{dx, dy, dz},
+         .radius = radius,
+         .text = text});
+    return true;
+}
+
+bool missionPost(GameContent& content)
+{
+    if (!content.missionDraftOpen()) {
+        SOL_LOG_WARN("mission_post: no draft (call sol.mission_begin first)");
+        return false;
+    }
+    content.setMissionDraftOpen(false);
+    SpaceWorld& world = content.world();
+    std::string error;
+    if (!world.missionSim().postOffer(world.galaxy(), world.economy(), world.factionSim(),
+                                      content.missionDraft(), &error)) {
+        SOL_LOG_WARN("mission_post: '%s' refused: %s", content.missionDraft().title.c_str(),
+                     error.c_str());
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool GameContent::initialize(const std::string& dataDirectory, const std::string& modsDirectory,
@@ -653,6 +960,27 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&setStanding>("sol", "set_rep", this);
     m_vm.registerFunction<&factionCandidates>("sol", "faction_candidates", this);
     m_vm.registerFunction<&factionRaid>("sol", "faction_raid", this);
+    // sol.mission_board (the listing) and the global mission_board hook (the
+    // Lua-defined composer) live in different namespaces; no collision.
+    m_vm.registerFunction<&listMissionBoard>("sol", "mission_board", this);
+    m_vm.registerFunction<&listMissions>("sol", "missions", this);
+    m_vm.registerFunction<&acceptMission>("sol", "accept_mission", this);
+    m_vm.registerFunction<&abandonMission>("sol", "abandon_mission", this);
+    m_vm.registerFunction<&trackMission>("sol", "track_mission", this);
+    m_vm.registerFunction<&campaignStage>("sol", "campaign_stage", this);
+    m_vm.registerFunction<&setCampaignStage>("sol", "set_campaign_stage", this);
+    m_vm.registerFunction<&missionCandidatesInfo>("sol", "mission_candidates", this);
+    m_vm.registerFunction<&gateDestination>("sol", "gate_destination", this);
+    m_vm.registerFunction<&stationCount>("sol", "station_count", this);
+    m_vm.registerFunction<&currentSystemIndex>("sol", "system_index", this);
+    m_vm.registerFunction<&missionBegin>("sol", "mission_begin", this);
+    m_vm.registerFunction<&missionDeadline>("sol", "mission_deadline", this);
+    m_vm.registerFunction<&missionMinRep>("sol", "mission_min_rep", this);
+    m_vm.registerFunction<&missionObjDock>("sol", "mission_obj_dock", this);
+    m_vm.registerFunction<&missionObjDeliver>("sol", "mission_obj_deliver", this);
+    m_vm.registerFunction<&missionObjKill>("sol", "mission_obj_kill", this);
+    m_vm.registerFunction<&missionObjFlyTo>("sol", "mission_obj_flyto", this);
+    m_vm.registerFunction<&missionPost>("sol", "mission_post", this);
 }
 
 bool GameContent::reloadDefs()
@@ -675,14 +1003,26 @@ bool GameContent::reloadDefs()
 
 void GameContent::runBootScripts()
 {
+    // Every scripts/*.lua per layer, sorted, init.lua first (it defines the
+    // shared helpers) — campaign content gets its own file (Phase 8c).
     for (const std::string& layer : m_layerDirectories) {
-        const std::string script = layer + "/scripts/init.lua";
-        if (platform::fileModificationTime(script.c_str()) == 0) {
-            continue;
+        const std::string scriptsDir = layer + "/scripts";
+        std::vector<std::string> scripts;
+        for (const std::string& path : platform::listFiles(scriptsDir.c_str())) {
+            if (hasExtension(path, ".lua")) {
+                scripts.push_back(path);
+            }
         }
-        std::string error;
-        if (!m_vm.doFile(script.c_str(), &error)) {
-            SOL_LOG_ERROR("%s", error.c_str());
+        std::sort(scripts.begin(), scripts.end());
+        const auto init = std::find(scripts.begin(), scripts.end(), scriptsDir + "/init.lua");
+        if (init != scripts.end()) {
+            std::rotate(scripts.begin(), init, init + 1);
+        }
+        for (const std::string& script : scripts) {
+            std::string error;
+            if (!m_vm.doFile(script.c_str(), &error)) {
+                SOL_LOG_ERROR("%s", error.c_str());
+            }
         }
     }
 
@@ -699,6 +1039,14 @@ void GameContent::runBootScripts()
     m_hasFactionHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_factionHookFailed = false;
+    lua_getglobal(state, "mission_board");
+    m_hasBoardHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_boardHookFailed = false;
+    lua_getglobal(state, "mission_event");
+    m_hasMissionEventHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_missionEventHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -809,6 +1157,113 @@ void GameContent::tick(double dt)
             m_factionHookFailed = true;
         }
         m_world->applyDefaultFactionDecision(decision);
+    }
+
+    // Mission board (Phase 8c): re-composed on every dock event and on the
+    // docked refresh cadence; Lua posts offers through the sol.mission_*
+    // builder against the candidates runMissionBoard enumerates.
+    const bool dockEvent = m_world->consumeDockEvent();
+    if (m_world->isDocked() &&
+        (dockEvent || m_world->missionSim().tickBoard(dt))) {
+        runMissionBoard();
+    }
+
+    // Campaign flavor: the world already applied payouts/penalties; authored
+    // missions' transitions are forwarded to Lua's mission_event hook.
+    m_missionEvents.clear();
+    m_world->takeMissionEvents(m_missionEvents);
+    if (m_hasMissionEventHook && !m_missionEventHookFailed) {
+        for (const sol::sim::MissionEvent& event : m_missionEvents) {
+            if (event.mission.campaignId.empty()) {
+                continue;
+            }
+            const char* kind = "accepted";
+            switch (event.kind) {
+            case sol::sim::MissionEventKind::Accepted:
+                break;
+            case sol::sim::MissionEventKind::ObjectiveComplete:
+                kind = "objective";
+                break;
+            case sol::sim::MissionEventKind::Completed:
+                kind = "completed";
+                break;
+            case sol::sim::MissionEventKind::Failed:
+                kind = "failed";
+                break;
+            case sol::sim::MissionEventKind::Abandoned:
+                kind = "abandoned";
+                break;
+            }
+            std::string error;
+            if (!m_vm.callGlobal("mission_event", &error, event.mission.campaignId.c_str(),
+                                 kind, static_cast<double>(event.objective + 1))) {
+                SOL_LOG_ERROR("mission_event disabled until scripts reload: %s",
+                              error.c_str());
+                m_missionEventHookFailed = true;
+                break;
+            }
+        }
+    }
+}
+
+void GameContent::runMissionBoard()
+{
+    SpaceWorld& world = *m_world;
+    sol::sim::MissionSim& missions = world.missionSim();
+    missions.openBoard(world.currentSystemIndex(), world.dockedStationIndex());
+    if (!m_hasBoardHook || m_boardHookFailed) {
+        return; // scriptless fallback: an empty board
+    }
+    const std::uint32_t owner = world.systemOwnerFaction(world.currentSystemIndex());
+    if (owner >= world.factions().size()) {
+        return; // ownerless station: nobody to post work
+    }
+
+    // Candidate strings, faction_candidates-style. Hauls:
+    // "system:station:commodityId:units:severity:jumps:systemName:stationName"
+    m_haulCandidates.clear();
+    missions.haulCandidates(world.galaxy(), world.economy(), world.currentSystemIndex(),
+                            world.dockedStationIndex(), m_haulCandidates);
+    std::string hauls;
+    for (const sol::sim::HaulCandidate& c : m_haulCandidates) {
+        if (!hauls.empty()) {
+            hauls += ";";
+        }
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%.0f:%.2f:%u", static_cast<double>(c.units),
+                      static_cast<double>(c.severity), c.jumps);
+        const sol::sim::SystemSpec& spec = world.galaxy().systems[c.system];
+        hauls += std::to_string(c.system) + ":" + std::to_string(c.station) + ":" +
+                 world.commodityIds()[c.commodity] + ":" + buffer + ":" + spec.name + ":" +
+                 spec.stations[c.station].name;
+    }
+    // Bounties: "system:clanIndex1based:intensity:jumps:systemName:clanName".
+    m_bountyCandidates.clear();
+    missions.bountyCandidates(world.galaxy(), world.factionSim(),
+                              world.currentSystemIndex(), m_bountyCandidates);
+    std::string bounties;
+    for (const sol::sim::BountyCandidate& c : m_bountyCandidates) {
+        if (c.clan >= world.factions().size()) {
+            continue;
+        }
+        if (!bounties.empty()) {
+            bounties += ";";
+        }
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.intensity),
+                      c.jumps);
+        bounties += std::to_string(c.system) + ":" + std::to_string(c.clan + 1) + ":" +
+                    buffer + ":" + world.galaxy().systems[c.system].name + ":" +
+                    world.factions()[c.clan].name;
+    }
+
+    std::string error;
+    if (!m_vm.callGlobal("mission_board", &error, world.dockedStationName(),
+                         static_cast<double>(owner + 1),
+                         world.factions()[owner].name.c_str(), hauls.c_str(),
+                         bounties.c_str(), static_cast<double>(missions.boardRoll()))) {
+        SOL_LOG_ERROR("mission_board disabled until scripts reload: %s", error.c_str());
+        m_boardHookFailed = true;
     }
 }
 

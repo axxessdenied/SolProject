@@ -12,6 +12,7 @@
 #include "sol/sim/economy.hpp"
 #include "sol/sim/faction_sim.hpp"
 #include "sol/sim/flight.hpp"
+#include "sol/sim/missions.hpp"
 #include "sol/sim/power.hpp"
 #include "sol/sim/steering.hpp"
 #include "sol/sim/universe.hpp"
@@ -324,6 +325,25 @@ public:
         m_factionSim.applyDefaultDecision(m_galaxy, &m_economy, decision);
     }
 
+    // --- Missions & contracts (Phase 8c) ---
+    [[nodiscard]] const sol::sim::MissionSim& missionSim() const { return m_missions; }
+    [[nodiscard]] sol::sim::MissionSim& missionSim() { return m_missions; }
+    // Player accept/abandon with the game-side gates (docked; standing with
+    // the poster enforces the offer's min_rep tier).
+    bool acceptMission(std::uint32_t offerIndex, std::string* outError = nullptr);
+    bool abandonMission(std::uint32_t activeIndex);
+    // True once after each successful dock (and death-respawn re-dock);
+    // GameContent consumes it to re-open the board and run the Lua hook.
+    [[nodiscard]] bool consumeDockEvent()
+    {
+        const bool pending = m_dockEventPending;
+        m_dockEventPending = false;
+        return pending;
+    }
+    // Drains mission events whose consequences (payout, standing) this world
+    // already applied; GameContent forwards campaign ones to Lua.
+    void takeMissionEvents(std::vector<sol::sim::MissionEvent>& out);
+
     // Hardcore/ironman (decisions/007): set at new game, carried by the save.
     void setHardcore(bool hardcore) { m_hardcore = hardcore; }
     [[nodiscard]] bool hardcore() const { return m_hardcore; }
@@ -531,9 +551,17 @@ private:
     void handleShipDestroyed(std::uint32_t entityIndex,
                              std::uint32_t attackerIndex = kNoIndex);
     // Rebuilds the runtime faction table (majors + jittered clans) and
-    // (re)initializes the FactionSim against the current galaxy; called by
-    // generateUniverse and by loadFrom after a galaxy regeneration.
+    // (re)initializes the FactionSim and MissionSim against the current
+    // galaxy; called by generateUniverse and by loadFrom after a galaxy
+    // regeneration.
     void initializeFactions();
+    // Hands player cargo to any active Deliver objective at the docked
+    // station: cargo leaves the hold, the market stock refills (the contract
+    // literally fills the shortage it advertised).
+    void processMissionDeliveries();
+    // Applies queued mission consequences (payout, standing moves) and
+    // buffers the events for GameContent's Lua forwarding.
+    void processMissionEvents();
     // Ambient NPC population for a freshly instantiated system: owner
     // patrol/raider wings by region security plus raid-intensity incursions.
     void spawnAmbientPilots(std::uint32_t systemIndex, const sol::sim::SystemSpec& spec);
@@ -582,6 +610,10 @@ private:
     sol::sim::EconomyParams m_economyParams; // kept for re-init on load
     std::vector<GameFaction> m_factionTable; // majors + clans, sim order
     sol::sim::FactionSim m_factionSim;
+    sol::sim::MissionSim m_missions;
+    std::vector<sol::sim::MissionEvent> m_missionEvents; // buffered for Lua
+    std::vector<sol::sim::MissionEvent> m_missionEventScratch;
+    bool m_dockEventPending = false;
     std::vector<std::string> m_commodityIds; // economy index -> def id
     double m_playerCredits = 1'000.0;
     std::vector<float> m_playerCargo; // per commodity
