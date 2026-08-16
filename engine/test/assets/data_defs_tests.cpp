@@ -104,6 +104,103 @@ color = [0.2, 0.4, 1.0]
     SOL_CHECK(db.findFaction("sol.navy")->color[2] == 1.0f);
 }
 
+SOL_TEST(data_defs_faction_sim_fields_and_gates)
+{
+    DefDatabase db;
+    std::string error;
+    const char* doc = R"(
+[[faction]]
+id = "sol.navy"
+name = "Solar Navy"
+kind = "major"
+aggression = 0.3
+forgiveness = 0.7
+relations = ["sol.corsairs:-60", "sol.guild:40"]
+ships_patrol = ["sol.fighter"]
+ships_raider = ["sol.fighter"]
+
+[[faction]]
+id = "sol.corsairs"
+name = "Corsairs"
+kind = "pirate"
+relations = ["sol.navy:-60"]
+
+[[faction]]
+id = "sol.guild"
+name = "Freight Guild"
+
+[[module]]
+id = "sol.navy_shield"
+name = "Navy Shield"
+slot = "shield"
+factions = ["sol.navy"]
+min_rep = 20.0
+shield_strength_add = 50.0
+)";
+    SOL_CHECK(merge(db, doc, "factions.toml", &error));
+    const sol::assets::FactionDef* navy = db.findFaction("sol.navy");
+    SOL_CHECK(navy != nullptr);
+    SOL_CHECK(navy->kind == sol::assets::FactionKind::Major);
+    SOL_CHECK(navy->aggression == 0.3f);
+    SOL_CHECK(navy->forgiveness == 0.7f);
+    SOL_CHECK(navy->relations.size() == 2);
+    SOL_CHECK(navy->relations[0].otherId == "sol.corsairs");
+    SOL_CHECK(navy->relations[0].standing == -60.0f);
+    SOL_CHECK(navy->shipsPatrol.size() == 1 && navy->shipsPatrol[0] == "sol.fighter");
+    SOL_CHECK(db.findFaction("sol.corsairs")->kind == sol::assets::FactionKind::Pirate);
+    // Defaults on the untouched faction.
+    SOL_CHECK(db.findFaction("sol.guild")->aggression == 0.5f);
+    SOL_CHECK(db.findFaction("sol.guild")->relations.empty());
+
+    const sol::assets::ModuleDef* gated = db.findModule("sol.navy_shield");
+    SOL_CHECK(gated != nullptr);
+    SOL_CHECK(gated->gate.factions.size() == 1 && gated->gate.factions[0] == "sol.navy");
+    SOL_CHECK(gated->gate.minRep == 20.0f);
+    // Ungated defs default open.
+    SOL_CHECK(navy->shipsRaider.size() == 1);
+
+    // Both sides declared and agreeing: valid.
+    SOL_CHECK(db.validateFactions(&error));
+
+    // Bad kind, out-of-range weights, malformed relations: schema errors.
+    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\nkind = \"guild\"\n", "bad.toml",
+                     &error));
+    SOL_CHECK(error.find("kind") != std::string::npos);
+    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\naggression = 1.5\n", "bad.toml",
+                     &error));
+    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\nrelations = [\"sol.navy\"]\n",
+                     "bad.toml", &error));
+    SOL_CHECK(error.find("id:standing") != std::string::npos);
+    SOL_CHECK(!merge(db, "[[module]]\nid = \"m\"\nname = \"M\"\nslot = \"cargo\"\nmin_rep = 150\n",
+                     "bad.toml", &error));
+    SOL_CHECK(error.find("min_rep") != std::string::npos);
+}
+
+SOL_TEST(data_defs_faction_relations_must_agree)
+{
+    DefDatabase db;
+    std::string error;
+    const char* doc = R"(
+[[faction]]
+id = "sol.a"
+name = "A"
+relations = ["sol.b:-40"]
+
+[[faction]]
+id = "sol.b"
+name = "B"
+relations = ["sol.a:-10"]
+)";
+    SOL_CHECK(merge(db, doc, "factions.toml", &error));
+    SOL_CHECK(!db.validateFactions(&error));
+    SOL_CHECK(error.find("mismatched") != std::string::npos);
+    // One-sided declarations and unknown ids are fine.
+    DefDatabase oneSided;
+    SOL_CHECK(merge(oneSided, "[[faction]]\nid = \"sol.a\"\nname = \"A\"\nrelations = [\"sol.gone:-40\"]\n",
+                    "factions.toml", &error));
+    SOL_CHECK(oneSided.validateFactions(&error));
+}
+
 SOL_TEST(data_defs_validation_errors)
 {
     DefDatabase db;

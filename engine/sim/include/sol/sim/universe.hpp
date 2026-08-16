@@ -50,6 +50,11 @@ struct GalaxyParams
     float frontierRadiusFraction = 0.70f;
     std::uint32_t factionCount = 0;    // territory claimants (capitals in the core)
     float fringeLawlessChance = 0.6f;  // fringe systems that stay unclaimed
+    // Pirate clan templates available (Phase 8b): > 0 turns each connected
+    // neighborhood of lawless systems into a generated clan whose faction
+    // index continues past the majors (factionCount + clan index). 0 keeps
+    // lawless systems at kNoFaction (pre-8b behavior).
+    std::uint32_t pirateTemplateCount = 0;
     std::uint32_t extraGatesPerSystem = 1; // nearest-neighbor links beyond the MST
     // In-system playfield (meters, sim space). Stations sit within
     // [stationMinDistance, stationMaxDistance] of the primary planet; gates
@@ -104,11 +109,24 @@ struct GateLink
     std::uint32_t b = 0;
 };
 
+// A generated pirate clan (Phase 8b): one per connected neighborhood of
+// lawless fringe systems. Its faction index is params.factionCount + its
+// position in Galaxy::clans; personality/color jitter derives from seed
+// against the template (game side, where the defs live).
+struct ClanSpec
+{
+    std::string name;
+    std::uint32_t templateIndex = 0; // pirate template def, game-side order
+    std::uint64_t seed = 0;
+    std::uint32_t homeSystem = 0; // lowest-index member system
+};
+
 struct Galaxy
 {
     std::uint64_t seed = 0;
     std::vector<SystemSpec> systems;
     std::vector<GateLink> links;
+    std::vector<ClanSpec> clans;
 };
 
 // Generates the full galaxy plan. The gate graph is always connected.

@@ -2,6 +2,7 @@
 
 #include "sol/assets/loadout.hpp"
 #include "sol/core/log.hpp"
+#include "sol/core/random.hpp"
 #include "sol/core/serialize.hpp"
 #include "sol/sim/collision.hpp"
 #include "sol/sim/steering.hpp"
@@ -31,7 +32,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 4; // v4: hardcore flag + fleet/fits/crew
+constexpr std::uint32_t kSaveVersion = 5; // v5: faction relations/standings block
 
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
@@ -118,7 +119,11 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
 {
     m_galaxyParams = sim::GalaxyParams{};
     m_galaxyParams.seed = m_universeSeed;
-    m_galaxyParams.factionCount = static_cast<std::uint32_t>(defs.factions().size());
+    // Majors claim territory; pirate defs are clan templates (Phase 8b).
+    for (const assets::FactionDef& faction : defs.factions()) {
+        (faction.kind == assets::FactionKind::Pirate ? m_galaxyParams.pirateTemplateCount
+                                                     : m_galaxyParams.factionCount) += 1;
+    }
     for (const assets::StationDef& station : defs.stations()) {
         m_galaxyParams.stationRules.push_back(
             {{station.weightCore, station.weightFrontier, station.weightFringe}});
@@ -173,10 +178,204 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     }
     m_startSystem = start;
     resetFleetToStarter();
+    initializeFactions(); // before loadSystem: ambient wings need the table
     loadSystem(start, kNoIndex);
-    SOL_LOG_INFO("universe: seed %llu, %zu systems, %zu lanes; starting in '%s'",
+    SOL_LOG_INFO("universe: seed %llu, %zu systems, %zu lanes, %zu faction(s) "
+                 "(%zu clans); starting in '%s'",
                  static_cast<unsigned long long>(m_universeSeed), m_galaxy.systems.size(),
-                 m_galaxy.links.size(), currentSystemName());
+                 m_galaxy.links.size(), m_factionTable.size(), m_galaxy.clans.size(),
+                 currentSystemName());
+}
+
+void SpaceWorld::initializeFactions()
+{
+    m_factionTable.clear();
+    if (m_defs == nullptr) {
+        return;
+    }
+    // Majors in def order (their generator indices), then clans.
+    std::vector<const assets::FactionDef*> pirateTemplates;
+    for (const assets::FactionDef& def : m_defs->factions()) {
+        if (def.kind == assets::FactionKind::Pirate) {
+            pirateTemplates.push_back(&def);
+            continue;
+        }
+        m_factionTable.push_back({.defId = def.id,
+                                  .name = def.name,
+                                  .color = {def.color[0], def.color[1], def.color[2]},
+                                  .pirate = false,
+                                  .aggression = def.aggression,
+                                  .forgiveness = def.forgiveness,
+                                  .shipsPatrol = def.shipsPatrol,
+                                  .shipsRaider = def.shipsRaider});
+    }
+    const std::size_t majorCount = m_factionTable.size();
+    for (const sim::ClanSpec& clan : m_galaxy.clans) {
+        if (clan.templateIndex >= pirateTemplates.size()) {
+            continue; // template roster shrank since generation; skip cleanly
+        }
+        const assets::FactionDef& base = *pirateTemplates[clan.templateIndex];
+        core::Rng jitter(clan.seed, 1);
+        const auto jitterChannel = [&](float value) {
+            return core::clamp(value * (0.75f + 0.5f * jitter.nextFloat01()), 0.05f, 1.0f);
+        };
+        const auto jitterWeight = [&](float value) {
+            return core::clamp(value + 0.3f * jitter.nextFloat01() - 0.15f, 0.0f, 1.0f);
+        };
+        m_factionTable.push_back(
+            {.defId = base.id,
+             .name = clan.name,
+             .color = {jitterChannel(base.color[0]), jitterChannel(base.color[1]),
+                       jitterChannel(base.color[2])},
+             .pirate = true,
+             .aggression = jitterWeight(base.aggression),
+             .forgiveness = jitterWeight(base.forgiveness),
+             .shipsPatrol = base.shipsPatrol,
+             .shipsRaider = base.shipsRaider});
+    }
+
+    // FactionSim params: authored relations resolve def ids to table
+    // indices (clans inherit their template's rows); unspecified
+    // major-pirate pairs open at the default enmity.
+    const std::uint32_t count = static_cast<std::uint32_t>(m_factionTable.size());
+    sim::FactionSimParams params;
+    params.agents.reserve(count);
+    for (const GameFaction& faction : m_factionTable) {
+        params.agents.push_back({.aggression = faction.aggression,
+                                 .forgiveness = faction.forgiveness,
+                                 .pirate = faction.pirate});
+        params.initialStandings.push_back(faction.pirate ? kClanInitialStanding : 0.0f);
+    }
+    params.baselineRelations.assign(static_cast<std::size_t>(count) * count, 0.0f);
+    const auto setPair = [&](std::uint32_t a, std::uint32_t b, float value) {
+        params.baselineRelations[static_cast<std::size_t>(a) * count + b] = value;
+        params.baselineRelations[static_cast<std::size_t>(b) * count + a] = value;
+    };
+    for (std::uint32_t a = 0; a < count; ++a) {
+        for (std::uint32_t b = a + 1; b < count; ++b) {
+            if (m_factionTable[a].pirate != m_factionTable[b].pirate) {
+                setPair(a, b, kDefaultPirateRelation);
+            }
+        }
+    }
+    for (std::uint32_t a = 0; a < count; ++a) {
+        const assets::FactionDef* def = m_defs->findFaction(m_factionTable[a].defId.c_str());
+        if (def == nullptr) {
+            continue;
+        }
+        for (const assets::FactionRelation& relation : def->relations) {
+            bool found = false;
+            for (std::uint32_t b = 0; b < count; ++b) {
+                if (b != a && m_factionTable[b].defId == relation.otherId) {
+                    setPair(a, b, relation.standing);
+                    found = true;
+                }
+            }
+            if (!found && a < majorCount) { // clans: silence per-clan repeats
+                SOL_LOG_WARN("faction '%s': relation to unknown faction '%s' ignored",
+                             def->id.c_str(), relation.otherId.c_str());
+            }
+        }
+    }
+    m_factionSim.initialize(m_galaxy, params, m_universeSeed);
+}
+
+const char* SpaceWorld::playerAttitudeName(std::uint32_t faction) const
+{
+    if (faction >= m_factionTable.size()) {
+        return "";
+    }
+    if (m_factionSim.playerHostile(faction)) {
+        return "hostile";
+    }
+    return m_factionSim.playerFriendly(faction) ? "friendly" : "neutral";
+}
+
+bool SpaceWorld::stationSells(const assets::CatalogGate& gate) const
+{
+    if (!isDocked()) {
+        return false;
+    }
+    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    if (owner >= m_factionTable.size()) {
+        return true; // ownerless station: open market
+    }
+    const GameFaction& faction = m_factionTable[owner];
+    if (!gate.factions.empty() &&
+        std::find(gate.factions.begin(), gate.factions.end(), faction.defId) ==
+            gate.factions.end()) {
+        return false;
+    }
+    // Pirate stations fence anything their defs allow, standing be damned
+    // (docking already required non-hostile standing).
+    return faction.pirate || m_factionSim.standing(owner) >= gate.minRep;
+}
+
+bool SpaceWorld::commitFactionRaid(std::uint32_t faction, std::uint32_t targetSystem)
+{
+    if (!m_factionSim.commitRaid(m_galaxy, &m_economy, faction, targetSystem)) {
+        return false;
+    }
+    if (faction < m_factionTable.size() && targetSystem < m_galaxy.systems.size()) {
+        SOL_LOG_INFO("faction raid: %s hit '%s'", m_factionTable[faction].name.c_str(),
+                     m_galaxy.systems[targetSystem].name.c_str());
+    }
+    return true;
+}
+
+void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::SystemSpec& spec)
+{
+    if (m_defs == nullptr || m_factionTable.empty()) {
+        return;
+    }
+    const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
+    const auto spawnWing = [&](std::uint32_t faction, const std::vector<std::string>& roster,
+                               PilotRole role, std::uint32_t count, const core::DVec3& anchor,
+                               double spread) {
+        if (roster.empty()) {
+            return;
+        }
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const assets::ShipDef* def = m_defs->findShip(roster[i % roster.size()].c_str());
+            if (def == nullptr) {
+                SOL_LOG_WARN("ambient wing: no ship def '%s'", roster[i % roster.size()].c_str());
+                return;
+            }
+            const core::DVec3 position =
+                anchor + core::DVec3{spread * (1.0 + i), 300.0 + 250.0 * i,
+                                     -spread * 0.5 * i};
+            const ecs::Entity entity =
+                spawnShipAt(*def, *m_defs, position, m_factionTable[faction].name.c_str());
+            m_registry.emplace<ShipPilot>(entity,
+                                          ShipPilot{.role = role, .factionIndex = faction});
+        }
+    };
+
+    // Owner presence: patrol wings by region security for majors, resident
+    // raider wings for clan systems.
+    const std::uint32_t owner = spec.factionIndex;
+    const core::DVec3 anchor = spec.stations.empty() ? hub : spec.stations[0].position;
+    if (owner < m_factionTable.size()) {
+        const GameFaction& faction = m_factionTable[owner];
+        if (faction.pirate) {
+            spawnWing(owner, faction.shipsRaider, PilotRole::Fighter, 2, anchor, 900.0);
+        } else {
+            constexpr std::uint32_t kPatrolsPerRegion[3] = {3, 2, 1}; // core/frontier/fringe
+            spawnWing(owner, faction.shipsPatrol, PilotRole::Patrol,
+                      kPatrolsPerRegion[static_cast<std::size_t>(spec.region)], anchor, 700.0);
+        }
+    }
+
+    // Raid incursion: the last raider keeps ships in-system while the
+    // intensity is warm (fresh raids read as an active raiding party).
+    const float intensity = m_factionSim.raidIntensity(systemIndex);
+    const std::uint32_t raider = m_factionSim.lastRaider(systemIndex);
+    if (intensity >= 0.5f && raider < m_factionTable.size() && raider != owner) {
+        const std::uint32_t count =
+            std::min(3u, static_cast<std::uint32_t>(intensity + 0.5f));
+        spawnWing(raider, m_factionTable[raider].shipsRaider, PilotRole::Fighter, count,
+                  anchor + core::DVec3{9'000.0, 1'500.0, 6'000.0}, 1'200.0);
+    }
 }
 
 void SpaceWorld::despawnSystem()
@@ -292,6 +491,9 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     transform.previousOrientation = transform.orientation;
     m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     m_playerDamageTimer = 0.0f;
+
+    // Ambient faction presence (Phase 8b): owner wings + raid incursions.
+    spawnAmbientPilots(systemIndex, spec);
 }
 
 bool SpaceWorld::jumpNearestGate(double activationRange)
@@ -344,6 +546,15 @@ bool SpaceWorld::tryDockNearestStation(double range)
         }
     }
     if (nearest == kNoIndex) {
+        return false;
+    }
+    // Docking rights (Phase 8b): a hostile owner refuses the request. Death
+    // respawn bypasses this path on purpose — dock stays the safe room.
+    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    if (owner < m_factionTable.size() && m_factionSim.playerHostile(owner)) {
+        SOL_LOG_WARN("docking denied at '%s': %s is hostile",
+                     spec.stations[nearest].name.c_str(),
+                     m_factionTable[owner].name.c_str());
         return false;
     }
     m_dockedStation = nearest;
@@ -429,6 +640,10 @@ sim::TradeResult SpaceWorld::playerBuy(std::uint32_t commodity, float units)
     const sim::TradeResult result = m_economy.buy(market, commodity, units);
     m_playerCredits -= result.credits;
     m_playerCargo[commodity] += result.units;
+    if (const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+        owner < m_factionTable.size()) {
+        m_factionSim.recordTrade(owner, result.credits); // commerce goodwill
+    }
     return result;
 }
 
@@ -443,6 +658,10 @@ sim::TradeResult SpaceWorld::playerSell(std::uint32_t commodity, float units)
     const sim::TradeResult result = m_economy.sell(market, commodity, units);
     m_playerCredits += result.credits;
     m_playerCargo[commodity] -= result.units;
+    if (const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+        owner < m_factionTable.size()) {
+        m_factionSim.recordTrade(owner, result.credits);
+    }
     return result;
 }
 
@@ -638,6 +857,9 @@ bool SpaceWorld::buyModule(const char* moduleId, std::string* outError)
     if (module == nullptr) {
         return refuse(std::string("no module def '") + moduleId + "'", outError);
     }
+    if (!stationSells(module->gate)) {
+        return refuse("'" + module->name + "' is not sold here (faction catalog)", outError);
+    }
     OwnedShip& ship = m_fleet[m_activeShip];
     const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
     if (base == nullptr) {
@@ -699,6 +921,9 @@ bool SpaceWorld::buyWeapon(const char* weaponId, std::string* outError)
     if (weapon == nullptr) {
         return refuse(std::string("no weapon def '") + weaponId + "'", outError);
     }
+    if (!stationSells(weapon->gate)) {
+        return refuse("'" + weapon->name + "' is not sold here (faction catalog)", outError);
+    }
     OwnedShip& ship = m_fleet[m_activeShip];
     if (ship.weaponId == weaponId) {
         return refuse("already fitted", outError);
@@ -728,6 +953,9 @@ bool SpaceWorld::buyShip(const char* shipDefId, std::string* outError)
     const assets::ShipDef* def = m_defs->findShip(shipDefId);
     if (def == nullptr) {
         return refuse(std::string("no ship def '") + shipDefId + "'", outError);
+    }
+    if (!stationSells(def->gate)) {
+        return refuse("'" + def->name + "' is not sold here (faction catalog)", outError);
     }
     if (m_playerCredits < def->price) {
         return refuse("insufficient credits", outError);
@@ -798,6 +1026,9 @@ bool SpaceWorld::hireCrew(const char* crewId, std::string* outError)
     const assets::CrewDef* member = m_defs->findCrew(crewId);
     if (member == nullptr) {
         return refuse(std::string("no crew def '") + crewId + "'", outError);
+    }
+    if (!stationSells(member->gate)) {
+        return refuse("'" + member->name + "' is not for hire here (faction catalog)", outError);
     }
     OwnedShip& ship = m_fleet[m_activeShip];
     const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
@@ -882,21 +1113,12 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
     }
 }
 
-ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def,
-                                         const assets::DefDatabase& defs)
+ecs::Entity SpaceWorld::spawnShipAt(const assets::ShipDef& def, const assets::DefDatabase& defs,
+                                    const core::DVec3& position, const char* factionName)
 {
-    const sim::ShipState player = shipState();
-    const core::Vec3 forward = rotate(player.orientation, core::Vec3{0.0f, 0.0f, -1.0f});
-    const double distance = 150.0 + 100.0 * static_cast<double>(def.scale);
-    const core::DVec3 position =
-        player.position + core::DVec3{forward.x * distance, forward.y * distance,
-                                      forward.z * distance};
-
     const ecs::Entity e = m_registry.create();
     m_registry.emplace<Transform>(e, Transform{.position = position,
-                                               .previousPosition = position,
-                                               .orientation = player.orientation,
-                                               .previousOrientation = player.orientation});
+                                               .previousPosition = position});
     m_registry.emplace<RenderShape>(e, RenderShape{});
     m_registry.emplace<FlightBody>(e);
     // Default input is assist-on with zero commands = station-keeping until a
@@ -906,7 +1128,27 @@ ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def,
     m_registry.emplace<ShipDefense>(e);
     m_registry.emplace<ShipWeapon>(e);
     applyShipDef(e.index, def, defs);
-    m_spawnedShips.push_back({.entity = e, .defId = def.id, .name = def.name});
+    std::string name = def.name;
+    if (factionName != nullptr && factionName[0] != '\0') {
+        name += std::string(" (") + factionName + ")";
+    }
+    m_spawnedShips.push_back({.entity = e, .defId = def.id, .name = std::move(name)});
+    return e;
+}
+
+ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def,
+                                         const assets::DefDatabase& defs)
+{
+    const sim::ShipState player = shipState();
+    const core::Vec3 forward = rotate(player.orientation, core::Vec3{0.0f, 0.0f, -1.0f});
+    const double distance = 150.0 + 100.0 * static_cast<double>(def.scale);
+    const core::DVec3 position =
+        player.position + core::DVec3{forward.x * distance, forward.y * distance,
+                                      forward.z * distance};
+    const ecs::Entity e = spawnShipAt(def, defs, position, nullptr);
+    Transform& transform = m_registry.storage<Transform>().get(e.index);
+    transform.orientation = player.orientation;
+    transform.previousOrientation = player.orientation;
     return e;
 }
 
@@ -926,6 +1168,11 @@ TargetInfo SpaceWorld::currentTargetInfo() const
     info.nav = NavTarget{.name = ship.name, .position = transform.position, .surfaceRadius = 0.0};
     info.isShip = true;
     info.velocity = m_registry.storage<FlightBody>().get(ship.entity.index).velocity;
+    if (const ShipPilot* pilot = m_registry.tryGet<ShipPilot>(ship.entity);
+        pilot != nullptr && pilot->factionIndex < m_factionTable.size()) {
+        info.factionName = m_factionTable[pilot->factionIndex].name;
+        info.attitude = playerAttitudeName(pilot->factionIndex);
+    }
     if (const ShipDefense* defense = m_registry.tryGet<ShipDefense>(ship.entity)) {
         const float strength =
             defense->tuning.shieldStrength > 0.0f ? defense->tuning.shieldStrength : 1.0f;
@@ -945,11 +1192,27 @@ void SpaceWorld::cycleTarget()
     }
 }
 
+bool SpaceWorld::targetShipByName(const char* namePart)
+{
+    for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
+        if (m_spawnedShips[i].name.find(namePart) != std::string::npos) {
+            m_targetIndex = m_targets.size() + i;
+            return true;
+        }
+    }
+    return false;
+}
+
 ecs::Entity SpaceWorld::spawnPilotFromDef(const assets::ShipDef& def,
-                                          const assets::DefDatabase& defs, PilotRole role)
+                                          const assets::DefDatabase& defs, PilotRole role,
+                                          std::uint32_t factionIndex)
 {
     const ecs::Entity e = spawnShipFromDef(def, defs);
-    m_registry.emplace<ShipPilot>(e, ShipPilot{.role = role});
+    m_registry.emplace<ShipPilot>(e, ShipPilot{.role = role, .factionIndex = factionIndex});
+    if (factionIndex < m_factionTable.size()) {
+        m_spawnedShips.back().name =
+            def.name + " (" + m_factionTable[factionIndex].name + ")";
+    }
     return e;
 }
 
@@ -977,6 +1240,55 @@ bool SpaceWorld::pilotAttackPlayer(ecs::Entity entity)
     }
     pilot->state = PilotState::Attack;
     pilot->targetIndex = playerEntityIndex();
+    pilot->hasTarget = 1;
+    if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
+        power->state.pips = pipsForPilot(pilot->state);
+    }
+    return true;
+}
+
+bool SpaceWorld::pilotEngageEnemy(ecs::Entity entity)
+{
+    ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    if (pilot == nullptr || pilot->factionIndex >= m_factionTable.size()) {
+        return false;
+    }
+    constexpr double kSensorRange = 8.0e4; // meters
+    const core::DVec3 self = m_registry.storage<Transform>().get(entity.index).position;
+
+    std::uint32_t bestTarget = kNoIndex;
+    double bestDistance = kSensorRange;
+    const auto consider = [&](std::uint32_t targetIndex) {
+        const Transform* transform = m_registry.storage<Transform>().tryGet(targetIndex);
+        const ShipDefense* defense = m_registry.storage<ShipDefense>().tryGet(targetIndex);
+        if (transform == nullptr || defense == nullptr || !defense->state.alive()) {
+            return;
+        }
+        const double distance = length(transform->position - self);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestTarget = targetIndex;
+        }
+    };
+
+    const ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const std::uint32_t otherIndex = pilots.entityIndices()[i];
+        const std::uint32_t otherFaction = pilots.values()[i].factionIndex;
+        if (otherIndex == entity.index || otherFaction >= m_factionTable.size() ||
+            !m_factionSim.atWar(pilot->factionIndex, otherFaction)) {
+            continue;
+        }
+        consider(otherIndex);
+    }
+    if (m_factionSim.playerHostile(pilot->factionIndex) && !isDocked()) {
+        consider(playerEntityIndex());
+    }
+    if (bestTarget == kNoIndex) {
+        return false;
+    }
+    pilot->state = PilotState::Attack;
+    pilot->targetIndex = bestTarget;
     pilot->hasTarget = 1;
     if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
         power->state.pips = pipsForPilot(pilot->state);
@@ -1050,10 +1362,14 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
             continue;
         }
         pilot.thinkTimer = kThinkInterval;
+        const char* attitude = pilot.factionIndex < m_factionTable.size()
+                                   ? playerAttitudeName(pilot.factionIndex)
+                                   : "none";
         out.push_back({
             .entity = m_registry.entityFromIndex(pilots.entityIndices()[i]),
             .role = kRoleNames[static_cast<std::uint32_t>(pilot.role) % 3],
             .state = kStateNames[static_cast<std::uint32_t>(pilot.state) % 4],
+            .attitude = attitude,
         });
     }
 }
@@ -1173,6 +1489,17 @@ void SpaceWorld::tick(double dt)
                 .orientation = transform->orientation,
                 .angularVelocity = body->angularVelocity,
             };
+
+            // A patrol only holds a grudge while the player is actually
+            // hostile (Phase 8b live find: permanent aggro besieged the pad
+            // after a standing recovered; raiders, by contrast, keep theirs).
+            if (pilot.state == PilotState::Attack && pilot.role == PilotRole::Patrol &&
+                pilot.hasTarget != 0 && pilot.targetIndex == playerIndex &&
+                pilot.factionIndex < m_factionTable.size() &&
+                !m_factionSim.playerHostile(pilot.factionIndex)) {
+                pilot.state = PilotState::Idle;
+                pilot.hasTarget = 0;
+            }
 
             sim::FlightInput input; // Idle default: assist-on station keeping
             switch (pilot.state) {
@@ -1343,7 +1670,7 @@ void SpaceWorld::tick(double dt)
 
     // Impact damage (k*v^2) through the facing the hit arrived on.
     const std::size_t shipCount = m_collisionShipIndices.size();
-    std::vector<std::uint32_t> destroyedShips;
+    std::vector<DestroyedShip> destroyedShips;
     auto applyImpact = [&](std::uint32_t bodySlot, core::DVec3 toSource, double impactSpeed) {
         if (bodySlot >= shipCount) {
             return;
@@ -1367,15 +1694,15 @@ void SpaceWorld::tick(double dt)
                        toSource * m_collisionBodies[bodySlot].radius,
                    result);
         if (result.destroyed) {
-            destroyedShips.push_back(entityIndex);
+            destroyedShips.push_back({.victim = entityIndex}); // rams credit no one
         }
     };
     for (const sim::Contact& contact : m_contacts) {
         applyImpact(contact.bodyA, -contact.normal, contact.impactSpeed);
         applyImpact(contact.bodyB, contact.normal, contact.impactSpeed);
     }
-    for (const std::uint32_t entityIndex : destroyedShips) {
-        handleShipDestroyed(entityIndex);
+    for (const DestroyedShip& destroyed : destroyedShips) {
+        handleShipDestroyed(destroyed.victim, destroyed.attacker);
     }
     destroyedShips.clear();
 
@@ -1424,7 +1751,8 @@ void SpaceWorld::tick(double dt)
                                    (transform.position - transform.previousPosition) * bestT,
                                result);
                     if (result.destroyed) {
-                        destroyedShips.push_back(targetIndex);
+                        destroyedShips.push_back(
+                            {.victim = targetIndex, .attacker = projectile.shooterIndex});
                     }
                 }
             }
@@ -1436,8 +1764,8 @@ void SpaceWorld::tick(double dt)
     for (const std::uint32_t index : deadProjectiles) {
         m_registry.destroy(m_registry.entityFromIndex(index));
     }
-    for (const std::uint32_t entityIndex : destroyedShips) {
-        handleShipDestroyed(entityIndex);
+    for (const DestroyedShip& destroyed : destroyedShips) {
+        handleShipDestroyed(destroyed.victim, destroyed.attacker);
     }
     destroyedShips.clear();
 
@@ -1510,8 +1838,9 @@ void SpaceWorld::tick(double dt)
                     const sim::DamageResult result = sim::applyDamage(
                         defense->state, defense->tuning, facing, weapon.damage);
                     noteDamage(bestTarget, muzzle + (beamEnd - muzzle) * bestT, result);
-                    if (result.destroyed) {
-                        destroyedShips.push_back(bestTarget); // deferred: mid-iteration
+                    if (result.destroyed) { // deferred: mid-iteration
+                        destroyedShips.push_back(
+                            {.victim = bestTarget, .attacker = entityIndex});
                     }
                 }
             }
@@ -1530,8 +1859,8 @@ void SpaceWorld::tick(double dt)
             });
         }
     }
-    for (const std::uint32_t entityIndex : destroyedShips) {
-        handleShipDestroyed(entityIndex);
+    for (const DestroyedShip& destroyed : destroyedShips) {
+        handleShipDestroyed(destroyed.victim, destroyed.attacker);
     }
     for (const PendingBolt& bolt : newBolts) {
         const ecs::Entity e = m_registry.create();
@@ -1563,6 +1892,10 @@ void SpaceWorld::tick(double dt)
     // (decisions/005 — no time compression).
     m_economy.tick(m_galaxy, dt);
 
+    // Coarse-layer faction sim (Phase 8b): drift/decay here; due decisions
+    // are dispatched by GameContent (Lua faction_think or the default rule).
+    m_factionSim.tick(dt);
+
     // Deferred death respawn into the last-dock system (see member comment).
     if (m_pendingRespawnSystem != kNoIndex) {
         const std::uint32_t system = m_pendingRespawnSystem;
@@ -1590,7 +1923,7 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex, const core::DVec3& hitPos
     }
 }
 
-void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex)
+void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t attackerIndex)
 {
     // Fireball at the wreck site, scaled by the hull.
     m_combatEffects.spawnExplosion(m_registry.storage<Transform>().get(entityIndex).position,
@@ -1641,6 +1974,19 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex)
         ShipPower& power = m_registry.storage<ShipPower>().get(entityIndex);
         power.state = sim::PowerState{.weaponCharge = power.tuning.weaponCapacitor};
         return;
+    }
+
+    // Reputation (Phase 8b): only player kills move standings, and only for
+    // affiliated victims; the web pays the victim's enemies.
+    if (attackerIndex == playerEntityIndex()) {
+        if (const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
+            pilot != nullptr && pilot->factionIndex < m_factionTable.size()) {
+            m_factionSim.recordShipKill(pilot->factionIndex);
+            SOL_LOG_INFO("kill vs %s: standing now %.1f (%s)",
+                         m_factionTable[pilot->factionIndex].name.c_str(),
+                         m_factionSim.standing(pilot->factionIndex),
+                         playerAttitudeName(pilot->factionIndex));
+        }
     }
 
     for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
@@ -1728,6 +2074,7 @@ bool SpaceWorld::saveTo(const char* path)
         writer.write(ship.storedStation);
     }
     m_economy.save(writer);
+    m_factionSim.save(writer); // v5: relations, war flags, standings, raids
     makeSnapshotSchema().save(m_registry, writer);
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
 }
@@ -1822,6 +2169,14 @@ bool SpaceWorld::loadFrom(const char* path)
         if (!m_economy.load(reader)) {
             return false;
         }
+    }
+    // Faction layout re-derives from galaxy + defs (v5); dynamic state loads
+    // over a fresh initialize, same rule as the economy.
+    if (galaxyChanged) {
+        initializeFactions(); // m_universeSeed already updated above
+    }
+    if (!m_factionSim.load(reader)) {
+        return false;
     }
 
     ecs::Registry fresh;

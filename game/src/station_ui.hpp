@@ -11,10 +11,12 @@
 
 namespace game {
 
-// Fills the Phase 8a tabs of the docked-station panel (outfitting, shipyard,
-// crew) from the world and defs. `text` backs the generated detail strings —
-// a deque so growth never moves entries the rows already point at. All row
-// vectors are cleared and rebuilt; spans in `panel` are set to them.
+// Fills the Phase 8a/8b tabs of the docked-station panel (outfitting,
+// shipyard, crew, factions) from the world and defs. Catalogs show only what
+// the owner faction sells the player (Phase 8b gates). `text` backs the
+// generated detail strings — a deque so growth never moves entries the rows
+// already point at. All row vectors are cleared and rebuilt; spans in
+// `panel` are set to them.
 void fillStationOutfitting(const SpaceWorld& world, const sol::assets::DefDatabase& defs,
                            std::deque<std::string>& text, sol::ui::StationPanel& panel,
                            std::vector<sol::ui::OutfitRow>& moduleRows,
@@ -22,7 +24,8 @@ void fillStationOutfitting(const SpaceWorld& world, const sol::assets::DefDataba
                            std::vector<sol::ui::OutfitRow>& crewCatalogRows,
                            std::vector<sol::ui::OutfitRow>& crewAboardRows,
                            std::vector<sol::ui::OutfitRow>& shipRows,
-                           std::vector<sol::ui::FleetRow>& fleetRows);
+                           std::vector<sol::ui::FleetRow>& fleetRows,
+                           std::vector<sol::ui::FactionRow>& factionRows);
 
 // Executes the (at most one) station-panel click of this frame.
 void executeStationAction(SpaceWorld& world, const sol::ui::StationAction& action);

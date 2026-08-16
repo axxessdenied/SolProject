@@ -91,6 +91,15 @@ struct ShipPowerTuning
     float weaponRecharge = 15.0f; // units/s at scale 1
 };
 
+// Catalog gating shared by sellable defs (Phase 8b): which faction's stations
+// stock the item (empty = every faction) and the player standing the owner
+// requires before selling it (pirate-kind owners fence past min_rep).
+struct CatalogGate
+{
+    std::vector<std::string> factions; // seller allowlist of faction ids
+    float minRep = -100.0f;            // owner-standing gate, -100..100
+};
+
 struct ShipDef
 {
     std::string id;   // stable, namespaced, e.g. "sol.shuttle"
@@ -111,6 +120,7 @@ struct ShipDef
     std::uint32_t slotsCargo = 1;
     std::uint32_t slotsUtility = 1;
     std::uint32_t crewBerths = 1;
+    CatalogGate gate;
     std::string source; // document that last defined this id (diagnostics)
 };
 
@@ -136,6 +146,7 @@ struct ModuleDef
     float mass = 0.0f;      // kg
     float powerDraw = 0.0f; // against ShipDef::powerOutput
     StatModifiers modifiers;
+    CatalogGate gate;
     std::string source;
 };
 
@@ -149,6 +160,7 @@ struct CrewDef
     std::string role; // display flavor, e.g. "Engineer"
     float price = 200.0f;
     StatModifiers modifiers;
+    CatalogGate gate;
     std::string source;
 };
 
@@ -163,7 +175,23 @@ struct WeaponDef
     float projectileSpeed = 0.0f;   // m/s; 0 for hitscan
     float energyCost = 10.0f;       // capacitor draw per shot
     float price = 500.0f;           // shipyard price (Phase 8a outfitting)
+    CatalogGate gate;
     std::string source;
+};
+
+enum class FactionKind : std::uint32_t
+{
+    Major = 0, // authored territory claimant (generator capital)
+    Pirate,    // clan template; instantiated per lawless fringe neighborhood
+};
+
+// One side's declared initial standing toward another faction ("id:standing"
+// strings in TOML, -100..100). The matrix is symmetric: a pair declared from
+// both sides must agree (validateFactions).
+struct FactionRelation
+{
+    std::string otherId;
+    float standing = 0.0f;
 };
 
 struct FactionDef
@@ -172,6 +200,14 @@ struct FactionDef
     std::string name;
     std::string description;
     float color[3] = {1.0f, 1.0f, 1.0f}; // sRGB accent for HUD/markers
+    FactionKind kind = FactionKind::Major;
+    // Personality weights (0..1) consumed by the Lua decision rules
+    // (Phase 8b faction sim): raid appetite and drift-back-to-baseline rate.
+    float aggression = 0.5f;
+    float forgiveness = 0.5f;
+    std::vector<FactionRelation> relations;
+    std::vector<std::string> shipsPatrol; // ship def ids for ambient wings
+    std::vector<std::string> shipsRaider;
     std::string source;
 };
 
@@ -219,6 +255,12 @@ public:
     // Reads and merges every *.toml directly inside directory, sorted by
     // path for determinism. A missing directory is fine (a mod without data).
     [[nodiscard]] bool mergeDirectory(const char* directory, std::string* outError = nullptr);
+
+    // Cross-def checks that need the fully merged database: a faction pair
+    // declaring initial relations from both sides must agree (Phase 8b).
+    // Relations naming unknown faction ids are ignored downstream, not here —
+    // a mod may remove a faction another def still references.
+    [[nodiscard]] bool validateFactions(std::string* outError = nullptr) const;
 
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;

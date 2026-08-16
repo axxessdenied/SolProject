@@ -4,6 +4,7 @@
 #include "sol/platform/file_io.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <set>
 #include <utility>
 
@@ -58,9 +59,40 @@ scripting::EntityHandle spawnPilot(GameContent& content, const std::string& id,
     return scripting::toHandle(entity);
 }
 
+// As spawn_pilot, with an allegiance: factionIndex is 1-based into
+// sol.factions (the runtime table: majors then clans).
+scripting::EntityHandle spawnPilotFaction(GameContent& content, const std::string& id,
+                                          const std::string& role, double factionIndex)
+{
+    const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
+    if (faction >= content.world().factions().size()) {
+        SOL_LOG_WARN("spawn_pilot_faction: faction %d out of range (see sol.factions())",
+                     static_cast<int>(factionIndex));
+        return {};
+    }
+    const assets::ShipDef* def = content.defs().findShip(id.c_str());
+    if (def == nullptr) {
+        SOL_LOG_WARN("spawn_pilot_faction: no ship def '%s'", id.c_str());
+        return {};
+    }
+    PilotRole pilotRole = role == "trader"   ? PilotRole::Trader
+                          : role == "patrol" ? PilotRole::Patrol
+                                             : PilotRole::Fighter;
+    const ecs::Entity entity = content.world().spawnPilotFromDef(
+        *def, content.defs(), pilotRole, static_cast<std::uint32_t>(faction));
+    SOL_LOG_INFO("spawned %s pilot '%s' for %s", role.c_str(), def->name.c_str(),
+                 content.world().factions()[faction].name.c_str());
+    return scripting::toHandle(entity);
+}
+
 bool pilotAttackPlayer(GameContent& content, scripting::EntityHandle ship)
 {
     return content.world().pilotAttackPlayer(scripting::toEntity(ship));
+}
+
+bool pilotEngageEnemy(GameContent& content, scripting::EntityHandle ship)
+{
+    return content.world().pilotEngageEnemy(scripting::toEntity(ship));
 }
 
 bool pilotFlee(GameContent& content, scripting::EntityHandle ship)
@@ -166,6 +198,12 @@ std::string listGates(GameContent& content)
 bool jumpToSystem(GameContent& content, const std::string& destination)
 {
     return content.world().jumpToSystem(destination.c_str());
+}
+
+// Dev/console QoL: select a spawned ship as the nav target by name part.
+bool targetShip(GameContent& content, const std::string& namePart)
+{
+    return content.world().targetShipByName(namePart.c_str());
 }
 
 // Autopilot to the selected target, arriving arrivalRangeMeters out
@@ -380,6 +418,144 @@ double addCredits(GameContent& content, double amount)
     return content.world().playerCredits();
 }
 
+// --- Factions & reputation (Phase 8b; faction indices are 1-based) ---
+
+std::string listFactions(GameContent& content)
+{
+    std::string lines;
+    const std::vector<game::GameFaction>& factions = content.world().factions();
+    for (std::size_t i = 0; i < factions.size(); ++i) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        lines += std::to_string(i + 1) + ": " + factions[i].name +
+                 (factions[i].pirate ? " (pirate clan)" : " (major)");
+    }
+    return lines;
+}
+
+std::string listStandings(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    for (std::size_t i = 0; i < world.factions().size(); ++i) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        const std::uint32_t faction = static_cast<std::uint32_t>(i);
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%+.1f",
+                      static_cast<double>(world.factionSim().standing(faction)));
+        lines += std::to_string(i + 1) + ": " + world.factions()[i].name + " " + buffer +
+                 " (" + world.playerAttitudeName(faction) + ")";
+        if (faction == world.systemOwnerFaction(world.currentSystemIndex())) {
+            lines += " [local]"; // owns the system the player is in
+        }
+    }
+    return lines;
+}
+
+// Non-neutral pairs only; the full matrix is quadratic in clans.
+std::string listRelations(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const std::size_t count = world.factions().size();
+    std::string lines;
+    for (std::uint32_t a = 0; a < count; ++a) {
+        for (std::uint32_t b = a + 1; b < count; ++b) {
+            const float value = world.factionSim().relation(a, b);
+            if (value == 0.0f) {
+                continue;
+            }
+            if (!lines.empty()) {
+                lines += "\n";
+            }
+            char buffer[64];
+            std::snprintf(buffer, sizeof(buffer), "%+.1f", static_cast<double>(value));
+            lines += world.factions()[a].name + " vs " + world.factions()[b].name + ": " +
+                     buffer + (world.factionSim().atWar(a, b) ? " (WAR)" : "");
+        }
+    }
+    return lines.empty() ? "(all neutral)" : lines;
+}
+
+std::string listRaids(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+        const float intensity = world.factionSim().raidIntensity(s);
+        if (intensity < 0.05f) {
+            continue;
+        }
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        const std::uint32_t raider = world.factionSim().lastRaider(s);
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(intensity));
+        lines += world.galaxy().systems[s].name + ": " + buffer;
+        if (raider < world.factions().size()) {
+            lines += " by " + world.factions()[raider].name;
+        }
+    }
+    return lines.empty() ? "(no recent raids)" : lines;
+}
+
+// Dev cheat for verifying gates/hostility without the long rep grind.
+double setStanding(GameContent& content, double factionIndex, double value)
+{
+    SpaceWorld& world = content.world();
+    const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
+    if (faction >= world.factions().size()) {
+        SOL_LOG_WARN("set_rep: faction %d out of range", static_cast<int>(factionIndex));
+        return 0.0;
+    }
+    world.factionSim().setStanding(static_cast<std::uint32_t>(faction),
+                                   static_cast<float>(value));
+    return world.factionSim().standing(static_cast<std::uint32_t>(faction));
+}
+
+// Raid candidates for faction_think:
+// "systemIndex:systemName:relation:ownerKind;..." with ownerKind m|p
+// (system indices are the engine's 0-based ids, fed back to faction_raid).
+std::string factionCandidates(GameContent& content, double factionIndex)
+{
+    SpaceWorld& world = content.world();
+    const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
+    if (faction >= world.factions().size()) {
+        return "";
+    }
+    std::vector<sol::sim::RaidCandidate> candidates;
+    world.factionSim().raidCandidates(world.galaxy(), static_cast<std::uint32_t>(faction),
+                                      candidates);
+    std::string joined;
+    for (const sol::sim::RaidCandidate& candidate : candidates) {
+        if (!joined.empty()) {
+            joined += ";";
+        }
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%.1f", static_cast<double>(candidate.relation));
+        joined += std::to_string(candidate.system) + ":" +
+                  world.galaxy().systems[candidate.system].name + ":" + buffer + ":" +
+                  (candidate.owner < world.factions().size() &&
+                           world.factions()[candidate.owner].pirate
+                       ? "p"
+                       : "m");
+    }
+    return joined;
+}
+
+bool factionRaid(GameContent& content, double factionIndex, double systemIndex)
+{
+    const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
+    if (faction >= content.world().factions().size()) {
+        return false;
+    }
+    return content.world().commitFactionRaid(static_cast<std::uint32_t>(faction),
+                                             static_cast<std::uint32_t>(systemIndex));
+}
+
 } // namespace
 
 bool GameContent::initialize(const std::string& dataDirectory, const std::string& modsDirectory,
@@ -431,7 +607,9 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&shipSpeed>("sol", "speed", this);
     m_vm.registerFunction<&entityCount>("sol", "entity_count", this);
     m_vm.registerFunction<&spawnPilot>("sol", "spawn_pilot", this);
+    m_vm.registerFunction<&spawnPilotFaction>("sol", "spawn_pilot_faction", this);
     m_vm.registerFunction<&pilotAttackPlayer>("sol", "pilot_attack_player", this);
+    m_vm.registerFunction<&pilotEngageEnemy>("sol", "pilot_engage_enemy", this);
     m_vm.registerFunction<&pilotFlee>("sol", "pilot_flee", this);
     m_vm.registerFunction<&pilotIdle>("sol", "pilot_idle", this);
     m_vm.registerFunction<&pilotPatrolOffset>("sol", "pilot_patrol_offset", this);
@@ -450,6 +628,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&playerCargo>("sol", "cargo", this);
     m_vm.registerFunction<&listGates>("sol", "gates", this);
     m_vm.registerFunction<&jumpToSystem>("sol", "jump_to", this);
+    m_vm.registerFunction<&targetShip>("sol", "target_ship", this);
     m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
@@ -467,6 +646,13 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&fireCrew>("sol", "fire_crew", this);
     m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);
     m_vm.registerFunction<&addCredits>("sol", "add_credits", this);
+    m_vm.registerFunction<&listFactions>("sol", "factions", this);
+    m_vm.registerFunction<&listStandings>("sol", "rep", this);
+    m_vm.registerFunction<&listRelations>("sol", "relations", this);
+    m_vm.registerFunction<&listRaids>("sol", "raids", this);
+    m_vm.registerFunction<&setStanding>("sol", "set_rep", this);
+    m_vm.registerFunction<&factionCandidates>("sol", "faction_candidates", this);
+    m_vm.registerFunction<&factionRaid>("sol", "faction_raid", this);
 }
 
 bool GameContent::reloadDefs()
@@ -478,6 +664,10 @@ bool GameContent::reloadDefs()
             SOL_LOG_ERROR("data defs: %s", error.c_str());
             return false;
         }
+    }
+    if (!fresh.validateFactions(&error)) { // cross-def check needs the merged set
+        SOL_LOG_ERROR("data defs: %s", error.c_str());
+        return false;
     }
     m_defs = std::move(fresh);
     return true;
@@ -505,6 +695,10 @@ void GameContent::runBootScripts()
     m_hasPilotHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_pilotHookFailed = false;
+    lua_getglobal(state, "faction_think");
+    m_hasFactionHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_factionHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -585,12 +779,36 @@ void GameContent::tick(double dt)
         for (const SpaceWorld::PilotThink& think : m_pilotThinks) {
             std::string error;
             if (!m_vm.callGlobal("pilot_think", &error, scripting::toHandle(think.entity),
-                                 think.role, think.state)) {
+                                 think.role, think.state, think.attitude)) {
                 SOL_LOG_ERROR("pilot_think disabled until scripts reload: %s", error.c_str());
                 m_pilotHookFailed = true;
                 break;
             }
         }
+    }
+
+    // Faction strategy (Phase 8b): the sim queues one decision per faction
+    // at its slow cadence; Lua's faction_think chooses (it can query
+    // sol.faction_candidates and commit sol.faction_raid), with the C++
+    // default policy standing in when no hook is defined.
+    m_factionDecisions.clear();
+    m_world->factionSim().takeDueDecisions(m_factionDecisions);
+    for (const sol::sim::FactionDecision& decision : m_factionDecisions) {
+        if (m_hasFactionHook && !m_factionHookFailed) {
+            const game::GameFaction& faction = m_world->factions()[decision.faction];
+            std::string error;
+            if (m_vm.callGlobal("faction_think", &error,
+                                static_cast<double>(decision.faction + 1),
+                                faction.name.c_str(), faction.pirate,
+                                static_cast<double>(faction.aggression),
+                                static_cast<double>(faction.forgiveness),
+                                static_cast<double>(decision.roll))) {
+                continue;
+            }
+            SOL_LOG_ERROR("faction_think disabled until scripts reload: %s", error.c_str());
+            m_factionHookFailed = true;
+        }
+        m_world->applyDefaultFactionDecision(decision);
     }
 }
 

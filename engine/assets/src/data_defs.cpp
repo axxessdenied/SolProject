@@ -135,6 +135,74 @@ struct FieldReader
         }
     }
 
+    void optionalStringList(const char* key, std::vector<std::string>& out)
+    {
+        const TomlValue* value = table.find(key);
+        if (value == nullptr) {
+            return;
+        }
+        if (!value->isArray()) {
+            fail(std::string("key '") + key + "' must be an array of strings");
+            return;
+        }
+        for (std::size_t i = 0; i < value->size(); ++i) {
+            const TomlValue& element = (*value)[i];
+            if (!element.isString()) {
+                fail(std::string("key '") + key + "' must be an array of strings");
+                return;
+            }
+            out.push_back(element.asString());
+        }
+    }
+
+    // "faction_id:standing" strings, standing in [-100, 100] (Phase 8b
+    // relations; unlike rate lists, negative values are the point).
+    void optionalRelationList(const char* key, std::vector<FactionRelation>& out)
+    {
+        const TomlValue* value = table.find(key);
+        if (value == nullptr) {
+            return;
+        }
+        if (!value->isArray()) {
+            fail(std::string("key '") + key + "' must be an array of \"id:standing\" strings");
+            return;
+        }
+        for (std::size_t i = 0; i < value->size(); ++i) {
+            const TomlValue& element = (*value)[i];
+            if (!element.isString()) {
+                fail(std::string("key '") + key + "' must be an array of \"id:standing\" strings");
+                return;
+            }
+            const std::string& text = element.asString();
+            const std::size_t colon = text.rfind(':');
+            if (colon == std::string::npos || colon == 0 || colon + 1 >= text.size()) {
+                fail(std::string("'") + key + "' entry '" + text + "' is not \"id:standing\"");
+                return;
+            }
+            FactionRelation relation;
+            relation.otherId = text.substr(0, colon);
+            char* end = nullptr;
+            relation.standing = std::strtof(text.c_str() + colon + 1, &end);
+            if (end != text.c_str() + text.size() || relation.standing < -100.0f ||
+                relation.standing > 100.0f) {
+                fail(std::string("'") + key + "' entry '" + text +
+                     "' needs a numeric standing in [-100, 100]");
+                return;
+            }
+            out.push_back(std::move(relation));
+        }
+    }
+
+    // The shared catalog gate keys on sellable defs (Phase 8b).
+    void optionalGate(CatalogGate& out)
+    {
+        optionalStringList("factions", out.factions);
+        optionalFloat("min_rep", out.minRep);
+        if (!failed && (out.minRep < -100.0f || out.minRep > 100.0f)) {
+            fail("'min_rep' must be in [-100, 100]");
+        }
+    }
+
     void optionalUint(const char* key, std::uint32_t& out)
     {
         const TomlValue* value = table.find(key);
@@ -242,6 +310,7 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     reader.optionalUint("slots_cargo", def.slotsCargo);
     reader.optionalUint("slots_utility", def.slotsUtility);
     reader.optionalUint("crew_berths", def.crewBerths);
+    reader.optionalGate(def.gate);
 
     reader.rejectUnknownKeys({"id", "name", "model", "scale", "forward_accel", "reverse_accel",
                               "lateral_accel", "vertical_accel", "max_speed", "max_turn_rate",
@@ -250,7 +319,8 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
                               "shield_regen", "shield_regen_delay", "armor", "hull",
                               "weapon_capacitor", "weapon_recharge", "weapon", "cargo", "price",
                               "mass", "power_output", "slots_shield", "slots_engine",
-                              "slots_cargo", "slots_utility", "crew_berths"});
+                              "slots_cargo", "slots_utility", "crew_berths", "factions",
+                              "min_rep"});
     if (!reader.failed && def.scale <= 0.0f) {
         reader.fail("'scale' must be > 0");
     }
@@ -283,9 +353,10 @@ bool parseWeapon(const TomlValue& table, const char* sourceName, std::vector<Wea
     reader.optionalFloat("projectile_speed", def.projectileSpeed);
     reader.optionalFloat("energy_cost", def.energyCost);
     reader.optionalFloat("price", def.price);
+    reader.optionalGate(def.gate);
 
     reader.rejectUnknownKeys({"id", "name", "kind", "damage", "rate_of_fire", "range",
-                              "projectile_speed", "energy_cost", "price"});
+                              "projectile_speed", "energy_cost", "price", "factions", "min_rep"});
     if (!reader.failed && def.kind != "projectile" && def.kind != "hitscan") {
         reader.fail("'kind' must be \"projectile\" or \"hitscan\"");
     }
@@ -310,8 +381,29 @@ bool parseFaction(const TomlValue& table, const char* sourceName, std::vector<Fa
     reader.requireString("name", def.name);
     reader.optionalString("description", def.description);
     reader.optionalFloat3("color", def.color);
+    std::string kind = "major";
+    reader.optionalString("kind", kind);
+    reader.optionalFloat("aggression", def.aggression);
+    reader.optionalFloat("forgiveness", def.forgiveness);
+    reader.optionalRelationList("relations", def.relations);
+    reader.optionalStringList("ships_patrol", def.shipsPatrol);
+    reader.optionalStringList("ships_raider", def.shipsRaider);
 
-    reader.rejectUnknownKeys({"id", "name", "description", "color"});
+    reader.rejectUnknownKeys({"id", "name", "description", "color", "kind", "aggression",
+                              "forgiveness", "relations", "ships_patrol", "ships_raider"});
+    if (!reader.failed) {
+        if (kind == "major") {
+            def.kind = FactionKind::Major;
+        } else if (kind == "pirate") {
+            def.kind = FactionKind::Pirate;
+        } else {
+            reader.fail("'kind' must be \"major\" or \"pirate\"");
+        }
+    }
+    if (!reader.failed && (def.aggression < 0.0f || def.aggression > 1.0f ||
+                           def.forgiveness < 0.0f || def.forgiveness > 1.0f)) {
+        reader.fail("'aggression' and 'forgiveness' must be in [0, 1]");
+    }
     if (reader.failed) {
         return false;
     }
@@ -393,8 +485,10 @@ bool parseModule(const TomlValue& table, const char* sourceName, std::vector<Mod
     reader.optionalFloat("mass", def.mass);
     reader.optionalFloat("power_draw", def.powerDraw);
     reader.optionalModifiers(def.modifiers);
+    reader.optionalGate(def.gate);
 
-    reader.rejectUnknownKeys({"id", "name", "slot", "price", "mass", "power_draw"},
+    reader.rejectUnknownKeys({"id", "name", "slot", "price", "mass", "power_draw", "factions",
+                              "min_rep"},
                              /*allowModifiers=*/true);
     if (!reader.failed) {
         if (slot == "shield") {
@@ -434,8 +528,10 @@ bool parseCrew(const TomlValue& table, const char* sourceName, std::vector<CrewD
     reader.requireString("role", def.role);
     reader.optionalFloat("price", def.price);
     reader.optionalModifiers(def.modifiers);
+    reader.optionalGate(def.gate);
 
-    reader.rejectUnknownKeys({"id", "name", "role", "price"}, /*allowModifiers=*/true);
+    reader.rejectUnknownKeys({"id", "name", "role", "price", "factions", "min_rep"},
+                             /*allowModifiers=*/true);
     if (reader.failed) {
         return false;
     }
@@ -565,6 +661,31 @@ bool DefDatabase::mergeDirectory(const char* directory, std::string* outError)
         if (!mergeToml(reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(),
                        outError)) {
             return false;
+        }
+    }
+    return true;
+}
+
+bool DefDatabase::validateFactions(std::string* outError) const
+{
+    for (const FactionDef& faction : m_factions) {
+        for (const FactionRelation& relation : faction.relations) {
+            const FactionDef* other = findFaction(relation.otherId.c_str());
+            if (other == nullptr) {
+                continue; // unknown ids are downstream warnings, not errors
+            }
+            for (const FactionRelation& mirrored : other->relations) {
+                if (mirrored.otherId == faction.id &&
+                    mirrored.standing != relation.standing) {
+                    if (outError != nullptr) {
+                        *outError = "factions '" + faction.id + "' and '" + other->id +
+                                    "' declare mismatched relations (" +
+                                    std::to_string(relation.standing) + " vs " +
+                                    std::to_string(mirrored.standing) + ")";
+                    }
+                    return false;
+                }
+            }
         }
     }
     return true;

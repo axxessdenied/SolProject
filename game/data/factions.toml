@@ -1,19 +1,89 @@
-# Faction defs (identity only until Phase 6+ gives them AI and relations).
+# Faction defs (Phase 8b). kind: major | pirate. Majors claim territory
+# from core capitals in def order; pirate defs are clan templates — the
+# galaxy generator stamps one clan per lawless fringe neighborhood from
+# them, jittering color and personality per clan seed.
+#
+# aggression drives raid appetite, forgiveness the drift back to baseline.
+# relations are "faction_id:standing" (-100..100); declare each pair from
+# ONE side (both sides must agree if repeated). Unspecified major<->pirate
+# pairs default to -60 (open war); everything else defaults to 0.
 
 [[faction]]
 id = "sol.navy"
 name = "Solar Navy"
-description = "System security; patrols the gate lanes."
+description = "System security; patrols the gate lanes of the civilized core."
 color = [0.25, 0.45, 1.0]
+kind = "major"
+aggression = 0.35
+forgiveness = 0.7
+relations = ["sol.guild:40", "sol.hegemony:-35", "sol.compact:10", "sol.ascendancy:10"]
+ships_patrol = ["sol.interceptor"]
+ships_raider = ["sol.interceptor"]
 
 [[faction]]
 id = "sol.guild"
 name = "Freight Guild"
-description = "Traders and haulers; owns most stations."
+description = "Traders and haulers; owns most stations and hates disruption."
 color = [0.95, 0.75, 0.2]
+kind = "major"
+aggression = 0.1
+forgiveness = 0.8
+relations = ["sol.hegemony:-10", "sol.compact:20"]
+ships_patrol = ["sol.interceptor"]
+ships_raider = ["sol.interceptor"]
+
+[[faction]]
+id = "sol.hegemony"
+name = "Ironstar Hegemony"
+description = "Authoritarian industrial bloc; believes the lanes should be theirs."
+color = [0.75, 0.22, 0.28]
+kind = "major"
+aggression = 0.7
+forgiveness = 0.3
+relations = ["sol.compact:-40", "sol.ascendancy:-20"]
+ships_patrol = ["sol.interceptor"]
+ships_raider = ["sol.interceptor"]
+
+[[faction]]
+id = "sol.compact"
+name = "Frontier Compact"
+description = "Settler militias holding the frontier together with sealant and spite."
+color = [0.35, 0.8, 0.45]
+kind = "major"
+aggression = 0.4
+forgiveness = 0.6
+ships_patrol = ["sol.interceptor"]
+ships_raider = ["sol.interceptor"]
+
+[[faction]]
+id = "sol.ascendancy"
+name = "Helios Ascendancy"
+description = "Technocratic enclave trading knowledge for distance."
+color = [0.6, 0.4, 0.95]
+kind = "major"
+aggression = 0.25
+forgiveness = 0.5
+ships_patrol = ["sol.interceptor"]
+ships_raider = ["sol.interceptor"]
 
 [[faction]]
 id = "sol.corsairs"
 name = "Corsairs"
-description = "Pirates working the edges of the shipping lanes."
+description = "Pirate clans working the edges of the shipping lanes."
 color = [0.9, 0.2, 0.15]
+kind = "pirate"
+aggression = 0.8
+forgiveness = 0.2
+ships_patrol = ["sol.interceptor"]
+ships_raider = ["sol.interceptor"]
+
+[[faction]]
+id = "sol.reavers"
+name = "Reaver Kindred"
+description = "Fringe raiders who treat wrecks as a harvest."
+color = [0.95, 0.5, 0.1]
+kind = "pirate"
+aggression = 0.95
+forgiveness = 0.1
+ships_patrol = ["sol.interceptor"]
+ships_raider = ["sol.interceptor"]

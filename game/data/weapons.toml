@@ -31,3 +31,7 @@ range = 3000.0
 projectile_speed = 850.0
 energy_cost = 14.0
 price = 4000.0
+# Military hardware (Phase 8b): only navy/hegemony arsenals stock it, and
+# they want to know you. Pirate fences ignore min_rep.
+factions = ["sol.navy", "sol.hegemony", "sol.corsairs", "sol.reavers"]
+min_rep = 15.0

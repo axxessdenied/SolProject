@@ -185,6 +185,10 @@ void DevUi::buildStationPanel(StationPanel& station)
                 buildCrewTab(station);
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Factions")) {
+                buildFactionsTab(station);
+                ImGui::EndTabItem();
+            }
             ImGui::EndTabBar();
         }
     }
@@ -321,6 +325,41 @@ void DevUi::buildCrewTab(StationPanel& station)
     ImGui::SeparatorText("For hire (one-time fee, no refund)");
     if (const int row = outfitCatalog("crew", station.crewCatalog, "Hire"); row >= 0) {
         station.action = {StationAction::Kind::HireCrew, station.crewCatalog[row].id, row};
+    }
+}
+
+void DevUi::buildFactionsTab(StationPanel& station)
+{
+    if (ImGui::BeginTable("factions", 3,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Faction", ImGuiTableColumnFlags_WidthStretch, 2.2f);
+        ImGui::TableSetupColumn("Standing", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 2.2f);
+        ImGui::TableHeadersRow();
+        for (const FactionRow& faction : station.factions) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(faction.name);
+            ImGui::TableNextColumn();
+            char label[32];
+            std::snprintf(label, sizeof(label), "%+.0f", faction.standing);
+            const ImVec4 color = faction.standing < -30.0f ? ImVec4{0.9f, 0.3f, 0.25f, 1.0f}
+                                 : faction.standing > 30.0f
+                                     ? ImVec4{0.35f, 0.85f, 0.4f, 1.0f}
+                                     : ImVec4{0.75f, 0.75f, 0.75f, 1.0f};
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
+            ImGui::ProgressBar((faction.standing + 100.0f) / 200.0f, {-1.0f, 0.0f}, label);
+            ImGui::PopStyleColor();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s, %s", faction.attitude, faction.detail);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::SeparatorText("Recent raids");
+    if (station.factionNotes[0] == '\0') {
+        ImGui::TextDisabled("(quiet lately)");
+    } else {
+        ImGui::TextWrapped("%s", station.factionNotes);
     }
 }
 
@@ -632,6 +671,15 @@ void DevUi::buildFlightHud(const FlightHud& hud)
         char distance[32];
         formatDistance(hud.targetDistanceMeters, distance, sizeof(distance));
         ImGui::Text("TGT %s  %s", hud.targetName, distance);
+        if (hud.targetFaction[0] != '\0') {
+            const bool hostile = std::strcmp(hud.targetAttitude, "hostile") == 0;
+            const bool friendly = std::strcmp(hud.targetAttitude, "friendly") == 0;
+            ImGui::SameLine(0.0f, 8.0f);
+            ImGui::TextColored(hostile    ? ImVec4{0.9f, 0.3f, 0.25f, 1.0f}
+                               : friendly ? ImVec4{0.35f, 0.85f, 0.4f, 1.0f}
+                                          : ImVec4{0.7f, 0.7f, 0.7f, 1.0f},
+                               "%s [%s]", hud.targetFaction, hud.targetAttitude);
+        }
         if (hud.targetIsShip) {
             ImGui::SameLine(0.0f, 8.0f);
             ImGui::TextColored({1.0f, 0.78f, 0.31f, 1.0f}, "[S %d/%d H %d%%]",

@@ -67,6 +67,11 @@ struct FlightHud
     core::Vec3 leadDirectionCamera; // unit, camera space
     float damageFlash = 0.0f;       // 0..1
 
+    // Target allegiance (Phase 8b): faction display name and the player's
+    // attitude tag ("hostile"/"neutral"/"friendly"); empty for unaffiliated.
+    const char* targetFaction = "";
+    const char* targetAttitude = "";
+
     // Universe context (Phase 7): current system, and jump/dock prompts
     // while the ship is within activation range.
     const char* systemName = "";
@@ -123,6 +128,15 @@ struct FleetRow
     float value = 0.0f;      // hull + fit at list price
 };
 
+// One faction's standing line for the Factions tab (Phase 8b).
+struct FactionRow
+{
+    const char* name = "";
+    const char* detail = "";   // kind + war list, prebuilt
+    float standing = 0.0f;     // -100..100
+    const char* attitude = ""; // "hostile"/"neutral"/"friendly"
+};
+
 // What the player clicked this frame; the game executes it.
 struct StationAction
 {
@@ -156,6 +170,8 @@ struct StationPanel
     std::span<const OutfitRow> crewAboard;
     std::span<const OutfitRow> shipCatalog;
     std::span<const FleetRow> fleet;
+    std::span<const FactionRow> factions; // standings (Phase 8b)
+    const char* factionNotes = "";        // recent raids summary, prebuilt
     StationAction action; // out
 };
 
@@ -198,6 +214,7 @@ private:
     void buildOutfittingTab(StationPanel& station);
     void buildShipyardTab(StationPanel& station);
     void buildCrewTab(StationPanel& station);
+    void buildFactionsTab(StationPanel& station);
     static int consoleTextCallback(ImGuiInputTextCallbackData* data);
 
     bool m_initialized = false;

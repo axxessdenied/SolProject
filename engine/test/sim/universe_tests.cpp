@@ -142,6 +142,53 @@ SOL_TEST(universe_regions_and_factions)
     }
 }
 
+SOL_TEST(universe_pirate_clans_claim_lawless_neighborhoods)
+{
+    GalaxyParams params = testParams(31337);
+    params.pirateTemplateCount = 2;
+    const Galaxy galaxy = generateGalaxy(params);
+
+    // With templates, no system stays lawless: every ex-kNoFaction system
+    // belongs to exactly one clan, indexed past the majors.
+    SOL_CHECK(!galaxy.clans.empty());
+    std::vector<bool> clanSeen(galaxy.clans.size(), false);
+    for (const SystemSpec& system : galaxy.systems) {
+        SOL_REQUIRE(system.factionIndex != kNoFaction);
+        if (system.factionIndex >= params.factionCount) {
+            const std::uint32_t clan = system.factionIndex - params.factionCount;
+            SOL_REQUIRE(clan < galaxy.clans.size());
+            SOL_CHECK(system.region == Region::Fringe); // lawless rolls are fringe-only
+            clanSeen[clan] = true;
+        }
+    }
+    for (std::size_t c = 0; c < galaxy.clans.size(); ++c) {
+        SOL_CHECK(clanSeen[c]);
+        SOL_CHECK(galaxy.clans[c].templateIndex < params.pirateTemplateCount);
+        SOL_CHECK(!galaxy.clans[c].name.empty());
+        // Home is a member of its own clan.
+        SOL_CHECK(galaxy.systems[galaxy.clans[c].homeSystem].factionIndex ==
+                  params.factionCount + static_cast<std::uint32_t>(c));
+    }
+
+    // Deterministic per seed; majors' claims are untouched by the clan pass.
+    const Galaxy again = generateGalaxy(params);
+    SOL_REQUIRE(again.clans.size() == galaxy.clans.size());
+    for (std::size_t c = 0; c < galaxy.clans.size(); ++c) {
+        SOL_CHECK(again.clans[c].name == galaxy.clans[c].name);
+        SOL_CHECK(again.clans[c].templateIndex == galaxy.clans[c].templateIndex);
+        SOL_CHECK(again.clans[c].seed == galaxy.clans[c].seed);
+        SOL_CHECK(again.clans[c].homeSystem == galaxy.clans[c].homeSystem);
+    }
+    const Galaxy withoutClans = generateGalaxy(testParams(31337));
+    SOL_REQUIRE(withoutClans.systems.size() == galaxy.systems.size());
+    for (std::size_t i = 0; i < galaxy.systems.size(); ++i) {
+        if (withoutClans.systems[i].factionIndex != kNoFaction) {
+            SOL_CHECK(galaxy.systems[i].factionIndex ==
+                      withoutClans.systems[i].factionIndex);
+        }
+    }
+}
+
 SOL_TEST(universe_playfield_within_leg_budget)
 {
     const GalaxyParams params = testParams(555);

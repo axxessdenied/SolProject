@@ -261,6 +261,7 @@ int main(int argc, char** argv)
     std::vector<sol::ui::OutfitRow> crewAboardRows;
     std::vector<sol::ui::OutfitRow> shipRows;
     std::vector<sol::ui::FleetRow> fleetRows;
+    std::vector<sol::ui::FactionRow> factionRows;
     std::deque<std::string> stationText; // backs generated row text per frame
     SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).", world.entityCount(),
                  world.currentSystemName(), world.galaxy().systems.size());
@@ -552,6 +553,8 @@ int main(int argc, char** argv)
         hud.targetShieldFore = target.shieldFore;
         hud.targetShieldAft = target.shieldAft;
         hud.targetHull = target.hull;
+        hud.targetFaction = target.factionName.c_str();
+        hud.targetAttitude = target.attitude;
         const game::ShipWeapon& playerWeapon = world.playerWeapon();
         if (target.isShip && playerWeapon.kind == game::WeaponKind::Projectile &&
             playerWeapon.projectileSpeed > 1.0f) {
@@ -589,7 +592,7 @@ int main(int argc, char** argv)
             stationPanel.trade.rows = tradeRows;
             game::fillStationOutfitting(world, content.defs(), stationText, stationPanel,
                                         moduleRows, weaponRows, crewCatalogRows, crewAboardRows,
-                                        shipRows, fleetRows);
+                                        shipRows, fleetRows, factionRows);
         }
         devUi.beginFrame(stats, hud, showStation ? &stationPanel : nullptr);
         if (showStation && stationPanel.trade.action.row >= 0) {

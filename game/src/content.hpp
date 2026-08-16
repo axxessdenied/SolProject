@@ -58,11 +58,14 @@ private:
     SpaceWorld* m_world = nullptr;
     std::vector<WatchedFile> m_watched;
     std::vector<SpaceWorld::PilotThink> m_pilotThinks; // per-tick scratch
+    std::vector<sol::sim::FactionDecision> m_factionDecisions; // per-tick scratch
     double m_lastPollTime = -1.0;
     bool m_hasTickHook = false;
     bool m_tickHookFailed = false; // logged once; reset on script reload
     bool m_hasPilotHook = false;
     bool m_pilotHookFailed = false;
+    bool m_hasFactionHook = false;
+    bool m_factionHookFailed = false;
 };
 
 } // namespace game

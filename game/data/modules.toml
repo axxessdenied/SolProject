@@ -21,6 +21,7 @@ mass = 700.0
 power_draw = 3.0
 shield_strength_mul = 1.5
 shield_regen_mul = 1.2
+min_rep = 10.0 # Phase 8b: any owner sells it, but only to known customers
 
 [[module]]
 id = "sol.engine_tuner_mk1"

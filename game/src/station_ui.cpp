@@ -39,7 +39,8 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
                            std::vector<ui::OutfitRow>& crewCatalogRows,
                            std::vector<ui::OutfitRow>& crewAboardRows,
                            std::vector<ui::OutfitRow>& shipRows,
-                           std::vector<ui::FleetRow>& fleetRows)
+                           std::vector<ui::FleetRow>& fleetRows,
+                           std::vector<ui::FactionRow>& factionRows)
 {
     text.clear();
     moduleRows.clear();
@@ -48,6 +49,7 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
     crewAboardRows.clear();
     shipRows.clear();
     fleetRows.clear();
+    factionRows.clear();
 
     const OwnedShip& active = world.activeShip();
     const assets::ShipDef* base = defs.findShip(active.defId.c_str());
@@ -79,6 +81,9 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
     panel.deductible = world.insuranceDeductible();
 
     for (const assets::ModuleDef& def : defs.modules()) {
+        if (!world.stationSells(def.gate)) {
+            continue; // owner faction doesn't stock it (Phase 8b catalogs)
+        }
         moduleRows.push_back({.id = def.id.c_str(),
                               .name = def.name.c_str(),
                               .detail = store(text, std::string(kSlotNames[static_cast<std::size_t>(
@@ -89,6 +94,9 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
                               .fitted = fittedCount(active, def.id)});
     }
     for (const assets::WeaponDef& def : defs.weapons()) {
+        if (!world.stationSells(def.gate)) {
+            continue;
+        }
         weaponRows.push_back({.id = def.id.c_str(),
                               .name = def.name.c_str(),
                               .detail = store(text, def.kind + ", dmg " +
@@ -98,6 +106,9 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
                               .fitted = active.weaponId == def.id ? 1 : 0});
     }
     for (const assets::CrewDef& def : defs.crew()) {
+        if (!world.stationSells(def.gate)) {
+            continue;
+        }
         crewCatalogRows.push_back({.id = def.id.c_str(),
                                    .name = def.name.c_str(),
                                    .detail = def.role.c_str(),
@@ -115,6 +126,9 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
                                   .fitted = 1});
     }
     for (const assets::ShipDef& def : defs.ships()) {
+        if (!world.stationSells(def.gate)) {
+            continue;
+        }
         shipRows.push_back(
             {.id = def.id.c_str(),
              .name = def.name.c_str(),
@@ -135,12 +149,51 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
              .value = static_cast<float>(world.shipValue(ship))});
     }
 
+    // Factions tab (Phase 8b): standings plus each faction's wars.
+    const sol::sim::FactionSim& factionSim = world.factionSim();
+    for (std::size_t i = 0; i < world.factions().size(); ++i) {
+        const std::uint32_t faction = static_cast<std::uint32_t>(i);
+        std::string detail = world.factions()[i].pirate ? "pirate clan" : "major";
+        std::string wars;
+        for (std::size_t j = 0; j < world.factions().size(); ++j) {
+            if (j != i && factionSim.atWar(faction, static_cast<std::uint32_t>(j))) {
+                wars += wars.empty() ? "at war: " : ", ";
+                wars += world.factions()[j].name;
+            }
+        }
+        if (!wars.empty()) {
+            detail += " - " + wars;
+        }
+        factionRows.push_back({.name = world.factions()[i].name.c_str(),
+                               .detail = store(text, std::move(detail)),
+                               .standing = factionSim.standing(faction),
+                               .attitude = world.playerAttitudeName(faction)});
+    }
+    std::string raids;
+    for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+        const float intensity = factionSim.raidIntensity(s);
+        if (intensity < 0.05f) {
+            continue;
+        }
+        if (!raids.empty()) {
+            raids += "\n";
+        }
+        raids += world.galaxy().systems[s].name;
+        const std::uint32_t raider = factionSim.lastRaider(s);
+        if (raider < world.factions().size()) {
+            raids += " raided by " + world.factions()[raider].name;
+        }
+        raids += " (" + formatNumber(intensity) + ")";
+    }
+    panel.factionNotes = store(text, std::move(raids));
+
     panel.modules = moduleRows;
     panel.weapons = weaponRows;
     panel.crewCatalog = crewCatalogRows;
     panel.crewAboard = crewAboardRows;
     panel.shipCatalog = shipRows;
     panel.fleet = fleetRows;
+    panel.factions = factionRows;
 }
 
 void executeStationAction(SpaceWorld& world, const ui::StationAction& action)

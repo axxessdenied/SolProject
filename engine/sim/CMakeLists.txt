@@ -2,6 +2,7 @@ add_library(sol_sim STATIC
     src/collision.cpp
     src/damage.cpp
     src/economy.cpp
+    src/faction_sim.cpp
     src/fixed_loop.cpp
     src/flight.cpp
     src/power.cpp

@@ -150,6 +150,25 @@ TradeResult Economy::sell(std::uint32_t market, std::uint32_t commodity, float u
     return result;
 }
 
+void Economy::raidSystem(std::uint32_t systemIndex, float stockFraction)
+{
+    const float keep = 1.0f - core::clamp(stockFraction, 0.0f, 1.0f);
+    for (StationMarket& market : m_markets) {
+        if (market.systemIndex != systemIndex) {
+            continue;
+        }
+        for (float& stockUnits : market.stock) {
+            stockUnits *= keep;
+        }
+    }
+    for (EconomyTrader& trader : m_traders) {
+        if (trader.phase == TraderPhase::InTransit &&
+            m_markets[trader.market].systemIndex == systemIndex) {
+            trader.cargo = 0.0f;
+        }
+    }
+}
+
 void Economy::tick(const Galaxy& galaxy, double dt)
 {
     m_accumulator += dt;

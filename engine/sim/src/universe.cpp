@@ -23,6 +23,7 @@ enum Stream : std::uint64_t
     kStreamNames,
     kStreamFactions,
     kStreamContents,
+    kStreamClans,
 };
 
 constexpr const char* kNamePrefixes[] = {
@@ -39,6 +40,9 @@ constexpr const char* kStationOrdinals[] = {
     "Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta", "Theta",
 };
 constexpr const char* kPlanetNumerals[] = {"I", "II", "III", "IV", "V", "VI"};
+constexpr const char* kClanSuffixes[] = {
+    "Raiders", "Corsairs", "Cartel", "Syndicate", "Reavers", "Wolves", "Marauders", "Talons",
+};
 
 template <std::size_t N>
 [[nodiscard]] const char* pick(core::Rng& rng, const char* const (&table)[N])
@@ -275,6 +279,50 @@ void claimTerritory(const GalaxyParams& params, core::Rng& rng, std::vector<Syst
     }
 }
 
+// Pirate clans (Phase 8b): every connected component of still-lawless
+// systems becomes one generated clan; its members' factionIndex continues
+// past the majors, so downstream tables (relations, reputation, catalogs)
+// are just sized to factionCount + clans.size(). Component walk is in index
+// order and all draws come from one dedicated stream => deterministic.
+void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSpec>& systems,
+                const std::vector<GateLink>& links, std::vector<ClanSpec>& clans)
+{
+    if (params.factionCount == 0 || params.pirateTemplateCount == 0) {
+        return;
+    }
+    const std::uint32_t count = static_cast<std::uint32_t>(systems.size());
+    std::vector<std::vector<std::uint32_t>> adjacency(count);
+    for (const GateLink& link : links) {
+        adjacency[link.a].push_back(link.b);
+        adjacency[link.b].push_back(link.a);
+    }
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (systems[i].factionIndex != kNoFaction) {
+            continue;
+        }
+        const std::uint32_t clanFaction =
+            params.factionCount + static_cast<std::uint32_t>(clans.size());
+        std::vector<std::uint32_t> frontier{i};
+        systems[i].factionIndex = clanFaction;
+        while (!frontier.empty()) {
+            const std::uint32_t index = frontier.back();
+            frontier.pop_back();
+            for (const std::uint32_t neighbor : adjacency[index]) {
+                if (systems[neighbor].factionIndex == kNoFaction) {
+                    systems[neighbor].factionIndex = clanFaction;
+                    frontier.push_back(neighbor);
+                }
+            }
+        }
+        clans.push_back({
+            .name = systems[i].name + " " + pick(rng, kClanSuffixes),
+            .templateIndex = rng.range(params.pirateTemplateCount),
+            .seed = rng.nextU64(),
+            .homeSystem = i,
+        });
+    }
+}
+
 [[nodiscard]] std::uint32_t pickArchetype(const GalaxyParams& params, core::Rng& rng,
                                           Region region)
 {
@@ -393,6 +441,9 @@ Galaxy generateGalaxy(const GalaxyParams& params)
 
     core::Rng factionRng(params.seed, kStreamFactions);
     claimTerritory(params, factionRng, galaxy.systems, galaxy.links);
+
+    core::Rng clanRng(params.seed, kStreamClans);
+    spawnClans(params, clanRng, galaxy.systems, galaxy.links, galaxy.clans);
 
     for (const GateLink& link : galaxy.links) {
         galaxy.systems[link.a].gates.push_back({link.b, {}});

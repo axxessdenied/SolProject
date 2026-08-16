@@ -109,6 +109,12 @@ public:
     TradeResult buy(std::uint32_t market, std::uint32_t commodity, float units);
     TradeResult sell(std::uint32_t market, std::uint32_t commodity, float units);
 
+    // A faction raid (Phase 8b): every market in the system loses
+    // stockFraction of each commodity, and traders hauling toward the system
+    // lose their cargo (they arrive empty) — piracy propagates into
+    // shortages and prices per GDD 6.
+    void raidSystem(std::uint32_t systemIndex, float stockFraction);
+
     // Dynamic state only (stocks, traders, phase accumulator); the layout is
     // re-derived from galaxy+params, and load fails if they don't match.
     void save(core::BinaryWriter& writer) const;

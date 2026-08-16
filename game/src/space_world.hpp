@@ -10,6 +10,7 @@
 #include "sol/sim/collision.hpp"
 #include "sol/sim/damage.hpp"
 #include "sol/sim/economy.hpp"
+#include "sol/sim/faction_sim.hpp"
 #include "sol/sim/flight.hpp"
 #include "sol/sim/power.hpp"
 #include "sol/sim/steering.hpp"
@@ -129,6 +130,24 @@ struct ShipPilot
     sol::core::DVec3 waypoint;
     float thinkTimer = 0.0f; // counts down to the next Lua think
     float weavePhase = 0.0f;
+    // Faction table index (Phase 8b), or ~0u for unaffiliated console spawns
+    // (which Lua treats as unconditionally player-hostile, the pre-8b rule).
+    std::uint32_t factionIndex = 0xffff'ffffu;
+};
+
+// Runtime faction identity (Phase 8b): authored majors first, generated
+// pirate clans after, aligned with sim::SystemSpec::factionIndex and the
+// FactionSim agent order. Clans jitter their template def per clan seed.
+struct GameFaction
+{
+    std::string defId; // majors: own def id; clans: template def id (gates)
+    std::string name;
+    sol::core::Vec3 color = {1.0f, 1.0f, 1.0f};
+    bool pirate = false;
+    float aggression = 0.5f;
+    float forgiveness = 0.5f;
+    std::vector<std::string> shipsPatrol;
+    std::vector<std::string> shipsRaider;
 };
 
 struct RenderShape
@@ -170,6 +189,8 @@ struct TargetInfo
     float shieldFore = 0.0f;    // fractions, ships only
     float shieldAft = 0.0f;
     float hull = 0.0f;
+    std::string factionName;    // empty for unaffiliated/static targets
+    const char* attitude = "";  // player standing vs its faction (HUD tag)
 };
 
 // The new-game starter ship def; mods can override it (Phase 5 data pipeline).
@@ -275,6 +296,34 @@ public:
     bool hireCrew(const char* crewId, std::string* outError = nullptr);
     bool fireCrew(const char* crewId, std::string* outError = nullptr);
 
+    // --- Factions & reputation (Phase 8b) ---
+    static constexpr float kClanInitialStanding = -20.0f; // dockable, wary
+    static constexpr float kDefaultPirateRelation = -60.0f; // unspecified pairs
+
+    [[nodiscard]] const std::vector<GameFaction>& factions() const { return m_factionTable; }
+    [[nodiscard]] const sol::sim::FactionSim& factionSim() const { return m_factionSim; }
+    [[nodiscard]] sol::sim::FactionSim& factionSim() { return m_factionSim; }
+    // The faction holding a system (and its stations), or an out-of-table
+    // value for ownerless systems (factionCount == 0 galaxies).
+    [[nodiscard]] std::uint32_t systemOwnerFaction(std::uint32_t systemIndex) const
+    {
+        return systemIndex < m_galaxy.systems.size()
+                   ? m_galaxy.systems[systemIndex].factionIndex
+                   : kNoIndex;
+    }
+    // "hostile"/"neutral"/"friendly" for a faction table index; "" outside it.
+    [[nodiscard]] const char* playerAttitudeName(std::uint32_t faction) const;
+    // Whether the docked station's owner stocks a gated def (Phase 8a caveat
+    // fix: catalogs are the owner faction's; pirates fence past min_rep).
+    [[nodiscard]] bool stationSells(const sol::assets::CatalogGate& gate) const;
+    // Lua-chosen raid (sol.faction_raid); validates via the sim's candidates.
+    bool commitFactionRaid(std::uint32_t faction, std::uint32_t targetSystem);
+    // Scriptless fallback for one due decision (no faction_think hook).
+    void applyDefaultFactionDecision(const sol::sim::FactionDecision& decision)
+    {
+        m_factionSim.applyDefaultDecision(m_galaxy, &m_economy, decision);
+    }
+
     // Hardcore/ironman (decisions/007): set at new game, carried by the save.
     void setHardcore(bool hardcore) { m_hardcore = hardcore; }
     [[nodiscard]] bool hardcore() const { return m_hardcore; }
@@ -342,6 +391,9 @@ public:
     // every live pilot ship (combat targets with shield/hull readouts).
     [[nodiscard]] TargetInfo currentTargetInfo() const;
     void cycleTarget();
+    // Selects the first live spawned ship whose display name contains
+    // namePart (dev/console QoL; T-cycling is the player path).
+    bool targetShipByName(const char* namePart);
 
     [[nodiscard]] const ShipWeapon& playerWeapon() const
     {
@@ -382,13 +434,19 @@ public:
                                       const sol::assets::DefDatabase& defs);
 
     // As above, plus an AI pilot in the given role (starts Idle until Lua's
-    // pilot_think assigns work).
+    // pilot_think assigns work). factionIndex tags the pilot's allegiance;
+    // ~0u spawns the pre-8b unaffiliated kind.
     sol::ecs::Entity spawnPilotFromDef(const sol::assets::ShipDef& def,
-                                       const sol::assets::DefDatabase& defs, PilotRole role);
+                                       const sol::assets::DefDatabase& defs, PilotRole role,
+                                       std::uint32_t factionIndex = kNoIndex);
 
     // --- Pilot commands (the Lua-facing strategy API, called via bindings) ---
     // All return false for a dead/pilotless entity.
     bool pilotAttackPlayer(sol::ecs::Entity entity);
+    // Attacks the nearest enemy of the pilot's faction: another pilot whose
+    // faction it is at war with, or the player when hostile (and not docked).
+    // False (and no state change) with nothing hostile in sensor range.
+    bool pilotEngageEnemy(sol::ecs::Entity entity);
     bool pilotFlee(sol::ecs::Entity entity);
     bool pilotIdle(sol::ecs::Entity entity);
     bool pilotPatrolTo(sol::ecs::Entity entity, sol::core::DVec3 waypoint);
@@ -406,6 +464,9 @@ public:
         sol::ecs::Entity entity;
         const char* role = "";
         const char* state = "";
+        // Player standing vs the pilot's faction ("hostile"/"neutral"/
+        // "friendly"), or "none" for unaffiliated console spawns.
+        const char* attitude = "none";
     };
     void collectDuePilotThinks(double dt, std::vector<PilotThink>& out);
 
@@ -415,6 +476,14 @@ private:
         sol::ecs::Entity entity;
         std::string defId;
         std::string name; // display name for targeting
+    };
+
+    // A destroyed ship and (when a weapon did it) who fired the killing
+    // blow — reputation only moves on player kills (Phase 8b).
+    struct DestroyedShip
+    {
+        std::uint32_t victim = 0;
+        std::uint32_t attacker = 0xffff'ffffu;
     };
 
     static constexpr float kDamageFlashSeconds = 0.45f;
@@ -459,7 +528,20 @@ private:
     }
     // Resets the fleet to the single new-game starter ship.
     void resetFleetToStarter();
-    void handleShipDestroyed(std::uint32_t entityIndex);
+    void handleShipDestroyed(std::uint32_t entityIndex,
+                             std::uint32_t attackerIndex = kNoIndex);
+    // Rebuilds the runtime faction table (majors + jittered clans) and
+    // (re)initializes the FactionSim against the current galaxy; called by
+    // generateUniverse and by loadFrom after a galaxy regeneration.
+    void initializeFactions();
+    // Ambient NPC population for a freshly instantiated system: owner
+    // patrol/raider wings by region security plus raid-intensity incursions.
+    void spawnAmbientPilots(std::uint32_t systemIndex, const sol::sim::SystemSpec& spec);
+    // Spawn at an explicit position (ambient wings); the public
+    // spawnShipFromDef wraps this at a point ahead of the player.
+    sol::ecs::Entity spawnShipAt(const sol::assets::ShipDef& def,
+                                 const sol::assets::DefDatabase& defs,
+                                 const sol::core::DVec3& position, const char* factionName);
     [[nodiscard]] std::uint32_t playerEntityIndex() const
     {
         return m_registry.storage<PlayerShip>().entityIndices()[0];
@@ -498,6 +580,8 @@ private:
     sol::sim::GalaxyParams m_galaxyParams; // kept for regeneration on load
     sol::sim::Economy m_economy;
     sol::sim::EconomyParams m_economyParams; // kept for re-init on load
+    std::vector<GameFaction> m_factionTable; // majors + clans, sim order
+    sol::sim::FactionSim m_factionSim;
     std::vector<std::string> m_commodityIds; // economy index -> def id
     double m_playerCredits = 1'000.0;
     std::vector<float> m_playerCargo; // per commodity
