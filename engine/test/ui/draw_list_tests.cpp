@@ -311,3 +311,26 @@ SOL_TEST(draw_list_outline_draws_four_sides_inside_the_rect)
         SOL_REQUIRE(vertex.position.y <= box.max.y);
     }
 }
+
+SOL_TEST(draw_list_drops_geometry_under_a_collapsed_clip)
+{
+    DrawList list;
+
+    // A clip that misses its parent entirely collapses to zero area. Nothing
+    // may be emitted under it: the renderer reads an empty rect as "no clip"
+    // and would draw the geometry across the whole screen.
+    list.pushClip({{100.0f, 100.0f}, {200.0f, 200.0f}});
+    list.pushClip({{600.0f, 600.0f}, {700.0f, 700.0f}});
+    list.addRect({{610.0f, 610.0f}, {650.0f, 650.0f}}, kWhite);
+    list.addRoundedRect({{610.0f, 610.0f}, {650.0f, 650.0f}}, 4.0f, kWhite);
+    list.addLine({610.0f, 610.0f}, {650.0f, 650.0f}, kWhite, 2.0f);
+    list.addTriangle({610.0f, 610.0f}, {650.0f, 610.0f}, {630.0f, 650.0f}, kWhite);
+    SOL_CHECK(list.vertices().empty());
+    SOL_CHECK(list.indices().empty());
+    list.popClip();
+
+    // Back inside the parent, drawing resumes.
+    list.addRect({{110.0f, 110.0f}, {150.0f, 150.0f}}, kWhite);
+    SOL_CHECK(!list.vertices().empty());
+    list.popClip();
+}

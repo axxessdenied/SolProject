@@ -104,6 +104,10 @@ public:
 private:
     // Starts or extends the batch matching the current texture and clip.
     void selectBatch(std::uint32_t texture);
+    // True when the current clip has collapsed to nothing. Geometry under it
+    // must be dropped here: a zero-area clip rect reaches the renderer looking
+    // exactly like "no clip", and would be drawn over the whole screen.
+    [[nodiscard]] bool clipIsEmpty() const;
     [[nodiscard]] bool reserve(std::size_t vertexCount, std::size_t indexCount);
     void addQuad(core::Vec2 topLeft, core::Vec2 bottomRight, core::Vec2 uvMin, core::Vec2 uvMax,
                  const Color& color, std::uint32_t texture);

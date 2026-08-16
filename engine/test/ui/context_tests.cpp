@@ -4,6 +4,7 @@
 #include <sol/test/test.hpp>
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 using sol::assets::Font;
@@ -360,4 +361,228 @@ SOL_TEST(ui_context_builds_geometry_and_resets_each_frame)
     ui.beginFrame(InputState{}, kScreen);
     ui.endFrame();
     SOL_CHECK(ui.drawList().vertices().empty());
+}
+
+// --- Tab strip ---
+
+namespace {
+
+constexpr const char* const kTabLabels[] = {"Trade", "Outfitting", "Shipyard"};
+// Three tabs across 300 px: 96 px each with the theme's 6 px spacing, so the
+// third runs 304..400.
+constexpr Rect kTabStrip = {{100.0f, 100.0f}, {400.0f, 134.0f}};
+
+} // namespace
+
+SOL_TEST(ui_context_tabs_select_on_click)
+{
+    UiContext ui;
+    int selected = 0;
+
+    const auto frame = [&](const InputState& input) {
+        ui.beginFrame(input, kScreen);
+        const bool changed = ui.tabs(kTabStrip, kTabLabels, selected);
+        ui.endFrame();
+        return changed;
+    };
+
+    SOL_CHECK(!frame(pressAt(350.0f, 110.0f))); // the click completes on release
+    SOL_CHECK(frame(releaseAt(350.0f, 110.0f)));
+    SOL_CHECK(selected == 2);
+
+    // Clicking the tab that is already open changes nothing.
+    (void)frame(pressAt(350.0f, 110.0f));
+    SOL_CHECK(!frame(releaseAt(350.0f, 110.0f)));
+    SOL_CHECK(selected == 2);
+}
+
+SOL_TEST(ui_context_tabs_step_once_per_arrow_press)
+{
+    UiContext ui;
+    int selected = 0;
+
+    const auto frame = [&](const InputState& input) {
+        ui.beginFrame(input, kScreen);
+        (void)ui.tabs(kTabStrip, kTabLabels, selected);
+        ui.endFrame();
+    };
+
+    InputState next;
+    next.navNext = true;
+    frame(next); // focus enters the strip
+
+    InputState right;
+    right.navRight = true;
+    frame(right);
+    SOL_CHECK(selected == 1);
+
+    // Still held: a held key must not run the whole strip in one press.
+    frame(right);
+    SOL_CHECK(selected == 1);
+
+    frame(InputState{}); // release
+    frame(right);
+    SOL_CHECK(selected == 2);
+
+    // And wraps, in both directions.
+    frame(InputState{});
+    frame(right);
+    SOL_CHECK(selected == 0);
+
+    InputState left;
+    left.navLeft = true;
+    frame(left);
+    SOL_CHECK(selected == 2);
+}
+
+SOL_TEST(ui_context_tabs_survive_a_stale_selection_and_an_empty_strip)
+{
+    UiContext ui;
+
+    // A selection left over from a screen with more tabs must land somewhere
+    // real rather than index past the end.
+    int selected = 7;
+    ui.beginFrame(InputState{}, kScreen);
+    (void)ui.tabs(kTabStrip, kTabLabels, selected);
+    ui.endFrame();
+    SOL_CHECK(selected == 2);
+
+    selected = -3;
+    ui.beginFrame(InputState{}, kScreen);
+    (void)ui.tabs(kTabStrip, kTabLabels, selected);
+    ui.endFrame();
+    SOL_CHECK(selected == 0);
+
+    int none = 4;
+    ui.beginFrame(InputState{}, kScreen);
+    SOL_CHECK(!ui.tabs(kTabStrip, std::span<const char* const>{}, none));
+    ui.endFrame();
+    SOL_CHECK(none == 4); // nothing to select, nothing touched
+}
+
+// --- Scroll regions ---
+
+namespace {
+
+constexpr Rect kScrollView = {{100.0f, 100.0f}, {400.0f, 300.0f}}; // 200 tall
+
+InputState wheelAt(float x, float y, float delta)
+{
+    InputState input = mouseAt(x, y);
+    input.scrollDelta = delta;
+    return input;
+}
+
+} // namespace
+
+SOL_TEST(ui_context_scroll_clamps_to_the_content)
+{
+    UiContext ui;
+    float offset = 0.0f;
+
+    // Scrolling down past the end stops at exactly one screenful from the
+    // bottom, not somewhere below the content.
+    ui.beginFrame(wheelAt(200.0f, 200.0f, -100.0f), kScreen);
+    const Rect content = ui.beginScroll(kScrollView, 600.0f, offset);
+    ui.endScroll();
+    ui.endFrame();
+    SOL_CHECK(offset == 400.0f);
+    SOL_CHECK(content.min.y == kScrollView.min.y - 400.0f);
+    SOL_CHECK(content.max.y == content.min.y + 600.0f);
+    // A scrollable region gives up width to its bar.
+    SOL_CHECK(content.max.x < kScrollView.max.x);
+
+    // Scrolling back up stops at the top.
+    ui.beginFrame(wheelAt(200.0f, 200.0f, 100.0f), kScreen);
+    (void)ui.beginScroll(kScrollView, 600.0f, offset);
+    ui.endScroll();
+    ui.endFrame();
+    SOL_CHECK(offset == 0.0f);
+
+    // Content that fits never scrolls and keeps the full width.
+    ui.beginFrame(wheelAt(200.0f, 200.0f, -100.0f), kScreen);
+    const Rect shortContent = ui.beginScroll(kScrollView, 50.0f, offset);
+    ui.endScroll();
+    ui.endFrame();
+    SOL_CHECK(offset == 0.0f);
+    SOL_CHECK(shortContent.max.x == kScrollView.max.x);
+
+    // The wheel only moves the region the cursor is over.
+    ui.beginFrame(wheelAt(800.0f, 600.0f, -100.0f), kScreen);
+    (void)ui.beginScroll(kScrollView, 600.0f, offset);
+    ui.endScroll();
+    ui.endFrame();
+    SOL_CHECK(offset == 0.0f);
+}
+
+SOL_TEST(ui_context_scrolled_rows_are_out_of_the_mouse_reach)
+{
+    UiContext ui;
+    float offset = 0.0f;
+    bool visibleFired = false;
+    bool hiddenFired = false;
+
+    const auto frame = [&](const InputState& input) {
+        ui.beginFrame(input, kScreen);
+        const Rect content = ui.beginScroll(kScrollView, 800.0f, offset);
+        visibleFired = ui.button({content.min, {content.max.x, content.min.y + 40.0f}}, "First");
+        // Laid out below the fold: clipped away visually, and it must be out
+        // of reach too, or the player clicks a row they cannot see.
+        hiddenFired = ui.button({{content.min.x, content.min.y + 300.0f},
+                                 {content.max.x, content.min.y + 340.0f}},
+                                "Deep");
+        ui.endScroll();
+        ui.endFrame();
+    };
+
+    frame(pressAt(200.0f, 420.0f));
+    frame(releaseAt(200.0f, 420.0f));
+    SOL_CHECK(!hiddenFired);
+
+    frame(pressAt(200.0f, 120.0f));
+    frame(releaseAt(200.0f, 120.0f));
+    SOL_CHECK(visibleFired);
+}
+
+SOL_TEST(ui_context_scroll_follows_keyboard_focus)
+{
+    UiContext ui;
+    float offset = 0.0f;
+    constexpr float kRowPitch = 50.0f;
+
+    const auto frame = [&](const InputState& input) {
+        ui.beginFrame(input, kScreen);
+        const Rect content = ui.beginScroll(kScrollView, 8 * kRowPitch, offset);
+        for (int i = 0; i < 8; ++i) {
+            ui.pushId(i);
+            const float top = content.min.y + static_cast<float>(i) * kRowPitch;
+            (void)ui.button({{content.min.x, top}, {content.max.x, top + 40.0f}}, "Row");
+            ui.popId();
+        }
+        ui.endScroll();
+        ui.endFrame();
+    };
+
+    InputState next;
+    next.navNext = true;
+    for (int i = 0; i < 7; ++i) {
+        frame(next); // tab down to a row past the fold
+    }
+    frame(InputState{}); // the correction lands the frame after the focus move
+
+    // Whatever the offset settled on, the focused row has to be on screen.
+    SOL_CHECK(offset > 0.0f);
+    const float focusedTop = kScrollView.min.y - offset + 6.0f * kRowPitch;
+    SOL_CHECK(focusedTop >= kScrollView.min.y - 0.01f);
+    SOL_CHECK(focusedTop + 40.0f <= kScrollView.max.y + 0.01f);
+}
+
+SOL_TEST(ui_context_endscroll_without_a_region_is_harmless)
+{
+    UiContext ui;
+    ui.beginFrame(InputState{}, kScreen);
+    ui.endScroll(); // unbalanced call must not underflow the stack
+    (void)ui.button(kFirst, "Launch");
+    ui.endFrame();
+    SOL_CHECK(ui.interactiveCount() == 1);
 }

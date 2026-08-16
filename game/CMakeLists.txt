@@ -7,6 +7,7 @@ add_executable(sol_game
     src/scene_renderer.cpp
     src/shader_watcher.cpp
     src/space_world.cpp
+    src/station_screen.cpp
     src/station_ui.cpp
     src/thruster_particles.cpp
 )

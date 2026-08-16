@@ -26,11 +26,17 @@ void UiContext::setFont(const assets::Font* font, std::uint32_t fontTexture)
 
 void UiContext::beginFrame(const InputState& input, core::Vec2 screenSize)
 {
+    m_navLeftEdge = input.navLeft && !m_previousNavLeft;
+    m_navRightEdge = input.navRight && !m_previousNavRight;
+    m_previousNavLeft = input.navLeft;
+    m_previousNavRight = input.navRight;
+
     m_input = input;
     m_screenSize = screenSize;
     m_drawList.reset();
     m_idStack.clear();
     m_navItems.clear();
+    m_scrollStack.clear();
     m_hotId = kNoWidget;
     m_frameOpen = true;
 }
@@ -115,7 +121,17 @@ UiContext::Interaction UiContext::interact(std::string_view label, const Rect& b
 
     m_navItems.push_back(interaction.id);
     interaction.focused = isFocused(interaction.id);
-    interaction.hovered = bounds.contains(m_input.mousePosition);
+    // Inside a scroll region the cursor must be over the region as well as the
+    // widget: a row scrolled out of view is still at its layout position, and
+    // clipping it visually is no help if it can still be clicked.
+    interaction.hovered =
+        bounds.contains(m_input.mousePosition) &&
+        (m_scrollStack.empty() || m_scrollStack.back().bounds.contains(m_input.mousePosition));
+    if (interaction.focused && !m_scrollStack.empty()) {
+        ScrollRegion& region = m_scrollStack.back();
+        region.focusRect = bounds;
+        region.hasFocusRect = true;
+    }
 
     if (interaction.hovered) {
         m_hotId = interaction.id;
@@ -276,6 +292,115 @@ bool UiContext::selectable(const Rect& bounds, std::string_view text, bool selec
                           {bounds.max.x - m_theme.spacing, bounds.max.y}};
     label(textBox, text, color);
     return interaction.activated;
+}
+
+bool UiContext::tabs(const Rect& bounds, std::span<const char* const> labels, int& selected)
+{
+    if (labels.empty()) {
+        return false;
+    }
+    const int count = static_cast<int>(labels.size());
+    selected = std::clamp(selected, 0, count - 1);
+    const int previous = selected;
+
+    const float each = (bounds.width() - m_theme.spacing * static_cast<float>(count - 1)) /
+                       static_cast<float>(count);
+    for (int i = 0; i < count; ++i) {
+        const char* text = labels[static_cast<std::size_t>(i)];
+        const float left = bounds.min.x + (each + m_theme.spacing) * static_cast<float>(i);
+        const Rect tab = {{left, bounds.min.y}, {left + each, bounds.max.y}};
+        const bool active = i == previous;
+
+        const Interaction interaction = interact(text, tab, true);
+        if (interaction.activated) {
+            selected = i;
+        }
+        // Arrows step the strip, so a screen's tabs are reachable without
+        // cycling focus through every widget one of them contains. On the edge
+        // only: holding the key must not run the whole strip in one frame.
+        if (interaction.focused && (m_navLeftEdge || m_navRightEdge)) {
+            const int step = m_navRightEdge ? 1 : -1;
+            selected = (previous + step + count) % count;
+            // Focus rides along, or a second press would step from the old tab
+            // again and the strip would never move past its neighbour.
+            setFocus(idFor(labels[static_cast<std::size_t>(selected)]));
+        }
+
+        m_drawList.addRoundedRect(tab, m_theme.radius,
+                                  active ? m_theme.controlActive : controlColor(interaction, true));
+        if (active) {
+            // An underline keeps the current tab readable even where the
+            // active and hovered fills are close in value.
+            m_drawList.addRect({{tab.min.x + m_theme.radius, tab.max.y - 2.0f},
+                                {tab.max.x - m_theme.radius, tab.max.y}},
+                               m_theme.accent);
+        }
+        drawFocusRing(tab, interaction);
+        label(tab, text, active ? m_theme.textPrimary : m_theme.textDim, nullptr, TextAlign::Center);
+    }
+    return selected != previous;
+}
+
+Rect UiContext::beginScroll(const Rect& bounds, float contentHeight, float& offset)
+{
+    ScrollRegion region;
+    region.bounds = bounds;
+    region.offset = &offset;
+    region.maxOffset = std::max(0.0f, contentHeight - bounds.height());
+
+    if (region.maxOffset > 0.0f && bounds.contains(m_input.mousePosition)) {
+        offset -= m_input.scrollDelta * m_theme.rowHeight * 3.0f;
+    }
+    offset = std::clamp(offset, 0.0f, region.maxOffset);
+
+    m_scrollStack.push_back(region);
+    m_drawList.pushClip(bounds);
+
+    // The bar eats width only when there is something to scroll, so a short
+    // list is not laid out narrower than a long one for no reason.
+    const float barWidth = region.maxOffset > 0.0f ? m_theme.scrollbarWidth + m_theme.spacing : 0.0f;
+    const float top = bounds.min.y - offset;
+    return {{bounds.min.x, top}, {bounds.max.x - barWidth, top + contentHeight}};
+}
+
+void UiContext::endScroll()
+{
+    if (m_scrollStack.empty()) {
+        return;
+    }
+    const ScrollRegion region = m_scrollStack.back();
+    m_scrollStack.pop_back();
+    m_drawList.popClip();
+
+    float& offset = *region.offset;
+    if (region.hasFocusRect) {
+        // Focus rects are in screen space at the offset they were built with;
+        // undo it to get content space, then move the window onto them. The
+        // correction lands next frame, like the focus change that caused it.
+        const float top = region.focusRect.min.y - region.bounds.min.y + offset;
+        const float bottom = top + region.focusRect.height();
+        if (top < offset) {
+            offset = top;
+        } else if (bottom > offset + region.bounds.height()) {
+            offset = bottom - region.bounds.height();
+        }
+        offset = std::clamp(offset, 0.0f, region.maxOffset);
+    }
+
+    if (region.maxOffset <= 0.0f) {
+        return;
+    }
+    const Rect track = {{region.bounds.max.x - m_theme.scrollbarWidth, region.bounds.min.y},
+                        {region.bounds.max.x, region.bounds.max.y}};
+    m_drawList.addRoundedRect(track, m_theme.scrollbarWidth * 0.5f, m_theme.meterTrack);
+
+    const float viewFraction =
+        region.bounds.height() / (region.bounds.height() + region.maxOffset);
+    const float thumbHeight = std::max(track.height() * viewFraction, m_theme.scrollbarWidth * 2.0f);
+    const float travel = track.height() - thumbHeight;
+    const float thumbTop = track.min.y + travel * (offset / region.maxOffset);
+    m_drawList.addRoundedRect({{track.min.x, thumbTop}, {track.max.x, thumbTop + thumbHeight}},
+                              m_theme.scrollbarWidth * 0.5f, m_theme.controlHovered);
 }
 
 void UiContext::meter(const Rect& bounds, float fraction, const Color& fill)

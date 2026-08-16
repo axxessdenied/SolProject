@@ -101,10 +101,20 @@ bool DrawList::reserve(std::size_t vertexCount, std::size_t indexCount)
     return true;
 }
 
+bool DrawList::clipIsEmpty() const
+{
+    if (m_clipStack.empty()) {
+        return false;
+    }
+    const Rect& clip = m_clipStack.back();
+    return clip.max.x <= clip.min.x || clip.max.y <= clip.min.y;
+}
+
 void DrawList::addQuad(core::Vec2 topLeft, core::Vec2 bottomRight, core::Vec2 uvMin, core::Vec2 uvMax,
                        const Color& color, std::uint32_t texture)
 {
-    if (color.a <= 0.0f || bottomRight.x <= topLeft.x || bottomRight.y <= topLeft.y) {
+    if (color.a <= 0.0f || bottomRight.x <= topLeft.x || bottomRight.y <= topLeft.y ||
+        clipIsEmpty()) {
         return;
     }
     if (!reserve(4, 6)) {
@@ -145,7 +155,7 @@ void DrawList::addRectOutline(const Rect& rect, const Color& color, float thickn
 
 void DrawList::addTriangle(core::Vec2 a, core::Vec2 b, core::Vec2 c, const Color& color)
 {
-    if (color.a <= 0.0f || !reserve(3, 3)) {
+    if (color.a <= 0.0f || clipIsEmpty() || !reserve(3, 3)) {
         return;
     }
     selectBatch(0);
@@ -165,7 +175,7 @@ void DrawList::addLine(core::Vec2 from, core::Vec2 to, const Color& color, float
     const float dx = to.x - from.x;
     const float dy = to.y - from.y;
     const float length = std::sqrt(dx * dx + dy * dy);
-    if (length <= 0.0f || thickness <= 0.0f || color.a <= 0.0f) {
+    if (length <= 0.0f || thickness <= 0.0f || color.a <= 0.0f || clipIsEmpty()) {
         return;
     }
     if (!reserve(4, 6)) {
@@ -194,7 +204,7 @@ void DrawList::addLine(core::Vec2 from, core::Vec2 to, const Color& color, float
 
 void DrawList::addRoundedRect(const Rect& rect, float radius, const Color& color, int cornerSegments)
 {
-    if (rect.empty() || color.a <= 0.0f) {
+    if (rect.empty() || color.a <= 0.0f || clipIsEmpty()) {
         return;
     }
     const float limit = std::min(rect.width(), rect.height()) * 0.5f;

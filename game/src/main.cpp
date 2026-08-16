@@ -6,6 +6,7 @@
 #include "shader_watcher.hpp"
 #include "ship_camera.hpp"
 #include "space_world.hpp"
+#include "station_screen.hpp"
 #include "station_ui.hpp"
 
 #include "sol/core/log.hpp"
@@ -224,6 +225,7 @@ int main(int argc, char** argv)
     game::GameState state = game::GameState::MainMenu;
     game::GameState settingsReturnState = game::GameState::MainMenu;
     game::MainMenuState mainMenuState;
+    game::StationScreenState stationScreen; // tab + scroll positions, across frames
     mainMenuState.hasSave = sol::platform::fileModificationTime(savePath.c_str()) != 0;
 
     const std::string settingsPath = executableDir + "settings.toml";
@@ -333,11 +335,17 @@ int main(int argc, char** argv)
         const float deltaSeconds = sol::core::clamp(static_cast<float>(now - lastFrameTime), 0.0f, 0.1f);
         lastFrameTime = now;
 
-        // While a menu is up the ship takes no orders and the sim stands
-        // still. Every gameplay key reads through this, so Tab means "next
-        // widget" in a menu and "cruise" in flight without either fighting
-        // the other.
-        const bool inFlight = state == game::GameState::Flying || state == game::GameState::Docked;
+        // Who owns the keyboard this frame. The ship takes orders only in
+        // flight, so Tab means "next widget" on a screen and "cruise" in the
+        // cockpit without either fighting the other. Docking counts as a
+        // screen - the station UI wants those keys - but not as a pause: the
+        // market and the mission board are on the clock while the player
+        // shops, so the sim keeps running.
+        const bool inFlight = state == game::GameState::Flying;
+        const bool docked = state == game::GameState::Docked;
+        const bool simRunning = inFlight || docked;
+        const bool uiHasKeys = !inFlight;                 // menus and the station screen
+        const bool inMenuScreen = uiHasKeys && !docked;   // where Esc means "back out"
         const auto gameplayKey = [&](sol::platform::Key key) {
             return inFlight && window.isKeyDown(key);
         };
@@ -346,7 +354,7 @@ int main(int argc, char** argv)
         const bool escapeDown = window.isKeyDown(sol::platform::Key::Escape);
         const bool escapeEdge = escapeDown && !previousEscape;
         previousEscape = escapeDown;
-        if (escapeEdge && inFlight) {
+        if (escapeEdge && simRunning) {
             state = game::GameState::Paused;
             window.setCursorLocked(false);
         }
@@ -401,8 +409,9 @@ int main(int argc, char** argv)
         }
         previousF = fDown;
 
-        // Dock/undock at the nearest station (G toggles).
-        const bool gDown = gameplayKey(sol::platform::Key::G);
+        // Dock/undock at the nearest station (G toggles). Undocking is the one
+        // gameplay key the station screen leaves live, beside its own button.
+        const bool gDown = (inFlight || docked) && window.isKeyDown(sol::platform::Key::G);
         if (gDown && !previousG) {
             if (world.isDocked()) {
                 (void)world.undock();
@@ -430,8 +439,11 @@ int main(int argc, char** argv)
         if (!inFlight) {
             // The mapper reads the window directly, so it is skipped entirely
             // rather than fed neutral input - otherwise Tab would toggle
-            // cruise while the player is tabbing through a menu.
+            // cruise while the player is tabbing through a menu. It also owns
+            // the cursor lock, so release it here or a screen opened mid-turn
+            // inherits a captured mouse.
             world.setShipInput({});
+            window.setCursorLocked(false);
         } else if (cameraMode == game::CameraMode::Free) {
             freeCamera.update(window, deltaSeconds);
             world.setShipInput({});
@@ -444,7 +456,7 @@ int main(int argc, char** argv)
 
         // A menu stops the clock: no accumulation, so unpausing does not
         // fast-forward the galaxy by however long the player was reading.
-        if (inFlight) {
+        if (simRunning) {
             simLoop.beginFrame(deltaSeconds);
             while (simLoop.shouldTick()) {
                 world.tick(simLoop.tickDelta());
@@ -690,9 +702,8 @@ int main(int argc, char** argv)
 
         // Navigation keys are edge-triggered: holding Tab must not race
         // through every widget on the screen in one frame.
-        const bool inMenu = !inFlight;
         const auto menuKeyEdge = [&](sol::platform::Key key, bool& previous) {
-            const bool down = inMenu && window.isKeyDown(key) && !devUi.wantsMouseCapture();
+            const bool down = uiHasKeys && window.isKeyDown(key) && !devUi.wantsMouseCapture();
             const bool edge = down && !previous;
             previous = down;
             return edge;
@@ -704,13 +715,20 @@ int main(int argc, char** argv)
         uiInput.navPrevious = upEdge;
         uiInput.navActivate = menuKeyEdge(sol::platform::Key::Enter, previousNavActivate) ||
                               menuKeyEdge(sol::platform::Key::Space, previousNavSpace);
-        // Sliders step while held, so left/right stay level-triggered.
-        uiInput.navLeft = inMenu && window.isKeyDown(sol::platform::Key::Left);
-        uiInput.navRight = inMenu && window.isKeyDown(sol::platform::Key::Right);
-        uiInput.navCancel = escapeEdge && inMenu;
+        // Sliders step while held, so left/right stay level-triggered - but
+        // they stand down for ImGui on the same terms as every other nav key,
+        // or a cursor resting on the dev overlay would disable half of them.
+        const bool arrowsLive = uiHasKeys && !devUi.wantsMouseCapture();
+        uiInput.navLeft = arrowsLive && window.isKeyDown(sol::platform::Key::Left);
+        uiInput.navRight = arrowsLive && window.isKeyDown(sol::platform::Key::Right);
+        // Only a menu treats Esc as "back out". While docked it opened the
+        // pause menu above, and reading it here as well would cancel that menu
+        // on the very frame it appeared.
+        uiInput.navCancel = escapeEdge && inMenuScreen;
 
         ui.beginFrame(uiInput, uiSize);
         game::MenuAction menuAction = game::MenuAction::None;
+        bool undockRequested = false;
         switch (state) {
         case game::GameState::MainMenu:
             menuAction = game::buildMainMenu(ui, mainMenuState);
@@ -722,9 +740,13 @@ int main(int argc, char** argv)
             menuAction = game::buildSettingsScreen(ui, settings);
             break;
         case game::GameState::Flying:
-        case game::GameState::Docked:
             // The dev HUD stays up beside this one during the changeover.
             game::buildFlightUi(ui.drawList(), renderer.uiFont(), ui.screenSize(), hud);
+            break;
+        case game::GameState::Docked:
+            // Docked, the station screen owns the view; the flight readout has
+            // nothing to say about a parked ship.
+            undockRequested = game::buildStationScreen(ui, stationPanel, stationScreen);
             break;
         }
         ui.endFrame();
@@ -784,11 +806,18 @@ int main(int argc, char** argv)
         // not `inFlight` from the top of the frame: Esc may have opened the
         // pause menu since, and re-deriving from a stale flag would slam it
         // shut again on the same frame.
+        if (undockRequested) {
+            (void)world.undock();
+        }
         if (state == game::GameState::Flying || state == game::GameState::Docked) {
             state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
         }
 
-        devUi.beginFrame(stats, hud, showStation ? &stationPanel : nullptr);
+        // The provisional ImGui station screen is off: the custom one replaces
+        // it, and the two overlap on screen, so there is nothing to compare
+        // side by side the way the HUD still is. Its code goes with the
+        // provisional HUD in the cleanup that ends this phase.
+        devUi.beginFrame(stats, hud, nullptr);
         if (showStation && stationPanel.trade.action.row >= 0) {
             const std::uint32_t commodity =
                 static_cast<std::uint32_t>(stationPanel.trade.action.row);

@@ -4,6 +4,7 @@
 #include "sol/ui/layout.hpp"
 
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -60,6 +61,7 @@ struct Theme
     float rowHeight = 28.0f;
     float radius = 6.0f;
     float focusRingThickness = 2.0f;
+    float scrollbarWidth = 10.0f;
 
     // Style names as cooked into the font asset.
     const char* headingStyle = "heading";
@@ -121,7 +123,27 @@ public:
     [[nodiscard]] bool selectable(const Rect& bounds, std::string_view label, bool selected,
                                   bool enabled = true);
 
+    // A tab strip splitting `bounds` evenly. `selected` indexes `labels` and is
+    // updated in place; left/right step it while a tab holds focus, so moving
+    // between tabs costs one arrow key rather than a full nav cycle. Returns
+    // true on the frame the selection changed.
+    [[nodiscard]] bool tabs(const Rect& bounds, std::span<const char* const> labels, int& selected);
+
     void meter(const Rect& bounds, float fraction, const Color& fill);
+
+    // --- Scroll region ---
+    //
+    // Clips everything built between the calls to `bounds` and shifts it up by
+    // `offset`, which the caller owns so a screen keeps its place across
+    // frames. Returns the rectangle to lay the content out in: its top is the
+    // scrolled origin and its height is `contentHeight`, so a Column built over
+    // it needs no offset arithmetic of its own.
+    //
+    // The wheel scrolls while the cursor is inside, and endScroll() pulls the
+    // focused widget back into view - a row reached by keyboard has to be a row
+    // the player can see.
+    [[nodiscard]] Rect beginScroll(const Rect& bounds, float contentHeight, float& offset);
+    void endScroll();
 
     // Number of interactive widgets built this frame; the nav order.
     [[nodiscard]] std::size_t interactiveCount() const { return m_navItems.size(); }
@@ -135,6 +157,17 @@ private:
         bool held = false;
         bool activated = false;
         bool focused = false;
+    };
+
+    // An open scroll region: where it draws, whose offset it moves, and the
+    // focused widget inside it (if any), which endScroll() scrolls into view.
+    struct ScrollRegion
+    {
+        Rect bounds;
+        float* offset = nullptr;
+        float maxOffset = 0.0f;
+        Rect focusRect;
+        bool hasFocusRect = false;
     };
 
     [[nodiscard]] Interaction interact(std::string_view label, const Rect& bounds, bool enabled);
@@ -151,6 +184,15 @@ private:
 
     std::vector<WidgetId> m_idStack;
     std::vector<WidgetId> m_navItems; // interactive widgets, in build order
+    std::vector<ScrollRegion> m_scrollStack;
+
+    // Left/right arrive held (a slider steps while the key is down); discrete
+    // controls like the tab strip need the edge, which is derived here rather
+    // than asked of every caller.
+    bool m_previousNavLeft = false;
+    bool m_previousNavRight = false;
+    bool m_navLeftEdge = false;
+    bool m_navRightEdge = false;
 
     WidgetId m_hotId = kNoWidget;    // under the cursor
     WidgetId m_activeId = kNoWidget; // being pressed
