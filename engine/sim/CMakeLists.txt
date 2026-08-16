@@ -8,6 +8,7 @@ add_library(sol_sim STATIC
     src/missions.cpp
     src/power.cpp
     src/steering.cpp
+    src/survey.cpp
     src/universe.cpp
     src/weapons.cpp
 )

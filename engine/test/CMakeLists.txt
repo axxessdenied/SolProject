@@ -63,6 +63,7 @@ add_executable(sol_sim_tests
     sim/flight_tests.cpp
     sim/power_tests.cpp
     sim/steering_tests.cpp
+    sim/survey_tests.cpp
     sim/universe_tests.cpp
     sim/weapons_tests.cpp
 )
