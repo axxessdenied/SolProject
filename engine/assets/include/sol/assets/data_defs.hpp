@@ -36,6 +36,8 @@ enum class FitStat : std::uint32_t
     WeaponCapacitor,
     WeaponRecharge,
     Cargo,
+    ScanRange, // Phase 8e: pulse/target-scan reach
+    ScanSpeed, // Phase 8e: target-scan progress rate
     Count,
 };
 
@@ -111,6 +113,10 @@ struct ShipDef
     ShipPowerTuning power;
     std::string weaponId;        // weapon def id; empty = unarmed
     float cargoCapacity = 50.0f; // trade goods, units
+    // Scanning (engine plan Phase 8e): how far a pulse reaches and how fast a
+    // target scan resolves. Scanner modules move both like any other stat.
+    float scanRange = 2.5e8f;  // meters
+    float scanSpeed = 1.0f;    // target-scan progress multiplier
     // Outfitting (engine plan Phase 8a): hull price, fitting budgets, slots.
     float price = 10'000.0f;
     float mass = 10'000.0f;    // kg; module mass dilutes accelerations

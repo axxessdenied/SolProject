@@ -21,6 +21,7 @@ constexpr const char* kFitStatKeys[kFitStatCount] = {
     "forward_accel",  "reverse_accel", "lateral_accel",   "vertical_accel", "max_speed",
     "turn_rate",      "cruise_speed_scale", "shield_strength", "shield_regen", "armor",
     "hull",           "weapon_capacitor", "weapon_recharge", "cargo",
+    "scan_range",     "scan_speed",
 };
 
 // Accumulates the first error and short-circuits later reads.
@@ -301,6 +302,8 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     reader.optionalFloat("weapon_recharge", power.weaponRecharge);
     reader.optionalString("weapon", def.weaponId);
     reader.optionalFloat("cargo", def.cargoCapacity);
+    reader.optionalFloat("scan_range", def.scanRange);
+    reader.optionalFloat("scan_speed", def.scanSpeed);
 
     reader.optionalFloat("price", def.price);
     reader.optionalFloat("mass", def.mass);
@@ -317,7 +320,8 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
                               "angular_accel", "boost_accel_scale", "boost_speed_scale",
                               "cruise_speed_scale", "cruise_accel_scale", "shield_strength",
                               "shield_regen", "shield_regen_delay", "armor", "hull",
-                              "weapon_capacitor", "weapon_recharge", "weapon", "cargo", "price",
+                              "weapon_capacitor", "weapon_recharge", "weapon", "cargo",
+                              "scan_range", "scan_speed", "price",
                               "mass", "power_output", "slots_shield", "slots_engine",
                               "slots_cargo", "slots_utility", "crew_berths", "factions",
                               "min_rep"});

@@ -30,6 +30,8 @@ float statValue(const ShipDef& def, FitStat stat)
     case FitStat::WeaponCapacitor: return def.power.weaponCapacitor;
     case FitStat::WeaponRecharge: return def.power.weaponRecharge;
     case FitStat::Cargo: return def.cargoCapacity;
+    case FitStat::ScanRange: return def.scanRange;
+    case FitStat::ScanSpeed: return def.scanSpeed;
     case FitStat::Count: break;
     }
     return 0.0f;
@@ -52,6 +54,8 @@ void setStatValue(ShipDef& def, FitStat stat, float value)
     case FitStat::WeaponCapacitor: def.power.weaponCapacitor = value; return;
     case FitStat::WeaponRecharge: def.power.weaponRecharge = value; return;
     case FitStat::Cargo: def.cargoCapacity = value; return;
+    case FitStat::ScanRange: def.scanRange = value; return;
+    case FitStat::ScanSpeed: def.scanSpeed = value; return;
     case FitStat::Count: break;
     }
 }

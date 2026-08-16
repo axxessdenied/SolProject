@@ -88,6 +88,27 @@ power_draw = 1.5
 weapon_capacitor_mul = 1.4
 
 [[module]]
+id = "sol.survey_scanner_mk1"
+name = "Survey Scanner Mk1"
+slot = "utility"
+price = 1500.0
+mass = 250.0
+power_draw = 1.5
+scan_range_mul = 1.6
+scan_speed_mul = 1.25
+
+[[module]]
+id = "sol.survey_scanner_mk2"
+name = "Survey Scanner Mk2"
+slot = "utility"
+price = 4500.0
+mass = 400.0
+power_draw = 2.5
+scan_range_mul = 2.4
+scan_speed_mul = 1.6
+min_rep = 10.0
+
+[[module]]
 id = "sol.regen_amplifier"
 name = "Regen Amplifier"
 slot = "utility"

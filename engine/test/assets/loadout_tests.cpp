@@ -221,3 +221,59 @@ SOL_TEST(loadout_validate_budgets)
     SOL_CHECK(!sol::assets::validateLoadout(*ship, {}, tooManyCrew, &error));
     SOL_CHECK(error.find("berth") != std::string::npos);
 }
+
+SOL_TEST(loadout_scanner_modules_move_scan_stats)
+{
+    constexpr const char* kScannerDefs = R"(
+[[ship]]
+id = "sol.surveyor"
+name = "Surveyor"
+scan_range = 6.0e7
+scan_speed = 1.0
+mass = 10000.0
+power_output = 6.0
+slots_utility = 2
+
+[[module]]
+id = "sol.scanner_mk1"
+name = "Scanner Mk1"
+slot = "utility"
+price = 1500.0
+mass = 0.0
+power_draw = 1.5
+scan_range_mul = 1.6
+scan_speed_mul = 1.25
+
+[[module]]
+id = "sol.scanner_booster"
+name = "Scanner Booster"
+slot = "utility"
+price = 500.0
+mass = 0.0
+scan_range_add = 1.0e7
+)";
+
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kScannerDefs, "scanners.toml", &error));
+
+    const ShipDef* ship = db.findShip("sol.surveyor");
+    const ModuleDef* scanner = db.findModule("sol.scanner_mk1");
+    const ModuleDef* booster = db.findModule("sol.scanner_booster");
+    SOL_REQUIRE(ship != nullptr && scanner != nullptr && booster != nullptr);
+    SOL_CHECK(nearlyEqual(ship->scanRange, 6.0e7f));
+    SOL_CHECK(nearlyEqual(ship->scanSpeed, 1.0f));
+
+    // Adds land before muls, the Phase 8a ordering rule, so the booster's
+    // 10,000 km rides the scanner's multiplier: (6e7 + 1e7) * 1.6.
+    const ModuleDef* fit[] = {scanner, booster};
+    const ShipDef resolved = sol::assets::resolveLoadout(*ship, fit, {});
+    SOL_CHECK(std::fabs(resolved.scanRange - 1.12e8f) < 1.0e3f);
+    SOL_CHECK(nearlyEqual(resolved.scanSpeed, 1.25f));
+
+    // Order-independence: the same fit the other way round resolves equal.
+    const ModuleDef* swapped[] = {booster, scanner};
+    const ShipDef other = sol::assets::resolveLoadout(*ship, swapped, {});
+    SOL_CHECK(other.scanRange == resolved.scanRange);
+    SOL_CHECK(other.scanSpeed == resolved.scanSpeed);
+}
