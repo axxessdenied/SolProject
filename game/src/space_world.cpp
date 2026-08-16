@@ -330,6 +330,26 @@ bool SpaceWorld::commitFactionRaid(std::uint32_t faction, std::uint32_t targetSy
     return true;
 }
 
+bool SpaceWorld::warpToStationOffset(std::uint32_t station, const core::DVec3& offset)
+{
+    if (isDocked() || m_currentSystem >= m_galaxy.systems.size()) {
+        return false;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    if (station >= spec.stations.size()) {
+        return false;
+    }
+    m_autopilotActive = false;
+    Transform& transform = m_registry.storage<Transform>().get(playerEntityIndex());
+    const core::DVec3 position = spec.stations[station].position + offset;
+    transform.position = position;
+    transform.previousPosition = position;
+    m_registry.storage<FlightBody>().get(playerEntityIndex()) = FlightBody{};
+    SOL_LOG_WARN("dev warp: player moved to '%s' offset (%.0f, %.0f, %.0f)",
+                 spec.stations[station].name.c_str(), offset.x, offset.y, offset.z);
+    return true;
+}
+
 bool SpaceWorld::acceptMission(std::uint32_t offerIndex, std::string* outError)
 {
     if (!isDocked()) {

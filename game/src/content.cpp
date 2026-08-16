@@ -411,6 +411,13 @@ double insuranceQuote(GameContent& content)
     return content.world().insuranceDeductible();
 }
 
+// Dev cheat: teleport to a station-relative offset (mission/combat tests).
+bool warpOffset(GameContent& content, double station, double dx, double dy, double dz)
+{
+    return content.world().warpToStationOffset(static_cast<std::uint32_t>(station),
+                                               {dx, dy, dz});
+}
+
 // Dev cheat, same spirit as spawn_ship: outfitting tests need capital.
 double addCredits(GameContent& content, double amount)
 {
@@ -960,6 +967,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&fireCrew>("sol", "fire_crew", this);
     m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);
     m_vm.registerFunction<&addCredits>("sol", "add_credits", this);
+    m_vm.registerFunction<&warpOffset>("sol", "warp", this);
     m_vm.registerFunction<&listFactions>("sol", "factions", this);
     m_vm.registerFunction<&listStandings>("sol", "rep", this);
     m_vm.registerFunction<&listRelations>("sol", "relations", this);

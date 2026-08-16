@@ -254,6 +254,10 @@ public:
     [[nodiscard]] const std::vector<std::string>& commodityIds() const { return m_commodityIds; }
     [[nodiscard]] std::uint32_t commodityIndex(const char* id) const;
     [[nodiscard]] double playerCredits() const { return m_playerCredits; }
+    // Dev-console cheat (sol.warp): teleports the flying player to a
+    // station-relative offset in the current system. False while docked or
+    // with a bad station index.
+    bool warpToStationOffset(std::uint32_t station, const sol::core::DVec3& offset);
     // Dev-console cheat (sol.add_credits); clamps at zero.
     void addCredits(double amount)
     {
