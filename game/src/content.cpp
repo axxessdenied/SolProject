@@ -373,6 +373,13 @@ double insuranceQuote(GameContent& content)
     return content.world().insuranceDeductible();
 }
 
+// Dev cheat, same spirit as spawn_ship: outfitting tests need capital.
+double addCredits(GameContent& content, double amount)
+{
+    content.world().addCredits(amount);
+    return content.world().playerCredits();
+}
+
 } // namespace
 
 bool GameContent::initialize(const std::string& dataDirectory, const std::string& modsDirectory,
@@ -459,6 +466,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&hireCrew>("sol", "hire_crew", this);
     m_vm.registerFunction<&fireCrew>("sol", "fire_crew", this);
     m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);
+    m_vm.registerFunction<&addCredits>("sol", "add_credits", this);
 }
 
 bool GameContent::reloadDefs()

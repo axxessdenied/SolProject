@@ -232,6 +232,11 @@ public:
     [[nodiscard]] const std::vector<std::string>& commodityIds() const { return m_commodityIds; }
     [[nodiscard]] std::uint32_t commodityIndex(const char* id) const;
     [[nodiscard]] double playerCredits() const { return m_playerCredits; }
+    // Dev-console cheat (sol.add_credits); clamps at zero.
+    void addCredits(double amount)
+    {
+        m_playerCredits = m_playerCredits + amount > 0.0 ? m_playerCredits + amount : 0.0;
+    }
     [[nodiscard]] float playerCargo(std::uint32_t commodity) const
     {
         return commodity < m_playerCargo.size() ? m_playerCargo[commodity] : 0.0f;
@@ -445,6 +450,13 @@ private:
     void applyActiveLoadout();
     // Shared refusal path for outfitting mutations.
     bool refuse(const std::string& reason, std::string* outError) const;
+    // A docked ship is inside the station and takes no damage — otherwise
+    // hostiles camp the pad and re-kill on respawn (fatal under decisions/007
+    // hardcore, where each death would delete the save).
+    [[nodiscard]] bool isDamageImmune(std::uint32_t entityIndex) const
+    {
+        return entityIndex == playerEntityIndex() && isDocked();
+    }
     // Resets the fleet to the single new-game starter ship.
     void resetFleetToStarter();
     void handleShipDestroyed(std::uint32_t entityIndex);

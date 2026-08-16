@@ -1354,7 +1354,7 @@ void SpaceWorld::tick(double dt)
         }
         const std::uint32_t entityIndex = m_collisionShipIndices[bodySlot];
         ShipDefense* defense = defenses.tryGet(entityIndex);
-        if (defense == nullptr || !defense->state.alive()) {
+        if (defense == nullptr || !defense->state.alive() || isDamageImmune(entityIndex)) {
             return;
         }
         const core::Quat orientation =
@@ -1412,7 +1412,8 @@ void SpaceWorld::tick(double dt)
             if (bestSlot < shipCount) {
                 const std::uint32_t targetIndex = m_collisionShipIndices[bestSlot];
                 if (ShipDefense* defense = defenses.tryGet(targetIndex);
-                    defense != nullptr && defense->state.alive()) {
+                    defense != nullptr && defense->state.alive() &&
+                    !isDamageImmune(targetIndex)) {
                     const core::DVec3 toSource = normalize(projectile.velocity) * -1.0;
                     const sim::ShieldFacing facing = sim::facingForHit(
                         m_registry.storage<Transform>().get(targetIndex).orientation, toSource);
@@ -1501,7 +1502,8 @@ void SpaceWorld::tick(double dt)
             }
             if (hit) {
                 if (ShipDefense* defense = defenses.tryGet(bestTarget);
-                    defense != nullptr && defense->state.alive()) {
+                    defense != nullptr && defense->state.alive() &&
+                    !isDamageImmune(bestTarget)) {
                     const sim::ShieldFacing facing = sim::facingForHit(
                         m_registry.storage<Transform>().get(bestTarget).orientation,
                         forwardD * -1.0);
