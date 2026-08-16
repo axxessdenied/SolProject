@@ -8,9 +8,10 @@
 namespace game {
 
 // The custom game UI (engine plan Phase 8d), drawn on the in-repo UI stack
-// rather than Dear ImGui. This is the flight readout: the first surface moved
-// off the provisional dev HUD, which stays up beside it until every panel has
-// an equivalent here.
+// rather than Dear ImGui. This is the flight HUD, at parity with the
+// provisional dev one: crosshair with shield facings, projectile lead marker,
+// target diamond or edge arrow, flight readout, power pips, target readout,
+// contextual prompts, and the tracked mission line.
 //
 // Pure geometry building - no input, no game state mutation - so it can be
 // exercised headlessly.

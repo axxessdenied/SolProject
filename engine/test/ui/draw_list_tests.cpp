@@ -312,6 +312,67 @@ SOL_TEST(draw_list_outline_draws_four_sides_inside_the_rect)
     }
 }
 
+SOL_TEST(draw_list_circle_strokes_a_ring_of_the_asked_width)
+{
+    DrawList list;
+    const sol::core::Vec2 center = {100.0f, 100.0f};
+    list.addCircle(center, 20.0f, kWhite, 4.0f, 8);
+
+    // One vertex pair per step plus the closing pair, two triangles a step.
+    SOL_REQUIRE(list.vertices().size() == 18);
+    SOL_REQUIRE(list.indices().size() == 48);
+    SOL_CHECK(batchedIndexCount(list) == list.indices().size());
+    SOL_CHECK(list.batches()[0].texture == 0); // solid, like every other fill
+
+    bool sawInner = false;
+    bool sawOuter = false;
+    for (const DrawList::Vertex& vertex : list.vertices()) {
+        const float dx = vertex.position.x - center.x;
+        const float dy = vertex.position.y - center.y;
+        const float radius = std::sqrt(dx * dx + dy * dy);
+        SOL_REQUIRE(radius > 17.99f && radius < 22.01f);
+        sawInner = sawInner || nearlyEqual(radius, 18.0f);
+        sawOuter = sawOuter || nearlyEqual(radius, 22.0f);
+    }
+    SOL_CHECK(sawInner);
+    SOL_CHECK(sawOuter);
+}
+
+SOL_TEST(draw_list_arc_stays_inside_its_own_sweep)
+{
+    DrawList list;
+    const sol::core::Vec2 center = {200.0f, 200.0f};
+    // A short arc centered straight up: -pi/2 is up, since screen y grows down.
+    constexpr float kUp = -1.57079633f;
+    list.addArc(center, 30.0f, kUp - 0.3f, kUp + 0.3f, kWhite, 2.0f, 6);
+
+    SOL_REQUIRE(list.vertices().size() == 14);
+    for (const DrawList::Vertex& vertex : list.vertices()) {
+        SOL_REQUIRE(vertex.position.y < center.y);              // above the center
+        SOL_REQUIRE(std::abs(vertex.position.x - center.x) < 10.0f); // narrow sweep
+    }
+}
+
+SOL_TEST(draw_list_arc_ignores_degenerate_input)
+{
+    DrawList list;
+    list.addArc({50.0f, 50.0f}, 0.0f, 0.0f, 1.0f, kWhite, 2.0f, 8);   // no radius
+    list.addArc({50.0f, 50.0f}, 10.0f, 1.0f, 1.0f, kWhite, 2.0f, 8);  // no sweep
+    list.addArc({50.0f, 50.0f}, 10.0f, 0.0f, 1.0f, kWhite, 0.0f, 8);  // no width
+    SOL_CHECK(list.vertices().empty());
+    SOL_CHECK(list.indices().empty());
+
+    // A stroke wider than the radius fills to the center instead of winding
+    // the inner edge back through it.
+    list.addCircle({50.0f, 50.0f}, 4.0f, kWhite, 20.0f, 4);
+    SOL_REQUIRE(!list.vertices().empty());
+    for (const DrawList::Vertex& vertex : list.vertices()) {
+        const float dx = vertex.position.x - 50.0f;
+        const float dy = vertex.position.y - 50.0f;
+        SOL_REQUIRE(std::sqrt(dx * dx + dy * dy) < 14.01f);
+    }
+}
+
 SOL_TEST(draw_list_drops_geometry_under_a_collapsed_clip)
 {
     DrawList list;
@@ -325,6 +386,7 @@ SOL_TEST(draw_list_drops_geometry_under_a_collapsed_clip)
     list.addRoundedRect({{610.0f, 610.0f}, {650.0f, 650.0f}}, 4.0f, kWhite);
     list.addLine({610.0f, 610.0f}, {650.0f, 650.0f}, kWhite, 2.0f);
     list.addTriangle({610.0f, 610.0f}, {650.0f, 610.0f}, {630.0f, 650.0f}, kWhite);
+    list.addCircle({630.0f, 630.0f}, 10.0f, kWhite, 2.0f, 8);
     SOL_CHECK(list.vertices().empty());
     SOL_CHECK(list.indices().empty());
     list.popClip();

@@ -202,6 +202,55 @@ void DrawList::addLine(core::Vec2 from, core::Vec2 to, const Color& color, float
     m_batches.back().indexCount += 6;
 }
 
+void DrawList::addArc(core::Vec2 center, float radius, float startAngle, float endAngle,
+                      const Color& color, float thickness, int segments)
+{
+    const float sweep = endAngle - startAngle;
+    if (radius <= 0.0f || thickness <= 0.0f || color.a <= 0.0f || sweep == 0.0f || clipIsEmpty()) {
+        return;
+    }
+    const int steps = std::clamp(segments, 1, 64);
+    const std::size_t vertexCount = static_cast<std::size_t>(steps + 1) * 2;
+    const std::size_t indexCount = static_cast<std::size_t>(steps) * 6;
+    if (!reserve(vertexCount, indexCount)) {
+        return;
+    }
+    selectBatch(0);
+
+    // A stroke wider than the radius would fold the inner edge through the
+    // center and wind the strip backwards, so it stops at a filled disc.
+    const float half = thickness * 0.5f;
+    const float inner = std::max(radius - half, 0.0f);
+    const float outer = radius + half;
+
+    const std::uint16_t base = static_cast<std::uint16_t>(m_vertices.size());
+    const std::uint32_t packed = packColor(color);
+    for (int step = 0; step <= steps; ++step) {
+        const float angle =
+            startAngle + sweep * (static_cast<float>(step) / static_cast<float>(steps));
+        const float cosAngle = std::cos(angle);
+        const float sinAngle = std::sin(angle);
+        m_vertices.push_back(
+            {{center.x + cosAngle * inner, center.y + sinAngle * inner}, kWhiteUv, packed});
+        m_vertices.push_back(
+            {{center.x + cosAngle * outer, center.y + sinAngle * outer}, kWhiteUv, packed});
+    }
+    for (int step = 0; step < steps; ++step) {
+        const std::uint16_t pair = static_cast<std::uint16_t>(base + step * 2);
+        const std::uint16_t order[6] = {0, 1, 3, 0, 3, 2};
+        for (const std::uint16_t index : order) {
+            m_indices.push_back(static_cast<std::uint16_t>(pair + index));
+        }
+    }
+    m_batches.back().indexCount += static_cast<std::uint32_t>(indexCount);
+}
+
+void DrawList::addCircle(core::Vec2 center, float radius, const Color& color, float thickness,
+                         int segments)
+{
+    addArc(center, radius, 0.0f, 6.28318531f, color, thickness, segments);
+}
+
 void DrawList::addRoundedRect(const Rect& rect, float radius, const Color& color, int cornerSegments)
 {
     if (rect.empty() || color.a <= 0.0f || clipIsEmpty()) {

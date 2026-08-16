@@ -84,6 +84,15 @@ public:
     void addLine(core::Vec2 from, core::Vec2 to, const Color& color, float thickness = 1.0f);
     void addTriangle(core::Vec2 a, core::Vec2 b, core::Vec2 c, const Color& color);
 
+    // Stroked ring segment: angles are radians measured from +x and sweep the
+    // way the screen runs, so -pi/2 is up. Drawn as one strip between an inner
+    // and an outer radius rather than as joined line segments, which keeps a
+    // thick arc free of gaps at the joints. `segments` covers the whole sweep.
+    void addArc(core::Vec2 center, float radius, float startAngle, float endAngle,
+                const Color& color, float thickness = 1.0f, int segments = 24);
+    void addCircle(core::Vec2 center, float radius, const Color& color, float thickness = 1.0f,
+                   int segments = 24);
+
     // Draws UTF-8 text with `position` at the left end of the baseline.
     // Returns the advance width consumed.
     float addText(const assets::FontStyleRecord& style, core::Vec2 position, std::string_view text,
