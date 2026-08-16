@@ -2,6 +2,7 @@ add_library(sol_assets STATIC
     src/asset_loader.cpp
     src/data_defs.cpp
     src/loadout.cpp
+    src/truetype.cpp
 )
 add_library(sol::assets ALIAS sol_assets)
 
