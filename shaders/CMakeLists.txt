@@ -22,6 +22,8 @@ set(SOL_SHADER_SOURCES
     debug_line.frag
     particle.vert
     particle.frag
+    ui.vert
+    ui.frag
 )
 
 set(SOL_SHADER_OUTPUTS "")

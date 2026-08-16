@@ -6,6 +6,7 @@ add_library(sol_renderer STATIC
     src/scene_pass.cpp
     src/sky_renderer.cpp
     src/tonemap_renderer.cpp
+    src/ui_renderer.cpp
 )
 add_library(sol::renderer ALIAS sol_renderer)
 

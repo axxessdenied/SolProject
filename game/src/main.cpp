@@ -1,5 +1,6 @@
 #include "content.hpp"
 #include "fly_camera.hpp"
+#include "game_ui.hpp"
 #include "scene_renderer.hpp"
 #include "shader_watcher.hpp"
 #include "ship_camera.hpp"
@@ -211,6 +212,10 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
     renderer.setDevUi(&devUi);
+
+    // Game-UI geometry, rebuilt every frame; lives out here so its buffers are
+    // reused instead of reallocated per frame.
+    sol::ui::DrawList gameUi;
 
 #if !defined(SOL_SHADER_SOURCE_DIR)
     #define SOL_SHADER_SOURCE_DIR ""
@@ -616,6 +621,16 @@ int main(int argc, char** argv)
             game::fillStationMissions(world, stationText, stationPanel, missionOfferRows,
                                       missionJournalRows); // after: shares stationText
         }
+        // Custom game UI (Phase 8d), built fresh each frame and drawn after
+        // tonemap. The dev HUD stays up beside it during the changeover.
+        gameUi.reset();
+        gameUi.setFont(&renderer.uiFont(), renderer.uiFontTexture());
+        game::buildFlightUi(gameUi, renderer.uiFont(),
+                            {static_cast<float>(swapchain.extent().width),
+                             static_cast<float>(swapchain.extent().height)},
+                            hud);
+        renderer.setUiDrawList(&gameUi);
+
         devUi.beginFrame(stats, hud, showStation ? &stationPanel : nullptr);
         if (showStation && stationPanel.trade.action.row >= 0) {
             const std::uint32_t commodity =

@@ -360,6 +360,7 @@ Image createSampledTexture(Context& context, const TextureUploadDesc& desc)
     viewCreateInfo.image = result.image;
     viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewCreateInfo.format = desc.format;
+    viewCreateInfo.components = desc.swizzle;
     viewCreateInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, desc.mipCount, 0, 1};
     SOL_VK_CHECK(vkCreateImageView(context.device(), &viewCreateInfo, nullptr, &result.view));
     return result;

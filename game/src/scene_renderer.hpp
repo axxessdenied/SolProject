@@ -7,10 +7,13 @@
 #include "sol/renderer/particle_renderer.hpp"
 #include "sol/renderer/sky_renderer.hpp"
 #include "sol/renderer/tonemap_renderer.hpp"
+#include "sol/renderer/ui_renderer.hpp"
 #include "sol/rhi/context.hpp"
 #include "sol/rhi/resources.hpp"
 #include "sol/rhi/swapchain.hpp"
+#include "sol/assets/font.hpp"
 #include "sol/ui/dev_ui.hpp"
+#include "sol/ui/draw_list.hpp"
 
 #include <cstdint>
 #include <span>
@@ -107,13 +110,23 @@ public:
     {
         return m_meshRenderer.reloadPipeline() && m_skyRenderer.reloadPipeline() &&
                m_impostorRenderer.reloadPipeline() && m_tonemapRenderer.reloadPipeline() &&
-               m_debugDraw.reloadPipeline() && m_particleRenderer.reloadPipeline();
+               m_debugDraw.reloadPipeline() && m_particleRenderer.reloadPipeline() &&
+               m_uiRenderer.reloadPipeline();
     }
 
     [[nodiscard]] std::uint32_t drawCallCount() const { return m_drawCallCount; }
 
     // Optional dev overlay, rendered inside the scene pass.
     void setDevUi(sol::ui::DevUi* devUi) { m_devUi = devUi; }
+
+    // Game UI geometry for this frame, drawn after tonemap and before the dev
+    // overlay so ImGui always sits on top. The list is owned by the caller.
+    void setUiDrawList(const sol::ui::DrawList* drawList) { m_uiDrawList = drawList; }
+
+    // The cooked UI font and the texture slot its atlas occupies, for callers
+    // building draw lists.
+    [[nodiscard]] const sol::assets::Font& uiFont() const { return m_uiFont; }
+    [[nodiscard]] std::uint32_t uiFontTexture() const { return m_uiFontTexture; }
 
     // Add camera-relative debug lines each frame before drawFrame; the list
     // is drawn inside the HDR pass and cleared afterwards.
@@ -153,6 +166,13 @@ private:
     sol::renderer::GpuTexture m_hullTexture;
     sol::rhi::Image m_depth;
     sol::rhi::Image m_hdrColor;
+
+    sol::renderer::UiRenderer m_uiRenderer;
+    sol::assets::Font m_uiFont;
+    sol::rhi::Image m_uiFontAtlas;
+    VkSampler m_uiFontSampler = VK_NULL_HANDLE;
+    std::uint32_t m_uiFontTexture = 0;
+    const sol::ui::DrawList* m_uiDrawList = nullptr;
 
     sol::ui::DevUi* m_devUi = nullptr;
     FrameResources m_frames[kFramesInFlight];

@@ -47,7 +47,9 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
         !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
                                 kFramesInFlight) ||
         !m_particleRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
-                                       kFramesInFlight)) {
+                                       kFramesInFlight) ||
+        !m_uiRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat, shaderDirectory,
+                                 kFramesInFlight)) {
         return false;
     }
     m_hdrColor = rhi::createColorTarget(context, swapchain.extent(), kHdrFormat);
@@ -72,6 +74,28 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
     m_shipMesh = m_meshRenderer.createMesh(shipData);
     m_checkerTexture = m_meshRenderer.createTexture(checkerData);
     m_hullTexture = m_meshRenderer.createTexture(hullData);
+
+    // Game UI font: one R8 coverage atlas, viewed as white with the coverage
+    // in alpha so it shares the UI shader with solid fills.
+    if (!m_uiFont.load((cookedBase + "ui.sfont").c_str())) {
+        return false;
+    }
+    {
+        const std::uint8_t* atlasData = m_uiFont.atlas().data();
+        const std::uint32_t atlasSize = static_cast<std::uint32_t>(m_uiFont.atlas().size());
+        rhi::TextureUploadDesc atlasDesc = {};
+        atlasDesc.width = m_uiFont.atlasWidth();
+        atlasDesc.height = m_uiFont.atlasHeight();
+        atlasDesc.format = VK_FORMAT_R8_UNORM;
+        atlasDesc.mipCount = 1;
+        atlasDesc.mipData = &atlasData;
+        atlasDesc.mipSizes = &atlasSize;
+        atlasDesc.swizzle = {VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE,
+                             VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R};
+        m_uiFontAtlas = rhi::createSampledTexture(context, atlasDesc);
+        m_uiFontSampler = rhi::createClampSampler(context);
+        m_uiFontTexture = m_uiRenderer.registerTexture(m_uiFontAtlas.view, m_uiFontSampler);
+    }
 
     m_depth = rhi::createDepthImage(context, swapchain.extent());
 
@@ -161,6 +185,12 @@ void SceneRenderer::shutdown()
     m_tonemapRenderer.shutdown();
     m_debugDraw.shutdown();
     m_particleRenderer.shutdown();
+    m_uiRenderer.shutdown();
+    if (m_uiFontSampler != VK_NULL_HANDLE) {
+        vkDestroySampler(m_context->device(), m_uiFontSampler, nullptr);
+        m_uiFontSampler = VK_NULL_HANDLE;
+    }
+    rhi::destroyImage(*m_context, m_uiFontAtlas);
     m_context = nullptr;
     m_swapchain = nullptr;
 }
@@ -262,9 +292,16 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
 
     renderer::endHdrScenePass(commandBuffer, m_hdrColor);
 
-    // --- Present pass: tonemap + dev UI ---
+    // --- Present pass: tonemap, game UI, dev UI ---
     renderer::beginPresentPass(commandBuffer, *m_swapchain, imageIndex, m_depth);
     m_tonemapRenderer.draw(commandBuffer, extent, scene.exposure);
+    if (m_uiDrawList != nullptr && !m_uiDrawList->batches().empty()) {
+        const core::Vec2 screenSize = {static_cast<float>(extent.width),
+                                       static_cast<float>(extent.height)};
+        m_uiRenderer.draw(commandBuffer, m_frameIndex, screenSize, m_uiDrawList->vertices(),
+                          m_uiDrawList->indices(), m_uiDrawList->batches());
+        ++m_drawCallCount;
+    }
     if (m_devUi != nullptr) {
         m_devUi->render(commandBuffer);
     }

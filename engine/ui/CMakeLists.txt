@@ -1,10 +1,11 @@
 add_library(sol_ui STATIC
     src/dev_ui.cpp
+    src/draw_list.cpp
 )
 add_library(sol::ui ALIAS sol_ui)
 
 target_include_directories(sol_ui PUBLIC include)
-target_link_libraries(sol_ui PUBLIC sol::rhi imgui)
+target_link_libraries(sol_ui PUBLIC sol::renderer imgui)
 
 if(WIN32)
     # ImGui platform backend bridge: sanctioned platform touch point (AGENTS.md 4).

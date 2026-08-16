@@ -1,5 +1,6 @@
 #include <sol/assets/font.hpp>
 
+#include <sol/test/synthetic_cooked_font.hpp>
 #include <sol/test/test.hpp>
 
 #include <cstdint>
@@ -14,74 +15,11 @@ using sol::assets::FontStyleRecord;
 
 namespace {
 
-// Cooked fonts are plain records, so the tests assemble one directly rather
-// than reaching for the cooker (which sits above this layer anyway).
-struct FontBuilder
-{
-    std::vector<FontStyleRecord> styles;
-    std::vector<FontGlyphRecord> glyphs;
-    std::uint32_t atlasWidth = 16;
-    std::uint32_t atlasHeight = 16;
-
-    void addStyle(const char* name, float pixelSize, const std::vector<char32_t>& codepoints)
-    {
-        FontStyleRecord style = {};
-        std::memcpy(style.name, name, std::strlen(name));
-        style.pixelSize = pixelSize;
-        style.ascent = pixelSize * 0.8f;
-        style.descent = -pixelSize * 0.2f;
-        style.lineHeight = pixelSize * 1.1f;
-        style.firstGlyph = static_cast<std::uint32_t>(glyphs.size());
-        style.glyphCount = static_cast<std::uint32_t>(codepoints.size());
-        styles.push_back(style);
-
-        for (const char32_t codepoint : codepoints) {
-            FontGlyphRecord glyph = {};
-            glyph.codepoint = static_cast<std::uint32_t>(codepoint);
-            glyph.atlasX = 0;
-            glyph.atlasY = 0;
-            glyph.width = 2;
-            glyph.height = 2;
-            glyph.bearingX = 0;
-            glyph.bearingY = -2;
-            glyph.advance = codepoint == U' ' ? 3.0f : 5.0f;
-            glyphs.push_back(glyph);
-        }
-    }
-
-    [[nodiscard]] std::vector<std::uint8_t> encode() const
-    {
-        FontFileHeader header = {};
-        header.styleCount = static_cast<std::uint32_t>(styles.size());
-        header.glyphCount = static_cast<std::uint32_t>(glyphs.size());
-        header.atlasWidth = atlasWidth;
-        header.atlasHeight = atlasHeight;
-
-        const std::size_t styleBytes = styles.size() * sizeof(FontStyleRecord);
-        const std::size_t glyphBytes = glyphs.size() * sizeof(FontGlyphRecord);
-        const std::size_t atlasBytes = static_cast<std::size_t>(atlasWidth) * atlasHeight;
-
-        std::vector<std::uint8_t> bytes(sizeof(header) + styleBytes + glyphBytes + atlasBytes, 0);
-        std::memcpy(bytes.data(), &header, sizeof(header));
-        if (styleBytes != 0) {
-            std::memcpy(bytes.data() + sizeof(header), styles.data(), styleBytes);
-        }
-        if (glyphBytes != 0) {
-            std::memcpy(bytes.data() + sizeof(header) + styleBytes, glyphs.data(), glyphBytes);
-        }
-        return bytes;
-    }
-};
-
-// Codepoints must be sorted, as the cooker emits them.
-const std::vector<char32_t> kAscii = {U' ', U'?', U'A', U'B', U'a'};
+using sol::test::CookedFontBuilder;
 
 std::vector<std::uint8_t> buildTwoStyleFont()
 {
-    FontBuilder builder;
-    builder.addStyle("hud", 16.0f, kAscii);
-    builder.addStyle("heading", 32.0f, kAscii);
-    return builder.encode();
+    return sol::test::buildSyntheticCookedFont();
 }
 
 bool nearlyEqual(float a, float b)
@@ -202,21 +140,21 @@ SOL_TEST(font_rejects_corrupt_assets)
     SOL_CHECK(!font.loadFromMemory(truncated));
 
     // A style whose glyph run runs off the end of the table.
-    FontBuilder overrun;
-    overrun.addStyle("hud", 16.0f, kAscii);
+    CookedFontBuilder overrun;
+    overrun.addStyle("hud", 16.0f, sol::test::syntheticCharset());
     overrun.styles[0].glyphCount = 99;
     SOL_CHECK(!font.loadFromMemory(overrun.encode()));
 
     // A glyph rect that leaves the atlas would index out of bounds at draw time.
-    FontBuilder escapes;
-    escapes.addStyle("hud", 16.0f, kAscii);
+    CookedFontBuilder escapes;
+    escapes.addStyle("hud", 16.0f, sol::test::syntheticCharset());
     escapes.glyphs[2].atlasX = static_cast<std::uint16_t>(escapes.atlasWidth);
     escapes.glyphs[2].width = 4;
     SOL_CHECK(!font.loadFromMemory(escapes.encode()));
 
     // An unterminated style name would run off the end of the char array.
-    FontBuilder unterminated;
-    unterminated.addStyle("hud", 16.0f, kAscii);
+    CookedFontBuilder unterminated;
+    unterminated.addStyle("hud", 16.0f, sol::test::syntheticCharset());
     std::memset(unterminated.styles[0].name, 'x', sol::assets::kFontStyleNameCapacity);
     SOL_CHECK(!font.loadFromMemory(unterminated.encode()));
 

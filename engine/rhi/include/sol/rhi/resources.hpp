@@ -53,6 +53,12 @@ struct TextureUploadDesc
     std::uint32_t mipCount = 0;
     const std::uint8_t* const* mipData = nullptr; // mipCount pointers
     const std::uint32_t* mipSizes = nullptr;      // mipCount byte sizes
+
+    // View component mapping; identity by default. Lets a single-channel
+    // coverage texture (a glyph atlas) read as white with the coverage in
+    // alpha, so it shares a shader with ordinary color textures.
+    VkComponentMapping swizzle = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                                  VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
 };
 
 // Creates a sampled image, uploads all mips via staging, and leaves it in
