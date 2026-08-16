@@ -351,29 +351,28 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             || state.selectedSystem >= static_cast<int>(panel.systems.size())) {
             state.selectedSystem = panel.currentIndex;
         }
-        // Trade overlay picker (Phase 8g), above the list: "Owners" is the
-        // map as it has always been, and each commodity recolors the galaxy
-        // by what the player knows it costs where.
+        // Trade overlay picker (Phase 8g), above the list. One cycling button
+        // rather than a row of cells: five choices across a column this
+        // narrow leaves no room for a name like "Refined Metal", and a
+        // truncated legend is worse than an extra click.
         Column listColumn(listBounds, 0.0f, ui.theme().spacing);
         const Rect overlayRow = listColumn.row(kRowHeight);
         {
-            Row cursor(overlayRow, 2.0f);
-            const float cellWidth =
-                (overlayRow.max.x - overlayRow.min.x - 2.0f
-                 * static_cast<float>(panel.commodityNames.size()))
-                / static_cast<float>(panel.commodityNames.size() + 1);
-            ui.pushId("overlay");
-            if (ui.selectable(cursor.cell(cellWidth), "Owners", panel.tradeCommodity < 0)) {
-                panel.action = {.kind = MapAction::Kind::SetTradeCommodity, .index = -1};
+            const int commodityCount = static_cast<int>(panel.commodityNames.size());
+            char label[64] = {};
+            if (panel.tradeCommodity >= 0 && panel.tradeCommodity < commodityCount) {
+                std::snprintf(label, sizeof(label), "Colour: %s",
+                              panel.commodityNames[static_cast<std::size_t>(
+                                  panel.tradeCommodity)]);
+            } else {
+                std::snprintf(label, sizeof(label), "Colour: owners");
             }
-            for (std::size_t c = 0; c < panel.commodityNames.size(); ++c) {
-                const bool on = panel.tradeCommodity == static_cast<int>(c);
-                if (ui.selectable(cursor.cell(cellWidth), panel.commodityNames[c], on)) {
-                    panel.action = {.kind = MapAction::Kind::SetTradeCommodity,
-                                    .index = static_cast<int>(c)};
-                }
+            if (ui.button(overlayRow, label, commodityCount > 0)) {
+                // Owners -> each commodity -> back to owners.
+                const int next = panel.tradeCommodity + 1;
+                panel.action = {.kind = MapAction::Kind::SetTradeCommodity,
+                                .index = next >= commodityCount ? -1 : next};
             }
-            ui.popId();
         }
         drawSystemList(ui, panel, listColumn.remaining(), state);
         drawGalaxyMap(ui, panel, mapBounds, state.selectedSystem);

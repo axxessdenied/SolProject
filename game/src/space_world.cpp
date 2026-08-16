@@ -35,8 +35,10 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 constexpr std::uint32_t kSaveVersion = 9; // v9: market intel memory, world clock
 
 // Market intel (Phase 8g): what a station's market report covers and costs.
-// The radius matches the traders' own horizon (EconomyParams::maxTradeJumps),
-// so what you can buy intel on is what the local economy actually talks to.
+// Deliberately shorter than the traders' own horizon — a station's brokers
+// know their neighbourhood, not everywhere their freighters reach, and a
+// report that covered the whole reachable galaxy would end scouting rather
+// than reward it.
 constexpr std::uint32_t kIntelJumpRadius = 3;
 constexpr double kIntelBasePrice = 120.0;
 constexpr double kIntelPricePerMarket = 18.0;
