@@ -1,4 +1,5 @@
 #include "bc1.hpp"
+#include "font.hpp"
 #include "gltf.hpp"
 #include "png.hpp"
 
@@ -33,11 +34,34 @@ std::string fileExtension(const std::string& path)
     return extension;
 }
 
+std::string directoryOf(const std::string& path)
+{
+    const std::size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? std::string() : path.substr(0, slash);
+}
+
 bool isUpToDate(const std::string& source, const std::string& output)
 {
     const std::uint64_t sourceTime = platform::fileModificationTime(source.c_str());
     const std::uint64_t outputTime = platform::fileModificationTime(output.c_str());
     return outputTime != 0 && sourceTime != 0 && outputTime >= sourceTime;
+}
+
+// A font manifest pulls in the TTFs beside it, so its own timestamp is not
+// enough to decide staleness - editing a font file has to force a re-cook too.
+bool isFontUpToDate(const std::string& manifest, const std::string& output)
+{
+    if (!isUpToDate(manifest, output)) {
+        return false;
+    }
+    const std::uint64_t outputTime = platform::fileModificationTime(output.c_str());
+    for (const std::string& sibling : platform::listFiles(directoryOf(manifest).c_str())) {
+        const std::uint64_t siblingTime = platform::fileModificationTime(sibling.c_str());
+        if (siblingTime != 0 && siblingTime > outputTime) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool cookTexture(const std::string& source, const std::string& output)
@@ -114,6 +138,32 @@ bool cookMesh(const std::string& source, const std::string& output)
     return true;
 }
 
+bool cookFont(const std::string& source, const std::string& output)
+{
+    std::vector<std::uint8_t> manifestBytes;
+    if (!platform::readFileBytes(source.c_str(), manifestBytes)) {
+        SOL_LOG_ERROR("cooker: cannot read %s", source.c_str());
+        return false;
+    }
+
+    cooker::BakedFont font;
+    std::string error;
+    if (!cooker::bakeFont(reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size(),
+                          directoryOf(source), font, &error)) {
+        SOL_LOG_ERROR("cooker: %s: %s", source.c_str(), error.c_str());
+        return false;
+    }
+
+    const std::vector<std::uint8_t> fileBytes = cooker::encodeFont(font);
+    if (!platform::writeFileBytes(output.c_str(), fileBytes.data(), fileBytes.size())) {
+        SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
+        return false;
+    }
+    SOL_LOG_INFO("cooked %s -> %s (%zu styles, %zu glyphs, %ux%u atlas)", source.c_str(), output.c_str(),
+                 font.styles.size(), font.glyphs.size(), font.atlasWidth, font.atlasHeight);
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -139,17 +189,22 @@ int main(int argc, char** argv)
         std::string output;
         bool (*cook)(const std::string&, const std::string&) = nullptr;
 
+        bool (*isCurrent)(const std::string&, const std::string&) = &isUpToDate;
         if (extension == ".png") {
             output = outputDirectory + "/" + fileStem(source) + ".stex";
             cook = &cookTexture;
         } else if (extension == ".gltf" || extension == ".glb") {
             output = outputDirectory + "/" + fileStem(source) + ".smesh";
             cook = &cookMesh;
+        } else if (extension == ".font") {
+            output = outputDirectory + "/" + fileStem(source) + ".sfont";
+            cook = &cookFont;
+            isCurrent = &isFontUpToDate;
         } else {
-            continue; // .gitkeep, .bin buffers referenced by gltf, etc.
+            continue; // .gitkeep, .ttf sources named by a .font manifest, etc.
         }
 
-        if (isUpToDate(source, output)) {
+        if (isCurrent(source, output)) {
             ++skipped;
             continue;
         }

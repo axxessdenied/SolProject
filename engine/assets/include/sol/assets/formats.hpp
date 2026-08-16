@@ -9,6 +9,7 @@ namespace sol::assets {
 
 inline constexpr std::uint32_t kMeshMagic = 0x48534D53u;    // "SMSH"
 inline constexpr std::uint32_t kTextureMagic = 0x58455453u; // "STEX"
+inline constexpr std::uint32_t kFontMagic = 0x4E4F4653u;    // "SFON"
 inline constexpr std::uint32_t kFormatVersion = 1;
 
 // .smesh layout: MeshFileHeader, vertexCount * MeshVertex, indexCount * uint32.
@@ -31,6 +32,7 @@ static_assert(sizeof(MeshVertex) == 32);
 enum class TextureFormat : std::uint32_t
 {
     BC1 = 1, // 8 bytes per 4x4 block, opaque RGB
+    R8 = 2,  // uncompressed single channel; glyph coverage, which BC1 would smear
 };
 
 // .stex layout: TextureFileHeader, then mip payloads from mip 0 down,
@@ -44,6 +46,51 @@ struct TextureFileHeader
     std::uint32_t mipCount = 0;
     TextureFormat format = TextureFormat::BC1;
 };
+
+// Longest style name a cooked font stores, including the terminator.
+inline constexpr std::uint32_t kFontStyleNameCapacity = 32;
+
+// .sfont layout: FontFileHeader, styleCount * FontStyleRecord, glyphCount *
+// FontGlyphRecord, then atlasWidth * atlasHeight bytes of R8 coverage.
+//
+// Every style in a font shares one atlas, so the UI draws all of its text -
+// any weight, any size - without rebinding a texture. Glyph records are
+// grouped by style and sorted by codepoint within a style, so a lookup is a
+// binary search over one contiguous run.
+struct FontFileHeader
+{
+    std::uint32_t magic = kFontMagic;
+    std::uint32_t version = kFormatVersion;
+    std::uint32_t styleCount = 0;
+    std::uint32_t glyphCount = 0;
+    std::uint32_t atlasWidth = 0;
+    std::uint32_t atlasHeight = 0;
+};
+
+struct FontStyleRecord
+{
+    char name[kFontStyleNameCapacity] = {}; // "hud", "body", "heading", ...
+    float pixelSize = 0.0f;
+    float ascent = 0.0f;
+    float descent = 0.0f; // negative, below the baseline
+    float lineHeight = 0.0f;
+    std::uint32_t firstGlyph = 0; // index into the glyph array
+    std::uint32_t glyphCount = 0;
+};
+static_assert(sizeof(FontStyleRecord) == 56);
+
+struct FontGlyphRecord
+{
+    std::uint32_t codepoint = 0;
+    std::uint16_t atlasX = 0;
+    std::uint16_t atlasY = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::int16_t bearingX = 0; // left edge relative to the pen
+    std::int16_t bearingY = 0; // top edge relative to the baseline; negative is above
+    float advance = 0.0f;      // pen movement, pixels
+};
+static_assert(sizeof(FontGlyphRecord) == 20);
 
 [[nodiscard]] constexpr std::uint32_t bc1MipByteSize(std::uint32_t width, std::uint32_t height)
 {

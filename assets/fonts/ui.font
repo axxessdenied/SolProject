@@ -1,0 +1,35 @@
+# Game UI font (engine plan Phase 8d). Cooked to cooked/ui.sfont: every style
+# below shares one R8 glyph atlas, so all UI text draws from a single texture.
+#
+# IBM Plex Sans, SIL Open Font License 1.1 - see LICENSE.txt beside this file.
+# Printable ASCII (32..126) is always baked; `codepoints` adds to it.
+
+atlas_width = 512
+padding = 1
+
+# Degree, multiplication sign (dimensions), en/em dash, ellipsis, arrows,
+# bullet - the non-ASCII characters HUD and station strings actually use.
+codepoints = [0x00B0, 0x00D7, 0x2013, 0x2014, 0x2026, 0x2190, 0x2192, 0x2022]
+
+# Flight HUD: small, and read at a glance against a moving background.
+[[style]]
+name = "hud"
+source = "IBMPlexSans-Regular.ttf"
+size = 16
+
+# Station screens and menus.
+[[style]]
+name = "body"
+source = "IBMPlexSans-Regular.ttf"
+size = 20
+
+[[style]]
+name = "body_strong"
+source = "IBMPlexSans-SemiBold.ttf"
+size = 20
+
+# Panel titles and menu entries.
+[[style]]
+name = "heading"
+source = "IBMPlexSans-SemiBold.ttf"
+size = 32
