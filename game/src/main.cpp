@@ -24,8 +24,10 @@
 #include "sol/rhi/context.hpp"
 #include "sol/rhi/swapchain.hpp"
 #include "sol/ui/dev_ui.hpp"
+#include "sol/ui/radar_projection.hpp"
 #include "sol/ui/screens.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -173,6 +175,79 @@ void consoleCommandHandler(const char* command, void* userData)
     static_cast<game::GameContent*>(userData)->executeConsole(command);
 }
 
+// --- Contact radar fill (Phase 8h) -------------------------------------------
+
+// The disc shows at most this many contacts, nearest first. A system can hold
+// dozens of nav points and a fight can add more ships; past this the disc
+// stops being a glance and starts being a puzzle.
+constexpr std::size_t kRadarMaxContacts = 32;
+
+sol::ui::RadarKind radarKindOf(game::SpaceWorld::NavKind kind)
+{
+    switch (kind) {
+    case game::SpaceWorld::NavKind::Station: return sol::ui::RadarKind::Station;
+    case game::SpaceWorld::NavKind::Gate: return sol::ui::RadarKind::Gate;
+    case game::SpaceWorld::NavKind::Planet: return sol::ui::RadarKind::Planet;
+    case game::SpaceWorld::NavKind::Star: return sol::ui::RadarKind::Star;
+    case game::SpaceWorld::NavKind::Signal: return sol::ui::RadarKind::Signal;
+    case game::SpaceWorld::NavKind::Field: return sol::ui::RadarKind::Field;
+    case game::SpaceWorld::NavKind::Wreck: return sol::ui::RadarKind::Wreck;
+    }
+    return sol::ui::RadarKind::Signal;
+}
+
+// Everything around the ship, in ship-local meters. Individual rocks are
+// deliberately absent: a field of forty-eight is one contact, the same ruling
+// Phase 8f made when it put rock on the boresight instead of the target cycle.
+void fillRadarContacts(const game::SpaceWorld& world,
+                       std::vector<sol::ui::RadarContact>& out)
+{
+    out.clear();
+    const sol::sim::ShipState ship = world.shipState();
+    // body -> sim becomes sim -> body, which is what puts the disc in the
+    // ship's frame and makes it turn when the ship turns.
+    const sol::core::Quat toLocal = conjugate(ship.orientation);
+
+    const auto push = [&](const sol::core::DVec3& position, sol::ui::RadarKind kind,
+                          sol::ui::RadarAttitude attitude, bool isTarget) {
+        const sol::core::DVec3 offset = position - ship.position;
+        out.push_back({.offset = rotate(toLocal, toVec3(offset)),
+                       .kind = kind,
+                       .attitude = attitude,
+                       .isTarget = isTarget});
+    };
+
+    const std::size_t selected = world.currentTargetIndex();
+    const std::span<const game::NavTarget> navTargets = world.navTargets();
+    for (std::size_t i = 0; i < navTargets.size(); ++i) {
+        push(navTargets[i].position, radarKindOf(world.navTargetKind(i)),
+             sol::ui::RadarAttitude::Neutral, i == selected);
+    }
+    for (std::size_t i = 0; i < world.contactCount(); ++i) {
+        const game::TargetInfo contact = world.contactInfo(i);
+        sol::ui::RadarAttitude attitude = sol::ui::RadarAttitude::Hostile;
+        if (std::strcmp(contact.attitude, "friendly") == 0) {
+            attitude = sol::ui::RadarAttitude::Friendly;
+        } else if (std::strcmp(contact.attitude, "neutral") == 0) {
+            attitude = sol::ui::RadarAttitude::Neutral;
+        }
+        // An unaffiliated spawn has no faction to consult and Lua treats it as
+        // player-hostile, so the empty attitude falls through to Hostile.
+        push(contact.nav.position, sol::ui::RadarKind::Ship, attitude,
+             navTargets.size() + i == selected);
+    }
+
+    // Nearest first, then truncate: a full disc should be the things closest
+    // to the ship, not whichever happened to be generated first.
+    std::sort(out.begin(), out.end(),
+              [](const sol::ui::RadarContact& a, const sol::ui::RadarContact& b) {
+                  return lengthSquared(a.offset) < lengthSquared(b.offset);
+              });
+    if (out.size() > kRadarMaxContacts) {
+        out.resize(kRadarMaxContacts);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -230,6 +305,9 @@ int main(int argc, char** argv)
     game::MainMenuState mainMenuState;
     game::StationScreenState stationScreen; // tab + scroll positions, across frames
     game::MapScreenState mapScreen;         // map tab, scroll, and selection
+    // Refilled each frame and kept alive across the HUD build, which only
+    // carries a span into it.
+    std::vector<sol::ui::RadarContact> radarContacts;
     mainMenuState.hasSave = sol::platform::fileModificationTime(savePath.c_str()) != 0;
 
     const std::string settingsPath = executableDir + "settings.toml";
@@ -317,6 +395,7 @@ int main(int argc, char** argv)
     bool previousF10 = false;
     bool previousV = false;
     bool previousT = false;
+    bool previousC = false;
     bool previousJ = false;
     bool previousG = false;
     bool previousF = false;
@@ -407,12 +486,27 @@ int main(int argc, char** argv)
         }
         previousV = vDown;
 
+        // T walks the nav points, C walks the ships (Phase 8h): two questions,
+        // two keys, one selection.
         const bool tDown = gameplayKey(sol::platform::Key::T);
         if (tDown && !previousT) {
-            world.cycleTarget();
+            world.cycleNavTarget();
             SOL_LOG_INFO("Target: %s", world.currentTargetInfo().nav.name.c_str());
         }
         previousT = tDown;
+
+        const bool cDown = gameplayKey(sol::platform::Key::C);
+        if (cDown && !previousC) {
+            world.cycleContact();
+            const game::TargetInfo contact = world.currentTargetInfo();
+            if (contact.isShip) {
+                SOL_LOG_INFO("Contact: %s [%s]", contact.nav.name.c_str(),
+                             contact.attitude[0] != '\0' ? contact.attitude : "unaffiliated");
+            } else {
+                SOL_LOG_INFO("No contacts in this system");
+            }
+        }
+        previousC = cDown;
 
         // Jump through the nearest in-range gate (decisions/004 gate travel).
         const bool jDown = gameplayKey(sol::platform::Key::J);
@@ -673,6 +767,11 @@ int main(int argc, char** argv)
         const double stationDistance = world.nearestStationDistance();
         hud.dockInRange =
             !hud.docked && stationDistance >= 0.0 && stationDistance <= kDockRange;
+        // Contact radar (Phase 8h): everything around the ship, not just the
+        // one thing targeted. The vector outlives the span the HUD carries.
+        fillRadarContacts(world, radarContacts);
+        hud.radarContacts = radarContacts;
+        hud.radarRangeMeters = sol::ui::kRadarRangeMeters;
         hud.targetIsShip = target.isShip;
         hud.targetShieldFore = target.shieldFore;
         hud.targetShieldAft = target.shieldAft;

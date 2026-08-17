@@ -44,6 +44,7 @@ add_executable(sol_ui_tests
     ui/draw_list_tests.cpp
     ui/layout_tests.cpp
     ui/map_projection_tests.cpp
+    ui/radar_projection_tests.cpp
 )
 target_link_libraries(sol_ui_tests PRIVATE sol::test sol::ui)
 add_test(NAME ui.unit COMMAND sol_ui_tests)

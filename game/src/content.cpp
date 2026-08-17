@@ -658,6 +658,33 @@ double sellSurvey(GameContent& content)
     return content.world().sellSurveyData();
 }
 
+// --- Situational awareness (Phase 8h) ----------------------------------------
+
+// The ship cycle in the order C walks it: whoever is attacking the player
+// first, then hostiles, then the rest, each group nearest-first. Printing the
+// order is how the threat ranking gets verified without flying a fight.
+std::string listContacts(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::vector<std::size_t> order;
+    world.contactOrder(order);
+    const sol::core::DVec3 ship = world.shipState().position;
+    std::string lines;
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        const TargetInfo contact = world.contactInfo(order[i]);
+        char buffer[192];
+        std::snprintf(buffer, sizeof(buffer), "%zu: %s [%s] %.0f km", i + 1,
+                      contact.nav.name.c_str(),
+                      contact.attitude[0] != '\0' ? contact.attitude : "unaffiliated",
+                      sol::core::length(contact.nav.position - ship) / 1000.0);
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    char summary[96];
+    std::snprintf(summary, sizeof(summary), "%zu contact(s) in %s", order.size(),
+                  world.currentSystemName());
+    return lines.empty() ? std::string(summary) : lines + "\n" + summary;
+}
+
 // --- Mining, salvage & refining (Phase 8f) -----------------------------------
 
 std::string listFields(GameContent& content)
@@ -1565,6 +1592,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&mineAhead>("sol", "mine", this);
     m_vm.registerFunction<&warpToRock>("sol", "warp_rock", this);
     m_vm.registerFunction<&selectTargetByName>("sol", "target", this);
+    m_vm.registerFunction<&listContacts>("sol", "contacts", this);
     m_vm.registerFunction<&orderRefine>("sol", "refine", this);
     m_vm.registerFunction<&collectRefined>("sol", "collect", this);
     m_vm.registerFunction<&listRefineJobs>("sol", "refine_jobs", this);

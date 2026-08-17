@@ -642,8 +642,26 @@ public:
 
     // Cycling targets: the static nav points (station, planet, sun) then
     // every live pilot ship (combat targets with shield/hull readouts).
+    //
+    // Those two classes cycle on separate keys (Phase 8h) because they answer
+    // different questions — where am I going, and what is shooting at me —
+    // and walking them with one key made reaching a fighter take a dozen
+    // presses past every planet and signal in the system. There is still
+    // exactly ONE selection: weapons lead, autopilot, the HUD readout and the
+    // map's Set Target all read m_targetIndex, so each class instead
+    // remembers the slot it last held and switching class restores it.
     [[nodiscard]] TargetInfo currentTargetInfo() const;
-    void cycleTarget();
+    // The same readout for any live ship, by slot (the contact cycle, the
+    // radar fill, and the console listing all want it, not just the
+    // selection). Returns a default-constructed info for a stale slot.
+    [[nodiscard]] TargetInfo contactInfo(std::size_t shipSlot) const;
+    [[nodiscard]] std::size_t contactCount() const { return m_spawnedShips.size(); }
+    void cycleNavTarget();
+    void cycleContact();
+    // Ship slots in cycleContact order: whoever is attacking the player
+    // first, then hostiles, then the rest, each group nearest-first.
+    void contactOrder(std::vector<std::size_t>& out) const;
+    [[nodiscard]] bool targetIsContact() const { return m_targetIndex >= m_targets.size(); }
     // The static nav points of this system, in target-cycle order.
     [[nodiscard]] std::span<const NavTarget> navTargets() const { return m_targets; }
     [[nodiscard]] NavKind navTargetKind(std::size_t index) const;
@@ -987,6 +1005,11 @@ private:
     std::vector<sol::sim::AvoidanceSphere> m_obstacles; // stations + celestials
     std::vector<NavTarget> m_targets;
     std::size_t m_targetIndex = 0;
+    // The slot each target class last held, so switching between them with
+    // T and C resumes rather than restarting (Phase 8h). m_contactSlot is an
+    // index into m_spawnedShips, not into the combined target space.
+    std::size_t m_navSlot = 0;
+    std::size_t m_contactSlot = 0;
 };
 
 } // namespace game

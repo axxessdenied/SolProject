@@ -13,6 +13,43 @@ namespace sol::ui {
 // `action` fields for the game to execute - the fill-then-execute seam that
 // survived the move off the provisional Dear ImGui screens.
 
+// --- Contact radar (Phase 8h) ------------------------------------------------
+
+// What a contact is, so the disc can pick a glyph and a colour. The nav kinds
+// mirror SpaceWorld::NavKind; Ship is the combat class the C key cycles.
+enum class RadarKind : std::uint32_t
+{
+    Station = 0,
+    Gate,
+    Planet,
+    Star,
+    Signal,
+    Field,
+    Wreck,
+    Bookmark,
+    Ship,
+};
+
+// How the player stands toward a contact. Static scenery is Neutral; only
+// ships carry a real attitude (Phase 8b's faction standing).
+enum class RadarAttitude : std::uint32_t
+{
+    Neutral = 0,
+    Friendly,
+    Hostile,
+};
+
+// One thing on the disc. `offset` is in SHIP-LOCAL meters: +x right, +y up,
+// -z forward, so the disc rotates with the ship and a dot at the top of it
+// is dead ahead. The game fills these; the projection reaches into nothing.
+struct RadarContact
+{
+    core::Vec3 offset;
+    RadarKind kind = RadarKind::Ship;
+    RadarAttitude attitude = RadarAttitude::Neutral;
+    bool isTarget = false; // the current selection, drawn emphasized
+};
+
 // Everything the flight HUD draws.
 struct FlightHud
 {
@@ -93,6 +130,12 @@ struct FlightHud
     double prospectDistance = 0.0; // meters
     float collectedUnits = 0.0f;   // gathered just now; 0 = idle
     const char* collectedName = "";
+
+    // Contact radar (Phase 8h): everything around the ship, not just what is
+    // targeted. Nearest-first and capped by the fill, so the disc stays
+    // readable in a system holding dozens of things.
+    std::span<const RadarContact> radarContacts;
+    double radarRangeMeters = 0.0; // what the outer ring stands for; 0 = auto
 };
 
 // One commodity line on the station's Trade tab. The game fills rows from the

@@ -1,5 +1,7 @@
 #include "game_ui.hpp"
 
+#include "sol/ui/radar_projection.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -506,6 +508,116 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
     }
 }
 
+// --- Contact radar (Phase 8h) ------------------------------------------------
+
+constexpr float kRadarRadius = 78.0f;
+constexpr float kRadarStalkLimit = 13.0f;
+// Contacts are positioned on a disc inset by the stalk's reach, so a rim
+// contact with a tall stalk still lands inside the rim. Without the inset the
+// blips visibly escape the circle, which reads as a drawing bug rather than
+// as altitude. Costs a sixth of the radius and keeps every bearing exact -
+// the alternative, clamping the blip back afterwards, would put a high far
+// contact at the same place as a lower nearer one.
+constexpr float kRadarPlotRadius = kRadarRadius - kRadarStalkLimit;
+
+// Colour per contact kind. Ships take their colour from allegiance because
+// that is the question being asked of them; scenery is coded by what it is.
+[[nodiscard]] Color radarColor(const sol::ui::RadarContact& contact)
+{
+    switch (contact.kind) {
+    case sol::ui::RadarKind::Ship:
+        switch (contact.attitude) {
+        case sol::ui::RadarAttitude::Hostile: return kHostile;
+        case sol::ui::RadarAttitude::Friendly: return kFriendly;
+        case sol::ui::RadarAttitude::Neutral: break;
+        }
+        return kNeutral;
+    case sol::ui::RadarKind::Station: return kAccent;
+    case sol::ui::RadarKind::Gate: return rgba(0x9E7BFFFFu);
+    case sol::ui::RadarKind::Planet:
+    case sol::ui::RadarKind::Star: return rgba(0x7E8C99FFu);
+    case sol::ui::RadarKind::Signal: return rgba(0x63D8C4FFu);
+    case sol::ui::RadarKind::Field: return rgba(0xC2A36BFFu);
+    case sol::ui::RadarKind::Wreck: return rgba(0xA88C6EFFu);
+    case sol::ui::RadarKind::Bookmark: return rgba(0xFFC850FFu);
+    }
+    return kNeutral;
+}
+
+// Bottom centre: the contact disc. Top of the disc is dead ahead and it turns
+// with the ship, so a dot's position is a heading to steer, not a map bearing.
+// Sits between the flight panel (bottom left) and the power panel (bottom
+// right), which is the only bottom space neither of them claims.
+void drawRadar(DrawList& list, const Font& font, const Styles& styles, Vec2 screenSize,
+               const sol::ui::FlightHud& hud)
+{
+    constexpr float kRangeLabelBand = 20.0f;
+    const Vec2 center = {screenSize.x * 0.5f,
+                         screenSize.y - kMargin - kRangeLabelBand - kRadarRadius};
+
+    // The disc itself: a filled ground, a rim, and one intermediate ring so
+    // the log compression has something to be read against.
+    list.addRoundedRect({{center.x - kRadarRadius, center.y - kRadarRadius},
+                         {center.x + kRadarRadius, center.y + kRadarRadius}},
+                        kRadarRadius, kPanel);
+    list.addCircle(center, kRadarRadius, kAccent.withAlpha(0.45f), 1.5f, 48);
+    list.addCircle(center, kRadarRadius * 0.5f, kAccent.withAlpha(0.16f), 1.0f, 36);
+
+    // Cross hairs mark the ship's own axes: up the disc is forward.
+    list.addLine({center.x, center.y - kRadarRadius}, {center.x, center.y + kRadarRadius},
+                 kAccent.withAlpha(0.12f), 1.0f);
+    list.addLine({center.x - kRadarRadius, center.y}, {center.x + kRadarRadius, center.y},
+                 kAccent.withAlpha(0.12f), 1.0f);
+
+    const float range = sol::ui::radarRange(hud.radarRangeMeters > 0.0
+                                                ? hud.radarRangeMeters
+                                                : sol::ui::kRadarRangeMeters);
+    for (const sol::ui::RadarContact& contact : hud.radarContacts) {
+        const Vec2 point = sol::ui::radarPoint(contact.offset, center, kRadarPlotRadius, range);
+        const bool beyond = sol::ui::radarBeyondRange(contact.offset, range);
+        const Color color = radarColor(contact);
+
+        // The stalk carries height, which is the one thing a flat disc cannot
+        // say by itself. Drawn first so the dot sits on top of its own line.
+        const float stalk = sol::ui::radarStalk(contact.offset, kRadarStalkLimit);
+        if (std::abs(stalk) > 0.5f) {
+            list.addLine(point, {point.x, point.y + stalk}, color.withAlpha(0.5f), 1.0f);
+        }
+        const Vec2 dot = {point.x, point.y + stalk};
+
+        const float size = contact.isTarget ? 4.0f : 3.0f;
+        if (beyond) {
+            // Past the outer ring: hollow, so "beyond the radar" never reads
+            // as "at the edge of the radar". Drawn a touch larger and with
+            // enough segments to read as a ring rather than as a lumpy
+            // polygon at three pixels.
+            list.addCircle(dot, size + 1.0f, color, 1.25f, 16);
+        } else {
+            list.addRoundedRect({{dot.x - size, dot.y - size}, {dot.x + size, dot.y + size}},
+                                size, color);
+        }
+        if (contact.isTarget) {
+            list.addCircle(dot, size + 3.5f, kTargetMark, 1.25f, 12);
+        }
+    }
+
+    // The ship, dead centre, pointing up the disc.
+    list.addTriangle({center.x, center.y - 5.0f}, {center.x - 3.5f, center.y + 4.0f},
+                     {center.x + 3.5f, center.y + 4.0f}, kTextPrimary);
+
+    // Label the rim with the distance it stands for; a disc whose scale is a
+    // secret is a decoration.
+    char buffer[32] = {};
+    formatDistance(hud.radarRangeMeters > 0.0 ? hud.radarRangeMeters
+                                              : sol::ui::kRadarRangeMeters,
+                   buffer, sizeof(buffer));
+    const float width = font.measureWidth(*styles.small, buffer);
+    list.addTextInBox(*styles.small,
+                      {{center.x - width * 0.5f, center.y + kRadarRadius + 4.0f},
+                       {center.x + width * 0.5f, center.y + kRadarRadius + kRangeLabelBand}},
+                      buffer, kTextDim.withAlpha(0.75f), TextAlign::Center);
+}
+
 // Scanner block: the pulse's charge, what the held scan is resolving, and how
 // many contacts are still unidentified here. It sits under the target readout
 // because it is the same kind of information - what the sensors have found -
@@ -680,6 +792,7 @@ void buildFlightUi(DrawList& list, const Font& font, Vec2 screenSize, const sol:
     drawTargetReadout(list, styles, screenSize, hud, targetPanel);
     drawMissionLine(list, styles, flightPanel, hud);
     drawScannerPanel(list, styles, screenSize, targetPanel, hud);
+    drawRadar(list, font, styles, screenSize, hud);
 }
 
 } // namespace game

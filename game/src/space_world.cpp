@@ -2616,12 +2616,21 @@ TargetInfo SpaceWorld::currentTargetInfo() const
     // m_targetIndex can go stale when a targeted ship dies; wrap it here.
     const std::size_t index = total > 0 ? m_targetIndex % total : 0;
 
-    TargetInfo info;
     if (index < m_targets.size()) {
+        TargetInfo info;
         info.nav = m_targets[index];
         return info;
     }
-    const SpawnedShip& ship = m_spawnedShips[index - m_targets.size()];
+    return contactInfo(index - m_targets.size());
+}
+
+TargetInfo SpaceWorld::contactInfo(std::size_t shipSlot) const
+{
+    TargetInfo info;
+    if (shipSlot >= m_spawnedShips.size()) {
+        return info;
+    }
+    const SpawnedShip& ship = m_spawnedShips[shipSlot];
     const Transform& transform = m_registry.storage<Transform>().get(ship.entity.index);
     info.nav = NavTarget{.name = ship.name, .position = transform.position, .surfaceRadius = 0.0};
     info.isShip = true;
@@ -2724,21 +2733,115 @@ bool SpaceWorld::selectTarget(std::size_t index)
         return false;
     }
     m_targetIndex = index;
+    // Selecting outright (the map's Set Target, a console call) also updates
+    // that class's remembered slot, so a later T or C resumes from what the
+    // player actually chose rather than from a stale cycle position.
+    if (index < m_targets.size()) {
+        m_navSlot = index;
+    } else {
+        m_contactSlot = index - m_targets.size();
+    }
     return true;
 }
 
-void SpaceWorld::cycleTarget()
+void SpaceWorld::cycleNavTarget()
 {
-    const std::size_t total = m_targets.size() + m_spawnedShips.size();
-    if (total > 0) {
-        m_targetIndex = (m_targetIndex % total + 1) % total;
+    if (m_targets.empty()) {
+        return;
     }
+    // Already on a nav point: step to the next one. Coming back from the
+    // contact cycle: return to where this class left off, so switching
+    // classes costs one press rather than a walk back around the list.
+    m_navSlot = m_targetIndex < m_targets.size() ? (m_targetIndex + 1) % m_targets.size()
+                                                 : m_navSlot % m_targets.size();
+    m_targetIndex = m_navSlot;
+}
+
+void SpaceWorld::contactOrder(std::vector<std::size_t>& out) const
+{
+    out.clear();
+    if (m_spawnedShips.empty()) {
+        return;
+    }
+    const core::DVec3 playerPosition =
+        m_registry.storage<Transform>().get(playerEntityIndex()).position;
+    const std::uint32_t player = playerEntityIndex();
+
+    // Threat tier, lowest first. Being shot at right now beats standing
+    // policy: a patrol that has decided to kill you is more urgent than a
+    // hostile freighter minding its own business three hundred klicks out.
+    auto tierOf = [&](const SpawnedShip& ship) {
+        const ShipPilot* pilot = m_registry.tryGet<ShipPilot>(ship.entity);
+        if (pilot == nullptr) {
+            return 2;
+        }
+        if (pilot->state == PilotState::Attack && pilot->hasTarget != 0
+            && pilot->targetIndex == player) {
+            return 0;
+        }
+        // An unaffiliated console spawn has no faction to consult and Lua
+        // treats it as unconditionally player-hostile (the pre-8b rule).
+        if (pilot->factionIndex >= m_factionTable.size()) {
+            return 1;
+        }
+        return m_factionSim.playerHostile(pilot->factionIndex) ? 1 : 2;
+    };
+
+    struct Ranked
+    {
+        std::size_t slot;
+        int tier;
+        double distanceSquared;
+    };
+    std::vector<Ranked> ranked;
+    ranked.reserve(m_spawnedShips.size());
+    for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
+        const SpawnedShip& ship = m_spawnedShips[i];
+        const core::DVec3 offset =
+            m_registry.storage<Transform>().get(ship.entity.index).position - playerPosition;
+        ranked.push_back({.slot = i,
+                          .tier = tierOf(ship),
+                          .distanceSquared = dot(offset, offset)});
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) {
+        return a.tier != b.tier ? a.tier < b.tier : a.distanceSquared < b.distanceSquared;
+    });
+    out.reserve(ranked.size());
+    for (const Ranked& entry : ranked) {
+        out.push_back(entry.slot);
+    }
+}
+
+void SpaceWorld::cycleContact()
+{
+    std::vector<std::size_t> order;
+    contactOrder(order);
+    if (order.empty()) {
+        return;
+    }
+    // Coming from a nav target, the first press lands on the head of the
+    // threat order — the thing shooting at you, which is the whole point of
+    // giving contacts their own key. Already on a ship, step along that
+    // order from wherever the current one sits in it.
+    std::size_t next = 0;
+    if (m_targetIndex >= m_targets.size()) {
+        const std::size_t current = m_targetIndex - m_targets.size();
+        for (std::size_t i = 0; i < order.size(); ++i) {
+            if (order[i] == current) {
+                next = (i + 1) % order.size();
+                break;
+            }
+        }
+    }
+    m_contactSlot = order[next];
+    m_targetIndex = m_targets.size() + m_contactSlot;
 }
 
 bool SpaceWorld::targetShipByName(const char* namePart)
 {
     for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
         if (m_spawnedShips[i].name.find(namePart) != std::string::npos) {
+            m_contactSlot = i;
             m_targetIndex = m_targets.size() + i;
             return true;
         }
