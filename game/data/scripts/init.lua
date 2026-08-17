@@ -215,6 +215,13 @@ function mission_board(stationName, owner, ownerName, ownerPirate, hauls, bounti
                                   * (0.9 + 0.2 * roll))
         if sol.mission_begin(string.format("Bounty: %s in %s", b.clanName, b.sysName),
                              owner, reward, 3 + b.jumps, 2, "") then
+            -- A bounty needs a clock for the same reason a haul does, and for
+            -- one more: raiders are spawned by raid intensity, not placed, so
+            -- a system that goes quiet can leave a contract with no remaining
+            -- targets. Without a deadline that mission is unfinishable AND
+            -- unexpiring, holding one of four active slots until the player
+            -- pays standing to abandon it. Time to cross, hunt, and re-hunt.
+            sol.mission_deadline(600 + 420 * b.jumps + 240 * kills)
             sol.mission_obj_kill(b.clan, kills, b.system,
                                  string.format("Destroy %d %s raiders in %s", kills,
                                                b.clanName, b.sysName))

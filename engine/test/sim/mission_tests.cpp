@@ -342,6 +342,55 @@ SOL_TEST(mission_campaign_steps_deadlines_and_abandon)
     SOL_CHECK(events[1].kind == MissionEventKind::Abandoned);
 }
 
+// Phase 8l: the half of the stolen-bounty defect that lives down here. A
+// mission with no deadline is immortal - tick only counts down when one is
+// set - so a bounty whose targets are gone held one of four active slots
+// forever, and the player's only exit was paying standing to abandon it.
+// That behaviour is deliberate and kept; the fix is that init.lua now gives
+// bounties a deadline like hauls have always had. This test is what stops
+// "deadline 0 should expire" creeping in later and quietly making the real
+// fix redundant - and it pins the consequence that matters, which is that
+// expiry gives the slot back.
+SOL_TEST(mission_without_a_deadline_never_expires_and_expiry_frees_the_slot)
+{
+    MissionWorld world;
+    world.missions.openBoard(0, 0);
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                         bountyOffer(2)));
+    SOL_REQUIRE(world.missions.accept(0, 0.0f));
+    SOL_REQUIRE(world.missions.active().size() == 1);
+    SOL_CHECK(world.missions.active()[0].deadline == 0.0);
+
+    // An hour of sim time and it has not moved.
+    for (int i = 0; i < 360; ++i) {
+        world.missions.tick(10.0);
+    }
+    SOL_REQUIRE(world.missions.active().size() == 1);
+    std::vector<MissionEvent> events;
+    world.missions.takeEvents(events);
+    SOL_REQUIRE(events.size() == 1); // accepted, and nothing whatsoever since
+    SOL_CHECK(events[0].kind == MissionEventKind::Accepted);
+
+    // The same contract with a clock on it leaves on its own.
+    world.missions.openBoard(0, 0);
+    Mission timed = bountyOffer(2);
+    timed.deadline = 60.0;
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, timed));
+    SOL_REQUIRE(world.missions.accept(0, 0.0f));
+    SOL_REQUIRE(world.missions.active().size() == 2);
+    world.missions.tick(59.0);
+    SOL_CHECK(world.missions.active().size() == 2);
+    world.missions.tick(2.0);
+    SOL_REQUIRE(world.missions.active().size() == 1);
+    SOL_CHECK(world.missions.active()[0].deadline == 0.0); // the immortal one remains
+
+    events.clear();
+    world.missions.takeEvents(events);
+    SOL_REQUIRE(events.size() == 2);
+    SOL_CHECK(events[1].kind == MissionEventKind::Failed);
+    SOL_CHECK(events[1].mission.standingPenalty == 2.0f);
+}
+
 SOL_TEST(mission_save_load_round_trips_exactly)
 {
     MissionWorld world;

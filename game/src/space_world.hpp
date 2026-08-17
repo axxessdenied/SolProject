@@ -77,6 +77,11 @@ struct ShipDefense
 {
     sol::sim::DefenseTuning tuning;
     sol::sim::DefenseState state;
+    // Counts down from kAssistSeconds each time the player lands damage here
+    // (Phase 8l). Positive at the moment of death means the player was in the
+    // fight, so a bounty counts the kill even when someone else finished it.
+    // Transient by design: spawned ships are repopulated rather than saved.
+    double playerAssist = 0.0;
 };
 
 enum class WeaponKind : std::uint32_t
@@ -846,6 +851,11 @@ private:
     };
 
     static constexpr float kDamageFlashSeconds = 0.45f;
+    // How long after the player's last hit a kill still counts as theirs for
+    // mission purposes (Phase 8l). Long enough that a patrol stealing the last
+    // shot of a dogfight still credits the bounty; short enough that a ship
+    // clipped once and left behind does not.
+    static constexpr double kAssistSeconds = 10.0;
     static constexpr std::uint32_t kNoIndex = 0xffff'ffffu;
 
     // The parked-ship position for a station (clear of its collision sphere).
@@ -864,9 +874,12 @@ private:
     void rebuildSystemSideData(const sol::sim::SystemSpec& spec);
 
     // Records feedback for a damage result (sparks, player flash, explosion
-    // on a kill is handled by handleShipDestroyed).
+    // on a kill is handled by handleShipDestroyed). `attackerIndex` is who
+    // dealt it, or kNoIndex where nobody is to blame (a ram) - when it is the
+    // player, the target's assist window is re-armed (Phase 8l).
     void noteDamage(std::uint32_t targetIndex, const sol::core::DVec3& hitPosition,
-                    const sol::sim::DamageResult& result);
+                    const sol::sim::DamageResult& result,
+                    std::uint32_t attackerIndex = kNoIndex);
 
     void applyShipDef(std::uint32_t entityIndex, const sol::assets::ShipDef& def,
                       const sol::assets::DefDatabase& defs);

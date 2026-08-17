@@ -3521,6 +3521,9 @@ void SpaceWorld::tick(double dt)
                         ? sim::shieldRegenScale(power->state.pips, power->tuning)
                         : 1.0f;
                 sim::stepDefense(defense->state, defense->tuning, regenScale, dt);
+                if (defense->playerAssist > 0.0) {
+                    defense->playerAssist = std::max(0.0, defense->playerAssist - dt);
+                }
             }
 
             sim::ShipState state = {
@@ -3687,7 +3690,7 @@ void SpaceWorld::tick(double dt)
                     noteDamage(targetIndex,
                                transform.previousPosition +
                                    (transform.position - transform.previousPosition) * bestT,
-                               result);
+                               result, projectile.shooterIndex);
                     if (result.destroyed) {
                         destroyedShips.push_back(
                             {.victim = targetIndex, .attacker = projectile.shooterIndex});
@@ -3826,7 +3829,8 @@ void SpaceWorld::tick(double dt)
                         forwardD * -1.0);
                     const sim::DamageResult result = sim::applyDamage(
                         defense->state, defense->tuning, facing, weapon.damage);
-                    noteDamage(bestTarget, muzzle + (beamEnd - muzzle) * bestT, result);
+                    noteDamage(bestTarget, muzzle + (beamEnd - muzzle) * bestT, result,
+                               entityIndex);
                     if (result.destroyed) { // deferred: mid-iteration
                         destroyedShips.push_back(
                             {.victim = bestTarget, .attacker = entityIndex});
@@ -3948,12 +3952,20 @@ void SpaceWorld::tick(double dt)
 }
 
 void SpaceWorld::noteDamage(std::uint32_t targetIndex, const core::DVec3& hitPosition,
-                            const sim::DamageResult& result)
+                            const sim::DamageResult& result, std::uint32_t attackerIndex)
 {
     const bool shieldHit = result.shieldAbsorbed >= result.armorAbsorbed + result.hullDamage;
     m_combatEffects.spawnImpact(hitPosition, shieldHit);
     if (targetIndex == playerEntityIndex()) {
         m_playerDamageTimer = kDamageFlashSeconds;
+        return; // the player assisting their own death is not a thing
+    }
+    // Phase 8l: re-arm the victim's assist window so a kill someone else
+    // finishes still counts toward a bounty the player was fighting for.
+    if (attackerIndex == playerEntityIndex()) {
+        if (ShipDefense* defense = m_registry.storage<ShipDefense>().tryGet(targetIndex)) {
+            defense->playerAssist = kAssistSeconds;
+        }
     }
 }
 
@@ -4011,17 +4023,31 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
         return;
     }
 
-    // Reputation (Phase 8b): only player kills move standings, and only for
-    // affiliated victims; the web pays the victim's enemies.
-    if (attackerIndex == playerEntityIndex()) {
-        if (const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
-            pilot != nullptr && pilot->factionIndex < m_factionTable.size()) {
+    // Two rules that used to share one gate, and are not the same rule
+    // (Phase 8l). Reputation (Phase 8b) is strictly the player's own kill:
+    // a patrol's kill must not move the player's standing with the victim.
+    // Mission credit is broader - a bounty asks whether the player was in
+    // the fight, and a kill stolen by local security still leaves the raider
+    // dead, which is what the contract paid for.
+    if (const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
+        pilot != nullptr && pilot->factionIndex < m_factionTable.size()) {
+        const bool playerKilled = attackerIndex == playerEntityIndex();
+        const ShipDefense* defense = m_registry.storage<ShipDefense>().tryGet(entityIndex);
+        const bool playerAssisted = defense != nullptr && defense->playerAssist > 0.0;
+
+        if (playerKilled) {
             m_factionSim.recordShipKill(pilot->factionIndex);
-            m_missions.notifyKill(pilot->factionIndex, m_currentSystem);
             SOL_LOG_INFO("kill vs %s: standing now %.1f (%s)",
                          m_factionTable[pilot->factionIndex].name.c_str(),
                          m_factionSim.standing(pilot->factionIndex),
                          playerAttitudeName(pilot->factionIndex));
+        }
+        if (playerKilled || playerAssisted) {
+            m_missions.notifyKill(pilot->factionIndex, m_currentSystem);
+            if (!playerKilled) {
+                SOL_LOG_INFO("assist vs %s: someone else finished it, bounty credited",
+                             m_factionTable[pilot->factionIndex].name.c_str());
+            }
         }
     }
 

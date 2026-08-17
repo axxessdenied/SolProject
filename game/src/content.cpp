@@ -2034,19 +2034,25 @@ void GameContent::tick(double dt)
         m_world->applyDefaultFactionDecision(decision);
     }
 
-    // Mission board (Phase 8c): re-composed on every dock event and on the
-    // docked refresh cadence; Lua posts offers through the sol.mission_*
-    // builder against the candidates runMissionBoard enumerates.
-    const bool dockEvent = m_world->consumeDockEvent();
-    if (m_world->isDocked() &&
-        (dockEvent || m_world->missionSim().tickBoard(dt))) {
-        runMissionBoard();
-    }
-
     // Campaign flavor: the world already applied payouts/penalties; authored
     // missions' transitions are forwarded to Lua's mission_event hook.
     m_missionEvents.clear();
     m_world->takeMissionEvents(m_missionEvents);
+
+    // Phase 8l: a mission leaving the journal is exactly when the board wants
+    // re-composing - a campaign chain posts its next leg from the board hook,
+    // and a freed active slot can unblock offers. Checked across every event,
+    // not just the campaign ones the hook below forwards.
+    bool boardDirty = false;
+    for (const sol::sim::MissionEvent& event : m_missionEvents) {
+        if (event.kind == sol::sim::MissionEventKind::Completed ||
+            event.kind == sol::sim::MissionEventKind::Failed ||
+            event.kind == sol::sim::MissionEventKind::Abandoned) {
+            boardDirty = true;
+            break;
+        }
+    }
+
     if (m_hasMissionEventHook && !m_missionEventHookFailed) {
         for (const sol::sim::MissionEvent& event : m_missionEvents) {
             if (event.mission.campaignId.empty()) {
@@ -2078,6 +2084,20 @@ void GameContent::tick(double dt)
                 break;
             }
         }
+    }
+
+    // Mission board (Phase 8c): re-composed on every dock event, whenever a
+    // mission just left the journal (Phase 8l), and otherwise on the docked
+    // refresh cadence as a backstop for offers that rotate on their own. It
+    // runs *after* the event drain above so that a campaign leg completed
+    // this frame has already bumped the stage through mission_event, and the
+    // composition that follows can post the next leg - which is what made
+    // undock/redock the only way to continue a chain. openBoard resets the
+    // refresh accumulator, so a re-compose here re-arms the backstop too.
+    const bool dockEvent = m_world->consumeDockEvent();
+    if (m_world->isDocked() &&
+        (dockEvent || boardDirty || m_world->missionSim().tickBoard(dt))) {
+        runMissionBoard();
     }
 
     // Exploration (Phase 8e): a resolved site already holds the scriptless
