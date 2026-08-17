@@ -33,6 +33,22 @@ bool Swapchain::recreate(std::uint32_t width, std::uint32_t height, bool vsync)
     return createInternal(width, height, vsync);
 }
 
+namespace {
+
+const char* presentModeName(VkPresentModeKHR mode)
+{
+    switch (mode) {
+    case VK_PRESENT_MODE_FIFO_KHR: return "FIFO (vsync)";
+    case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "FIFO_RELAXED";
+    case VK_PRESENT_MODE_MAILBOX_KHR: return "MAILBOX";
+    case VK_PRESENT_MODE_IMMEDIATE_KHR: return "IMMEDIATE";
+    default: break;
+    }
+    return "unknown";
+}
+
+} // namespace
+
 // FIFO is the only mode the spec guarantees, so it is both the vsync-on answer
 // and the floor when vsync is off: MAILBOX first (tears nothing, drops frames),
 // then IMMEDIATE (tears, uncapped), then give up and stay capped rather than
@@ -126,6 +142,8 @@ bool Swapchain::createInternal(std::uint32_t width, std::uint32_t height, bool v
 
     m_imageFormat = surfaceFormat.format;
     m_extent = extent;
+    SOL_LOG_INFO("Swapchain %ux%u, present mode %s", extent.width, extent.height,
+                 presentModeName(createInfo.presentMode));
 
     std::uint32_t actualImageCount = 0;
     SOL_VK_CHECK(vkGetSwapchainImagesKHR(device, m_swapchain, &actualImageCount, nullptr));

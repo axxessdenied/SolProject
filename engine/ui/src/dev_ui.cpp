@@ -164,9 +164,13 @@ void DevUi::buildWindows(const OverlayStats& stats)
         ImGui::Text("sim  tick %llu   entities %u   alpha %.2f",
                     static_cast<unsigned long long>(stats.simTicks), stats.simEntities,
                     stats.simAlpha);
-        ImGui::TextDisabled("RMB steer, WASD thrust, Tab cruise, X assist, V camera, T target");
-        ImGui::TextDisabled("1/2/3 pips WEP/ENG/SYS, 4 balance");
-        ImGui::TextDisabled("F1 console, F3 debug draw, F5 shaders, F9/F10 save/load");
+        // Gameplay controls are rebindable (Phase 8k), so this crib names the
+        // shipped layout rather than claiming to be the live one - the engine
+        // dev UI has no way to reach the game's binding table, and a hint that
+        // silently goes stale is the exact lie the HUD prompts stopped telling.
+        ImGui::TextDisabled("defaults: RMB steer, WASD thrust, Tab cruise, X assist, V cam, T target");
+        ImGui::TextDisabled("defaults: 1/2/3 pips WEP/ENG/SYS, 4 balance (rebind in Settings)");
+        ImGui::TextDisabled("F1 console, F3 debug draw, F5 shaders, F9/F10 save/load (fixed)");
     }
     ImGui::End();
 

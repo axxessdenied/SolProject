@@ -377,21 +377,23 @@ MenuAction buildControlsScreen(UiContext& ui, Settings& settings, ControlsScreen
         }
 
         Row row(rows.row(kRowHeight), spacing);
-        ui.label(row.cell(230.0f), actionLabel(action), ui.theme().textPrimary,
+        ui.label(row.cell(210.0f), actionLabel(action), ui.theme().textPrimary,
                  ui.theme().bodyStyle);
 
         const InputChord chord = settings.bindings.chordFor(i);
         const bool capturing = state.capturing == i;
-        // An unbound action reads as an em dash, and one a steal just emptied
-        // says so in accent - the player has to be able to see what the last
-        // assignment cost them without reading the notice line.
-        const char* value = capturing            ? "press a key or mouse button..."
-                            : chord.bound()      ? sol::platform::chordName(chord)
+        // An unbound action reads as a dash, and one a steal just emptied says
+        // so in accent - the player has to be able to see what the last
+        // assignment cost them without reading the notice line. The value cell
+        // is 260 px because the capture prompt is the longest thing it ever
+        // holds and ui.label does not clip: at 220 it ran under the button.
+        const char* value = capturing               ? "press any key or button"
+                            : chord.bound()         ? sol::platform::chordName(chord)
                             : state.stolenFrom == i ? "needs a key"
-                                                 : "--";
+                                                    : "--";
         const sol::ui::Color valueColor = capturing || !chord.bound() ? ui.theme().accent
                                                                      : ui.theme().textPrimary;
-        ui.label(row.cell(220.0f), value, valueColor, ui.theme().bodyStyle);
+        ui.label(row.cell(260.0f), value, valueColor, ui.theme().bodyStyle);
 
         ui.pushId(static_cast<int>(i));
         if (ui.button(row.remaining(), capturing ? "Cancel" : "Rebind")) {
