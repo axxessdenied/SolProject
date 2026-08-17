@@ -192,6 +192,7 @@ sol::ui::RadarKind radarKindOf(game::SpaceWorld::NavKind kind)
     case game::SpaceWorld::NavKind::Signal: return sol::ui::RadarKind::Signal;
     case game::SpaceWorld::NavKind::Field: return sol::ui::RadarKind::Field;
     case game::SpaceWorld::NavKind::Wreck: return sol::ui::RadarKind::Wreck;
+    case game::SpaceWorld::NavKind::Bookmark: return sol::ui::RadarKind::Bookmark;
     }
     return sol::ui::RadarKind::Signal;
 }
@@ -419,6 +420,14 @@ int main(int argc, char** argv)
     bool previousEditEnd = false;
     bool previousEditBackspace = false;
     bool previousEditDelete = false;
+    bool previousEditSubmit = false;
+    bool previousB = false;
+    // The bookmark naming prompt (Phase 8h), open across frames while the
+    // player types. Its position is latched when B is pressed, so drifting
+    // while naming does not move where the bookmark lands.
+    sol::ui::BookmarkPrompt bookmarkPrompt;
+    sol::core::DVec3 bookmarkPosition;
+    std::string bookmarkWhere; // backs prompt.whereSummary across frames
     bool previousMouseDown = false;
     bool quitRequested = false;
     bool showDebugDraw = false;
@@ -457,10 +466,15 @@ int main(int argc, char** argv)
         // The map is a screen, not a pause: the economy, the factions, and
         // whatever is shooting at you all keep running while it is open.
         const bool simRunning = inFlight || docked || onMap;
-        const bool uiHasKeys = !inFlight;                 // menus, station, map
+        // A text field open over the flight view owns the keyboard, on exactly
+        // the terms a menu does (Phase 8h): the letters are a name being typed,
+        // not thrust and target commands. Without this "Rich Rock" flies the
+        // ship, and Enter and Backspace never reach the field at all.
+        const bool typing = bookmarkPrompt.open;
+        const bool uiHasKeys = !inFlight || typing;       // menus, station, map
         const bool inMenuScreen = uiHasKeys && !docked;   // where Esc means "back out"
         const auto gameplayKey = [&](sol::platform::Key key) {
-            return inFlight && window.isKeyDown(key);
+            return inFlight && !typing && window.isKeyDown(key);
         };
 
         // Esc opens the pause menu; the menus handle backing out themselves.
@@ -468,8 +482,9 @@ int main(int argc, char** argv)
         const bool escapeEdge = escapeDown && !previousEscape;
         previousEscape = escapeDown;
         // The map handles Esc itself (it closes), so it is excluded here even
-        // though its clock is running.
-        if (escapeEdge && (inFlight || docked)) {
+        // though its clock is running - and so does an open text field, where
+        // Esc means "abandon what I was typing" rather than "pause".
+        if (escapeEdge && (inFlight || docked) && !typing) {
             state = game::GameState::Paused;
             window.setCursorLocked(false);
         }
@@ -493,6 +508,34 @@ int main(int argc, char** argv)
             }
         }
         previousV = vDown;
+
+        // B writes down where the ship is (Phase 8h). The position is latched
+        // now rather than read on accept, so drifting while typing the name
+        // does not move where the bookmark ends up.
+        //
+        // Opened on RELEASE, not press, and the character the key produces is
+        // withheld from the UI for as long as the key is down and on the frame
+        // it comes up (see bookmarkKeyEcho below). Without that the field
+        // receives the very "b" that opened it — which it did, and neither
+        // half of the guard alone was enough: the character does not reliably
+        // land on the same frame as the key event that generated it.
+        const bool bHeld = gameplayKey(sol::platform::Key::B);
+        const bool bReleased = !bHeld && previousB;
+        if (bReleased && !bookmarkPrompt.open) {
+            bookmarkPosition = world.shipState().position;
+            bookmarkPrompt.open = true;
+            bookmarkPrompt.full =
+                world.survey().bookmarkCountIn(world.currentSystemIndex())
+                >= world.survey().params().maxBookmarksPerSystem;
+            bookmarkPrompt.name = world.suggestBookmarkName(bookmarkPosition);
+            bookmarkWhere = std::string(world.currentSystemName()) + ", " + bookmarkPrompt.name;
+            bookmarkPrompt.whereSummary = bookmarkWhere.c_str();
+            bookmarkPrompt.focusRequested = true;
+            bookmarkPrompt.nameIsSuggestion = true;
+        }
+        previousB = bHeld;
+        // True while the opening keystroke could still be echoing as text.
+        const bool bookmarkKeyEcho = bHeld || bReleased;
 
         // T walks the nav points, C walks the ships (Phase 8h): two questions,
         // two keys, one selection.
@@ -594,12 +637,13 @@ int main(int argc, char** argv)
         previousPip4 = pip4;
 
         // In free-cam mode the mouse/keys drive the debug camera, not the ship.
-        if (!inFlight) {
+        if (!inFlight || typing) {
             // The mapper reads the window directly, so it is skipped entirely
             // rather than fed neutral input - otherwise Tab would toggle
-            // cruise while the player is tabbing through a menu. It also owns
-            // the cursor lock, so release it here or a screen opened mid-turn
-            // inherits a captured mouse.
+            // cruise while the player is tabbing through a menu, and typing a
+            // bookmark name would fly the ship. It also owns the cursor lock,
+            // so release it here or a screen opened mid-turn inherits a
+            // captured mouse.
             world.setShipInput({});
             window.setCursorLocked(false);
         } else if (cameraMode == game::CameraMode::Free) {
@@ -1003,13 +1047,14 @@ int main(int argc, char** argv)
         // rather than from key states, so the keyboard layout is respected;
         // the editing keys are edges, because a caret that moved once per
         // frame while a key was held would be unusable.
-        uiInput.text = window.textInput();
+        uiInput.text = bookmarkKeyEcho ? std::string_view{} : window.textInput();
         uiInput.editLeft = menuKeyEdge(sol::platform::Key::Left, previousEditLeft);
         uiInput.editRight = menuKeyEdge(sol::platform::Key::Right, previousEditRight);
         uiInput.editHome = menuKeyEdge(sol::platform::Key::Home, previousEditHome);
         uiInput.editEnd = menuKeyEdge(sol::platform::Key::End, previousEditEnd);
         uiInput.editBackspace = menuKeyEdge(sol::platform::Key::Backspace, previousEditBackspace);
         uiInput.editDelete = menuKeyEdge(sol::platform::Key::Delete, previousEditDelete);
+        uiInput.editSubmit = menuKeyEdge(sol::platform::Key::Enter, previousEditSubmit);
 
         ui.beginFrame(uiInput, uiSize, deltaSeconds);
         game::MenuAction menuAction = game::MenuAction::None;
@@ -1028,6 +1073,10 @@ int main(int argc, char** argv)
         case game::GameState::Flying:
             // The dev HUD stays up beside this one during the changeover.
             game::buildFlightUi(ui.drawList(), renderer.uiFont(), ui.screenSize(), hud);
+            // The bookmark prompt sits over the HUD rather than replacing it:
+            // the galaxy keeps running, and writing down a waypoint should not
+            // feel like leaving the cockpit.
+            game::buildBookmarkPrompt(ui, bookmarkPrompt);
             break;
         case game::GameState::Docked:
             // Docked, the station screen owns the view; the flight readout has
@@ -1042,6 +1091,19 @@ int main(int argc, char** argv)
         }
         ui.endFrame();
         renderer.setUiDrawList(&ui.drawList());
+
+        // Bookmark prompt outcome (Phase 8h). The latched position is used,
+        // not where the ship has drifted to while the name was typed.
+        if (bookmarkPrompt.accepted) {
+            if (world.addBookmarkAt(bookmarkPosition, bookmarkPrompt.name)) {
+                SOL_LOG_INFO("Bookmarked '%s'", bookmarkPrompt.name.c_str());
+            } else {
+                SOL_LOG_INFO("Too many bookmarks in this system");
+            }
+            bookmarkPrompt.open = false;
+        } else if (bookmarkPrompt.cancelled) {
+            bookmarkPrompt.open = false;
+        }
 
         switch (menuAction) {
         case game::MenuAction::None:

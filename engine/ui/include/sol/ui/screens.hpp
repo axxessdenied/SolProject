@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 
 namespace sol::ui {
 
@@ -226,6 +227,29 @@ struct SurveyRow
     float value = 0.0f;      // credits this line pays
 };
 
+// --- Bookmark naming overlay (Phase 8h) --------------------------------------
+
+// The little prompt B opens over the flight view. The name arrives prefilled
+// from context, so accepting immediately is the common case and typing is the
+// override; the screen edits `name` in place through the text field.
+struct BookmarkPrompt
+{
+    bool open = false;
+    std::string name;
+    const char* whereSummary = ""; // "Lyrioa, 3.4 Mm from Ceres", prebuilt
+    bool full = false;             // this system is at its bookmark cap
+    // Set by the game when it opens the prompt; the screen consumes it to put
+    // keyboard focus in the field, so the player can type without clicking.
+    bool focusRequested = false;
+    // True while `name` is still the untouched suggestion. The first typed
+    // character then REPLACES it rather than appending, which is what makes a
+    // prefilled name usable without selection ranges to delete it with.
+    bool nameIsSuggestion = false;
+    // Out: exactly one of these, on the frame the player decided.
+    bool accepted = false;
+    bool cancelled = false;
+};
+
 // --- Map screens (Phase 8e; deferred here out of Phase 8d) -------------------
 
 // How much the player knows about a system, in the order the ladder runs.
@@ -281,6 +305,7 @@ struct MapMarkerRow
         Signal,
         Field, // Phase 8f: an asteroid field
         Wreck,
+        Bookmark, // Phase 8h: a place the player wrote down
     };
     Kind kind = Kind::Star;
     const char* name = "";
@@ -312,6 +337,7 @@ struct MapAction
         Autopilot,    // index = marker row: target it and engage
         Close,
         SetTradeCommodity, // Phase 8g: index = commodity, or -1 to turn it off
+        DeleteBookmark,    // Phase 8h: index = marker row (a Bookmark marker)
     };
     Kind kind = Kind::None;
     int index = -1;

@@ -313,6 +313,9 @@ SOL_TEST(survey_save_load_round_trips)
     SOL_CHECK(survey.setLoot(2, 0, loot));
     survey.setRoute({2, 1, 0});
     survey.recordMarket(3, {11.0f, 42.0f}, 640.0);
+    const std::uint32_t bookmarkId =
+        survey.addBookmark(2, {1.5e8, -2.0e7, 9.0e7}, "Good rock", 3, 812.5);
+    SOL_CHECK(bookmarkId != 0);
 
     sol::core::BinaryWriter writer;
     survey.save(writer);
@@ -346,6 +349,18 @@ SOL_TEST(survey_save_load_round_trips)
     SOL_CHECK(restored.remembered(3)->takenAt == 640.0);
     SOL_REQUIRE(restored.remembered(3)->prices.size() == 2);
     SOL_CHECK(restored.remembered(3)->prices[1] == 42.0f);
+    // Bookmarks come back with their name, position, label and timestamp
+    // exactly - a waypoint that moves on reload is worse than none.
+    SOL_REQUIRE(restored.bookmark(bookmarkId) != nullptr);
+    SOL_CHECK(restored.bookmark(bookmarkId)->name == "Good rock");
+    SOL_CHECK(restored.bookmark(bookmarkId)->position.x == 1.5e8);
+    SOL_CHECK(restored.bookmark(bookmarkId)->position.y == -2.0e7);
+    SOL_CHECK(restored.bookmark(bookmarkId)->position.z == 9.0e7);
+    SOL_CHECK(restored.bookmark(bookmarkId)->label == 3);
+    SOL_CHECK(restored.bookmark(bookmarkId)->createdAt == 812.5);
+    SOL_CHECK(restored.bookmark(bookmarkId)->system == 2);
+    // And a new bookmark after a reload must not reuse a live id.
+    SOL_CHECK(restored.addBookmark(2, {}, "Another", 0, 900.0) != bookmarkId);
 
     // A mismatched layout is rejected rather than half-read (economy rule).
     GalaxyParams biggerParams;
@@ -394,4 +409,67 @@ SOL_TEST(survey_generated_galaxy_signals_follow_the_region_gradient)
     for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
         SOL_CHECK(again.signalCount(i) == survey.signalCount(i));
     }
+}
+
+SOL_TEST(survey_bookmark_ids_are_stable_across_deletions)
+{
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey = lineSurvey(galaxy);
+
+    const std::uint32_t first = survey.addBookmark(0, {1.0e8, 0.0, 0.0}, "One", 0, 10.0);
+    const std::uint32_t second = survey.addBookmark(2, {2.0e8, 0.0, 0.0}, "Two", 0, 20.0);
+    const std::uint32_t third = survey.addBookmark(0, {3.0e8, 0.0, 0.0}, "Three", 0, 30.0);
+    SOL_CHECK(first != 0 && second != 0 && third != 0);
+    SOL_CHECK(first != second && second != third);
+
+    // Deleting one in ANOTHER system must not renumber the rest. This is the
+    // whole reason bookmarks carry an id instead of being addressed by their
+    // ledger index: SpaceWorld's nav-target tail points at them, and a live
+    // selection or an in-flight scan indexes into that tail.
+    SOL_CHECK(survey.removeBookmark(second));
+    SOL_REQUIRE(survey.bookmark(first) != nullptr);
+    SOL_REQUIRE(survey.bookmark(third) != nullptr);
+    SOL_CHECK(survey.bookmark(first)->name == "One");
+    SOL_CHECK(survey.bookmark(third)->name == "Three");
+    SOL_CHECK(survey.bookmark(second) == nullptr);
+
+    // A fresh bookmark never takes a retired id, so a stale slot pointing at
+    // a deleted one cannot silently become a different place.
+    const std::uint32_t fourth = survey.addBookmark(0, {}, "Four", 0, 40.0);
+    SOL_CHECK(fourth != second);
+    SOL_CHECK(fourth != first && fourth != third);
+
+    // Per-system listing is by system, in creation order.
+    std::vector<std::uint32_t> inZero;
+    survey.bookmarksIn(0, inZero);
+    SOL_REQUIRE(inZero.size() == 3);
+    SOL_CHECK(inZero[0] == first);
+    SOL_CHECK(inZero[1] == third);
+    SOL_CHECK(inZero[2] == fourth);
+    SOL_CHECK(survey.bookmarkCountIn(2) == 0);
+
+    SOL_CHECK(survey.renameBookmark(first, "Renamed"));
+    SOL_CHECK(survey.bookmark(first)->name == "Renamed");
+    SOL_CHECK(!survey.renameBookmark(second, "Gone"));
+    SOL_CHECK(!survey.removeBookmark(second));
+}
+
+SOL_TEST(survey_bookmarks_are_capped_per_system)
+{
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey;
+    SurveyParams params = lineParams();
+    params.maxBookmarksPerSystem = 3;
+    survey.initialize(galaxy, params, 2, 99);
+
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        SOL_CHECK(survey.addBookmark(1, {}, "x", 0, 0.0) != 0);
+    }
+    // Past the cap the attempt fails rather than pushing the oldest out: the
+    // nav cycle and the radar disc both surface these, and silently losing a
+    // waypoint the player wrote down would be worse than refusing a new one.
+    SOL_CHECK(survey.addBookmark(1, {}, "overflow", 0, 0.0) == 0);
+    SOL_CHECK(survey.bookmarkCountIn(1) == 3);
+    // The cap is per system, so another system is unaffected.
+    SOL_CHECK(survey.addBookmark(2, {}, "elsewhere", 0, 0.0) != 0);
 }

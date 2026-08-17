@@ -685,6 +685,69 @@ std::string listContacts(GameContent& content)
     return lines.empty() ? std::string(summary) : lines + "\n" + summary;
 }
 
+// Writes down where the ship is. An empty name takes the generated one, which
+// is the same path B takes when the player accepts the suggestion.
+std::string bookmarkHere(GameContent& content, std::string name)
+{
+    SpaceWorld& world = content.world();
+    if (!world.addBookmarkHere(name)) {
+        return "too many bookmarks in this system";
+    }
+    const std::vector<sol::sim::Bookmark>& all = world.survey().bookmarks();
+    return "bookmarked '" + all.back().name + "'";
+}
+
+std::string listBookmarks(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const sol::core::DVec3 ship = world.shipState().position;
+    std::string lines;
+    for (const sol::sim::Bookmark& bookmark : world.survey().bookmarks()) {
+        const bool here = bookmark.system == world.currentSystemIndex();
+        char buffer[224];
+        if (here) {
+            std::snprintf(buffer, sizeof(buffer), "%u: %s - %.0f km away", bookmark.id,
+                          bookmark.name.c_str(),
+                          sol::core::length(bookmark.position - ship) / 1000.0);
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "%u: %s - in %s", bookmark.id,
+                          bookmark.name.c_str(),
+                          world.galaxy().systems[bookmark.system].name.c_str());
+        }
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    char summary[96];
+    std::snprintf(summary, sizeof(summary), "%zu bookmark(s), %u in %s",
+                  world.survey().bookmarks().size(),
+                  world.survey().bookmarkCountIn(world.currentSystemIndex()),
+                  world.currentSystemName());
+    return lines.empty() ? std::string(summary) : lines + "\n" + summary;
+}
+
+std::string deleteBookmark(GameContent& content, double id)
+{
+    return content.world().removeBookmark(static_cast<std::uint32_t>(id)) ? "deleted"
+                                                                         : "no such bookmark";
+}
+
+// Dev teleport to a bookmark, the shape sol.warp_rock established in 8f.
+std::string warpBookmark(GameContent& content, double id)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::Bookmark* bookmark = world.survey().bookmark(static_cast<std::uint32_t>(id));
+    if (bookmark == nullptr) {
+        return "no such bookmark";
+    }
+    if (bookmark->system != world.currentSystemIndex()) {
+        return "that bookmark is in another system";
+    }
+    (void)world.selectBookmark(bookmark->id);
+    if (!world.warpTo(bookmark->position, 2000.0)) {
+        return "cannot warp while docked";
+    }
+    return "warped to '" + bookmark->name + "'";
+}
+
 // --- Mining, salvage & refining (Phase 8f) -----------------------------------
 
 std::string listFields(GameContent& content)
@@ -1593,6 +1656,10 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&warpToRock>("sol", "warp_rock", this);
     m_vm.registerFunction<&selectTargetByName>("sol", "target", this);
     m_vm.registerFunction<&listContacts>("sol", "contacts", this);
+    m_vm.registerFunction<&bookmarkHere>("sol", "bookmark", this);
+    m_vm.registerFunction<&listBookmarks>("sol", "bookmarks", this);
+    m_vm.registerFunction<&deleteBookmark>("sol", "bookmark_delete", this);
+    m_vm.registerFunction<&warpBookmark>("sol", "warp_bookmark", this);
     m_vm.registerFunction<&orderRefine>("sol", "refine", this);
     m_vm.registerFunction<&collectRefined>("sol", "collect", this);
     m_vm.registerFunction<&listRefineJobs>("sol", "refine_jobs", this);

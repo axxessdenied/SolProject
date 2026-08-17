@@ -113,6 +113,26 @@ struct MarketMemory
     double takenAt = 0.0;      // sim seconds when the snapshot was taken
 };
 
+// A place the player wrote down (Phase 8h). Lives here for the same reason
+// MarketMemory does: SurveySim is the home of what the player knows about the
+// galaxy, and a bookmark is knowledge rather than simulation — which keeps
+// SpaceWorld the flying-and-drawing layer and reuses a save path that exists.
+struct Bookmark
+{
+    // Assigned on creation and never reused, so a nav-target slot can point at
+    // a bookmark and survive one being deleted anywhere else in the galaxy.
+    // A ledger index cannot do that job: SpaceWorld's dynamic target tail is
+    // append-only precisely because a live selection and an in-flight scan
+    // index into it, and deleting a bookmark in another system would shift
+    // every later index out from under them.
+    std::uint32_t id = 0;
+    std::uint32_t system = 0;
+    core::DVec3 position;      // sim space, meters
+    std::string name;          // player-typed, or generated from context
+    std::uint32_t label = 0;   // colour/category tier; 0 = plain
+    double createdAt = 0.0;    // sim seconds
+};
+
 struct SurveyParams
 {
     // Signals per system, [min, max] by region tier (Core, Frontier, Fringe):
@@ -138,6 +158,9 @@ struct SurveyParams
     // since and saying so is what keeps bought intel worth re-buying instead
     // of being a one-time unlock.
     double intelStaleSeconds = 900.0;
+    // Bookmarks per system (Phase 8h), capped so neither the nav cycle nor
+    // the radar disc drowns in them.
+    std::uint32_t maxBookmarksPerSystem = 16;
 };
 
 class SurveySim
@@ -207,6 +230,20 @@ public:
     bool bestRemembered(std::uint32_t commodity, std::uint32_t excludeMarket, double now,
                         std::uint32_t* outMarket, float* outPrice, double* outAge) const;
 
+    // --- Bookmarks (Phase 8h) ---
+    // Records a place and returns its id, or 0 when this system is at the cap.
+    [[nodiscard]] std::uint32_t addBookmark(std::uint32_t system, const core::DVec3& position,
+                                            std::string name, std::uint32_t label, double now);
+    [[nodiscard]] const std::vector<Bookmark>& bookmarks() const { return m_bookmarks; }
+    // Ids of the bookmarks in one system, in creation order. Ids, not indices,
+    // because a caller holding one across a deletion elsewhere must not have
+    // it silently become a different bookmark.
+    void bookmarksIn(std::uint32_t system, std::vector<std::uint32_t>& out) const;
+    [[nodiscard]] std::uint32_t bookmarkCountIn(std::uint32_t system) const;
+    [[nodiscard]] const Bookmark* bookmark(std::uint32_t id) const;
+    bool removeBookmark(std::uint32_t id);
+    bool renameBookmark(std::uint32_t id, std::string name);
+
     // --- Plotted route (galaxy map; no auto-jump, decisions/005) ---
     // Stored as the remaining systems including the current one at index 0.
     void setRoute(std::vector<std::uint32_t> route);
@@ -255,6 +292,8 @@ private:
     std::vector<SurveyEntry> m_ledger;
     std::vector<LootRecord> m_loot;
     std::vector<MarketMemory> m_marketMemory; // sorted by market index
+    std::vector<Bookmark> m_bookmarks;        // creation order
+    std::uint32_t m_nextBookmarkId = 1;       // 0 means "no bookmark"
     std::vector<std::uint32_t> m_route;
     std::uint64_t m_seed = 0;
 };

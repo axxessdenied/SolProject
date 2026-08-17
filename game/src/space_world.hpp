@@ -519,6 +519,9 @@ public:
     // with the nose on it — test pacing for the beam, in the same spirit as
     // sol.warp. False while docked or with no rock in the system.
     bool warpToNearestRock();
+    // The general form: parks the ship `standoff` meters short of a point,
+    // approaching from wherever it already is, with the nose on it.
+    bool warpTo(const sol::core::DVec3& target, double standoff);
 
     // Wreck loot composed by the Lua hook (validated in MiningSim).
     bool applyWreckLoot(std::uint32_t id, sol::sim::SignalLoot loot);
@@ -638,6 +641,7 @@ public:
         Signal,
         Field, // Phase 8f: an asteroid field, targeted as a whole
         Wreck,
+        Bookmark, // Phase 8h: a place the player wrote down
     };
 
     // Cycling targets: the static nav points (station, planet, sun) then
@@ -672,6 +676,20 @@ public:
     // Field index / wreck id for a Field or Wreck slot; ~0u for anything else.
     [[nodiscard]] std::uint32_t navTargetField(std::size_t index) const;
     [[nodiscard]] std::uint32_t navTargetWreck(std::size_t index) const;
+    // Bookmark id for a Bookmark slot; ~0u for anything else (Phase 8h).
+    [[nodiscard]] std::uint32_t navTargetBookmark(std::size_t index) const;
+
+    // --- Bookmarks (Phase 8h) ---
+    // Writes down where the ship is now. An empty name gets one generated
+    // from what is nearby, which is what makes the common case free.
+    bool addBookmarkHere(const std::string& name);
+    bool addBookmarkAt(const sol::core::DVec3& position, const std::string& name);
+    // The name a bookmark at `position` would get by default: the nearest
+    // named thing and how far off it is.
+    [[nodiscard]] std::string suggestBookmarkName(const sol::core::DVec3& position) const;
+    bool removeBookmark(std::uint32_t id);
+    // Selects a bookmark's nav slot by id, so the map's list can target one.
+    bool selectBookmark(std::uint32_t id);
     [[nodiscard]] std::size_t currentTargetIndex() const;
     // Selects a nav-target slot outright (the map's "Set Target").
     bool selectTarget(std::size_t index);

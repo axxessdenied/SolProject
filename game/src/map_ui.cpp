@@ -80,6 +80,8 @@ namespace {
         return ui::MapMarkerRow::Kind::Field;
     case SpaceWorld::NavKind::Wreck:
         return ui::MapMarkerRow::Kind::Wreck;
+    case SpaceWorld::NavKind::Bookmark:
+        return ui::MapMarkerRow::Kind::Bookmark;
     }
     return ui::MapMarkerRow::Kind::Station;
 }
@@ -264,6 +266,8 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
                 }
             }
             detail += " - " + std::to_string(static_cast<int>(cargo)) + " units aboard";
+        } else if (kind == SpaceWorld::NavKind::Bookmark) {
+            detail += " - bookmark";
         }
         markerRows.push_back({.kind = toMarkerKind(kind),
                               .name = targets[i].name.c_str(),
@@ -327,6 +331,19 @@ bool executeMapAction(SpaceWorld& world, const ui::MapAction& action)
             return world.engageAutopilot();
         }
         break;
+    case Kind::DeleteBookmark: {
+        // The marker row index IS the nav-target index, so the bookmark's id
+        // comes straight off the slot - which is what keeps this correct after
+        // any other bookmark has been deleted.
+        if (action.index < 0) {
+            break;
+        }
+        const std::uint32_t id = world.navTargetBookmark(static_cast<std::size_t>(action.index));
+        if (id != 0xffff'ffffu) {
+            (void)world.removeBookmark(id);
+        }
+        break;
+    }
     }
     return false;
 }

@@ -134,6 +134,35 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
+    // Key state is recorded BEFORE the dev-UI hook gets a say, because it is a
+    // physical fact: whether a key is down does not depend on who wants the
+    // keystroke. The hook consumes keyboard messages while ImGui wants them,
+    // and it can take a key UP without having taken the matching DOWN - ImGui
+    // owns Tab for its own focus navigation - which used to leave that key
+    // latched down forever. A stuck Tab reads as "navigate next" every frame,
+    // which is how it was found: it dragged focus out of a text field.
+    // Whether the GAME acts on a key is gated separately, by wantsMouseCapture.
+    switch (message) {
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN: {
+        const Key key = translateVirtualKey(wParam);
+        if (key != Key::Unknown) {
+            impl->keyDown[static_cast<int>(key)] = true;
+        }
+        break;
+    }
+    case WM_KEYUP:
+    case WM_SYSKEYUP: {
+        const Key key = translateVirtualKey(wParam);
+        if (key != Key::Unknown) {
+            impl->keyDown[static_cast<int>(key)] = false;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
     if (impl->messageHook != nullptr &&
         impl->messageHook(hwnd, message, static_cast<std::uint64_t>(wParam),
                           static_cast<std::int64_t>(lParam))) {
@@ -197,14 +226,17 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
         impl->wheel += static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
         return 0;
 
+    // State was already recorded above; these cases exist only to decide who
+    // else gets the message. WM_KEYDOWN is CONSUMED, which the arrival of text
+    // input made load-bearing: pumpEvents already calls TranslateMessage, and
+    // letting DefWindowProc see the same keystroke gets it translated a second
+    // time, so every typed character arrived TWICE. WM_SYSKEYDOWN still falls
+    // through to DefWindowProc, so Alt+F4 and the system menu keep working.
     case WM_KEYDOWN:
-    case WM_SYSKEYDOWN: {
-        const Key key = translateVirtualKey(wParam);
-        if (key != Key::Unknown) {
-            impl->keyDown[static_cast<int>(key)] = true;
-        }
-        break; // fall through to DefWindowProc so Alt+F4 etc. keep working
-    }
+        return 0;
+
+    case WM_SYSKEYDOWN:
+        break;
 
     case WM_CHAR: {
         // Only reached when the dev UI's message hook did not want the
@@ -233,13 +265,10 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
     }
 
     case WM_KEYUP:
-    case WM_SYSKEYUP: {
-        const Key key = translateVirtualKey(wParam);
-        if (key != Key::Unknown) {
-            impl->keyDown[static_cast<int>(key)] = false;
-        }
+        return 0;
+
+    case WM_SYSKEYUP:
         break;
-    }
 
     case WM_KILLFOCUS:
         // Avoid stuck input when focus is lost mid-press.

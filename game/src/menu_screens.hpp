@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sol/ui/context.hpp"
+#include "sol/ui/screens.hpp"
 
 #include <string>
 
@@ -60,5 +61,11 @@ struct MainMenuState
 [[nodiscard]] MenuAction buildMainMenu(sol::ui::UiContext& ui, MainMenuState& state);
 [[nodiscard]] MenuAction buildPauseMenu(sol::ui::UiContext& ui, bool hardcore);
 [[nodiscard]] MenuAction buildSettingsScreen(sol::ui::UiContext& ui, Settings& settings);
+
+// The bookmark naming prompt (Phase 8h). Drawn over the flight view rather
+// than as its own GameState: the galaxy keeps running, and dropping a
+// waypoint should not feel like leaving the cockpit. Writes the decision back
+// into `prompt.accepted` / `prompt.cancelled`.
+void buildBookmarkPrompt(sol::ui::UiContext& ui, sol::ui::BookmarkPrompt& prompt);
 
 } // namespace game

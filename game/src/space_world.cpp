@@ -32,7 +32,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 9; // v9: market intel memory, world clock
+constexpr std::uint32_t kSaveVersion = 10; // v10: bookmarks
 
 // Market intel (Phase 8g): what a station's market report covers and costs.
 // Deliberately shorter than the traders' own horizon — a station's brokers
@@ -581,6 +581,15 @@ void SpaceWorld::rebuildDynamicTargets()
             m_dynamicTargets.push_back({.kind = NavKind::Wreck, .index = id});
         }
     }
+    // Bookmarks (Phase 8h) key on their SurveySim id, not their ledger index,
+    // so deleting one in another system cannot renumber a slot here.
+    std::vector<std::uint32_t> bookmarkIds;
+    m_survey.bookmarksIn(m_currentSystem, bookmarkIds);
+    for (const std::uint32_t id : bookmarkIds) {
+        if (!hasSlot(NavKind::Bookmark, id)) {
+            m_dynamicTargets.push_back({.kind = NavKind::Bookmark, .index = id});
+        }
+    }
 
     // Compact slots whose object is gone, carrying the player's selection and
     // any scan in flight with them.
@@ -588,9 +597,10 @@ void SpaceWorld::rebuildDynamicTargets()
     for (std::size_t read = 0; read < m_dynamicTargets.size(); ++read) {
         const DynamicTarget& slot = m_dynamicTargets[read];
         const bool alive =
-            slot.kind == NavKind::Signal   ? slot.index < m_signals.size()
-            : slot.kind == NavKind::Field  ? slot.index < m_fields.size()
-                                           : m_mining.wreck(slot.index) != nullptr;
+            slot.kind == NavKind::Signal     ? slot.index < m_signals.size()
+            : slot.kind == NavKind::Field    ? slot.index < m_fields.size()
+            : slot.kind == NavKind::Bookmark ? m_survey.bookmark(slot.index) != nullptr
+                                             : m_mining.wreck(slot.index) != nullptr;
         if (!alive) {
             const std::size_t removed = m_signalTargetBase + write;
             if (m_targetIndex > removed) {
@@ -626,6 +636,13 @@ void SpaceWorld::rebuildDynamicTargets()
             const sim::AsteroidFieldSpec& field = m_fields[slot.index];
             m_targets.push_back({.name = "Asteroid Field " + std::to_string(slot.index + 1),
                                  .position = field.center,
+                                 .surfaceRadius = 0.0});
+            break;
+        }
+        case NavKind::Bookmark: {
+            const sim::Bookmark* bookmark = m_survey.bookmark(slot.index);
+            m_targets.push_back({.name = "* " + bookmark->name,
+                                 .position = bookmark->position,
                                  .surfaceRadius = 0.0});
             break;
         }
@@ -1309,9 +1326,17 @@ bool SpaceWorld::warpToNearestRock()
     if (best == kNoIndex) {
         return false;
     }
-    const core::DVec3 target = transforms.get(best).position;
     const double standoff =
         static_cast<double>(shapes.get(best).scale.x) + 400.0; // clear of the hull
+    return warpTo(transforms.get(best).position, standoff);
+}
+
+bool SpaceWorld::warpTo(const core::DVec3& target, double standoff)
+{
+    if (isDocked()) {
+        return false;
+    }
+    const core::DVec3 position = shipState().position;
     // Approach from wherever the ship already is, so the parked view looks
     // like an arrival rather than a fixed camera angle.
     core::DVec3 approach = position - target;
@@ -1338,7 +1363,7 @@ bool SpaceWorld::warpToNearestRock()
     transform.orientation = orientation;
     transform.previousOrientation = orientation;
     m_registry.storage<FlightBody>().get(playerEntityIndex()) = FlightBody{};
-    SOL_LOG_WARN("dev warp: parked %.0f m off a rock", standoff);
+    SOL_LOG_WARN("dev warp: parked %.0f m off the target", standoff);
     return true;
 }
 
@@ -2719,6 +2744,91 @@ std::uint32_t SpaceWorld::navTargetWreck(std::size_t index) const
     }
     const DynamicTarget& slot = m_dynamicTargets[index - m_signalTargetBase];
     return slotIndexOfKind(NavKind::Wreck, slot.kind, slot.index);
+}
+
+std::uint32_t SpaceWorld::navTargetBookmark(std::size_t index) const
+{
+    if (index < m_signalTargetBase || index >= m_targets.size()) {
+        return kNoIndex;
+    }
+    const DynamicTarget& slot = m_dynamicTargets[index - m_signalTargetBase];
+    return slotIndexOfKind(NavKind::Bookmark, slot.kind, slot.index);
+}
+
+// --- Bookmarks (Phase 8h) ----------------------------------------------------
+
+std::string SpaceWorld::suggestBookmarkName(const core::DVec3& position) const
+{
+    // Named from the nearest thing that already has a name, which is what a
+    // person would write down: "3.4 Mm from Ceres" beats "Bookmark 4".
+    const NavTarget* nearest = nullptr;
+    double bestSquared = 0.0;
+    for (std::size_t i = 0; i < m_targets.size(); ++i) {
+        // Never name a bookmark after another bookmark: the result is circular
+        // ("At * Rich Rock"), it carries the display prefix, and what the
+        // player wants is the name of a PLACE, not of their own earlier note.
+        if (navTargetKind(i) == NavKind::Bookmark) {
+            continue;
+        }
+        const core::DVec3 offset = m_targets[i].position - position;
+        const double squared = dot(offset, offset);
+        if (nearest == nullptr || squared < bestSquared) {
+            nearest = &m_targets[i];
+            bestSquared = squared;
+        }
+    }
+    if (nearest == nullptr) {
+        return "Waypoint";
+    }
+    const double meters = std::sqrt(bestSquared);
+    char buffer[96] = {};
+    if (meters < 1000.0) {
+        std::snprintf(buffer, sizeof(buffer), "At %s", nearest->name.c_str());
+    } else if (meters < 1.0e6) {
+        std::snprintf(buffer, sizeof(buffer), "%.0f km from %s", meters / 1000.0,
+                      nearest->name.c_str());
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%.1f Mm from %s", meters / 1.0e6,
+                      nearest->name.c_str());
+    }
+    return buffer;
+}
+
+bool SpaceWorld::addBookmarkAt(const core::DVec3& position, const std::string& name)
+{
+    const std::string chosen = name.empty() ? suggestBookmarkName(position) : name;
+    if (m_survey.addBookmark(m_currentSystem, position, chosen, 0, m_worldSeconds) == 0) {
+        return false; // this system is at its cap
+    }
+    rebuildDynamicTargets();
+    return true;
+}
+
+bool SpaceWorld::addBookmarkHere(const std::string& name)
+{
+    return addBookmarkAt(m_registry.storage<Transform>().get(playerEntityIndex()).position, name);
+}
+
+bool SpaceWorld::removeBookmark(std::uint32_t id)
+{
+    if (!m_survey.removeBookmark(id)) {
+        return false;
+    }
+    // The nav tail compacts through the same path a decayed wreck takes, so
+    // the player's selection and any scan in flight follow it rather than
+    // silently pointing at whatever moved into the slot.
+    rebuildDynamicTargets();
+    return true;
+}
+
+bool SpaceWorld::selectBookmark(std::uint32_t id)
+{
+    for (std::size_t i = m_signalTargetBase; i < m_targets.size(); ++i) {
+        if (navTargetBookmark(i) == id) {
+            return selectTarget(i);
+        }
+    }
+    return false;
 }
 
 std::size_t SpaceWorld::currentTargetIndex() const

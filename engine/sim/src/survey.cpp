@@ -436,6 +436,77 @@ bool SurveySim::bestRemembered(std::uint32_t commodity, std::uint32_t excludeMar
     return found;
 }
 
+// --- Bookmarks (Phase 8h) ----------------------------------------------------
+
+std::uint32_t SurveySim::addBookmark(std::uint32_t system, const core::DVec3& position,
+                                     std::string name, std::uint32_t label, double now)
+{
+    if (bookmarkCountIn(system) >= m_params.maxBookmarksPerSystem) {
+        return 0;
+    }
+    const std::uint32_t id = m_nextBookmarkId++;
+    m_bookmarks.push_back({.id = id,
+                           .system = system,
+                           .position = position,
+                           .name = std::move(name),
+                           .label = label,
+                           .createdAt = now});
+    return id;
+}
+
+void SurveySim::bookmarksIn(std::uint32_t system, std::vector<std::uint32_t>& out) const
+{
+    out.clear();
+    for (const Bookmark& bookmark : m_bookmarks) {
+        if (bookmark.system == system) {
+            out.push_back(bookmark.id);
+        }
+    }
+}
+
+const Bookmark* SurveySim::bookmark(std::uint32_t id) const
+{
+    for (const Bookmark& bookmark : m_bookmarks) {
+        if (bookmark.id == id) {
+            return &bookmark;
+        }
+    }
+    return nullptr;
+}
+
+std::uint32_t SurveySim::bookmarkCountIn(std::uint32_t system) const
+{
+    std::uint32_t count = 0;
+    for (const Bookmark& bookmark : m_bookmarks) {
+        if (bookmark.system == system) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool SurveySim::removeBookmark(std::uint32_t id)
+{
+    for (auto it = m_bookmarks.begin(); it != m_bookmarks.end(); ++it) {
+        if (it->id == id) {
+            m_bookmarks.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SurveySim::renameBookmark(std::uint32_t id, std::string name)
+{
+    for (Bookmark& bookmark : m_bookmarks) {
+        if (bookmark.id == id) {
+            bookmark.name = std::move(name);
+            return true;
+        }
+    }
+    return false;
+}
+
 void SurveySim::setRoute(std::vector<std::uint32_t> route)
 {
     m_route.clear();
@@ -494,6 +565,18 @@ void SurveySim::save(core::BinaryWriter& writer) const
         for (const float value : memory.prices) {
             writer.write(value);
         }
+    }
+    writer.write(static_cast<std::uint32_t>(m_bookmarks.size()));
+    writer.write(m_nextBookmarkId); // never reused, so it has to be saved
+    for (const Bookmark& bookmark : m_bookmarks) {
+        writer.write(bookmark.id);
+        writer.write(bookmark.system);
+        writer.write(bookmark.position.x);
+        writer.write(bookmark.position.y);
+        writer.write(bookmark.position.z);
+        writer.writeString(bookmark.name);
+        writer.write(bookmark.label);
+        writer.write(bookmark.createdAt);
     }
     writer.write(static_cast<std::uint32_t>(m_route.size()));
     for (const std::uint32_t system : m_route) {
@@ -574,6 +657,21 @@ bool SurveySim::load(core::BinaryReader& reader)
             if (!reader.read(value)) {
                 return false;
             }
+        }
+    }
+    std::uint32_t bookmarkCount = 0;
+    if (!reader.read(bookmarkCount) || !reader.read(m_nextBookmarkId)) {
+        return false;
+    }
+    m_bookmarks.resize(bookmarkCount);
+    for (Bookmark& bookmark : m_bookmarks) {
+        if (!reader.read(bookmark.id) || bookmark.id == 0
+            || bookmark.id >= m_nextBookmarkId || !reader.read(bookmark.system)
+            || bookmark.system >= m_systemCount
+            || !reader.read(bookmark.position.x) || !reader.read(bookmark.position.y)
+            || !reader.read(bookmark.position.z) || !reader.readString(bookmark.name)
+            || !reader.read(bookmark.label) || !reader.read(bookmark.createdAt)) {
+            return false;
         }
     }
     std::uint32_t routeCount = 0;

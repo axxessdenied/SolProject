@@ -98,6 +98,8 @@ constexpr const char* const kTabLabels[MapScreenState::TabCount] = {"Galaxy", "S
         return rgba(0x9C8F7AFFu); // rock
     case MapMarkerRow::Kind::Wreck:
         return rgba(0xC4696CFFu); // something died here
+    case MapMarkerRow::Kind::Bookmark:
+        return rgba(0xFFC850FFu); // the player's own mark, not the galaxy's
     }
     return ui.theme().textDim;
 }
@@ -386,9 +388,20 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         const float size = marker.kind == MapMarkerRow::Kind::Star   ? 6.0f
                            : marker.kind == MapMarkerRow::Kind::Planet ? 5.0f
                                                                        : 3.5f;
-        ui.drawList().addRoundedRect({{point.x - size, point.y - size},
-                                      {point.x + size, point.y + size}},
-                                     marker.kind == MapMarkerRow::Kind::Gate ? 1.0f : size, color);
+        if (marker.kind == MapMarkerRow::Kind::Bookmark) {
+            // A diamond, so the player's own marks are distinguishable from
+            // the galaxy's furniture by shape and not only by colour.
+            const float reach = size + 1.5f;
+            ui.drawList().addTriangle({point.x, point.y - reach}, {point.x - reach, point.y},
+                                      {point.x + reach, point.y}, color);
+            ui.drawList().addTriangle({point.x, point.y + reach}, {point.x - reach, point.y},
+                                      {point.x + reach, point.y}, color);
+        } else {
+            ui.drawList().addRoundedRect({{point.x - size, point.y - size},
+                                          {point.x + size, point.y + size}},
+                                         marker.kind == MapMarkerRow::Kind::Gate ? 1.0f : size,
+                                         color);
+        }
         if (marker.targeted) {
             ui.drawList().addCircle(point, size + 6.0f, ui.theme().accent, 1.6f, 4);
         }
@@ -621,11 +634,17 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
         Row buttons(footer, ui.theme().spacing);
         const Rect closeCell = buttons.cellFromRight(kButtonWidth);
         const Rect resetCell = buttons.cellFromRight(kButtonWidth);
+        const Rect deleteCell = buttons.cellFromRight(kButtonWidth);
         const Rect autoCell = buttons.cellFromRight(kButtonWidth);
         const Rect targetCell = buttons.cellFromRight(kButtonWidth);
         const Rect detailCell = buttons.remaining();
 
         const bool hasMarker = state.selectedMarker >= 0;
+        // Only the player's own marks can be deleted; a planet cannot.
+        const bool deletable =
+            hasMarker
+            && panel.markers[static_cast<std::size_t>(state.selectedMarker)].kind
+                   == MapMarkerRow::Kind::Bookmark;
         clipped(ui, detailCell,
                 hasMarker ? panel.markers[static_cast<std::size_t>(state.selectedMarker)].detail
                           : "nothing in range",
@@ -635,6 +654,9 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
         }
         if (ui.button(autoCell, "Autopilot", hasMarker)) {
             panel.action = {MapAction::Kind::Autopilot, state.selectedMarker};
+        }
+        if (ui.button(deleteCell, "Delete", deletable)) {
+            panel.action = {MapAction::Kind::DeleteBookmark, state.selectedMarker};
         }
         if (ui.button(resetCell, "Reset View", zoomed)) {
             resetView = true;

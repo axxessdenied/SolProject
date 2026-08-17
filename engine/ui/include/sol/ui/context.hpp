@@ -45,6 +45,9 @@ struct InputState
     bool editEnd = false;
     bool editBackspace = false;
     bool editDelete = false;
+    // Enter ALONE, unlike navActivate which is Enter-or-Space. A prompt with
+    // a text field in it cannot accept on Space: that is a character.
+    bool editSubmit = false;
 };
 
 // Colors, metrics, and font style names in one place, so a restyle is a data
@@ -119,6 +122,9 @@ public:
     // True on the frame the player dismissed the current screen (Esc, or the
     // cancel button on a pad).
     [[nodiscard]] bool cancelRequested() const { return m_input.navCancel; }
+    // Enter alone; safe to use as "confirm" on a screen that also has a text
+    // field, where Space has to stay a character.
+    [[nodiscard]] bool submitRequested() const { return m_input.editSubmit; }
 
     // --- Widgets. Each returns whether the player acted on it this frame. ---
 

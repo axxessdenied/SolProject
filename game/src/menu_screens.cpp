@@ -223,4 +223,80 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
     return action;
 }
 
+void buildBookmarkPrompt(UiContext& ui, sol::ui::BookmarkPrompt& prompt)
+{
+    prompt.accepted = false;
+    prompt.cancelled = false;
+    if (!prompt.open) {
+        return;
+    }
+
+    constexpr float kWidth = 460.0f;
+    constexpr float kHeight = 176.0f;
+    // Sits above centre so the crosshair and the thing being bookmarked stay
+    // visible behind it - this is a note about what you are looking at.
+    const float x = (ui.screenSize().x - kWidth) * 0.5f;
+    const float y = ui.screenSize().y * 0.28f;
+    const Rect frame = {{x, y}, {x + kWidth, y + kHeight}};
+    ui.panel(frame);
+    ui.pushId("bookmark_prompt");
+
+    Column column(frame, ui.theme().padding, ui.theme().spacing);
+    ui.label(column.row(30.0f), prompt.full ? "Too many bookmarks here" : "Bookmark this place",
+             ui.theme().textPrimary, ui.theme().headingStyle);
+    ui.label(column.row(20.0f), prompt.whereSummary, ui.theme().textDim, ui.theme().smallStyle);
+    column.skip(4.0f);
+
+    if (prompt.full) {
+        ui.label(column.row(20.0f), "Delete one from the system map first.", ui.theme().textDim,
+                 ui.theme().smallStyle);
+        column.skip(4.0f);
+        Row buttons(column.row(kButtonHeight), ui.theme().spacing);
+        if (ui.button(buttons.cellFromRight(120.0f), "Close") || ui.cancelRequested()) {
+            prompt.cancelled = true;
+        }
+        ui.popId();
+        return;
+    }
+
+    const Rect fieldCell = column.row(34.0f);
+    if (prompt.focusRequested) {
+        // Focus the field so the player can type immediately; the caret goes
+        // to the end, which is where an edit to a suggested name starts.
+        ui.setFocus(ui.idFor("name"));
+        ui.setCaret(prompt.name.size());
+        prompt.focusRequested = false;
+    }
+    // The suggestion is a default, not a starting point to edit: the first
+    // character typed clears it. Without selection ranges this is the only way
+    // a prefilled field is not actively in the way. Gated on the field
+    // actually holding focus - otherwise a stray character with focus
+    // elsewhere wipes the suggested name and puts nothing in its place.
+    if (prompt.nameIsSuggestion && !ui.input().text.empty()
+        && ui.isFocused(ui.idFor("name"))) {
+        prompt.name.clear();
+        ui.setCaret(0);
+        prompt.nameIsSuggestion = false;
+    }
+    if (ui.textField(fieldCell, "name", prompt.name)) {
+        prompt.nameIsSuggestion = false;
+    }
+    column.skip(6.0f);
+
+    Row buttons(column.row(kButtonHeight), ui.theme().spacing);
+    const Rect saveCell = buttons.cellFromRight(120.0f);
+    const Rect cancelCell = buttons.cellFromRight(120.0f);
+    // Enter accepts even with the field focused, which is what makes the
+    // prefilled name a one-key confirmation; the field ignores navActivate,
+    // so this does not fight it.
+    if (ui.button(saveCell, "Save", !prompt.name.empty()) || ui.submitRequested()) {
+        prompt.accepted = !prompt.name.empty();
+    }
+    if (ui.button(cancelCell, "Cancel") || ui.cancelRequested()) {
+        prompt.cancelled = true;
+    }
+
+    ui.popId();
+}
+
 } // namespace game
