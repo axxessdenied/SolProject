@@ -289,6 +289,29 @@ struct TargetInfo
     const char* attitude = "";  // player standing vs its faction (HUD tag)
 };
 
+// Physical extent of the built structures. Used as the NPC avoidance sphere
+// and, since Phase 8j, as the click box: a thing the player can see filling
+// the view has to be selectable where they see it, not only within a few
+// pixels of the point its centre projects to. The station's drawn hull is
+// 100 m and its sphere is a little past that; a gate's frame is 70 m.
+inline constexpr double kStationRadiusMeters = 130.0;
+inline constexpr double kGateRadiusMeters = 70.0;
+
+// How the player is looking at the world this frame (Phase 8j). The frame loop
+// owns the camera and the UI scale, and pushes both in here once per frame;
+// the world never computes them. It is held rather than passed because a click
+// is not the only thing that needs it — the console performs the identical
+// pick, and both have to be answered against the same view or the verification
+// is testing a different game than the one on screen.
+struct ViewFrame
+{
+    sol::core::DVec3 cameraPosition;
+    sol::core::Quat cameraOrientation;
+    sol::core::Vec2 screenSize; // VIRTUAL UI pixels, i.e. after the UI scale
+    float tanHalfFovY = 1.0f;
+    bool valid = false; // false before the first frame, and while a menu is up
+};
+
 // The new-game starter ship def; mods can override it (Phase 5 data pipeline).
 inline constexpr const char* kPlayerShipDefId = "sol.shuttle";
 
@@ -720,8 +743,13 @@ public:
     // Selects a bookmark's nav slot by id, so the map's list can target one.
     bool selectBookmark(std::uint32_t id);
     [[nodiscard]] std::size_t currentTargetIndex() const;
-    // Selects a nav-target slot outright (the map's "Set Target").
+    // Selects a nav-target slot outright (the map's "Set Target", a click).
     bool selectTarget(std::size_t index);
+
+    // --- Picking (Phase 8j) ---
+    // How the world is being viewed, for the click-to-select in target_pick.hpp.
+    void setViewFrame(const ViewFrame& view) { m_viewFrame = view; }
+    [[nodiscard]] const ViewFrame& viewFrame() const { return m_viewFrame; }
     // Selects the first live spawned ship whose display name contains
     // namePart (dev/console QoL; T-cycling is the player path).
     bool targetShipByName(const char* namePart);
@@ -1069,6 +1097,8 @@ private:
     // index into m_spawnedShips, not into the combined target space.
     std::size_t m_navSlot = 0;
     std::size_t m_contactSlot = 0;
+    // Pushed in by the frame loop (Phase 8j); pure view state, never saved.
+    ViewFrame m_viewFrame;
 };
 
 } // namespace game

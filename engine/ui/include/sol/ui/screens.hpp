@@ -50,6 +50,10 @@ struct RadarContact
     RadarKind kind = RadarKind::Ship;
     RadarAttitude attitude = RadarAttitude::Neutral;
     bool isTarget = false; // the current selection, drawn emphasized
+    // The game's own index for this contact, carried through the fill's
+    // nearest-first sort so a click on the disc can name what it hit (Phase
+    // 8j). Opaque here: the disc never interprets it.
+    std::uint32_t selection = 0;
 };
 
 // Everything the flight HUD draws.

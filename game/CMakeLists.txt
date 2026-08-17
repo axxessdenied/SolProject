@@ -13,6 +13,7 @@ add_executable(sol_game
     src/space_world.cpp
     src/station_screen.cpp
     src/station_ui.cpp
+    src/target_pick.cpp
     src/thruster_particles.cpp
 )
 set_target_properties(sol_game PROPERTIES OUTPUT_NAME sol)

@@ -1,5 +1,6 @@
 #include "game_ui.hpp"
 
+#include "sol/ui/pick.hpp"
 #include "sol/ui/radar_projection.hpp"
 
 #include <algorithm>
@@ -45,7 +46,7 @@ constexpr Color kPipWeapons = rgba(0xFF9973FFu);
 constexpr Color kPipEngines = rgba(0x8CDCA0FFu);
 constexpr Color kPipShields = rgba(0x80BFFFFFu);
 
-constexpr float kMargin = 24.0f;
+constexpr float kMargin = kHudMargin; // shared with the pick (Phase 8j)
 constexpr float kPadding = 14.0f;
 constexpr float kRowHeight = 22.0f;
 constexpr float kMeterHeight = 8.0f;
@@ -169,24 +170,11 @@ float drawChip(DrawList& list, const Font& font, const FontStyleRecord& style, V
     return width;
 }
 
-// Camera-space direction to a screen point. `inFront` is false when the target
-// is behind the near plane, where the projection would mirror it.
-struct Projection
-{
-    Vec2 position;
-    bool inFront = false;
-};
-
-[[nodiscard]] Projection project(const Vec3& directionCamera, Vec2 center, float focal)
-{
-    if (directionCamera.z >= -0.01f) { // camera looks down -Z
-        return {};
-    }
-    const float depth = -directionCamera.z;
-    return {{center.x + (directionCamera.x / depth) * focal,
-             center.y - (directionCamera.y / depth) * focal},
-            true};
-}
+// Camera-space direction to a screen point. Lives in sol/ui/pick.hpp since
+// Phase 8j, because the marker and the click that selects it have to agree
+// about where a thing is on screen; this is the only definition.
+using Projection = sol::ui::ScreenPoint;
+using sol::ui::screenPoint;
 
 // Boresight crosshair, shield facings, and the screen-edge flash while hits are
 // landing (decisions/002: fore arc above, aft arc below).
@@ -233,7 +221,7 @@ void drawLeadMarker(DrawList& list, Vec2 center, float focal, const sol::ui::Fli
     if (!hud.hasLead) {
         return;
     }
-    const Projection lead = project(hud.leadDirectionCamera, center, focal);
+    const Projection lead = screenPoint(hud.leadDirectionCamera, center, focal);
     if (!lead.inFront) {
         return;
     }
@@ -249,7 +237,7 @@ void drawLeadMarker(DrawList& list, Vec2 center, float focal, const sol::ui::Fli
 void drawTargetMarker(DrawList& list, const Styles& styles, Vec2 center, Vec2 screenSize, float focal,
                       const sol::ui::FlightHud& hud)
 {
-    const Projection target = project(hud.targetDirectionCamera, center, focal);
+    const Projection target = screenPoint(hud.targetDirectionCamera, center, focal);
     constexpr float kEdgeMargin = 24.0f;
     const bool onScreen = target.inFront && target.position.x > kEdgeMargin &&
                           target.position.x < (screenSize.x - kEdgeMargin) &&
@@ -510,15 +498,12 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
 
 // --- Contact radar (Phase 8h) ------------------------------------------------
 
-constexpr float kRadarRadius = 78.0f;
-constexpr float kRadarStalkLimit = 13.0f;
-// Contacts are positioned on a disc inset by the stalk's reach, so a rim
-// contact with a tall stalk still lands inside the rim. Without the inset the
-// blips visibly escape the circle, which reads as a drawing bug rather than
-// as altitude. Costs a sixth of the radius and keeps every bearing exact -
-// the alternative, clamping the blip back afterwards, would put a high far
-// contact at the same place as a lower nearer one.
-constexpr float kRadarPlotRadius = kRadarRadius - kRadarStalkLimit;
+// The disc's geometry moved into radar_projection.hpp with Phase 8j: a blip
+// is clickable now, so where it is drawn and where it can be hit have to be
+// one definition.
+using sol::ui::kRadarPlotRadius;
+using sol::ui::kRadarRadius;
+using sol::ui::kRadarStalkLimit;
 
 // Colour per contact kind. Ships take their colour from allegiance because
 // that is the question being asked of them; scenery is coded by what it is.
@@ -554,9 +539,8 @@ constexpr float kRadarPlotRadius = kRadarRadius - kRadarStalkLimit;
 void drawRadar(DrawList& list, const Font& font, const Styles& styles, Vec2 screenSize,
                const sol::ui::FlightHud& hud)
 {
-    constexpr float kRangeLabelBand = 20.0f;
-    const Vec2 center = {screenSize.x * 0.5f,
-                         screenSize.y - kMargin - kRangeLabelBand - kRadarRadius};
+    constexpr float kRangeLabelBand = sol::ui::kRadarLabelBand;
+    const Vec2 center = sol::ui::radarCenter(screenSize, kMargin);
 
     // The disc itself: a filled ground, a rim, and one intermediate ring so
     // the log compression has something to be read against.
@@ -586,7 +570,9 @@ void drawRadar(DrawList& list, const Font& font, const Styles& styles, Vec2 scre
         if (std::abs(stalk) > 0.5f) {
             list.addLine(point, {point.x, point.y + stalk}, color.withAlpha(0.5f), 1.0f);
         }
-        const Vec2 dot = {point.x, point.y + stalk};
+        // Composed in the header so the click lands on the dot that was drawn.
+        const Vec2 dot =
+            sol::ui::radarDot(contact.offset, center, kRadarPlotRadius, range, kRadarStalkLimit);
 
         // The objective reads a size up: on a disc of thirty contacts, the one
         // the player was actually told to reach should not need finding.
@@ -782,8 +768,7 @@ void buildFlightUi(DrawList& list, const Font& font, Vec2 screenSize, const sol:
     // World-space markers project against the same virtual screen the panels
     // are laid out in, so the UI scale moves the whole HUD together.
     const Vec2 center = {screenSize.x * 0.5f, screenSize.y * 0.5f};
-    const float tanHalfFov = hud.tanHalfFovY > 0.0001f ? hud.tanHalfFovY : 1.0f;
-    const float focal = (screenSize.y * 0.5f) / tanHalfFov;
+    const float focal = sol::ui::focalLength(screenSize.y, hud.tanHalfFovY);
 
     drawReticle(list, center, screenSize, hud);
     drawScanRing(list, center, hud);

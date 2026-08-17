@@ -2029,7 +2029,7 @@ void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
     // Steering obstacles for NPC avoidance: stations plus every celestial.
     m_obstacles.clear();
     for (const sim::StationSpec& station : spec.stations) {
-        m_obstacles.push_back({.position = station.position, .radius = 130.0});
+        m_obstacles.push_back({.position = station.position, .radius = kStationRadiusMeters});
     }
     for (const CelestialBody& planet : m_planets) {
         m_obstacles.push_back({.position = planet.position, .radius = planet.radius});

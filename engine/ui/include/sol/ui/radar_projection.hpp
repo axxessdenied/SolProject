@@ -32,6 +32,30 @@ inline constexpr double kRadarDecade = 10.0;
 // the one thing that matters about it - the direction it lies in.
 inline constexpr double kRadarRangeMeters = 1.0e9;
 
+// Disc geometry, in virtual UI pixels. These live here rather than beside the
+// HUD's other constants because Phase 8j hit-tests the disc, and where a blip
+// is drawn and where it can be clicked have to be one definition or the two
+// drift apart silently.
+inline constexpr float kRadarRadius = 78.0f;
+inline constexpr float kRadarStalkLimit = 13.0f;
+// Contacts are positioned on a disc inset by the stalk's reach, so a rim
+// contact with a tall stalk still lands inside the rim. Without the inset the
+// blips visibly escape the circle, which reads as a drawing bug rather than
+// as altitude. Costs a sixth of the radius and keeps every bearing exact -
+// the alternative, clamping the blip back afterwards, would put a high far
+// contact at the same place as a lower nearer one.
+inline constexpr float kRadarPlotRadius = kRadarRadius - kRadarStalkLimit;
+// The band under the disc that carries its range label.
+inline constexpr float kRadarLabelBand = 20.0f;
+
+// Where the disc sits: bottom centre, between the flight panel (bottom left)
+// and the power panel (bottom right), which is the only bottom space neither
+// of them claims. `margin` is the HUD's screen margin.
+[[nodiscard]] inline core::Vec2 radarCenter(core::Vec2 screenSize, float margin)
+{
+    return {screenSize.x * 0.5f, screenSize.y - margin - kRadarLabelBand - kRadarRadius};
+}
+
 // Compressed radius for a distance in meters. Monotonic and zero at zero, so
 // nearer is always nearer on the disc.
 [[nodiscard]] inline float radarRadius(double meters)
@@ -102,6 +126,17 @@ inline constexpr double kRadarRangeMeters = 1.0e9;
     }
     // Screen y grows downward: something above the ship draws upward.
     return offsetMeters.y >= 0.0f ? -pixels : pixels;
+}
+
+// Where the blip itself ends up: the plotted point carried to the end of its
+// altitude stalk. This composition is what a click has to be tested against -
+// the dot the player sees is the dot they aim at - so the draw loop and the
+// hit test both read it here rather than each composing their own.
+[[nodiscard]] inline core::Vec2 radarDot(core::Vec3 offsetMeters, core::Vec2 center,
+                                         float discRadius, float range, float stalkLimit)
+{
+    const core::Vec2 point = radarPoint(offsetMeters, center, discRadius, range);
+    return {point.x, point.y + radarStalk(offsetMeters, stalkLimit)};
 }
 
 } // namespace sol::ui

@@ -1,6 +1,7 @@
 #include "content.hpp"
 
 #include "ship_ui.hpp"
+#include "target_pick.hpp"
 
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
@@ -730,6 +731,44 @@ std::string targetNearestHostile(GameContent& content)
     const TargetInfo hostile = world.currentTargetInfo();
     return "targeting " + hostile.nav.name + " ["
            + (hostile.attitude[0] != '\0' ? hostile.attitude : "unaffiliated") + "]";
+}
+
+// The left-click's path (Phase 8j), at virtual-screen coordinates. This is the
+// same call the mouse makes, routing included, so a drive script can verify
+// what a click does without landing the cursor on a three-pixel blip.
+std::string pickAt(GameContent& content, double x, double y)
+{
+    SpaceWorld& world = content.world();
+    const ViewFrame& view = world.viewFrame();
+    if (!view.valid) {
+        return "no view frame yet (not in flight?)";
+    }
+    const PickResult pick =
+        pickTarget(world, {static_cast<float>(x), static_cast<float>(y)});
+    if (!selectPicked(world, pick)) {
+        char buffer[128];
+        std::snprintf(buffer, sizeof(buffer), "nothing at (%.0f, %.0f) of %.0fx%.0f", x, y,
+                      static_cast<double>(view.screenSize.x),
+                      static_cast<double>(view.screenSize.y));
+        return buffer;
+    }
+    return std::string(pick.route == PickRoute::Radar ? "radar: " : "space: ")
+           + world.currentTargetInfo().nav.name;
+}
+
+// What a click takes while the cursor is captured for mouse-look: whatever is
+// at the boresight.
+std::string pickBoresightCommand(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    if (!world.viewFrame().valid) {
+        return "no view frame yet (not in flight?)";
+    }
+    const PickResult pick = pickBoresight(world);
+    if (!selectPicked(world, pick)) {
+        return "nothing on the boresight";
+    }
+    return "boresight: " + world.currentTargetInfo().nav.name;
 }
 
 // Writes down where the ship is. An empty name takes the generated one, which
@@ -1713,6 +1752,9 @@ void GameContent::registerBindings()
     // Mission objectives and threat selection (Phase 8i).
     m_vm.registerFunction<&describeObjective>("sol", "objective", this);
     m_vm.registerFunction<&targetNearestHostile>("sol", "target_hostile", this);
+    // Click-to-select (Phase 8j): the mouse's own path, at coordinates.
+    m_vm.registerFunction<&pickAt>("sol", "pick", this);
+    m_vm.registerFunction<&pickBoresightCommand>("sol", "pick_boresight", this);
     m_vm.registerFunction<&bookmarkHere>("sol", "bookmark", this);
     m_vm.registerFunction<&listBookmarks>("sol", "bookmarks", this);
     m_vm.registerFunction<&deleteBookmark>("sol", "bookmark_delete", this);

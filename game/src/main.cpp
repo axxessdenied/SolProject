@@ -12,6 +12,7 @@
 #include "space_world.hpp"
 #include "station_screen.hpp"
 #include "station_ui.hpp"
+#include "target_pick.hpp"
 
 #include "sol/core/log.hpp"
 #include "sol/core/version.hpp"
@@ -175,81 +176,6 @@ private:
 void consoleCommandHandler(const char* command, void* userData)
 {
     static_cast<game::GameContent*>(userData)->executeConsole(command);
-}
-
-// --- Contact radar fill (Phase 8h) -------------------------------------------
-
-// The disc shows at most this many contacts, nearest first. A system can hold
-// dozens of nav points and a fight can add more ships; past this the disc
-// stops being a glance and starts being a puzzle.
-constexpr std::size_t kRadarMaxContacts = 32;
-
-sol::ui::RadarKind radarKindOf(game::SpaceWorld::NavKind kind)
-{
-    switch (kind) {
-    case game::SpaceWorld::NavKind::Station: return sol::ui::RadarKind::Station;
-    case game::SpaceWorld::NavKind::Gate: return sol::ui::RadarKind::Gate;
-    case game::SpaceWorld::NavKind::Planet: return sol::ui::RadarKind::Planet;
-    case game::SpaceWorld::NavKind::Star: return sol::ui::RadarKind::Star;
-    case game::SpaceWorld::NavKind::Signal: return sol::ui::RadarKind::Signal;
-    case game::SpaceWorld::NavKind::Field: return sol::ui::RadarKind::Field;
-    case game::SpaceWorld::NavKind::Wreck: return sol::ui::RadarKind::Wreck;
-    case game::SpaceWorld::NavKind::Bookmark: return sol::ui::RadarKind::Bookmark;
-    case game::SpaceWorld::NavKind::Objective: return sol::ui::RadarKind::Objective;
-    }
-    return sol::ui::RadarKind::Signal;
-}
-
-// Everything around the ship, in ship-local meters. Individual rocks are
-// deliberately absent: a field of forty-eight is one contact, the same ruling
-// Phase 8f made when it put rock on the boresight instead of the target cycle.
-void fillRadarContacts(const game::SpaceWorld& world,
-                       std::vector<sol::ui::RadarContact>& out)
-{
-    out.clear();
-    const sol::sim::ShipState ship = world.shipState();
-    // body -> sim becomes sim -> body, which is what puts the disc in the
-    // ship's frame and makes it turn when the ship turns.
-    const sol::core::Quat toLocal = conjugate(ship.orientation);
-
-    const auto push = [&](const sol::core::DVec3& position, sol::ui::RadarKind kind,
-                          sol::ui::RadarAttitude attitude, bool isTarget) {
-        const sol::core::DVec3 offset = position - ship.position;
-        out.push_back({.offset = rotate(toLocal, toVec3(offset)),
-                       .kind = kind,
-                       .attitude = attitude,
-                       .isTarget = isTarget});
-    };
-
-    const std::size_t selected = world.currentTargetIndex();
-    const std::span<const game::NavTarget> navTargets = world.navTargets();
-    for (std::size_t i = 0; i < navTargets.size(); ++i) {
-        push(navTargets[i].position, radarKindOf(world.navTargetKind(i)),
-             sol::ui::RadarAttitude::Neutral, i == selected);
-    }
-    for (std::size_t i = 0; i < world.contactCount(); ++i) {
-        const game::TargetInfo contact = world.contactInfo(i);
-        sol::ui::RadarAttitude attitude = sol::ui::RadarAttitude::Hostile;
-        if (std::strcmp(contact.attitude, "friendly") == 0) {
-            attitude = sol::ui::RadarAttitude::Friendly;
-        } else if (std::strcmp(contact.attitude, "neutral") == 0) {
-            attitude = sol::ui::RadarAttitude::Neutral;
-        }
-        // An unaffiliated spawn has no faction to consult and Lua treats it as
-        // player-hostile, so the empty attitude falls through to Hostile.
-        push(contact.nav.position, sol::ui::RadarKind::Ship, attitude,
-             navTargets.size() + i == selected);
-    }
-
-    // Nearest first, then truncate: a full disc should be the things closest
-    // to the ship, not whichever happened to be generated first.
-    std::sort(out.begin(), out.end(),
-              [](const sol::ui::RadarContact& a, const sol::ui::RadarContact& b) {
-                  return lengthSquared(a.offset) < lengthSquared(b.offset);
-              });
-    if (out.size() > kRadarMaxContacts) {
-        out.resize(kRadarMaxContacts);
-    }
 }
 
 } // namespace
@@ -442,10 +368,15 @@ int main(int argc, char** argv)
     sol::core::DVec3 bookmarkPosition;
     std::string bookmarkWhere; // backs prompt.whereSummary across frames
     bool previousMouseDown = false;
+    // Left mouse selects in flight since Phase 8j (fire moved to middle), and
+    // it is latched separately from the UI's click: the two are read at
+    // different points in the frame and neither should consume the other's edge.
+    bool previousPickDown = false;
     bool quitRequested = false;
     bool showDebugDraw = false;
 
-    SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse steer, WASD/QE/Space/Ctrl thrust, "
+    SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse steer, MMB fire, LMB select, "
+                 "WASD/QE/Space/Ctrl thrust, "
                  "Shift boost, Tab cruise, X assist, F autopilot, V camera, T target, ESC quits.",
                  window.width(), window.height());
 
@@ -716,7 +647,10 @@ int main(int argc, char** argv)
             world.setShipInput({});
         } else {
             sol::sim::FlightInput input = inputMapper.update(window, deltaSeconds);
-            input.trigger = window.isMouseButtonDown(sol::platform::MouseButton::Left) &&
+            // Fire is MIDDLE mouse since Phase 8j, which is what frees left
+            // mouse to select. Mining moves with it: 8f deliberately made the
+            // mining beam the fire button and that ruling stands.
+            input.trigger = window.isMouseButtonDown(sol::platform::MouseButton::Middle) &&
                             !devUi.wantsMouseCapture();
             world.setShipInput(input);
         }
@@ -744,6 +678,38 @@ int main(int argc, char** argv)
         case game::CameraMode::Free:
             camera = freeCamera.frame();
             break;
+        }
+
+        // Click-to-select (Phase 8j). The view frame is published as soon as
+        // the camera exists, and the click is answered here rather than with
+        // the rest of the mouse input further down, so the selection it makes
+        // is the one this frame's HUD and radar are built from.
+        {
+            const float pickScale = settings.uiScale > 0.0f ? settings.uiScale : 1.0f;
+            game::ViewFrame view;
+            view.cameraPosition = camera.position;
+            view.cameraOrientation = camera.orientation;
+            view.screenSize = {static_cast<float>(swapchain.extent().width) / pickScale,
+                               static_cast<float>(swapchain.extent().height) / pickScale};
+            view.tanHalfFovY = std::tan(game::kCameraVerticalFov * 0.5f);
+            view.valid = true;
+            world.setViewFrame(view);
+
+            const bool pickDown = inFlight && !typing &&
+                                  window.isMouseButtonDown(sol::platform::MouseButton::Left) &&
+                                  !devUi.wantsMouseCapture();
+            if (pickDown && !previousPickDown) {
+                // While the cursor is captured for mouse-look its position is
+                // meaningless by contract, so the click asks the same question
+                // at the boresight: target what the ship is pointing at.
+                const sol::core::Vec2 cursor = window.mousePosition();
+                const game::PickResult pick =
+                    window.isCursorLocked()
+                        ? game::pickBoresight(world)
+                        : game::pickTarget(world, {cursor.x / pickScale, cursor.y / pickScale});
+                game::selectPicked(world, pick);
+            }
+            previousPickDown = pickDown;
         }
 
         const bool includeShip = cameraMode != game::CameraMode::FirstPerson;
@@ -886,7 +852,7 @@ int main(int argc, char** argv)
             !hud.docked && stationDistance >= 0.0 && stationDistance <= kDockRange;
         // Contact radar (Phase 8h): everything around the ship, not just the
         // one thing targeted. The vector outlives the span the HUD carries.
-        fillRadarContacts(world, radarContacts);
+        game::fillRadarContacts(world, radarContacts);
         hud.radarContacts = radarContacts;
         hud.radarRangeMeters = sol::ui::kRadarRangeMeters;
         hud.targetIsShip = target.isShip;

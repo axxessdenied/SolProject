@@ -7,6 +7,11 @@
 
 namespace game {
 
+// The HUD's screen margin. Exposed since Phase 8j because the radar disc's
+// position depends on it and a click has to be tested against the disc where
+// it was actually drawn.
+inline constexpr float kHudMargin = 24.0f;
+
 // The custom game UI (engine plan Phase 8d), drawn on the in-repo UI stack
 // rather than Dear ImGui. This is the flight HUD, at parity with the
 // provisional dev one: crosshair with shield facings, projectile lead marker,
