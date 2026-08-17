@@ -114,6 +114,63 @@ void clipped(UiContext& ui, const Rect& cell, std::string_view text, const Color
     ui.drawList().popClip();
 }
 
+// --- Zoom and pan (Phase 8h) -------------------------------------------------
+
+constexpr float kMinZoom = 1.0f;
+constexpr float kMaxZoom = 8.0f;
+constexpr float kZoomPerNotch = 1.2f;
+
+using sol::ui::MapView;
+
+// Wheel zooms about the cursor, drag pans, and pan is clamped so the content
+// cannot be thrown out of the panel entirely. Returns the transform to draw
+// with. Only responds while the cursor is inside `view`, so the wheel still
+// belongs to the system list when it is over the list.
+[[nodiscard]] MapView updateMapView(UiContext& ui, const Rect& view, MapScreenState& state)
+{
+    const std::size_t tab = static_cast<std::size_t>(state.tab);
+    const Vec2 origin = {(view.min.x + view.max.x) * 0.5f, (view.min.y + view.max.y) * 0.5f};
+    const sol::ui::InputState& input = ui.input();
+    const bool inside = input.mousePosition.x >= view.min.x && input.mousePosition.x <= view.max.x
+                        && input.mousePosition.y >= view.min.y
+                        && input.mousePosition.y <= view.max.y;
+
+    float& zoom = state.zoom[tab];
+    Vec2& pan = state.pan[tab];
+
+    if (inside && input.scrollDelta != 0.0f) {
+        const float previous = zoom;
+        zoom = std::clamp(zoom * std::pow(kZoomPerNotch, input.scrollDelta), kMinZoom, kMaxZoom);
+        // Keep whatever is under the cursor under the cursor: solve the
+        // transform for the pan that fixes that point. Without this the map
+        // slides away from wherever you were trying to look at.
+        if (zoom != previous) {
+            pan = sol::ui::panHoldingAnchor(pan, origin, input.mousePosition, previous, zoom);
+        }
+    }
+
+    // Drag to pan. The press has to start inside the view, or dragging a
+    // footer button across the map would scroll it.
+    if (input.mousePressed && inside) {
+        state.dragging = true;
+        state.dragAnchor = input.mousePosition;
+        state.dragPanStart = pan;
+    }
+    if (!input.mouseDown) {
+        state.dragging = false;
+    }
+    if (state.dragging) {
+        pan = {state.dragPanStart.x + (input.mousePosition.x - state.dragAnchor.x),
+               state.dragPanStart.y + (input.mousePosition.y - state.dragAnchor.y)};
+    }
+
+    const Vec2 slack = sol::ui::panLimit(view, zoom);
+    pan.x = std::clamp(pan.x, -slack.x, slack.x);
+    pan.y = std::clamp(pan.y, -slack.y, slack.y);
+
+    return {origin, pan, zoom};
+}
+
 // Labels sit to the right of their marker, and on a crowded map they land on
 // top of each other — a station, its gates and an asteroid field can project
 // within a few pixels. This pushes a colliding label down until it clears and
@@ -198,14 +255,16 @@ private:
 
 // --- Galaxy view ------------------------------------------------------------
 
-void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int selected)
+void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int selected,
+                   const MapView& magnify)
 {
     ui.drawList().addRect(view, ui.theme().background.withAlpha(0.55f));
     ui.drawList().addRectOutline(view, ui.theme().panelEdge, 1.0f);
     if (panel.systems.empty()) {
         return;
     }
-    const sol::ui::MapProjection project = sol::ui::fitGalaxyMap(panel.systems, view);
+    const sol::ui::MapProjection fitted = sol::ui::fitGalaxyMap(panel.systems, view);
+    const auto project = [&](Vec2 position) { return magnify(fitted(position)); };
     ui.drawList().pushClip(view);
 
     // Lanes first, so nodes sit on top of them. A lane is only drawn when both
@@ -260,7 +319,8 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
 
 // --- System view ------------------------------------------------------------
 
-void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int selected)
+void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int selected,
+                   const MapView& magnify)
 {
     ui.drawList().addRect(view, ui.theme().background.withAlpha(0.55f));
     ui.drawList().addRectOutline(view, ui.theme().panelEdge, 1.0f);
@@ -286,29 +346,37 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
     const float bubbleRadius = radius * 0.30f;
     const Vec2 hub = sol::ui::orbitMapPoint(panel.hubPosition, center, orbitRadius, orbitSpan);
 
+    // Both tiers land in screen space first, then go through the magnifier
+    // together - so zoom is one transform over the finished picture rather
+    // than a change to either tier's curve.
     const auto project = [&](const MapMarkerRow& marker) {
-        return marker.inPlayfield
-                   ? sol::ui::playfieldPoint(marker.position, hub, bubbleRadius, bubbleSpan)
-                   : sol::ui::orbitMapPoint(marker.position, center, orbitRadius, orbitSpan);
+        return magnify(marker.inPlayfield
+                           ? sol::ui::playfieldPoint(marker.position, hub, bubbleRadius, bubbleSpan)
+                           : sol::ui::orbitMapPoint(marker.position, center, orbitRadius,
+                                                    orbitSpan));
     };
 
     ui.drawList().pushClip(view);
     // An orbit ring per body, so the planets read as orbiting rather than as
     // dots that happen to be scattered.
+    const Vec2 starPoint = magnify(center);
     for (const MapMarkerRow& marker : panel.markers) {
         if (marker.inPlayfield || marker.kind == MapMarkerRow::Kind::Star) {
             continue;
         }
-        const Vec2 point = project(marker);
-        const float dx = point.x - center.x;
-        const float dy = point.y - center.y;
-        ui.drawList().addCircle(center, std::sqrt(dx * dx + dy * dy),
+        // Measured before the magnifier and scaled after, so the ring stays
+        // concentric with the star under any pan.
+        const Vec2 orbit =
+            sol::ui::orbitMapPoint(marker.position, center, orbitRadius, orbitSpan);
+        const float dx = orbit.x - center.x;
+        const float dy = orbit.y - center.y;
+        ui.drawList().addCircle(starPoint, magnify.scaled(std::sqrt(dx * dx + dy * dy)),
                                 ui.theme().panelEdge.withAlpha(0.45f), 1.0f, 48);
     }
     // The bubble's own edge, so the change of scale is visible rather than an
     // unannounced lie about how far apart these things are.
-    ui.drawList().addCircle(hub, bubbleRadius + 8.0f, ui.theme().panelEdge.withAlpha(0.8f), 1.0f,
-                            40);
+    ui.drawList().addCircle(magnify(hub), magnify.scaled(bubbleRadius + 8.0f),
+                            ui.theme().panelEdge.withAlpha(0.8f), 1.0f, 40);
 
     LabelPlacer labels;
     for (std::size_t i = 0; i < panel.markers.size(); ++i) {
@@ -332,8 +400,8 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
     }
     // The ship, where it actually is, which is inside the bubble.
     if (panel.hasShip) {
-        const Vec2 ship =
-            sol::ui::playfieldPoint(panel.shipPosition, hub, bubbleRadius, bubbleSpan);
+        const Vec2 ship = magnify(
+            sol::ui::playfieldPoint(panel.shipPosition, hub, bubbleRadius, bubbleSpan));
         ui.drawList().addCircle(ship, 4.0f, ui.theme().textPrimary, 1.6f, 12);
     }
     ui.drawList().popClip();
@@ -467,6 +535,16 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
     const Rect listBounds = split.cell(kListWidth);
     const Rect mapBounds = split.remaining();
 
+    // Zoom and pan are read before either view draws, since both need the
+    // transform and the footer needs to know whether there is anything to
+    // reset. The wheel only bites inside the map area, so it still scrolls
+    // the list when the cursor is over the list.
+    const MapView magnify = updateMapView(ui, mapBounds, state);
+    const bool zoomed = state.zoom[static_cast<std::size_t>(state.tab)] > 1.0f
+                        || state.pan[static_cast<std::size_t>(state.tab)].x != 0.0f
+                        || state.pan[static_cast<std::size_t>(state.tab)].y != 0.0f;
+    bool resetView = false;
+
     bool closed = false;
     if (state.tab == MapScreenState::Galaxy) {
         if (state.selectedSystem < 0
@@ -497,11 +575,12 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             }
         }
         drawSystemList(ui, panel, listColumn.remaining(), state);
-        drawGalaxyMap(ui, panel, mapBounds, state.selectedSystem);
+        drawGalaxyMap(ui, panel, mapBounds, state.selectedSystem, magnify);
 
         // Footer: what the selection is, and what can be done with it.
         Row buttons(footer, ui.theme().spacing);
         const Rect closeCell = buttons.cellFromRight(kButtonWidth);
+        const Rect resetCell = buttons.cellFromRight(kButtonWidth);
         const Rect clearCell = buttons.cellFromRight(kButtonWidth);
         const Rect plotCell = buttons.cellFromRight(kButtonWidth);
         const Rect detailCell = buttons.remaining();
@@ -524,6 +603,9 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
         if (ui.button(clearCell, "Clear Route", panel.routeSummary[0] != '\0')) {
             panel.action = {MapAction::Kind::ClearRoute, -1};
         }
+        if (ui.button(resetCell, "Reset View", zoomed)) {
+            resetView = true;
+        }
         if (ui.button(closeCell, "Close")) {
             closed = true;
         }
@@ -533,11 +615,12 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             state.selectedMarker = panel.markers.empty() ? -1 : 0;
         }
         drawMarkerList(ui, panel, listBounds, state);
-        drawSystemMap(ui, panel, mapBounds, state.selectedMarker);
+        drawSystemMap(ui, panel, mapBounds, state.selectedMarker, magnify);
 
         // Footer computed above; the buttons sit on the last row of the frame.
         Row buttons(footer, ui.theme().spacing);
         const Rect closeCell = buttons.cellFromRight(kButtonWidth);
+        const Rect resetCell = buttons.cellFromRight(kButtonWidth);
         const Rect autoCell = buttons.cellFromRight(kButtonWidth);
         const Rect targetCell = buttons.cellFromRight(kButtonWidth);
         const Rect detailCell = buttons.remaining();
@@ -553,9 +636,20 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
         if (ui.button(autoCell, "Autopilot", hasMarker)) {
             panel.action = {MapAction::Kind::Autopilot, state.selectedMarker};
         }
+        if (ui.button(resetCell, "Reset View", zoomed)) {
+            resetView = true;
+        }
         if (ui.button(closeCell, "Close")) {
             closed = true;
         }
+    }
+
+    // Applied after drawing so the button reads against the frame the player
+    // was actually looking at; the next frame draws the reset view.
+    if (resetView) {
+        state.zoom[static_cast<std::size_t>(state.tab)] = 1.0f;
+        state.pan[static_cast<std::size_t>(state.tab)] = {};
+        state.dragging = false;
     }
 
     ui.popId();

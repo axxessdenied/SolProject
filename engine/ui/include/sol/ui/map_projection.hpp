@@ -14,6 +14,50 @@ namespace sol::ui {
 // be drawn at all, and how a playfield spanning six orders of magnitude lands
 // on one readable disc.
 
+// --- Zoom and pan (Phase 8h) -------------------------------------------------
+
+// A screen-space magnifier applied on top of whichever projection a view
+// already used. Deliberately post-projection: it magnifies exactly what the
+// player is looking at, including the system view's crowded playfield bubble,
+// and leaves both tiers' extent maths untouched. Uniform, so shapes are
+// preserved and a scaled radius is just radius * zoom.
+struct MapView
+{
+    core::Vec2 origin; // the view's centre, what zoom happens about
+    core::Vec2 pan;    // screen pixels
+    float zoom = 1.0f;
+
+    [[nodiscard]] core::Vec2 operator()(core::Vec2 point) const
+    {
+        return {origin.x + (point.x - origin.x) * zoom + pan.x,
+                origin.y + (point.y - origin.y) * zoom + pan.y};
+    }
+    [[nodiscard]] float scaled(float length) const { return length * zoom; }
+};
+
+// The pan that keeps whatever sits under `anchor` under `anchor` across a
+// zoom change. Without it the map slides away from the very thing the player
+// put the cursor on to look at.
+[[nodiscard]] inline core::Vec2 panHoldingAnchor(core::Vec2 pan, core::Vec2 origin,
+                                                 core::Vec2 anchor, float fromZoom, float toZoom)
+{
+    if (!(fromZoom > 0.0f)) {
+        return pan;
+    }
+    const float ratio = toZoom / fromZoom;
+    return {anchor.x - (anchor.x - origin.x - pan.x) * ratio - origin.x,
+            anchor.y - (anchor.y - origin.y - pan.y) * ratio - origin.y};
+}
+
+// How far the content may be dragged: half the magnified overshoot in each
+// axis, which reaches every part of it without letting it be lost off-panel.
+// Zero at 1x, where there is nothing to pan to.
+[[nodiscard]] inline core::Vec2 panLimit(const Rect& view, float zoom)
+{
+    const float excess = zoom > 1.0f ? zoom - 1.0f : 0.0f;
+    return {view.width() * 0.5f * excess, view.height() * 0.5f * excess};
+}
+
 // Galaxy view: light-years to screen pixels, uniform in both axes so the lane
 // graph keeps its shape.
 struct MapProjection

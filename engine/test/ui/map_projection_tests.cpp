@@ -47,6 +47,68 @@ std::vector<MapSystemRow> squareGalaxy()
 
 } // namespace
 
+SOL_TEST(map_view_zoom_holds_whatever_is_under_the_cursor)
+{
+    const Rect view = {{100.0f, 100.0f}, {500.0f, 400.0f}};
+    const Vec2 origin = {300.0f, 250.0f};
+    const Vec2 anchor = {420.0f, 160.0f}; // deliberately not the centre
+
+    sol::ui::MapView magnify{origin, {0.0f, 0.0f}, 1.0f};
+    // A point that happens to sit exactly under the cursor at 1x.
+    const Vec2 subject = anchor;
+    SOL_CHECK(nearlyEqual(magnify(subject).x, anchor.x));
+
+    // Zoom in about the cursor: the same point must still land there, or the
+    // map slides away from the very thing you put the cursor on.
+    const float zoomed = 3.0f;
+    magnify.pan = sol::ui::panHoldingAnchor(magnify.pan, origin, anchor, magnify.zoom, zoomed);
+    magnify.zoom = zoomed;
+    SOL_CHECK(nearlyEqual(magnify(subject).x, anchor.x, 1.0e-2f));
+    SOL_CHECK(nearlyEqual(magnify(subject).y, anchor.y, 1.0e-2f));
+
+    // And back out again, to the same place.
+    magnify.pan = sol::ui::panHoldingAnchor(magnify.pan, origin, anchor, magnify.zoom, 1.0f);
+    magnify.zoom = 1.0f;
+    SOL_CHECK(nearlyEqual(magnify(subject).x, anchor.x, 1.0e-2f));
+    SOL_CHECK(nearlyEqual(magnify(subject).y, anchor.y, 1.0e-2f));
+    // Returning to 1x must also return the pan to nothing, so "reset" and
+    // "zoom back out" agree about what the default framing is.
+    SOL_CHECK(nearlyEqual(magnify.pan.x, 0.0f, 1.0e-2f));
+    SOL_CHECK(nearlyEqual(magnify.pan.y, 0.0f, 1.0e-2f));
+}
+
+SOL_TEST(map_view_pan_is_bounded_by_the_magnified_overshoot)
+{
+    const Rect view = {{100.0f, 100.0f}, {500.0f, 400.0f}}; // 400 x 300
+
+    // Nothing to pan to when nothing is magnified.
+    const Vec2 none = sol::ui::panLimit(view, 1.0f);
+    SOL_CHECK(nearlyEqual(none.x, 0.0f));
+    SOL_CHECK(nearlyEqual(none.y, 0.0f));
+
+    // At 3x the content is three times the panel, so half the two-panel
+    // overshoot is reachable in each direction.
+    const Vec2 limit = sol::ui::panLimit(view, 3.0f);
+    SOL_CHECK(nearlyEqual(limit.x, 400.0f));
+    SOL_CHECK(nearlyEqual(limit.y, 300.0f));
+
+    // Below 1x (which the screen clamps away) the limit must not go negative
+    // and invert the clamp.
+    const Vec2 under = sol::ui::panLimit(view, 0.25f);
+    SOL_CHECK(under.x >= 0.0f && under.y >= 0.0f);
+}
+
+SOL_TEST(map_view_scales_lengths_with_the_same_factor_as_positions)
+{
+    // Orbit rings and the playfield bubble are drawn from a radius rather
+    // than from two points, so the two have to agree or the rings drift off
+    // the markers they belong to.
+    const sol::ui::MapView magnify{{200.0f, 200.0f}, {17.0f, -9.0f}, 2.5f};
+    const Vec2 a = magnify({200.0f, 200.0f});
+    const Vec2 b = magnify({260.0f, 200.0f});
+    SOL_CHECK(nearlyEqual(b.x - a.x, magnify.scaled(60.0f)));
+}
+
 SOL_TEST(map_projection_fits_known_systems_inside_the_view)
 {
     const std::vector<MapSystemRow> systems = squareGalaxy();
