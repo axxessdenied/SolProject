@@ -586,3 +586,181 @@ SOL_TEST(ui_context_endscroll_without_a_region_is_harmless)
     ui.endFrame();
     SOL_CHECK(ui.interactiveCount() == 1);
 }
+
+// --- Text field (Phase 8h) ---------------------------------------------------
+
+namespace {
+
+constexpr Rect kField = {{100.0f, 100.0f}, {400.0f, 140.0f}};
+
+// One frame of a single focused text field. The field takes focus from the
+// click in the frame the caller passes mousePressed, and keeps it after.
+bool runField(UiContext& ui, const InputState& input, std::string& value)
+{
+    ui.beginFrame(input, kScreen);
+    const bool changed = ui.textField(kField, "name", value);
+    ui.endFrame();
+    return changed;
+}
+
+// A field that already has focus, so the editing keys apply.
+void focusField(UiContext& ui, std::string& value)
+{
+    (void)runField(ui, pressAt(110.0f, 120.0f), value);
+    (void)runField(ui, releaseAt(110.0f, 120.0f), value);
+}
+
+InputState typing(std::string_view text)
+{
+    InputState input;
+    input.text = text;
+    return input;
+}
+
+} // namespace
+
+SOL_TEST(ui_text_field_inserts_typed_text_at_the_caret)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+
+    std::string value = "Ore";
+    focusField(ui, value);
+    ui.setCaret(value.size());
+
+    SOL_CHECK(runField(ui, typing(" Field"), value));
+    SOL_CHECK(value == "Ore Field");
+
+    // Insertion happens at the caret, not always at the end.
+    ui.setCaret(3);
+    SOL_CHECK(runField(ui, typing("!"), value));
+    SOL_CHECK(value == "Ore! Field");
+
+    // A frame with no text typed reports no change.
+    SOL_CHECK(!runField(ui, InputState{}, value));
+    SOL_CHECK(value == "Ore! Field");
+}
+
+SOL_TEST(ui_text_field_backspace_and_delete_respect_both_ends)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+
+    std::string value = "abc";
+    focusField(ui, value);
+
+    // Backspace at the start has nothing to remove and must not report a
+    // change or walk off the front of the string.
+    ui.setCaret(0);
+    InputState back;
+    back.editBackspace = true;
+    SOL_CHECK(!runField(ui, back, value));
+    SOL_CHECK(value == "abc");
+
+    // Delete at the end likewise.
+    ui.setCaret(value.size());
+    InputState forward;
+    forward.editDelete = true;
+    SOL_CHECK(!runField(ui, forward, value));
+    SOL_CHECK(value == "abc");
+
+    // Backspace removes what is behind the caret; Delete what is ahead.
+    ui.setCaret(2);
+    SOL_CHECK(runField(ui, back, value));
+    SOL_CHECK(value == "ac");
+    ui.setCaret(1);
+    SOL_CHECK(runField(ui, forward, value));
+    SOL_CHECK(value == "a");
+}
+
+SOL_TEST(ui_text_field_caret_moves_over_whole_code_points)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+
+    // "aeb" with a two-byte middle character: stepping by bytes would split
+    // it and leave the string invalid UTF-8.
+    std::string value = "a\xC3\xA9" "b";
+    focusField(ui, value);
+    ui.setCaret(value.size());
+
+    InputState left;
+    left.editLeft = true;
+    (void)runField(ui, left, value); // over 'b'
+    (void)runField(ui, left, value); // over the two-byte character
+    // A backspace here must remove the whole 'a' before it, leaving the
+    // multi-byte character intact.
+    InputState back;
+    back.editBackspace = true;
+    SOL_CHECK(runField(ui, back, value));
+    SOL_CHECK(value == "\xC3\xA9" "b");
+
+    // Home and End reach both extremes.
+    InputState home;
+    home.editHome = true;
+    (void)runField(ui, home, value);
+    SOL_CHECK(!runField(ui, back, value)); // already at the start
+    InputState end;
+    end.editEnd = true;
+    (void)runField(ui, end, value);
+    SOL_CHECK(runField(ui, back, value));
+    SOL_CHECK(value == "\xC3\xA9");
+}
+
+SOL_TEST(ui_text_field_stops_at_its_length_budget_on_a_boundary)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+
+    std::string value;
+    (void)runField(ui, pressAt(110.0f, 120.0f), value);
+    (void)runField(ui, releaseAt(110.0f, 120.0f), value);
+
+    // Four bytes of room, offered two two-byte characters: both fit.
+    ui.beginFrame(typing("\xC3\xA9\xC3\xA9"), kScreen);
+    (void)ui.textField(kField, "name", value, 4);
+    ui.endFrame();
+    SOL_CHECK(value == "\xC3\xA9\xC3\xA9");
+
+    // Full now, so further typing is refused rather than truncated mid
+    // character.
+    ui.beginFrame(typing("\xC3\xA9"), kScreen);
+    const bool changed = ui.textField(kField, "name", value, 4);
+    ui.endFrame();
+    SOL_CHECK(!changed);
+    SOL_CHECK(value == "\xC3\xA9\xC3\xA9");
+}
+
+SOL_TEST(ui_text_field_takes_the_arrows_away_from_the_tab_strip)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+
+    static const char* const kTabs[] = {"Galaxy", "System"};
+    std::string value = "x";
+    int tab = 0;
+
+    // With focus in the field, a right-arrow is the caret's - the tab strip
+    // must not step, or typing into a field would change screens underneath.
+    focusField(ui, value);
+    SOL_CHECK(ui.editingText());
+
+    InputState right;
+    right.navRight = true;
+    right.editRight = true;
+    ui.beginFrame(right, kScreen);
+    (void)ui.tabs({{100.0f, 40.0f}, {400.0f, 70.0f}}, std::span<const char* const>(kTabs), tab);
+    (void)ui.textField(kField, "name", value);
+    ui.endFrame();
+    SOL_CHECK(tab == 0);
+}

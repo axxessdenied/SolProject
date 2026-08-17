@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string_view>
 
 namespace sol::platform {
 
@@ -22,6 +23,8 @@ enum class Key : std::uint8_t
     Escape, Space, Enter, Tab,
     LeftShift, LeftControl, LeftAlt,
     Up, Down, Left, Right,
+    // Text editing (Phase 8h). Left/Right above double as caret movement.
+    Backspace, Delete, Home, End,
     F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
     Count
 };
@@ -83,6 +86,17 @@ public:
 
     // Wheel movement in notches accumulated since the previous pumpEvents call.
     [[nodiscard]] float wheelDelta() const;
+
+    // UTF-8 characters typed since the previous pumpEvents call, cleared each
+    // pump - the same lifetime contract mouseDelta() and wheelDelta() set.
+    // This is text, not keys: it respects the keyboard layout and dead keys,
+    // and it carries nothing for a keypress that produces no character.
+    //
+    // Text the dev UI consumed never appears here: the message hook runs
+    // before this is recorded and swallows keyboard messages while ImGui
+    // wants them, so a focused console and a focused text field cannot both
+    // receive the same keystroke.
+    [[nodiscard]] std::string_view textInput() const;
 
     // Hides the cursor and confines it to the client area (mouse-look mode).
     void setCursorLocked(bool locked);

@@ -24,8 +24,12 @@ void UiContext::setFont(const assets::Font* font, std::uint32_t fontTexture)
     m_drawList.setFont(font, fontTexture);
 }
 
-void UiContext::beginFrame(const InputState& input, core::Vec2 screenSize)
+void UiContext::beginFrame(const InputState& input, core::Vec2 screenSize, float deltaSeconds)
 {
+    // Caret blink runs on wall time, not frames: at 400 fps a frame-counted
+    // blink is a flicker. Zero dt (the default, which the headless tests use)
+    // leaves the caret solid.
+    m_caretBlink = deltaSeconds > 0.0f ? m_caretBlink + deltaSeconds : 0.0f;
     m_navLeftEdge = input.navLeft && !m_previousNavLeft;
     m_navRightEdge = input.navRight && !m_previousNavRight;
     m_previousNavLeft = input.navLeft;
@@ -38,6 +42,8 @@ void UiContext::beginFrame(const InputState& input, core::Vec2 screenSize)
     m_navItems.clear();
     m_scrollStack.clear();
     m_hotId = kNoWidget;
+    m_textFieldFocusedLastFrame = m_textFieldFocused;
+    m_textFieldFocused = false;
     m_frameOpen = true;
 }
 
@@ -213,6 +219,176 @@ bool UiContext::button(const Rect& bounds, std::string_view text, bool enabled)
     return interaction.activated;
 }
 
+namespace {
+
+// UTF-8 boundaries: a continuation byte is 10xxxxxx, so the caret steps over
+// whole code points rather than splitting one and drawing a broken glyph.
+[[nodiscard]] bool isContinuation(char byte)
+{
+    return (static_cast<unsigned char>(byte) & 0xC0u) == 0x80u;
+}
+
+[[nodiscard]] std::size_t previousBoundary(std::string_view text, std::size_t at)
+{
+    if (at == 0) {
+        return 0;
+    }
+    std::size_t index = at - 1;
+    while (index > 0 && isContinuation(text[index])) {
+        --index;
+    }
+    return index;
+}
+
+[[nodiscard]] std::size_t nextBoundary(std::string_view text, std::size_t at)
+{
+    if (at >= text.size()) {
+        return text.size();
+    }
+    std::size_t index = at + 1;
+    while (index < text.size() && isContinuation(text[index])) {
+        ++index;
+    }
+    return index;
+}
+
+} // namespace
+
+bool UiContext::textField(const Rect& bounds, std::string_view id, std::string& value,
+                          std::size_t maxLength)
+{
+    const Interaction interaction = interact(id, bounds, true);
+    // A missing style stops the field being DRAWN, further down; it must not
+    // stop it being edited, or a theme naming a style the font lacks would
+    // silently turn a field read-only.
+    const assets::FontStyleRecord* record = style(m_theme.bodyStyle);
+
+    // The caret belongs to whichever field holds focus; adopting it on focus
+    // change keeps one cursor for the whole UI rather than one per field.
+    if (m_caretField != interaction.id && interaction.focused) {
+        m_caretField = interaction.id;
+        m_caret = value.size();
+    }
+    if (m_caret > value.size()) {
+        m_caret = value.size();
+    }
+
+    bool changed = false;
+    const bool editing = interaction.focused;
+    if (editing) {
+        m_textFieldFocused = true;
+        // Click inside places the caret at the nearest boundary to the
+        // cursor, walking the string once and measuring each prefix.
+        if (interaction.hovered && m_input.mousePressed && m_font != nullptr
+            && record != nullptr) {
+            const float target = m_input.mousePosition.x - (bounds.min.x + m_theme.padding * 0.5f);
+            std::size_t best = 0;
+            float bestDistance = std::abs(target);
+            for (std::size_t at = nextBoundary(value, 0); at <= value.size();
+                 at = nextBoundary(value, at)) {
+                const float width =
+                    m_font->measureWidth(*record, std::string_view(value).substr(0, at));
+                const float distance = std::abs(target - width);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = at;
+                }
+                if (at == value.size()) {
+                    break;
+                }
+            }
+            m_caret = best;
+        }
+
+        if (m_input.editLeft) {
+            m_caret = previousBoundary(value, m_caret);
+        }
+        if (m_input.editRight) {
+            m_caret = nextBoundary(value, m_caret);
+        }
+        if (m_input.editHome) {
+            m_caret = 0;
+        }
+        if (m_input.editEnd) {
+            m_caret = value.size();
+        }
+        if (m_input.editBackspace && m_caret > 0) {
+            const std::size_t from = previousBoundary(value, m_caret);
+            value.erase(from, m_caret - from);
+            m_caret = from;
+            changed = true;
+        }
+        if (m_input.editDelete && m_caret < value.size()) {
+            value.erase(m_caret, nextBoundary(value, m_caret) - m_caret);
+            changed = true;
+        }
+        if (!m_input.text.empty() && value.size() < maxLength) {
+            // maxLength is a byte budget; truncate on a boundary so a
+            // multi-byte character is never cut in half at the limit.
+            std::string_view incoming = m_input.text;
+            const std::size_t room = maxLength - value.size();
+            if (incoming.size() > room) {
+                std::size_t keep = 0;
+                while (nextBoundary(incoming, keep) <= room) {
+                    keep = nextBoundary(incoming, keep);
+                    if (keep == incoming.size()) {
+                        break;
+                    }
+                }
+                incoming = incoming.substr(0, keep);
+            }
+            if (!incoming.empty()) {
+                value.insert(m_caret, incoming);
+                m_caret += incoming.size();
+                changed = true;
+            }
+        }
+        if (changed) {
+            m_caretBlink = 0.0f; // typing shows the caret rather than hiding it
+        }
+    }
+
+    // A field reads as editable: a sunken well rather than a raised control.
+    m_drawList.addRoundedRect(bounds, m_theme.radius,
+                              editing ? m_theme.controlActive : m_theme.control);
+    drawFocusRing(bounds, interaction);
+    if (record == nullptr) {
+        return changed;
+    }
+
+    const float inset = m_theme.padding * 0.5f;
+    const Rect inner = {{bounds.min.x + inset, bounds.min.y},
+                        {bounds.max.x - inset, bounds.max.y}};
+    // Scroll the text so the caret stays visible once the value outruns the
+    // box; without this a long name types itself off the right edge.
+    float caretX = 0.0f;
+    float textWidth = 0.0f;
+    if (m_font != nullptr) {
+        caretX = m_font->measureWidth(*record, std::string_view(value).substr(0, m_caret));
+        textWidth = m_font->measureWidth(*record, value);
+    }
+    float offset = 0.0f;
+    if (textWidth > inner.width()) {
+        offset = std::min(textWidth - inner.width(), std::max(0.0f, caretX - inner.width() + 6.0f));
+    }
+
+    m_drawList.pushClip(inner);
+    m_drawList.addTextInBox(*record, {{inner.min.x - offset, inner.min.y}, inner.max}, value,
+                            m_theme.textPrimary);
+    if (editing) {
+        // Half a second on, half off; a solid caret when dt is not supplied.
+        const bool visible = m_caretBlink <= 0.0f || std::fmod(m_caretBlink, 1.0f) < 0.5f;
+        if (visible) {
+            const float x = inner.min.x + caretX - offset;
+            const float pad = 4.0f;
+            m_drawList.addRect({{x, bounds.min.y + pad}, {x + 1.5f, bounds.max.y - pad}},
+                               m_theme.textPrimary);
+        }
+    }
+    m_drawList.popClip();
+    return changed;
+}
+
 bool UiContext::checkbox(const Rect& bounds, std::string_view text, bool& value)
 {
     const Interaction interaction = interact(text, bounds, true);
@@ -318,7 +494,10 @@ bool UiContext::tabs(const Rect& bounds, std::span<const char* const> labels, in
         // Arrows step the strip, so a screen's tabs are reachable without
         // cycling focus through every widget one of them contains. On the edge
         // only: holding the key must not run the whole strip in one frame.
-        if (interaction.focused && (m_navLeftEdge || m_navRightEdge)) {
+        // Not while a text field is being typed into - there the arrows are
+        // the caret's.
+        if (interaction.focused && !m_textFieldFocusedLastFrame
+            && (m_navLeftEdge || m_navRightEdge)) {
             const int step = m_navRightEdge ? 1 : -1;
             selected = (previous + step + count) % count;
             // Focus rides along, or a second press would step from the old tab

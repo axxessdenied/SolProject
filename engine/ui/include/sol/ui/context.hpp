@@ -34,6 +34,17 @@ struct InputState
     bool navCancel = false;
     bool navLeft = false;
     bool navRight = false;
+
+    // Text entry (Phase 8h). `text` is the UTF-8 typed this frame, straight
+    // from Window::textInput(); the rest are key EDGES, because a caret that
+    // moved once per frame while a key was held would be unusable.
+    std::string_view text;
+    bool editLeft = false;
+    bool editRight = false;
+    bool editHome = false;
+    bool editEnd = false;
+    bool editBackspace = false;
+    bool editDelete = false;
 };
 
 // Colors, metrics, and font style names in one place, so a restyle is a data
@@ -84,7 +95,9 @@ public:
     void setTheme(const Theme& theme) { m_theme = theme; }
     [[nodiscard]] const Theme& theme() const { return m_theme; }
 
-    void beginFrame(const InputState& input, core::Vec2 screenSize);
+    // `deltaSeconds` drives only the caret blink; zero (the default) leaves
+    // the caret solid, which is what the headless tests want.
+    void beginFrame(const InputState& input, core::Vec2 screenSize, float deltaSeconds = 0.0f);
     void endFrame();
 
     [[nodiscard]] DrawList& drawList() { return m_drawList; }
@@ -122,6 +135,24 @@ public:
     // A selectable row (list entries, tabs when drawn as a strip).
     [[nodiscard]] bool selectable(const Rect& bounds, std::string_view label, bool selected,
                                   bool enabled = true);
+
+    // An editable single-line field (Phase 8h). `id` names the widget - the
+    // value is what the player is typing, so it cannot double as the label
+    // the way every other widget's text does. Returns true on the frames the
+    // value changed. Insertion and deletion only: no selection ranges, no
+    // clipboard, no IME.
+    //
+    // While focused it swallows the nav keys it uses, so typing "s" into a
+    // field does not also step the list behind it.
+    [[nodiscard]] bool textField(const Rect& bounds, std::string_view id, std::string& value,
+                                 std::size_t maxLength = 48);
+    // Where the caret sits in the focused field, in bytes. Screens that open a
+    // field prefilled want it at the end rather than at the start.
+    void setCaret(std::size_t bytes) { m_caret = bytes; }
+    // True while a text field holds keyboard focus. Screens use it to keep
+    // their own key handling (Esc, Enter, single-letter shortcuts) out of the
+    // way of typing.
+    [[nodiscard]] bool editingText() const { return m_textFieldFocusedLastFrame; }
 
     // A tab strip splitting `bounds` evenly. `selected` indexes `labels` and is
     // updated in place; left/right step it while a tab holds focus, so moving
@@ -197,6 +228,17 @@ private:
     WidgetId m_hotId = kNoWidget;    // under the cursor
     WidgetId m_activeId = kNoWidget; // being pressed
     WidgetId m_focusId = kNoWidget;  // keyboard focus
+    // Caret position, in bytes, within whichever field holds focus. One
+    // caret is enough because only one field can be focused at a time.
+    std::size_t m_caret = 0;
+    WidgetId m_caretField = kNoWidget; // whose caret m_caret is
+    float m_caretBlink = 0.0f;
+    // Whether focus is in a text field. Set as the field builds, and carried
+    // to the next frame because widgets that also want the arrows (the tab
+    // strip, sliders) are often built BEFORE the field in the same frame.
+    // Focus persists across frames, so last frame's answer is the right one.
+    bool m_textFieldFocused = false;
+    bool m_textFieldFocusedLastFrame = false;
     bool m_frameOpen = false;
 };
 

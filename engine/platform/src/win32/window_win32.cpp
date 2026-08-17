@@ -3,6 +3,8 @@
 #include "sol/core/assert.hpp"
 #include "sol/core/log.hpp"
 
+#include <string>
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -37,7 +39,33 @@ Key translateVirtualKey(WPARAM virtualKey)
     case VK_DOWN: return Key::Down;
     case VK_LEFT: return Key::Left;
     case VK_RIGHT: return Key::Right;
+    case VK_BACK: return Key::Backspace;
+    case VK_DELETE: return Key::Delete;
+    case VK_HOME: return Key::Home;
+    case VK_END: return Key::End;
     default: return Key::Unknown;
+    }
+}
+
+// Appends one Unicode code point as UTF-8. WM_CHAR delivers UTF-16 code
+// units, so anything outside the BMP arrives as two messages and is
+// reassembled by the caller before it gets here.
+void appendUtf8(std::string& out, std::uint32_t codePoint)
+{
+    if (codePoint < 0x80) {
+        out.push_back(static_cast<char>(codePoint));
+    } else if (codePoint < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+        out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+    } else if (codePoint < 0x10000) {
+        out.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+    } else {
+        out.push_back(static_cast<char>(0xF0 | (codePoint >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
     }
 }
 
@@ -57,6 +85,9 @@ struct Window::Impl
     float mouseDeltaX = 0.0f;
     float mouseDeltaY = 0.0f;
     float wheel = 0.0f;
+    std::string textInput;
+    // High surrogate held between the two WM_CHARs of an astral code point.
+    std::uint16_t pendingSurrogate = 0;
     bool cursorLocked = false;
     bool cursorHidden = false;
     MessageHook messageHook = nullptr;
@@ -175,6 +206,32 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
         break; // fall through to DefWindowProc so Alt+F4 etc. keep working
     }
 
+    case WM_CHAR: {
+        // Only reached when the dev UI's message hook did not want the
+        // keystroke - the hook runs above and returns early - so a focused
+        // ImGui console and a focused game text field never both see it.
+        const auto unit = static_cast<std::uint16_t>(wParam);
+        if (unit >= 0xD800 && unit <= 0xDBFF) {
+            impl->pendingSurrogate = unit; // high half; the low half follows
+            return 0;
+        }
+        std::uint32_t codePoint = unit;
+        if (unit >= 0xDC00 && unit <= 0xDFFF) {
+            if (impl->pendingSurrogate == 0) {
+                return 0; // orphaned low half
+            }
+            codePoint = 0x10000u + ((impl->pendingSurrogate - 0xD800u) << 10)
+                        + (unit - 0xDC00u);
+        }
+        impl->pendingSurrogate = 0;
+        // Control codes arrive here too (Backspace is 0x08, Enter 0x0D);
+        // those are keys, handled as keys, and are not text.
+        if (codePoint >= 0x20 && codePoint != 0x7F) {
+            appendUtf8(impl->textInput, codePoint);
+        }
+        return 0;
+    }
+
     case WM_KEYUP:
     case WM_SYSKEYUP: {
         const Key key = translateVirtualKey(wParam);
@@ -286,6 +343,7 @@ void Window::pumpEvents()
     m_impl->mouseDeltaX = 0.0f;
     m_impl->mouseDeltaY = 0.0f;
     m_impl->wheel = 0.0f;
+    m_impl->textInput.clear();
 
     MSG message = {};
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != 0) {
@@ -356,6 +414,11 @@ core::Vec2 Window::mousePosition() const
 float Window::wheelDelta() const
 {
     return m_impl->wheel;
+}
+
+std::string_view Window::textInput() const
+{
+    return m_impl->textInput;
 }
 
 void Window::setCursorLocked(bool locked)

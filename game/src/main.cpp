@@ -411,6 +411,14 @@ int main(int argc, char** argv)
     bool previousNavDown = false;
     bool previousNavActivate = false;
     bool previousNavSpace = false;
+    // Text-editing key edges (Phase 8h); Left/Right are read twice, level for
+    // sliders and edge for the caret, which is why they need their own latch.
+    bool previousEditLeft = false;
+    bool previousEditRight = false;
+    bool previousEditHome = false;
+    bool previousEditEnd = false;
+    bool previousEditBackspace = false;
+    bool previousEditDelete = false;
     bool previousMouseDown = false;
     bool quitRequested = false;
     bool showDebugDraw = false;
@@ -991,7 +999,19 @@ int main(int argc, char** argv)
         // on the very frame it appeared.
         uiInput.navCancel = escapeEdge && inMenuScreen;
 
-        ui.beginFrame(uiInput, uiSize);
+        // Text entry (Phase 8h). The characters come from the platform layer
+        // rather than from key states, so the keyboard layout is respected;
+        // the editing keys are edges, because a caret that moved once per
+        // frame while a key was held would be unusable.
+        uiInput.text = window.textInput();
+        uiInput.editLeft = menuKeyEdge(sol::platform::Key::Left, previousEditLeft);
+        uiInput.editRight = menuKeyEdge(sol::platform::Key::Right, previousEditRight);
+        uiInput.editHome = menuKeyEdge(sol::platform::Key::Home, previousEditHome);
+        uiInput.editEnd = menuKeyEdge(sol::platform::Key::End, previousEditEnd);
+        uiInput.editBackspace = menuKeyEdge(sol::platform::Key::Backspace, previousEditBackspace);
+        uiInput.editDelete = menuKeyEdge(sol::platform::Key::Delete, previousEditDelete);
+
+        ui.beginFrame(uiInput, uiSize, deltaSeconds);
         game::MenuAction menuAction = game::MenuAction::None;
         bool undockRequested = false;
         bool mapClosed = false;
