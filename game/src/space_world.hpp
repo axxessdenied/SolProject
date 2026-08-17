@@ -18,6 +18,7 @@
 #include "sol/sim/steering.hpp"
 #include "sol/sim/survey.hpp"
 #include "sol/sim/universe.hpp"
+#include "sol/ui/screens.hpp"
 
 #include <cstdint>
 #include <span>
@@ -315,6 +316,17 @@ struct ViewFrame
     sol::core::Vec2 screenSize; // VIRTUAL UI pixels, i.e. after the UI scale
     float tanHalfFovY = 1.0f;
     bool valid = false; // false before the first frame, and while a menu is up
+
+    // Where the HUD ended up this frame (Phase 8m). The pick carries it for the
+    // same reason Phase 8j moved the disc's geometry into a header: the radar
+    // is no longer at a position the pick can recompute from the screen size —
+    // in a cockpit it is bolted to the dash — so the click has to be answered
+    // against the frame the disc was actually drawn from.
+    sol::ui::HudFrame hud;
+    // The ship's nose in camera space. Free-look turns the head without turning
+    // the ship, so this is what "target what I am pointing at" means; it is
+    // (0,0,-1) whenever the head is straight.
+    sol::core::Vec3 boresightCamera = {0.0f, 0.0f, -1.0f};
 };
 
 // The new-game starter ship def; mods can override it (Phase 5 data pipeline).

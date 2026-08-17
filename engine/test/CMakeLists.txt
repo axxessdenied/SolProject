@@ -46,6 +46,7 @@ target_link_libraries(sol_platform_tests PRIVATE sol::test sol::platform)
 add_test(NAME platform.unit COMMAND sol_platform_tests)
 
 add_executable(sol_ui_tests
+    ui/cockpit_frame_tests.cpp
     ui/context_tests.cpp
     ui/draw_list_tests.cpp
     ui/layout_tests.cpp

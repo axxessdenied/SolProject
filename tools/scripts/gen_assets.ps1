@@ -128,6 +128,42 @@ $bmp.Save("$repo\assets\textures\hull.png", [System.Drawing.Imaging.ImageFormat]
 $bmp.Dispose()
 Write-Output "wrote hull.png"
 
+# --- cockpit.png: 256x256 dark cabin panelling (Phase 8m) ---
+# The hull texture is a light exterior grey, and a cockpit wearing it reads as a
+# warehouse: the interior ends up brighter than the starfield it frames, and the
+# HUD has to compete with its own surroundings. A cabin is dark, with the light
+# coming from the instruments - so this is nearly black, with recessed panel
+# seams and a few amber strips picking out edges.
+$size = 256
+$bmp = New-Object System.Drawing.Bitmap($size, $size)
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.Clear([System.Drawing.Color]::FromArgb(255, 26, 28, 33))
+$rng = New-Object System.Random(8131)
+for ($i = 0; $i -lt 44; $i++) {
+    $w = $rng.Next(24, 96); $h = $rng.Next(18, 72)
+    $x = $rng.Next(0, $size - $w); $y = $rng.Next(0, $size - $h)
+    $shade = $rng.Next(20, 44)
+    $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, $shade, ($shade + 2), ($shade + 6)))
+    $g.FillRectangle($brush, $x, $y, $w, $h)
+    $brush.Dispose()
+}
+# Seams are LIGHTER than the panels here: a dark surface reads its detail off
+# highlights, not off shadows, and the sun grazing the dash has nothing to bite
+# on otherwise.
+$seamPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255, 62, 66, 76), 2)
+for ($i = 0; $i -lt 10; $i++) {
+    $x = $rng.Next(0, $size); $g.DrawLine($seamPen, $x, 0, $x, $size)
+    $y = $rng.Next(0, $size); $g.DrawLine($seamPen, 0, $y, $size, $y)
+}
+$glow = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 190, 116, 38))
+for ($i = 0; $i -lt 5; $i++) {
+    $g.FillRectangle($glow, $rng.Next(0, $size - 26), $rng.Next(0, $size - 4), 26, 4)
+}
+$glow.Dispose(); $seamPen.Dispose(); $g.Dispose()
+$bmp.Save("$repo\assets\textures\cockpit.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$bmp.Dispose()
+Write-Output "wrote cockpit.png"
+
 # --- shared glTF mesh emit helpers ---
 function New-MeshBuilder {
     [pscustomobject]@{
@@ -145,7 +181,11 @@ function Add-Vertex($mb, $px, $py, $pz, $nx, $ny, $nz, $u, $v) {
 }
 
 # Axis-aligned box centered at (cx,cy,cz) with full sizes (sx,sy,sz).
-function Add-Box($mb, $cx, $cy, $cz, $sx, $sy, $sz) {
+# `tile` is texture repeats per METER: 0 (the default, and what every caller
+# before Phase 8m passes) keeps the old 0..1 stretch across each face, which is
+# fine for a hull seen from hundreds of meters away and hopeless for a dash the
+# player's face is a meter from.
+function Add-Box($mb, $cx, $cy, $cz, $sx, $sy, $sz, $tile = 0) {
     $hx = $sx / 2; $hy = $sy / 2; $hz = $sz / 2
     $boxFaces = @(
         @{ n = @(0,0,1);  c = @(@((-$hx),(-$hy),$hz), @($hx,(-$hy),$hz), @($hx,$hy,$hz), @((-$hx),$hy,$hz)) },
@@ -155,12 +195,18 @@ function Add-Box($mb, $cx, $cy, $cz, $sx, $sy, $sz) {
         @{ n = @(0,1,0);  c = @(@((-$hx),$hy,$hz), @($hx,$hy,$hz), @($hx,$hy,(-$hz)), @((-$hx),$hy,(-$hz))) },
         @{ n = @(0,-1,0); c = @(@((-$hx),(-$hy),(-$hz)), @($hx,(-$hy),(-$hz)), @($hx,(-$hy),$hz), @((-$hx),(-$hy),$hz)) }
     )
+    # How wide and tall each face is, in the same order as $boxFaces, so a
+    # tiled UV can be sized from the surface rather than stretched over it.
+    $faceSpans = @(@($sx, $sy), @($sx, $sy), @($sz, $sy), @($sz, $sy), @($sx, $sz), @($sx, $sz))
     $cornerUvs = @(@(0,1), @(1,1), @(1,0), @(0,0))
-    foreach ($face in $boxFaces) {
+    for ($f = 0; $f -lt $boxFaces.Count; $f++) {
+        $face = $boxFaces[$f]
+        $spanU = if ($tile -gt 0) { $faceSpans[$f][0] * $tile } else { 1 }
+        $spanV = if ($tile -gt 0) { $faceSpans[$f][1] * $tile } else { 1 }
         $base = $mb.Positions.Count / 3
         for ($i = 0; $i -lt 4; $i++) {
             $p = $face.c[$i]
-            Add-Vertex $mb ($p[0] + $cx) ($p[1] + $cy) ($p[2] + $cz) $face.n[0] $face.n[1] $face.n[2] $cornerUvs[$i][0] $cornerUvs[$i][1]
+            Add-Vertex $mb ($p[0] + $cx) ($p[1] + $cy) ($p[2] + $cz) $face.n[0] $face.n[1] $face.n[2] ($cornerUvs[$i][0] * $spanU) ($cornerUvs[$i][1] * $spanV)
         }
         $mb.Indices.AddRange([uint16[]]@($base, ($base + 1), ($base + 2), $base, ($base + 2), ($base + 3)))
     }
@@ -189,6 +235,66 @@ function Add-Torus($mb, $majorRadius, $tubeRadius, $segU, $segV, $uTiles) {
             # CCW viewed from outside the tube.
             $mb.Indices.AddRange([uint16[]]@($a, ($a + 1), ($b + 1), $a, ($b + 1), $b))
         }
+    }
+}
+
+# Oriented box running from p0 to p1 with a width x height cross-section.
+# Add-Box is axis-aligned only and a canopy frame is nothing but slanted bars,
+# so this is what the cockpit is built out of. Backface culling is on in the
+# mesh pipeline (mesh_renderer.cpp), which is why every part is a closed solid
+# rather than a one-sided sheet.
+function Add-Beam($mb, $p0, $p1, $width, $height, $tile = 0) {
+    $dx = $p1[0] - $p0[0]; $dy = $p1[1] - $p0[1]; $dz = $p1[2] - $p0[2]
+    $len = [Math]::Sqrt(($dx * $dx) + ($dy * $dy) + ($dz * $dz))
+    if ($len -le 0) { return }
+    $dx /= $len; $dy /= $len; $dz /= $len
+    # Any reference not parallel to the beam; beams that run vertically take Z.
+    if ([Math]::Abs($dy) -gt 0.9) { $rx = 0.0; $ry = 0.0; $rz = 1.0 }
+    else { $rx = 0.0; $ry = 1.0; $rz = 0.0 }
+    $sx = ($dy * $rz) - ($dz * $ry)
+    $sy = ($dz * $rx) - ($dx * $rz)
+    $sz = ($dx * $ry) - ($dy * $rx)
+    $sl = [Math]::Sqrt(($sx * $sx) + ($sy * $sy) + ($sz * $sz))
+    $sx /= $sl; $sy /= $sl; $sz /= $sl
+    $ux = ($sy * $dz) - ($sz * $dy)
+    $uy = ($sz * $dx) - ($sx * $dz)
+    $uz = ($sx * $dy) - ($sy * $dx)
+
+    $hw = $width / 2; $hh = $height / 2
+    # Corners 0-3 at p0 and 4-7 at p1, each ring ordered (-s,-u) (+s,-u) (+s,+u) (-s,+u).
+    $c = @()
+    foreach ($end in @($p0, $p1)) {
+        foreach ($pair in @(@(-1, -1), @(1, -1), @(1, 1), @(-1, 1))) {
+            $s = $pair[0]; $u = $pair[1]
+            $c += , @((($end[0] + ($sx * $s * $hw)) + ($ux * $u * $hh)),
+                      (($end[1] + ($sy * $s * $hw)) + ($uy * $u * $hh)),
+                      (($end[2] + ($sz * $s * $hw)) + ($uz * $u * $hh)))
+        }
+    }
+    # (s,u,d) is left-handed here - cross(s,u) = -d - so each face's winding is
+    # picked to make cross(v1-v0, v2-v0) come out along its outward normal.
+    $beamFaces = @(
+        @{ n = @($dx, $dy, $dz);          i = @(4, 7, 6, 5) },
+        @{ n = @((-$dx), (-$dy), (-$dz)); i = @(0, 1, 2, 3) },
+        @{ n = @($sx, $sy, $sz);          i = @(1, 5, 6, 2) },
+        @{ n = @((-$sx), (-$sy), (-$sz)); i = @(0, 3, 7, 4) },
+        @{ n = @($ux, $uy, $uz);          i = @(3, 2, 6, 7) },
+        @{ n = @((-$ux), (-$uy), (-$uz)); i = @(0, 4, 5, 1) }
+    )
+    # Caps are (width x height); the four sides all run the beam's length.
+    $beamSpans = @(@($width, $height), @($width, $height), @($len, $height), @($len, $height),
+                   @($len, $width), @($len, $width))
+    $beamUvs = @(@(0, 1), @(1, 1), @(1, 0), @(0, 0))
+    for ($f = 0; $f -lt $beamFaces.Count; $f++) {
+        $face = $beamFaces[$f]
+        $spanU = if ($tile -gt 0) { $beamSpans[$f][0] * $tile } else { 1 }
+        $spanV = if ($tile -gt 0) { $beamSpans[$f][1] * $tile } else { 1 }
+        $base = $mb.Positions.Count / 3
+        for ($i = 0; $i -lt 4; $i++) {
+            $p = $c[$face.i[$i]]
+            Add-Vertex $mb $p[0] $p[1] $p[2] $face.n[0] $face.n[1] $face.n[2] ($beamUvs[$i][0] * $spanU) ($beamUvs[$i][1] * $spanV)
+        }
+        $mb.Indices.AddRange([uint16[]]@($base, ($base + 1), ($base + 2), $base, ($base + 2), ($base + 3)))
     }
 }
 
@@ -382,3 +488,72 @@ foreach ($tri in $tris) {
     Add-FlatTriangle $asteroid $corners[0] $corners[1] $corners[2] $uvs2[0] $uvs2[1] $uvs2[2]
 }
 Write-Gltf $asteroid 'asteroid' "$repo\assets\meshes\asteroid.gltf"
+
+# --- cockpit.gltf: the pilot's frame (Phase 8m), authored in SHIP space ---
+# The eye sits at kCockpitOffset in ship_camera.hpp and the hull is hidden in
+# cockpit view, so this mesh is the only thing the player ever sees of their own
+# ship. Every point below is written as an offset from the EYE and translated
+# into ship space here, so the seat and the frame around it can never drift
+# apart. The same eye-relative numbers appear as anchors and aperture edges in
+# engine/ui/include/sol/ui/cockpit_frame.hpp - change one, change both.
+$ex = 0.0; $ey = 0.8; $ez = -5.0
+$cockpit = New-MeshBuilder
+
+# Canopy frame. Pillar bases sit on the dash's front corners, lean inward as
+# they rise to the brow, then run back over the head to a rear hoop.
+$L0 = @(($ex - 0.98), ($ey - 0.30), ($ez - 1.00))   # left pillar base
+$R0 = @(($ex + 0.98), ($ey - 0.30), ($ez - 1.00))
+$L1 = @(($ex - 0.80), ($ey + 0.58), ($ez - 0.86))   # left brow corner
+$R1 = @(($ex + 0.80), ($ey + 0.58), ($ez - 0.86))
+$L2 = @(($ex - 0.66), ($ey + 0.66), ($ez + 0.34))   # left rail, aft
+$R2 = @(($ex + 0.66), ($ey + 0.66), ($ez + 0.34))
+$L3 = @(($ex - 0.92), ($ey - 0.34), ($ez + 0.34))   # left sill, aft
+$R3 = @(($ex + 0.92), ($ey - 0.34), ($ez + 0.34))
+
+# Everything in here is a meter or two from the player's face, so the panel
+# texture is tiled by physical size rather than stretched over each face -
+# a 2 m dash wearing one 256 px panel reads as a wall in a warehouse.
+$ct = 2.6                                                 # texture repeats per meter
+Add-Beam $cockpit $L0 $L1 0.075 0.075 $ct                 # A-pillars
+Add-Beam $cockpit $R0 $R1 0.075 0.075 $ct
+Add-Beam $cockpit $L1 $R1 0.070 0.070 $ct                 # brow
+Add-Beam $cockpit $L1 $L2 0.070 0.070 $ct                 # canopy rails
+Add-Beam $cockpit $R1 $R2 0.070 0.070 $ct
+Add-Beam $cockpit $L2 $R2 0.070 0.070 $ct                 # rear hoop
+Add-Beam $cockpit $L0 $L3 0.100 0.090 $ct                 # sills at the elbows
+Add-Beam $cockpit $R0 $R3 0.100 0.090 $ct
+Add-Beam $cockpit $L3 $L2 0.070 0.070 $ct                 # rear uprights
+Add-Beam $cockpit $R3 $R2 0.070 0.070 $ct
+
+# Instrument shelf. Its top face is the horizon the lower HUD sits on, and its
+# FRONT edge is what sets the aperture's bottom - the near edge is far steeper
+# and never the silhouette.
+Add-Box $cockpit $ex ($ey - 0.46) ($ez - 0.70) 2.00 0.28 0.62 $ct
+# Side panels, riding the sills at the pilot's elbows. Long and shallow rather
+# than blocky: a box out here reads as a crate floating beside the seat, which
+# is exactly what the first pass looked like.
+Add-Box $cockpit ($ex - 0.92) ($ey - 0.24) ($ez - 0.35) 0.22 0.18 0.90 $ct
+Add-Box $cockpit ($ex + 0.92) ($ey - 0.24) ($ez - 0.35) 0.22 0.18 0.90 $ct
+# Footwell, seat back, headrest, and a bulkhead so looking aft finds structure
+# rather than stars through a hole in the ship.
+Add-Box $cockpit $ex ($ey - 0.72) ($ez - 0.35) 1.20 0.08 1.20 $ct
+Add-Box $cockpit $ex ($ey - 0.10) ($ez + 0.28) 0.62 0.70 0.10 $ct
+Add-Box $cockpit $ex ($ey + 0.34) ($ez + 0.30) 0.34 0.22 0.10 $ct
+Add-Box $cockpit $ex ($ey + 0.10) ($ez + 0.40) 1.80 1.00 0.10 $ct
+
+# Nose ahead of the glass, tapering to a point near where ship.gltf's own nose
+# is. It emerges from behind the dash edge as it runs forward, which gives the
+# lower glass something for the world to sit against - but only just: the first
+# pass was wide enough and long enough to read as a runway.
+$nA = @(($ex - 0.34), ($ey - 0.68), ($ez - 1.00))
+$nB = @(($ex + 0.34), ($ey - 0.68), ($ez - 1.00))
+$nC = @(($ex + 0.34), ($ey - 0.46), ($ez - 1.00))
+$nD = @(($ex - 0.34), ($ey - 0.46), ($ez - 1.00))
+$nT = @($ex, ($ey - 0.54), ($ez - 1.95))
+Add-FlatTriangle $cockpit $nD $nC $nT @(0, 0) @(1, 0) @(0.5, 1)
+Add-FlatTriangle $cockpit $nB $nA $nT @(0, 0) @(1, 0) @(0.5, 1)
+Add-FlatTriangle $cockpit $nA $nD $nT @(0, 0) @(1, 0) @(0.5, 1)
+Add-FlatTriangle $cockpit $nC $nB $nT @(0, 0) @(1, 0) @(0.5, 1)
+Add-FlatTriangle $cockpit $nA $nB $nC @(0, 0) @(1, 0) @(1, 1)
+Add-FlatTriangle $cockpit $nA $nC $nD @(0, 0) @(1, 1) @(0, 1)
+Write-Gltf $cockpit 'cockpit' "$repo\assets\meshes\cockpit.gltf"

@@ -28,6 +28,7 @@
 #include "sol/platform/window.hpp"
 #include "sol/rhi/context.hpp"
 #include "sol/rhi/swapchain.hpp"
+#include "sol/ui/cockpit_frame.hpp"
 #include "sol/ui/dev_ui.hpp"
 #include "sol/ui/radar_projection.hpp"
 #include "sol/ui/screens.hpp"
@@ -102,8 +103,13 @@ public:
                                                const sol::platform::BindingTable& bindings,
                                                float mouseSensitivity, bool invertPitch)
     {
-        const bool steering = game::held(bindings, game::Action::LookAround);
-        window.setCursorLocked(steering);
+        // Free-look owns the mouse while it is held (Phase 8m): the player is
+        // turning their head, not the ship. Both modes want the cursor locked,
+        // and this class is the one owner of that lock, so it decides here
+        // rather than leaving main.cpp to overwrite the flag later in the frame.
+        const bool freeLooking = game::held(bindings, game::Action::FreeLook);
+        const bool steering = game::held(bindings, game::Action::LookAround) && !freeLooking;
+        window.setCursorLocked(steering || freeLooking);
         if (steering) {
             const sol::core::Vec2 delta = window.mouseDelta();
             // Phase 8k: the sensitivity slider has been in the settings menu
@@ -285,7 +291,10 @@ int main(int argc, char** argv)
     ShipInputMapper inputMapper;
     game::ShipCamera shipCamera;
     game::FlyCamera freeCamera;
-    game::CameraMode cameraMode = game::CameraMode::ThirdPerson;
+    // The cockpit is where the game starts (Phase 8m): it is the view the whole
+    // HUD is now mounted in, and a player who never presses the camera key
+    // should be sitting in it.
+    game::CameraMode cameraMode = game::CameraMode::Cockpit;
     std::vector<game::RenderInstance> renderInstances;
     std::vector<game::ParticleInstance> particleInstances;
     game::SceneInfo sceneInfo;
@@ -439,12 +448,15 @@ int main(int argc, char** argv)
             window.setCursorLocked(false);
         }
 
-        // Camera mode cycle: first person -> chase -> free.
+        // Camera mode cycle: cockpit -> chase -> free.
         if (gameplayPressed(game::Action::CycleCamera)) {
             switch (cameraMode) {
-            case game::CameraMode::FirstPerson:
+            case game::CameraMode::Cockpit:
                 cameraMode = game::CameraMode::ThirdPerson;
                 shipCamera.snapTo(world.shipRenderTransform(simLoop.alpha()));
+                // Leaving the seat takes the head with it: coming back should
+                // find the eye down the nose rather than wherever it was left.
+                shipCamera.snapLookAhead();
                 break;
             case game::CameraMode::ThirdPerson:
                 cameraMode = game::CameraMode::Free;
@@ -452,7 +464,7 @@ int main(int argc, char** argv)
                     shipCamera.thirdPerson(world.shipRenderTransform(simLoop.alpha()), 0.0f).position);
                 break;
             case game::CameraMode::Free:
-                cameraMode = game::CameraMode::FirstPerson;
+                cameraMode = game::CameraMode::Cockpit;
                 break;
             }
         }
@@ -648,10 +660,20 @@ int main(int argc, char** argv)
         const float simAlpha = simLoop.alpha();
 
         const game::Transform shipTransform = world.shipRenderTransform(simAlpha);
+
+        // Free-look (Phase 8m): only in the cockpit, and only while gameplay
+        // owns the keyboard — a menu or the bookmark prompt stops the head the
+        // same way it stops the ship. Released, the eye eases back on its own,
+        // so this runs every frame rather than only while the key is down.
+        const bool freeLook = gameplayLive && cameraMode == game::CameraMode::Cockpit &&
+                              game::held(binds, game::Action::FreeLook);
+        shipCamera.updateLook(window.mouseDelta(), freeLook, deltaSeconds,
+                              settings.mouseSensitivity, settings.invertPitch);
+
         game::CameraFrame camera;
         switch (cameraMode) {
-        case game::CameraMode::FirstPerson:
-            camera = shipCamera.firstPerson(shipTransform);
+        case game::CameraMode::Cockpit:
+            camera = shipCamera.cockpit(shipTransform);
             break;
         case game::CameraMode::ThirdPerson:
             camera = shipCamera.thirdPerson(shipTransform, deltaSeconds);
@@ -659,6 +681,33 @@ int main(int argc, char** argv)
         case game::CameraMode::Free:
             camera = freeCamera.frame();
             break;
+        }
+        const bool inCockpit = cameraMode == game::CameraMode::Cockpit;
+
+        // Where the HUD is mounted (Phase 8m), computed as soon as the camera
+        // exists because the pick below has to be answered against the frame
+        // the disc and the panels are actually drawn from. In the cockpit the
+        // mount points are projected out of the frame, so they follow the dash
+        // at any field of view, window size or UI scale and swing with the
+        // head; outside it the frame answers with the screen corners the HUD
+        // used before there was a cockpit, and chase view is unchanged.
+        sol::ui::HudFrame hudFrame;
+        sol::core::Vec3 boresightCamera = {0.0f, 0.0f, -1.0f};
+        {
+            const float hudScale = settings.uiScale > 0.0f ? settings.uiScale : 1.0f;
+            const sol::core::Vec2 hudScreen = {
+                static_cast<float>(swapchain.extent().width) / hudScale,
+                static_cast<float>(swapchain.extent().height) / hudScale};
+            const float tanHalfFov = std::tan(game::kCameraVerticalFov * 0.5f);
+            hudFrame = inCockpit
+                           ? sol::ui::cockpitFrame(shipCamera.headOffset(), hudScreen, tanHalfFov)
+                           : sol::ui::screenFrame(
+                                 hudScreen, game::kHudMargin,
+                                 sol::ui::radarCenter(hudScreen, game::kHudMargin));
+            // The nose, in camera space. An identity head offset makes this
+            // exactly (0,0,-1), which is what it was before free-look existed.
+            boresightCamera =
+                rotate(conjugate(shipCamera.headOffset()), sol::core::Vec3{0.0f, 0.0f, -1.0f});
         }
 
         // Click-to-select (Phase 8j). The view frame is published as soon as
@@ -673,6 +722,8 @@ int main(int argc, char** argv)
             view.screenSize = {static_cast<float>(swapchain.extent().width) / pickScale,
                                static_cast<float>(swapchain.extent().height) / pickScale};
             view.tanHalfFovY = std::tan(game::kCameraVerticalFov * 0.5f);
+            view.hud = hudFrame;
+            view.boresightCamera = boresightCamera;
             view.valid = true;
             world.setViewFrame(view);
 
@@ -690,8 +741,21 @@ int main(int argc, char** argv)
             }
         }
 
-        const bool includeShip = cameraMode != game::CameraMode::FirstPerson;
-        world.buildRenderInstances(simAlpha, includeShip, renderInstances);
+        // The hull stays hidden in the cockpit: the eye sits 5 m up the nose of
+        // a 12 m faceted wedge with no interior, so drawing ship.gltf around it
+        // would park the camera inside a solid shell. Anything of the ship that
+        // should be visible from the seat is authored into cockpit.gltf, which
+        // is the only mesh that knows where the seat is.
+        world.buildRenderInstances(simAlpha, !inCockpit, renderInstances);
+        if (inCockpit) {
+            // Attached to the SHIP, not the camera. That is what lets free-look
+            // look around the frame instead of dragging it along, and what puts
+            // the moving sun on the dash.
+            renderInstances.push_back({.position = shipTransform.position,
+                                       .rotation = shipTransform.orientation,
+                                       .scale = {1.0f, 1.0f, 1.0f},
+                                       .model = game::ModelId::Cockpit});
+        }
         world.buildParticleInstances(simAlpha, particleInstances);
 
         sceneInfo.sun = {world.sun().position, world.sun().radius, 0};
@@ -794,10 +858,15 @@ int main(int argc, char** argv)
         hud.cruise = world.shipInput().cruise;
         hud.autopilot = world.autopilotActive();
         switch (cameraMode) {
-        case game::CameraMode::FirstPerson: hud.cameraMode = "COCKPIT"; break;
+        case game::CameraMode::Cockpit: hud.cameraMode = "COCKPIT"; break;
         case game::CameraMode::ThirdPerson: hud.cameraMode = "CHASE"; break;
         case game::CameraMode::Free: hud.cameraMode = "FREECAM"; break;
         }
+        // The surface the HUD hangs off, and where the nose is on it (Phase 8m).
+        // Both were settled above, before the pick, so the panels the player
+        // sees and the click that answers them read one frame.
+        hud.frame = hudFrame;
+        hud.boresightDirectionCamera = boresightCamera;
         hud.targetName = target.nav.name.c_str();
         hud.targetDistanceMeters = targetDistance;
         hud.closingSpeedMetersPerSecond =

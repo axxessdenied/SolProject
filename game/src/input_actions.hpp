@@ -55,6 +55,7 @@ enum class Action : std::uint32_t
     Fire,
     Select,
     LookAround,
+    FreeLook,
 
     Count,
 };

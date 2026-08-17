@@ -166,9 +166,14 @@ PickResult pickTarget(const SpaceWorld& world, Vec2 cursor)
     }
 
     // The disc first: it is drawn over the world, so a click inside it is a
-    // click on the radar even when something is behind it in space.
-    const Vec2 discCenter = sol::ui::radarCenter(view.screenSize, kHudMargin);
-    if (sol::ui::insideDisc(cursor, discCenter, sol::ui::kRadarRadius)) {
+    // click on the radar even when something is behind it in space. Its centre
+    // comes off the frame the HUD was built from rather than being recomputed
+    // here — since Phase 8m the disc can be bolted to a cockpit dash, and the
+    // draw and the hit test have to read one number or they drift apart the
+    // moment the head moves.
+    const Vec2 discCenter = view.hud.centreConsole.position;
+    if (view.hud.centreConsole.visible &&
+        sol::ui::insideDisc(cursor, discCenter, sol::ui::kRadarRadius)) {
         std::vector<sol::ui::RadarContact> contacts;
         fillRadarContacts(world, contacts);
         const float range = sol::ui::radarRange(sol::ui::kRadarRangeMeters);
@@ -189,6 +194,13 @@ PickResult pickTarget(const SpaceWorld& world, Vec2 cursor)
         return {PickRoute::Radar, contacts[hit].selection};
     }
 
+    // A click on the cockpit itself selects nothing (Phase 8m). The player
+    // cannot see through the dash, so it must not act as though they could —
+    // the same ruling the disc above gets, for the same reason.
+    if (view.hud.cockpit && !view.hud.insideAperture(cursor)) {
+        return {};
+    }
+
     std::vector<sol::ui::PickCandidate> candidates;
     fillPickCandidates(world, view, candidates);
     const Vec2 center = {view.screenSize.x * 0.5f, view.screenSize.y * 0.5f};
@@ -206,7 +218,17 @@ PickResult pickBoresight(const SpaceWorld& world)
     if (!view.valid) {
         return {};
     }
-    return pickTarget(world, {view.screenSize.x * 0.5f, view.screenSize.y * 0.5f});
+    // Where the NOSE is on screen, which is the middle of it until Phase 8m's
+    // free-look turns the head. A player holding the fire button and clicking
+    // means "that one, the thing I am pointing at" — not "the thing in the
+    // middle of the window", which with the head turned is a different object.
+    const Vec2 center = {view.screenSize.x * 0.5f, view.screenSize.y * 0.5f};
+    const float focal = sol::ui::focalLength(view.screenSize.y, view.tanHalfFovY);
+    const sol::ui::ScreenPoint nose = sol::ui::screenPoint(view.boresightCamera, center, focal);
+    if (!nose.inFront) {
+        return {};
+    }
+    return pickTarget(world, nose.position);
 }
 
 bool selectPicked(SpaceWorld& world, const PickResult& result)

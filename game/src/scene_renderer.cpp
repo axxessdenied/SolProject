@@ -29,6 +29,9 @@ constexpr std::uint64_t kStarfieldSeed = 1337;
 constexpr float kSunIntensity = 3.2f;
 constexpr float kAmbient = 0.012f;
 constexpr float kSkyIntensity = 1.0f;
+// Cabin light (Phase 8m): unlit albedo added to the cockpit only, so the side
+// of the frame the star is not on still reads.
+constexpr float kCockpitEmissive = 0.10f;
 
 } // namespace
 
@@ -60,23 +63,29 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
     assets::MeshData stationData;
     assets::MeshData shipData;
     assets::MeshData asteroidData;
+    assets::MeshData cockpitData;
     assets::TextureData checkerData;
     assets::TextureData hullData;
+    assets::TextureData cockpitTextureData;
     const std::string cookedBase = cookedDirectory;
     if (!assets::loadMesh((cookedBase + "cube.smesh").c_str(), cubeData) ||
         !assets::loadMesh((cookedBase + "station.smesh").c_str(), stationData) ||
         !assets::loadMesh((cookedBase + "ship.smesh").c_str(), shipData) ||
         !assets::loadMesh((cookedBase + "asteroid.smesh").c_str(), asteroidData) ||
+        !assets::loadMesh((cookedBase + "cockpit.smesh").c_str(), cockpitData) ||
         !assets::loadTexture((cookedBase + "checker.stex").c_str(), checkerData) ||
-        !assets::loadTexture((cookedBase + "hull.stex").c_str(), hullData)) {
+        !assets::loadTexture((cookedBase + "hull.stex").c_str(), hullData) ||
+        !assets::loadTexture((cookedBase + "cockpit.stex").c_str(), cockpitTextureData)) {
         return false;
     }
     m_cubeMesh = m_meshRenderer.createMesh(cubeData);
     m_stationMesh = m_meshRenderer.createMesh(stationData);
     m_shipMesh = m_meshRenderer.createMesh(shipData);
     m_asteroidMesh = m_meshRenderer.createMesh(asteroidData);
+    m_cockpitMesh = m_meshRenderer.createMesh(cockpitData);
     m_checkerTexture = m_meshRenderer.createTexture(checkerData);
     m_hullTexture = m_meshRenderer.createTexture(hullData);
+    m_cockpitTexture = m_meshRenderer.createTexture(cockpitTextureData);
 
     // Game UI font: one R8 coverage atlas, viewed as white with the coverage
     // in alpha so it shares the UI shader with solid fills.
@@ -179,10 +188,12 @@ void SceneRenderer::shutdown()
     rhi::destroyImage(*m_context, m_hdrColor);
     m_meshRenderer.destroyTexture(m_checkerTexture);
     m_meshRenderer.destroyTexture(m_hullTexture);
+    m_meshRenderer.destroyTexture(m_cockpitTexture);
     m_meshRenderer.destroyMesh(m_cubeMesh);
     m_meshRenderer.destroyMesh(m_stationMesh);
     m_meshRenderer.destroyMesh(m_shipMesh);
     m_meshRenderer.destroyMesh(m_asteroidMesh);
+    m_meshRenderer.destroyMesh(m_cockpitMesh);
     m_meshRenderer.shutdown();
     m_skyRenderer.shutdown();
     m_impostorRenderer.shutdown();
@@ -234,6 +245,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
 
         const renderer::GpuMesh* mesh = &m_cubeMesh;
         const renderer::GpuTexture* texture = &m_checkerTexture;
+        float emissive = 0.0f;
         switch (instance.model) {
         case ModelId::Cube: break;
         case ModelId::Station:
@@ -248,8 +260,17 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
             mesh = &m_asteroidMesh;
             texture = &m_hullTexture;
             break;
+        case ModelId::Cockpit:
+            mesh = &m_cockpitMesh;
+            texture = &m_cockpitTexture;
+            // Interior lighting. kAmbient is 1.2%, which is right for a hull
+            // in vacuum and pitch black for a room the player is sitting in -
+            // the sun still sweeps across the dash on top of this, which is
+            // the whole reason the cockpit is geometry rather than paint.
+            emissive = kCockpitEmissive;
+            break;
         }
-        m_meshRenderer.draw(commandBuffer, *mesh, *texture, viewProjection * model, model);
+        m_meshRenderer.draw(commandBuffer, *mesh, *texture, viewProjection * model, model, emissive);
         ++m_drawCallCount;
     }
 

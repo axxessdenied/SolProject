@@ -89,6 +89,12 @@ const ActionInfo kActions[] = {
      InputChord::ofMouse(MouseButton::Left)},
     {Action::LookAround, ActionGroup::Views, "look_around", "Mouse Steering",
      InputChord::ofMouse(MouseButton::Right)},
+    // Phase 8m. A key rather than a button because all three mouse buttons are
+    // spoken for above, and Z rather than Left Alt because Windows routes Alt
+    // through WM_SYSKEYDOWN and the window menu - the same message path Phase
+    // 8h had to leave falling through to DefWindowProc for Alt+F4.
+    {Action::FreeLook, ActionGroup::Views, "free_look", "Free Look",
+     InputChord::ofKey(Key::Z)},
 };
 
 static_assert(sizeof(kActions) / sizeof(kActions[0]) == kActionCount,

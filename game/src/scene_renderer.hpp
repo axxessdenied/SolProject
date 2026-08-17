@@ -44,6 +44,10 @@ enum class ModelId : std::uint32_t
     Station,
     Ship,
     Asteroid, // Phase 8f: authored at radius 1 m, scaled per rock
+    // Phase 8m: the player's own cockpit, authored in ship space around the
+    // eye and drawn at the ship's transform - attached to the SHIP, not the
+    // camera, so free-look looks around it and the sun crosses the dash.
+    Cockpit,
 };
 
 // One drawable produced by the sim for the current frame; positions are
@@ -169,8 +173,10 @@ private:
     sol::renderer::GpuMesh m_stationMesh;
     sol::renderer::GpuMesh m_shipMesh;
     sol::renderer::GpuMesh m_asteroidMesh;
+    sol::renderer::GpuMesh m_cockpitMesh;
     sol::renderer::GpuTexture m_checkerTexture;
     sol::renderer::GpuTexture m_hullTexture;
+    sol::renderer::GpuTexture m_cockpitTexture;
     sol::rhi::Image m_depth;
     sol::rhi::Image m_hdrColor;
 

@@ -56,6 +56,51 @@ struct RadarContact
     std::uint32_t selection = 0;
 };
 
+// --- The surface the HUD is drawn on (Phase 8m) -------------------------------
+
+// One projected mount point on the cockpit. `visible` is false once the head
+// has turned far enough that the anchor is behind the eye, where the
+// projection would mirror it onto the wrong side of the screen.
+struct HudAnchorPoint
+{
+    core::Vec2 position;
+    bool visible = false;
+};
+
+// Where the HUD hangs. In the cockpit these are points on the frame, projected
+// fresh every frame by cockpit_frame.hpp; in chase and free cameras they are
+// the screen corners the HUD used before there was a cockpit, so one layout
+// path serves both and the external views stay pixel-identical.
+struct HudFrame
+{
+    // The HUD reads this only to decide whether anything can be occluded,
+    // never to pick a layout.
+    bool cockpit = false;
+
+    HudAnchorPoint leftConsole;   // flight panel, bottom-left corner
+    HudAnchorPoint rightConsole;  // power block, bottom-right corner
+    HudAnchorPoint centreConsole; // radar disc, centre
+
+    // The glass, as an axis-aligned rect. World-referenced HUD elements clip
+    // to it and the off-screen target arrow rides its rim. Axis-aligned is an
+    // approximation of an opening that is not - DrawList::pushClip takes a
+    // rect - and it errs inward, so a marker stops short of the frame rather
+    // than crossing it. Empty means there is no glass in front of the player.
+    core::Vec2 apertureMin;
+    core::Vec2 apertureMax;
+
+    [[nodiscard]] constexpr bool apertureEmpty() const
+    {
+        return apertureMax.x <= apertureMin.x || apertureMax.y <= apertureMin.y;
+    }
+
+    [[nodiscard]] constexpr bool insideAperture(core::Vec2 point) const
+    {
+        return point.x >= apertureMin.x && point.x < apertureMax.x && point.y >= apertureMin.y &&
+               point.y < apertureMax.y;
+    }
+};
+
 // Everything the flight HUD draws.
 struct FlightHud
 {
@@ -151,6 +196,16 @@ struct FlightHud
     const char* jumpKey = "";
     const char* interactKey = ""; // dock and salvage share it
     const char* scanKey = "";
+
+    // The cockpit (Phase 8m). `frame` says where the panels mount and how much
+    // glass there is; the HUD reads nothing else about the view.
+    HudFrame frame;
+    // Where the ship's nose points, in camera space. Until free-look existed
+    // this was always (0,0,-1) and the crosshair could simply be drawn at the
+    // centre of the screen; with the head turned it is not, and a crosshair
+    // that stayed centred would be telling the player they are aiming
+    // somewhere they are not.
+    core::Vec3 boresightDirectionCamera = {0.0f, 0.0f, -1.0f};
 };
 
 // One commodity line on the station's Trade tab. The game fills rows from the

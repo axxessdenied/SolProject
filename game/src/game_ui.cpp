@@ -176,22 +176,32 @@ float drawChip(DrawList& list, const Font& font, const FontStyleRecord& style, V
 using Projection = sol::ui::ScreenPoint;
 using sol::ui::screenPoint;
 
-// Boresight crosshair, shield facings, and the screen-edge flash while hits are
-// landing (decisions/002: fore arc above, aft arc below).
-void drawReticle(DrawList& list, Vec2 center, Vec2 screenSize, const sol::ui::FlightHud& hud)
+// The flash while hits are landing. It rings the edge of what the player can
+// see out of, which in a cockpit is the canopy opening and everywhere else is
+// the screen - a red band across the dash would read as a drawing bug.
+void drawDamageFlash(DrawList& list, const Rect& view, const sol::ui::FlightHud& hud)
 {
     const float flash = clamp01(hud.damageFlash);
-    if (flash > 0.0f) {
-        // Nested outlines fake a gradient inward from the screen edge; a single
-        // band would read as a hard red frame.
-        for (int ring = 0; ring < 4; ++ring) {
-            const float inset = static_cast<float>(ring) * 10.0f;
-            const float alpha = 0.30f * flash * (1.0f - static_cast<float>(ring) * 0.25f);
-            list.addRectOutline({{inset, inset}, {screenSize.x - inset, screenSize.y - inset}},
-                                kReticleHit.withAlpha(alpha), 10.0f);
-        }
+    if (flash <= 0.0f) {
+        return;
     }
+    // Nested outlines fake a gradient inward from the edge; a single band would
+    // read as a hard red frame.
+    for (int ring = 0; ring < 4; ++ring) {
+        const float inset = static_cast<float>(ring) * 10.0f;
+        const float alpha = 0.30f * flash * (1.0f - static_cast<float>(ring) * 0.25f);
+        list.addRectOutline({{view.min.x + inset, view.min.y + inset},
+                             {view.max.x - inset, view.max.y - inset}},
+                            kReticleHit.withAlpha(alpha), 10.0f);
+    }
+}
 
+// Boresight crosshair and shield facings (decisions/002: fore arc above, aft
+// arc below). `center` is where the ship's nose is on screen, which is the
+// middle of the view until Phase 8m's free-look turns the head.
+void drawReticle(DrawList& list, Vec2 center, const sol::ui::FlightHud& hud)
+{
+    const float flash = clamp01(hud.damageFlash);
     const Color color = mix(kReticle, kReticleHit, flash);
     list.addCircle(center, 10.0f, color, 1.5f, 24);
     list.addLine({center.x - 18.0f, center.y}, {center.x - 10.0f, center.y}, color, 1.5f);
@@ -233,16 +243,19 @@ void drawLeadMarker(DrawList& list, Vec2 center, float focal, const sol::ui::Fli
 }
 
 // Diamond over an on-screen target with its range beside it; an edge arrow
-// pointing the way when it is off screen or behind.
-void drawTargetMarker(DrawList& list, const Styles& styles, Vec2 center, Vec2 screenSize, float focal,
-                      const sol::ui::FlightHud& hud)
+// pointing the way when it is off view or behind. `view` is what the player can
+// see out of - the canopy opening in a cockpit, the whole screen otherwise - so
+// a target hidden behind the dash gets an arrow rather than a diamond drawn on
+// the instrument shelf.
+void drawTargetMarker(DrawList& list, const Styles& styles, Vec2 center, const Rect& view,
+                      float focal, bool cockpit, const sol::ui::FlightHud& hud)
 {
     const Projection target = screenPoint(hud.targetDirectionCamera, center, focal);
     constexpr float kEdgeMargin = 24.0f;
-    const bool onScreen = target.inFront && target.position.x > kEdgeMargin &&
-                          target.position.x < (screenSize.x - kEdgeMargin) &&
-                          target.position.y > kEdgeMargin &&
-                          target.position.y < (screenSize.y - kEdgeMargin);
+    const bool onScreen = target.inFront && target.position.x > (view.min.x + kEdgeMargin) &&
+                          target.position.x < (view.max.x - kEdgeMargin) &&
+                          target.position.y > (view.min.y + kEdgeMargin) &&
+                          target.position.y < (view.max.y - kEdgeMargin);
     if (onScreen) {
         list.addCircle(target.position, 14.0f, kTargetMark, 2.0f, 4); // a 4-segment ring is a diamond
         char distance[32] = {};
@@ -261,7 +274,26 @@ void drawTargetMarker(DrawList& list, const Styles& styles, Vec2 center, Vec2 sc
     const float length = std::sqrt(x * x + y * y);
     const float nx = length > 0.0001f ? x / length : 0.0f;
     const float ny = length > 0.0001f ? y / length : -1.0f;
-    const float ringRadius = std::min(screenSize.x, screenSize.y) * 0.38f;
+
+    // Where the arrow sits. Outside a cockpit it rides a ring about the
+    // crosshair, exactly as it has since Phase 8d. Inside one it rides the rim
+    // of the opening instead, because the rim is where the view actually stops
+    // - a ring would put the arrow behind a pillar on one bearing and out in
+    // open glass on another.
+    float reach = std::min(view.width(), view.height()) * 0.38f;
+    if (cockpit) {
+        // Distance along (nx, ny) from the view centre to the edge of the
+        // opening, pulled in far enough for the arrow to sit clear of the frame.
+        const Vec2 viewCentre = {(view.min.x + view.max.x) * 0.5f,
+                                 (view.min.y + view.max.y) * 0.5f};
+        const float halfWidth = view.width() * 0.5f;
+        const float halfHeight = view.height() * 0.5f;
+        const float toSide = std::abs(nx) > 0.0001f ? halfWidth / std::abs(nx) : 1.0e6f;
+        const float toCap = std::abs(ny) > 0.0001f ? halfHeight / std::abs(ny) : 1.0e6f;
+        reach = std::max(std::min(toSide, toCap) - 18.0f, 0.0f);
+        center = viewCentre;
+    }
+    const float ringRadius = reach;
     const Vec2 tip = {center.x + nx * ringRadius, center.y + ny * ringRadius};
     const Vec2 back = {center.x + nx * (ringRadius - 16.0f), center.y + ny * (ringRadius - 16.0f)};
     const Vec2 side = {-ny * 7.0f, nx * 7.0f};
@@ -269,12 +301,14 @@ void drawTargetMarker(DrawList& list, const Styles& styles, Vec2 center, Vec2 sc
                      kTargetMark);
 }
 
-// Bottom left: where the ship is, how fast, and what it has left.
-void drawFlightPanel(DrawList& list, const Font& font, const Styles& styles, Vec2 screenSize,
+// Left console: where the ship is, how fast, and what it has left. Pinned by
+// its bottom-left corner to the frame's left mount point, which is the screen
+// corner outside a cockpit and a point on the dash inside one (Phase 8m).
+void drawFlightPanel(DrawList& list, const Font& font, const Styles& styles, Vec2 anchor,
                      const sol::ui::FlightHud& hud, Rect& panelOut)
 {
-    const Rect panel = {{kMargin, screenSize.y - kMargin - kFlightPanelHeight},
-                        {kMargin + kFlightPanelWidth, screenSize.y - kMargin}};
+    const Rect panel = {{anchor.x, anchor.y - kFlightPanelHeight},
+                        {anchor.x + kFlightPanelWidth, anchor.y}};
     panelOut = panel;
     list.addRoundedRect(panel, 8.0f, kPanel);
     list.addRoundedRect({{panel.min.x, panel.min.y}, {panel.min.x + 3.0f, panel.max.y}}, 1.5f, kAccent);
@@ -334,14 +368,14 @@ void drawFlightPanel(DrawList& list, const Font& font, const Styles& styles, Vec
     list.popClip();
 }
 
-// Bottom right: power distribution (decisions/003) and weapon capacitor.
-void drawPowerPanel(DrawList& list, const Styles& styles, Vec2 screenSize,
+// Right console: power distribution (decisions/003) and weapon capacitor.
+// Pinned by its bottom-right corner, the mirror of the flight panel.
+void drawPowerPanel(DrawList& list, const Styles& styles, Vec2 anchor,
                     const sol::ui::FlightHud& hud)
 {
     const float rows = 4.0f; // WEP / ENG / SYS / CAP
     const float height = kPadding + rows * 20.0f + kPadding * 0.5f;
-    const Rect panel = {{screenSize.x - kMargin - kPowerPanelWidth, screenSize.y - kMargin - height},
-                        {screenSize.x - kMargin, screenSize.y - kMargin}};
+    const Rect panel = {{anchor.x - kPowerPanelWidth, anchor.y - height}, {anchor.x, anchor.y}};
     list.addRoundedRect(panel, 8.0f, kPanel);
     list.pushClip(panel);
 
@@ -396,19 +430,24 @@ void drawPowerPanel(DrawList& list, const Styles& styles, Vec2 screenSize,
     list.popClip();
 }
 
-// Top right: who is targeted, whose side they are on, and what shape they are in.
-void drawTargetReadout(DrawList& list, const Styles& styles, Vec2 screenSize,
+// Top right of the view: who is targeted, whose side they are on, and what
+// shape they are in. This one has no console to sit on - three hundred pixels
+// do not fit on the strip of dash left beside the pillars - so it rides the
+// glass, pinned to the top-right of the opening and inset by the HUD margin.
+// Outside a cockpit the opening is the whole screen, which is the top-right
+// corner it has occupied since Phase 8d.
+void drawTargetReadout(DrawList& list, const Styles& styles, const Rect& panelArea,
                        const sol::ui::FlightHud& hud, Rect& panelOut)
 {
-    panelOut = {{screenSize.x - kMargin, kMargin}, {screenSize.x - kMargin, kMargin}};
+    panelOut = {{panelArea.max.x, panelArea.min.y}, {panelArea.max.x, panelArea.min.y}};
     if (!has(hud.targetName)) {
         return;
     }
     const bool showFaction = has(hud.targetFaction);
     const float height = kPadding + 26.0f + (showFaction ? 20.0f : 0.0f) + 20.0f +
                          (hud.targetIsShip ? 3.0f * 18.0f + 4.0f : 0.0f) + kPadding * 0.5f;
-    const Rect panel = {{screenSize.x - kMargin - kTargetPanelWidth, kMargin},
-                        {screenSize.x - kMargin, kMargin + height}};
+    const Rect panel = {{panelArea.max.x - kTargetPanelWidth, panelArea.min.y},
+                        {panelArea.max.x, panelArea.min.y + height}};
     panelOut = panel;
     list.addRoundedRect(panel, 8.0f, kPanel);
     list.addRoundedRect({{panel.max.x - 3.0f, panel.min.y}, {panel.max.x, panel.max.y}}, 1.5f,
@@ -550,15 +589,17 @@ using sol::ui::kRadarStalkLimit;
     return kNeutral;
 }
 
-// Bottom centre: the contact disc. Top of the disc is dead ahead and it turns
+// Centre console: the contact disc. Top of the disc is dead ahead and it turns
 // with the ship, so a dot's position is a heading to steer, not a map bearing.
-// Sits between the flight panel (bottom left) and the power panel (bottom
-// right), which is the only bottom space neither of them claims.
-void drawRadar(DrawList& list, const Font& font, const Styles& styles, Vec2 screenSize,
+// Sits between the flight panel and the power block, which is the only space
+// neither of them claims - on the screen's bottom edge outside a cockpit, and
+// on the centre of the dash inside one. The centre comes in from the frame
+// rather than being recomputed, because Phase 8j made a blip clickable and the
+// draw and the hit test have to read one number.
+void drawRadar(DrawList& list, const Font& font, const Styles& styles, Vec2 center,
                const sol::ui::FlightHud& hud)
 {
     constexpr float kRangeLabelBand = sol::ui::kRadarLabelBand;
-    const Vec2 center = sol::ui::radarCenter(screenSize, kMargin);
 
     // The disc itself: a filled ground, a rim, and one intermediate ring so
     // the log compression has something to be read against.
@@ -634,7 +675,7 @@ void drawRadar(DrawList& list, const Font& font, const Styles& styles, Vec2 scre
 // many contacts are still unidentified here. It sits under the target readout
 // because it is the same kind of information - what the sensors have found -
 // and because the top left belongs to the dev overlay in dev builds.
-void drawScannerPanel(DrawList& list, const Styles& styles, Vec2 screenSize,
+void drawScannerPanel(DrawList& list, const Styles& styles, const Rect& panelArea,
                       const Rect& targetPanel, const sol::ui::FlightHud& hud)
 {
     const bool scanning = has(hud.scanTarget);
@@ -652,8 +693,7 @@ void drawScannerPanel(DrawList& list, const Styles& styles, Vec2 screenSize,
                        + (has(hud.routeNextHop) ? 1.0f : 0.0f);
     const float height = kPadding + rows * 20.0f + kPadding * 0.5f;
     const float top = targetPanel.max.y + (targetPanel.height() > 0.0f ? 8.0f : 0.0f);
-    const Rect panel = {{screenSize.x - kMargin - kWidth, top},
-                        {screenSize.x - kMargin, top + height}};
+    const Rect panel = {{panelArea.max.x - kWidth, top}, {panelArea.max.x, top + height}};
     list.addRoundedRect(panel, 8.0f, kPanel);
     list.pushClip({{panel.min.x + kPadding, panel.min.y}, {panel.max.x - kPadding, panel.max.y}});
 
@@ -795,22 +835,85 @@ void buildFlightUi(DrawList& list, const Font& font, Vec2 screenSize, const sol:
     const Vec2 center = {screenSize.x * 0.5f, screenSize.y * 0.5f};
     const float focal = sol::ui::focalLength(screenSize.y, hud.tanHalfFovY);
 
-    drawReticle(list, center, screenSize, hud);
-    drawScanRing(list, center, hud);
+    // Where the HUD is mounted (Phase 8m). Outside a cockpit the frame answers
+    // with the screen corners and a full-screen opening, so everything below
+    // lays out exactly where it did before there was a cockpit - there is one
+    // layout path, not two.
+    const sol::ui::HudFrame& frame = hud.frame;
+    const Rect view = {frame.apertureMin, frame.apertureMax};
+    if (view.empty()) {
+        return; // no glass in front of the player: the head is turned right round
+    }
+    // Panels that ride the glass sit inside it by the same margin they used to
+    // sit inside the screen by.
+    const Rect panelArea = {{view.min.x + kMargin, view.min.y + kMargin},
+                            {view.max.x - kMargin, view.max.y - kMargin}};
+
+    // Where the ship's nose is on screen. Outside a cockpit the crosshair stays
+    // in the middle of the screen: in chase view the boresight is ~60 px above
+    // it (the Phase 8j lesson) and the reticle being the aim point is a
+    // convention the pick already agrees with. In a cockpit the head can turn,
+    // and a crosshair that stayed centred would be telling the player they are
+    // aiming somewhere they are not.
+    Vec2 aim = center;
+    bool aimVisible = true;
+    if (frame.cockpit) {
+        const Projection nose = screenPoint(hud.boresightDirectionCamera, center, focal);
+        aim = nose.position;
+        aimVisible = nose.inFront && frame.insideAperture(nose.position);
+    }
+
+    drawDamageFlash(list, view, hud);
+
+    // Everything that points at something outside the ship is clipped to the
+    // opening, so no world marker is ever drawn on the instrument shelf.
+    list.pushClip(view);
+    if (aimVisible) {
+        drawReticle(list, aim, hud);
+        drawScanRing(list, aim, hud);
+        drawPrompts(list, font, styles, aim, hud);
+    }
     drawLeadMarker(list, center, focal, hud);
     if (has(hud.targetName)) {
-        drawTargetMarker(list, styles, center, screenSize, focal, hud);
+        drawTargetMarker(list, styles, center, view, focal, frame.cockpit, hud);
     }
-    drawPrompts(list, font, styles, center, hud);
+    list.popClip();
+
+    // The dash is measured in ANGLES and the panels in PIXELS, and on a short
+    // virtual screen the two disagree: the projection shrinks the distance
+    // between the console mount points while the flight panel stays 320 px
+    // wide, until it laps over the disc between them. So the two side panels
+    // give way to the disc rather than the other way round. The push is
+    // expressed against the DISC, not against the screen, which is what lets
+    // the whole row still swing together when free-look turns the head - a
+    // screen-relative clamp would glue the panels to the edge as the dash slid
+    // out from under them. The frame cannot do this itself: it deliberately
+    // does not know how big a panel is, and these numbers live here.
+    constexpr float kConsoleGap = 8.0f;
+    Vec2 leftConsole = frame.leftConsole.position;
+    Vec2 rightConsole = frame.rightConsole.position;
+    if (frame.cockpit && frame.centreConsole.visible) {
+        const float discLeft = frame.centreConsole.position.x - sol::ui::kRadarRadius;
+        const float discRight = frame.centreConsole.position.x + sol::ui::kRadarRadius;
+        leftConsole.x =
+            std::min(leftConsole.x, discLeft - kConsoleGap - kFlightPanelWidth);
+        rightConsole.x = std::max(rightConsole.x, discRight + kConsoleGap + kPowerPanelWidth);
+    }
 
     Rect flightPanel = {};
     Rect targetPanel = {};
-    drawFlightPanel(list, font, styles, screenSize, hud, flightPanel);
-    drawPowerPanel(list, styles, screenSize, hud);
-    drawTargetReadout(list, styles, screenSize, hud, targetPanel);
-    drawMissionLine(list, styles, flightPanel, hud);
-    drawScannerPanel(list, styles, screenSize, targetPanel, hud);
-    drawRadar(list, font, styles, screenSize, hud);
+    if (frame.leftConsole.visible) {
+        drawFlightPanel(list, font, styles, leftConsole, hud, flightPanel);
+        drawMissionLine(list, styles, flightPanel, hud);
+    }
+    if (frame.rightConsole.visible) {
+        drawPowerPanel(list, styles, rightConsole, hud);
+    }
+    drawTargetReadout(list, styles, panelArea, hud, targetPanel);
+    drawScannerPanel(list, styles, panelArea, targetPanel, hud);
+    if (frame.centreConsole.visible) {
+        drawRadar(list, font, styles, frame.centreConsole.position, hud);
+    }
 }
 
 } // namespace game
