@@ -467,10 +467,28 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
     // flight, so a docked prompt here would be unreachable. Salvage shares the
     // interact key with docking; a station in range wins, since you cannot be
     // parked on a pad and inside a wreck at once.
+    // Built from the current bindings since Phase 8k, not written down: a
+    // rebind that left "[J] JUMP" on screen would be telling the player to
+    // press a key that no longer does anything. An unbound action drops the
+    // bracket entirely rather than instructing them to press nothing.
+    char jumpChip[40] = {};
+    char dockChip[40] = {};
+    char salvageChip[40] = {};
+    const auto chip = [](char* buffer, std::size_t size, const char* key, const char* verb) {
+        if (key != nullptr && key[0] != '\0') {
+            std::snprintf(buffer, size, "[%s] %s", key, verb);
+        } else {
+            std::snprintf(buffer, size, "%s (unbound)", verb);
+        }
+    };
+    chip(jumpChip, sizeof(jumpChip), hud.jumpKey, "JUMP");
+    chip(dockChip, sizeof(dockChip), hud.interactKey, "DOCK");
+    chip(salvageChip, sizeof(salvageChip), hud.interactKey, "SALVAGE");
+
     const Prompt prompts[] = {
-        {"[J] JUMP", hud.gateInRange},
-        {"[G] DOCK", hud.dockInRange},
-        {"[G] SALVAGE", hud.salvageInRange && !hud.dockInRange},
+        {jumpChip, hud.gateInRange},
+        {dockChip, hud.dockInRange},
+        {salvageChip, hud.salvageInRange && !hud.dockInRange},
     };
     constexpr float kChipHeight = 24.0f;
     constexpr float kChipGap = 8.0f;
@@ -643,9 +661,16 @@ void drawScannerPanel(DrawList& list, const Styles& styles, Vec2 screenSize,
     const float right = panel.max.x - kPadding;
     float y = panel.min.y + kPadding * 0.5f;
 
-    // [R] reads as ready in accent, charging in dim, with the bar underneath.
+    // The scan chip reads as ready in accent, charging in dim, with the bar
+    // underneath. Its key comes from the bindings (Phase 8k) like the prompts.
     const bool ready = hud.pulseCharge >= 1.0f;
-    list.addTextInBox(*styles.small, {{left, y}, {left + 90.0f, y + 20.0f}}, "[R] SCAN",
+    char scanChip[40] = {};
+    if (hud.scanKey != nullptr && hud.scanKey[0] != '\0') {
+        std::snprintf(scanChip, sizeof(scanChip), "[%s] SCAN", hud.scanKey);
+    } else {
+        std::snprintf(scanChip, sizeof(scanChip), "SCAN");
+    }
+    list.addTextInBox(*styles.small, {{left, y}, {left + 90.0f, y + 20.0f}}, scanChip,
                       ready ? kAccent : kTextDim);
     const float meterY = y + (20.0f - kMeterHeight) * 0.5f;
     drawMeter(list, {{left + 96.0f, meterY}, {right, meterY + kMeterHeight}}, hud.pulseCharge,

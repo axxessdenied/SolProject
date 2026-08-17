@@ -18,11 +18,15 @@ public:
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
 
-    [[nodiscard]] bool create(Context& context, std::uint32_t width, std::uint32_t height);
+    // `vsync` picks the present mode: FIFO when on (always available), and the
+    // best available of MAILBOX then IMMEDIATE when off, falling back to FIFO
+    // if the surface offers neither.
+    [[nodiscard]] bool create(Context& context, std::uint32_t width, std::uint32_t height,
+                              bool vsync = true);
     void destroy();
 
     // Caller must ensure the device is idle first.
-    [[nodiscard]] bool recreate(std::uint32_t width, std::uint32_t height);
+    [[nodiscard]] bool recreate(std::uint32_t width, std::uint32_t height, bool vsync = true);
 
     [[nodiscard]] VkFormat imageFormat() const { return m_imageFormat; }
     [[nodiscard]] VkExtent2D extent() const { return m_extent; }
@@ -41,7 +45,8 @@ public:
     [[nodiscard]] PresentResult present(VkSemaphore waitSemaphore, std::uint32_t imageIndex);
 
 private:
-    [[nodiscard]] bool createInternal(std::uint32_t width, std::uint32_t height);
+    [[nodiscard]] bool createInternal(std::uint32_t width, std::uint32_t height, bool vsync);
+    [[nodiscard]] VkPresentModeKHR choosePresentMode(bool vsync) const;
     void destroyImageViews();
 
     Context* m_context = nullptr;

@@ -6,6 +6,7 @@
 #include "sol/core/log.hpp"
 
 #include <algorithm>
+#include <vector>
 
 namespace sol::rhi {
 
@@ -14,14 +15,14 @@ Swapchain::~Swapchain()
     destroy();
 }
 
-bool Swapchain::create(Context& context, std::uint32_t width, std::uint32_t height)
+bool Swapchain::create(Context& context, std::uint32_t width, std::uint32_t height, bool vsync)
 {
     SOL_ASSERT(m_swapchain == VK_NULL_HANDLE);
     m_context = &context;
-    return createInternal(width, height);
+    return createInternal(width, height, vsync);
 }
 
-bool Swapchain::recreate(std::uint32_t width, std::uint32_t height)
+bool Swapchain::recreate(std::uint32_t width, std::uint32_t height, bool vsync)
 {
     SOL_ASSERT(m_context != nullptr);
     destroyImageViews();
@@ -29,10 +30,42 @@ bool Swapchain::recreate(std::uint32_t width, std::uint32_t height)
         vkDestroySwapchainKHR(m_context->device(), m_swapchain, nullptr);
         m_swapchain = VK_NULL_HANDLE;
     }
-    return createInternal(width, height);
+    return createInternal(width, height, vsync);
 }
 
-bool Swapchain::createInternal(std::uint32_t width, std::uint32_t height)
+// FIFO is the only mode the spec guarantees, so it is both the vsync-on answer
+// and the floor when vsync is off: MAILBOX first (tears nothing, drops frames),
+// then IMMEDIATE (tears, uncapped), then give up and stay capped rather than
+// pass a mode the surface never offered.
+VkPresentModeKHR Swapchain::choosePresentMode(bool vsync) const
+{
+    if (vsync) {
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    std::uint32_t modeCount = 0;
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR(m_context->physicalDevice(), m_context->surface(),
+                                                  &modeCount, nullptr) != VK_SUCCESS ||
+        modeCount == 0) {
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+    std::vector<VkPresentModeKHR> modes(modeCount);
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR(m_context->physicalDevice(), m_context->surface(),
+                                                  &modeCount, modes.data()) != VK_SUCCESS) {
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    for (const VkPresentModeKHR preferred : {VK_PRESENT_MODE_MAILBOX_KHR,
+                                             VK_PRESENT_MODE_IMMEDIATE_KHR}) {
+        if (std::find(modes.begin(), modes.end(), preferred) != modes.end()) {
+            return preferred;
+        }
+    }
+    SOL_LOG_WARN("Surface offers no unsynchronized present mode; V-Sync stays on");
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+bool Swapchain::createInternal(std::uint32_t width, std::uint32_t height, bool vsync)
 {
     const VkPhysicalDevice physicalDevice = m_context->physicalDevice();
     const VkSurfaceKHR surface = m_context->surface();
@@ -86,7 +119,7 @@ bool Swapchain::createInternal(std::uint32_t width, std::uint32_t height)
     createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     createInfo.preTransform = capabilities.currentTransform;
     createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR; // vsync; always available
+    createInfo.presentMode = choosePresentMode(vsync);
     createInfo.clipped = VK_TRUE;
 
     SOL_VK_CHECK(vkCreateSwapchainKHR(device, &createInfo, nullptr, &m_swapchain));

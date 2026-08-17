@@ -142,6 +142,15 @@ struct FlightHud
     // readable in a system holding dozens of things.
     std::span<const RadarContact> radarContacts;
     double radarRangeMeters = 0.0; // what the outer ring stands for; 0 = auto
+
+    // Prompt keys (Phase 8k). The HUD used to print "[J] JUMP" as a literal,
+    // which a rebind would turn into a confident lie. The fill supplies the
+    // name of whatever chord currently drives each prompt; empty means the
+    // action is unbound, and the chip then names the action alone rather than
+    // instructing the player to press nothing.
+    const char* jumpKey = "";
+    const char* interactKey = ""; // dock and salvage share it
+    const char* scanKey = "";
 };
 
 // One commodity line on the station's Trade tab. The game fills rows from the

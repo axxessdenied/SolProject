@@ -841,6 +841,70 @@ std::string shipInfo(GameContent& content)
     return shipInfoReport(content.world(), content.defs());
 }
 
+// --- Controls (Phase 8k) -----------------------------------------------------
+//
+// The Controls screen is a scrolling list of 34 rows behind two menus, so
+// driving a rebind by mouse is slow and brittle. These do the same thing the
+// screen does, through the same table, which is what makes the exit criteria
+// checkable in a script.
+
+std::string listBindings(GameContent& content)
+{
+    const sol::platform::BindingTable* bindings = content.bindings();
+    if (bindings == nullptr) {
+        return "bindings unavailable";
+    }
+    std::string lines;
+    for (std::uint32_t i = 0; i < kActionCount; ++i) {
+        const Action action = static_cast<Action>(i);
+        const sol::platform::InputChord chord = bindings->chordFor(i);
+        lines += (lines.empty() ? "" : "\n") + std::string(actionId(action)) + " = " +
+                 (chord.bound() ? sol::platform::chordName(chord) : "(unbound)");
+    }
+    return lines;
+}
+
+// sol.bind("jump", "K") - assigns, stealing exactly as the screen does, and
+// says what it took so a script can assert on the conflict policy.
+std::string bindAction(GameContent& content, const char* actionName, const char* chordName)
+{
+    sol::platform::BindingTable* bindings = content.bindings();
+    if (bindings == nullptr) {
+        return "bindings unavailable";
+    }
+    bool known = false;
+    const Action action = actionFromId(actionName, known);
+    if (!known) {
+        return std::string("no such action '") + (actionName == nullptr ? "" : actionName) + "'";
+    }
+    const std::string name = chordName == nullptr ? "" : chordName;
+    const sol::platform::InputChord chord = sol::platform::chordFromName(name);
+    if (!chord.bound() && !name.empty()) {
+        return "no such key or button '" + name + "'";
+    }
+    if (isReservedChord(chord)) {
+        return name + " is reserved by the menus and cannot be bound";
+    }
+    const std::uint32_t stolen = bindings->assign(static_cast<std::uint32_t>(action), chord);
+    std::string result = std::string(actionLabel(action)) + " = " +
+                         (chord.bound() ? sol::platform::chordName(chord) : "(unbound)");
+    if (stolen != sol::platform::BindingTable::kNoAction) {
+        result += ", taken from " + std::string(actionLabel(static_cast<Action>(stolen))) +
+                  " (now unbound)";
+    }
+    return result;
+}
+
+std::string resetBindings(GameContent& content)
+{
+    sol::platform::BindingTable* bindings = content.bindings();
+    if (bindings == nullptr) {
+        return "bindings unavailable";
+    }
+    installDefaultBindings(*bindings);
+    return "controls reset to defaults";
+}
+
 // --- Mining, salvage & refining (Phase 8f) -----------------------------------
 
 std::string listFields(GameContent& content)
@@ -1760,6 +1824,10 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&deleteBookmark>("sol", "bookmark_delete", this);
     m_vm.registerFunction<&warpBookmark>("sol", "warp_bookmark", this);
     m_vm.registerFunction<&shipInfo>("sol", "ship_info", this);
+    // Controls (Phase 8k): the same table the Controls screen edits.
+    m_vm.registerFunction<&listBindings>("sol", "bindings", this);
+    m_vm.registerFunction<&bindAction>("sol", "bind", this);
+    m_vm.registerFunction<&resetBindings>("sol", "reset_bindings", this);
     m_vm.registerFunction<&orderRefine>("sol", "refine", this);
     m_vm.registerFunction<&collectRefined>("sol", "collect", this);
     m_vm.registerFunction<&listRefineJobs>("sol", "refine_jobs", this);

@@ -36,6 +36,26 @@ void dimBackground(UiContext& ui)
     ui.drawList().addRect({{0.0f, 0.0f}, ui.screenSize()}, ui.theme().background);
 }
 
+// A hand-edited settings file can name one chord for two actions, which the
+// in-game path can never produce because assignment steals. The earlier action
+// keeps it and the later one is unbound: a visible "this needs a key" beats
+// two actions firing off one press, which is a bug the player did not build.
+void repairDuplicateBindings(sol::platform::BindingTable& bindings)
+{
+    for (std::uint32_t action = 0; action < bindings.actionCount(); ++action) {
+        const sol::platform::InputChord chord = bindings.chordFor(action);
+        if (!chord.bound()) {
+            continue;
+        }
+        if (bindings.find(chord) != action) {
+            SOL_LOG_WARN("settings: '%s' is bound twice - '%s' left unbound",
+                         sol::platform::chordName(chord),
+                         actionLabel(static_cast<Action>(action)));
+            bindings.unbind(action);
+        }
+    }
+}
+
 } // namespace
 
 bool Settings::load(const char* path)
@@ -73,13 +93,50 @@ bool Settings::load(const char* path)
     mouseSensitivity = readFloat("mouse_sensitivity", defaults.mouseSensitivity, 0.1f, 4.0f);
     invertPitch = readBool("invert_pitch", defaults.invertPitch);
     vsync = readBool("vsync", defaults.vsync);
+
+    // Bindings (Phase 8k). Defaults are already installed by the constructor,
+    // so an absent [bindings] table, an absent action within it, or a line
+    // this build does not understand all leave the shipped layout in place -
+    // a settings file must never be the reason the game cannot be flown.
+    if (const sol::core::TomlValue* table = root.find("bindings");
+        table != nullptr && table->isTable()) {
+        for (const auto& [key, value] : table->members()) {
+            if (!value.isString()) {
+                SOL_LOG_WARN("settings: binding '%s' is not a string - keeping the default",
+                             key.c_str());
+                continue;
+            }
+            bool known = false;
+            const Action action = actionFromId(key.c_str(), known);
+            if (!known) {
+                SOL_LOG_WARN("settings: unknown action '%s' - ignored", key.c_str());
+                continue;
+            }
+            // An empty name is how a deliberately unbound action is written,
+            // and is not the same thing as an unreadable one.
+            const std::string& name = value.asString();
+            const sol::platform::InputChord chord = sol::platform::chordFromName(name);
+            if (!chord.bound() && !name.empty()) {
+                SOL_LOG_WARN("settings: '%s' is not a key or button ('%s') - keeping the default",
+                             name.c_str(), key.c_str());
+                continue;
+            }
+            // bind() rather than assign(): the file is read as written, and a
+            // file that names one chord twice is repaired below rather than
+            // silently letting the first reader win.
+            bindings.bind(static_cast<std::uint32_t>(action), chord);
+        }
+        repairDuplicateBindings(bindings);
+    }
     return true;
 }
 
 bool Settings::save(const char* path) const
 {
-    char text[512] = {};
-    const int written = std::snprintf(text, sizeof(text),
+    // A std::string builder rather than the fixed char[512] this used to be:
+    // 34 bindings overflow that buffer several times over.
+    char scalars[256] = {};
+    const int written = std::snprintf(scalars, sizeof(scalars),
                                       "# The Stars Don't Wait - player settings\n"
                                       "ui_scale = %.3f\n"
                                       "mouse_sensitivity = %.3f\n"
@@ -91,7 +148,21 @@ bool Settings::save(const char* path) const
     if (written <= 0) {
         return false;
     }
-    return sol::platform::writeFileBytes(path, text, static_cast<std::size_t>(written));
+
+    std::string text(scalars, static_cast<std::size_t>(written));
+    text += "\n[bindings]\n";
+    for (std::uint32_t i = 0; i < kActionCount; ++i) {
+        const Action action = static_cast<Action>(i);
+        const sol::platform::InputChord chord = bindings.chordFor(i);
+        // An unbound action is written as an empty string, not omitted: the
+        // reader treats a missing key as "use the default", so omitting it
+        // would silently rebind it on the next load.
+        text += actionId(action);
+        text += " = \"";
+        text += chord.bound() ? sol::platform::chordName(chord) : "";
+        text += "\"\n";
+    }
+    return sol::platform::writeFileBytes(path, text.data(), text.size());
 }
 
 MenuAction buildMainMenu(UiContext& ui, MainMenuState& state)
@@ -187,8 +258,8 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
     ui.pushId("settings");
 
     const float rowHeight = 34.0f;
-    const float height = kTitleHeight + rowHeight * 4.0f + kButtonHeight +
-                         ui.theme().spacing * 6.0f + ui.theme().padding * 2.0f;
+    const float height = kTitleHeight + rowHeight * 4.0f + kButtonHeight * 2.0f +
+                         ui.theme().spacing * 7.0f + ui.theme().padding * 2.0f;
     const Rect panel = centeredPanel(ui, 540.0f, height);
     ui.panel(panel);
 
@@ -215,8 +286,140 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
 
     column.skip(6.0f);
     MenuAction action = MenuAction::None;
+    if (ui.button(column.row(kButtonHeight), "Controls...")) {
+        action = MenuAction::OpenControls;
+    }
     if (ui.button(column.row(kButtonHeight), "Back") || ui.cancelRequested()) {
         action = MenuAction::CloseSettings;
+    }
+
+    ui.popId();
+    return action;
+}
+
+MenuAction buildControlsScreen(UiContext& ui, Settings& settings, ControlsScreenState& state,
+                               sol::platform::InputChord captured, bool cancel)
+{
+    using sol::platform::BindingTable;
+    using sol::platform::InputChord;
+
+    dimBackground(ui);
+    ui.pushId("controls");
+
+    constexpr float kRowHeight = 30.0f;
+    constexpr float kGroupHeight = 28.0f;
+    constexpr float kPanelWidth = 620.0f;
+    const float spacing = ui.theme().spacing;
+    const float padding = ui.theme().padding;
+
+    // Escape abandons an armed capture rather than leaving the screen - which
+    // is exactly why Escape is a reserved chord and can never be bound.
+    if (cancel && state.capturing < kActionCount) {
+        state.capturing = kActionCount;
+        state.notice = "Rebind cancelled.";
+        cancel = false;
+    }
+
+    // A capture consumes the first chord that goes down. Reserved chords are
+    // refused here rather than assigned: the conflict policy does not apply to
+    // them, because the player must never be able to lock themselves out of
+    // the screen they are standing in.
+    if (state.capturing < kActionCount && captured.bound()) {
+        const Action target = static_cast<Action>(state.capturing);
+        if (isReservedChord(captured)) {
+            state.notice = std::string(sol::platform::chordName(captured)) +
+                           " is reserved by the menus and cannot be bound.";
+        } else {
+            const std::uint32_t stolen = settings.bindings.assign(state.capturing, captured);
+            if (stolen == BindingTable::kNoAction) {
+                state.notice = std::string(actionLabel(target)) + " is now " +
+                               sol::platform::chordName(captured) + ".";
+                if (state.stolenFrom == state.capturing) {
+                    state.stolenFrom = kActionCount; // this row has a key again
+                }
+            } else {
+                state.stolenFrom = stolen;
+                state.notice = std::string(actionLabel(target)) + " took " +
+                               sol::platform::chordName(captured) + " from " +
+                               actionLabel(static_cast<Action>(stolen)) + ", which now needs a key.";
+            }
+            state.capturing = kActionCount;
+        }
+    }
+
+    // Height: one row per action, plus a header per group.
+    const float contentHeight =
+        static_cast<float>(kActionCount) * (kRowHeight + 4.0f) +
+        static_cast<float>(ActionGroup::Count) * (kGroupHeight + 4.0f) + 4.0f;
+
+    const float listHeight = 400.0f;
+    const float panelHeight = kTitleHeight + listHeight + 26.0f + kButtonHeight * 2.0f +
+                              spacing * 5.0f + padding * 2.0f;
+    const Rect panel = centeredPanel(ui, kPanelWidth, panelHeight);
+    ui.panel(panel);
+
+    Column column(panel, padding, spacing);
+    ui.label(column.row(kTitleHeight), "Controls", ui.theme().textPrimary, ui.theme().headingStyle,
+             TextAlign::Center);
+
+    const Rect listBounds = column.row(listHeight);
+    const Rect content = ui.beginScroll(listBounds, contentHeight, state.scroll);
+    Column rows(content, 0.0f, 4.0f);
+
+    ActionGroup drawn = ActionGroup::Count;
+    for (std::uint32_t i = 0; i < kActionCount; ++i) {
+        const Action action = static_cast<Action>(i);
+        const ActionGroup group = actionGroup(action);
+        if (group != drawn) {
+            drawn = group;
+            ui.label(rows.row(kGroupHeight), actionGroupLabel(group), ui.theme().textDim,
+                     ui.theme().smallStyle);
+        }
+
+        Row row(rows.row(kRowHeight), spacing);
+        ui.label(row.cell(230.0f), actionLabel(action), ui.theme().textPrimary,
+                 ui.theme().bodyStyle);
+
+        const InputChord chord = settings.bindings.chordFor(i);
+        const bool capturing = state.capturing == i;
+        // An unbound action reads as an em dash, and one a steal just emptied
+        // says so in accent - the player has to be able to see what the last
+        // assignment cost them without reading the notice line.
+        const char* value = capturing            ? "press a key or mouse button..."
+                            : chord.bound()      ? sol::platform::chordName(chord)
+                            : state.stolenFrom == i ? "needs a key"
+                                                 : "--";
+        const sol::ui::Color valueColor = capturing || !chord.bound() ? ui.theme().accent
+                                                                     : ui.theme().textPrimary;
+        ui.label(row.cell(220.0f), value, valueColor, ui.theme().bodyStyle);
+
+        ui.pushId(static_cast<int>(i));
+        if (ui.button(row.remaining(), capturing ? "Cancel" : "Rebind")) {
+            // One capture armed at a time: clicking a second row moves the
+            // arm rather than leaving two rows waiting for the same keypress.
+            state.capturing = capturing ? kActionCount : i;
+            state.notice.clear();
+        }
+        ui.popId();
+    }
+    ui.endScroll();
+
+    ui.label(column.row(26.0f), state.notice, ui.theme().textDim, ui.theme().smallStyle);
+
+    MenuAction action = MenuAction::None;
+    if (ui.button(column.row(kButtonHeight), "Reset to Defaults")) {
+        installDefaultBindings(settings.bindings);
+        state.capturing = kActionCount;
+        state.stolenFrom = kActionCount;
+        state.notice = "Controls reset to defaults.";
+    }
+    // Backing out is refused while a capture is armed, so the one key that
+    // cancels a capture cannot also drop the player out of the screen.
+    if (ui.button(column.row(kButtonHeight), "Back") || cancel) {
+        if (state.capturing >= kActionCount) {
+            state.notice.clear();
+            action = MenuAction::CloseControls;
+        }
     }
 
     ui.popId();

@@ -1,8 +1,10 @@
 #pragma once
 
+#include "input_actions.hpp"
 #include "space_world.hpp"
 
 #include "sol/assets/data_defs.hpp"
+#include "sol/platform/input_bindings.hpp"
 #include "sol/scripting/vm.hpp"
 
 #include <cstdint>
@@ -36,6 +38,13 @@ public:
 
     [[nodiscard]] const sol::assets::DefDatabase& defs() const { return m_defs; }
     [[nodiscard]] SpaceWorld& world() { return *m_world; }
+
+    // The live control bindings (Phase 8k), so the console can read and change
+    // them - which is what makes a rebind verifiable in a drive script without
+    // pixel-perfect clicking through a scrolling list. Owned by main.cpp's
+    // Settings; null until it is handed over.
+    void setBindings(sol::platform::BindingTable* bindings) { m_bindings = bindings; }
+    [[nodiscard]] sol::platform::BindingTable* bindings() const { return m_bindings; }
 
     // Mission-builder draft for the Lua board hook (sol.mission_* bindings
     // in content.cpp assemble it; sol.mission_post validates and clears it).
@@ -73,6 +82,7 @@ private:
     sol::assets::DefDatabase m_defs;
     sol::scripting::ScriptVm m_vm;
     SpaceWorld* m_world = nullptr;
+    sol::platform::BindingTable* m_bindings = nullptr; // Phase 8k; main.cpp owns it
     std::vector<WatchedFile> m_watched;
     std::vector<SpaceWorld::PilotThink> m_pilotThinks; // per-tick scratch
     std::vector<sol::sim::FactionDecision> m_factionDecisions; // per-tick scratch

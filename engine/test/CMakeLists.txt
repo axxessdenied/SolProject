@@ -39,6 +39,12 @@ add_executable(sol_assets_tests
 target_link_libraries(sol_assets_tests PRIVATE sol::test sol::assets)
 add_test(NAME assets.unit COMMAND sol_assets_tests)
 
+add_executable(sol_platform_tests
+    platform/input_bindings_tests.cpp
+)
+target_link_libraries(sol_platform_tests PRIVATE sol::test sol::platform)
+add_test(NAME platform.unit COMMAND sol_platform_tests)
+
 add_executable(sol_ui_tests
     ui/context_tests.cpp
     ui/draw_list_tests.cpp

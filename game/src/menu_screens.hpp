@@ -1,5 +1,8 @@
 #pragma once
 
+#include "input_actions.hpp"
+
+#include "sol/platform/input_bindings.hpp"
 #include "sol/ui/context.hpp"
 #include "sol/ui/screens.hpp"
 
@@ -25,6 +28,10 @@ enum class GameState : std::uint32_t
     // reading your own numbers is not a reason for the galaxy to stop, and
     // half of them only mean anything while something is happening to you.
     ShipInfo,
+    // The rebind list (Phase 8k). Its own screen rather than four more rows on
+    // Settings: 34 actions do not fit a 540 px panel, and this one needs a
+    // scroll region and a capture mode that the settings sliders do not.
+    Controls,
 };
 
 // Player-facing options, persisted beside the save as TOML. Kept out of the
@@ -35,6 +42,13 @@ struct Settings
     float mouseSensitivity = 1.0f;
     bool invertPitch = false;
     bool vsync = true;
+
+    // Controls (Phase 8k). Constructed with the shipped layout so a missing or
+    // partial settings file is a complete, playable binding set rather than a
+    // ship that cannot be flown.
+    sol::platform::BindingTable bindings;
+
+    Settings() { installDefaultBindings(bindings); }
 
     [[nodiscard]] bool load(const char* path);
     [[nodiscard]] bool save(const char* path) const;
@@ -52,6 +66,8 @@ enum class MenuAction : std::uint32_t
     LoadGame,
     OpenSettings,
     CloseSettings,
+    OpenControls,
+    CloseControls,
     QuitGame,
 };
 
@@ -61,10 +77,30 @@ struct MainMenuState
     bool hardcore = false;  // new-run flag, was --hardcore only
 };
 
+// Scroll position, which row is capturing, and what the last assignment did.
+// Lives across frames in main.cpp beside the other screen states.
+struct ControlsScreenState
+{
+    float scroll = 0.0f;
+    // The action waiting for a chord, or kActionCount for "none armed".
+    std::uint32_t capturing = kActionCount;
+    // The action a steal left unbound, so its row can say so. Cleared when the
+    // player rebinds it or resets to defaults.
+    std::uint32_t stolenFrom = kActionCount;
+    std::string notice; // one line under the list; empty = nothing to say
+};
+
 // Each returns the action the player triggered this frame, or None.
 [[nodiscard]] MenuAction buildMainMenu(sol::ui::UiContext& ui, MainMenuState& state);
 [[nodiscard]] MenuAction buildPauseMenu(sol::ui::UiContext& ui, bool hardcore);
 [[nodiscard]] MenuAction buildSettingsScreen(sol::ui::UiContext& ui, Settings& settings);
+
+// The rebind list. `captured` is the chord that went down this frame (from
+// BindingTable::captured()), consumed only while a row is armed; `cancel` is
+// Escape, which abandons a capture rather than backing out of the screen.
+[[nodiscard]] MenuAction buildControlsScreen(sol::ui::UiContext& ui, Settings& settings,
+                                             ControlsScreenState& state,
+                                             sol::platform::InputChord captured, bool cancel);
 
 // The bookmark naming prompt (Phase 8h). Drawn over the flight view rather
 // than as its own GameState: the galaxy keeps running, and dropping a

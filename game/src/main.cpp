@@ -1,6 +1,7 @@
 #include "content.hpp"
 #include "fly_camera.hpp"
 #include "game_ui.hpp"
+#include "input_actions.hpp"
 #include "map_screen.hpp"
 #include "map_ui.hpp"
 #include "menu_screens.hpp"
@@ -21,6 +22,7 @@
 #include "sol/sim/power.hpp"
 #include "sol/sim/weapons.hpp"
 #include "sol/platform/file_io.hpp"
+#include "sol/platform/input_bindings.hpp"
 #include "sol/platform/platform.hpp"
 #include "sol/platform/time.hpp"
 #include "sol/platform/window.hpp"
@@ -87,52 +89,57 @@ constexpr double kGateActivationRange = 10'000.0;
 // A station accepts a dock request inside this range.
 constexpr double kDockRange = 2'000.0;
 
-// Latches per-frame window state into a flight-model input. Rotation combines
-// a self-centering virtual stick fed by the mouse (hold RMB) with full-deflection
-// arrow keys; Q/E roll. WASD + Space/Ctrl thrust, Shift boost, Tab toggles
-// cruise, X toggles assist.
+// Latches per-frame input state into a flight-model input. Rotation combines a
+// self-centering virtual stick fed by the mouse (hold the Mouse Steering
+// binding) with full-deflection key axes. Every axis is an Action since Phase
+// 8k, so the layout here is a default rather than a rule; the edges for the
+// assist and cruise toggles come from the binding table, which is why this
+// class no longer carries a latch per key.
 class ShipInputMapper
 {
 public:
-    [[nodiscard]] sol::sim::FlightInput update(sol::platform::Window& window, float deltaSeconds)
+    [[nodiscard]] sol::sim::FlightInput update(sol::platform::Window& window, float deltaSeconds,
+                                               const sol::platform::BindingTable& bindings,
+                                               float mouseSensitivity, bool invertPitch)
     {
-        using sol::platform::Key;
-        using sol::platform::MouseButton;
-
-        const bool steering = window.isMouseButtonDown(MouseButton::Right);
+        const bool steering = game::held(bindings, game::Action::LookAround);
         window.setCursorLocked(steering);
         if (steering) {
             const sol::core::Vec2 delta = window.mouseDelta();
-            m_stick.x -= delta.y * kStickSensitivity; // mouse up = nose up
-            m_stick.y -= delta.x * kStickSensitivity; // mouse left = yaw left
+            // Phase 8k: the sensitivity slider has been in the settings menu
+            // since 8d reading nothing. Pitch inversion applies to the mouse
+            // only - a player who wants the key axes the other way round now
+            // swaps two bindings.
+            const float scale = kStickSensitivity * mouseSensitivity;
+            const float pitch = invertPitch ? -delta.y : delta.y;
+            m_stick.x -= pitch * scale; // mouse up = nose up
+            m_stick.y -= delta.x * scale; // mouse left = yaw left
         }
         // Self-centering, Elite-style relative mouse.
         const float recenter = std::exp(-kRecenterRate * deltaSeconds);
         m_stick.x = sol::core::clamp(m_stick.x * recenter, -1.0f, 1.0f);
         m_stick.y = sol::core::clamp(m_stick.y * recenter, -1.0f, 1.0f);
 
+        using game::Action;
+        const auto axis = [&bindings](Action positive, Action negative) {
+            return (game::held(bindings, positive) ? 1.0f : 0.0f) -
+                   (game::held(bindings, negative) ? 1.0f : 0.0f);
+        };
+
         sol::sim::FlightInput input;
-        input.angular.x = applyDeadZone(m_stick.x);
-        input.angular.y = applyDeadZone(m_stick.y);
-        if (window.isKeyDown(Key::Up)) input.angular.x += 1.0f;
-        if (window.isKeyDown(Key::Down)) input.angular.x -= 1.0f;
-        if (window.isKeyDown(Key::Left)) input.angular.y += 1.0f;
-        if (window.isKeyDown(Key::Right)) input.angular.y -= 1.0f;
-        if (window.isKeyDown(Key::Q)) input.angular.z -= 1.0f; // roll left
-        if (window.isKeyDown(Key::E)) input.angular.z += 1.0f;
+        input.angular.x = applyDeadZone(m_stick.x) + axis(Action::PitchUp, Action::PitchDown);
+        input.angular.y = applyDeadZone(m_stick.y) + axis(Action::YawLeft, Action::YawRight);
+        input.angular.z = axis(Action::RollRight, Action::RollLeft);
 
-        if (window.isKeyDown(Key::W)) input.linear.z -= 1.0f; // main drive
-        if (window.isKeyDown(Key::S)) input.linear.z += 1.0f;
-        if (window.isKeyDown(Key::A)) input.linear.x -= 1.0f;
-        if (window.isKeyDown(Key::D)) input.linear.x += 1.0f;
-        if (window.isKeyDown(Key::Space)) input.linear.y += 1.0f;
-        if (window.isKeyDown(Key::LeftControl)) input.linear.y -= 1.0f;
+        input.linear.z = axis(Action::ThrustReverse, Action::ThrustForward); // -Z is the main drive
+        input.linear.x = axis(Action::StrafeRight, Action::StrafeLeft);
+        input.linear.y = axis(Action::StrafeUp, Action::StrafeDown);
 
-        input.boost = window.isKeyDown(Key::LeftShift);
-        if (pressed(window, Key::X, m_previousAssistKey)) {
+        input.boost = game::held(bindings, Action::Boost);
+        if (game::pressed(bindings, Action::ToggleAssist)) {
             m_assist = !m_assist;
         }
-        if (pressed(window, Key::Tab, m_previousCruiseKey)) {
+        if (game::pressed(bindings, Action::ToggleCruise)) {
             m_cruise = !m_cruise;
         }
         input.assist = m_assist;
@@ -141,15 +148,6 @@ public:
     }
 
 private:
-    [[nodiscard]] static bool pressed(sol::platform::Window& window, sol::platform::Key key,
-                                      bool& previous)
-    {
-        const bool down = window.isKeyDown(key);
-        const bool edge = down && !previous;
-        previous = down;
-        return edge;
-    }
-
     // Small deflections command nothing (easier fine alignment; also kills
     // the drift the recenter exponential never quite decays away); the
     // response is rescaled past the edge so it stays continuous.
@@ -169,8 +167,6 @@ private:
     sol::core::Vec2 m_stick;
     bool m_assist = true;
     bool m_cruise = false;
-    bool m_previousAssistKey = false;
-    bool m_previousCruiseKey = false;
 };
 
 void consoleCommandHandler(const char* command, void* userData)
@@ -201,15 +197,22 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
-    sol::rhi::Swapchain swapchain;
-    if (!swapchain.create(context, window.width(), window.height())) {
-        return EXIT_FAILURE;
-    }
-
     const std::string executableDir = sol::platform::executableDirectory();
     const std::string shaderDirectory = executableDir + "shaders/";
     const std::string cookedDirectory = executableDir + "cooked/";
     const std::string savePath = executableDir + "world.sav";
+
+    // Settings load before the swapchain exists, because V-Sync is a swapchain
+    // present mode (Phase 8k) and creating it the wrong way round would mean
+    // rebuilding it on the first frame of every run.
+    const std::string settingsPath = executableDir + "settings.toml";
+    game::Settings settings;
+    (void)settings.load(settingsPath.c_str()); // absent is normal on a first run
+
+    sol::rhi::Swapchain swapchain;
+    if (!swapchain.create(context, window.width(), window.height(), settings.vsync)) {
+        return EXIT_FAILURE;
+    }
 
     game::SceneRenderer renderer;
     if (!renderer.initialize(context, swapchain, shaderDirectory.c_str(), cookedDirectory.c_str())) {
@@ -240,10 +243,6 @@ int main(int argc, char** argv)
     // carries a span into it.
     std::vector<sol::ui::RadarContact> radarContacts;
     mainMenuState.hasSave = sol::platform::fileModificationTime(savePath.c_str()) != 0;
-
-    const std::string settingsPath = executableDir + "settings.toml";
-    game::Settings settings;
-    (void)settings.load(settingsPath.c_str()); // absent is normal on a first run
 
 #if !defined(SOL_SHADER_SOURCE_DIR)
     #define SOL_SHADER_SOURCE_DIR ""
@@ -280,6 +279,9 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
     devUi.setCommandHandler(&consoleCommandHandler, &content);
+    // The console edits the same binding table the Controls screen does, so a
+    // rebind can be driven and asserted on without clicking through the list.
+    content.setBindings(&settings.bindings);
     ShipInputMapper inputMapper;
     game::ShipCamera shipCamera;
     game::FlyCamera freeCamera;
@@ -326,24 +328,13 @@ int main(int argc, char** argv)
                  world.currentSystemName(), world.galaxy().systems.size());
 
     float smoothedFps = 0.0f;
+    // Dev tooling keeps its own latches: F3/F5/F9/F10 are reserved chords that
+    // never reach the binding table, because they are tooling rather than
+    // controls (Phase 8k).
     bool previousF3 = false;
     bool previousF5 = false;
     bool previousF9 = false;
     bool previousF10 = false;
-    bool previousV = false;
-    bool previousT = false;
-    bool previousC = false;
-    bool previousO = false; // objective (Phase 8i)
-    bool previousH = false; // nearest hostile (Phase 8i)
-    bool previousJ = false;
-    bool previousG = false;
-    bool previousF = false;
-    bool previousR = false;
-    bool previousM = false;
-    bool previousPip1 = false;
-    bool previousPip2 = false;
-    bool previousPip3 = false;
-    bool previousPip4 = false;
     bool previousEscape = false;
     bool previousNavTab = false;
     bool previousNavUp = false;
@@ -359,8 +350,6 @@ int main(int argc, char** argv)
     bool previousEditBackspace = false;
     bool previousEditDelete = false;
     bool previousEditSubmit = false;
-    bool previousB = false;
-    bool previousI = false;
     // The bookmark naming prompt (Phase 8h), open across frames while the
     // player types. Its position is latched when B is pressed, so drifting
     // while naming does not move where the bookmark lands.
@@ -368,15 +357,17 @@ int main(int argc, char** argv)
     sol::core::DVec3 bookmarkPosition;
     std::string bookmarkWhere; // backs prompt.whereSummary across frames
     bool previousMouseDown = false;
-    // Left mouse selects in flight since Phase 8j (fire moved to middle), and
-    // it is latched separately from the UI's click: the two are read at
-    // different points in the frame and neither should consume the other's edge.
-    bool previousPickDown = false;
     bool quitRequested = false;
     bool showDebugDraw = false;
+    // Every gameplay chord's up/down state, sampled once per frame and handed
+    // to the binding table, which owns the press edges that used to be a
+    // `previousX` bool per key (Phase 8k).
+    sol::platform::InputSnapshot inputSnapshot;
+    game::ControlsScreenState controlsScreen;
+    bool previousVsync = settings.vsync;
 
-    SOL_LOG_INFO("Entering frame loop (%ux%u). RMB+mouse steer, MMB fire, LMB select, "
-                 "WASD/QE/Space/Ctrl thrust, "
+    SOL_LOG_INFO("Entering frame loop (%ux%u). Controls are rebindable in Settings; the shipped "
+                 "layout is RMB+mouse steer, MMB fire, LMB select, WASD/QE/Space/Ctrl thrust, "
                  "Shift boost, Tab cruise, X assist, F autopilot, V camera, T target, ESC quits.",
                  window.width(), window.height());
 
@@ -419,8 +410,21 @@ int main(int argc, char** argv)
         const bool typing = bookmarkPrompt.open;
         const bool uiHasKeys = !inFlight || typing;       // menus, station, map
         const bool inMenuScreen = uiHasKeys && !docked;   // where Esc means "back out"
-        const auto gameplayKey = [&](sol::platform::Key key) {
-            return inFlight && !typing && window.isKeyDown(key);
+
+        // Bindings (Phase 8k). Sampled once, here, so every action this frame
+        // reads one consistent picture of the keyboard and mouse - and so the
+        // press edges live in the table rather than in a `previousX` bool per
+        // key. Sampling before the dev-UI hook is the 8h rule that keeps a key
+        // ImGui swallowed from latching down forever.
+        inputSnapshot.sample(window);
+        settings.bindings.beginFrame(inputSnapshot);
+        const sol::platform::BindingTable& binds = settings.bindings;
+
+        // A gameplay action only counts in the cockpit, and never while a text
+        // field is open over it: the letters are a name being typed.
+        const bool gameplayLive = inFlight && !typing;
+        const auto gameplayPressed = [&](game::Action action) {
+            return gameplayLive && game::pressed(binds, action);
         };
 
         // Esc opens the pause menu; the menus handle backing out themselves.
@@ -435,9 +439,8 @@ int main(int argc, char** argv)
             window.setCursorLocked(false);
         }
 
-        // Camera mode cycle (V): first person -> chase -> free.
-        const bool vDown = gameplayKey(sol::platform::Key::V);
-        if (vDown && !previousV) {
+        // Camera mode cycle: first person -> chase -> free.
+        if (gameplayPressed(game::Action::CycleCamera)) {
             switch (cameraMode) {
             case game::CameraMode::FirstPerson:
                 cameraMode = game::CameraMode::ThirdPerson;
@@ -453,11 +456,10 @@ int main(int argc, char** argv)
                 break;
             }
         }
-        previousV = vDown;
 
-        // B writes down where the ship is (Phase 8h). The position is latched
-        // now rather than read on accept, so drifting while typing the name
-        // does not move where the bookmark ends up.
+        // The bookmark key writes down where the ship is (Phase 8h). The
+        // position is latched now rather than read on accept, so drifting
+        // while typing the name does not move where the bookmark ends up.
         //
         // Opened on RELEASE, not press, and the character the key produces is
         // withheld from the UI for as long as the key is down and on the frame
@@ -465,8 +467,8 @@ int main(int argc, char** argv)
         // receives the very "b" that opened it — which it did, and neither
         // half of the guard alone was enough: the character does not reliably
         // land on the same frame as the key event that generated it.
-        const bool bHeld = gameplayKey(sol::platform::Key::B);
-        const bool bReleased = !bHeld && previousB;
+        const bool bHeld = gameplayLive && game::held(binds, game::Action::Bookmark);
+        const bool bReleased = gameplayLive && game::released(binds, game::Action::Bookmark);
         if (bReleased && !bookmarkPrompt.open) {
             bookmarkPosition = world.shipState().position;
             bookmarkPrompt.open = true;
@@ -479,21 +481,17 @@ int main(int argc, char** argv)
             bookmarkPrompt.focusRequested = true;
             bookmarkPrompt.nameIsSuggestion = true;
         }
-        previousB = bHeld;
         // True while the opening keystroke could still be echoing as text.
         const bool bookmarkKeyEcho = bHeld || bReleased;
 
-        // T walks the nav points, C walks the ships (Phase 8h): two questions,
-        // two keys, one selection.
-        const bool tDown = gameplayKey(sol::platform::Key::T);
-        if (tDown && !previousT) {
+        // One key walks the nav points, another walks the ships (Phase 8h):
+        // two questions, two bindings, one selection.
+        if (gameplayPressed(game::Action::CycleNavTarget)) {
             world.cycleNavTarget();
             SOL_LOG_INFO("Target: %s", world.currentTargetInfo().nav.name.c_str());
         }
-        previousT = tDown;
 
-        const bool cDown = gameplayKey(sol::platform::Key::C);
-        if (cDown && !previousC) {
+        if (gameplayPressed(game::Action::CycleContact)) {
             world.cycleContact();
             const game::TargetInfo contact = world.currentTargetInfo();
             if (contact.isShip) {
@@ -503,14 +501,12 @@ int main(int argc, char** argv)
                 SOL_LOG_INFO("No contacts in this system");
             }
         }
-        previousC = cDown;
 
-        // O selects the tracked mission's destination outright (Phase 8i).
-        // Not a cycle: the whole point of the item is that the player never
-        // has to hunt for where they were sent, and hunting through twenty nav
-        // slots to find it is the same complaint one level down.
-        const bool oDown = gameplayKey(sol::platform::Key::O);
-        if (oDown && !previousO) {
+        // Selects the tracked mission's destination outright (Phase 8i). Not a
+        // cycle: the whole point of the item is that the player never has to
+        // hunt for where they were sent, and hunting through twenty nav slots
+        // to find it is the same complaint one level down.
+        if (gameplayPressed(game::Action::SelectObjective)) {
             if (world.selectObjective()) {
                 SOL_LOG_INFO("Objective: %s", world.currentTargetInfo().nav.name.c_str());
             } else {
@@ -521,13 +517,11 @@ int main(int argc, char** argv)
                              where.empty() ? "" : " - objective is at ", where.c_str());
             }
         }
-        previousO = oDown;
 
-        // H jumps straight back to the nearest hostile (Phase 8i). C's first
-        // press already lands there from a standing start, but mid-cycle it
-        // keeps walking, and this is the way back.
-        const bool hDown = gameplayKey(sol::platform::Key::H);
-        if (hDown && !previousH) {
+        // Jumps straight back to the nearest hostile (Phase 8i). The contact
+        // cycle's first press already lands there from a standing start, but
+        // mid-cycle it keeps walking, and this is the way back.
+        if (gameplayPressed(game::Action::NearestHostile)) {
             if (world.selectNearestHostile()) {
                 const game::TargetInfo hostile = world.currentTargetInfo();
                 SOL_LOG_INFO("Nearest hostile: %s [%s]", hostile.nav.name.c_str(),
@@ -536,22 +530,18 @@ int main(int argc, char** argv)
                 SOL_LOG_INFO("Nothing hostile in this system");
             }
         }
-        previousH = hDown;
 
         // Jump through the nearest in-range gate (decisions/004 gate travel).
-        const bool jDown = gameplayKey(sol::platform::Key::J);
-        if (jDown && !previousJ) {
+        if (gameplayPressed(game::Action::Jump)) {
             if (world.jumpNearestGate(kGateActivationRange)) {
                 SOL_LOG_INFO("Arrived in '%s'", world.currentSystemName());
             } else {
                 SOL_LOG_INFO("No gate within %.0f km", kGateActivationRange / 1000.0);
             }
         }
-        previousJ = jDown;
 
-        // Autopilot to the selected target (F toggles; manual input cancels).
-        const bool fDown = gameplayKey(sol::platform::Key::F);
-        if (fDown && !previousF) {
+        // Autopilot to the selected target (toggles; manual input cancels).
+        if (gameplayPressed(game::Action::Autopilot)) {
             if (world.autopilotActive()) {
                 world.disengageAutopilot();
                 SOL_LOG_INFO("Autopilot: disengaged");
@@ -559,14 +549,13 @@ int main(int argc, char** argv)
                 SOL_LOG_INFO("Autopilot: no target (or docked)");
             }
         }
-        previousF = fDown;
 
-        // Dock/undock at the nearest station (G toggles). Undocking is the one
-        // gameplay key the station screen leaves live, beside its own button.
-        // G is also the salvage key (Phase 8e): one interact key, and a
-        // station in range wins over a wreck.
-        const bool gDown = (inFlight || docked) && window.isKeyDown(sol::platform::Key::G);
-        if (gDown && !previousG) {
+        // Dock/undock at the nearest station (toggles). Undocking is the one
+        // gameplay action the station screen leaves live, beside its own
+        // button - so this one reads `inFlight || docked` rather than going
+        // through gameplayPressed. It is also the salvage action (Phase 8e):
+        // one interact binding, and a station in range wins over a wreck.
+        if ((inFlight || docked) && game::pressed(binds, game::Action::DockSalvage)) {
             if (world.isDocked()) {
                 (void)world.undock();
             } else if (!world.tryDockNearestStation(kDockRange)
@@ -575,23 +564,18 @@ int main(int argc, char** argv)
                              kDockRange / 1000.0);
             }
         }
-        previousG = gDown;
 
-        // Scan pulse (R): reveals contacts within the fitted scanner's range.
-        const bool rDown = gameplayKey(sol::platform::Key::R);
-        if (rDown && !previousR) {
+        // Scan pulse: reveals contacts within the fitted scanner's range.
+        if (gameplayPressed(game::Action::ScanPulse)) {
             if (world.pulseScan() < 0) {
                 SOL_LOG_INFO("Scanner still charging (%.0f%%)",
                              static_cast<double>(world.pulseCharge() * 100.0f));
             }
         }
-        previousR = rDown;
 
-        // Map (M) opens from flight or from a station and closes from itself.
-        const bool mDown = (inFlight || docked || onMap)
-                           && window.isKeyDown(sol::platform::Key::M)
-                           && !devUi.wantsMouseCapture();
-        if (mDown && !previousM) {
+        // The map opens from flight or from a station and closes from itself.
+        if ((inFlight || docked || onMap) && !typing && !devUi.wantsMouseCapture()
+            && game::pressed(binds, game::Action::OpenMap)) {
             if (onMap) {
                 state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
             } else {
@@ -599,16 +583,13 @@ int main(int argc, char** argv)
                 window.setCursorLocked(false);
             }
         }
-        previousM = mDown;
 
-        // Ship readout (I), on the same terms as the map: opens from flight or
+        // Ship readout, on the same terms as the map: opens from flight or
         // from a station, closes from itself, and does not stop the clock.
         // Suppressed while a text field is open, or "i" in a bookmark name
         // would leave the cockpit.
-        const bool iDown = (inFlight || docked || onShipInfo) && !typing
-                           && window.isKeyDown(sol::platform::Key::I)
-                           && !devUi.wantsMouseCapture();
-        if (iDown && !previousI) {
+        if ((inFlight || docked || onShipInfo) && !typing && !devUi.wantsMouseCapture()
+            && game::pressed(binds, game::Action::OpenShipInfo)) {
             if (onShipInfo) {
                 state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
             } else {
@@ -616,21 +597,20 @@ int main(int argc, char** argv)
                 window.setCursorLocked(false);
             }
         }
-        previousI = iDown;
 
-        // Power triage (decisions/003): 1/2/3 pip WEP/ENG/SYS, 4 balances.
-        const bool pip1 = gameplayKey(sol::platform::Key::Num1);
-        const bool pip2 = gameplayKey(sol::platform::Key::Num2);
-        const bool pip3 = gameplayKey(sol::platform::Key::Num3);
-        const bool pip4 = gameplayKey(sol::platform::Key::Num4);
-        if (pip1 && !previousPip1) world.playerAddPip(sol::sim::PowerSystem::Weapons);
-        if (pip2 && !previousPip2) world.playerAddPip(sol::sim::PowerSystem::Engines);
-        if (pip3 && !previousPip3) world.playerAddPip(sol::sim::PowerSystem::Shields);
-        if (pip4 && !previousPip4) world.playerBalancePips();
-        previousPip1 = pip1;
-        previousPip2 = pip2;
-        previousPip3 = pip3;
-        previousPip4 = pip4;
+        // Power triage (decisions/003): three pip bindings, one that balances.
+        if (gameplayPressed(game::Action::PipWeapons)) {
+            world.playerAddPip(sol::sim::PowerSystem::Weapons);
+        }
+        if (gameplayPressed(game::Action::PipEngines)) {
+            world.playerAddPip(sol::sim::PowerSystem::Engines);
+        }
+        if (gameplayPressed(game::Action::PipShields)) {
+            world.playerAddPip(sol::sim::PowerSystem::Shields);
+        }
+        if (gameplayPressed(game::Action::PipBalance)) {
+            world.playerBalancePips();
+        }
 
         // In free-cam mode the mouse/keys drive the debug camera, not the ship.
         if (!inFlight || typing) {
@@ -646,12 +626,13 @@ int main(int argc, char** argv)
             freeCamera.update(window, deltaSeconds);
             world.setShipInput({});
         } else {
-            sol::sim::FlightInput input = inputMapper.update(window, deltaSeconds);
-            // Fire is MIDDLE mouse since Phase 8j, which is what frees left
-            // mouse to select. Mining moves with it: 8f deliberately made the
-            // mining beam the fire button and that ruling stands.
-            input.trigger = window.isMouseButtonDown(sol::platform::MouseButton::Middle) &&
-                            !devUi.wantsMouseCapture();
+            sol::sim::FlightInput input = inputMapper.update(
+                window, deltaSeconds, binds, settings.mouseSensitivity, settings.invertPitch);
+            // Fire defaults to MIDDLE mouse since Phase 8j, which is what frees
+            // left mouse to select - and since 8k it is a binding like any
+            // other. Mining moves with it: 8f deliberately made the mining beam
+            // the fire button and that ruling stands.
+            input.trigger = game::held(binds, game::Action::Fire) && !devUi.wantsMouseCapture();
             world.setShipInput(input);
         }
 
@@ -695,10 +676,8 @@ int main(int argc, char** argv)
             view.valid = true;
             world.setViewFrame(view);
 
-            const bool pickDown = inFlight && !typing &&
-                                  window.isMouseButtonDown(sol::platform::MouseButton::Left) &&
-                                  !devUi.wantsMouseCapture();
-            if (pickDown && !previousPickDown) {
+            if (gameplayLive && !devUi.wantsMouseCapture()
+                && game::pressed(binds, game::Action::Select)) {
                 // While the cursor is captured for mouse-look its position is
                 // meaningless by contract, so the click asks the same question
                 // at the boresight: target what the ship is pointing at.
@@ -709,7 +688,6 @@ int main(int argc, char** argv)
                         : game::pickTarget(world, {cursor.x / pickScale, cursor.y / pickScale});
                 game::selectPicked(world, pick);
             }
-            previousPickDown = pickDown;
         }
 
         const bool includeShip = cameraMode != game::CameraMode::FirstPerson;
@@ -880,6 +858,11 @@ int main(int argc, char** argv)
         const double salvageDistance = world.nearestSalvageDistance();
         hud.salvageInRange =
             salvageDistance >= 0.0 && salvageDistance <= game::SpaceWorld::kSalvageRange;
+        // Prompt keys (Phase 8k). These used to be string literals in the HUD,
+        // which a rebind turned into a confident lie.
+        hud.jumpKey = game::boundChordName(binds, game::Action::Jump);
+        hud.interactKey = game::boundChordName(binds, game::Action::DockSalvage);
+        hud.scanKey = game::boundChordName(binds, game::Action::ScanPulse);
         const std::uint32_t nextHop = world.survey().nextHop();
         if (nextHop < world.galaxy().systems.size()) {
             routeHopName = world.galaxy().systems[nextHop].name;
@@ -1115,6 +1098,13 @@ int main(int argc, char** argv)
         case game::GameState::Settings:
             menuAction = game::buildSettingsScreen(ui, settings);
             break;
+        case game::GameState::Controls:
+            // The capture reads the raw chord edge rather than any binding, so
+            // a key can be assigned to an action whatever else already holds
+            // it - the steal is the screen's business, not the table's caller.
+            menuAction = game::buildControlsScreen(ui, settings, controlsScreen,
+                                                   settings.bindings.captured(), escapeEdge);
+            break;
         case game::GameState::Flying:
             // The dev HUD stays up beside this one during the changeover.
             game::buildFlightUi(ui.drawList(), renderer.uiFont(), ui.screenSize(), hud);
@@ -1199,6 +1189,18 @@ int main(int argc, char** argv)
             }
             state = settingsReturnState;
             break;
+        case game::MenuAction::OpenControls:
+            state = game::GameState::Controls;
+            break;
+        case game::MenuAction::CloseControls:
+            // Bindings persist the moment the player leaves the list, on the
+            // same terms the sliders do: a crash must not cost them the layout
+            // they just built.
+            if (!settings.save(settingsPath.c_str())) {
+                SOL_LOG_WARN("could not write %s", settingsPath.c_str());
+            }
+            state = game::GameState::Settings;
+            break;
         case game::MenuAction::QuitGame:
             quitRequested = true;
             break;
@@ -1248,6 +1250,14 @@ int main(int argc, char** argv)
         }
 
         bool needRecreate = window.consumeResize();
+        // V-Sync is a swapchain present mode (Phase 8k), so toggling it rides
+        // the recreate path every window resize already exercises rather than
+        // getting a second one written for it.
+        if (settings.vsync != previousVsync) {
+            previousVsync = settings.vsync;
+            needRecreate = true;
+            SOL_LOG_INFO("V-Sync %s", settings.vsync ? "on" : "off");
+        }
         if (needRecreate) {
             devUi.discardFrame();
         }
@@ -1271,7 +1281,7 @@ int main(int argc, char** argv)
 
         if (needRecreate) {
             context.waitIdle();
-            if (swapchain.recreate(window.width(), window.height())) {
+            if (swapchain.recreate(window.width(), window.height(), settings.vsync)) {
                 if (!renderer.onSwapchainRecreated()) {
                     failed = true;
                     break;

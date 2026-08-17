@@ -1,5 +1,6 @@
 add_library(sol_platform STATIC
     src/file_io.cpp
+    src/input_bindings.cpp
 )
 add_library(sol::platform ALIAS sol_platform)
 

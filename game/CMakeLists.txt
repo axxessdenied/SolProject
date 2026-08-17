@@ -2,6 +2,7 @@ add_executable(sol_game
     src/combat_effects.cpp
     src/content.cpp
     src/game_ui.cpp
+    src/input_actions.cpp
     src/main.cpp
     src/map_screen.cpp
     src/map_ui.cpp
