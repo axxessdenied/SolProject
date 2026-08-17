@@ -7,6 +7,8 @@
 #include "scene_renderer.hpp"
 #include "shader_watcher.hpp"
 #include "ship_camera.hpp"
+#include "ship_screen.hpp"
+#include "ship_ui.hpp"
 #include "space_world.hpp"
 #include "station_screen.hpp"
 #include "station_ui.hpp"
@@ -306,6 +308,7 @@ int main(int argc, char** argv)
     game::MainMenuState mainMenuState;
     game::StationScreenState stationScreen; // tab + scroll positions, across frames
     game::MapScreenState mapScreen;         // map tab, scroll, and selection
+    game::ShipScreenState shipScreen;       // ship readout scroll
     // Refilled each frame and kept alive across the HUD build, which only
     // carries a span into it.
     std::vector<sol::ui::RadarContact> radarContacts;
@@ -386,6 +389,12 @@ int main(int argc, char** argv)
         commodityNames.push_back(def != nullptr ? def->name.c_str() : id.c_str());
     }
     std::deque<std::string> mapText;     // same, for the map screen
+    std::deque<std::string> shipText;    // same, for the ship readout
+    std::vector<sol::ui::InfoRow> shipFlightRows;
+    std::vector<sol::ui::InfoRow> shipDefenceRows;
+    std::vector<sol::ui::InfoRow> shipUtilityRows;
+    std::vector<sol::ui::InfoRow> shipFittedRows;
+    std::vector<sol::ui::InfoRow> shipCargoRows;
     SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).", world.entityCount(),
                  world.currentSystemName(), world.galaxy().systems.size());
 
@@ -422,6 +431,7 @@ int main(int argc, char** argv)
     bool previousEditDelete = false;
     bool previousEditSubmit = false;
     bool previousB = false;
+    bool previousI = false;
     // The bookmark naming prompt (Phase 8h), open across frames while the
     // player types. Its position is latched when B is pressed, so drifting
     // while naming does not move where the bookmark lands.
@@ -463,9 +473,11 @@ int main(int argc, char** argv)
         const bool inFlight = state == game::GameState::Flying;
         const bool docked = state == game::GameState::Docked;
         const bool onMap = state == game::GameState::Map;
+        const bool onShipInfo = state == game::GameState::ShipInfo;
         // The map is a screen, not a pause: the economy, the factions, and
-        // whatever is shooting at you all keep running while it is open.
-        const bool simRunning = inFlight || docked || onMap;
+        // whatever is shooting at you all keep running while it is open. The
+        // ship readout is the same kind of screen.
+        const bool simRunning = inFlight || docked || onMap || onShipInfo;
         // A text field open over the flight view owns the keyboard, on exactly
         // the terms a menu does (Phase 8h): the letters are a name being typed,
         // not thrust and target commands. Without this "Rich Rock" flies the
@@ -621,6 +633,23 @@ int main(int argc, char** argv)
             }
         }
         previousM = mDown;
+
+        // Ship readout (I), on the same terms as the map: opens from flight or
+        // from a station, closes from itself, and does not stop the clock.
+        // Suppressed while a text field is open, or "i" in a bookmark name
+        // would leave the cockpit.
+        const bool iDown = (inFlight || docked || onShipInfo) && !typing
+                           && window.isKeyDown(sol::platform::Key::I)
+                           && !devUi.wantsMouseCapture();
+        if (iDown && !previousI) {
+            if (onShipInfo) {
+                state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
+            } else {
+                state = game::GameState::ShipInfo;
+                window.setCursorLocked(false);
+            }
+        }
+        previousI = iDown;
 
         // Power triage (decisions/003): 1/2/3 pip WEP/ENG/SYS, 4 balances.
         const bool pip1 = gameplayKey(sol::platform::Key::Num1);
@@ -998,6 +1027,12 @@ int main(int argc, char** argv)
             game::fillMapPanel(world, mapText, mapPanel, mapSystemRows, mapLaneRows,
                                mapMarkerRows);
         }
+        sol::ui::ShipInfoPanel shipPanel;
+        if (state == game::GameState::ShipInfo) {
+            game::fillShipInfoPanel(world, content.defs(), shipText, shipPanel, shipFlightRows,
+                                    shipDefenceRows, shipUtilityRows, shipFittedRows,
+                                    shipCargoRows);
+        }
         // --- Custom game UI (Phase 8d), rebuilt every frame ---
         // Everything below works in virtual UI pixels: the layout, the cursor,
         // and the renderer all divide by the same scale, so the setting moves
@@ -1087,6 +1122,11 @@ int main(int argc, char** argv)
             // The map owns the view (it dims what is behind it), but the ship
             // is still flying under it - this state does not stop the clock.
             mapClosed = game::buildMapScreen(ui, mapPanel, mapScreen);
+            break;
+        case game::GameState::ShipInfo:
+            if (game::buildShipScreen(ui, shipPanel, shipScreen)) {
+                state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
+            }
             break;
         }
         ui.endFrame();

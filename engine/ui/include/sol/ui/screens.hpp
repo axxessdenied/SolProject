@@ -227,6 +227,46 @@ struct SurveyRow
     float value = 0.0f;      // credits this line pays
 };
 
+// --- Ship information screen (Phase 8h) --------------------------------------
+
+// One "label: value" line, with an optional dim note after it. Deliberately
+// generic: the ship screen is a dozen small tables and inventing a row type
+// per table would be a dozen structs that all say the same thing.
+struct InfoRow
+{
+    const char* label = "";
+    const char* value = "";
+    const char* detail = ""; // dim, optional
+};
+
+// Everything the ship screen draws. Read-only: refitting stays a station
+// activity, which is a design statement rather than a shortfall. What it adds
+// is being able to read the outfitting numbers WHILE their consequences are
+// happening, which the station pad by definition cannot do.
+struct ShipInfoPanel
+{
+    const char* shipName = "";
+    const char* shipClass = "";
+    const char* fitSummary = ""; // power / slots / berths, prebuilt
+    float hull = 1.0f;
+    float shieldFore = 1.0f;
+    float shieldAft = 1.0f;
+    double credits = 0.0;
+    float cargoUsed = 0.0f;
+    float cargoCapacity = 0.0f;
+    // Pips are shown here too, because half the stats below are what the pip
+    // allocation is currently doing to the ship.
+    int pipsWeapons = 2;
+    int pipsEngines = 2;
+    int pipsShields = 2;
+    int pipMax = 4;
+    std::span<const InfoRow> flight;  // thrust, speed, turn rates
+    std::span<const InfoRow> defence; // shields, armor, hull, weapon
+    std::span<const InfoRow> utility; // scan, collector, cargo
+    std::span<const InfoRow> fitted;  // weapon, modules, crew
+    std::span<const InfoRow> cargo;   // manifest, one line per commodity held
+};
+
 // --- Bookmark naming overlay (Phase 8h) --------------------------------------
 
 // The little prompt B opens over the flight view. The name arrives prefilled

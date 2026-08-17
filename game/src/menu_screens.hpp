@@ -21,6 +21,10 @@ enum class GameState : std::uint32_t
     // like it does *not* stop the clock: a galaxy that pauses while you read
     // the map is not the galaxy this game is selling.
     Map,
+    // The ship readout (Phase 8h). Like the map, a screen rather than a pause:
+    // reading your own numbers is not a reason for the galaxy to stop, and
+    // half of them only mean anything while something is happening to you.
+    ShipInfo,
 };
 
 // Player-facing options, persisted beside the save as TOML. Kept out of the

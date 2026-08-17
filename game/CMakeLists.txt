@@ -5,6 +5,8 @@ add_executable(sol_game
     src/main.cpp
     src/map_screen.cpp
     src/map_ui.cpp
+    src/ship_screen.cpp
+    src/ship_ui.cpp
     src/menu_screens.cpp
     src/scene_renderer.cpp
     src/shader_watcher.cpp

@@ -1,5 +1,7 @@
 #include "content.hpp"
 
+#include "ship_ui.hpp"
+
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
 
@@ -746,6 +748,13 @@ std::string warpBookmark(GameContent& content, double id)
         return "cannot warp while docked";
     }
     return "warped to '" + bookmark->name + "'";
+}
+
+// The ship readout as text: how the screen gets verified without reading
+// pixels, and the fastest way to see what a refit actually changed.
+std::string shipInfo(GameContent& content)
+{
+    return shipInfoReport(content.world(), content.defs());
 }
 
 // --- Mining, salvage & refining (Phase 8f) -----------------------------------
@@ -1660,6 +1669,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listBookmarks>("sol", "bookmarks", this);
     m_vm.registerFunction<&deleteBookmark>("sol", "bookmark_delete", this);
     m_vm.registerFunction<&warpBookmark>("sol", "warp_bookmark", this);
+    m_vm.registerFunction<&shipInfo>("sol", "ship_info", this);
     m_vm.registerFunction<&orderRefine>("sol", "refine", this);
     m_vm.registerFunction<&collectRefined>("sol", "collect", this);
     m_vm.registerFunction<&listRefineJobs>("sol", "refine_jobs", this);
