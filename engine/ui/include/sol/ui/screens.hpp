@@ -314,6 +314,11 @@ struct MapSystemRow
     bool hasOwner = false;
     bool current = false;
     bool onRoute = false;
+    // Phase 8h: the player has written a place down in this system. The
+    // galaxy map marks it so a bookmark made three systems ago is findable
+    // without remembering which system it was in - and once the system is
+    // selected, Plot Route already gets you back there.
+    std::uint32_t bookmarkCount = 0;
     // Trade overlay (Phase 8g), meaningful only when MapPanel::tradeCommodity
     // is set. `tradeLevel` is where this price sits between the cheapest and
     // dearest the player has seen, which is what makes a route legible at a

@@ -307,6 +307,19 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         if (system.current) {
             ui.drawList().addCircle(point, kNodeRadius + 10.0f, kCurrentRing, 1.8f, 16);
         }
+        // A gold diamond above the node for a system holding bookmarks: the
+        // same glyph the system map uses for them, so "my own mark" reads the
+        // same at both scales. Selecting the system then plotting a route is
+        // how you get back to it.
+        if (system.bookmarkCount > 0) {
+            const float reach = 3.5f;
+            const Vec2 pin = {point.x, point.y - kNodeRadius - 8.0f};
+            const Color gold = rgba(0xFFC850FFu);
+            ui.drawList().addTriangle({pin.x, pin.y - reach}, {pin.x - reach, pin.y},
+                                      {pin.x + reach, pin.y}, gold);
+            ui.drawList().addTriangle({pin.x, pin.y + reach}, {pin.x - reach, pin.y},
+                                      {pin.x + reach, pin.y}, gold);
+        }
         // A gate names where it leads, so a charted system carries its name -
         // dimmed, because that name is all you have until you go. The gap
         // clears the widest ring drawn above (the current-system ring at

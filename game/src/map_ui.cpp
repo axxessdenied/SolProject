@@ -149,6 +149,9 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
         row.knowledge = toMapKnowledge(state);
         row.current = i == world.currentSystemIndex();
         row.onRoute = std::find(route.begin(), route.end(), i) != route.end();
+        // A bookmark is the player's own knowledge, so it shows regardless of
+        // how much of the system they have surveyed - they were standing there.
+        row.bookmarkCount = survey.bookmarkCountIn(i);
 
         // Ownership is knowledge too: a system you have only heard of from a
         // gate does not tell you whose space it is.
@@ -171,6 +174,9 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
             detail += ", sites " + std::to_string(resolved) + "/" + std::to_string(signals);
             if (state == sim::KnowledgeState::Surveyed) {
                 detail += " - SURVEYED";
+            }
+            if (row.bookmarkCount > 0) {
+                detail += ", " + std::to_string(row.bookmarkCount) + " bookmark(s)";
             }
             row.detail = store(text, std::move(detail));
         }
