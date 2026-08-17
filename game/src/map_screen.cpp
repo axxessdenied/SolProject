@@ -44,6 +44,9 @@ constexpr Color kLane = rgba(0x35506AFFu);
 constexpr Color kLaneRoute = rgba(0x58C8F0FFu);
 constexpr Color kCharted = rgba(0x6B7C8CFFu);
 constexpr Color kCurrentRing = rgba(0xF2CC59FFu);
+// Phase 8i. Nothing like the bookmark's gold: "somewhere I chose" and
+// "somewhere I was sent" must never read alike. Shared by both map tiers.
+constexpr Color kObjective = rgba(0xFF66C4FFu);
 
 constexpr const char* const kTabLabels[MapScreenState::TabCount] = {"Galaxy", "System"};
 
@@ -100,6 +103,8 @@ constexpr const char* const kTabLabels[MapScreenState::TabCount] = {"Galaxy", "S
         return rgba(0xC4696CFFu); // something died here
     case MapMarkerRow::Kind::Bookmark:
         return rgba(0xFFC850FFu); // the player's own mark, not the galaxy's
+    case MapMarkerRow::Kind::Objective:
+        return kObjective;
     }
     return ui.theme().textDim;
 }
@@ -320,6 +325,13 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
             ui.drawList().addTriangle({pin.x, pin.y + reach}, {pin.x - reach, pin.y},
                                       {pin.x + reach, pin.y}, gold);
         }
+        // And a magenta ring around the node the tracked mission points at
+        // (Phase 8i). Drawn widest of the lot so it survives a system that is
+        // also current, also selected and also surveyed - being sent somewhere
+        // is the state that must never be the one crowded out.
+        if (system.hasObjective) {
+            ui.drawList().addCircle(point, kNodeRadius + 13.0f, kObjective, 1.8f, 20);
+        }
         // A gate names where it leads, so a charted system carries its name -
         // dimmed, because that name is all you have until you go. The gap
         // clears the widest ring drawn above (the current-system ring at
@@ -327,7 +339,7 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         labels.place(ui, *ui.drawList().font()->style(ui.theme().smallStyle), point, system.name,
                      system.knowledge >= MapKnowledge::Visited ? ui.theme().textDim
                                                                : ui.theme().textDisabled,
-                     kNodeRadius + 13.0f);
+                     kNodeRadius + (system.hasObjective ? 16.0f : 13.0f));
     }
     ui.drawList().popClip();
 }
@@ -409,6 +421,16 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
                                       {point.x + reach, point.y}, color);
             ui.drawList().addTriangle({point.x, point.y + reach}, {point.x - reach, point.y},
                                       {point.x + reach, point.y}, color);
+        } else if (marker.kind == MapMarkerRow::Kind::Objective) {
+            // A ring around a centre dot - the waypoint glyph, and the only
+            // marker on the map that is a halo rather than a solid, so where
+            // the mission says to go is findable without reading a legend
+            // (Phase 8i).
+            const float inner = size - 1.5f;
+            ui.drawList().addRoundedRect(
+                {{point.x - inner, point.y - inner}, {point.x + inner, point.y + inner}}, inner,
+                color);
+            ui.drawList().addCircle(point, size + 3.0f, color, 1.6f, 16);
         } else {
             ui.drawList().addRoundedRect({{point.x - size, point.y - size},
                                           {point.x + size, point.y + size}},

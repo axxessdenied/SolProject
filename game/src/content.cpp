@@ -687,6 +687,51 @@ std::string listContacts(GameContent& content)
     return lines.empty() ? std::string(summary) : lines + "\n" + summary;
 }
 
+// The tracked mission's current objective and whether it currently holds a nav
+// slot (Phase 8i). Printing the slot is how the append-only bookkeeping gets
+// verified without reading pixels: the defect this item fixes was precisely a
+// position the game knew and never said.
+std::string describeObjective(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::MissionObjective* objective = world.trackedObjective();
+    if (objective == nullptr) {
+        return "no tracked mission";
+    }
+    const char* kindName = objective->kind == sol::sim::ObjectiveKind::FlyTo    ? "fly to"
+                           : objective->kind == sol::sim::ObjectiveKind::Dock   ? "dock"
+                           : objective->kind == sol::sim::ObjectiveKind::Deliver ? "deliver"
+                                                                                 : "kill";
+    const std::string where = world.objectiveDestinationText();
+    std::string line = std::string(kindName) + ": " + objective->text;
+    if (!where.empty()) {
+        line += " - " + where;
+    }
+    const std::size_t slot = world.objectiveTargetIndex();
+    if (slot == SpaceWorld::kNoTarget) {
+        return line + "\nno nav slot (not a FlyTo in this system)";
+    }
+    char buffer[160];
+    std::snprintf(buffer, sizeof(buffer), "nav slot %zu: %s, %.1f km away, radius %.1f km", slot,
+                  world.navTargets()[slot].name.c_str(),
+                  sol::core::length(objective->position - world.shipState().position) / 1000.0,
+                  objective->radius / 1000.0);
+    return line + "\n" + buffer;
+}
+
+// The H key's path: select the nearest hostile, or say plainly that there is
+// not one, which is the answer a key that silently does nothing withholds.
+std::string targetNearestHostile(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    if (!world.selectNearestHostile()) {
+        return "nothing hostile in this system";
+    }
+    const TargetInfo hostile = world.currentTargetInfo();
+    return "targeting " + hostile.nav.name + " ["
+           + (hostile.attitude[0] != '\0' ? hostile.attitude : "unaffiliated") + "]";
+}
+
 // Writes down where the ship is. An empty name takes the generated one, which
 // is the same path B takes when the player accepts the suggestion.
 std::string bookmarkHere(GameContent& content, std::string name)
@@ -1665,6 +1710,9 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&warpToRock>("sol", "warp_rock", this);
     m_vm.registerFunction<&selectTargetByName>("sol", "target", this);
     m_vm.registerFunction<&listContacts>("sol", "contacts", this);
+    // Mission objectives and threat selection (Phase 8i).
+    m_vm.registerFunction<&describeObjective>("sol", "objective", this);
+    m_vm.registerFunction<&targetNearestHostile>("sol", "target_hostile", this);
     m_vm.registerFunction<&bookmarkHere>("sol", "bookmark", this);
     m_vm.registerFunction<&listBookmarks>("sol", "bookmarks", this);
     m_vm.registerFunction<&deleteBookmark>("sol", "bookmark_delete", this);

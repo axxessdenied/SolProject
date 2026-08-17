@@ -195,6 +195,7 @@ sol::ui::RadarKind radarKindOf(game::SpaceWorld::NavKind kind)
     case game::SpaceWorld::NavKind::Field: return sol::ui::RadarKind::Field;
     case game::SpaceWorld::NavKind::Wreck: return sol::ui::RadarKind::Wreck;
     case game::SpaceWorld::NavKind::Bookmark: return sol::ui::RadarKind::Bookmark;
+    case game::SpaceWorld::NavKind::Objective: return sol::ui::RadarKind::Objective;
     }
     return sol::ui::RadarKind::Signal;
 }
@@ -406,6 +407,8 @@ int main(int argc, char** argv)
     bool previousV = false;
     bool previousT = false;
     bool previousC = false;
+    bool previousO = false; // objective (Phase 8i)
+    bool previousH = false; // nearest hostile (Phase 8i)
     bool previousJ = false;
     bool previousG = false;
     bool previousF = false;
@@ -570,6 +573,39 @@ int main(int argc, char** argv)
             }
         }
         previousC = cDown;
+
+        // O selects the tracked mission's destination outright (Phase 8i).
+        // Not a cycle: the whole point of the item is that the player never
+        // has to hunt for where they were sent, and hunting through twenty nav
+        // slots to find it is the same complaint one level down.
+        const bool oDown = gameplayKey(sol::platform::Key::O);
+        if (oDown && !previousO) {
+            if (world.selectObjective()) {
+                SOL_LOG_INFO("Objective: %s", world.currentTargetInfo().nav.name.c_str());
+            } else {
+                const std::string where = world.objectiveDestinationText();
+                // Honest about which of the two "no" answers this is: nothing
+                // tracked at all, or tracked but not a place in this system.
+                SOL_LOG_INFO("No objective marker here%s%s",
+                             where.empty() ? "" : " - objective is at ", where.c_str());
+            }
+        }
+        previousO = oDown;
+
+        // H jumps straight back to the nearest hostile (Phase 8i). C's first
+        // press already lands there from a standing start, but mid-cycle it
+        // keeps walking, and this is the way back.
+        const bool hDown = gameplayKey(sol::platform::Key::H);
+        if (hDown && !previousH) {
+            if (world.selectNearestHostile()) {
+                const game::TargetInfo hostile = world.currentTargetInfo();
+                SOL_LOG_INFO("Nearest hostile: %s [%s]", hostile.nav.name.c_str(),
+                             hostile.attitude[0] != '\0' ? hostile.attitude : "unaffiliated");
+            } else {
+                SOL_LOG_INFO("Nothing hostile in this system");
+            }
+        }
+        previousH = hDown;
 
         // Jump through the nearest in-range gate (decisions/004 gate travel).
         const bool jDown = gameplayKey(sol::platform::Key::J);
@@ -907,6 +943,14 @@ int main(int argc, char** argv)
             } else if (objective.kind == sol::sim::ObjectiveKind::Deliver) {
                 missionHudObjective +=
                     " (" + std::to_string(static_cast<int>(objective.units)) + " units)";
+            }
+            // ...and where that actually is (Phase 8i). The mission's prose
+            // names the errand, not the place; without this a Dock objective
+            // never says which station and nothing off-system says which
+            // system, which is half of "I had no way to find it".
+            const std::string destination = world.objectiveDestinationText();
+            if (!destination.empty()) {
+                missionHudObjective += " - " + destination;
             }
             hud.missionTitle = tracked.title.c_str();
             hud.missionObjective = missionHudObjective.c_str();

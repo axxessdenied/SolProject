@@ -641,8 +641,12 @@ public:
         Signal,
         Field, // Phase 8f: an asteroid field, targeted as a whole
         Wreck,
-        Bookmark, // Phase 8h: a place the player wrote down
+        Bookmark,  // Phase 8h: a place the player wrote down
+        Objective, // Phase 8i: where the tracked mission says to go
     };
+
+    // "No slot" for the target-index queries below.
+    static constexpr std::size_t kNoTarget = static_cast<std::size_t>(-1);
 
     // Cycling targets: the static nav points (station, planet, sun) then
     // every live pilot ship (combat targets with shield/hull readouts).
@@ -665,6 +669,11 @@ public:
     // Ship slots in cycleContact order: whoever is attacking the player
     // first, then hostiles, then the rest, each group nearest-first.
     void contactOrder(std::vector<std::size_t>& out) const;
+    // The same order, with each slot's threat tier alongside (0 = attacking
+    // the player, 1 = hostile, 2 = everything else). "Is the nearest contact
+    // hostile" is then read off the sort that already ran, rather than from a
+    // second definition of hostile that can drift away from this one.
+    void contactOrder(std::vector<std::size_t>& out, std::vector<int>& tiers) const;
     [[nodiscard]] bool targetIsContact() const { return m_targetIndex >= m_targets.size(); }
     // The static nav points of this system, in target-cycle order.
     [[nodiscard]] std::span<const NavTarget> navTargets() const { return m_targets; }
@@ -678,6 +687,26 @@ public:
     [[nodiscard]] std::uint32_t navTargetWreck(std::size_t index) const;
     // Bookmark id for a Bookmark slot; ~0u for anything else (Phase 8h).
     [[nodiscard]] std::uint32_t navTargetBookmark(std::size_t index) const;
+
+    // --- Mission objectives (Phase 8i) ---
+    // The tracked mission's current objective, or nullptr when nothing is
+    // tracked. The position it carries has been in the data since 8c and was
+    // never drawn, which is what made the campaign unreachable.
+    [[nodiscard]] const sol::sim::MissionObjective* trackedObjective() const;
+    // Where the tracked objective sends the player, as prose for the HUD: the
+    // station and system for Dock/Deliver, the system for a FlyTo elsewhere,
+    // the victim faction for a Kill. Empty when nothing is tracked or when the
+    // destination is a marker in this system the player can already see —
+    // saying "over there" beside a dot that says where is noise.
+    [[nodiscard]] std::string objectiveDestinationText() const;
+    // Slot of the NavKind::Objective target, or kNoTarget when the tracked
+    // objective is not a FlyTo in this system (so nothing is there to select).
+    [[nodiscard]] std::size_t objectiveTargetIndex() const;
+    // Selects that slot (the O key). False when there is nothing to select.
+    bool selectObjective();
+    // Selects the nearest hostile contact (the H key), which is the head of
+    // the contact order when the order's head is hostile at all.
+    bool selectNearestHostile();
 
     // --- Bookmarks (Phase 8h) ---
     // Writes down where the ship is now. An empty name gets one generated
@@ -853,6 +882,18 @@ private:
     // or a scan in flight is already pointing at. Slots whose object is gone
     // (a decayed wreck) are compacted, and the target index follows them.
     void rebuildDynamicTargets();
+    // True when the tracked mission's current objective is a FlyTo in this
+    // system — the one case that has a position and nothing else to draw it.
+    // Dock/Deliver name a station that is already a nav target and Kill has no
+    // position at all, so both are answered by the HUD line instead.
+    [[nodiscard]] bool objectiveDestination(const sol::sim::MissionObjective** out) const;
+    // Rebuilds the tail only when the objective slot's presence or position no
+    // longer matches the tracked mission. Called each tick; costs a pointer
+    // chase and a vector compare when nothing has changed.
+    void syncObjectiveTarget();
+    // How far short of a target autopilot parks. Shared by the engage message
+    // and the steering itself, so what it announces is what it does.
+    [[nodiscard]] double autopilotArrivalRange(const TargetInfo& target) const;
     // Mining layout for the current galaxy (sized like the economy's), and
     // the ore table read out of the commodity defs.
     void initializeMining();

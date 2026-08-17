@@ -82,6 +82,8 @@ namespace {
         return ui::MapMarkerRow::Kind::Wreck;
     case SpaceWorld::NavKind::Bookmark:
         return ui::MapMarkerRow::Kind::Bookmark;
+    case SpaceWorld::NavKind::Objective:
+        return ui::MapMarkerRow::Kind::Objective;
     }
     return ui::MapMarkerRow::Kind::Station;
 }
@@ -139,6 +141,13 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
         }
     }
 
+    // Which system the tracked mission is pointing at (Phase 8i). An objective
+    // in another system has no marker anywhere else, so without this the
+    // galaxy map is silent about the one thing the player has been told to do.
+    const sim::MissionObjective* objective = world.trackedObjective();
+    const std::uint32_t objectiveSystem =
+        objective != nullptr ? objective->system : sim::kAnySystem;
+
     for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
         const sim::SystemSpec& spec = galaxy.systems[i];
         const sim::KnowledgeState state = survey.knowledge(i);
@@ -152,6 +161,7 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
         // A bookmark is the player's own knowledge, so it shows regardless of
         // how much of the system they have surveyed - they were standing there.
         row.bookmarkCount = survey.bookmarkCountIn(i);
+        row.hasObjective = i == objectiveSystem;
 
         // Ownership is knowledge too: a system you have only heard of from a
         // gate does not tell you whose space it is.
@@ -160,8 +170,12 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
             row.hasOwner = true;
             row.ownerColor = world.factions()[owner].color;
         }
+        // Said the same way in both branches: being sent somewhere unsurveyed
+        // is exactly the case where the player most needs to be told.
+        const std::string objectiveNote = row.hasObjective ? " - MISSION OBJECTIVE" : "";
         if (!visited) {
-            row.detail = store(text, spec.name + ": charted only - fly there to survey it");
+            row.detail = store(
+                text, spec.name + ": charted only - fly there to survey it" + objectiveNote);
         } else {
             std::uint32_t resolved = 0;
             const std::uint32_t signals = survey.signalCount(i);
@@ -178,6 +192,7 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
             if (row.bookmarkCount > 0) {
                 detail += ", " + std::to_string(row.bookmarkCount) + " bookmark(s)";
             }
+            detail += objectiveNote;
             row.detail = store(text, std::move(detail));
         }
         if (tradeCommodity >= 0 && systemHasPrice[i] != 0) {
@@ -274,6 +289,15 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
             detail += " - " + std::to_string(static_cast<int>(cargo)) + " units aboard";
         } else if (kind == SpaceWorld::NavKind::Bookmark) {
             detail += " - bookmark";
+        } else if (kind == SpaceWorld::NavKind::Objective) {
+            // The marker's name is deliberately short, so the mission's own
+            // wording rides in the detail. It goes *before* the distance
+            // because the detail column is right-aligned and clips from the
+            // left: the narrow row keeps the distance every other row shows,
+            // and the wide footer cell reads out the whole sentence.
+            if (objective != nullptr) {
+                detail = objective->text + " - " + detail;
+            }
         }
         markerRows.push_back({.kind = toMarkerKind(kind),
                               .name = targets[i].name.c_str(),

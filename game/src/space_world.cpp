@@ -545,6 +545,87 @@ std::string signalTargetName(const SignalInstance& signal, bool resolved, bool e
 
 } // namespace
 
+const sim::MissionObjective* SpaceWorld::trackedObjective() const
+{
+    const std::vector<sim::Mission>& active = m_missions.active();
+    if (m_missions.tracked() >= active.size()) {
+        return nullptr;
+    }
+    const sim::Mission& mission = active[m_missions.tracked()];
+    return mission.currentObjective < mission.objectives.size()
+               ? &mission.objectives[mission.currentObjective]
+               : nullptr;
+}
+
+bool SpaceWorld::objectiveDestination(const sim::MissionObjective** out) const
+{
+    const sim::MissionObjective* objective = trackedObjective();
+    if (objective == nullptr || objective->kind != sim::ObjectiveKind::FlyTo
+        || objective->system != m_currentSystem) {
+        return false;
+    }
+    if (out != nullptr) {
+        *out = objective;
+    }
+    return true;
+}
+
+std::string SpaceWorld::objectiveDestinationText() const
+{
+    const sim::MissionObjective* objective = trackedObjective();
+    if (objective == nullptr) {
+        return {};
+    }
+    const auto systemName = [&](std::uint32_t system) -> std::string {
+        return system < m_galaxy.systems.size() ? m_galaxy.systems[system].name
+                                                : std::string("an unknown system");
+    };
+    const bool here = objective->system == m_currentSystem;
+    switch (objective->kind) {
+    case sim::ObjectiveKind::FlyTo:
+        // In this system it already has a marker, a radar dot and a nav slot.
+        return here ? std::string() : systemName(objective->system);
+    case sim::ObjectiveKind::Dock:
+    case sim::ObjectiveKind::Deliver: {
+        std::string where = "a station";
+        if (objective->system < m_galaxy.systems.size()) {
+            const std::vector<sim::StationSpec>& stations =
+                m_galaxy.systems[objective->system].stations;
+            if (objective->station < stations.size()) {
+                where = stations[objective->station].name;
+            }
+        }
+        return here ? where : where + ", " + systemName(objective->system);
+    }
+    case sim::ObjectiveKind::Kill: {
+        const std::string victim = objective->faction < m_factionTable.size()
+                                       ? m_factionTable[objective->faction].name
+                                       : std::string("anyone");
+        if (objective->system == sim::kAnySystem) {
+            return victim + ", anywhere";
+        }
+        return here ? victim + ", here" : victim + ", " + systemName(objective->system);
+    }
+    }
+    return {};
+}
+
+void SpaceWorld::syncObjectiveTarget()
+{
+    const sim::MissionObjective* objective = nullptr;
+    const bool want = objectiveDestination(&objective);
+    const std::size_t slot = objectiveTargetIndex();
+    const bool have = slot != kNoTarget;
+    // The position matters as much as the presence: when one FlyTo completes
+    // and the next is also in this system the slot stays put and only moves,
+    // which is what carries a selection (and an engaged autopilot) to the next
+    // leg instead of dropping it.
+    if (want == have && (!want || m_targets[slot].position == objective->position)) {
+        return;
+    }
+    rebuildDynamicTargets();
+}
+
 void SpaceWorld::rebuildDynamicTargets()
 {
     // Slots are append-only in discovery order: a scan in flight and the
@@ -590,6 +671,16 @@ void SpaceWorld::rebuildDynamicTargets()
             m_dynamicTargets.push_back({.kind = NavKind::Bookmark, .index = id});
         }
     }
+    // The tracked mission's destination (Phase 8i). There is at most one, so
+    // the slot carries no index of its own: it exists while the tracked
+    // objective is a FlyTo here, and its position is re-read below every
+    // rebuild. That is deliberate — when one leg completes and the next is
+    // also in this system, the marker moves to the new waypoint and a live
+    // selection (and an engaged autopilot) carry over instead of dropping.
+    const bool wantObjective = objectiveDestination(nullptr);
+    if (wantObjective && !hasSlot(NavKind::Objective, 0)) {
+        m_dynamicTargets.push_back({.kind = NavKind::Objective, .index = 0});
+    }
 
     // Compact slots whose object is gone, carrying the player's selection and
     // any scan in flight with them.
@@ -597,12 +688,22 @@ void SpaceWorld::rebuildDynamicTargets()
     for (std::size_t read = 0; read < m_dynamicTargets.size(); ++read) {
         const DynamicTarget& slot = m_dynamicTargets[read];
         const bool alive =
-            slot.kind == NavKind::Signal     ? slot.index < m_signals.size()
-            : slot.kind == NavKind::Field    ? slot.index < m_fields.size()
-            : slot.kind == NavKind::Bookmark ? m_survey.bookmark(slot.index) != nullptr
-                                             : m_mining.wreck(slot.index) != nullptr;
+            slot.kind == NavKind::Signal      ? slot.index < m_signals.size()
+            : slot.kind == NavKind::Field     ? slot.index < m_fields.size()
+            : slot.kind == NavKind::Bookmark  ? m_survey.bookmark(slot.index) != nullptr
+            : slot.kind == NavKind::Objective ? wantObjective
+                                              : m_mining.wreck(slot.index) != nullptr;
         if (!alive) {
             const std::size_t removed = m_signalTargetBase + write;
+            // The selection itself going away is not a reason to fly to
+            // whatever slid into its slot. Found flying the objective: the
+            // FlyTo completed at its radius while autopilot was still closing,
+            // the slot vanished, and the ship carried on to a neutral
+            // interceptor four kilometres away without being asked (Phase 8i).
+            if (m_targetIndex == removed && m_autopilotActive) {
+                m_autopilotActive = false;
+                SOL_LOG_INFO("Autopilot: disengaged, the destination is gone");
+            }
             if (m_targetIndex > removed) {
                 --m_targetIndex;
             }
@@ -643,6 +744,21 @@ void SpaceWorld::rebuildDynamicTargets()
             const sim::Bookmark* bookmark = m_survey.bookmark(slot.index);
             m_targets.push_back({.name = "* " + bookmark->name,
                                  .position = bookmark->position,
+                                 .surfaceRadius = 0.0});
+            break;
+        }
+        case NavKind::Objective: {
+            // One glyph of prefix, as bookmarks take, so the cycle says what a
+            // slot is without a legend. Deliberately NOT the objective's own
+            // text: that is a sentence of mission prose ("Fly to the
+            // calibration beacon (8 km out)"), and as a target name it
+            // overran the map's name column, collided with its neighbour's
+            // label on the map itself, and was truncated in the HUD readout.
+            // The prose belongs on the mission line, which already carries it.
+            const sim::MissionObjective* objective = nullptr;
+            (void)objectiveDestination(&objective);
+            m_targets.push_back({.name = "> Objective",
+                                 .position = objective->position,
                                  .surfaceRadius = 0.0});
             break;
         }
@@ -2869,7 +2985,14 @@ void SpaceWorld::cycleNavTarget()
 
 void SpaceWorld::contactOrder(std::vector<std::size_t>& out) const
 {
+    std::vector<int> tiers;
+    contactOrder(out, tiers);
+}
+
+void SpaceWorld::contactOrder(std::vector<std::size_t>& out, std::vector<int>& tiers) const
+{
     out.clear();
+    tiers.clear();
     if (m_spawnedShips.empty()) {
         return;
     }
@@ -2917,8 +3040,10 @@ void SpaceWorld::contactOrder(std::vector<std::size_t>& out) const
         return a.tier != b.tier ? a.tier < b.tier : a.distanceSquared < b.distanceSquared;
     });
     out.reserve(ranked.size());
+    tiers.reserve(ranked.size());
     for (const Ranked& entry : ranked) {
         out.push_back(entry.slot);
+        tiers.push_back(entry.tier);
     }
 }
 
@@ -2945,6 +3070,39 @@ void SpaceWorld::cycleContact()
     }
     m_contactSlot = order[next];
     m_targetIndex = m_targets.size() + m_contactSlot;
+}
+
+std::size_t SpaceWorld::objectiveTargetIndex() const
+{
+    for (std::size_t slot = 0; slot < m_dynamicTargets.size(); ++slot) {
+        if (m_dynamicTargets[slot].kind == NavKind::Objective) {
+            return m_signalTargetBase + slot;
+        }
+    }
+    return kNoTarget;
+}
+
+bool SpaceWorld::selectObjective()
+{
+    // Selected outright rather than cycled to: the whole point of the item is
+    // that the player never has to hunt for where they were sent, and hunting
+    // through twenty nav slots is the same complaint one level down.
+    const std::size_t index = objectiveTargetIndex();
+    return index != kNoTarget && selectTarget(index);
+}
+
+bool SpaceWorld::selectNearestHostile()
+{
+    std::vector<std::size_t> order;
+    std::vector<int> tiers;
+    contactOrder(order, tiers);
+    // The order is already threat-then-distance, so the nearest hostile is its
+    // head whenever the head is hostile at all — anything else means there is
+    // nothing hostile in the system to jump to.
+    if (order.empty() || tiers[0] > 1) {
+        return false;
+    }
+    return selectTarget(m_targets.size() + order[0]);
 }
 
 bool SpaceWorld::targetShipByName(const char* namePart)
@@ -3149,9 +3307,29 @@ bool SpaceWorld::engageAutopilot()
         return false;
     }
     m_autopilotActive = true;
-    SOL_LOG_INFO("Autopilot: flying to '%s' (arrive %.1f km out)",
-                 currentTargetInfo().nav.name.c_str(), m_autopilotRange / 1000.0);
+    const TargetInfo target = currentTargetInfo();
+    SOL_LOG_INFO("Autopilot: flying to '%s' (arrive %.1f km out)", target.nav.name.c_str(),
+                 autopilotArrivalRange(target) / 1000.0);
     return true;
+}
+
+double SpaceWorld::autopilotArrivalRange(const TargetInfo& target) const
+{
+    // Stand off by the surface plus the arrival range; big bodies get at
+    // least half a radius of clearance so the goal sits outside their
+    // avoidance shell.
+    double range =
+        target.nav.surfaceRadius + std::max(m_autopilotRange, target.nav.surfaceRadius * 0.5);
+    // A mission objective is the one target whose whole point is *arriving*
+    // (Phase 8i). The general standoff is 1.5 km and a FlyTo radius is
+    // typically 1.2 km, so autopilot would otherwise park just outside the
+    // completion sphere and the objective would never tick over — which is the
+    // original complaint wearing a different hat. Park well inside it instead.
+    const sim::MissionObjective* objective = nullptr;
+    if (m_targetIndex == objectiveTargetIndex() && objectiveDestination(&objective)) {
+        range = std::max(std::min(range, objective->radius * 0.5), 50.0);
+    }
+    return range;
 }
 
 void SpaceWorld::setAutopilotArrivalRange(double meters)
@@ -3178,11 +3356,7 @@ sim::FlightInput SpaceWorld::autopilotInput()
         return m_shipInput;
     }
 
-    // Stand off by the surface plus the arrival range; big bodies get at
-    // least half a radius of clearance so the goal sits outside their
-    // avoidance shell.
-    const double effectiveRange =
-        target.nav.surfaceRadius + std::max(m_autopilotRange, target.nav.surfaceRadius * 0.5);
+    const double effectiveRange = autopilotArrivalRange(target);
     const core::DVec3 targetVelocity = target.isShip ? target.velocity : core::DVec3{};
     const sim::ShipState state = shipState();
     const double remaining = length(target.nav.position - state.position) - effectiveRange;
@@ -3746,6 +3920,11 @@ void SpaceWorld::tick(double dt)
         m_missions.notifyPosition(m_currentSystem, shipState().position);
     }
     processMissionEvents();
+    // The objective's nav slot follows whatever the events above did to the
+    // tracked mission (Phase 8i). Checked here rather than hooked onto each of
+    // accept/track/abandon/complete because the slot is derived state and this
+    // is a comparison of three fields, not a rebuild.
+    syncObjectiveTarget();
 
     // Scanning (Phase 8e): pulse recharge plus the held target scan.
     tickScanning(dt);

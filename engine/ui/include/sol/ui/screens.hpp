@@ -28,6 +28,7 @@ enum class RadarKind : std::uint32_t
     Field,
     Wreck,
     Bookmark,
+    Objective, // Phase 8i: where the tracked mission says to go
     Ship,
 };
 
@@ -319,6 +320,11 @@ struct MapSystemRow
     // without remembering which system it was in - and once the system is
     // selected, Plot Route already gets you back there.
     std::uint32_t bookmarkCount = 0;
+    // Phase 8i: the tracked mission's current objective is in this system.
+    // An objective in another system has no marker to draw anywhere else, so
+    // without this flag the galaxy map is silent about the one thing the
+    // player has actually been told to do; Plot Route then already gets there.
+    bool hasObjective = false;
     // Trade overlay (Phase 8g), meaningful only when MapPanel::tradeCommodity
     // is set. `tradeLevel` is where this price sits between the cheapest and
     // dearest the player has seen, which is what makes a route legible at a
@@ -350,7 +356,8 @@ struct MapMarkerRow
         Signal,
         Field, // Phase 8f: an asteroid field
         Wreck,
-        Bookmark, // Phase 8h: a place the player wrote down
+        Bookmark,  // Phase 8h: a place the player wrote down
+        Objective, // Phase 8i: where the tracked mission says to go
     };
     Kind kind = Kind::Star;
     const char* name = "";

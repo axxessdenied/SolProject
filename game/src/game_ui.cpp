@@ -540,6 +540,9 @@ constexpr float kRadarPlotRadius = kRadarRadius - kRadarStalkLimit;
     case sol::ui::RadarKind::Field: return rgba(0xC2A36BFFu);
     case sol::ui::RadarKind::Wreck: return rgba(0xA88C6EFFu);
     case sol::ui::RadarKind::Bookmark: return rgba(0xFFC850FFu);
+    // Deliberately nothing like the bookmark's gold: "somewhere I chose" and
+    // "somewhere I was sent" must never read alike.
+    case sol::ui::RadarKind::Objective: return rgba(0xFF66C4FFu);
     }
     return kNeutral;
 }
@@ -585,7 +588,10 @@ void drawRadar(DrawList& list, const Font& font, const Styles& styles, Vec2 scre
         }
         const Vec2 dot = {point.x, point.y + stalk};
 
-        const float size = contact.isTarget ? 4.0f : 3.0f;
+        // The objective reads a size up: on a disc of thirty contacts, the one
+        // the player was actually told to reach should not need finding.
+        const bool objective = contact.kind == sol::ui::RadarKind::Objective;
+        const float size = contact.isTarget || objective ? 4.0f : 3.0f;
         if (beyond) {
             // Past the outer ring: hollow, so "beyond the radar" never reads
             // as "at the edge of the radar". Drawn a touch larger and with
@@ -598,6 +604,8 @@ void drawRadar(DrawList& list, const Font& font, const Styles& styles, Vec2 scre
         }
         if (contact.isTarget) {
             list.addCircle(dot, size + 3.5f, kTargetMark, 1.25f, 12);
+        } else if (objective) {
+            list.addCircle(dot, size + 2.5f, color.withAlpha(0.55f), 1.0f, 12);
         }
     }
 
