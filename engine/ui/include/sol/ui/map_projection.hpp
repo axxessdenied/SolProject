@@ -95,6 +95,15 @@ struct MapProjection
     return static_cast<float>(std::log10(1.0 + std::abs(meters) / 1.0e5));
 }
 
+// Orbital tier: distance from the star. Orbits run from about 4e10 m out to
+// 4e11, so this uses a far coarser decade than the playfield does — under the
+// playfield's curve every orbit lands in the outermost few percent of the
+// disc and the planets pile up on the rim.
+[[nodiscard]] inline float orbitMapRadius(double meters)
+{
+    return static_cast<float>(std::log10(1.0 + std::abs(meters) / 1.0e9));
+}
+
 // Largest compressed radius over a marker set, the denominator that keeps the
 // outermost marker just inside the disc. Never zero.
 [[nodiscard]] inline float systemMapExtent(std::span<const MapMarkerRow> markers)
@@ -106,6 +115,75 @@ struct MapProjection
         extent = std::max(extent, systemMapRadius(std::sqrt(x * x + y * y)));
     }
     return extent > 0.0f ? extent : 1.0f;
+}
+
+// The same, restricted to one tier: the orbital extent is measured on the
+// orbit curve over the bodies, the playfield extent on the playfield curve
+// over everything else.
+[[nodiscard]] inline float orbitExtent(std::span<const MapMarkerRow> markers,
+                                       core::Vec2 hubPosition)
+{
+    // The hub itself has to fit, even in a system whose only body is the one
+    // the playfield hangs off.
+    float extent = orbitMapRadius(
+        std::sqrt(static_cast<double>(hubPosition.x) * hubPosition.x
+                  + static_cast<double>(hubPosition.y) * hubPosition.y));
+    for (const MapMarkerRow& marker : markers) {
+        if (marker.inPlayfield) {
+            continue;
+        }
+        const double x = marker.position.x;
+        const double y = marker.position.y;
+        extent = std::max(extent, orbitMapRadius(std::sqrt(x * x + y * y)));
+    }
+    return extent > 0.0f ? extent : 1.0f;
+}
+
+// Playfield tier: how far out the furthest thing in the bubble is, in meters.
+// Unlike the rest of the system this is *linear*, because the playfield spans
+// well under a decade (a station 1e8 m out, a gate 6e8) — a log curve over
+// that range squeezes everything into a thin ring at the bubble's edge, which
+// undoes the whole point of expanding it. Linear also means relative
+// positions inside the bubble are exactly true, which is what you want of the
+// part of the map you actually fly.
+[[nodiscard]] inline float playfieldSpan(std::span<const MapMarkerRow> markers)
+{
+    float span = 0.0f;
+    for (const MapMarkerRow& marker : markers) {
+        if (!marker.inPlayfield) {
+            continue;
+        }
+        const double x = marker.position.x;
+        const double y = marker.position.y;
+        span = std::max(span, static_cast<float>(std::sqrt(x * x + y * y)));
+    }
+    return span > 0.0f ? span : 1.0f;
+}
+
+[[nodiscard]] inline core::Vec2 playfieldPoint(core::Vec2 offsetMeters, core::Vec2 center,
+                                               float discRadius, float spanMeters)
+{
+    if (!(spanMeters > 0.0f)) {
+        return center;
+    }
+    const float scale = discRadius / spanMeters;
+    return {center.x + offsetMeters.x * scale, center.y + offsetMeters.y * scale};
+}
+
+// Where an orbital body lands on the disc: the star is the middle, and
+// bearing is exact so the shape of the system is real.
+[[nodiscard]] inline core::Vec2 orbitMapPoint(core::Vec2 offsetMeters, core::Vec2 center,
+                                              float discRadius, float extent)
+{
+    const double x = offsetMeters.x;
+    const double y = offsetMeters.y;
+    const double distance = std::sqrt(x * x + y * y);
+    if (distance <= 0.0 || extent <= 0.0f) {
+        return center;
+    }
+    const float scaled = discRadius * (orbitMapRadius(distance) / extent);
+    const float angle = static_cast<float>(std::atan2(y, x));
+    return {center.x + std::cos(angle) * scaled, center.y + std::sin(angle) * scaled};
 }
 
 // Where a marker lands on the disc of radius `discRadius` around `center`.

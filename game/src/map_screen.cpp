@@ -6,9 +6,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace game {
+
+namespace assets = sol::assets;
 
 using sol::core::Vec2;
 using sol::ui::Color;
@@ -110,6 +114,88 @@ void clipped(UiContext& ui, const Rect& cell, std::string_view text, const Color
     ui.drawList().popClip();
 }
 
+// Labels sit to the right of their marker, and on a crowded map they land on
+// top of each other — a station, its gates and an asteroid field can project
+// within a few pixels. This pushes a colliding label down until it clears and
+// ties it back to its dot with a leader line, which is the ordinary
+// cartographic answer and keeps every dot where it honestly belongs.
+class LabelPlacer
+{
+public:
+    void place(UiContext& ui, const assets::FontStyleRecord& style, Vec2 anchor,
+               const char* text, const Color& color, float gap)
+    {
+        if (text == nullptr || text[0] == '\0') {
+            return;
+        }
+        const float height = style.lineHeight > 1.0f ? style.lineHeight : 14.0f;
+        // Estimated rather than measured: the draw list has no width query,
+        // and for keeping names off each other an estimate is enough.
+        const float width =
+            std::min(130.0f, 8.0f + 0.52f * style.pixelSize * static_cast<float>(
+                                                 std::char_traits<char>::length(text)));
+
+        // Try the natural spot first, then the other side of the marker, then
+        // step away vertically in both directions alternately. Most labels
+        // find a home within a step or two, which matters: a leader line is
+        // legible but a map full of them is not.
+        const auto boxAt = [&](bool rightSide, float dy) {
+            const float left = rightSide ? anchor.x + gap : anchor.x - gap - width;
+            return Rect{{left, anchor.y - height * 0.5f + dy},
+                        {left + width, anchor.y + height * 0.5f + dy}};
+        };
+        Rect box = boxAt(true, 0.0f);
+        bool placedCleanly = !collides(box);
+        if (!placedCleanly) {
+            for (int step = 0; step <= 6 && !placedCleanly; ++step) {
+                for (const bool rightSide : {true, false}) {
+                    for (const float sign : {-1.0f, 1.0f}) {
+                        if (step == 0 && (sign < 0.0f || rightSide)) {
+                            continue; // already tried right/0
+                        }
+                        const Rect candidate = boxAt(rightSide, sign * height * step);
+                        if (!collides(candidate)) {
+                            box = candidate;
+                            placedCleanly = true;
+                            break;
+                        }
+                    }
+                    if (placedCleanly) {
+                        break;
+                    }
+                }
+            }
+        }
+        if (!placedCleanly) {
+            box = boxAt(true, height * 7.0f); // give up gracefully rather than overlap
+        }
+        m_placed.push_back(box);
+
+        // A leader whenever the label is not sitting right beside its dot.
+        const Vec2 labelEdge{box.min.x < anchor.x ? box.max.x + 3.0f : box.min.x - 3.0f,
+                             (box.min.y + box.max.y) * 0.5f};
+        if (std::abs(labelEdge.y - anchor.y) > 1.0f || box.min.x < anchor.x) {
+            ui.drawList().addLine(anchor, labelEdge, color.withAlpha(0.4f), 1.0f);
+        }
+        ui.drawList().addTextInBox(style, box, text, color,
+                                   box.min.x < anchor.x ? TextAlign::Right : TextAlign::Left);
+    }
+
+private:
+    [[nodiscard]] bool collides(const Rect& box) const
+    {
+        for (const Rect& other : m_placed) {
+            if (box.min.x < other.max.x && box.max.x > other.min.x && box.min.y < other.max.y
+                && box.max.y > other.min.y) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::vector<Rect> m_placed;
+};
+
 // --- Galaxy view ------------------------------------------------------------
 
 void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int selected)
@@ -135,6 +221,7 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
                               lane.onRoute ? kLaneRoute : kLane, lane.onRoute ? 2.5f : 1.0f);
     }
 
+    LabelPlacer labels;
     for (std::size_t i = 0; i < panel.systems.size(); ++i) {
         const MapSystemRow& system = panel.systems[i];
         if (!sol::ui::systemVisible(system)) {
@@ -160,12 +247,13 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
             ui.drawList().addCircle(point, kNodeRadius + 10.0f, kCurrentRing, 1.8f, 16);
         }
         // A gate names where it leads, so a charted system carries its name -
-        // dimmed, because that name is all you have until you go.
-        ui.drawList().addTextInBox(
-            *ui.drawList().font()->style(ui.theme().smallStyle),
-            {{point.x + 8.0f, point.y - 9.0f}, {point.x + 130.0f, point.y + 9.0f}}, system.name,
-            system.knowledge >= MapKnowledge::Visited ? ui.theme().textDim
-                                                      : ui.theme().textDisabled);
+        // dimmed, because that name is all you have until you go. The gap
+        // clears the widest ring drawn above (the current-system ring at
+        // kNodeRadius + 10), or the selection would sit on top of the text.
+        labels.place(ui, *ui.drawList().font()->style(ui.theme().smallStyle), point, system.name,
+                     system.knowledge >= MapKnowledge::Visited ? ui.theme().textDim
+                                                               : ui.theme().textDisabled,
+                     kNodeRadius + 13.0f);
     }
     ui.drawList().popClip();
 }
@@ -184,20 +272,52 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
     if (radius <= 0.0f) {
         return;
     }
-    const float extent = sol::ui::systemMapExtent(panel.markers);
-    ui.drawList().pushClip(view);
-    // Range rings, one per decade, so the log scale is visible rather than a
-    // silent lie about distance.
-    for (float decade = 1.0f; decade <= extent; decade += 1.0f) {
-        ui.drawList().addCircle(center, radius * (decade / extent),
-                                ui.theme().panelEdge.withAlpha(0.5f), 1.0f, 32);
-    }
 
+    // Two tiers. The star holds the middle and the planets sit on their orbits
+    // around it, which is the shape a system actually has. But everything you
+    // fly to — stations, gates, signals, fields, wrecks — sits within a few
+    // hundred thousand km of one planet, and at orbital scale that is a single
+    // pixel, so the playfield is drawn expanded in a bubble pinned to that
+    // planet. Distances inside each tier stay ordered and bearings stay exact;
+    // it is the gap between the two scales that is compressed.
+    const float orbitSpan = sol::ui::orbitExtent(panel.markers, panel.hubPosition);
+    const float bubbleSpan = sol::ui::playfieldSpan(panel.markers);
+    const float orbitRadius = radius * 0.70f;
+    const float bubbleRadius = radius * 0.30f;
+    const Vec2 hub = sol::ui::orbitMapPoint(panel.hubPosition, center, orbitRadius, orbitSpan);
+
+    const auto project = [&](const MapMarkerRow& marker) {
+        return marker.inPlayfield
+                   ? sol::ui::playfieldPoint(marker.position, hub, bubbleRadius, bubbleSpan)
+                   : sol::ui::orbitMapPoint(marker.position, center, orbitRadius, orbitSpan);
+    };
+
+    ui.drawList().pushClip(view);
+    // An orbit ring per body, so the planets read as orbiting rather than as
+    // dots that happen to be scattered.
+    for (const MapMarkerRow& marker : panel.markers) {
+        if (marker.inPlayfield || marker.kind == MapMarkerRow::Kind::Star) {
+            continue;
+        }
+        const Vec2 point = project(marker);
+        const float dx = point.x - center.x;
+        const float dy = point.y - center.y;
+        ui.drawList().addCircle(center, std::sqrt(dx * dx + dy * dy),
+                                ui.theme().panelEdge.withAlpha(0.45f), 1.0f, 48);
+    }
+    // The bubble's own edge, so the change of scale is visible rather than an
+    // unannounced lie about how far apart these things are.
+    ui.drawList().addCircle(hub, bubbleRadius + 8.0f, ui.theme().panelEdge.withAlpha(0.8f), 1.0f,
+                            40);
+
+    LabelPlacer labels;
     for (std::size_t i = 0; i < panel.markers.size(); ++i) {
         const MapMarkerRow& marker = panel.markers[i];
-        const Vec2 point = sol::ui::systemMapPoint(marker.position, center, radius, extent);
+        const Vec2 point = project(marker);
         const Color color = markerColor(ui, marker);
-        const float size = marker.kind == MapMarkerRow::Kind::Star ? 6.0f : 4.0f;
+        const float size = marker.kind == MapMarkerRow::Kind::Star   ? 6.0f
+                           : marker.kind == MapMarkerRow::Kind::Planet ? 5.0f
+                                                                       : 3.5f;
         ui.drawList().addRoundedRect({{point.x - size, point.y - size},
                                       {point.x + size, point.y + size}},
                                      marker.kind == MapMarkerRow::Kind::Gate ? 1.0f : size, color);
@@ -207,13 +327,15 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         if (static_cast<int>(i) == selected) {
             ui.drawList().addCircle(point, size + 9.0f, kCurrentRing, 1.4f, 16);
         }
-        ui.drawList().addTextInBox(*ui.drawList().font()->style(ui.theme().smallStyle),
-                                   {{point.x + 8.0f, point.y - 9.0f},
-                                    {point.x + 150.0f, point.y + 9.0f}},
-                                   marker.name, ui.theme().textDim);
+        labels.place(ui, *ui.drawList().font()->style(ui.theme().smallStyle), point, marker.name,
+                     ui.theme().textDim, size + 10.0f);
     }
-    // The ship sits at the middle of its own map.
-    ui.drawList().addCircle(center, 4.0f, ui.theme().textPrimary, 1.6f, 12);
+    // The ship, where it actually is, which is inside the bubble.
+    if (panel.hasShip) {
+        const Vec2 ship =
+            sol::ui::playfieldPoint(panel.shipPosition, hub, bubbleRadius, bubbleSpan);
+        ui.drawList().addCircle(ship, 4.0f, ui.theme().textPrimary, 1.6f, 12);
+    }
     ui.drawList().popClip();
 }
 

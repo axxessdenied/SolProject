@@ -13,6 +13,10 @@ using sol::ui::MapMarkerRow;
 using sol::ui::MapProjection;
 using sol::ui::MapSystemRow;
 using sol::ui::Rect;
+using sol::ui::orbitExtent;
+using sol::ui::orbitMapPoint;
+using sol::ui::playfieldPoint;
+using sol::ui::playfieldSpan;
 using sol::ui::systemMapExtent;
 using sol::ui::systemMapPoint;
 using sol::ui::systemMapRadius;
@@ -140,4 +144,61 @@ SOL_TEST(map_system_view_compresses_range_but_keeps_order_and_bearing)
 
     // A degenerate extent collapses to the center rather than dividing by zero.
     SOL_CHECK(nearlyEqual(systemMapPoint({1.0e8f, 0.0f}, center, kDisc, 0.0f).x, center.x));
+}
+
+SOL_TEST(map_system_view_puts_the_star_in_the_middle_and_expands_the_playfield)
+{
+    // The two tiers a real system needs. Planets orbit 4e10-4e11 m out; a
+    // station sits 1e8 m from one of them, which on the orbital curve is the
+    // same pixel as the planet — hence the bubble.
+    std::vector<MapMarkerRow> markers(4);
+    markers[0].kind = MapMarkerRow::Kind::Star;
+    markers[0].position = {0.0f, 0.0f}; // the star is the system origin
+    markers[1].kind = MapMarkerRow::Kind::Planet;
+    markers[1].position = {4.0e10f, 0.0f};
+    markers[2].kind = MapMarkerRow::Kind::Planet;
+    markers[2].position = {0.0f, 4.0e11f};
+    markers[3].kind = MapMarkerRow::Kind::Station;
+    markers[3].inPlayfield = true;
+    markers[3].position = {1.0e8f, 0.0f}; // 1e8 m from the hub, due +x
+
+    const Vec2 hubPosition{4.0e10f, 0.0f}; // the playfield hangs off planet 1
+    const Vec2 center = {200.0f, 200.0f};
+    constexpr float kDisc = 100.0f;
+
+    const float orbits = orbitExtent(markers, hubPosition);
+    const float bubble = playfieldSpan(markers);
+    SOL_CHECK(orbits > 0.0f);
+    SOL_CHECK(nearlyEqual(bubble, 1.0e8f, 1.0f)); // linear meters, not a log curve
+
+    // The star lands dead centre. That is the whole point of the tier split.
+    const Vec2 star = orbitMapPoint(markers[0].position, center, kDisc, orbits);
+    SOL_CHECK(nearlyEqual(star.x, center.x) && nearlyEqual(star.y, center.y));
+
+    // Planets sit out on their orbits, in order, bearing exact.
+    const Vec2 inner = orbitMapPoint(markers[1].position, center, kDisc, orbits);
+    const Vec2 outer = orbitMapPoint(markers[2].position, center, kDisc, orbits);
+    SOL_CHECK(inner.x > center.x && nearlyEqual(inner.y, center.y));
+    SOL_CHECK(outer.y > center.y && nearlyEqual(outer.x, center.x));
+    SOL_CHECK(inner.x - center.x < outer.y - center.y);
+    SOL_CHECK(outer.y - center.y <= kDisc + 0.01f);
+    // And the inner orbit is not crushed against the star: under the
+    // playfield's own curve every orbit landed in the outermost few percent,
+    // which is what made the planets pile up on the rim.
+    SOL_CHECK(inner.x - center.x > kDisc * 0.3f);
+
+    // The station is drawn around its planet, not around the star, and out at
+    // the bubble's edge because it is the furthest thing in it.
+    const Vec2 hub = orbitMapPoint(hubPosition, center, kDisc, orbits);
+    const float bubbleRadius = kDisc * 0.30f;
+    const Vec2 station = playfieldPoint(markers[3].position, hub, bubbleRadius, bubble);
+    SOL_CHECK(nearlyEqual(station.x, hub.x + bubbleRadius));
+    SOL_CHECK(nearlyEqual(station.y, hub.y));
+    // Half as far out is half the pixels: inside the bubble the scale is
+    // linear, so relative positions there are exactly true.
+    const Vec2 halfway = playfieldPoint({5.0e7f, 0.0f}, hub, bubbleRadius, bubble);
+    SOL_CHECK(nearlyEqual(halfway.x - hub.x, bubbleRadius * 0.5f));
+    SOL_CHECK(nearlyEqual(playfieldPoint({0.0f, 0.0f}, hub, bubbleRadius, 0.0f).x, hub.x));
+    // A system whose only body is the hub still yields a finite extent.
+    SOL_CHECK(orbitExtent(std::span<const MapMarkerRow>{}, hubPosition) > 0.0f);
 }

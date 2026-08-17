@@ -217,7 +217,16 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
     const std::span<const NavTarget> targets = world.navTargets();
     for (std::size_t i = 0; i < targets.size(); ++i) {
         const SpaceWorld::NavKind kind = world.navTargetKind(i);
-        const core::DVec3 offset = targets[i].position - hub;
+        // Two tiers, two origins. The star and the planets are measured from
+        // the star, which is at the system origin, so the map reads the way a
+        // system actually looks — star in the middle, worlds around it.
+        // Everything else lives within a few hundred thousand km of the
+        // primary planet, which at orbital scale is the same pixel, so it
+        // keeps its offset from that planet and gets drawn in the expanded
+        // bubble the map puts there.
+        const bool orbital =
+            kind == SpaceWorld::NavKind::Star || kind == SpaceWorld::NavKind::Planet;
+        const core::DVec3 offset = orbital ? targets[i].position : targets[i].position - hub;
         const double distance = length(targets[i].position - shipPosition);
         bool scanned = false;
         if (kind == SpaceWorld::NavKind::Signal) {
@@ -263,8 +272,13 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
                                            static_cast<float>(offset.z)},
                               .distanceMeters = distance,
                               .scanned = scanned,
-                              .targeted = i == targeted});
+                              .targeted = i == targeted,
+                              .inPlayfield = !orbital});
     }
+    panel.hubPosition = {static_cast<float>(hub.x), static_cast<float>(hub.z)};
+    const core::DVec3 shipOffset = shipPosition - hub;
+    panel.shipPosition = {static_cast<float>(shipOffset.x), static_cast<float>(shipOffset.z)};
+    panel.hasShip = true;
 
     std::string routeSummary;
     if (route.size() >= 2) {

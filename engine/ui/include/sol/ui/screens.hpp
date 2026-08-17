@@ -242,10 +242,20 @@ struct MapMarkerRow
     Kind kind = Kind::Star;
     const char* name = "";
     const char* detail = "";
-    core::Vec2 position;       // meters, playfield plane relative to the hub
+    // Meters in the playfield plane. What it is measured *from* depends on
+    // which tier the marker belongs to (see `inPlayfield`), because a system
+    // spans two wildly different scales: planets orbit 40-400 million km out,
+    // while everything you actually fly to sits within a few hundred thousand
+    // km of one planet. Drawing both against one origin makes the second group
+    // a single dot.
+    core::Vec2 position;
     double distanceMeters = 0.0; // from the ship
-    bool scanned = false;      // bodies: surveyed; signals: identified
+    bool scanned = false;        // bodies: surveyed; signals: identified
     bool targeted = false;
+    // False: an orbital body, positioned from the star. True: something in
+    // the playfield around the primary planet, positioned from that planet
+    // and drawn in the expanded bubble the system map puts there.
+    bool inPlayfield = false;
 };
 
 struct MapAction
@@ -275,6 +285,11 @@ struct MapPanel
     std::span<const MapLaneRow> lanes;
     std::span<const MapMarkerRow> markers;
     int currentIndex = -1; // row of the system the player is in
+    // Where the playfield bubble is pinned: the primary planet's offset from
+    // the star, in meters. Everything with `inPlayfield` is drawn around it.
+    core::Vec2 hubPosition;
+    core::Vec2 shipPosition; // the ship, meters from the hub
+    bool hasShip = false;
     // Trade overlay (Phase 8g): pick a commodity and the galaxy map colors
     // every system the player has price data for. -1 is off.
     std::span<const char* const> commodityNames;
