@@ -16,6 +16,7 @@
 #include "target_pick.hpp"
 
 #include "sol/core/log.hpp"
+#include "sol/core/profiler.hpp"
 #include "sol/core/version.hpp"
 #include "sol/sim/fixed_loop.hpp"
 #include "sol/sim/flight.hpp"
@@ -384,8 +385,21 @@ int main(int argc, char** argv)
     std::uint64_t frameCount = 0;
     bool failed = false;
 
+    // On for the whole run: this is dev tooling on the same side of the line
+    // as the overlay and the console (engine plan 2.9), and ~40 clock reads a
+    // frame is not a cost worth a toggle. The class defaults to off so tests
+    // and any other client start silent.
+    sol::core::Profiler& profiler = sol::core::frameProfiler();
+    profiler.setEnabled(true);
+
     while (true) {
-        window.pumpEvents();
+        // Publishes the frame just finished. Before pumpEvents so the event
+        // pump is inside the frame it belongs to rather than straddling two.
+        profiler.beginFrame();
+        {
+            SOL_PROFILE_ZONE("input.events");
+            window.pumpEvents();
+        }
         if (window.shouldClose() || quitRequested) {
             break;
         }
@@ -651,10 +665,15 @@ int main(int argc, char** argv)
         // A menu stops the clock: no accumulation, so unpausing does not
         // fast-forward the galaxy by however long the player was reading.
         if (simRunning) {
+            // The counter is the tick count, not a size: the fixed loop runs
+            // up to eight ticks per rendered frame, so a sim time without it
+            // cannot be read as a per-tick cost.
+            SOL_PROFILE_ZONE_NAMED(simZone, "sim");
             simLoop.beginFrame(deltaSeconds);
             while (simLoop.shouldTick()) {
                 world.tick(simLoop.tickDelta());
                 content.tick(simLoop.tickDelta());
+                SOL_PROFILE_COUNT(simZone, 1);
             }
         }
         const float simAlpha = simLoop.alpha();
@@ -746,7 +765,10 @@ int main(int argc, char** argv)
         // would park the camera inside a solid shell. Anything of the ship that
         // should be visible from the seat is authored into cockpit.gltf, which
         // is the only mesh that knows where the seat is.
-        world.buildRenderInstances(simAlpha, !inCockpit, renderInstances);
+        {
+            SOL_PROFILE_ZONE("render.buildInstances");
+            world.buildRenderInstances(simAlpha, !inCockpit, renderInstances);
+        }
         if (inCockpit) {
             // Attached to the SHIP, not the camera. That is what lets free-look
             // look around the frame instead of dragging it along, and what puts
@@ -849,6 +871,7 @@ int main(int argc, char** argv)
         stats.simTicks = simLoop.tickCount();
         stats.simEntities = world.entityCount();
         stats.simAlpha = simAlpha;
+        stats.profiler = &profiler;
 
         sol::ui::FlightHud hud;
         hud.active = true;
@@ -1153,10 +1176,12 @@ int main(int argc, char** argv)
         uiInput.editDelete = menuKeyEdge(sol::platform::Key::Delete, previousEditDelete);
         uiInput.editSubmit = menuKeyEdge(sol::platform::Key::Enter, previousEditSubmit);
 
-        ui.beginFrame(uiInput, uiSize, deltaSeconds);
         game::MenuAction menuAction = game::MenuAction::None;
         bool undockRequested = false;
         bool mapClosed = false;
+        {
+        SOL_PROFILE_ZONE("ui.build");
+        ui.beginFrame(uiInput, uiSize, deltaSeconds);
         switch (state) {
         case game::GameState::MainMenu:
             menuAction = game::buildMainMenu(ui, mainMenuState);
@@ -1199,6 +1224,7 @@ int main(int argc, char** argv)
             break;
         }
         ui.endFrame();
+        }
         renderer.setUiDrawList(&ui.drawList());
 
         // Bookmark prompt outcome (Phase 8h). The latched position is used,
@@ -1304,7 +1330,10 @@ int main(int argc, char** argv)
 
         // Dev overlay and console only: every player-facing screen is on the
         // custom stack now.
-        devUi.beginFrame(stats);
+        {
+            SOL_PROFILE_ZONE("ui.devOverlay");
+            devUi.beginFrame(stats);
+        }
         if (showStation && stationPanel.trade.action.row >= 0) {
             const std::uint32_t commodity =
                 static_cast<std::uint32_t>(stationPanel.trade.action.row);
@@ -1331,6 +1360,10 @@ int main(int argc, char** argv)
             devUi.discardFrame();
         }
         if (!needRecreate) {
+            // CPU-side submit only. What the GPU then does with it is not
+            // measured here and needs timestamp queries (out of scope, 8n).
+            SOL_PROFILE_ZONE_NAMED(renderZone, "render.submit");
+            SOL_PROFILE_COUNT(renderZone, renderInstances.size());
             switch (renderer.drawFrame(camera, renderInstances, particleInstances, sceneInfo)) {
             case game::SceneRenderer::DrawResult::Success:
                 ++frameCount;

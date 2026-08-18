@@ -15,6 +15,7 @@ add_executable(sol_core_tests
     core/jobs_tests.cpp
     core/json_tests.cpp
     core/math_tests.cpp
+    core/profiler_tests.cpp
     core/random_tests.cpp
     core/serialize_tests.cpp
     core/toml_tests.cpp

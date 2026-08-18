@@ -2,6 +2,7 @@
 
 #include "sol/core/assert.hpp"
 #include "sol/core/math/math.hpp"
+#include "sol/core/profiler.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -378,13 +379,22 @@ void Economy::produce(double dt, FeedstockSource* source)
 
 void Economy::step(const Galaxy& galaxy, double dt, FeedstockSource* source)
 {
-    produce(dt, source);
+    {
+        SOL_PROFILE_ZONE_NAMED(produceZone, "economy.produce");
+        SOL_PROFILE_COUNT(produceZone, m_markets.size());
+        produce(dt, source);
+    }
     // Agents decide against the prices this tick opened with, which keeps
     // their inner loop a flat array read instead of a price() call per
     // market per commodity.
-    refreshTickPrices();
-    refreshInbound();
+    {
+        SOL_PROFILE_ZONE("economy.prices");
+        refreshTickPrices();
+        refreshInbound();
+    }
 
+    SOL_PROFILE_ZONE_NAMED(traderZone, "economy.traders");
+    SOL_PROFILE_COUNT(traderZone, m_traders.size());
     for (EconomyTrader& trader : m_traders) {
         switch (trader.phase) {
         case TraderPhase::Idle:

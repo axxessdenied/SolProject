@@ -2,6 +2,7 @@
 
 #include "sol/assets/loadout.hpp"
 #include "sol/core/log.hpp"
+#include "sol/core/profiler.hpp"
 #include "sol/core/random.hpp"
 #include "sol/core/serialize.hpp"
 #include "sol/sim/collision.hpp"
@@ -3406,7 +3407,9 @@ void SpaceWorld::tick(double dt)
 
     // NPC pilots: C++ steering flies whatever state Lua's pilot_think chose.
     {
+        SOL_PROFILE_ZONE_NAMED(pilotZone, "sim.pilots");
         ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
+        SOL_PROFILE_COUNT(pilotZone, pilots.size());
         const std::span<const sim::AvoidanceSphere> obstacles = m_obstacles;
         for (std::size_t i = 0; i < pilots.size(); ++i) {
             ShipPilot& pilot = pilots.values()[i];
@@ -3504,6 +3507,8 @@ void SpaceWorld::tick(double dt)
     // SYS pips scale shield regen.
     ecs::Pool<ShipPower>& powers = m_registry.storage<ShipPower>();
     ecs::Pool<ShipDefense>& defenses = m_registry.storage<ShipDefense>();
+    {
+    SOL_PROFILE_ZONE("sim.flight");
     m_registry.view<Transform, FlightBody, ShipControl>().each(
         [&](ecs::Entity entity, Transform& transform, FlightBody& body, ShipControl& control) {
             transform.previousPosition = transform.position;
@@ -3539,9 +3544,16 @@ void SpaceWorld::tick(double dt)
             body.velocity = state.velocity;
             body.angularVelocity = state.angularVelocity;
         });
+    }
 
     // Collision pass: ships (movers) vs each other, scenery, and celestials.
     // Swept spheres, so cruise speeds cannot tunnel through the planet.
+    //
+    // Zones here are opened and closed by hand rather than by the scope guard:
+    // this function is one long sequence whose sections share their locals, so
+    // there are no braces to hang an RAII zone on without restructuring it.
+    core::Profiler& profiler = core::frameProfiler();
+    const std::uint32_t buildZone = profiler.beginZone("sim.collision.build");
     m_collisionBodies.clear();
     m_collisionShipIndices.clear();
 
@@ -3599,8 +3611,20 @@ void SpaceWorld::tick(double dt)
                                      .inverseMass = 0.0});
     }
 
+    // The counter is the body count: this pass is quadratic in it, so a time
+    // without it says the pass is slow and never says why.
+    profiler.addCounter(buildZone, m_collisionBodies.size());
+    profiler.endZone(buildZone);
+
     m_contacts.clear();
+    const std::uint32_t resolveZone = profiler.beginZone("sim.collision.resolve");
+    // Pairs actually tested, stated the way resolveCollisions iterates them,
+    // so the measured number can be compared against the arithmetic rather
+    // than trusted alongside it.
+    const std::size_t bodyCount = m_collisionBodies.size();
+    profiler.addCounter(resolveZone, bodyCount > 1 ? bodyCount * (bodyCount - 1) / 2 : 0);
     sim::resolveCollisions(m_collisionBodies, kCollisionRestitution, m_contacts);
+    profiler.endZone(resolveZone);
 
     for (std::size_t i = 0; i < m_collisionShipIndices.size(); ++i) {
         const sim::CollisionBody& body = m_collisionBodies[i];
@@ -3650,6 +3674,10 @@ void SpaceWorld::tick(double dt)
     // Projectiles: advance, expire, resolve hits. Ship spheres come from the
     // collision list built above (slot i <-> m_collisionShipIndices[i]);
     // remaining slots are statics that simply soak bolts.
+    const std::uint32_t projectileZone = profiler.beginZone("sim.projectiles");
+    // Every live bolt rescans the whole body list, so the cost is the product
+    // and the counter has to be the product too.
+    profiler.addCounter(projectileZone, projectiles.size() * m_collisionBodies.size());
     std::vector<std::uint32_t> deadProjectiles;
     for (std::size_t p = 0; p < projectiles.size(); ++p) {
         Projectile& projectile = projectiles.values()[p];
@@ -3709,8 +3737,12 @@ void SpaceWorld::tick(double dt)
         handleShipDestroyed(destroyed.victim, destroyed.attacker);
     }
     destroyedShips.clear();
+    profiler.endZone(projectileZone);
 
     // Weapons: tick cooldowns; a held trigger fires when charged and ready.
+    // Hitscan pulses and mining beams resolve in here, and both sweep the same
+    // body list the projectile loop does.
+    const std::uint32_t weaponZone = profiler.beginZone("sim.weapons");
     ecs::Pool<ShipWeapon>& weapons = m_registry.storage<ShipWeapon>();
     struct PendingBolt
     {
@@ -3889,6 +3921,7 @@ void SpaceWorld::tick(double dt)
                                                      .damage = bolt.damage,
                                                      .shooterIndex = bolt.shooterIndex});
     }
+    profiler.endZone(weaponZone);
 
     // Feedback bookkeeping.
     m_combatEffects.tick(dt);
@@ -3904,21 +3937,38 @@ void SpaceWorld::tick(double dt)
 
     // Mining (Phase 8f): rock tumble, chunk drift and collection, wreck decay
     // and reconciliation, refinery orders.
-    tickMining(dt);
+    {
+        const std::uint32_t zone = profiler.beginZone("sim.mining");
+        tickMining(dt);
+        profiler.endZone(zone);
+    }
 
     // Coarse-layer economy: galaxy-wide, same clock as everything else
     // (decisions/005 — no time compression). The feedstock source is what
     // makes a mining outpost's ore come out of its own system's rock
     // (Phase 8g) instead of out of nothing.
-    m_economy.tick(m_galaxy, dt, &m_feedstock);
+    //
+    // This is the measurement Phase 8g's spec promised and could not take:
+    // raising the trader fleet was known to spend time here and nothing could
+    // say how much.
+    {
+        const std::uint32_t zone = profiler.beginZone("sim.coarse.economy");
+        m_economy.tick(m_galaxy, dt, &m_feedstock);
+        profiler.endZone(zone);
+    }
 
     // Coarse-layer faction sim (Phase 8b): drift/decay here; due decisions
     // are dispatched by GameContent (Lua faction_think or the default rule).
-    m_factionSim.tick(dt);
+    {
+        const std::uint32_t zone = profiler.beginZone("sim.coarse.factions");
+        m_factionSim.tick(dt);
+        profiler.endZone(zone);
+    }
 
     // Coarse-layer missions (Phase 8c): deadlines and position objectives
     // here; the board hook and campaign flavor run in GameContent against
     // the events this drains.
+    const std::uint32_t missionZone = profiler.beginZone("sim.coarse.missions");
     m_missions.tick(dt);
     if (!isDocked()) {
         m_missions.notifyPosition(m_currentSystem, shipState().position);
@@ -3929,9 +3979,14 @@ void SpaceWorld::tick(double dt)
     // accept/track/abandon/complete because the slot is derived state and this
     // is a comparison of three fields, not a rebuild.
     syncObjectiveTarget();
+    profiler.endZone(missionZone);
 
     // Scanning (Phase 8e): pulse recharge plus the held target scan.
-    tickScanning(dt);
+    {
+        const std::uint32_t zone = profiler.beginZone("sim.scanning");
+        tickScanning(dt);
+        profiler.endZone(zone);
+    }
 
     // Deferred death respawn into the last-dock system (see member comment).
     if (m_pendingRespawnSystem != kNoIndex) {

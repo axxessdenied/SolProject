@@ -9,6 +9,7 @@
 #include <imgui_impl_vulkan.h>
 
 #include <cstddef>
+#include <cstdio>
 #include <string>
 #include <utility>
 #include <vector>
@@ -171,6 +172,30 @@ void DevUi::buildWindows(const OverlayStats& stats)
         ImGui::TextDisabled("defaults: RMB steer, WASD thrust, Tab cruise, X assist, V cam, T target");
         ImGui::TextDisabled("defaults: 1/2/3 pips WEP/ENG/SYS, 4 balance (rebind in Settings)");
         ImGui::TextDisabled("F1 console, F3 debug draw, F5 shaders, F9/F10 save/load (fixed)");
+
+        // Zone tree (Phase 8n). Mean says where the frame goes; max says what
+        // the hitch was, and an fps counter averages exactly that away - which
+        // is why both columns are here and neither is enough alone.
+        if (stats.profiler != nullptr && stats.profiler->enabled()
+            && stats.profiler->zoneCount() > 0) {
+            const core::Profiler& profiler = *stats.profiler;
+            ImGui::Separator();
+            ImGui::Text("%-22s %7s %7s %7s", "zone", "last", "mean", "max");
+            for (std::uint32_t i = 0; i < profiler.zoneCount(); ++i) {
+                const core::ZoneReport zone = profiler.report(i);
+                // Indent by nesting depth: a parent's time includes its
+                // children's, and the shape is what says so.
+                char label[64];
+                std::snprintf(label, sizeof(label), "%*s%s",
+                              static_cast<int>(zone.depth) * 2, "", zone.name);
+                ImGui::Text("%-22s %6.2f  %6.2f  %6.2f", label, zone.lastMilliseconds,
+                            zone.meanMilliseconds, zone.maxMilliseconds);
+                if (zone.counter > 0) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("  n=%llu", static_cast<unsigned long long>(zone.counter));
+                }
+            }
+        }
     }
     ImGui::End();
 

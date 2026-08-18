@@ -4,6 +4,7 @@
 #include "target_pick.hpp"
 
 #include "sol/core/log.hpp"
+#include "sol/core/profiler.hpp"
 #include "sol/platform/file_io.hpp"
 
 #include <algorithm>
@@ -839,6 +840,82 @@ std::string warpBookmark(GameContent& content, double id)
 std::string shipInfo(GameContent& content)
 {
     return shipInfoReport(content.world(), content.defs());
+}
+
+// --- Frame profiler (Phase 8n) -----------------------------------------------
+//
+// The overlay draws the same tree, but a screenshot is not an assertion: a
+// drive has to be able to state a budget and have the run fail when it is
+// missed. These read the same Profiler the overlay does.
+
+std::string perfReport(GameContent& content)
+{
+    (void)content;
+    const sol::core::Profiler& profiler = sol::core::frameProfiler();
+    if (!profiler.enabled()) {
+        return "profiler disabled";
+    }
+    if (profiler.zoneCount() == 0) {
+        return "no zones recorded yet";
+    }
+    std::string lines = "zone                     last    mean     max";
+    for (std::uint32_t i = 0; i < profiler.zoneCount(); ++i) {
+        const sol::core::ZoneReport zone = profiler.report(i);
+        char row[192];
+        std::snprintf(row, sizeof(row), "\n%*s%-*s %6.2f  %6.2f  %6.2f",
+                      static_cast<int>(zone.depth) * 2, "",
+                      24 - static_cast<int>(zone.depth) * 2, zone.name, zone.lastMilliseconds,
+                      zone.meanMilliseconds, zone.maxMilliseconds);
+        lines += row;
+        if (zone.counter > 0) {
+            char tail[48];
+            std::snprintf(tail, sizeof(tail), "  n=%llu",
+                          static_cast<unsigned long long>(zone.counter));
+            lines += tail;
+        }
+    }
+    return lines;
+}
+
+// Mean milliseconds over the history window — the number a budget is stated
+// against, because last is one frame's luck and max is one frame's worst.
+// -1 for a zone that does not exist, so a typo in a drive fails loudly rather
+// than passing as a fast zero.
+double perfZone(GameContent& content, const std::string& name)
+{
+    (void)content;
+    const sol::core::Profiler& profiler = sol::core::frameProfiler();
+    const std::uint32_t index = profiler.findZone(name.c_str());
+    return index == sol::core::kInvalidZone ? -1.0 : profiler.report(index).meanMilliseconds;
+}
+
+double perfZoneMax(GameContent& content, const std::string& name)
+{
+    (void)content;
+    const sol::core::Profiler& profiler = sol::core::frameProfiler();
+    const std::uint32_t index = profiler.findZone(name.c_str());
+    return index == sol::core::kInvalidZone ? -1.0 : profiler.report(index).maxMilliseconds;
+}
+
+// The zone's input size, which is what turns "this pass is slow" into "this
+// pass is slow because it was handed 15,300 pairs".
+double perfZoneCount(GameContent& content, const std::string& name)
+{
+    (void)content;
+    const sol::core::Profiler& profiler = sol::core::frameProfiler();
+    const std::uint32_t index = profiler.findZone(name.c_str());
+    return index == sol::core::kInvalidZone
+               ? -1.0
+               : static_cast<double>(profiler.report(index).counter);
+}
+
+// Clears the history so a measurement can start from a known state rather
+// than averaging in the load screen that preceded it.
+std::string perfReset(GameContent& content)
+{
+    (void)content;
+    sol::core::frameProfiler().reset();
+    return "profiler reset";
 }
 
 // --- Controls (Phase 8k) -----------------------------------------------------
@@ -1824,6 +1901,11 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&deleteBookmark>("sol", "bookmark_delete", this);
     m_vm.registerFunction<&warpBookmark>("sol", "warp_bookmark", this);
     m_vm.registerFunction<&shipInfo>("sol", "ship_info", this);
+    m_vm.registerFunction<&perfReport>("sol", "perf", this);
+    m_vm.registerFunction<&perfZone>("sol", "perf_zone", this);
+    m_vm.registerFunction<&perfZoneMax>("sol", "perf_zone_max", this);
+    m_vm.registerFunction<&perfZoneCount>("sol", "perf_count", this);
+    m_vm.registerFunction<&perfReset>("sol", "perf_reset", this);
     // Controls (Phase 8k): the same table the Controls screen edits.
     m_vm.registerFunction<&listBindings>("sol", "bindings", this);
     m_vm.registerFunction<&bindAction>("sol", "bind", this);
@@ -1987,6 +2069,7 @@ void GameContent::poll(double nowSeconds)
 void GameContent::tick(double dt)
 {
     if (m_hasTickHook && !m_tickHookFailed) {
+        SOL_PROFILE_ZONE("lua.on_tick");
         std::string error;
         if (!m_vm.callGlobal("on_tick", &error, dt)) {
             SOL_LOG_ERROR("on_tick disabled until scripts reload: %s", error.c_str());
@@ -1997,8 +2080,12 @@ void GameContent::tick(double dt)
     // Pilot strategy: Lua thinks at 2 Hz per pilot; C++ steering flies the
     // chosen state every tick inside SpaceWorld.
     if (m_hasPilotHook && !m_pilotHookFailed) {
+        // Counter is pilots that came due this tick, not pilots alive: the
+        // hook runs at 2 Hz per pilot, so the two differ by ~30x.
+        SOL_PROFILE_ZONE_NAMED(pilotZone, "lua.pilot_think");
         m_pilotThinks.clear();
         m_world->collectDuePilotThinks(dt, m_pilotThinks);
+        SOL_PROFILE_COUNT(pilotZone, m_pilotThinks.size());
         for (const SpaceWorld::PilotThink& think : m_pilotThinks) {
             std::string error;
             if (!m_vm.callGlobal("pilot_think", &error, scripting::toHandle(think.entity),
@@ -2014,8 +2101,11 @@ void GameContent::tick(double dt)
     // at its slow cadence; Lua's faction_think chooses (it can query
     // sol.faction_candidates and commit sol.faction_raid), with the C++
     // default policy standing in when no hook is defined.
+    {
+    SOL_PROFILE_ZONE_NAMED(factionZone, "lua.faction_think");
     m_factionDecisions.clear();
     m_world->factionSim().takeDueDecisions(m_factionDecisions);
+    SOL_PROFILE_COUNT(factionZone, m_factionDecisions.size());
     for (const sol::sim::FactionDecision& decision : m_factionDecisions) {
         if (m_hasFactionHook && !m_factionHookFailed) {
             const game::GameFaction& faction = m_world->factions()[decision.faction];
@@ -2033,9 +2123,11 @@ void GameContent::tick(double dt)
         }
         m_world->applyDefaultFactionDecision(decision);
     }
+    }
 
     // Campaign flavor: the world already applied payouts/penalties; authored
     // missions' transitions are forwarded to Lua's mission_event hook.
+    SOL_PROFILE_ZONE("lua.mission_events");
     m_missionEvents.clear();
     m_world->takeMissionEvents(m_missionEvents);
 

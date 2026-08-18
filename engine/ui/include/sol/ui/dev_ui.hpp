@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sol/core/math/vec.hpp"
+#include "sol/core/profiler.hpp"
 #include "sol/platform/window.hpp"
 #include "sol/rhi/context.hpp"
 
@@ -24,6 +25,11 @@ struct OverlayStats
     std::uint64_t simTicks = 0;
     std::uint32_t simEntities = 0;
     float simAlpha = 0.0f;
+    // Where the frame actually went (Phase 8n). Non-owning; null draws the
+    // overlay exactly as it was before the profiler existed. Passed rather
+    // than read off the global so the overlay can be driven with any
+    // instance, and so this layer states its dependency instead of hiding it.
+    const core::Profiler* profiler = nullptr;
 };
 
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).
