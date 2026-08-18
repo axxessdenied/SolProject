@@ -38,6 +38,15 @@ public:
     // Pool for short-lived one-shot command buffers (uploads).
     [[nodiscard]] VkCommandPool transientCommandPool() const { return m_transientCommandPool; }
 
+    // GPU timestamp capability (Phase 8o). Nanoseconds per tick of the
+    // timestamp counter, and how many of its low bits are meaningful on the
+    // graphics queue. `timestampValidBits() == 0` means this queue cannot
+    // timestamp at all - a real case, not a theoretical one - and callers
+    // must degrade rather than divide by a period they never got.
+    [[nodiscard]] float timestampPeriod() const { return m_timestampPeriod; }
+    [[nodiscard]] std::uint32_t timestampValidBits() const { return m_timestampValidBits; }
+    [[nodiscard]] bool supportsTimestamps() const { return m_timestampValidBits > 0; }
+
     void waitIdle() const;
 
     // Validation warnings + errors observed by the debug messenger since startup.
@@ -52,6 +61,8 @@ private:
     std::uint32_t m_graphicsQueueFamily = 0;
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkCommandPool m_transientCommandPool = VK_NULL_HANDLE;
+    float m_timestampPeriod = 0.0f;
+    std::uint32_t m_timestampValidBits = 0;
 };
 
 } // namespace sol::rhi

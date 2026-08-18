@@ -859,6 +859,7 @@ std::string perfReport(GameContent& content)
         return "no zones recorded yet";
     }
     std::string lines = "zone                     last    mean     max";
+    bool anyExternal = false;
     for (std::uint32_t i = 0; i < profiler.zoneCount(); ++i) {
         const sol::core::ZoneReport zone = profiler.report(i);
         char row[192];
@@ -873,6 +874,18 @@ std::string perfReport(GameContent& content)
                           static_cast<unsigned long long>(zone.counter));
             lines += tail;
         }
+        if (zone.external) {
+            lines += " *";
+            anyExternal = true;
+        }
+    }
+    // Phase 8o. Without this a reader compares a gpu.* row's `last` against
+    // the cpu rows beside it and concludes the GPU disagrees with the CPU,
+    // when in fact it is answering about an older frame. Mean and max are the
+    // same samples shifted, so they compare fine - which is exactly why the
+    // note names `last` and not the whole row.
+    if (anyExternal) {
+        lines += "\n* device-timed; `last` is a completed frame, not this one";
     }
     return lines;
 }

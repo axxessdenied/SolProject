@@ -2,6 +2,7 @@
 
 #include "sol/assets/asset_loader.hpp"
 #include "sol/core/log.hpp"
+#include "sol/core/profiler.hpp"
 #include "sol/renderer/scene_pass.hpp"
 
 #include <string>
@@ -57,6 +58,12 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
     }
     m_hdrColor = rhi::createColorTarget(context, swapchain.extent(), kHdrFormat);
     m_tonemapRenderer.setSource(m_hdrColor.view);
+
+    // Phase 8o. A device that cannot timestamp degrades to no GPU rows, so
+    // this failing is not a reason to fail startup for a dev instrument.
+    if (!m_gpuProfiler.initialize(context, kFramesInFlight)) {
+        SOL_LOG_WARN("GPU profiler unavailable; frame report will have no gpu.* zones");
+    }
 
     // Assets
     assets::MeshData cubeData;
@@ -176,6 +183,7 @@ void SceneRenderer::shutdown()
     }
     const VkDevice device = m_context->device();
 
+    m_gpuProfiler.shutdown();
     destroyPerImageSemaphores();
     for (FrameResources& frame : m_frames) {
         vkDestroyFence(device, frame.inFlight, nullptr);
@@ -221,6 +229,13 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     GAME_VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
+    // Phase 8o. The zones below are read off the structure that is already
+    // here - scene_pass.hpp's two brackets - rather than invented, which is
+    // the opposite of 8n's sim instrumentation, where SpaceWorld::tick was
+    // 568 lines with no seams and every zone had to be placed by hand.
+    m_gpuProfiler.beginFrame(commandBuffer, m_frameIndex);
+    const std::uint32_t gpuFrameZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.frame");
+
     const VkExtent2D extent = m_swapchain->extent();
     const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
     const core::Mat4 projection =
@@ -231,8 +246,10 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     const core::Vec3 sunDirection = toVec3(normalize(scene.sun.position - camera.position));
 
     // --- HDR scene pass ---
+    const std::uint32_t gpuSceneZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.scene");
     renderer::beginHdrScenePass(commandBuffer, m_hdrColor, m_depth, kSpaceClearColor);
 
+    const std::uint32_t gpuMeshZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.meshes");
     m_meshRenderer.setSunlight(sunDirection, kSunIntensity, kAmbient);
     m_meshRenderer.bind(commandBuffer, extent);
     m_drawCallCount = 0;
@@ -274,6 +291,8 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         ++m_drawCallCount;
     }
 
+    m_gpuProfiler.endZone(commandBuffer, gpuMeshZone);
+
     // Small fixed palette; CelestialDraw::palette indexes it (mod count).
     static constexpr core::Vec3 kPlanetPalette[][2] = {
         {{0.06f, 0.11f, 0.18f}, {0.30f, 0.26f, 0.18f}}, // ocean world
@@ -284,6 +303,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     };
     constexpr std::uint32_t kPaletteCount =
         static_cast<std::uint32_t>(std::size(kPlanetPalette));
+    const std::uint32_t gpuImpostorZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.impostors");
     for (const CelestialDraw& body : scene.planets) {
         renderer::ImpostorRenderer::Body planet = {};
         planet.centerRelative = (body.position - camera.position).toVec3();
@@ -293,18 +313,29 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         planet.sunDirection = sunDirection;
         m_impostorRenderer.drawPlanet(commandBuffer, viewProjection, planet);
     }
+    m_gpuProfiler.endZone(commandBuffer, gpuImpostorZone);
 
     // Sky after opaques (passes only at the far clear), star glow over the sky.
+    // Full-screen and ray-marched, which makes it the most plausible fill-rate
+    // cost in the frame and the one zone worth naming in advance (Phase 8o).
+    const std::uint32_t gpuSkyZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.sky");
     m_skyRenderer.draw(commandBuffer, extent, camera.orientation, kCameraVerticalFov, aspect,
                        kSkyIntensity);
+    m_gpuProfiler.endZone(commandBuffer, gpuSkyZone);
 
+    // The star reopens gpu.impostors rather than getting a zone of its own:
+    // it is the same pass, drawn after the sky because it glows over it. The
+    // report shows two calls against that zone, which is the honest reading.
+    const std::uint32_t gpuStarZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.impostors");
     renderer::ImpostorRenderer::Body star = {};
     star.centerRelative = (scene.sun.position - camera.position).toVec3();
     star.radius = static_cast<float>(scene.sun.radius);
     star.colorA = {14.0f, 12.5f, 10.5f}; // disc, HDR
     star.colorB = {5.0f, 3.6f, 2.2f};    // glow, HDR
     m_impostorRenderer.drawStar(commandBuffer, viewProjection, star);
+    m_gpuProfiler.endZone(commandBuffer, gpuStarZone);
 
+    const std::uint32_t gpuParticleZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.particles");
     m_particleScratch.clear();
     for (const ParticleInstance& particle : particles) {
         m_particleScratch.push_back({
@@ -318,10 +349,13 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
 
     m_debugDraw.draw(commandBuffer, m_frameIndex, viewProjection);
     m_debugDraw.clear();
+    m_gpuProfiler.endZone(commandBuffer, gpuParticleZone);
 
     renderer::endHdrScenePass(commandBuffer, m_hdrColor);
+    m_gpuProfiler.endZone(commandBuffer, gpuSceneZone);
 
     // --- Present pass: tonemap, game UI, dev UI ---
+    const std::uint32_t gpuPresentZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.present");
     renderer::beginPresentPass(commandBuffer, *m_swapchain, imageIndex, m_depth);
     m_tonemapRenderer.draw(commandBuffer, extent, scene.exposure);
     if (m_uiDrawList != nullptr && !m_uiDrawList->batches().empty()) {
@@ -337,6 +371,8 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         m_devUi->render(commandBuffer);
     }
     renderer::endPresentPass(commandBuffer, *m_swapchain, imageIndex);
+    m_gpuProfiler.endZone(commandBuffer, gpuPresentZone);
+    m_gpuProfiler.endZone(commandBuffer, gpuFrameZone);
 
     GAME_VK_CHECK(vkEndCommandBuffer(commandBuffer));
 }
@@ -349,49 +385,70 @@ SceneRenderer::DrawResult SceneRenderer::drawFrame(const CameraFrame& camera,
     const VkDevice device = m_context->device();
     FrameResources& frame = m_frames[m_frameIndex];
 
-    GAME_VK_CHECK(vkWaitForFences(device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX));
-
-    std::uint32_t imageIndex = 0;
-    switch (m_swapchain->acquireNextImage(frame.imageAvailable, imageIndex)) {
-    case rhi::Swapchain::PresentResult::OutOfDate:
-        return DrawResult::NeedSwapchainRecreate; // fence untouched: still signaled for next attempt
-    case rhi::Swapchain::PresentResult::Failure:
-        return DrawResult::Failure;
-    case rhi::Swapchain::PresentResult::Success:
-        break;
+    // Phase 8o: this function is four different things and three of them can
+    // block, so one zone over all of it cannot say which wait it measured.
+    // 8n proved the ~6.2 ms here is a wait rather than work; the split below
+    // is what says WHAT it waits for. A fence block means the CPU is gated
+    // behind the GPU or behind present pacing two frames back; an acquire
+    // block means the presentation engine is holding images. Those are
+    // different findings, and the enclosing render.submit zone still sums
+    // them so the number stays comparable to 8n's.
+    {
+        SOL_PROFILE_ZONE("render.waitFence");
+        GAME_VK_CHECK(vkWaitForFences(device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX));
     }
 
-    GAME_VK_CHECK(vkResetFences(device, 1, &frame.inFlight));
-    GAME_VK_CHECK(vkResetCommandPool(device, frame.commandPool, 0));
-    recordCommands(frame.commandBuffer, imageIndex, camera, instances, particles, scene);
+    std::uint32_t imageIndex = 0;
+    {
+        SOL_PROFILE_ZONE("render.acquire");
+        switch (m_swapchain->acquireNextImage(frame.imageAvailable, imageIndex)) {
+        case rhi::Swapchain::PresentResult::OutOfDate:
+            return DrawResult::NeedSwapchainRecreate; // fence untouched: still signaled for next attempt
+        case rhi::Swapchain::PresentResult::Failure:
+            return DrawResult::Failure;
+        case rhi::Swapchain::PresentResult::Success:
+            break;
+        }
+    }
 
-    VkSemaphoreSubmitInfo waitSemaphoreInfo = {};
-    waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    waitSemaphoreInfo.semaphore = frame.imageAvailable;
-    waitSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    {
+        SOL_PROFILE_ZONE("render.record");
+        GAME_VK_CHECK(vkResetFences(device, 1, &frame.inFlight));
+        GAME_VK_CHECK(vkResetCommandPool(device, frame.commandPool, 0));
+        recordCommands(frame.commandBuffer, imageIndex, camera, instances, particles, scene);
+    }
 
-    VkSemaphoreSubmitInfo signalSemaphoreInfo = {};
-    signalSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    signalSemaphoreInfo.semaphore = m_renderFinished[imageIndex];
-    signalSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    rhi::Swapchain::PresentResult presentResult = rhi::Swapchain::PresentResult::Success;
+    {
+        SOL_PROFILE_ZONE("render.present");
 
-    VkCommandBufferSubmitInfo commandBufferInfo = {};
-    commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    commandBufferInfo.commandBuffer = frame.commandBuffer;
+        VkSemaphoreSubmitInfo waitSemaphoreInfo = {};
+        waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        waitSemaphoreInfo.semaphore = frame.imageAvailable;
+        waitSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
-    VkSubmitInfo2 submitInfo = {};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    submitInfo.waitSemaphoreInfoCount = 1;
-    submitInfo.pWaitSemaphoreInfos = &waitSemaphoreInfo;
-    submitInfo.commandBufferInfoCount = 1;
-    submitInfo.pCommandBufferInfos = &commandBufferInfo;
-    submitInfo.signalSemaphoreInfoCount = 1;
-    submitInfo.pSignalSemaphoreInfos = &signalSemaphoreInfo;
+        VkSemaphoreSubmitInfo signalSemaphoreInfo = {};
+        signalSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        signalSemaphoreInfo.semaphore = m_renderFinished[imageIndex];
+        signalSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
 
-    GAME_VK_CHECK(vkQueueSubmit2(m_context->graphicsQueue(), 1, &submitInfo, frame.inFlight));
+        VkCommandBufferSubmitInfo commandBufferInfo = {};
+        commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        commandBufferInfo.commandBuffer = frame.commandBuffer;
 
-    const rhi::Swapchain::PresentResult presentResult =
-        m_swapchain->present(m_renderFinished[imageIndex], imageIndex);
+        VkSubmitInfo2 submitInfo = {};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+        submitInfo.waitSemaphoreInfoCount = 1;
+        submitInfo.pWaitSemaphoreInfos = &waitSemaphoreInfo;
+        submitInfo.commandBufferInfoCount = 1;
+        submitInfo.pCommandBufferInfos = &commandBufferInfo;
+        submitInfo.signalSemaphoreInfoCount = 1;
+        submitInfo.pSignalSemaphoreInfos = &signalSemaphoreInfo;
+
+        GAME_VK_CHECK(vkQueueSubmit2(m_context->graphicsQueue(), 1, &submitInfo, frame.inFlight));
+
+        presentResult = m_swapchain->present(m_renderFinished[imageIndex], imageIndex);
+    }
 
     m_frameIndex = (m_frameIndex + 1) % kFramesInFlight;
 

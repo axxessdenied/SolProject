@@ -9,6 +9,7 @@
 #include "sol/renderer/tonemap_renderer.hpp"
 #include "sol/renderer/ui_renderer.hpp"
 #include "sol/rhi/context.hpp"
+#include "sol/rhi/gpu_profiler.hpp"
 #include "sol/rhi/resources.hpp"
 #include "sol/rhi/swapchain.hpp"
 #include "sol/assets/font.hpp"
@@ -121,6 +122,13 @@ public:
 
     [[nodiscard]] std::uint32_t drawCallCount() const { return m_drawCallCount; }
 
+    // Publishes any GPU timings the device has finished with into the frame
+    // profiler (Phase 8o). Call at the top of the frame with no CPU zone
+    // open - see GpuProfiler::publishPending for why that is not advice.
+    void publishGpuTimings() { m_gpuProfiler.publishPending(); }
+
+    [[nodiscard]] bool gpuTimingAvailable() const { return m_gpuProfiler.available(); }
+
     // Optional dev overlay, rendered inside the scene pass.
     void setDevUi(sol::ui::DevUi* devUi) { m_devUi = devUi; }
 
@@ -189,6 +197,7 @@ private:
     float m_uiScale = 1.0f;
 
     sol::ui::DevUi* m_devUi = nullptr;
+    sol::rhi::GpuProfiler m_gpuProfiler;
     FrameResources m_frames[kFramesInFlight];
     std::vector<VkSemaphore> m_renderFinished;
     std::uint32_t m_frameIndex = 0;

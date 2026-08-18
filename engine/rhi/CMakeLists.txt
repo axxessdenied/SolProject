@@ -3,6 +3,7 @@ find_package(Vulkan REQUIRED)
 add_library(sol_rhi STATIC
     src/context.cpp
     src/descriptors.cpp
+    src/gpu_profiler.cpp
     src/pipeline.cpp
     src/resources.cpp
     src/swapchain.cpp

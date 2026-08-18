@@ -245,6 +245,28 @@ bool Context::initialize(const ContextDesc& desc, const platform::NativeWindowHa
                  VK_API_VERSION_MINOR(pickedProperties.apiVersion),
                  m_graphicsQueueFamily);
 
+    // Timestamp capability (Phase 8o). The period comes from the limits this
+    // function has fetched twice and thrown away since Phase 1; the valid-bit
+    // count is per queue FAMILY, not per device, so it has to be read from the
+    // family that was just chosen. Logged because a capability the log does
+    // not mention is one nobody checks before disbelieving a number.
+    m_timestampPeriod = pickedProperties.limits.timestampPeriod;
+    {
+        std::uint32_t familyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &familyCount, nullptr);
+        std::vector<VkQueueFamilyProperties> families(familyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &familyCount, families.data());
+        if (m_graphicsQueueFamily < familyCount) {
+            m_timestampValidBits = families[m_graphicsQueueFamily].timestampValidBits;
+        }
+    }
+    if (m_timestampValidBits > 0) {
+        SOL_LOG_INFO("GPU timestamps: %u valid bits, %.3f ns/tick", m_timestampValidBits,
+                     static_cast<double>(m_timestampPeriod));
+    } else {
+        SOL_LOG_INFO("GPU timestamps: unsupported on queue family %u", m_graphicsQueueFamily);
+    }
+
     // Logical device
     const float queuePriority = 1.0f;
     VkDeviceQueueCreateInfo queueCreateInfo = {};

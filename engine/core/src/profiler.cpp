@@ -119,6 +119,25 @@ void Profiler::endZone(std::uint32_t zone)
     ++entry.frameCalls;
 }
 
+void Profiler::endZoneMeasured(std::uint32_t zone, double milliseconds)
+{
+    if (zone == kInvalidZone || m_depth == 0) {
+        return;
+    }
+    if (m_stack[m_depth - 1].zone != zone) {
+        return;
+    }
+    --m_depth;
+    Zone& entry = m_zones[zone];
+    // Deliberately NOT clamped against the enclosing zone. GPU passes overlap
+    // and a child can honestly outlast the wall-clock parent it is nested
+    // under; clamping would hide that rather than report it, and the tree is
+    // inclusive by design (see the header).
+    entry.frameNanoseconds += milliseconds * kNanosecondsPerMillisecond;
+    entry.external = true;
+    ++entry.frameCalls;
+}
+
 void Profiler::addCounter(std::uint32_t zone, std::uint64_t amount)
 {
     if (zone == kInvalidZone || zone >= m_zoneCount) {
@@ -178,6 +197,7 @@ ZoneReport Profiler::report(std::uint32_t zone) const
         .maxMilliseconds = peak / kNanosecondsPerMillisecond,
         .calls = entry.lastCalls,
         .counter = entry.lastCounter,
+        .external = entry.external,
     };
 }
 

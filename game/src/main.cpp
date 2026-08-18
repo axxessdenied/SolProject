@@ -396,6 +396,11 @@ int main(int argc, char** argv)
         // Publishes the frame just finished. Before pumpEvents so the event
         // pump is inside the frame it belongs to rather than straddling two.
         profiler.beginFrame();
+        // Phase 8o: GPU timings for frames the device has finished with, put
+        // in here and nowhere else. The profiler fixes a zone's parent the
+        // first time it sees it, so publishing from inside any CPU zone would
+        // graft the whole gpu.* tree under it permanently.
+        renderer.publishGpuTimings();
         {
             SOL_PROFILE_ZONE("input.events");
             window.pumpEvents();
@@ -1360,8 +1365,10 @@ int main(int argc, char** argv)
             devUi.discardFrame();
         }
         if (!needRecreate) {
-            // CPU-side submit only. What the GPU then does with it is not
-            // measured here and needs timestamp queries (out of scope, 8n).
+            // The CPU side of the frame's end. Kept as one zone so the number
+            // stays comparable to 8n's, with the four children that say which
+            // part of it is a wait (scene_renderer.cpp) and the gpu.* zones
+            // that say what the GPU did underneath it (Phase 8o).
             SOL_PROFILE_ZONE_NAMED(renderZone, "render.submit");
             SOL_PROFILE_COUNT(renderZone, renderInstances.size());
             switch (renderer.drawFrame(camera, renderInstances, particleInstances, sceneInfo)) {

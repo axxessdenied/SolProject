@@ -181,6 +181,7 @@ void DevUi::buildWindows(const OverlayStats& stats)
             const core::Profiler& profiler = *stats.profiler;
             ImGui::Separator();
             ImGui::Text("%-22s %7s %7s %7s", "zone", "last", "mean", "max");
+            bool anyExternal = false;
             for (std::uint32_t i = 0; i < profiler.zoneCount(); ++i) {
                 const core::ZoneReport zone = profiler.report(i);
                 // Indent by nesting depth: a parent's time includes its
@@ -194,6 +195,18 @@ void DevUi::buildWindows(const OverlayStats& stats)
                     ImGui::SameLine();
                     ImGui::TextDisabled("  n=%llu", static_cast<unsigned long long>(zone.counter));
                 }
+                if (zone.external) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled(" *");
+                    anyExternal = true;
+                }
+            }
+            // Phase 8o: a device-timed row's `last` is about a frame that has
+            // already ended, so read beside a CPU row it looks like the two
+            // disagree. Mean and max are the same samples shifted and compare
+            // fine, which is why the note names `last` alone.
+            if (anyExternal) {
+                ImGui::TextDisabled("* device-timed; last = a completed frame, not this one");
             }
         }
     }

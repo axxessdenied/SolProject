@@ -35,6 +35,11 @@ struct ZoneReport
     double maxMilliseconds = 0.0;        // over the history window
     std::uint32_t calls = 0;             // entries during the last frame
     std::uint64_t counter = 0;           // input size when the zone last ran; 0 if unused
+    // Timed by a clock this profiler does not own (Phase 8o: the GPU's).
+    // Such a zone's `lastMilliseconds` is about a frame that already ended -
+    // see endZoneMeasured - so the report says so rather than leaving a
+    // reader to infer it from the zone's name.
+    bool external = false;
 };
 
 // Not thread-safe by design: this measures the main frame loop, which is a
@@ -60,6 +65,20 @@ public:
     // so running out of zones costs measurements and never correctness.
     [[nodiscard]] std::uint32_t beginZone(const char* name);
     void endZone(std::uint32_t zone);
+
+    // Closes a zone with a duration measured by a clock this profiler does
+    // not own - the GPU's, read back a couple of frames late (Phase 8o). The
+    // nesting, parenting and ring statistics are exactly endZone's; only the
+    // source of the number differs, and it arrives in milliseconds because
+    // that is what a device gives back.
+    //
+    // The zone is marked external in its report. That matters: the caller is
+    // publishing a measurement of an OLDER frame into the current frame's
+    // slot, so `last` is stale by however deep the caller's pipeline is.
+    // Mean and max over the window are unaffected - the same samples, shifted
+    // - which is why the lag is documented rather than corrected. Correcting
+    // it would mean buffering the whole report to re-align one column.
+    void endZoneMeasured(std::uint32_t zone, double milliseconds);
 
     // Attaches a per-frame magnitude to a zone: body counts, pair counts,
     // entity counts. Time says a pass is slow; this says how big its input
@@ -110,6 +129,7 @@ private:
         double lastNanoseconds = 0.0; // published, last completed frame
         std::uint32_t lastCalls = 0;
         std::uint64_t lastCounter = 0;
+        bool external = false; // closed by endZoneMeasured rather than endZone
 
         std::vector<double> history; // nanoseconds per frame, ring
     };
