@@ -249,6 +249,7 @@ int main(int argc, char** argv)
     // Refilled each frame and kept alive across the HUD build, which only
     // carries a span into it.
     std::vector<sol::ui::RadarContact> radarContacts;
+    std::vector<sol::ui::CommsLine> commsLines; // same lifetime rule (Phase 8r)
     mainMenuState.hasSave = sol::platform::fileModificationTime(savePath.c_str()) != 0;
 
 #if !defined(SOL_SHADER_SOURCE_DIR)
@@ -587,12 +588,27 @@ int main(int argc, char** argv)
         // through gameplayPressed. It is also the salvage action (Phase 8e):
         // one interact binding, and a station in range wins over a wreck.
         if ((inFlight || docked) && game::pressed(binds, game::Action::DockSalvage)) {
+            // The precedence ladder (Phase 8r). Rungs 1-3 are exactly what
+            // shipped before this item, so nothing that worked moves: a wreck
+            // five kilometres from a station still salvages on this key. Rung
+            // 4 is the only addition and it fires where nothing happened
+            // before, which is what makes "hail, then fly in" a sequence
+            // instead of a formality.
             if (world.isDocked()) {
                 (void)world.undock();
-            } else if (!world.tryDockNearestStation(kDockRange)
-                       && !world.trySalvageNearest(game::SpaceWorld::kSalvageRange)) {
-                SOL_LOG_INFO("Nothing to dock with or salvage within %.0f km",
-                             kDockRange / 1000.0);
+            } else if (world.hasClearance()) {
+                // Already cleared: the key means "cancel", because the one
+                // thing a cleared pilot cannot otherwise do is change their
+                // mind, and a clearance holds a berth for three minutes.
+                world.clearClearance("Approach cancelled.");
+            } else if (world.nearestStationDistance() >= 0.0
+                       && world.nearestStationDistance() <= kDockRange) {
+                (void)world.requestDocking();
+            } else if (!world.trySalvageNearest(game::SpaceWorld::kSalvageRange)) {
+                if (!world.requestDocking()) {
+                    SOL_LOG_INFO("Nothing to hail or salvage within %.0f km",
+                                 game::SpaceWorld::kDockRequestRange / 1000.0);
+                }
             }
         }
 
@@ -925,6 +941,26 @@ int main(int argc, char** argv)
         const double stationDistance = world.nearestStationDistance();
         hud.dockInRange =
             !hud.docked && stationDistance >= 0.0 && stationDistance <= kDockRange;
+        // Docking clearance (Phase 8r): what the station said, and where it
+        // told you to park.
+        hud.stationInHailRange = !hud.docked && stationDistance >= 0.0
+                                 && stationDistance <= game::SpaceWorld::kDockRequestRange;
+        hud.cleared = world.hasClearance();
+        if (hud.cleared) {
+            hud.clearedBerth = static_cast<int>(world.clearance().berth) + 1;
+            hud.clearedBerthDistanceMeters =
+                length(world.clearedBerthPoint() - world.shipState().position);
+        }
+        commsLines.clear();
+        for (const game::SpaceWorld::CommsMessage& message : world.comms()) {
+            // The last two seconds are the fade, so a line dims out of the
+            // corner of the eye instead of disappearing mid-read.
+            const double fade = sol::core::clamp(message.secondsLeft * 0.5, 0.0, 1.0);
+            commsLines.push_back({.from = message.from.c_str(),
+                                  .text = message.text.c_str(),
+                                  .fade = static_cast<float>(fade)});
+        }
+        hud.comms = commsLines;
         // Contact radar (Phase 8h): everything around the ship, not just the
         // one thing targeted. The vector outlives the span the HUD carries.
         game::fillRadarContacts(world, radarContacts);

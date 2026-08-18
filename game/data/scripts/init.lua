@@ -34,6 +34,10 @@
 --   sol.warp_rock()                 dev: park just off the nearest rock, nose on it
 --   sol.refine(units) / sol.collect()         order refining here / take the output
 --   sol.refine_jobs()               outstanding refinery orders, anywhere
+--   sol.request_dock()              hail the nearest station for a berth (Phase 8r)
+--   sol.clearance() / sol.berths(i) what you are cleared for / a station's ports
+--   sol.grant_docking(berth, msg) / sol.deny_docking(msg)   inside dock_request
+--   sol.dock()                      dev: dock at once, asking nobody
 
 local announceInterval = 20.0 -- seconds; edit + save to see hot-reload
 local timer = 0.0
@@ -279,4 +283,37 @@ end
 
 function rock_mined(commodity, units)
     print(string.format("[mining] rock finished: %.0f units of %s", units, commodity))
+end
+
+-- Docking clearance (Phase 8r). C++ hands over everything the dispatcher can
+-- know — who is asking, whose station it is, how they feel about you, how many
+-- berths there are, and one seeded roll — and this decides. Answer with exactly
+-- one of sol.grant_docking(berth, message) or sol.deny_docking(message); say
+-- nothing and C++ falls back to its own rule, which grants unless you are
+-- hostile. The roll is the only entropy, so this stays a pure function.
+function dock_request(station, owner, standing, berths, hostile, roll)
+    -- Keep every line short: the comms panel's sender column already says who
+    -- is talking, and a line that repeats the station's name is the line that
+    -- runs off the end of the panel.
+    if hostile then
+        sol.deny_docking(string.format("Denied. Leave %s space.", owner))
+        return
+    end
+    -- Berth 1 is the near pad and it goes to people they like. Everyone else
+    -- gets sent round the ring, which is the difference a standing bar makes
+    -- that a number on a screen does not.
+    local berth
+    if standing >= 25 then
+        berth = 1
+        sol.grant_docking(berth, string.format(
+            "Good to see you again. Berth %d, the close one.", berth))
+    elseif standing <= -15 then
+        berth = 2 + math.floor(roll * (berths - 1)) % (berths - 1)
+        sol.grant_docking(berth, string.format(
+            "Cleared, berth %d. Keep it slow.", berth))
+    else
+        berth = 1 + math.floor(roll * berths) % berths
+        sol.grant_docking(berth, string.format(
+            "Cleared for berth %d. Mind your approach.", berth))
+    end
 end

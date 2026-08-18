@@ -56,6 +56,16 @@ struct RadarContact
     std::uint32_t selection = 0;
 };
 
+// One line of radio traffic (Phase 8r). `fade` is 0..1 and 1 while the line is
+// fresh, so an old line dims out instead of vanishing mid-read. The HUD does
+// not know who anybody is: the game supplies both strings already composed.
+struct CommsLine
+{
+    const char* from = "";
+    const char* text = "";
+    float fade = 1.0f;
+};
+
 // --- The surface the HUD is drawn on (Phase 8m) -------------------------------
 
 // One projected mount point on the cockpit. `visible` is false once the head
@@ -196,6 +206,19 @@ struct FlightHud
     const char* jumpKey = "";
     const char* interactKey = ""; // dock and salvage share it
     const char* scanKey = "";
+
+    // Comms (Phase 8r): the last few things said to the player, newest last.
+    // Built for docking clearance but deliberately not named after it — the
+    // pilot-info half of the same playtest note inherits a channel rather than
+    // starting from nothing. The span outlives the frame that fills it.
+    std::span<const CommsLine> comms;
+    // Docking clearance, for the prompt chip: which berth was assigned and how
+    // far away it is. `dockInRange` above still means "close enough to use the
+    // shortcut"; these mean "you have been told where to park".
+    bool cleared = false;
+    int clearedBerth = 0; // 1-based, for display
+    double clearedBerthDistanceMeters = 0.0;
+    bool stationInHailRange = false;
 
     // The cockpit (Phase 8m). `frame` says where the panels mount and how much
     // glass there is; the HUD reads nothing else about the view.

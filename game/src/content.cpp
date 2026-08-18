@@ -196,10 +196,92 @@ bool jumpNearestGate(GameContent& content)
     return content.world().jumpNearestGate(1.0e30);
 }
 
-// Dev shortcut: dock at the nearest station regardless of range.
+// Dev shortcut: dock at the nearest station regardless of range and without
+// asking anyone. Kept exactly as it was through Phase 8r on purpose — every
+// drive script in the repo uses it, and the clearance flow has its own
+// binding (sol.request_dock) beside it.
 bool dockNearest(GameContent& content)
 {
     return content.world().tryDockNearestStation(1.0e30);
+}
+
+// The real thing: hail the nearest station and let the dispatcher answer.
+bool requestDock(GameContent& content)
+{
+    return content.world().requestDocking();
+}
+
+// What the clearance is, if any — the probe a drive asserts the state machine
+// through, rather than reading a pixel.
+std::string describeClearance(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    if (world.isDocked()) {
+        return std::string("docked at ") + world.dockedStationName();
+    }
+    if (!world.hasClearance()) {
+        return "no clearance";
+    }
+    const SpaceWorld::DockClearance& clearance = world.clearance();
+    const sol::sim::SystemSpec& spec = world.galaxy().systems[world.currentSystemIndex()];
+    char buffer[192] = {};
+    std::snprintf(buffer, sizeof(buffer), "%s berth %u - %.0f m away, %.0f s left",
+                  spec.stations[clearance.station].name.c_str(), clearance.berth + 1,
+                  length(world.clearedBerthPoint() - world.shipState().position),
+                  clearance.secondsLeft);
+    return buffer;
+}
+
+// Every berth of a station, with the one number the geometry has to get right:
+// how far the capture sphere stays clear of the 130 m avoidance sphere.
+std::string listBerths(GameContent& content, double stationIndex)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::SystemSpec& spec = world.galaxy().systems[world.currentSystemIndex()];
+    const auto station = static_cast<std::uint32_t>(stationIndex < 0.0 ? 0.0 : stationIndex);
+    if (station >= spec.stations.size()) {
+        return "no such station in this system";
+    }
+    std::string out = spec.stations[station].name + ":\n";
+    const sol::core::DVec3 ship = world.shipState().position;
+    for (std::uint32_t berth = 0; berth < sol::sim::kBerthCount; ++berth) {
+        const sol::core::DVec3 point =
+            sol::sim::berthPoint(spec.stations[station].position, berth);
+        char buffer[160] = {};
+        std::snprintf(buffer, sizeof(buffer),
+                      "  berth %u - %.0f m off the hub, %.0f m from the ship\n", berth + 1,
+                      length(point - spec.stations[station].position), length(point - ship));
+        out += buffer;
+    }
+    return out;
+}
+
+// The dock_request hook's two builders. Both refuse outside the hook, the same
+// way sol.set_loot does, so a script cannot clear itself to dock from on_tick.
+bool grantDocking(GameContent& content, double berth, const char* message)
+{
+    const std::uint32_t station = content.dockRequestStation();
+    if (station == 0xffff'ffffu) {
+        SOL_LOG_WARN("grant_docking: only valid inside dock_request");
+        return false;
+    }
+    content.noteDockAnswered();
+    return content.world().grantDocking(
+        station, static_cast<std::uint32_t>(berth < 1.0 ? 0.0 : berth - 1.0),
+        message != nullptr ? message : "Cleared to dock.");
+}
+
+bool denyDocking(GameContent& content, const char* message)
+{
+    const std::uint32_t station = content.dockRequestStation();
+    if (station == 0xffff'ffffu) {
+        SOL_LOG_WARN("deny_docking: only valid inside dock_request");
+        return false;
+    }
+    content.noteDockAnswered();
+    content.world().denyDocking(station,
+                                message != nullptr ? message : "Clearance denied.");
+    return true;
 }
 
 bool undock(GameContent& content)
@@ -1969,6 +2051,15 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&warpToRock>("sol", "warp_rock", this);
     m_vm.registerFunction<&selectTargetByName>("sol", "target", this);
     m_vm.registerFunction<&listContacts>("sol", "contacts", this);
+    // Docking clearance (Phase 8r). sol.grant_docking / sol.deny_docking are
+    // the dock_request hook's builders; sol.request_dock is the player's own
+    // action and sol.clearance / sol.berths are the probes a drive asserts
+    // through. sol.dock above is unchanged and still bypasses all of it.
+    m_vm.registerFunction<&requestDock>("sol", "request_dock", this);
+    m_vm.registerFunction<&describeClearance>("sol", "clearance", this);
+    m_vm.registerFunction<&listBerths>("sol", "berths", this);
+    m_vm.registerFunction<&grantDocking>("sol", "grant_docking", this);
+    m_vm.registerFunction<&denyDocking>("sol", "deny_docking", this);
     // Mission objectives and threat selection (Phase 8i).
     m_vm.registerFunction<&describeObjective>("sol", "objective", this);
     m_vm.registerFunction<&targetNearestHostile>("sol", "target_hostile", this);
@@ -2085,6 +2176,10 @@ void GameContent::runBootScripts()
     m_hasRockMinedHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_rockMinedHookFailed = false;
+    lua_getglobal(state, "dock_request");
+    m_hasDockRequestHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_dockRequestHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -2271,6 +2366,52 @@ void GameContent::tick(double dt)
     if (m_world->isDocked() &&
         (dockEvent || boardDirty || m_world->missionSim().tickBoard(dt))) {
         runMissionBoard();
+    }
+
+    // Docking clearance (Phase 8r): the world queues a hail, the dispatcher
+    // answers it. Same shape as the board and the loot hooks — C++ enumerates,
+    // Lua composes, C++ validates — so a refusal can be written by a faction
+    // rather than hardcoded here, and the scriptless default below still makes
+    // the feature work with no scripts at all.
+    std::uint32_t dockStation = 0;
+    double dockRoll = 0.0;
+    if (m_world->takeDockRequest(dockStation, dockRoll)) {
+        const sol::sim::SystemSpec& spec =
+            m_world->galaxy().systems[m_world->currentSystemIndex()];
+        const std::uint32_t owner = m_world->systemOwnerFaction(m_world->currentSystemIndex());
+        const bool owned = owner < m_world->factions().size();
+        const bool hostile = owned && m_world->factionSim().playerHostile(owner);
+        const char* ownerName = owned ? m_world->factions()[owner].name.c_str() : "Independent";
+        const double standing =
+            owned ? static_cast<double>(m_world->factionSim().standing(owner)) : 0.0;
+        m_dockAnswered = false;
+        if (m_hasDockRequestHook && !m_dockRequestHookFailed) {
+            m_dockRequestStation = dockStation;
+            std::string error;
+            if (!m_vm.callGlobal("dock_request", &error, spec.stations[dockStation].name.c_str(),
+                                 ownerName, standing,
+                                 static_cast<double>(sol::sim::kBerthCount), hostile, dockRoll)) {
+                SOL_LOG_ERROR("dock_request disabled until scripts reload: %s", error.c_str());
+                m_dockRequestHookFailed = true;
+            }
+            m_dockRequestStation = 0xffff'ffffu;
+        }
+        if (!m_dockAnswered) {
+            // The scriptless default, so the feature works with no scripts at
+            // all. The refusal is the one Phase 8b already wrote — it just
+            // reaches the player now instead of the log nobody reads.
+            if (hostile) {
+                m_world->denyDocking(dockStation, std::string("Clearance denied. ") + ownerName
+                                                      + " wants you gone.");
+            } else {
+                const std::uint32_t berth =
+                    static_cast<std::uint32_t>(dockRoll * sol::sim::kBerthCount)
+                    % sol::sim::kBerthCount;
+                (void)m_world->grantDocking(dockStation, berth,
+                                            "Cleared for berth " + std::to_string(berth + 1)
+                                                + ". Mind your approach.");
+            }
+        }
     }
 
     // Exploration (Phase 8e): a resolved site already holds the scriptless

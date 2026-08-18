@@ -680,6 +680,17 @@ void SpaceWorld::rebuildDynamicTargets()
     if (wantObjective && !hasSlot(NavKind::Objective, 0)) {
         m_dynamicTargets.push_back({.kind = NavKind::Objective, .index = 0});
     }
+    // The berth a station has just cleared you for (Phase 8r). One slot,
+    // indexless, exactly the shape the objective above takes and for the same
+    // reason 8i gave: a nav slot buys the radar blip, the target cycle, the map
+    // marker and Autopilot in one move rather than four. It lives as long as
+    // the clearance does, and when the clearance ends the compaction below
+    // carries the selection off it — including disengaging an autopilot that
+    // was still flying to it, which is the bug 8i found and fixed here.
+    const bool wantBerth = hasClearance();
+    if (wantBerth && !hasSlot(NavKind::Berth, 0)) {
+        m_dynamicTargets.push_back({.kind = NavKind::Berth, .index = 0});
+    }
 
     // Compact slots whose object is gone, carrying the player's selection and
     // any scan in flight with them.
@@ -691,6 +702,7 @@ void SpaceWorld::rebuildDynamicTargets()
             : slot.kind == NavKind::Field     ? slot.index < m_fields.size()
             : slot.kind == NavKind::Bookmark  ? m_survey.bookmark(slot.index) != nullptr
             : slot.kind == NavKind::Objective ? wantObjective
+            : slot.kind == NavKind::Berth     ? wantBerth
                                               : m_mining.wreck(slot.index) != nullptr;
         if (!alive) {
             const std::size_t removed = m_signalTargetBase + write;
@@ -758,6 +770,16 @@ void SpaceWorld::rebuildDynamicTargets()
             (void)objectiveDestination(&objective);
             m_targets.push_back({.name = "> Objective",
                                  .position = objective->position,
+                                 .surfaceRadius = 0.0});
+            break;
+        }
+        case NavKind::Berth: {
+            // Short, like the objective's name and for the same reason: the
+            // station it belongs to is named on the comms line that assigned
+            // it, and a name long enough to repeat that would overrun the
+            // map's name column into the detail beside it.
+            m_targets.push_back({.name = "Berth " + std::to_string(m_clearance.berth + 1),
+                                 .position = clearedBerthPoint(),
                                  .surfaceRadius = 0.0});
             break;
         }
@@ -2044,6 +2066,13 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     // gate names where it leads — the map grows along the lanes you fly.
     m_survey.notifyArrival(m_galaxy, systemIndex);
     m_dockedStation = kNoIndex;
+    m_dockedBerth = kNoIndex;
+    // A clearance belongs to a station in the system you just left (Phase 8r),
+    // for the same reason autopilot is dropped on the line below: the target
+    // list is about to change under it.
+    m_clearance = DockClearance{};
+    m_pendingDockRequest = kNoIndex;
+    m_berthRefusalTimer = 0.0;
     m_autopilotActive = false; // the target list is about to change under it
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
     instantiateSystemEntities(spec);
@@ -2107,16 +2136,59 @@ bool SpaceWorld::jumpNearestGate(double activationRange)
 
 sol::core::DVec3 SpaceWorld::dockPoint(std::uint32_t stationIndex) const
 {
-    // 250 m above the station: outside its ~100 m collision sphere, close
-    // enough to read as "parked at the pad".
     const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
-    return spec.stations[stationIndex].position + core::DVec3{0.0, 250.0, 0.0};
+    const core::DVec3& station = spec.stations[stationIndex].position;
+    // Since Phase 8r a ship that flew in on a clearance is parked in the berth
+    // it was assigned, and this is the one function that answers "where does a
+    // ship parked at this station sit" — tick() pins the docked ship here every
+    // frame, undock releases relative to it, and the death rule respawns at it.
+    if (m_dockedBerth != kNoIndex) {
+        return sim::berthPoint(station, m_dockedBerth);
+    }
+    // No berth: the pre-8r point, 250 m above the station. Still reached by the
+    // dev shortcut and by the death respawn, neither of which asks anyone.
+    return station + core::DVec3{0.0, 250.0, 0.0};
 }
 
-bool SpaceWorld::tryDockNearestStation(double range)
+void SpaceWorld::completeDock(std::uint32_t station, std::uint32_t berth)
 {
-    if (isDocked() || m_currentSystem >= m_galaxy.systems.size()) {
-        return false;
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    m_dockedStation = station;
+    m_dockedBerth = berth;
+    m_lastDockSystem = m_currentSystem;
+    m_lastDockStation = station;
+    // A clearance is consumed by being used; nothing below may see one.
+    m_clearance = DockClearance{};
+    m_pendingDockRequest = kNoIndex;
+
+    // Park at the pad, kill relative motion, refresh the spawn anchor (the
+    // death rule respawns at the last dock).
+    const std::uint32_t playerIndex = playerEntityIndex();
+    Transform& transform = m_registry.storage<Transform>().get(playerIndex);
+    const core::DVec3 pad = dockPoint(station);
+    transform.position = pad;
+    transform.previousPosition = pad;
+    m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
+    m_playerSpawn = pad;
+    m_autopilotActive = false;
+    SOL_LOG_INFO("docked at '%s'", spec.stations[station].name.c_str());
+    // Missions (Phase 8c): Dock objectives first, so a following Deliver at
+    // this station can hand in on the same visit; the dock event tells
+    // GameContent to re-open the board.
+    m_missions.notifyDock(m_currentSystem, station);
+    processMissionDeliveries();
+    // Market intel (Phase 8g): standing on the pad is the one price reading
+    // you never have to pay for, and it is what seeds the "elsewhere" column
+    // on every other station's Trade tab.
+    recordDockedMarket();
+    m_dockEventPending = true;
+    rebuildDynamicTargets(); // the berth slot goes away with the clearance
+}
+
+std::uint32_t SpaceWorld::nearestStationWithin(double range, double* outDistance) const
+{
+    if (m_currentSystem >= m_galaxy.systems.size()) {
+        return kNoIndex;
     }
     const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
     const core::DVec3 playerPosition = shipState().position;
@@ -2129,11 +2201,24 @@ bool SpaceWorld::tryDockNearestStation(double range)
             nearest = i;
         }
     }
+    if (nearest != kNoIndex && outDistance != nullptr) {
+        *outDistance = nearestDistance;
+    }
+    return nearest;
+}
+
+bool SpaceWorld::tryDockNearestStation(double range)
+{
+    if (isDocked()) {
+        return false;
+    }
+    const std::uint32_t nearest = nearestStationWithin(range, nullptr);
     if (nearest == kNoIndex) {
         return false;
     }
-    // Docking rights (Phase 8b): a hostile owner refuses the request. Death
-    // respawn bypasses this path on purpose — dock stays the safe room.
+    // Docking rights (Phase 8b): a hostile owner refuses. Death respawn
+    // bypasses this path on purpose — dock stays the safe room.
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
     const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
     if (owner < m_factionTable.size() && m_factionSim.playerHostile(owner)) {
         SOL_LOG_WARN("docking denied at '%s': %s is hostile",
@@ -2141,30 +2226,7 @@ bool SpaceWorld::tryDockNearestStation(double range)
                      m_factionTable[owner].name.c_str());
         return false;
     }
-    m_dockedStation = nearest;
-    m_lastDockSystem = m_currentSystem;
-    m_lastDockStation = nearest;
-
-    // Autodock: park at the pad, kill relative motion, refresh the spawn
-    // anchor (the death rule respawns at the last dock).
-    const std::uint32_t playerIndex = playerEntityIndex();
-    Transform& transform = m_registry.storage<Transform>().get(playerIndex);
-    const core::DVec3 pad = dockPoint(nearest);
-    transform.position = pad;
-    transform.previousPosition = pad;
-    m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
-    m_playerSpawn = pad;
-    SOL_LOG_INFO("docked at '%s'", spec.stations[nearest].name.c_str());
-    // Missions (Phase 8c): Dock objectives first, so a following Deliver at
-    // this station can hand in on the same visit; the dock event tells
-    // GameContent to re-open the board.
-    m_missions.notifyDock(m_currentSystem, nearest);
-    processMissionDeliveries();
-    // Market intel (Phase 8g): standing on the pad is the one price reading
-    // you never have to pay for, and it is what seeds the "elsewhere" column
-    // on every other station's Trade tab.
-    recordDockedMarket();
-    m_dockEventPending = true;
+    completeDock(nearest, kNoIndex);
     return true;
 }
 
@@ -2176,14 +2238,24 @@ bool SpaceWorld::undock()
     const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
     const std::uint32_t playerIndex = playerEntityIndex();
     Transform& transform = m_registry.storage<Transform>().get(playerIndex);
-    // Release 500 m off the pad so the station sphere is comfortably clear.
-    const core::DVec3 release =
-        spec.stations[m_dockedStation].position + core::DVec3{0.0, 500.0, 0.0};
+    const core::DVec3& station = spec.stations[m_dockedStation].position;
+    // Released where you docked: pushed 100 m straight out from the berth if
+    // you flew in on a clearance (Phase 8r), or 500 m above the station if you
+    // arrived by the shortcut or woke here after dying. Either way the station
+    // sphere is comfortably clear.
+    core::DVec3 release = station + core::DVec3{0.0, 500.0, 0.0};
+    if (m_dockedBerth != kNoIndex) {
+        const core::DVec3 berth = sim::berthPoint(station, m_dockedBerth);
+        const core::DVec3 outward = berth - station;
+        const double reach = length(outward);
+        release = reach > 0.0 ? berth + outward * (100.0 / reach) : berth;
+    }
     transform.position = release;
     transform.previousPosition = release;
     m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     SOL_LOG_INFO("undocked from '%s'", spec.stations[m_dockedStation].name.c_str());
     m_dockedStation = kNoIndex;
+    m_dockedBerth = kNoIndex;
     return true;
 }
 
@@ -2193,6 +2265,198 @@ const char* SpaceWorld::dockedStationName() const
         return "";
     }
     return m_galaxy.systems[m_currentSystem].stations[m_dockedStation].name.c_str();
+}
+
+// --- Comms and docking clearance (Phase 8r) ---------------------------------
+
+void SpaceWorld::say(const std::string& from, const std::string& text)
+{
+    m_comms.push_back({.from = from, .text = text, .secondsLeft = kCommsMessageSeconds});
+    if (m_comms.size() > kCommsLines) {
+        m_comms.erase(m_comms.begin(), m_comms.begin() + (m_comms.size() - kCommsLines));
+    }
+    SOL_LOG_INFO("comms: %s: %s", from.c_str(), text.c_str());
+}
+
+sol::core::DVec3 SpaceWorld::clearedBerthPoint() const
+{
+    if (!hasClearance() || m_currentSystem >= m_galaxy.systems.size()) {
+        return {};
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    if (m_clearance.station >= spec.stations.size()) {
+        return {};
+    }
+    return sim::berthPoint(spec.stations[m_clearance.station].position, m_clearance.berth);
+}
+
+void SpaceWorld::clearClearance(const char* reason)
+{
+    if (!hasClearance()) {
+        return;
+    }
+    if (reason != nullptr && m_currentSystem < m_galaxy.systems.size()
+        && m_clearance.station < m_galaxy.systems[m_currentSystem].stations.size()) {
+        say(m_galaxy.systems[m_currentSystem].stations[m_clearance.station].name, reason);
+    }
+    m_clearance = DockClearance{};
+    // The berth's nav slot goes with it, and the compaction inside is what
+    // disengages an autopilot that was still flying to it (Phase 8i's rule).
+    rebuildDynamicTargets();
+}
+
+bool SpaceWorld::requestDocking()
+{
+    if (isDocked()) {
+        return false;
+    }
+    if (hasClearance()) {
+        const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+        say(spec.stations[m_clearance.station].name,
+            "You are already cleared for berth " + std::to_string(m_clearance.berth + 1) + ".");
+        return false;
+    }
+    double distance = 0.0;
+    const std::uint32_t station = nearestStationWithin(kDockRequestRange, &distance);
+    if (station == kNoIndex) {
+        say("Comms", "No station in range to hail.");
+        return false;
+    }
+    // The answer is not decided here. GameContent drains this, asks the
+    // dock_request hook, and calls grantDocking/denyDocking — the same shape
+    // signal_loot and mission_board use, so a refusal can be authored rather
+    // than hardcoded.
+    m_pendingDockRequest = station;
+    // Seeded per (universe, system, station, how many times you have asked), so
+    // the answer is deterministic for a run but a second hail at the same
+    // station can put you somewhere else — a dispatcher assigning the same
+    // berth forever is the tell that nobody is really on the other end.
+    core::Rng rng(m_universeSeed ^ (static_cast<std::uint64_t>(m_currentSystem) << 32u),
+                  (static_cast<std::uint64_t>(station) << 20u) | ++m_dockRequestCount);
+    m_dockRequestRoll = static_cast<double>(rng.nextU32()) * 0x1.0p-32;
+    // Deliberately does not name the station: the comms panel's sender column
+    // already does, and a line that repeats it is the line that clips.
+    say("You", "Requesting docking clearance.");
+    return true;
+}
+
+bool SpaceWorld::takeDockRequest(std::uint32_t& outStation, double& outRoll)
+{
+    if (m_pendingDockRequest == kNoIndex) {
+        return false;
+    }
+    outStation = m_pendingDockRequest;
+    outRoll = m_dockRequestRoll;
+    m_pendingDockRequest = kNoIndex;
+    return true;
+}
+
+bool SpaceWorld::grantDocking(std::uint32_t station, std::uint32_t berth,
+                              const std::string& message)
+{
+    if (isDocked() || m_currentSystem >= m_galaxy.systems.size()) {
+        return false;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    if (station >= spec.stations.size() || berth >= sim::kBerthCount) {
+        SOL_LOG_WARN("grant_docking: station %u berth %u is out of range", station, berth);
+        return false;
+    }
+    m_clearance = {.station = station, .berth = berth, .secondsLeft = kClearanceSeconds};
+    say(spec.stations[station].name, message);
+    rebuildDynamicTargets();
+    // Selected outright rather than cycled to, for the reason 8i gave about
+    // the mission objective: the player just asked for this, so it is the one
+    // thing they certainly want the ship pointed at.
+    const std::size_t slot = berthTargetIndex();
+    if (slot != kNoTarget) {
+        (void)selectTarget(slot);
+    }
+    return true;
+}
+
+void SpaceWorld::denyDocking(std::uint32_t station, const std::string& message)
+{
+    if (m_currentSystem >= m_galaxy.systems.size()) {
+        return;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    say(station < spec.stations.size() ? spec.stations[station].name : std::string("Comms"),
+        message);
+}
+
+std::size_t SpaceWorld::berthTargetIndex() const
+{
+    for (std::size_t slot = 0; slot < m_dynamicTargets.size(); ++slot) {
+        if (m_dynamicTargets[slot].kind == NavKind::Berth) {
+            return m_signalTargetBase + slot;
+        }
+    }
+    return kNoTarget;
+}
+
+void SpaceWorld::tickDocking(double dt)
+{
+    // Comms lines fade whatever else is happening — they are a readout, not
+    // state, the same rule the collection ticker follows.
+    for (CommsMessage& message : m_comms) {
+        message.secondsLeft -= dt;
+    }
+    while (!m_comms.empty() && m_comms.front().secondsLeft <= 0.0) {
+        m_comms.erase(m_comms.begin());
+    }
+    if (m_berthRefusalTimer > 0.0) {
+        m_berthRefusalTimer -= dt;
+    }
+    if (isDocked() || m_currentSystem >= m_galaxy.systems.size()) {
+        return;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    const core::DVec3 position = shipState().position;
+    const double speed = length(shipState().velocity);
+
+    if (hasClearance()) {
+        // Revoked the moment the owner turns on you. Derived from standing
+        // rather than from a new event: firing on a patrol is what moves
+        // standing, and standing crossing hostile is what a dispatcher would
+        // actually react to.
+        const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+        if (owner < m_factionTable.size() && m_factionSim.playerHostile(owner)) {
+            clearClearance("Clearance revoked. Leave the approach lane.");
+            return;
+        }
+        m_clearance.secondsLeft -= dt;
+        if (m_clearance.secondsLeft <= 0.0) {
+            clearClearance("Clearance expired. Hail us again.");
+            return;
+        }
+        if (sim::inBerth(position, speed, clearedBerthPoint())) {
+            const std::uint32_t station = m_clearance.station;
+            const std::uint32_t berth = m_clearance.berth;
+            completeDock(station, berth);
+            say(spec.stations[station].name, "Docking clamps engaged. Welcome aboard.");
+        }
+        return;
+    }
+
+    // No clearance: sitting in somebody's berth is refused in words rather
+    // than silently doing nothing, which is the whole complaint this item
+    // started from (a refusal that only ever reached the console log).
+    if (m_berthRefusalTimer > 0.0) {
+        return;
+    }
+    for (std::uint32_t i = 0; i < spec.stations.size(); ++i) {
+        for (std::uint32_t berth = 0; berth < sim::kBerthCount; ++berth) {
+            if (!sim::inBerth(position, speed, sim::berthPoint(spec.stations[i].position, berth))) {
+                continue;
+            }
+            say(spec.stations[i].name,
+                "Berth " + std::to_string(berth + 1)
+                    + " is not yours. Hail us or stand off.");
+            m_berthRefusalTimer = kCommsMessageSeconds;
+            return;
+        }
+    }
 }
 
 std::uint32_t SpaceWorld::commodityIndex(const char* id) const
@@ -3328,6 +3592,15 @@ double SpaceWorld::autopilotArrivalRange(const TargetInfo& target) const
     if (m_targetIndex == objectiveTargetIndex() && objectiveDestination(&objective)) {
         range = std::max(std::min(range, objective->radius * 0.5), 50.0);
     }
+    // A cleared berth is the second target of that kind (Phase 8r) and the
+    // same rule applies: the standoff has to put the ship INSIDE the capture
+    // sphere or autopilot parks just outside the thing it was flying to. Half
+    // the capture radius is 30 m, still 170 m from the station centre and so
+    // comfortably outside the 130 m sphere the autopilot is steering around —
+    // which is why the berth ring sits at 200 m in the first place.
+    if (hasClearance() && m_targetIndex == berthTargetIndex()) {
+        range = std::min(range, sim::kBerthCaptureRadius * 0.5);
+    }
     return range;
 }
 
@@ -3986,6 +4259,14 @@ void SpaceWorld::tick(double dt)
         profiler.endZone(zone);
     }
 
+    // Docking clearance (Phase 8r): the countdown, the comms fade, and the
+    // arrival test that turns flying into a berth into being docked.
+    {
+        const std::uint32_t zone = profiler.beginZone("sim.docking");
+        tickDocking(dt);
+        profiler.endZone(zone);
+    }
+
     // Deferred death respawn into the last-dock system (see member comment).
     if (m_pendingRespawnSystem != kNoIndex) {
         const std::uint32_t system = m_pendingRespawnSystem;
@@ -4403,6 +4684,17 @@ bool SpaceWorld::loadFrom(const char* path)
         dockedStation < spec.stations.size() ? dockedStation : kNoIndex;
     m_lastDockSystem = lastDockSystem;
     m_lastDockStation = lastDockStation;
+    // Which berth is not in the save (Phase 8r: the clearance is transient and
+    // the format stays v10), so a docked load parks on the pad above the
+    // station. It has to be reset explicitly rather than left alone: the value
+    // is live state from the run being replaced, and carrying it over would
+    // park the loaded ship in a berth it was never assigned. The clearance and
+    // the comms log go for the same reason.
+    m_dockedBerth = kNoIndex;
+    m_clearance = DockClearance{};
+    m_pendingDockRequest = kNoIndex;
+    m_berthRefusalTimer = 0.0;
+    m_comms.clear();
     m_pendingRespawnSystem = kNoIndex;
     // A scan in flight does not survive a load, and neither does an autopilot
     // leg: the target list is rebuilt below, so an engaged autopilot would

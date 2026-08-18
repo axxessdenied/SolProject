@@ -68,6 +68,7 @@ add_test(NAME scripting.unit COMMAND sol_scripting_tests)
 add_executable(sol_sim_tests
     sim/collision_tests.cpp
     sim/damage_tests.cpp
+    sim/docking_tests.cpp
     sim/economy_tests.cpp
     sim/faction_sim_tests.cpp
     sim/mining_tests.cpp

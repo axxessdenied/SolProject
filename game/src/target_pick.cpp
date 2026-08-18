@@ -34,6 +34,10 @@ sol::ui::RadarKind radarKindOf(SpaceWorld::NavKind kind)
     case SpaceWorld::NavKind::Wreck: return sol::ui::RadarKind::Wreck;
     case SpaceWorld::NavKind::Bookmark: return sol::ui::RadarKind::Bookmark;
     case SpaceWorld::NavKind::Objective: return sol::ui::RadarKind::Objective;
+    // A berth is part of a station, and it draws as one (Phase 8r). No new
+    // radar glyph: the disc already has nine and the blip is 200 m from the
+    // station's own, so what tells them apart is the name, not the shape.
+    case SpaceWorld::NavKind::Berth: return sol::ui::RadarKind::Station;
     }
     return sol::ui::RadarKind::Signal;
 }
@@ -68,6 +72,9 @@ sol::ui::RadarAttitude attitudeOf(const char* attitude)
     case SpaceWorld::NavKind::Wreck:
     case SpaceWorld::NavKind::Bookmark:
     case SpaceWorld::NavKind::Objective: break;
+    // Clickable at the size it is actually captured at, so the box the player
+    // aims for and the box the ship has to fly into are one number.
+    case SpaceWorld::NavKind::Berth: return sol::sim::kBerthCaptureRadius;
     }
     return 0.0;
 }

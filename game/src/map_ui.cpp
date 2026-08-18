@@ -101,6 +101,11 @@ namespace {
         return ui::MapMarkerRow::Kind::Bookmark;
     case SpaceWorld::NavKind::Objective:
         return ui::MapMarkerRow::Kind::Objective;
+    // A berth draws as the station it belongs to (Phase 8r). At map scale it
+    // is 200 m from the station's own marker, i.e. the same pixel, so a glyph
+    // of its own would buy nothing the row's name does not already say.
+    case SpaceWorld::NavKind::Berth:
+        return ui::MapMarkerRow::Kind::Station;
     }
     return ui::MapMarkerRow::Kind::Station;
 }
@@ -532,6 +537,8 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
             detail += " - " + std::to_string(static_cast<int>(cargo)) + " units aboard";
         } else if (kind == SpaceWorld::NavKind::Bookmark) {
             detail += " - bookmark";
+        } else if (kind == SpaceWorld::NavKind::Berth) {
+            detail += " - cleared";
         } else if (kind == SpaceWorld::NavKind::Objective) {
             // The marker's name is deliberately short, so the mission's own
             // wording rides in the detail. It goes *before* the distance

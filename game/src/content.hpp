@@ -60,6 +60,12 @@ public:
     // none is. Wrecks and sites share sol.set_loot — it is the same loot.
     [[nodiscard]] std::uint32_t lootWreck() const { return m_lootWreck; }
 
+    // The station whose dock_request hook is running right now (Phase 8r), so
+    // sol.grant_docking and sol.deny_docking can only ever answer the hail
+    // they were called about. ~0u outside the hook.
+    [[nodiscard]] std::uint32_t dockRequestStation() const { return m_dockRequestStation; }
+    void noteDockAnswered() { m_dockAnswered = true; }
+
 private:
     struct WatchedFile
     {
@@ -118,6 +124,16 @@ private:
     bool m_wreckLootHookFailed = false;
     bool m_hasRockMinedHook = false;
     bool m_rockMinedHookFailed = false;
+    // Docking clearance hook (Phase 8r). m_dockRequestStation is the station
+    // the hook is being asked about, which is what sol.grant_docking and
+    // sol.deny_docking answer against - the same context-while-the-hook-runs
+    // shape m_lootSignal has, and what makes those two builders refuse to be
+    // called from anywhere else. m_dockAnswered is how the scriptless default
+    // knows the hook declined to say anything.
+    std::uint32_t m_dockRequestStation = 0xffff'ffffu;
+    bool m_dockAnswered = false;
+    bool m_hasDockRequestHook = false;
+    bool m_dockRequestHookFailed = false;
 };
 
 } // namespace game

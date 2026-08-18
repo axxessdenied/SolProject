@@ -9,6 +9,7 @@
 #include "sol/ecs/ecs.hpp"
 #include "sol/sim/collision.hpp"
 #include "sol/sim/damage.hpp"
+#include "sol/sim/docking.hpp"
 #include "sol/sim/economy.hpp"
 #include "sol/sim/faction_sim.hpp"
 #include "sol/sim/flight.hpp"
@@ -379,10 +380,10 @@ public:
     // range-gated). Returns false if no gate leads there.
     [[nodiscard]] bool jumpToSystem(const char* destinationName);
 
-    // --- Docking (GDD: request -> autodock; manual flight optional later) ---
-    // Docks at the nearest station within range: ship parks at the station's
-    // dock point, flight input is ignored until undock, and the station
-    // becomes the death-rule respawn point (last dock).
+    // --- Docking (GDD: request -> approach; Phase 8r made the request real) ---
+    // Docks at the nearest station within range without asking anyone: the dev
+    // shortcut (sol.dock) and the death respawn both need a way in that no
+    // dispatcher can refuse. The player's route is requestDocking() below.
     [[nodiscard]] bool tryDockNearestStation(double range);
     [[nodiscard]] bool undock();
     [[nodiscard]] bool isDocked() const { return m_dockedStation != kNoIndex; }
@@ -391,6 +392,68 @@ public:
     [[nodiscard]] std::uint32_t dockedStationIndex() const { return m_dockedStation; }
     // Distance to the nearest station, or a negative value with none.
     [[nodiscard]] double nearestStationDistance() const;
+
+    // --- Docking clearance (Phase 8r) ---
+    //
+    // Deliberately DISJOINT from m_dockedStation rather than folded into it. A
+    // clearance only exists while the ship is *not* docked, so isDocked() —
+    // and the ~65 places that ask it "am I inside the station" — keep their
+    // exact meaning. The backlog note that became this item expected the
+    // opposite (a boolean widened into a state machine); the code says
+    // otherwise, and this comment is here so nobody re-derives it.
+    struct DockClearance
+    {
+        std::uint32_t station = kNoIndex; // station index in the current system
+        std::uint32_t berth = kNoIndex;   // which port was assigned
+        double secondsLeft = 0.0;         // counts down; 0 = no clearance
+    };
+
+    // How long a grant stands, and how far a request carries. The request
+    // range is long so calling ahead is a sequence rather than a formality;
+    // it never overrides the dock/salvage precedence inside kDockRange, which
+    // main.cpp owns (see the ladder there).
+    static constexpr double kClearanceSeconds = 180.0;
+    static constexpr double kDockRequestRange = 20'000.0;
+
+    // Hails the nearest station within kDockRequestRange. Does NOT decide the
+    // answer: it queues the request, and GameContent drains it, asks the
+    // dock_request hook, and calls grantDocking/denyDocking below. That is the
+    // same "C++ enumerates, Lua composes, C++ validates" shape signal_loot,
+    // wreck_loot and mission_board already use. False (with a comms line) when
+    // docked, already cleared, or with nothing in range.
+    bool requestDocking();
+    // Pending hail for GameContent to answer, if any. True once per request.
+    // `outRoll` is 0..1 and is the only entropy the dock_request hook gets, so
+    // the dispatcher's policy stays a pure function of what it is handed —
+    // the same rule mission_board and signal_loot are held to.
+    [[nodiscard]] bool takeDockRequest(std::uint32_t& outStation, double& outRoll);
+    // The two answers. grantDocking validates the berth index and refuses a
+    // station that is no longer the one asked about.
+    bool grantDocking(std::uint32_t station, std::uint32_t berth, const std::string& message);
+    void denyDocking(std::uint32_t station, const std::string& message);
+    [[nodiscard]] const DockClearance& clearance() const { return m_clearance; }
+    [[nodiscard]] bool hasClearance() const { return m_clearance.station != kNoIndex; }
+    // Where the cleared berth is, in sim space. Only meaningful with a
+    // clearance; returns the origin otherwise.
+    [[nodiscard]] sol::core::DVec3 clearedBerthPoint() const;
+    // Drops any clearance, saying why on the comms line when `reason` is set.
+    void clearClearance(const char* reason);
+
+    // --- Comms (Phase 8r) ---
+    // A short transient log of what has been said to the player. Built for
+    // docking clearance, but deliberately not named after it: the pilot-info
+    // half of the same playtest note inherits a channel instead of starting
+    // from nothing.
+    struct CommsMessage
+    {
+        std::string from;
+        std::string text;
+        double secondsLeft = 0.0;
+    };
+    static constexpr std::size_t kCommsLines = 3;
+    static constexpr double kCommsMessageSeconds = 8.0;
+    void say(const std::string& from, const std::string& text);
+    [[nodiscard]] std::span<const CommsMessage> comms() const { return m_comms; }
 
     // --- Trading (Phase 7 economy; player trades ride the same markets the
     // NPC agents move) ---
@@ -692,6 +755,7 @@ public:
         Wreck,
         Bookmark,  // Phase 8h: a place the player wrote down
         Objective, // Phase 8i: where the tracked mission says to go
+        Berth,     // Phase 8r: the port a station has just cleared you for
     };
 
     // "No slot" for the target-index queries below.
@@ -992,6 +1056,17 @@ private:
     // Pulse cooldown plus target-scan progress for the player's current
     // target; resolves the target when the scan completes.
     void tickScanning(double dt);
+    // Clearance countdown, comms fade, and the arrival test that turns flying
+    // into a berth into being docked (Phase 8r).
+    void tickDocking(double dt);
+    // Everything that happens when the ship is inside the station, whichever
+    // way it got there: the pad, the mission notify, the market snapshot and
+    // the dock event. `berth` is kNoIndex for the shortcut and respawn paths.
+    void completeDock(std::uint32_t station, std::uint32_t berth);
+    // Nearest station in this system within `range`, or kNoIndex.
+    [[nodiscard]] std::uint32_t nearestStationWithin(double range, double* outDistance) const;
+    // Slot of the NavKind::Berth target, or kNoTarget with no clearance.
+    [[nodiscard]] std::size_t berthTargetIndex() const;
     // Signal index of the current target, or kNoIndex when it is not a site.
     [[nodiscard]] std::uint32_t targetSignalIndex() const;
     // Body index (0 = star, 1.. = planets) of the current target, or kNoIndex.
@@ -1080,6 +1155,20 @@ private:
     std::uint32_t m_dockedStation = kNoIndex; // station index in current system
     std::uint32_t m_lastDockSystem = kNoIndex;
     std::uint32_t m_lastDockStation = kNoIndex;
+    // Docking clearance (Phase 8r). Transient by design: dropped on a jump, on
+    // docking, on expiry, and on load, so the save format is untouched.
+    DockClearance m_clearance;
+    // Which berth the player is parked in, or kNoIndex for the pre-8r pad
+    // above the station (the dev shortcut and the death respawn both land
+    // there, since neither asks a dispatcher for permission).
+    std::uint32_t m_dockedBerth = kNoIndex;
+    std::uint32_t m_pendingDockRequest = kNoIndex; // station awaiting an answer
+    double m_dockRequestRoll = 0.0;                // the hook's only entropy
+    std::uint32_t m_dockRequestCount = 0;          // so a re-hail can differ
+    // Throttle for "you have no clearance" so sitting in an unassigned berth
+    // says it once per approach rather than sixty times a second.
+    double m_berthRefusalTimer = 0.0;
+    std::vector<CommsMessage> m_comms;
     // Death respawn into another system defers to end-of-tick: loadSystem
     // mid-tick would invalidate the pass scratch (collision slots, pools).
     std::uint32_t m_pendingRespawnSystem = kNoIndex;

@@ -521,13 +521,24 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
         }
     };
     chip(jumpChip, sizeof(jumpChip), hud.jumpKey, "JUMP");
-    chip(dockChip, sizeof(dockChip), hud.interactKey, "DOCK");
+    // Since Phase 8r the interact key hails rather than docks, and once you
+    // are cleared it cancels — so the verb has to follow the state or the chip
+    // is the same confident lie the hardcoded "[J] JUMP" was before 8k.
+    char berthVerb[40] = {};
+    if (hud.cleared) {
+        std::snprintf(berthVerb, sizeof(berthVerb), "CANCEL (BERTH %d)", hud.clearedBerth);
+    }
+    chip(dockChip, sizeof(dockChip), hud.interactKey,
+         hud.cleared ? berthVerb : "REQUEST DOCKING");
     chip(salvageChip, sizeof(salvageChip), hud.interactKey, "SALVAGE");
 
     const Prompt prompts[] = {
         {jumpChip, hud.gateInRange},
-        {dockChip, hud.dockInRange},
-        {salvageChip, hud.salvageInRange && !hud.dockInRange},
+        {dockChip, hud.cleared || hud.stationInHailRange},
+        // Salvage keeps the key inside the 2 km dock band exactly as it did
+        // before; only a hail beyond that band is new, so a wreck out here
+        // still wins the prompt.
+        {salvageChip, hud.salvageInRange && !hud.dockInRange && !hud.cleared},
     };
     constexpr float kChipHeight = 24.0f;
     constexpr float kChipGap = 8.0f;
@@ -813,6 +824,72 @@ void drawMissionLine(DrawList& list, const Styles& styles, const Rect& flightPan
     list.popClip();
 }
 
+// Radio traffic and the live clearance (Phase 8r). Top-left, which is the one
+// corner of the glass nothing else claims: the flight panel and the mission
+// line are bottom-left, the target and scanner panels are top-right, the disc
+// is centre. Deliberately a general comms readout rather than a docking
+// readout - the pilot-info half of the same playtest note draws here too.
+void drawCommsPanel(DrawList& list, const Styles& styles, const Rect& panelArea,
+                    const sol::ui::FlightHud& hud)
+{
+    const std::size_t lines = hud.comms.size();
+    if (lines == 0 && !hud.cleared) {
+        return; // nothing being said: keep the view clear
+    }
+    // Wide enough for a ~50-character line at the HUD style, which is what the
+    // longest thing anybody says fits in - measured, not guaranteed, the same
+    // caveat 8k recorded about the capture prompt.
+    //
+    // The clamp is expressed against the TARGET READOUT, not against the
+    // screen, for the reason 8m gave about pushing the side panels off the
+    // radar disc: the thing this panel must not collide with is that panel,
+    // and a screen-relative fraction gets the answer wrong in both directions -
+    // 0.45 of the opening is narrower than the text needs at 1280 and still
+    // overlaps on a window wide enough to matter. On a genuinely narrow window
+    // the sentence clips instead, which is the trade the rest of this HUD makes.
+    const float width =
+        std::min(520.0f, panelArea.width() - kTargetPanelWidth - kPadding * 2.0f);
+    constexpr float kSenderWidth = 116.0f;
+    const float rows = static_cast<float>(lines) + (hud.cleared ? 1.0f : 0.0f);
+    const float height = kPadding + rows * 20.0f + kPadding * 0.5f;
+    const Rect panel = {{panelArea.min.x, panelArea.min.y},
+                        {panelArea.min.x + width, panelArea.min.y + height}};
+    list.addRoundedRect(panel, 8.0f, kPanel);
+    list.pushClip({{panel.min.x + kPadding, panel.min.y}, {panel.max.x - kPadding, panel.max.y}});
+
+    const float left = panel.min.x + kPadding;
+    const float right = panel.max.x - kPadding;
+    float y = panel.min.y + kPadding * 0.5f;
+
+    if (hud.cleared) {
+        // The one number a pilot on approach actually wants, and it goes first
+        // because it outlives the line that announced it.
+        char buffer[64] = {};
+        char distance[32] = {};
+        formatDistance(hud.clearedBerthDistanceMeters, distance, sizeof(distance));
+        std::snprintf(buffer, sizeof(buffer), "CLEARED - BERTH %d", hud.clearedBerth);
+        list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, buffer, kAccent);
+        list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, distance, kTextPrimary,
+                          TextAlign::Right);
+        y += 20.0f;
+    }
+    for (const sol::ui::CommsLine& line : hud.comms) {
+        // A line dims out over its last two seconds rather than vanishing
+        // mid-read, so the panel never blinks a sentence away.
+        const float fade = clamp01(line.fade);
+        Color sender = kAccent;
+        Color body = kTextDim;
+        sender.a *= fade;
+        body.a *= fade;
+        list.addTextInBox(*styles.small, {{left, y}, {left + kSenderWidth, y + 20.0f}}, line.from,
+                          sender);
+        list.addTextInBox(*styles.small, {{left + kSenderWidth + 6.0f, y}, {right, y + 20.0f}},
+                          line.text, body);
+        y += 20.0f;
+    }
+    list.popClip();
+}
+
 } // namespace
 
 void buildFlightUi(DrawList& list, const Font& font, Vec2 screenSize, const sol::ui::FlightHud& hud)
@@ -911,6 +988,7 @@ void buildFlightUi(DrawList& list, const Font& font, Vec2 screenSize, const sol:
     }
     drawTargetReadout(list, styles, panelArea, hud, targetPanel);
     drawScannerPanel(list, styles, panelArea, targetPanel, hud);
+    drawCommsPanel(list, styles, panelArea, hud);
     if (frame.centreConsole.visible) {
         drawRadar(list, font, styles, frame.centreConsole.position, hud);
     }
