@@ -71,6 +71,7 @@ This is a from-scratch engine. The **only** approved third-party dependencies ar
 | glslang (or shaderc) | GLSL → SPIR-V, **build-time only** |
 | Lua 5.4 (vendored source) | Scripting runtime |
 | Dear ImGui (vendored) | **Dev/debug tooling only** — never shipping game UI |
+| stb_vorbis (vendored) | Ogg Vorbis decode, **cooker only** — the shipping binary carries no decoder (`docs/decisions/009-audio-decoder.md`) |
 
 Everything else — math, ECS, containers/allocators, asset formats, image/mesh importing in the cooker, platform abstraction — is written in this repo. **Adding, upgrading, or expanding the scope of any dependency requires explicit approval from the user first.** Do not add a library "temporarily," and do not copy-paste library source into the tree as a workaround.
 
