@@ -47,6 +47,15 @@ add_executable(sol_platform_tests
 target_link_libraries(sol_platform_tests PRIVATE sol::test sol::platform)
 add_test(NAME platform.unit COMMAND sol_platform_tests)
 
+# The mixer is exercised headlessly by calling renderAudio directly - no
+# device, no sound card, no wall clock. A rule verified only by ear is a rule
+# that gets re-verified by ear forever.
+add_executable(sol_audio_tests
+    audio/mixer_tests.cpp
+)
+target_link_libraries(sol_audio_tests PRIVATE sol::test sol::audio)
+add_test(NAME audio.unit COMMAND sol_audio_tests)
+
 add_executable(sol_ui_tests
     ui/cockpit_frame_tests.cpp
     ui/context_tests.cpp
