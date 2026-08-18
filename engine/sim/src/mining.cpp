@@ -1,6 +1,7 @@
 #include "sol/sim/mining.hpp"
 
 #include "sol/core/assert.hpp"
+#include "sol/core/profiler.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -77,6 +78,9 @@ void MiningSim::initialize(const Galaxy& galaxy, const MiningParams& params,
     m_wrecks.clear();
     m_refineJobs.clear();
     m_nextWreckId = 1;
+    // The memo is derived from the galaxy being replaced here, so it goes with
+    // it. Every other path that swaps galaxies runs through initialize.
+    m_rockCache.clear();
 
     std::vector<AsteroidFieldSpec> fields;
     for (std::uint32_t i = 0; i < m_systemCount; ++i) {
@@ -113,8 +117,27 @@ void MiningSim::fieldsFor(const Galaxy& galaxy, std::uint32_t system,
     }
 }
 
+const std::vector<RockSpec>& MiningSim::cachedRocks(const Galaxy& galaxy, std::uint32_t system,
+                                                    std::uint32_t field) const
+{
+    const std::uint64_t key = rockKey(system, field, 0);
+    const auto it = m_rockCache.find(key);
+    if (it != m_rockCache.end()) {
+        return it->second;
+    }
+    std::vector<RockSpec> rocks;
+    generateRocks(galaxy, system, field, rocks);
+    return m_rockCache.emplace(key, std::move(rocks)).first->second;
+}
+
 void MiningSim::rocksFor(const Galaxy& galaxy, std::uint32_t system, std::uint32_t field,
                          std::vector<RockSpec>& out) const
+{
+    out = cachedRocks(galaxy, system, field);
+}
+
+void MiningSim::generateRocks(const Galaxy& galaxy, std::uint32_t system, std::uint32_t field,
+                              std::vector<RockSpec>& out) const
 {
     out.clear();
     std::vector<AsteroidFieldSpec> fields;
@@ -226,26 +249,29 @@ float MiningSim::drawFromSystem(const Galaxy& galaxy, std::uint32_t system,
     // at a time sustains almost nothing. It is also where the region
     // gradient comes from for free — a fringe system carries several times
     // the rock of a core one, so it supports several times the outpost.
-    struct Bite
-    {
-        std::uint32_t field = 0;
-        std::uint32_t rock = 0;
-        float total = 0.0f;
-        float left = 0.0f;
-    };
-    std::vector<Bite> bites;
-    std::vector<RockSpec> rocks;
+    //
+    // Spreading it that way means the draw touches EVERY matching rock, so
+    // doing it through mineRock — one sorted insert per rock — costs
+    // O(rocks * records) of memmove and rises as more of the galaxy is worked.
+    // The takes are collected here instead and merged in one linear pass; the
+    // resulting table is identical, key order included.
+    SOL_PROFILE_ZONE("mining.drawFromSystem");
+    m_drawTakes.clear();
     float pool = 0.0f;
     const std::uint32_t fields = fieldCount(system);
     for (std::uint32_t field = 0; field < fields; ++field) {
-        rocksFor(galaxy, system, field, rocks);
+        // By reference: the memo owns the rocks, so this walk costs neither a
+        // regeneration nor a copy.
+        const std::vector<RockSpec>& rocks = cachedRocks(galaxy, system, field);
         for (std::uint32_t rock = 0; rock < rocks.size(); ++rock) {
             if (rocks[rock].commodity != commodity) {
                 continue;
             }
             const float left = unitsLeft(system, field, rock, rocks[rock].yieldUnits);
             if (left > 0.0f) {
-                bites.push_back({field, rock, rocks[rock].yieldUnits, left});
+                // unitsTaken carries the rock's REMAINING units for now; the
+                // share it actually gives up is only known once the pool is.
+                m_drawTakes.push_back({.key = rockKey(system, field, rock), .unitsTaken = left});
                 pool += left;
             }
         }
@@ -255,10 +281,60 @@ float MiningSim::drawFromSystem(const Galaxy& galaxy, std::uint32_t system,
     }
     const float want = std::min(units, pool);
     float taken = 0.0f;
-    for (const Bite& bite : bites) {
-        taken += mineRock(system, bite.field, bite.rock, bite.total, want * bite.left / pool);
+    // Compacted in place: `kept` never runs ahead of `i`, so this rewrites
+    // only slots already read.
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < m_drawTakes.size(); ++i) {
+        const std::uint64_t key = m_drawTakes[i].key;
+        const float left = m_drawTakes[i].unitsTaken;
+        // min() with `left` reproduces mineRock's clamp against what the rock
+        // still holds; the proportional share can only exceed it on rounding.
+        const float got = std::min(want * left / pool, left);
+        if (!(got > 0.0f)) {
+            // mineRock created no record for a rock it did not cut, and the
+            // table is saved — so a zero take must not leave one behind.
+            continue;
+        }
+        m_drawTakes[kept++] = {.key = key, .unitsTaken = got};
+        taken += got;
     }
+    m_drawTakes.resize(kept);
+    // Fields ascend, rocks ascend within a field, and rockKey is monotonic in
+    // both, so the takes are already in the order the merge needs.
+    mergeDepletion(m_drawTakes);
     return taken;
+}
+
+void MiningSim::mergeDepletion(const std::vector<RockDepletion>& takes)
+{
+    if (takes.empty()) {
+        return;
+    }
+    m_depletionScratch.clear();
+    m_depletionScratch.reserve(m_depletion.size() + takes.size());
+
+    std::size_t existing = 0;
+    std::size_t incoming = 0;
+    while (existing < m_depletion.size() && incoming < takes.size()) {
+        if (m_depletion[existing].key < takes[incoming].key) {
+            m_depletionScratch.push_back(m_depletion[existing++]);
+        } else if (takes[incoming].key < m_depletion[existing].key) {
+            m_depletionScratch.push_back(takes[incoming++]);
+        } else {
+            m_depletionScratch.push_back(
+                {.key = m_depletion[existing].key,
+                 .unitsTaken = m_depletion[existing].unitsTaken + takes[incoming].unitsTaken});
+            ++existing;
+            ++incoming;
+        }
+    }
+    while (existing < m_depletion.size()) {
+        m_depletionScratch.push_back(m_depletion[existing++]);
+    }
+    while (incoming < takes.size()) {
+        m_depletionScratch.push_back(takes[incoming++]);
+    }
+    m_depletion.swap(m_depletionScratch);
 }
 
 float MiningSim::systemStock(const Galaxy& galaxy, std::uint32_t system,
@@ -268,10 +344,9 @@ float MiningSim::systemStock(const Galaxy& galaxy, std::uint32_t system,
         return 0.0f;
     }
     float total = 0.0f;
-    std::vector<RockSpec> rocks;
     const std::uint32_t fields = fieldCount(system);
     for (std::uint32_t field = 0; field < fields; ++field) {
-        rocksFor(galaxy, system, field, rocks);
+        const std::vector<RockSpec>& rocks = cachedRocks(galaxy, system, field);
         for (std::uint32_t rock = 0; rock < rocks.size(); ++rock) {
             if (rocks[rock].commodity == commodity) {
                 total += unitsLeft(system, field, rock, rocks[rock].yieldUnits);

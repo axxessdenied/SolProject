@@ -128,6 +128,44 @@ SOL_TEST(mining_system_draw_spreads_across_rocks_and_runs_out)
     SOL_CHECK(mining.systemStock(galaxy, 2, 1) < 1.0e-2f);
 }
 
+SOL_TEST(mining_repeated_draws_accumulate_into_one_record_per_rock)
+{
+    // Phase 8n replaced the one-sorted-insert-per-rock path with a single
+    // merge, because an outpost's draw touches every matching rock in its
+    // system and that cost O(rocks * records) of memmove every economy step.
+    // The merge has to land on the same table: one record per rock, debts
+    // summed, and no zero-value record for a rock that gave up nothing.
+    const Galaxy galaxy = lineGalaxy();
+    MiningSim mining = lineMining(galaxy);
+
+    (void)mining.drawFromSystem(galaxy, 2, 1, 3.0f);
+    const std::size_t afterFirst = mining.depletionRecordCount();
+    SOL_REQUIRE(afterFirst >= 4); // the draw did spread
+
+    // Twenty more draws over the same rocks must deepen the existing records
+    // rather than add new ones.
+    float drawn = 0.0f;
+    for (int i = 0; i < 20; ++i) {
+        drawn += mining.drawFromSystem(galaxy, 2, 1, 1.0f);
+    }
+    SOL_CHECK(mining.depletionRecordCount() == afterFirst);
+    SOL_CHECK(std::abs(drawn - 20.0f) < 1.0e-2f);
+
+    // Debts accumulated rather than being overwritten by the last merge.
+    float totalTaken = 0.0f;
+    for (std::uint32_t field = 0; field < mining.fieldCount(2); ++field) {
+        for (std::uint32_t rock = 0; rock < 64; ++rock) {
+            totalTaken += mining.unitsTaken(2, field, rock);
+        }
+    }
+    SOL_CHECK(std::abs(totalTaken - 23.0f) < 1.0e-1f);
+
+    // A commodity with no rock behind it leaves the table exactly as it was —
+    // no empty records for rocks that were never cut.
+    (void)mining.drawFromSystem(galaxy, 2, 0, 5.0f);
+    SOL_CHECK(mining.depletionRecordCount() == afterFirst);
+}
+
 SOL_TEST(mining_fields_and_rocks_are_deterministic_per_seed)
 {
     const Galaxy galaxy = lineGalaxy();

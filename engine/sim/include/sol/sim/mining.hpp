@@ -32,6 +32,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace sol::sim {
@@ -242,6 +243,26 @@ private:
                                                std::uint32_t rock);
     [[nodiscard]] std::size_t findDepletion(std::uint64_t key) const;
 
+    // Adds `takes` (ascending key order, unique) in one linear merge. An
+    // outpost's draw is spread across every rock in its system holding the
+    // commodity, so the one-sorted-insert-per-rock path mineRock uses costs
+    // O(rocks * records) of memmove per economy step and gets worse as the
+    // galaxy is worked — the whole of the 3.4 ms spike Phase 8n measured.
+    // Same resulting table, same key order, so the save is unaffected.
+    void mergeDepletion(const std::vector<RockDepletion>& takes);
+
+    // rocksFor is a pure function of the system seed, and the coarse economy
+    // asks for the same handful of extractor systems once a second forever —
+    // so regenerating them costs an RNG walk per rock for an answer that
+    // cannot have changed. Memoized by (system, field); derived state, never
+    // saved, dropped whenever the galaxy it came from is replaced.
+    [[nodiscard]] const std::vector<RockSpec>& cachedRocks(const Galaxy& galaxy,
+                                                           std::uint32_t system,
+                                                           std::uint32_t field) const;
+    // The generator behind the memo. Every caller goes through cachedRocks.
+    void generateRocks(const Galaxy& galaxy, std::uint32_t system, std::uint32_t field,
+                       std::vector<RockSpec>& out) const;
+
     MiningParams m_params;
     std::uint32_t m_systemCount = 0;
     std::uint32_t m_commodityCount = 0;
@@ -251,6 +272,12 @@ private:
     std::vector<RefineJob> m_refineJobs;
     std::uint32_t m_nextWreckId = 1;
     std::uint64_t m_seed = 0;
+
+    // Scratch held so the once-a-second galaxy step does not allocate, and
+    // the rock memo. All derived state: never saved.
+    std::vector<RockDepletion> m_drawTakes;
+    std::vector<RockDepletion> m_depletionScratch;
+    mutable std::unordered_map<std::uint64_t, std::vector<RockSpec>> m_rockCache;
 };
 
 } // namespace sol::sim
