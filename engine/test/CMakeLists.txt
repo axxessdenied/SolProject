@@ -80,6 +80,7 @@ add_executable(sol_sim_tests
     sim/docking_tests.cpp
     sim/economy_tests.cpp
     sim/faction_sim_tests.cpp
+    sim/jump_transition_tests.cpp
     sim/mining_tests.cpp
     sim/mission_tests.cpp
     sim/pilot_tips_tests.cpp
