@@ -1,5 +1,7 @@
 #include "map_ui.hpp"
 
+#include "sol/ui/map_projection.hpp"
+
 #include <algorithm>
 #include <cstdio>
 
@@ -63,6 +65,21 @@ namespace {
     return ui::MapKnowledge::Unknown;
 }
 
+[[nodiscard]] const char* knowledgeName(sim::KnowledgeState state)
+{
+    switch (state) {
+    case sim::KnowledgeState::Unknown:
+        return "unknown";
+    case sim::KnowledgeState::Charted:
+        return "charted";
+    case sim::KnowledgeState::Visited:
+        return "visited";
+    case sim::KnowledgeState::Surveyed:
+        return "surveyed";
+    }
+    return "?";
+}
+
 [[nodiscard]] ui::MapMarkerRow::Kind toMarkerKind(SpaceWorld::NavKind kind)
 {
     switch (kind) {
@@ -86,6 +103,173 @@ namespace {
         return ui::MapMarkerRow::Kind::Objective;
     }
     return ui::MapMarkerRow::Kind::Station;
+}
+
+// --- Remote systems (Phase 8q) ----------------------------------------------
+
+// The markers for a system the player is NOT standing in. Everything here is
+// already resident: SystemSpec carries the bodies, stations and gates with
+// their positions, and the two content sims answer signalsFor/fieldsFor/
+// wrecksIn/bookmarksIn for any system index. So nothing is regenerated and no
+// state is invented - this reads the same facts the local path reads, minus
+// the ones that only exist because the player is there (rock counts, wreck
+// cargo, distance from the ship, the target ring).
+//
+// What may appear at all goes through ui::markerVisible, which holds the fog
+// rule beside systemVisible/laneVisible; the per-signal discovery bit is
+// applied here on top of it, because the rung cannot answer for an individual
+// site. Order matches the target cycle - stations, gates, planets, star, then
+// the dynamic tail - so a player who can read one system map can read both.
+void fillRemoteMarkers(const SpaceWorld& world, std::uint32_t system,
+                       std::deque<std::string>& text, std::vector<ui::MapMarkerRow>& markerRows)
+{
+    using Kind = ui::MapMarkerRow::Kind;
+    const sim::Galaxy& galaxy = world.galaxy();
+    const sim::SurveySim& survey = world.survey();
+    const sim::SystemSpec& spec = galaxy.systems[system];
+    const ui::MapKnowledge rung = toMapKnowledge(survey.knowledge(system));
+    const core::DVec3 hub = sim::playfieldHub(spec);
+
+    // "412 Mkm from your ship" would be a number about a place three jumps
+    // behind the player, so each marker is measured from the origin of its own
+    // tier instead - planets from the star they orbit, everything in the
+    // playfield from the planet it clusters around. That is the same split the
+    // map itself draws, and measuring the whole system from the star would
+    // instead report the hub's orbital radius nine times over: at Lyrioa every
+    // station and gate would read ~51 Mkm and none of them would be
+    // distinguishable from the planet they are parked beside.
+    const auto add = [&](Kind kind, std::string name, const core::DVec3& position,
+                         std::string detail, bool scanned, std::uint32_t bookmarkId) {
+        if (!ui::markerVisible(rung, kind)) {
+            return;
+        }
+        const bool orbital = kind == Kind::Star || kind == Kind::Planet;
+        const core::DVec3 offset = orbital ? position : position - hub;
+        const double distance = length(offset);
+        // The star is the origin of the orbital tier, so its distance is zero
+        // by construction and saying "0 m" is noise rather than information.
+        std::string full = kind == Kind::Star ? std::string() : formatDistance(distance);
+        if (!detail.empty()) {
+            full += full.empty() ? detail : " - " + detail;
+        }
+        markerRows.push_back({.kind = kind,
+                              .name = store(text, std::move(name)),
+                              .detail = store(text, std::move(full)),
+                              .position = {static_cast<float>(offset.x),
+                                           static_cast<float>(offset.z)},
+                              .distanceMeters = distance,
+                              .scanned = scanned,
+                              .targeted = false,
+                              .bookmarkId = bookmarkId,
+                              .inPlayfield = !orbital});
+    };
+
+    for (const sim::StationSpec& station : spec.stations) {
+        add(Kind::Station, station.name, station.position, {}, false, 0);
+    }
+    for (const sim::GateSpec& gate : spec.gates) {
+        add(Kind::Gate, "Gate: " + galaxy.systems[gate.toSystem].name, gate.position, {}, false, 0);
+    }
+    // Body index 0 is the star and 1.. are the planets in spec order, which is
+    // the indexing SurveySim::bodyScanned answers against.
+    for (std::uint32_t i = 0; i < spec.planets.size(); ++i) {
+        const sim::PlanetSpec& planet = spec.planets[i];
+        const bool scanned = survey.bodyScanned(system, i + 1);
+        add(Kind::Planet, planet.name, planet.position, scanned ? "scanned" : "unscanned", scanned,
+            0);
+    }
+    {
+        // At Charted the star is the only marker there is, so its detail is
+        // where the reason for an otherwise empty map belongs.
+        const bool scanned = survey.bodyScanned(system, 0);
+        // Short, because the detail column is 96 px and clips from the left:
+        // a sentence here survives as a mid-word tail. The galaxy tab's footer
+        // already carries the "fly there to survey it" wording.
+        const char* detail = rung < ui::MapKnowledge::Visited ? "charted only"
+                             : scanned                        ? "scanned"
+                                                              : "unscanned";
+        add(Kind::Star, spec.name, {}, detail, scanned, 0);
+    }
+
+    // Sites are gated per signal rather than by the rung: an unswept system
+    // shows none even once it is Visited, because none has been found.
+    std::vector<sim::SignalSpec> signals;
+    survey.signalsFor(galaxy, system, signals);
+    std::size_t slot = 0;
+    for (std::uint32_t i = 0; i < signals.size(); ++i) {
+        if (!survey.signalDiscovered(system, i)) {
+            continue;
+        }
+        const bool resolved = survey.signalResolved(system, i);
+        add(Kind::Signal,
+            signalTargetName(signals[i].kind, resolved, survey.signalEmptied(system, i), slot++),
+            signals[i].position, resolved ? "scanned" : "unscanned", resolved, 0);
+    }
+    // Fields need no discovery bit - a field is a visible thing in the
+    // playfield, which is the same rule the local nav list follows. Rock
+    // counts are deliberately not read: that is a rocksFor walk per field for
+    // a number the player has not been there to earn.
+    std::vector<sim::AsteroidFieldSpec> fields;
+    world.mining().fieldsFor(galaxy, system, fields);
+    for (std::uint32_t i = 0; i < fields.size(); ++i) {
+        add(Kind::Field, "Asteroid Field " + std::to_string(i + 1), fields[i].center, {}, false, 0);
+    }
+    std::vector<std::uint32_t> wreckIds;
+    world.mining().wrecksIn(system, wreckIds);
+    for (const std::uint32_t id : wreckIds) {
+        const sim::WreckRecord* wreck = world.mining().wreck(id);
+        if (wreck != nullptr) {
+            add(Kind::Wreck, "Wreck: " + wreck->name, wreck->position, {}, false, 0);
+        }
+    }
+    std::vector<std::uint32_t> bookmarkIds;
+    survey.bookmarksIn(system, bookmarkIds);
+    for (const std::uint32_t id : bookmarkIds) {
+        const sim::Bookmark* mark = survey.bookmark(id);
+        if (mark != nullptr) {
+            add(Kind::Bookmark, "* " + mark->name, mark->position, "bookmark", false, id);
+        }
+    }
+    // The tracked objective, when it is a FlyTo over there - which is exactly
+    // the case a route-planning map exists to answer.
+    const sim::MissionObjective* objective = world.trackedObjective();
+    if (objective != nullptr && objective->kind == sim::ObjectiveKind::FlyTo
+        && objective->system == system) {
+        add(Kind::Objective, "> Objective", objective->position, objective->text, false, 0);
+    }
+}
+
+// Everything that is true of the screen whichever system it is showing: the
+// plotted route, the ledger line, where the player actually is, and the three
+// spans. Shared by both marker paths so neither can forget half of it.
+void fillMapTail(const SpaceWorld& world, std::deque<std::string>& text, ui::MapPanel& panel,
+                 const std::vector<ui::MapSystemRow>& systemRows,
+                 const std::vector<ui::MapLaneRow>& laneRows,
+                 const std::vector<ui::MapMarkerRow>& markerRows)
+{
+    const sim::Galaxy& galaxy = world.galaxy();
+    const sim::SurveySim& survey = world.survey();
+    const std::vector<std::uint32_t>& route = survey.route();
+
+    std::string routeSummary;
+    if (route.size() >= 2) {
+        routeSummary = std::to_string(route.size() - 1) + " jump(s): ";
+        for (std::size_t i = 0; i < route.size(); ++i) {
+            routeSummary += (i == 0 ? "" : " > ") + galaxy.systems[route[i]].name;
+        }
+    }
+    panel.routeSummary = store(text, std::move(routeSummary));
+
+    const std::uint32_t known = survey.knownSystemCount();
+    panel.knownSummary =
+        store(text, std::to_string(known) + " of " + std::to_string(galaxy.systems.size())
+                        + " systems known - ledger "
+                        + std::to_string(static_cast<int>(survey.ledgerValue())) + " cr");
+    panel.currentSystem = world.currentSystemName();
+    panel.currentIndex = static_cast<int>(world.currentSystemIndex());
+    panel.systems = systemRows;
+    panel.lanes = laneRows;
+    panel.markers = markerRows;
 }
 
 } // namespace
@@ -227,8 +411,67 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
                             .onRoute = onRoute});
     }
 
+    // Which system the System tab is showing (Phase 8q). The screen keeps the
+    // galaxy selection across frames and main.cpp hands it in exactly the way
+    // it hands the trade commodity, so there is no second selection to keep in
+    // step. -1, an out-of-range index, and a system the player has never heard
+    // of all mean "wherever the player is", which is what the tab always did.
+    const std::uint32_t currentSystem = world.currentSystemIndex();
+    std::uint32_t viewSystem = currentSystem;
+    if (panel.viewSystem >= 0
+        && static_cast<std::size_t>(panel.viewSystem) < galaxy.systems.size()
+        && survey.knowledge(static_cast<std::uint32_t>(panel.viewSystem))
+               != sim::KnowledgeState::Unknown) {
+        viewSystem = static_cast<std::uint32_t>(panel.viewSystem);
+    }
+    panel.viewIsCurrent = viewSystem == currentSystem;
+    panel.viewSystemName = galaxy.systems[viewSystem].name.c_str();
+    {
+        // Said in words, because the one thing a remote map must never do is
+        // imply it is as current as the local one.
+        const sim::KnowledgeState rung = survey.knowledge(viewSystem);
+        std::string summary = galaxy.systems[viewSystem].name;
+        summary += " - ";
+        summary += knowledgeName(rung);
+        if (panel.viewIsCurrent) {
+            summary += ", you are here";
+        } else {
+            const std::vector<std::uint32_t> hops =
+                sim::routeBetween(galaxy, currentSystem, viewSystem);
+            summary += hops.size() >= 2
+                           ? ", " + std::to_string(hops.size() - 1) + " jump(s) away"
+                           : ", no route known";
+        }
+        panel.viewSummary = store(text, std::move(summary));
+    }
+
+    // Somewhere else: the markers come from the galaxy plan and the two
+    // content sims rather than from the live nav list, and nothing that means
+    // "you are standing here" is filled in.
+    if (!panel.viewIsCurrent) {
+        fillRemoteMarkers(world, viewSystem, text, markerRows);
+        // The hub is the primary planet's position, which is knowledge in its
+        // own right: at Charted nothing is drawn in the playfield, so pinning
+        // the bubble at the real hub would sketch where the inhabited part of
+        // an unvisited system is. Zero until there is something there to pin.
+        const core::DVec3 remoteHub =
+            survey.knowledge(viewSystem) >= sim::KnowledgeState::Visited
+                ? sim::playfieldHub(galaxy.systems[viewSystem])
+                : core::DVec3{};
+        panel.hubPosition = {static_cast<float>(remoteHub.x), static_cast<float>(remoteHub.z)};
+        panel.shipPosition = {};
+        panel.hasShip = false; // the ship is not there, so it is not drawn
+        fillMapTail(world, text, panel, systemRows, laneRows, markerRows);
+        return;
+    }
+
     // System view: the nav targets, in the order the T key cycles them, so a
-    // map selection and a target cycle land on exactly the same thing.
+    // map selection and a target cycle land on exactly the same thing. This is
+    // the local path and it stays exactly as it was: it knows things the
+    // remote path cannot (live rock counts, wreck cargo, distance from the
+    // ship, which slot is targeted), and giving those up to share one code
+    // path would cost the current system information to buy the remote one a
+    // consistency it does not need.
     const core::DVec3 hub = world.planets().empty()
                                 ? core::DVec3{}
                                 : world.planets()[std::min<std::size_t>(
@@ -299,40 +542,23 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
                 detail = objective->text + " - " + detail;
             }
         }
-        markerRows.push_back({.kind = toMarkerKind(kind),
-                              .name = targets[i].name.c_str(),
-                              .detail = store(text, std::move(detail)),
-                              .position = {static_cast<float>(offset.x),
-                                           static_cast<float>(offset.z)},
-                              .distanceMeters = distance,
-                              .scanned = scanned,
-                              .targeted = i == targeted,
-                              .inPlayfield = !orbital});
+        markerRows.push_back(
+            {.kind = toMarkerKind(kind),
+             .name = targets[i].name.c_str(),
+             .detail = store(text, std::move(detail)),
+             .position = {static_cast<float>(offset.x), static_cast<float>(offset.z)},
+             .distanceMeters = distance,
+             .scanned = scanned,
+             .targeted = i == targeted,
+             .bookmarkId = kind == SpaceWorld::NavKind::Bookmark ? world.navTargetBookmark(i) : 0u,
+             .inPlayfield = !orbital});
     }
     panel.hubPosition = {static_cast<float>(hub.x), static_cast<float>(hub.z)};
     const core::DVec3 shipOffset = shipPosition - hub;
     panel.shipPosition = {static_cast<float>(shipOffset.x), static_cast<float>(shipOffset.z)};
     panel.hasShip = true;
 
-    std::string routeSummary;
-    if (route.size() >= 2) {
-        routeSummary = std::to_string(route.size() - 1) + " jump(s): ";
-        for (std::size_t i = 0; i < route.size(); ++i) {
-            routeSummary += (i == 0 ? "" : " > ") + galaxy.systems[route[i]].name;
-        }
-    }
-    panel.routeSummary = store(text, std::move(routeSummary));
-
-    std::uint32_t known = survey.knownSystemCount();
-    panel.knownSummary =
-        store(text, std::to_string(known) + " of " + std::to_string(galaxy.systems.size())
-                        + " systems known - ledger "
-                        + std::to_string(static_cast<int>(survey.ledgerValue())) + " cr");
-    panel.currentSystem = world.currentSystemName();
-    panel.currentIndex = static_cast<int>(world.currentSystemIndex());
-    panel.systems = systemRows;
-    panel.lanes = laneRows;
-    panel.markers = markerRows;
+    fillMapTail(world, text, panel, systemRows, laneRows, markerRows);
 }
 
 bool executeMapAction(SpaceWorld& world, const ui::MapAction& action)
@@ -361,19 +587,16 @@ bool executeMapAction(SpaceWorld& world, const ui::MapAction& action)
             return world.engageAutopilot();
         }
         break;
-    case Kind::DeleteBookmark: {
-        // The marker row index IS the nav-target index, so the bookmark's id
-        // comes straight off the slot - which is what keeps this correct after
-        // any other bookmark has been deleted.
-        if (action.index < 0) {
-            break;
-        }
-        const std::uint32_t id = world.navTargetBookmark(static_cast<std::size_t>(action.index));
-        if (id != 0xffff'ffffu) {
-            (void)world.removeBookmark(id);
+    case Kind::DeleteBookmark:
+        // The action carries the bookmark's own never-reused id rather than a
+        // row (Phase 8q). It used to read the id back off the nav-target slot,
+        // which is only answerable for the system the player is standing in -
+        // and on a remote view that lookup would have deleted whichever
+        // bookmark happened to occupy that slot back home.
+        if (action.bookmarkId != 0) {
+            (void)world.removeBookmark(action.bookmarkId);
         }
         break;
-    }
     }
     return false;
 }

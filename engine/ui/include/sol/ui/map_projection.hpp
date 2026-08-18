@@ -80,6 +80,38 @@ struct MapProjection
     return system.knowledge != MapKnowledge::Unknown;
 }
 
+// And the same rule one tier down (Phase 8q): what a system map may show of a
+// system the player is not standing in. The knowledge rung gates the *kinds*
+// of thing that can appear; whether an individual signal appears is a separate
+// question answered by SurveySim's per-signal discovery bit, which the fill
+// applies on top of this - so an unswept Surveyed-adjacent system still shows
+// no sites, because it has none discovered.
+//
+// Charted is the ladder's own words: "named by a gate you have stood at;
+// contents blank". You know the system is there and what it is called, so you
+// get the star - which is the system - and nothing around it. Visited is the
+// ladder's words too: "you have been here: owner, stations, and bodies are
+// known". Surveyed adds no new *kind*, only more signal bits already set,
+// which is why the table below has two interesting rows rather than four.
+//
+// Bookmarks ignore the rung entirely, for the reason the galaxy map's
+// bookmarkCount already ignores it: a bookmark is the player's own knowledge
+// and they were standing there when they made it.
+[[nodiscard]] inline bool markerVisible(MapKnowledge knowledge, MapMarkerRow::Kind kind)
+{
+    if (kind == MapMarkerRow::Kind::Bookmark) {
+        return knowledge != MapKnowledge::Unknown;
+    }
+    if (knowledge == MapKnowledge::Unknown) {
+        return false;
+    }
+    if (kind == MapMarkerRow::Kind::Star) {
+        return true;
+    }
+    // Everything else is contents, and contents need a visit.
+    return knowledge >= MapKnowledge::Visited;
+}
+
 // A lane needs both ends known - otherwise it would point at a system the
 // player has not heard of.
 [[nodiscard]] inline bool laneVisible(std::span<const MapSystemRow> systems,

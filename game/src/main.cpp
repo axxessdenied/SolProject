@@ -1114,6 +1114,11 @@ int main(int argc, char** argv)
             // across frames; fillMapPanel reads it to decide what to color by.
             mapPanel.tradeCommodity = mapScreen.tradeCommodity;
             mapPanel.commodityNames = commodityNames;
+            // And which system the System tab is looking at (Phase 8q) - the
+            // galaxy tab's own selection, so finding a system on one tab and
+            // looking inside it on the other is one gesture rather than two
+            // selections that can disagree.
+            mapPanel.viewSystem = mapScreen.selectedSystem;
             game::fillMapPanel(world, mapText, mapPanel, mapSystemRows, mapLaneRows,
                                mapMarkerRows);
         }

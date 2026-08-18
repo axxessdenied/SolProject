@@ -1,5 +1,6 @@
 #include "content.hpp"
 
+#include "map_ui.hpp"
 #include "ship_ui.hpp"
 #include "target_pick.hpp"
 
@@ -17,6 +18,31 @@ namespace game {
 using namespace sol;
 
 namespace {
+
+[[nodiscard]] const char* markerKindName(sol::ui::MapMarkerRow::Kind kind)
+{
+    switch (kind) {
+    case sol::ui::MapMarkerRow::Kind::Star:
+        return "star";
+    case sol::ui::MapMarkerRow::Kind::Planet:
+        return "planet";
+    case sol::ui::MapMarkerRow::Kind::Station:
+        return "station";
+    case sol::ui::MapMarkerRow::Kind::Gate:
+        return "gate";
+    case sol::ui::MapMarkerRow::Kind::Signal:
+        return "signal";
+    case sol::ui::MapMarkerRow::Kind::Field:
+        return "field";
+    case sol::ui::MapMarkerRow::Kind::Wreck:
+        return "wreck";
+    case sol::ui::MapMarkerRow::Kind::Bookmark:
+        return "bookmark";
+    case sol::ui::MapMarkerRow::Kind::Objective:
+        return "objective";
+    }
+    return "?";
+}
 
 [[nodiscard]] bool hasExtension(const std::string& path, const char* extension)
 {
@@ -809,6 +835,46 @@ std::string listBookmarks(GameContent& content)
                   world.survey().bookmarkCountIn(world.currentSystemIndex()),
                   world.currentSystemName());
     return lines.empty() ? std::string(summary) : lines + "\n" + summary;
+}
+
+// The system map of any system, as the screen would draw it (Phase 8q).
+// Deliberately runs the real fill rather than a parallel read: the point is to
+// assert what the *screen* shows at each rung of the knowledge ladder, and a
+// second implementation here could agree with itself while disagreeing with
+// the game.
+std::string systemMap(GameContent& content, double index)
+{
+    const SpaceWorld& world = content.world();
+    if (index < 0.0 || static_cast<std::size_t>(index) >= world.galaxy().systems.size()) {
+        return "no such system";
+    }
+    // The screen falls back to the current system when asked for one the
+    // player has never heard of, because such a system cannot be selected from
+    // the list in the first place. A probe must not do that quietly: asked
+    // about system 42, answering about system 3 would look like a fog-rule bug
+    // in whichever direction the reader was already suspicious of.
+    if (world.survey().knowledge(static_cast<std::uint32_t>(index))
+        == sol::sim::KnowledgeState::Unknown) {
+        return "unknown system - nothing charted, the System tab cannot reach it";
+    }
+    std::deque<std::string> text;
+    sol::ui::MapPanel panel;
+    std::vector<sol::ui::MapSystemRow> systems;
+    std::vector<sol::ui::MapLaneRow> lanes;
+    std::vector<sol::ui::MapMarkerRow> markers;
+    panel.viewSystem = static_cast<int>(index);
+    fillMapPanel(world, text, panel, systems, lanes, markers);
+
+    std::string lines = panel.viewSummary;
+    for (const sol::ui::MapMarkerRow& marker : panel.markers) {
+        char buffer[224];
+        std::snprintf(buffer, sizeof(buffer), "%-9s %s - %s", markerKindName(marker.kind),
+                      marker.name, marker.detail);
+        lines += "\n" + std::string(buffer);
+    }
+    char summary[64];
+    std::snprintf(summary, sizeof(summary), "%zu marker(s)", panel.markers.size());
+    return lines + "\n" + summary;
 }
 
 std::string deleteBookmark(GameContent& content, double id)
@@ -1912,6 +1978,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&bookmarkHere>("sol", "bookmark", this);
     m_vm.registerFunction<&listBookmarks>("sol", "bookmarks", this);
     m_vm.registerFunction<&deleteBookmark>("sol", "bookmark_delete", this);
+    // Remote system maps (Phase 8q): what the System tab draws for any system.
+    m_vm.registerFunction<&systemMap>("sol", "system_map", this);
     m_vm.registerFunction<&warpBookmark>("sol", "warp_bookmark", this);
     m_vm.registerFunction<&shipInfo>("sol", "ship_info", this);
     m_vm.registerFunction<&perfReport>("sol", "perf", this);

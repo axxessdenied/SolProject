@@ -437,9 +437,18 @@ struct MapMarkerRow
     // km of one planet. Drawing both against one origin makes the second group
     // a single dot.
     core::Vec2 position;
-    double distanceMeters = 0.0; // from the ship
-    bool scanned = false;        // bodies: surveyed; signals: identified
+    // From the ship in the system the player is in; from that system's own
+    // star when the map is showing somewhere else (Phase 8q), because
+    // "412 Mkm from your ship" is not a number about a system four jumps away.
+    double distanceMeters = 0.0;
+    bool scanned = false; // bodies: surveyed; signals: identified
     bool targeted = false;
+    // Phase 8h/8q: which bookmark this row is, for a Bookmark marker; 0
+    // otherwise. The Delete action carries the id rather than the row because
+    // a remote row is not a nav-target slot and must never be used as one -
+    // handing it to navTargetBookmark() would delete whatever bookmark
+    // happened to occupy that slot in the system the player is standing in.
+    std::uint32_t bookmarkId = 0;
     // False: an orbital body, positioned from the star. True: something in
     // the playfield around the primary planet, positioned from that planet
     // and drawn in the expanded bubble the system map puts there.
@@ -457,10 +466,13 @@ struct MapAction
         Autopilot,    // index = marker row: target it and engage
         Close,
         SetTradeCommodity, // Phase 8g: index = commodity, or -1 to turn it off
-        DeleteBookmark,    // Phase 8h: index = marker row (a Bookmark marker)
+        DeleteBookmark,    // Phase 8h/8q: bookmarkId names the bookmark
     };
     Kind kind = Kind::None;
     int index = -1;
+    // DeleteBookmark only. A never-reused id rather than a row, so the action
+    // is answerable for a system the player is not in - see MapMarkerRow.
+    std::uint32_t bookmarkId = 0;
 };
 
 // The map screen: a galaxy view over the lane graph and a system view of the
@@ -474,6 +486,20 @@ struct MapPanel
     std::span<const MapLaneRow> lanes;
     std::span<const MapMarkerRow> markers;
     int currentIndex = -1; // row of the system the player is in
+    // Which system the System tab is showing (Phase 8q). IN: set from the
+    // screen's own galaxy selection, the way tradeCommodity is, so picking a
+    // system on the galaxy map and switching tabs looks inside it. -1 means
+    // "wherever the player is", which is what the tab did before 8q.
+    int viewSystem = -1;
+    const char* viewSystemName = ""; // header, when the System tab is up
+    // "Coriolis Reach - visited, 3 jumps away", prebuilt. Says the rung and
+    // the distance in words, because the one thing a remote map must never do
+    // is imply it is as current as the local one.
+    const char* viewSummary = "";
+    // False when the System tab is showing somewhere the player is not: the
+    // ship glyph, the target ring and the two actions that need a nav-target
+    // slot are all statements about being there.
+    bool viewIsCurrent = true;
     // Where the playfield bubble is pinned: the primary planet's offset from
     // the star, in meters. Everything with `inPlayfield` is drawn around it.
     core::Vec2 hubPosition;

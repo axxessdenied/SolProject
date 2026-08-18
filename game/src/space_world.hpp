@@ -282,6 +282,15 @@ struct NavTarget
     double surfaceRadius = 0.0; // 0 for point targets (station)
 };
 
+// What a scannable site is called at each stage of being found: "Contact 3"
+// until it is identified, then what it turned out to be. Declared here rather
+// than left in space_world.cpp's anonymous namespace because the map screen
+// names the sites of systems the player is not in (Phase 8q) and has to name
+// them the same way - two copies of this is how the local and the remote map
+// come to call one site two different things.
+[[nodiscard]] std::string signalTargetName(sol::sim::SignalKind kind, bool resolved, bool emptied,
+                                           std::size_t slot);
+
 // Snapshot of the selected nav/combat target for HUD and weapons.
 struct TargetInfo
 {

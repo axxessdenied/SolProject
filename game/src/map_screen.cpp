@@ -401,9 +401,17 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
                                 ui.theme().panelEdge.withAlpha(0.45f), 1.0f, 48);
     }
     // The bubble's own edge, so the change of scale is visible rather than an
-    // unannounced lie about how far apart these things are.
-    ui.drawList().addCircle(magnify(hub), magnify.scaled(bubbleRadius + 8.0f),
-                            ui.theme().panelEdge.withAlpha(0.8f), 1.0f, 40);
+    // unannounced lie about how far apart these things are. Drawn only when
+    // there is something in the playfield to expand: a Charted system (Phase
+    // 8q) shows its star and nothing else, and an empty bubble there would be
+    // a ring around a region the player has been told nothing about.
+    const bool anyInPlayfield = std::any_of(
+        panel.markers.begin(), panel.markers.end(),
+        [](const MapMarkerRow& marker) { return marker.inPlayfield; });
+    if (anyInPlayfield) {
+        ui.drawList().addCircle(magnify(hub), magnify.scaled(bubbleRadius + 8.0f),
+                                ui.theme().panelEdge.withAlpha(0.8f), 1.0f, 40);
+    }
 
     LabelPlacer labels;
     for (std::size_t i = 0; i < panel.markers.size(); ++i) {
@@ -563,16 +571,22 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
 
     Column outer(frame, ui.theme().padding, ui.theme().spacing);
 
-    // Header: where you are and how much of the galaxy you have seen.
+    // Header: where you are and how much of the galaxy you have seen. Its row
+    // is claimed here so the layout below is unchanged, but it is drawn after
+    // the tabs, because since Phase 8q the System tab names whatever system it
+    // is showing and that must change on the same frame the tab does.
     const Rect header = outer.row(kHeaderHeight);
-    ui.label(header, panel.currentSystem, ui.theme().textPrimary, ui.theme().headingStyle);
-    ui.label(header, panel.knownSummary, ui.theme().textDim, ui.theme().bodyStyle,
-             TextAlign::Right);
 
     int tab = state.tab;
     if (ui.tabs(outer.row(kTabHeight), std::span<const char* const>(kTabLabels), tab)) {
         state.tab = tab;
     }
+
+    ui.label(header,
+             state.tab == MapScreenState::System ? panel.viewSystemName : panel.currentSystem,
+             ui.theme().textPrimary, ui.theme().headingStyle);
+    ui.label(header, panel.knownSummary, ui.theme().textDim, ui.theme().bodyStyle,
+             TextAlign::Right);
 
     // Footer first: the body is whatever the header, tabs, and footer leave,
     // and it has to be known before either view draws into it.
@@ -662,7 +676,16 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             || state.selectedMarker >= static_cast<int>(panel.markers.size())) {
             state.selectedMarker = panel.markers.empty() ? -1 : 0;
         }
-        drawMarkerList(ui, panel, listBounds, state);
+        // Which system is on show and how far away it is (Phase 8q). It sits
+        // above the list, where the galaxy tab keeps its overlay picker, so
+        // the two tabs have the same shape - and it is drawn in the accent
+        // colour when the answer is "not where you are", because everything
+        // below it is then a report rather than a live readout.
+        Column listColumn(listBounds, 0.0f, ui.theme().spacing);
+        clipped(ui, listColumn.row(kRowHeight), panel.viewSummary,
+                panel.viewIsCurrent ? ui.theme().textDim : ui.theme().accent,
+                ui.theme().smallStyle);
+        drawMarkerList(ui, panel, listColumn.remaining(), state);
         drawSystemMap(ui, panel, mapBounds, state.selectedMarker, magnify);
 
         // Footer computed above; the buttons sit on the last row of the frame.
@@ -670,28 +693,44 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
         const Rect closeCell = buttons.cellFromRight(kButtonWidth);
         const Rect resetCell = buttons.cellFromRight(kButtonWidth);
         const Rect deleteCell = buttons.cellFromRight(kButtonWidth);
-        const Rect autoCell = buttons.cellFromRight(kButtonWidth);
-        const Rect targetCell = buttons.cellFromRight(kButtonWidth);
+        const Rect secondCell = buttons.cellFromRight(kButtonWidth);
+        const Rect firstCell = buttons.cellFromRight(kButtonWidth);
         const Rect detailCell = buttons.remaining();
 
         const bool hasMarker = state.selectedMarker >= 0;
+        const MapMarkerRow* marker =
+            hasMarker ? &panel.markers[static_cast<std::size_t>(state.selectedMarker)] : nullptr;
         // Only the player's own marks can be deleted; a planet cannot.
-        const bool deletable =
-            hasMarker
-            && panel.markers[static_cast<std::size_t>(state.selectedMarker)].kind
-                   == MapMarkerRow::Kind::Bookmark;
-        clipped(ui, detailCell,
-                hasMarker ? panel.markers[static_cast<std::size_t>(state.selectedMarker)].detail
-                          : "nothing in range",
+        const bool deletable = marker != nullptr && marker->kind == MapMarkerRow::Kind::Bookmark;
+        clipped(ui, detailCell, marker != nullptr ? marker->detail : "nothing in range",
                 ui.theme().textDim);
-        if (ui.button(targetCell, "Set Target", hasMarker)) {
-            panel.action = {MapAction::Kind::SelectMarker, state.selectedMarker};
-        }
-        if (ui.button(autoCell, "Autopilot", hasMarker)) {
-            panel.action = {MapAction::Kind::Autopilot, state.selectedMarker};
+        // Set Target and Autopilot are statements about a nav-target slot in
+        // the system the player is standing in, so on a remote view their two
+        // cells carry the two actions that *are* answerable from a distance.
+        // Swapped rather than greyed: a route is the whole point of looking at
+        // a system you are not in, and it would have no button otherwise.
+        if (panel.viewIsCurrent) {
+            if (ui.button(firstCell, "Set Target", hasMarker)) {
+                panel.action = {MapAction::Kind::SelectMarker, state.selectedMarker};
+            }
+            if (ui.button(secondCell, "Autopilot", hasMarker)) {
+                panel.action = {MapAction::Kind::Autopilot, state.selectedMarker};
+            }
+        } else {
+            if (ui.button(firstCell, "Plot Route")) {
+                panel.action = {MapAction::Kind::PlotRoute, panel.viewSystem};
+            }
+            if (ui.button(secondCell, "Show Current")) {
+                // Pure view state, like the trade picker: the fill reads the
+                // galaxy selection back on the next frame.
+                state.selectedSystem = panel.currentIndex;
+                state.selectedMarker = -1;
+            }
         }
         if (ui.button(deleteCell, "Delete", deletable)) {
-            panel.action = {MapAction::Kind::DeleteBookmark, state.selectedMarker};
+            panel.action = {.kind = MapAction::Kind::DeleteBookmark,
+                            .index = state.selectedMarker,
+                            .bookmarkId = marker->bookmarkId};
         }
         if (ui.button(resetCell, "Reset View", zoomed)) {
             resetView = true;

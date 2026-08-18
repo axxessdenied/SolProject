@@ -530,21 +530,19 @@ namespace {
 [[nodiscard]] std::vector<const assets::CrewDef*> fitCrew(const assets::DefDatabase& defs,
                                                           const OwnedShip& ship);
 
-std::string signalTargetName(const SignalInstance& signal, bool resolved, bool emptied,
-                             std::size_t slot)
+} // namespace
+
+std::string signalTargetName(sim::SignalKind kind, bool resolved, bool emptied, std::size_t slot)
 {
     if (!resolved) {
         return "Contact " + std::to_string(slot + 1);
     }
-    std::string name =
-        signal.kind == sim::SignalKind::Derelict ? "Derelict Hull" : "Supply Cache";
+    std::string name = kind == sim::SignalKind::Derelict ? "Derelict Hull" : "Supply Cache";
     if (emptied) {
         name += " (empty)";
     }
     return name;
 }
-
-} // namespace
 
 const sim::MissionObjective* SpaceWorld::trackedObjective() const
 {
@@ -726,7 +724,7 @@ void SpaceWorld::rebuildDynamicTargets()
         case NavKind::Signal: {
             const SignalInstance& signal = m_signals[slot.index];
             m_targets.push_back(
-                {.name = signalTargetName(signal,
+                {.name = signalTargetName(signal.kind,
                                           m_survey.signalResolved(m_currentSystem, slot.index),
                                           m_survey.signalEmptied(m_currentSystem, slot.index),
                                           signalSlot++),

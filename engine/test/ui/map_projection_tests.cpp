@@ -12,6 +12,7 @@ using sol::ui::MapLaneRow;
 using sol::ui::MapMarkerRow;
 using sol::ui::MapProjection;
 using sol::ui::MapSystemRow;
+using sol::ui::markerVisible;
 using sol::ui::Rect;
 using sol::ui::orbitExtent;
 using sol::ui::orbitMapPoint;
@@ -263,4 +264,38 @@ SOL_TEST(map_system_view_puts_the_star_in_the_middle_and_expands_the_playfield)
     SOL_CHECK(nearlyEqual(playfieldPoint({0.0f, 0.0f}, hub, bubbleRadius, 0.0f).x, hub.x));
     // A system whose only body is the hub still yields a finite extent.
     SOL_CHECK(orbitExtent(std::span<const MapMarkerRow>{}, hubPosition) > 0.0f);
+}
+
+SOL_TEST(marker_fog_rule_gates_contents_on_a_visit_and_never_the_star)
+{
+    using Kind = MapMarkerRow::Kind;
+    // Every kind the system map can draw, so a new one cannot be added
+    // without this test having an opinion about it.
+    const Kind kinds[] = {Kind::Star,  Kind::Planet, Kind::Station,  Kind::Gate,     Kind::Signal,
+                          Kind::Field, Kind::Wreck,  Kind::Bookmark, Kind::Objective};
+
+    // Unknown: nothing at all, not even the player's own marks - a system you
+    // have never heard of cannot hold a bookmark you made.
+    for (const Kind kind : kinds) {
+        SOL_CHECK(!markerVisible(MapKnowledge::Unknown, kind));
+    }
+
+    // Charted: the star (which *is* the system) and a bookmark, nothing else.
+    // "Named by a gate you have stood at; contents blank."
+    SOL_CHECK(markerVisible(MapKnowledge::Charted, Kind::Star));
+    SOL_CHECK(markerVisible(MapKnowledge::Charted, Kind::Bookmark));
+    for (const Kind kind : kinds) {
+        if (kind == Kind::Star || kind == Kind::Bookmark) {
+            continue;
+        }
+        SOL_CHECK(!markerVisible(MapKnowledge::Charted, kind));
+    }
+
+    // Visited and Surveyed: everything. Surveyed adds no new *kind* - it is
+    // Visited with more signal bits already set, and those bits are applied by
+    // the fill rather than here.
+    for (const Kind kind : kinds) {
+        SOL_CHECK(markerVisible(MapKnowledge::Visited, kind));
+        SOL_CHECK(markerVisible(MapKnowledge::Surveyed, kind));
+    }
 }
