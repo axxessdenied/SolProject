@@ -443,7 +443,12 @@ int main(int argc, char** argv)
         // The map is a screen, not a pause: the economy, the factions, and
         // whatever is shooting at you all keep running while it is open. The
         // ship readout is the same kind of screen.
-        const bool simRunning = inFlight || docked || onMap || onShipInfo;
+        //
+        // A jump IS a pause (Phase 8v), for the same reason a menu is: between
+        // systems the ship is in neither, so there is nobody for the sim to
+        // resolve it against. It is a ride, not a piloting segment.
+        const bool jumping = world.jumpActive();
+        const bool simRunning = (inFlight || docked || onMap || onShipInfo) && !jumping;
         // A text field open over the flight view owns the keyboard, on exactly
         // the terms a menu does (Phase 8h): the letters are a name being typed,
         // not thrust and target commands. Without this "Rich Rock" flies the
@@ -463,7 +468,7 @@ int main(int argc, char** argv)
 
         // A gameplay action only counts in the cockpit, and never while a text
         // field is open over it: the letters are a name being typed.
-        const bool gameplayLive = inFlight && !typing;
+        const bool gameplayLive = inFlight && !typing && !jumping;
         const auto gameplayPressed = [&](game::Action action) {
             return gameplayLive && game::pressed(binds, action);
         };
@@ -576,10 +581,10 @@ int main(int argc, char** argv)
         }
 
         // Jump through the nearest in-range gate (decisions/004 gate travel).
+        // Since Phase 8v this only STARTS the jump; the arrival is logged by
+        // the transition when it swaps, partway through the tunnel.
         if (gameplayPressed(game::Action::Jump)) {
-            if (world.jumpNearestGate(kGateActivationRange)) {
-                SOL_LOG_INFO("Arrived in '%s'", world.currentSystemName());
-            } else {
+            if (!world.jumpNearestGate(kGateActivationRange)) {
                 SOL_LOG_INFO("No gate within %.0f km", kGateActivationRange / 1000.0);
             }
         }
@@ -717,6 +722,14 @@ int main(int argc, char** argv)
                 SOL_PROFILE_COUNT(simZone, 1);
             }
         }
+
+        // The jump transition (Phase 8v), on real frame time rather than sim
+        // ticks — it runs precisely while the sim is stopped. This sits after
+        // the fixed loop and outside it, which is what makes the system change
+        // it performs safe: loadSystem must not run with a tick in flight.
+        if (inFlight || jumping) {
+            world.advanceJumpTransition(deltaSeconds);
+        }
         const float simAlpha = simLoop.alpha();
 
         const game::Transform shipTransform = world.shipRenderTransform(simAlpha);
@@ -833,6 +846,17 @@ int main(int argc, char** argv)
             sceneInfo.planets.push_back({planet.position, planet.radius,
                                          world.currentSystemIndex() * 7u +
                                              static_cast<std::uint32_t>(i)});
+        }
+
+        // The jump tunnel (Phase 8v). The streaks converge on the SHIP's nose
+        // rather than the camera's, so the tunnel stays anchored to where the
+        // ship is actually going even in chase view.
+        {
+            const sol::sim::JumpTransition& jump = world.jumpTransition();
+            sceneInfo.skyWarp = static_cast<float>(jump.warp());
+            sceneInfo.skyScale = static_cast<float>(jump.skyScale());
+            sceneInfo.travelDirection =
+                rotate(shipTransform.orientation, sol::core::Vec3{0.0f, 0.0f, -1.0f});
         }
 
         // Debug draw (F3): ship axes, velocity arrow, target ray.
@@ -961,6 +985,7 @@ int main(int argc, char** argv)
         hud.systemName = world.currentSystemName();
         const double gateDistance = world.nearestGateDistance();
         hud.gateInRange = gateDistance >= 0.0 && gateDistance <= kGateActivationRange;
+        hud.jumping = jumping;
         hud.docked = world.isDocked();
         hud.dockedStationName = world.dockedStationName();
         const double stationDistance = world.nearestStationDistance();

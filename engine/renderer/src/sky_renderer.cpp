@@ -21,6 +21,7 @@ struct PushConstants
     core::Vec4 right;   // camera right * tan(fovX/2)
     core::Vec4 up;      // camera up * tan(fovY/2)
     core::Vec4 forward; // camera forward, .w = intensity
+    core::Vec4 warp;    // Phase 8v: .xyz = travel axis, .w = strength
 };
 
 // Face texel -> direction, Vulkan cubemap layer order (+X,-X,+Y,-Y,+Z,-Z).
@@ -273,7 +274,7 @@ bool SkyRenderer::reloadPipeline()
 
 void SkyRenderer::draw(VkCommandBuffer commandBuffer, VkExtent2D extent,
                        const core::Quat& cameraOrientation, float verticalFovRadians, float aspect,
-                       float intensity) const
+                       float intensity, const core::Vec3& warpAxis, float warp) const
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
@@ -286,6 +287,7 @@ void SkyRenderer::draw(VkCommandBuffer commandBuffer, VkExtent2D extent,
     push.right = {right.x, right.y, right.z, 0.0f};
     push.up = {up.x, up.y, up.z, 0.0f};
     push.forward = {forward.x, forward.y, forward.z, intensity};
+    push.warp = {warpAxis.x, warpAxis.y, warpAxis.z, warp};
     vkCmdPushConstants(commandBuffer, m_pipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                        &push);

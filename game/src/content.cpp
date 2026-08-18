@@ -282,9 +282,46 @@ std::string systemName(GameContent& content)
 
 // Dev shortcut: jump via the nearest gate regardless of range (real play
 // gates through main.cpp's activation-range check on the J key).
+//
+// This PLAYS THE FULL TRANSITION (Phase 8v) and so returns before arriving —
+// deliberately, because it is the lever drives use to exercise the real path,
+// and a lever that silently skipped the transition would be a second
+// implementation of jumping. sol.jump_to() is the instant teleport.
 bool jumpNearestGate(GameContent& content)
 {
     return content.world().jumpNearestGate(1.0e30);
+}
+
+// Where a jump has got to, so a drive can assert the sequence without reading
+// a pixel: phase, elapsed, streak strength and destination.
+std::string jumpState(GameContent& content)
+{
+    const SpaceWorld& world = content.world();
+    const sol::sim::JumpTransition& jump = world.jumpTransition();
+    const char* phase = "idle";
+    switch (jump.phase()) {
+    case sol::sim::JumpPhase::Idle: phase = "idle"; break;
+    case sol::sim::JumpPhase::Tunnel: phase = "tunnel"; break;
+    case sol::sim::JumpPhase::Arrive: phase = "arrive"; break;
+    }
+    char buffer[192];
+    if (!jump.active()) {
+        std::snprintf(buffer, sizeof(buffer), "idle in %s", world.currentSystemName());
+        return buffer;
+    }
+    const std::uint32_t destination = jump.destination();
+    const char* destinationName = destination < world.galaxy().systems.size()
+                                      ? world.galaxy().systems[destination].name.c_str()
+                                      : "?";
+    std::snprintf(buffer, sizeof(buffer), "%s t=%.2f warp=%.2f sky=%.2f -> %s", phase,
+                  jump.elapsed(), jump.warp(), jump.skyScale(), destinationName);
+    return buffer;
+}
+
+// Distance to the nearest gate in metres, or -1 with no gates in system.
+double gateDistance(GameContent& content)
+{
+    return content.world().nearestGateDistance();
 }
 
 // Dev shortcut: dock at the nearest station regardless of range and without
@@ -2296,6 +2333,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&pilotHull>("sol", "pilot_hull", this);
     m_vm.registerFunction<&systemName>("sol", "system", this);
     m_vm.registerFunction<&jumpNearestGate>("sol", "jump", this);
+    m_vm.registerFunction<&jumpState>("sol", "jump_state", this);
+    m_vm.registerFunction<&gateDistance>("sol", "gate_distance", this);
     m_vm.registerFunction<&dockNearest>("sol", "dock", this);
     m_vm.registerFunction<&undock>("sol", "undock", this);
     m_vm.registerFunction<&dockedAt>("sol", "docked_at", this);

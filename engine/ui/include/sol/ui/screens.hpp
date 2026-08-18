@@ -167,6 +167,11 @@ struct FlightHud
     bool dockInRange = false;
     bool docked = false;
     const char* dockedStationName = "";
+    // Mid-jump (Phase 8v). Every interact prompt is refused for the length of
+    // the transition, so the row is suppressed rather than left advertising
+    // four things that will not happen. Before 8v this window did not exist:
+    // pressing jump put you in the next system the same frame.
+    bool jumping = false;
 
     // Scanning (Phase 8e). The pulse recharges, a target scan runs while the
     // contact is held in the reticle, and salvage shares the prompt slot with

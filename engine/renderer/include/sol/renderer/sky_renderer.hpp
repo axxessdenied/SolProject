@@ -23,8 +23,11 @@ public:
 
     // Camera basis in world space; intensity scales the stored radiance into
     // HDR units.
+    // `warpAxis` is the world-space direction the jump tunnel's streaks
+    // converge on and `warp` their strength (0 at rest); see shaders/sky.frag.
     void draw(VkCommandBuffer commandBuffer, VkExtent2D extent, const core::Quat& cameraOrientation,
-              float verticalFovRadians, float aspect, float intensity) const;
+              float verticalFovRadians, float aspect, float intensity,
+              const core::Vec3& warpAxis = {0.0f, 0.0f, -1.0f}, float warp = 0.0f) const;
 
 private:
     rhi::Context* m_context = nullptr;

@@ -84,6 +84,16 @@ struct SceneInfo
     CelestialDraw sun;
     std::vector<CelestialDraw> planets;
     float exposure = 1.0f;
+    // The jump tunnel (Phase 8v). `skyWarp` is the streak strength (0 at rest),
+    // `skyScale` multiplies the sky's resting intensity, and `travelDirection`
+    // is the world-space axis the streaks converge on -- the ship's nose, not
+    // the camera's, so the tunnel stays anchored to where the ship is actually
+    // going. Deliberately NOT a FOV change: one FOV feeds the scene, the sky
+    // and the cockpit's HUD projection, so widening it would slide every dash
+    // anchor (Phase 8m's angles-vs-pixels rule).
+    float skyWarp = 0.0f;
+    float skyScale = 1.0f;
+    sol::core::Vec3 travelDirection = {0.0f, 0.0f, -1.0f};
 };
 
 // Space-scene renderer: HDR pass (sun-lit meshes, planet/star impostors,

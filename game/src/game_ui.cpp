@@ -534,6 +534,12 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
     char hailChip[48] = {};
     chip(hailChip, sizeof(hailChip), hud.hailKey, "HAIL");
 
+    // Mid-jump every one of these is refused, so the whole row goes rather
+    // than four chips offering actions the transition will swallow.
+    if (hud.jumping) {
+        return;
+    }
+
     const Prompt prompts[] = {
         {jumpChip, hud.gateInRange},
         {dockChip, hud.cleared || hud.stationInHailRange},

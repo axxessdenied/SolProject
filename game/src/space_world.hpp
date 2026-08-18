@@ -13,6 +13,7 @@
 #include "sol/sim/economy.hpp"
 #include "sol/sim/faction_sim.hpp"
 #include "sol/sim/flight.hpp"
+#include "sol/sim/jump_transition.hpp"
 #include "sol/sim/mining.hpp"
 #include "sol/sim/pilot_tips.hpp"
 #include "sol/sim/missions.hpp"
@@ -371,17 +372,33 @@ public:
     // GameContent::initialize after defs load.
     void generateUniverse(const sol::assets::DefDatabase& defs);
 
-    // Jumps through the nearest gate within activationRange meters of the
-    // player: despawns this system, instantiates the destination, and places
-    // the player at the arrival gate. Returns false if no gate is in range.
+    // Begins a jump through the nearest gate within activationRange meters of
+    // the player. Since Phase 8v this STARTS a transition rather than arriving:
+    // the system change happens partway through, at the tunnel's full stretch.
+    // Returns false if no gate is in range, or if a jump is already running.
     [[nodiscard]] bool jumpNearestGate(double activationRange);
+
+    // Runs the jump transition on real frame time and performs the system
+    // change at its swap point.
+    //
+    // Called from the FRAME LOOP rather than from tick(), and that is the whole
+    // reason it is its own entry point. loadSystem invalidates the tick's pass
+    // scratch (collision slots, pools) — which is why the death respawn defers
+    // it to end of tick — and a transition suspends the sim, so there is no
+    // tick to defer to. The frame loop calls this where no tick is in flight.
+    void advanceJumpTransition(double deltaSeconds);
+
+    [[nodiscard]] const sol::sim::JumpTransition& jumpTransition() const { return m_jump; }
+    [[nodiscard]] bool jumpActive() const { return m_jump.active(); }
 
     // Distance to the nearest gate, or a negative value with no gates.
     [[nodiscard]] double nearestGateDistance() const;
 
     // Jumps via this system's gate to the named destination system,
-    // regardless of distance (dev/console path; the J key stays
-    // range-gated). Returns false if no gate leads there.
+    // regardless of distance, and ARRIVES IMMEDIATELY — a dev teleport, not a
+    // jump. Phase 8v deliberately left this instant while making sol.jump()
+    // play the real transition, so a drive always knows which one it called.
+    // Returns false if no gate leads there.
     [[nodiscard]] bool jumpToSystem(const char* destinationName);
 
     // --- Docking (GDD: request -> approach; Phase 8r made the request real) ---
@@ -1273,6 +1290,10 @@ private:
     // Death respawn into another system defers to end-of-tick: loadSystem
     // mid-tick would invalidate the pass scratch (collision slots, pools).
     std::uint32_t m_pendingRespawnSystem = kNoIndex;
+    // The jump in flight (Phase 8v). Transient by design and never serialised:
+    // it is cleared on load, because a save written between systems is not a
+    // place the player can be put back.
+    sol::sim::JumpTransition m_jump;
 
     // Exploration (Phase 8e). m_signals is rebuilt per system from the seed;
     // only SurveySim's state bits and ledger are saved.

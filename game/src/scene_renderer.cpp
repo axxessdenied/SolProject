@@ -320,7 +320,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     // cost in the frame and the one zone worth naming in advance (Phase 8o).
     const std::uint32_t gpuSkyZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.sky");
     m_skyRenderer.draw(commandBuffer, extent, camera.orientation, kCameraVerticalFov, aspect,
-                       kSkyIntensity);
+                       kSkyIntensity * scene.skyScale, scene.travelDirection, scene.skyWarp);
     m_gpuProfiler.endZone(commandBuffer, gpuSkyZone);
 
     // The star reopens gpu.impostors rather than getting a zone of its own:

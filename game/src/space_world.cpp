@@ -2206,10 +2206,27 @@ bool SpaceWorld::jumpNearestGate(double activationRange)
         return false;
     }
     const std::uint32_t destination = nearest->toSystem;
+    if (!m_jump.begin(destination)) {
+        return false; // already in the lane; you cannot jump out of a jump
+    }
     SOL_LOG_INFO("jumping: %s -> %s", currentSystemName(),
                  m_galaxy.systems[destination].name.c_str());
-    loadSystem(destination, m_currentSystem);
     return true;
+}
+
+void SpaceWorld::advanceJumpTransition(double deltaSeconds)
+{
+    if (!m_jump.active()) {
+        return;
+    }
+    m_jump.advance(deltaSeconds);
+    if (m_jump.swapDue()) {
+        // Full stretch: there is nothing legible on screen to pop. The load
+        // itself is unchanged from the instant version — it is only covered.
+        loadSystem(m_jump.destination(), m_currentSystem);
+        m_jump.noteSwapped();
+        SOL_LOG_INFO("Arrived in '%s'", currentSystemName());
+    }
 }
 
 sol::core::DVec3 SpaceWorld::dockPoint(std::uint32_t stationIndex) const
@@ -2854,7 +2871,11 @@ bool SpaceWorld::jumpToSystem(const char* destinationName)
     }
     for (const GateInstance& gate : m_gates) {
         if (m_galaxy.systems[gate.toSystem].name == destinationName) {
-            SOL_LOG_INFO("jumping: %s -> %s", currentSystemName(), destinationName);
+            SOL_LOG_INFO("teleport: %s -> %s (no transition)", currentSystemName(),
+                         destinationName);
+            // A teleport abandons any transition in flight rather than landing
+            // on top of it, so the two paths can never both own a destination.
+            m_jump.clear();
             loadSystem(gate.toSystem, m_currentSystem);
             return true;
         }
@@ -4607,6 +4628,7 @@ void SpaceWorld::tick(double dt)
     if (m_pendingRespawnSystem != kNoIndex) {
         const std::uint32_t system = m_pendingRespawnSystem;
         m_pendingRespawnSystem = kNoIndex;
+        m_jump.clear(); // dying outranks travelling
         loadSystem(system, kNoIndex);
         if (m_lastDockStation != kNoIndex &&
             m_lastDockStation < m_galaxy.systems[system].stations.size()) {
@@ -5051,6 +5073,11 @@ bool SpaceWorld::loadFrom(const char* path)
     // The snapshot carries the system's statics; only the non-ECS side data
     // (celestials, targets, gates, spawn anchor) needs rebuilding.
     m_currentSystem = systemIndex;
+    // ⚑ This path does NOT go through loadSystem, so transient state reset
+    // there is not reset here (the rule Phase 8r wrote down after m_dockedBerth
+    // survived a load). A jump is transient state: clearing it is what stops a
+    // save written mid-lane from resuming inside a tunnel to nowhere.
+    m_jump.clear();
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
     rebuildSystemSideData(spec);
     m_dockedStation =
