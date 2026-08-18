@@ -37,6 +37,7 @@ void UiContext::beginFrame(const InputState& input, core::Vec2 screenSize, float
 
     m_input = input;
     m_screenSize = screenSize;
+    m_activations = 0;
     m_drawList.reset();
     m_idStack.clear();
     m_navItems.clear();
@@ -152,6 +153,12 @@ UiContext::Interaction UiContext::interact(std::string_view label, const Rect& b
     // A click counts only if it went down and came up on the same widget.
     const bool clicked = interaction.held && interaction.hovered && m_input.mouseReleased;
     interaction.activated = clicked || (interaction.focused && m_input.navActivate);
+    if (interaction.activated) {
+        // Every widget's activation funnels through here, so one counter is
+        // enough for the caller to know a control was pressed - which is all
+        // a click cue needs, and it keeps sol::ui unaware that audio exists.
+        ++m_activations;
+    }
     return interaction;
 }
 

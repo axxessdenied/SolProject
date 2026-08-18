@@ -305,6 +305,70 @@ produces = ["sol.food:-1"]
                      "bad2.toml", &error));
 }
 
+SOL_TEST(data_defs_parse_sounds)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db, R"(
+[[sound]]
+id = "sol.weapon_fire"
+asset = "weapon_fire"
+gain = 0.55
+pitch_jitter = 0.08
+max_instances = 4
+
+[[sound]]
+id = "sol.engine_loop"
+asset = "engine_loop"
+)",
+                    "sounds.toml", &error));
+
+    SOL_CHECK(db.sounds().size() == 2);
+    const auto* fire = db.findSound("sol.weapon_fire");
+    SOL_REQUIRE(fire != nullptr);
+    SOL_CHECK(fire->asset == "weapon_fire");
+    SOL_CHECK(fire->gain > 0.54f && fire->gain < 0.56f);
+    SOL_CHECK(fire->pitchJitter > 0.07f && fire->pitchJitter < 0.09f);
+    SOL_CHECK(fire->maxInstances == 4);
+
+    // Defaults: full gain, no jitter, unlimited instances, 500 m rolloff.
+    const auto* loop = db.findSound("sol.engine_loop");
+    SOL_REQUIRE(loop != nullptr);
+    SOL_CHECK(loop->gain == 1.0f);
+    SOL_CHECK(loop->pitchJitter == 0.0f);
+    SOL_CHECK(loop->maxInstances == 0);
+    SOL_CHECK(loop->rolloff == 500.0f);
+    SOL_CHECK(db.findSound("sol.nothing") == nullptr);
+}
+
+SOL_TEST(data_defs_sound_validation_errors)
+{
+    DefDatabase db;
+    std::string error;
+
+    // A cue with no asset cannot resolve to anything, so it is a load error
+    // rather than a silent cue discovered later.
+    SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\n", "s.toml", &error));
+    SOL_CHECK(error.find("asset") != std::string::npos);
+
+    SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\ngain = -1.0\n", "s.toml", &error));
+    SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\npitch_jitter = 0.9\n", "s.toml",
+                     &error));
+    SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\nrolloff = 0.0\n", "s.toml", &error));
+    // Strict schema: a typo dies at load, not at play time.
+    SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\nvolume = 1.0\n", "s.toml", &error));
+
+    // Nothing above was allowed to land.
+    SOL_CHECK(db.sounds().empty());
+
+    // A mod layer replaces a cue in place, the same rule every other def has.
+    SOL_CHECK(merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\ngain = 1.0\n", "base.toml", &error));
+    SOL_CHECK(merge(db, "[[sound]]\nid = \"a\"\nasset = \"y\"\ngain = 0.25\n", "mod.toml", &error));
+    SOL_CHECK(db.sounds().size() == 1);
+    SOL_CHECK(db.findSound("a")->asset == "y");
+    SOL_CHECK(db.findSound("a")->gain == 0.25f);
+}
+
 SOL_TEST(data_defs_parse_mining_fields)
 {
     DefDatabase db;

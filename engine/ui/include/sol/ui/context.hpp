@@ -185,6 +185,11 @@ public:
     // Number of interactive widgets built this frame; the nav order.
     [[nodiscard]] std::size_t interactiveCount() const { return m_navItems.size(); }
 
+    // Widgets activated this frame, by click or by nav. Reset every frame.
+    // The caller decides what a press sounds like; sol::ui does not know that
+    // audio exists, and this is the one seam it needs in order to stay that way.
+    [[nodiscard]] std::uint32_t activationsThisFrame() const { return m_activations; }
+
 private:
     // Shared hit-testing and state bookkeeping for every interactive widget.
     struct Interaction
@@ -230,6 +235,7 @@ private:
     bool m_previousNavRight = false;
     bool m_navLeftEdge = false;
     bool m_navRightEdge = false;
+    std::uint32_t m_activations = 0; // widgets pressed this frame
 
     WidgetId m_hotId = kNoWidget;    // under the cursor
     WidgetId m_activeId = kNoWidget; // being pressed

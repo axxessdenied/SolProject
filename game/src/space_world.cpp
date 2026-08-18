@@ -1,5 +1,7 @@
 #include "space_world.hpp"
 
+#include "game_audio.hpp"
+
 #include "sol/assets/loadout.hpp"
 #include "sol/core/log.hpp"
 #include "sol/core/profiler.hpp"
@@ -2000,6 +2002,12 @@ void SpaceWorld::despawnSystem()
     m_spawnedShips.clear();
     m_combatEffects.clear();
     m_thrusters.clear();
+    if (m_audio != nullptr) {
+        // Every voice in flight was positioned in the system being torn down,
+        // and a one-shot does not track its emitter - so leaving them running
+        // would play the old system's explosions in the new one's coordinates.
+        m_audio->stopAll();
+    }
 }
 
 void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
@@ -2202,6 +2210,12 @@ void SpaceWorld::completeDock(std::uint32_t station, std::uint32_t berth)
     m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     m_playerSpawn = pad;
     m_autopilotActive = false;
+    if (m_audio != nullptr) {
+        // Docking kills relative motion, so the engine has to go quiet with
+        // it - otherwise the hum runs on through every station screen.
+        m_audio->play2D(m_audio->cues().docking);
+        m_audio->setEngineThrottle(0.0f);
+    }
     SOL_LOG_INFO("docked at '%s'", spec.stations[station].name.c_str());
     // Missions (Phase 8c): Dock objectives first, so a following Deliver at
     // this station can hand in on the same visit; the dock event tells
@@ -4259,6 +4273,17 @@ void SpaceWorld::tick(double dt)
             modelBaseRadius(shape.model) * static_cast<double>(shape.scale.x) + 6.0;
         const core::DVec3 muzzle = transform.position + forwardD * noseOffset;
 
+        // A shot was definitely fired by here: the cooldown is reset and the
+        // capacitor is paid. The player's own gun is at the listener; every
+        // other ship's is out in the world.
+        if (m_audio != nullptr) {
+            if (entityIndex == playerEntityIndex()) {
+                m_audio->play2D(m_audio->cues().weaponFire);
+            } else {
+                m_audio->playAt(m_audio->cues().weaponFire, muzzle);
+            }
+        }
+
         if (weapon.kind == WeaponKind::Hitscan) {
             // Instant pulse along the boresight; first ship hit takes it.
             const core::DVec3 beamEnd = muzzle + forwardD * static_cast<double>(weapon.range);
@@ -4359,6 +4384,9 @@ void SpaceWorld::tick(double dt)
         if (cut.wreck) {
             (void)cutWreck(cut.entityIndex, cut.units);
             m_combatEffects.spawnImpact(cut.impact, false);
+            if (m_audio != nullptr) {
+                m_audio->playAt(m_audio->cues().miningCut, cut.impact);
+            }
             continue;
         }
         const MineableRock* rock = m_registry.storage<MineableRock>().tryGet(cut.entityIndex);
@@ -4371,6 +4399,9 @@ void SpaceWorld::tick(double dt)
         const float total = rock->totalUnits;
         (void)cutRock(cut.entityIndex, cut.units);
         m_combatEffects.spawnImpact(cut.impact, false);
+        if (m_audio != nullptr) {
+            m_audio->playAt(m_audio->cues().miningCut, cut.impact);
+        }
         if (m_mining.unitsLeft(m_currentSystem, field, index, total) <= 0.0f) {
             m_registry.destroy(m_registry.entityFromIndex(cut.entityIndex)); // it broke up
             m_rockEvents.push_back({.commodity = commodity, .units = total});
@@ -4402,6 +4433,19 @@ void SpaceWorld::tick(double dt)
 
     // Thruster visuals are player-only for now (NPC plumes: Phase 6 feedback).
     m_thrusters.tick(shipState(), shipTuning(), m_appliedInput, dt);
+
+    // The engine loop follows the same input the plumes do, so what you hear
+    // and what you see come from one number. Docked is silent: the drive is off.
+    if (m_audio != nullptr) {
+        float throttle = 0.0f;
+        if (!isDocked()) {
+            throttle = core::length(m_appliedInput.linear);
+            if (m_appliedInput.boost || m_appliedInput.cruise) {
+                throttle = std::max(throttle, 1.0f);
+            }
+        }
+        m_audio->setEngineThrottle(throttle);
+    }
 
     // Mining (Phase 8f): rock tumble, chunk drift and collection, wreck decay
     // and reconciliation, refinery orders.
@@ -4487,6 +4531,22 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex, const core::DVec3& hitPos
 {
     const bool shieldHit = result.shieldAbsorbed >= result.armorAbsorbed + result.hullDamage;
     m_combatEffects.spawnImpact(hitPosition, shieldHit);
+    if (m_audio != nullptr) {
+        const sol::audio::SoundId cue =
+            shieldHit ? m_audio->cues().hitShield : m_audio->cues().hitHull;
+        // A hit on the player is a hit on the listener: 2D, because the sound
+        // is your own hull and it has no direction to come from.
+        if (targetIndex == playerEntityIndex()) {
+            m_audio->play2D(cue);
+            // The alarm is for damage that is actually costing you something.
+            // Every shield hit would make it a drone rather than a warning.
+            if (result.hullDamage > 0.0f) {
+                m_audio->play2D(m_audio->cues().alarm);
+            }
+        } else {
+            m_audio->playAt(cue, hitPosition);
+        }
+    }
     if (targetIndex == playerEntityIndex()) {
         m_playerDamageTimer = kDamageFlashSeconds;
         return; // the player assisting their own death is not a thing
@@ -4503,8 +4563,16 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex, const core::DVec3& hitPos
 void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t attackerIndex)
 {
     // Fireball at the wreck site, scaled by the hull.
-    m_combatEffects.spawnExplosion(m_registry.storage<Transform>().get(entityIndex).position,
+    const core::DVec3 wreckPosition = m_registry.storage<Transform>().get(entityIndex).position;
+    m_combatEffects.spawnExplosion(wreckPosition,
                                    m_registry.storage<RenderShape>().get(entityIndex).scale.x);
+    if (m_audio != nullptr) {
+        if (entityIndex == playerEntityIndex()) {
+            m_audio->play2D(m_audio->cues().explosion);
+        } else {
+            m_audio->playAt(m_audio->cues().explosion, wreckPosition);
+        }
+    }
     if (entityIndex == playerEntityIndex()) {
         // Cargo is lost either way (decisions/007).
         std::fill(m_playerCargo.begin(), m_playerCargo.end(), 0.0f);

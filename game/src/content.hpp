@@ -46,6 +46,12 @@ public:
     void setBindings(sol::platform::BindingTable* bindings) { m_bindings = bindings; }
     [[nodiscard]] sol::platform::BindingTable* bindings() const { return m_bindings; }
 
+    // Audio (Phase 8t), so sol.play_sound can fire a cue from a script and
+    // sol.audio can read the device back. Owned by main.cpp; null is normal
+    // (no output device), and the bindings say so rather than lying.
+    void setAudio(GameAudio* audio) { m_audio = audio; }
+    [[nodiscard]] GameAudio* audio() const { return m_audio; }
+
     // Mission-builder draft for the Lua board hook (sol.mission_* bindings
     // in content.cpp assemble it; sol.mission_post validates and clears it).
     [[nodiscard]] sol::sim::Mission& missionDraft() { return m_missionDraft; }
@@ -89,6 +95,7 @@ private:
     sol::scripting::ScriptVm m_vm;
     SpaceWorld* m_world = nullptr;
     sol::platform::BindingTable* m_bindings = nullptr; // Phase 8k; main.cpp owns it
+    GameAudio* m_audio = nullptr;                      // Phase 8t; main.cpp owns it
     std::vector<WatchedFile> m_watched;
     std::vector<SpaceWorld::PilotThink> m_pilotThinks; // per-tick scratch
     std::vector<sol::sim::FactionDecision> m_factionDecisions; // per-tick scratch

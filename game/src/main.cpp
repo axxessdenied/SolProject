@@ -1,5 +1,6 @@
 #include "content.hpp"
 #include "fly_camera.hpp"
+#include "game_audio.hpp"
 #include "game_ui.hpp"
 #include "input_actions.hpp"
 #include "map_screen.hpp"
@@ -290,6 +291,17 @@ int main(int argc, char** argv)
     // The console edits the same binding table the Controls screen does, so a
     // rebind can be driven and asserted on without clicking through the list.
     content.setBindings(&settings.bindings);
+
+    // Audio (Phase 8t). No output device is not a failure: the game runs
+    // silently and every cue site is guarded, so this return value is logged
+    // rather than acted on.
+    game::GameAudio audio;
+    if (!audio.initialize(content.defs(), cookedDirectory)) {
+        SOL_LOG_WARN("audio: running without sound");
+    }
+    audio.setVolumes(settings.masterVolume, settings.effectsVolume);
+    world.setAudio(&audio);
+    content.setAudio(&audio);
     ShipInputMapper inputMapper;
     game::ShipCamera shipCamera;
     game::FlyCamera freeCamera;
@@ -774,6 +786,11 @@ int main(int argc, char** argv)
             view.boresightCamera = boresightCamera;
             view.valid = true;
             world.setViewFrame(view);
+            // The listener is the same frame the pick and the HUD use (Phase
+            // 8j's argument, one item on): what you hear and where you are
+            // told things are must come from one view, or the verification is
+            // about a different game than the one on screen.
+            audio.setListener(camera.position, camera.orientation);
 
             if (gameplayLive && !devUi.wantsMouseCapture()
                 && game::pressed(binds, game::Action::Select)) {
@@ -1290,6 +1307,15 @@ int main(int argc, char** argv)
         }
         ui.endFrame();
         }
+        // One cue per frame however many widgets fired: two controls cannot
+        // meaningfully be pressed in the same frame, and stacking clicks turns
+        // a tap into a rattle.
+        if (ui.activationsThisFrame() > 0) {
+            audio.play2D(audio.cues().uiClick);
+        }
+        // Pushed every frame so a slider is heard while it is being dragged;
+        // GameAudio drops the ones that did not change.
+        audio.setVolumes(settings.masterVolume, settings.effectsVolume);
         renderer.setUiDrawList(&ui.drawList());
 
         // Bookmark prompt outcome (Phase 8h). The latched position is used,
@@ -1465,6 +1491,9 @@ int main(int argc, char** argv)
     }
 
     context.waitIdle();
+    // The device thread reads the bank, so it stops before anything that owns
+    // samples goes away (Phase 8t).
+    audio.shutdown();
     devUi.shutdown();
     renderer.shutdown();
     swapchain.destroy();

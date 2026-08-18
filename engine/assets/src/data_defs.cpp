@@ -452,6 +452,42 @@ bool parseCommodity(const TomlValue& table, const char* sourceName,
     return true;
 }
 
+bool parseSound(const TomlValue& table, const char* sourceName, std::vector<SoundDef>& out,
+                std::string* outError)
+{
+    SoundDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": sound '" + def.id + "'";
+    }
+    reader.requireString("asset", def.asset);
+    reader.optionalFloat("gain", def.gain);
+    reader.optionalFloat("pitch_jitter", def.pitchJitter);
+    reader.optionalFloat("rolloff", def.rolloff);
+    reader.optionalUint("max_instances", def.maxInstances);
+
+    reader.rejectUnknownKeys({"id", "asset", "gain", "pitch_jitter", "rolloff", "max_instances"});
+    if (!reader.failed && def.gain < 0.0f) {
+        reader.fail("'gain' must be >= 0");
+    }
+    // Jitter is a fraction of the playback rate; half is already a musical
+    // fifth either way, and past 1.0 the rate would reach zero.
+    if (!reader.failed && (def.pitchJitter < 0.0f || def.pitchJitter > 0.5f)) {
+        reader.fail("'pitch_jitter' must be within [0, 0.5]");
+    }
+    if (!reader.failed && def.rolloff <= 0.0f) {
+        reader.fail("'rolloff' must be > 0");
+    }
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
 bool parseStation(const TomlValue& table, const char* sourceName, std::vector<StationDef>& out,
                   std::string* outError)
 {
@@ -577,6 +613,7 @@ void DefDatabase::clear()
     m_stations.clear();
     m_modules.clear();
     m_crew.clear();
+    m_sounds.clear();
 }
 
 bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* sourceName,
@@ -599,6 +636,7 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     std::vector<StationDef> stations = m_stations;
     std::vector<ModuleDef> modules = m_modules;
     std::vector<CrewDef> crew = m_crew;
+    std::vector<SoundDef> sounds = m_sounds;
 
     for (const auto& [key, value] : root.members()) {
         bool (*parse)(const TomlValue&, const char*, void*, std::string*) = nullptr;
@@ -638,10 +676,16 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
                 return parseCrew(t, s, *static_cast<std::vector<CrewDef>*>(v), e);
             };
             target = &crew;
+        } else if (key == "sound") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseSound(t, s, *static_cast<std::vector<SoundDef>*>(v), e);
+            };
+            target = &sounds;
         } else {
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
-                            "' (expected ship, weapon, faction, commodity, station, module, or crew)";
+                            "' (expected ship, weapon, faction, commodity, station, module, "
+                            "crew, or sound)";
             }
             return false;
         }
@@ -667,6 +711,7 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     m_stations = std::move(stations);
     m_modules = std::move(modules);
     m_crew = std::move(crew);
+    m_sounds = std::move(sounds);
     return true;
 }
 
@@ -737,6 +782,13 @@ const FactionDef* DefDatabase::findFaction(const char* id) const
     const auto it = std::find_if(m_factions.begin(), m_factions.end(),
                                  [&](const FactionDef& d) { return d.id == id; });
     return it != m_factions.end() ? &*it : nullptr;
+}
+
+const SoundDef* DefDatabase::findSound(const char* id) const
+{
+    const auto it =
+        std::find_if(m_sounds.begin(), m_sounds.end(), [&](const SoundDef& d) { return d.id == id; });
+    return it != m_sounds.end() ? &*it : nullptr;
 }
 
 const CommodityDef* DefDatabase::findCommodity(const char* id) const

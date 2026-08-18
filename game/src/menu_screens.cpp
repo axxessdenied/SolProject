@@ -93,6 +93,8 @@ bool Settings::load(const char* path)
     mouseSensitivity = readFloat("mouse_sensitivity", defaults.mouseSensitivity, 0.1f, 4.0f);
     invertPitch = readBool("invert_pitch", defaults.invertPitch);
     vsync = readBool("vsync", defaults.vsync);
+    masterVolume = readFloat("master_volume", defaults.masterVolume, 0.0f, 1.0f);
+    effectsVolume = readFloat("effects_volume", defaults.effectsVolume, 0.0f, 1.0f);
 
     // Bindings (Phase 8k). Defaults are already installed by the constructor,
     // so an absent [bindings] table, an absent action within it, or a line
@@ -141,10 +143,14 @@ bool Settings::save(const char* path) const
                                       "ui_scale = %.3f\n"
                                       "mouse_sensitivity = %.3f\n"
                                       "invert_pitch = %s\n"
-                                      "vsync = %s\n",
+                                      "vsync = %s\n"
+                                      "master_volume = %.3f\n"
+                                      "effects_volume = %.3f\n",
                                       static_cast<double>(uiScale),
                                       static_cast<double>(mouseSensitivity),
-                                      invertPitch ? "true" : "false", vsync ? "true" : "false");
+                                      invertPitch ? "true" : "false", vsync ? "true" : "false",
+                                      static_cast<double>(masterVolume),
+                                      static_cast<double>(effectsVolume));
     if (written <= 0) {
         return false;
     }
@@ -283,6 +289,8 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
     sliderRow("Mouse sensitivity", settings.mouseSensitivity, 0.1f, 4.0f);
     (void)ui.checkbox(column.row(rowHeight), "Invert pitch", settings.invertPitch);
     (void)ui.checkbox(column.row(rowHeight), "V-Sync", settings.vsync);
+    sliderRow("Master volume", settings.masterVolume, 0.0f, 1.0f);
+    sliderRow("Effects volume", settings.effectsVolume, 0.0f, 1.0f);
 
     column.skip(6.0f);
     MenuAction action = MenuAction::None;

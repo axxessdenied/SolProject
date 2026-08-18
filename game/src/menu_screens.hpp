@@ -42,6 +42,11 @@ struct Settings
     float mouseSensitivity = 1.0f;
     bool invertPitch = false;
     bool vsync = true;
+    // Audio (Phase 8t). Two sliders rather than three: a music slider with no
+    // music to govern is a control that does nothing, which is the class of
+    // defect 8k spent a whole item removing.
+    float masterVolume = 0.8f;
+    float effectsVolume = 1.0f;
 
     // Controls (Phase 8k). Constructed with the shipped layout so a missing or
     // partial settings file is a complete, playable binding set rather than a

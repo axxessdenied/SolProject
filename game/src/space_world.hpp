@@ -320,6 +320,9 @@ inline constexpr double kGateRadiusMeters = 70.0;
 // is not the only thing that needs it — the console performs the identical
 // pick, and both have to be answered against the same view or the verification
 // is testing a different game than the one on screen.
+// Owned by the frame loop (Phase 8t); the world only posts cues to it.
+class GameAudio;
+
 struct ViewFrame
 {
     sol::core::DVec3 cameraPosition;
@@ -889,6 +892,13 @@ public:
     // Selects a nav-target slot outright (the map's "Set Target", a click).
     bool selectTarget(std::size_t index);
 
+    // --- Audio (Phase 8t) ---
+    // The frame loop owns the device, so the world is handed a borrowed
+    // pointer rather than owning one - the same shape as the dev UI. Null is
+    // normal: a machine with no output endpoint runs the whole game silently,
+    // and every call site is guarded rather than the sound being faked.
+    void setAudio(GameAudio* audio) { m_audio = audio; }
+
     // --- Picking (Phase 8j) ---
     // How the world is being viewed, for the click-to-select in target_pick.hpp.
     void setViewFrame(const ViewFrame& view) { m_viewFrame = view; }
@@ -1152,6 +1162,7 @@ private:
     std::vector<sol::sim::AvoidanceSphere> m_autopilotObstacles; // per-tick scratch
     ThrusterParticles m_thrusters;
     CombatEffects m_combatEffects;
+    GameAudio* m_audio = nullptr; // borrowed; null when there is no device
     float m_playerDamageTimer = 0.0f;
 
     // Per-tick collision scratch + last tick's contacts (damage model input).

@@ -240,6 +240,26 @@ struct CommodityDef
     std::string source;
 };
 
+// A sound cue (Phase 8t): what the game asks for by id, pointing at a cooked
+// .saud by name. Data rather than an enum so a cue can be retuned or replaced
+// on a script reload, and so a mod layer can override one without a rebuild.
+struct SoundDef
+{
+    std::string id;
+    std::string asset; // cooked file stem, e.g. "weapon_fire" -> weapon_fire.saud
+    float gain = 1.0f;
+    // Playback rate is jittered by +-pitchJitter around 1, so a cue fired
+    // repeatedly (a gun, a mining beam) does not comb-filter against itself.
+    float pitchJitter = 0.0f;
+    // Meters at which a positional voice has fallen to half gain. Ignored
+    // when the cue is played 2D.
+    float rolloff = 500.0f;
+    // Concurrent voices of this cue; 0 is unlimited. A cap keeps one chattering
+    // source from crowding the whole mix out.
+    std::uint32_t maxInstances = 0;
+    std::string source;
+};
+
 // One production or consumption line on a station ("sol.food:0.5" in TOML).
 struct StationRate
 {
@@ -310,6 +330,7 @@ public:
     [[nodiscard]] const StationDef* findStation(const char* id) const;
     [[nodiscard]] const ModuleDef* findModule(const char* id) const;
     [[nodiscard]] const CrewDef* findCrew(const char* id) const;
+    [[nodiscard]] const SoundDef* findSound(const char* id) const;
 
     // First-definition order; later layers replace elements in place, so
     // indices stay stable across a reload that only edits values.
@@ -320,6 +341,7 @@ public:
     [[nodiscard]] const std::vector<StationDef>& stations() const { return m_stations; }
     [[nodiscard]] const std::vector<ModuleDef>& modules() const { return m_modules; }
     [[nodiscard]] const std::vector<CrewDef>& crew() const { return m_crew; }
+    [[nodiscard]] const std::vector<SoundDef>& sounds() const { return m_sounds; }
 
 private:
     std::vector<ShipDef> m_ships;
@@ -329,6 +351,7 @@ private:
     std::vector<StationDef> m_stations;
     std::vector<ModuleDef> m_modules;
     std::vector<CrewDef> m_crew;
+    std::vector<SoundDef> m_sounds;
 };
 
 } // namespace sol::assets

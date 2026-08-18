@@ -1,5 +1,6 @@
 #include "content.hpp"
 
+#include "game_audio.hpp"
 #include "map_ui.hpp"
 #include "ship_ui.hpp"
 #include "target_pick.hpp"
@@ -147,6 +148,93 @@ bool pilotPatrolOffset(GameContent& content, scripting::EntityHandle ship, doubl
 double pilotHull(GameContent& content, scripting::EntityHandle ship)
 {
     return content.world().shipHullFraction(scripting::toEntity(ship));
+}
+
+// --- Audio (Phase 8t) ---
+
+std::string listSounds(GameContent& content)
+{
+    // Named gameAudio, not audio: a local called `audio` shadows the sol::audio
+    // namespace inside these functions.
+    GameAudio* gameAudio = content.audio();
+    if (gameAudio == nullptr) {
+        return "audio: not initialized";
+    }
+    std::string out;
+    for (const assets::SoundDef& def : content.defs().sounds()) {
+        if (!out.empty()) {
+            out += ", ";
+        }
+        out += def.id;
+        // A cue whose asset failed to cook is in the defs and not in the bank;
+        // saying so here is what separates "wrong id" from "missing file".
+        if (gameAudio->find(def.id.c_str()) == audio::kNoSound) {
+            out += "(missing)";
+        }
+    }
+    return out.empty() ? "no sound defs" : out;
+}
+
+std::string audioReport(GameContent& content)
+{
+    // Named gameAudio, not audio: a local called `audio` shadows the sol::audio
+    // namespace inside these functions.
+    GameAudio* gameAudio = content.audio();
+    if (gameAudio == nullptr) {
+        return "audio: not initialized";
+    }
+    if (!gameAudio->deviceOpen()) {
+        return "audio: NO DEVICE (running silent), " + std::to_string(gameAudio->cueCount()) +
+               " cue(s) loaded";
+    }
+    const platform::AudioDeviceInfo info = gameAudio->deviceInfo();
+    char buffer[224] = {};
+    (void)std::snprintf(buffer, sizeof(buffer),
+                        "audio: %u Hz, %u frame buffer, %zu cue(s), %u voice(s) active, "
+                        "%llu played, %llu stolen, %llu dropped, %llu underrun(s)",
+                        info.sampleRate, info.bufferFrames, gameAudio->cueCount(),
+                        gameAudio->activeVoices(),
+                        static_cast<unsigned long long>(gameAudio->playedCues()),
+                        static_cast<unsigned long long>(gameAudio->stolenVoices()),
+                        static_cast<unsigned long long>(gameAudio->droppedCommands()),
+                        static_cast<unsigned long long>(gameAudio->underruns()));
+    return buffer;
+}
+
+// sol.play_sound("sol.explosion") plays at the listener; adding x,y,z places
+// it in the world, where it is attenuated and panned like any other cue.
+bool playSound(GameContent& content, const char* id)
+{
+    // Named gameAudio, not audio: a local called `audio` shadows the sol::audio
+    // namespace inside these functions.
+    GameAudio* gameAudio = content.audio();
+    if (gameAudio == nullptr) {
+        return false;
+    }
+    const audio::SoundId cue = gameAudio->find(id);
+    if (cue == audio::kNoSound) {
+        SOL_LOG_WARN("play_sound: no cue '%s'", id);
+        return false;
+    }
+    gameAudio->play2D(cue);
+    return true;
+}
+
+bool playSoundAt(GameContent& content, const char* id, double x, double y, double z)
+{
+    // Named gameAudio, not audio: a local called `audio` shadows the sol::audio
+    // namespace inside these functions.
+    GameAudio* gameAudio = content.audio();
+    if (gameAudio == nullptr) {
+        return false;
+    }
+    const audio::SoundId cue = gameAudio->find(id);
+    if (cue == audio::kNoSound) {
+        SOL_LOG_WARN("play_sound_at: no cue '%s'", id);
+        return false;
+    }
+    gameAudio->playAt(cue, core::DVec3{x, y, z});
+    return true;
 }
 
 std::string listShips(GameContent& content)
@@ -2059,6 +2147,12 @@ void GameContent::registerBindings()
 {
     m_vm.registerFunction<&spawnShip>("sol", "spawn_ship", this);
     m_vm.registerFunction<&listShips>("sol", "ships", this);
+    // Audio (Phase 8t). play_sound is the point of choosing data-driven cues
+    // over hardcoded call sites: campaign.lua and pilot_hail can be heard.
+    m_vm.registerFunction<&listSounds>("sol", "sounds", this);
+    m_vm.registerFunction<&audioReport>("sol", "audio", this);
+    m_vm.registerFunction<&playSound>("sol", "play_sound", this);
+    m_vm.registerFunction<&playSoundAt>("sol", "play_sound_at", this);
     m_vm.registerFunction<&targetName>("sol", "target_name", this);
     m_vm.registerFunction<&targetDistance>("sol", "target_distance", this);
     m_vm.registerFunction<&shipSpeed>("sol", "speed", this);
@@ -2224,6 +2318,12 @@ bool GameContent::reloadDefs()
         return false;
     }
     m_defs = std::move(fresh);
+    // Cue tuning follows the defs (Phase 8t): gain, jitter, rolloff and caps
+    // are re-read, the cooked samples are not - retuning a cue is a file save,
+    // recooking one is a build.
+    if (m_audio != nullptr) {
+        m_audio->reloadDefs(m_defs);
+    }
     return true;
 }
 
