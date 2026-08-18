@@ -420,6 +420,14 @@ void FactionSim::setContest(std::uint32_t system, std::uint32_t attacker, float 
         return;
     }
     if (attacker == kNoFaction || attacker >= m_count) {
+        // Clearing a LIVE contest resolves it as a lapse rather than wiping
+        // it silently. Decay to the floor is the natural way a contest ends
+        // this way and it queues a resolution; if this lever did not, it
+        // could leave a Hold objective waiting on an answer that never comes
+        // - a state the running game can never produce.
+        if (m_contestAttacker[system] != kNoFaction) {
+            resolveContest(system, false);
+        }
         m_contestAttacker[system] = kNoFaction;
         m_contestPressure[system] = 0.0f;
         return;

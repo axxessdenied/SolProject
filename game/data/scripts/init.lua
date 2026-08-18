@@ -285,8 +285,12 @@ function mission_board(stationName, owner, ownerName, ownerPirate, hauls, bounti
             -- A contest resolves on its own clock, so the deadline is a
             -- backstop against a stalemate rather than the real pressure.
             sol.mission_deadline(1200 + 600 * c.jumps)
-            if c.jumps == 0 then
-                sol.mission_min_rep(5) -- work on your own doorstep goes to regulars
+            -- Gate the desperate ones, not the ordinary ones. There is at
+            -- most ONE war contract on a board, so a rep gate on the common
+            -- case hides the whole feature from a new pilot - which is what
+            -- gating a local contest at rep 5 did, since standings start at 0.
+            if c.pressure > 0.8 then
+                sol.mission_min_rep(10) -- a last stand goes to someone known
             end
             sol.mission_obj_hold(c.system, side, text)
             sol.mission_post()

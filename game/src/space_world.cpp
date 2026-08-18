@@ -2377,8 +2377,7 @@ void SpaceWorld::drainContestResolutions()
         m_announcedContestSystem = m_currentSystem;
         m_announcedContestAttacker = here.attacker;
         if (here.attacker < m_factionTable.size() && !isDocked()) {
-            say(kFleetcom, m_factionTable[here.attacker].name +
-                               " forces are pressing a claim on this system.");
+            say(kFleetcom, m_factionTable[here.attacker].name + " is pressing a claim here.");
         }
     }
 
@@ -2397,7 +2396,7 @@ void SpaceWorld::drainContestResolutions()
                                     ? m_factionTable[resolution.loser].name.c_str()
                                     : "nobody";
         if (resolution.system < m_galaxy.systems.size()) {
-            SOL_LOG_INFO("[territory] %s: %s %s (%s)",
+            SOL_LOG_INFO("[territory] %s: %s %s %s",
                          m_galaxy.systems[resolution.system].name.c_str(), winnerName,
                          resolution.flipped ? "takes the system from" : "holds against",
                          loserName);
@@ -2407,9 +2406,14 @@ void SpaceWorld::drainContestResolutions()
         }
         m_announcedContestSystem = kNoIndex;
         m_announcedContestAttacker = kNoIndex;
+        // ⚑ Kept SHORT on purpose. The comms panel is clamped against the
+        // target panel (8r) and its cell clips rather than overruns (8s), so
+        // a long line is silently cut at the right edge - which a drive found
+        // here, on a sentence that read fine in the log. The longest faction
+        // name in a generated galaxy is ~17 characters; budget for that.
         say(kFleetcom, resolution.flipped
-                           ? std::string(winnerName) + " forces now hold this system."
-                           : std::string(loserName) + " have broken off. The system holds.");
+                           ? std::string(winnerName) + " holds this system now."
+                           : std::string(loserName) + " driven off. System holds.");
     }
 }
 

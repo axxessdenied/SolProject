@@ -412,6 +412,17 @@ SOL_TEST(faction_sim_contest_lapses_when_nobody_sustains_it)
     FactionSim sim;
     sim.initialize(galaxy, territoryParams(), 3);
 
+    // Clearing a live contest through the dev lever must resolve it as a
+    // lapse, not wipe it: anything waiting on the answer (a Hold objective)
+    // would otherwise wait forever, which the running game never does.
+    sim.setContest(1, 1, 0.3f);
+    sim.setContest(1, kNoFaction, 0.0f);
+    std::vector<sol::sim::ContestResolution> cleared;
+    sim.takeResolutions(cleared);
+    SOL_REQUIRE(cleared.size() == 1);
+    SOL_CHECK(!cleared[0].flipped);
+    SOL_CHECK(cleared[0].winner == 0);
+
     sim.setContest(1, 1, 0.3f);
     SOL_REQUIRE(sim.contested(1));
     sim.tick(3'600.0); // four half-lives: 0.3 -> ~0.019, under the floor
@@ -440,6 +451,9 @@ SOL_TEST(faction_sim_home_system_is_never_contestable)
     SOL_CHECK(!sim.contestOf(2).live());                // but no claim opens
     sim.setContest(2, 2, 0.9f);
     SOL_CHECK(!sim.contestOf(2).live()); // the dev lever refuses it too
+    std::vector<sol::sim::ContestResolution> refused;
+    sim.takeResolutions(refused);
+    SOL_CHECK(refused.empty()); // a refusal is not a resolution
     SOL_CHECK(sim.systemOwner(2) == 1);
 
     // Beaten back to one system, a faction stops losing ground: take its

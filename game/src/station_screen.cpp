@@ -524,7 +524,9 @@ void buildFactionsTab(UiContext& ui, StationPanel& panel, StationScreenState& st
         clipped(ui, detailCell, buffer, theme.textDim, theme.smallStyle);
     }
 
-    sectionHeader(ui, column.row(kSectionHeight), "Recent raids");
+    // Since Phase 8u this block leads with contested systems and borders that
+    // have moved, and only then lists raids - so the header names all three.
+    sectionHeader(ui, column.row(kSectionHeight), "War and raids");
     if (panel.factionNotes == nullptr || panel.factionNotes[0] == '\0') {
         emptyNote(ui, column, "(quiet lately)");
     } else {

@@ -154,6 +154,15 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
     for (std::size_t i = 0; i < world.factions().size(); ++i) {
         const std::uint32_t faction = static_cast<std::uint32_t>(i);
         std::string detail = world.factions()[i].pirate ? "pirate clan" : "major";
+        // ⚑ How much ground they hold goes BEFORE the war list (Phase 8u).
+        // The war list is unbounded - a major at seed 1701 is at war with all
+        // ten pirate clans - and it already overruns this column, so anything
+        // appended after it is invisible. Short fixed-length facts first.
+        std::uint32_t held = 0;
+        for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+            held += factionSim.systemOwner(s) == faction ? 1u : 0u;
+        }
+        detail += ", " + std::to_string(held) + " system(s)";
         std::string wars;
         for (std::size_t j = 0; j < world.factions().size(); ++j) {
             if (j != i && factionSim.atWar(faction, static_cast<std::uint32_t>(j))) {
@@ -164,14 +173,6 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
         if (!wars.empty()) {
             detail += " - " + wars;
         }
-        // How much ground they actually hold (Phase 8u), which is what makes
-        // a faction being beaten back legible as something other than a
-        // colour change on the map.
-        std::uint32_t held = 0;
-        for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
-            held += factionSim.systemOwner(s) == faction ? 1u : 0u;
-        }
-        detail += " - holds " + std::to_string(held) + " system(s)";
         factionRows.push_back({.name = world.factions()[i].name.c_str(),
                                .detail = store(text, std::move(detail)),
                                .standing = factionSim.standing(faction),
