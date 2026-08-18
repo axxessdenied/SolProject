@@ -74,6 +74,11 @@ public:
     [[nodiscard]] std::uint64_t stolenVoices() const { return m_mixer.stolenVoices(); }
     [[nodiscard]] sol::platform::AudioDeviceInfo deviceInfo() const { return m_device.info(); }
     [[nodiscard]] std::uint64_t playedCues() const { return m_played; }
+    // The gains last posted to the mixer. Reading them back is what proves a
+    // slider reached the audio system rather than only the settings file; that
+    // the mixer then applies them is what gainsScaleTheMix asserts.
+    [[nodiscard]] float masterVolume() const { return m_masterVolume; }
+    [[nodiscard]] float effectsVolume() const { return m_effectsVolume; }
 
 private:
     struct Cue

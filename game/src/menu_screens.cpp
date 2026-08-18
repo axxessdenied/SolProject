@@ -264,8 +264,11 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
     ui.pushId("settings");
 
     const float rowHeight = 34.0f;
-    const float height = kTitleHeight + rowHeight * 4.0f + kButtonHeight * 2.0f +
-                         ui.theme().spacing * 7.0f + ui.theme().padding * 2.0f;
+    // Six rows since Phase 8t added the two volume sliders, and one spacing
+    // per item: the panel is sized from its contents, so adding a row without
+    // moving these two numbers pushes the buttons out through the bottom.
+    const float height = kTitleHeight + rowHeight * 6.0f + kButtonHeight * 2.0f +
+                         ui.theme().spacing * 9.0f + ui.theme().padding * 2.0f;
     const Rect panel = centeredPanel(ui, 540.0f, height);
     ui.panel(panel);
 

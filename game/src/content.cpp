@@ -190,9 +190,12 @@ std::string audioReport(GameContent& content)
     const platform::AudioDeviceInfo info = gameAudio->deviceInfo();
     char buffer[224] = {};
     (void)std::snprintf(buffer, sizeof(buffer),
-                        "audio: %u Hz, %u frame buffer, %zu cue(s), %u voice(s) active, "
+                        "audio: %u Hz, %u frame buffer, %zu cue(s), vol %.2f/%.2f, "
+                        "%u voice(s) active, "
                         "%llu played, %llu stolen, %llu dropped, %llu underrun(s)",
                         info.sampleRate, info.bufferFrames, gameAudio->cueCount(),
+                        static_cast<double>(gameAudio->masterVolume()),
+                        static_cast<double>(gameAudio->effectsVolume()),
                         gameAudio->activeVoices(),
                         static_cast<unsigned long long>(gameAudio->playedCues()),
                         static_cast<unsigned long long>(gameAudio->stolenVoices()),
