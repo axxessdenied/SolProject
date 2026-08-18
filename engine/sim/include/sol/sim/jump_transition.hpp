@@ -35,23 +35,43 @@ inline constexpr double kJumpArriveSeconds = 0.9;
 // brightness stays a single fact defined in one place.
 inline constexpr double kJumpSkyPeak = 3.0;
 
-// ⚑ How close you have to get to a gate for it to take you — and the one
-// number in this item that flying it had to correct.
+// Did this tick's motion carry the ship THROUGH a gate's opening?
 //
-// The obvious choice is the gate's own drawn frame, kGateRadiusMeters = 70 m.
-// That is exactly wrong, because the gate is SOLID: it is a Cube model of base
-// radius 1 at scale 70, so it carries a 70 m collision sphere, and the player's
-// hull is another 8 m. The ship physically stops at 78 m and cannot be moved a
-// metre closer — six seconds of full manual thrust does nothing. Capturing at
-// the frame radius means capturing inside the one volume the ship is excluded
-// from, so the jump could never fire.
+// Phase 8w, replacing 8v's proximity sphere. The sphere had no notion of
+// direction, so anything that came near enough was taken — and because a gate
+// is solid (a Cube model of base radius 1 at scale 70, plus an 8 m hull, so the
+// ship stops dead at 78 m) "near enough" had to be 110 m, which is a wide net
+// to cast on a player who was only flying past. Phase 8w makes the gate
+// non-solid and asks the honest question instead.
 //
-// 110 m therefore sits comfortably outside the 78 m contact distance, with
-// 32 m of daylight, and jump_transition_tests asserts that margin rather than
-// trusting this comment. It is the same rule Phase 8r's berths landed on
-// (capture must not overlap the sphere the ship is pushed out of), arrived at
-// from the opposite direction.
-inline constexpr double kGateCaptureRadius = 110.0;
+// ⚑ The direction requirement is not a rule here, it is the shape of the test:
+// a segment that never changes sides of the plane cannot cross it, so flying
+// past, alongside, or stopping short can never trigger a jump. That is what
+// "you have to get right up on it" buys, and it is why no tuning constant is
+// needed to make accidental jumps rare — they are impossible.
+//
+// `axis` is the gate's facing (unit). It is DERIVED, never stored: generation
+// places every gate at hub + bearing * gateDistance, so the axis is
+// normalize(gate - hub), the lane the gate serves. A gate works in BOTH
+// directions, because nothing here cares about the sign of the crossing.
+[[nodiscard]] inline bool crossedAperture(const core::DVec3& from, const core::DVec3& to,
+                                          const core::DVec3& gate, const core::DVec3& axis,
+                                          double frameRadius)
+{
+    const double before = dot(from - gate, axis);
+    const double after = dot(to - gate, axis);
+    if (before == after) {
+        return false; // travelling parallel to the plane: never crosses it
+    }
+    if ((before > 0.0 && after > 0.0) || (before < 0.0 && after < 0.0)) {
+        return false; // stayed on one side, however close it got
+    }
+    // Signs differ, so the crossing is on the segment: find it and ask whether
+    // it went through the opening rather than past the frame's edge.
+    const double t = before / (before - after);
+    const core::DVec3 hit = from + (to - from) * t;
+    return length(hit - gate) <= frameRadius;
+}
 
 enum class JumpPhase
 {

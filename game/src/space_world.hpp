@@ -183,6 +183,12 @@ struct GateInstance
 {
     std::string name; // "Gate: <destination>"
     std::uint32_t toSystem = 0;
+    // Which way the gate faces (unit), and therefore the normal of the plane
+    // you have to cross to use it (Phase 8w). DERIVED, never stored: generation
+    // puts every gate at hub + bearing * gateDistance, so this is
+    // normalize(position - hub) — the lane the gate serves. Rebuilt with the
+    // rest of the system's side data, so it is correct on every load path.
+    sol::core::DVec3 axis{0.0, 0.0, 1.0};
     sol::core::DVec3 position;
 };
 
@@ -314,6 +320,11 @@ struct TargetInfo
 // 100 m and its sphere is a little past that; a gate's frame is 70 m.
 inline constexpr double kStationRadiusMeters = 130.0;
 inline constexpr double kGateRadiusMeters = 70.0;
+// How far past the opening autopilot aims when flying to a gate (Phase 8w), so
+// that "arrive" means through rather than on the threshold. Far enough that
+// steerTravel is still carrying real speed as it crosses, short enough that the
+// ship is not left a long way past the gate if the jump somehow does not fire.
+inline constexpr double kGateApproachOvershoot = 400.0;
 
 // How the player is looking at the world this frame (Phase 8j). The frame loop
 // owns the camera and the UI scale, and pushes both in here once per frame;
@@ -1157,9 +1168,14 @@ private:
     // Clearance countdown, comms fade, and the arrival test that turns flying
     // into a berth into being docked (Phase 8r).
     void tickDocking(double dt);
-    // Arms a jump when the player's path this tick crossed a gate's frame
-    // (Phase 8v). The sibling of tickDocking's berth arrival test.
+    // Arms a jump when the player's path this tick went through a gate's
+    // opening (Phase 8v/8w). The sibling of tickDocking's berth arrival test.
     void tickGateCrossing();
+    // Where autopilot should actually fly to for a given target: the target
+    // itself, except for a gate, which is a doorway to pass through rather
+    // than a point to stop at (Phase 8w).
+    [[nodiscard]] sol::core::DVec3 autopilotDestination(const TargetInfo& target,
+                                                        const sol::core::DVec3& from) const;
     // Everything that happens when the ship is inside the station, whichever
     // way it got there: the pad, the mission notify, the market snapshot and
     // the dock event. `berth` is kNoIndex for the shortcut and respawn paths.

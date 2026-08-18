@@ -112,6 +112,25 @@ constexpr double kCollisionRestitution = 0.15;
     return 8.0;
 }
 
+// Rotation taking the model's +Z onto `axis` (Phase 8w). The gate slab is thin
+// on Z, so this turns its face to the lane it serves. Both ends of the
+// degenerate case matter: already facing, and facing exactly backwards, where
+// the cross product is zero and any perpendicular axis will do.
+[[nodiscard]] core::Quat facingRotation(const core::DVec3& axis)
+{
+    const core::Vec3 to = core::toVec3(axis);
+    const core::Vec3 from{0.0f, 0.0f, 1.0f};
+    const float alignment = dot(from, to);
+    if (alignment > 0.9999f) {
+        return core::Quat::identity();
+    }
+    if (alignment < -0.9999f) {
+        return core::fromAxisAngle({0.0f, 1.0f, 0.0f}, 3.14159265358979323846f);
+    }
+    return core::fromAxisAngle(normalize(cross(from, to)),
+                               std::acos(core::clamp(alignment, -1.0f, 1.0f)));
+}
+
 // Stable component ids for the save format; never reuse or renumber. Ids 1-3
 // belonged to the retired Phase 3 swarm-world format.
 ecs::Snapshot makeSnapshotSchema()
@@ -2051,18 +2070,29 @@ void SpaceWorld::despawnSystem()
 
 void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
 {
-    auto addStatic = [&](core::DVec3 position, core::Vec3 scale, ModelId model) {
+    auto addStatic = [&](core::DVec3 position, core::Vec3 scale, ModelId model,
+                         core::Quat orientation = core::Quat::identity()) {
         const ecs::Entity e = m_registry.create();
         m_registry.emplace<Transform>(e, Transform{.position = position,
-                                                   .previousPosition = position});
+                                                   .previousPosition = position,
+                                                   .orientation = orientation,
+                                                   .previousOrientation = orientation});
         m_registry.emplace<RenderShape>(e, RenderShape{.scale = scale, .model = model});
     };
     for (const sim::StationSpec& station : spec.stations) {
         addStatic(station.position, {1.0f, 1.0f, 1.0f}, ModelId::Station);
     }
-    // Gates render as flat frames (provisional visual: a squashed cube).
+    // Gates render as flat frames (provisional visual: a squashed cube), and
+    // since Phase 8w they FACE THEIR LANE rather than all presenting the same
+    // arbitrary world-Z side. The player has to fly through the opening now, so
+    // being able to see which way through is stopped being cosmetic.
+    const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
     for (const sim::GateSpec& gate : spec.gates) {
-        addStatic(gate.position, {70.0f, 70.0f, 10.0f}, ModelId::Cube);
+        const core::DVec3 outward = gate.position - hub;
+        const double reach = length(outward);
+        const core::DVec3 axis =
+            reach > 0.0 ? outward * (1.0 / reach) : core::DVec3{0.0, 0.0, 1.0};
+        addStatic(gate.position, {70.0f, 70.0f, 10.0f}, ModelId::Cube, facingRotation(axis));
     }
 }
 
@@ -2075,9 +2105,17 @@ void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
             {.name = planet.name, .position = planet.position, .radius = planet.radius});
     }
     m_gates.clear();
+    // The hub the gates are measured from, which is what gives each one its
+    // facing (Phase 8w). generateGalaxy places a gate at hub + bearing *
+    // gateDistance, so the outward direction IS the lane it serves.
+    const core::DVec3 gateHub = spec.planets[spec.primaryPlanet].position;
     for (const sim::GateSpec& gate : spec.gates) {
+        const core::DVec3 outward = gate.position - gateHub;
+        const double reach = length(outward);
         m_gates.push_back({.name = "Gate: " + m_galaxy.systems[gate.toSystem].name,
                            .toSystem = gate.toSystem,
+                           .axis = reach > 0.0 ? outward * (1.0 / reach)
+                                               : core::DVec3{0.0, 0.0, 1.0},
                            .position = gate.position});
     }
 
@@ -2221,16 +2259,12 @@ void SpaceWorld::tickGateCrossing()
     }
     const Transform& transform = m_registry.storage<Transform>().get(playerEntityIndex());
     for (const GateInstance& gate : m_gates) {
-        // Swept, not a point test: a ship under boost covers a good fraction of
-        // the capture sphere in one 60 Hz tick, and a point test would let it
-        // pass clean through. segmentHitsSphere reports t = 0 for a segment
-        // that starts inside, so sitting at the gate counts too.
-        //
-        // Captured OUTSIDE the frame, not at it — see kGateCaptureRadius. The
-        // gate is solid, so the ship can never reach its 70 m frame at all.
-        double t = 0.0;
-        if (!sim::segmentHitsSphere(transform.previousPosition, transform.position, gate.position,
-                                    sim::kGateCaptureRadius, t)) {
+        // Did this tick's motion carry the ship through the opening (Phase 8w)?
+        // Swept by construction — the test is about a segment, so a ship under
+        // boost cannot step over the plane between ticks — and directional by
+        // construction, so flying past the gate can no longer take you.
+        if (!sim::crossedAperture(transform.previousPosition, transform.position, gate.position,
+                                  gate.axis, kGateRadiusMeters)) {
             continue;
         }
         if (m_jump.begin(gate.toSystem)) {
@@ -2245,6 +2279,19 @@ void SpaceWorld::advanceJumpTransition(double deltaSeconds)
 {
     if (!m_jump.active()) {
         return;
+    }
+    // Coast (Phase 8w). The sim is suspended for the length of the transition,
+    // so without this the ship stops dead the instant the jump arms and the
+    // gate it just flew through stays nailed in the middle of the view for the
+    // whole tunnel — which is what made the effect read as a screen filter
+    // rather than as travel. Transform only: no forces, no collision, no tick.
+    // The gate recedes behind the player because they are still moving.
+    if (m_jump.phase() == sim::JumpPhase::Tunnel) {
+        const std::uint32_t playerIndex = playerEntityIndex();
+        Transform& transform = m_registry.storage<Transform>().get(playerIndex);
+        const core::DVec3 velocity = m_registry.storage<FlightBody>().get(playerIndex).velocity;
+        transform.previousPosition = transform.position;
+        transform.position += velocity * deltaSeconds;
     }
     m_jump.advance(deltaSeconds);
     if (m_jump.swapDue()) {
@@ -3976,10 +4023,14 @@ double SpaceWorld::autopilotArrivalRange(const TargetInfo& target) const
     // steerTravel decelerates to a STOP at whatever range it is given, so any
     // positive standoff has the ship braking as it reaches the frame: at half
     // the radius it crept to 78 m and sat there at 0.1 m/s, eight metres short
-    // of a jump, with autopilot still dutifully engaged. Aiming at the centre
-    // is what makes the ship cross the 70 m shell while it still has speed, and
-    // the swept crossing test fires on the way in. Nothing deflects it on the
-    // way: gates are not in m_obstacles.
+    // of a jump, with autopilot still dutifully engaged.
+    //
+    // Zero is right, but only alongside autopilotDestination() below (Phase
+    // 8w): the gate's CENTRE lies on the plane the ship has to cross, and
+    // arriving at a plane is not crossing it, so aiming at the centre would
+    // stall one epsilon short of a jump forever — 8v's 78 m failure in a new
+    // costume. Autopilot aims at a point on the far side instead, and this
+    // zero is what stops it standing off from THAT.
     if (navTargetKind(m_targetIndex) == NavKind::Gate) {
         range = 0.0;
     }
@@ -3989,6 +4040,34 @@ double SpaceWorld::autopilotArrivalRange(const TargetInfo& target) const
 void SpaceWorld::setAutopilotArrivalRange(double meters)
 {
     m_autopilotRange = core::clamp(meters, 100.0, 1.0e7);
+}
+
+core::DVec3 SpaceWorld::autopilotDestination(const TargetInfo& target,
+                                             const core::DVec3& from) const
+{
+    // Everything but a gate is a place to arrive AT (Phase 8w).
+    if (navTargetKind(m_targetIndex) != NavKind::Gate) {
+        return target.nav.position;
+    }
+    const GateInstance* gate = nullptr;
+    for (const GateInstance& candidate : m_gates) {
+        if (length(candidate.position - target.nav.position) < 1.0) {
+            gate = &candidate;
+            break;
+        }
+    }
+    if (gate == nullptr) {
+        return target.nav.position;
+    }
+    // A gate is a place to arrive THROUGH. Its centre sits on the plane the
+    // ship has to cross, and steerTravel decelerates to a stop at its
+    // destination — so aiming at the centre parks the ship ON the threshold
+    // and the aperture test, which needs the segment to change sides, never
+    // fires. Aim at a point beyond the opening, on the far side from wherever
+    // the ship currently is, and flying there means going through.
+    const double side = dot(from - gate->position, gate->axis);
+    const double sign = side >= 0.0 ? -1.0 : 1.0;
+    return gate->position + gate->axis * (sign * kGateApproachOvershoot);
 }
 
 sim::FlightInput SpaceWorld::autopilotInput()
@@ -4013,7 +4092,8 @@ sim::FlightInput SpaceWorld::autopilotInput()
     const double effectiveRange = autopilotArrivalRange(target);
     const core::DVec3 targetVelocity = target.isShip ? target.velocity : core::DVec3{};
     const sim::ShipState state = shipState();
-    const double remaining = length(target.nav.position - state.position) - effectiveRange;
+    const core::DVec3 destination = autopilotDestination(target, state.position);
+    const double remaining = length(destination - state.position) - effectiveRange;
     if (remaining <= 0.0 && length(state.velocity - targetVelocity) < 25.0) {
         m_autopilotActive = false;
         SOL_LOG_INFO("Autopilot: arrived at '%s'", target.nav.name.c_str());
@@ -4023,12 +4103,12 @@ sim::FlightInput SpaceWorld::autopilotInput()
     // The destination's own sphere must not deflect the final approach.
     m_autopilotObstacles.clear();
     for (const sim::AvoidanceSphere& sphere : m_obstacles) {
-        if (length(sphere.position - target.nav.position) > sphere.radius + effectiveRange) {
+        if (length(sphere.position - destination) > sphere.radius + effectiveRange) {
             m_autopilotObstacles.push_back(sphere);
         }
     }
 
-    sim::FlightInput input = sim::steerTravel(state, shipTuning(), target.nav.position,
+    sim::FlightInput input = sim::steerTravel(state, shipTuning(), destination,
                                               targetVelocity, effectiveRange,
                                               m_autopilotObstacles);
     input.assist = true;
@@ -4243,6 +4323,17 @@ void SpaceWorld::tick(double dt)
             continue;
         }
         const RenderShape& shape = shapes.values()[i];
+        // Gates are the third thing you fly through (Phase 8w), after the bolts
+        // and ore above. A gate used to be a solid 70 m sphere, which stopped
+        // the ship dead at 78 m and made "fly through the gate" impossible —
+        // the aperture rule needs the doorway to be a doorway.
+        //
+        // Cube is unambiguous HERE and only here: the game's other two Cube
+        // users are projectiles and ore chunks, and both were excluded by the
+        // test immediately above, so the only Cube left among statics is a gate.
+        if (shape.model == ModelId::Cube) {
+            continue;
+        }
         const Transform& transform = transforms.get(entityIndex);
         m_collisionBodies.push_back(
             {.previousPosition = transform.position,
