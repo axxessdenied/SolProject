@@ -2,6 +2,7 @@
 #include "font.hpp"
 #include "gltf.hpp"
 #include "png.hpp"
+#include "sound.hpp"
 
 #include "sol/assets/formats.hpp"
 #include "sol/core/log.hpp"
@@ -164,6 +165,33 @@ bool cookFont(const std::string& source, const std::string& output)
     return true;
 }
 
+bool cookSound(const std::string& source, const std::string& output)
+{
+    std::vector<std::uint8_t> sourceBytes;
+    if (!platform::readFileBytes(source.c_str(), sourceBytes)) {
+        SOL_LOG_ERROR("cooker: cannot read %s", source.c_str());
+        return false;
+    }
+
+    assets::SoundData sound;
+    const bool isOgg = fileExtension(source) == ".ogg";
+    const bool imported = isOgg ? cooker::importOgg(sourceBytes.data(), sourceBytes.size(), sound)
+                                : cooker::importWav(sourceBytes.data(), sourceBytes.size(), sound);
+    if (!imported) {
+        SOL_LOG_ERROR("cooker: cannot import %s", source.c_str());
+        return false;
+    }
+
+    const std::vector<std::uint8_t> fileBytes = cooker::encodeSound(sound);
+    if (!platform::writeFileBytes(output.c_str(), fileBytes.data(), fileBytes.size())) {
+        SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
+        return false;
+    }
+    SOL_LOG_INFO("cooked %s -> %s (%u frames, %u ch, %u Hz)", source.c_str(), output.c_str(),
+                 sound.frameCount(), sound.channelCount, sound.sampleRate);
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -200,6 +228,9 @@ int main(int argc, char** argv)
             output = outputDirectory + "/" + fileStem(source) + ".sfont";
             cook = &cookFont;
             isCurrent = &isFontUpToDate;
+        } else if (extension == ".wav" || extension == ".ogg") {
+            output = outputDirectory + "/" + fileStem(source) + ".saud";
+            cook = &cookSound;
         } else {
             continue; // .gitkeep, .ttf sources named by a .font manifest, etc.
         }

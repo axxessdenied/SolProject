@@ -1,7 +1,10 @@
 #include "bc1.hpp"
 #include "gltf.hpp"
 #include "png.hpp"
+#include "sound.hpp"
 
+#include "sol/assets/asset_loader.hpp"
+#include "sol/assets/formats.hpp"
 #include "sol/platform/file_io.hpp"
 #include "sol/test/test.hpp"
 
@@ -127,6 +130,198 @@ SOL_TEST(gltfImportsTriangleWithNodeTransform)
     SOL_CHECK(mesh.vertices[0].position[0] == 10.0f);
     SOL_CHECK(mesh.vertices[1].position[0] == 11.0f);
     SOL_CHECK(mesh.vertices[2].position[1] == 1.0f);
+
+    std::remove(path.c_str());
+}
+
+// --- sound (Phase 8t) ---
+
+namespace {
+
+void wavAppendTag(std::vector<std::uint8_t>& out, const char* tag)
+{
+    out.insert(out.end(), tag, tag + 4);
+}
+
+void wavAppendU32(std::vector<std::uint8_t>& out, std::uint32_t value)
+{
+    for (int shift = 0; shift < 32; shift += 8) {
+        out.push_back(static_cast<std::uint8_t>((value >> shift) & 0xFFu));
+    }
+}
+
+void wavAppendU16(std::vector<std::uint8_t>& out, std::uint16_t value)
+{
+    out.push_back(static_cast<std::uint8_t>(value & 0xFFu));
+    out.push_back(static_cast<std::uint8_t>((value >> 8) & 0xFFu));
+}
+
+// One fmt chunk and one data chunk, optionally with a LIST chunk wedged
+// between them: real writers emit those, and the importer walks chunks rather
+// than assuming an order precisely so they do not break it.
+std::vector<std::uint8_t> buildWav(std::uint16_t format, std::uint16_t channels,
+                                   std::uint32_t sampleRate, std::uint16_t bits,
+                                   const std::vector<std::uint8_t>& payload,
+                                   bool withListChunk = false)
+{
+    std::vector<std::uint8_t> body;
+    wavAppendTag(body, "fmt ");
+    wavAppendU32(body, 16);
+    wavAppendU16(body, format);
+    wavAppendU16(body, channels);
+    wavAppendU32(body, sampleRate);
+    wavAppendU32(body, sampleRate * channels * (bits / 8u));
+    wavAppendU16(body, static_cast<std::uint16_t>(channels * (bits / 8u)));
+    wavAppendU16(body, bits);
+
+    if (withListChunk) {
+        wavAppendTag(body, "LIST");
+        wavAppendU32(body, 5); // odd, so the reader must honor the pad byte
+        const char* info = "INFOx";
+        body.insert(body.end(), info, info + 5);
+        body.push_back(0);
+    }
+
+    wavAppendTag(body, "data");
+    wavAppendU32(body, static_cast<std::uint32_t>(payload.size()));
+    body.insert(body.end(), payload.begin(), payload.end());
+
+    std::vector<std::uint8_t> file;
+    wavAppendTag(file, "RIFF");
+    wavAppendU32(file, static_cast<std::uint32_t>(body.size() + 4));
+    wavAppendTag(file, "WAVE");
+    file.insert(file.end(), body.begin(), body.end());
+    return file;
+}
+
+std::vector<std::uint8_t> pcm16Payload(const std::vector<std::int16_t>& samples)
+{
+    std::vector<std::uint8_t> bytes;
+    for (std::int16_t sample : samples) {
+        wavAppendU16(bytes, static_cast<std::uint16_t>(sample));
+    }
+    return bytes;
+}
+
+} // namespace
+
+SOL_TEST(wavImportsPcm16Stereo)
+{
+    const std::vector<std::int16_t> samples = {0, 1000, -1000, 32767, -32768, 5};
+    const std::vector<std::uint8_t> file = buildWav(1, 2, 44100, 16, pcm16Payload(samples));
+
+    assets::SoundData sound;
+    SOL_CHECK(cooker::importWav(file.data(), file.size(), sound));
+    SOL_CHECK(sound.sampleRate == 44100);
+    SOL_CHECK(sound.channelCount == 2);
+    SOL_CHECK(sound.frameCount() == 3); // six samples, two channels
+    SOL_CHECK(sound.samples == samples);
+}
+
+SOL_TEST(wavWalksPastUnknownChunks)
+{
+    const std::vector<std::int16_t> samples = {7, -7};
+    const std::vector<std::uint8_t> file = buildWav(1, 1, 22050, 16, pcm16Payload(samples), true);
+
+    assets::SoundData sound;
+    SOL_CHECK(cooker::importWav(file.data(), file.size(), sound));
+    SOL_CHECK(sound.sampleRate == 22050);
+    SOL_CHECK(sound.frameCount() == 2);
+    SOL_CHECK(sound.samples == samples);
+}
+
+SOL_TEST(wavNormalizesSampleWidthsToInt16)
+{
+    // 8-bit is unsigned with a midpoint of 128, so silence is 0x80.
+    const std::vector<std::uint8_t> eightBit = {128, 255, 0};
+    const std::vector<std::uint8_t> eightBitFile = buildWav(1, 1, 8000, 8, eightBit);
+    assets::SoundData fromEight;
+    SOL_CHECK(cooker::importWav(eightBitFile.data(), eightBitFile.size(), fromEight));
+    SOL_CHECK(fromEight.samples.size() == 3);
+    SOL_CHECK(fromEight.samples[0] == 0);
+    SOL_CHECK(fromEight.samples[1] == 32512);  // (255 - 128) << 8
+    SOL_CHECK(fromEight.samples[2] == -32768); // (0 - 128) << 8
+
+    // 32-bit float is normalized [-1, 1] and clamps rather than wrapping.
+    const float floats[] = {0.0f, 1.0f, -1.0f, 2.0f};
+    std::vector<std::uint8_t> floatPayload(sizeof(floats));
+    std::memcpy(floatPayload.data(), floats, sizeof(floats));
+    const std::vector<std::uint8_t> floatFile = buildWav(3, 1, 48000, 32, floatPayload);
+    assets::SoundData fromFloat;
+    SOL_CHECK(cooker::importWav(floatFile.data(), floatFile.size(), fromFloat));
+    SOL_CHECK(fromFloat.samples.size() == 4);
+    SOL_CHECK(fromFloat.samples[0] == 0);
+    SOL_CHECK(fromFloat.samples[1] == 32767);
+    SOL_CHECK(fromFloat.samples[2] == -32767);
+    SOL_CHECK(fromFloat.samples[3] == 32767); // clamped, not wrapped
+}
+
+SOL_TEST(wavRejectsWhatItCannotPlay)
+{
+    const std::vector<std::uint8_t> payload = pcm16Payload({1, 2});
+    assets::SoundData sound;
+
+    std::vector<std::uint8_t> notRiff = buildWav(1, 1, 44100, 16, payload);
+    notRiff[0] = 'X';
+    SOL_CHECK(!cooker::importWav(notRiff.data(), notRiff.size(), sound));
+
+    // A compressed format (ADPCM) is refused rather than read as PCM.
+    const std::vector<std::uint8_t> adpcm = buildWav(2, 1, 44100, 16, payload);
+    SOL_CHECK(!cooker::importWav(adpcm.data(), adpcm.size(), sound));
+
+    // More channels than the mixer has a policy for.
+    const std::vector<std::uint8_t> surround = buildWav(1, 6, 44100, 16, payload);
+    SOL_CHECK(!cooker::importWav(surround.data(), surround.size(), sound));
+
+    // A chunk header claiming more bytes than the file holds.
+    std::vector<std::uint8_t> truncated = buildWav(1, 1, 44100, 16, payload);
+    truncated.resize(truncated.size() - 2);
+    SOL_CHECK(!cooker::importWav(truncated.data(), truncated.size(), sound));
+
+    // fmt but no data.
+    std::vector<std::uint8_t> headerOnly = buildWav(1, 1, 44100, 16, {});
+    headerOnly.resize(20 + 16); // RIFF/WAVE + the fmt chunk, nothing after
+    SOL_CHECK(!cooker::importWav(headerOnly.data(), headerOnly.size(), sound));
+}
+
+SOL_TEST(oggRejectsGarbageWithoutCrashing)
+{
+    assets::SoundData sound;
+    const std::uint8_t notOgg[] = {'n', 'o', 't', ' ', 'a', 'n', ' ', 'o', 'g', 'g'};
+    SOL_CHECK(!cooker::importOgg(notOgg, sizeof(notOgg), sound));
+    SOL_CHECK(!cooker::importOgg(notOgg, 0, sound));
+
+    // A valid capture pattern with nothing behind it: the decoder must fail
+    // rather than read past the buffer.
+    const std::uint8_t oggHeaderOnly[] = {'O', 'g', 'g', 'S', 0, 2, 0, 0};
+    SOL_CHECK(!cooker::importOgg(oggHeaderOnly, sizeof(oggHeaderOnly), sound));
+}
+
+SOL_TEST(soundRoundTripsThroughTheCookedFormat)
+{
+    assets::SoundData source;
+    source.sampleRate = 44100;
+    source.channelCount = 1;
+    source.samples = {0, 128, -128, 32767, -32768};
+
+    const std::vector<std::uint8_t> encoded = cooker::encodeSound(source);
+    SOL_CHECK(encoded.size() ==
+              sizeof(assets::SoundFileHeader) + source.samples.size() * sizeof(std::int16_t));
+
+    const std::string path = std::string(platform::executableDirectory()) + "test_roundtrip.saud";
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), encoded.data(), encoded.size()));
+
+    assets::SoundData loaded;
+    SOL_CHECK(assets::loadSound(path.c_str(), loaded));
+    SOL_CHECK(loaded.sampleRate == source.sampleRate);
+    SOL_CHECK(loaded.channelCount == source.channelCount);
+    SOL_CHECK(loaded.frameCount() == 5);
+    SOL_CHECK(loaded.samples == source.samples);
+
+    // A truncated payload is a size mismatch, not a short read.
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), encoded.data(), encoded.size() - 2));
+    assets::SoundData shortLoad;
+    SOL_CHECK(!assets::loadSound(path.c_str(), shortLoad));
 
     std::remove(path.c_str());
 }

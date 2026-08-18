@@ -21,8 +21,22 @@ struct TextureData
     std::vector<std::vector<std::uint8_t>> mips; // mip 0 first
 };
 
+struct SoundData
+{
+    std::uint32_t sampleRate = 0;
+    std::uint32_t channelCount = 1;
+    std::vector<std::int16_t> samples; // interleaved; size == frames * channels
+
+    [[nodiscard]] std::uint32_t frameCount() const
+    {
+        return channelCount == 0 ? 0
+                                 : static_cast<std::uint32_t>(samples.size()) / channelCount;
+    }
+};
+
 // Synchronous cooked-asset loading (async lands with the job system, Phase 3).
 [[nodiscard]] bool loadMesh(const char* path, MeshData& out);
 [[nodiscard]] bool loadTexture(const char* path, TextureData& out);
+[[nodiscard]] bool loadSound(const char* path, SoundData& out);
 
 } // namespace sol::assets

@@ -78,4 +78,41 @@ bool loadTexture(const char* path, TextureData& out)
     return offset == bytes.size();
 }
 
+bool loadSound(const char* path, SoundData& out)
+{
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(path, bytes)) {
+        SOL_LOG_ERROR("Failed to read sound: %s", path);
+        return false;
+    }
+
+    SoundFileHeader header = {};
+    if (bytes.size() < sizeof(header)) {
+        return false;
+    }
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    if (header.magic != kSoundMagic || header.version != kFormatVersion ||
+        header.codec != SoundCodec::Pcm16 || header.sampleRate == 0 || header.channelCount == 0 ||
+        header.channelCount > 2) {
+        SOL_LOG_ERROR("Bad sound header: %s", path);
+        return false;
+    }
+
+    const std::size_t sampleCount =
+        static_cast<std::size_t>(header.frameCount) * header.channelCount;
+    if (bytes.size() != sizeof(header) + sampleCount * sizeof(std::int16_t)) {
+        SOL_LOG_ERROR("Sound size mismatch: %s", path);
+        return false;
+    }
+
+    out.sampleRate = header.sampleRate;
+    out.channelCount = header.channelCount;
+    out.samples.resize(sampleCount);
+    if (sampleCount > 0) {
+        std::memcpy(out.samples.data(), bytes.data() + sizeof(header),
+                    sampleCount * sizeof(std::int16_t));
+    }
+    return true;
+}
+
 } // namespace sol::assets

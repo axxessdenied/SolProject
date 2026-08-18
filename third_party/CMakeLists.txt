@@ -53,3 +53,12 @@ add_library(imgui STATIC
 )
 target_include_directories(imgui PUBLIC imgui imgui/backends)
 target_link_libraries(imgui PUBLIC Vulkan::Vulkan)
+
+# stb_vorbis v1.22 (nothings.org/stb, public domain). Ogg Vorbis decode for
+# the COOKER ONLY - see docs/decisions/009-audio-decoder.md and the AGENTS.md
+# section 5 table. The shipping binary carries no decoder: .ogg and .wav both
+# cook to PCM in .saud. Nothing above sol::assets may link this.
+add_library(stb_vorbis STATIC
+    stb_vorbis/stb_vorbis.c
+)
+target_include_directories(stb_vorbis PUBLIC stb_vorbis)
