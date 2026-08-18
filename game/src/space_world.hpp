@@ -394,6 +394,10 @@ public:
     // Distance to the nearest gate, or a negative value with no gates.
     [[nodiscard]] double nearestGateDistance() const;
 
+    // The nearest gate itself, or nullptr with no gates — so the HUD can name
+    // where it leads rather than only how far off it is.
+    [[nodiscard]] const GateInstance* nearestGate() const;
+
     // Jumps via this system's gate to the named destination system,
     // regardless of distance, and ARRIVES IMMEDIATELY — a dev teleport, not a
     // jump. Phase 8v deliberately left this instant while making sol.jump()
@@ -1153,6 +1157,9 @@ private:
     // Clearance countdown, comms fade, and the arrival test that turns flying
     // into a berth into being docked (Phase 8r).
     void tickDocking(double dt);
+    // Arms a jump when the player's path this tick crossed a gate's frame
+    // (Phase 8v). The sibling of tickDocking's berth arrival test.
+    void tickGateCrossing();
     // Everything that happens when the ship is inside the station, whichever
     // way it got there: the pad, the mission notify, the market snapshot and
     // the dock event. `berth` is kNoIndex for the shortcut and respawn paths.

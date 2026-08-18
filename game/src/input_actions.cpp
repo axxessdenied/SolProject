@@ -69,8 +69,6 @@ const ActionInfo kActions[] = {
      InputChord::ofKey(Key::H)},
     {Action::Autopilot, ActionGroup::Targeting, "autopilot", "Autopilot",
      InputChord::ofKey(Key::F)},
-    {Action::Jump, ActionGroup::Targeting, "jump", "Jump Through Gate",
-     InputChord::ofKey(Key::J)},
     {Action::DockSalvage, ActionGroup::Targeting, "dock_salvage", "Dock / Salvage",
      InputChord::ofKey(Key::G)},
     {Action::ScanPulse, ActionGroup::Targeting, "scan_pulse", "Scan Pulse",

@@ -43,7 +43,11 @@ enum class Action : std::uint32_t
     SelectObjective,
     NearestHostile,
     Autopilot,
-    Jump,
+    // Phase 8v removed Jump: you fly THROUGH a gate now, so there is no key to
+    // press. It is gone rather than left in the Controls screen doing nothing,
+    // for the reason game_ui.cpp already gives about "[J] JUMP" — a listed
+    // binding that does nothing is a confident lie. An old settings.toml still
+    // carrying `jump = "J"` logs one "unknown action - ignored" and is fine.
     DockSalvage,
     ScanPulse,
     Bookmark,

@@ -163,6 +163,11 @@ struct FlightHud
     // Universe context (Phase 7): current system, and jump/dock prompts
     // while the ship is within activation range.
     const char* systemName = "";
+    // The gate being approached (Phase 8v): where it leads and how far off it
+    // is, so the chip can say "GATE: QUEIS 4.2 km" instead of naming a key
+    // that no longer exists.
+    const char* gateDestination = "";
+    double gateDistanceMeters = -1.0;
     bool gateInRange = false;
     bool dockInRange = false;
     bool docked = false;
@@ -208,7 +213,8 @@ struct FlightHud
     // name of whatever chord currently drives each prompt; empty means the
     // action is unbound, and the chip then names the action alone rather than
     // instructing the player to press nothing.
-    const char* jumpKey = "";
+    // No jumpKey since Phase 8v: a gate is flown through, so its chip is an
+    // approach readout rather than a key legend.
     const char* interactKey = ""; // dock and salvage share it
     const char* scanKey = "";
     const char* hailKey = ""; // Phase 8s: talking to a ship is its own verb

@@ -5,11 +5,19 @@
 using sol::sim::JumpPhase;
 using sol::sim::JumpTransition;
 using sol::sim::JumpTransitionParams;
+using sol::sim::kGateCaptureRadius;
 using sol::sim::kJumpArriveSeconds;
 using sol::sim::kJumpSkyPeak;
 using sol::sim::kJumpTunnelSeconds;
 
 namespace {
+
+// What the game puts at a gate, restated here so the test fails if either side
+// moves. A gate is a Cube model (modelBaseRadius 1.0) drawn at RenderShape
+// scale 70, and collision radius is base * scale.x — so the gate is a SOLID
+// 70 m sphere. The player's hull is the Ship model at base 8.0, scale 1.
+constexpr double kGateFrameRadius = 70.0;
+constexpr double kPlayerHullRadius = 8.0;
 
 // Runs a whole transition in `step`-sized advances, consuming the swap the way
 // the game does, and reports how many times it was offered. The count is the
@@ -194,6 +202,23 @@ SOL_TEST(jump_transition_warp_and_sky_stay_in_range_and_peak_at_the_swap)
     SOL_CHECK(!full.warpLeftRange);
     SOL_CHECK(full.maxWarp > 0.9);  // it does reach full stretch
     SOL_CHECK(full.minWarp < 0.15); // and it does come back
+}
+
+SOL_TEST(jump_transition_capture_sphere_clears_the_gate_the_ship_bounces_off)
+{
+    // The load-bearing assertion of the trigger, and the one the first drive
+    // had to teach. A gate is solid: the ship stops dead at frame + hull and
+    // cannot be pushed a metre closer, so a capture radius at or inside that
+    // distance describes a place the player can never be, and the jump would
+    // simply never fire. Measured live before this constant moved: the ship
+    // parked at exactly 78 m and six seconds of full thrust did not shift it.
+    constexpr double kContactDistance = kGateFrameRadius + kPlayerHullRadius;
+    SOL_CHECK(kContactDistance == 78.0);
+    SOL_CHECK(kGateCaptureRadius > kContactDistance);
+
+    // And with real daylight rather than by a hair, so a bigger hull than the
+    // starting shuttle still triggers it instead of wedging against the frame.
+    SOL_CHECK(kGateCaptureRadius - kContactDistance >= 25.0);
 }
 
 SOL_TEST(jump_transition_zero_length_params_swap_immediately_rather_than_divide)

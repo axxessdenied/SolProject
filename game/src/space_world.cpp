@@ -2214,6 +2214,33 @@ bool SpaceWorld::jumpNearestGate(double activationRange)
     return true;
 }
 
+void SpaceWorld::tickGateCrossing()
+{
+    if (isDocked() || m_jump.active() || m_gates.empty()) {
+        return;
+    }
+    const Transform& transform = m_registry.storage<Transform>().get(playerEntityIndex());
+    for (const GateInstance& gate : m_gates) {
+        // Swept, not a point test: a ship under boost covers a good fraction of
+        // the capture sphere in one 60 Hz tick, and a point test would let it
+        // pass clean through. segmentHitsSphere reports t = 0 for a segment
+        // that starts inside, so sitting at the gate counts too.
+        //
+        // Captured OUTSIDE the frame, not at it — see kGateCaptureRadius. The
+        // gate is solid, so the ship can never reach its 70 m frame at all.
+        double t = 0.0;
+        if (!sim::segmentHitsSphere(transform.previousPosition, transform.position, gate.position,
+                                    sim::kGateCaptureRadius, t)) {
+            continue;
+        }
+        if (m_jump.begin(gate.toSystem)) {
+            SOL_LOG_INFO("jumping: %s -> %s", currentSystemName(),
+                         m_galaxy.systems[gate.toSystem].name.c_str());
+        }
+        return;
+    }
+}
+
 void SpaceWorld::advanceJumpTransition(double deltaSeconds)
 {
     if (!m_jump.active()) {
@@ -2885,14 +2912,30 @@ bool SpaceWorld::jumpToSystem(const char* destinationName)
 
 double SpaceWorld::nearestGateDistance() const
 {
-    if (m_gates.empty()) {
+    const GateInstance* gate = nearestGate();
+    if (gate == nullptr) {
         return -1.0;
     }
     const core::DVec3 playerPosition =
         m_registry.storage<Transform>().get(playerEntityIndex()).position;
-    double nearest = 1.0e30;
+    return length(gate->position - playerPosition);
+}
+
+const GateInstance* SpaceWorld::nearestGate() const
+{
+    if (m_gates.empty()) {
+        return nullptr;
+    }
+    const core::DVec3 playerPosition =
+        m_registry.storage<Transform>().get(playerEntityIndex()).position;
+    const GateInstance* nearest = nullptr;
+    double nearestDistance = 1.0e30;
     for (const GateInstance& gate : m_gates) {
-        nearest = std::min(nearest, length(gate.position - playerPosition));
+        const double distance = length(gate.position - playerPosition);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearest = &gate;
+        }
     }
     return nearest;
 }
@@ -3927,6 +3970,19 @@ double SpaceWorld::autopilotArrivalRange(const TargetInfo& target) const
     if (hasClearance() && m_targetIndex == berthTargetIndex()) {
         range = std::min(range, sim::kBerthCaptureRadius * 0.5);
     }
+    // And a gate is the third (Phase 8v) — but NOT for the same reason, and
+    // copying the berth's half-the-radius here was wrong in a way only flying
+    // it revealed. A berth is a place to park; a gate is a doorway to cross.
+    // steerTravel decelerates to a STOP at whatever range it is given, so any
+    // positive standoff has the ship braking as it reaches the frame: at half
+    // the radius it crept to 78 m and sat there at 0.1 m/s, eight metres short
+    // of a jump, with autopilot still dutifully engaged. Aiming at the centre
+    // is what makes the ship cross the 70 m shell while it still has speed, and
+    // the swept crossing test fires on the way in. Nothing deflects it on the
+    // way: gates are not in m_obstacles.
+    if (navTargetKind(m_targetIndex) == NavKind::Gate) {
+        range = 0.0;
+    }
     return range;
 }
 
@@ -4623,6 +4679,11 @@ void SpaceWorld::tick(double dt)
         tickDocking(dt);
         profiler.endZone(zone);
     }
+
+    // Flying through a gate is what jumps you (Phase 8v). Safe to run mid-tick
+    // because it only ARMS the transition — the loadSystem it eventually
+    // causes happens from the frame loop, in advanceJumpTransition.
+    tickGateCrossing();
 
     // Deferred death respawn into the last-dock system (see member comment).
     if (m_pendingRespawnSystem != kNoIndex) {

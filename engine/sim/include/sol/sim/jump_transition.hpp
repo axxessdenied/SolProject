@@ -35,6 +35,24 @@ inline constexpr double kJumpArriveSeconds = 0.9;
 // brightness stays a single fact defined in one place.
 inline constexpr double kJumpSkyPeak = 3.0;
 
+// ⚑ How close you have to get to a gate for it to take you — and the one
+// number in this item that flying it had to correct.
+//
+// The obvious choice is the gate's own drawn frame, kGateRadiusMeters = 70 m.
+// That is exactly wrong, because the gate is SOLID: it is a Cube model of base
+// radius 1 at scale 70, so it carries a 70 m collision sphere, and the player's
+// hull is another 8 m. The ship physically stops at 78 m and cannot be moved a
+// metre closer — six seconds of full manual thrust does nothing. Capturing at
+// the frame radius means capturing inside the one volume the ship is excluded
+// from, so the jump could never fire.
+//
+// 110 m therefore sits comfortably outside the 78 m contact distance, with
+// 32 m of daylight, and jump_transition_tests asserts that margin rather than
+// trusting this comment. It is the same rule Phase 8r's berths landed on
+// (capture must not overlap the sphere the ship is pushed out of), arrived at
+// from the opposite direction.
+inline constexpr double kGateCaptureRadius = 110.0;
+
 enum class JumpPhase
 {
     Idle,

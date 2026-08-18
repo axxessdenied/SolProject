@@ -510,7 +510,10 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
     // rebind that left "[J] JUMP" on screen would be telling the player to
     // press a key that no longer does anything. An unbound action drops the
     // bracket entirely rather than instructing them to press nothing.
-    char jumpChip[40] = {};
+    // Wider than the others because it carries a system name plus a distance,
+    // and a faction-length name would overrun 40 (Phase 8u's lesson about
+    // writing a line to a budget it cannot grow).
+    char jumpChip[64] = {};
     char dockChip[40] = {};
     char salvageChip[40] = {};
     const auto chip = [](char* buffer, std::size_t size, const char* key, const char* verb) {
@@ -520,7 +523,16 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
             std::snprintf(buffer, size, "%s (unbound)", verb);
         }
     };
-    chip(jumpChip, sizeof(jumpChip), hud.jumpKey, "JUMP");
+    // Since Phase 8v a gate has no key: you fly through it. So this chip stops
+    // being an instruction and becomes an approach readout — where the gate
+    // goes and how far off it still is.
+    if (hud.gateDistanceMeters >= 1000.0) {
+        std::snprintf(jumpChip, sizeof(jumpChip), "GATE: %s  %.1f km", hud.gateDestination,
+                      hud.gateDistanceMeters / 1000.0);
+    } else {
+        std::snprintf(jumpChip, sizeof(jumpChip), "GATE: %s  %.0f m", hud.gateDestination,
+                      hud.gateDistanceMeters < 0.0 ? 0.0 : hud.gateDistanceMeters);
+    }
     // Since Phase 8r the interact key hails rather than docks, and once you
     // are cleared it cancels — so the verb has to follow the state or the chip
     // is the same confident lie the hardcoded "[J] JUMP" was before 8k.

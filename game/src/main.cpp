@@ -580,14 +580,9 @@ int main(int argc, char** argv)
             }
         }
 
-        // Jump through the nearest in-range gate (decisions/004 gate travel).
-        // Since Phase 8v this only STARTS the jump; the arrival is logged by
-        // the transition when it swaps, partway through the tunnel.
-        if (gameplayPressed(game::Action::Jump)) {
-            if (!world.jumpNearestGate(kGateActivationRange)) {
-                SOL_LOG_INFO("No gate within %.0f km", kGateActivationRange / 1000.0);
-            }
-        }
+        // Gate travel has no key since Phase 8v (decisions/004 still governs
+        // what a gate IS): you fly through the frame, SpaceWorld::tickGateCrossing
+        // catches the crossing, and the arrival is logged when the tunnel swaps.
 
         // Autopilot to the selected target (toggles; manual input cancels).
         if (gameplayPressed(game::Action::Autopilot)) {
@@ -985,6 +980,15 @@ int main(int argc, char** argv)
         hud.systemName = world.currentSystemName();
         const double gateDistance = world.nearestGateDistance();
         hud.gateInRange = gateDistance >= 0.0 && gateDistance <= kGateActivationRange;
+        hud.gateDistanceMeters = gateDistance;
+        // kGateActivationRange stopped being an activation range in Phase 8v —
+        // nothing activates at 10 km any more. It is now the range at which the
+        // approach readout appears, which is the meaning gateInRange already had.
+        if (const game::GateInstance* gate = world.nearestGate(); gate != nullptr) {
+            hud.gateDestination = world.galaxy().systems[gate->toSystem].name.c_str();
+        } else {
+            hud.gateDestination = "";
+        }
         hud.jumping = jumping;
         hud.docked = world.isDocked();
         hud.dockedStationName = world.dockedStationName();
@@ -1043,7 +1047,6 @@ int main(int argc, char** argv)
             salvageDistance >= 0.0 && salvageDistance <= game::SpaceWorld::kSalvageRange;
         // Prompt keys (Phase 8k). These used to be string literals in the HUD,
         // which a rebind turned into a confident lie.
-        hud.jumpKey = game::boundChordName(binds, game::Action::Jump);
         hud.interactKey = game::boundChordName(binds, game::Action::DockSalvage);
         hud.scanKey = game::boundChordName(binds, game::Action::ScanPulse);
         hud.hailKey = game::boundChordName(binds, game::Action::HailTarget);
