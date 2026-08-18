@@ -19,7 +19,9 @@ using sol::sim::GateSpec;
 using sol::sim::StationSpec;
 using sol::sim::SystemSpec;
 using sol::sim::TradeResult;
+using sol::sim::TraderLeg;
 using sol::sim::TraderPhase;
+using sol::sim::TraderRoute;
 
 namespace {
 
@@ -40,6 +42,22 @@ Galaxy tinyGalaxy()
     b.gates[0] = {.toSystem = 0, .position = {}};
     galaxy.systems = {a, b};
     galaxy.links = {{0, 1}};
+    return galaxy;
+}
+
+// One system, two stations, no gates: every haul a trader can find here is
+// station-to-station, which is the hopless case the leg decomposition has to
+// handle without inventing a gate stretch.
+Galaxy soloGalaxy()
+{
+    Galaxy galaxy;
+    galaxy.seed = 7;
+    SystemSpec a;
+    a.name = "A";
+    a.planets.push_back({.name = "A I", .position = {}, .radius = 1.0e6});
+    a.stations.push_back({.name = "A Alpha", .archetype = 0, .position = {}});
+    a.stations.push_back({.name = "A Beta", .archetype = 1, .position = {}});
+    galaxy.systems = {a};
     return galaxy;
 }
 
@@ -174,6 +192,143 @@ SOL_TEST(economy_save_load_round_trips_and_stays_deterministic)
     broken.initialize(galaxy, tinyParams(), 5);
     sol::core::BinaryReader truncated(bytes.subspan(0, 10));
     SOL_CHECK(!broken.load(truncated));
+}
+
+// --- Phase 8x: trader routes ---
+
+SOL_TEST(economy_trader_route_decomposes_a_haul)
+{
+    // The time model has quoted a haul as traderLegSeconds at each endpoint
+    // plus jumpSeconds a gate since Phase 7. This asserts the boundaries land
+    // exactly there and nowhere else, because that decomposition is the whole
+    // basis on which a coarse trader can be given a position at all.
+    const Galaxy galaxy = tinyGalaxy();
+    const EconomyParams params = tinyParams(); // 5 s legs, 5 s jumps
+    Economy economy;
+    economy.initialize(galaxy, params, 9);
+    SOL_REQUIRE(economy.traders().size() == 1);
+
+    // Parked: no leg, and the trader's origin is where it is standing.
+    SOL_CHECK(economy.route(0).leg == TraderLeg::None);
+    SOL_CHECK(economy.traders()[0].origin == economy.traders()[0].market);
+
+    int guard = 0;
+    while (economy.traders()[0].phase != TraderPhase::InTransit && guard++ < 400) {
+        economy.tick(galaxy, 1.0);
+    }
+    SOL_REQUIRE(economy.traders()[0].phase == TraderPhase::InTransit);
+
+    const TraderRoute start = economy.route(0);
+    SOL_CHECK(start.hops == 1); // one station per system, so the gate is forced
+    SOL_CHECK(start.fromMarket != start.toMarket);
+    SOL_CHECK(economy.traders()[0].legTotal == 15.0); // 5 out + 5 gate + 5 in
+    SOL_CHECK(start.leg == TraderLeg::Depart);
+    SOL_CHECK(start.progress == 0.0f);
+    SOL_CHECK(start.system == economy.markets()[start.fromMarket].systemIndex);
+
+    const std::uint32_t fromSystem = economy.markets()[start.fromMarket].systemIndex;
+    const std::uint32_t toSystem = economy.markets()[start.toMarket].systemIndex;
+    for (int elapsed = 1; elapsed <= 14; ++elapsed) {
+        economy.tick(galaxy, 1.0);
+        SOL_REQUIRE(economy.traders()[0].phase == TraderPhase::InTransit);
+        const TraderRoute route = economy.route(0);
+        SOL_CHECK(route.fromMarket == start.fromMarket);
+        SOL_CHECK(route.toMarket == start.toMarket);
+        if (elapsed < 5) {
+            SOL_CHECK(route.leg == TraderLeg::Depart);
+            SOL_CHECK(route.system == fromSystem);
+            SOL_CHECK(std::abs(route.progress - static_cast<float>(elapsed) / 5.0f) < 1.0e-5f);
+        } else if (elapsed < 10) {
+            // In the gate graph, so it is in no system — and that is the
+            // answer rather than a gap in one.
+            SOL_CHECK(route.leg == TraderLeg::Jump);
+            SOL_CHECK(route.system == sol::sim::kNoSystem);
+        } else {
+            SOL_CHECK(route.leg == TraderLeg::Arrive);
+            SOL_CHECK(route.system == toSystem);
+            SOL_CHECK(std::abs(route.progress - static_cast<float>(elapsed - 10) / 5.0f) <
+                      1.0e-5f);
+        }
+    }
+
+    // The fifteenth second lands it, and a landed trader reads as parked.
+    economy.tick(galaxy, 1.0);
+    SOL_REQUIRE(economy.traders()[0].phase == TraderPhase::Idle);
+    SOL_CHECK(economy.route(0).leg == TraderLeg::None);
+    SOL_CHECK(economy.route(0).system == toSystem);
+    SOL_CHECK(economy.traders()[0].origin == start.toMarket);
+    SOL_CHECK(economy.traders()[0].legTotal == 0.0);
+}
+
+SOL_TEST(economy_a_hopless_haul_never_leaves_its_system)
+{
+    // Two stations in one system: the arrive window opens exactly where the
+    // depart window closes, so there is no stretch of the trip the trader
+    // spends nowhere. A body drawn for this one exists for the whole haul.
+    const Galaxy galaxy = soloGalaxy();
+    Economy economy;
+    economy.initialize(galaxy, tinyParams(), 3);
+    SOL_REQUIRE(economy.markets().size() == 2);
+
+    bool sawDepart = false;
+    bool sawArrive = false;
+    for (int i = 0; i < 400; ++i) {
+        economy.tick(galaxy, 1.0);
+        const TraderRoute route = economy.route(0);
+        if (route.leg == TraderLeg::None) {
+            continue;
+        }
+        SOL_REQUIRE(route.leg != TraderLeg::Jump);
+        SOL_CHECK(route.hops == 0);
+        SOL_CHECK(economy.traders()[0].legTotal == 10.0); // 5 out + no gate + 5 in
+        SOL_CHECK(route.system == 0);
+        sawDepart = sawDepart || route.leg == TraderLeg::Depart;
+        sawArrive = sawArrive || route.leg == TraderLeg::Arrive;
+    }
+    SOL_CHECK(sawDepart);
+    SOL_CHECK(sawArrive);
+}
+
+SOL_TEST(economy_save_load_round_trips_a_route)
+{
+    // v12 added origin and legTotal, and they are what a body is placed from.
+    // A load that dropped them would put a trader back in the galaxy with no
+    // idea where it came from — which reads as a working save right up until
+    // something tries to draw it.
+    const Galaxy galaxy = tinyGalaxy();
+    Economy economy;
+    economy.initialize(galaxy, tinyParams(), 9);
+    int guard = 0;
+    while (economy.route(0).leg != TraderLeg::Jump && guard++ < 400) {
+        economy.tick(galaxy, 1.0);
+    }
+    SOL_REQUIRE(economy.route(0).leg == TraderLeg::Jump); // mid-haul, between systems
+
+    sol::core::BinaryWriter writer;
+    economy.save(writer);
+    Economy restored;
+    restored.initialize(galaxy, tinyParams(), 999); // wrong seed on purpose
+    const std::span<const std::byte> bytes(writer.data());
+    sol::core::BinaryReader reader(bytes);
+    SOL_REQUIRE(restored.load(reader));
+
+    const TraderRoute before = economy.route(0);
+    const TraderRoute after = restored.route(0);
+    SOL_CHECK(after.leg == before.leg);
+    SOL_CHECK(after.fromMarket == before.fromMarket);
+    SOL_CHECK(after.toMarket == before.toMarket);
+    SOL_CHECK(after.hops == before.hops);
+    SOL_CHECK(after.progress == before.progress);
+    SOL_CHECK(restored.traders()[0].origin == economy.traders()[0].origin);
+    SOL_CHECK(restored.traders()[0].legTotal == economy.traders()[0].legTotal);
+
+    // And it carries on from where it was rather than restarting the leg.
+    for (int i = 0; i < 4; ++i) {
+        economy.tick(galaxy, 1.0);
+        restored.tick(galaxy, 1.0);
+    }
+    SOL_CHECK(restored.route(0).leg == economy.route(0).leg);
+    SOL_CHECK(restored.route(0).progress == economy.route(0).progress);
 }
 
 // --- Phase 8g: feedstock gating, extraction, and the spread ---

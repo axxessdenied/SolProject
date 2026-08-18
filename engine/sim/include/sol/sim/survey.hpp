@@ -28,7 +28,8 @@
 
 namespace sol::sim {
 
-inline constexpr std::uint32_t kNoSystem = 0xffff'ffffu;
+// kNoSystem moved to universe.hpp when Phase 8x's trader routes wanted it
+// too; it is still sol::sim::kNoSystem and every user of it is unchanged.
 
 // Per-system knowledge ladder. Charted is what a gate tells you for free:
 // the destination has a name and a place on the map, and nothing else.

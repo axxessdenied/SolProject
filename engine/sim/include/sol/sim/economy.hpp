@@ -22,6 +22,7 @@
 namespace sol::sim {
 
 inline constexpr std::uint32_t kNoCommodity = 0xffff'ffffu;
+inline constexpr std::uint32_t kNoMarket = 0xffff'ffffu;
 
 struct EconomyCommodity
 {
@@ -126,10 +127,48 @@ enum class TraderPhase : std::uint8_t
 struct EconomyTrader
 {
     std::uint32_t market = 0; // current market (Idle) or destination (InTransit)
+    // Where this leg started (Phase 8x). Without it a trader knows where it is
+    // going and when it arrives but nothing about where it came from, so it
+    // cannot be placed anywhere. Equal to `market` while Idle, which is the
+    // honest reading: it is standing at the market it last arrived at.
+    std::uint32_t origin = 0;
     TraderPhase phase = TraderPhase::Idle;
     double travelRemaining = 0.0; // seconds, InTransit
+    // What travelRemaining started at. Progress along the haul is the pair of
+    // them, and the pair is what makes a position derivable at all.
+    double legTotal = 0.0;
     std::uint32_t commodity = 0;
     float cargo = 0.0f; // units aboard
+};
+
+// Which part of a haul a trader is flying (Phase 8x). This is not a new model:
+// traderLegSeconds is *"in-system travel per endpoint"* and jumpSeconds is per
+// gate transit, so the time a leg was quoted at has always decomposed into
+// depart -> jumps -> arrive. This reads that decomposition back out.
+//
+// Depart and Arrive are the in-system portions, and they are the only ones a
+// body can be drawn for. Jump is the gate graph, where the trader is nowhere
+// the player can be.
+enum class TraderLeg : std::uint8_t
+{
+    None = 0, // Idle: parked at a market
+    Depart,   // origin's system: station -> gate (-> destination, if hopless)
+    Jump,     // between systems: no position
+    Arrive,   // destination's system: gate -> station
+};
+
+struct TraderRoute
+{
+    TraderLeg leg = TraderLeg::None;
+    // Where a body would be. kNoSystem on Jump — and that is the answer, not a
+    // failure: a trader between gates is not in any system.
+    std::uint32_t system = kNoSystem;
+    std::uint32_t fromMarket = kNoMarket;
+    std::uint32_t toMarket = kNoMarket;
+    // Gates between the two endpoints. Zero means both markets are in one
+    // system, so the haul is station-to-station and never leaves it.
+    std::uint32_t hops = 0;
+    float progress = 0.0f; // 0..1 along this leg
 };
 
 struct TradeResult
@@ -153,9 +192,14 @@ public:
     [[nodiscard]] const std::vector<EconomyTrader>& traders() const { return m_traders; }
     [[nodiscard]] const EconomyParams& params() const { return m_params; }
 
-    // Market index for a station, or kNoFaction-style invalid on bad input.
+    // Market index for a station, or kNoMarket on bad input.
     [[nodiscard]] std::uint32_t marketFor(std::uint32_t systemIndex,
                                           std::uint32_t stationIndex) const;
+
+    // Where a coarse trader is along its haul (Phase 8x). Derived from the
+    // trader's own clock, so it costs nothing to ask and cannot disagree with
+    // the record — the trader stays the truth and this is a view of it.
+    [[nodiscard]] TraderRoute route(std::uint32_t traderIndex) const;
 
     // Mid price at current stock: the curve itself, and what a price display
     // or a "is this dear or cheap" comparison wants.
@@ -208,6 +252,11 @@ private:
     void refreshInbound();
     [[nodiscard]] float inbound(std::uint32_t market, std::uint32_t commodity) const;
     void traderThink(const Galaxy& galaxy, EconomyTrader& trader);
+    // The one place a trader leaves a market. Origin, destination and the
+    // leg's clock are three facts about one decision; a caller that set two of
+    // them would strand a trader in space with no idea where it came from.
+    void beginTransit(EconomyTrader& trader, std::uint32_t destination, std::uint8_t hops);
+    [[nodiscard]] std::uint8_t hopCount(std::uint32_t fromSystem, std::uint32_t toSystem) const;
     [[nodiscard]] float tickPrice(std::uint32_t market, std::uint32_t commodity) const;
 
     EconomyParams m_params;

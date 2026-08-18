@@ -33,6 +33,11 @@ enum class Region : std::uint8_t
 };
 
 inline constexpr std::uint32_t kNoFaction = 0xffff'ffffu; // lawless system
+// "No system at all", as opposed to system 0. Lives here rather than in the
+// first sibling that wanted it (survey.hpp, Phase 8e) because a second one
+// now does: Phase 8x asks where a coarse trader is, and a trader between
+// gates is honestly nowhere.
+inline constexpr std::uint32_t kNoSystem = 0xffff'ffffu;
 
 // How often one station archetype appears per region; the game supplies one
 // rule per station def, and specs refer back to it by index.

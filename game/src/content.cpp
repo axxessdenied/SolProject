@@ -510,6 +510,63 @@ std::string traderStats(GameContent& content)
     return std::to_string(idle) + " idle, " + std::to_string(transit) + " in transit";
 }
 
+// The same fleet with its routes read back (Phase 8x): what every hauler is
+// doing, and every one of them that is in this system right now — which is
+// exactly the set that gets a body in stage 2. `sol.trader_stats` answers
+// whether the layer runs at all; this answers where.
+std::string traderRoutes(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::Economy& economy = world.economy();
+    const sol::sim::Galaxy& galaxy = world.galaxy();
+    const std::uint32_t here = world.currentSystemIndex();
+
+    const auto stationName = [&](std::uint32_t market) -> const char* {
+        if (market >= economy.markets().size()) {
+            return "?";
+        }
+        const sol::sim::StationMarket& row = economy.markets()[market];
+        return galaxy.systems[row.systemIndex].stations[row.stationIndex].name.c_str();
+    };
+
+    std::uint32_t byLeg[4] = {0, 0, 0, 0};
+    std::string lines;
+    char buffer[256];
+    for (std::uint32_t t = 0; t < economy.traders().size(); ++t) {
+        const sol::sim::TraderRoute route = economy.route(t);
+        byLeg[static_cast<std::size_t>(route.leg)] += 1;
+        if (route.system != here) {
+            continue; // elsewhere, or between gates and nowhere at all
+        }
+        const sol::sim::EconomyTrader& trader = economy.traders()[t];
+        // `commodity` is whatever it last hauled and stays set when the hold
+        // is empty, so a deadheading trader would otherwise be reported
+        // carrying a cargo it does not have.
+        char hold[48];
+        if (trader.cargo > 0.0f && trader.commodity < world.commodityIds().size()) {
+            std::snprintf(hold, sizeof(hold), "%s %.0fu",
+                          world.commodityIds()[trader.commodity].c_str(),
+                          static_cast<double>(trader.cargo));
+        } else {
+            std::snprintf(hold, sizeof(hold), "empty");
+        }
+        if (route.leg == sol::sim::TraderLeg::None) {
+            std::snprintf(buffer, sizeof(buffer), "#%u idle at %s (%s)", t,
+                          stationName(route.toMarket), hold);
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "#%u %s  %s -> %s  %s %.0f%% (%u hop)", t,
+                          hold, stationName(route.fromMarket), stationName(route.toMarket),
+                          route.leg == sol::sim::TraderLeg::Depart ? "departing" : "arriving",
+                          static_cast<double>(route.progress) * 100.0, route.hops);
+        }
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    std::snprintf(buffer, sizeof(buffer),
+                  "%zu traders: %u idle, %u departing, %u jumping, %u arriving",
+                  economy.traders().size(), byLeg[0], byLeg[1], byLeg[2], byLeg[3]);
+    return (lines.empty() ? std::string("(none in this system)") : lines) + "\n" + buffer;
+}
+
 // --- Trading (works while docked; market = the docked station) ---
 
 std::string listCommodities(GameContent& content)
@@ -2349,6 +2406,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&jumpToSystem>("sol", "jump_to", this);
     m_vm.registerFunction<&targetShip>("sol", "target_ship", this);
     m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
+    m_vm.registerFunction<&traderRoutes>("sol", "traders", this);
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
     m_vm.registerFunction<&listModules>("sol", "modules", this);

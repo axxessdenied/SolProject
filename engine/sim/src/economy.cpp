@@ -85,6 +85,7 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
         for (std::uint32_t t = 0; t < m_params.traderCount; ++t) {
             EconomyTrader trader;
             trader.market = m_rng.range(static_cast<std::uint32_t>(m_markets.size()));
+            trader.origin = trader.market; // Idle: it is where it came from
             m_traders.push_back(trader);
         }
     }
@@ -102,6 +103,67 @@ std::uint32_t Economy::marketFor(std::uint32_t systemIndex, std::uint32_t statio
         return kInvalid;
     }
     return m_marketOffset[systemIndex] + stationIndex;
+}
+
+std::uint8_t Economy::hopCount(std::uint32_t fromSystem, std::uint32_t toSystem) const
+{
+    if (fromSystem >= m_systemCount || toSystem >= m_systemCount) {
+        return kUnreachable;
+    }
+    return m_hops[static_cast<std::size_t>(fromSystem) * m_systemCount + toSystem];
+}
+
+TraderRoute Economy::route(std::uint32_t traderIndex) const
+{
+    TraderRoute out;
+    if (traderIndex >= m_traders.size()) {
+        return out;
+    }
+    const EconomyTrader& trader = m_traders[traderIndex];
+    if (trader.origin >= m_markets.size() || trader.market >= m_markets.size()) {
+        return out;
+    }
+    const std::uint32_t fromSystem = m_markets[trader.origin].systemIndex;
+    const std::uint32_t toSystem = m_markets[trader.market].systemIndex;
+    out.fromMarket = trader.origin;
+    out.toMarket = trader.market;
+    const std::uint8_t hops = hopCount(fromSystem, toSystem);
+    out.hops = hops == kUnreachable ? 0u : hops;
+
+    if (trader.phase == TraderPhase::Idle) {
+        out.system = toSystem; // parked, and `origin == market` says so
+        return out;
+    }
+
+    // The clock, read back. Elapsed is clamped because a tick subtracts before
+    // it checks, so the last instant of a leg is momentarily past its end.
+    const double legSeconds = m_params.traderLegSeconds;
+    const double total = trader.legTotal;
+    const double elapsed = std::clamp(total - trader.travelRemaining, 0.0, std::max(total, 0.0));
+    if (legSeconds <= 0.0) {
+        // No in-system portion at all: the whole haul is gate transit, and
+        // there is nowhere to draw a body.
+        out.leg = TraderLeg::Jump;
+        return out;
+    }
+    if (elapsed < legSeconds) {
+        out.leg = TraderLeg::Depart;
+        out.system = fromSystem;
+        out.progress = static_cast<float>(elapsed / legSeconds);
+        return out;
+    }
+    // A hopless haul has no middle: the arrive window opens exactly where the
+    // depart window closes, so the trader never leaves the system.
+    const double arriveStart = total - legSeconds;
+    if (elapsed >= arriveStart) {
+        out.leg = TraderLeg::Arrive;
+        out.system = toSystem;
+        out.progress = static_cast<float>((elapsed - arriveStart) / legSeconds);
+        return out;
+    }
+    out.leg = TraderLeg::Jump; // system stays kNoSystem: it is between them
+    out.progress = static_cast<float>((elapsed - legSeconds) / (arriveStart - legSeconds));
+    return out;
 }
 
 float Economy::priceAtStock(std::uint32_t market, std::uint32_t commodity,
@@ -416,6 +478,11 @@ void Economy::step(const Galaxy& galaxy, double dt, FeedstockSource* source)
                 refreshMarketPrices(trader.market); // same reason as the buy side
                 trader.cargo = std::max(0.0f, trader.cargo - sold.units);
                 trader.phase = TraderPhase::Idle;
+                // Parked: the leg it just flew is over, so the clock reads
+                // zero and its origin is where it is standing.
+                trader.origin = trader.market;
+                trader.travelRemaining = 0.0;
+                trader.legTotal = 0.0;
             }
             break;
         }
@@ -452,11 +519,8 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
                 }
             }
             if (bestDestination != kInvalid) {
-                const std::uint8_t hops = hopRow[m_markets[bestDestination].systemIndex];
-                trader.market = bestDestination;
-                trader.phase = TraderPhase::InTransit;
-                trader.travelRemaining = m_params.traderLegSeconds * 2.0
-                                         + static_cast<double>(hops) * m_params.jumpSeconds;
+                beginTransit(trader, bestDestination,
+                             hopRow[m_markets[bestDestination].systemIndex]);
             }
             return; // laden either way: no room aboard for a new haul
         }
@@ -542,12 +606,8 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
         if (bestMarket == kInvalid || cheapest >= 1.0f) {
             return; // nowhere better; look again next tick
         }
-        const std::uint8_t hops = hopRow[m_markets[bestMarket].systemIndex];
         trader.cargo = 0.0f;
-        trader.market = bestMarket;
-        trader.phase = TraderPhase::InTransit;
-        trader.travelRemaining = m_params.traderLegSeconds * 2.0 +
-                                 static_cast<double>(hops) * m_params.jumpSeconds;
+        beginTransit(trader, bestMarket, hopRow[m_markets[bestMarket].systemIndex]);
         return;
     }
 
@@ -562,16 +622,23 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
     if (bought.units <= 0.0f) {
         return;
     }
-    const std::uint8_t hops = hopRow[m_markets[bestMarket].systemIndex];
     trader.commodity = bestCommodity;
     trader.cargo = bought.units;
-    trader.market = bestMarket;
     // Visible to every trader that thinks after this one, this same tick.
     m_inbound[static_cast<std::size_t>(bestMarket) * m_commodityCount + bestCommodity] +=
         bought.units;
+    beginTransit(trader, bestMarket, hopRow[m_markets[bestMarket].systemIndex]);
+}
+
+void Economy::beginTransit(EconomyTrader& trader, std::uint32_t destination, std::uint8_t hops)
+{
+    trader.origin = trader.market;
+    trader.market = destination;
     trader.phase = TraderPhase::InTransit;
-    trader.travelRemaining = m_params.traderLegSeconds * 2.0 +
-                             static_cast<double>(hops) * m_params.jumpSeconds;
+    // The quote a leg is flown against, and the number route() decomposes.
+    trader.legTotal = m_params.traderLegSeconds * 2.0 +
+                      static_cast<double>(hops) * m_params.jumpSeconds;
+    trader.travelRemaining = trader.legTotal;
 }
 
 void Economy::save(core::BinaryWriter& writer) const
@@ -585,8 +652,10 @@ void Economy::save(core::BinaryWriter& writer) const
     writer.write(static_cast<std::uint32_t>(m_traders.size()));
     for (const EconomyTrader& trader : m_traders) {
         writer.write(trader.market);
+        writer.write(trader.origin);   // v12: the route half of a trader
         writer.write(static_cast<std::uint8_t>(trader.phase));
         writer.write(trader.travelRemaining);
+        writer.write(trader.legTotal); // v12
         writer.write(trader.commodity);
         writer.write(trader.cargo);
     }
@@ -616,9 +685,14 @@ bool Economy::load(core::BinaryReader& reader)
     }
     for (EconomyTrader& trader : m_traders) {
         std::uint8_t phase = 0;
-        if (!reader.read(trader.market) || !reader.read(phase) ||
-            !reader.read(trader.travelRemaining) || !reader.read(trader.commodity) ||
+        if (!reader.read(trader.market) || !reader.read(trader.origin) ||
+            !reader.read(phase) || !reader.read(trader.travelRemaining) ||
+            !reader.read(trader.legTotal) || !reader.read(trader.commodity) ||
             !reader.read(trader.cargo) || trader.market >= m_markets.size() ||
+            // A route with an origin off the end of the market list would be a
+            // body drawn at a station that does not exist, so it is checked
+            // exactly as hard as the destination always has been.
+            trader.origin >= m_markets.size() || trader.legTotal < 0.0 ||
             phase > static_cast<std::uint8_t>(TraderPhase::InTransit)) {
             return false;
         }
