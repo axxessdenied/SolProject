@@ -284,6 +284,41 @@ bool denyDocking(GameContent& content, const char* message)
     return true;
 }
 
+// The pilot_hail hook's three builders (Phase 8s). All three refuse outside
+// the hook, the same way the docking pair above does, so a script cannot talk
+// itself into a free market report from on_tick. The guard is
+// SpaceWorld::answeringHail(), which the first answer closes — so "only inside
+// the hook" and "answer with exactly one" are one fact rather than two.
+bool hailReply(GameContent& content, const char* message)
+{
+    if (!content.world().answeringHail()) {
+        SOL_LOG_WARN("hail_reply: only valid inside pilot_hail");
+        return false;
+    }
+    return content.world().replyHail(message != nullptr ? message : "Nothing to report.");
+}
+
+bool hailTipMarket(GameContent& content, const char* message)
+{
+    if (!content.world().answeringHail()) {
+        SOL_LOG_WARN("hail_tip_market: only valid inside pilot_hail");
+        return false;
+    }
+    // The message is the sentiment only: C++ appends which market, because
+    // naming it is a claim about the galaxy rather than a turn of phrase.
+    return content.world().tipMarket(message != nullptr ? message : "Prices were good at");
+}
+
+bool hailTipPlace(GameContent& content, const char* message)
+{
+    if (!content.world().answeringHail()) {
+        SOL_LOG_WARN("hail_tip_place: only valid inside pilot_hail");
+        return false;
+    }
+    return content.world().tipPlace(message != nullptr ? message
+                                                       : "Saw something unclaimed out in");
+}
+
 bool undock(GameContent& content)
 {
     return content.world().undock();
@@ -1258,6 +1293,74 @@ bool selectTargetByName(GameContent& content, const char* namePart)
     return false;
 }
 
+// Pilot comms probes (Phase 8s), so a drive asserts the conversation rather
+// than photographing it — the rule 8q and 8r both ended up writing down.
+bool hailSelected(GameContent& content)
+{
+    return content.world().hailTarget();
+}
+
+// Select a ship contact by name, then hail it, so a drive does not have to
+// walk the contact cycle blind. Contacts live past the nav targets in one
+// index space, which is what selectTarget takes.
+bool hailByName(GameContent& content, const char* namePart)
+{
+    SpaceWorld& world = content.world();
+    const std::string_view want(namePart != nullptr ? namePart : "");
+    if (want.empty()) {
+        return false;
+    }
+    const std::size_t navCount = world.navTargets().size();
+    for (std::size_t slot = 0; slot < world.contactCount(); ++slot) {
+        if (world.contactInfo(slot).nav.name.find(want) == std::string::npos) {
+            continue;
+        }
+        if (!world.selectTarget(navCount + slot)) {
+            return false;
+        }
+        return world.hailTarget();
+    }
+    return false;
+}
+
+// What the player has been told: rumoured places and remembered prices, with
+// their ages. Both stores existed before this item — the tip writes what B and
+// sol.buy_intel already write — so this reads them back rather than a third.
+std::string listTips(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::SurveySim& survey = world.survey();
+    std::string lines;
+    std::uint32_t rumours = 0;
+    for (const sol::sim::Bookmark& bookmark : survey.bookmarks()) {
+        if (bookmark.label != sol::sim::kTipLabel) {
+            continue;
+        }
+        ++rumours;
+        char buffer[224];
+        std::snprintf(buffer, sizeof(buffer), "place %u: %s in %s", bookmark.id,
+                      bookmark.name.c_str(),
+                      world.galaxy().systems[bookmark.system].name.c_str());
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    for (const sol::sim::MarketMemory& memory : survey.marketMemory()) {
+        const sol::sim::StationMarket& record = world.economy().markets()[memory.market];
+        const sol::sim::SystemSpec& spec = world.galaxy().systems[record.systemIndex];
+        char buffer[224];
+        std::snprintf(buffer, sizeof(buffer), "price %u: %s, %s - %.0f s old%s", memory.market,
+                      record.stationIndex < spec.stations.size()
+                          ? spec.stations[record.stationIndex].name.c_str()
+                          : "?",
+                      spec.name.c_str(), world.worldSeconds() - memory.takenAt,
+                      survey.isStale(memory, world.worldSeconds()) ? " (stale)" : "");
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    char summary[128];
+    std::snprintf(summary, sizeof(summary), "%u rumour(s), %zu market(s) remembered, %zu pilot(s) hailed here",
+                  rumours, survey.marketMemory().size(), world.hailCount());
+    return lines.empty() ? std::string(summary) : lines + "\n" + summary;
+}
+
 bool orderRefine(GameContent& content, double units)
 {
     std::string error;
@@ -2060,6 +2163,16 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listBerths>("sol", "berths", this);
     m_vm.registerFunction<&grantDocking>("sol", "grant_docking", this);
     m_vm.registerFunction<&denyDocking>("sol", "deny_docking", this);
+    // Pilot comms (Phase 8s). sol.hail_reply / sol.hail_tip_market /
+    // sol.hail_tip_place are the pilot_hail hook's builders; sol.hail and
+    // sol.hail_target are the player's own action, and sol.tips reads back what
+    // the two stores this item writes into already hold.
+    m_vm.registerFunction<&hailSelected>("sol", "hail", this);
+    m_vm.registerFunction<&hailByName>("sol", "hail_target", this);
+    m_vm.registerFunction<&listTips>("sol", "tips", this);
+    m_vm.registerFunction<&hailReply>("sol", "hail_reply", this);
+    m_vm.registerFunction<&hailTipMarket>("sol", "hail_tip_market", this);
+    m_vm.registerFunction<&hailTipPlace>("sol", "hail_tip_place", this);
     // Mission objectives and threat selection (Phase 8i).
     m_vm.registerFunction<&describeObjective>("sol", "objective", this);
     m_vm.registerFunction<&targetNearestHostile>("sol", "target_hostile", this);
@@ -2180,6 +2293,10 @@ void GameContent::runBootScripts()
     m_hasDockRequestHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_dockRequestHookFailed = false;
+    lua_getglobal(state, "pilot_hail");
+    m_hasPilotHailHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_pilotHailHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -2412,6 +2529,39 @@ void GameContent::tick(double dt)
                                                 + ". Mind your approach.");
             }
         }
+    }
+
+    // Pilot comms (Phase 8s): the same drain one item later. C++ enumerates
+    // everything the pilot could know, Lua composes the words and picks which
+    // KIND of tip to offer, and C++ picks the fact itself — a tip is a claim
+    // about the galaxy, and a hook allowed to name the position could bookmark
+    // interstellar space.
+    SpaceWorld::HailRequest hail;
+    if (m_world->takeHailRequest(hail)) {
+        if (m_hasPilotHailHook && !m_pilotHailHookFailed) {
+            std::string error;
+            if (!m_vm.callGlobal("pilot_hail", &error, hail.name.c_str(), hail.role,
+                                 hail.factionName.c_str(), hail.attitude, hail.standing,
+                                 hail.hostile, hail.canTipMarket, hail.canTipPlace, hail.roll)) {
+                SOL_LOG_ERROR("pilot_hail disabled until scripts reload: %s", error.c_str());
+                m_pilotHailHookFailed = true;
+            }
+        }
+        // Still answering means the hook said nothing (or is not there), so the
+        // scriptless default takes its turn and the feature works with no
+        // scripts at all.
+        if (m_world->answeringHail()) {
+            if (hail.hostile) {
+                (void)m_world->replyHail("Say another word and I'll answer with guns.");
+            } else if (hail.canTipMarket && std::strcmp(hail.role, "trader") == 0) {
+                (void)m_world->tipMarket("Prices were worth the trip at");
+            } else if (hail.canTipPlace) {
+                (void)m_world->tipPlace("There's something out there nobody's picked over, in");
+            } else {
+                (void)m_world->replyHail("Nothing to report. Fly safe.");
+            }
+        }
+        m_world->finishHail();
     }
 
     // Exploration (Phase 8e): a resolved site already holds the scriptless

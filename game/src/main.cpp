@@ -612,6 +612,14 @@ int main(int argc, char** argv)
             }
         }
 
+        // Hail the selected ship (Phase 8s). Its own verb rather than a fifth
+        // rung on the ladder above: that key already means five things, and a
+        // ship selected while parked near a station is exactly the case where
+        // it would have to guess which one was meant.
+        if (gameplayPressed(game::Action::HailTarget)) {
+            (void)world.hailTarget(); // says why on the comms panel when it can't
+        }
+
         // Scan pulse: reveals contacts within the fitted scanner's range.
         if (gameplayPressed(game::Action::ScanPulse)) {
             if (world.pulseScan() < 0) {
@@ -996,6 +1004,17 @@ int main(int argc, char** argv)
         hud.jumpKey = game::boundChordName(binds, game::Action::Jump);
         hud.interactKey = game::boundChordName(binds, game::Action::DockSalvage);
         hud.scanKey = game::boundChordName(binds, game::Action::ScanPulse);
+        hud.hailKey = game::boundChordName(binds, game::Action::HailTarget);
+        // Phase 8s: the chip shows only when there is somebody to talk to, and
+        // "the selection is a ship" is the world's question rather than the
+        // HUD's - it has never known what a contact is.
+        if (world.targetIsContact()) {
+            const game::TargetInfo contact = world.currentTargetInfo();
+            hud.shipInHailRange =
+                contact.isShip
+                && length(contact.nav.position - world.shipState().position)
+                       <= game::SpaceWorld::kHailRange;
+        }
         const std::uint32_t nextHop = world.survey().nextHop();
         if (nextHop < world.galaxy().systems.size()) {
             routeHopName = world.galaxy().systems[nextHop].name;

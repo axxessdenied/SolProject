@@ -134,6 +134,12 @@ private:
     bool m_dockAnswered = false;
     bool m_hasDockRequestHook = false;
     bool m_dockRequestHookFailed = false;
+    // Pilot comms hook (Phase 8s). No station index to hold here: whether a
+    // hail is being answered is SpaceWorld::answeringHail(), which closes
+    // itself on the first answer, so the "exactly one reply" rule and the
+    // "only inside the hook" guard are the same fact rather than two.
+    bool m_hasPilotHailHook = false;
+    bool m_pilotHailHookFailed = false;
 };
 
 } // namespace game

@@ -38,6 +38,10 @@
 --   sol.clearance() / sol.berths(i) what you are cleared for / a station's ports
 --   sol.grant_docking(berth, msg) / sol.deny_docking(msg)   inside dock_request
 --   sol.dock()                      dev: dock at once, asking nobody
+--   sol.hail() / sol.hail_target(namePart)   talk to a ship (Phase 8s)
+--   sol.tips()                      rumours and remembered prices, with ages
+--   sol.hail_reply(msg) / sol.hail_tip_market(msg) / sol.hail_tip_place(msg)
+--                                   inside pilot_hail
 
 local announceInterval = 20.0 -- seconds; edit + save to see hot-reload
 local timer = 0.0
@@ -315,5 +319,63 @@ function dock_request(station, owner, standing, berths, hostile, roll)
         berth = 1 + math.floor(roll * berths) % berths
         sol.grant_docking(berth, string.format(
             "Cleared for berth %d. Mind your approach.", berth))
+    end
+end
+
+-- Pilot comms (Phase 8s). Somebody hailed on the open channel and this decides
+-- what they say back. Answer with exactly one of:
+--
+--   sol.hail_reply(message)        words only
+--   sol.hail_tip_market(message)   words, then C++ names a market and records
+--                                  its prices into what the player remembers
+--   sol.hail_tip_place(message)    words, then C++ names a system and drops a
+--                                  labelled bookmark on an unscanned site there
+--
+-- ⚑ THE MESSAGE IS THE SENTIMENT ONLY. C++ appends the place, and that split is
+-- deliberate: a berth was one of four interchangeable integers a script could
+-- not get meaningfully wrong, but a tip is a claim about the galaxy. So write a
+-- line that ENDS pointing at somewhere ("...worth the trip at") and let C++
+-- finish the sentence. `canMarket`/`canPlace` say whether that pilot has
+-- anything of each kind left; offering one anyway gets a shrug instead, because
+-- the words were written on the premise of a fact that turned out not to exist.
+--
+-- Say nothing and C++ falls back to its own rule. Keep every line short for the
+-- reason dock_request does: the panel clips, and the sender column is already
+-- spending a column on the name.
+function pilot_hail(name, role, faction, attitude, standing, hostile, canMarket, canPlace, roll)
+    if hostile then
+        sol.hail_reply("Wrong channel. Break off.")
+        return
+    end
+    if role == "trader" and canMarket then
+        -- A hauler's whole job is knowing where a cargo sells, so this is the
+        -- one thing they will tell a stranger for free.
+        if attitude == "friendly" then
+            sol.hail_tip_market("For you? Best book I've seen lately was")
+        else
+            sol.hail_tip_market("Prices were worth the run at")
+        end
+        return
+    end
+    if role == "patrol" and canPlace then
+        -- Patrols sweep and log; a neutral one is terse about it, a friendly
+        -- one tells you where they stopped looking.
+        sol.hail_tip_place("We logged an unswept return out in")
+        return
+    end
+    if canPlace and roll > 0.35 then
+        sol.hail_tip_place("Something out there nobody's claimed, over in")
+        return
+    end
+    if canMarket then
+        sol.hail_tip_market("Heard the numbers were moving at")
+        return
+    end
+    -- Nothing to give. A galaxy that always has one more tip is a galaxy where
+    -- a tip means nothing, so running dry is a real answer.
+    if attitude == "friendly" then
+        sol.hail_reply("Quiet out here lately. Watch yourself.")
+    else
+        sol.hail_reply("Nothing for you. Channel's clear.")
     end
 end

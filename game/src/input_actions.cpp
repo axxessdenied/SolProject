@@ -77,6 +77,13 @@ const ActionInfo kActions[] = {
      InputChord::ofKey(Key::R)},
     {Action::Bookmark, ActionGroup::Targeting, "bookmark", "Drop Bookmark",
      InputChord::ofKey(Key::B)},
+    // Phase 8s. Its own verb rather than a fifth rung on the interact key,
+    // which already means five things and would have to guess between a ship
+    // and a station when both are in range. Y because both mnemonic keys are
+    // gone - H is Nearest Hostile and C is Cycle Contact, both in this group -
+    // and Y is free in the same physical cluster as T and H.
+    {Action::HailTarget, ActionGroup::Targeting, "hail_target", "Hail Target",
+     InputChord::ofKey(Key::Y)},
 
     {Action::CycleCamera, ActionGroup::Views, "cycle_camera", "Cycle Camera",
      InputChord::ofKey(Key::V)},

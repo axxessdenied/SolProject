@@ -14,6 +14,7 @@
 #include "sol/sim/faction_sim.hpp"
 #include "sol/sim/flight.hpp"
 #include "sol/sim/mining.hpp"
+#include "sol/sim/pilot_tips.hpp"
 #include "sol/sim/missions.hpp"
 #include "sol/sim/power.hpp"
 #include "sol/sim/steering.hpp"
@@ -454,6 +455,58 @@ public:
     static constexpr double kCommsMessageSeconds = 8.0;
     void say(const std::string& from, const std::string& text);
     [[nodiscard]] std::span<const CommsMessage> comms() const { return m_comms; }
+
+    // --- Pilot comms (Phase 8s) ---
+    //
+    // Talking to another ship, on the channel 8r built general on purpose. The
+    // shape is requestDocking()'s, deliberately: the world queues a hail, and
+    // GameContent drains it, asks the pilot_hail hook and calls one of the
+    // three answers below. A drive that knows one knows the other.
+    //
+    // Same 20 km a station is hailed from, so the player learns one number.
+    static constexpr double kHailRange = kDockRequestRange;
+
+    // Everything a pilot could know about themselves and about the player,
+    // enumerated here so the hook composes words rather than deciding facts.
+    struct HailRequest
+    {
+        sol::ecs::Entity pilot;
+        std::string name;
+        std::string factionName; // empty for an unaffiliated console spawn
+        const char* role = "";
+        const char* attitude = ""; // "hostile"/"neutral"/"friendly"/"none"
+        double standing = 0.0;
+        bool hostile = false;
+        // Whether this pilot has anything of each kind left to say. The hook
+        // picks WHICH KIND of tip to offer; the engine picks which market or
+        // which site, because a tip is a claim about the galaxy and a script
+        // that could name the position could bookmark interstellar space.
+        bool canTipMarket = false;
+        bool canTipPlace = false;
+        double roll = 0.0; // 0..1, the hook's only entropy
+    };
+
+    // Hails the selected ship contact. False (with a comms line saying why)
+    // with nothing selected, a non-ship selected, or the ship out of range.
+    // A pilot who has already spoken repeats themselves verbatim rather than
+    // re-rolling, which is what stops a hail being a slot machine.
+    bool hailTarget();
+    // Pending hail for GameContent to answer. True once per request.
+    [[nodiscard]] bool takeHailRequest(HailRequest& out);
+    // The three answers, valid only while a hail is being answered. Each says
+    // the words and records them against the pilot; the two tip forms also
+    // write what the pilot knew into SurveySim, where the Trade tab and the
+    // maps already read it back.
+    [[nodiscard]] bool answeringHail() const { return !isNull(m_answeringHail.pilot); }
+    bool replyHail(const std::string& message);
+    bool tipMarket(const std::string& message);
+    bool tipPlace(const std::string& message);
+    // Closes the answering window. GameContent calls it after the hook has run
+    // and its own scriptless default has had a turn, so a hook that errors
+    // halfway cannot leave the builders callable from on_tick.
+    void finishHail();
+    // How many pilots have been hailed in this system (the console probe).
+    [[nodiscard]] std::size_t hailCount() const { return m_hails.size(); }
 
     // --- Trading (Phase 7 economy; player trades ride the same markets the
     // NPC agents move) ---
@@ -1169,6 +1222,22 @@ private:
     // says it once per approach rather than sixty times a second.
     double m_berthRefusalTimer = 0.0;
     std::vector<CommsMessage> m_comms;
+    // Pilot comms (Phase 8s). What a pilot has already said, so a second hail
+    // repeats them instead of re-rolling. Keyed by the whole Entity — index AND
+    // generation — because entity indices are reused when a ship dies, and a
+    // fresh pilot inheriting a dead one's words is exactly the ghost this table
+    // exists to prevent. Transient like the clearance: pilots do not survive a
+    // jump, so this is cleared wherever the ship list is.
+    struct HailMemory
+    {
+        sol::ecs::Entity pilot;
+        std::string from;
+        std::string text;
+    };
+    std::vector<HailMemory> m_hails;
+    HailRequest m_pendingHail;  // queued by hailTarget, drained by GameContent
+    HailMemory m_answeringHail; // who the three answers below are speaking as
+    std::uint32_t m_hailCount = 0; // so a re-hail of a NEW pilot can differ
     // Death respawn into another system defers to end-of-tick: loadSystem
     // mid-tick would invalidate the pass scratch (collision slots, pools).
     std::uint32_t m_pendingRespawnSystem = kNoIndex;

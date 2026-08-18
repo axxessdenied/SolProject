@@ -531,6 +531,8 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
     chip(dockChip, sizeof(dockChip), hud.interactKey,
          hud.cleared ? berthVerb : "REQUEST DOCKING");
     chip(salvageChip, sizeof(salvageChip), hud.interactKey, "SALVAGE");
+    char hailChip[48] = {};
+    chip(hailChip, sizeof(hailChip), hud.hailKey, "HAIL");
 
     const Prompt prompts[] = {
         {jumpChip, hud.gateInRange},
@@ -539,6 +541,9 @@ void drawPrompts(DrawList& list, const Font& font, const Styles& styles, Vec2 ce
         // before; only a hail beyond that band is new, so a wreck out here
         // still wins the prompt.
         {salvageChip, hud.salvageInRange && !hud.dockInRange && !hud.cleared},
+        // Phase 8s. Its own key, so it never competes with the three above for
+        // the interact binding - it only competes for the row's width.
+        {hailChip, hud.shipInHailRange},
     };
     constexpr float kChipHeight = 24.0f;
     constexpr float kChipGap = 8.0f;
@@ -881,8 +886,17 @@ void drawCommsPanel(DrawList& list, const Styles& styles, const Rect& panelArea,
         Color body = kTextDim;
         sender.a *= fade;
         body.a *= fade;
+        // The sender cell is a hard budget, not a suggestion. addTextInBox does
+        // not clip to its box - the same fact 8i recorded about ui.selectable
+        // and 8k about ui.label - so a name longer than the column runs
+        // straight through the message beside it. Station names fit; a pilot's
+        // does not, because it carries a faction ("Freighter (Solar Navy)"),
+        // and Phase 8s found this by hailing one. The column gives way, because
+        // the message is the content.
+        list.pushClip({{left, y}, {left + kSenderWidth, y + 20.0f}});
         list.addTextInBox(*styles.small, {{left, y}, {left + kSenderWidth, y + 20.0f}}, line.from,
                           sender);
+        list.popClip();
         list.addTextInBox(*styles.small, {{left + kSenderWidth + 6.0f, y}, {right, y + 20.0f}},
                           line.text, body);
         y += 20.0f;

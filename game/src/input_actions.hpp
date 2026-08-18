@@ -47,6 +47,7 @@ enum class Action : std::uint32_t
     DockSalvage,
     ScanPulse,
     Bookmark,
+    HailTarget,
 
     // Views & mouse.
     CycleCamera,

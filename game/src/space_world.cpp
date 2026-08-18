@@ -71,6 +71,31 @@ void hopsFrom(const sim::Galaxy& galaxy, std::uint32_t from, std::uint32_t maxHo
     }
 }
 
+// A ship's name as a radio callsign: "Freighter (Solar Navy)" -> "Freighter".
+// Target names carry their faction since Phase 8b, which is right on the target
+// readout and wrong in the comms panel's sender column - it is the SAME
+// repetition 8r had to strip from the docking lines, one item later. The
+// faction is still on screen: the target panel names it twice, an inch to the
+// right of whoever is talking.
+[[nodiscard]] std::string radioName(const std::string& shipName)
+{
+    const std::size_t open = shipName.find(" (");
+    return open == std::string::npos ? shipName : shipName.substr(0, open);
+}
+
+// What Lua calls a pilot's job. Shared by the pilot_think hook and Phase 8s's
+// pilot_hail, in one place so the two can never disagree about what a "trader"
+// is - a hook that branches on the string would break silently if they did.
+[[nodiscard]] const char* pilotRoleName(PilotRole role)
+{
+    switch (role) {
+    case PilotRole::Fighter: return "fighter";
+    case PilotRole::Trader: return "trader";
+    case PilotRole::Patrol: return "patrol";
+    }
+    return "fighter";
+}
+
 // Bounding-sphere radii per model at scale 1 (meters); collision radius =
 // base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
 constexpr double kCollisionRestitution = 0.15;
@@ -2073,6 +2098,12 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     m_clearance = DockClearance{};
     m_pendingDockRequest = kNoIndex;
     m_berthRefusalTimer = 0.0;
+    // Who you have talked to is about to stop existing (Phase 8s): every pilot
+    // in the table belongs to the system being left, and entity indices are
+    // reused, so keeping it would let a new pilot inherit a dead one's words.
+    m_hails.clear();
+    m_pendingHail = HailRequest{};
+    m_answeringHail = HailMemory{};
     m_autopilotActive = false; // the target list is about to change under it
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
     instantiateSystemEntities(spec);
@@ -2383,6 +2414,173 @@ void SpaceWorld::denyDocking(std::uint32_t station, const std::string& message)
     const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
     say(station < spec.stations.size() ? spec.stations[station].name : std::string("Comms"),
         message);
+}
+
+bool SpaceWorld::hailTarget()
+{
+    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    // The same wrap currentTargetInfo() applies, because a targeted ship can
+    // die out from under m_targetIndex and the hail must ask about whatever
+    // the HUD is currently showing rather than about a stale slot.
+    const std::size_t index = total > 0 ? m_targetIndex % total : 0;
+    if (total == 0 || index < m_targets.size()) {
+        say("Comms", "No ship selected to hail.");
+        return false;
+    }
+    const SpawnedShip& ship = m_spawnedShips[index - m_targets.size()];
+    const core::DVec3 position = m_registry.storage<Transform>().get(ship.entity.index).position;
+    const double distance = length(position - shipState().position);
+    if (distance > kHailRange) {
+        // Naming the ship is right here, unlike a station's own lines: the
+        // sender column says "Comms", so nothing repeats.
+        say("Comms", ship.name + " is out of comms range.");
+        return false;
+    }
+    // Already spoken to: they repeat themselves. This is what stops a hail
+    // being a slot machine you re-roll for a better tip.
+    for (const HailMemory& memory : m_hails) {
+        if (memory.pilot == ship.entity) {
+            say(memory.from, memory.text);
+            return true;
+        }
+    }
+    const ShipPilot* pilot = m_registry.tryGet<ShipPilot>(ship.entity);
+    if (pilot == nullptr) {
+        say("Comms", ship.name + " does not answer."); // an inert console spawn
+        return false;
+    }
+
+    m_pendingHail = HailRequest{};
+    m_pendingHail.pilot = ship.entity;
+    m_pendingHail.name = ship.name;
+    m_pendingHail.role = pilotRoleName(pilot->role);
+    if (pilot->factionIndex < m_factionTable.size()) {
+        m_pendingHail.factionName = m_factionTable[pilot->factionIndex].name;
+        m_pendingHail.attitude = playerAttitudeName(pilot->factionIndex);
+        m_pendingHail.standing = static_cast<double>(m_factionSim.standing(pilot->factionIndex));
+        m_pendingHail.hostile = m_factionSim.playerHostile(pilot->factionIndex);
+    } else {
+        // The pre-8b rule an unaffiliated console spawn already lives under:
+        // no faction means no reason to be friendly.
+        m_pendingHail.attitude = "none";
+        m_pendingHail.hostile = true;
+    }
+    // Whether there is anything of each kind left to say. The hook picks which
+    // KIND of tip to offer and how it sounds; the engine picks which market or
+    // which site, because a tip is a claim about the galaxy.
+    std::vector<std::uint8_t> hops;
+    hopsFrom(m_galaxy, m_currentSystem, kIntelJumpRadius, hops);
+    std::uint32_t market = 0;
+    m_pendingHail.canTipMarket = sim::chooseMarketTip(m_economy.markets(), hops, kIntelJumpRadius,
+                                                      m_survey, m_worldSeconds, &market);
+    std::vector<sim::SignalSpec> scratch;
+    sim::TipSite site;
+    m_pendingHail.canTipPlace =
+        sim::choosePlaceTip(m_galaxy, m_survey, hops, kIntelJumpRadius, scratch, &site);
+    // Seeded per (universe, system, pilot, how many hails you have made), so
+    // the answer is deterministic for a run while two pilots met in a row do
+    // not read off the same script.
+    core::Rng rng(m_universeSeed ^ (static_cast<std::uint64_t>(m_currentSystem) << 32u),
+                  (static_cast<std::uint64_t>(ship.entity.index) << 20u) | ++m_hailCount);
+    m_pendingHail.roll = static_cast<double>(rng.nextU32()) * 0x1.0p-32;
+    say("You", "Hailing " + ship.name + ".");
+    return true;
+}
+
+bool SpaceWorld::takeHailRequest(HailRequest& out)
+{
+    if (isNull(m_pendingHail.pilot)) {
+        return false;
+    }
+    out = m_pendingHail;
+    // The hook still gets the full name — it may want the faction to decide
+    // what to say. Only the panel's sender column takes the callsign.
+    m_answeringHail =
+        HailMemory{.pilot = m_pendingHail.pilot, .from = radioName(m_pendingHail.name)};
+    m_pendingHail = HailRequest{};
+    return true;
+}
+
+void SpaceWorld::finishHail()
+{
+    m_answeringHail = HailMemory{};
+}
+
+bool SpaceWorld::replyHail(const std::string& message)
+{
+    if (!answeringHail()) {
+        SOL_LOG_WARN("hail reply: only valid inside pilot_hail");
+        return false;
+    }
+    m_answeringHail.text = message;
+    say(m_answeringHail.from, message);
+    // Recorded so a second hail repeats it, and cleared so a hook that calls
+    // two builders only gets the first - the same "answer with exactly one"
+    // rule dock_request holds its dispatcher to.
+    m_hails.push_back(m_answeringHail);
+    m_answeringHail = HailMemory{};
+    return true;
+}
+
+bool SpaceWorld::tipMarket(const std::string& message)
+{
+    if (!answeringHail()) {
+        SOL_LOG_WARN("hail tip: only valid inside pilot_hail");
+        return false;
+    }
+    std::vector<std::uint8_t> hops;
+    hopsFrom(m_galaxy, m_currentSystem, kIntelJumpRadius, hops);
+    std::uint32_t market = 0;
+    if (!sim::chooseMarketTip(m_economy.markets(), hops, kIntelJumpRadius, m_survey,
+                              m_worldSeconds, &market)) {
+        // The hook was told canTipMarket was false and offered one anyway. Its
+        // words were written on the premise of a fact, so they are dropped
+        // rather than left pointing at nothing.
+        return replyHail("Nothing out here you don't already know.");
+    }
+    const sim::StationMarket& record = m_economy.markets()[market];
+    std::vector<float> prices(m_commodityIds.size(), 0.0f);
+    for (std::uint32_t c = 0; c < prices.size(); ++c) {
+        prices[c] = m_economy.price(market, c);
+    }
+    m_survey.recordMarket(market, prices, m_worldSeconds);
+    // Where it is, appended by C++ for the reason above: the hook writes the
+    // sentiment, the engine writes the fact. Kept terse because 8r's comms
+    // panel clips, and the sender column is already spending a column.
+    const sim::SystemSpec& spec = m_galaxy.systems[record.systemIndex];
+    const std::string where = record.stationIndex < spec.stations.size()
+                                  ? spec.stations[record.stationIndex].name + ", " + spec.name
+                                  : spec.name;
+    SOL_LOG_INFO("pilot tip: market %u (%s)", market, where.c_str());
+    return replyHail(message + " " + where + ".");
+}
+
+bool SpaceWorld::tipPlace(const std::string& message)
+{
+    if (!answeringHail()) {
+        SOL_LOG_WARN("hail tip: only valid inside pilot_hail");
+        return false;
+    }
+    std::vector<std::uint8_t> hops;
+    hopsFrom(m_galaxy, m_currentSystem, kIntelJumpRadius, hops);
+    std::vector<sim::SignalSpec> scratch;
+    sim::TipSite site;
+    if (!sim::choosePlaceTip(m_galaxy, m_survey, hops, kIntelJumpRadius, scratch, &site)) {
+        return replyHail("Nothing out here worth your time.");
+    }
+    // A short name on purpose: it lands in the nav cycle and the map's name
+    // column, which 8i established does not clip. Who said it rides on the
+    // comms line instead, where there is room for it.
+    if (m_survey.addBookmark(site.system, site.position, "Rumour", sim::kTipLabel, m_worldSeconds)
+        == 0) {
+        return replyHail("You've got nowhere left to write that down."); // at the cap
+    }
+    if (site.system == m_currentSystem) {
+        rebuildDynamicTargets(); // the radar blip, nav slot and marker, at once
+    }
+    const std::string where = m_galaxy.systems[site.system].name;
+    SOL_LOG_INFO("pilot tip: site %u in %s", site.signal, where.c_str());
+    return replyHail(message + " " + where + ".");
 }
 
 std::size_t SpaceWorld::berthTargetIndex() const
@@ -3527,7 +3725,6 @@ double SpaceWorld::shipHullFraction(ecs::Entity entity) const
 
 void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
 {
-    static constexpr const char* kRoleNames[] = {"fighter", "trader", "patrol"};
     static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee"};
     constexpr float kThinkInterval = 0.5f; // 2 Hz strategy; steering runs at 60
 
@@ -3544,7 +3741,7 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
                                    : "none";
         out.push_back({
             .entity = m_registry.entityFromIndex(pilots.entityIndices()[i]),
-            .role = kRoleNames[static_cast<std::uint32_t>(pilot.role) % 3],
+            .role = pilotRoleName(pilot.role),
             .state = kStateNames[static_cast<std::uint32_t>(pilot.state) % 4],
             .attitude = attitude,
         });
@@ -4695,6 +4892,12 @@ bool SpaceWorld::loadFrom(const char* path)
     m_pendingDockRequest = kNoIndex;
     m_berthRefusalTimer = 0.0;
     m_comms.clear();
+    // And who had been hailed (Phase 8s), for exactly the reason above: these
+    // are pilots from the run being replaced. loadSave does NOT go through
+    // loadSystem, so resetting it there is not resetting it here.
+    m_hails.clear();
+    m_pendingHail = HailRequest{};
+    m_answeringHail = HailMemory{};
     m_pendingRespawnSystem = kNoIndex;
     // A scan in flight does not survive a load, and neither does an autopilot
     // leg: the target list is rebuilt below, so an engaged autopilot would

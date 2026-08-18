@@ -206,6 +206,7 @@ struct FlightHud
     const char* jumpKey = "";
     const char* interactKey = ""; // dock and salvage share it
     const char* scanKey = "";
+    const char* hailKey = ""; // Phase 8s: talking to a ship is its own verb
 
     // Comms (Phase 8r): the last few things said to the player, newest last.
     // Built for docking clearance but deliberately not named after it — the
@@ -219,6 +220,10 @@ struct FlightHud
     int clearedBerth = 0; // 1-based, for display
     double clearedBerthDistanceMeters = 0.0;
     bool stationInHailRange = false;
+    // Phase 8s: a ship contact is selected and close enough to talk to. The
+    // fill answers it, because "is the selection a ship" is the world's
+    // question and the HUD has never known what a contact is.
+    bool shipInHailRange = false;
 
     // The cockpit (Phase 8m). `frame` says where the panels mount and how much
     // glass there is; the HUD reads nothing else about the view.
