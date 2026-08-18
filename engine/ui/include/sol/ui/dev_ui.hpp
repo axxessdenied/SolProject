@@ -36,6 +36,19 @@ struct OverlayStats
 class DevUi
 {
 public:
+    // How much of the perf overlay is on screen (Phase 8p). The console has
+    // had a visibility flag since it existed and the overlay never did,
+    // because until 8n's zone tree it was five short lines and nobody wanted
+    // one. Compact is a third state rather than a plain on/off because the
+    // complaint was *space*: hiding the window outright also costs the fps
+    // line, which is the one a glance is usually looking for.
+    enum class OverlayMode
+    {
+        Full,    // everything: stats, control crib, zone tree
+        Compact, // the fps/frame-time line alone
+        Hidden,  // no overlay window at all
+    };
+
     [[nodiscard]] bool initialize(platform::Window& window, rhi::Context& context,
                                   VkFormat colorFormat, VkFormat depthFormat,
                                   std::uint32_t swapchainImageCount);
@@ -69,6 +82,9 @@ private:
     bool m_initialized = false;
     bool m_frameOpen = false;
     bool m_showConsole = true;
+    // Full by default, so a cold boot looks exactly as it did before this
+    // existed and the 8n/8o drives that screenshot the zone tree still work.
+    OverlayMode m_overlayMode = OverlayMode::Full;
     VkDevice m_device = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
 

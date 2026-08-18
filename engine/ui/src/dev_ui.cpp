@@ -151,66 +151,79 @@ void DevUi::beginFrame(const OverlayStats& stats)
 
 void DevUi::buildWindows(const OverlayStats& stats)
 {
-    // Perf overlay: fixed top-left, transparent, no interaction.
-    ImGui::SetNextWindowPos({12.0f, 12.0f});
-    ImGui::SetNextWindowBgAlpha(0.55f);
-    const ImGuiWindowFlags overlayFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                                          ImGuiWindowFlags_AlwaysAutoResize |
-                                          ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-    if (ImGui::Begin("perf##overlay", nullptr, overlayFlags)) {
-        ImGui::Text("%.1f fps  (%.2f ms)", stats.fps, stats.frameMilliseconds);
-        ImGui::Text("cam  %.2f  %.2f  %.2f", stats.cameraPosition.x, stats.cameraPosition.y,
-                    stats.cameraPosition.z);
-        ImGui::Text("speed %.1f m/s   draws %u", stats.cameraSpeed, stats.drawCalls);
-        ImGui::Text("sim  tick %llu   entities %u   alpha %.2f",
-                    static_cast<unsigned long long>(stats.simTicks), stats.simEntities,
-                    stats.simAlpha);
-        // Gameplay controls are rebindable (Phase 8k), so this crib names the
-        // shipped layout rather than claiming to be the live one - the engine
-        // dev UI has no way to reach the game's binding table, and a hint that
-        // silently goes stale is the exact lie the HUD prompts stopped telling.
-        ImGui::TextDisabled("defaults: RMB steer, WASD thrust, Tab cruise, X assist, V cam, T target");
-        ImGui::TextDisabled("defaults: 1/2/3 pips WEP/ENG/SYS, 4 balance (rebind in Settings)");
-        ImGui::TextDisabled("F1 console, F3 debug draw, F5 shaders, F9/F10 save/load (fixed)");
+    // Perf overlay: fixed top-left, transparent, no interaction. Hidden skips
+    // Begin and End *together* (Phase 8p) - gating only the Begin would leave
+    // an unmatched End in a frame that otherwise looks perfectly healthy.
+    if (m_overlayMode != OverlayMode::Hidden) {
+        ImGui::SetNextWindowPos({12.0f, 12.0f});
+        ImGui::SetNextWindowBgAlpha(0.55f);
+        const ImGuiWindowFlags overlayFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                              ImGuiWindowFlags_AlwaysAutoResize |
+                                              ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+        if (ImGui::Begin("perf##overlay", nullptr, overlayFlags)) {
+            // The one line Compact keeps: it answers the space complaint
+            // without giving up the number a glance is usually after.
+            ImGui::Text("%.1f fps  (%.2f ms)", stats.fps, stats.frameMilliseconds);
+            if (m_overlayMode == OverlayMode::Full) {
+                ImGui::Text("cam  %.2f  %.2f  %.2f", stats.cameraPosition.x, stats.cameraPosition.y,
+                            stats.cameraPosition.z);
+                ImGui::Text("speed %.1f m/s   draws %u", stats.cameraSpeed, stats.drawCalls);
+                ImGui::Text("sim  tick %llu   entities %u   alpha %.2f",
+                            static_cast<unsigned long long>(stats.simTicks), stats.simEntities,
+                            stats.simAlpha);
+                // Gameplay controls are rebindable (Phase 8k), so this crib names the
+                // shipped layout rather than claiming to be the live one - the engine
+                // dev UI has no way to reach the game's binding table, and a hint that
+                // silently goes stale is the exact lie the HUD prompts stopped telling.
+                ImGui::TextDisabled(
+                    "defaults: RMB steer, WASD thrust, Tab cruise, X assist, V cam, T target");
+                ImGui::TextDisabled("defaults: 1/2/3 pips WEP/ENG/SYS, 4 balance (rebind in Settings)");
+                // Full is the only mode that advertises F2, which is the other
+                // half of why Full is the default.
+                ImGui::TextDisabled(
+                    "F1 console, F2 overlay, F3 debug draw, F5 shaders, F9/F10 save/load (fixed)");
 
-        // Zone tree (Phase 8n). Mean says where the frame goes; max says what
-        // the hitch was, and an fps counter averages exactly that away - which
-        // is why both columns are here and neither is enough alone.
-        if (stats.profiler != nullptr && stats.profiler->enabled()
-            && stats.profiler->zoneCount() > 0) {
-            const core::Profiler& profiler = *stats.profiler;
-            ImGui::Separator();
-            ImGui::Text("%-22s %7s %7s %7s", "zone", "last", "mean", "max");
-            bool anyExternal = false;
-            for (std::uint32_t i = 0; i < profiler.zoneCount(); ++i) {
-                const core::ZoneReport zone = profiler.report(i);
-                // Indent by nesting depth: a parent's time includes its
-                // children's, and the shape is what says so.
-                char label[64];
-                std::snprintf(label, sizeof(label), "%*s%s",
-                              static_cast<int>(zone.depth) * 2, "", zone.name);
-                ImGui::Text("%-22s %6.2f  %6.2f  %6.2f", label, zone.lastMilliseconds,
-                            zone.meanMilliseconds, zone.maxMilliseconds);
-                if (zone.counter > 0) {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("  n=%llu", static_cast<unsigned long long>(zone.counter));
+                // Zone tree (Phase 8n). Mean says where the frame goes; max says what
+                // the hitch was, and an fps counter averages exactly that away - which
+                // is why both columns are here and neither is enough alone.
+                if (stats.profiler != nullptr && stats.profiler->enabled()
+                    && stats.profiler->zoneCount() > 0) {
+                    const core::Profiler& profiler = *stats.profiler;
+                    ImGui::Separator();
+                    ImGui::Text("%-22s %7s %7s %7s", "zone", "last", "mean", "max");
+                    bool anyExternal = false;
+                    for (std::uint32_t i = 0; i < profiler.zoneCount(); ++i) {
+                        const core::ZoneReport zone = profiler.report(i);
+                        // Indent by nesting depth: a parent's time includes its
+                        // children's, and the shape is what says so.
+                        char label[64];
+                        std::snprintf(label, sizeof(label), "%*s%s",
+                                      static_cast<int>(zone.depth) * 2, "", zone.name);
+                        ImGui::Text("%-22s %6.2f  %6.2f  %6.2f", label, zone.lastMilliseconds,
+                                    zone.meanMilliseconds, zone.maxMilliseconds);
+                        if (zone.counter > 0) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("  n=%llu",
+                                                static_cast<unsigned long long>(zone.counter));
+                        }
+                        if (zone.external) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled(" *");
+                            anyExternal = true;
+                        }
+                    }
+                    // Phase 8o: a device-timed row's `last` is about a frame that has
+                    // already ended, so read beside a CPU row it looks like the two
+                    // disagree. Mean and max are the same samples shifted and compare
+                    // fine, which is why the note names `last` alone.
+                    if (anyExternal) {
+                        ImGui::TextDisabled("* device-timed; last = a completed frame, not this one");
+                    }
                 }
-                if (zone.external) {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled(" *");
-                    anyExternal = true;
-                }
-            }
-            // Phase 8o: a device-timed row's `last` is about a frame that has
-            // already ended, so read beside a CPU row it looks like the two
-            // disagree. Mean and max are the same samples shifted and compare
-            // fine, which is why the note names `last` alone.
-            if (anyExternal) {
-                ImGui::TextDisabled("* device-timed; last = a completed frame, not this one");
             }
         }
+        ImGui::End();
     }
-    ImGui::End();
 
     if (m_showConsole) {
         ImGui::SetNextWindowSize({560.0f, 220.0f}, ImGuiCond_FirstUseEver);
@@ -239,9 +252,19 @@ void DevUi::buildWindows(const OverlayStats& stats)
         ImGui::End();
     }
 
-    // F1 toggles the console.
+    // F1 toggles the console; F2 cycles the overlay (Phase 8p). Both are dev
+    // keys handled here rather than game bindings, for the reason the crib
+    // above already states: this layer cannot reach the game's binding table,
+    // and a dev key dressed up as a player binding would be that lie in the
+    // other direction. They are reserved in `kReservedKeys` so the Controls
+    // screen cannot hand either of them out.
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
         m_showConsole = !m_showConsole;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+        m_overlayMode = m_overlayMode == OverlayMode::Full      ? OverlayMode::Compact
+                        : m_overlayMode == OverlayMode::Compact ? OverlayMode::Hidden
+                                                                : OverlayMode::Full;
     }
 }
 

@@ -113,7 +113,7 @@ const ActionInfo& info(Action action)
 // same time, which has been true since long before bindings existed.
 constexpr Key kReservedKeys[] = {
     Key::Escape, Key::Enter, Key::Backspace, Key::Delete, Key::Home, Key::End,
-    Key::F1,     Key::F3,    Key::F5,        Key::F9,     Key::F10,
+    Key::F1,     Key::F2,    Key::F3,        Key::F5,     Key::F9,   Key::F10,
 };
 
 } // namespace
