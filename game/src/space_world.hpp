@@ -459,6 +459,18 @@ public:
     void say(const std::string& from, const std::string& text);
     [[nodiscard]] std::span<const CommsMessage> comms() const { return m_comms; }
 
+    // --- Territory (Phase 8u) ---
+    //
+    // Drains the sim's contest resolutions: forwards each to MissionSim so a
+    // Hold objective can settle, announces the ones the player is standing
+    // in, and logs the rest. Also speaks once when a contest opens over the
+    // player's head. Called from the coarse faction tick.
+    void drainContestResolutions();
+    // "Fleetcom" - a short callsign, because 8s established that the comms
+    // sender column is 116 px and a faction name prints straight through its
+    // own message.
+    static constexpr const char* kFleetcom = "Fleetcom";
+
     // --- Pilot comms (Phase 8s) ---
     //
     // Talking to another ship, on the channel 8r built general on purpose. The
@@ -571,13 +583,15 @@ public:
     [[nodiscard]] const std::vector<GameFaction>& factions() const { return m_factionTable; }
     [[nodiscard]] const sol::sim::FactionSim& factionSim() const { return m_factionSim; }
     [[nodiscard]] sol::sim::FactionSim& factionSim() { return m_factionSim; }
-    // The faction holding a system (and its stations), or an out-of-table
-    // value for ownerless systems (factionCount == 0 galaxies).
+    // The faction holding a system (and its stations) NOW, or an out-of-table
+    // value for ownerless systems (factionCount == 0 galaxies). Since Phase
+    // 8u this is dynamic state in FactionSim rather than the generated plan:
+    // SystemSpec::factionIndex is the founding claim and never moves, and
+    // every consumer of ownership in this game reads it through here.
     [[nodiscard]] std::uint32_t systemOwnerFaction(std::uint32_t systemIndex) const
     {
-        return systemIndex < m_galaxy.systems.size()
-                   ? m_galaxy.systems[systemIndex].factionIndex
-                   : kNoIndex;
+        return systemIndex < m_galaxy.systems.size() ? m_factionSim.systemOwner(systemIndex)
+                                                     : kNoIndex;
     }
     // "hostile"/"neutral"/"friendly" for a faction table index; "" outside it.
     [[nodiscard]] const char* playerAttitudeName(std::uint32_t faction) const;
@@ -1246,6 +1260,13 @@ private:
         std::string text;
     };
     std::vector<HailMemory> m_hails;
+    // Territory (Phase 8u): what the player has already been told about the
+    // contest over their head, so an opening is announced once rather than
+    // narrated tick by tick. Transient - a system change re-arms it, and it
+    // is deliberately not serialized.
+    std::uint32_t m_announcedContestSystem = kNoIndex;
+    std::uint32_t m_announcedContestAttacker = kNoIndex;
+    std::vector<sol::sim::ContestResolution> m_contestResolutions;
     HailRequest m_pendingHail;  // queued by hailTarget, drained by GameContent
     HailMemory m_answeringHail; // who the three answers below are speaking as
     std::uint32_t m_hailCount = 0; // so a re-hail of a NEW pilot can differ

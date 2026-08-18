@@ -37,6 +37,10 @@ enum class ObjectiveKind : std::uint32_t
     Deliver,    // hand in `units` of `commodity` at (system, station)
     Kill,       // destroy `count` ships of `faction` in `system` (or anywhere)
     FlyTo,      // come within `radius` of `position` in `system`
+    // `faction` still holds `system` when its contest resolves (Phase 8u).
+    // One member covers both directions: a defence names the owner, an
+    // assault contract names the attacker.
+    Hold,
 };
 
 struct MissionObjective
@@ -91,6 +95,19 @@ struct BountyCandidate
     std::uint32_t jumps = 0;
 };
 
+// A system currently contested within reach, paired with the two factions
+// fighting over it — the raw material for a defence contract (Phase 8u).
+// Enumerated only where the board's owner is a party to the contest: a
+// station will not pay a pilot to help the faction taking its system.
+struct ContestCandidate
+{
+    std::uint32_t system = 0;
+    std::uint32_t owner = kNoFaction;    // who holds it now
+    std::uint32_t attacker = kNoFaction; // who is pressing the claim
+    float pressure = 0.0f;
+    std::uint32_t jumps = 0;
+};
+
 enum class MissionEventKind : std::uint32_t
 {
     Accepted = 0,      // objective 0 is now current
@@ -98,6 +115,11 @@ enum class MissionEventKind : std::uint32_t
     Completed,         // consume rewardCredits/standingReward
     Failed,            // deadline expired; consume standingPenalty
     Abandoned,         // player walked away; consume standingPenalty
+    // A Hold objective's contest resolved the wrong way (Phase 8u). A
+    // separate kind precisely so it can carry no standing penalty: losing a
+    // battle you flew is not the same as letting a timer run out, which is
+    // the rough edge Phase 8l recorded and could not fix in its own scope.
+    Lost,
 };
 
 // Consequence queue entry: the game drains these each tick, applies payouts
@@ -141,6 +163,11 @@ public:
     void bountyCandidates(const Galaxy& galaxy, const FactionSim& factions,
                           std::uint32_t fromSystem,
                           std::vector<BountyCandidate>& out) const;
+    // Contests in reach that `boardOwner` is a party to (Phase 8u). Pass
+    // kNoFaction for an ownerless board, which enumerates nothing.
+    void contestCandidates(const Galaxy& galaxy, const FactionSim& factions,
+                           std::uint32_t fromSystem, std::uint32_t boardOwner,
+                           std::vector<ContestCandidate>& out) const;
 
     // --- The board (offers at the docked station) ---
     // Clears the offers and rebinds the board to a station; the hook then
@@ -172,6 +199,11 @@ public:
     void notifyDock(std::uint32_t system, std::uint32_t station);
     void notifyKill(std::uint32_t victimFaction, std::uint32_t system);
     void notifyPosition(std::uint32_t system, const core::DVec3& position);
+    // A contest ended (Phase 8u): a Hold objective on that system completes
+    // when `winner` is the faction it named, and the mission is Lost when
+    // it is not. Checked here rather than polled, so it costs nothing until
+    // a border actually moves.
+    void notifyContestResolved(std::uint32_t system, std::uint32_t winner);
     // Consumes up to `available` units toward the mission's current Deliver
     // objective at (system, station); returns what was consumed (the caller
     // removes it from cargo and feeds the market). Advances on completion.

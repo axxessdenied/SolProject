@@ -165,6 +165,39 @@ void MissionSim::bountyCandidates(const Galaxy& galaxy, const FactionSim& factio
     }
 }
 
+void MissionSim::contestCandidates(const Galaxy& galaxy, const FactionSim& factions,
+                                   std::uint32_t fromSystem, std::uint32_t boardOwner,
+                                   std::vector<ContestCandidate>& out) const
+{
+    out.clear();
+    if (galaxy.systems.size() != m_systemCount || fromSystem >= m_systemCount ||
+        boardOwner >= m_factionCount) {
+        return;
+    }
+    std::vector<std::uint8_t> depth;
+    jumpDepths(galaxy, fromSystem, depth);
+    for (std::uint32_t s = 0; s < m_systemCount; ++s) {
+        if (depth[s] == 0xff || !factions.contested(s)) {
+            continue;
+        }
+        const SystemContest contest = factions.contestOf(s);
+        const std::uint32_t owner = factions.systemOwner(s);
+        if (owner >= m_factionCount || contest.attacker >= m_factionCount) {
+            continue;
+        }
+        // A station only posts about a fight it is in. It will not pay a
+        // pilot to help the faction taking its own system.
+        if (owner != boardOwner && contest.attacker != boardOwner) {
+            continue;
+        }
+        out.push_back({.system = s,
+                       .owner = owner,
+                       .attacker = contest.attacker,
+                       .pressure = contest.pressure,
+                       .jumps = depth[s]});
+    }
+}
+
 void MissionSim::openBoard(std::uint32_t system, std::uint32_t station)
 {
     m_offers.clear();
@@ -201,6 +234,8 @@ bool MissionSim::objectiveInRange(const Galaxy& galaxy,
         return objective.faction < m_factionCount && objective.kills > 0;
     case ObjectiveKind::FlyTo:
         return objective.radius > 0.0;
+    case ObjectiveKind::Hold:
+        return objective.faction < m_factionCount;
     }
     return false;
 }
@@ -277,8 +312,22 @@ bool MissionSim::postOffer(const Galaxy& galaxy, const Economy& economy,
                 setError(outError, "no such bounty");
                 return false;
             }
+        } else if (objective.kind == ObjectiveKind::Hold) {
+            std::vector<ContestCandidate> candidates;
+            contestCandidates(galaxy, factions, m_boardSystem, mission.poster, candidates);
+            const auto match = std::find_if(
+                candidates.begin(), candidates.end(), [&](const ContestCandidate& c) {
+                    // The named side must be one of the two actually fighting,
+                    // so a board cannot sell a defence of a bystander.
+                    return c.system == objective.system &&
+                           (c.owner == objective.faction || c.attacker == objective.faction);
+                });
+            if (match == candidates.end()) {
+                setError(outError, "no such contest");
+                return false;
+            }
         } else {
-            setError(outError, "procedural contracts are haul or bounty");
+            setError(outError, "procedural contracts are haul, bounty or contest");
             return false;
         }
     }
@@ -384,6 +433,32 @@ void MissionSim::notifyKill(std::uint32_t victimFaction, std::uint32_t system)
             }
         }
         ++i;
+    }
+}
+
+void MissionSim::notifyContestResolved(std::uint32_t system, std::uint32_t winner)
+{
+    for (std::uint32_t i = 0; i < m_active.size();) {
+        const MissionObjective& objective =
+            m_active[i].objectives[m_active[i].currentObjective];
+        if (objective.kind != ObjectiveKind::Hold || objective.system != system) {
+            ++i;
+            continue;
+        }
+        if (objective.faction == winner) {
+            if (advanceObjective(i)) {
+                continue;
+            }
+            ++i;
+            continue;
+        }
+        // The side the contract named lost. Queued as Lost rather than
+        // Failed precisely so the game charges no standing: the player flew
+        // the battle, and the poster lost more than they did.
+        m_events.push_back({.kind = MissionEventKind::Lost,
+                            .mission = m_active[i],
+                            .objective = m_active[i].currentObjective});
+        removeActive(i);
     }
 }
 

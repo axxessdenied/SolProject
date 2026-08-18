@@ -40,6 +40,26 @@ void FactionSim::initialize(const Galaxy& galaxy, const FactionSimParams& params
     m_standings = params.initialStandings;
     m_raidIntensity.assign(m_systemCount, 0.0f);
     m_lastRaider.assign(m_systemCount, kNoFaction);
+
+    // Territory (Phase 8u): the founding claim is the generated plan, and
+    // ownership starts equal to it. The home system is the lowest-index
+    // system holding a faction's claim — the rule ClanSpec::homeSystem
+    // already states — and is derived here rather than saved.
+    m_foundingClaim.resize(m_systemCount);
+    for (std::uint32_t s = 0; s < m_systemCount; ++s) {
+        m_foundingClaim[s] = galaxy.systems[s].factionIndex;
+    }
+    m_systemOwner = m_foundingClaim;
+    m_contestAttacker.assign(m_systemCount, kNoFaction);
+    m_contestPressure.assign(m_systemCount, 0.0f);
+    m_homeSystem.assign(m_count, kNoFaction);
+    for (std::uint32_t s = 0; s < m_systemCount; ++s) {
+        const std::uint32_t claim = m_foundingClaim[s];
+        if (claim < m_count && m_homeSystem[claim] == kNoFaction) {
+            m_homeSystem[claim] = s;
+        }
+    }
+    m_resolutions.clear();
     m_dueDecisions.clear();
     m_stepAccumulator = 0.0;
     m_decisionAccumulator = 0.0;
@@ -92,6 +112,20 @@ void FactionSim::step(double dt)
             intensity *= decay;
         }
     }
+    // A siege nobody sustains lapses, and that is the defender winning by
+    // attrition — no separate code path, just the decay running out.
+    if (m_params.contestHalfLife > 0.0) {
+        const float decay = static_cast<float>(std::exp2(-dt / m_params.contestHalfLife));
+        for (std::uint32_t s = 0; s < m_systemCount; ++s) {
+            if (m_contestAttacker[s] == kNoFaction) {
+                continue;
+            }
+            m_contestPressure[s] *= decay;
+            if (m_contestPressure[s] < m_params.contestFloor) {
+                resolveContest(s, false);
+            }
+        }
+    }
 }
 
 void FactionSim::takeDueDecisions(std::vector<FactionDecision>& out)
@@ -112,7 +146,9 @@ void FactionSim::raidCandidates(const Galaxy& galaxy, std::uint32_t faction,
     std::vector<std::uint8_t> depth(m_systemCount, kUnvisited);
     std::vector<std::uint32_t> frontier;
     for (std::uint32_t s = 0; s < m_systemCount; ++s) {
-        if (galaxy.systems[s].factionIndex == faction) {
+        // Held now, not claimed at generation: reach follows the border, so
+        // a faction raids onward from ground it has taken (Phase 8u).
+        if (m_systemOwner[s] == faction) {
             depth[s] = 0;
             frontier.push_back(s);
         }
@@ -131,7 +167,7 @@ void FactionSim::raidCandidates(const Galaxy& galaxy, std::uint32_t faction,
         frontier.swap(next);
     }
     for (std::uint32_t s = 0; s < m_systemCount; ++s) {
-        const std::uint32_t owner = galaxy.systems[s].factionIndex;
+        const std::uint32_t owner = m_systemOwner[s];
         if (depth[s] == kUnvisited || owner == kNoFaction || owner == faction ||
             owner >= m_count) {
             continue;
@@ -183,6 +219,9 @@ bool FactionSim::commitRaid(const Galaxy& galaxy, Economy* economy, std::uint32_
     refreshWar(faction, owner);
     m_raidIntensity[targetSystem] += 1.0f;
     m_lastRaider[targetSystem] = faction;
+    // A raid is also a claim (Phase 8u): sustained raiding is what takes a
+    // system, and one raid on its own decays away long before it does.
+    pressSystem(targetSystem, faction, m_params.contestPerRaid);
     return true;
 }
 
@@ -283,6 +322,145 @@ std::uint32_t FactionSim::lastRaider(std::uint32_t system) const
     return system < m_lastRaider.size() ? m_lastRaider[system] : kNoFaction;
 }
 
+std::uint32_t FactionSim::systemOwner(std::uint32_t system) const
+{
+    return system < m_systemOwner.size() ? m_systemOwner[system] : kNoFaction;
+}
+
+std::uint32_t FactionSim::foundingClaim(std::uint32_t system) const
+{
+    return system < m_foundingClaim.size() ? m_foundingClaim[system] : kNoFaction;
+}
+
+std::uint32_t FactionSim::homeSystem(std::uint32_t faction) const
+{
+    return faction < m_homeSystem.size() ? m_homeSystem[faction] : kNoFaction;
+}
+
+SystemContest FactionSim::contestOf(std::uint32_t system) const
+{
+    if (system >= m_contestAttacker.size()) {
+        return {};
+    }
+    return {.attacker = m_contestAttacker[system], .pressure = m_contestPressure[system]};
+}
+
+bool FactionSim::contested(std::uint32_t system) const
+{
+    return system < m_contestAttacker.size() && m_contestAttacker[system] != kNoFaction &&
+           m_contestPressure[system] >= m_params.contestThreshold;
+}
+
+void FactionSim::pressSystem(std::uint32_t system, std::uint32_t attacker, float amount)
+{
+    if (system >= m_systemCount || attacker >= m_count) {
+        return;
+    }
+    const std::uint32_t owner = m_systemOwner[system];
+    if (owner == attacker || owner >= m_count) {
+        return; // your own ground, or nobody's to take
+    }
+    // A faction's home is never contestable. Without it a faction can be
+    // erased, and an ownerless galaxy has no boards, no catalogs and no way
+    // to spend the standing the player built with it.
+    if (m_homeSystem[owner] == system) {
+        return;
+    }
+    std::uint32_t& holder = m_contestAttacker[system];
+    if (holder == kNoFaction) {
+        holder = attacker;
+        m_contestPressure[system] = 0.0f;
+    } else if (holder != attacker) {
+        return; // one attacker at a time; a rival waits for this one to lapse
+    }
+    m_contestPressure[system] = core::clamp(m_contestPressure[system] + amount, 0.0f, 1.0f);
+    if (m_contestPressure[system] >= 1.0f) {
+        resolveContest(system, true);
+    } else if (m_contestPressure[system] < m_params.contestFloor) {
+        resolveContest(system, false);
+    }
+}
+
+void FactionSim::resolveContest(std::uint32_t system, bool flipped)
+{
+    const std::uint32_t attacker = m_contestAttacker[system];
+    const std::uint32_t holder = m_systemOwner[system];
+    if (attacker == kNoFaction) {
+        return;
+    }
+    if (flipped) {
+        m_systemOwner[system] = attacker;
+    }
+    m_resolutions.push_back({
+        .system = system,
+        .winner = flipped ? attacker : holder,
+        .loser = flipped ? holder : attacker,
+        .flipped = flipped,
+    });
+    m_contestAttacker[system] = kNoFaction;
+    m_contestPressure[system] = 0.0f;
+}
+
+void FactionSim::recordContestKill(std::uint32_t system, std::uint32_t victimFaction)
+{
+    if (system >= m_systemCount || m_contestAttacker[system] != victimFaction ||
+        victimFaction == kNoFaction) {
+        return; // not the faction pressing this system's claim
+    }
+    m_contestPressure[system] =
+        core::clamp(m_contestPressure[system] - m_params.contestPerKill, 0.0f, 1.0f);
+    if (m_contestPressure[system] < m_params.contestFloor) {
+        resolveContest(system, false);
+    }
+}
+
+void FactionSim::setContest(std::uint32_t system, std::uint32_t attacker, float pressure)
+{
+    if (system >= m_systemCount) {
+        return;
+    }
+    if (attacker == kNoFaction || attacker >= m_count) {
+        m_contestAttacker[system] = kNoFaction;
+        m_contestPressure[system] = 0.0f;
+        return;
+    }
+    const std::uint32_t owner = m_systemOwner[system];
+    if (owner == attacker || owner >= m_count || m_homeSystem[owner] == system) {
+        return; // the same refusals pressSystem applies
+    }
+    m_contestAttacker[system] = attacker;
+    m_contestPressure[system] = core::clamp(pressure, 0.0f, 1.0f);
+    if (m_contestPressure[system] >= 1.0f) {
+        resolveContest(system, true);
+    } else if (m_contestPressure[system] < m_params.contestFloor) {
+        resolveContest(system, false);
+    }
+}
+
+bool FactionSim::flipSystem(std::uint32_t system, std::uint32_t owner)
+{
+    if (system >= m_systemCount || owner >= m_count || m_systemOwner[system] == owner) {
+        return false;
+    }
+    const std::uint32_t previous = m_systemOwner[system];
+    m_systemOwner[system] = owner;
+    m_contestAttacker[system] = kNoFaction;
+    m_contestPressure[system] = 0.0f;
+    m_resolutions.push_back({
+        .system = system,
+        .winner = owner,
+        .loser = previous,
+        .flipped = true,
+    });
+    return true;
+}
+
+void FactionSim::takeResolutions(std::vector<ContestResolution>& out)
+{
+    out.insert(out.end(), m_resolutions.begin(), m_resolutions.end());
+    m_resolutions.clear();
+}
+
 void FactionSim::save(core::BinaryWriter& writer) const
 {
     writer.write(m_count);
@@ -301,6 +479,18 @@ void FactionSim::save(core::BinaryWriter& writer) const
     }
     for (const std::uint32_t raider : m_lastRaider) {
         writer.write(raider);
+    }
+    // Territory (Phase 8u, save v11). The founding claim and the home
+    // systems re-derive from the galaxy in initialize, so only what has
+    // actually moved is written.
+    for (const std::uint32_t owner : m_systemOwner) {
+        writer.write(owner);
+    }
+    for (const std::uint32_t attacker : m_contestAttacker) {
+        writer.write(attacker);
+    }
+    for (const float pressure : m_contestPressure) {
+        writer.write(pressure);
     }
     writer.write(m_stepAccumulator);
     writer.write(m_decisionAccumulator);
@@ -342,6 +532,21 @@ bool FactionSim::load(core::BinaryReader& reader)
             return false;
         }
     }
+    for (std::uint32_t& owner : m_systemOwner) {
+        if (!reader.read(owner)) {
+            return false;
+        }
+    }
+    for (std::uint32_t& attacker : m_contestAttacker) {
+        if (!reader.read(attacker)) {
+            return false;
+        }
+    }
+    for (float& pressure : m_contestPressure) {
+        if (!reader.read(pressure)) {
+            return false;
+        }
+    }
     core::Rng::RawState rngState;
     if (!reader.read(m_stepAccumulator) || !reader.read(m_decisionAccumulator) ||
         !reader.read(rngState.state) || !reader.read(rngState.inc)) {
@@ -349,6 +554,7 @@ bool FactionSim::load(core::BinaryReader& reader)
     }
     m_rng.setRawState(rngState);
     m_dueDecisions.clear();
+    m_resolutions.clear(); // transient: a load is not news
     return true;
 }
 

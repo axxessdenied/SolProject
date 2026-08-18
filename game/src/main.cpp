@@ -1061,6 +1061,13 @@ int main(int argc, char** argv)
             } else if (objective.kind == sol::sim::ObjectiveKind::Deliver) {
                 missionHudObjective +=
                     " (" + std::to_string(static_cast<int>(objective.units)) + " units)";
+            } else if (objective.kind == sol::sim::ObjectiveKind::Hold) {
+                // The contest meter is the progress bar this objective has
+                // (Phase 8u), and it lives in the sim rather than on the
+                // objective - so it is read here, where the world is.
+                const int percent = static_cast<int>(
+                    world.factionSim().contestOf(objective.system).pressure * 100.0f + 0.5f);
+                missionHudObjective += " (pressure " + std::to_string(percent) + "%)";
             }
             // ...and where that actually is (Phase 8i). The mission's prose
             // names the errand, not the place; without this a Dock objective

@@ -937,6 +937,7 @@ std::string describeObjective(GameContent& content)
     const char* kindName = objective->kind == sol::sim::ObjectiveKind::FlyTo    ? "fly to"
                            : objective->kind == sol::sim::ObjectiveKind::Dock   ? "dock"
                            : objective->kind == sol::sim::ObjectiveKind::Deliver ? "deliver"
+                           : objective->kind == sol::sim::ObjectiveKind::Hold    ? "hold"
                                                                                  : "kill";
     const std::string where = world.objectiveDestinationText();
     std::string line = std::string(kindName) + ": " + objective->text;
@@ -1780,6 +1781,103 @@ std::string factionCandidates(GameContent& content, double factionIndex)
     return joined;
 }
 
+// --- Territory (Phase 8u) ---
+// Every system whose owner has moved off its founding claim, plus every live
+// contest. Faction indices printed 1-based, matching sol.factions.
+std::string listTerritory(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::FactionSim& factions = world.factionSim();
+    const auto name = [&](std::uint32_t faction) -> std::string {
+        return faction < world.factions().size()
+                   ? world.factions()[faction].name + " (" + std::to_string(faction + 1) + ")"
+                   : std::string("nobody");
+    };
+    std::string lines;
+    for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+        const std::uint32_t owner = factions.systemOwner(s);
+        const std::uint32_t claim = factions.foundingClaim(s);
+        const sol::sim::SystemContest contest = factions.contestOf(s);
+        if (owner == claim && !contest.live()) {
+            continue;
+        }
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        lines += std::to_string(s) + " " + world.galaxy().systems[s].name + ": " + name(owner);
+        if (owner != claim) {
+            lines += " (taken from " + name(claim) + ")";
+        }
+        if (contest.live()) {
+            char buffer[64];
+            std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(contest.pressure));
+            lines += " - contested by " + name(contest.attacker) + " at " + buffer +
+                     (factions.contested(s) ? "" : " (below threshold)");
+        }
+    }
+    return lines.empty() ? "(every system is held by its founding claim)" : lines;
+}
+
+// One system in full, including the facts that make it un-contestable.
+std::string contestReport(GameContent& content, double systemIndex)
+{
+    SpaceWorld& world = content.world();
+    const auto system = static_cast<std::uint32_t>(systemIndex);
+    if (system >= world.galaxy().systems.size()) {
+        return "no such system";
+    }
+    const sol::sim::FactionSim& factions = world.factionSim();
+    const auto name = [&](std::uint32_t faction) -> std::string {
+        return faction < world.factions().size()
+                   ? world.factions()[faction].name + " (" + std::to_string(faction + 1) + ")"
+                   : std::string("nobody");
+    };
+    const std::uint32_t owner = factions.systemOwner(system);
+    const sol::sim::SystemContest contest = factions.contestOf(system);
+    std::string line = world.galaxy().systems[system].name + ": held by " + name(owner) +
+                       ", founding claim " + name(factions.foundingClaim(system));
+    if (owner < world.factions().size() && factions.homeSystem(owner) == system) {
+        line += " [HOME: cannot be contested]";
+    }
+    if (!contest.live()) {
+        return line + "; no contest";
+    }
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(contest.pressure));
+    return line + "; contested by " + name(contest.attacker) + " at pressure " + buffer +
+           (factions.contested(system) ? " (live)" : " (below threshold)");
+}
+
+// Dev lever: the exit criteria are stated against this, because a contest
+// driven by real raids takes many 60 s decision cycles to reach a flip.
+bool setContest(GameContent& content, double systemIndex, double factionIndex, double pressure)
+{
+    SpaceWorld& world = content.world();
+    const auto system = static_cast<std::uint32_t>(systemIndex);
+    if (system >= world.galaxy().systems.size()) {
+        return false;
+    }
+    const auto oneBased = static_cast<std::int64_t>(factionIndex);
+    const std::uint32_t attacker =
+        oneBased >= 1 && static_cast<std::size_t>(oneBased) <= world.factions().size()
+            ? static_cast<std::uint32_t>(oneBased - 1)
+            : sol::sim::kNoFaction;
+    world.factionSim().setContest(system, attacker, static_cast<float>(pressure));
+    return world.factionSim().contestOf(system).attacker == attacker;
+}
+
+// Dev lever: hand a system over outright, ending any contest.
+bool flipSystem(GameContent& content, double systemIndex, double factionIndex)
+{
+    SpaceWorld& world = content.world();
+    const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
+    if (faction >= world.factions().size()) {
+        return false;
+    }
+    return world.factionSim().flipSystem(static_cast<std::uint32_t>(systemIndex),
+                                         static_cast<std::uint32_t>(faction));
+}
+
 bool factionRaid(GameContent& content, double factionIndex, double systemIndex)
 {
     const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
@@ -2061,6 +2159,34 @@ bool missionObjKill(GameContent& content, double factionIndex, double count, dou
 
 // Position is relative to the target system's first station (or its primary
 // planet when the system has none) — Lua has no absolute-coordinate source.
+// Hold (Phase 8u): `faction` still holds `system` when its contest resolves.
+// One builder covers both directions - name the owner for a defence, the
+// attacker for an assault contract.
+bool missionObjHold(GameContent& content, double system, double factionIndex,
+                    const std::string& text)
+{
+    if (!content.missionDraftOpen()) {
+        return false;
+    }
+    const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
+    if (faction >= content.world().factions().size()) {
+        SOL_LOG_WARN("mission_obj_hold: faction %d out of range",
+                     static_cast<int>(factionIndex));
+        return false;
+    }
+    if (system < 0.0 ||
+        static_cast<std::size_t>(system) >= content.world().galaxy().systems.size()) {
+        SOL_LOG_WARN("mission_obj_hold: system %d out of range", static_cast<int>(system));
+        return false;
+    }
+    content.missionDraft().objectives.push_back(
+        {.kind = sol::sim::ObjectiveKind::Hold,
+         .system = static_cast<std::uint32_t>(system),
+         .faction = static_cast<std::uint32_t>(faction),
+         .text = text});
+    return true;
+}
+
 bool missionObjFlyTo(GameContent& content, double system, double dx, double dy, double dz,
                      double radius, const std::string& text)
 {
@@ -2208,6 +2334,10 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&setStanding>("sol", "set_rep", this);
     m_vm.registerFunction<&factionCandidates>("sol", "faction_candidates", this);
     m_vm.registerFunction<&factionRaid>("sol", "faction_raid", this);
+    m_vm.registerFunction<&listTerritory>("sol", "territory", this);
+    m_vm.registerFunction<&contestReport>("sol", "contest", this);
+    m_vm.registerFunction<&setContest>("sol", "set_contest", this);
+    m_vm.registerFunction<&flipSystem>("sol", "flip", this);
     // sol.mission_board (the listing) and the global mission_board hook (the
     // Lua-defined composer) live in different namespaces; no collision.
     m_vm.registerFunction<&listMissionBoard>("sol", "mission_board", this);
@@ -2228,6 +2358,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&missionObjDock>("sol", "mission_obj_dock", this);
     m_vm.registerFunction<&missionObjDeliver>("sol", "mission_obj_deliver", this);
     m_vm.registerFunction<&missionObjKill>("sol", "mission_obj_kill", this);
+    m_vm.registerFunction<&missionObjHold>("sol", "mission_obj_hold", this);
     m_vm.registerFunction<&missionObjFlyTo>("sol", "mission_obj_flyto", this);
     m_vm.registerFunction<&missionPost>("sol", "mission_post", this);
     // Exploration (Phase 8e). sol.set_loot is the signal_loot hook's builder;
@@ -2535,6 +2666,7 @@ void GameContent::tick(double dt)
     for (const sol::sim::MissionEvent& event : m_missionEvents) {
         if (event.kind == sol::sim::MissionEventKind::Completed ||
             event.kind == sol::sim::MissionEventKind::Failed ||
+            event.kind == sol::sim::MissionEventKind::Lost ||
             event.kind == sol::sim::MissionEventKind::Abandoned) {
             boardDirty = true;
             break;
@@ -2558,6 +2690,9 @@ void GameContent::tick(double dt)
                 break;
             case sol::sim::MissionEventKind::Failed:
                 kind = "failed";
+                break;
+            case sol::sim::MissionEventKind::Lost:
+                kind = "lost";
                 break;
             case sol::sim::MissionEventKind::Abandoned:
                 kind = "abandoned";
@@ -2804,12 +2939,35 @@ void GameContent::runMissionBoard()
                     world.factions()[c.clan].name;
     }
 
+    // Contests (Phase 8u):
+    // "system:owner1based:attacker1based:pressure:jumps:sysName:ownerName:attackerName".
+    m_contestCandidates.clear();
+    missions.contestCandidates(world.galaxy(), world.factionSim(), world.currentSystemIndex(),
+                               owner, m_contestCandidates);
+    std::string contests;
+    for (const sol::sim::ContestCandidate& c : m_contestCandidates) {
+        if (c.owner >= world.factions().size() || c.attacker >= world.factions().size()) {
+            continue;
+        }
+        if (!contests.empty()) {
+            contests += ";";
+        }
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.pressure),
+                      c.jumps);
+        contests += std::to_string(c.system) + ":" + std::to_string(c.owner + 1) + ":" +
+                    std::to_string(c.attacker + 1) + ":" + buffer + ":" +
+                    world.galaxy().systems[c.system].name + ":" +
+                    world.factions()[c.owner].name + ":" + world.factions()[c.attacker].name;
+    }
+
     std::string error;
     if (!m_vm.callGlobal("mission_board", &error, world.dockedStationName(),
                          static_cast<double>(owner + 1),
                          world.factions()[owner].name.c_str(),
                          world.factions()[owner].pirate, hauls.c_str(),
-                         bounties.c_str(), static_cast<double>(missions.boardRoll()))) {
+                         bounties.c_str(), contests.c_str(),
+                         static_cast<double>(missions.boardRoll()))) {
         SOL_LOG_ERROR("mission_board disabled until scripts reload: %s", error.c_str());
         m_boardHookFailed = true;
     }

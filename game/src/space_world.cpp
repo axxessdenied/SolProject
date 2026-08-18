@@ -35,7 +35,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 10; // v10: bookmarks
+constexpr std::uint32_t kSaveVersion = 11; // v11: territory (owner + contests)
 
 // Market intel (Phase 8g): what a station's market report covers and costs.
 // Deliberately shorter than the traders' own horizon — a station's brokers
@@ -509,6 +509,15 @@ void SpaceWorld::processMissionEvents()
                          posterValid ? m_factionTable[mission.poster].name.c_str() : "?",
                          static_cast<double>(mission.standingReward));
             break;
+        case sim::MissionEventKind::Lost:
+            // The contest resolved against the side this contract named
+            // (Phase 8u). No standing penalty, deliberately: the player flew
+            // the battle and lost it, which is not the same as letting a
+            // deadline run out - the unfairness Phase 8l recorded and could
+            // not fix inside its own scope.
+            SOL_LOG_WARN("[missions] lost '%s': the system fell (no penalty)",
+                         mission.title.c_str());
+            break;
         case sim::MissionEventKind::Failed:
         case sim::MissionEventKind::Abandoned:
             // Campaign missions charge nothing (decisions/008: the spine is
@@ -632,6 +641,11 @@ std::string SpaceWorld::objectiveDestinationText() const
         }
         return here ? victim + ", here" : victim + ", " + systemName(objective->system);
     }
+    case sim::ObjectiveKind::Hold:
+        // A contest has no position and so gets no marker at all: the prose
+        // is the only thing that can say where the fight is (Phase 8i's rule,
+        // arriving at the one objective kind that needs it most).
+        return here ? std::string("here") : systemName(objective->system);
     }
     return {};
 }
@@ -1959,8 +1973,11 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
     };
 
     // Owner presence: patrol wings by region security for majors, resident
-    // raider wings for clan systems.
-    const std::uint32_t owner = spec.factionIndex;
+    // raider wings for clan systems. Read through the accessor, not off the
+    // spec: since Phase 8u the founding claim is not who holds the system,
+    // and this is the one site where the stale value would put the wrong
+    // navy in the sky above a station that has changed hands.
+    const std::uint32_t owner = systemOwnerFaction(systemIndex);
     const core::DVec3 anchor = spec.stations.empty() ? hub : spec.stations[0].position;
     if (owner < m_factionTable.size()) {
         const GameFaction& faction = m_factionTable[owner];
@@ -1973,15 +1990,37 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
         }
     }
 
-    // Raid incursion: the last raider keeps ships in-system while the
-    // intensity is warm (fresh raids read as an active raiding party).
-    const float intensity = m_factionSim.raidIntensity(systemIndex);
-    const std::uint32_t raider = m_factionSim.lastRaider(systemIndex);
-    if (intensity >= 0.5f && raider < m_factionTable.size() && raider != owner) {
+    // Contested system (Phase 8u): the attacker keeps a standing force here
+    // for as long as the claim is live, sized off pressure rather than off a
+    // single raid's warmth. This is what makes a border a place the player
+    // can fly into and fight over rather than a colour on the map. The
+    // owner's patrol wing above is reinforced, not replaced - both sides are
+    // present, which is what a contested system means.
+    const sim::SystemContest contest = m_factionSim.contestOf(systemIndex);
+    const bool contested = m_factionSim.contested(systemIndex);
+    if (contested && contest.attacker < m_factionTable.size() && contest.attacker != owner) {
+        const GameFaction& attacker = m_factionTable[contest.attacker];
+        const std::vector<std::string>& roster =
+            attacker.shipsRaider.empty() ? attacker.shipsPatrol : attacker.shipsRaider;
         const std::uint32_t count =
-            std::min(3u, static_cast<std::uint32_t>(intensity + 0.5f));
-        spawnWing(raider, m_factionTable[raider].shipsRaider, PilotRole::Fighter, count,
+            std::clamp(static_cast<std::uint32_t>(contest.pressure * 4.0f), 1u, 4u);
+        spawnWing(contest.attacker, roster, PilotRole::Fighter, count,
                   anchor + core::DVec3{9'000.0, 1'500.0, 6'000.0}, 1'200.0);
+        if (owner < m_factionTable.size()) {
+            spawnWing(owner, m_factionTable[owner].shipsPatrol, PilotRole::Patrol, 2,
+                      anchor + core::DVec3{-4'000.0, 800.0, 2'000.0}, 700.0);
+        }
+    } else {
+        // Raid incursion: the last raider keeps ships in-system while the
+        // intensity is warm (fresh raids read as an active raiding party).
+        const float intensity = m_factionSim.raidIntensity(systemIndex);
+        const std::uint32_t raider = m_factionSim.lastRaider(systemIndex);
+        if (intensity >= 0.5f && raider < m_factionTable.size() && raider != owner) {
+            const std::uint32_t count =
+                std::min(3u, static_cast<std::uint32_t>(intensity + 0.5f));
+            spawnWing(raider, m_factionTable[raider].shipsRaider, PilotRole::Fighter, count,
+                      anchor + core::DVec3{9'000.0, 1'500.0, 6'000.0}, 1'200.0);
+        }
     }
 }
 
@@ -2321,6 +2360,57 @@ void SpaceWorld::say(const std::string& from, const std::string& text)
         m_comms.erase(m_comms.begin(), m_comms.begin() + (m_comms.size() - kCommsLines));
     }
     SOL_LOG_INFO("comms: %s: %s", from.c_str(), text.c_str());
+}
+
+void SpaceWorld::drainContestResolutions()
+{
+    // Announce the contest over the player's own head, once. A system change
+    // re-arms this, so flying back into a war you already knew about tells
+    // you again - which is right, because you have just arrived.
+    const sim::SystemContest here = m_factionSim.contestOf(m_currentSystem);
+    const bool live = m_factionSim.contested(m_currentSystem);
+    if (!live) {
+        m_announcedContestSystem = kNoIndex;
+        m_announcedContestAttacker = kNoIndex;
+    } else if (m_currentSystem != m_announcedContestSystem ||
+               here.attacker != m_announcedContestAttacker) {
+        m_announcedContestSystem = m_currentSystem;
+        m_announcedContestAttacker = here.attacker;
+        if (here.attacker < m_factionTable.size() && !isDocked()) {
+            say(kFleetcom, m_factionTable[here.attacker].name +
+                               " forces are pressing a claim on this system.");
+        }
+    }
+
+    m_contestResolutions.clear();
+    m_factionSim.takeResolutions(m_contestResolutions);
+    for (const sim::ContestResolution& resolution : m_contestResolutions) {
+        // A Hold objective settles on the resolution regardless of where the
+        // player is standing: the contract was about the system, not about
+        // being there to watch.
+        m_missions.notifyContestResolved(resolution.system, resolution.winner);
+
+        const char* winnerName = resolution.winner < m_factionTable.size()
+                                     ? m_factionTable[resolution.winner].name.c_str()
+                                     : "Nobody";
+        const char* loserName = resolution.loser < m_factionTable.size()
+                                    ? m_factionTable[resolution.loser].name.c_str()
+                                    : "nobody";
+        if (resolution.system < m_galaxy.systems.size()) {
+            SOL_LOG_INFO("[territory] %s: %s %s (%s)",
+                         m_galaxy.systems[resolution.system].name.c_str(), winnerName,
+                         resolution.flipped ? "takes the system from" : "holds against",
+                         loserName);
+        }
+        if (resolution.system != m_currentSystem) {
+            continue; // elsewhere: the map is where you find out
+        }
+        m_announcedContestSystem = kNoIndex;
+        m_announcedContestAttacker = kNoIndex;
+        say(kFleetcom, resolution.flipped
+                           ? std::string(winnerName) + " forces now hold this system."
+                           : std::string(loserName) + " have broken off. The system holds.");
+    }
 }
 
 sol::core::DVec3 SpaceWorld::clearedBerthPoint() const
@@ -4474,6 +4564,7 @@ void SpaceWorld::tick(double dt)
     {
         const std::uint32_t zone = profiler.beginZone("sim.coarse.factions");
         m_factionSim.tick(dt);
+        drainContestResolutions();
         profiler.endZone(zone);
     }
 
@@ -4643,6 +4734,19 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
         }
         if (playerKilled || playerAssisted) {
             m_missions.notifyKill(pilot->factionIndex, m_currentSystem);
+            // Territory (Phase 8u): the same "was the player in this fight"
+            // rule 8l defined decides whether a kill pushes a contest back.
+            // Only the player's kills reach here - nothing simulates a war's
+            // attrition, so crediting ambient dogfights would invent state
+            // the sim does not have and make the meter a lie.
+            const float before = m_factionSim.contestOf(m_currentSystem).pressure;
+            m_factionSim.recordContestKill(m_currentSystem, pilot->factionIndex);
+            const float after = m_factionSim.contestOf(m_currentSystem).pressure;
+            if (after < before) {
+                SOL_LOG_INFO("contest in system %u: pressure %.2f -> %.2f",
+                             m_currentSystem, static_cast<double>(before),
+                             static_cast<double>(after));
+            }
             if (!playerKilled) {
                 SOL_LOG_INFO("assist vs %s: someone else finished it, bounty credited",
                              m_factionTable[pilot->factionIndex].name.c_str());
@@ -4950,7 +5054,7 @@ bool SpaceWorld::loadFrom(const char* path)
     m_lastDockSystem = lastDockSystem;
     m_lastDockStation = lastDockStation;
     // Which berth is not in the save (Phase 8r: the clearance is transient and
-    // the format stays v10), so a docked load parks on the pad above the
+    // no format bump was needed for it), so a docked load parks on the pad above the
     // station. It has to be reset explicitly rather than left alone: the value
     // is live state from the run being replaced, and carrying it over would
     // park the loaded ship in a berth it was never assigned. The clearance and
@@ -4966,6 +5070,12 @@ bool SpaceWorld::loadFrom(const char* path)
     m_hails.clear();
     m_pendingHail = HailRequest{};
     m_answeringHail = HailMemory{};
+    // And what the player had been told about the war over their head
+    // (Phase 8u) - the same rule a third time. A loaded run has heard
+    // nothing yet, so a live contest announces itself again.
+    m_announcedContestSystem = kNoIndex;
+    m_announcedContestAttacker = kNoIndex;
+    m_contestResolutions.clear();
     m_pendingRespawnSystem = kNoIndex;
     // A scan in flight does not survive a load, and neither does an autopilot
     // leg: the target list is rebuilt below, so an engaged autopilot would

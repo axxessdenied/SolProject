@@ -421,6 +421,13 @@ struct MapSystemRow
     // without this flag the galaxy map is silent about the one thing the
     // player has actually been told to do; Plot Route then already gets there.
     bool hasObjective = false;
+    // Phase 8u: a live contest over this system. Drawn as a ring in the
+    // attacker's colour, so the player sees a FRONT rather than only its
+    // outcome - a border that moved with no warning is not a feature. Gated
+    // behind the same "visited" rule ownership itself is: a war you have
+    // only heard of from a gate is not yours to know about.
+    bool contested = false;
+    core::Vec3 contestColor{0.9f, 0.4f, 0.2f};
     // Trade overlay (Phase 8g), meaningful only when MapPanel::tradeCommodity
     // is set. `tradeLevel` is where this price sits between the cheapest and
     // dearest the player has seen, which is what makes a route legible at a

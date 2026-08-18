@@ -15,6 +15,8 @@
 --   sol.set_rep(faction, value)     dev cheat: set a standing (-100..100)
 --   sol.faction_candidates(faction) raid options "system:name:relation;..."
 --   sol.faction_raid(faction, system)  commit one (validated against reach)
+--   sol.territory() / sol.contest(sys)  who holds what, and live contests
+--   sol.set_contest(sys, faction, p) / sol.flip(sys, faction)   dev levers
 --   sol.ships() / sol.target_name() / sol.target_distance() / sol.speed()
 --   sol.entity_count()              live sim entities
 --   sol.mission_board() / sol.missions()   offers at the docked station / journal
@@ -159,7 +161,9 @@ end
 --
 -- Haul entry:   system:station:commodityId:units:severity:jumps:sysName:stName
 -- Bounty entry: system:clan:intensity:jumps:systemName:clanName
-function mission_board(stationName, owner, ownerName, ownerPirate, hauls, bounties, roll)
+-- Contest entry: system:owner:attacker:pressure:jumps:sysName:ownerName:attackerName
+function mission_board(stationName, owner, ownerName, ownerPirate, hauls, bounties,
+                       contests, roll)
     if campaign_offer ~= nil and not ownerPirate then
         campaign_offer(owner, ownerName)
     end
@@ -233,6 +237,58 @@ function mission_board(stationName, owner, ownerName, ownerPirate, hauls, bounti
             sol.mission_obj_kill(b.clan, kills, b.system,
                                  string.format("Destroy %d %s raiders in %s", kills,
                                                b.clanName, b.sysName))
+            sol.mission_post()
+        end
+    end
+
+    -- War contracts (Phase 8u): the board only ever hears about contests its
+    -- own faction is a party to, so this decides which SIDE it is on. The
+    -- fight nearest to being lost is posted first, at most one at a time -
+    -- a war is meant to feel like one thing happening, not a menu.
+    local contestList = {}
+    for entry in string.gmatch(contests, "[^;]+") do
+        local system, holder, attacker, pressure, jumps, sysName, holderName, attackerName =
+            string.match(entry,
+                         "^(%d+):(%d+):(%d+):([%d%.]+):(%d+):([^:]+):([^:]+):([^:]+)$")
+        if system ~= nil then
+            contestList[#contestList + 1] = {
+                system = tonumber(system), holder = tonumber(holder),
+                attacker = tonumber(attacker), pressure = tonumber(pressure),
+                jumps = tonumber(jumps), sysName = sysName,
+                holderName = holderName, attackerName = attackerName,
+            }
+        end
+    end
+    table.sort(contestList, function(a, b) return a.pressure > b.pressure end)
+    if #contestList > 0 then
+        local c = contestList[1]
+        -- Which side this station is on is not a choice: it is whichever of
+        -- the two factions signs the pay. Defending is the common case;
+        -- an attacker's own station in reach posts the assault instead.
+        local defending = c.holder == owner
+        local side = defending and c.holder or c.attacker
+        local sideName = defending and c.holderName or c.attackerName
+        local title = defending
+            and string.format("Defend %s", c.sysName)
+            or string.format("Assault %s", c.sysName)
+        local text = defending
+            and string.format("Break the %s push on %s", c.attackerName, c.sysName)
+            or string.format("Take %s from %s", c.sysName, c.holderName)
+        -- Pays better than a bounty: it is the same shooting with the outcome
+        -- attached, and it can be lost through no fault of the pilot.
+        local reward = math.floor((1400 + 500 * c.jumps) * (1 + c.pressure)
+                                  * (0.9 + 0.2 * roll))
+        -- The penalty is real and it is charged on expiry or abandonment.
+        -- Losing the battle is what costs nothing, and that is decided by
+        -- the event kind in C++, not by zeroing the number here.
+        if sol.mission_begin(title, side, reward, 8, 2, "") then
+            -- A contest resolves on its own clock, so the deadline is a
+            -- backstop against a stalemate rather than the real pressure.
+            sol.mission_deadline(1200 + 600 * c.jumps)
+            if c.jumps == 0 then
+                sol.mission_min_rep(5) -- work on your own doorstep goes to regulars
+            end
+            sol.mission_obj_hold(c.system, side, text)
             sol.mission_post()
         end
     end

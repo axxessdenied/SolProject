@@ -138,7 +138,174 @@ Mission bountyOffer(std::uint32_t kills)
     return mission;
 }
 
+// Four systems in a chain for the contest tests (Phase 8u): faction 0 holds
+// 0 AND 1, faction 1 holds 2, clan 2 holds 3. Faction 0 holding two systems
+// is what makes system 1 contestable at all — a faction's only system is its
+// home and can never change hands.
+Galaxy territoryGalaxy()
+{
+    Galaxy galaxy;
+    galaxy.seed = 17;
+    constexpr std::uint32_t kOwners[4] = {0, 0, 1, 2};
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        SystemSpec system;
+        system.name = std::string("T") + static_cast<char>('0' + i);
+        system.factionIndex = kOwners[i];
+        system.planets.push_back({.name = "P", .position = {}, .radius = 1.0e6});
+        system.stations.push_back({.name = "St", .archetype = 0, .position = {}});
+        if (i > 0) {
+            system.gates.push_back({.toSystem = i - 1, .position = {}});
+        }
+        if (i < 3) {
+            system.gates.push_back({.toSystem = i + 1, .position = {}});
+        }
+        galaxy.systems.push_back(std::move(system));
+    }
+    galaxy.links = {{0, 1}, {1, 2}, {2, 3}};
+    galaxy.clans.push_back({.name = "T3 Raiders", .templateIndex = 0, .seed = 3, .homeSystem = 3});
+    return galaxy;
+}
+
+// System 1 (faction 0's, not their home) is contested by faction 1, with the
+// board open at system 0's station.
+struct ContestWorld
+{
+    Galaxy galaxy = territoryGalaxy();
+    Economy economy;
+    FactionSim factions;
+    MissionSim missions;
+
+    explicit ContestWorld(std::uint64_t seed = 7, MissionParams params = {})
+    {
+        economy.initialize(galaxy, oneCommodityParams(), seed);
+        factions.initialize(galaxy, chainFactionParams(), seed);
+        missions.initialize(galaxy, params, 3, 1, seed);
+        factions.setContest(1, 1, 0.5f);
+        SOL_CHECK(factions.contested(1));
+        missions.openBoard(0, 0);
+    }
+};
+
+Mission holdOffer(std::uint32_t system, std::uint32_t faction, std::uint32_t poster)
+{
+    Mission mission;
+    mission.title = "Hold the line";
+    mission.poster = poster;
+    mission.rewardCredits = 1'200.0;
+    mission.standingReward = 6.0f;
+    mission.standingPenalty = 3.0f;
+    mission.deadline = 900.0;
+    mission.objectives.push_back({.kind = ObjectiveKind::Hold,
+                                  .system = system,
+                                  .faction = faction,
+                                  .text = "Hold T1"});
+    return mission;
+}
+
 } // namespace
+
+SOL_TEST(mission_contest_candidates_need_the_board_to_be_a_party)
+{
+    ContestWorld world;
+    std::vector<sol::sim::ContestCandidate> candidates;
+
+    // The defender's board sees it.
+    world.missions.contestCandidates(world.galaxy, world.factions, 0, 0, candidates);
+    SOL_REQUIRE(candidates.size() == 1);
+    SOL_CHECK(candidates[0].system == 1);
+    SOL_CHECK(candidates[0].owner == 0);
+    SOL_CHECK(candidates[0].attacker == 1);
+    SOL_CHECK(candidates[0].jumps == 1);
+
+    // So does the attacker's, because a station of theirs in reach would pay
+    // for the same fight from the other side.
+    world.missions.contestCandidates(world.galaxy, world.factions, 0, 1, candidates);
+    SOL_CHECK(candidates.size() == 1);
+
+    // A bystander's board does not: a station will not sell work in a war it
+    // is not in.
+    world.missions.contestCandidates(world.galaxy, world.factions, 0, 2, candidates);
+    SOL_CHECK(candidates.empty());
+    world.missions.contestCandidates(world.galaxy, world.factions, 0, kNoFaction, candidates);
+    SOL_CHECK(candidates.empty());
+
+    // Pressure below the threshold is weather, not a contest, and the board
+    // never learns about it.
+    world.factions.setContest(1, 1, 0.1f);
+    world.missions.contestCandidates(world.galaxy, world.factions, 0, 0, candidates);
+    SOL_CHECK(candidates.empty());
+}
+
+SOL_TEST(mission_hold_offers_validate_against_a_live_contest)
+{
+    ContestWorld world;
+    std::string error;
+
+    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                       holdOffer(1, 0, 0), &error));
+    // Either side of the fight can be named — a defence or an assault.
+    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                       holdOffer(1, 1, 1), &error));
+    // A bystander cannot be named as the holder, so the board cannot sell a
+    // defence of a faction that is not in the fight.
+    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                        holdOffer(1, 2, 0), &error));
+    SOL_CHECK(error == "no such contest");
+    // Nor a system where nothing is happening.
+    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                        holdOffer(3, 2, 0), &error));
+    SOL_CHECK(error == "no such contest");
+}
+
+SOL_TEST(mission_hold_completes_when_the_named_side_keeps_the_system)
+{
+    ContestWorld world;
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                         holdOffer(1, 0, 0)));
+    SOL_REQUIRE(world.missions.accept(0, 0.0f));
+    std::vector<MissionEvent> events;
+    world.missions.takeEvents(events);
+    events.clear();
+
+    // Someone else's system resolving is not this contract's business.
+    world.missions.notifyContestResolved(2, 1);
+    world.missions.takeEvents(events);
+    SOL_CHECK(events.empty());
+    SOL_CHECK(world.missions.active().size() == 1);
+
+    world.missions.notifyContestResolved(1, 0);
+    world.missions.takeEvents(events);
+    SOL_REQUIRE(events.size() == 2);
+    SOL_CHECK(events[0].kind == MissionEventKind::ObjectiveComplete);
+    SOL_CHECK(events[1].kind == MissionEventKind::Completed);
+    SOL_CHECK(events[1].mission.rewardCredits == 1'200.0);
+    SOL_CHECK(world.missions.active().empty());
+}
+
+SOL_TEST(mission_hold_lost_is_its_own_event_kind_so_it_can_cost_nothing)
+{
+    ContestWorld world;
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                         holdOffer(1, 0, 0)));
+    SOL_REQUIRE(world.missions.accept(0, 0.0f));
+    std::vector<MissionEvent> events;
+    world.missions.takeEvents(events);
+    events.clear();
+
+    // The attacker took it. The player flew the battle and lost it, which is
+    // not the same as letting a deadline run out — so it is not Failed, and
+    // the game charges no standing for it. Phase 8l recorded this exact
+    // unfairness and could not fix it inside its own scope.
+    world.missions.notifyContestResolved(1, 1);
+    world.missions.takeEvents(events);
+    SOL_REQUIRE(events.size() == 1);
+    SOL_CHECK(events[0].kind == MissionEventKind::Lost);
+    SOL_CHECK(events[0].kind != MissionEventKind::Failed);
+    // The penalty travels on the snapshot untouched: the sim states what
+    // happened and the game decides what it costs.
+    SOL_CHECK(events[0].mission.standingPenalty == 3.0f);
+    SOL_CHECK(world.missions.active().empty());
+}
 
 SOL_TEST(mission_candidates_come_from_real_shortages_and_raids)
 {

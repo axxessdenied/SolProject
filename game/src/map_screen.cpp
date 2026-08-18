@@ -332,6 +332,16 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         if (system.hasObjective) {
             ui.drawList().addCircle(point, kNodeRadius + 13.0f, kObjective, 1.8f, 20);
         }
+        // A contested system wears a ring in the ATTACKER's colour (Phase 8u),
+        // drawn outside the objective ring rather than in place of it: they
+        // are concentric, so a system that is both still reads as both. The
+        // colour is the attacker's because the owner's is already the node.
+        if (system.contested) {
+            ui.drawList().addCircle(point, kNodeRadius + 16.0f,
+                                    Color{system.contestColor.x, system.contestColor.y,
+                                          system.contestColor.z, 1.0f},
+                                    2.0f, 24);
+        }
         // A gate names where it leads, so a charted system carries its name -
         // dimmed, because that name is all you have until you go. The gap
         // clears the widest ring drawn above (the current-system ring at
@@ -339,7 +349,9 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         labels.place(ui, *ui.drawList().font()->style(ui.theme().smallStyle), point, system.name,
                      system.knowledge >= MapKnowledge::Visited ? ui.theme().textDim
                                                                : ui.theme().textDisabled,
-                     kNodeRadius + (system.hasObjective ? 16.0f : 13.0f));
+                     kNodeRadius + (system.contested      ? 19.0f
+                                    : system.hasObjective ? 16.0f
+                                                          : 13.0f));
     }
     ui.drawList().popClip();
 }

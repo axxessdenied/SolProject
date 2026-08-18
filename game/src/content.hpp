@@ -101,6 +101,7 @@ private:
     std::vector<sol::sim::FactionDecision> m_factionDecisions; // per-tick scratch
     std::vector<sol::sim::HaulCandidate> m_haulCandidates;     // per-board scratch
     std::vector<sol::sim::BountyCandidate> m_bountyCandidates;
+    std::vector<sol::sim::ContestCandidate> m_contestCandidates; // Phase 8u
     std::vector<sol::sim::MissionEvent> m_missionEvents; // per-tick scratch
     sol::sim::Mission m_missionDraft;
     bool m_missionDraftOpen = false;

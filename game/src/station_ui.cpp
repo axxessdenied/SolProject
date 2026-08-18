@@ -164,28 +164,68 @@ void fillStationOutfitting(const SpaceWorld& world, const assets::DefDatabase& d
         if (!wars.empty()) {
             detail += " - " + wars;
         }
+        // How much ground they actually hold (Phase 8u), which is what makes
+        // a faction being beaten back legible as something other than a
+        // colour change on the map.
+        std::uint32_t held = 0;
+        for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+            held += factionSim.systemOwner(s) == faction ? 1u : 0u;
+        }
+        detail += " - holds " + std::to_string(held) + " system(s)";
         factionRows.push_back({.name = world.factions()[i].name.c_str(),
                                .detail = store(text, std::move(detail)),
                                .standing = factionSim.standing(faction),
                                .attitude = world.playerAttitudeName(faction)});
     }
-    std::string raids;
+    // War first, then raids (Phase 8u): a border that has moved is bigger news
+    // than a market that got drained, and this tab is where a player who has
+    // been away catches up. Both are current state rather than a history -
+    // nothing stores when a system changed hands, and inventing a timestamp
+    // store for one screen would be a worse trade than saying "now".
+    std::string notes;
+    const auto factionName = [&](std::uint32_t faction) -> std::string {
+        return faction < world.factions().size() ? world.factions()[faction].name
+                                                 : std::string("nobody");
+    };
+    for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+        if (!factionSim.contested(s)) {
+            continue;
+        }
+        if (!notes.empty()) {
+            notes += "\n";
+        }
+        notes += world.galaxy().systems[s].name + " CONTESTED: " +
+                 factionName(factionSim.contestOf(s).attacker) + " vs " +
+                 factionName(factionSim.systemOwner(s)) + " (" +
+                 formatNumber(factionSim.contestOf(s).pressure) + ")";
+    }
+    for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+        const std::uint32_t owner = factionSim.systemOwner(s);
+        if (owner == factionSim.foundingClaim(s)) {
+            continue;
+        }
+        if (!notes.empty()) {
+            notes += "\n";
+        }
+        notes += world.galaxy().systems[s].name + " now held by " + factionName(owner) +
+                 ", taken from " + factionName(factionSim.foundingClaim(s));
+    }
     for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
         const float intensity = factionSim.raidIntensity(s);
         if (intensity < 0.05f) {
             continue;
         }
-        if (!raids.empty()) {
-            raids += "\n";
+        if (!notes.empty()) {
+            notes += "\n";
         }
-        raids += world.galaxy().systems[s].name;
+        notes += world.galaxy().systems[s].name;
         const std::uint32_t raider = factionSim.lastRaider(s);
         if (raider < world.factions().size()) {
-            raids += " raided by " + world.factions()[raider].name;
+            notes += " raided by " + world.factions()[raider].name;
         }
-        raids += " (" + formatNumber(intensity) + ")";
+        notes += " (" + formatNumber(intensity) + ")";
     }
-    panel.factionNotes = store(text, std::move(raids));
+    panel.factionNotes = store(text, std::move(notes));
 
     panel.modules = moduleRows;
     panel.weapons = weaponRows;
@@ -212,6 +252,11 @@ namespace {
         detail += " (" + std::to_string(objective.kills) + " left)";
     } else if (objective.kind == sol::sim::ObjectiveKind::Deliver) {
         detail += " (" + std::to_string(static_cast<int>(objective.units)) + " units)";
+    } else if (objective.kind == sol::sim::ObjectiveKind::Hold) {
+        // The contest meter, which is this objective's only progress (8u).
+        const int percent = static_cast<int>(
+            world.factionSim().contestOf(objective.system).pressure * 100.0f + 0.5f);
+        detail += " (pressure " + std::to_string(percent) + "%)";
     }
     if (mission.objectives.size() > 1) {
         detail += " [" + std::to_string(mission.currentObjective + 1) + "/" +

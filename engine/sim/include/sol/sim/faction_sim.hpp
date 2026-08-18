@@ -15,6 +15,14 @@
 // the game reports, with kill credit propagating to the victim's enemies
 // (the GDD web). Deterministic for (galaxy, params, seed, event sequence);
 // save/load restores tick-for-tick like the economy.
+//
+// Territory moves here too (engine plan Phase 8u). SystemSpec::factionIndex
+// is the *founding claim* — part of the generated plan, regenerated from the
+// seed on load, never mutated — while this sim holds who owns each system
+// now. A raid feeds a per-system contest; sustained pressure flips the
+// system to the attacker, and pressure nobody sustains decays until the
+// contest lapses, which is the defender winning by attrition. A faction's
+// home system cannot be contested, so no faction is ever erased.
 
 #include "sol/sim/economy.hpp"
 #include "sol/sim/universe.hpp"
@@ -55,6 +63,12 @@ struct FactionSimParams
     float killPenalty = 10.0f;        // standing lost with a victim's owner
     float killWebScale = 0.5f;        // x relation depth: enemies' gratitude
     float commerceRate = 0.001f;      // standing per credit traded
+    // --- Territory (Phase 8u) ---
+    float contestPerRaid = 0.2f;      // pressure a committed raid adds
+    float contestPerKill = 0.05f;     // pressure the player's kill removes
+    float contestThreshold = 0.25f;   // at or above: publicly contested
+    float contestFloor = 0.05f;       // below: the contest has lapsed
+    double contestHalfLife = 900.0;   // seconds, pressure decay
 };
 
 // A raid a faction could commit this decision: an enemy-held system in reach.
@@ -71,6 +85,27 @@ struct FactionDecision
 {
     std::uint32_t faction = 0;
     float roll = 0.0f;
+};
+
+// A live claim on a system someone else holds (Phase 8u). One attacker at a
+// time: two would need a three-way resolution rule for a case the decision
+// cadence makes rare. kNoFaction attacker means the system is quiet.
+struct SystemContest
+{
+    std::uint32_t attacker = kNoFaction;
+    float pressure = 0.0f; // 0..1; 1 flips the system
+    [[nodiscard]] bool live() const { return attacker != kNoFaction; }
+};
+
+// A contest that ended since the last drain. Either the attacker took the
+// system (flipped) or the pressure lapsed and the holder kept it. The game
+// announces these on comms and forwards them to MissionSim.
+struct ContestResolution
+{
+    std::uint32_t system = 0;
+    std::uint32_t winner = kNoFaction; // who holds the system now
+    std::uint32_t loser = kNoFaction;  // the other party to the contest
+    bool flipped = false;              // ownership actually changed hands
 };
 
 class FactionSim
@@ -133,6 +168,34 @@ public:
     [[nodiscard]] float raidIntensity(std::uint32_t system) const;
     [[nodiscard]] std::uint32_t lastRaider(std::uint32_t system) const;
 
+    // --- Territory (Phase 8u) ---
+    // Who holds the system now, which is not necessarily who was generated
+    // holding it. kNoFaction for a system nobody claims.
+    [[nodiscard]] std::uint32_t systemOwner(std::uint32_t system) const;
+    // The founding claim from the generated plan: what systemOwner started
+    // as, kept so a caller can tell a moved border from an original one.
+    [[nodiscard]] std::uint32_t foundingClaim(std::uint32_t system) const;
+    // The one system a faction can never lose: the lowest-index system
+    // holding its founding claim, the rule ClanSpec::homeSystem states. A
+    // faction with no claim at all has none (kNoFaction).
+    [[nodiscard]] std::uint32_t homeSystem(std::uint32_t faction) const;
+    [[nodiscard]] SystemContest contestOf(std::uint32_t system) const;
+    // Publicly contested: pressure at or above contestThreshold. Below it
+    // the pressure is weather, and nothing in the UI or the board sees it.
+    [[nodiscard]] bool contested(std::uint32_t system) const;
+    // The player destroyed one of the attacker's ships in a contested
+    // system: pressure falls by contestPerKill. Only the player's kills
+    // reach this — nothing simulates a war's attrition, so crediting
+    // ambient dogfights would invent state the sim does not have.
+    void recordContestKill(std::uint32_t system, std::uint32_t victimFaction);
+    // Dev/test lever: open, move or (with kNoFaction) clear a contest
+    // outright. Resolves immediately if the value is already decisive.
+    void setContest(std::uint32_t system, std::uint32_t attacker, float pressure);
+    // Dev/test lever: hand a system to a faction, ending any contest.
+    bool flipSystem(std::uint32_t system, std::uint32_t owner);
+    // Moves the resolutions queued since the last call into out (append).
+    void takeResolutions(std::vector<ContestResolution>& out);
+
     // Dynamic state only (layout re-derives from galaxy + params; load fails
     // on a mismatch, same rule as the economy).
     void save(core::BinaryWriter& writer) const;
@@ -141,6 +204,12 @@ public:
 private:
     void step(double dt);
     void refreshWar(std::uint32_t a, std::uint32_t b);
+    // Opens a contest on a system or feeds the standing attacker's. A rival
+    // cannot hijack a live contest; it can only claim one that has lapsed.
+    void pressSystem(std::uint32_t system, std::uint32_t attacker, float amount);
+    // Applies the decisive outcome for a system whose pressure has reached
+    // 1 (flip) or fallen through contestFloor (lapse), and queues it.
+    void resolveContest(std::uint32_t system, bool flipped);
     [[nodiscard]] std::size_t pairIndex(std::uint32_t a, std::uint32_t b) const
     {
         return static_cast<std::size_t>(a) * m_count + b;
@@ -154,6 +223,15 @@ private:
     std::vector<float> m_standings;      // player, per faction
     std::vector<float> m_raidIntensity;  // per system, decaying
     std::vector<std::uint32_t> m_lastRaider; // per system, kNoFaction = none
+    // Territory (Phase 8u). m_foundingClaim mirrors the generated plan and
+    // never moves; m_systemOwner is who holds it now. m_homeSystem is
+    // derived per faction in initialize and so is not serialized.
+    std::vector<std::uint32_t> m_foundingClaim;
+    std::vector<std::uint32_t> m_systemOwner;
+    std::vector<std::uint32_t> m_contestAttacker;
+    std::vector<float> m_contestPressure;
+    std::vector<std::uint32_t> m_homeSystem;
+    std::vector<ContestResolution> m_resolutions;
     std::vector<FactionDecision> m_dueDecisions;
     double m_stepAccumulator = 0.0;
     double m_decisionAccumulator = 0.0;

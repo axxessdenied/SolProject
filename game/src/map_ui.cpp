@@ -359,6 +359,14 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
             row.hasOwner = true;
             row.ownerColor = world.factions()[owner].color;
         }
+        // A war is knowledge on the same terms (Phase 8u): the front is only
+        // drawn where the player has actually been.
+        const sim::SystemContest contest = world.factionSim().contestOf(i);
+        if (visited && world.factionSim().contested(i) &&
+            contest.attacker < world.factions().size()) {
+            row.contested = true;
+            row.contestColor = world.factions()[contest.attacker].color;
+        }
         // Said the same way in both branches: being sent somewhere unsurveyed
         // is exactly the case where the player most needs to be told.
         const std::string objectiveNote = row.hasObjective ? " - MISSION OBJECTIVE" : "";
@@ -373,6 +381,9 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
             }
             std::string detail = spec.name + ": " + regionName(spec.region);
             detail += row.hasOwner ? ", " + world.factions()[owner].name : ", unclaimed";
+            if (row.contested) {
+                detail += " - CONTESTED by " + world.factions()[contest.attacker].name;
+            }
             detail += ", " + std::to_string(spec.stations.size()) + " station(s)";
             detail += ", sites " + std::to_string(resolved) + "/" + std::to_string(signals);
             if (state == sim::KnowledgeState::Surveyed) {

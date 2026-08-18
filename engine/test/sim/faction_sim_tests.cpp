@@ -4,6 +4,8 @@
 #include <sol/core/serialize.hpp>
 #include <sol/test/test.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -75,6 +77,59 @@ EconomyParams oneCommodityParams()
     params.archetypes = {archetype};
     params.traderCount = 1;
     return params;
+}
+
+// Four systems in a chain for the territory tests (Phase 8u): 0 - 1 - 2 - 3,
+// with faction 0 holding TWO systems (0 and 1) so that one of them is not its
+// home and can therefore change hands. Faction 1 holds 2, pirate clan 2 holds
+// 3. Everyone is at war with everyone, so reach is the only thing gating a
+// raid. raidReach = 1 by default, which is what makes "reach follows the
+// border" observable rather than incidental.
+Galaxy territoryGalaxy()
+{
+    Galaxy galaxy;
+    galaxy.seed = 17;
+    constexpr std::uint32_t kOwners[4] = {0, 0, 1, 2};
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        SystemSpec system;
+        system.name = std::string("T") + static_cast<char>('0' + i);
+        system.factionIndex = kOwners[i];
+        system.planets.push_back({.name = "P", .position = {}, .radius = 1.0e6});
+        system.stations.push_back({.name = "St", .archetype = 0, .position = {}});
+        if (i > 0) {
+            system.gates.push_back({.toSystem = i - 1, .position = {}});
+        }
+        if (i < 3) {
+            system.gates.push_back({.toSystem = i + 1, .position = {}});
+        }
+        galaxy.systems.push_back(std::move(system));
+    }
+    galaxy.links = {{0, 1}, {1, 2}, {2, 3}};
+    galaxy.clans.push_back({.name = "T3 Raiders", .templateIndex = 0, .seed = 3, .homeSystem = 3});
+    return galaxy;
+}
+
+FactionSimParams territoryParams()
+{
+    FactionSimParams params = chainParams();
+    params.baselineRelations = {0.0f, -60.0f, -60.0f, //
+                                -60.0f, 0.0f, -60.0f, //
+                                -60.0f, -60.0f, 0.0f};
+    params.raidReach = 1;
+    return params;
+}
+
+// Raids a system until it changes hands, so a test asserts the outcome rather
+// than counting floating-point increments. Returns false if it never flips.
+bool raidUntilFlipped(FactionSim& sim, const Galaxy& galaxy, std::uint32_t attacker,
+                      std::uint32_t system)
+{
+    for (int i = 0; i < 32 && sim.systemOwner(system) != attacker; ++i) {
+        if (!sim.commitRaid(galaxy, nullptr, attacker, system)) {
+            return false;
+        }
+    }
+    return sim.systemOwner(system) == attacker;
 }
 
 } // namespace
@@ -292,6 +347,218 @@ SOL_TEST(faction_sim_save_load_round_trips_and_stays_deterministic)
     FactionSim broken;
     broken.initialize(galaxy, chainParams(), 5);
     SOL_CHECK(!broken.load(truncated));
+}
+
+SOL_TEST(faction_sim_territory_starts_at_the_founding_claim)
+{
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSim sim;
+    sim.initialize(galaxy, territoryParams(), 3);
+
+    for (std::uint32_t s = 0; s < 4; ++s) {
+        SOL_CHECK(sim.systemOwner(s) == galaxy.systems[s].factionIndex);
+        SOL_CHECK(sim.foundingClaim(s) == galaxy.systems[s].factionIndex);
+        SOL_CHECK(!sim.contestOf(s).live());
+        SOL_CHECK(!sim.contested(s));
+    }
+    // The home system is the lowest-index system holding the claim, which is
+    // the rule ClanSpec::homeSystem already states for generated clans.
+    SOL_CHECK(sim.homeSystem(0) == 0);
+    SOL_CHECK(sim.homeSystem(1) == 2);
+    SOL_CHECK(sim.homeSystem(2) == 3);
+    SOL_CHECK(sim.systemOwner(99) == kNoFaction);
+}
+
+SOL_TEST(faction_sim_raids_open_a_contest_that_flips_the_system)
+{
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSim sim;
+    sim.initialize(galaxy, territoryParams(), 3);
+
+    // One raid is pressure, not a conquest: below the threshold nothing in
+    // the game is told a contest exists.
+    SOL_REQUIRE(sim.commitRaid(galaxy, nullptr, 1, 1));
+    SOL_CHECK(sim.contestOf(1).attacker == 1);
+    SOL_CHECK(sim.contestOf(1).pressure == 0.2f);
+    SOL_CHECK(!sim.contested(1));
+    SOL_REQUIRE(sim.commitRaid(galaxy, nullptr, 1, 1));
+    SOL_CHECK(sim.contested(1));
+    SOL_CHECK(sim.systemOwner(1) == 0); // still theirs until it resolves
+
+    SOL_REQUIRE(raidUntilFlipped(sim, galaxy, 1, 1));
+    SOL_CHECK(sim.systemOwner(1) == 1);
+    SOL_CHECK(!sim.contestOf(1).live()); // the contest clears with the claim
+    // The generated plan is not rewritten: the galaxy stays a pure function
+    // of its seed, and a caller can still tell a moved border from an
+    // original one.
+    SOL_CHECK(sim.foundingClaim(1) == 0);
+    SOL_CHECK(galaxy.systems[1].factionIndex == 0);
+
+    std::vector<sol::sim::ContestResolution> resolutions;
+    sim.takeResolutions(resolutions);
+    SOL_REQUIRE(resolutions.size() == 1);
+    SOL_CHECK(resolutions[0].system == 1);
+    SOL_CHECK(resolutions[0].winner == 1);
+    SOL_CHECK(resolutions[0].loser == 0);
+    SOL_CHECK(resolutions[0].flipped);
+    resolutions.clear();
+    sim.takeResolutions(resolutions);
+    SOL_CHECK(resolutions.empty()); // drained, not repeated
+}
+
+SOL_TEST(faction_sim_contest_lapses_when_nobody_sustains_it)
+{
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSim sim;
+    sim.initialize(galaxy, territoryParams(), 3);
+
+    sim.setContest(1, 1, 0.3f);
+    SOL_REQUIRE(sim.contested(1));
+    sim.tick(3'600.0); // four half-lives: 0.3 -> ~0.019, under the floor
+
+    SOL_CHECK(!sim.contestOf(1).live());
+    SOL_CHECK(sim.systemOwner(1) == 0); // the defender kept it by attrition
+    std::vector<sol::sim::ContestResolution> resolutions;
+    sim.takeResolutions(resolutions);
+    SOL_REQUIRE(resolutions.size() == 1);
+    SOL_CHECK(!resolutions[0].flipped);
+    SOL_CHECK(resolutions[0].winner == 0);
+    SOL_CHECK(resolutions[0].loser == 1);
+}
+
+SOL_TEST(faction_sim_home_system_is_never_contestable)
+{
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSim sim;
+    sim.initialize(galaxy, territoryParams(), 3);
+
+    // System 2 is faction 1's only claim, so it is their home. A faction that
+    // could lose it could be erased, and an erased faction takes its boards,
+    // its catalogs and the player's standing with it.
+    SOL_REQUIRE(sim.commitRaid(galaxy, nullptr, 2, 2)); // the raid still lands
+    SOL_CHECK(sim.raidIntensity(2) == 1.0f);            // markets still drained
+    SOL_CHECK(!sim.contestOf(2).live());                // but no claim opens
+    sim.setContest(2, 2, 0.9f);
+    SOL_CHECK(!sim.contestOf(2).live()); // the dev lever refuses it too
+    SOL_CHECK(sim.systemOwner(2) == 1);
+
+    // Beaten back to one system, a faction stops losing ground: take its
+    // second system and the first becomes its home ground by construction.
+    SOL_REQUIRE(raidUntilFlipped(sim, galaxy, 1, 1));
+    SOL_CHECK(sim.systemOwner(1) == 1);
+    SOL_CHECK(sim.homeSystem(0) == 0);
+    sim.setContest(0, 1, 0.9f);
+    SOL_CHECK(!sim.contestOf(0).live());
+}
+
+SOL_TEST(faction_sim_player_kills_push_a_contest_back)
+{
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSim sim;
+    sim.initialize(galaxy, territoryParams(), 3);
+
+    const auto nearly = [](float value, float expected) {
+        return std::fabs(value - expected) < 1.0e-5f;
+    };
+    sim.setContest(1, 1, 0.3f);
+    sim.recordContestKill(1, 1);
+    SOL_CHECK(nearly(sim.contestOf(1).pressure, 0.25f));
+    // Killing anyone but the faction pressing the claim changes nothing —
+    // including the defender's own ships.
+    sim.recordContestKill(1, 0);
+    sim.recordContestKill(1, 2);
+    SOL_CHECK(nearly(sim.contestOf(1).pressure, 0.25f));
+    // A kill in a system with no contest is not an error, it is just quiet.
+    sim.recordContestKill(3, 1);
+    SOL_CHECK(!sim.contestOf(3).live());
+
+    for (int i = 0; i < 5; ++i) {
+        sim.recordContestKill(1, 1);
+    }
+    SOL_CHECK(!sim.contestOf(1).live());
+    SOL_CHECK(sim.systemOwner(1) == 0);
+    std::vector<sol::sim::ContestResolution> resolutions;
+    sim.takeResolutions(resolutions);
+    SOL_REQUIRE(resolutions.size() == 1);
+    SOL_CHECK(!resolutions[0].flipped);
+    SOL_CHECK(resolutions[0].winner == 0);
+}
+
+SOL_TEST(faction_sim_one_attacker_presses_a_system_at_a_time)
+{
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSimParams params = territoryParams();
+    params.raidReach = 2; // both rivals can now reach system 1
+    FactionSim sim;
+    sim.initialize(galaxy, params, 3);
+
+    SOL_REQUIRE(sim.commitRaid(galaxy, nullptr, 1, 1));
+    SOL_CHECK(sim.contestOf(1).attacker == 1);
+    // The clan raids the same system: the raid lands, but it does not take
+    // over a claim someone else is already pressing.
+    SOL_REQUIRE(sim.commitRaid(galaxy, nullptr, 2, 1));
+    SOL_CHECK(sim.raidIntensity(1) == 2.0f);
+    SOL_CHECK(sim.contestOf(1).attacker == 1);
+    SOL_CHECK(sim.contestOf(1).pressure == 0.2f); // and does not feed it
+}
+
+SOL_TEST(faction_sim_raid_reach_follows_a_moved_border)
+{
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSim sim;
+    sim.initialize(galaxy, territoryParams(), 3);
+
+    std::vector<RaidCandidate> candidates;
+    sim.raidCandidates(galaxy, 1, candidates);
+    const auto holds = [&](std::uint32_t system) {
+        return std::any_of(candidates.begin(), candidates.end(),
+                           [&](const RaidCandidate& c) { return c.system == system; });
+    };
+    SOL_CHECK(holds(1));  // one jump from system 2
+    SOL_CHECK(holds(3));  // one jump the other way
+    SOL_CHECK(!holds(0)); // two jumps: out of reach at raidReach 1
+
+    SOL_REQUIRE(raidUntilFlipped(sim, galaxy, 1, 1));
+    sim.raidCandidates(galaxy, 1, candidates);
+    // Taking system 1 moved the front: system 0 is now one jump from held
+    // ground, and system 1 is no longer a target because it is theirs.
+    SOL_CHECK(holds(0));
+    SOL_CHECK(!holds(1));
+    // And the loser can press to take it back — the border is not a ratchet.
+    sim.raidCandidates(galaxy, 0, candidates);
+    SOL_CHECK(holds(1));
+}
+
+SOL_TEST(faction_sim_territory_survives_save_load)
+{
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSim sim;
+    sim.initialize(galaxy, territoryParams(), 3);
+    SOL_REQUIRE(raidUntilFlipped(sim, galaxy, 1, 1));
+    // The dispossessed owner pressing to take it back: one system carrying
+    // both a moved border and a live counter-claim.
+    sim.setContest(1, 0, 0.4f);
+    std::vector<sol::sim::ContestResolution> resolutions;
+    sim.takeResolutions(resolutions);
+
+    sol::core::BinaryWriter writer;
+    sim.save(writer);
+    FactionSim restored;
+    restored.initialize(galaxy, territoryParams(), 999);
+    const std::span<const std::byte> bytes(writer.data());
+    sol::core::BinaryReader reader(bytes);
+    SOL_REQUIRE(restored.load(reader));
+
+    SOL_CHECK(restored.systemOwner(1) == 1);
+    SOL_CHECK(restored.foundingClaim(1) == 0); // re-derived from the galaxy
+    SOL_CHECK(restored.homeSystem(0) == 0);
+    SOL_CHECK(restored.contestOf(1).attacker == 0);
+    SOL_CHECK(restored.contestOf(1).pressure == 0.4f);
+    // A load is not news: the resolutions queue does not replay old flips
+    // as though they had just happened.
+    resolutions.clear();
+    restored.takeResolutions(resolutions);
+    SOL_CHECK(resolutions.empty());
 }
 
 SOL_TEST(economy_raid_empties_inbound_trader_cargo)
