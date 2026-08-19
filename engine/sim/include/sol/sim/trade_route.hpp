@@ -116,6 +116,65 @@ template <typename HopFn>
     return dA + (legLength - dA) * (remaining - approach) / (legSeconds - approach);
 }
 
+// Which hull a hauler is drawn in, out of the rosters the factions already
+// carry (engine plan Phase 8x, stage 6).
+//
+// ⚑ The rule is that the ship can carry what it is carrying. That is not
+// decoration: a coarse haul is laden on the way in and a deadhead on the way
+// out (stage 4's own finding), so keying the hull off the load makes the sky
+// readable — a big hull in the lane is cargo worth taking, and a small one is
+// a ship on its way to fetch some. A raider, an escort and the player all read
+// the same thing off it, and none of them has to be told.
+//
+// The smallest hull that covers the load wins, because a faction that owns a
+// freighter and a shuttle does not send the freighter to move forty units.
+// Nothing covering it takes the biggest there is: a roster is data, and data
+// that cannot carry a shipped cargo must still answer with a ship.
+//
+// `traderIndex` breaks ties, so a faction listing two hulls of equal capacity
+// uses both, and one hauler keeps its own answer for as long as its load does
+// — which is the whole leg, because cargo is bought at one end and sold at
+// the other.
+[[nodiscard]] inline std::uint32_t chooseTraderHull(std::span<const float> capacities, float cargo,
+                                                    std::uint32_t traderIndex)
+{
+    if (capacities.empty()) {
+        return 0;
+    }
+    std::uint32_t best = static_cast<std::uint32_t>(capacities.size());
+    std::uint32_t ties = 0;
+    std::uint32_t biggest = 0;
+    for (std::uint32_t i = 0; i < capacities.size(); ++i) {
+        if (capacities[i] > capacities[biggest]) {
+            biggest = i;
+        }
+        if (capacities[i] < cargo) {
+            continue;
+        }
+        if (best >= capacities.size() || capacities[i] < capacities[best]) {
+            best = i;
+            ties = 1;
+        } else if (capacities[i] == capacities[best]) {
+            ++ties;
+        }
+    }
+    if (best >= capacities.size()) {
+        return biggest;
+    }
+    if (ties <= 1) {
+        return best;
+    }
+    // Rotate through the equals rather than always taking the first, so a
+    // roster of same-sized hulls is a mixed sky instead of one repeated ship.
+    std::uint32_t wanted = traderIndex % ties;
+    for (std::uint32_t i = 0; i < capacities.size(); ++i) {
+        if (capacities[i] == capacities[best] && wanted-- == 0) {
+            return i;
+        }
+    }
+    return best;
+}
+
 // Where in its lane a trader flies, so that two on the same leg are not at
 // the same point.
 //

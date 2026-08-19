@@ -264,6 +264,10 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     m_feedstock.mining = &m_mining;
     m_feedstock.galaxy = &m_galaxy;
     m_feedstock.economy = &m_economy;
+    // Sized with the markets and cleared with them: a hold on an outpost's
+    // draw belongs to the run the ship died in (Phase 8x stage 6).
+    m_minerHold.assign(m_economy.markets().size(), 0.0);
+    m_feedstock.minerHold = &m_minerHold;
     m_playerCargo.assign(commodityCount, 0.0f);
 
     // Start in the first core system with a station (deterministic per seed).
@@ -1785,6 +1789,16 @@ float SpaceWorld::MiningFeedstock::draw(std::uint32_t market, std::uint32_t comm
         || market >= economy->markets().size()) {
         return 0.0f;
     }
+    // ⚑ An outpost with no miner digs nothing (Phase 8x stage 6). The draw was
+    // always abstract — ore simply appeared out of the ground on the coarse
+    // clock — and stage 6 gives it a ship, so killing that ship has to reach
+    // the books or the ship is scenery. Held for as long as a replacement
+    // would take to fly out, then it resumes on its own; nothing here is
+    // saved, because the only way to set it is to shoot something in front of
+    // the player.
+    if (minerHold != nullptr && market < minerHold->size() && (*minerHold)[market] > 0.0) {
+        return 0.0f;
+    }
     // An outpost works the rock in its own system and nowhere else, which is
     // what makes "where does ore come from" a question the map can answer.
     const std::uint32_t system = economy->markets()[market].systemIndex;
@@ -2325,12 +2339,29 @@ void SpaceWorld::syncTraderPuppets()
         if (roster.empty()) {
             continue;
         }
-        // Keyed on the trader, not on a counter, so one hauler keeps the same
-        // hull every time the player meets it.
-        const std::string& defId = roster[t % roster.size()];
-        const assets::ShipDef* def = m_defs->findShip(defId.c_str());
+        // ⚑ The hull carries what the hauler is carrying (Phase 8x stage 6).
+        // Stage 2 keyed this on the trader index alone, which put freighters
+        // and shuttles on the same lanes at random; reading the load instead
+        // makes the sky mean something, because a coarse haul is laden inbound
+        // and a deadhead outbound. It stays stable for the whole leg without
+        // being pinned to the index: cargo is bought at one end of a haul and
+        // sold at the other, so a body cannot change ship under the player.
+        const assets::ShipDef* def = nullptr;
+        const std::string* defId = nullptr;
+        m_rosterCapacities.clear();
+        for (const std::string& id : roster) {
+            const assets::ShipDef* candidate = m_defs->findShip(id.c_str());
+            m_rosterCapacities.push_back(candidate != nullptr ? candidate->cargoCapacity : 0.0f);
+        }
+        const std::uint32_t hull = sim::chooseTraderHull(
+            std::span<const float>(m_rosterCapacities), m_economy.traders()[t].cargo, t);
+        if (hull < roster.size()) {
+            defId = &roster[hull];
+            def = m_defs->findShip(defId->c_str());
+        }
         if (def == nullptr) {
-            SOL_LOG_WARN("trader puppet: no ship def '%s'", defId.c_str());
+            SOL_LOG_WARN("trader puppet: no ship def '%s'",
+                         defId != nullptr ? defId->c_str() : "?");
             continue;
         }
         const core::DVec3 position = traderScheduledPoint(leg);
@@ -2356,6 +2387,278 @@ void SpaceWorld::syncTraderPuppets()
         m_registry.storage<TraderPuppet>().get(entity.index).paced =
             keepTraderOnSchedule(entity, leg) ? 1u : 0u;
         m_puppetPresent[t] = 1;
+    }
+}
+
+bool SpaceWorld::chooseMinerRock(MinerPuppet& miner, const core::DVec3& from, bool sameField) const
+{
+    // 8f's rocks are real entities with real depletion, so the miner works one
+    // of those rather than a point in a field: a rock that has been cut to
+    // nothing is not spawned, which means a miner can never be found working
+    // ground that is already gone.
+    const ecs::Pool<MineableRock>& rocks = m_registry.storage<MineableRock>();
+    m_minerRocks.clear();
+    m_minerRockEntities.clear();
+    std::uint32_t nearest = kNoIndex;
+    std::uint32_t nearestField = 0;
+    double nearestDistance = 0.0;
+    std::uint32_t leaving = sim::kNoRock;
+    for (std::size_t i = 0; i < rocks.size(); ++i) {
+        const MineableRock& rock = rocks.values()[i];
+        if (rock.commodity != miner.commodity) {
+            continue; // an outpost sells one thing; it works the rock holding it
+        }
+        const std::uint32_t index = rocks.entityIndices()[i];
+        const Transform* transform = m_registry.storage<Transform>().tryGet(index);
+        const RenderShape* shape = m_registry.storage<RenderShape>().tryGet(index);
+        if (transform == nullptr || shape == nullptr) {
+            continue;
+        }
+        if (rock.field == miner.field) {
+            if (index == miner.rock) {
+                leaving = static_cast<std::uint32_t>(m_minerRocks.size());
+            }
+            m_minerRocks.push_back(
+                {.position = transform->position, .radius = static_cast<double>(shape->scale.x)});
+            m_minerRockEntities.push_back(index);
+        }
+        const double distance = length(transform->position - from);
+        if (nearest == kNoIndex || distance < nearestDistance) {
+            nearest = index;
+            nearestField = rock.field;
+            nearestDistance = distance;
+        }
+    }
+    if (sameField && !m_minerRocks.empty()) {
+        // Every hop is short and every hop is clear, because a field is full
+        // of solid rock and nothing steers around it.
+        const std::uint32_t next = sim::chooseWorkRock(
+            from, leaving, std::span<const sim::MiningRock>(m_minerRocks), kMinerPathClearance);
+        if (next != sim::kNoRock) {
+            miner.rock = m_minerRockEntities[next];
+            ++miner.rockStep;
+            return true;
+        }
+        // Boxed in: keep working the one it has rather than fly a path that
+        // ends in a rock. Answering true is the point — the miner is fine,
+        // there is simply nowhere better to be.
+        return miner.rock != kNoIndex;
+    }
+    if (nearest == kNoIndex) {
+        return false; // nothing of this commodity in the sky: no body to draw
+    }
+    miner.field = nearestField;
+    miner.rock = nearest;
+    ++miner.rockStep;
+    return true;
+}
+
+bool SpaceWorld::minerWorkPoint(const MinerPuppet& miner, core::DVec3& rock,
+                                core::DVec3& hold) const
+{
+    const Transform* transform = m_registry.storage<Transform>().tryGet(miner.rock);
+    if (transform == nullptr || m_registry.storage<MineableRock>().tryGet(miner.rock) == nullptr) {
+        return false; // cut to nothing, or the system changed under it
+    }
+    rock = transform->position;
+    const RenderShape* shape = m_registry.storage<RenderShape>().tryGet(miner.rock);
+    const double radius = shape != nullptr ? static_cast<double>(shape->scale.x) : 0.0;
+    // On the station's side of the rock, so a ship coming out from the dock
+    // meets the miner rather than the rock it is hiding behind.
+    const sim::StationMarket& market = m_economy.markets()[miner.market];
+    const core::DVec3 station =
+        m_galaxy.systems[market.systemIndex].stations[market.stationIndex].position;
+    hold = sim::minerHoldPoint(rock, radius, station - rock, kMinerRockClearance);
+    return true;
+}
+
+void SpaceWorld::syncMinerPuppets(double dt)
+{
+    if (m_defs == nullptr || m_factionTable.empty() || m_economy.markets().empty()) {
+        return;
+    }
+    const std::size_t marketCount = m_economy.markets().size();
+    if (m_minerHold.size() != marketCount) {
+        m_minerHold.assign(marketCount, 0.0);
+    }
+    for (double& hold : m_minerHold) {
+        hold = std::max(0.0, hold - dt);
+    }
+    m_minerPresent.assign(marketCount, 0);
+
+    // Which outposts here are actually digging. Not "which are extractors":
+    // satisfaction is the station's own answer to how much of its nominal
+    // output it managed, so a mine whose warehouse is full, whose rock has run
+    // out, or whose miner the player just shot reads zero and gets no body.
+    // That is the promotion working in the honest direction — the sky follows
+    // the books, and a still field means the books have stopped.
+    const auto digs = [&](std::uint32_t market) {
+        const sim::StationMarket& row = m_economy.markets()[market];
+        if (row.systemIndex != m_currentSystem || row.archetype >= m_economyParams.archetypes.size()) {
+            return false;
+        }
+        return m_economyParams.archetypes[row.archetype].extracts &&
+               m_economy.satisfaction(market) > 0.0f && m_minerHold[market] <= 0.0;
+    };
+
+    std::vector<ecs::Entity> doomed;
+    ecs::Pool<MinerPuppet>& miners = m_registry.storage<MinerPuppet>();
+    for (std::size_t i = 0; i < miners.size(); ++i) {
+        MinerPuppet& miner = miners.values()[i];
+        const ecs::Entity entity = m_registry.entityFromIndex(miners.entityIndices()[i]);
+        if (miner.market >= marketCount || !digs(miner.market) ||
+            m_minerPresent[miner.market] != 0) {
+            doomed.push_back(entity);
+            continue;
+        }
+        m_minerPresent[miner.market] = 1;
+        ShipPilot* pilot = m_registry.tryGet<ShipPilot>(entity);
+        Transform* transform = m_registry.tryGet<Transform>(entity);
+        if (pilot == nullptr || transform == nullptr) {
+            continue;
+        }
+        // The job is not Lua's to choose, exactly as a hauler's route is not
+        // (stage 2): Idle and Patrol go back on the rock, while Attack and
+        // Flee are left alone — being shot at is the one thing that should
+        // stop a miner working. And it stays stopped for as long as the threat
+        // is warm, or the tick after Lua stopped flying the fight would send
+        // the ship straight back to the rock it was being shot off.
+        if (pilot->threatTimer <= 0.0f &&
+            (pilot->state == PilotState::Idle || pilot->state == PilotState::Patrol)) {
+            pilot->state = PilotState::Travel;
+        }
+        if (pilot->state != PilotState::Travel) {
+            continue;
+        }
+        miner.rockSeconds -= static_cast<float>(dt);
+        core::DVec3 rock;
+        core::DVec3 hold;
+        if (miner.rockSeconds <= 0.0f || !minerWorkPoint(miner, rock, hold)) {
+            if (!chooseMinerRock(miner, transform->position, true)) {
+                doomed.push_back(entity); // the field is worked out under it
+                continue;
+            }
+            miner.rockSeconds = static_cast<float>(kMinerRockSeconds);
+            if (!minerWorkPoint(miner, rock, hold)) {
+                doomed.push_back(entity);
+                continue;
+            }
+        }
+        pilot->waypoint = hold;
+    }
+    for (const ecs::Entity entity : doomed) {
+        despawnShip(entity.index);
+    }
+
+    for (std::uint32_t market = 0; market < marketCount; ++market) {
+        if (m_minerPresent[market] != 0 || !digs(market)) {
+            continue;
+        }
+        const sim::StationMarket& row = m_economy.markets()[market];
+        const sim::EconomyArchetype& archetype = m_economyParams.archetypes[row.archetype];
+        std::uint32_t commodity = kNoIndex;
+        for (std::uint32_t c = 0; c < archetype.production.size(); ++c) {
+            if (archetype.production[c] > 0.0f) {
+                commodity = c;
+                break;
+            }
+        }
+        if (commodity == kNoIndex) {
+            continue;
+        }
+        const core::DVec3 station =
+            m_galaxy.systems[row.systemIndex].stations[row.stationIndex].position;
+        MinerPuppet miner{.market = market, .commodity = commodity};
+        if (!chooseMinerRock(miner, station, false)) {
+            continue; // no rock of that kind here; the draw is failing anyway
+        }
+        core::DVec3 rock;
+        core::DVec3 hold;
+        if (!minerWorkPoint(miner, rock, hold)) {
+            continue;
+        }
+        miner.rockSeconds = static_cast<float>(kMinerRockSeconds);
+
+        // Whose ship it is: the ground it works, which is the same rule a
+        // hauler's allegiance follows. Never unaffiliated — Lua reads that as
+        // unconditionally player-hostile, and a mining ship opening fire on
+        // sight is exactly what this must not be.
+        std::uint32_t faction = systemOwnerFaction(row.systemIndex);
+        if (faction >= m_factionTable.size()) {
+            faction = 0;
+        }
+        const GameFaction& owner = m_factionTable[faction];
+        const std::vector<std::string>& roster =
+            owner.shipsTrader.empty() ? owner.shipsPatrol : owner.shipsTrader;
+        if (roster.empty()) {
+            continue;
+        }
+        // ⚑ The biggest hull the faction hauls with, and that falls out of the
+        // same rule as a freighter rather than needing a roster of its own: a
+        // ship that works a rock all day is carrying as much as anything in
+        // the sky. Asking chooseTraderHull for more than any hull holds is how
+        // "the biggest there is" is spelled.
+        m_rosterCapacities.clear();
+        for (const std::string& id : roster) {
+            const assets::ShipDef* candidate = m_defs->findShip(id.c_str());
+            m_rosterCapacities.push_back(candidate != nullptr ? candidate->cargoCapacity : 0.0f);
+        }
+        const std::uint32_t hull = sim::chooseTraderHull(
+            std::span<const float>(m_rosterCapacities), std::numeric_limits<float>::max(), market);
+        const assets::ShipDef* def =
+            hull < roster.size() ? m_defs->findShip(roster[hull].c_str()) : nullptr;
+        if (def == nullptr) {
+            SOL_LOG_WARN("miner puppet: no ship def for market %u", market);
+            continue;
+        }
+        // Placed where it works rather than at the station: an outpost's draw
+        // has been running since the galaxy was made, so the player arriving
+        // must find the field already being worked, not a ship setting out.
+        const ecs::Entity entity = spawnShipAt(*def, *m_defs, hold, owner.name.c_str());
+        m_registry.emplace<ShipPilot>(entity, ShipPilot{.role = PilotRole::Trader,
+                                                        .state = PilotState::Travel,
+                                                        .waypoint = hold,
+                                                        .factionIndex = faction});
+        m_registry.emplace<MinerPuppet>(entity, miner);
+        Transform& transform = m_registry.storage<Transform>().get(entity.index);
+        transform.orientation = lookAlong(rock - hold); // nose on the rock it is cutting
+        transform.previousOrientation = transform.orientation;
+        m_minerPresent[market] = 1;
+    }
+}
+
+void SpaceWorld::minerPuppetInfo(std::vector<MinerPuppetInfo>& out)
+{
+    out.clear();
+    const core::DVec3 eye = m_registry.storage<Transform>().get(playerEntityIndex()).position;
+    ecs::Pool<MinerPuppet>& miners = m_registry.storage<MinerPuppet>();
+    for (std::size_t i = 0; i < miners.size(); ++i) {
+        const std::uint32_t entityIndex = miners.entityIndices()[i];
+        const Transform* transform = m_registry.storage<Transform>().tryGet(entityIndex);
+        if (transform == nullptr) {
+            continue;
+        }
+        const MinerPuppet& miner = miners.values()[i];
+        MinerPuppetInfo info;
+        info.market = miner.market;
+        info.distance = length(transform->position - eye);
+        const FlightBody* body = m_registry.storage<FlightBody>().tryGet(entityIndex);
+        info.speed = body != nullptr ? length(body->velocity) : 0.0;
+        if (const Transform* rock = m_registry.storage<Transform>().tryGet(miner.rock)) {
+            info.working = true;
+            info.rockDistance = length(rock->position - transform->position);
+        }
+        if (miner.market < m_economy.markets().size()) {
+            const sim::StationMarket& row = m_economy.markets()[miner.market];
+            info.station = m_galaxy.systems[row.systemIndex].stations[row.stationIndex].name;
+        }
+        for (const SpawnedShip& spawned : m_spawnedShips) {
+            if (spawned.entity.index == entityIndex) {
+                info.name = spawned.name;
+                break;
+            }
+        }
+        out.push_back(std::move(info));
     }
 }
 
@@ -3027,6 +3330,24 @@ bool SpaceWorld::killCoarseTrader(std::uint32_t traderIndex)
     }
     m_factionSim.recordTraderLoss(route.system, traderIndex);
     return true;
+}
+
+bool SpaceWorld::killMinerPuppet(std::uint32_t market)
+{
+    // ⚑ 8u's rule again, and here it is the whole implementation: a miner has
+    // no coarse record of its own, so there is nothing to strike off and no
+    // second road to write. Either the ship is in the sky and dies the way a
+    // raider's shot kills it — explosion, wreck, loot, the outpost's draw
+    // stopping — or the lever answers false and the drive has to go somewhere
+    // there is a mine.
+    ecs::Pool<MinerPuppet>& miners = m_registry.storage<MinerPuppet>();
+    for (std::size_t i = 0; i < miners.size(); ++i) {
+        if (miners.values()[i].market == market) {
+            handleShipDestroyed(miners.entityIndices()[i]);
+            return true;
+        }
+    }
+    return false;
 }
 
 sol::core::DVec3 SpaceWorld::clearedBerthPoint() const
@@ -4489,6 +4810,28 @@ bool SpaceWorld::pilotHuntTrader(ecs::Entity entity)
                                     .inbound = route.leg == sim::TraderLeg::Arrive});
     }
 
+    // Miners are prey too (Phase 8x stage 6), and the note this phase came
+    // from asked for exactly that: ships in the sectors "so they can be raided
+    // or protected". A miner is never paced — nothing schedules it, it is
+    // parked at a rock — and it counts as inbound, because that flag means
+    // "will still be here when you arrive" and a ship working a field is the
+    // truest case of it there is.
+    const ecs::Pool<MinerPuppet>& miners = m_registry.storage<MinerPuppet>();
+    for (std::size_t i = 0; i < miners.size(); ++i) {
+        const std::uint32_t index = miners.entityIndices()[i];
+        const Transform* body = m_registry.storage<Transform>().tryGet(index);
+        const ShipPilot* crew = m_registry.storage<ShipPilot>().tryGet(index);
+        const ShipDefense* defense = m_registry.storage<ShipDefense>().tryGet(index);
+        if (body == nullptr || crew == nullptr || defense == nullptr || !defense->state.alive()) {
+            continue;
+        }
+        m_preyCandidates.push_back({.index = index,
+                                    .position = body->position,
+                                    .faction = crew->factionIndex,
+                                    .paced = false,
+                                    .inbound = true});
+    }
+
     const std::uint32_t prey =
         sim::choosePrey(transform->position, sim::preyReach(m_galaxyParams.gateDistance),
                         m_preyCandidates, m_preyHostile);
@@ -4908,9 +5251,15 @@ void SpaceWorld::tick(double dt)
                     // target 656,890 km away — abandoning a fight it was
                     // winning at one kilometre. Threat is proximity plus
                     // intent, not a hit counter.
+                    // A miner counts as well (stage 6). Nothing paces it, so
+                    // there is no clock to hold; what the threat buys there is
+                    // the ship knowing which way to run, and the reconcile
+                    // leaving it alone instead of sending it back to its rock
+                    // the moment Lua stops flying the fight.
                     if (pilot.role == PilotRole::Fighter &&
                         distance < static_cast<double>(weapon->range) &&
-                        m_registry.storage<TraderPuppet>().tryGet(pilot.targetIndex) != nullptr) {
+                        (m_registry.storage<TraderPuppet>().tryGet(pilot.targetIndex) != nullptr ||
+                         m_registry.storage<MinerPuppet>().tryGet(pilot.targetIndex) != nullptr)) {
                         if (ShipPilot* hunted =
                                 m_registry.storage<ShipPilot>().tryGet(pilot.targetIndex)) {
                             hunted->threatIndex = entityIndex;
@@ -5445,6 +5794,11 @@ void SpaceWorld::tick(double dt)
     {
         const std::uint32_t zone = profiler.beginZone("sim.puppets");
         syncTraderPuppets();
+        // And a ship at the rock for every outpost here that is digging
+        // (Phase 8x stage 6). Same reconcile, same rule, a different coarse
+        // actor: an extractor's draw is activity the sim has been performing
+        // since Phase 8g with nothing in the sky to show for it.
+        syncMinerPuppets(dt);
         profiler.endZone(zone);
     }
 
@@ -5690,6 +6044,20 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
                    defense != nullptr && defense->playerAssist > 0.0) {
             m_playerKilledTraders.push_back(puppet->traderIndex);
         }
+    }
+
+    // A miner dying stops its outpost digging (Phase 8x stage 6), which is the
+    // same idea one actor over: the entity is a view of a draw, so removing it
+    // has to reach the draw or the ship was scenery. It is the only way the
+    // player can reach into a station's production directly — and it is
+    // temporary, because the outpost sends another ship out.
+    if (const MinerPuppet* miner = m_registry.storage<MinerPuppet>().tryGet(entityIndex);
+        miner != nullptr && miner->market < m_minerHold.size()) {
+        m_minerHold[miner->market] = kMinerReplacementLegs * m_economy.params().traderLegSeconds;
+        const sim::StationMarket& row = m_economy.markets()[miner->market];
+        SOL_LOG_INFO("[mining] %s loses its miner: no draw for %.0f s",
+                     m_galaxy.systems[row.systemIndex].stations[row.stationIndex].name.c_str(),
+                     m_minerHold[miner->market]);
     }
 
     for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
@@ -6011,6 +6379,11 @@ bool SpaceWorld::loadFrom(const char* path)
     // are pilots from the run being replaced. loadSave does NOT go through
     // loadSystem, so resetting it there is not resetting it here.
     m_hails.clear();
+    // Same rule for an outpost's stopped draw (Phase 8x stage 6): it records a
+    // ship shot in front of the player, and the player it belonged to has just
+    // been replaced. Leaving it would import one run's kill into another's
+    // economy — and it is not in the save precisely because it is transient.
+    m_minerHold.assign(m_economy.markets().size(), 0.0);
     m_pendingHail = HailRequest{};
     m_answeringHail = HailMemory{};
     // And what the player had been told about the war over their head

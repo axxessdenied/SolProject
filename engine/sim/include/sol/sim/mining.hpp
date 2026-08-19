@@ -26,11 +26,13 @@
 
 #include "sol/sim/survey.hpp"
 #include "sol/sim/universe.hpp"
+#include "sol/sim/weapons.hpp" // segmentHitsSphere: a miner's path through a field
 
 #include "sol/core/math/math.hpp"
 #include "sol/core/serialize.hpp"
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -143,6 +145,85 @@ struct MiningParams
 
     std::uint32_t maxCargoStacks = 3; // wreck-loot validation (as SurveyParams)
 };
+
+// One rock as a miner sees it: somewhere to be, and something to fly into.
+struct MiningRock
+{
+    core::DVec3 position;
+    double radius = 0.0;
+};
+
+inline constexpr std::uint32_t kNoRock = 0xffff'ffffu;
+
+// The rock a miner moves to next: the nearest one, other than the one it is
+// leaving, that it can reach in a STRAIGHT LINE without flying into another.
+// kNoRock when there is no such rock, which means it stays where it is.
+//
+// ⚑ The straight line is the whole rule, and it was written after watching a
+// miner die. Rocks are solid statics and nothing in the game steers around
+// them: `m_obstacles` holds stations and planets only, so a ship crossing a
+// field has no avoidance at all. The first version picked the next rock by
+// generation order, which sent a freighter 5,377 m across a field at 207 m/s
+// — measured, in that order, one sample before `'sol.freighter' destroyed` —
+// and the outpost lost its miner every sixty seconds forever. Nearest keeps
+// the hop short; the clearance test is what makes even a short one safe.
+//
+// The test is conservative on both ends: it aims at the rock's centre, while
+// the ship actually stops a hold point short of it, and it counts the rock
+// being LEFT as an obstacle, because a new rock on the far side of the old
+// one is exactly the hop that would clip it.
+[[nodiscard]] inline std::uint32_t chooseWorkRock(const core::DVec3& from, std::uint32_t avoid,
+                                                  std::span<const MiningRock> rocks,
+                                                  double clearance)
+{
+    std::uint32_t best = kNoRock;
+    double bestDistance = 0.0;
+    for (std::uint32_t i = 0; i < rocks.size(); ++i) {
+        if (i == avoid) {
+            continue;
+        }
+        const double distance = length(rocks[i].position - from);
+        if (best != kNoRock && distance >= bestDistance) {
+            continue;
+        }
+        bool blocked = false;
+        for (std::uint32_t j = 0; j < rocks.size() && !blocked; ++j) {
+            double t = 0.0;
+            blocked = j != i && segmentHitsSphere(from, rocks[i].position, rocks[j].position,
+                                                  rocks[j].radius + clearance, t);
+        }
+        if (!blocked) {
+            best = i;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
+// Where a mining ship holds while it works a rock (engine plan Phase 8x,
+// stage 6).
+//
+// An extractor station's ore comes out of the ground through drawFromSystem
+// whether or not anyone is watching; a miner is that draw given a body, so it
+// parks off a rock rather than flying a lane. The clearance is the whole rule
+// and it is easy to get wrong in a way a screenshot will not show: rocks run
+// from 45 m to 240 m of radius, so a fixed hold distance that looks generous
+// at the small end puts the ship inside the big one — and a rock is solid.
+// Measured from the rock's own surface, never from its centre.
+//
+// `towards` is the direction the ship should sit on (the game passes the
+// station's side, so a miner is between the rock and the dock it feeds, which
+// is where anyone flying in from the station will see it). A degenerate
+// direction still has to answer with a point outside the rock.
+[[nodiscard]] inline core::DVec3 minerHoldPoint(const core::DVec3& rock, double rockRadius,
+                                                const core::DVec3& towards, double clearance)
+{
+    const double distance = length(towards);
+    const core::DVec3 direction =
+        distance > 1.0e-6 ? towards * (1.0 / distance) : core::DVec3{0.0, 0.0, 1.0};
+    const double radius = rockRadius > 0.0 ? rockRadius : 0.0;
+    return rock + direction * (radius + (clearance > 0.0 ? clearance : 0.0));
+}
 
 class MiningSim
 {

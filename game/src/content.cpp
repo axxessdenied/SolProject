@@ -654,6 +654,14 @@ bool killTrader(GameContent& content, double traderIndex)
     return content.world().killCoarseTrader(static_cast<std::uint32_t>(traderIndex));
 }
 
+// The same lever for a mining ship (Phase 8x stage 6), taking the market index
+// sol.miners() prints. False means there is no such body here, which is the
+// only honest answer: a miner has no record apart from its outpost's draw.
+bool killMiner(GameContent& content, double market)
+{
+    return content.world().killMinerPuppet(static_cast<std::uint32_t>(market));
+}
+
 // What is actually in the sky, read off the entities rather than off the
 // record (Phase 8x). sol.traders() says who *should* have a body; this says
 // who does, and the two disagreeing is the whole failure mode of a promotion.
@@ -673,6 +681,51 @@ std::string traderPuppets(GameContent& content)
     std::snprintf(buffer, sizeof(buffer), "%zu trader bod%s in %s", puppets.size(),
                   puppets.size() == 1 ? "y" : "ies",
                   world.galaxy().systems[world.currentSystemIndex()].name.c_str());
+    return (lines.empty() ? std::string("(none)") : lines) + "\n" + buffer;
+}
+
+// Who is working the rock (Phase 8x stage 6). Prints both halves of the
+// promotion because only their disagreement is a bug: the bodies that exist,
+// and every extractor station here that the books say is digging — so a mine
+// listed with no ship is either a defect or the player's own doing, and the
+// hold says which.
+std::string minerPuppets(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::vector<game::MinerPuppetInfo> miners;
+    world.minerPuppetInfo(miners);
+    std::string lines;
+    char buffer[256];
+    for (const game::MinerPuppetInfo& miner : miners) {
+        std::snprintf(buffer, sizeof(buffer), "m%u %s (%s)  %.0f km out, %s", miner.market,
+                      miner.name.c_str(), miner.station.c_str(), miner.distance / 1000.0,
+                      miner.working ? "working" : "no rock");
+        if (miner.working) {
+            const std::size_t used = std::strlen(buffer);
+            std::snprintf(buffer + used, sizeof(buffer) - used, " a rock %.0f m off at %.0f m/s",
+                          miner.rockDistance, miner.speed);
+        }
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    const sol::sim::Economy& economy = world.economy();
+    std::size_t extractors = 0;
+    for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+        const sol::sim::StationMarket& row = economy.markets()[m];
+        if (row.systemIndex != world.currentSystemIndex() ||
+            row.archetype >= economy.params().archetypes.size() ||
+            !economy.params().archetypes[row.archetype].extracts) {
+            continue;
+        }
+        ++extractors;
+        std::snprintf(buffer, sizeof(buffer), "  m%u %s: output %.0f%%%s", m,
+                      world.galaxy().systems[row.systemIndex].stations[row.stationIndex]
+                          .name.c_str(),
+                      static_cast<double>(economy.satisfaction(m)) * 100.0,
+                      world.minerHold(m) > 0.0 ? " [no miner]" : "");
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    std::snprintf(buffer, sizeof(buffer), "%zu miner(s) for %zu outpost(s) in %s", miners.size(),
+                  extractors, world.galaxy().systems[world.currentSystemIndex()].name.c_str());
     return (lines.empty() ? std::string("(none)") : lines) + "\n" + buffer;
 }
 
@@ -2599,10 +2652,12 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
     m_vm.registerFunction<&traderRoutes>("sol", "traders", this);
     m_vm.registerFunction<&traderPuppets>("sol", "puppets", this);
+    m_vm.registerFunction<&minerPuppets>("sol", "miners", this);
     m_vm.registerFunction<&traderHunters>("sol", "hunters", this);
     m_vm.registerFunction<&systemDanger>("sol", "danger", this);
     m_vm.registerFunction<&escortCandidates>("sol", "escort_candidates", this);
     m_vm.registerFunction<&killTrader>("sol", "trader_kill", this);
+    m_vm.registerFunction<&killMiner>("sol", "miner_kill", this);
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
     m_vm.registerFunction<&listModules>("sol", "modules", this);

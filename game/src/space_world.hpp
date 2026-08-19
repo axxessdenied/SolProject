@@ -191,6 +191,36 @@ struct TraderPuppet
     std::uint32_t paced = 0;
 };
 
+// A body for an extractor station's ore draw (Phase 8x stage 6). The same
+// puppet relationship a trader has, against a different coarse actor: an
+// outpost marked produces_from = "field" pulls real rock out of MiningSim
+// every economy tick whether or not anyone is watching, and this is that draw
+// with a ship on the end of it. The market is the record; the entity is the
+// view. Transient like TraderPuppet — rebuilt from the books on load.
+struct MinerPuppet
+{
+    std::uint32_t market = 0;    // economy market index of the outpost it feeds
+    std::uint32_t commodity = 0; // what that outpost digs
+    std::uint32_t field = 0;     // asteroid field it is working
+    std::uint32_t rock = 0xffff'ffffu; // entity index of the rock, or none
+    float rockSeconds = 0.0f;          // time left before it moves to the next
+    std::uint32_t rockStep = 0;        // which rock in the field it took last
+};
+
+// One miner body, for the console probe. Same job as TraderPuppetInfo: the
+// failure mode of a promotion is the record and the sky disagreeing, so this
+// reports what is drawn and which outpost's draw it stands for.
+struct MinerPuppetInfo
+{
+    std::uint32_t market = 0;
+    std::string name;
+    std::string station;
+    double distance = 0.0;   // from the player, meters
+    double rockDistance = 0.0; // from the rock it is working, meters
+    double speed = 0.0;      // moving means it is between rocks, not working one
+    bool working = false;    // it has a rock at all
+};
+
 // One fighter and whatever it is going for, for the console probe. The
 // promotion's failure mode is the record and the sky disagreeing, and
 // predation's is a raider that says it is hunting while flying nowhere - so
@@ -403,6 +433,30 @@ inline constexpr double kTraderLaneSpacing = 400.0;
 // coarse sim and the bubble, which is the whole Simulation-LOD idea.
 inline constexpr double kTraderApproachDistance = 6'000.0;
 inline constexpr double kTraderApproachSeconds = 35.0;
+// How far off a rock's SURFACE a miner holds while it works it (Phase 8x
+// stage 6), and how long it stays before moving to the next one. The clearance
+// is a standoff and not a stop: PilotState::Travel arrives within
+// kTraderArrivalRange of its waypoint, so the ship settles somewhere between
+// the surface and this plus that, and the smallest of those has to still be
+// daylight. A minute a rock is slow enough to read as work rather than as a
+// patrol, and quick enough that a field is not a still life.
+inline constexpr double kMinerRockClearance = 600.0;
+inline constexpr double kMinerRockSeconds = 60.0;
+// ⚑ And how wide a corridor a miner needs to move between two of them. Rocks
+// are solid statics and NOTHING in the game avoids them — m_obstacles holds
+// stations and planets only — so a hop is refused unless the straight line
+// misses every other rock by this much. It is deliberately far smaller than
+// the hold clearance above: a 32 m hull needs room to pass, not room to park,
+// and a corridor as wide as the standoff would box a miner in and quietly
+// turn it into scenery.
+inline constexpr double kMinerPathClearance = 200.0;
+// How long an outpost's draw stops after its miner is killed (Phase 8x stage
+// 6). ⚑ Not picked: traderLegSeconds is the economy's own figure for crossing
+// a system, which is exactly what a replacement has to fly. Killing the ship
+// therefore costs the station about that much ore — the first time the player
+// can reach into a station's production directly, and the reason a miner is
+// worth shooting at rather than scenery.
+inline constexpr double kMinerReplacementLegs = 1.0;
 // How long a pilot remembers being shot at (Phase 8x §D). It asks 8l's
 // question - was this ship in this fight - but answers it for the victim
 // rather than for a bounty, so it is deliberately shorter than that 10 s
@@ -599,6 +653,10 @@ public:
     // game would - through its body if it has one here, so the wreck, the loot
     // and the standing hit are all real.
     bool killCoarseTrader(std::uint32_t traderIndex);
+    // Dev lever (sol.miner_kill): the same, one actor over. There is no
+    // recordless road here — a miner IS its body — so this only ever destroys a
+    // ship that is in the sky, through the death path a raider's shot uses.
+    bool killMinerPuppet(std::uint32_t market);
     // How many traders have been lost since this session started. A probe, not
     // sim state: it is never saved, and nothing reads it but the console.
     [[nodiscard]] std::uint32_t traderLossCount() const { return m_traderLossCount; }
@@ -671,6 +729,17 @@ public:
                                           sol::core::DVec3* out) const;
     // Every trader body in the system, for the console.
     void traderPuppetInfo(std::vector<TraderPuppetInfo>& out);
+    // Every miner body in the system, and the outposts that are drawing
+    // without one — because the two disagreeing is what a broken promotion
+    // looks like from the outside (Phase 8x stage 6).
+    void minerPuppetInfo(std::vector<MinerPuppetInfo>& out);
+    // Seconds an outpost's draw is stopped for, or 0. The probe's other half:
+    // a mine with no miner and no hold is a bug, and one with a hold is the
+    // player's own doing.
+    [[nodiscard]] double minerHold(std::uint32_t market) const
+    {
+        return market < m_minerHold.size() ? m_minerHold[market] : 0.0;
+    }
     [[nodiscard]] const std::vector<std::string>& commodityIds() const { return m_commodityIds; }
     [[nodiscard]] std::uint32_t commodityIndex(const char* id) const;
     [[nodiscard]] double playerCredits() const { return m_playerCredits; }
@@ -1348,6 +1417,22 @@ private:
     // else. Runs after the economy tick, which is the moment the set goes
     // stale. The record decides who exists; this only draws the consequence.
     void syncTraderPuppets();
+    // Reconciles miner bodies with the extractor stations here (Phase 8x stage
+    // 6): a ship at the rock for every outpost in this system that is actually
+    // drawing, and none for one that has stopped — because its warehouse is
+    // full, because the rock ran out, or because the player shot its last
+    // miner. Runs beside the trader reconcile for the same reason: the economy
+    // tick is the one moment any of that can change.
+    void syncMinerPuppets(double dt);
+    // The rock a miner should be working: the nearest one holding what its
+    // outpost digs on the first pick, then round the same field. Answers false
+    // when there is nothing of that commodity left in the sky.
+    [[nodiscard]] bool chooseMinerRock(MinerPuppet& miner, const sol::core::DVec3& from,
+                                       bool sameField) const;
+    // Where a miner should sit to work the rock it has picked (its hold point
+    // off the surface), and where that rock is. False when the rock is gone.
+    [[nodiscard]] bool minerWorkPoint(const MinerPuppet& miner, sol::core::DVec3& rock,
+                                      sol::core::DVec3& hold) const;
     // The leg a trader is currently flying: its two ends in system space, how
     // far along the record says it is, and how long the leg is quoted at.
     // Answers false when the trader is not flying an in-system leg here.
@@ -1386,6 +1471,21 @@ private:
     // Scratch for syncTraderPuppets: which coarse traders already have a body.
     // A member so the per-tick reconcile does not allocate.
     std::vector<std::uint8_t> m_puppetPresent;
+    // Per market, seconds an outpost's draw is stopped for because its miner
+    // was killed (Phase 8x stage 6), and the scratch the reconcile counts
+    // bodies in. Transient: a hold describes a ship that died in front of the
+    // player, so it is dropped on a new game and never saved — the same rule
+    // the puppets themselves follow.
+    std::vector<double> m_minerHold;
+    std::vector<std::uint8_t> m_minerPresent;
+    // The field a miner is choosing its next rock out of, and the entities
+    // those rocks belong to. Mutable scratch: choosing is a const question
+    // about the world, asked at most once a minute per miner.
+    mutable std::vector<sol::sim::MiningRock> m_minerRocks;
+    mutable std::vector<std::uint32_t> m_minerRockEntities;
+    // Cargo capacities of a faction's hauler roster, rebuilt per spawn so the
+    // hull can be chosen against the load rather than against an index.
+    std::vector<float> m_rosterCapacities;
     // Scratch for pilotHuntTrader (Phase 8x): the haulers in the sky and the
     // hunter's hostility row. Members for the reconcile's reason - hunting is
     // a per-think decision and every raider in the system makes it.
@@ -1426,6 +1526,11 @@ private:
         sol::sim::MiningSim* mining = nullptr;
         const sol::sim::Galaxy* galaxy = nullptr;
         const sol::sim::Economy* economy = nullptr;
+        // Outposts whose miner was killed and has not been replaced yet
+        // (Phase 8x stage 6), seconds remaining, indexed by market. Borrowed
+        // from SpaceWorld: a hold is a fact about a ship that died in front of
+        // the player, so it lives with the bodies and never reaches the save.
+        const std::vector<double>* minerHold = nullptr;
         float draw(std::uint32_t market, std::uint32_t commodity, float units) override;
     };
 

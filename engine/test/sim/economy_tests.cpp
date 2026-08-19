@@ -476,6 +476,46 @@ SOL_TEST(economy_lane_slots_keep_a_convoy_from_sharing_coordinates)
     SOL_CHECK(std::isfinite(nowhere.x) && std::isfinite(nowhere.y) && std::isfinite(nowhere.z));
 }
 
+SOL_TEST(economy_a_hauler_flies_a_hull_that_can_carry_its_load)
+{
+    // Stage 6's whole idea: the sky is readable because the hull fits the
+    // cargo. A laden haul is a freighter and a deadhead is a shuttle, so a
+    // raider, an escort and the player all read the same thing off a silhouette
+    // without being told it.
+    using sol::sim::chooseTraderHull;
+    const std::vector<float> shipped = {200.0f, 50.0f}; // ships_trader, as data
+    const std::span<const float> roster(shipped);
+
+    // The shipped fleet hauls 150 units, which only the freighter can hold.
+    SOL_CHECK(chooseTraderHull(roster, 150.0f, 0) == 0);
+    // A part load fits the small hull, and so does a deadhead.
+    SOL_CHECK(chooseTraderHull(roster, 40.0f, 0) == 1);
+    SOL_CHECK(chooseTraderHull(roster, 0.0f, 0) == 1);
+    // Exactly full still fits: the rule is "can carry", not "has room to spare".
+    SOL_CHECK(chooseTraderHull(roster, 50.0f, 0) == 1);
+    // The smallest hull that COVERS it, not the biggest available.
+    const std::vector<float> three = {500.0f, 200.0f, 50.0f};
+    SOL_CHECK(chooseTraderHull(std::span<const float>(three), 60.0f, 0) == 1);
+    // Nothing covers it: a roster is data, and data that cannot carry a shipped
+    // cargo must still answer with a ship rather than with nothing.
+    SOL_CHECK(chooseTraderHull(roster, 5'000.0f, 0) == 0);
+    SOL_CHECK(chooseTraderHull({}, 10.0f, 3) == 0);
+
+    // Equal-capacity hulls are shared out by trader, so a faction listing two
+    // of the same size flies both — and one hauler keeps its own answer, which
+    // is what stops a body changing ship under the player mid-leg.
+    const std::vector<float> twins = {100.0f, 100.0f, 20.0f};
+    const std::span<const float> pair(twins);
+    SOL_CHECK(chooseTraderHull(pair, 90.0f, 0) == 0);
+    SOL_CHECK(chooseTraderHull(pair, 90.0f, 1) == 1);
+    SOL_CHECK(chooseTraderHull(pair, 90.0f, 2) == 0);
+    SOL_CHECK(chooseTraderHull(pair, 90.0f, 7) == chooseTraderHull(pair, 90.0f, 7));
+    // And the tie-break never reaches past what fits: 20 cannot take 90.
+    for (std::uint32_t t = 0; t < 16; ++t) {
+        SOL_CHECK(chooseTraderHull(pair, 90.0f, t) != 2);
+    }
+}
+
 SOL_TEST(economy_hop_count_agrees_with_the_leg_it_quoted)
 {
     // hopCount is public now because placing a body needs it, and it has to

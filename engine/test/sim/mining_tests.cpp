@@ -4,7 +4,9 @@
 #include <sol/core/serialize.hpp>
 #include <sol/test/test.hpp>
 
+#include <cmath>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 using sol::sim::AsteroidFieldSpec;
@@ -550,4 +552,94 @@ SOL_TEST(mining_generated_galaxy_fields_follow_the_region_gradient)
         total += oreless.fieldCount(i);
     }
     SOL_CHECK(total == 0);
+}
+
+SOL_TEST(mining_a_miner_only_crosses_to_a_rock_it_can_reach)
+{
+    // ⚑ Written after watching a miner die. Rocks are solid statics and
+    // nothing in the game steers around them, so a hop across a field is a
+    // ship flying blind: the first version picked the next rock in generation
+    // order and sent a freighter 5,377 m at 207 m/s, which read as a mining
+    // outpost losing its ship every sixty seconds forever. Nearest keeps the
+    // hop short and the clearance test keeps it survivable.
+    using sol::sim::chooseWorkRock;
+    using sol::sim::kNoRock;
+    using sol::sim::MiningRock;
+    constexpr double kClear = 200.0;
+    const sol::core::DVec3 from{0.0, 0.0, 0.0};
+
+    // 0 sits squarely between the miner and 1, so the far one is refused even
+    // though nothing else is wrong with it.
+    const std::vector<MiningRock> shadowed = {
+        {.position = {1'000.0, 0.0, 0.0}, .radius = 200.0},
+        {.position = {2'000.0, 0.0, 0.0}, .radius = 200.0},
+    };
+    SOL_CHECK(chooseWorkRock(from, kNoRock, std::span<const MiningRock>(shadowed), kClear) == 0);
+    // Leaving 0 with only its own shadow behind it: nowhere clear to go.
+    SOL_CHECK(chooseWorkRock(from, 0, std::span<const MiningRock>(shadowed), kClear) == kNoRock);
+
+    // Nearest wins among clear paths, and the one being left is never picked.
+    const std::vector<MiningRock> field = {
+        {.position = {0.0, 900.0, 0.0}, .radius = 100.0},   // nearest
+        {.position = {0.0, -1'400.0, 0.0}, .radius = 100.0},
+        {.position = {2'500.0, 0.0, 0.0}, .radius = 100.0},
+    };
+    const std::span<const MiningRock> clear(field);
+    SOL_CHECK(chooseWorkRock(from, kNoRock, clear, kClear) == 0);
+    SOL_CHECK(chooseWorkRock(from, 0, clear, kClear) == 1);
+    SOL_CHECK(chooseWorkRock(from, 1, clear, kClear) == 0);
+    // Deterministic: the same question twice is the same answer, so two
+    // reconciles in a row cannot shuffle a miner between rocks.
+    SOL_CHECK(chooseWorkRock(from, 1, clear, kClear) == chooseWorkRock(from, 1, clear, kClear));
+
+    // Degenerate inputs answer rather than crash: no rocks at all, and one
+    // rock which is the one being left.
+    SOL_CHECK(chooseWorkRock(from, kNoRock, {}, kClear) == kNoRock);
+    const std::vector<MiningRock> lonely = {{.position = {500.0, 0.0, 0.0}, .radius = 50.0}};
+    SOL_CHECK(chooseWorkRock(from, 0, std::span<const MiningRock>(lonely), kClear) == kNoRock);
+
+    // A wider corridor refuses a hop a narrow one allows — which is the whole
+    // reason the path margin is its own number and not the hold standoff.
+    const std::vector<MiningRock> squeeze = {
+        {.position = {1'000.0, 0.0, 0.0}, .radius = 50.0},
+        {.position = {500.0, 300.0, 0.0}, .radius = 50.0},
+    };
+    const std::span<const MiningRock> gap(squeeze);
+    SOL_CHECK(chooseWorkRock(from, 1, gap, 100.0) == 0);
+    SOL_CHECK(chooseWorkRock(from, 1, gap, 400.0) == kNoRock);
+}
+
+SOL_TEST(mining_a_miner_holds_clear_of_the_rock_it_works)
+{
+    // An extractor's ore comes out of the ground whether or not anyone is
+    // watching (Phase 8x stage 6); a miner is that draw given a body, so it
+    // parks off a rock instead of flying a lane. The clearance is the whole
+    // rule and it is the kind that looks right in a screenshot and is wrong
+    // where nobody has flown yet: rocks run from 45 m to 240 m of radius, so a
+    // hold distance measured from the centre puts the ship inside the big ones
+    // — and a rock is solid.
+    using sol::sim::minerHoldPoint;
+    const sol::core::DVec3 rock{1.0e6, -2.0e5, 3.0e5};
+    const sol::core::DVec3 station{0.0, 0.0, 0.0};
+    constexpr double kClearance = 400.0;
+
+    for (const double radius : {45.0, 120.0, 240.0}) {
+        const sol::core::DVec3 hold = minerHoldPoint(rock, radius, station - rock, kClearance);
+        // Outside the rock by the clearance, whatever the rock's size.
+        SOL_CHECK(std::abs(sol::core::length(hold - rock) - (radius + kClearance)) < 1.0e-6);
+        // On the station's side of it, so a ship flying out from the dock sees
+        // the miner rather than the rock it is behind.
+        SOL_CHECK(sol::core::length(hold - station) < sol::core::length(rock - station));
+    }
+
+    // Degenerate inputs still answer with a point outside the rock: a miner
+    // standing exactly where its station is, and a rock with no radius at all.
+    const sol::core::DVec3 nowhere = minerHoldPoint(rock, 100.0, {}, kClearance);
+    SOL_CHECK(std::abs(sol::core::length(nowhere - rock) - 500.0) < 1.0e-6);
+    const sol::core::DVec3 flat = minerHoldPoint(rock, 0.0, station - rock, kClearance);
+    SOL_CHECK(std::abs(sol::core::length(flat - rock) - kClearance) < 1.0e-6);
+    // A negative clearance is data, not a crash: it must not pull the ship
+    // inside the rock, so the worst it can do is put it on the surface.
+    const sol::core::DVec3 clamped = minerHoldPoint(rock, 100.0, station - rock, -50.0);
+    SOL_CHECK(sol::core::length(clamped - rock) >= 100.0 - 1.0e-6);
 }
