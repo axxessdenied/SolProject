@@ -145,6 +145,17 @@ struct ForgePart
 
     std::vector<std::pair<std::string, ForgeValue>> params;
 
+    // ⚑ The comments and blank lines that stood above this part's `[[part]]`
+    // line, kept VERBATIM and written back out in front of it. Empty on a part
+    // the tool created, where the writer supplies the blank separator itself.
+    //
+    // It is trivia rather than "the comment block" because `cockpit.forge` puts
+    // a blank line between its `# --- canopy frame ---` divider and the part it
+    // introduces: storing only the comments would reproduce the words and lose
+    // the spacing, and a writer that silently reformats a committed file is one
+    // nobody will let near a committed file. Whatever was there comes back.
+    std::string leading;
+
     [[nodiscard]] const ForgeValue* find(const char* name) const;
     // The authored value if present, the schema default otherwise.
     [[nodiscard]] ForgeValue value(const char* name) const;
@@ -175,6 +186,34 @@ struct ForgeDoc
     ForgeBuildOptions build;
     std::vector<ForgePart> parts;
 
+    // ⚑ What stood above the first plain key, verbatim - which for every asset
+    // in this game is the file's header comment, and those headers are where
+    // most of what this project knows about its own meshes is written down. A
+    // writer that regenerates a file from its values alone deletes them on the
+    // first save: survivable while the tool only opens files, fatal once stage
+    // E is saving on every accepted edit.
+    //
+    // Trivia above a `[[part]]` belongs to the PART, even when that part is the
+    // first thing in the file, so a document that opens straight into a part
+    // has no header. Splitting it the other way would make the writer emit both
+    // this and its own separator, and the file would gain a blank line every
+    // time it was saved.
+    std::string header;
+    // The same, above a `[build]` table. Separate because `[build]` sits
+    // between the name and the parts and can carry its own note.
+    std::string buildLeading;
+    // Trailing comments and blank lines after the last part, which belong to no
+    // element and would otherwise be the one kind of trivia still dropped.
+    std::string trailer;
+
+    // ⚑ True when the source carried a comment this model cannot place: one
+    // after a value on the same line, or one inside a multi-line array's
+    // brackets. Neither exists in this repo's six assets, and neither can be
+    // attached without a per-key slot the document does not have - so the
+    // parser flags it and the tool says so, because a known gap a person is
+    // told about is a different thing from a silent loss.
+    bool hasUnplaceableComments = false;
+
     [[nodiscard]] const ForgePart* find(const std::string& id) const;
     [[nodiscard]] std::size_t indexOf(const std::string& id) const; // npos when absent
     // A part id not already taken, derived from `base`.
@@ -189,8 +228,18 @@ struct ForgeDoc
                               ForgeDoc& out, std::string* error = nullptr);
 
 // Serialises back to TOML. Round-trip stable: parsing the output gives an equal
-// document. Parameters still at their schema default are omitted, so a file
-// stays as short as what it actually says.
+// document. A parameter the source never mentioned stays unmentioned, so a file
+// says only what it actually says - but one that was written down is written
+// back even where it equals the schema default, because a person who typed the
+// segment count is naming the knob and a tool that answers by deleting the line
+// is not one they will trust with the file.
+//
+// ⚑ Stronger than that for a file that came from `parseForge`: the six assets
+// in `assets/meshes/` come back BYTE FOR BYTE, comments and blank lines
+// included, and `geometry.unit` asserts it against the committed files. That is
+// the property stage E needs - a modeller saves on every accepted edit, so a
+// writer that reformatted anything would rewrite the whole asset on the first
+// nudge of a vertex and bury the change it actually made.
 [[nodiscard]] std::string writeForge(const ForgeDoc& doc);
 
 // Evaluates the tree into a mesh.

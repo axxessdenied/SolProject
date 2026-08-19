@@ -8,7 +8,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <utility>
 
 using namespace sol;
 using assets::ForgeDoc;
@@ -30,6 +33,44 @@ namespace {
         return {};
     }
     return error.empty() ? "rejected" : error;
+}
+
+[[nodiscard]] std::string readWholeFile(const std::string& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        std::printf("  cannot open %s\n", path.c_str());
+        return {};
+    }
+    std::ostringstream contents;
+    contents << file.rdbuf();
+    return contents.str();
+}
+
+// "the file differs" is a poor thing to learn about a 1300-line asset, so say
+// which line and show both.
+void reportFirstDifferingLine(const char* name, const std::string& expected,
+                              const std::string& actual)
+{
+    std::size_t line = 1;
+    std::size_t lineStart = 0;
+    const std::size_t shared = std::min(expected.size(), actual.size());
+    for (std::size_t i = 0; i < shared; ++i) {
+        if (expected[i] != actual[i]) {
+            const std::size_t expectedEnd = expected.find('\n', lineStart);
+            const std::size_t actualEnd = actual.find('\n', lineStart);
+            std::printf("  %s.forge line %zu\n    want: %s\n    got:  %s\n", name, line,
+                        expected.substr(lineStart, expectedEnd - lineStart).c_str(),
+                        actual.substr(lineStart, actualEnd - lineStart).c_str());
+            return;
+        }
+        if (expected[i] == '\n') {
+            ++line;
+            lineStart = i + 1;
+        }
+    }
+    std::printf("  %s.forge: same for %zu bytes, then lengths differ (%zu vs %zu)\n", name, shared,
+                expected.size(), actual.size());
 }
 
 [[nodiscard]] bool near(double a, double b, double tolerance)
@@ -593,4 +634,165 @@ segments_u = 2
     std::string error;
     SOL_CHECK(!assets::buildForge(doc, mesh, &error));
     SOL_CHECK(!error.empty());
+}
+
+// ⚑ The load-bearing test of the comment-preserving writer, and the reason it
+// can exist at all is the D debt slice: the six `.forge` files are committed and
+// this suite already reads them, so the net is the real assets rather than a
+// fixture that agrees with the code by construction.
+//
+// Byte for byte, not "equivalent". Stage E saves on every accepted edit, so a
+// writer that reformatted anything at all would rewrite the whole asset the
+// first time somebody nudged a vertex and bury the one line that changed.
+SOL_TEST(everyCommittedForgeSourceRoundTripsByteForByte)
+{
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
+    for (const char* name : names) {
+        const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+        const std::string source = readWholeFile(path);
+        SOL_CHECK(!source.empty());
+        if (source.empty()) {
+            continue;
+        }
+
+        ForgeDoc doc;
+        std::string error;
+        SOL_CHECK(assets::parseForge(source.data(), source.size(), path.c_str(), doc, &error));
+        if (!error.empty()) {
+            std::printf("  %s\n", error.c_str());
+            continue;
+        }
+
+        // None of the six carries a comment after a value or inside an array,
+        // which is what makes the byte-exact claim reachable at all.
+        SOL_CHECK(!doc.hasUnplaceableComments);
+
+        const std::string written = assets::writeForge(doc);
+        SOL_CHECK(written == source);
+        if (written != source) {
+            reportFirstDifferingLine(name, source, written);
+        }
+    }
+}
+
+// The header is the file's, not the writer's. A document that arrives without
+// one leaves without one - otherwise the tool would inject three lines of its
+// own into a hand-written file the first time it was saved, which is the same
+// class of unasked-for edit as dropping the comments was.
+SOL_TEST(forgeWriterInventsNoHeaderOfItsOwn)
+{
+    const std::string source = "[[part]]\nid = \"a\"\ntype = \"box\"\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+    SOL_CHECK(doc.header.empty());
+    SOL_CHECK(doc.parts.size() == 1 && doc.parts[0].leading.empty());
+    SOL_CHECK(assets::writeForge(doc) == source);
+}
+
+// ⚑ The case cockpit.forge decided: a divider, a blank line, then the part it
+// introduces. Storing the comments alone would reproduce the words and close
+// the gap, and the author would find their spacing quietly edited.
+SOL_TEST(forgeKeepsTheBlankLineBetweenACommentAndItsPart)
+{
+    const std::string source = "# the file, explained\n"
+                               "name = \"demo\"\n"
+                               "\n"
+                               "# --- the hull ------------------------------\n"
+                               "# and a second line about it\n"
+                               "\n"
+                               "[[part]]\n"
+                               "id = \"hull\"\n"
+                               "type = \"box\"\n"
+                               "\n"
+                               "# a trailing note nothing owns\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+    SOL_CHECK(doc.header == "# the file, explained\n");
+    SOL_REQUIRE(doc.parts.size() == 1);
+    SOL_CHECK(doc.parts[0].leading == "\n# --- the hull ------------------------------\n"
+                                      "# and a second line about it\n\n");
+    SOL_CHECK(doc.trailer == "\n# a trailing note nothing owns\n");
+    SOL_CHECK(!doc.hasUnplaceableComments);
+    SOL_CHECK(assets::writeForge(doc) == source);
+}
+
+// A part the tool created has no trivia, so the writer supplies the blank line
+// that separates it from the part above - and a save of a document that mixes
+// the two must not run them together.
+SOL_TEST(forgeSeparatesAnAuthoredPartFromOneTheToolAdded)
+{
+    ForgeDoc doc;
+    SOL_REQUIRE(parses("name = \"demo\"\n\n# the first\n[[part]]\nid = \"a\"\ntype = \"box\"\n",
+                       doc));
+    assets::ForgePart added;
+    added.id = "b";
+    added.primitive = ForgePrimitive::Box;
+    doc.parts.push_back(added);
+
+    const std::string written = assets::writeForge(doc);
+    SOL_CHECK(written == "name = \"demo\"\n\n# the first\n[[part]]\nid = \"a\"\ntype = \"box\"\n"
+                         "\n[[part]]\nid = \"b\"\ntype = \"box\"\n");
+
+    // And it settles: writing what came back changes nothing further.
+    ForgeDoc reparsed;
+    SOL_REQUIRE(parses(written, reparsed));
+    SOL_CHECK(assets::writeForge(reparsed) == written);
+}
+
+// Reordering carries a part's own comments with it, which is the behaviour a
+// divider like "--- canopy frame ---" needs: the heading belongs to the part it
+// introduces, not to the position in the file it happened to occupy.
+SOL_TEST(forgeCommentsFollowTheirPartWhenItMoves)
+{
+    ForgeDoc doc;
+    SOL_REQUIRE(parses("name = \"demo\"\n"
+                       "\n# about a\n[[part]]\nid = \"a\"\ntype = \"box\"\n"
+                       "\n# about b\n[[part]]\nid = \"b\"\ntype = \"box\"\n",
+                       doc));
+    SOL_REQUIRE(doc.parts.size() == 2);
+    std::swap(doc.parts[0], doc.parts[1]);
+
+    const std::string written = assets::writeForge(doc);
+    SOL_CHECK(written == "name = \"demo\"\n"
+                         "\n# about b\n[[part]]\nid = \"b\"\ntype = \"box\"\n"
+                         "\n# about a\n[[part]]\nid = \"a\"\ntype = \"box\"\n");
+}
+
+// ⚑ The two comments this model cannot place, flagged rather than dropped in
+// silence. A `#` after a value would need a slot per key, and one inside an
+// array's brackets belongs to the value - attaching either to the next part
+// would MOVE it, which is worse than admitting the limit.
+SOL_TEST(forgeFlagsACommentItCannotPlace)
+{
+    ForgeDoc trailing;
+    SOL_REQUIRE(parses("[[part]]\nid = \"a\" # the hull\ntype = \"box\"\n", trailing));
+    SOL_CHECK(trailing.hasUnplaceableComments);
+
+    ForgeDoc inArray;
+    SOL_REQUIRE(parses("[[part]]\nid = \"a\"\ntype = \"revolve\"\n"
+                       "profile = [\n  [0.0, 0.0],\n  # the shoulder\n  [1.0, 2.0],\n]\n",
+                       inArray));
+    SOL_CHECK(inArray.hasUnplaceableComments);
+
+    ForgeDoc clean;
+    SOL_REQUIRE(parses("# a header\nname = \"demo\"\n\n[[part]]\nid = \"a\"\ntype = \"box\"\n",
+                       clean));
+    SOL_CHECK(!clean.hasUnplaceableComments);
+}
+
+// ⚑ A `#` or a `[` inside a quoted id is text, not syntax. Without the scanner
+// skipping quoted spans, one part called "a[b" would leave it permanently
+// inside an array and every comment below that part would silently vanish -
+// a failure nobody would see until their header was gone.
+SOL_TEST(forgeTriviaScannerReadsBracketsInsideStringsAsText)
+{
+    const std::string source = "name = \"demo\"\n"
+                               "\n[[part]]\nid = \"a[b\"\ntype = \"box\"\n"
+                               "\n# still attached\n[[part]]\nid = \"c\"\ntype = \"box\"\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+    SOL_REQUIRE(doc.parts.size() == 2);
+    SOL_CHECK(doc.parts[1].leading == "\n# still attached\n");
+    SOL_CHECK(!doc.hasUnplaceableComments);
+    SOL_CHECK(assets::writeForge(doc) == source);
 }

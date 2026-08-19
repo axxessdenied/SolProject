@@ -77,6 +77,13 @@ namespace {
 void PartEditor::openNew(const std::string& directory)
 {
     m_doc = ForgeDoc{};
+    // The header a new file starts life with. It lives here rather than in
+    // writeForge because the writer is faithful to the document and invents
+    // nothing - a file that opens without a header must save without one, or
+    // the round trip that lets the tool save safely stops holding.
+    m_doc.header = "# Authored with the Forge (engine plan Phase 9). This file is the\n"
+                   "# SOURCE: the mesh beside it is built from these parts and can be\n"
+                   "# rebuilt from them, which a cooked buffer of triangles cannot.\n";
     m_doc.name = "untitled";
     ForgePart part;
     part.id = "part_1";
@@ -446,11 +453,25 @@ bool PartEditor::draw()
     ImGui::SameLine();
     ImGui::TextDisabled("%s", m_dirty ? "* unsaved" : "saved");
 
-    // ⚑ Said out loud because it is a trap rather than a footnote: the TOML
-    // parser discards comments, so a save REWRITES the file from the document
-    // and any header a person hand-wrote is gone. Saving over a hand-authored
-    // asset is lossy in exactly the way an author will not expect.
-    ImGui::TextDisabled("save rewrites the file: comments are not kept");
+    // ⚑ A save used to rewrite the file from the document and drop every
+    // comment in it. It no longer does: whole-line comments and the blank lines
+    // around them come back exactly where they were, asserted byte for byte
+    // against the six committed assets in geometry.unit. What still cannot be
+    // placed is a comment sharing a line with a value, or one inside a
+    // multi-line array's brackets - so the warning fires only for a file that
+    // actually carries one, which is the difference between a warning and
+    // wallpaper.
+    if (m_doc.hasUnplaceableComments) {
+        // Wrapped for the same reason the catalog warning is: the sentence is
+        // the finding, and a sentence that stops at the panel edge is not one.
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+        ImGui::TextUnformatted("this file has a comment the writer cannot place - one after a "
+                               "value on the same line, or one inside an array's brackets - and "
+                               "saving will drop it");
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+    }
 
     if (!m_buildError.empty()) {
         ImGui::TextColored({0.95f, 0.45f, 0.35f, 1.0f}, "%s", m_buildError.c_str());

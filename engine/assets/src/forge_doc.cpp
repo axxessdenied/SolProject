@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <string_view>
 
 namespace sol::assets {
 namespace {
@@ -21,6 +22,161 @@ constexpr ForgePrimitive kPrimitives[] = {
     ForgePrimitive::Torus,        ForgePrimitive::FlatTriangle, ForgePrimitive::Revolve,
     ForgePrimitive::Extrude,      ForgePrimitive::Mesh,
 };
+
+// ⚑ Where every comment and blank line in the source sat, so the writer can put
+// it back. It has to be a second pass over the same text because the TOML parser
+// hands back values and nothing else: by the time a document exists, every
+// comment that was in the file is already gone.
+//
+// The rule is that trivia attaches to whatever comes BELOW it, which is how a
+// person reads a heading. What is stored is the raw lines - comments and blank
+// lines together, verbatim - rather than a list of comments, because
+// `cockpit.forge` puts a blank line between its `# --- canopy frame ---` divider
+// and the part that divider introduces. Keeping only the words would reproduce
+// them and quietly close the gap.
+struct SourceTrivia
+{
+    std::string header;
+    std::string buildLeading;
+    std::vector<std::string> partLeading; // one entry per [[part]], in file order
+    std::string trailer;
+    bool unplaceable = false;
+};
+
+[[nodiscard]] bool isTriviaLine(std::string_view line)
+{
+    for (const char c : line) {
+        if (c == ' ' || c == '\t' || c == '\r') {
+            continue;
+        }
+        return c == '#';
+    }
+    return true; // blank
+}
+
+[[nodiscard]] std::string_view trimLeft(std::string_view line)
+{
+    std::size_t i = 0;
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) {
+        ++i;
+    }
+    return line.substr(i);
+}
+
+// Advances the bracket depth across one line that carries content, and reports
+// a `#` found after a value on it.
+//
+// ⚑ Quoted spans are skipped, so a `#` or a `[` inside an id is read as text
+// rather than as syntax. Without that, one part called "a[b" would put the
+// scanner permanently inside an array and every comment below it would be
+// dropped - a failure that would be invisible until somebody's header vanished.
+void scanContentLine(std::string_view line, int& depth, bool& sawComment)
+{
+    char quote = '\0';
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (quote != '\0') {
+            if (c == '\\' && quote == '"') {
+                ++i; // an escape consumes the next character, quote included
+            } else if (c == quote) {
+                quote = '\0';
+            }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+        } else if (c == '#') {
+            sawComment = true;
+            return;
+        } else if (c == '[') {
+            ++depth;
+        } else if (c == ']') {
+            --depth;
+        }
+    }
+}
+
+// ⚑ Trivia is only collected at bracket depth ZERO. A baked part is a
+// multi-line array of vertices, and a `#` line between two of them belongs to
+// that value, not to the next part: attaching it would move the comment
+// somewhere else in the file on the next save, which is worse than admitting it
+// cannot be placed. `unplaceable` is how the tool gets to say so.
+[[nodiscard]] SourceTrivia scanTrivia(const char* text, std::size_t length)
+{
+    SourceTrivia trivia;
+    std::string pending;
+    bool sawElement = false;
+    int depth = 0;
+
+    std::size_t cursor = 0;
+    while (cursor < length) {
+        std::size_t end = cursor;
+        while (end < length && text[end] != '\n') {
+            ++end;
+        }
+        const std::string_view line(text + cursor, end - cursor);
+        const std::size_t next = (end < length) ? end + 1 : end;
+
+        if (depth == 0 && isTriviaLine(line)) {
+            pending.append(text + cursor, next - cursor);
+            if (next == end) {
+                pending += '\n'; // a last line with no newline still needs one back
+            }
+            cursor = next;
+            continue;
+        }
+
+        if (depth == 0) {
+            const std::string_view body = trimLeft(line);
+            // ⚑ A part's own trivia goes to the PART even when it is the first
+            // thing in the file, and the file header is only what stands above
+            // the first plain key. Splitting it the other way - "everything
+            // before the first element is the header" - double-counts, because
+            // the writer would then emit the header AND its own separator in
+            // front of part one, and the file would grow a blank line on every
+            // save. A file that saves differently from how it loaded is exactly
+            // what this change exists to stop.
+            if (body.starts_with("[[part]]")) {
+                trivia.partLeading.push_back(std::move(pending));
+            } else if (body.starts_with("[build]")) {
+                trivia.buildLeading = std::move(pending);
+            } else if (!sawElement) {
+                trivia.header = std::move(pending);
+            } else if (!pending.empty()) {
+                // A comment above a plain key, which has no slot: the document
+                // stores parts and a header, not a note per field.
+                trivia.unplaceable = true;
+            }
+            sawElement = true;
+            pending.clear();
+        }
+
+        bool sawComment = false;
+        scanContentLine(line, depth, sawComment);
+        if (sawComment) {
+            trivia.unplaceable = true;
+        }
+        cursor = next;
+    }
+
+    trivia.trailer = std::move(pending);
+    return trivia;
+}
+
+// What goes in front of a table header: whatever the source had there, or a
+// blank line for an element the tool created.
+//
+// ⚑ The blank line is suppressed when nothing has been written yet, because a
+// file that opens straight into `[[part]]` must save that way. Emitting one
+// unconditionally would push a blank line onto the front of such a file, and
+// then another on the next save.
+[[nodiscard]] std::string separatorFor(const std::string& leading, const std::string& soFar)
+{
+    if (!leading.empty()) {
+        return leading;
+    }
+    return soFar.empty() ? std::string() : std::string("\n");
+}
 
 [[nodiscard]] ForgeValue scalarValue(double v)
 {
@@ -41,52 +197,6 @@ constexpr ForgePrimitive kPrimitives[] = {
     ForgeValue out;
     out.uv = {u, v};
     return out;
-}
-
-// Doubles that came from the same literal compare equal, which is all the
-// writer's "omit what is still at its default" needs. It is deliberately not a
-// tolerance: a parameter a person typed should survive a round trip even when
-// it is a hair off the default.
-[[nodiscard]] bool sameValue(ForgeParamKind kind, const ForgeValue& a, const ForgeValue& b)
-{
-    switch (kind) {
-    case ForgeParamKind::Scalar:
-    case ForgeParamKind::Integer:
-    case ForgeParamKind::Boolean:
-        return a.scalar == b.scalar;
-    case ForgeParamKind::Vec3:
-        return a.vec.x == b.vec.x && a.vec.y == b.vec.y && a.vec.z == b.vec.z;
-    case ForgeParamKind::Uv:
-        return a.uv.u == b.uv.u && a.uv.v == b.uv.v;
-    case ForgeParamKind::Profile:
-        if (a.profile.size() != b.profile.size()) {
-            return false;
-        }
-        for (std::size_t i = 0; i < a.profile.size(); ++i) {
-            if (a.profile[i].x != b.profile[i].x || a.profile[i].y != b.profile[i].y) {
-                return false;
-            }
-        }
-        return true;
-    case ForgeParamKind::VertexList:
-        if (a.vertices.size() != b.vertices.size()) {
-            return false;
-        }
-        for (std::size_t i = 0; i < a.vertices.size(); ++i) {
-            const ForgeVertex& x = a.vertices[i];
-            const ForgeVertex& y = b.vertices[i];
-            if (x.position.x != y.position.x || x.position.y != y.position.y ||
-                x.position.z != y.position.z || x.normal.x != y.normal.x ||
-                x.normal.y != y.normal.y || x.normal.z != y.normal.z || x.uv.u != y.uv.u ||
-                x.uv.v != y.uv.v) {
-                return false;
-            }
-        }
-        return true;
-    case ForgeParamKind::IndexList:
-        return a.indices == b.indices;
-    }
-    return false;
 }
 
 // The shortest text that reads back as exactly this double: an authored `47`
@@ -678,16 +788,37 @@ bool parseForge(const char* text, std::size_t length, const char* sourceName, Fo
         }
     }
 
+    // The comments, last, because attaching them needs the parts counted. The
+    // scanner finds `[[part]]` lines and the TOML parser finds part tables; a
+    // file can express one without the other (an inline `part = [{...}]` array
+    // has no header lines at all), so a disagreement means this document is one
+    // whose trivia cannot be placed rather than one to guess at.
+    SourceTrivia trivia = scanTrivia(text, length);
+    doc.header = std::move(trivia.header);
+    doc.buildLeading = std::move(trivia.buildLeading);
+    doc.trailer = std::move(trivia.trailer);
+    doc.hasUnplaceableComments = trivia.unplaceable;
+    if (trivia.partLeading.size() == doc.parts.size()) {
+        for (std::size_t i = 0; i < doc.parts.size(); ++i) {
+            doc.parts[i].leading = std::move(trivia.partLeading[i]);
+        }
+    } else if (!doc.parts.empty()) {
+        doc.hasUnplaceableComments = true;
+    }
+
     out = std::move(doc);
     return true;
 }
 
 std::string writeForge(const ForgeDoc& doc)
 {
+    // ⚑ Nothing is invented here, including a header for a document that has
+    // none. The writer is faithful or it is nothing: the moment it adds a line
+    // of its own, `writeForge(parseForge(f)) == f` stops holding, and that
+    // equality is the whole guarantee stage E rests on. Seeding a new file with
+    // a header is the tool's business, not this function's.
     std::string out;
-    out += "# Authored with the Forge (engine plan Phase 9). This file is the\n";
-    out += "# SOURCE: the mesh beside it is built from these parts and can be\n";
-    out += "# rebuilt from them, which a cooked buffer of triangles cannot.\n";
+    out += doc.header;
     if (!doc.name.empty()) {
         out += "name = \"" + doc.name + "\"\n";
     }
@@ -695,7 +826,8 @@ std::string writeForge(const ForgeDoc& doc)
     const ForgeBuildOptions defaults;
     if (doc.build.weld != defaults.weld || doc.build.optimize != defaults.optimize ||
         doc.build.smoothAngleDegrees != defaults.smoothAngleDegrees) {
-        out += "\n[build]\n";
+        out += separatorFor(doc.buildLeading, out);
+        out += "[build]\n";
         if (doc.build.weld != defaults.weld) {
             out += std::string("weld = ") + (doc.build.weld ? "true" : "false") + "\n";
         }
@@ -710,7 +842,8 @@ std::string writeForge(const ForgeDoc& doc)
     }
 
     for (const ForgePart& part : doc.parts) {
-        out += "\n[[part]]\n";
+        out += separatorFor(part.leading, out);
+        out += "[[part]]\n";
         out += "id = \"" + part.id + "\"\n";
         out += std::string("type = \"") + forgePrimitiveName(part.primitive) + "\"\n";
         if (!part.parent.empty()) {
@@ -733,9 +866,21 @@ std::string writeForge(const ForgeDoc& doc)
             out += "\n";
         }
 
+        // ⚑ What was AUTHORED is written, including a value that happens to
+        // equal the schema default. `params` holds exactly the keys the file
+        // carried - the editor reads through `value()` and only calls `set()`
+        // on a real edit - so "present" means a person typed it.
+        //
+        // This used to skip anything equal to its default, which deleted four
+        // real lines across the six shipped assets on any save: gate's
+        // `segments_u = 32`, station's `segments_v = 12`, ship's `uv2` and
+        // cockpit's `width = 0.1`. It is the same lossy rewrite the comments
+        // were, one field further in - an author who writes the segment count
+        // down is saying "this is the knob", and a tool that answers by
+        // deleting the line is not one they will trust with the file.
         for (const ForgeParamSpec& spec : forgeParams(part.primitive)) {
             const ForgeValue* authored = part.find(spec.name);
-            if (authored == nullptr || sameValue(spec.kind, *authored, spec.defaultValue)) {
+            if (authored == nullptr) {
                 continue;
             }
             out += std::string(spec.name) + " = ";
@@ -816,6 +961,7 @@ std::string writeForge(const ForgeDoc& doc)
             out += "\n";
         }
     }
+    out += doc.trailer;
     return out;
 }
 
