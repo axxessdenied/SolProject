@@ -173,6 +173,16 @@ struct TraderRoute
     float progress = 0.0f; // 0..1 along this leg
 };
 
+// A haul that finished this tick (Phase 8x stage 5). Shaped exactly like
+// FactionSim's TraderLoss, and for the same reason: the two ends of a haul are
+// the two answers an escort contract can get, so they are reported the same
+// way rather than one being an event and the other a poll.
+struct TraderArrival
+{
+    std::uint32_t system = kNoSystem; // where it landed
+    std::uint32_t trader = 0;
+};
+
 struct TradeResult
 {
     float units = 0.0f;   // actually moved
@@ -193,6 +203,13 @@ public:
     [[nodiscard]] const std::vector<StationMarket>& markets() const { return m_markets; }
     [[nodiscard]] const std::vector<EconomyTrader>& traders() const { return m_traders; }
     [[nodiscard]] const EconomyParams& params() const { return m_params; }
+
+    // Hauls that ended during the most recent tick() (Phase 8x stage 5), which
+    // is the only window they are valid in: the list is cleared at the top of
+    // every tick rather than drained by a taker, so a caller that forgets to
+    // read it leaks nothing and a test that never asks pays nothing. Transient
+    // by design and never serialized — the same rule m_detained follows.
+    [[nodiscard]] const std::vector<TraderArrival>& arrivals() const { return m_arrivals; }
 
     // Market index for a station, or kNoMarket on bad input.
     [[nodiscard]] std::uint32_t marketFor(std::uint32_t systemIndex,
@@ -309,6 +326,10 @@ private:
     // Per trader: its clock is held this tick (Phase 8x §D). Sized with the
     // fleet in initialize, never saved.
     std::vector<std::uint8_t> m_detained;
+    // Hauls that ended in the most recent tick (Phase 8x stage 5). Transient
+    // for the same reason m_detained is: it is a fact about this instant, and a
+    // save taken mid-haul simply resumes with an empty one.
+    std::vector<TraderArrival> m_arrivals;
     // Hop counts between systems capped at maxTradeJumps + 1 sentinel,
     // precomputed (BFS per system) for trader route evaluation.
     std::vector<std::uint8_t> m_hops; // [from * systemCount + to]

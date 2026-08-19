@@ -177,8 +177,9 @@ end
 -- Haul entry:   system:station:commodityId:units:severity:jumps:sysName:stName
 -- Bounty entry: system:clan:intensity:jumps:systemName:clanName
 -- Contest entry: system:owner:attacker:pressure:jumps:sysName:ownerName:attackerName
+-- Escort entry: trader:system:station:commodityId:cargo:danger:jumps:sysName:stName
 function mission_board(stationName, owner, ownerName, ownerPirate, hauls, bounties,
-                       contests, roll)
+                       contests, escorts, roll)
     if campaign_offer ~= nil and not ownerPirate then
         campaign_offer(owner, ownerName)
     end
@@ -309,6 +310,73 @@ function mission_board(stationName, owner, ownerName, ownerPirate, hauls, bounti
             end
             sol.mission_obj_hold(c.system, side, text)
             sol.mission_post()
+        end
+    end
+
+    -- Escort contracts (Phase 8x): a hauler is leaving this system RIGHT NOW,
+    -- and the board will pay for somebody to fly with it. At most one, for the
+    -- same reason the war contract is: it is one ship, leaving once.
+    local escortList = {}
+    for entry in string.gmatch(escorts, "[^;]+") do
+        local trader, system, station, commodity, cargo, danger, jumps, sysName, stName =
+            string.match(entry,
+                         "^(%d+):(%d+):(%d+):([^:]+):([%d%.]+):([%d%.]+):(%d+):([^:]+):([^:]+)$")
+        if trader ~= nil then
+            escortList[#escortList + 1] = {
+                trader = tonumber(trader), system = tonumber(system),
+                station = tonumber(station), commodity = commodity,
+                cargo = tonumber(cargo), danger = tonumber(danger),
+                jumps = tonumber(jumps), sysName = sysName, stName = stName,
+            }
+        end
+    end
+    -- Laden first, then by danger: a full hold is the better story and the
+    -- bigger loss, but it is a PREFERENCE and not a rule. ⚑ Requiring cargo
+    -- was the first version and a drive killed it in one screenshot: both
+    -- haulers leaving the player's own start station were deadheading toward a
+    -- producer (Phase 8x stage 1's convergence finding), so the laden test
+    -- posted nothing at all where a new pilot would first look. That is 8u's
+    -- rep-gate mistake again - a filter on the only contract of its kind is a
+    -- lockout, not a difficulty curve.
+    table.sort(escortList, function(a, b)
+        if (a.cargo > 0) ~= (b.cargo > 0) then return a.cargo > 0 end
+        return a.danger > b.danger
+    end)
+    for i = 1, #escortList do
+        local e = escortList[i]
+        -- The one rule left, and it is about not selling work that isn't work:
+        -- a run to a quiet system is one the sim will not threaten, so paying
+        -- for it would be paying a pilot to watch a schedule tick over.
+        if e.danger > 0.05 then
+            -- Pays on the danger, because that is exactly what the escort is
+            -- buying: attrition never rolls in the system the player is
+            -- standing in, so a pilot who actually flies it turns the odds off.
+            -- Cargo is worth something on top - an empty hull is a hull, and a
+            -- full one is a hull plus everything the station is waiting for.
+            local reward = math.floor((300 + 2200 * e.danger + 250 * e.jumps + 3 * e.cargo)
+                                      * (0.9 + 0.2 * roll))
+            local title = e.cargo > 0
+                and string.format("Escort: %s run to %s",
+                                  string.gsub(e.commodity, "^sol%.", ""), e.sysName)
+                or string.format("Escort: empty run to %s", e.sysName)
+            if sol.mission_begin(title, owner, reward, 3 + e.jumps, 2, "") then
+                -- The haul's own clock is 90 s a leg plus 20 s a gate, and a
+                -- hauler under fire stops counting down while it fights, so
+                -- the deadline is a backstop with room for a real ambush in it.
+                sol.mission_deadline(300 + 120 * e.jumps)
+                -- No rep gate. There is at most ONE of these on a board and
+                -- gating the only contract of its kind hides the whole feature
+                -- from a new pilot - the mistake Phase 8u made with its war
+                -- contract and had to undo.
+                -- No system in parentheses: the HUD line appends the
+                -- destination itself, so naming it here printed it twice AND
+                -- pushed the journal row past the width of its column.
+                sol.mission_obj_escort(e.trader, e.system,
+                                       string.format("Keep hauler #%d alive to %s",
+                                                     e.trader, e.stName))
+                sol.mission_post()
+            end
+            break
         end
     end
 end

@@ -41,6 +41,11 @@ enum class ObjectiveKind : std::uint32_t
     // One member covers both directions: a defence names the owner, an
     // assault contract names the attacker.
     Hold,
+    // Coarse trader `trader` reaches `system` alive (Phase 8x §E). It tracks
+    // the TRADER INDEX and never an entity: a puppet is destroyed and rebuilt
+    // every time the player follows it through a gate, so an entity handle
+    // would go stale at exactly the moment the mission gets interesting.
+    Escort,
 };
 
 struct MissionObjective
@@ -52,6 +57,7 @@ struct MissionObjective
     float units = 0.0f;            // Deliver: remaining to hand in
     std::uint32_t faction = 0;     // Kill: victim faction
     std::uint32_t kills = 0;       // Kill: remaining
+    std::uint32_t trader = 0;      // Escort: coarse trader index
     core::DVec3 position;          // FlyTo, system barycenter frame
     double radius = 0.0;           // FlyTo, meters
     std::string text;              // journal line
@@ -108,6 +114,27 @@ struct ContestCandidate
     std::uint32_t jumps = 0;
 };
 
+// A coarse trader flying the in-system leg OUT of the board's own system,
+// paired with where its haul ends — the raw material for an escort contract
+// (Phase 8x §E).
+//
+// Departing from here is the whole of the eligibility rule, and it is a rule
+// about what a pilot can physically do: a hauler already three systems out
+// will land before anyone accepting the job could catch it. `danger` is what
+// makes the work worth paying for, and it is read from the same FactionSim
+// number attrition rolls against — so a contract is dear exactly where the
+// sim would have taken the ship.
+struct EscortCandidate
+{
+    std::uint32_t trader = 0;
+    std::uint32_t system = 0;  // where the haul ends
+    std::uint32_t station = 0; // and at which station
+    std::uint32_t commodity = 0;
+    float cargo = 0.0f; // zero for a hauler deadheading to a buy
+    float danger = 0.0f;
+    std::uint32_t jumps = 0; // gates still ahead of it
+};
+
 enum class MissionEventKind : std::uint32_t
 {
     Accepted = 0,      // objective 0 is now current
@@ -115,10 +142,11 @@ enum class MissionEventKind : std::uint32_t
     Completed,         // consume rewardCredits/standingReward
     Failed,            // deadline expired; consume standingPenalty
     Abandoned,         // player walked away; consume standingPenalty
-    // A Hold objective's contest resolved the wrong way (Phase 8u). A
-    // separate kind precisely so it can carry no standing penalty: losing a
-    // battle you flew is not the same as letting a timer run out, which is
-    // the rough edge Phase 8l recorded and could not fix in its own scope.
+    // A Hold objective's contest resolved the wrong way (Phase 8u), or an
+    // escorted hauler was destroyed by somebody else (Phase 8x). A separate
+    // kind precisely so it can carry no standing penalty: losing a battle you
+    // flew is not the same as letting a timer run out, which is the rough edge
+    // Phase 8l recorded and could not fix in its own scope.
     Lost,
 };
 
@@ -146,9 +174,10 @@ class MissionSim
 {
 public:
     // Counts pin the layout the save format validates against (economy rule).
+    // traderCount is the coarse fleet an Escort objective indexes into.
     void initialize(const Galaxy& galaxy, const MissionParams& params,
                     std::uint32_t factionCount, std::uint32_t commodityCount,
-                    std::uint64_t seed);
+                    std::uint32_t traderCount, std::uint64_t seed);
 
     // Advances active-mission deadlines; expiries queue Failed events.
     void tick(double dt);
@@ -168,6 +197,13 @@ public:
     void contestCandidates(const Galaxy& galaxy, const FactionSim& factions,
                            std::uint32_t fromSystem, std::uint32_t boardOwner,
                            std::vector<ContestCandidate>& out) const;
+    // Haulers leaving fromSystem right now (Phase 8x §E). Every one of them is
+    // enumerated, laden or deadheading, safe destination or lethal one: which
+    // ones are worth a contract is a policy the board's hook decides, and the
+    // fields it needs to decide with are here.
+    void escortCandidates(const Galaxy& galaxy, const Economy& economy,
+                          const FactionSim& factions, std::uint32_t fromSystem,
+                          std::vector<EscortCandidate>& out) const;
 
     // --- The board (offers at the docked station) ---
     // Clears the offers and rebinds the board to a station; the hook then
@@ -204,6 +240,18 @@ public:
     // it is not. Checked here rather than polled, so it costs nothing until
     // a border actually moves.
     void notifyContestResolved(std::uint32_t system, std::uint32_t winner);
+    // A coarse trader finished its haul (Phase 8x §E): an Escort objective on
+    // that trader completes when the haul ended in the system it named.
+    void notifyTraderArrived(std::uint32_t trader, std::uint32_t system);
+    // A coarse trader was destroyed. An Escort objective on it ends here and
+    // cannot be recovered — the ship it named does not exist any more.
+    //
+    // `byPlayer` is the difference between a contract you failed and one you
+    // lost: shooting your own charge is a betrayal and is charged as a Failed,
+    // while a raider getting through is the Lost kind that costs no standing
+    // (8u's precedent). Without the distinction the cheapest way to finish an
+    // escort would be to kill it yourself and keep the wreck.
+    void notifyTraderLost(std::uint32_t trader, bool byPlayer);
     // Consumes up to `available` units toward the mission's current Deliver
     // objective at (system, station); returns what was consumed (the caller
     // removes it from cargo and feeds the market). Advances on completion.
@@ -241,6 +289,7 @@ private:
     std::uint32_t m_systemCount = 0;
     std::uint32_t m_factionCount = 0;
     std::uint32_t m_commodityCount = 0;
+    std::uint32_t m_traderCount = 0;
     std::vector<Mission> m_offers;
     std::vector<Mission> m_active;
     std::vector<MissionEvent> m_events;

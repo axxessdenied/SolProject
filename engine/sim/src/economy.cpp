@@ -119,6 +119,7 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
     }
 
     m_detained.assign(m_traders.size(), 0);
+    m_arrivals.clear();
     m_tickPrices.assign(m_markets.size() * commodityCount, 0.0f);
     m_inbound.assign(m_markets.size() * commodityCount, 0.0f);
     m_satisfaction.assign(m_markets.size(), 1.0f);
@@ -409,6 +410,11 @@ bool Economy::detained(std::uint32_t traderIndex) const
 
 void Economy::tick(const Galaxy& galaxy, double dt, FeedstockSource* source)
 {
+    // Cleared here rather than by whoever reads it: an arrival is a fact about
+    // the tick it happened in, so the list belongs to this call and cannot
+    // outlive it. A headless test that never asks therefore accumulates
+    // nothing across four sim hours.
+    m_arrivals.clear();
     m_accumulator += dt;
     while (m_accumulator >= m_params.tickInterval) {
         m_accumulator -= m_params.tickInterval;
@@ -555,6 +561,12 @@ void Economy::step(const Galaxy& galaxy, double dt, FeedstockSource* source)
                 trader.origin = trader.market;
                 trader.travelRemaining = 0.0;
                 trader.legTotal = 0.0;
+                // It got there. The one thing an escort contract is waiting to
+                // hear, reported from the one place a haul can end well —
+                // loseTrader() is the other end and reports the other answer.
+                m_arrivals.push_back(
+                    {.system = m_markets[trader.market].systemIndex,
+                     .trader = static_cast<std::uint32_t>(index)});
             }
             break;
         }

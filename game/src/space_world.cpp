@@ -38,7 +38,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 12; // v12: trader routes (origin + legTotal)
+constexpr std::uint32_t kSaveVersion = 13; // v13: escort objectives (trader index)
 
 // Market intel (Phase 8g): what a station's market report covers and costs.
 // Deliberately shorter than the traders' own horizon — a station's brokers
@@ -383,8 +383,13 @@ void SpaceWorld::initializeFactions()
     m_factionSim.initialize(m_galaxy, params, m_universeSeed);
     // Missions layout is pinned to the same faction table + commodity roster
     // (Phase 8c); a save's mission block loads over this fresh state.
+    // The fleet size comes from the economy as BUILT rather than from the
+    // params that asked for it: with no commodities there is no economy and no
+    // fleet, and an escort contract on a trader that does not exist is exactly
+    // what this count is here to refuse.
     m_missions.initialize(m_galaxy, sim::MissionParams{}, count,
                           static_cast<std::uint32_t>(m_commodityIds.size()),
+                          static_cast<std::uint32_t>(m_economy.traders().size()),
                           m_universeSeed);
     m_missionEvents.clear();
     m_dockEventPending = false;
@@ -512,6 +517,20 @@ void SpaceWorld::processMissionEvents()
     for (const sim::MissionEvent& event : m_missionEventScratch) {
         const sim::Mission& mission = event.mission;
         const bool posterValid = mission.poster < m_factionTable.size();
+        // ⚑ An escort is the first contract that can settle itself while the
+        // player is flying, with nothing on screen to say so: a haul is handed
+        // in at a dock, a bounty ends on a kill they made, a Hold ends on a
+        // border they can see move. This one ends when a ship somewhere else
+        // lands or dies. So it speaks, once, and SHORT - the comms cell clips
+        // at roughly 45 characters (8r/8s).
+        const bool escort = event.objective < mission.objectives.size() &&
+                            mission.objectives[event.objective].kind ==
+                                sim::ObjectiveKind::Escort;
+        const auto announce = [&](const char* line) {
+            if (escort && !isDocked()) {
+                say(kFleetcom, line);
+            }
+        };
         switch (event.kind) {
         case sim::MissionEventKind::Accepted:
             SOL_LOG_INFO("[missions] accepted '%s': %s", mission.title.c_str(),
@@ -532,15 +551,18 @@ void SpaceWorld::processMissionEvents()
                          mission.title.c_str(), mission.rewardCredits,
                          posterValid ? m_factionTable[mission.poster].name.c_str() : "?",
                          static_cast<double>(mission.standingReward));
+            announce("Our hauler is docked. Contract paid.");
             break;
         case sim::MissionEventKind::Lost:
             // The contest resolved against the side this contract named
-            // (Phase 8u). No standing penalty, deliberately: the player flew
-            // the battle and lost it, which is not the same as letting a
-            // deadline run out - the unfairness Phase 8l recorded and could
-            // not fix inside its own scope.
-            SOL_LOG_WARN("[missions] lost '%s': the system fell (no penalty)",
-                         mission.title.c_str());
+            // (Phase 8u), or the hauler it named was destroyed by somebody
+            // else (Phase 8x). No standing penalty either way, deliberately:
+            // the player flew the battle and lost it, which is not the same as
+            // letting a deadline run out - the unfairness Phase 8l recorded
+            // and could not fix inside its own scope.
+            SOL_LOG_WARN("[missions] lost '%s': %s (no penalty)", mission.title.c_str(),
+                         escort ? "the hauler was destroyed" : "the system fell");
+            announce("We lost the hauler. Stand down.");
             break;
         case sim::MissionEventKind::Failed:
         case sim::MissionEventKind::Abandoned:
@@ -554,6 +576,14 @@ void SpaceWorld::processMissionEvents()
                                                                      : "abandoned",
                          mission.title.c_str(),
                          mission.campaign() ? " (campaign: no penalty)" : "");
+            // Deliberately neutral: an escort reaches Failed either by running
+            // out of clock or because the player shot their own charge (Phase
+            // 8x §E), and the event carries no way to tell those apart. A line
+            // that named the betrayal would be a lie half the time it fired,
+            // and the standing charge above is the part that does the talking.
+            if (event.kind == sim::MissionEventKind::Failed) {
+                announce("Escort contract void.");
+            }
             break;
         }
         m_missionEvents.push_back(event);
@@ -616,17 +646,57 @@ const sim::MissionObjective* SpaceWorld::trackedObjective() const
                : nullptr;
 }
 
-bool SpaceWorld::objectiveDestination(const sim::MissionObjective** out) const
+bool SpaceWorld::traderBodyPosition(std::uint32_t traderIndex, core::DVec3* out) const
+{
+    const ecs::Pool<TraderPuppet>& puppets = m_registry.storage<TraderPuppet>();
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        if (puppets.values()[i].traderIndex != traderIndex) {
+            continue;
+        }
+        const Transform* transform =
+            m_registry.storage<Transform>().tryGet(puppets.entityIndices()[i]);
+        if (transform == nullptr) {
+            return false;
+        }
+        if (out != nullptr) {
+            *out = transform->position;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool SpaceWorld::objectiveMarker(ObjectiveMarker* out) const
 {
     const sim::MissionObjective* objective = trackedObjective();
-    if (objective == nullptr || objective->kind != sim::ObjectiveKind::FlyTo
-        || objective->system != m_currentSystem) {
+    if (objective == nullptr) {
         return false;
     }
-    if (out != nullptr) {
-        *out = objective;
+    if (objective->kind == sim::ObjectiveKind::FlyTo) {
+        if (objective->system != m_currentSystem) {
+            return false;
+        }
+        if (out != nullptr) {
+            *out = {.position = objective->position, .radius = objective->radius};
+        }
+        return true;
     }
-    return true;
+    // An escort's marker is the hauler, and only while the hauler is here.
+    // ⚑ Its `system` is deliberately NOT consulted: that is where the haul
+    // ENDS, and the whole job is flying with the ship somewhere else. Presence
+    // of a body is the test, which is also the honest one — there is nothing
+    // to point at while the trader is in the gate network.
+    if (objective->kind == sim::ObjectiveKind::Escort) {
+        core::DVec3 position;
+        if (!traderBodyPosition(objective->trader, &position)) {
+            return false;
+        }
+        if (out != nullptr) {
+            *out = {.position = position, .radius = 0.0, .moving = true};
+        }
+        return true;
+    }
+    return false;
 }
 
 std::string SpaceWorld::objectiveDestinationText() const
@@ -670,21 +740,40 @@ std::string SpaceWorld::objectiveDestinationText() const
         // is the only thing that can say where the fight is (Phase 8i's rule,
         // arriving at the one objective kind that needs it most).
         return here ? std::string("here") : systemName(objective->system);
+    case sim::ObjectiveKind::Escort: {
+        // Two facts, and the second is the one a marker cannot give: where the
+        // haul ends, and whether the ship being escorted is in this sky at all.
+        // A hauler in the gate network is neither here nor lost, and without
+        // this the HUD would simply go quiet while the mission was running.
+        const std::string destination = here ? std::string("here")
+                                             : systemName(objective->system);
+        return traderBodyPosition(objective->trader, nullptr)
+                   ? destination
+                   : destination + " (in transit)";
+    }
     }
     return {};
 }
 
 void SpaceWorld::syncObjectiveTarget()
 {
-    const sim::MissionObjective* objective = nullptr;
-    const bool want = objectiveDestination(&objective);
+    ObjectiveMarker marker;
+    const bool want = objectiveMarker(&marker);
     const std::size_t slot = objectiveTargetIndex();
     const bool have = slot != kNoTarget;
-    // The position matters as much as the presence: when one FlyTo completes
-    // and the next is also in this system the slot stays put and only moves,
-    // which is what carries a selection (and an engaged autopilot) to the next
-    // leg instead of dropping it.
-    if (want == have && (!want || m_targets[slot].position == objective->position)) {
+    if (want == have) {
+        // The position matters as much as the presence: when one FlyTo
+        // completes and the next is also in this system the slot stays put and
+        // only moves, which is what carries a selection (and an engaged
+        // autopilot) to the next leg instead of dropping it.
+        //
+        // Written in place rather than rebuilt, because an escort's marker is
+        // a ship under way: it moves EVERY tick, and a rebuild per tick would
+        // re-lay the whole target tail (and its strings) for a slot whose only
+        // changing field is three doubles.
+        if (want && m_targets[slot].position != marker.position) {
+            m_targets[slot].position = marker.position;
+        }
         return;
     }
     rebuildDynamicTargets();
@@ -741,7 +830,7 @@ void SpaceWorld::rebuildDynamicTargets()
     // rebuild. That is deliberate — when one leg completes and the next is
     // also in this system, the marker moves to the new waypoint and a live
     // selection (and an engaged autopilot) carry over instead of dropping.
-    const bool wantObjective = objectiveDestination(nullptr);
+    const bool wantObjective = objectiveMarker(nullptr);
     if (wantObjective && !hasSlot(NavKind::Objective, 0)) {
         m_dynamicTargets.push_back({.kind = NavKind::Objective, .index = 0});
     }
@@ -831,10 +920,13 @@ void SpaceWorld::rebuildDynamicTargets()
             // overran the map's name column, collided with its neighbour's
             // label on the map itself, and was truncated in the HUD readout.
             // The prose belongs on the mission line, which already carries it.
-            const sim::MissionObjective* objective = nullptr;
-            (void)objectiveDestination(&objective);
-            m_targets.push_back({.name = "> Objective",
-                                 .position = objective->position,
+            ObjectiveMarker marker;
+            (void)objectiveMarker(&marker);
+            // Named apart because it behaves apart: a waypoint sits still and
+            // a charge under escort does not, and a pilot cycling targets is
+            // owed that distinction in the one word the column has room for.
+            m_targets.push_back({.name = marker.moving ? "> Escort" : "> Objective",
+                                 .position = marker.position,
                                  .surfaceRadius = 0.0});
             break;
         }
@@ -2892,6 +2984,13 @@ void SpaceWorld::drainTraderLosses()
     m_factionSim.takeTraderLosses(m_traderLossEvents);
     for (const sim::TraderLoss& loss : m_traderLossEvents) {
         ++m_traderLossCount;
+        // An escort contract ends here, and how it ends depends on who fired.
+        // The flag is set by handleShipDestroyed, which is the only place that
+        // knows: the coarse record is told a hauler died and never by whom.
+        const bool betrayed = std::find(m_playerKilledTraders.begin(),
+                                        m_playerKilledTraders.end(),
+                                        loss.trader) != m_playerKilledTraders.end();
+        m_missions.notifyTraderLost(loss.trader, betrayed);
         // One place logs, whichever road the loss came down: attrition rolling
         // in a system nobody is watching, a raider finishing one off, or the
         // player shooting a hauler off their own bow.
@@ -2900,6 +2999,9 @@ void SpaceWorld::drainTraderLosses()
                          ? m_galaxy.systems[loss.system].name.c_str()
                          : "transit");
     }
+    // Cleared only once the losses it describes have been drained, so it does
+    // not matter whether combat ran before or after this call in the frame.
+    m_playerKilledTraders.clear();
 }
 
 bool SpaceWorld::killCoarseTrader(std::uint32_t traderIndex)
@@ -4571,9 +4673,13 @@ double SpaceWorld::autopilotArrivalRange(const TargetInfo& target) const
     // typically 1.2 km, so autopilot would otherwise park just outside the
     // completion sphere and the objective would never tick over — which is the
     // original complaint wearing a different hat. Park well inside it instead.
-    const sim::MissionObjective* objective = nullptr;
-    if (m_targetIndex == objectiveTargetIndex() && objectiveDestination(&objective)) {
-        range = std::max(std::min(range, objective->radius * 0.5), 50.0);
+    // An escort's marker carries no radius: there is no sphere to get inside,
+    // only a ship to keep station on, so the general standoff is the right one
+    // and the clamp is skipped rather than applied against a zero.
+    ObjectiveMarker marker;
+    if (m_targetIndex == objectiveTargetIndex() && objectiveMarker(&marker) &&
+        marker.radius > 0.0) {
+        range = std::max(std::min(range, marker.radius * 0.5), 50.0);
     }
     // A cleared berth is the second target of that kind (Phase 8r) and the
     // same rule applies: the standoff has to put the ship INSIDE the capture
@@ -5323,6 +5429,12 @@ void SpaceWorld::tick(double dt)
     {
         const std::uint32_t zone = profiler.beginZone("sim.coarse.economy");
         m_economy.tick(m_galaxy, dt, &m_feedstock);
+        // Read inside the same zone the tick was taken in, because the list is
+        // only valid until the next one (Phase 8x §E). A haul ending is the
+        // one thing an escort contract is waiting for.
+        for (const sim::TraderArrival& arrival : m_economy.arrivals()) {
+            m_missions.notifyTraderArrived(arrival.trader, arrival.system);
+        }
         profiler.endZone(zone);
     }
 
@@ -5566,6 +5678,18 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
     if (const TraderPuppet* puppet = m_registry.storage<TraderPuppet>().tryGet(entityIndex);
         puppet != nullptr && m_economy.loseTrader(puppet->traderIndex)) {
         m_factionSim.recordTraderLoss(m_currentSystem, puppet->traderIndex);
+        // Who fired is known here and nowhere else (Phase 8x §E). It matters
+        // for exactly one thing: an escort contract on a hauler the player
+        // shot themselves is a failure they are charged for, not a loss they
+        // are excused. 8l's assist window counts, so finishing your own charge
+        // off through local security is the same betrayal.
+        if (attackerIndex == playerEntityIndex()) {
+            m_playerKilledTraders.push_back(puppet->traderIndex);
+        } else if (const ShipDefense* defense =
+                       m_registry.storage<ShipDefense>().tryGet(entityIndex);
+                   defense != nullptr && defense->playerAssist > 0.0) {
+            m_playerKilledTraders.push_back(puppet->traderIndex);
+        }
     }
 
     for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {

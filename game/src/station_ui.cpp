@@ -258,6 +258,20 @@ namespace {
         const int percent = static_cast<int>(
             world.factionSim().contestOf(objective.system).pressure * 100.0f + 0.5f);
         detail += " (pressure " + std::to_string(percent) + "%)";
+    } else if (objective.kind == sol::sim::ObjectiveKind::Escort) {
+        // How far the hauler has got, which is this objective's progress and
+        // is the record's to answer - the body may not even exist right now.
+        //
+        // ⚑ Kept to the same handful of characters the other three suffixes
+        // take. The journal's detail column is narrower than the board's by
+        // the width of its Track and Abandon buttons, and a drive caught
+        // "(in the gate network)" cut off mid-word there while the same row
+        // read fine on the board one screen earlier.
+        const sol::sim::TraderRoute route = world.economy().route(objective.trader);
+        const int percent = static_cast<int>(route.progress * 100.0f + 0.5f);
+        detail += route.leg == sol::sim::TraderLeg::Jump
+                      ? std::string(" (jumping)")
+                      : " (leg " + std::to_string(percent) + "%)";
     }
     if (mission.objectives.size() > 1) {
         detail += " [" + std::to_string(mission.currentObjective + 1) + "/" +

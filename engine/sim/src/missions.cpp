@@ -22,12 +22,13 @@ void setError(std::string* outError, const char* message)
 
 void MissionSim::initialize(const Galaxy& galaxy, const MissionParams& params,
                             std::uint32_t factionCount, std::uint32_t commodityCount,
-                            std::uint64_t seed)
+                            std::uint32_t traderCount, std::uint64_t seed)
 {
     m_params = params;
     m_systemCount = static_cast<std::uint32_t>(galaxy.systems.size());
     m_factionCount = factionCount;
     m_commodityCount = commodityCount;
+    m_traderCount = traderCount;
     m_offers.clear();
     m_active.clear();
     m_events.clear();
@@ -198,6 +199,37 @@ void MissionSim::contestCandidates(const Galaxy& galaxy, const FactionSim& facti
     }
 }
 
+void MissionSim::escortCandidates(const Galaxy& galaxy, const Economy& economy,
+                                  const FactionSim& factions, std::uint32_t fromSystem,
+                                  std::vector<EscortCandidate>& out) const
+{
+    out.clear();
+    if (galaxy.systems.size() != m_systemCount || fromSystem >= m_systemCount) {
+        return;
+    }
+    const std::vector<EconomyTrader>& fleet = economy.traders();
+    const std::uint32_t count =
+        std::min(m_traderCount, static_cast<std::uint32_t>(fleet.size()));
+    for (std::uint32_t t = 0; t < count; ++t) {
+        const TraderRoute route = economy.route(t);
+        // Leaving HERE, right now. An arriving hauler is already home and a
+        // jumping one is nowhere at all, so Depart is the only leg a pilot
+        // standing on this dock could still fly alongside.
+        if (route.leg != TraderLeg::Depart || route.system != fromSystem ||
+            route.toMarket >= economy.markets().size()) {
+            continue;
+        }
+        const StationMarket& destination = economy.markets()[route.toMarket];
+        out.push_back({.trader = t,
+                       .system = destination.systemIndex,
+                       .station = destination.stationIndex,
+                       .commodity = fleet[t].commodity,
+                       .cargo = fleet[t].cargo,
+                       .danger = factions.danger(destination.systemIndex),
+                       .jumps = route.hops});
+    }
+}
+
 void MissionSim::openBoard(std::uint32_t system, std::uint32_t station)
 {
     m_offers.clear();
@@ -236,6 +268,12 @@ bool MissionSim::objectiveInRange(const Galaxy& galaxy,
         return objective.radius > 0.0;
     case ObjectiveKind::Hold:
         return objective.faction < m_factionCount;
+    case ObjectiveKind::Escort:
+        // The fleet is fixed for the life of a galaxy (a lost hauler goes back
+        // to Idle rather than being struck off), so an index that was valid
+        // when the contract was written stays valid until the save is loaded
+        // against a different one — which is what this catches.
+        return objective.trader < m_traderCount;
     }
     return false;
 }
@@ -326,8 +364,22 @@ bool MissionSim::postOffer(const Galaxy& galaxy, const Economy& economy,
                 setError(outError, "no such contest");
                 return false;
             }
+        } else if (objective.kind == ObjectiveKind::Escort) {
+            std::vector<EscortCandidate> candidates;
+            escortCandidates(galaxy, economy, factions, m_boardSystem, candidates);
+            const auto match = std::find_if(
+                candidates.begin(), candidates.end(), [&](const EscortCandidate& c) {
+                    // Both halves are checked: a board cannot sell a run to
+                    // somewhere the hauler named is not actually going, which
+                    // would be a contract that could only ever fail.
+                    return c.trader == objective.trader && c.system == objective.system;
+                });
+            if (match == candidates.end()) {
+                setError(outError, "no such hauler");
+                return false;
+            }
         } else {
-            setError(outError, "procedural contracts are haul, bounty or contest");
+            setError(outError, "procedural contracts are haul, bounty, contest or escort");
             return false;
         }
     }
@@ -462,6 +514,41 @@ void MissionSim::notifyContestResolved(std::uint32_t system, std::uint32_t winne
     }
 }
 
+void MissionSim::notifyTraderArrived(std::uint32_t trader, std::uint32_t system)
+{
+    for (std::uint32_t i = 0; i < m_active.size();) {
+        const MissionObjective& objective =
+            m_active[i].objectives[m_active[i].currentObjective];
+        // The system is checked as well as the trader because a hauler outlives
+        // its haul: it lands, goes Idle, and picks a new destination minutes
+        // later. Only the arrival the contract was written about pays.
+        if (objective.kind == ObjectiveKind::Escort && objective.trader == trader &&
+            objective.system == system) {
+            if (advanceObjective(i)) {
+                continue;
+            }
+        }
+        ++i;
+    }
+}
+
+void MissionSim::notifyTraderLost(std::uint32_t trader, bool byPlayer)
+{
+    for (std::uint32_t i = 0; i < m_active.size();) {
+        const MissionObjective& objective =
+            m_active[i].objectives[m_active[i].currentObjective];
+        if (objective.kind != ObjectiveKind::Escort || objective.trader != trader) {
+            ++i;
+            continue;
+        }
+        m_events.push_back({.kind = byPlayer ? MissionEventKind::Failed
+                                             : MissionEventKind::Lost,
+                            .mission = m_active[i],
+                            .objective = m_active[i].currentObjective});
+        removeActive(i);
+    }
+}
+
 void MissionSim::notifyPosition(std::uint32_t system, const core::DVec3& position)
 {
     for (std::uint32_t i = 0; i < m_active.size();) {
@@ -515,6 +602,7 @@ void writeObjective(core::BinaryWriter& writer, const MissionObjective& objectiv
     writer.write(objective.units);
     writer.write(objective.faction);
     writer.write(objective.kills);
+    writer.write(objective.trader); // v13
     writer.write(objective.position.x);
     writer.write(objective.position.y);
     writer.write(objective.position.z);
@@ -525,14 +613,21 @@ void writeObjective(core::BinaryWriter& writer, const MissionObjective& objectiv
 [[nodiscard]] bool readObjective(core::BinaryReader& reader, MissionObjective& objective)
 {
     std::uint32_t kind = 0;
-    if (!reader.read(kind) || kind > static_cast<std::uint32_t>(ObjectiveKind::FlyTo)) {
+    // ⚑ The bound is the LAST member and must move with it. It read FlyTo up
+    // to here, which was written when FlyTo was last — so from Phase 8u a
+    // saved Hold objective (offered or active) failed this check and took the
+    // whole world load down with it. Nothing caught it because a save only
+    // carries one if a contest happens to be in reach of the board when it is
+    // taken. The round-trip test beside this one now covers every kind.
+    if (!reader.read(kind) || kind > static_cast<std::uint32_t>(ObjectiveKind::Escort)) {
         return false;
     }
     objective.kind = static_cast<ObjectiveKind>(kind);
     return reader.read(objective.system) && reader.read(objective.station) &&
            reader.read(objective.commodity) && reader.read(objective.units) &&
            reader.read(objective.faction) && reader.read(objective.kills) &&
-           reader.read(objective.position.x) && reader.read(objective.position.y) &&
+           reader.read(objective.trader) && reader.read(objective.position.x) &&
+           reader.read(objective.position.y) &&
            reader.read(objective.position.z) && reader.read(objective.radius) &&
            reader.readString(objective.text);
 }
@@ -581,6 +676,7 @@ void MissionSim::save(core::BinaryWriter& writer) const
     writer.write(m_systemCount);
     writer.write(m_factionCount);
     writer.write(m_commodityCount);
+    writer.write(m_traderCount); // v13: what an Escort objective indexes into
     writer.write(static_cast<std::uint32_t>(m_offers.size()));
     for (const Mission& mission : m_offers) {
         writeMission(writer, mission);
@@ -604,9 +700,11 @@ bool MissionSim::load(core::BinaryReader& reader)
     std::uint32_t systemCount = 0;
     std::uint32_t factionCount = 0;
     std::uint32_t commodityCount = 0;
+    std::uint32_t traderCount = 0;
     if (!reader.read(systemCount) || systemCount != m_systemCount ||
         !reader.read(factionCount) || factionCount != m_factionCount ||
-        !reader.read(commodityCount) || commodityCount != m_commodityCount) {
+        !reader.read(commodityCount) || commodityCount != m_commodityCount ||
+        !reader.read(traderCount) || traderCount != m_traderCount) {
         return false; // galaxy/defs mismatch: initialize() first
     }
     std::uint32_t offerCount = 0;

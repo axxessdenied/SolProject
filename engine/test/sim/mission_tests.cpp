@@ -32,6 +32,9 @@ using sol::sim::MissionParams;
 using sol::sim::MissionSim;
 using sol::sim::ObjectiveKind;
 using sol::sim::SystemSpec;
+using sol::sim::TraderLeg;
+using sol::sim::TraderPhase;
+using sol::sim::TraderRoute;
 
 namespace {
 
@@ -99,7 +102,7 @@ struct MissionWorld
     {
         economy.initialize(galaxy, oneCommodityParams(), seed);
         factions.initialize(galaxy, chainFactionParams(), seed);
-        missions.initialize(galaxy, params, 3, 1, seed);
+        missions.initialize(galaxy, params, 3, 1, 0, seed);
         SOL_CHECK(factions.commitRaid(galaxy, &economy, 2, 1)); // intensity 1.0
         economy.raidSystem(1, 0.888888888f);                    // stock -> ~50/1000
     }
@@ -179,7 +182,7 @@ struct ContestWorld
     {
         economy.initialize(galaxy, oneCommodityParams(), seed);
         factions.initialize(galaxy, chainFactionParams(), seed);
-        missions.initialize(galaxy, params, 3, 1, seed);
+        missions.initialize(galaxy, params, 3, 1, 0, seed);
         factions.setContest(1, 1, 0.5f);
         SOL_CHECK(factions.contested(1));
         missions.openBoard(0, 0);
@@ -202,7 +205,303 @@ Mission holdOffer(std::uint32_t system, std::uint32_t faction, std::uint32_t pos
     return mission;
 }
 
+// chainGalaxy's three systems with the two far stations turned into consumers,
+// so the one hauler below always has somewhere to take something. The mission
+// galaxies above hold their stocks still on purpose; an escort needs a trader
+// that actually moves.
+Galaxy tradeGalaxy()
+{
+    Galaxy galaxy = chainGalaxy();
+    galaxy.systems[1].stations[0].archetype = 1;
+    galaxy.systems[2].stations[0].archetype = 1;
+    return galaxy;
+}
+
+EconomyParams tradeParams()
+{
+    EconomyParams params;
+    params.commodities = {EconomyCommodity{.basePrice = 10.0f}};
+    EconomyArchetype producer;
+    producer.production = {2.0f};
+    producer.stockCapacity = 1'000.0f;
+    EconomyArchetype consumer;
+    consumer.consumption = {2.0f};
+    consumer.stockCapacity = 1'000.0f;
+    params.archetypes = {producer, consumer};
+    params.traderCount = 1;
+    params.traderCargo = 50.0f;
+    params.traderLegSeconds = 5.0; // short legs: the boundaries are the point
+    params.jumpSeconds = 5.0;
+    return params;
+}
+
+// One hauler, caught at the instant it leaves a station — which is the only
+// instant an escort contract can be written about it.
+struct EscortWorld
+{
+    Galaxy galaxy = tradeGalaxy();
+    Economy economy;
+    FactionSim factions;
+    MissionSim missions;
+    std::uint32_t fromSystem = 0; // where it is leaving
+    std::uint32_t toSystem = 0;   // where the haul ends
+    std::uint32_t hops = 0;
+
+    explicit EscortWorld(std::uint64_t seed = 5)
+    {
+        economy.initialize(galaxy, tradeParams(), seed);
+        factions.initialize(galaxy, chainFactionParams(), seed);
+        missions.initialize(galaxy, MissionParams{}, 3, 1, 1, seed);
+        // The fleet starts scattered along its own clock (Phase 8x stage 3),
+        // so land it first and then watch the next haul leave.
+        int guard = 0;
+        while (economy.traders()[0].phase != TraderPhase::Idle && guard++ < 400) {
+            economy.tick(galaxy, 1.0);
+        }
+        guard = 0;
+        while (economy.traders()[0].phase != TraderPhase::InTransit && guard++ < 400) {
+            economy.tick(galaxy, 1.0);
+        }
+        SOL_CHECK(economy.traders()[0].phase == TraderPhase::InTransit);
+        const TraderRoute route = economy.route(0);
+        SOL_CHECK(route.leg == TraderLeg::Depart);
+        fromSystem = route.system;
+        toSystem = economy.markets()[route.toMarket].systemIndex;
+        hops = route.hops;
+        missions.openBoard(fromSystem, 0);
+    }
+
+    // Runs the economy until the hauler is no longer on its departing leg.
+    void flyOutOfTheSystem()
+    {
+        int guard = 0;
+        while (economy.route(0).leg == TraderLeg::Depart && guard++ < 400) {
+            economy.tick(galaxy, 1.0);
+        }
+    }
+};
+
+Mission escortOffer(std::uint32_t trader, std::uint32_t system, std::uint32_t poster)
+{
+    Mission mission;
+    mission.title = "Escort the run";
+    mission.poster = poster;
+    mission.rewardCredits = 900.0;
+    mission.standingReward = 4.0f;
+    mission.standingPenalty = 2.0f;
+    mission.objectives.push_back({.kind = ObjectiveKind::Escort,
+                                  .system = system,
+                                  .trader = trader,
+                                  .text = "Keep the hauler alive"});
+    return mission;
+}
+
 } // namespace
+
+SOL_TEST(mission_escort_candidates_are_the_haulers_leaving_this_system)
+{
+    EscortWorld world;
+    std::vector<sol::sim::EscortCandidate> candidates;
+
+    world.missions.escortCandidates(world.galaxy, world.economy, world.factions,
+                                    world.fromSystem, candidates);
+    SOL_REQUIRE(candidates.size() == 1);
+    SOL_CHECK(candidates[0].trader == 0);
+    SOL_CHECK(candidates[0].system == world.toSystem);
+    SOL_CHECK(candidates[0].jumps == world.hops);
+    SOL_CHECK(candidates[0].danger == 0.0f); // nothing has happened out there yet
+
+    // Not from anywhere else: the rule is about what a pilot standing on THIS
+    // dock could still fly alongside, and nobody can escort a ship that is
+    // already a system away.
+    for (std::uint32_t s = 0; s < 3; ++s) {
+        if (s == world.fromSystem) {
+            continue;
+        }
+        world.missions.escortCandidates(world.galaxy, world.economy, world.factions, s,
+                                        candidates);
+        SOL_CHECK(candidates.empty());
+    }
+
+    // And the window closes on its own: once it reaches the gate there is
+    // nothing here to escort, from this board or any other.
+    world.flyOutOfTheSystem();
+    world.missions.escortCandidates(world.galaxy, world.economy, world.factions,
+                                    world.fromSystem, candidates);
+    SOL_CHECK(candidates.empty());
+}
+
+SOL_TEST(mission_escort_candidates_carry_the_danger_of_the_destination)
+{
+    EscortWorld world;
+    // Warm the far end up. This is the number attrition rolls against, so a
+    // board pricing on it is pricing on the risk the sim will actually take.
+    SOL_REQUIRE(world.factions.commitRaid(world.galaxy, &world.economy, 2, world.toSystem));
+
+    std::vector<sol::sim::EscortCandidate> candidates;
+    world.missions.escortCandidates(world.galaxy, world.economy, world.factions,
+                                    world.fromSystem, candidates);
+    SOL_REQUIRE(candidates.size() == 1);
+    SOL_CHECK(candidates[0].danger > 0.0f);
+    SOL_CHECK(candidates[0].danger == world.factions.danger(world.toSystem));
+}
+
+SOL_TEST(mission_escort_offers_validate_against_a_departing_hauler)
+{
+    EscortWorld world;
+    std::string error;
+
+    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                       escortOffer(0, world.toSystem, 0), &error));
+
+    // Right hauler, wrong destination: a contract that could only ever fail.
+    const std::uint32_t elsewhere = world.toSystem == 0 ? 1u : 0u;
+    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                        escortOffer(0, elsewhere, 0), &error));
+    SOL_CHECK(error == "no such hauler");
+
+    // A trader index off the end of the fleet never reaches the candidate
+    // match: it is refused by the range check every objective goes through.
+    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                        escortOffer(1, world.toSystem, 0), &error));
+    SOL_CHECK(error == "objective out of range");
+
+    // And once the hauler has gone, the board cannot sell it any more.
+    world.flyOutOfTheSystem();
+    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                        escortOffer(0, world.toSystem, 0), &error));
+    SOL_CHECK(error == "no such hauler");
+}
+
+SOL_TEST(mission_escort_completes_on_the_arrival_it_named)
+{
+    EscortWorld world;
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                         escortOffer(0, world.toSystem, 0)));
+    SOL_REQUIRE(world.missions.accept(0, 0.0f));
+
+    std::vector<MissionEvent> events;
+    world.missions.takeEvents(events); // the Accepted
+    events.clear();
+
+    // A hauler outlives its haul: it lands, goes Idle and leaves again, so an
+    // arrival somewhere else is not this contract's arrival.
+    const std::uint32_t elsewhere = world.toSystem == 0 ? 1u : 0u;
+    world.missions.notifyTraderArrived(0, elsewhere);
+    SOL_CHECK(world.missions.active().size() == 1);
+    world.missions.notifyTraderArrived(1, world.toSystem); // another hauler
+    SOL_CHECK(world.missions.active().size() == 1);
+
+    world.missions.notifyTraderArrived(0, world.toSystem);
+    SOL_CHECK(world.missions.active().empty());
+    world.missions.takeEvents(events);
+    SOL_REQUIRE(events.size() == 2);
+    SOL_CHECK(events[0].kind == MissionEventKind::ObjectiveComplete);
+    SOL_CHECK(events[1].kind == MissionEventKind::Completed);
+    SOL_CHECK(events[1].mission.rewardCredits == 900.0);
+}
+
+SOL_TEST(mission_escort_lost_to_someone_else_costs_nothing_but_a_betrayal_does)
+{
+    EscortWorld world;
+    std::vector<MissionEvent> events;
+
+    // A raider got through. The pilot flew the job and lost it, which is 8u's
+    // Lost kind: the game charges no standing on it.
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                         escortOffer(0, world.toSystem, 0)));
+    SOL_REQUIRE(world.missions.accept(0, 0.0f));
+    world.missions.takeEvents(events);
+    events.clear();
+    world.missions.notifyTraderLost(1, false); // a different hauler entirely
+    SOL_CHECK(world.missions.active().size() == 1);
+    world.missions.notifyTraderLost(0, false);
+    SOL_CHECK(world.missions.active().empty());
+    world.missions.takeEvents(events);
+    SOL_REQUIRE(events.size() == 1);
+    SOL_CHECK(events[0].kind == MissionEventKind::Lost);
+
+    // ⚑ Unless the pilot shot it themselves. Without this the cheapest way to
+    // finish an escort would be to destroy the ship and keep the wreck: the
+    // contract ends either way, and only one of the two endings is free.
+    events.clear();
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                         escortOffer(0, world.toSystem, 0)));
+    SOL_REQUIRE(world.missions.accept(0, 0.0f));
+    world.missions.takeEvents(events);
+    events.clear();
+    world.missions.notifyTraderLost(0, true);
+    SOL_CHECK(world.missions.active().empty());
+    world.missions.takeEvents(events);
+    SOL_REQUIRE(events.size() == 1);
+    SOL_CHECK(events[0].kind == MissionEventKind::Failed);
+    SOL_CHECK(events[0].mission.standingPenalty == 2.0f);
+}
+
+SOL_TEST(mission_save_round_trips_every_objective_kind)
+{
+    // ⚑ This test exists because of a bug it would have caught in Phase 8u:
+    // readObjective bounded the kind at FlyTo, which was the last member when
+    // it was written, so from the moment Hold was added a save carrying one
+    // failed to load and took the whole world down with it. Nothing noticed,
+    // because a save only carries a Hold if a contest happens to be in reach
+    // of the board when it is taken. Every kind is written here, so the next
+    // member added is caught by the suite rather than by a player.
+    EscortWorld world;
+    Mission mission;
+    mission.title = "Everything at once";
+    mission.campaignId = "test.every_kind"; // campaign offers may chain anything
+    mission.poster = 0;
+    mission.rewardCredits = 1'000.0;
+    mission.objectives = {
+        {.kind = ObjectiveKind::Dock, .system = 1, .station = 0, .text = "dock"},
+        {.kind = ObjectiveKind::Deliver,
+         .system = 1,
+         .station = 0,
+         .commodity = 0,
+         .units = 5.0f,
+         .text = "deliver"},
+        {.kind = ObjectiveKind::Kill, .system = 1, .faction = 2, .kills = 3, .text = "kill"},
+        {.kind = ObjectiveKind::FlyTo,
+         .system = 1,
+         .position = {1.0, 2.0, 3.0},
+         .radius = 1'200.0,
+         .text = "fly to"},
+        {.kind = ObjectiveKind::Hold, .system = 1, .faction = 0, .text = "hold"},
+        {.kind = ObjectiveKind::Escort,
+         .system = world.toSystem,
+         .trader = 0,
+         .text = "escort"},
+    };
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
+                                         mission));
+    SOL_REQUIRE(world.missions.accept(0, 0.0f));
+
+    sol::core::BinaryWriter writer;
+    world.missions.save(writer);
+    EscortWorld restored(999);
+    sol::core::BinaryReader reader(std::span<const std::byte>(writer.data()));
+    SOL_REQUIRE(restored.missions.load(reader));
+
+    SOL_REQUIRE(restored.missions.active().size() == 1);
+    const std::vector<MissionObjective>& objectives =
+        restored.missions.active()[0].objectives;
+    SOL_REQUIRE(objectives.size() == 6);
+    SOL_CHECK(objectives[2].kills == 3);
+    SOL_CHECK(objectives[3].radius == 1'200.0);
+    SOL_CHECK(objectives[3].position.z == 3.0);
+    SOL_CHECK(objectives[4].kind == ObjectiveKind::Hold);
+    SOL_CHECK(objectives[5].kind == ObjectiveKind::Escort);
+    SOL_CHECK(objectives[5].trader == 0);
+    SOL_CHECK(objectives[5].system == world.toSystem);
+
+    // The fleet size is part of the layout now, for the same reason the
+    // faction and commodity counts are: an Escort objective indexes into it.
+    MissionSim mismatched;
+    mismatched.initialize(world.galaxy, MissionParams{}, 3, 1, 2, 1);
+    sol::core::BinaryReader again(std::span<const std::byte>(writer.data()));
+    SOL_CHECK(!mismatched.load(again));
+}
 
 SOL_TEST(mission_contest_candidates_need_the_board_to_be_a_party)
 {
@@ -602,7 +901,7 @@ SOL_TEST(mission_save_load_round_trips_exactly)
 
     // A layout mismatch refuses to load (galaxy/defs changed under the save).
     MissionSim mismatched;
-    mismatched.initialize(world.galaxy, MissionParams{}, 4, 1, 1);
+    mismatched.initialize(world.galaxy, MissionParams{}, 4, 1, 0, 1);
     sol::core::BinaryReader again(std::span<const std::byte>(writer.data()));
     SOL_CHECK(!mismatched.load(again));
 }

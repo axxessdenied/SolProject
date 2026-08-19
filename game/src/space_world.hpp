@@ -665,6 +665,10 @@ public:
     {
         return traderIndex < m_puppetPresent.size() && m_puppetPresent[traderIndex] != 0;
     }
+    // Where that body is, when there is one. The escort marker's whole job
+    // (Phase 8x §E), and the reason it can be a moving one.
+    [[nodiscard]] bool traderBodyPosition(std::uint32_t traderIndex,
+                                          sol::core::DVec3* out) const;
     // Every trader body in the system, for the console.
     void traderPuppetInfo(std::vector<TraderPuppetInfo>& out);
     [[nodiscard]] const std::vector<std::string>& commodityIds() const { return m_commodityIds; }
@@ -1024,7 +1028,8 @@ public:
     // saying "over there" beside a dot that says where is noise.
     [[nodiscard]] std::string objectiveDestinationText() const;
     // Slot of the NavKind::Objective target, or kNoTarget when the tracked
-    // objective is not a FlyTo in this system (so nothing is there to select).
+    // objective has nothing in this system to point at (so nothing is there to
+    // select).
     [[nodiscard]] std::size_t objectiveTargetIndex() const;
     // Selects that slot (the O key). False when there is nothing to select.
     bool selectObjective();
@@ -1250,11 +1255,22 @@ private:
     // or a scan in flight is already pointing at. Slots whose object is gone
     // (a decayed wreck) are compacted, and the target index follows them.
     void rebuildDynamicTargets();
-    // True when the tracked mission's current objective is a FlyTo in this
-    // system — the one case that has a position and nothing else to draw it.
-    // Dock/Deliver name a station that is already a nav target and Kill has no
-    // position at all, so both are answered by the HUD line instead.
-    [[nodiscard]] bool objectiveDestination(const sol::sim::MissionObjective** out) const;
+    // Where the tracked objective's nav slot goes, when it has one here. Two
+    // kinds do: a FlyTo, which has carried a position since 8c, and an Escort
+    // whose hauler currently has a body in this system (Phase 8x §E).
+    // Dock/Deliver name a station that is already a nav target, and Kill and
+    // Hold have no position at all, so those are answered by the HUD line.
+    //
+    // It answers a POSITION rather than the objective, because an escort's
+    // marker is the hauler itself and moves every tick — which is the whole
+    // difference between the two kinds that get one.
+    struct ObjectiveMarker
+    {
+        sol::core::DVec3 position;
+        double radius = 0.0; // FlyTo's completion sphere; an escort has none
+        bool moving = false; // an escort: re-read every tick, and named apart
+    };
+    [[nodiscard]] bool objectiveMarker(ObjectiveMarker* out) const;
     // Rebuilds the tail only when the objective slot's presence or position no
     // longer matches the tracked mission. Called each tick; costs a pointer
     // chase and a vector compare when nothing has changed.
@@ -1478,6 +1494,11 @@ private:
     // the fleet's own state, and these only exist to say it out loud.
     std::vector<sol::sim::TraderLoss> m_traderLossEvents;
     std::uint32_t m_traderLossCount = 0;
+    // Traders the player shot themselves, since the last drain (Phase 8x §E).
+    // The coarse record is told a hauler died and never by whom, so this is
+    // the one bridge between the two, and it exists for exactly one decision:
+    // whether an escort contract was failed or merely lost.
+    std::vector<std::uint32_t> m_playerKilledTraders;
     HailRequest m_pendingHail;  // queued by hailTarget, drained by GameContent
     HailMemory m_answeringHail; // who the three answers below are speaking as
     std::uint32_t m_hailCount = 0; // so a re-hail of a NEW pilot can differ

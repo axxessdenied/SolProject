@@ -615,6 +615,37 @@ std::string systemDanger(GameContent& content, double systemIndex)
     return buffer;
 }
 
+// What the board would be offered here (Phase 8x §E). Printed against the
+// player's own system rather than against a docked station, so the eligibility
+// rule can be read while flying: an escort candidate is a hauler DEPARTING
+// this system, and the set empties by itself as each one reaches its gate.
+std::string escortCandidates(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::vector<sol::sim::EscortCandidate> candidates;
+    world.missionSim().escortCandidates(world.galaxy(), world.economy(), world.factionSim(),
+                                        world.currentSystemIndex(), candidates);
+    std::string lines;
+    char buffer[256];
+    for (const sol::sim::EscortCandidate& c : candidates) {
+        std::snprintf(buffer, sizeof(buffer), "#%u -> %s  %s %.0fu, %u hop(s), danger %.2f%s",
+                      c.trader,
+                      c.system < world.galaxy().systems.size()
+                          ? world.galaxy().systems[c.system].name.c_str()
+                          : "?",
+                      c.cargo > 0.0f && c.commodity < world.commodityIds().size()
+                          ? world.commodityIds()[c.commodity].c_str()
+                          : "empty",
+                      static_cast<double>(c.cargo), c.jumps, static_cast<double>(c.danger),
+                      world.traderHasBody(c.trader) ? " *" : "");
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    std::snprintf(buffer, sizeof(buffer), "%zu escortable hauler(s) leaving %s",
+                  candidates.size(),
+                  world.galaxy().systems[world.currentSystemIndex()].name.c_str());
+    return (lines.empty() ? std::string("(none)") : lines) + "\n" + buffer;
+}
+
 // Dev lever for a loss. Goes down the same road a real one does - through the
 // body if this trader has one here - because a lever that reaches a state the
 // running game cannot is a second implementation (8u).
@@ -1137,24 +1168,43 @@ std::string describeObjective(GameContent& content)
     if (objective == nullptr) {
         return "no tracked mission";
     }
-    const char* kindName = objective->kind == sol::sim::ObjectiveKind::FlyTo    ? "fly to"
-                           : objective->kind == sol::sim::ObjectiveKind::Dock   ? "dock"
+    const char* kindName = objective->kind == sol::sim::ObjectiveKind::FlyTo     ? "fly to"
+                           : objective->kind == sol::sim::ObjectiveKind::Dock    ? "dock"
                            : objective->kind == sol::sim::ObjectiveKind::Deliver ? "deliver"
                            : objective->kind == sol::sim::ObjectiveKind::Hold    ? "hold"
+                           : objective->kind == sol::sim::ObjectiveKind::Escort  ? "escort"
                                                                                  : "kill";
     const std::string where = world.objectiveDestinationText();
     std::string line = std::string(kindName) + ": " + objective->text;
     if (!where.empty()) {
         line += " - " + where;
     }
+    if (objective->kind == sol::sim::ObjectiveKind::Escort) {
+        // The charge's own progress, read off the record rather than off the
+        // body: it is the number that says whether the contract is nearly won,
+        // and it keeps answering while the hauler is in the gate network.
+        const sol::sim::TraderRoute route = world.economy().route(objective->trader);
+        char haul[128];
+        std::snprintf(haul, sizeof(haul), "\ntrader #%u: leg %s %.0f%%, %u hop(s)%s",
+                      objective->trader,
+                      route.leg == sol::sim::TraderLeg::None       ? "none"
+                      : route.leg == sol::sim::TraderLeg::Depart   ? "depart"
+                      : route.leg == sol::sim::TraderLeg::Jump     ? "jump"
+                                                                   : "arrive",
+                      static_cast<double>(route.progress) * 100.0, route.hops,
+                      world.traderHasBody(objective->trader) ? ", body here" : "");
+        line += haul;
+    }
     const std::size_t slot = world.objectiveTargetIndex();
     if (slot == SpaceWorld::kNoTarget) {
-        return line + "\nno nav slot (not a FlyTo in this system)";
+        return line + "\nno nav slot (nothing of this objective is in this system)";
     }
     char buffer[160];
     std::snprintf(buffer, sizeof(buffer), "nav slot %zu: %s, %.1f km away, radius %.1f km", slot,
                   world.navTargets()[slot].name.c_str(),
-                  sol::core::length(objective->position - world.shipState().position) / 1000.0,
+                  sol::core::length(world.navTargets()[slot].position -
+                                    world.shipState().position) /
+                      1000.0,
                   objective->radius / 1000.0);
     return line + "\n" + buffer;
 }
@@ -2390,6 +2440,35 @@ bool missionObjHold(GameContent& content, double system, double factionIndex,
     return true;
 }
 
+// Escort (Phase 8x §E): coarse trader `trader` reaches `system` alive. The
+// trader index is 0-based, unlike the 1-based faction indices above, because
+// it is not a def table Lua ever names - it is the same number sol.traders()
+// and the escort candidate string print, and translating it would make three
+// surfaces disagree about one hauler.
+bool missionObjEscort(GameContent& content, double trader, double system,
+                      const std::string& text)
+{
+    if (!content.missionDraftOpen()) {
+        return false;
+    }
+    if (trader < 0.0 ||
+        static_cast<std::size_t>(trader) >= content.world().economy().traders().size()) {
+        SOL_LOG_WARN("mission_obj_escort: trader %d out of range", static_cast<int>(trader));
+        return false;
+    }
+    if (system < 0.0 ||
+        static_cast<std::size_t>(system) >= content.world().galaxy().systems.size()) {
+        SOL_LOG_WARN("mission_obj_escort: system %d out of range", static_cast<int>(system));
+        return false;
+    }
+    content.missionDraft().objectives.push_back(
+        {.kind = sol::sim::ObjectiveKind::Escort,
+         .system = static_cast<std::uint32_t>(system),
+         .trader = static_cast<std::uint32_t>(trader),
+         .text = text});
+    return true;
+}
+
 bool missionObjFlyTo(GameContent& content, double system, double dx, double dy, double dz,
                      double radius, const std::string& text)
 {
@@ -2522,6 +2601,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&traderPuppets>("sol", "puppets", this);
     m_vm.registerFunction<&traderHunters>("sol", "hunters", this);
     m_vm.registerFunction<&systemDanger>("sol", "danger", this);
+    m_vm.registerFunction<&escortCandidates>("sol", "escort_candidates", this);
     m_vm.registerFunction<&killTrader>("sol", "trader_kill", this);
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
@@ -2572,6 +2652,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&missionObjDeliver>("sol", "mission_obj_deliver", this);
     m_vm.registerFunction<&missionObjKill>("sol", "mission_obj_kill", this);
     m_vm.registerFunction<&missionObjHold>("sol", "mission_obj_hold", this);
+    m_vm.registerFunction<&missionObjEscort>("sol", "mission_obj_escort", this);
     m_vm.registerFunction<&missionObjFlyTo>("sol", "mission_obj_flyto", this);
     m_vm.registerFunction<&missionPost>("sol", "mission_post", this);
     // Exploration (Phase 8e). sol.set_loot is the signal_loot hook's builder;
@@ -3174,12 +3255,45 @@ void GameContent::runMissionBoard()
                     world.factions()[c.owner].name + ":" + world.factions()[c.attacker].name;
     }
 
+    // Escorts (Phase 8x §E):
+    // "trader:system:station:commodityId:cargo:danger:jumps:sysName:stName".
+    // The hauler is named by its COARSE INDEX and never by an entity - the
+    // body it may or may not have right now is a view, and the contract has to
+    // outlive it.
+    m_escortCandidates.clear();
+    missions.escortCandidates(world.galaxy(), world.economy(), world.factionSim(),
+                              world.currentSystemIndex(), m_escortCandidates);
+    std::string escorts;
+    for (const sol::sim::EscortCandidate& c : m_escortCandidates) {
+        if (c.system >= world.galaxy().systems.size()) {
+            continue;
+        }
+        const sol::sim::SystemSpec& spec = world.galaxy().systems[c.system];
+        if (c.station >= spec.stations.size()) {
+            continue;
+        }
+        if (!escorts.empty()) {
+            escorts += ";";
+        }
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%.0f:%.2f:%u", static_cast<double>(c.cargo),
+                      static_cast<double>(c.danger), c.jumps);
+        // A deadheading hauler has no commodity worth naming, and `commodity`
+        // stays set from its last run - the same trap sol.traders() fell into.
+        const char* hauling = c.cargo > 0.0f && c.commodity < world.commodityIds().size()
+                                  ? world.commodityIds()[c.commodity].c_str()
+                                  : "-";
+        escorts += std::to_string(c.trader) + ":" + std::to_string(c.system) + ":" +
+                   std::to_string(c.station) + ":" + hauling + ":" + buffer + ":" +
+                   spec.name + ":" + spec.stations[c.station].name;
+    }
+
     std::string error;
     if (!m_vm.callGlobal("mission_board", &error, world.dockedStationName(),
                          static_cast<double>(owner + 1),
                          world.factions()[owner].name.c_str(),
                          world.factions()[owner].pirate, hauls.c_str(),
-                         bounties.c_str(), contests.c_str(),
+                         bounties.c_str(), contests.c_str(), escorts.c_str(),
                          static_cast<double>(missions.boardRoll()))) {
         SOL_LOG_ERROR("mission_board disabled until scripts reload: %s", error.c_str());
         m_boardHookFailed = true;
