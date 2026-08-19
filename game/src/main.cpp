@@ -287,6 +287,17 @@ int main(int argc, char** argv)
     if (!content.initialize(dataDirectory, modsDirectory, &world)) {
         return EXIT_FAILURE;
     }
+    // The model catalog (Phase 9). It cannot go in the renderer's initialize
+    // because the pipelines come up before the defs are read, and a missing
+    // mesh is a hard failure exactly as the hardcoded loads used to be.
+    if (!renderer.loadModels(content.defs().models(), cookedDirectory.c_str())) {
+        return EXIT_FAILURE;
+    }
+    // Resolved once: the cockpit is the one drawable the game layer pushes
+    // itself rather than reading off a RenderShape.
+    const game::ModelId cockpitModel =
+        static_cast<game::ModelId>(content.defs().modelIndex("cockpit"));
+
     devUi.setCommandHandler(&consoleCommandHandler, &content);
     // The console edits the same binding table the Controls screen does, so a
     // rebind can be driven and asserted on without clicking through the list.
@@ -830,7 +841,7 @@ int main(int argc, char** argv)
             renderInstances.push_back({.position = shipTransform.position,
                                        .rotation = shipTransform.orientation,
                                        .scale = {1.0f, 1.0f, 1.0f},
-                                       .model = game::ModelId::Cockpit});
+                                       .model = cockpitModel});
         }
         world.buildParticleInstances(simAlpha, particleInstances);
 

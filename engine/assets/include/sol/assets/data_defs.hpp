@@ -264,6 +264,38 @@ struct SoundDef
     std::string source;
 };
 
+// A drawable model (Phase 9): the cooked mesh and texture the renderer binds,
+// and the figures the sim measures the thing by. Data rather than an enum
+// because until this existed the whole set was a five-member C++ enum behind
+// four hardcoded switches - so a mesh could be authored and cooked and still
+// have no way of reaching the game. `[[model]]` rows are what the authoring
+// tool writes; the def order is the runtime model index.
+struct ModelDef
+{
+    std::string id;
+    std::string mesh;    // cooked file stem, e.g. "ship" -> ship.smesh
+    std::string texture; // cooked file stem, e.g. "hull" -> hull.stex
+    // Radius in meters at instance scale 1; the sim multiplies by the scale
+    // for collision and weapon hit tests. A model authored at unit radius
+    // (the asteroid) therefore takes its size from the scale, and one
+    // authored at its real size (the ship, the station) is drawn at scale 1.
+    float radius = 1.0f;
+    // What NPC steering and autopilot dodge, meters at scale 1; 0 means "the
+    // same as radius". A station's is deliberately wider than what you can
+    // hit, because 8r's berths ring at 200 m and that approach was tuned
+    // against the wider figure - larger than what you can hit is always safe.
+    float avoidRadius = 0.0f;
+    // Unlit albedo glow added at draw time. Vacuum ambient is 1.2%, which is
+    // right for a hull and pitch black for a room the player is sitting in.
+    float emissive = 0.0f;
+    // Whether the model blocks anything at all. A gate is a doorway you fly
+    // through (Phase 8w), and before this field that fact was expressed as
+    // "the only Cube left among statics" - which would have silently
+    // un-solidified any future Cube-shaped static, as 8w's own gaps recorded.
+    bool solid = true;
+    std::string source;
+};
+
 // One production or consumption line on a station ("sol.food:0.5" in TOML).
 struct StationRate
 {
@@ -335,6 +367,13 @@ public:
     [[nodiscard]] const ModuleDef* findModule(const char* id) const;
     [[nodiscard]] const CrewDef* findCrew(const char* id) const;
     [[nodiscard]] const SoundDef* findSound(const char* id) const;
+    [[nodiscard]] const ModelDef* findModel(const char* id) const;
+
+    // Index of a model by id, or kNoModel. The renderer and the sim both key
+    // off this index rather than off the string, so a name is resolved once at
+    // spawn and never in a per-tick loop.
+    static constexpr std::uint32_t kNoModel = 0xFFFFFFFFu;
+    [[nodiscard]] std::uint32_t modelIndex(const char* id) const;
 
     // First-definition order; later layers replace elements in place, so
     // indices stay stable across a reload that only edits values.
@@ -346,6 +385,7 @@ public:
     [[nodiscard]] const std::vector<ModuleDef>& modules() const { return m_modules; }
     [[nodiscard]] const std::vector<CrewDef>& crew() const { return m_crew; }
     [[nodiscard]] const std::vector<SoundDef>& sounds() const { return m_sounds; }
+    [[nodiscard]] const std::vector<ModelDef>& models() const { return m_models; }
 
 private:
     std::vector<ShipDef> m_ships;
@@ -356,6 +396,7 @@ private:
     std::vector<ModuleDef> m_modules;
     std::vector<CrewDef> m_crew;
     std::vector<SoundDef> m_sounds;
+    std::vector<ModelDef> m_models;
 };
 
 } // namespace sol::assets

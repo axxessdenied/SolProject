@@ -369,6 +369,112 @@ SOL_TEST(data_defs_sound_validation_errors)
     SOL_CHECK(db.findSound("a")->gain == 0.25f);
 }
 
+SOL_TEST(data_defs_parse_models)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db, R"(
+[[model]]
+id = "cube"
+mesh = "cube"
+texture = "checker"
+radius = 1.0
+
+[[model]]
+id = "station"
+mesh = "station"
+texture = "hull"
+radius = 100.0
+avoid_radius = 130.0
+
+[[model]]
+id = "gate"
+mesh = "cube"
+texture = "checker"
+solid = false
+)",
+                    "models.toml", &error));
+
+    SOL_CHECK(db.models().size() == 3);
+    // Def order IS the runtime model index, which is what lets the renderer
+    // and the sim key off an integer instead of re-resolving a string.
+    SOL_CHECK(db.modelIndex("cube") == 0);
+    SOL_CHECK(db.modelIndex("station") == 1);
+    SOL_CHECK(db.modelIndex("gate") == 2);
+    SOL_CHECK(db.modelIndex("nothing") == DefDatabase::kNoModel);
+    SOL_CHECK(db.findModel("nothing") == nullptr);
+
+    // Two spheres, and the wider one is what steering dodges (Phase 8r's
+    // berth approach was tuned against 130, not against the 100 you can hit).
+    const auto* station = db.findModel("station");
+    SOL_REQUIRE(station != nullptr);
+    SOL_CHECK(station->radius == 100.0f);
+    SOL_CHECK(station->avoidRadius == 130.0f);
+
+    // Omitting avoid_radius means "the same as radius" and is resolved at
+    // parse time, so no reader has to know about the sentinel.
+    const auto* cube = db.findModel("cube");
+    SOL_REQUIRE(cube != nullptr);
+    SOL_CHECK(cube->avoidRadius == 1.0f);
+    SOL_CHECK(cube->solid);
+    SOL_CHECK(cube->emissive == 0.0f);
+
+    // A gate is a doorway you fly through (Phase 8w), and that is now the
+    // model's own property rather than "the only Cube left among statics".
+    const auto* gate = db.findModel("gate");
+    SOL_REQUIRE(gate != nullptr);
+    SOL_CHECK(!gate->solid);
+    // Two models sharing one mesh is the normal case, not a special one.
+    SOL_CHECK(gate->mesh == cube->mesh);
+}
+
+SOL_TEST(data_defs_model_validation_errors)
+{
+    DefDatabase db;
+    std::string error;
+
+    // A model with no mesh or no texture cannot be drawn, so it fails at load
+    // rather than becoming an invisible entity somebody debugs later.
+    SOL_CHECK(!merge(db, "[[model]]\nid = \"a\"\ntexture = \"t\"\n", "m.toml", &error));
+    SOL_CHECK(error.find("mesh") != std::string::npos);
+    SOL_CHECK(!merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\n", "m.toml", &error));
+    SOL_CHECK(error.find("texture") != std::string::npos);
+
+    SOL_CHECK(!merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nradius = 0.0\n",
+                     "m.toml", &error));
+    // An avoidance sphere inside the collision sphere is steering that clears
+    // the obstacle it is about to hit, so it is rejected rather than clamped.
+    SOL_CHECK(!merge(db,
+                     "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nradius = "
+                     "10.0\navoid_radius = 5.0\n",
+                     "m.toml", &error));
+    SOL_CHECK(!merge(db,
+                     "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nemissive = -0.5\n",
+                     "m.toml", &error));
+    // solid takes a bool, not the 0/1 a TOML author might reach for.
+    SOL_CHECK(!merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nsolid = 0\n",
+                     "m.toml", &error));
+    // Strict schema: a typo dies at load, not as a mis-sized collision sphere.
+    SOL_CHECK(!merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nscale = 2.0\n",
+                     "m.toml", &error));
+
+    SOL_CHECK(db.models().empty());
+
+    // A mod layer replaces a model in place, so the index a spawned entity is
+    // holding still names the same thing after a reload.
+    SOL_CHECK(merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\n", "base.toml",
+                    &error));
+    SOL_CHECK(merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\n", "base.toml",
+                    &error));
+    SOL_CHECK(merge(db, "[[model]]\nid = \"a\"\nmesh = \"m2\"\ntexture = \"t\"\nradius = 4.0\n",
+                    "mod.toml", &error));
+    SOL_CHECK(db.models().size() == 2);
+    SOL_CHECK(db.modelIndex("a") == 0);
+    SOL_CHECK(db.modelIndex("b") == 1);
+    SOL_CHECK(db.findModel("a")->mesh == "m2");
+    SOL_CHECK(db.findModel("a")->radius == 4.0f);
+}
+
 SOL_TEST(data_defs_parse_mining_fields)
 {
     DefDatabase db;

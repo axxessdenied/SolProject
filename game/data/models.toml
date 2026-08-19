@@ -1,0 +1,67 @@
+# Drawable models (Phase 9). Every mesh the game can draw is named here, and
+# the def order is the runtime model index - so adding a mesh is a cooked file
+# plus a row, and never a C++ change. Before this file existed the set was a
+# five-member enum behind four hardcoded switches, which meant an authored,
+# cooked mesh had no way of reaching the game at all.
+#
+# `mesh` and `texture` are cooked file stems: "ship" is assets/meshes/ship.gltf
+# cooked to ship.smesh, "hull" is assets/textures/hull.png cooked to hull.stex.
+# `radius` is meters at instance scale 1 and the sim multiplies by the scale,
+# so a model authored at unit radius takes its size from the scale and one
+# authored at its real size is drawn at scale 1.
+
+[[model]]
+id = "cube"
+mesh = "cube"
+texture = "checker"
+radius = 1.0
+
+# The habitat torus. Its avoid_radius is deliberately wider than what you can
+# hit: 8r's berths ring at 200 m and the whole docking approach was tuned
+# against the 130 m figure, so shrinking it to the collision sphere would move
+# behaviour this row is only meant to describe.
+[[model]]
+id = "station"
+mesh = "station"
+texture = "hull"
+radius = 100.0
+avoid_radius = 130.0
+
+[[model]]
+id = "ship"
+mesh = "ship"
+texture = "hull"
+radius = 8.0
+
+# Authored at radius 1 m; a rock's real size is its instance scale.
+[[model]]
+id = "asteroid"
+mesh = "asteroid"
+texture = "hull"
+radius = 1.0
+
+# A gate is a doorway you fly THROUGH (Phase 8w), so it blocks nothing - it is
+# skipped by both the avoidance set and the collision set. That fact used to be
+# written as "the only Cube left among statics", which would have silently
+# un-solidified the next Cube-shaped static anyone added.
+[[model]]
+id = "gate"
+mesh = "cube"
+texture = "checker"
+radius = 1.0
+solid = false
+
+# The player's own frame (Phase 8m), authored in SHIP space around the eye and
+# drawn at the ship's transform - so its radius is measured from the ship
+# origin, not from the cockpit's own centre, and comes out just inside the
+# ship's own 8 m. Nothing reads it today: the cockpit is a RenderInstance and
+# never gets a RenderShape, so it is in no collision or avoidance set.
+# emissive is here because vacuum ambient is 1.2%, which is right for a hull
+# seen from outside and pitch black for a room the player is sitting in.
+[[model]]
+id = "cockpit"
+mesh = "cockpit"
+texture = "cockpit"
+radius = 8.0
+emissive = 0.10
+solid = false

@@ -12,12 +12,14 @@
 #include "sol/rhi/gpu_profiler.hpp"
 #include "sol/rhi/resources.hpp"
 #include "sol/rhi/swapchain.hpp"
+#include "sol/assets/data_defs.hpp"
 #include "sol/assets/font.hpp"
 #include "sol/ui/dev_ui.hpp"
 #include "sol/ui/draw_list.hpp"
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace game {
@@ -38,18 +40,23 @@ struct CameraFrame
     }
 };
 
-// The slice's fixed model catalog; data-driven assets arrive in Phase 5.
+// Index into the model catalog, which is `[[model]]` def order (Phase 9).
+// This was a five-member enum until the authoring tool needed a mesh to be
+// able to reach the game without a C++ change; the type stays strong so an
+// index into the wrong table is still a compile error, but the members are
+// resolved by name at load rather than written here.
 enum class ModelId : std::uint32_t
 {
-    Cube,
-    Station,
-    Ship,
-    Asteroid, // Phase 8f: authored at radius 1 m, scaled per rock
-    // Phase 8m: the player's own cockpit, authored in ship space around the
-    // eye and drawn at the ship's transform - attached to the SHIP, not the
-    // camera, so free-look looks around it and the sun crosses the dash.
-    Cockpit,
 };
+
+// No model. Drawing one is a no-op rather than a crash: a def layer can be
+// edited at runtime and a stale name must not take the frame down.
+inline constexpr ModelId kNoModel = static_cast<ModelId>(0xFFFFFFFFu);
+
+[[nodiscard]] inline constexpr std::uint32_t modelIndex(ModelId id)
+{
+    return static_cast<std::uint32_t>(id);
+}
 
 // One drawable produced by the sim for the current frame; positions are
 // sim-space doubles, made camera-relative at record time (large-world rule).
@@ -58,7 +65,7 @@ struct RenderInstance
     sol::core::DVec3 position;
     sol::core::Quat rotation = sol::core::Quat::identity();
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
-    ModelId model = ModelId::Cube;
+    ModelId model = kNoModel;
 };
 
 // One additive billboard in sim space (thruster exhaust etc.).
@@ -111,6 +118,16 @@ public:
 
     [[nodiscard]] bool initialize(sol::rhi::Context& context, sol::rhi::Swapchain& swapchain,
                                   const char* shaderDirectory, const char* cookedDirectory);
+
+    // Uploads the catalog the `[[model]]` defs name (Phase 9). Separate from
+    // initialize because the pipelines come up before the def database is
+    // loaded, and because a mod layer that adds a model should be able to
+    // reload the catalog without rebuilding the swapchain. Meshes and
+    // textures are cached by cooked stem, so ten models sharing hull.stex
+    // upload it once.
+    [[nodiscard]] bool loadModels(std::span<const sol::assets::ModelDef> models,
+                                  const char* cookedDirectory);
+    void unloadModels();
     void shutdown();
 
     [[nodiscard]] DrawResult drawFrame(const CameraFrame& camera,
@@ -187,14 +204,20 @@ private:
     sol::renderer::DebugDrawRenderer m_debugDraw;
     sol::renderer::ParticleRenderer m_particleRenderer;
     std::vector<sol::renderer::ParticleRenderer::Particle> m_particleScratch;
-    sol::renderer::GpuMesh m_cubeMesh;
-    sol::renderer::GpuMesh m_stationMesh;
-    sol::renderer::GpuMesh m_shipMesh;
-    sol::renderer::GpuMesh m_asteroidMesh;
-    sol::renderer::GpuMesh m_cockpitMesh;
-    sol::renderer::GpuTexture m_checkerTexture;
-    sol::renderer::GpuTexture m_hullTexture;
-    sol::renderer::GpuTexture m_cockpitTexture;
+    // The model catalog (Phase 9), parallel to `[[model]]` def order. Meshes
+    // and textures are owned by stem so a shared asset is uploaded once, and
+    // a model row holds the indices into those two pools.
+    struct CatalogEntry
+    {
+        std::uint32_t mesh = 0;
+        std::uint32_t texture = 0;
+        float emissive = 0.0f;
+    };
+    std::vector<CatalogEntry> m_models;
+    std::vector<sol::renderer::GpuMesh> m_meshes;
+    std::vector<sol::renderer::GpuTexture> m_textures;
+    std::vector<std::string> m_meshStems;
+    std::vector<std::string> m_textureStems;
     sol::rhi::Image m_depth;
     sol::rhi::Image m_hdrColor;
 

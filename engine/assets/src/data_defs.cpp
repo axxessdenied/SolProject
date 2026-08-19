@@ -204,6 +204,19 @@ struct FieldReader
         }
     }
 
+    void optionalBool(const char* key, bool& out)
+    {
+        const TomlValue* value = table.find(key);
+        if (value == nullptr) {
+            return;
+        }
+        if (!value->isBool()) {
+            fail(std::string("key '") + key + "' must be true or false");
+            return;
+        }
+        out = value->asBool();
+    }
+
     void optionalUint(const char* key, std::uint32_t& out)
     {
         const TomlValue* value = table.find(key);
@@ -490,6 +503,48 @@ bool parseSound(const TomlValue& table, const char* sourceName, std::vector<Soun
     return true;
 }
 
+bool parseModel(const TomlValue& table, const char* sourceName, std::vector<ModelDef>& out,
+                std::string* outError)
+{
+    ModelDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": model '" + def.id + "'";
+    }
+    reader.requireString("mesh", def.mesh);
+    reader.requireString("texture", def.texture);
+    reader.optionalFloat("radius", def.radius);
+    reader.optionalFloat("avoid_radius", def.avoidRadius);
+    reader.optionalFloat("emissive", def.emissive);
+    reader.optionalBool("solid", def.solid);
+
+    reader.rejectUnknownKeys({"id", "mesh", "texture", "radius", "avoid_radius", "emissive",
+                              "solid"});
+    if (!reader.failed && def.radius <= 0.0f) {
+        reader.fail("'radius' must be > 0");
+    }
+    // 0 is the sentinel for "same as radius"; anything positive but smaller
+    // would put the avoidance sphere inside the collision sphere, i.e. steering
+    // that clears the obstacle it is about to hit. Larger is always safe.
+    if (!reader.failed && def.avoidRadius != 0.0f && def.avoidRadius < def.radius) {
+        reader.fail("'avoid_radius' must be 0 (meaning 'same as radius') or >= 'radius'");
+    }
+    if (!reader.failed && def.emissive < 0.0f) {
+        reader.fail("'emissive' must be >= 0");
+    }
+    if (reader.failed) {
+        return false;
+    }
+    if (def.avoidRadius == 0.0f) {
+        def.avoidRadius = def.radius;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
 bool parseStation(const TomlValue& table, const char* sourceName, std::vector<StationDef>& out,
                   std::string* outError)
 {
@@ -616,6 +671,7 @@ void DefDatabase::clear()
     m_modules.clear();
     m_crew.clear();
     m_sounds.clear();
+    m_models.clear();
 }
 
 bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* sourceName,
@@ -639,6 +695,7 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     std::vector<ModuleDef> modules = m_modules;
     std::vector<CrewDef> crew = m_crew;
     std::vector<SoundDef> sounds = m_sounds;
+    std::vector<ModelDef> models = m_models;
 
     for (const auto& [key, value] : root.members()) {
         bool (*parse)(const TomlValue&, const char*, void*, std::string*) = nullptr;
@@ -683,11 +740,16 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
                 return parseSound(t, s, *static_cast<std::vector<SoundDef>*>(v), e);
             };
             target = &sounds;
+        } else if (key == "model") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseModel(t, s, *static_cast<std::vector<ModelDef>*>(v), e);
+            };
+            target = &models;
         } else {
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
                             "' (expected ship, weapon, faction, commodity, station, module, "
-                            "crew, or sound)";
+                            "crew, sound, or model)";
             }
             return false;
         }
@@ -714,6 +776,7 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     m_modules = std::move(modules);
     m_crew = std::move(crew);
     m_sounds = std::move(sounds);
+    m_models = std::move(models);
     return true;
 }
 
@@ -791,6 +854,22 @@ const SoundDef* DefDatabase::findSound(const char* id) const
     const auto it =
         std::find_if(m_sounds.begin(), m_sounds.end(), [&](const SoundDef& d) { return d.id == id; });
     return it != m_sounds.end() ? &*it : nullptr;
+}
+
+const ModelDef* DefDatabase::findModel(const char* id) const
+{
+    const std::uint32_t index = modelIndex(id);
+    return index == kNoModel ? nullptr : &m_models[index];
+}
+
+std::uint32_t DefDatabase::modelIndex(const char* id) const
+{
+    for (std::size_t i = 0; i < m_models.size(); ++i) {
+        if (m_models[i].id == id) {
+            return static_cast<std::uint32_t>(i);
+        }
+    }
+    return kNoModel;
 }
 
 const CommodityDef* DefDatabase::findCommodity(const char* id) const

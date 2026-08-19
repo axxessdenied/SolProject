@@ -170,6 +170,31 @@ double pilotHull(GameContent& content, scripting::EntityHandle ship)
 
 // --- Audio (Phase 8t) ---
 
+// The model catalog (Phase 9). Prints the index each row resolved to, because
+// that index is what every RenderShape holds and what the renderer looks up -
+// so a drive can tell "the def is missing" from "the def is there and the
+// entity is pointing at the wrong row".
+std::string listModels(GameContent& content)
+{
+    std::string out;
+    const auto& models = content.defs().models();
+    for (std::size_t i = 0; i < models.size(); ++i) {
+        const assets::ModelDef& def = models[i];
+        char line[192] = {};
+        std::snprintf(line, sizeof(line), "%s#%zu %s: %s/%s r%.0f a%.0f%s%s", i == 0 ? "" : "\n", i,
+                      def.id.c_str(), def.mesh.c_str(), def.texture.c_str(),
+                      static_cast<double>(def.radius), static_cast<double>(def.avoidRadius),
+                      def.solid ? "" : " [pass-through]", def.emissive > 0.0f ? " [lit]" : "");
+        out += line;
+    }
+    if (out.empty()) {
+        return "no model defs";
+    }
+    char footer[64] = {};
+    std::snprintf(footer, sizeof(footer), "\n%zu model(s)", models.size());
+    return out + footer;
+}
+
 std::string listSounds(GameContent& content)
 {
     // Named gameAudio, not audio: a local called `audio` shadows the sol::audio
@@ -2664,6 +2689,7 @@ void GameContent::registerBindings()
     // Audio (Phase 8t). play_sound is the point of choosing data-driven cues
     // over hardcoded call sites: campaign.lua and pilot_hail can be heard.
     m_vm.registerFunction<&listSounds>("sol", "sounds", this);
+    m_vm.registerFunction<&listModels>("sol", "models", this);
     m_vm.registerFunction<&audioReport>("sol", "audio", this);
     m_vm.registerFunction<&playSound>("sol", "play_sound", this);
     m_vm.registerFunction<&playSoundAt>("sol", "play_sound_at", this);

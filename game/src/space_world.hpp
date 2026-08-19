@@ -254,7 +254,7 @@ struct GameFaction
 struct RenderShape
 {
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
-    ModelId model = ModelId::Cube;
+    ModelId model = kNoModel;
 };
 
 // Non-entity scenery: rendered as impostors, referenced as nav targets.
@@ -1287,6 +1287,24 @@ public:
     void collectDuePilotThinks(double dt, std::vector<PilotThink>& out);
 
 private:
+    // --- The model catalog (Phase 9) ---
+    // These read `[[model]]` defs, which is why they are members: before this
+    // they were a hardcoded switch over a five-member enum, and there was no
+    // way for an authored mesh to answer any of them. All four tolerate a null
+    // database and an out-of-range index, because a def layer is reloadable at
+    // runtime and an index can outlive its row.
+    [[nodiscard]] const sol::assets::ModelDef* modelDef(ModelId model) const;
+    // Bounding-sphere radius at RenderShape scale 1, in meters; the collision
+    // radius is this times the instance scale.
+    [[nodiscard]] double modelBaseRadius(ModelId model) const;
+    // What steering dodges, at scale 1. Wider than the collision radius for a
+    // station, because 8r's berth approach was tuned against the wider figure.
+    [[nodiscard]] double modelAvoidRadius(ModelId model) const;
+    // False for a gate, which is a doorway you fly through (Phase 8w).
+    [[nodiscard]] bool modelIsSolid(ModelId model) const;
+    // Resolves a catalog id once, at spawn time - never in a per-tick loop.
+    [[nodiscard]] ModelId modelByName(const char* id) const;
+
     struct SpawnedShip
     {
         sol::ecs::Entity entity;

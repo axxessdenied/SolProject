@@ -101,19 +101,7 @@ void hopsFrom(const sim::Galaxy& galaxy, std::uint32_t from, std::uint32_t maxHo
     return "fighter";
 }
 
-// Bounding-sphere radii per model at scale 1 (meters); collision radius =
-// base * RenderShape scale. Rough spheres are fine for Phase 6 combat.
 constexpr double kCollisionRestitution = 0.15;
-[[nodiscard]] double modelBaseRadius(ModelId model)
-{
-    switch (model) {
-    case ModelId::Cube: return 1.0;
-    case ModelId::Station: return 100.0;
-    case ModelId::Ship: return 8.0;
-    case ModelId::Asteroid: return 1.0; // authored at radius 1; scale is meters
-    }
-    return 8.0;
-}
 
 // Rotation taking the model's +Z onto `axis` (Phase 8w). The gate slab is thin
 // on Z, so this turns its face to the lane it serves. Both ends of the
@@ -155,18 +143,19 @@ ecs::Snapshot makeSnapshotSchema()
     return schema;
 }
 
-ModelId modelIdFromName(const std::string& name)
+// A named model, or the fallback hull. Phase 9 made this a def lookup; it used
+// to resolve exactly three strings against a five-member enum, which is why a
+// mesh could be authored and cooked and still have no way into the game.
+ModelId modelIdFromName(const assets::DefDatabase& defs, const std::string& name)
 {
-    if (name == "cube") {
-        return ModelId::Cube;
+    const std::uint32_t index = defs.modelIndex(name.c_str());
+    if (index != assets::DefDatabase::kNoModel) {
+        return static_cast<ModelId>(index);
     }
-    if (name == "station") {
-        return ModelId::Station;
-    }
-    if (name != "ship") {
-        SOL_LOG_WARN("unknown model '%s' in ship def; using 'ship'", name.c_str());
-    }
-    return ModelId::Ship;
+    SOL_LOG_WARN("unknown model '%s' in ship def; using 'ship'", name.c_str());
+    const std::uint32_t fallback = defs.modelIndex("ship");
+    return fallback == assets::DefDatabase::kNoModel ? kNoModel
+                                                     : static_cast<ModelId>(fallback);
 }
 
 sim::ShipTuning toShipTuning(const assets::ShipFlightTuning& flight)
@@ -197,7 +186,10 @@ void SpaceWorld::spawn(std::uint64_t universeSeed)
     const ecs::Entity e = m_registry.create();
     m_registry.emplace<Transform>(e);
     m_registry.emplace<FlightBody>(e);
-    m_registry.emplace<RenderShape>(e, RenderShape{.model = ModelId::Ship});
+    // No model yet: the def database does not exist at construction, and
+    // applyShipDef gives the player the hull its def names before the first
+    // frame. An unset model draws nothing rather than the wrong thing.
+    m_registry.emplace<RenderShape>(e, RenderShape{});
     m_registry.emplace<PlayerShip>(e);
     m_registry.emplace<ShipControl>(e);
     m_registry.emplace<ShipPower>(e);
@@ -1486,7 +1478,8 @@ void SpaceWorld::instantiateMiningEntities()
                                                             .previousPosition = rock.position});
             const float scale = static_cast<float>(rock.radius);
             m_registry.emplace<RenderShape>(
-                entity, RenderShape{.scale = {scale, scale, scale}, .model = ModelId::Asteroid});
+                entity,
+                RenderShape{.scale = {scale, scale, scale}, .model = modelByName("asteroid")});
             m_registry.emplace<MineableRock>(entity,
                                              MineableRock{.field = field,
                                                           .index = index,
@@ -1523,7 +1516,7 @@ void SpaceWorld::spawnOreChunk(const core::DVec3& position, const core::DVec3& v
     m_registry.emplace<Transform>(
         entity, Transform{.position = position, .previousPosition = position});
     m_registry.emplace<RenderShape>(
-        entity, RenderShape{.scale = {6.0f, 6.0f, 6.0f}, .model = ModelId::Cube});
+        entity, RenderShape{.scale = {6.0f, 6.0f, 6.0f}, .model = modelByName("cube")});
     m_registry.emplace<OreChunk>(entity, OreChunk{.velocity = velocity,
                                                   .lifetime = kChunkLifetimeSeconds,
                                                   .commodity = commodity,
@@ -2146,7 +2139,7 @@ void SpaceWorld::tickMining(double dt)
         // No wreck mesh yet: a dead hull is the ship model, oversized and
         // adrift. A proper broken hull is polish, not mechanism.
         m_registry.emplace<RenderShape>(
-            entity, RenderShape{.scale = {1.4f, 1.4f, 1.4f}, .model = ModelId::Ship});
+            entity, RenderShape{.scale = {1.4f, 1.4f, 1.4f}, .model = modelByName("ship")});
         m_registry.emplace<WreckMarker>(entity, WreckMarker{.id = id});
         wrecksChanged = true;
     }
@@ -2942,20 +2935,24 @@ void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
                                                    .previousOrientation = orientation});
         m_registry.emplace<RenderShape>(e, RenderShape{.scale = scale, .model = model});
     };
+    const ModelId stationModel = modelByName("station");
     for (const sim::StationSpec& station : spec.stations) {
-        addStatic(station.position, {1.0f, 1.0f, 1.0f}, ModelId::Station);
+        addStatic(station.position, {1.0f, 1.0f, 1.0f}, stationModel);
     }
-    // Gates render as flat frames (provisional visual: a squashed cube), and
-    // since Phase 8w they FACE THEIR LANE rather than all presenting the same
-    // arbitrary world-Z side. The player has to fly through the opening now, so
-    // being able to see which way through is stopped being cosmetic.
+    // Gates render as flat frames (still a provisional visual: a squashed
+    // cube), and since Phase 8w they FACE THEIR LANE rather than all presenting
+    // the same arbitrary world-Z side. The player has to fly through the
+    // opening now, so being able to see which way through stopped being
+    // cosmetic. Since Phase 9 a gate has its own catalog row, which is what
+    // carries `solid = false` and what a real aperture mesh will replace.
+    const ModelId gateModel = modelByName("gate");
     const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
     for (const sim::GateSpec& gate : spec.gates) {
         const core::DVec3 outward = gate.position - hub;
         const double reach = length(outward);
         const core::DVec3 axis =
             reach > 0.0 ? outward * (1.0 / reach) : core::DVec3{0.0, 0.0, 1.0};
-        addStatic(gate.position, {70.0f, 70.0f, 10.0f}, ModelId::Cube, facingRotation(axis));
+        addStatic(gate.position, {70.0f, 70.0f, 10.0f}, gateModel, facingRotation(axis));
     }
 }
 
@@ -3100,6 +3097,49 @@ void SpaceWorld::guardManualCruise(double dt)
     }
 }
 
+const assets::ModelDef* SpaceWorld::modelDef(ModelId model) const
+{
+    if (m_defs == nullptr) {
+        return nullptr;
+    }
+    const std::uint32_t index = modelIndex(model);
+    return index < m_defs->models().size() ? &m_defs->models()[index] : nullptr;
+}
+
+double SpaceWorld::modelBaseRadius(ModelId model) const
+{
+    const assets::ModelDef* def = modelDef(model);
+    // The fallback is the ship's own 8 m, which is what the pre-Phase-9 switch
+    // returned for anything it did not name. Larger than what you can hit is
+    // safe; smaller never is.
+    return def != nullptr ? static_cast<double>(def->radius) : 8.0;
+}
+
+double SpaceWorld::modelAvoidRadius(ModelId model) const
+{
+    const assets::ModelDef* def = modelDef(model);
+    return def != nullptr ? static_cast<double>(def->avoidRadius) : 8.0;
+}
+
+bool SpaceWorld::modelIsSolid(ModelId model) const
+{
+    const assets::ModelDef* def = modelDef(model);
+    return def == nullptr || def->solid;
+}
+
+ModelId SpaceWorld::modelByName(const char* id) const
+{
+    if (m_defs == nullptr) {
+        return kNoModel;
+    }
+    const std::uint32_t index = m_defs->modelIndex(id);
+    if (index == assets::DefDatabase::kNoModel) {
+        SOL_LOG_WARN("no [[model]] def named '%s'", id);
+        return kNoModel;
+    }
+    return static_cast<ModelId>(index);
+}
+
 void SpaceWorld::rebuildAvoidance()
 {
     // ⚑ Built from the same pools and the same exclusions as the collision
@@ -3119,17 +3159,17 @@ void SpaceWorld::rebuildAvoidance()
             continue; // ships come after; bolts and ore block nothing
         }
         const RenderShape& shape = shapes.values()[i];
-        if (shape.model == ModelId::Cube) {
+        if (!modelIsSolid(shape.model)) {
             continue; // a gate is a doorway (Phase 8w), and you fly through it
         }
         // A station keeps the wider figure it has carried since Phase 6: its
         // berths ring at 200 m and the approach was tuned against this sphere,
         // so shrinking it to the collision radius would move 8r's docking.
         // Larger than what you can hit is always safe; smaller never is.
-        const double radius = shape.model == ModelId::Station
-                                  ? kStationRadiusMeters
-                                  : modelBaseRadius(shape.model)
-                                        * static_cast<double>(shape.scale.x);
+        // That is `avoid_radius` in models.toml now, and it is a property of
+        // every model rather than a branch naming one of them.
+        const double radius =
+            modelAvoidRadius(shape.model) * static_cast<double>(shape.scale.x);
         m_avoidance.push_back({.position = transforms.get(entityIndex).position,
                                .radius = radius,
                                .handle = entityIndex});
@@ -4434,7 +4474,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
 {
     RenderShape& shape = m_registry.storage<RenderShape>().get(entityIndex);
     shape.scale = {def.scale, def.scale, def.scale};
-    shape.model = modelIdFromName(def.model);
+    shape.model = modelIdFromName(defs, def.model);
     m_registry.storage<ShipControl>().get(entityIndex).tuning = toShipTuning(def.flight);
     if (entityIndex == playerEntityIndex()) {
         m_playerCargoCapacity = def.cargoCapacity;
@@ -5778,10 +5818,11 @@ void SpaceWorld::tick(double dt)
         // the ship dead at 78 m and made "fly through the gate" impossible —
         // the aperture rule needs the doorway to be a doorway.
         //
-        // Cube is unambiguous HERE and only here: the game's other two Cube
-        // users are projectiles and ore chunks, and both were excluded by the
-        // test immediately above, so the only Cube left among statics is a gate.
-        if (shape.model == ModelId::Cube) {
+        // Phase 9 made that the model's own `solid = false` rather than "the
+        // only Cube left among statics", which was true only because the two
+        // other Cube users were excluded by the test immediately above — and
+        // would have silently un-solidified the next Cube-shaped static.
+        if (!modelIsSolid(shape.model)) {
             continue;
         }
         const Transform& transform = transforms.get(entityIndex);
@@ -6119,6 +6160,7 @@ void SpaceWorld::tick(double dt)
             m_rockEvents.push_back({.commodity = commodity, .units = total});
         }
     }
+    const ModelId boltModel = modelByName("cube");
     for (const PendingBolt& bolt : newBolts) {
         const ecs::Entity e = m_registry.create();
         m_registry.emplace<Transform>(e, Transform{.position = bolt.position,
@@ -6126,7 +6168,7 @@ void SpaceWorld::tick(double dt)
                                                    .orientation = bolt.orientation,
                                                    .previousOrientation = bolt.orientation});
         m_registry.emplace<RenderShape>(
-            e, RenderShape{.scale = {0.3f, 0.3f, 4.0f}, .model = ModelId::Cube});
+            e, RenderShape{.scale = {0.3f, 0.3f, 4.0f}, .model = boltModel});
         m_registry.emplace<Projectile>(e, Projectile{.velocity = bolt.velocity,
                                                      .lifetime = bolt.lifetime,
                                                      .damage = bolt.damage,
