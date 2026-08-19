@@ -32,6 +32,7 @@
 #include "sol/rhi/swapchain.hpp"
 #include "sol/ui/cockpit_frame.hpp"
 #include "sol/ui/dev_ui.hpp"
+#include "sol/ui/imgui_host.hpp"
 #include "sol/ui/radar_projection.hpp"
 #include "sol/ui/screens.hpp"
 
@@ -227,12 +228,16 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
-    sol::ui::DevUi devUi;
-    if (!devUi.initialize(window, context, swapchain.imageFormat(), VK_FORMAT_D32_SFLOAT,
-                          swapchain.imageCount())) {
+    // ImGui comes up once for the process; the dev overlay is one of its
+    // clients (Phase 9 stage C), and the present pass records the host.
+    sol::ui::ImGuiHost imguiHost;
+    if (!imguiHost.initialize(window, context, swapchain.imageFormat(), VK_FORMAT_D32_SFLOAT,
+                              swapchain.imageCount())) {
         return EXIT_FAILURE;
     }
-    renderer.setDevUi(&devUi);
+    sol::ui::DevUi devUi;
+    devUi.initialize();
+    renderer.setImGuiHost(&imguiHost);
 
     // Game UI (Phase 8d). One context builds every custom surface - the flight
     // readout and the menu shell - into a single draw list per frame.
@@ -652,7 +657,7 @@ int main(int argc, char** argv)
         }
 
         // The map opens from flight or from a station and closes from itself.
-        if ((inFlight || docked || onMap) && !typing && !devUi.wantsMouseCapture()
+        if ((inFlight || docked || onMap) && !typing && !imguiHost.wantsMouseCapture()
             && game::pressed(binds, game::Action::OpenMap)) {
             if (onMap) {
                 state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
@@ -666,7 +671,7 @@ int main(int argc, char** argv)
         // from a station, closes from itself, and does not stop the clock.
         // Suppressed while a text field is open, or "i" in a bookmark name
         // would leave the cockpit.
-        if ((inFlight || docked || onShipInfo) && !typing && !devUi.wantsMouseCapture()
+        if ((inFlight || docked || onShipInfo) && !typing && !imguiHost.wantsMouseCapture()
             && game::pressed(binds, game::Action::OpenShipInfo)) {
             if (onShipInfo) {
                 state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
@@ -710,7 +715,7 @@ int main(int argc, char** argv)
             // left mouse to select - and since 8k it is a binding like any
             // other. Mining moves with it: 8f deliberately made the mining beam
             // the fire button and that ruling stands.
-            input.trigger = game::held(binds, game::Action::Fire) && !devUi.wantsMouseCapture();
+            input.trigger = game::held(binds, game::Action::Fire) && !imguiHost.wantsMouseCapture();
             world.setShipInput(input);
         }
 
@@ -811,7 +816,7 @@ int main(int argc, char** argv)
             // about a different game than the one on screen.
             audio.setListener(camera.position, camera.orientation);
 
-            if (gameplayLive && !devUi.wantsMouseCapture()
+            if (gameplayLive && !imguiHost.wantsMouseCapture()
                 && game::pressed(binds, game::Action::Select)) {
                 // While the cursor is captured for mouse-look its position is
                 // meaningless by contract, so the click asks the same question
@@ -1259,7 +1264,7 @@ int main(int argc, char** argv)
         const sol::core::Vec2 cursor = window.mousePosition();
         uiInput.mousePosition = {cursor.x / uiScale, cursor.y / uiScale};
         uiInput.mouseDown = window.isMouseButtonDown(sol::platform::MouseButton::Left) &&
-                            !devUi.wantsMouseCapture();
+                            !imguiHost.wantsMouseCapture();
         uiInput.mousePressed = uiInput.mouseDown && !previousMouseDown;
         uiInput.mouseReleased = !uiInput.mouseDown && previousMouseDown;
         previousMouseDown = uiInput.mouseDown;
@@ -1268,7 +1273,7 @@ int main(int argc, char** argv)
         // Navigation keys are edge-triggered: holding Tab must not race
         // through every widget on the screen in one frame.
         const auto menuKeyEdge = [&](sol::platform::Key key, bool& previous) {
-            const bool down = uiHasKeys && window.isKeyDown(key) && !devUi.wantsMouseCapture();
+            const bool down = uiHasKeys && window.isKeyDown(key) && !imguiHost.wantsMouseCapture();
             const bool edge = down && !previous;
             previous = down;
             return edge;
@@ -1283,7 +1288,7 @@ int main(int argc, char** argv)
         // Sliders step while held, so left/right stay level-triggered - but
         // they stand down for ImGui on the same terms as every other nav key,
         // or a cursor resting on the dev overlay would disable half of them.
-        const bool arrowsLive = uiHasKeys && !devUi.wantsMouseCapture();
+        const bool arrowsLive = uiHasKeys && !imguiHost.wantsMouseCapture();
         uiInput.navLeft = arrowsLive && window.isKeyDown(sol::platform::Key::Left);
         uiInput.navRight = arrowsLive && window.isKeyDown(sol::platform::Key::Right);
         // Only a menu treats Esc as "back out". While docked it opened the
@@ -1469,7 +1474,8 @@ int main(int argc, char** argv)
         // custom stack now.
         {
             SOL_PROFILE_ZONE("ui.devOverlay");
-            devUi.beginFrame(stats);
+            imguiHost.beginFrame();
+            devUi.build(stats);
         }
         if (showStation && stationPanel.trade.action.row >= 0) {
             const std::uint32_t commodity =
@@ -1494,7 +1500,7 @@ int main(int argc, char** argv)
             SOL_LOG_INFO("V-Sync %s", settings.vsync ? "on" : "off");
         }
         if (needRecreate) {
-            devUi.discardFrame();
+            imguiHost.discardFrame();
         }
         if (!needRecreate) {
             // The CPU side of the frame's end. Kept as one zone so the number
@@ -1509,7 +1515,7 @@ int main(int argc, char** argv)
                 break;
             case game::SceneRenderer::DrawResult::NeedSwapchainRecreate:
                 needRecreate = true;
-                devUi.discardFrame();
+                imguiHost.discardFrame();
                 break;
             case game::SceneRenderer::DrawResult::Failure:
                 failed = true;
@@ -1541,6 +1547,7 @@ int main(int argc, char** argv)
     // samples goes away (Phase 8t).
     audio.shutdown();
     devUi.shutdown();
+    imguiHost.shutdown();
     renderer.shutdown();
     swapchain.destroy();
     context.shutdown();

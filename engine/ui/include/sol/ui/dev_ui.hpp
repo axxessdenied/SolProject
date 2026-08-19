@@ -2,10 +2,6 @@
 
 #include "sol/core/math/vec.hpp"
 #include "sol/core/profiler.hpp"
-#include "sol/platform/window.hpp"
-#include "sol/rhi/context.hpp"
-
-#include <vulkan/vulkan.h>
 
 #include <cstdint>
 #include <string>
@@ -33,6 +29,10 @@ struct OverlayStats
 };
 
 // Dear ImGui dev/debug overlay (never player-facing UI - see engine plan 2.9).
+//
+// Content only: bringing ImGui up and closing a frame belong to ImGuiHost
+// (Phase 9 stage C), of which this class is the first client. What is left
+// here is the game's own two windows and the state behind them.
 class DevUi
 {
 public:
@@ -49,44 +49,31 @@ public:
         Hidden,  // no overlay window at all
     };
 
-    [[nodiscard]] bool initialize(platform::Window& window, rhi::Context& context,
-                                  VkFormat colorFormat, VkFormat depthFormat,
-                                  std::uint32_t swapchainImageCount);
+    // Points the core log sink at the console's ring buffer. No device work
+    // and no ImGui context: an ImGuiHost has to be live before build() runs,
+    // and this class does not care which one.
+    void initialize();
     void shutdown();
 
-    // Once per frame, before recording; builds the overlay + console windows.
-    // Player-facing screens are not this class's business: they live on the
-    // custom UI stack (`sol::ui::UiContext`, `sol/ui/screens.hpp`).
-    void beginFrame(const OverlayStats& stats);
-
-    // Records draw data; must be called inside the scene's dynamic rendering pass.
-    void render(VkCommandBuffer commandBuffer);
-
-    // Call instead of render() when the frame is abandoned (swapchain out of date).
-    void discardFrame();
+    // Once per frame, between ImGuiHost::beginFrame and ImGuiHost::render;
+    // builds the overlay + console windows. Player-facing screens are not this
+    // class's business: they live on the custom UI stack (`sol::ui::UiContext`,
+    // `sol/ui/screens.hpp`).
+    void build(const OverlayStats& stats);
 
     // Console command line: submitted text goes to the handler (e.g. a Lua
     // VM); without one the input line is hidden and the console is log-only.
     using CommandHandler = void (*)(const char* command, void* userData);
     void setCommandHandler(CommandHandler handler, void* userData);
 
-    // True while ImGui wants the mouse (e.g. clicking the console) - game
-    // actions like the weapon trigger should stand down.
-    [[nodiscard]] bool wantsMouseCapture() const;
-
 private:
-    void buildWindows(const OverlayStats& stats);
     void buildConsoleInput();
     static int consoleTextCallback(ImGuiInputTextCallbackData* data);
 
-    bool m_initialized = false;
-    bool m_frameOpen = false;
     bool m_showConsole = true;
     // Full by default, so a cold boot looks exactly as it did before this
     // existed and the 8n/8o drives that screenshot the zone tree still work.
     OverlayMode m_overlayMode = OverlayMode::Full;
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
 
     CommandHandler m_commandHandler = nullptr;
     void* m_commandUserData = nullptr;

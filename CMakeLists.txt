@@ -55,3 +55,5 @@ add_subdirectory(engine)
 add_subdirectory(tools/cooker)
 add_subdirectory(shaders)
 add_subdirectory(game)
+# After game/: the Forge depends on sol_cook_assets, which game/ defines.
+add_subdirectory(tools/forge)

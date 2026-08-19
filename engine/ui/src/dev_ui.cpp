@@ -1,12 +1,8 @@
 #include "sol/ui/dev_ui.hpp"
 
-#include "dev_ui_platform.hpp"
-
 #include "sol/core/log.hpp"
-#include "sol/rhi/descriptors.hpp"
 
 #include <imgui.h>
-#include <imgui_impl_vulkan.h>
 
 #include <cstddef>
 #include <cstdio>
@@ -17,8 +13,6 @@
 namespace sol::ui {
 
 namespace {
-
-platform::Window* g_hookedWindow = nullptr;
 
 // Ring buffer console fed by the core log sink.
 struct ConsoleBuffer
@@ -44,19 +38,6 @@ void consoleLogSink(core::LogLevel level, const char* message, void* /*userData*
     g_console.add(level, message);
 }
 
-bool messageHookTrampoline(void* windowHandle, std::uint32_t message, std::uint64_t wParam,
-                           std::int64_t lParam)
-{
-    return devUiPlatformMessageHook(windowHandle, message, wParam, lParam);
-}
-
-void checkVkResult(VkResult result)
-{
-    if (result != VK_SUCCESS) {
-        SOL_LOG_ERROR("[imgui] Vulkan call failed (%d)", static_cast<int>(result));
-    }
-}
-
 ImVec4 levelColor(core::LogLevel level)
 {
     switch (level) {
@@ -69,87 +50,17 @@ ImVec4 levelColor(core::LogLevel level)
 
 } // namespace
 
-bool DevUi::initialize(platform::Window& window, rhi::Context& context, VkFormat colorFormat,
-                       VkFormat depthFormat, std::uint32_t swapchainImageCount)
+void DevUi::initialize()
 {
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-    ImGui::GetIO().IniFilename = nullptr; // no imgui.ini litter
-
-    if (!devUiPlatformInit(window.nativeHandle())) {
-        SOL_LOG_ERROR("[imgui] platform backend init failed");
-        return false;
-    }
-
-    m_descriptorPool = rhi::createTextureDescriptorPool(context.device(), 8, /*allowFree=*/true);
-    m_device = context.device();
-
-    ImGui_ImplVulkan_InitInfo initInfo = {};
-    initInfo.Instance = context.instance();
-    initInfo.PhysicalDevice = context.physicalDevice();
-    initInfo.Device = context.device();
-    initInfo.QueueFamily = context.graphicsQueueFamily();
-    initInfo.Queue = context.graphicsQueue();
-    initInfo.DescriptorPool = m_descriptorPool;
-    initInfo.MinImageCount = 2;
-    initInfo.ImageCount = swapchainImageCount;
-    initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    initInfo.UseDynamicRendering = true;
-    initInfo.PipelineRenderingCreateInfo = {};
-    initInfo.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    initInfo.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-    static VkFormat s_colorFormat; // must outlive init (backend keeps the pointer)
-    s_colorFormat = colorFormat;
-    initInfo.PipelineRenderingCreateInfo.pColorAttachmentFormats = &s_colorFormat;
-    initInfo.PipelineRenderingCreateInfo.depthAttachmentFormat = depthFormat;
-    initInfo.CheckVkResultFn = &checkVkResult;
-
-    if (!ImGui_ImplVulkan_Init(&initInfo)) {
-        SOL_LOG_ERROR("[imgui] Vulkan backend init failed");
-        devUiPlatformShutdown();
-        return false;
-    }
-
-    window.setMessageHook(&messageHookTrampoline);
-    g_hookedWindow = &window;
     core::setLogSink(&consoleLogSink, nullptr);
-
-    m_initialized = true;
-    return true;
 }
 
 void DevUi::shutdown()
 {
-    if (!m_initialized) {
-        return;
-    }
     core::setLogSink(nullptr, nullptr);
-    if (g_hookedWindow != nullptr) {
-        g_hookedWindow->setMessageHook(nullptr);
-        g_hookedWindow = nullptr;
-    }
-    ImGui_ImplVulkan_Shutdown();
-    devUiPlatformShutdown();
-    ImGui::DestroyContext();
-    if (m_descriptorPool != VK_NULL_HANDLE) {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    m_initialized = false;
 }
 
-void DevUi::beginFrame(const OverlayStats& stats)
-{
-    ImGui_ImplVulkan_NewFrame();
-    devUiPlatformNewFrame();
-    ImGui::NewFrame();
-    m_frameOpen = true;
-
-    buildWindows(stats);
-}
-
-void DevUi::buildWindows(const OverlayStats& stats)
+void DevUi::build(const OverlayStats& stats)
 {
     // Perf overlay: fixed top-left, transparent, no interaction. Hidden skips
     // Begin and End *together* (Phase 8p) - gating only the Begin would leave
@@ -274,11 +185,6 @@ void DevUi::setCommandHandler(CommandHandler handler, void* userData)
     m_commandUserData = userData;
 }
 
-bool DevUi::wantsMouseCapture() const
-{
-    return m_initialized && ImGui::GetIO().WantCaptureMouse;
-}
-
 int DevUi::consoleTextCallback(ImGuiInputTextCallbackData* data)
 {
     auto* ui = static_cast<DevUi*>(data->UserData);
@@ -320,24 +226,6 @@ void DevUi::buildConsoleInput()
         }
         m_historyIndex = -1;
         ImGui::SetKeyboardFocusHere(-1); // keep typing without re-clicking
-    }
-}
-
-void DevUi::render(VkCommandBuffer commandBuffer)
-{
-    if (!m_frameOpen) {
-        return;
-    }
-    ImGui::Render();
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
-    m_frameOpen = false;
-}
-
-void DevUi::discardFrame()
-{
-    if (m_frameOpen) {
-        ImGui::EndFrame();
-        m_frameOpen = false;
     }
 }
 

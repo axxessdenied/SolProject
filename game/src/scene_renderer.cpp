@@ -387,8 +387,8 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
                           m_uiDrawList->indices(), m_uiDrawList->batches());
         ++m_drawCallCount;
     }
-    if (m_devUi != nullptr) {
-        m_devUi->render(commandBuffer);
+    if (m_imguiHost != nullptr) {
+        m_imguiHost->render(commandBuffer);
     }
     renderer::endPresentPass(commandBuffer, *m_swapchain, imageIndex);
     m_gpuProfiler.endZone(commandBuffer, gpuPresentZone);

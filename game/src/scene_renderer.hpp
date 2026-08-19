@@ -14,8 +14,8 @@
 #include "sol/rhi/swapchain.hpp"
 #include "sol/assets/data_defs.hpp"
 #include "sol/assets/font.hpp"
-#include "sol/ui/dev_ui.hpp"
 #include "sol/ui/draw_list.hpp"
+#include "sol/ui/imgui_host.hpp"
 
 #include <cstdint>
 #include <span>
@@ -156,8 +156,10 @@ public:
 
     [[nodiscard]] bool gpuTimingAvailable() const { return m_gpuProfiler.available(); }
 
-    // Optional dev overlay, rendered inside the scene pass.
-    void setDevUi(sol::ui::DevUi* devUi) { m_devUi = devUi; }
+    // Optional ImGui host, recorded last in the present pass so the dev
+    // overlay and console sit on top of everything (Phase 9 stage C: the pass
+    // records the host, not one of its clients).
+    void setImGuiHost(sol::ui::ImGuiHost* host) { m_imguiHost = host; }
 
     // Game UI geometry for this frame, drawn after tonemap and before the dev
     // overlay so ImGui always sits on top. The list is owned by the caller.
@@ -229,7 +231,7 @@ private:
     const sol::ui::DrawList* m_uiDrawList = nullptr;
     float m_uiScale = 1.0f;
 
-    sol::ui::DevUi* m_devUi = nullptr;
+    sol::ui::ImGuiHost* m_imguiHost = nullptr;
     sol::rhi::GpuProfiler m_gpuProfiler;
     FrameResources m_frames[kFramesInFlight];
     std::vector<VkSemaphore> m_renderFinished;
