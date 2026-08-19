@@ -202,8 +202,26 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
+    // ⚑ The authored side of every mesh in this game. The tool reads the game's
+    // DATA directory, never its code (AGENTS.md 4) - `DefDatabase` is engine and
+    // models.toml is a file - which is what lets a viewer say "this hull is
+    // 1.1584 m and the sim thinks it is 1.0" instead of leaving that to be
+    // noticed by a person holding a panel next to a text file, which is exactly
+    // how stage C found it.
+    assets::DefDatabase defs;
+    {
+        const std::string dataDirectory = SOL_MODEL_DATA_DIR;
+        std::string defError;
+        if (!forge::loadModelCatalog(dataDirectory, defs, &defError)) {
+            SOL_LOG_WARN("forge: cannot read model defs: %s", defError.c_str());
+        }
+        SOL_LOG_INFO("forge: %zu [[model]] row(s) from %s", defs.models().size(),
+                     dataDirectory.c_str());
+    }
+
     renderer::GpuMesh openMesh = {};
     forge::MeshReport report;
+    std::vector<forge::ModelMatch> modelMatches;
     int openIndex = -1;
     std::string status = "no mesh open";
 
@@ -260,6 +278,13 @@ int main(int argc, char** argv)
         }
         openMesh = view.meshes().createMesh(data);
         report = forge::reportMesh(data);
+        // Re-matched on every upload, not only on open: editing a part changes
+        // the measured radius, so a check that ran once would go stale the
+        // moment the tool was used for what it is for.
+        if (openIndex >= 0) {
+            modelMatches = forge::matchModels(defs, meshEntries[static_cast<std::size_t>(openIndex)],
+                                              report);
+        }
         if (reframe) {
             frameOpenMesh();
         }
@@ -295,8 +320,10 @@ int main(int argc, char** argv)
             SOL_LOG_ERROR("forge: %s", status.c_str());
             return;
         }
-        uploadMesh(data, /*reframe=*/true);
+        // Before the upload, not after: uploadMesh matches the open asset
+        // against the model catalog and needs to know which asset that is.
         openIndex = index;
+        uploadMesh(data, /*reframe=*/true);
         status = meshEntries[index].label;
 
         // A `.forge` is a SOURCE, so opening one loads the tree behind the
@@ -312,6 +339,21 @@ int main(int argc, char** argv)
         SOL_LOG_INFO("forge: %s - %u tris, %u verts (%u points), radius %.3f m",
                      meshEntries[index].label.c_str(), report.triangles, report.renderVertices,
                      report.positions, static_cast<double>(report.boundingRadius));
+        // Logged as well as drawn, because `--frames N` with stdout redirected
+        // is how this tool gets read by anything that is not a person.
+        for (const forge::ModelMatch& match : modelMatches) {
+            if (match.radiusAgrees()) {
+                SOL_LOG_INFO("forge: [[model]] %s radius %.4f m agrees with the mesh",
+                             match.id.c_str(), static_cast<double>(match.authoredRadius));
+            } else {
+                SOL_LOG_WARN("forge: [[model]] %s authors radius %.4f m, the mesh measures %.4f m "
+                             "(%+.4f, %+.1f%%)",
+                             match.id.c_str(), static_cast<double>(match.authoredRadius),
+                             static_cast<double>(report.boundingRadius),
+                             static_cast<double>(match.radiusDelta),
+                             static_cast<double>(match.radiusDeltaPercent()));
+            }
+        }
     };
     openMeshAt(meshEntries.empty() ? -1 : 0);
 
@@ -468,6 +510,51 @@ int main(int argc, char** argv)
                 ImGui::Text("manifold       %s", report.manifold ? "yes" : "NO");
                 ImGui::Text("closed         %s", report.closed ? "yes" : "no");
                 ImGui::Text("border edges   %u", report.borderEdges);
+
+                // ⚑ The measured radius set beside the authored one. Stage C
+                // could measure and could not read, so its two mismatches had
+                // to be spotted by a human comparing a panel with a text file.
+                ImGui::Separator();
+                if (modelMatches.empty()) {
+                    ImGui::TextDisabled("no [[model]] row names this mesh");
+                } else {
+                    for (const forge::ModelMatch& match : modelMatches) {
+                        ImGui::Text("[[model]] %s", match.id.c_str());
+                        ImGui::Text("  texture      %s", match.texture.c_str());
+                        ImGui::Text("  radius       %.4f m authored",
+                                    static_cast<double>(match.authoredRadius));
+                        if (match.radiusAgrees()) {
+                            ImGui::TextDisabled("  matches the mesh");
+                        } else {
+                            // ⚑ Wrapped, because the first version of this line
+                            // ran off the panel and stopped at "the collision
+                            // sphere sits" - which is the fourth time this repo
+                            // has shipped a widget that does not fit its box,
+                            // and the sentence IS the finding.
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::PushStyleColor(ImGuiCol_Text,
+                                                  ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+                            if (match.radiusDelta > 0.0f) {
+                                ImGui::Text("  MESH IS %.4f m (%.1f%%) LARGER: the collision "
+                                            "sphere sits inside the hull, so ships pass through "
+                                            "the picture",
+                                            static_cast<double>(match.radiusDelta),
+                                            static_cast<double>(match.radiusDeltaPercent()));
+                            } else {
+                                ImGui::Text("  MESH IS %.4f m (%.1f%%) SMALLER: the sphere reaches "
+                                            "past what is drawn, so ships stop short of nothing",
+                                            static_cast<double>(-match.radiusDelta),
+                                            static_cast<double>(-match.radiusDeltaPercent()));
+                            }
+                            ImGui::PopStyleColor();
+                            ImGui::PopTextWrapPos();
+                        }
+                        ImGui::Text("  avoid        %.4f m",
+                                    static_cast<double>(match.authoredAvoidRadius));
+                        ImGui::Text("  emissive     %.3f", static_cast<double>(match.emissive));
+                        ImGui::Text("  solid        %s", match.solid ? "yes" : "no (fly through)");
+                    }
+                }
             }
 
             if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen)) {

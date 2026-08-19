@@ -26,8 +26,15 @@ target_link_libraries(sol_forge PRIVATE
 
 # Authored meshes come from the source tree in a dev build, the same way the
 # game reads its defs; cooked assets and shaders are found beside the binary.
+#
+# ⚑ SOL_MODEL_DATA_DIR is the game's DATA directory, and pointing a tool at it
+# is not the same as linking game code (AGENTS.md 4): the [[model]] rows are
+# parsed by sol::assets::DefDatabase, which is engine. It is what lets the
+# viewer compare a measured radius against the authored one instead of leaving
+# that to a person reading a panel and a text file side by side.
 target_compile_definitions(sol_forge PRIVATE
     SOL_ASSETS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets"
+    SOL_MODEL_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data"
 )
 
 add_dependencies(sol_forge sol_shaders sol_cook_assets)

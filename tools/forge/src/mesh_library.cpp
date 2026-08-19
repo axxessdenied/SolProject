@@ -7,6 +7,7 @@
 #include "sol/platform/file_io.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <string_view>
 
@@ -28,6 +29,13 @@ namespace {
     return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
+[[nodiscard]] std::string fileStem(const std::string& path)
+{
+    std::string name = fileName(path);
+    const std::size_t dot = name.find_last_of('.');
+    return dot == std::string::npos ? name : name.substr(0, dot);
+}
+
 void collect(const std::string& directory, const char* extension, const char* tag,
              std::vector<AssetEntry>& out)
 {
@@ -35,7 +43,7 @@ void collect(const std::string& directory, const char* extension, const char* ta
     std::sort(files.begin(), files.end());
     for (const std::string& path : files) {
         if (endsWith(path, extension)) {
-            out.push_back({fileName(path) + tag, path});
+            out.push_back({fileName(path) + tag, path, fileStem(path)});
         }
     }
 }
@@ -116,6 +124,51 @@ MeshReport reportMesh(const assets::MeshData& data)
     report.borderEdges = adjacency.borderEdgeCount();
     report.cacheMissRatio = assets::averageCacheMissRatio(mesh);
     return report;
+}
+
+bool ModelMatch::radiusAgrees() const
+{
+    const float tolerance = std::max(1e-4f, std::fabs(authoredRadius) * 0.001f);
+    return std::fabs(radiusDelta) <= tolerance;
+}
+
+float ModelMatch::radiusDeltaPercent() const
+{
+    if (authoredRadius == 0.0f) {
+        return 0.0f;
+    }
+    return (radiusDelta / authoredRadius) * 100.0f;
+}
+
+bool loadModelCatalog(const std::string& dataDirectory, assets::DefDatabase& out, std::string* error)
+{
+    out.clear();
+    if (dataDirectory.empty()) {
+        return true;
+    }
+    return out.mergeDirectory(dataDirectory.c_str(), error);
+}
+
+std::vector<ModelMatch> matchModels(const assets::DefDatabase& defs, const AssetEntry& entry,
+                                    const MeshReport& report)
+{
+    std::vector<ModelMatch> matches;
+    for (const assets::ModelDef& model : defs.models()) {
+        if (model.mesh != entry.stem) {
+            continue;
+        }
+        ModelMatch match;
+        match.id = model.id;
+        match.texture = model.texture;
+        match.authoredRadius = model.radius;
+        match.authoredAvoidRadius =
+            model.avoidRadius > 0.0f ? model.avoidRadius : model.radius;
+        match.emissive = model.emissive;
+        match.solid = model.solid;
+        match.radiusDelta = report.boundingRadius - model.radius;
+        matches.push_back(std::move(match));
+    }
+    return matches;
 }
 
 } // namespace forge
