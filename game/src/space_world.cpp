@@ -2930,15 +2930,126 @@ void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
     m_mining.fieldsFor(m_galaxy, m_currentSystem, m_fields);
     rebuildDynamicTargets();
 
-    // Steering obstacles for NPC avoidance: stations plus every celestial.
-    m_obstacles.clear();
-    for (const sim::StationSpec& station : spec.stations) {
-        m_obstacles.push_back({.position = station.position, .radius = kStationRadiusMeters});
+    // The avoidance set is no longer built here (Phase 8y): it is rebuilt
+    // every tick beside the collision bodies, because rocks are spawned after
+    // this runs, wrecks come and go, and ships move. A list assembled once per
+    // system load could only ever describe part of what a ship can hit.
+    m_avoidance.clear();
+    m_avoidStatics = 0;
+}
+
+void SpaceWorld::guardManualCruise(double dt)
+{
+    // ⚑ The player's own cruise, warned and then cut (Phase 8y §D). Cruise
+    // exists only in assist mode, so this is the assist system doing its
+    // stated job; flying with assist off is still raw Newtonian with no help
+    // at all, and sub-cruise flight is unprotected on purpose.
+    m_cruiseWarningTimer = std::max(0.0, m_cruiseWarningTimer - dt);
+    const std::uint32_t playerIndex = playerEntityIndex();
+    const sim::ShipState state = shipState();
+    const double speed = length(state.velocity);
+    const sim::ShipTuning& tuning = shipTuning();
+    const double brake = 0.5 * static_cast<double>(tuning.reverseAccel)
+                         * static_cast<double>(tuning.cruiseAccelScale);
+    if (speed < static_cast<double>(tuning.maxSpeed) || brake <= 0.0) {
+        return; // not actually travelling yet; nothing to be saved from
     }
+    // How much room stopping needs from here, and how much there is. Looking
+    // along the VELOCITY rather than the nose: at cruise the ship goes where
+    // it is pointed a moment ago, and it is the momentum that hits things.
+    //
+    // ⚑ The floor is not decoration, and a drive found out why. Stopping
+    // distance falls with the SQUARE of speed, so a look-ahead that is only a
+    // multiple of it shrinks to nothing exactly as the guard succeeds: at
+    // cruise it watched 28 km ahead, and by 220 m/s it was watching 40 cm. The
+    // guard blinded itself, stopped warning, let the throttle build the speed
+    // back, and oscillated its way into the station it had just saved the ship
+    // from. The floor is the distance this hull needs to stop from its own
+    // normal envelope — derived from the tuning, not chosen — so the query
+    // always reaches far enough to be worth asking.
+    const double envelopeSpeed = static_cast<double>(tuning.maxSpeed) * 2.0;
+    const double normalBrake = 0.5 * static_cast<double>(tuning.reverseAccel);
+    const double floorDistance = envelopeSpeed * envelopeSpeed / (2.0 * normalBrake);
+    const double stopping = speed * speed / (2.0 * brake);
+    const double lookahead = std::max(kCruiseLookaheadStops * stopping, floorDistance);
+    const core::DVec3 ahead =
+        state.position + state.velocity * (lookahead / (speed > 0.0 ? speed : 1.0));
+    const double blocked =
+        sim::pathBlockedAt(state.position, ahead, sim::kPathClearance, m_avoidance, playerIndex);
+    if (blocked < 0.0) {
+        return;
+    }
+    // ⚑ Warned in DISTANCE rather than in seconds, and that is not a liberty
+    // taken with the design: at 5.5e6 m/s one second is 5,500 km, so a fixed
+    // grace second is either meaningless or already fatal depending on how
+    // fast you are going. Stopping distance is the honest currency — the
+    // warning lands with room to spare and the cut lands while there is still
+    // twice what the brakes need.
+    if (m_cruiseWarningTimer <= 0.0) {
+        say("Proximity", "Obstruction ahead - cut the drive.");
+        if (m_audio != nullptr) {
+            m_audio->play2D(m_audio->cues().alarm); // 8t's alarm, finally used
+                                                    // for something the player
+                                                    // can act on
+        }
+        m_cruiseWarningTimer = kCruiseWarningRepeatSeconds;
+    }
+    if (blocked < std::max(stopping * kCruiseCutStops, floorDistance * 0.5)) {
+        m_appliedInput.cruise = false; // the flight model's own interruptible
+                                       // cruise braking takes it from here
+    }
+}
+
+void SpaceWorld::rebuildAvoidance()
+{
+    // ⚑ Built from the same pools and the same exclusions as the collision
+    // bodies below, so "what I avoid" and "what I can hit" are one statement
+    // (Phase 8y). Statics first, movers after, and m_avoidStatics is the seam:
+    // a ship that must not dodge other ships takes the front of the list.
+    m_avoidance.clear();
+    const ecs::Pool<FlightBody>& bodies = m_registry.storage<FlightBody>();
+    const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
+    const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
+    const ecs::Pool<Projectile>& projectiles = m_registry.storage<Projectile>();
+    const ecs::Pool<OreChunk>& oreChunks = m_registry.storage<OreChunk>();
+    for (std::size_t i = 0; i < shapes.size(); ++i) {
+        const std::uint32_t entityIndex = shapes.entityIndices()[i];
+        if (bodies.contains(entityIndex) || projectiles.contains(entityIndex)
+            || oreChunks.contains(entityIndex)) {
+            continue; // ships come after; bolts and ore block nothing
+        }
+        const RenderShape& shape = shapes.values()[i];
+        if (shape.model == ModelId::Cube) {
+            continue; // a gate is a doorway (Phase 8w), and you fly through it
+        }
+        // A station keeps the wider figure it has carried since Phase 6: its
+        // berths ring at 200 m and the approach was tuned against this sphere,
+        // so shrinking it to the collision radius would move 8r's docking.
+        // Larger than what you can hit is always safe; smaller never is.
+        const double radius = shape.model == ModelId::Station
+                                  ? kStationRadiusMeters
+                                  : modelBaseRadius(shape.model)
+                                        * static_cast<double>(shape.scale.x);
+        m_avoidance.push_back({.position = transforms.get(entityIndex).position,
+                               .radius = radius,
+                               .handle = entityIndex});
+    }
+    m_avoidance.push_back({.position = m_star.position, .radius = m_star.radius});
     for (const CelestialBody& planet : m_planets) {
-        m_obstacles.push_back({.position = planet.position, .radius = planet.radius});
+        m_avoidance.push_back({.position = planet.position, .radius = planet.radius});
     }
-    m_obstacles.push_back({.position = m_star.position, .radius = m_star.radius});
+    m_avoidStatics = m_avoidance.size();
+    for (std::size_t i = 0; i < shapes.size(); ++i) {
+        const std::uint32_t entityIndex = shapes.entityIndices()[i];
+        if (!bodies.contains(entityIndex)) {
+            continue;
+        }
+        const RenderShape& shape = shapes.values()[i];
+        m_avoidance.push_back(
+            {.position = transforms.get(entityIndex).position,
+             .radius = modelBaseRadius(shape.model) * static_cast<double>(shape.scale.x),
+             .handle = entityIndex});
+    }
 }
 
 void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
@@ -5116,17 +5227,23 @@ sim::FlightInput SpaceWorld::autopilotInput()
         return m_shipInput;
     }
 
-    // The destination's own sphere must not deflect the final approach.
+    // The destination's own sphere must not deflect the final approach — and
+    // since Phase 8y it must not BRAKE it either, which is a stricter test:
+    // the path query stops the ship at a sphere's edge, so a berth 200 m off a
+    // station whose sphere reaches 230 m would be a place autopilot could
+    // never arrive. The margin therefore carries the same clearance the query
+    // itself adds.
     m_autopilotObstacles.clear();
-    for (const sim::AvoidanceSphere& sphere : m_obstacles) {
-        if (length(sphere.position - destination) > sphere.radius + effectiveRange) {
+    for (const sim::AvoidanceSphere& sphere : m_avoidance) {
+        if (length(sphere.position - destination)
+            > sphere.radius + sim::kPathClearance + effectiveRange) {
             m_autopilotObstacles.push_back(sphere);
         }
     }
 
     sim::FlightInput input = sim::steerTravel(state, shipTuning(), destination,
                                               targetVelocity, effectiveRange,
-                                              m_autopilotObstacles);
+                                              m_autopilotObstacles, playerEntityIndex());
     input.assist = true;
     return input;
 }
@@ -5137,6 +5254,14 @@ void SpaceWorld::tick(double dt)
     // whether the player is docked or flying — a price you read an hour ago
     // is an hour old either way.
     m_worldSeconds += dt;
+    // What nothing may fly into, this tick (Phase 8y). Before any steering,
+    // the player's autopilot included.
+    {
+        const std::uint32_t zone = core::frameProfiler().beginZone("sim.avoidance");
+        rebuildAvoidance();
+        core::frameProfiler().addCounter(zone, m_avoidance.size());
+        core::frameProfiler().endZone(zone);
+    }
     const std::uint32_t playerIndex = playerEntityIndex();
     if (isDocked()) {
         // Parked: flight input is ignored and the ship stays pinned to the
@@ -5151,6 +5276,11 @@ void SpaceWorld::tick(double dt)
         m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     } else {
         m_appliedInput = m_autopilotActive ? autopilotInput() : m_shipInput;
+        if (!m_autopilotActive && m_appliedInput.cruise) {
+            guardManualCruise(dt);
+        } else {
+            m_cruiseWarningTimer = 0.0;
+        }
         m_registry.storage<ShipControl>().get(playerIndex).input = m_appliedInput;
     }
 
@@ -5159,7 +5289,14 @@ void SpaceWorld::tick(double dt)
         SOL_PROFILE_ZONE_NAMED(pilotZone, "sim.pilots");
         ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
         SOL_PROFILE_COUNT(pilotZone, pilots.size());
-        const std::span<const sim::AvoidanceSphere> obstacles = m_obstacles;
+        // ⚑ Two spans over one list (Phase 8y §C). A ship going somewhere
+        // dodges everything, other ships included; a ship in a FIGHT sees only
+        // the scenery, because ramming is a legitimate move and separation
+        // logic would quietly forbid it — and because a hunter that treated
+        // its own target as an obstacle could never close on it.
+        const std::span<const sim::AvoidanceSphere> obstacles = m_avoidance;
+        const std::span<const sim::AvoidanceSphere> scenery =
+            obstacles.first(std::min(m_avoidStatics, obstacles.size()));
         for (std::size_t i = 0; i < pilots.size(); ++i) {
             ShipPilot& pilot = pilots.values()[i];
             const std::uint32_t entityIndex = pilots.entityIndices()[i];
@@ -5205,7 +5342,7 @@ void SpaceWorld::tick(double dt)
                 // record does that — so a puppet that beats its own clock
                 // simply holds station off the pad it came to.
                 input = sim::steerTravel(self, control->tuning, pilot.waypoint, {},
-                                         kTraderArrivalRange, obstacles);
+                                         kTraderArrivalRange, obstacles, entityIndex);
                 break;
             case PilotState::Attack: {
                 const Transform* targetTransform =
@@ -5223,7 +5360,7 @@ void SpaceWorld::tick(double dt)
                     distance > 1.0 ? toTarget * (1.0 / distance) : core::DVec3{0.0, 0.0, -1.0};
                 core::DVec3 desiredVelocity =
                     targetBody->velocity + direction * ((distance - 250.0) * 0.5);
-                sim::avoidObstacles(desiredVelocity, self, obstacles, 8.0);
+                sim::avoidObstacles(desiredVelocity, self, scenery, 8.0);
 
                 const ShipWeapon* weapon = m_registry.storage<ShipWeapon>().tryGet(entityIndex);
                 const double projectileSpeed =

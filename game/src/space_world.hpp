@@ -457,6 +457,16 @@ inline constexpr double kMinerPathClearance = 200.0;
 // can reach into a station's production directly, and the reason a miner is
 // worth shooting at rather than scenery.
 inline constexpr double kMinerReplacementLegs = 1.0;
+// How a manually cruising player is warned off something in the way, measured
+// in stopping distances rather than in seconds (Phase 8y §D). At 5.5e6 m/s a
+// second is 5,500 km, so a fixed grace second would be meaningless at one
+// speed and already fatal at another; what stays constant across every hull
+// and every speed is how much room the brakes need. The warning goes out
+// while there are four of them left and the drive cuts while there are still
+// two, so the player is always told before anything is taken away.
+inline constexpr double kCruiseLookaheadStops = 4.0;
+inline constexpr double kCruiseCutStops = 2.0;
+inline constexpr double kCruiseWarningRepeatSeconds = 6.0;
 // How long a pilot remembers being shot at (Phase 8x §D). It asks 8l's
 // question - was this ship in this fight - but answers it for the victim
 // rather than for a bounty, so it is deliberately shorter than that 10 s
@@ -1412,6 +1422,15 @@ private:
     // Ambient NPC population for a freshly instantiated system: owner
     // patrol/raider wings by region security plus raid-intensity incursions.
     void spawnAmbientPilots(std::uint32_t systemIndex, const sol::sim::SystemSpec& spec);
+    // Rebuilds m_avoidance for this tick from the same source the collision
+    // bodies come from (Phase 8y). Runs before any steering, because a ship
+    // that steers on last tick's picture of a moving fleet is steering at
+    // where things were.
+    void rebuildAvoidance();
+    // Warns the player off an obstruction they are cruising at, and cuts the
+    // drive when there is no longer room to stop (Phase 8y §D). Manual flight
+    // only: autopilot slows itself, and sub-cruise flight is the player's own.
+    void guardManualCruise(double dt);
     // Reconciles trader bodies with the coarse fleet (Phase 8x): a body for
     // every EconomyTrader flying an in-system leg here, and none for anyone
     // else. Runs after the economy tick, which is the moment the set goes
@@ -1654,7 +1673,23 @@ private:
     CelestialBody m_star;
     std::vector<CelestialBody> m_planets;
     std::vector<GateInstance> m_gates;
-    std::vector<sol::sim::AvoidanceSphere> m_obstacles; // stations + celestials
+    // ⚑ What a ship must not fly into (Phase 8y), rebuilt every tick from the
+    // SAME pass and the same exclusions as m_collisionBodies — so the set you
+    // avoid and the set you can hit cannot drift apart, which is the whole
+    // point of the phase. Before it, this was a load-time list of stations and
+    // celestials while the collision pass took rocks, wrecks and every ship
+    // besides; 8v had already been caught once reading "nothing steers around
+    // it" as "nothing stops you".
+    //
+    // Statics come first and movers after, so a caller that must not dodge
+    // other ships takes the first m_avoidStatics entries and one that must
+    // takes the lot. Handles are entity indices, which is how a ship skips
+    // its own body.
+    std::vector<sol::sim::AvoidanceSphere> m_avoidance;
+    std::size_t m_avoidStatics = 0;
+    // Throttle for the proximity warning, so a long approach says its piece
+    // once rather than sixty times a second — m_berthRefusalTimer's rule.
+    double m_cruiseWarningTimer = 0.0;
     std::vector<NavTarget> m_targets;
     std::size_t m_targetIndex = 0;
     // The slot each target class last held, so switching between them with
