@@ -325,3 +325,51 @@ SOL_TEST(soundRoundTripsThroughTheCookedFormat)
 
     std::remove(path.c_str());
 }
+
+SOL_TEST(base64EncodesKnownVectors)
+{
+    SOL_CHECK(cooker::encodeBase64(reinterpret_cast<const std::uint8_t*>("hello"), 5) == "aGVsbG8=");
+    SOL_CHECK(cooker::encodeBase64(reinterpret_cast<const std::uint8_t*>("hi"), 2) == "aGk=");
+    SOL_CHECK(cooker::encodeBase64(reinterpret_cast<const std::uint8_t*>("abc"), 3) == "YWJj");
+    SOL_CHECK(cooker::encodeBase64(nullptr, 0).empty());
+}
+
+// ⚑ The export is only worth anything if another program can read it back, and
+// the cheapest honest proof of that is this repo's own importer - which was
+// written against files this exporter did not produce, so it is a real second
+// opinion rather than a mirror.
+SOL_TEST(gltfExportRoundTripsThroughTheImporter)
+{
+    assets::MeshData original;
+    original.vertices = {
+        {{0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{2.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{0.0f, 0.0f, -4.25f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+        {{-3.0f, 1.5f, 2.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 0.5f}},
+    };
+    original.indices = {0, 1, 2, 0, 2, 3};
+
+    const std::string json = cooker::exportGltf(original, "probe");
+    const std::string path = std::string(platform::executableDirectory()) + "test_export.gltf";
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), json.data(), json.size()));
+
+    assets::MeshData reimported;
+    SOL_CHECK(cooker::importGltf(path.c_str(), reimported));
+    SOL_REQUIRE(reimported.vertices.size() == original.vertices.size());
+    SOL_CHECK(reimported.indices == original.indices);
+    for (std::size_t i = 0; i < original.vertices.size(); ++i) {
+        for (int axis = 0; axis < 3; ++axis) {
+            SOL_CHECK(reimported.vertices[i].position[axis] == original.vertices[i].position[axis]);
+            SOL_CHECK(reimported.vertices[i].normal[axis] == original.vertices[i].normal[axis]);
+        }
+        SOL_CHECK(reimported.vertices[i].uv[0] == original.vertices[i].uv[0]);
+        SOL_CHECK(reimported.vertices[i].uv[1] == original.vertices[i].uv[1]);
+    }
+
+    // POSITION min/max are required by the spec, and a viewer that frames on
+    // bounds reads them rather than the vertices.
+    SOL_CHECK(json.find("\"min\":[-3,0,-4.25]") != std::string::npos);
+    SOL_CHECK(json.find("\"max\":[2.5,1.5,2]") != std::string::npos);
+
+    std::remove(path.c_str());
+}

@@ -2,6 +2,7 @@ add_library(sol_assets STATIC
     src/asset_loader.cpp
     src/data_defs.cpp
     src/font.cpp
+    src/forge_doc.cpp
     src/loadout.cpp
     src/mesh_build.cpp
     src/mesh_edit.cpp

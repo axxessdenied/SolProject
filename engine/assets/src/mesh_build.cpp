@@ -3,6 +3,7 @@
 #include "sol/core/assert.hpp"
 
 #include <cmath>
+#include <utility>
 
 namespace sol::assets {
 namespace {
@@ -49,21 +50,119 @@ constexpr BuildUv kQuadUvs[4] = {{0.0, 1.0}, {1.0, 1.0}, {1.0, 0.0}, {0.0, 0.0}}
 
 } // namespace
 
+BuildTransform BuildTransform::fromTrs(BuildPoint translation, BuildPoint rotationRadians,
+                                       BuildPoint scale)
+{
+    const double cx = std::cos(rotationRadians.x);
+    const double sx = std::sin(rotationRadians.x);
+    const double cy = std::cos(rotationRadians.y);
+    const double sy = std::sin(rotationRadians.y);
+    const double cz = std::cos(rotationRadians.z);
+    const double sz = std::sin(rotationRadians.z);
+
+    // Rz * Ry * Rx, columns first.
+    const BuildPoint rx{cy * cz, cy * sz, 0.0 - sy};
+    const BuildPoint ry{(sx * sy * cz) - (cx * sz), (sx * sy * sz) + (cx * cz), sx * cy};
+    const BuildPoint rz{(cx * sy * cz) + (sx * sz), (cx * sy * sz) - (sx * cz), cx * cy};
+
+    BuildTransform out;
+    out.x = {rx.x * scale.x, rx.y * scale.x, rx.z * scale.x};
+    out.y = {ry.x * scale.y, ry.y * scale.y, ry.z * scale.y};
+    out.z = {rz.x * scale.z, rz.y * scale.z, rz.z * scale.z};
+    out.translation = translation;
+    return out;
+}
+
+BuildPoint BuildTransform::transformPoint(BuildPoint p) const
+{
+    return {(x.x * p.x) + (y.x * p.y) + (z.x * p.z) + translation.x,
+            (x.y * p.x) + (y.y * p.y) + (z.y * p.z) + translation.y,
+            (x.z * p.x) + (y.z * p.y) + (z.z * p.z) + translation.z};
+}
+
+BuildPoint BuildTransform::transformDirection(BuildPoint v) const
+{
+    return {(x.x * v.x) + (y.x * v.y) + (z.x * v.z), (x.y * v.x) + (y.y * v.y) + (z.y * v.z),
+            (x.z * v.x) + (y.z * v.y) + (z.z * v.z)};
+}
+
+double BuildTransform::determinant() const
+{
+    return dot3(x, cross3(y, z));
+}
+
+bool BuildTransform::isIdentity() const
+{
+    return x.x == 1.0 && x.y == 0.0 && x.z == 0.0 && y.x == 0.0 && y.y == 1.0 && y.z == 0.0 &&
+           z.x == 0.0 && z.y == 0.0 && z.z == 1.0 && translation.x == 0.0 &&
+           translation.y == 0.0 && translation.z == 0.0;
+}
+
+BuildTransform operator*(const BuildTransform& parent, const BuildTransform& child)
+{
+    BuildTransform out;
+    out.x = parent.transformDirection(child.x);
+    out.y = parent.transformDirection(child.y);
+    out.z = parent.transformDirection(child.z);
+    out.translation = parent.transformPoint(child.translation);
+    return out;
+}
+
 void MeshBuilder::clear()
 {
     m_vertices.clear();
     m_indices.clear();
 }
 
+// The normal matrix is the inverse transpose of the linear part. It is built as
+// the adjugate - the cross products of the basis columns - rather than a true
+// inverse, because that needs no division: it comes out scaled by the
+// determinant, and every normal is renormalised on the way out anyway, so a
+// singular transform degrades to a zero normal instead of dividing by zero.
+//
+// ⚑ The MAGNITUDE of that determinant scaling washes out in the renormalise;
+// its SIGN does not. adj(M) = det(M) * inverse-transpose(M), so under a
+// mirroring transform the adjugate points every normal exactly backwards - the
+// mirrored face of a box would light as though it faced into the solid. Undoing
+// the sign is what the negation below is for, and it is separate from the
+// winding swap: one fixes which way the surface faces, the other which way it
+// is wound.
+void MeshBuilder::setTransform(const BuildTransform& transform)
+{
+    m_transform = transform;
+    m_hasTransform = !transform.isIdentity();
+
+    const double det = transform.determinant();
+    m_mirrored = det < 0.0;
+
+    m_normalTransform = {};
+    m_normalTransform.x = cross3(transform.y, transform.z);
+    m_normalTransform.y = cross3(transform.z, transform.x);
+    m_normalTransform.z = cross3(transform.x, transform.y);
+    if (m_mirrored) {
+        m_normalTransform.x = flipped(m_normalTransform.x);
+        m_normalTransform.y = flipped(m_normalTransform.y);
+        m_normalTransform.z = flipped(m_normalTransform.z);
+    }
+    m_normalTransform.translation = {0, 0, 0};
+}
+
 std::uint32_t MeshBuilder::addVertex(BuildPoint position, BuildPoint normal, BuildUv uv)
 {
     const auto index = static_cast<std::uint32_t>(m_vertices.size());
+    if (m_hasTransform) {
+        position = m_transform.transformPoint(position);
+        normal = normalize3(m_normalTransform.transformDirection(normal));
+    }
     m_vertices.push_back({position, normal, uv});
     return index;
 }
 
 void MeshBuilder::addTriangle(std::uint32_t a, std::uint32_t b, std::uint32_t c)
 {
+    if (m_mirrored) {
+        std::swap(b, c);
+    }
     m_indices.push_back(a);
     m_indices.push_back(b);
     m_indices.push_back(c);

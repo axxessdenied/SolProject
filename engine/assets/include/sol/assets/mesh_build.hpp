@@ -41,6 +41,38 @@ struct BuildProfilePoint
     double y = 0.0;
 };
 
+// An affine placement in authoring space (engine plan Phase 9 stage D): three
+// basis columns and a translation. Deliberately not core::Mat4, which is float
+// - this multiplies the numbers a primitive is computed from, and stage B's
+// rule is that authoring stays in double and rounds exactly once at build().
+//
+// ⚑ It stores a MATRIX rather than a translate/rotate/scale triple because
+// composition of a part tree is not closed over triples: a parent scale
+// underneath a child rotation is a shear, which no TRS can express. The tree
+// composes matrices and hands the builder the result.
+struct BuildTransform
+{
+    BuildPoint x{1, 0, 0};
+    BuildPoint y{0, 1, 0};
+    BuildPoint z{0, 0, 1};
+    BuildPoint translation{0, 0, 0};
+
+    // Rotation is applied about X, then Y, then Z, all in the parent frame -
+    // so the composed linear part is Rz * Ry * Rx * S. Radians, per the
+    // engine's convention; a `.forge` file writes degrees and converts on the
+    // way in, because that is an authoring surface and this is not.
+    [[nodiscard]] static BuildTransform fromTrs(BuildPoint translation, BuildPoint rotationRadians,
+                                                BuildPoint scale);
+
+    [[nodiscard]] BuildPoint transformPoint(BuildPoint p) const;
+    [[nodiscard]] BuildPoint transformDirection(BuildPoint v) const;
+    [[nodiscard]] double determinant() const;
+    [[nodiscard]] bool isIdentity() const;
+};
+
+// Parent then child: the child's placement expressed in the parent's frame.
+[[nodiscard]] BuildTransform operator*(const BuildTransform& parent, const BuildTransform& child);
+
 class MeshBuilder
 {
 public:
@@ -53,6 +85,18 @@ public:
         return static_cast<std::uint32_t>(m_indices.size() / 3);
     }
     void clear();
+
+    // Placement applied to every vertex emitted from here on. Identity by
+    // default, and an identity transform is short-circuited rather than
+    // multiplied through - which is what keeps a mesh authored without one
+    // bit-identical to the same recipe before this existed.
+    //
+    // ⚑ A mirroring transform (negative determinant) turns a solid inside out,
+    // so triangle winding is swapped to compensate. Normals go through the
+    // inverse transpose, which is the only thing that survives a non-uniform
+    // scale.
+    void setTransform(const BuildTransform& transform);
+    [[nodiscard]] const BuildTransform& transform() const { return m_transform; }
 
     std::uint32_t addVertex(BuildPoint position, BuildPoint normal, BuildUv uv);
     void addTriangle(std::uint32_t a, std::uint32_t b, std::uint32_t c);
@@ -102,6 +146,11 @@ private:
 
     std::vector<BuildVertex> m_vertices;
     std::vector<std::uint32_t> m_indices;
+
+    BuildTransform m_transform{};
+    BuildTransform m_normalTransform{}; // inverse transpose of the linear part
+    bool m_hasTransform = false;
+    bool m_mirrored = false;
 };
 
 } // namespace sol::assets

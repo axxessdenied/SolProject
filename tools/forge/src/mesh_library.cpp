@@ -2,9 +2,12 @@
 
 #include "gltf.hpp"
 
+#include "sol/assets/forge_doc.hpp"
+#include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
 
 #include <algorithm>
+#include <string>
 #include <string_view>
 
 namespace forge {
@@ -43,6 +46,9 @@ std::vector<AssetEntry> listMeshes(const std::string& sourceDirectory,
                                    const std::string& cookedDirectory)
 {
     std::vector<AssetEntry> entries;
+    // `.forge` first: it is the only kind of source that can be EDITED here,
+    // and the others are what an asset came out as rather than what it is.
+    collect(sourceDirectory, ".forge", "  (parts)", entries);
     collect(sourceDirectory, ".gltf", "  (source)", entries);
     collect(sourceDirectory, ".glb", "  (source)", entries);
     collect(cookedDirectory, ".smesh", "  (cooked)", entries);
@@ -56,8 +62,31 @@ std::vector<AssetEntry> listTextures(const std::string& cookedDirectory)
     return entries;
 }
 
+bool isPartSource(const AssetEntry& entry)
+{
+    return endsWith(entry.path, ".forge");
+}
+
 bool loadMesh(const AssetEntry& entry, assets::MeshData& out)
 {
+    if (isPartSource(entry)) {
+        std::vector<std::uint8_t> bytes;
+        if (!platform::readFileBytes(entry.path.c_str(), bytes)) {
+            return false;
+        }
+        assets::ForgeDoc doc;
+        std::string error;
+        if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
+                                entry.path.c_str(), doc, &error)) {
+            SOL_LOG_ERROR("forge: %s", error.c_str());
+            return false;
+        }
+        if (!assets::buildForge(doc, out, &error)) {
+            SOL_LOG_ERROR("forge: %s", error.c_str());
+            return false;
+        }
+        return true;
+    }
     if (endsWith(entry.path, ".gltf") || endsWith(entry.path, ".glb")) {
         return cooker::importGltf(entry.path.c_str(), out);
     }

@@ -1,0 +1,108 @@
+# The jump gate (engine plan Phase 9 stage D) - the first asset in this game
+# authored as a part tree rather than emitted by a script nobody could see the
+# output of. It replaces a squashed unit cube that had stood in since the gates
+# were built.
+#
+# ⚑ It is authored AT REAL SIZE and drawn at scale 1. The cube it replaces was
+# stretched to (70, 70, 10), which is fine for a slab and ruinous for a ring:
+# a non-uniform scale would squash the tube into an ellipse.
+#
+# ⚑ THE APERTURE IS 70 m AND THAT NUMBER IS NOT A TASTE DECISION. The crossing
+# test in space_world.cpp uses kGateRadiusMeters = 70, so the hole a ship is
+# allowed through is 70 m across the axis. The old slab was drawn ±35 m wide,
+# which meant the game accepted a crossing 35 m clear of anything the player
+# could see. The ring's inner radius is major_radius - tube_radius = 70, so what
+# is drawn is now what is tested.
+name = "gate"
+
+# addTorus sweeps about +Y and a gate's model faces +Z (see facingRotation in
+# space_world.cpp), so the ring is turned a quarter turn to stand up in its
+# lane. This is the transform earning its place: without one, a ring in the
+# right plane would have meant a second primitive.
+[[part]]
+id = "ring"
+type = "torus"
+rotation = [90.0, 0.0, 0.0]
+major_radius = 78.0
+tube_radius = 8.0
+segments_u = 32
+segments_v = 8
+u_tiles = 16.0
+
+# The four radial arms and their outer housings. They live under one group so
+# the whole armature can be moved or scaled without touching the aperture - and
+# each arm is the SAME box, placed by a quarter turn about the lane axis, which
+# is what a part tree buys over four sets of hand-computed corners.
+[[part]]
+id = "armature"
+type = "group"
+
+[[part]]
+id = "arm_east"
+type = "box"
+parent = "armature"
+center = [93.0, 0.0, 0.0]
+size = [14.0, 7.0, 7.0]
+tile = 0.06
+
+[[part]]
+id = "arm_north"
+type = "box"
+parent = "armature"
+rotation = [0.0, 0.0, 90.0]
+center = [93.0, 0.0, 0.0]
+size = [14.0, 7.0, 7.0]
+tile = 0.06
+
+[[part]]
+id = "arm_west"
+type = "box"
+parent = "armature"
+rotation = [0.0, 0.0, 180.0]
+center = [93.0, 0.0, 0.0]
+size = [14.0, 7.0, 7.0]
+tile = 0.06
+
+[[part]]
+id = "arm_south"
+type = "box"
+parent = "armature"
+rotation = [0.0, 0.0, 270.0]
+center = [93.0, 0.0, 0.0]
+size = [14.0, 7.0, 7.0]
+tile = 0.06
+
+[[part]]
+id = "housing_east"
+type = "box"
+parent = "armature"
+center = [102.0, 0.0, 0.0]
+size = [8.0, 20.0, 14.0]
+tile = 0.06
+
+[[part]]
+id = "housing_north"
+type = "box"
+parent = "armature"
+rotation = [0.0, 0.0, 90.0]
+center = [102.0, 0.0, 0.0]
+size = [8.0, 20.0, 14.0]
+tile = 0.06
+
+[[part]]
+id = "housing_west"
+type = "box"
+parent = "armature"
+rotation = [0.0, 0.0, 180.0]
+center = [102.0, 0.0, 0.0]
+size = [8.0, 20.0, 14.0]
+tile = 0.06
+
+[[part]]
+id = "housing_south"
+type = "box"
+parent = "armature"
+rotation = [0.0, 0.0, 270.0]
+center = [102.0, 0.0, 0.0]
+size = [8.0, 20.0, 14.0]
+tile = 0.06

@@ -4,6 +4,7 @@
 #include "png.hpp"
 #include "sound.hpp"
 
+#include "sol/assets/forge_doc.hpp"
 #include "sol/assets/formats.hpp"
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
@@ -109,13 +110,8 @@ bool cookTexture(const std::string& source, const std::string& output)
     return true;
 }
 
-bool cookMesh(const std::string& source, const std::string& output)
+bool writeMesh(const assets::MeshData& mesh, const std::string& source, const std::string& output)
 {
-    assets::MeshData mesh;
-    if (!cooker::importGltf(source.c_str(), mesh)) {
-        return false;
-    }
-
     assets::MeshFileHeader header = {};
     header.vertexCount = static_cast<std::uint32_t>(mesh.vertices.size());
     header.indexCount = static_cast<std::uint32_t>(mesh.indices.size());
@@ -137,6 +133,46 @@ bool cookMesh(const std::string& source, const std::string& output)
     SOL_LOG_INFO("cooked %s -> %s (%u vertices, %u indices)", source.c_str(), output.c_str(),
                  header.vertexCount, header.indexCount);
     return true;
+}
+
+bool cookMesh(const std::string& source, const std::string& output)
+{
+    assets::MeshData mesh;
+    if (!cooker::importGltf(source.c_str(), mesh)) {
+        return false;
+    }
+    return writeMesh(mesh, source, output);
+}
+
+// A `.forge` part tree (engine plan Phase 9 stage D). Unlike a glTF this is a
+// SOURCE file - the shape the mesh is built from rather than the triangles it
+// came out as - so the cook is an evaluation rather than an import.
+bool cookForge(const std::string& source, const std::string& output)
+{
+    std::vector<std::uint8_t> sourceBytes;
+    if (!platform::readFileBytes(source.c_str(), sourceBytes)) {
+        SOL_LOG_ERROR("cooker: cannot read %s", source.c_str());
+        return false;
+    }
+
+    assets::ForgeDoc doc;
+    std::string error;
+    if (!assets::parseForge(reinterpret_cast<const char*>(sourceBytes.data()), sourceBytes.size(),
+                            source.c_str(), doc, &error)) {
+        SOL_LOG_ERROR("cooker: %s", error.c_str());
+        return false;
+    }
+
+    assets::MeshData mesh;
+    if (!assets::buildForge(doc, mesh, &error)) {
+        SOL_LOG_ERROR("cooker: %s: %s", source.c_str(), error.c_str());
+        return false;
+    }
+    if (mesh.vertices.empty() || mesh.indices.empty()) {
+        SOL_LOG_ERROR("cooker: %s builds no geometry", source.c_str());
+        return false;
+    }
+    return writeMesh(mesh, source, output);
 }
 
 bool cookFont(const std::string& source, const std::string& output)
@@ -208,38 +244,71 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    int cooked = 0;
-    int skipped = 0;
-    int failed = 0;
-
-    for (const std::string& source : platform::listFiles(sourceDirectory.c_str())) {
-        const std::string extension = fileExtension(source);
+    struct Job
+    {
+        std::string source;
         std::string output;
         bool (*cook)(const std::string&, const std::string&) = nullptr;
-
         bool (*isCurrent)(const std::string&, const std::string&) = &isUpToDate;
+    };
+
+    std::vector<Job> jobs;
+    for (const std::string& source : platform::listFiles(sourceDirectory.c_str())) {
+        const std::string extension = fileExtension(source);
+        Job job;
+        job.source = source;
+
         if (extension == ".png") {
-            output = outputDirectory + "/" + fileStem(source) + ".stex";
-            cook = &cookTexture;
+            job.output = outputDirectory + "/" + fileStem(source) + ".stex";
+            job.cook = &cookTexture;
         } else if (extension == ".gltf" || extension == ".glb") {
-            output = outputDirectory + "/" + fileStem(source) + ".smesh";
-            cook = &cookMesh;
+            job.output = outputDirectory + "/" + fileStem(source) + ".smesh";
+            job.cook = &cookMesh;
+        } else if (extension == ".forge") {
+            job.output = outputDirectory + "/" + fileStem(source) + ".smesh";
+            job.cook = &cookForge;
         } else if (extension == ".font") {
-            output = outputDirectory + "/" + fileStem(source) + ".sfont";
-            cook = &cookFont;
-            isCurrent = &isFontUpToDate;
+            job.output = outputDirectory + "/" + fileStem(source) + ".sfont";
+            job.cook = &cookFont;
+            job.isCurrent = &isFontUpToDate;
         } else if (extension == ".wav" || extension == ".ogg") {
-            output = outputDirectory + "/" + fileStem(source) + ".saud";
-            cook = &cookSound;
+            job.output = outputDirectory + "/" + fileStem(source) + ".saud";
+            job.cook = &cookSound;
         } else {
             continue; // .gitkeep, .ttf sources named by a .font manifest, etc.
         }
+        jobs.push_back(std::move(job));
+    }
 
-        if (isCurrent(source, output)) {
+    // ⚑ Output paths are keyed on the file STEM, so two sources that differ
+    // only by extension collide - and whichever cooked last would silently win,
+    // with a staleness check that then reported the loser as up to date. The
+    // hazard has been here since Phase 5 and was unreachable while `.gltf` was
+    // the only mesh source; `.forge` is what makes `gate.forge` beside
+    // `gate.gltf` a thing an author can type. Fail loudly instead.
+    int failed = 0;
+    for (std::size_t i = 0; i < jobs.size(); ++i) {
+        for (std::size_t j = i + 1; j < jobs.size(); ++j) {
+            if (jobs[i].output == jobs[j].output) {
+                SOL_LOG_ERROR("cooker: %s and %s both cook to %s", jobs[i].source.c_str(),
+                              jobs[j].source.c_str(), jobs[i].output.c_str());
+                ++failed;
+            }
+        }
+    }
+    if (failed != 0) {
+        SOL_LOG_ERROR("cooker: %d output collision(s); nothing cooked", failed);
+        return 1;
+    }
+
+    int cooked = 0;
+    int skipped = 0;
+    for (const Job& job : jobs) {
+        if (job.isCurrent(job.source, job.output)) {
             ++skipped;
             continue;
         }
-        if (cook(source, output)) {
+        if (job.cook(job.source, job.output)) {
             ++cooked;
         } else {
             ++failed;

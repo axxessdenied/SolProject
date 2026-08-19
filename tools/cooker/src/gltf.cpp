@@ -5,8 +5,10 @@
 #include "sol/core/math/math.hpp"
 #include "sol/platform/file_io.hpp"
 
+#include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace sol::cooker {
 
@@ -461,6 +463,124 @@ bool importGltf(const char* path, assets::MeshData& out)
         return false;
     }
     return true;
+}
+
+std::string encodeBase64(const std::uint8_t* data, std::size_t length)
+{
+    static const char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((length + 2) / 3) * 4);
+    std::size_t i = 0;
+    for (; i + 3 <= length; i += 3) {
+        const std::uint32_t triple =
+            (static_cast<std::uint32_t>(data[i]) << 16) |
+            (static_cast<std::uint32_t>(data[i + 1]) << 8) | static_cast<std::uint32_t>(data[i + 2]);
+        out += kAlphabet[(triple >> 18) & 0x3F];
+        out += kAlphabet[(triple >> 12) & 0x3F];
+        out += kAlphabet[(triple >> 6) & 0x3F];
+        out += kAlphabet[triple & 0x3F];
+    }
+    if (i < length) {
+        const std::size_t remaining = length - i;
+        std::uint32_t triple = static_cast<std::uint32_t>(data[i]) << 16;
+        if (remaining == 2) {
+            triple |= static_cast<std::uint32_t>(data[i + 1]) << 8;
+        }
+        out += kAlphabet[(triple >> 18) & 0x3F];
+        out += kAlphabet[(triple >> 12) & 0x3F];
+        out += remaining == 2 ? kAlphabet[(triple >> 6) & 0x3F] : '=';
+        out += '=';
+    }
+    return out;
+}
+
+std::string exportGltf(const assets::MeshData& mesh, const char* name)
+{
+    const auto vertexCount = static_cast<std::uint32_t>(mesh.vertices.size());
+    const auto indexCount = static_cast<std::uint32_t>(mesh.indices.size());
+
+    // Planar layout - positions, normals, uvs, indices - matching the assets
+    // already in this repo, so a diff between an exported mesh and a shipped
+    // one compares like with like.
+    const std::size_t positionBytes = std::size_t{vertexCount} * 12;
+    const std::size_t normalBytes = std::size_t{vertexCount} * 12;
+    const std::size_t uvBytes = std::size_t{vertexCount} * 8;
+    const std::size_t indexBytes = std::size_t{indexCount} * 4;
+
+    std::vector<std::uint8_t> buffer(positionBytes + normalBytes + uvBytes + indexBytes);
+    std::uint8_t* cursor = buffer.data();
+    for (const assets::MeshVertex& vertex : mesh.vertices) {
+        std::memcpy(cursor, vertex.position, 12);
+        cursor += 12;
+    }
+    for (const assets::MeshVertex& vertex : mesh.vertices) {
+        std::memcpy(cursor, vertex.normal, 12);
+        cursor += 12;
+    }
+    for (const assets::MeshVertex& vertex : mesh.vertices) {
+        std::memcpy(cursor, vertex.uv, 8);
+        cursor += 8;
+    }
+    if (indexBytes != 0) {
+        std::memcpy(cursor, mesh.indices.data(), indexBytes);
+    }
+
+    // POSITION's min/max are required by the glTF specification, not optional
+    // metadata: a viewer that culls or frames on bounds reads them and nothing
+    // else in the file carries the information.
+    float minimum[3] = {0, 0, 0};
+    float maximum[3] = {0, 0, 0};
+    for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
+        for (int axis = 0; axis < 3; ++axis) {
+            const float value = mesh.vertices[i].position[axis];
+            if (i == 0 || value < minimum[axis]) {
+                minimum[axis] = value;
+            }
+            if (i == 0 || value > maximum[axis]) {
+                maximum[axis] = value;
+            }
+        }
+    }
+
+    const auto number = [](double value) {
+        char text[32];
+        std::snprintf(text, sizeof(text), "%.9g", value);
+        return std::string(text);
+    };
+    const auto vec3 = [&number](const float (&v)[3]) {
+        return "[" + number(v[0]) + "," + number(v[1]) + "," + number(v[2]) + "]";
+    };
+
+    std::string json;
+    json += "{\"asset\":{\"version\":\"2.0\",\"generator\":\"Sol Forge\"},";
+    json += "\"scene\":0,\"scenes\":[{\"nodes\":[0]}],";
+    json += "\"nodes\":[{\"mesh\":0,\"name\":\"" + std::string(name) + "\"}],";
+    json += "\"meshes\":[{\"name\":\"" + std::string(name) +
+            "\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},"
+            "\"indices\":3}]}],";
+    json += "\"accessors\":[";
+    json += "{\"bufferView\":0,\"componentType\":5126,\"count\":" + std::to_string(vertexCount) +
+            ",\"type\":\"VEC3\",\"min\":" + vec3(minimum) + ",\"max\":" + vec3(maximum) + "},";
+    json += "{\"bufferView\":1,\"componentType\":5126,\"count\":" + std::to_string(vertexCount) +
+            ",\"type\":\"VEC3\"},";
+    json += "{\"bufferView\":2,\"componentType\":5126,\"count\":" + std::to_string(vertexCount) +
+            ",\"type\":\"VEC2\"},";
+    json += "{\"bufferView\":3,\"componentType\":5125,\"count\":" + std::to_string(indexCount) +
+            ",\"type\":\"SCALAR\"}],";
+    json += "\"bufferViews\":[";
+    json += "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":" + std::to_string(positionBytes) + "},";
+    json += "{\"buffer\":0,\"byteOffset\":" + std::to_string(positionBytes) +
+            ",\"byteLength\":" + std::to_string(normalBytes) + "},";
+    json += "{\"buffer\":0,\"byteOffset\":" + std::to_string(positionBytes + normalBytes) +
+            ",\"byteLength\":" + std::to_string(uvBytes) + "},";
+    json += "{\"buffer\":0,\"byteOffset\":" +
+            std::to_string(positionBytes + normalBytes + uvBytes) +
+            ",\"byteLength\":" + std::to_string(indexBytes) + "}],";
+    json += "\"buffers\":[{\"byteLength\":" + std::to_string(buffer.size()) +
+            ",\"uri\":\"data:application/octet-stream;base64," +
+            encodeBase64(buffer.data(), buffer.size()) + "\"}]}";
+    return json;
 }
 
 } // namespace sol::cooker

@@ -2939,12 +2939,17 @@ void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
     for (const sim::StationSpec& station : spec.stations) {
         addStatic(station.position, {1.0f, 1.0f, 1.0f}, stationModel);
     }
-    // Gates render as flat frames (still a provisional visual: a squashed
-    // cube), and since Phase 8w they FACE THEIR LANE rather than all presenting
-    // the same arbitrary world-Z side. The player has to fly through the
-    // opening now, so being able to see which way through stopped being
-    // cosmetic. Since Phase 9 a gate has its own catalog row, which is what
-    // carries `solid = false` and what a real aperture mesh will replace.
+    // Gates FACE THEIR LANE (Phase 8w) rather than all presenting the same
+    // arbitrary world-Z side: the player has to fly through the opening now, so
+    // which way through stopped being cosmetic.
+    //
+    // ⚑ Since Phase 9 stage D the gate is a real aperture authored in
+    // assets/meshes/gate.forge, drawn at scale 1 because it is modelled at its
+    // own size. It used to be the unit cube stretched to (70, 70, 10) - and
+    // that stand-in was drawn +/-35 m wide while kGateRadiusMeters accepted a
+    // crossing anywhere inside 70 m, so the game tested for a hole twice the
+    // size of the one it drew. The ring's inner radius is 70 m exactly, which
+    // closes that without touching the mechanic.
     const ModelId gateModel = modelByName("gate");
     const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
     for (const sim::GateSpec& gate : spec.gates) {
@@ -2952,7 +2957,7 @@ void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
         const double reach = length(outward);
         const core::DVec3 axis =
             reach > 0.0 ? outward * (1.0 / reach) : core::DVec3{0.0, 0.0, 1.0};
-        addStatic(gate.position, {70.0f, 70.0f, 10.0f}, gateModel, facingRotation(axis));
+        addStatic(gate.position, {1.0f, 1.0f, 1.0f}, gateModel, facingRotation(axis));
     }
 }
 

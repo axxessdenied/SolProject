@@ -34,9 +34,13 @@ struct AssetEntry
 // picked.
 [[nodiscard]] std::vector<AssetEntry> listTextures(const std::string& cookedDirectory);
 
-// Dispatches on extension: `.gltf`/`.glb` through the cooker's importer,
-// `.smesh` through the runtime loader. Both give the same buffer the game
-// would draw, which is the point.
+// A `.forge` part tree: the only kind of asset this tool can edit rather than
+// just open.
+[[nodiscard]] bool isPartSource(const AssetEntry& entry);
+
+// Dispatches on extension: `.forge` is parsed and evaluated, `.gltf`/`.glb` go
+// through the cooker's importer, `.smesh` through the runtime loader. All three
+// give the same buffer the game would draw, which is the point.
 [[nodiscard]] bool loadMesh(const AssetEntry& entry, sol::assets::MeshData& out);
 
 // Everything the viewer prints about a mesh.

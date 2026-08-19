@@ -44,11 +44,21 @@ radius = 1.0
 # skipped by both the avoidance set and the collision set. That fact used to be
 # written as "the only Cube left among statics", which would have silently
 # un-solidified the next Cube-shaped static anyone added.
+#
+# Since Phase 9 stage D it has its own mesh, authored as a part tree in
+# assets/meshes/gate.forge - a real ring you can see through instead of the
+# squashed unit cube it shared with everything else. It is authored at REAL
+# SIZE and drawn at scale 1 (a ring cannot survive the old non-uniform 70x70x10
+# stretch), so the radius here is the mesh's own 106.7 m rather than a unit
+# figure the instance scale multiplied up. Nothing in the sim reads it: the
+# collision, avoidance, mining and muzzle paths that consult a model radius all
+# iterate ships, rocks or wrecks, and `solid = false` keeps a gate out of the
+# other two.
 [[model]]
 id = "gate"
-mesh = "cube"
-texture = "checker"
-radius = 1.0
+mesh = "gate"
+texture = "hull"
+radius = 106.7
 solid = false
 
 # The player's own frame (Phase 8m), authored in SHIP space around the eye and

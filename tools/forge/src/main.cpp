@@ -12,6 +12,7 @@
 #include "forge_view.hpp"
 #include "mesh_library.hpp"
 #include "orbit_camera.hpp"
+#include "part_editor.hpp"
 
 #include "sol/core/log.hpp"
 #include "sol/core/version.hpp"
@@ -175,7 +176,7 @@ int main(int argc, char** argv)
     }
     view.setImGuiHost(&imguiHost);
 
-    const std::vector<forge::AssetEntry> meshEntries =
+    std::vector<forge::AssetEntry> meshEntries =
         forge::listMeshes(assetsDirectory, cookedDirectory);
     const std::vector<forge::AssetEntry> textureEntries = forge::listTextures(cookedDirectory);
     SOL_LOG_INFO("forge: %zu mesh(es) under %s and %s, %zu cooked texture(s)", meshEntries.size(),
@@ -246,6 +247,44 @@ int main(int argc, char** argv)
         camera.frame(center, fitRadius, forge::kCameraVerticalFov);
     };
 
+    forge::PartEditor editor;
+
+    // One path from a buffer of triangles to what is on screen, whether those
+    // triangles came off disk or out of the part tree a moment ago.
+    const auto uploadMesh = [&](const assets::MeshData& data, bool reframe) {
+        // The mesh being replaced may still be referenced by a frame the GPU
+        // has not finished; nothing here is worth a per-frame deletion queue.
+        context.waitIdle();
+        if (openMesh.indexCount > 0) {
+            view.meshes().destroyMesh(openMesh);
+        }
+        openMesh = view.meshes().createMesh(data);
+        report = forge::reportMesh(data);
+        if (reframe) {
+            frameOpenMesh();
+        }
+    };
+
+    // Rebuilds from the open document. Called on every edit, which is what
+    // makes the part tree feel like a model rather than a config file - the
+    // meshes in this game are hundreds of triangles, so a full rebuild is
+    // cheaper than working out what changed.
+    const auto rebuildFromEditor = [&](bool reframe) {
+        assets::MeshData data;
+        std::string error;
+        if (!assets::buildForge(editor.doc(), data, &error)) {
+            editor.setBuildError(error);
+            return;
+        }
+        editor.setBuildError({});
+        if (data.vertices.empty()) {
+            // A tree of nothing but groups is a legal document and an illegal
+            // draw; keep the last good mesh rather than uploading an empty one.
+            return;
+        }
+        uploadMesh(data, reframe);
+    };
+
     const auto openMeshAt = [&](int index) {
         if (index < 0 || index >= static_cast<int>(meshEntries.size())) {
             return;
@@ -256,17 +295,20 @@ int main(int argc, char** argv)
             SOL_LOG_ERROR("forge: %s", status.c_str());
             return;
         }
-        // The mesh being replaced may still be referenced by a frame the GPU
-        // has not finished; nothing here is worth a per-frame deletion queue.
-        context.waitIdle();
-        if (openMesh.indexCount > 0) {
-            view.meshes().destroyMesh(openMesh);
-        }
-        openMesh = view.meshes().createMesh(data);
-        report = forge::reportMesh(data);
+        uploadMesh(data, /*reframe=*/true);
         openIndex = index;
-        frameOpenMesh();
         status = meshEntries[index].label;
+
+        // A `.forge` is a SOURCE, so opening one loads the tree behind the
+        // mesh as well; everything else is triangles that can only be looked at.
+        if (forge::isPartSource(meshEntries[index])) {
+            std::string openStatus;
+            if (editor.openFile(meshEntries[index].path, openStatus)) {
+                status = openStatus;
+            } else {
+                status = openStatus;
+            }
+        }
         SOL_LOG_INFO("forge: %s - %u tris, %u verts (%u points), radius %.3f m",
                      meshEntries[index].label.c_str(), report.triangles, report.renderVertices,
                      report.positions, static_cast<double>(report.boundingRadius));
@@ -328,7 +370,7 @@ int main(int argc, char** argv)
         }
         const bool frameDown =
             window.isKeyDown(platform::Key::F) && !imguiHost.wantsKeyboardCapture();
-        if (frameDown && !framePressed && openIndex >= 0) {
+        if (frameDown && !framePressed && (openIndex >= 0 || editor.isOpen())) {
             frameOpenMesh();
         }
         framePressed = frameDown;
@@ -345,7 +387,7 @@ int main(int argc, char** argv)
             addWireBox(view.debugDraw(), {-half, -half, -half}, {half, half, half},
                        reference.color);
         }
-        if (showBounds && openIndex >= 0) {
+        if (showBounds && (openIndex >= 0 || editor.isOpen())) {
             addWireBox(view.debugDraw(), report.boundsMin, report.boundsMax,
                        {0.30f, 0.75f, 0.35f, 1.0f});
         }
@@ -373,10 +415,33 @@ int main(int argc, char** argv)
                     openMeshAt(openIndex);
                 }
                 ImGui::SameLine();
+                if (ImGui::Button("New parts")) {
+                    editor.openNew(assetsDirectory + "/meshes");
+                    openIndex = -1;
+                    rebuildFromEditor(/*reframe=*/true);
+                    status = "new part document";
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Rescan")) {
+                    // A save writes a new file into the source tree, and the
+                    // list was read once at startup.
+                    meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
+                    openIndex = -1;
+                    status = std::to_string(meshEntries.size()) + " assets";
+                }
                 ImGui::TextDisabled("%s", status.c_str());
             }
 
-            if (openIndex >= 0 && ImGui::CollapsingHeader("Report", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // The authoring half (stage D). It sits above the report on purpose:
+            // the numbers below are what the edit above just changed.
+            if (ImGui::CollapsingHeader("Parts", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (editor.draw()) {
+                    rebuildFromEditor(/*reframe=*/false);
+                }
+            }
+
+            if ((openIndex >= 0 || editor.isOpen()) &&
+                ImGui::CollapsingHeader("Report", ImGuiTreeNodeFlags_DefaultOpen)) {
                 const core::Vec3 size = report.boundsMax - report.boundsMin;
                 ImGui::Text("triangles      %u", report.triangles);
                 // Corners and points are different numbers and the gap is the
@@ -445,7 +510,7 @@ int main(int argc, char** argv)
         frame.sunDirection = {cosElevation * std::sin(sunAzimuth), std::sin(sunElevation),
                               cosElevation * std::cos(sunAzimuth)};
         frame.exposure = exposure;
-        if (openIndex >= 0) {
+        if (openMesh.indexCount > 0) {
             frame.items.push_back({&openMesh, &textures[static_cast<std::size_t>(textureIndex)],
                                    core::Mat4::identity(), emissive});
         }
