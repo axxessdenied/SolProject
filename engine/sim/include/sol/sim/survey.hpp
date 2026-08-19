@@ -211,6 +211,12 @@ public:
     // "resolved" because a site resolves into loot and a station resolves into
     // a name.
     //
+    // ⚑ How far a pulse reaches is the caller's business, not this layer's,
+    // and the two kinds differ: a station is found inside the scanner's range
+    // like a site, while a GATE is found anywhere in the system because it runs
+    // a lane beacon. See SpaceWorld::pulseScan, which explains why the game is
+    // unplayable without that exception.
+    //
     // Deliberately NOT part of checkSurveyed(): the ledger is data worth
     // selling, and a station is not survey data — somebody else built it and
     // already knows where it is. Surveyed keeps its exact 8e meaning of every

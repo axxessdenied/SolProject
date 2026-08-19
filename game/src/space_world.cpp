@@ -1060,24 +1060,42 @@ int SpaceWorld::pulseScan()
     // loaded, because it is world state NPCs anchor to — only un-hidden, which
     // is the whole point of the fog being a predicate rather than a filter.
     const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
-    int structures = 0;
+    int stations = 0;
+    int beacons = 0;
     for (std::uint32_t i = 0; i < spec.stations.size(); ++i) {
         if (length(spec.stations[i].position - position) <= range
             && m_survey.notifyStationDiscovered(m_galaxy, m_currentSystem, i)) {
-            ++structures;
+            ++stations;
         }
     }
+    // ⚑ A GATE IS FOUND AT ANY RANGE INSIDE THE SYSTEM, and the exception is
+    // the whole reason the phase is playable. A gate is a massive powered
+    // structure running a lane beacon; a derelict is a cold hull and a station
+    // is somewhere in between. Without this a new pilot cannot leave: gates sit
+    // at 6.0e8 m from the hub, stations at 1.0e8-4.0e8, and the starter pulse
+    // reaches 2.5e8 — measured live, the nearest gate to any of Lyrioa's three
+    // stations was 278,512 km against a 250,000 km reach, and a fresh game has
+    // no arrival gate to leave by. Everywhere else you arrive THROUGH a gate,
+    // so you can always go back the way you came; the start system is the one
+    // place that is not true, which is exactly where a new player is.
+    //
+    // What identifying a gate buys is unchanged: a beacon says "a gate is
+    // here", not where it goes. You still fly to it to learn that.
     for (std::uint32_t i = 0; i < m_gates.size(); ++i) {
-        if (length(m_gates[i].position - position) <= range
-            && m_survey.notifyGateDiscovered(m_galaxy, m_currentSystem, i)) {
-            ++structures;
+        if (m_survey.notifyGateDiscovered(m_galaxy, m_currentSystem, i)) {
+            ++beacons;
         }
     }
+    const int structures = stations + beacons;
     if (structures > 0) {
         refreshStaticTargetNames();
     }
+    // Two numbers, because they answer to two different rules and one figure
+    // covering both would be a lie: the drive read "5 new contact(s) within
+    // 250000 km" for a sweep whose gates were 813,507 km away.
+    SOL_LOG_INFO("scan pulse: %d within %.0f km, %d gate beacon(s)", found + stations,
+                 range / 1000.0, beacons);
     found += structures;
-    SOL_LOG_INFO("scan pulse: %d new contact(s) within %.0f km", found, range / 1000.0);
     return found;
 }
 
@@ -4813,6 +4831,14 @@ std::size_t SpaceWorld::currentTargetIndex() const
 bool SpaceWorld::selectTarget(std::size_t index)
 {
     if (index >= m_targets.size() + m_spawnedShips.size()) {
+        return false;
+    }
+    // ⚑ Phase 8z: the one choke point every outright selection goes through —
+    // the map's Set Target, the click pick, and the console's sol.target. A
+    // lever that could select an undiscovered station would be able to reach a
+    // state the game cannot, which is 8u's rule, and it would hand the fog's
+    // one secret to anything downstream that reads the selection.
+    if (index < m_targets.size() && !navTargetVisible(index)) {
         return false;
     }
     m_targetIndex = index;
