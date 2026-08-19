@@ -209,6 +209,16 @@ SOL_TEST(economy_trader_route_decomposes_a_haul)
     economy.initialize(galaxy, params, 9);
     SOL_REQUIRE(economy.traders().size() == 1);
 
+    // The fleet starts scattered along its own clock now (Phase 8x stage 3),
+    // so let this one land before watching it leave: everything below is a
+    // haul observed from its first second, and the opening leg is already
+    // half flown.
+    int settle = 0;
+    while (economy.traders()[0].phase != TraderPhase::Idle && settle++ < 400) {
+        economy.tick(galaxy, 1.0);
+    }
+    SOL_REQUIRE(economy.traders()[0].phase == TraderPhase::Idle);
+
     // Parked: no leg, and the trader's origin is where it is standing.
     SOL_CHECK(economy.route(0).leg == TraderLeg::None);
     SOL_CHECK(economy.traders()[0].origin == economy.traders()[0].market);
@@ -890,4 +900,213 @@ SOL_TEST(economy_market_lookup_matches_a_scan)
     }
     SOL_CHECK(economy.marketFor(0, 5) == 0xffff'ffffu);
     SOL_CHECK(economy.marketFor(99, 0) == 0xffff'ffffu);
+}
+
+SOL_TEST(economy_a_lost_haul_returns_the_trader_without_shrinking_the_fleet)
+{
+    // Phase 8x §B. The cargo is gone and the hauler is back where it started;
+    // what must NOT happen is the fleet getting smaller, because traderCount
+    // is the number 8g tuned the whole galaxy against from both directions.
+    const Galaxy galaxy = tinyGalaxy();
+    Economy economy;
+    economy.initialize(galaxy, tinyParams(), 5);
+    const std::size_t fleet = economy.traders().size();
+    SOL_REQUIRE(fleet == 1);
+
+    // Run until it is actually hauling something, which is the only state a
+    // loss means anything in.
+    for (int second = 0; second < 200 && economy.traders()[0].cargo <= 0.0f; ++second) {
+        economy.tick(galaxy, 1.0);
+    }
+    SOL_REQUIRE(economy.traders()[0].phase == TraderPhase::InTransit);
+    SOL_REQUIRE(economy.traders()[0].cargo > 0.0f);
+    const std::uint32_t origin = economy.traders()[0].origin;
+    const std::uint32_t destination = economy.traders()[0].market;
+    SOL_REQUIRE(origin != destination);
+
+    SOL_CHECK(economy.loseTrader(0));
+    const EconomyTrader& trader = economy.traders()[0];
+    SOL_CHECK(economy.traders().size() == fleet);
+    SOL_CHECK(trader.phase == TraderPhase::Idle);
+    SOL_CHECK(trader.market == origin); // it never arrived
+    SOL_CHECK(trader.origin == origin);
+    SOL_CHECK(trader.cargo == 0.0f);
+    SOL_CHECK(trader.legTotal == 0.0);
+    SOL_CHECK(trader.travelRemaining == 0.0);
+    // A parked trader has no haul to lose, so a second call changes nothing —
+    // which is what keeps one cargo from being destroyed twice when the body
+    // and the record both report the same death.
+    SOL_CHECK(!economy.loseTrader(0));
+    SOL_CHECK(!economy.loseTrader(99));
+    // And it reads as parked rather than as a haul with a stopped clock.
+    SOL_CHECK(economy.route(0).leg == TraderLeg::None);
+}
+
+SOL_TEST(economy_a_lost_haul_destroys_exactly_its_own_cargo)
+{
+    // The goods leave the galaxy once. Everything a trader carries counts as
+    // still in the galaxy (the steady-state test's own accounting), so this is
+    // the only way a loss is allowed to move that total.
+    const Galaxy galaxy = tinyGalaxy();
+    Economy economy;
+    economy.initialize(galaxy, tinyParams(), 9);
+    const auto goods = [&]() {
+        double total = 0.0;
+        for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+            total += static_cast<double>(economy.stock(m, 0));
+        }
+        for (const EconomyTrader& trader : economy.traders()) {
+            total += static_cast<double>(trader.cargo);
+        }
+        return total;
+    };
+    for (int second = 0; second < 200 && economy.traders()[0].cargo <= 0.0f; ++second) {
+        economy.tick(galaxy, 1.0);
+    }
+    const double before = goods();
+    const double hold = static_cast<double>(economy.traders()[0].cargo);
+    SOL_REQUIRE(hold > 0.0);
+    SOL_CHECK(economy.loseTrader(0));
+    SOL_CHECK(std::abs((before - hold) - goods()) < 1.0e-4);
+}
+
+SOL_TEST(economy_initialize_scatters_the_fleet_instead_of_starting_it_in_step)
+{
+    // Phase 8x. A fleet that all starts Idle all thinks on the same tick, so
+    // it departs, jumps and arrives as one body: every system is either empty
+    // or holds forty-five haulers, on a cycle the whole galaxy shares. Stage 2
+    // measured that as a nearest-body track reading 42599 / 77552 / 641276 km
+    // and then no bodies at all for minutes.
+    const Galaxy galaxy = shippedGalaxy();
+    const EconomyParams params = shippedParams();
+    Economy economy;
+    economy.initialize(galaxy, params, 1701);
+    SOL_REQUIRE(economy.traders().size() == params.traderCount);
+
+    std::uint32_t byLeg[4] = {0, 0, 0, 0};
+    double cargo = 0.0;
+    for (std::uint32_t t = 0; t < economy.traders().size(); ++t) {
+        byLeg[static_cast<std::size_t>(economy.route(t).leg)] += 1;
+        cargo += static_cast<double>(economy.traders()[t].cargo);
+    }
+    // Every leg of a haul is represented on the very first tick, which is the
+    // whole point: somebody is already arriving somewhere.
+    SOL_CHECK(byLeg[static_cast<std::size_t>(TraderLeg::Depart)] > 0);
+    SOL_CHECK(byLeg[static_cast<std::size_t>(TraderLeg::Jump)] > 0);
+    SOL_CHECK(byLeg[static_cast<std::size_t>(TraderLeg::Arrive)] > 0);
+    // And the fleet is not bunched: the old behaviour put all of it in Idle.
+    SOL_CHECK(byLeg[static_cast<std::size_t>(TraderLeg::None)] <
+              economy.traders().size() / 2);
+    // ⚑ It also creates no goods. The scattered legs are deadheads, so the
+    // galaxy's books open holding exactly what they always did — without which
+    // this would be a quiet change to the equilibrium 8g tuned.
+    SOL_CHECK(cargo == 0.0);
+}
+
+SOL_TEST(economy_holds_a_steady_state_while_losing_traders)
+{
+    // ⚑ The guard rail Phase 8x's spec names for the whole item. 8g tuned the
+    // fleet at 120 against a galaxy where a haul never failed, and found that
+    // BOTH directions break the economy. Attrition changes trader lifetimes,
+    // so it changes that equilibrium — and this is where that has to be found,
+    // rather than in a play session three phases later.
+    //
+    // It is deliberately far harsher than the shipped rate. Attrition rolls
+    // traderLossPerSecond (0.002) against a system's danger, and only in the
+    // handful of systems being raided or contested at any moment. This kills a
+    // hauler every twenty seconds, galaxy-wide, for four hours — around 27,000
+    // units of cargo destroyed per hour. If the galaxy holds through that, the
+    // shipped rate has a very wide margin.
+    const Galaxy galaxy = shippedGalaxy();
+    const EconomyParams params = shippedParams();
+    Economy economy;
+    economy.initialize(galaxy, params, 1701);
+
+    sol::sim::MiningParams miningParams;
+    miningParams.ores = {sol::sim::OreEntry{.commodity = Ore, .weight = {1.0f, 1.0f, 1.0f}}};
+    sol::sim::MiningSim mining;
+    mining.initialize(galaxy, miningParams, CommodityCount, 1701);
+
+    FieldSource source;
+    source.mining = &mining;
+    source.galaxy = &galaxy;
+    source.economy = &economy;
+
+    const auto goodsInTheGalaxy = [&]() {
+        double total = 0.0;
+        for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+            for (std::uint32_t c = 0; c < CommodityCount; ++c) {
+                total += economy.stock(m, c);
+            }
+        }
+        for (const EconomyTrader& trader : economy.traders()) {
+            total += trader.cargo;
+        }
+        return total;
+    };
+
+    double afterFirstHour = 0.0;
+    std::uint32_t losses = 0;
+    std::uint32_t victim = 0;
+    const auto fleetSize = static_cast<std::uint32_t>(economy.traders().size());
+    for (int second = 0; second < 14'400; ++second) {
+        economy.tick(galaxy, 1.0, &source);
+        mining.tick(1.0);
+        if (second % 20 == 0) {
+            // Walk the fleet rather than always picking one trader, so losses
+            // are spread over the galaxy the way real danger spreads them.
+            for (std::uint32_t attempt = 0; attempt < fleetSize; ++attempt) {
+                victim = (victim + 1) % fleetSize;
+                if (economy.loseTrader(victim)) {
+                    ++losses;
+                    break;
+                }
+            }
+        }
+        if (second == 3'600) {
+            afterFirstHour = goodsInTheGalaxy();
+        }
+    }
+    const double afterFourHours = goodsInTheGalaxy();
+
+    // The instrument has to have actually fired, or this passes by testing
+    // nothing — which is the failure 8n's BODIES=0 taught to check for.
+    SOL_CHECK(losses > 600);
+    // The fleet is exactly the size it started. This is the invariant
+    // attrition must never break, whatever the rate.
+    SOL_CHECK(economy.traders().size() == params.traderCount);
+
+    for (std::uint32_t c = 0; c < CommodityCount; ++c) {
+        double stock = 0.0;
+        double capacity = 0.0;
+        std::uint32_t starved = 0;
+        std::uint32_t wants = 0;
+        std::uint32_t glutted = 0;
+        std::uint32_t makes = 0;
+        for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+            const float units = economy.stock(m, c);
+            const float cap = economy.capacityOf(m);
+            stock += units;
+            capacity += cap;
+            const EconomyArchetype& archetype =
+                params.archetypes[economy.markets()[m].archetype];
+            const bool needs = archetype.feedstock[c] > 0.0f || archetype.consumption[c] > 0.0f;
+            const bool produces = archetype.production[c] > 0.0f;
+            wants += needs ? 1u : 0u;
+            makes += produces ? 1u : 0u;
+            starved += needs && units <= cap * 0.01f ? 1u : 0u;
+            glutted += produces && units >= cap * 0.99f ? 1u : 0u;
+        }
+        const double fill = capacity > 0.0 ? stock / capacity : 0.0;
+        SOL_CHECK(fill > 0.15);
+        SOL_CHECK(fill < 0.85);
+        SOL_CHECK(starved <= wants / 4);
+        SOL_CHECK(glutted <= makes / 4);
+    }
+
+    // Goods destroyed by attrition are goods leaving the galaxy, so this may
+    // sag where the untouched economy's total may not — but it must not
+    // ratchet, which is the failure the whole four-hour run exists to catch.
+    SOL_CHECK(afterFourHours > afterFirstHour * 0.9);
+    SOL_CHECK(afterFourHours < afterFirstHour * 1.1);
 }

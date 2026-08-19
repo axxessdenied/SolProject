@@ -2809,6 +2809,47 @@ void SpaceWorld::drainContestResolutions()
     }
 }
 
+void SpaceWorld::drainTraderLosses()
+{
+    m_traderLossEvents.clear();
+    m_factionSim.takeTraderLosses(m_traderLossEvents);
+    for (const sim::TraderLoss& loss : m_traderLossEvents) {
+        ++m_traderLossCount;
+        // One place logs, whichever road the loss came down: attrition rolling
+        // in a system nobody is watching, a raider finishing one off, or the
+        // player shooting a hauler off their own bow.
+        SOL_LOG_INFO("[attrition] trader %u lost in %s", loss.trader,
+                     loss.system < m_galaxy.systems.size()
+                         ? m_galaxy.systems[loss.system].name.c_str()
+                         : "transit");
+    }
+}
+
+bool SpaceWorld::killCoarseTrader(std::uint32_t traderIndex)
+{
+    if (traderIndex >= m_economy.traders().size()) {
+        return false;
+    }
+    // ⚑ A dev lever must reach only states the sim can reach (8u's rule, from
+    // a lever that cleared a contest without queueing its resolution). So a
+    // trader with a body in front of the player dies the way a real one does —
+    // explosion, wreck, loot, and the coarse loss falling out of the same path
+    // below — rather than being struck off the books while its hull flies on.
+    ecs::Pool<TraderPuppet>& puppets = m_registry.storage<TraderPuppet>();
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        if (puppets.values()[i].traderIndex == traderIndex) {
+            handleShipDestroyed(puppets.entityIndices()[i]);
+            return true;
+        }
+    }
+    const sim::TraderRoute route = m_economy.route(traderIndex);
+    if (!m_economy.loseTrader(traderIndex)) {
+        return false;
+    }
+    m_factionSim.recordTraderLoss(route.system, traderIndex);
+    return true;
+}
+
 sol::core::DVec3 SpaceWorld::clearedBerthPoint() const
 {
     if (!hasClearance() || m_currentSystem >= m_galaxy.systems.size()) {
@@ -5056,8 +5097,13 @@ void SpaceWorld::tick(double dt)
     // are dispatched by GameContent (Lua faction_think or the default rule).
     {
         const std::uint32_t zone = profiler.beginZone("sim.coarse.factions");
-        m_factionSim.tick(dt);
+        // The economy goes in because a war now costs the traffic that flies
+        // through it (Phase 8x §C), and the current system goes in because
+        // losses happen where the player is NOT: here a hauler dies by being
+        // shot, in the open, and leaves a wreck.
+        m_factionSim.tick(dt, &m_economy, m_currentSystem);
         drainContestResolutions();
+        drainTraderLosses();
         profiler.endZone(zone);
     }
 
@@ -5251,6 +5297,20 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
                              m_factionTable[pilot->factionIndex].name.c_str());
             }
         }
+    }
+
+    // A body dying is a haul failing (Phase 8x §B). The entity was only ever a
+    // view; the record is what persists, so the loss goes to the coarse trader
+    // through the index the puppet carries — its cargo is destroyed and it
+    // returns to Idle at the market it left. The wreck and its loot fall out
+    // of 8f's path below without a line of new code, which is what makes
+    // raiding a hauler pay in the currency the game already has.
+    //
+    // despawnShip() is the no-consequence sibling of this, and stays that way:
+    // a trader that merely flies out of the player's system has not been lost.
+    if (const TraderPuppet* puppet = m_registry.storage<TraderPuppet>().tryGet(entityIndex);
+        puppet != nullptr && m_economy.loseTrader(puppet->traderIndex)) {
+        m_factionSim.recordTraderLoss(m_currentSystem, puppet->traderIndex);
     }
 
     for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {

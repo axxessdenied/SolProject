@@ -82,10 +82,38 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
 
     m_traders.clear();
     if (!m_markets.empty()) {
+        const auto marketCount = static_cast<std::uint32_t>(m_markets.size());
         for (std::uint32_t t = 0; t < m_params.traderCount; ++t) {
             EconomyTrader trader;
-            trader.market = m_rng.range(static_cast<std::uint32_t>(m_markets.size()));
+            trader.market = m_rng.range(marketCount);
             trader.origin = trader.market; // Idle: it is where it came from
+            // ⚑ Scatter the fleet along its own clock (Phase 8x). A fleet that
+            // all starts Idle all thinks on the same tick, so it all departs
+            // together, all jumps together and all arrives together: every
+            // system in the galaxy is either empty or holds forty-five
+            // haulers, on one cycle they share. It decoheres eventually,
+            // because legs differ by hop count — but not inside the first
+            // minutes of a session, which is exactly where a player would
+            // read a quiet sky as the feature not working.
+            //
+            // Each trader therefore starts somewhere along a leg it is already
+            // flying, and starts it EMPTY: repositioning creates no goods, so
+            // the galaxy's books open holding exactly what they always did.
+            for (int attempt = 0; attempt < 8; ++attempt) {
+                const std::uint32_t destination = m_rng.range(marketCount);
+                if (destination == trader.market) {
+                    continue;
+                }
+                const std::uint8_t hops = hopCount(m_markets[trader.market].systemIndex,
+                                                   m_markets[destination].systemIndex);
+                if (hops == kUnreachable) {
+                    continue; // no route a trader would plan: leave it parked
+                }
+                beginTransit(trader, destination, hops);
+                trader.travelRemaining = static_cast<double>(m_rng.nextFloat01()) *
+                                         trader.legTotal;
+                break;
+            }
             m_traders.push_back(trader);
         }
     }
@@ -337,6 +365,28 @@ void Economy::raidSystem(std::uint32_t systemIndex, float stockFraction)
             trader.cargo = 0.0f;
         }
     }
+}
+
+bool Economy::loseTrader(std::uint32_t traderIndex)
+{
+    if (traderIndex >= m_traders.size()) {
+        return false;
+    }
+    EconomyTrader& trader = m_traders[traderIndex];
+    if (trader.phase != TraderPhase::InTransit) {
+        return false; // parked at a market: there is no haul to lose
+    }
+    // Back where it started, empty-handed. `market` is the destination while
+    // in transit, so returning to `origin` is the whole of it: the goods never
+    // arrived, and the fleet slot re-enters the pool at the station it left.
+    trader.market = trader.origin;
+    trader.phase = TraderPhase::Idle;
+    trader.travelRemaining = 0.0;
+    trader.legTotal = 0.0;
+    trader.cargo = 0.0f;
+    // m_inbound is derived from the trader list and rebuilt every step, so the
+    // destination stops counting on this delivery without being told.
+    return true;
 }
 
 void Economy::tick(const Galaxy& galaxy, double dt, FeedstockSource* source)

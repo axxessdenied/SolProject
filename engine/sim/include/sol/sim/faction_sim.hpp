@@ -69,6 +69,21 @@ struct FactionSimParams
     float contestThreshold = 0.25f;   // at or above: publicly contested
     float contestFloor = 0.05f;       // below: the contest has lapsed
     double contestHalfLife = 900.0;   // seconds, pressure decay
+    // --- Attrition (Phase 8x) ---
+    // What a system's danger is made of, and both halves already existed.
+    // Raid intensity is "recent raids" (+1 each, decaying over
+    // raidIntensityHalfLife); contest pressure is 0..1. A system carrying one
+    // fresh raid and no contest therefore reads half dangerous.
+    float dangerPerRaid = 0.5f;
+    float dangerPerContest = 0.5f;
+    // Chance per second that a trader flying an in-system leg through a fully
+    // dangerous system is lost. ⚑ This number is guarded by
+    // economy_shipped_rates_hold_a_steady_state, not by taste: 8g tuned the
+    // galaxy's equilibrium against a fleet that never lost a haul, so raising
+    // it is re-running that tuning whether or not anyone re-runs the test.
+    float traderLossPerSecond = 0.002f;
+    // Pressure a lost trader adds to a contest already running there.
+    float contestPerTraderLoss = 0.02f;
 };
 
 // A raid a faction could commit this decision: an enemy-held system in reach.
@@ -97,6 +112,15 @@ struct SystemContest
     [[nodiscard]] bool live() const { return attacker != kNoFaction; }
 };
 
+// A coarse trader lost since the last drain (Phase 8x). `system` is where it
+// went — kNoSystem when it was between gates, which only the dev lever can
+// reach, since attrition rolls nowhere but the two in-system legs.
+struct TraderLoss
+{
+    std::uint32_t system = kNoSystem;
+    std::uint32_t trader = 0;
+};
+
 // A contest that ended since the last drain. Either the attacker took the
 // system (flipped) or the pressure lapsed and the holder kept it. The game
 // announces these on comms and forwards them to MissionSim.
@@ -115,9 +139,17 @@ public:
     // Deterministic for (galaxy, params, seed).
     void initialize(const Galaxy& galaxy, const FactionSimParams& params, std::uint64_t seed);
 
-    // Advances real time: relation drift, raid-intensity decay, and the
-    // decision cadence (due decisions queue up for takeDueDecisions).
-    void tick(double dt);
+    // Advances real time: relation drift, raid-intensity decay, the decision
+    // cadence (due decisions queue up for takeDueDecisions), and — when an
+    // economy is handed in — trader attrition (Phase 8x).
+    //
+    // `economy` is optional exactly as it is on commitRaid: a caller with no
+    // economy gets the war without the traffic. `shelteredSystem` is where the
+    // player is standing, and nothing is lost there: losses happen where the
+    // player is NOT, so in their own system a hauler dies by being shot, in
+    // the open, leaving a wreck.
+    void tick(double dt, Economy* economy = nullptr,
+              std::uint32_t shelteredSystem = kNoSystem);
 
     // Moves the decisions queued since the last call into out (append).
     void takeDueDecisions(std::vector<FactionDecision>& out);
@@ -168,6 +200,18 @@ public:
     [[nodiscard]] float raidIntensity(std::uint32_t system) const;
     [[nodiscard]] std::uint32_t lastRaider(std::uint32_t system) const;
 
+    // --- Attrition (Phase 8x) ---
+    // How dangerous a system is to fly a haul through, 0..1. Composed from
+    // state that already existed — recent raids and a live contest's pressure
+    // — so nothing here is a second model of who is fighting whom.
+    [[nodiscard]] float danger(std::uint32_t system) const;
+    // A coarse trader was lost. Called by attrition and by the game when a
+    // trader's body is destroyed in the bubble, so both roads to the same
+    // event have one consequence.
+    void recordTraderLoss(std::uint32_t system, std::uint32_t trader);
+    // Moves the losses queued since the last call into out (append).
+    void takeTraderLosses(std::vector<TraderLoss>& out);
+
     // --- Territory (Phase 8u) ---
     // Who holds the system now, which is not necessarily who was generated
     // holding it. kNoFaction for a system nobody claims.
@@ -184,9 +228,15 @@ public:
     // the pressure is weather, and nothing in the UI or the board sees it.
     [[nodiscard]] bool contested(std::uint32_t system) const;
     // The player destroyed one of the attacker's ships in a contested
-    // system: pressure falls by contestPerKill. Only the player's kills
-    // reach this — nothing simulates a war's attrition, so crediting
-    // ambient dogfights would invent state the sim does not have.
+    // system: pressure falls by contestPerKill.
+    //
+    // ⚑ This used to say that only the player's kills may move a contest,
+    // because nothing simulated a war's attrition and crediting ambient
+    // dogfights would have invented state the sim did not have. Phase 8x
+    // built that state: traders can now be lost, so recordTraderLoss moves
+    // pressure the other way without the player firing a shot. This is still
+    // the player's own half of it, and it is still the only thing that pushes
+    // a claim back.
     void recordContestKill(std::uint32_t system, std::uint32_t victimFaction);
     // Dev/test lever: open, move or (with kNoFaction) clear a contest
     // outright. Resolves immediately if the value is already decisive.
@@ -202,7 +252,11 @@ public:
     [[nodiscard]] bool load(core::BinaryReader& reader);
 
 private:
-    void step(double dt);
+    void step(double dt, Economy* economy, std::uint32_t shelteredSystem);
+    // Rolls one step's losses over the fleet (Phase 8x §C). Rides the same
+    // step accumulator as drift and decay, so the war and its cost share one
+    // clock and one rng, and a save restores both tick-for-tick.
+    void attrition(Economy& economy, double dt, std::uint32_t shelteredSystem);
     void refreshWar(std::uint32_t a, std::uint32_t b);
     // Opens a contest on a system or feeds the standing attacker's. A rival
     // cannot hijack a live contest; it can only claim one that has lapsed.
@@ -232,6 +286,7 @@ private:
     std::vector<float> m_contestPressure;
     std::vector<std::uint32_t> m_homeSystem;
     std::vector<ContestResolution> m_resolutions;
+    std::vector<TraderLoss> m_traderLosses;
     std::vector<FactionDecision> m_dueDecisions;
     double m_stepAccumulator = 0.0;
     double m_decisionAccumulator = 0.0;

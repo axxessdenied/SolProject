@@ -60,13 +60,14 @@ void FactionSim::initialize(const Galaxy& galaxy, const FactionSimParams& params
         }
     }
     m_resolutions.clear();
+    m_traderLosses.clear();
     m_dueDecisions.clear();
     m_stepAccumulator = 0.0;
     m_decisionAccumulator = 0.0;
     m_rng.seed(seed, kFactionStream);
 }
 
-void FactionSim::tick(double dt)
+void FactionSim::tick(double dt, Economy* economy, std::uint32_t shelteredSystem)
 {
     if (m_count == 0) {
         return;
@@ -74,7 +75,7 @@ void FactionSim::tick(double dt)
     m_stepAccumulator += dt;
     while (m_stepAccumulator >= m_params.stepInterval) {
         m_stepAccumulator -= m_params.stepInterval;
-        step(m_params.stepInterval);
+        step(m_params.stepInterval, economy, shelteredSystem);
     }
     m_decisionAccumulator += dt;
     while (m_decisionAccumulator >= m_params.decisionInterval) {
@@ -85,7 +86,7 @@ void FactionSim::tick(double dt)
     }
 }
 
-void FactionSim::step(double dt)
+void FactionSim::step(double dt, Economy* economy, std::uint32_t shelteredSystem)
 {
     // Relations drift back toward the authored baseline, faster between
     // forgiving factions; war flags follow with hysteresis.
@@ -124,6 +125,48 @@ void FactionSim::step(double dt)
             if (m_contestPressure[s] < m_params.contestFloor) {
                 resolveContest(s, false);
             }
+        }
+    }
+    // The cost of all of the above, paid by the traffic (Phase 8x). Last,
+    // because it reads the danger the rest of this step just left behind.
+    if (economy != nullptr) {
+        attrition(*economy, dt, shelteredSystem);
+    }
+}
+
+void FactionSim::attrition(Economy& economy, double dt, std::uint32_t shelteredSystem)
+{
+    if (m_params.traderLossPerSecond <= 0.0f) {
+        return;
+    }
+    const std::vector<EconomyTrader>& fleet = economy.traders();
+    for (std::uint32_t t = 0; t < fleet.size(); ++t) {
+        if (fleet[t].phase != TraderPhase::InTransit) {
+            continue;
+        }
+        const TraderRoute route = economy.route(t);
+        // ⚑ A trader can only be lost somewhere it could have been SEEN.
+        // Depart and Arrive are exactly the windows a body exists in, and Jump
+        // is honestly nowhere — so the gate network is the safe part of a haul
+        // and a system is where the risk lives. That is not a convenience: it
+        // means every loss rolled here is one the player could have flown to
+        // and prevented, which is the whole premise of an escort contract.
+        if (route.leg != TraderLeg::Depart && route.leg != TraderLeg::Arrive) {
+            continue;
+        }
+        if (route.system >= m_systemCount || route.system == shelteredSystem) {
+            continue;
+        }
+        const float risk =
+            danger(route.system) * m_params.traderLossPerSecond * static_cast<float>(dt);
+        if (risk <= 0.0f) {
+            continue; // quiet system: no roll at all, so peace costs no entropy
+        }
+        if (m_rng.nextFloat01() >= risk) {
+            continue;
+        }
+        if (economy.loseTrader(t)) {
+            recordTraderLoss(route.system, t);
         }
     }
 }
@@ -320,6 +363,49 @@ float FactionSim::raidIntensity(std::uint32_t system) const
 std::uint32_t FactionSim::lastRaider(std::uint32_t system) const
 {
     return system < m_lastRaider.size() ? m_lastRaider[system] : kNoFaction;
+}
+
+float FactionSim::danger(std::uint32_t system) const
+{
+    if (system >= m_systemCount) {
+        return 0.0f;
+    }
+    // Raid intensity counts recent raids and has no ceiling, so it is clamped
+    // before it is weighted: the tenth raid in an hour does not make a system
+    // ten times deadlier than the first.
+    const float raids = core::clamp(m_raidIntensity[system], 0.0f, 1.0f);
+    const float pressure = m_contestAttacker[system] != kNoFaction
+                               ? core::clamp(m_contestPressure[system], 0.0f, 1.0f)
+                               : 0.0f;
+    return core::clamp(raids * m_params.dangerPerRaid + pressure * m_params.dangerPerContest,
+                       0.0f, 1.0f);
+}
+
+void FactionSim::recordTraderLoss(std::uint32_t system, std::uint32_t trader)
+{
+    m_traderLosses.push_back({.system = system, .trader = trader});
+    if (system >= m_systemCount) {
+        return; // lost between gates: there is no ground to press
+    }
+    // ⚑ The sentence Phase 8u could not write. A contest was a meter only the
+    // player could move, because nothing simulated a war's attrition and
+    // crediting ambient dogfights would have invented state the sim did not
+    // have. Traders that can be lost ARE that state.
+    //
+    // It only SUSTAINS a claim; it never opens one. Opening a contest names an
+    // attacker, and attrition has none of its own — a hauler lost to whoever
+    // was out there names nobody — so a raid stays the only thing that starts
+    // a war, and this is what keeps it from lapsing while the raiding holds.
+    const std::uint32_t attacker = m_contestAttacker[system];
+    if (attacker != kNoFaction) {
+        pressSystem(system, attacker, m_params.contestPerTraderLoss);
+    }
+}
+
+void FactionSim::takeTraderLosses(std::vector<TraderLoss>& out)
+{
+    out.insert(out.end(), m_traderLosses.begin(), m_traderLosses.end());
+    m_traderLosses.clear();
 }
 
 std::uint32_t FactionSim::systemOwner(std::uint32_t system) const

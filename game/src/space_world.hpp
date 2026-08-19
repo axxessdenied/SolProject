@@ -553,6 +553,21 @@ public:
     // own message.
     static constexpr const char* kFleetcom = "Fleetcom";
 
+    // --- Attrition (Phase 8x) ---
+    //
+    // Drains the coarse trader losses the faction sim rolled this tick and
+    // logs them. One drain and one log line for every road to the same event,
+    // so a hauler shot off the player's bow and a hauler lost forty light
+    // years away are reported by the same code.
+    void drainTraderLosses();
+    // Dev lever (sol.trader_kill): kills a coarse trader the way the running
+    // game would - through its body if it has one here, so the wreck, the loot
+    // and the standing hit are all real.
+    bool killCoarseTrader(std::uint32_t traderIndex);
+    // How many traders have been lost since this session started. A probe, not
+    // sim state: it is never saved, and nothing reads it but the console.
+    [[nodiscard]] std::uint32_t traderLossCount() const { return m_traderLossCount; }
+
     // --- Pilot comms (Phase 8s) ---
     //
     // Talking to another ship, on the channel 8r built general on purpose. The
@@ -1392,6 +1407,11 @@ private:
     std::uint32_t m_announcedContestSystem = kNoIndex;
     std::uint32_t m_announcedContestAttacker = kNoIndex;
     std::vector<sol::sim::ContestResolution> m_contestResolutions;
+    // Attrition (Phase 8x): the losses drained this tick, and a session tally
+    // for the console. Neither is serialized - the record of what was lost is
+    // the fleet's own state, and these only exist to say it out loud.
+    std::vector<sol::sim::TraderLoss> m_traderLossEvents;
+    std::uint32_t m_traderLossCount = 0;
     HailRequest m_pendingHail;  // queued by hailTarget, drained by GameContent
     HailMemory m_answeringHail; // who the three answers below are speaking as
     std::uint32_t m_hailCount = 0; // so a re-hail of a NEW pilot can differ

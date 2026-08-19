@@ -567,9 +567,42 @@ std::string traderRoutes(GameContent& content)
         drawn += world.traderHasBody(t) ? 1u : 0u;
     }
     std::snprintf(buffer, sizeof(buffer),
-                  "%zu traders: %u idle, %u departing, %u jumping, %u arriving; %u drawn here",
-                  economy.traders().size(), byLeg[0], byLeg[1], byLeg[2], byLeg[3], drawn);
+                  "%zu traders: %u idle, %u departing, %u jumping, %u arriving; %u drawn "
+                  "here; %u lost this session",
+                  economy.traders().size(), byLeg[0], byLeg[1], byLeg[2], byLeg[3], drawn,
+                  world.traderLossCount());
     return (lines.empty() ? std::string("(none in this system)") : lines) + "\n" + buffer;
+}
+
+// What attrition reads (Phase 8x): the danger a system poses to a haul flying
+// through it, and the two pieces of already-existing state it is made of.
+std::string systemDanger(GameContent& content, double systemIndex)
+{
+    SpaceWorld& world = content.world();
+    const auto system = static_cast<std::uint32_t>(systemIndex);
+    if (system >= world.galaxy().systems.size()) {
+        return "no such system";
+    }
+    const sol::sim::FactionSim& factions = world.factionSim();
+    const sol::sim::SystemContest contest = factions.contestOf(system);
+    char buffer[192];
+    std::snprintf(buffer, sizeof(buffer),
+                  "%s: danger %.3f (raids %.2f, contest %.2f)%s",
+                  world.galaxy().systems[system].name.c_str(),
+                  static_cast<double>(factions.danger(system)),
+                  static_cast<double>(factions.raidIntensity(system)),
+                  static_cast<double>(contest.live() ? contest.pressure : 0.0f),
+                  system == world.currentSystemIndex() ? " [HERE: sheltered from attrition]"
+                                                       : "");
+    return buffer;
+}
+
+// Dev lever for a loss. Goes down the same road a real one does - through the
+// body if this trader has one here - because a lever that reaches a state the
+// running game cannot is a second implementation (8u).
+bool killTrader(GameContent& content, double traderIndex)
+{
+    return content.world().killCoarseTrader(static_cast<std::uint32_t>(traderIndex));
 }
 
 // What is actually in the sky, read off the entities rather than off the
@@ -2435,6 +2468,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
     m_vm.registerFunction<&traderRoutes>("sol", "traders", this);
     m_vm.registerFunction<&traderPuppets>("sol", "puppets", this);
+    m_vm.registerFunction<&systemDanger>("sol", "danger", this);
+    m_vm.registerFunction<&killTrader>("sol", "trader_kill", this);
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
     m_vm.registerFunction<&listModules>("sol", "modules", this);

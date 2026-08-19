@@ -247,6 +247,24 @@ public:
     // shortages and prices per GDD 6.
     void raidSystem(std::uint32_t systemIndex, float stockFraction);
 
+    // A haul that ended badly (Phase 8x): the hauler is gone, whether it was
+    // shot in front of the player or lost to attrition in a system nobody was
+    // watching. False if the trader was not in transit — a ship parked at a
+    // market has no haul to lose.
+    //
+    // The cargo is destroyed, which is what raidSystem() has always done to a
+    // hold bound for a raided system; this is that mechanism given a cause and
+    // a place. What is new is the second half: the trader returns to Idle at
+    // the market it departed from.
+    //
+    // ⚑ It is NOT deleted, and that is deliberate. traderCount is the number
+    // 8g tuned the whole economy against from both directions — too few and
+    // consumers drain to zero, too many and the fleet hoards a fifth of the
+    // galaxy — so attrition that shrank the fleet would silently re-run that
+    // tuning every time a war got hot. Losing a hauler costs the galaxy a
+    // cargo and a round trip, not a member of the fleet.
+    bool loseTrader(std::uint32_t traderIndex);
+
     // Dynamic state only (stocks, traders, phase accumulator); the layout is
     // re-derived from galaxy+params, and load fails if they don't match.
     void save(core::BinaryWriter& writer) const;

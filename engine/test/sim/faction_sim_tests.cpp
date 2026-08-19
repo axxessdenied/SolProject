@@ -597,3 +597,173 @@ SOL_TEST(economy_raid_empties_inbound_trader_cargo)
     }
     SOL_CHECK(caught);
 }
+
+SOL_TEST(faction_sim_danger_is_made_of_raids_and_contests)
+{
+    // Phase 8x §C reads danger off state that already existed rather than
+    // modelling who is fighting whom a second time.
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSim sim;
+    sim.initialize(galaxy, territoryParams(), 3);
+    const auto nearly = [](float value, float expected) {
+        return std::fabs(value - expected) < 1.0e-5f;
+    };
+
+    SOL_CHECK(sim.danger(1) == 0.0f); // a quiet system is not dangerous at all
+    SOL_CHECK(sim.danger(99) == 0.0f);
+
+    // One raid: +1 intensity and contestPerRaid (0.2) of pressure.
+    SOL_REQUIRE(sim.commitRaid(galaxy, nullptr, 1, 1));
+    SOL_CHECK(nearly(sim.danger(1), 0.5f * 1.0f + 0.5f * 0.2f));
+    // A second raid moves it, but the intensity half is clamped BEFORE it is
+    // weighted: the tenth raid in an hour does not make a system ten times
+    // deadlier than the first, or a long war would kill everything that flew.
+    SOL_REQUIRE(sim.commitRaid(galaxy, nullptr, 1, 1));
+    SOL_CHECK(sim.raidIntensity(1) == 2.0f);
+    SOL_CHECK(nearly(sim.danger(1), 0.5f * 1.0f + 0.5f * 0.4f));
+    // The neighbours are untouched: danger is per system, like the raids it
+    // is made of.
+    SOL_CHECK(sim.danger(0) == 0.0f);
+    SOL_CHECK(sim.danger(2) == 0.0f);
+}
+
+SOL_TEST(faction_sim_attrition_takes_traders_only_where_one_could_be_watched)
+{
+    // ⚑ The rule this pins is the load-bearing one: a trader can only be lost
+    // somewhere it could have been SEEN. Depart and Arrive are exactly the
+    // windows a body exists in and Jump is honestly nowhere, so the gate
+    // network is the safe part of a haul — and every loss rolled here is one
+    // the player could have flown to and prevented.
+    const Galaxy galaxy = territoryGalaxy();
+    EconomyParams economyParams = oneCommodityParams();
+    economyParams.traderCount = 60; // enough to land some of the fleet on every leg
+    Economy economy;
+    economy.initialize(galaxy, economyParams, 11);
+
+    FactionSimParams params = territoryParams();
+    // Certain rather than likely: at danger 0.45 this makes the roll's
+    // threshold exceed 1, so the test asserts WHICH traders are exposed
+    // instead of measuring a rate.
+    params.traderLossPerSecond = 5.0f;
+    // ⚑ And the contest feed is switched off, which the first run of this test
+    // is what taught. Left live, the losses press the claim they are caused by
+    // — around fifteen of them take the system outright, mid-step — and the
+    // moment it flips there is no contest left to make the place dangerous, so
+    // the rest of the fleet flies on untouched. That is the sim working
+    // exactly as Phase 8x intends, and it would make this test's expectation
+    // wrong for a reason that has nothing to do with the rule under test. The
+    // feed is the next test's subject.
+    params.contestPerTraderLoss = 0.0f;
+    FactionSim sim;
+    sim.initialize(galaxy, params, 3);
+    sim.setContest(1, 1, 0.9f);
+    SOL_REQUIRE(sim.danger(1) > 0.0f);
+
+    // The economy is never ticked from here on, so nothing but attrition can
+    // move a trader out of transit — which is what makes the count exact.
+    std::vector<std::uint32_t> exposed;
+    std::vector<std::uint32_t> elsewhere;
+    for (std::uint32_t t = 0; t < economy.traders().size(); ++t) {
+        if (economy.traders()[t].phase != TraderPhase::InTransit) {
+            continue;
+        }
+        const sol::sim::TraderRoute route = economy.route(t);
+        const bool inSystemLeg = route.leg == sol::sim::TraderLeg::Depart ||
+                                 route.leg == sol::sim::TraderLeg::Arrive;
+        if (inSystemLeg && route.system == 1) {
+            exposed.push_back(t);
+        } else {
+            elsewhere.push_back(t);
+        }
+    }
+    SOL_REQUIRE(!exposed.empty());
+    SOL_REQUIRE(!elsewhere.empty());
+
+    // Losses happen where the player is NOT. With the only dangerous system in
+    // the galaxy sheltered, five minutes of it costs nothing.
+    //
+    // ⚑ Five minutes and not an hour, and that is the test's own bug report:
+    // contestHalfLife is 900 s, so an hour of shelter decays the pressure to
+    // below the contest floor and the traders would have survived the step
+    // after it for a reason that has nothing to do with shelter. The check
+    // below is what makes the shelter the only explanation — a loss here is
+    // certain, before and after.
+    SOL_REQUIRE(sim.danger(1) * params.traderLossPerSecond > 1.0f);
+    for (int second = 0; second < 300; ++second) {
+        sim.tick(1.0, &economy, 1);
+    }
+    SOL_REQUIRE(sim.danger(1) * params.traderLossPerSecond > 1.0f);
+    for (const std::uint32_t t : exposed) {
+        SOL_CHECK(economy.traders()[t].phase == TraderPhase::InTransit);
+    }
+
+    // Unsheltered, one step takes every trader flying an in-system leg there,
+    // and nobody else — not the ones between gates, not the ones in the three
+    // quiet systems next door.
+    sim.tick(1.0, &economy, sol::sim::kNoSystem);
+    for (const std::uint32_t t : exposed) {
+        SOL_CHECK(economy.traders()[t].phase == TraderPhase::Idle);
+    }
+    for (const std::uint32_t t : elsewhere) {
+        SOL_CHECK(economy.traders()[t].phase == TraderPhase::InTransit);
+    }
+    SOL_CHECK(economy.traders().size() == economyParams.traderCount);
+
+    std::vector<sol::sim::TraderLoss> losses;
+    sim.takeTraderLosses(losses);
+    SOL_CHECK(losses.size() == exposed.size());
+    for (const sol::sim::TraderLoss& loss : losses) {
+        SOL_CHECK(loss.system == 1);
+    }
+}
+
+SOL_TEST(faction_sim_a_lost_trader_sustains_a_contest_but_never_opens_one)
+{
+    // ⚑ The sentence Phase 8u could not write. Its contest was a meter only
+    // the player could move, because nothing simulated a war's attrition;
+    // traders that can be lost are that missing state, so a claim now holds
+    // itself up without the player firing a shot.
+    const Galaxy galaxy = territoryGalaxy();
+    FactionSim sim;
+    sim.initialize(galaxy, territoryParams(), 3);
+    const auto nearly = [](float value, float expected) {
+        return std::fabs(value - expected) < 1.0e-5f;
+    };
+    std::vector<sol::sim::TraderLoss> losses;
+
+    // No contest here: the loss is reported and presses nothing. Attrition
+    // never OPENS a claim, because opening one names an attacker and a hauler
+    // lost to whoever was out there names nobody.
+    sim.recordTraderLoss(1, 7);
+    SOL_CHECK(!sim.contestOf(1).live());
+    sim.takeTraderLosses(losses);
+    SOL_REQUIRE(losses.size() == 1);
+    SOL_CHECK(losses[0].system == 1);
+    SOL_CHECK(losses[0].trader == 7);
+    losses.clear();
+    sim.takeTraderLosses(losses); // and the queue drained
+    SOL_CHECK(losses.empty());
+
+    // A loss between gates has no ground to press, and is still reported.
+    sim.recordTraderLoss(sol::sim::kNoSystem, 3);
+    sim.takeTraderLosses(losses);
+    SOL_CHECK(losses.size() == 1);
+    losses.clear();
+
+    // With a claim already running, every loss feeds it.
+    sim.setContest(1, 1, 0.30f);
+    sim.recordTraderLoss(1, 7);
+    SOL_CHECK(nearly(sim.contestOf(1).pressure, 0.32f));
+
+    // And enough of them take the system. A border can now move on nothing
+    // but the traffic somebody stopped being able to fly.
+    for (int i = 0; i < 40 && sim.contestOf(1).live(); ++i) {
+        sim.recordTraderLoss(1, 7);
+    }
+    SOL_CHECK(sim.systemOwner(1) == 1);
+    std::vector<sol::sim::ContestResolution> resolutions;
+    sim.takeResolutions(resolutions);
+    SOL_REQUIRE(resolutions.size() == 1);
+    SOL_CHECK(resolutions[0].flipped);
+    SOL_CHECK(resolutions[0].winner == 1);
+}
