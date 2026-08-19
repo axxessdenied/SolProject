@@ -1,5 +1,7 @@
 #include "sol/sim/steering.hpp"
 
+#include "sol/sim/weapons.hpp" // segmentHitsSphere: what is in the way, and how far
+
 #include <cmath>
 
 namespace sol::sim {
@@ -67,9 +69,59 @@ FlightInput steerPursue(const ShipState& state, const ShipTuning& tuning,
     return steerAimAndMove(state, tuning, targetPosition, desiredVelocity);
 }
 
+double brakingSpeedLimit(const ShipTuning& tuning, double distance)
+{
+    if (!(distance > 0.0)) {
+        return 0.0;
+    }
+    // Half the available deceleration (margin for the controller lag), two
+    // regimes to mirror flight.cpp's cruise exit: above the normal envelope
+    // the cruise drive brakes (reverseAccel * cruiseAccelScale), below it the
+    // thrusters do.
+    const double envelopeSpeed = static_cast<double>(tuning.maxSpeed) * 2.0;
+    const double normalBrake = 0.5 * tuning.reverseAccel;
+    if (!(normalBrake > 0.0)) {
+        return 0.0; // a ship that cannot brake may not choose to go fast
+    }
+    const double cruiseBrake = normalBrake * tuning.cruiseAccelScale;
+    const double envelopeDistance = envelopeSpeed * envelopeSpeed / (2.0 * normalBrake);
+    if (distance <= envelopeDistance) {
+        return std::sqrt(2.0 * normalBrake * distance);
+    }
+    return std::sqrt(envelopeSpeed * envelopeSpeed
+                     + 2.0 * cruiseBrake * (distance - envelopeDistance));
+}
+
+double pathBlockedAt(const DVec3& from, const DVec3& to, double clearance,
+                     std::span<const AvoidanceSphere> obstacles, std::uint32_t ignore)
+{
+    const DVec3 lane = to - from;
+    const double laneLength = core::length(lane);
+    if (!(laneLength > 0.0)) {
+        return -1.0;
+    }
+    double nearest = -1.0;
+    for (const AvoidanceSphere& obstacle : obstacles) {
+        if (obstacle.handle == ignore && ignore != kNoAvoidHandle) {
+            continue;
+        }
+        double t = 0.0;
+        if (!segmentHitsSphere(from, to, obstacle.position,
+                               obstacle.radius + (clearance > 0.0 ? clearance : 0.0), t)) {
+            continue;
+        }
+        const double distance = t * laneLength;
+        if (nearest < 0.0 || distance < nearest) {
+            nearest = distance;
+        }
+    }
+    return nearest;
+}
+
 FlightInput steerTravel(const ShipState& state, const ShipTuning& tuning,
                         const DVec3& targetPosition, const DVec3& targetVelocity,
-                        double arrivalRange, std::span<const AvoidanceSphere> obstacles)
+                        double arrivalRange, std::span<const AvoidanceSphere> obstacles,
+                        std::uint32_t selfHandle)
 {
     const DVec3 toTarget = targetPosition - state.position;
     const double distance = length(toTarget);
@@ -80,20 +132,24 @@ FlightInput steerTravel(const ShipState& state, const ShipTuning& tuning,
     }
     const DVec3 direction = toTarget * (1.0 / distance);
 
-    // Braking-limited speed profile at half the available deceleration
-    // (margin for the controller lag), two regimes to mirror flight.cpp's
-    // cruise exit: above the normal envelope the cruise drive brakes
-    // (reverseAccel * cruiseAccelScale), below it the thrusters do.
-    const double envelopeSpeed = static_cast<double>(tuning.maxSpeed) * 2.0;
-    const double normalBrake = 0.5 * tuning.reverseAccel;
-    const double cruiseBrake = normalBrake * tuning.cruiseAccelScale;
-    const double envelopeDistance = envelopeSpeed * envelopeSpeed / (2.0 * normalBrake);
-    double desiredSpeed =
-        remaining <= envelopeDistance
-            ? std::sqrt(2.0 * normalBrake * remaining)
-            : std::sqrt(envelopeSpeed * envelopeSpeed + 2.0 * cruiseBrake * (remaining - envelopeDistance));
+    // Braking-limited speed profile (brakingSpeedLimit), which is the same
+    // curve Phase 8y asks about an obstacle.
+    double desiredSpeed = brakingSpeedLimit(tuning, remaining);
     const double cruiseMaxSpeed = static_cast<double>(tuning.maxSpeed) * tuning.cruiseSpeedScale;
     desiredSpeed = std::min(desiredSpeed, cruiseMaxSpeed);
+
+    // ⚑ And the same question about whatever is in the way (Phase 8y). A
+    // blocked path is answered with SPEED, never with steering: at cruise the
+    // ship crosses a station or another hull entirely within one tick, so the
+    // lateral nudge below has no time to act. Capping here means the cruise
+    // gate a few lines down turns itself off — the refusal falls out of the
+    // limit rather than being a second rule that could disagree with it — and
+    // once sub-cruise, avoidObstacles gets its chance to steer around.
+    const double blockedAt =
+        pathBlockedAt(state.position, targetPosition, kPathClearance, obstacles, selfHandle);
+    if (blockedAt >= 0.0) {
+        desiredSpeed = std::min(desiredSpeed, brakingSpeedLimit(tuning, blockedAt));
+    }
 
     // Cruise only once the nose is roughly on target; until then close at
     // normal speed while the turn completes.
@@ -105,6 +161,8 @@ FlightInput steerTravel(const ShipState& state, const ShipTuning& tuning,
 
     DVec3 desiredVelocity = targetVelocity + direction * desiredSpeed;
     if (!cruise) {
+        // The ship's own sphere needs no exclusion here: avoidObstacles skips
+        // anything it is already inside, and a ship is always inside itself.
         avoidObstacles(desiredVelocity, state, obstacles, 6.0);
     }
 
