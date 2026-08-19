@@ -82,17 +82,22 @@ struct MapProjection
 
 // And the same rule one tier down (Phase 8q): what a system map may show of a
 // system the player is not standing in. The knowledge rung gates the *kinds*
-// of thing that can appear; whether an individual signal appears is a separate
-// question answered by SurveySim's per-signal discovery bit, which the fill
-// applies on top of this - so an unswept Surveyed-adjacent system still shows
-// no sites, because it has none discovered.
+// of thing that can appear; whether an individual station, gate or signal
+// appears is a separate question answered by SurveySim's per-object discovery
+// bit, which the fill applies on top of this - so an unswept Surveyed-adjacent
+// system still shows no sites, because it has none discovered.
 //
 // Charted is the ladder's own words: "named by a gate you have stood at;
 // contents blank". You know the system is there and what it is called, so you
-// get the star - which is the system - and nothing around it. Visited is the
-// ladder's words too: "you have been here: owner, stations, and bodies are
-// known". Surveyed adds no new *kind*, only more signal bits already set,
-// which is why the table below has two interesting rows rather than four.
+// get the star - which is the system - and nothing around it.
+//
+// ⚑ Phase 8z narrowed the Visited row, and it is the change the whole phase
+// turns on. Visiting used to reveal every kind, which made arriving in a system
+// the same thing as surveying it. Now a visit reveals what you cannot hide -
+// the star and the planets, which are AU-scale scenery you can see from the
+// rim - and everything BUILT in the system (stations, gates, sites) waits on
+// its own discovery bit. Those kinds pass the rung here and are then gated
+// individually by the caller, exactly as signals already were.
 //
 // Bookmarks ignore the rung entirely, for the reason the galaxy map's
 // bookmarkCount already ignores it: a bookmark is the player's own knowledge
@@ -108,7 +113,9 @@ struct MapProjection
     if (kind == MapMarkerRow::Kind::Star) {
         return true;
     }
-    // Everything else is contents, and contents need a visit.
+    // Everything else is contents, and contents need a visit. The kinds that
+    // are also gated per-object say so at their own call sites; passing here
+    // only means "this kind is allowed to appear at all".
     return knowledge >= MapKnowledge::Visited;
 }
 

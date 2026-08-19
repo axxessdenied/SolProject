@@ -386,7 +386,15 @@ struct NavTarget
 // them the same way - two copies of this is how the local and the remote map
 // come to call one site two different things.
 [[nodiscard]] std::string signalTargetName(sol::sim::SignalKind kind, bool resolved, bool emptied,
-                                           std::size_t slot);
+                                           std::size_t ordinal);
+
+// What anything unidentified is called, whatever it turns out to be (Phase 8z).
+// A station, a gate and a derelict all read "Contact 4" until something scans
+// them, so the label never says what the glyph is also withholding. The ordinal
+// is the object's place in the system's fixed [stations, gates, signals] order,
+// so a contact's designation does not change when a different one is
+// identified. Shared with the map for the same reason signalTargetName is.
+[[nodiscard]] std::string anonymousContactName(std::size_t ordinal);
 
 // Snapshot of the selected nav/combat target for HUD and weapons.
 struct TargetInfo
@@ -1052,6 +1060,39 @@ public:
         Berth,     // Phase 8r: the port a station has just cleared you for
     };
 
+    // ⚑ What the player knows about a nav slot (Phase 8z).
+    //
+    // The fog is a predicate BESIDE the target list and never a filter on it,
+    // because the list is world state rather than player knowledge:
+    // stationPosition() is m_targets[0] and every ambient Lua patrol anchors to
+    // it, while m_signalTargetBase/m_planetTargetBase/m_starTargetIndex are
+    // indices into the same vector. Shortening it would move NPC patrol anchors
+    // the moment the player scanned something — the world reshaping itself
+    // around what the player knows.
+    //
+    // Hidden is skipped by the cycle, the radar, the click pick and both maps,
+    // which is why nothing downstream (autopilot, hail, dock request) needs a
+    // guard of its own: you cannot select what you cannot see.
+    enum class NavKnowledge : std::uint32_t
+    {
+        Hidden = 0, // not found yet
+        Contact,    // a pulse found it; you do not know what it is
+        Identified, // scanned, or never hidden in the first place
+    };
+    [[nodiscard]] NavKnowledge navKnowledge(std::size_t index) const;
+    [[nodiscard]] bool navTargetVisible(std::size_t index) const
+    {
+        return navKnowledge(index) != NavKnowledge::Hidden;
+    }
+    // The kind a seam should DRAW. An unidentified thing draws as a Signal on
+    // the radar and the map — the glyph that already means "something is there
+    // and you do not know what" — so the shape never leaks what the name is
+    // withholding.
+    [[nodiscard]] NavKind navTargetDrawKind(std::size_t index) const;
+    // The station or gate a slot refers to, or kNoIndex when it is neither.
+    [[nodiscard]] std::uint32_t navTargetStation(std::size_t index) const;
+    [[nodiscard]] std::uint32_t navTargetGate(std::size_t index) const;
+
     // "No slot" for the target-index queries below.
     static constexpr std::size_t kNoTarget = static_cast<std::size_t>(-1);
 
@@ -1334,6 +1375,27 @@ private:
     // or a scan in flight is already pointing at. Slots whose object is gone
     // (a decayed wreck) are compacted, and the target index follows them.
     void rebuildDynamicTargets();
+    // Rewrites the names of the static head (Phase 8z): a station or gate the
+    // player has not identified reads as an anonymous contact, and takes its
+    // real name the moment the bit flips. Names are stored rather than masked
+    // at read time so that every existing reader of navTargets()[i].name — the
+    // HUD, both maps, the console and Lua — keeps working untouched.
+    void refreshStaticTargetNames();
+    // Identifies the gate the player just arrived through and the station they
+    // are docked at: you always know what you are touching, and without this a
+    // new game starts the player inside an "Unknown contact".
+    void identifyTouchedObjects(std::uint32_t fromSystem);
+    // Identifies whichever station or gate a nav slot names, refreshing the
+    // names when it changed something. False when the slot is neither, or was
+    // already identified. One choke point so the held scan and the console
+    // lever cannot identify a thing by two different routes (8u's rule).
+    bool identifyStructure(std::size_t index);
+    // Carries the selection off a nav slot the player cannot see. Only ever
+    // needed after the fog changes or the list is rebuilt; a hidden selection
+    // would otherwise print a masked name in the HUD and be flyable by
+    // Autopilot, which is the fog leaking through the one seam that does not
+    // go through the cycle.
+    void snapSelectionToVisible();
     // Where the tracked objective's nav slot goes, when it has one here. Two
     // kinds do: a FlyTo, which has carried a position since 8c, and an Escort
     // whose hauler currently has a body in this system (Phase 8x §E).

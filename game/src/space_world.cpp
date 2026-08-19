@@ -38,7 +38,7 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 13; // v13: escort objectives (trader index)
+constexpr std::uint32_t kSaveVersion = 14; // v14: per-station/gate discovery (8z)
 
 // Market intel (Phase 8g): what a station's market report covers and costs.
 // Deliberately shorter than the traders' own horizon — a station's brokers
@@ -285,6 +285,16 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     initializeSurvey();   // before loadSystem: arrival writes the first entry
     initializeMining();   // before loadSystem: it instantiates the rocks
     loadSystem(start, kNoIndex);
+    // The station a new pilot launches from is known to them (Phase 8z §B).
+    // loadSystem parks a fresh start 800 m off station 0, and without this the
+    // game opens with the player floating beside an unidentified contact that
+    // happens to be their home port. Stated here rather than inferred inside
+    // identifyTouchedObjects, because a death respawn also arrives with no
+    // origin system and must NOT get a station for free.
+    if (!m_galaxy.systems[start].stations.empty()) {
+        (void)m_survey.notifyStationIdentified(m_galaxy, start, 0);
+        refreshStaticTargetNames();
+    }
     SOL_LOG_INFO("universe: seed %llu, %zu systems, %zu lanes, %zu faction(s) "
                  "(%zu clans); starting in '%s'",
                  static_cast<unsigned long long>(m_universeSeed), m_galaxy.systems.size(),
@@ -626,10 +636,25 @@ namespace {
 
 } // namespace
 
-std::string signalTargetName(sim::SignalKind kind, bool resolved, bool emptied, std::size_t slot)
+// ⚑ One anonymous name for everything unidentified, and one stable ordinal
+// behind it (Phase 8z). A contact is deliberately not told apart by its label:
+// a station, a gate and a derelict all read "Contact 4" until a scan says
+// otherwise, which is what makes identifying one worth the flight.
+//
+// The ordinal is the object's own position in the system's fixed
+// [stations, gates, signals] order rather than the order it was found in, so a
+// contact's designation never changes under the player when a *different* one
+// is identified. That is a small change to how sites were numbered before 8z
+// and strictly an improvement: "Contact 3" now stays Contact 3.
+std::string anonymousContactName(std::size_t ordinal)
+{
+    return "Contact " + std::to_string(ordinal + 1);
+}
+
+std::string signalTargetName(sim::SignalKind kind, bool resolved, bool emptied, std::size_t ordinal)
 {
     if (!resolved) {
-        return "Contact " + std::to_string(slot + 1);
+        return anonymousContactName(ordinal);
     }
     std::string name = kind == sim::SignalKind::Derelict ? "Derelict Hull" : "Supply Cache";
     if (emptied) {
@@ -888,16 +913,18 @@ void SpaceWorld::rebuildDynamicTargets()
     if (m_targets.size() > m_signalTargetBase) {
         m_targets.resize(m_signalTargetBase);
     }
-    std::size_t signalSlot = 0;
     for (const DynamicTarget& slot : m_dynamicTargets) {
         switch (slot.kind) {
         case NavKind::Signal: {
             const SignalInstance& signal = m_signals[slot.index];
+            // The contact ordinal continues the static head's numbering, and
+            // m_planetTargetBase is exactly the count of stations plus gates
+            // that came before it.
             m_targets.push_back(
                 {.name = signalTargetName(signal.kind,
                                           m_survey.signalResolved(m_currentSystem, slot.index),
                                           m_survey.signalEmptied(m_currentSystem, slot.index),
-                                          signalSlot++),
+                                          m_planetTargetBase + slot.index),
                  .position = signal.position,
                  .surfaceRadius = 0.0});
             break;
@@ -1028,6 +1055,28 @@ int SpaceWorld::pulseScan()
     if (found > 0) {
         rebuildDynamicTargets();
     }
+    // ⚑ Stations and gates answer to the same sweep (Phase 8z). They are not
+    // added to the target list here — they have been in it since the system
+    // loaded, because it is world state NPCs anchor to — only un-hidden, which
+    // is the whole point of the fog being a predicate rather than a filter.
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    int structures = 0;
+    for (std::uint32_t i = 0; i < spec.stations.size(); ++i) {
+        if (length(spec.stations[i].position - position) <= range
+            && m_survey.notifyStationDiscovered(m_galaxy, m_currentSystem, i)) {
+            ++structures;
+        }
+    }
+    for (std::uint32_t i = 0; i < m_gates.size(); ++i) {
+        if (length(m_gates[i].position - position) <= range
+            && m_survey.notifyGateDiscovered(m_galaxy, m_currentSystem, i)) {
+            ++structures;
+        }
+    }
+    if (structures > 0) {
+        refreshStaticTargetNames();
+    }
+    found += structures;
     SOL_LOG_INFO("scan pulse: %d new contact(s) within %.0f km", found, range / 1000.0);
     return found;
 }
@@ -1060,7 +1109,11 @@ void SpaceWorld::tickScanning(double dt)
         signalIndex != kNoIndex && !m_survey.signalResolved(m_currentSystem, signalIndex);
     const bool scannableBody =
         bodyIndex != kNoIndex && !m_survey.bodyScanned(m_currentSystem, bodyIndex);
-    if (!scannableSignal && !scannableBody) {
+    // Phase 8z: a discovered-but-unidentified station or gate is the third
+    // scannable thing. Hidden ones cannot be selected at all, so reaching here
+    // with one is impossible rather than guarded against.
+    const bool scannableStructure = navKnowledge(index) == NavKnowledge::Contact;
+    if (!scannableSignal && !scannableBody && !scannableStructure) {
         stopScan();
         return;
     }
@@ -1071,7 +1124,13 @@ void SpaceWorld::tickScanning(double dt)
     // Sites must be approached; bodies are read at whatever range they sit at
     // (they are AU-scale scenery — a survey scan of a planet is a telescope
     // pointed at it, not a flyby).
-    if (scannableSignal && distance > targetScanRange()) {
+    //
+    // ⚑ A station or a gate is approach-gated like a SITE, and that is the
+    // choice the whole phase rests on. Inherit the body's rule instead and the
+    // player pulses once from the arrival gate and identifies an entire system
+    // without flying anywhere — which is exactly the complaint 8z exists to
+    // answer. Identification costs the flight.
+    if ((scannableSignal || scannableStructure) && distance > targetScanRange()) {
         stopScan();
         return;
     }
@@ -1115,6 +1174,12 @@ void SpaceWorld::tickScanning(double dt)
         }
         return;
     }
+    if (scannableStructure) {
+        if (identifyStructure(index)) {
+            SOL_LOG_INFO("scan resolved: %s", m_targets[index].name.c_str());
+        }
+        return;
+    }
     if (m_survey.notifyBodyScanned(m_galaxy, m_currentSystem, bodyIndex)) {
         m_surveyEvents.push_back({.kind = SurveyEvent::Kind::BodyScanned,
                                   .system = m_currentSystem,
@@ -1142,6 +1207,13 @@ bool SpaceWorld::scanCurrentTarget()
                                   .seed = signal.seed,
                                   .name = sim::signalKindName(signal.kind)});
         rebuildDynamicTargets();
+        return true;
+    }
+    // Phase 8z: the same lever finishes a structure scan, through the same
+    // choke point the held scan uses. A console shortcut that identified a
+    // station by its own route would be a second implementation (8u).
+    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    if (total > 0 && identifyStructure(m_targetIndex % total)) {
         return true;
     }
     const std::uint32_t bodyIndex = targetBodyIndex();
@@ -2913,6 +2985,16 @@ void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
     m_signalTargetBase = m_targets.size();
     m_dynamicTargets.clear();
     m_targetIndex = 0;
+    // Phase 8z: mask the names of anything not identified yet. This lives here
+    // rather than in loadSystem because loadSave does NOT go through loadSystem
+    // — it calls this function directly (8r's lesson), and a loaded game must
+    // show the same fog the saved one did.
+    refreshStaticTargetNames();
+    // ⚑ And the selection has to move off slot 0, which used to be the first
+    // station and is now very often hidden. Arriving with a hidden station
+    // selected would print its masked name in the HUD's target readout and
+    // hand it to Autopilot — leaking the one thing the fog is for.
+    snapSelectionToVisible();
 
     // Scannable sites (Phase 8e): content regenerates from the system seed;
     // which ones the player has found comes out of SurveySim.
@@ -3105,8 +3187,35 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     m_playerDamageTimer = 0.0f;
 
+    // You always know what you are touching (Phase 8z §B).
+    identifyTouchedObjects(fromSystem);
+
     // Ambient faction presence (Phase 8b): owner wings + raid incursions.
     spawnAmbientPilots(systemIndex, spec);
+}
+
+void SpaceWorld::identifyTouchedObjects(std::uint32_t fromSystem)
+{
+    bool changed = false;
+    if (fromSystem != kNoIndex) {
+        // The gate you just flew through: you know what it is and where it
+        // goes, because you have just come from there. Without this the first
+        // jump strands the player at an anonymous object they flew through, and
+        // the way home is a contact they have to scan.
+        for (std::uint32_t i = 0; i < m_gates.size(); ++i) {
+            if (m_gates[i].toSystem == fromSystem) {
+                changed = m_survey.notifyGateIdentified(m_galaxy, m_currentSystem, i) || changed;
+                break;
+            }
+        }
+    }
+    if (m_dockedStation != kNoIndex) {
+        changed =
+            m_survey.notifyStationIdentified(m_galaxy, m_currentSystem, m_dockedStation) || changed;
+    }
+    if (changed) {
+        refreshStaticTargetNames();
+    }
 }
 
 bool SpaceWorld::jumpNearestGate(double activationRange)
@@ -3213,6 +3322,12 @@ void SpaceWorld::completeDock(std::uint32_t station, std::uint32_t berth)
     // A clearance is consumed by being used; nothing below may see one.
     m_clearance = DockClearance{};
     m_pendingDockRequest = kNoIndex;
+    // Docking identifies the port (Phase 8z §B): you are inside it. The dev
+    // dock shortcut routes through here too, so it cannot leave the player
+    // parked in a station the map still calls a contact.
+    if (m_survey.notifyStationIdentified(m_galaxy, m_currentSystem, station)) {
+        refreshStaticTargetNames();
+    }
 
     // Park at the pad, kill relative motion, refresh the spawn anchor (the
     // death rule respawns at the last dock).
@@ -4446,6 +4561,115 @@ SpaceWorld::NavKind SpaceWorld::navTargetKind(std::size_t index) const
                : NavKind::Signal;
 }
 
+std::uint32_t SpaceWorld::navTargetStation(std::size_t index) const
+{
+    // Stations lead the static head, so a slot is a station exactly when it
+    // sits before the gates begin.
+    const std::size_t gateBase = m_planetTargetBase - m_gates.size();
+    return index < gateBase ? static_cast<std::uint32_t>(index) : kNoIndex;
+}
+
+std::uint32_t SpaceWorld::navTargetGate(std::size_t index) const
+{
+    const std::size_t gateBase = m_planetTargetBase - m_gates.size();
+    return index >= gateBase && index < m_planetTargetBase
+               ? static_cast<std::uint32_t>(index - gateBase)
+               : kNoIndex;
+}
+
+SpaceWorld::NavKnowledge SpaceWorld::navKnowledge(std::size_t index) const
+{
+    // ⚑ Only the static head's stations and gates are fogged (Phase 8z).
+    //
+    // The star and the planets are AU-scale scenery visible from the rim, and
+    // the user's own ruling is that arrival still hands them over. The whole
+    // dynamic tail is already knowledge-gated by construction and says so where
+    // it is built: a signal enters it only once discovered, a wreck exists
+    // because something died in front of you, a bookmark because you wrote it,
+    // a berth because you were cleared for it, an objective because you took
+    // the contract, and a field needs no finding at all.
+    const std::uint32_t station = navTargetStation(index);
+    if (station != kNoIndex) {
+        return m_survey.stationIdentified(m_currentSystem, station) ? NavKnowledge::Identified
+               : m_survey.stationDiscovered(m_currentSystem, station)
+                   ? NavKnowledge::Contact
+                   : NavKnowledge::Hidden;
+    }
+    const std::uint32_t gate = navTargetGate(index);
+    if (gate != kNoIndex) {
+        return m_survey.gateIdentified(m_currentSystem, gate) ? NavKnowledge::Identified
+               : m_survey.gateDiscovered(m_currentSystem, gate)
+                   ? NavKnowledge::Contact
+                   : NavKnowledge::Hidden;
+    }
+    return NavKnowledge::Identified;
+}
+
+SpaceWorld::NavKind SpaceWorld::navTargetDrawKind(std::size_t index) const
+{
+    // An unidentified station or gate wears the contact glyph, so the shape on
+    // the radar and the map never says what the name is withholding.
+    return navKnowledge(index) == NavKnowledge::Contact ? NavKind::Signal : navTargetKind(index);
+}
+
+void SpaceWorld::snapSelectionToVisible()
+{
+    if (m_targets.empty() || m_targetIndex >= m_targets.size() || navTargetVisible(m_targetIndex)) {
+        return; // already fine, or already on a ship rather than a nav slot
+    }
+    for (std::size_t step = 1; step <= m_targets.size(); ++step) {
+        const std::size_t slot = (m_targetIndex + step) % m_targets.size();
+        if (navTargetVisible(slot)) {
+            m_targetIndex = slot;
+            m_navSlot = slot;
+            return;
+        }
+    }
+    // Cannot happen in a generated galaxy — the star is never hidden — but a
+    // hand-built system with nothing visible must not leave a stale selection.
+    m_targetIndex = 0;
+    m_navSlot = 0;
+}
+
+bool SpaceWorld::identifyStructure(std::size_t index)
+{
+    const std::uint32_t station = navTargetStation(index);
+    const std::uint32_t gate = navTargetGate(index);
+    bool changed = false;
+    if (station != kNoIndex) {
+        changed = m_survey.notifyStationIdentified(m_galaxy, m_currentSystem, station);
+    } else if (gate != kNoIndex) {
+        changed = m_survey.notifyGateIdentified(m_galaxy, m_currentSystem, gate);
+    }
+    if (changed) {
+        refreshStaticTargetNames();
+    }
+    return changed;
+}
+
+void SpaceWorld::refreshStaticTargetNames()
+{
+    if (m_currentSystem >= m_galaxy.systems.size()) {
+        return;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    const std::size_t gateBase = m_planetTargetBase - m_gates.size();
+    for (std::size_t i = 0; i < gateBase && i < m_targets.size(); ++i) {
+        const std::uint32_t station = static_cast<std::uint32_t>(i);
+        m_targets[i].name = m_survey.stationIdentified(m_currentSystem, station)
+                                ? spec.stations[station].name
+                                : anonymousContactName(i);
+    }
+    for (std::size_t i = gateBase; i < m_planetTargetBase && i < m_targets.size(); ++i) {
+        const std::uint32_t gate = static_cast<std::uint32_t>(i - gateBase);
+        // A gate's name carries its destination, which is precisely what
+        // identifying it buys — so an unidentified one must not show it.
+        m_targets[i].name = m_survey.gateIdentified(m_currentSystem, gate)
+                                ? m_gates[gate].name
+                                : anonymousContactName(i);
+    }
+}
+
 std::uint32_t SpaceWorld::navTargetBody(std::size_t index) const
 {
     if (index == m_starTargetIndex) {
@@ -4611,9 +4835,22 @@ void SpaceWorld::cycleNavTarget()
     // Already on a nav point: step to the next one. Coming back from the
     // contact cycle: return to where this class left off, so switching
     // classes costs one press rather than a walk back around the list.
-    m_navSlot = m_targetIndex < m_targets.size() ? (m_targetIndex + 1) % m_targets.size()
-                                                 : m_navSlot % m_targets.size();
-    m_targetIndex = m_navSlot;
+    std::size_t slot = m_targetIndex < m_targets.size() ? (m_targetIndex + 1) % m_targets.size()
+                                                        : m_navSlot % m_targets.size();
+    // Phase 8z: walk past what has not been found yet. The list still holds
+    // every station and gate — it is world state and NPCs anchor to it — so the
+    // cycle is where the player stops seeing them. A full lap finding nothing
+    // leaves the selection alone rather than parking it on a hidden slot, which
+    // is what keeps every downstream consumer (autopilot, hail, dock request,
+    // the scan) free of a fog check of its own.
+    for (std::size_t step = 0; step < m_targets.size(); ++step) {
+        if (navTargetVisible(slot)) {
+            m_navSlot = slot;
+            m_targetIndex = slot;
+            return;
+        }
+        slot = (slot + 1) % m_targets.size();
+    }
 }
 
 void SpaceWorld::contactOrder(std::vector<std::size_t>& out) const
@@ -6004,6 +6241,9 @@ void SpaceWorld::tick(double dt)
             transform.previousPosition = pad;
             m_playerSpawn = pad;
             m_dockEventPending = true; // fresh board at the respawn dock
+            // You wake up inside it, so you know it (Phase 8z). This runs after
+            // loadSystem's own identifyTouchedObjects, which saw no dock yet.
+            identifyTouchedObjects(kNoIndex);
         }
     }
 }

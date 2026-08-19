@@ -55,6 +55,10 @@ void SurveySim::initialize(const Galaxy& galaxy, const SurveyParams& params,
         signalsFor(galaxy, i, signals);
         SOL_ASSERT(signals.size() < kMaskBits);
         SOL_ASSERT(bodyCount(galaxy, i) <= kMaskBits);
+        // Phase 8z: stations and gates carry masks of their own now, so their
+        // ceilings are asserted here beside the two that already were.
+        SOL_ASSERT(galaxy.systems[i].stations.size() <= kMaskBits);
+        SOL_ASSERT(galaxy.systems[i].gates.size() <= kMaskBits);
         m_signalCounts[i] = static_cast<std::uint8_t>(signals.size());
     }
 }
@@ -180,13 +184,10 @@ void SurveySim::notifyArrival(const Galaxy& galaxy, std::uint32_t system)
         state.state = KnowledgeState::Visited;
         addEntry(galaxy, system, SurveyKind::System);
     }
-    // A gate names where it goes: the map grows along the lanes you travel.
-    for (const GateSpec& gate : galaxy.systems[system].gates) {
-        if (gate.toSystem < m_systems.size()
-            && m_systems[gate.toSystem].state == KnowledgeState::Unknown) {
-            m_systems[gate.toSystem].state = KnowledgeState::Charted;
-        }
-    }
+    // Phase 8z: arriving no longer charts the neighbours. A gate still names
+    // where it goes, but you have to find and identify the gate first — see
+    // notifyGateIdentified(). Being here tells you the system exists and gives
+    // you its star and its planets; everything built in it has to be found.
     checkSurveyed(galaxy, system);
 
     // Route bookkeeping: advance past the systems already flown, and drop the
@@ -204,15 +205,13 @@ void SurveySim::setKnowledge(const Galaxy& galaxy, std::uint32_t system, Knowled
     if (system >= m_systems.size()) {
         return;
     }
+    // Phase 8z: sets the rung and nothing else. It used to chart the
+    // neighbours, mirroring what arrival did at the time; arrival stopped, and
+    // a lever that kept doing it would be reaching a state by a route the sim
+    // no longer has (8u's rule). A drive that wants charted neighbours
+    // identifies the gates, which is what a player does.
+    (void)galaxy;
     m_systems[system].state = state;
-    if (state >= KnowledgeState::Visited && system < galaxy.systems.size()) {
-        for (const GateSpec& gate : galaxy.systems[system].gates) {
-            if (gate.toSystem < m_systems.size()
-                && m_systems[gate.toSystem].state == KnowledgeState::Unknown) {
-                m_systems[gate.toSystem].state = KnowledgeState::Charted;
-            }
-        }
-    }
 }
 
 bool SurveySim::bodyScanned(std::uint32_t system, std::uint32_t body) const
@@ -237,6 +236,142 @@ bool SurveySim::notifyBodyScanned(const Galaxy& galaxy, std::uint32_t system, st
     m_systems[system].bodiesScanned |= 1u << body;
     addEntry(galaxy, system, SurveyKind::Body);
     checkSurveyed(galaxy, system);
+    return true;
+}
+
+// --- Stations and gates (Phase 8z) ------------------------------------------
+//
+// Four masks, one ladder, and the bounds come from the galaxy rather than from
+// a stored count: SystemSpec already carries every system's stations and gates,
+// which is the same fact 8q leaned on when it drew a remote system map without
+// regenerating anything.
+
+namespace {
+
+[[nodiscard]] std::uint32_t stationCountIn(const Galaxy& galaxy, std::uint32_t system)
+{
+    return system < galaxy.systems.size()
+               ? static_cast<std::uint32_t>(galaxy.systems[system].stations.size())
+               : 0u;
+}
+
+[[nodiscard]] std::uint32_t gateCountIn(const Galaxy& galaxy, std::uint32_t system)
+{
+    return system < galaxy.systems.size()
+               ? static_cast<std::uint32_t>(galaxy.systems[system].gates.size())
+               : 0u;
+}
+
+} // namespace
+
+bool SurveySim::stationDiscovered(std::uint32_t system, std::uint32_t station) const
+{
+    if (system >= m_systems.size() || station >= kMaskBits) {
+        return false;
+    }
+    return (m_systems[system].stationsDiscovered & (1u << station)) != 0;
+}
+
+bool SurveySim::stationIdentified(std::uint32_t system, std::uint32_t station) const
+{
+    if (system >= m_systems.size() || station >= kMaskBits) {
+        return false;
+    }
+    return (m_systems[system].stationsIdentified & (1u << station)) != 0;
+}
+
+bool SurveySim::notifyStationDiscovered(const Galaxy& galaxy, std::uint32_t system,
+                                        std::uint32_t station)
+{
+    if (system >= m_systems.size() || station >= stationCountIn(galaxy, system)
+        || station >= kMaskBits) {
+        return false;
+    }
+    if (m_systems[system].state < KnowledgeState::Visited) {
+        return false; // you cannot sweep a system from another system
+    }
+    if (stationDiscovered(system, station)) {
+        return false;
+    }
+    m_systems[system].stationsDiscovered |= 1u << station;
+    return true;
+}
+
+bool SurveySim::notifyStationIdentified(const Galaxy& galaxy, std::uint32_t system,
+                                        std::uint32_t station)
+{
+    if (system >= m_systems.size() || station >= stationCountIn(galaxy, system)
+        || station >= kMaskBits) {
+        return false;
+    }
+    if (m_systems[system].state < KnowledgeState::Visited) {
+        return false;
+    }
+    if (stationIdentified(system, station)) {
+        return false;
+    }
+    // Identifying discovers first, so a scan that beat the pulse to it is not a
+    // special case anywhere else.
+    m_systems[system].stationsDiscovered |= 1u << station;
+    m_systems[system].stationsIdentified |= 1u << station;
+    return true;
+}
+
+bool SurveySim::gateDiscovered(std::uint32_t system, std::uint32_t gate) const
+{
+    if (system >= m_systems.size() || gate >= kMaskBits) {
+        return false;
+    }
+    return (m_systems[system].gatesDiscovered & (1u << gate)) != 0;
+}
+
+bool SurveySim::gateIdentified(std::uint32_t system, std::uint32_t gate) const
+{
+    if (system >= m_systems.size() || gate >= kMaskBits) {
+        return false;
+    }
+    return (m_systems[system].gatesIdentified & (1u << gate)) != 0;
+}
+
+bool SurveySim::notifyGateDiscovered(const Galaxy& galaxy, std::uint32_t system,
+                                     std::uint32_t gate)
+{
+    if (system >= m_systems.size() || gate >= gateCountIn(galaxy, system) || gate >= kMaskBits) {
+        return false;
+    }
+    if (m_systems[system].state < KnowledgeState::Visited) {
+        return false;
+    }
+    if (gateDiscovered(system, gate)) {
+        return false;
+    }
+    m_systems[system].gatesDiscovered |= 1u << gate;
+    return true;
+}
+
+bool SurveySim::notifyGateIdentified(const Galaxy& galaxy, std::uint32_t system,
+                                     std::uint32_t gate)
+{
+    if (system >= m_systems.size() || gate >= gateCountIn(galaxy, system) || gate >= kMaskBits) {
+        return false;
+    }
+    if (m_systems[system].state < KnowledgeState::Visited) {
+        return false;
+    }
+    if (gateIdentified(system, gate)) {
+        return false;
+    }
+    m_systems[system].gatesDiscovered |= 1u << gate;
+    m_systems[system].gatesIdentified |= 1u << gate;
+    // A gate names where it goes: the map grows along the lanes you have
+    // looked at. This moved here from notifyArrival in Phase 8z — it is the
+    // entire payload of identifying a gate, and the reason the galaxy map is
+    // now something you fill in rather than something handed to you.
+    const std::uint32_t destination = galaxy.systems[system].gates[gate].toSystem;
+    if (destination < m_systems.size()
+        && m_systems[destination].state == KnowledgeState::Unknown) {
+        m_systems[destination].state = KnowledgeState::Charted;
+    }
     return true;
 }
 
@@ -537,6 +672,10 @@ void SurveySim::save(core::BinaryWriter& writer) const
         writer.write(system.signalsDiscovered);
         writer.write(system.signalsResolved);
         writer.write(system.signalsEmptied);
+        writer.write(system.stationsDiscovered); // Phase 8z
+        writer.write(system.stationsIdentified);
+        writer.write(system.gatesDiscovered);
+        writer.write(system.gatesIdentified);
     }
     writer.write(static_cast<std::uint32_t>(m_ledger.size()));
     for (const SurveyEntry& entry : m_ledger) {
@@ -596,7 +735,9 @@ bool SurveySim::load(core::BinaryReader& reader)
         std::uint8_t state = 0;
         if (!reader.read(state) || state > static_cast<std::uint8_t>(KnowledgeState::Surveyed)
             || !reader.read(system.bodiesScanned) || !reader.read(system.signalsDiscovered)
-            || !reader.read(system.signalsResolved) || !reader.read(system.signalsEmptied)) {
+            || !reader.read(system.signalsResolved) || !reader.read(system.signalsEmptied)
+            || !reader.read(system.stationsDiscovered) || !reader.read(system.stationsIdentified)
+            || !reader.read(system.gatesDiscovered) || !reader.read(system.gatesIdentified)) {
             return false;
         }
         system.state = static_cast<KnowledgeState>(state);

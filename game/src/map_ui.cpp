@@ -169,11 +169,35 @@ void fillRemoteMarkers(const SpaceWorld& world, std::uint32_t system,
                               .inPlayfield = !orbital});
     };
 
-    for (const sim::StationSpec& station : spec.stations) {
-        add(Kind::Station, station.name, station.position, {}, false, 0);
+    // ⚑ Stations and gates are gated per object as well as by the rung (Phase
+    // 8z), which is the rule sites have followed since 8q — a Visited system
+    // you never swept shows none of them. An identified one draws under its own
+    // glyph and name; a discovered one draws as an anonymous contact, exactly
+    // as it does on the local map, because a remote map may not know more than
+    // the player did while standing there.
+    for (std::uint32_t i = 0; i < spec.stations.size(); ++i) {
+        if (!survey.stationDiscovered(system, i)) {
+            continue;
+        }
+        if (survey.stationIdentified(system, i)) {
+            add(Kind::Station, spec.stations[i].name, spec.stations[i].position, {}, true, 0);
+        } else {
+            add(Kind::Signal, anonymousContactName(i), spec.stations[i].position, "unscanned",
+                false, 0);
+        }
     }
-    for (const sim::GateSpec& gate : spec.gates) {
-        add(Kind::Gate, "Gate: " + galaxy.systems[gate.toSystem].name, gate.position, {}, false, 0);
+    for (std::uint32_t i = 0; i < spec.gates.size(); ++i) {
+        if (!survey.gateDiscovered(system, i)) {
+            continue;
+        }
+        if (survey.gateIdentified(system, i)) {
+            // Naming the far side is what identifying a gate bought.
+            add(Kind::Gate, "Gate: " + galaxy.systems[spec.gates[i].toSystem].name,
+                spec.gates[i].position, {}, true, 0);
+        } else {
+            add(Kind::Signal, anonymousContactName(spec.stations.size() + i),
+                spec.gates[i].position, "unscanned", false, 0);
+        }
     }
     // Body index 0 is the star and 1.. are the planets in spec order, which is
     // the indexing SurveySim::bodyScanned answers against.
@@ -200,14 +224,19 @@ void fillRemoteMarkers(const SpaceWorld& world, std::uint32_t system,
     // shows none even once it is Visited, because none has been found.
     std::vector<sim::SignalSpec> signals;
     survey.signalsFor(galaxy, system, signals);
-    std::size_t slot = 0;
+    // The contact ordinal continues the station and gate numbering above, which
+    // is the same sequence the local nav list uses (Phase 8z) — two maps that
+    // numbered contacts differently would be 8q's "two copies name one site two
+    // different things" all over again.
+    const std::size_t contactBase = spec.stations.size() + spec.gates.size();
     for (std::uint32_t i = 0; i < signals.size(); ++i) {
         if (!survey.signalDiscovered(system, i)) {
             continue;
         }
         const bool resolved = survey.signalResolved(system, i);
         add(Kind::Signal,
-            signalTargetName(signals[i].kind, resolved, survey.signalEmptied(system, i), slot++),
+            signalTargetName(signals[i].kind, resolved, survey.signalEmptied(system, i),
+                             contactBase + i),
             signals[i].position, resolved ? "scanned" : "unscanned", resolved, 0);
     }
     // Fields need no discovery bit - a field is a visible thing in the
@@ -498,7 +527,15 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
     const std::size_t targeted = world.currentTargetIndex();
     const std::span<const NavTarget> targets = world.navTargets();
     for (std::size_t i = 0; i < targets.size(); ++i) {
-        const SpaceWorld::NavKind kind = world.navTargetKind(i);
+        // Phase 8z: the system you are standing in gets the same fog its
+        // neighbours have had since 8q. Undiscovered stations and gates are not
+        // on the map, and a discovered one draws under the contact glyph until
+        // it is identified — navTargetDrawKind holds that rule so the local and
+        // remote fills cannot disagree about it.
+        if (!world.navTargetVisible(i)) {
+            continue;
+        }
+        const SpaceWorld::NavKind kind = world.navTargetDrawKind(i);
         // Two tiers, two origins. The star and the planets are measured from
         // the star, which is at the system origin, so the map reads the way a
         // system actually looks — star in the middle, worlds around it.
@@ -512,6 +549,9 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
         const double distance = length(targets[i].position - shipPosition);
         bool scanned = false;
         if (kind == SpaceWorld::NavKind::Signal) {
+            // An unidentified station or gate arrives here wearing the Signal
+            // draw kind, and navTargetSignal answers kNoIndex for it, so it
+            // reads "unscanned" — which is exactly what it is (Phase 8z).
             scanned = survey.signalResolved(world.currentSystemIndex(), world.navTargetSignal(i));
         } else if (kind == SpaceWorld::NavKind::Planet || kind == SpaceWorld::NavKind::Star) {
             scanned = survey.bodyScanned(world.currentSystemIndex(), world.navTargetBody(i));

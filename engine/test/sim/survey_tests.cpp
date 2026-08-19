@@ -109,26 +109,116 @@ SOL_TEST(survey_signals_are_deterministic_per_seed)
     }
 }
 
-SOL_TEST(survey_arrival_charts_neighbors_only)
+SOL_TEST(survey_arrival_visits_without_charting_neighbors)
 {
+    // Phase 8z moved the charting from arrival to gate identification. Being
+    // in a system tells you it exists; it does not tell you what its gates are
+    // or where they go, so the map no longer fills itself in as you pass by.
     const Galaxy galaxy = lineGalaxy();
     SurveySim survey = lineSurvey(galaxy);
     SOL_CHECK(survey.knowledge(0) == KnowledgeState::Unknown);
 
     survey.notifyArrival(galaxy, 0);
     SOL_CHECK(survey.knowledge(0) == KnowledgeState::Visited);
-    SOL_CHECK(survey.knowledge(1) == KnowledgeState::Charted); // one lane out
-    SOL_CHECK(survey.knowledge(2) == KnowledgeState::Unknown); // two lanes out
-    SOL_CHECK(survey.knownSystemCount() == 2);
+    SOL_CHECK(survey.knowledge(1) == KnowledgeState::Unknown); // the gate is unfound
+    SOL_CHECK(survey.knowledge(2) == KnowledgeState::Unknown);
+    SOL_CHECK(survey.knownSystemCount() == 1);
 
-    // Arriving again does not re-pay, and charting never demotes a visit.
+    // Arriving again does not re-pay.
     const double afterFirst = survey.ledgerValue();
     survey.notifyArrival(galaxy, 0);
     SOL_CHECK(survey.ledgerValue() == afterFirst);
+
+    // And charting never demotes a visit.
     survey.notifyArrival(galaxy, 1);
-    survey.notifyArrival(galaxy, 0);
-    SOL_CHECK(survey.knowledge(1) == KnowledgeState::Visited);
+    SOL_CHECK(survey.notifyGateIdentified(galaxy, 1, 0)); // the lane back to 0
+    SOL_CHECK(survey.knowledge(0) == KnowledgeState::Visited);
+}
+
+SOL_TEST(survey_gate_identification_charts_the_far_side)
+{
+    // The whole payload of identifying a gate: the map grows along the lanes
+    // you have looked at, one lane at a time.
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey = lineSurvey(galaxy);
+    survey.notifyArrival(galaxy, 1); // two gates: 0 -> S0, 1 -> S2
+    SOL_CHECK(survey.knowledge(0) == KnowledgeState::Unknown);
+    SOL_CHECK(survey.knowledge(2) == KnowledgeState::Unknown);
+
+    // Finding a gate is not knowing where it goes.
+    SOL_CHECK(survey.notifyGateDiscovered(galaxy, 1, 0));
+    SOL_CHECK(survey.gateDiscovered(1, 0));
+    SOL_CHECK(!survey.gateIdentified(1, 0));
+    SOL_CHECK(survey.knowledge(0) == KnowledgeState::Unknown);
+
+    SOL_CHECK(survey.notifyGateIdentified(galaxy, 1, 0));
+    SOL_CHECK(survey.knowledge(0) == KnowledgeState::Charted);
+    SOL_CHECK(survey.knowledge(2) == KnowledgeState::Unknown); // the other gate is untouched
+
+    SOL_CHECK(survey.notifyGateIdentified(galaxy, 1, 1));
     SOL_CHECK(survey.knowledge(2) == KnowledgeState::Charted);
+}
+
+SOL_TEST(survey_structures_are_found_then_identified)
+{
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey = lineSurvey(galaxy);
+
+    // You cannot sweep a system you have not reached.
+    SOL_CHECK(!survey.notifyStationDiscovered(galaxy, 0, 0));
+    survey.notifyArrival(galaxy, 0);
+
+    // Nothing is known on arrival.
+    SOL_CHECK(!survey.stationDiscovered(0, 0));
+    SOL_CHECK(!survey.stationIdentified(0, 0));
+    SOL_CHECK(!survey.gateDiscovered(0, 0));
+
+    // One way, and idempotent: the second call changes nothing and says so.
+    SOL_CHECK(survey.notifyStationDiscovered(galaxy, 0, 0));
+    SOL_CHECK(!survey.notifyStationDiscovered(galaxy, 0, 0));
+    SOL_CHECK(survey.stationDiscovered(0, 0));
+    SOL_CHECK(!survey.stationIdentified(0, 0));
+
+    SOL_CHECK(survey.notifyStationIdentified(galaxy, 0, 0));
+    SOL_CHECK(!survey.notifyStationIdentified(galaxy, 0, 0));
+    SOL_CHECK(survey.stationIdentified(0, 0));
+
+    // Identifying discovers first, so a scan that beat the pulse to something
+    // is not a special case anywhere else.
+    survey.notifyArrival(galaxy, 1);
+    SOL_CHECK(survey.notifyGateIdentified(galaxy, 1, 1));
+    SOL_CHECK(survey.gateDiscovered(1, 1));
+    SOL_CHECK(survey.gateIdentified(1, 1));
+
+    // Out of range indices are refused rather than corrupting a mask. S2 is
+    // the unsettled fringe system and has no stations at all.
+    survey.notifyArrival(galaxy, 2);
+    SOL_CHECK(!survey.notifyStationDiscovered(galaxy, 2, 0));
+    SOL_CHECK(!survey.notifyGateDiscovered(galaxy, 0, 7));
+}
+
+SOL_TEST(survey_structures_do_not_gate_completion)
+{
+    // 8z is fog, not ledger. Surveyed keeps its 8e meaning — every body scanned
+    // and every signal resolved — because the ledger is data worth selling and
+    // a station is not survey data: somebody else built it.
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey = lineSurvey(galaxy);
+    survey.notifyArrival(galaxy, 0);
+    const double beforeStructures = survey.ledgerValue();
+
+    SOL_CHECK(survey.notifyStationIdentified(galaxy, 0, 0));
+    SOL_CHECK(survey.notifyGateIdentified(galaxy, 0, 0));
+    SOL_CHECK(survey.ledgerValue() == beforeStructures); // discovery pays nothing
+
+    // The star, the one planet pair, and the core tier's single signal.
+    for (std::uint32_t body = 0; body < survey.bodyCount(galaxy, 0); ++body) {
+        (void)survey.notifyBodyScanned(galaxy, 0, body);
+    }
+    for (std::uint32_t signal = 0; signal < survey.signalCount(0); ++signal) {
+        (void)survey.notifySignalResolved(galaxy, 0, signal);
+    }
+    SOL_CHECK(survey.knowledge(0) == KnowledgeState::Surveyed);
 }
 
 SOL_TEST(survey_values_scale_with_region_and_settlement)
@@ -301,11 +391,21 @@ SOL_TEST(survey_save_load_round_trips)
 {
     const Galaxy galaxy = lineGalaxy();
     SurveySim survey = lineSurvey(galaxy);
+    survey.notifyArrival(galaxy, 0);
     survey.notifyArrival(galaxy, 1);
     survey.notifyArrival(galaxy, 2);
     SOL_CHECK(survey.notifyBodyScanned(galaxy, 2, 0));
     SOL_CHECK(survey.notifySignalDiscovered(2, 1));
     SOL_CHECK(survey.notifySignalResolved(galaxy, 2, 0));
+    // ⚑ Phase 8z: every combination of the two structure bits, on purpose. A
+    // mask written but not read back is the shape of the bug 8x stage 5 found
+    // in readObjective, and it only surfaces once a save happens to carry the
+    // state nobody wrote a case for.
+    SOL_CHECK(survey.notifyStationIdentified(galaxy, 0, 0)); // identified
+    SOL_CHECK(survey.notifyGateDiscovered(galaxy, 0, 0));    // found, not identified
+    SOL_CHECK(survey.notifyStationDiscovered(galaxy, 1, 0)); // found, not identified
+    SOL_CHECK(survey.notifyGateIdentified(galaxy, 1, 0));    // identified
+                                                             // system 1 gate 1: untouched
     SignalLoot loot;
     loot.cargo.push_back({.commodity = 0, .units = 7.5f});
     loot.credits = 120.0;
@@ -330,6 +430,15 @@ SOL_TEST(survey_save_load_round_trips)
     SOL_CHECK(restored.bodyScanned(2, 0));
     SOL_CHECK(restored.signalDiscovered(2, 1));
     SOL_CHECK(restored.signalResolved(2, 0));
+    // All six structure states, read back in both directions.
+    SOL_CHECK(restored.stationIdentified(0, 0));
+    SOL_CHECK(restored.stationDiscovered(0, 0)); // identifying discovered it too
+    SOL_CHECK(restored.gateDiscovered(0, 0));
+    SOL_CHECK(!restored.gateIdentified(0, 0));
+    SOL_CHECK(restored.stationDiscovered(1, 0));
+    SOL_CHECK(!restored.stationIdentified(1, 0));
+    SOL_CHECK(restored.gateIdentified(1, 0));
+    SOL_CHECK(!restored.gateDiscovered(1, 1)); // untouched stays untouched
     SOL_CHECK(restored.ledgerValue() == survey.ledgerValue());
     SOL_REQUIRE(restored.ledger().size() == survey.ledger().size());
     for (std::size_t i = 0; i < survey.ledger().size(); ++i) {

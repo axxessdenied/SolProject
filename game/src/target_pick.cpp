@@ -109,6 +109,12 @@ void fillPickCandidates(const SpaceWorld& world, const ViewFrame& view,
 
     const std::span<const NavTarget> navTargets = world.navTargets();
     for (std::size_t i = 0; i < navTargets.size(); ++i) {
+        // Phase 8z: you cannot click what you have not found. Without this a
+        // click in empty space would select an undiscovered station, which is
+        // the one route into a hidden slot that skipping the cycle misses.
+        if (!world.navTargetVisible(i)) {
+            continue;
+        }
         push(navTargets[i].position, pickRadiusOf(world, i), i);
     }
     for (std::size_t i = 0; i < world.contactCount(); ++i) {
@@ -143,7 +149,13 @@ void fillRadarContacts(const SpaceWorld& world, std::vector<sol::ui::RadarContac
 
     const std::span<const NavTarget> navTargets = world.navTargets();
     for (std::size_t i = 0; i < navTargets.size(); ++i) {
-        push(navTargets[i].position, radarKindOf(world.navTargetKind(i)),
+        // Phase 8z: an undiscovered station or gate has no blip, and a
+        // discovered-but-unidentified one wears the contact glyph rather than
+        // its own — the disc must not say what the name is withholding.
+        if (!world.navTargetVisible(i)) {
+            continue;
+        }
+        push(navTargets[i].position, radarKindOf(world.navTargetDrawKind(i)),
              sol::ui::RadarAttitude::Neutral, i);
     }
     for (std::size_t i = 0; i < world.contactCount(); ++i) {

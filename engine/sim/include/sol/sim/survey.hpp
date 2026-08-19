@@ -182,10 +182,18 @@ public:
     // --- Knowledge ---
     [[nodiscard]] KnowledgeState knowledge(std::uint32_t system) const;
     [[nodiscard]] std::uint32_t knownSystemCount() const;
-    // Arrival: the system becomes Visited (at least) and every system its
-    // gates reach becomes Charted. Writes a System entry the first time.
+    // Arrival: the system becomes Visited (at least). Writes a System entry the
+    // first time.
+    //
+    // Phase 8z: arrival no longer charts the neighbours. A gate still names
+    // where it leads, but only once you have *identified* the gate, so the
+    // galaxy map grows along the lanes actually looked at rather than the ones
+    // flown past. See notifyGateIdentified().
     void notifyArrival(const Galaxy& galaxy, std::uint32_t system);
-    // Dev/console path: chart or visit without flying there.
+    // Dev/console path: set a rung without flying there. It sets the rung and
+    // nothing else — 8u's rule that a lever reaching a state the sim cannot is
+    // a second implementation, which is why it stopped charting neighbours in
+    // 8z at the same moment arrival did.
     void setKnowledge(const Galaxy& galaxy, std::uint32_t system, KnowledgeState state);
 
     // --- Bodies (index 0 is the star, 1.. are planets in spec order) ---
@@ -193,6 +201,36 @@ public:
     // False when out of range or already scanned; otherwise writes a Body
     // entry and may complete the system.
     bool notifyBodyScanned(const Galaxy& galaxy, std::uint32_t system, std::uint32_t body);
+
+    // --- Stations and gates (Phase 8z) ---
+    //
+    // The same two-step ladder signals have had since 8e, given to the objects
+    // a player actually flies to: a pulse *discovers* (it is there, and that is
+    // all you know) and a target scan *identifies* (its name, its owner, and
+    // for a gate where it goes). The word is "identified" rather than 8e's
+    // "resolved" because a site resolves into loot and a station resolves into
+    // a name.
+    //
+    // Deliberately NOT part of checkSurveyed(): the ledger is data worth
+    // selling, and a station is not survey data — somebody else built it and
+    // already knows where it is. Surveyed keeps its exact 8e meaning of every
+    // body scanned and every signal resolved.
+    [[nodiscard]] bool stationDiscovered(std::uint32_t system, std::uint32_t station) const;
+    [[nodiscard]] bool stationIdentified(std::uint32_t system, std::uint32_t station) const;
+    // False when out of range or already known; true when this call is what
+    // changed it. Identifying discovers first, exactly as resolving a signal
+    // does, so a scan that beats the pulse to something is not a special case.
+    bool notifyStationDiscovered(const Galaxy& galaxy, std::uint32_t system,
+                                 std::uint32_t station);
+    bool notifyStationIdentified(const Galaxy& galaxy, std::uint32_t system,
+                                 std::uint32_t station);
+
+    [[nodiscard]] bool gateDiscovered(std::uint32_t system, std::uint32_t gate) const;
+    [[nodiscard]] bool gateIdentified(std::uint32_t system, std::uint32_t gate) const;
+    bool notifyGateDiscovered(const Galaxy& galaxy, std::uint32_t system, std::uint32_t gate);
+    // Charts the system on the far side: this is where "a gate names where it
+    // goes" lives now, and it is the whole payload of identifying a gate.
+    bool notifyGateIdentified(const Galaxy& galaxy, std::uint32_t system, std::uint32_t gate);
 
     // --- Signals ---
     [[nodiscard]] bool signalDiscovered(std::uint32_t system, std::uint32_t signal) const;
@@ -261,8 +299,10 @@ public:
     [[nodiscard]] bool load(core::BinaryReader& reader);
 
 private:
-    // Per-system state. Bodies and signals are bitmasks: a system holds at
-    // most 5 bodies and 6 signals, and initialize() asserts the ceiling.
+    // Per-system state. Bodies, signals, stations and gates are bitmasks: a
+    // system holds at most 5 bodies, 6 signals, 4 stations and a handful of
+    // gates, and initialize() asserts every one of those ceilings rather than
+    // trusting this comment.
     struct SystemSurvey
     {
         KnowledgeState state = KnowledgeState::Unknown;
@@ -270,6 +310,10 @@ private:
         std::uint32_t signalsDiscovered = 0;
         std::uint32_t signalsResolved = 0;
         std::uint32_t signalsEmptied = 0;
+        std::uint32_t stationsDiscovered = 0; // Phase 8z
+        std::uint32_t stationsIdentified = 0;
+        std::uint32_t gatesDiscovered = 0;
+        std::uint32_t gatesIdentified = 0;
     };
 
     struct LootRecord

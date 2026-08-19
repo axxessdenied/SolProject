@@ -291,9 +291,17 @@ SOL_TEST(marker_fog_rule_gates_contents_on_a_visit_and_never_the_star)
         SOL_CHECK(!markerVisible(MapKnowledge::Charted, kind));
     }
 
-    // Visited and Surveyed: everything. Surveyed adds no new *kind* - it is
-    // Visited with more signal bits already set, and those bits are applied by
-    // the fill rather than here.
+    // Visited and Surveyed: every kind is ADMITTED. Surveyed adds no new kind -
+    // it is Visited with more signal bits already set.
+    //
+    // ⚑ Phase 8z: "admitted" is now doing real work in this sentence. Station,
+    // Gate and Signal each carry a per-object bit that the fill applies on top
+    // of this answer, so passing here means only "this kind may appear at all"
+    // and never "this object is on the map". The composed rule - a Visited
+    // system with an undiscovered station shows no station marker - lives in
+    // map_ui.cpp's two fills, which sit in game/src and have no suite of their
+    // own; the bits underneath it are asserted in sim.unit's survey tests, and
+    // the composition is a drive assertion.
     for (const Kind kind : kinds) {
         SOL_CHECK(markerVisible(MapKnowledge::Visited, kind));
         SOL_CHECK(markerVisible(MapKnowledge::Surveyed, kind));

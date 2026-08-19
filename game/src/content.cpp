@@ -1995,6 +1995,56 @@ std::string plotRoute(GameContent& content, const char* systemName)
     return "no such system";
 }
 
+// Every station and gate in this system with what the player knows about it
+// (Phase 8z). Deliberately lists ALL of them, found or not — a probe that
+// showed only what the player can see could not tell "correctly hidden" from
+// "missing", which is the distinction the whole phase is made of. That is
+// stage 4's sol.hunters() rule: a probe that listed only hunts reported
+// "0 hunts" while a raider crossed the system in plain sight.
+//
+// Prints the distance beside the state so a drive can say *why* something is
+// still hidden — out of pulse range is not the same fact as unswept.
+std::string listStructures(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const std::uint32_t system = world.currentSystemIndex();
+    const sol::sim::SystemSpec& spec = world.galaxy().systems[system];
+    const sol::core::DVec3 position = world.shipState().position;
+    const sol::sim::SurveySim& survey = world.survey();
+    std::string lines;
+    const auto state = [](bool discovered, bool identified) {
+        return identified ? "identified" : discovered ? "contact" : "hidden";
+    };
+    std::uint32_t known = 0;
+    for (std::uint32_t i = 0; i < spec.stations.size(); ++i) {
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer), "station %u '%s': %s, %.0f km", i,
+                      spec.stations[i].name.c_str(),
+                      state(survey.stationDiscovered(system, i),
+                            survey.stationIdentified(system, i)),
+                      length(spec.stations[i].position - position) / 1000.0);
+        lines += lines.empty() ? "" : "\n";
+        lines += buffer;
+        known += survey.stationDiscovered(system, i) ? 1u : 0u;
+    }
+    for (std::uint32_t i = 0; i < spec.gates.size(); ++i) {
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer), "gate %u -> %s: %s, %.0f km", i,
+                      world.galaxy().systems[spec.gates[i].toSystem].name.c_str(),
+                      state(survey.gateDiscovered(system, i), survey.gateIdentified(system, i)),
+                      length(spec.gates[i].position - position) / 1000.0);
+        lines += lines.empty() ? "" : "\n";
+        lines += buffer;
+        known += survey.gateDiscovered(system, i) ? 1u : 0u;
+    }
+    char summary[128];
+    std::snprintf(summary, sizeof(summary), "\n%zu structure(s) in %s, %u found; pulse %.0f km",
+                  spec.stations.size() + spec.gates.size(), world.currentSystemName(), known,
+                  static_cast<double>(world.scanRange()) / 1000.0);
+    lines += summary;
+    return lines;
+}
+
 // Dev cheat: marks a system visited without flying there (map/route testing).
 bool chartSystem(GameContent& content, const char* systemName)
 {
@@ -2714,6 +2764,8 @@ void GameContent::registerBindings()
     // the rest are read-outs plus two dev levers (scan, chart).
     m_vm.registerFunction<&listKnowledge>("sol", "knowledge", this);
     m_vm.registerFunction<&listSignals>("sol", "signals", this);
+    // Phase 8z: what the player knows about the built things here.
+    m_vm.registerFunction<&listStructures>("sol", "structures", this);
     m_vm.registerFunction<&pulseScan>("sol", "pulse", this);
     m_vm.registerFunction<&scanTarget>("sol", "scan", this);
     m_vm.registerFunction<&salvageNearest>("sol", "salvage", this);
