@@ -18,6 +18,7 @@
 #include "sol/sim/pilot_tips.hpp"
 #include "sol/sim/missions.hpp"
 #include "sol/sim/power.hpp"
+#include "sol/sim/predation.hpp"
 #include "sol/sim/steering.hpp"
 #include "sol/sim/survey.hpp"
 #include "sol/sim/universe.hpp"
@@ -149,6 +150,14 @@ struct ShipPilot
     sol::core::DVec3 waypoint;
     float thinkTimer = 0.0f; // counts down to the next Lua think
     float weavePhase = 0.0f;
+    // Who last shot this ship, and how long that is still worth acting on
+    // (Phase 8x). Before this a pilot had no idea it was being attacked: it
+    // read its own hull and nothing else, so a hauler waited to lose 40% of it
+    // before running, and ran from whatever entity 0 happened to be. The
+    // window is short on purpose - a threat you have not seen in a few seconds
+    // is a threat you have lost, not one you keep hunting forever.
+    std::uint32_t threatIndex = 0;
+    float threatTimer = 0.0f;
     // Faction table index (Phase 8b), or ~0u for unaffiliated console spawns
     // (which Lua treats as unconditionally player-hostile, the pre-8b rule).
     std::uint32_t factionIndex = 0xffff'ffffu;
@@ -175,6 +184,25 @@ struct TraderPuppet
     // Where this leg ends, in system space. Recomputed when the leg changes
     // rather than every tick, because it only moves when the record does.
     sol::core::DVec3 destination;
+    // The record moved it this tick rather than its engines (Phase 8x stage
+    // 4). Written by the reconcile, read by prey selection: through the paced
+    // middle of a leg the schedule outruns every hull in the game, so a hunter
+    // that locked on would chase it forever without ever firing.
+    std::uint32_t paced = 0;
+};
+
+// One fighter and whatever it is going for, for the console probe. The
+// promotion's failure mode is the record and the sky disagreeing, and
+// predation's is a raider that says it is hunting while flying nowhere - so
+// this reports every fighter, hunting or not, and what it settled for.
+struct HunterInfo
+{
+    std::string name;
+    std::string prey;              // what it is going for, hauler or otherwise
+    std::uint32_t traderIndex = 0; // which coarse trader, when prey is a hauler
+    double distance = 0.0;         // to its target, meters
+    const char* state = "";
+    bool hunting = false; // its target is a trader body
 };
 
 // Runtime faction identity (Phase 8b): authored majors first, generated
@@ -375,6 +403,13 @@ inline constexpr double kTraderLaneSpacing = 400.0;
 // coarse sim and the bubble, which is the whole Simulation-LOD idea.
 inline constexpr double kTraderApproachDistance = 6'000.0;
 inline constexpr double kTraderApproachSeconds = 35.0;
+// How long a pilot remembers being shot at (Phase 8x §D). It asks 8l's
+// question - was this ship in this fight - but answers it for the victim
+// rather than for a bounty, so it is deliberately shorter than that 10 s
+// assist window: a bounty should forgive a lull, while a hauler that has not
+// been shot at for six seconds has genuinely been left alone and should get
+// back on its lane instead of fleeing forever.
+inline constexpr double kThreatMemorySeconds = 6.0;
 
 // How the player is looking at the world this frame (Phase 8j). The frame loop
 // owns the camera and the UI scale, and pushes both in here once per frame;
@@ -1079,10 +1114,28 @@ public:
     // faction it is at war with, or the player when hostile (and not docked).
     // False (and no state change) with nothing hostile in sensor range.
     bool pilotEngageEnemy(sol::ecs::Entity entity);
+    // Goes for a hauler (Phase 8x §D). Picks the nearest trader body the
+    // pilot's faction would attack — the same "at war with, or hostile to"
+    // test the coarse layer uses to choose a system to raid — and either
+    // attacks it or cruises after it, because a trade lane is hundreds of
+    // thousands of kilometres and the dogfight steering never leaves the
+    // normal envelope. False with nothing worth taking in reach, and a hunter
+    // that hears that stops travelling rather than flying at a stale point.
+    bool pilotHuntTrader(sol::ecs::Entity entity);
+    // Answers whoever last shot this ship, inside the threat window. This is
+    // the one target a pilot has that does not come from a search: it is not
+    // "the nearest enemy", it is the one that is actually shooting.
+    bool pilotEngageThreat(sol::ecs::Entity entity);
+    // Something has shot this ship recently (the window ShipPilot::threatTimer
+    // holds). What lets a hauler run before it is nearly dead.
+    [[nodiscard]] bool pilotUnderFire(sol::ecs::Entity entity) const;
     bool pilotFlee(sol::ecs::Entity entity);
     bool pilotIdle(sol::ecs::Entity entity);
     bool pilotPatrolTo(sol::ecs::Entity entity, sol::core::DVec3 waypoint);
     [[nodiscard]] double shipHullFraction(sol::ecs::Entity entity) const;
+    // Every hunter in the system and the hauler it is going for, for the
+    // console.
+    void hunterInfo(std::vector<HunterInfo>& out);
     // The playfield anchor Lua patrol offsets are relative to: the first
     // station of the current system, or the first nav target without one.
     [[nodiscard]] sol::core::DVec3 stationPosition() const
@@ -1099,6 +1152,12 @@ public:
         // Player standing vs the pilot's faction ("hostile"/"neutral"/
         // "friendly"), or "none" for unaffiliated console spawns.
         const char* attitude = "none";
+        // Whether this pilot flies for a pirate clan (Phase 8x). Strategy is
+        // Lua's, and "does a laden hauler outrank the enemy in front of me"
+        // is strategy: a clan came out for cargo, a navy came out for the war.
+        // Passed the same way faction_think and mission_board are already
+        // handed a pirate flag.
+        bool pirate = false;
     };
     void collectDuePilotThinks(double dt, std::vector<PilotThink>& out);
 
@@ -1288,7 +1347,9 @@ private:
     // Where the record says a trader is, on its schedule rather than its
     // engines. See keepTraderOnSchedule for why the two differ.
     [[nodiscard]] sol::core::DVec3 traderScheduledPoint(const TraderLegPlacement& leg) const;
-    void keepTraderOnSchedule(sol::ecs::Entity entity, const TraderLegPlacement& leg);
+    // True when the record moved the trader this tick rather than its engines,
+    // which is what makes it uncatchable and so unhuntable.
+    bool keepTraderOnSchedule(sol::ecs::Entity entity, const TraderLegPlacement& leg);
     // Removes a spawned ship with none of the death path's consequences.
     void despawnShip(std::uint32_t entityIndex);
     // Spawn at an explicit position (ambient wings); the public
@@ -1309,6 +1370,11 @@ private:
     // Scratch for syncTraderPuppets: which coarse traders already have a body.
     // A member so the per-tick reconcile does not allocate.
     std::vector<std::uint8_t> m_puppetPresent;
+    // Scratch for pilotHuntTrader (Phase 8x): the haulers in the sky and the
+    // hunter's hostility row. Members for the reconcile's reason - hunting is
+    // a per-think decision and every raider in the system makes it.
+    std::vector<sol::sim::PreyCandidate> m_preyCandidates;
+    std::vector<std::uint8_t> m_preyHostile;
     sol::sim::FlightInput m_shipInput;    // player input latch, applied in tick
     sol::sim::FlightInput m_appliedInput; // what the ship flew last tick
     bool m_autopilotActive = false;

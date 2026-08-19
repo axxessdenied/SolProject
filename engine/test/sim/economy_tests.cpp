@@ -942,6 +942,50 @@ SOL_TEST(economy_a_lost_haul_returns_the_trader_without_shrinking_the_fleet)
     SOL_CHECK(economy.route(0).leg == TraderLeg::None);
 }
 
+SOL_TEST(economy_a_detained_trader_holds_its_clock_and_then_carries_on)
+{
+    // Phase 8x §D. A hauler being shot at is not flying its leg. ⚑ Without
+    // this the record wins every fight: travelRemaining counts down whatever
+    // is happening in the bubble, so a hauler under fire arrives on schedule,
+    // starts its next leg, and its body is rebuilt somewhere else in the
+    // system - which a drive watched happen twice, at 2 km, with the raider
+    // already shooting.
+    const Galaxy galaxy = tinyGalaxy();
+    Economy economy;
+    economy.initialize(galaxy, tinyParams(), 5);
+    SOL_REQUIRE(economy.traders().size() == 1);
+    for (int second = 0; second < 200 && economy.traders()[0].phase != TraderPhase::InTransit;
+         ++second) {
+        economy.tick(galaxy, 1.0);
+    }
+    SOL_REQUIRE(economy.traders()[0].phase == TraderPhase::InTransit);
+
+    // Held: the clock does not move, however long the fight lasts.
+    const double held = economy.traders()[0].travelRemaining;
+    for (int second = 0; second < 5; ++second) {
+        economy.clearDetained();
+        economy.detainTrader(0);
+        SOL_CHECK(economy.detained(0));
+        economy.tick(galaxy, 1.0);
+    }
+    SOL_CHECK(economy.traders()[0].travelRemaining == held);
+    SOL_CHECK(economy.traders()[0].phase == TraderPhase::InTransit);
+
+    // Released, and the haul carries on from exactly where it stopped rather
+    // than catching up - a fight costs the delivery the time it took.
+    economy.clearDetained();
+    SOL_CHECK(!economy.detained(0));
+    economy.tick(galaxy, 1.0);
+    SOL_CHECK(economy.traders()[0].travelRemaining < held);
+    SOL_CHECK(economy.traders()[0].travelRemaining >= held - 1.5);
+
+    // Out-of-range indices are ignored rather than resizing anything, so the
+    // bubble handing over a stale trader index cannot detain trader zero.
+    economy.detainTrader(99);
+    SOL_CHECK(!economy.detained(99));
+    SOL_CHECK(!economy.detained(0));
+}
+
 SOL_TEST(economy_a_lost_haul_destroys_exactly_its_own_cargo)
 {
     // The goods leave the galaxy once. Everything a trader carries counts as

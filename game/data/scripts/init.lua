@@ -58,9 +58,10 @@ function on_tick(dt)
 end
 
 -- NPC pilot strategy (engine plan: Lua decides states, C++ steering flies
--- them). Called at 2 Hz per pilot with role, state, and the player's
--- attitude toward the pilot's faction ("hostile"/"neutral"/"friendly", or
--- "none" for unaffiliated console spawns, which stay player-hostile).
+-- them). Called at 2 Hz per pilot with role, state, the player's attitude
+-- toward the pilot's faction ("hostile"/"neutral"/"friendly", or "none" for
+-- unaffiliated console spawns, which stay player-hostile), and whether that
+-- faction is a pirate clan (Phase 8x: what a raider came out for).
 local patrolLegs = {
     { 2000.0,  400.0,     0.0},
     {    0.0,  400.0, -2000.0},
@@ -82,15 +83,22 @@ local function nextLeg(ship, legs, memory)
     sol.pilot_patrol_offset(ship, leg[1], leg[2], leg[3])
 end
 
-function pilot_think(ship, role, state, attitude)
+function pilot_think(ship, role, state, attitude, pirate)
     local hull = sol.pilot_hull(ship)
     if role == "fighter" then
-        -- Raiders: fight the local war (patrols) first; failing that, any
-        -- player their clan doesn't consider a friend is prey.
+        -- Raiders: answer whatever is shooting at you, then decide what you
+        -- came out for. A clan came for cargo, so a hauler outranks the local
+        -- war; a faction's fighters came for the war, so a freighter is what
+        -- they take when there is no enemy fleet to fight. Failing all of
+        -- that, any player their side doesn't consider a friend is prey.
         if hull < 0.3 then
             if state ~= "flee" then sol.pilot_flee(ship) end
         elseif state ~= "attack" then
-            if not sol.pilot_engage_enemy(ship) and attitude ~= "friendly" then
+            local busy = sol.pilot_under_fire(ship) and sol.pilot_engage_threat(ship)
+            if not busy and pirate then busy = sol.pilot_hunt_trader(ship) end
+            if not busy then busy = sol.pilot_engage_enemy(ship) end
+            if not busy and not pirate then busy = sol.pilot_hunt_trader(ship) end
+            if not busy and attitude ~= "friendly" then
                 sol.pilot_attack_player(ship)
             end
         end
@@ -105,8 +113,15 @@ function pilot_think(ship, role, state, attitude)
             nextLeg(ship, patrolLegs, patrolLeg)
         end
     elseif role == "trader" then
-        if hull < 0.6 then
+        -- A hauler is not a warship. It runs the moment something shoots at
+        -- it rather than waiting to lose 40% of its hull first: shields take
+        -- the first hits, so a hull-only rule means a freighter flies calmly
+        -- through the whole opening exchange. Once the shooting stops it goes
+        -- idle, and a puppet's own record puts it back on its lane.
+        if hull < 0.6 or sol.pilot_under_fire(ship) then
             if state ~= "flee" then sol.pilot_flee(ship) end
+        elseif state == "flee" then
+            sol.pilot_idle(ship)
         elseif state == "idle" then
             nextLeg(ship, traderLegs, traderLeg)
         end

@@ -118,6 +118,7 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
         }
     }
 
+    m_detained.assign(m_traders.size(), 0);
     m_tickPrices.assign(m_markets.size() * commodityCount, 0.0f);
     m_inbound.assign(m_markets.size() * commodityCount, 0.0f);
     m_satisfaction.assign(m_markets.size(), 1.0f);
@@ -389,6 +390,23 @@ bool Economy::loseTrader(std::uint32_t traderIndex)
     return true;
 }
 
+void Economy::clearDetained()
+{
+    m_detained.assign(m_traders.size(), 0);
+}
+
+void Economy::detainTrader(std::uint32_t traderIndex)
+{
+    if (traderIndex < m_detained.size()) {
+        m_detained[traderIndex] = 1;
+    }
+}
+
+bool Economy::detained(std::uint32_t traderIndex) const
+{
+    return traderIndex < m_detained.size() && m_detained[traderIndex] != 0;
+}
+
 void Economy::tick(const Galaxy& galaxy, double dt, FeedstockSource* source)
 {
     m_accumulator += dt;
@@ -507,12 +525,16 @@ void Economy::step(const Galaxy& galaxy, double dt, FeedstockSource* source)
 
     SOL_PROFILE_ZONE_NAMED(traderZone, "economy.traders");
     SOL_PROFILE_COUNT(traderZone, m_traders.size());
-    for (EconomyTrader& trader : m_traders) {
+    for (std::size_t index = 0; index < m_traders.size(); ++index) {
+        EconomyTrader& trader = m_traders[index];
         switch (trader.phase) {
         case TraderPhase::Idle:
             traderThink(galaxy, trader);
             break;
         case TraderPhase::InTransit:
+            if (index < m_detained.size() && m_detained[index] != 0) {
+                break; // being shot at: the delivery waits, the fight does not
+            }
             trader.travelRemaining -= dt;
             if (trader.travelRemaining <= 0.0) {
                 // Arrive and sell what the market can absorb. Whatever will

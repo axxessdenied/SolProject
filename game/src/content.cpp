@@ -126,6 +126,24 @@ bool pilotEngageEnemy(GameContent& content, scripting::EntityHandle ship)
     return content.world().pilotEngageEnemy(scripting::toEntity(ship));
 }
 
+// Predation (Phase 8x §D). Which hauler is fair game is a fact about the
+// galaxy and stays in C++; whether cargo outranks the war in front of you is
+// strategy and stays in pilot_think.
+bool pilotHuntTrader(GameContent& content, scripting::EntityHandle ship)
+{
+    return content.world().pilotHuntTrader(scripting::toEntity(ship));
+}
+
+bool pilotEngageThreat(GameContent& content, scripting::EntityHandle ship)
+{
+    return content.world().pilotEngageThreat(scripting::toEntity(ship));
+}
+
+bool pilotUnderFire(GameContent& content, scripting::EntityHandle ship)
+{
+    return content.world().pilotUnderFire(scripting::toEntity(ship));
+}
+
 bool pilotFlee(GameContent& content, scripting::EntityHandle ship)
 {
     return content.world().pilotFlee(scripting::toEntity(ship));
@@ -625,6 +643,37 @@ std::string traderPuppets(GameContent& content)
                   puppets.size() == 1 ? "y" : "ies",
                   world.galaxy().systems[world.currentSystemIndex()].name.c_str());
     return (lines.empty() ? std::string("(none)") : lines) + "\n" + buffer;
+}
+
+// Who is going for whom (Phase 8x §D). A hunt has two halves that can fail
+// separately - picking prey, and actually closing on it - so the probe prints
+// the state as well as the pair: "travel" is a raider still crossing the
+// system, "attack" is one that has arrived.
+std::string traderHunters(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::vector<game::HunterInfo> hunters;
+    world.hunterInfo(hunters);
+    std::string lines;
+    std::size_t hunting = 0;
+    char buffer[256];
+    for (const game::HunterInfo& hunter : hunters) {
+        hunting += hunter.hunting ? 1u : 0u;
+        if (hunter.hunting) {
+            std::snprintf(buffer, sizeof(buffer), "%s [%s] -> #%u %s  %.0f km",
+                          hunter.name.c_str(), hunter.state, hunter.traderIndex,
+                          hunter.prey.c_str(), hunter.distance / 1000.0);
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "%s [%s] -> %s", hunter.name.c_str(),
+                          hunter.state,
+                          hunter.prey.empty() ? "nothing" : hunter.prey.c_str());
+        }
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    std::snprintf(buffer, sizeof(buffer), "%zu fighter(s) here, %zu hunting a hauler in %s",
+                  hunters.size(), hunting,
+                  world.galaxy().systems[world.currentSystemIndex()].name.c_str());
+    return (lines.empty() ? std::string("(no fighters)") : lines) + "\n" + buffer;
 }
 
 // --- Trading (works while docked; market = the docked station) ---
@@ -2444,6 +2493,9 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&spawnPilotFaction>("sol", "spawn_pilot_faction", this);
     m_vm.registerFunction<&pilotAttackPlayer>("sol", "pilot_attack_player", this);
     m_vm.registerFunction<&pilotEngageEnemy>("sol", "pilot_engage_enemy", this);
+    m_vm.registerFunction<&pilotHuntTrader>("sol", "pilot_hunt_trader", this);
+    m_vm.registerFunction<&pilotEngageThreat>("sol", "pilot_engage_threat", this);
+    m_vm.registerFunction<&pilotUnderFire>("sol", "pilot_under_fire", this);
     m_vm.registerFunction<&pilotFlee>("sol", "pilot_flee", this);
     m_vm.registerFunction<&pilotIdle>("sol", "pilot_idle", this);
     m_vm.registerFunction<&pilotPatrolOffset>("sol", "pilot_patrol_offset", this);
@@ -2468,6 +2520,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
     m_vm.registerFunction<&traderRoutes>("sol", "traders", this);
     m_vm.registerFunction<&traderPuppets>("sol", "puppets", this);
+    m_vm.registerFunction<&traderHunters>("sol", "hunters", this);
     m_vm.registerFunction<&systemDanger>("sol", "danger", this);
     m_vm.registerFunction<&killTrader>("sol", "trader_kill", this);
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
@@ -2776,7 +2829,7 @@ void GameContent::tick(double dt)
         for (const SpaceWorld::PilotThink& think : m_pilotThinks) {
             std::string error;
             if (!m_vm.callGlobal("pilot_think", &error, scripting::toHandle(think.entity),
-                                 think.role, think.state, think.attitude)) {
+                                 think.role, think.state, think.attitude, think.pirate)) {
                 SOL_LOG_ERROR("pilot_think disabled until scripts reload: %s", error.c_str());
                 m_pilotHookFailed = true;
                 break;

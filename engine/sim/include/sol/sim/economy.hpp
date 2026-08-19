@@ -265,6 +265,25 @@ public:
     // cargo and a round trip, not a member of the fleet.
     bool loseTrader(std::uint32_t traderIndex);
 
+    // A trader that is fighting for its life is not making progress on its
+    // delivery (Phase 8x §D). Held traders skip the leg countdown for as long
+    // as the caller keeps saying so; clearDetained() then detain() runs once
+    // per game tick, so a hauler is released the moment nothing is on it.
+    //
+    // ⚑ Without this the record wins every fight. travelRemaining counts down
+    // whatever is happening in the bubble, so a hauler under fire still
+    // "arrives" on schedule, starts its next leg, and its body is rebuilt
+    // somewhere else in the system — a drive watched a raider reach 2 km and
+    // then find its prey 12,000 km away, twice, with no shot fired by anyone.
+    // The coarse clock models flying a leg, and a ship being shot at is not
+    // flying its leg.
+    //
+    // Transient by design: never serialized, and rebuilt from the bubble every
+    // tick exactly as puppets are, so a save taken mid-fight simply resumes.
+    void clearDetained();
+    void detainTrader(std::uint32_t traderIndex);
+    [[nodiscard]] bool detained(std::uint32_t traderIndex) const;
+
     // Dynamic state only (stocks, traders, phase accumulator); the layout is
     // re-derived from galaxy+params, and load fails if they don't match.
     void save(core::BinaryWriter& writer) const;
@@ -287,6 +306,9 @@ private:
     EconomyParams m_params;
     std::vector<StationMarket> m_markets;
     std::vector<EconomyTrader> m_traders;
+    // Per trader: its clock is held this tick (Phase 8x §D). Sized with the
+    // fleet in initialize, never saved.
+    std::vector<std::uint8_t> m_detained;
     // Hop counts between systems capped at maxTradeJumps + 1 sentinel,
     // precomputed (BFS per system) for trader route evaluation.
     std::vector<std::uint8_t> m_hops; // [from * systemCount + to]

@@ -8,6 +8,7 @@
 #include "sol/core/random.hpp"
 #include "sol/core/serialize.hpp"
 #include "sol/sim/collision.hpp"
+#include "sol/sim/predation.hpp"
 #include "sol/sim/steering.hpp"
 #include "sol/sim/trade_route.hpp"
 #include "sol/sim/weapons.hpp"
@@ -2157,6 +2158,10 @@ void SpaceWorld::syncTraderPuppets()
     }
     const std::size_t fleet = m_economy.traders().size();
     m_puppetPresent.assign(fleet, 0);
+    // Re-asserted from scratch every tick, like m_puppetPresent: a hold on a
+    // trader's clock is a fact about what is happening to its body right now,
+    // and a body that is gone can hold nothing.
+    m_economy.clearDetained();
 
     // Existing bodies first: anything whose record has moved on stops being
     // here, and anything whose leg has changed under it is rebuilt rather than
@@ -2180,6 +2185,9 @@ void SpaceWorld::syncTraderPuppets()
         // back on the leg it is actually here to fly. Done before the pacing
         // below, which declines to touch anything not on its leg.
         ShipPilot* pilot = m_registry.tryGet<ShipPilot>(entity);
+        if (pilot != nullptr && pilot->threatTimer > 0.0f) {
+            m_economy.detainTrader(puppet.traderIndex);
+        }
         if (pilot != nullptr &&
             (pilot->state == PilotState::Idle || pilot->state == PilotState::Patrol)) {
             pilot->state = PilotState::Travel;
@@ -2187,7 +2195,9 @@ void SpaceWorld::syncTraderPuppets()
         if (pilot != nullptr && pilot->state == PilotState::Travel) {
             pilot->waypoint = leg.to;
         }
-        keepTraderOnSchedule(entity, leg);
+        // Recorded rather than recomputed by prey selection: this is the only
+        // place that knows which of the two clocks moved the hauler this tick.
+        puppet.paced = keepTraderOnSchedule(entity, leg) ? 1u : 0u;
     }
     for (const ecs::Entity entity : doomed) {
         despawnShip(entity.index);
@@ -2246,6 +2256,13 @@ void SpaceWorld::syncTraderPuppets()
         Transform& transform = m_registry.storage<Transform>().get(entity.index);
         transform.orientation = lookAlong(leg.to - position);
         transform.previousOrientation = transform.orientation;
+        // Appearing mid-leg is the normal case, so a new body has to answer
+        // the same question the reconcile above answers: is the record flying
+        // this one? Skipping it would leave a hauler briefly advertised as
+        // huntable while being uncatchable, and hand it its lane speed a tick
+        // late into the bargain.
+        m_registry.storage<TraderPuppet>().get(entity.index).paced =
+            keepTraderOnSchedule(entity, leg) ? 1u : 0u;
         m_puppetPresent[t] = 1;
     }
 }
@@ -2275,22 +2292,32 @@ core::DVec3 SpaceWorld::traderScheduledPoint(const TraderLegPlacement& leg) cons
 // inside the approach window the ship owns it, which is the part with
 // anything to look at. That handover IS the Simulation-LOD promotion: coarse
 // where nobody is watching, full fidelity where they are.
-void SpaceWorld::keepTraderOnSchedule(ecs::Entity entity, const TraderLegPlacement& leg)
+bool SpaceWorld::keepTraderOnSchedule(ecs::Entity entity, const TraderLegPlacement& leg)
 {
     ShipPilot* pilot = m_registry.tryGet<ShipPilot>(entity);
     if (pilot != nullptr && pilot->state != PilotState::Travel) {
-        return; // fighting or running: its own business, and Lua's
+        return false; // fighting or running: its own business, and Lua's
+    }
+    // ⚑ And nor is a hauler someone is shooting at, whatever state it is in.
+    // A drive watched a raider close to 2 km, open fire, and then find its
+    // prey 13,000 km away: the hauler had stopped fleeing for one think, gone
+    // back on its lane, and the record — which moves it faster than any hull
+    // flies — carried it out of the fight. The schedule owns a hauler's
+    // position only while nothing is happening to it. Six seconds of quiet
+    // (kThreatMemorySeconds) is what "the fight is over" means here.
+    if (pilot != nullptr && pilot->threatTimer > 0.0f) {
+        return false;
     }
     const double elapsed = static_cast<double>(leg.progress) * leg.legSeconds;
     const double remaining = leg.legSeconds - elapsed;
     const double window = std::min(kTraderApproachSeconds, leg.legSeconds * 0.4);
     if (elapsed <= window || remaining <= window) {
-        return; // near an endpoint: it flies itself
+        return false; // near an endpoint: it flies itself
     }
     Transform* transform = m_registry.tryGet<Transform>(entity);
     FlightBody* body = m_registry.tryGet<FlightBody>(entity);
     if (transform == nullptr || body == nullptr) {
-        return;
+        return false;
     }
     const core::DVec3 point = traderScheduledPoint(leg);
     transform->position = point;
@@ -2310,6 +2337,7 @@ void SpaceWorld::keepTraderOnSchedule(ecs::Entity entity, const TraderLegPlaceme
             control != nullptr ? static_cast<double>(control->tuning.maxSpeed) * 2.0 : 200.0;
         body->velocity = lane * (envelope / distance);
     }
+    return true;
 }
 
 void SpaceWorld::traderPuppetInfo(std::vector<TraderPuppetInfo>& out)
@@ -2339,6 +2367,55 @@ void SpaceWorld::traderPuppetInfo(std::vector<TraderPuppetInfo>& out)
                 info.name = spawned.name;
                 break;
             }
+        }
+        out.push_back(std::move(info));
+    }
+}
+
+void SpaceWorld::hunterInfo(std::vector<HunterInfo>& out)
+{
+    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel"};
+    out.clear();
+    const ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
+    const ecs::Pool<TraderPuppet>& puppets = m_registry.storage<TraderPuppet>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const ShipPilot& pilot = pilots.values()[i];
+        // ⚑ Every fighter, not only the ones that found prey. A probe that
+        // listed hunts alone answered "0 hunts" while a raider was visibly
+        // crossing the system at cruise speed, which told me nothing about
+        // which half had failed - picking prey, or reporting it. What a hunt
+        // fails at is worth as much as that it happened.
+        if (pilot.role != PilotRole::Fighter) {
+            continue;
+        }
+        const std::uint32_t entityIndex = pilots.entityIndices()[i];
+        const Transform* from = m_registry.storage<Transform>().tryGet(entityIndex);
+        if (from == nullptr) {
+            continue;
+        }
+        HunterInfo info;
+        info.state =
+            kStateNames[static_cast<std::uint32_t>(pilot.state) % std::size(kStateNames)];
+        const TraderPuppet* prey =
+            pilot.hasTarget != 0 ? puppets.tryGet(pilot.targetIndex) : nullptr;
+        if (prey != nullptr) {
+            info.traderIndex = prey->traderIndex;
+            info.hunting = true;
+        }
+        const Transform* to = pilot.hasTarget != 0
+                                  ? m_registry.storage<Transform>().tryGet(pilot.targetIndex)
+                                  : nullptr;
+        info.distance = to != nullptr ? length(to->position - from->position) : 0.0;
+        for (const SpawnedShip& spawned : m_spawnedShips) {
+            if (spawned.entity.index == entityIndex) {
+                info.name = spawned.name;
+            } else if (pilot.hasTarget != 0 && spawned.entity.index == pilot.targetIndex) {
+                info.prey = spawned.name;
+            }
+        }
+        if (info.prey.empty() && pilot.hasTarget != 0 &&
+            pilot.targetIndex == playerEntityIndex()) {
+            info.prey = "the player";
         }
         out.push_back(std::move(info));
     }
@@ -4161,7 +4238,8 @@ sim::PowerPips pipsForPilot(PilotState state)
     case PilotState::Attack: return {3, 2, 1};
     case PilotState::Flee: return {0, 4, 2};
     case PilotState::Idle:
-    case PilotState::Patrol: break;
+    case PilotState::Patrol:
+    case PilotState::Travel: break;
     }
     return {2, 2, 2};
 }
@@ -4232,11 +4310,149 @@ bool SpaceWorld::pilotEngageEnemy(ecs::Entity entity)
     return true;
 }
 
+bool SpaceWorld::pilotUnderFire(ecs::Entity entity) const
+{
+    const ShipPilot* pilot =
+        m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    return pilot != nullptr && pilot->threatTimer > 0.0f;
+}
+
+bool SpaceWorld::pilotEngageThreat(ecs::Entity entity)
+{
+    ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    if (pilot == nullptr || pilot->threatTimer <= 0.0f) {
+        return false;
+    }
+    // The threat is a remembered entity index rather than a search result, so
+    // it has to be re-checked before it is flown at: the ship that shot us six
+    // seconds ago may be dead, and an index outliving its entity is how a
+    // pilot ends up attacking whatever was spawned into the slot next.
+    const ShipDefense* defense = m_registry.storage<ShipDefense>().tryGet(pilot->threatIndex);
+    if (defense == nullptr || !defense->state.alive() ||
+        m_registry.storage<Transform>().tryGet(pilot->threatIndex) == nullptr) {
+        pilot->threatTimer = 0.0f;
+        return false;
+    }
+    pilot->state = PilotState::Attack;
+    pilot->targetIndex = pilot->threatIndex;
+    pilot->hasTarget = 1;
+    if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
+        power->state.pips = pipsForPilot(pilot->state);
+    }
+    return true;
+}
+
+bool SpaceWorld::pilotHuntTrader(ecs::Entity entity)
+{
+    ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    const Transform* transform =
+        pilot != nullptr ? m_registry.tryGet<Transform>(entity) : nullptr;
+    const ShipControl* control = pilot != nullptr ? m_registry.tryGet<ShipControl>(entity) : nullptr;
+    if (pilot == nullptr || transform == nullptr || control == nullptr ||
+        pilot->factionIndex >= m_factionTable.size()) {
+        return false;
+    }
+
+    // Who this hunter would attack, in one row. ⚑ The test is the coarse
+    // layer's own: FactionSim::raidCandidates picks a system to raid by "at
+    // war with, or relations below hostile", and a raider in the bubble
+    // deciding whose freighter to burn is the same judgement one level down.
+    // Deriving it here rather than inventing a predation-specific rule is what
+    // keeps a raid the player watches consistent with a raid they only read
+    // about on the map.
+    m_preyHostile.assign(m_factionTable.size(), 0);
+    for (std::uint32_t other = 0; other < m_factionTable.size(); ++other) {
+        const bool hostile = m_factionSim.atWar(pilot->factionIndex, other) ||
+                             m_factionSim.relation(pilot->factionIndex, other) <
+                                 m_factionSim.params().hostileThreshold;
+        m_preyHostile[other] = hostile ? 1u : 0u;
+    }
+
+    m_preyCandidates.clear();
+    const ecs::Pool<TraderPuppet>& puppets = m_registry.storage<TraderPuppet>();
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        const std::uint32_t index = puppets.entityIndices()[i];
+        const Transform* body = m_registry.storage<Transform>().tryGet(index);
+        const ShipPilot* hauler = m_registry.storage<ShipPilot>().tryGet(index);
+        const ShipDefense* defense = m_registry.storage<ShipDefense>().tryGet(index);
+        if (body == nullptr || hauler == nullptr || defense == nullptr ||
+            !defense->state.alive()) {
+            continue;
+        }
+        const sim::TraderRoute route = m_economy.route(puppets.values()[i].traderIndex);
+        m_preyCandidates.push_back({.index = index,
+                                    .position = body->position,
+                                    .faction = hauler->factionIndex,
+                                    .paced = puppets.values()[i].paced != 0,
+                                    .inbound = route.leg == sim::TraderLeg::Arrive});
+    }
+
+    const std::uint32_t prey =
+        sim::choosePrey(transform->position, sim::preyReach(m_galaxyParams.gateDistance),
+                        m_preyCandidates, m_preyHostile);
+    if (prey == sim::kNoPrey) {
+        // Nothing left to take. A hunter that keeps its Travel state here
+        // would fly at the last place it saw a hauler for as long as the
+        // system stayed empty, so the hunt ending puts it back on the ground
+        // floor and lets the rest of pilot_think decide what it does instead.
+        if (pilot->state == PilotState::Travel) {
+            pilot->state = PilotState::Idle;
+            pilot->hasTarget = 0;
+        }
+        return false;
+    }
+
+    const double distance =
+        length(m_registry.storage<Transform>().get(prey).position - transform->position);
+    // ⚑ Two states, one target, and the split is not a tuning choice: the
+    // dogfight steering never leaves the normal envelope (a few hundred m/s)
+    // while a trade lane is hundreds of thousands of kilometres, so a raider
+    // told to "attack" something across the system would close on it for
+    // twenty minutes. Travel is the cruise drive and already exists for
+    // exactly this distance, so an intercept is a trade leg with a ship at the
+    // end of it. Weapon range is the handover, because that is precisely where
+    // flying stops being useful and fighting starts.
+    const ShipWeapon* weapon = m_registry.storage<ShipWeapon>().tryGet(entity.index);
+    const double engageRange = weapon != nullptr && weapon->kind != WeaponKind::None &&
+                                       weapon->range > 0.0f
+                                   ? static_cast<double>(weapon->range)
+                                   : kTraderArrivalRange;
+    pilot->targetIndex = prey;
+    pilot->hasTarget = 1;
+    pilot->state = distance <= engageRange ? PilotState::Attack : PilotState::Travel;
+    // ⚑ It flies to where the hauler is GOING, not to where the hauler is —
+    // and this is the stage's own lesson turned on the hunter. A drive watched
+    // a raider close a stern chase from 185,073 km to 9,869 km in ten seconds
+    // and then lose the ship anyway, because a leg ends on its own schedule:
+    // the prey went back on the record, or arrived, and its body went with it.
+    // You cannot catch a hauler in the middle of its leg, so you meet it at
+    // the end of one. The puppet already carries that point, so the raider
+    // gets to the pad first and waits, which is what an ambush is.
+    const TraderPuppet* preyPuppet = m_registry.storage<TraderPuppet>().tryGet(prey);
+    pilot->waypoint = preyPuppet != nullptr
+                          ? preyPuppet->destination
+                          : m_registry.storage<Transform>().get(prey).position;
+
+    if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
+        power->state.pips = pipsForPilot(pilot->state);
+    }
+    return true;
+}
+
 bool SpaceWorld::pilotFlee(ecs::Entity entity)
 {
     ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
     if (pilot == nullptr) {
         return false;
+    }
+    // Run from what is actually shooting. Flee steers away from targetIndex,
+    // and before Phase 8x nothing guaranteed that field meant anything at all
+    // — a hauler that had never picked a target fled from entity 0, which is
+    // the player, so the one ship coming to help was the one it ran from.
+    if (pilot->threatTimer > 0.0f &&
+        m_registry.storage<Transform>().tryGet(pilot->threatIndex) != nullptr) {
+        pilot->targetIndex = pilot->threatIndex;
+        pilot->hasTarget = 1;
     }
     pilot->state = PilotState::Flee;
     if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
@@ -4292,6 +4508,12 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
     ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
     for (std::size_t i = 0; i < pilots.size(); ++i) {
         ShipPilot& pilot = pilots.values()[i];
+        // The threat window ages here rather than in the steering pass: this
+        // is the one loop that visits every pilot exactly once with a dt, and
+        // a pilot with no hull left to shoot at still has to forget.
+        if (pilot.threatTimer > 0.0f) {
+            pilot.threatTimer = std::max(0.0f, pilot.threatTimer - static_cast<float>(dt));
+        }
         pilot.thinkTimer -= static_cast<float>(dt);
         if (pilot.thinkTimer > 0.0f) {
             continue;
@@ -4306,6 +4528,8 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
             .state = kStateNames[static_cast<std::uint32_t>(pilot.state) %
                                  std::size(kStateNames)],
             .attitude = attitude,
+            .pirate = pilot.factionIndex < m_factionTable.size() &&
+                      m_factionTable[pilot.factionIndex].pirate,
         });
     }
 }
@@ -4568,6 +4792,25 @@ void SpaceWorld::tick(double dt)
                 if (weapon != nullptr && weapon->kind != WeaponKind::None) {
                     input.trigger = sim::aimError(self, aimPoint) < 0.06 &&
                                     distance < static_cast<double>(weapon->range) * 0.9;
+                    // ⚑ A hauler with a fighter inside weapon range is under
+                    // threat whether or not a shot has connected yet, and this
+                    // is the tick-rate place that knows it (Phase 8x §D).
+                    // Arming it only on damage was not enough twice over: the
+                    // record kept moving a hauler that was being shot at, and
+                    // a six-second lull in the hits released the prey, expired
+                    // the lock and sent the raider off after a better-ranked
+                    // target 656,890 km away — abandoning a fight it was
+                    // winning at one kilometre. Threat is proximity plus
+                    // intent, not a hit counter.
+                    if (pilot.role == PilotRole::Fighter &&
+                        distance < static_cast<double>(weapon->range) &&
+                        m_registry.storage<TraderPuppet>().tryGet(pilot.targetIndex) != nullptr) {
+                        if (ShipPilot* hunted =
+                                m_registry.storage<ShipPilot>().tryGet(pilot.targetIndex)) {
+                            hunted->threatIndex = entityIndex;
+                            hunted->threatTimer = static_cast<float>(kThreatMemorySeconds);
+                        }
+                    }
                 }
                 break;
             }
@@ -5192,6 +5435,18 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex, const core::DVec3& hitPos
     if (attackerIndex == playerEntityIndex()) {
         if (ShipDefense* defense = m_registry.storage<ShipDefense>().tryGet(targetIndex)) {
             defense->playerAssist = kAssistSeconds;
+        }
+    }
+    // Phase 8x §D: tell the victim who is shooting it. Damage is the one
+    // place in the game that knows this for certain, and every hit already
+    // funnels through here, so one line gives every pilot in the game the
+    // fact it was missing - a hauler can run from the ship actually attacking
+    // it rather than from whatever entity 0 happened to be, and a raider
+    // cruising off after cargo can answer the patrol on its tail.
+    if (attackerIndex != kNoIndex && attackerIndex != targetIndex) {
+        if (ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(targetIndex)) {
+            pilot->threatIndex = attackerIndex;
+            pilot->threatTimer = static_cast<float>(kThreatMemorySeconds);
         }
     }
 }
