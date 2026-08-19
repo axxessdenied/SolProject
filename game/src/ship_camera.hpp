@@ -96,9 +96,10 @@ public:
 
     void snapTo(const Transform& ship) { m_chaseOrientation = ship.orientation; }
 
-    // Where the eye sits in ship space. cockpit.gltf is authored around this
-    // exact point by tools/scripts/gen_assets.ps1 - move it and the pilot ends
-    // up outside their own canopy.
+    // Where the eye sits in ship space. assets/meshes/cockpit.forge is authored
+    // around this exact point - its header says so and every coordinate in it is
+    // this offset plus something. Move it and the pilot ends up outside their
+    // own canopy.
     static constexpr sol::core::Vec3 kCockpitOffset = {0.0f, 0.8f, -5.0f};
 
 private:

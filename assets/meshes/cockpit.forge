@@ -1,0 +1,235 @@
+# The pilot's frame (Phase 8m) - the only part of their own ship the player ever
+# sees, since the hull is hidden in cockpit view.
+#
+# ⚑ IT IS AUTHORED IN SHIP SPACE, NOT AROUND ITS OWN ORIGIN, and that is why
+# every number below looks offset: the eye sits at kCockpitOffset = (0, 0.8, -5)
+# in ship_camera.hpp and this mesh is drawn at the ship's transform, so the seat
+# and the frame around it cannot drift apart. The generator wrote each point as
+# an offset from the eye and added the eye in; the offsets are kept in the
+# comments so a person can still read the shape.
+#
+# ⚑ AND THE EYE IS NOT A GROUP TRANSFORM HERE, DELIBERATELY. Putting one on a
+# parent part would express the same placement and would NOT reproduce this
+# mesh: a transform renormalises every normal it moves (mesh_build.cpp
+# addVertex), and a beam's oriented normal is not exactly unit in double, so
+# each one would shift in its last bits. A transform is free for a box and not
+# for anything computed - worth knowing before reaching for one.
+#
+# ⚑ Stage C's scale-reference boxes sit at the ORIGIN, so viewing this file in
+# the Forge puts the arm's-length reference five metres from where it belongs.
+# That is the tool's known gap, not this asset's.
+name = "cockpit"
+
+# --- canopy frame ---------------------------------------------------------
+# The eight frame joints, as offsets from the eye:
+#   l0/r0 (-+0.98, -0.30, -1.00)   l1/r1 (-+0.80, +0.58, -0.86)
+#   l2/r2 (-+0.66, +0.66, +0.34)   l3/r3 (-+0.92, -0.34, +0.34)
+# Beams are 2.6 texture repeats per metre throughout: this is a metre from the
+# player's eye, where a 0..1 stretch across a face reads as a smear.
+
+[[part]]
+id = "a_pillar_port"
+type = "beam"
+from = [-0.98, 0.5, -6.0]
+to = [-0.8, 1.38, -5.86]
+width = 0.075
+height = 0.075
+tile = 2.6
+
+[[part]]
+id = "a_pillar_starboard"
+type = "beam"
+from = [0.98, 0.5, -6.0]
+to = [0.8, 1.38, -5.86]
+width = 0.075
+height = 0.075
+tile = 2.6
+
+[[part]]
+id = "windscreen_header"
+type = "beam"
+from = [-0.8, 1.38, -5.86]
+to = [0.8, 1.38, -5.86]
+width = 0.07
+height = 0.07
+tile = 2.6
+
+[[part]]
+id = "roof_rail_port"
+type = "beam"
+from = [-0.8, 1.38, -5.86]
+to = [-0.66, 1.46, -4.66]
+width = 0.07
+height = 0.07
+tile = 2.6
+
+[[part]]
+id = "roof_rail_starboard"
+type = "beam"
+from = [0.8, 1.38, -5.86]
+to = [0.66, 1.46, -4.66]
+width = 0.07
+height = 0.07
+tile = 2.6
+
+[[part]]
+id = "roof_cross"
+type = "beam"
+from = [-0.66, 1.46, -4.66]
+to = [0.66, 1.46, -4.66]
+width = 0.07
+height = 0.07
+tile = 2.6
+
+[[part]]
+id = "sill_port"
+type = "beam"
+from = [-0.98, 0.5, -6.0]
+to = [-0.92, 0.46, -4.66]
+width = 0.1
+height = 0.09
+tile = 2.6
+
+[[part]]
+id = "sill_starboard"
+type = "beam"
+from = [0.98, 0.5, -6.0]
+to = [0.92, 0.46, -4.66]
+width = 0.1
+height = 0.09
+tile = 2.6
+
+[[part]]
+id = "c_pillar_port"
+type = "beam"
+from = [-0.92, 0.46, -4.66]
+to = [-0.66, 1.46, -4.66]
+width = 0.07
+height = 0.07
+tile = 2.6
+
+[[part]]
+id = "c_pillar_starboard"
+type = "beam"
+from = [0.92, 0.46, -4.66]
+to = [0.66, 1.46, -4.66]
+width = 0.07
+height = 0.07
+tile = 2.6
+
+# --- console, seat and bulkhead -------------------------------------------
+
+[[part]]
+id = "dash"
+type = "box"
+center = [0.0, 0.34, -5.7]
+size = [2.0, 0.28, 0.62]
+tile = 2.6
+
+[[part]]
+id = "side_console_port"
+type = "box"
+center = [-0.92, 0.56, -5.35]
+size = [0.22, 0.18, 0.9]
+tile = 2.6
+
+[[part]]
+id = "side_console_starboard"
+type = "box"
+center = [0.92, 0.56, -5.35]
+size = [0.22, 0.18, 0.9]
+tile = 2.6
+
+[[part]]
+id = "floor"
+type = "box"
+center = [0.0, 0.08, -5.35]
+size = [1.2, 0.08, 1.2]
+tile = 2.6
+
+[[part]]
+id = "seat_back"
+type = "box"
+center = [0.0, 0.7, -4.72]
+size = [0.62, 0.7, 0.1]
+tile = 2.6
+
+[[part]]
+id = "headrest"
+type = "box"
+center = [0.0, 1.14, -4.7]
+size = [0.34, 0.22, 0.1]
+tile = 2.6
+
+[[part]]
+id = "rear_bulkhead"
+type = "box"
+center = [0.0, 0.9, -4.6]
+size = [1.8, 1.0, 0.1]
+tile = 2.6
+
+# --- nose cowl ------------------------------------------------------------
+# A four-sided taper from the windscreen base out to a point ahead of the eye.
+# Offsets from the eye: A/B (-+0.34, -0.68, -1.00), C/D (-+0.34, -0.46, -1.00),
+# tip (0, -0.54, -1.95).
+
+[[part]]
+id = "cowl_upper"
+type = "flat_triangle"
+p0 = [-0.34, 0.34, -6.0]
+p1 = [0.34, 0.34, -6.0]
+p2 = [0.0, 0.26, -6.95]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [0.5, 1.0]
+
+[[part]]
+id = "cowl_lower"
+type = "flat_triangle"
+p0 = [0.34, 0.12, -6.0]
+p1 = [-0.34, 0.12, -6.0]
+p2 = [0.0, 0.26, -6.95]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [0.5, 1.0]
+
+[[part]]
+id = "cowl_port"
+type = "flat_triangle"
+p0 = [-0.34, 0.12, -6.0]
+p1 = [-0.34, 0.34, -6.0]
+p2 = [0.0, 0.26, -6.95]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [0.5, 1.0]
+
+[[part]]
+id = "cowl_starboard"
+type = "flat_triangle"
+p0 = [0.34, 0.34, -6.0]
+p1 = [0.34, 0.12, -6.0]
+p2 = [0.0, 0.26, -6.95]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [0.5, 1.0]
+
+# The cowl's open back, so the solid is closed and the weld test passes.
+[[part]]
+id = "cowl_back_lower"
+type = "flat_triangle"
+p0 = [-0.34, 0.12, -6.0]
+p1 = [0.34, 0.12, -6.0]
+p2 = [0.34, 0.34, -6.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [1.0, 1.0]
+
+[[part]]
+id = "cowl_back_upper"
+type = "flat_triangle"
+p0 = [-0.34, 0.12, -6.0]
+p1 = [0.34, 0.34, -6.0]
+p2 = [-0.34, 0.34, -6.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]

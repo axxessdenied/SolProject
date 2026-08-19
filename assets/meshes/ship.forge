@@ -1,0 +1,186 @@
+# The player's hull - a faceted wedge fighter, nose at -Z, about 12 m long.
+#
+# ⚑ THIS ASSET HAS NO PARAMETRIC STRUCTURE TO RECOVER, AND THAT IS THE HONEST
+# TRANSCRIPTION RATHER THAN A SHORTCOMING OF THE FORMAT. The generator wrote a
+# loop over two four-point rings, but the two rings are different shapes and the
+# nose is a fan onto a single point, so it is a LOFT and not an extrude - and
+# inventing a loft primitive to fit one asset would mean shaping a general
+# vocabulary around a single caller. Sixteen flat triangles is what the ship is.
+#
+# The point tables the loop indexed are written once here as comments, so a
+# person editing the hull can still see the two rings the triangles came from:
+#
+#   nose  ( 0.0,  0.3, -7.0)
+#   front (-2.6, -1.3, -1.0) ( 2.6, -1.3, -1.0) ( 2.0,  1.5, -1.0) (-2.0,  1.5, -1.0)
+#   rear  (-3.5, -1.7,  5.0) ( 3.5, -1.7,  5.0) ( 2.6,  2.0,  5.0) (-2.6,  2.0,  5.0)
+#
+# ⚑ Moving a shared corner therefore means editing it in every triangle that
+# touches it - four of them for a front corner. That is precisely the pain
+# stage E exists to remove, and this file is the case for it.
+name = "ship"
+
+# --- quadrant 0: front[0] -> front[1] -------------------------------------
+[[part]]
+id = "nose_0"
+type = "flat_triangle"
+p0 = [0.0, 0.3, -7.0]
+p1 = [2.6, -1.3, -1.0]
+p2 = [-2.6, -1.3, -1.0]
+uv0 = [0.5, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]
+
+[[part]]
+id = "hull_0a"
+type = "flat_triangle"
+p0 = [-2.6, -1.3, -1.0]
+p1 = [2.6, -1.3, -1.0]
+p2 = [3.5, -1.7, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [1.0, 1.0]
+
+[[part]]
+id = "hull_0b"
+type = "flat_triangle"
+p0 = [-2.6, -1.3, -1.0]
+p1 = [3.5, -1.7, 5.0]
+p2 = [-3.5, -1.7, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]
+
+# --- quadrant 1: front[1] -> front[2] -------------------------------------
+[[part]]
+id = "nose_1"
+type = "flat_triangle"
+p0 = [0.0, 0.3, -7.0]
+p1 = [2.0, 1.5, -1.0]
+p2 = [2.6, -1.3, -1.0]
+uv0 = [0.5, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]
+
+[[part]]
+id = "hull_1a"
+type = "flat_triangle"
+p0 = [2.6, -1.3, -1.0]
+p1 = [2.0, 1.5, -1.0]
+p2 = [2.6, 2.0, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [1.0, 1.0]
+
+[[part]]
+id = "hull_1b"
+type = "flat_triangle"
+p0 = [2.6, -1.3, -1.0]
+p1 = [2.6, 2.0, 5.0]
+p2 = [3.5, -1.7, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]
+
+# --- quadrant 2: front[2] -> front[3] -------------------------------------
+[[part]]
+id = "nose_2"
+type = "flat_triangle"
+p0 = [0.0, 0.3, -7.0]
+p1 = [-2.0, 1.5, -1.0]
+p2 = [2.0, 1.5, -1.0]
+uv0 = [0.5, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]
+
+[[part]]
+id = "hull_2a"
+type = "flat_triangle"
+p0 = [2.0, 1.5, -1.0]
+p1 = [-2.0, 1.5, -1.0]
+p2 = [-2.6, 2.0, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [1.0, 1.0]
+
+[[part]]
+id = "hull_2b"
+type = "flat_triangle"
+p0 = [2.0, 1.5, -1.0]
+p1 = [-2.6, 2.0, 5.0]
+p2 = [2.6, 2.0, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]
+
+# --- quadrant 3: front[3] -> front[0] -------------------------------------
+[[part]]
+id = "nose_3"
+type = "flat_triangle"
+p0 = [0.0, 0.3, -7.0]
+p1 = [-2.6, -1.3, -1.0]
+p2 = [-2.0, 1.5, -1.0]
+uv0 = [0.5, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]
+
+[[part]]
+id = "hull_3a"
+type = "flat_triangle"
+p0 = [-2.0, 1.5, -1.0]
+p1 = [-2.6, -1.3, -1.0]
+p2 = [-3.5, -1.7, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [1.0, 1.0]
+
+[[part]]
+id = "hull_3b"
+type = "flat_triangle"
+p0 = [-2.0, 1.5, -1.0]
+p1 = [-3.5, -1.7, 5.0]
+p2 = [-2.6, 2.0, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]
+
+# --- engine deck, wound CCW seen from +Z ----------------------------------
+[[part]]
+id = "rear_lower"
+type = "flat_triangle"
+p0 = [-3.5, -1.7, 5.0]
+p1 = [3.5, -1.7, 5.0]
+p2 = [2.6, 2.0, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [1.0, 1.0]
+
+[[part]]
+id = "rear_upper"
+type = "flat_triangle"
+p0 = [-3.5, -1.7, 5.0]
+p1 = [2.6, 2.0, 5.0]
+p2 = [-2.6, 2.0, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 1.0]
+uv2 = [0.0, 1.0]
+
+# --- dorsal fin: one blade, drawn from both sides so it is closed ---------
+[[part]]
+id = "fin_port"
+type = "flat_triangle"
+p0 = [0.0, 1.7, 1.0]
+p1 = [0.0, 3.8, 4.6]
+p2 = [0.0, 2.0, 5.0]
+uv0 = [0.0, 0.0]
+uv1 = [0.5, 1.0]
+uv2 = [1.0, 0.0]
+
+[[part]]
+id = "fin_starboard"
+type = "flat_triangle"
+p0 = [0.0, 1.7, 1.0]
+p1 = [0.0, 2.0, 5.0]
+p2 = [0.0, 3.8, 4.6]
+uv0 = [0.0, 0.0]
+uv1 = [1.0, 0.0]
+uv2 = [0.5, 1.0]

@@ -1,0 +1,80 @@
+# The station - habitat torus, hub, spokes and solar panels, in meters.
+#
+# ⚑ THIS MESH MEASURES 102.0 m FROM ITS OWN ORIGIN AND models.toml AUTHORS ITS
+# RADIUS AS 100.0, so the collision sphere the sim builds sits INSIDE the hull
+# the player can see. Stage C found that by eye and it is recorded here rather
+# than quietly corrected: a torus at major 90 + tube 12 reaches 102 by
+# construction, so whichever number moves is a gameplay decision about how close
+# a ship may come, not a transcription detail.
+#
+# The order below is the file's emission order and therefore the mesh's vertex
+# numbering: torus first, then the hub it rings.
+name = "station"
+
+# Habitat ring. 40 segments around, 12 around the tube, texture repeating 8
+# times about the circumference.
+[[part]]
+id = "habitat_ring"
+type = "torus"
+major_radius = 90.0
+tube_radius = 12.0
+segments_u = 40
+segments_v = 12
+u_tiles = 8.0
+
+[[part]]
+id = "hub"
+type = "box"
+center = [0.0, 0.0, 0.0]
+size = [44.0, 60.0, 44.0]
+
+# The four spokes out to the ring. Written as four separate boxes rather than
+# one part turned four times because they are AXIS-ALIGNED and differ in which
+# axis is long - a rotation would express the same thing less plainly.
+[[part]]
+id = "spoke_east"
+type = "box"
+center = [47.0, 0.0, 0.0]
+size = [86.0, 6.0, 6.0]
+
+[[part]]
+id = "spoke_west"
+type = "box"
+center = [-47.0, 0.0, 0.0]
+size = [86.0, 6.0, 6.0]
+
+[[part]]
+id = "spoke_south"
+type = "box"
+center = [0.0, 0.0, 47.0]
+size = [6.0, 6.0, 86.0]
+
+[[part]]
+id = "spoke_north"
+type = "box"
+center = [0.0, 0.0, -47.0]
+size = [6.0, 6.0, 86.0]
+
+[[part]]
+id = "mast_upper"
+type = "box"
+center = [0.0, 44.0, 0.0]
+size = [3.0, 28.0, 3.0]
+
+[[part]]
+id = "mast_lower"
+type = "box"
+center = [0.0, -44.0, 0.0]
+size = [3.0, 28.0, 3.0]
+
+[[part]]
+id = "panel_upper"
+type = "box"
+center = [0.0, 62.0, 0.0]
+size = [76.0, 1.5, 26.0]
+
+[[part]]
+id = "panel_lower"
+type = "box"
+center = [0.0, -62.0, 0.0]
+size = [76.0, 1.5, 26.0]

@@ -831,10 +831,10 @@ int main(int argc, char** argv)
         }
 
         // The hull stays hidden in the cockpit: the eye sits 5 m up the nose of
-        // a 12 m faceted wedge with no interior, so drawing ship.gltf around it
-        // would park the camera inside a solid shell. Anything of the ship that
-        // should be visible from the seat is authored into cockpit.gltf, which
-        // is the only mesh that knows where the seat is.
+        // a 12 m faceted wedge with no interior, so drawing the ship mesh around
+        // it would park the camera inside a solid shell. Anything of the ship
+        // that should be visible from the seat is authored into cockpit.forge,
+        // which is the only mesh that knows where the seat is.
         {
             SOL_PROFILE_ZONE("render.buildInstances");
             world.buildRenderInstances(simAlpha, !inCockpit, renderInstances);

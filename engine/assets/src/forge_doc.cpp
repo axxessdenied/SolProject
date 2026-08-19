@@ -14,12 +14,12 @@ namespace {
 
 using core::TomlValue;
 
-constexpr const char* kPrimitiveNames[] = {"group",         "box",     "beam",   "torus",
-                                           "flat_triangle", "revolve", "extrude"};
+constexpr const char* kPrimitiveNames[] = {"group",         "box",     "beam",    "torus",
+                                           "flat_triangle", "revolve", "extrude", "mesh"};
 constexpr ForgePrimitive kPrimitives[] = {
-    ForgePrimitive::Group,   ForgePrimitive::Box,     ForgePrimitive::Beam,
-    ForgePrimitive::Torus,   ForgePrimitive::FlatTriangle, ForgePrimitive::Revolve,
-    ForgePrimitive::Extrude,
+    ForgePrimitive::Group,        ForgePrimitive::Box,     ForgePrimitive::Beam,
+    ForgePrimitive::Torus,        ForgePrimitive::FlatTriangle, ForgePrimitive::Revolve,
+    ForgePrimitive::Extrude,      ForgePrimitive::Mesh,
 };
 
 [[nodiscard]] ForgeValue scalarValue(double v)
@@ -68,6 +68,23 @@ constexpr ForgePrimitive kPrimitives[] = {
             }
         }
         return true;
+    case ForgeParamKind::VertexList:
+        if (a.vertices.size() != b.vertices.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < a.vertices.size(); ++i) {
+            const ForgeVertex& x = a.vertices[i];
+            const ForgeVertex& y = b.vertices[i];
+            if (x.position.x != y.position.x || x.position.y != y.position.y ||
+                x.position.z != y.position.z || x.normal.x != y.normal.x ||
+                x.normal.y != y.normal.y || x.normal.z != y.normal.z || x.uv.u != y.uv.u ||
+                x.uv.v != y.uv.v) {
+                return false;
+            }
+        }
+        return true;
+    case ForgeParamKind::IndexList:
+        return a.indices == b.indices;
     }
     return false;
 }
@@ -99,6 +116,34 @@ void appendNumber(std::string& out, double value)
     out += buffer;
     // TOML tells integers and floats apart by the dot, and every number here is
     // a float to the reader, so keep one.
+    if (std::strpbrk(buffer, ".eEni") == nullptr) {
+        out += ".0";
+    }
+}
+
+// As appendNumber, but the value only has to survive a round trip through
+// FLOAT. Baked geometry came out of a MeshData, whose vertices are float, so
+// the extra digits a double writer emits are not precision - they are the
+// decimal expansion of a binary value that carries no more information. At 960
+// vertices and eight numbers each, the difference is a file a person can scan
+// against one they cannot.
+void appendMeshNumber(std::string& out, double value)
+{
+    const auto target = static_cast<float>(value);
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.9g", value);
+    for (int precision = 1; precision <= 9; ++precision) {
+        char candidate[64];
+        std::snprintf(candidate, sizeof(candidate), "%.*g", precision, value);
+        if (std::strpbrk(candidate, "eE") != nullptr) {
+            continue;
+        }
+        if (static_cast<float>(std::strtod(candidate, nullptr)) == target) {
+            std::memcpy(buffer, candidate, sizeof(buffer));
+            break;
+        }
+    }
+    out += buffer;
     if (std::strpbrk(buffer, ".eEni") == nullptr) {
         out += ".0";
     }
@@ -203,6 +248,54 @@ struct Reader
             }
             return true;
         }
+        case ForgeParamKind::VertexList: {
+            if (!value.isArray()) {
+                fail(std::string("'") + spec.name +
+                     "' must be an array of [px, py, pz, nx, ny, nz, u, v] rows");
+                return false;
+            }
+            out.vertices.clear();
+            out.vertices.reserve(value.size());
+            for (std::size_t i = 0; i < value.size(); ++i) {
+                const TomlValue& row = value[i];
+                double parts[8] = {};
+                if (!row.isArray() || row.size() != 8) {
+                    fail(std::string("'") + spec.name + "' row " + std::to_string(i) +
+                         " must be eight numbers: position, normal, uv");
+                    return false;
+                }
+                for (std::size_t c = 0; c < 8; ++c) {
+                    if (!row[c].isFloat() && !row[c].isInteger()) {
+                        fail(std::string("'") + spec.name + "' row " + std::to_string(i) +
+                             " must be eight numbers: position, normal, uv");
+                        return false;
+                    }
+                    parts[c] = row[c].asFloat();
+                }
+                out.vertices.push_back({{parts[0], parts[1], parts[2]},
+                                        {parts[3], parts[4], parts[5]},
+                                        {parts[6], parts[7]}});
+            }
+            return true;
+        }
+        case ForgeParamKind::IndexList: {
+            if (!value.isArray()) {
+                fail(std::string("'") + spec.name + "' must be an array of whole numbers");
+                return false;
+            }
+            out.indices.clear();
+            out.indices.reserve(value.size());
+            for (std::size_t i = 0; i < value.size(); ++i) {
+                const TomlValue& element = value[i];
+                if (!element.isInteger() || element.asInteger() < 0) {
+                    fail(std::string("'") + spec.name +
+                         "' must be an array of whole numbers, none negative");
+                    return false;
+                }
+                out.indices.push_back(static_cast<std::uint32_t>(element.asInteger()));
+            }
+            return true;
+        }
         }
         return false;
     }
@@ -301,6 +394,13 @@ std::span<const ForgeParamSpec> forgeParams(ForgePrimitive primitive)
         {"u_tiles", ForgeParamKind::Scalar, scalarValue(1.0)},
         {"cap_ends", ForgeParamKind::Boolean, scalarValue(0.0)},
     };
+    // A baked part defaults to EMPTY rather than to some placeholder solid: a
+    // bake is only ever created from geometry that already exists, so a default
+    // shape here would be a shape nobody asked for.
+    static const std::vector<ForgeParamSpec> kMesh = {
+        {"vertices", ForgeParamKind::VertexList, ForgeValue{}},
+        {"indices", ForgeParamKind::IndexList, ForgeValue{}},
+    };
     static const std::vector<ForgeParamSpec> kExtrude = {
         {"outline", ForgeParamKind::Profile, ForgeValue{}},
         {"from", ForgeParamKind::Vec3, vecValue({0, 0, 0})},
@@ -320,6 +420,8 @@ std::span<const ForgeParamSpec> forgeParams(ForgePrimitive primitive)
         return kTorus;
     case ForgePrimitive::FlatTriangle:
         return kFlatTriangle;
+    case ForgePrimitive::Mesh:
+        return kMesh;
     case ForgePrimitive::Revolve:
         return kRevolve;
     case ForgePrimitive::Extrude:
@@ -671,6 +773,45 @@ std::string writeForge(const ForgeDoc& doc)
                 }
                 out += "]";
                 break;
+            // ⚑ These two are the only parameters written across several lines,
+            // and the reason is the diff. A baked part is hundreds of vertices;
+            // on one line, moving one of them rewrites the single longest line
+            // in the file and a reviewer sees a wall. One vertex per line makes
+            // that edit one line, which is the entire argument for a text
+            // format over the base64 glTF this replaces.
+            case ForgeParamKind::VertexList:
+                out += "[\n";
+                for (const ForgeVertex& vertex : authored->vertices) {
+                    out += "  [";
+                    const double numbers[8] = {vertex.position.x, vertex.position.y,
+                                               vertex.position.z, vertex.normal.x,
+                                               vertex.normal.y,   vertex.normal.z,
+                                               vertex.uv.u,       vertex.uv.v};
+                    for (std::size_t i = 0; i < std::size(numbers); ++i) {
+                        if (i != 0) {
+                            out += ", ";
+                        }
+                        appendMeshNumber(out, numbers[i]);
+                    }
+                    out += "],\n";
+                }
+                out += "]";
+                break;
+            case ForgeParamKind::IndexList:
+                out += "[\n";
+                for (std::size_t i = 0; i < authored->indices.size(); ++i) {
+                    // One triangle per line, for the same reason.
+                    out += (i % 3 == 0) ? "  " : ", ";
+                    out += std::to_string(authored->indices[i]);
+                    if (i % 3 == 2) {
+                        out += ",\n";
+                    }
+                }
+                if (authored->indices.size() % 3 != 0) {
+                    out += "\n";
+                }
+                out += "]";
+                break;
             }
             out += "\n";
         }
@@ -684,6 +825,28 @@ BuildTransform forgeWorldTransform(const ForgeDoc& doc, std::size_t partIndex)
         return {};
     }
     return worldTransforms(doc)[partIndex];
+}
+
+ForgePart forgeBakePart(const std::string& id, const MeshData& mesh)
+{
+    ForgePart part;
+    part.id = id;
+    part.primitive = ForgePrimitive::Mesh;
+
+    ForgeValue vertices;
+    vertices.vertices.reserve(mesh.vertices.size());
+    for (const MeshVertex& vertex : mesh.vertices) {
+        vertices.vertices.push_back(
+            {{vertex.position[0], vertex.position[1], vertex.position[2]},
+             {vertex.normal[0], vertex.normal[1], vertex.normal[2]},
+             {vertex.uv[0], vertex.uv[1]}});
+    }
+    part.set("vertices", vertices);
+
+    ForgeValue indices;
+    indices.indices = mesh.indices;
+    part.set("indices", indices);
+    return part;
 }
 
 bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error)
@@ -752,6 +915,47 @@ bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error)
             }
             builder.addExtrude(outline.profile, part.value("from").vec, part.value("to").vec,
                                part.value("tile").scalar, part.value("cap_ends").scalar != 0.0);
+            break;
+        }
+        case ForgePrimitive::Mesh: {
+            // find() rather than value(): a baked part's parameter is hundreds
+            // of vertices and value() returns a copy of it.
+            const ForgeValue* vertices = part.find("vertices");
+            const ForgeValue* indices = part.find("indices");
+            if (vertices == nullptr || indices == nullptr || vertices->vertices.empty() ||
+                indices->indices.empty()) {
+                if (error != nullptr) {
+                    *error = "part '" + part.id + "': a mesh part needs vertices and indices";
+                }
+                return false;
+            }
+            if (indices->indices.size() % 3 != 0) {
+                if (error != nullptr) {
+                    *error = "part '" + part.id + "': indices must come in threes";
+                }
+                return false;
+            }
+            const auto count = static_cast<std::uint32_t>(vertices->vertices.size());
+            for (const std::uint32_t index : indices->indices) {
+                if (index >= count) {
+                    if (error != nullptr) {
+                        *error = "part '" + part.id + "': index " + std::to_string(index) +
+                                 " is past the part's " + std::to_string(count) + " vertices";
+                    }
+                    return false;
+                }
+            }
+            // ⚑ Indices are part-local and the builder's are document-wide, so
+            // they are rebased. Anything else would make a baked part's meaning
+            // depend on what happened to be emitted before it.
+            const std::uint32_t base = builder.vertexCount();
+            for (const ForgeVertex& vertex : vertices->vertices) {
+                builder.addVertex(vertex.position, vertex.normal, vertex.uv);
+            }
+            for (std::size_t t = 0; t + 2 < indices->indices.size(); t += 3) {
+                builder.addTriangle(base + indices->indices[t], base + indices->indices[t + 1],
+                                    base + indices->indices[t + 2]);
+            }
             break;
         }
         }

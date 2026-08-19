@@ -84,8 +84,14 @@ using sol::assets::MeshBuilder;
 // 16777619` promotes to DOUBLE, so every step past the first is the product
 // rounded to 53 bits before it is masked back to 32. Measured, not guessed -
 // `('-0.5257|0.8507|0.0000')` hashes to 2051818176 in PowerShell and 27768919
-// in real FNV-1a, and asteroid.gltf in this repo is built on the first number.
-// A "corrected" hash here would silently re-author a shipped asset.
+// in real FNV-1a, and the asteroid this game ships is built on the first
+// number. A "corrected" hash here would silently re-author a shipped asset.
+//
+// ⚑ This recipe is now the PROVENANCE of assets/meshes/asteroid.forge, which is
+// baked rather than parametric precisely so that this arithmetic never has to
+// exist in engine code. Both are pinned to the same hashes below, so they are
+// one asset with a net rather than two implementations - but if you ever want a
+// DIFFERENT rock, this is what you edit, and then you re-bake.
 [[nodiscard]] inline std::uint32_t powershellHashStep(std::uint32_t hash, char character)
 {
     const auto xored = static_cast<double>(hash ^ static_cast<unsigned char>(character));

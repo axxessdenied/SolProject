@@ -1,11 +1,15 @@
 #include "shipped_meshes.hpp"
 
+#include "sol/assets/forge_doc.hpp"
 #include "sol/assets/mesh_edit.hpp"
 #include "sol/core/hash.hpp"
 #include "sol/test/test.hpp"
 
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -140,6 +144,94 @@ void checkAgainstShipped(const char* name, const MeshData& mesh)
     SOL_CHECK(checkHash(name, "indices", hashIndices(mesh), truth.indexHash));
 }
 
+// ⚑ THE NET NOW REACHES THE COMMITTED FILES, WHICH IT DID NOT BEFORE. Until the
+// script's mesh half was retired, these five meshes were proved by re-authoring
+// them in C++ above and hashing the result - and the `.gltf` files the game
+// actually cooked were never opened by anything. That was survivable only while
+// a second implementation held the truth. Now `assets/meshes/*.forge` IS the
+// source the cooker reads, so a transcription that is right in this header and
+// wrong in the file has to fail, and the only way to make it fail is to read the
+// file. The path comes from CMake rather than a walk up from the working
+// directory, because a test that guesses where the repo is finds a different
+// answer under ctest than under a debugger.
+[[nodiscard]] std::string readSourceFile(const std::string& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        std::printf("  cannot open %s\n", path.c_str());
+        return {};
+    }
+    std::ostringstream contents;
+    contents << file.rdbuf();
+    return contents.str();
+}
+
+[[nodiscard]] bool buildFromForgeSource(const char* name, MeshData& out)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+    const std::string text = readSourceFile(path);
+    if (text.empty()) {
+        return false;
+    }
+    assets::ForgeDoc doc;
+    std::string error;
+    if (!assets::parseForge(text.data(), text.size(), path.c_str(), doc, &error)) {
+        std::printf("  %s\n", error.c_str());
+        return false;
+    }
+    if (doc.name != name) {
+        std::printf("  %s.forge names itself '%s'\n", name, doc.name.c_str());
+        return false;
+    }
+    if (!assets::buildForge(doc, out, &error)) {
+        std::printf("  %s\n", error.c_str());
+        return false;
+    }
+    return true;
+}
+
+// A hash comparison says a transcription is wrong; this says WHICH NUMBER is
+// wrong, which is the difference between a five-minute fix and an afternoon.
+// The two meshes are built from the same recipe by two routes, so the first
+// vertex that disagrees is the part that was mistyped.
+bool reportFirstDifference(const char* name, const MeshData& fromFile, const MeshData& fromRecipe)
+{
+    if (fromFile.vertices.size() != fromRecipe.vertices.size()) {
+        std::printf("  %s: %zu vertices from the file, %zu from the recipe\n", name,
+                    fromFile.vertices.size(), fromRecipe.vertices.size());
+        return false;
+    }
+    for (std::size_t i = 0; i < fromFile.vertices.size(); ++i) {
+        const assets::MeshVertex& a = fromFile.vertices[i];
+        const assets::MeshVertex& b = fromRecipe.vertices[i];
+        for (int c = 0; c < 3; ++c) {
+            if (a.position[c] != b.position[c] || a.normal[c] != b.normal[c]) {
+                std::printf("  %s vertex %zu: file pos (%.9g %.9g %.9g) nrm (%.9g %.9g %.9g)\n", name,
+                            i, a.position[0], a.position[1], a.position[2], a.normal[0], a.normal[1],
+                            a.normal[2]);
+                std::printf("  %s vertex %zu: want pos (%.9g %.9g %.9g) nrm (%.9g %.9g %.9g)\n", name,
+                            i, b.position[0], b.position[1], b.position[2], b.normal[0], b.normal[1],
+                            b.normal[2]);
+                return false;
+            }
+        }
+        if (a.uv[0] != b.uv[0] || a.uv[1] != b.uv[1]) {
+            std::printf("  %s vertex %zu uv: file (%.9g %.9g), want (%.9g %.9g)\n", name, i, a.uv[0],
+                        a.uv[1], b.uv[0], b.uv[1]);
+            return false;
+        }
+    }
+    return fromFile.indices == fromRecipe.indices;
+}
+
+void checkForgeSourceIsTheShippedMesh(const char* name, const MeshData& fromRecipe)
+{
+    MeshData fromFile;
+    SOL_REQUIRE(buildFromForgeSource(name, fromFile));
+    SOL_CHECK(reportFirstDifference(name, fromFile, fromRecipe));
+    checkAgainstShipped(name, fromFile);
+}
+
 } // namespace
 
 SOL_TEST(cubeReproducesTheShippedMesh)
@@ -165,6 +257,60 @@ SOL_TEST(asteroidReproducesTheShippedMesh)
 SOL_TEST(cockpitReproducesTheShippedMesh)
 {
     checkAgainstShipped("cockpit", shipped::buildCockpit());
+}
+
+// The committed sources, read from disk. These are the assertions that let the
+// PowerShell generator's mesh half be deleted: after this, the file in the repo
+// is the only thing describing these meshes, and if it stops describing them the
+// suite says so.
+SOL_TEST(theCubeForgeSourceIsTheShippedMesh)
+{
+    checkForgeSourceIsTheShippedMesh("cube", shipped::buildCube());
+}
+
+SOL_TEST(theStationForgeSourceIsTheShippedMesh)
+{
+    checkForgeSourceIsTheShippedMesh("station", shipped::buildStation());
+}
+
+SOL_TEST(theShipForgeSourceIsTheShippedMesh)
+{
+    checkForgeSourceIsTheShippedMesh("ship", shipped::buildShip());
+}
+
+SOL_TEST(theCockpitForgeSourceIsTheShippedMesh)
+{
+    checkForgeSourceIsTheShippedMesh("cockpit", shipped::buildCockpit());
+}
+
+// ⚑ The asteroid is the one that is BAKED rather than transcribed, so this test
+// asserts something the other four do not: that a literal `mesh` part carrying
+// 960 written-out vertices still comes back as the exact mesh it was baked from.
+// It is the bake path's proof, and stage E inherits it built rather than argued.
+SOL_TEST(theAsteroidForgeSourceIsTheShippedMesh)
+{
+    checkForgeSourceIsTheShippedMesh("asteroid", shipped::buildAsteroid());
+}
+
+// The bake is only trustworthy if it is a round trip, so take the same recipe
+// through it here rather than trusting the committed file to have been produced
+// correctly once. This is what would fail if appendMeshNumber ever wrote a
+// number that reparsed to a different float - the failure mode a writer of
+// baked geometry actually has.
+SOL_TEST(bakingAMeshAndReadingItBackIsTheSameMesh)
+{
+    assets::ForgeDoc doc;
+    doc.name = "asteroid";
+    doc.parts.push_back(assets::forgeBakePart("hull", shipped::buildAsteroid()));
+
+    const std::string text = assets::writeForge(doc);
+    assets::ForgeDoc reparsed;
+    std::string error;
+    SOL_REQUIRE(assets::parseForge(text.data(), text.size(), "baked", reparsed, &error));
+
+    MeshData rebuilt;
+    SOL_REQUIRE(assets::buildForge(reparsed, rebuilt, &error));
+    SOL_CHECK(reportFirstDifference("asteroid", rebuilt, shipped::buildAsteroid()));
 }
 
 // Every mesh in this game is built out of closed solids, and the weld is what

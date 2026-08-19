@@ -50,6 +50,19 @@ enum class ForgePrimitive
     FlatTriangle,
     Revolve,
     Extrude,
+    // ⚑ Literal geometry: vertices and indices written out, with no recipe
+    // behind them. This is THE BAKE, and the rule it implements was decided at
+    // the D checkpoint - a hand edit bakes the parts it touched and leaves every
+    // other part parametric, rather than freezing the whole document or keeping
+    // an edit list keyed to vertex indices that a parameter change invalidates.
+    //
+    // It is also what carries geometry the parametric vocabulary cannot honestly
+    // describe. The asteroid is the first: it is a noise-displaced icosphere
+    // whose noise is keyed on PowerShell's uint32 multiply promoting to double
+    // (see the port in the geometry suite), and a primitive that reproduced that
+    // would put a bug-compatibility shim in the engine's permanent vocabulary
+    // for every future asset to inherit.
+    Mesh,
 };
 
 [[nodiscard]] const char* forgePrimitiveName(ForgePrimitive primitive);
@@ -67,6 +80,21 @@ enum class ForgeParamKind
     // A list of 2D points: a revolve's (radius, height) profile or an
     // extrude's outline.
     Profile,
+    // A baked part's geometry: one array of eight numbers per vertex, position
+    // then normal then uv. Eight-per-line rather than three parallel arrays so
+    // that MOVING A VERTEX IS ONE CHANGED LINE, which is the only reason this
+    // format is text.
+    VertexList,
+    // A baked part's triangles, as offsets into its own VertexList.
+    IndexList,
+};
+
+// One corner of a baked part, in authoring precision.
+struct ForgeVertex
+{
+    BuildPoint position{0, 0, 0};
+    BuildPoint normal{0, 1, 0};
+    BuildUv uv{};
 };
 
 // One parameter value. Which member is live is decided by the schema, never by
@@ -78,6 +106,8 @@ struct ForgeValue
     BuildPoint vec{0, 0, 0};
     BuildUv uv{};
     std::vector<BuildProfilePoint> profile;
+    std::vector<ForgeVertex> vertices;
+    std::vector<std::uint32_t> indices;
 };
 
 struct ForgeParamSpec
@@ -174,5 +204,15 @@ struct ForgeDoc
 // The world transform of one part: its own placement composed up the parent
 // chain. Exposed because the editor needs it to draw a part's own axes.
 [[nodiscard]] BuildTransform forgeWorldTransform(const ForgeDoc& doc, std::size_t partIndex);
+
+// Geometry as a literal `mesh` part - the bake. The part carries no placement,
+// because the geometry handed in is already wherever it is.
+//
+// ⚑ Baked numbers are written at FLOAT precision, not double, and that is a
+// decision rather than a shortcut: a baked part's numbers came out of a mesh,
+// and a mesh is float, so the seventeen digits a double writer emits would be
+// fifteen digits of noise per coordinate in a file whose whole purpose is that
+// a person can read it.
+[[nodiscard]] ForgePart forgeBakePart(const std::string& id, const MeshData& mesh);
 
 } // namespace sol::assets

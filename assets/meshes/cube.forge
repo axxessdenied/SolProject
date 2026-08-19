@@ -1,0 +1,14 @@
+# The unit cube - the smallest asset in the game and the one that proves the
+# format costs nothing. Every parameter a box takes is already at its default,
+# so the whole asset is a name and a type, and the writer omitting defaults is
+# what keeps it that way.
+#
+# It is a placeholder model rather than a thing anyone looks at: models.toml
+# points the ore chunk at it, and until stage D the GATE was this cube stretched
+# to (70, 70, 10), which is how the game came to test for an aperture twice the
+# size of the one it drew.
+name = "cube"
+
+[[part]]
+id = "box"
+type = "box"

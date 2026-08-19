@@ -35,9 +35,12 @@ constexpr BuildUv kQuadUvs[4] = {{0.0, 1.0}, {1.0, 1.0}, {1.0, 0.0}, {0.0, 0.0}}
 
 // ⚑ Subtraction from zero, not IEEE negation, and the difference is a real
 // one: `-x` turns +0 into -0, and PowerShell's unary minus does not. Ninety-two
-// of cockpit.gltf's 1278 normal floats are a +0 that IEEE negation would write
+// of the cockpit's 1278 normal floats are a +0 that IEEE negation would write
 // as -0, so a port that used `-x` would re-author a shipped asset over a sign
 // bit nothing can see. Every opposite-facing normal below goes through here.
+// (Measured against the cockpit.gltf the generator emitted, before that file
+// was retired for cockpit.forge; the sign bits are unchanged and still asserted
+// by the geometry suite, which is why this stays.)
 [[nodiscard]] double flipped(double v)
 {
     return 0.0 - v;

@@ -50,6 +50,12 @@ add_executable(sol_geometry_tests
     geometry/shipped_mesh_tests.cpp
 )
 target_link_libraries(sol_geometry_tests PRIVATE sol::test sol::assets)
+# The committed .forge sources are the regression net now that the generator's
+# mesh half is gone, so the suite has to read the real files. Handed in by the
+# build rather than found by walking up from the working directory, which is a
+# different place under ctest than under a debugger.
+target_compile_definitions(sol_geometry_tests
+    PRIVATE SOL_MESH_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/meshes")
 add_test(NAME geometry.unit COMMAND sol_geometry_tests)
 
 add_executable(sol_platform_tests
