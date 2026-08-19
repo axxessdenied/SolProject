@@ -130,6 +130,12 @@ enum class PilotState : std::uint32_t
     Patrol, // fly to waypoint
     Attack, // pursue + shoot target
     Flee,   // evade target
+    // Long-haul travel to waypoint on the cruise drive (Phase 8x). Patrol's
+    // steering is combat-scale — it closes to 50 m and stops — and a trade
+    // leg is hundreds of thousands of kilometres, which is a distance only
+    // the cruise envelope crosses in a sane time. This is the same
+    // steerTravel the player's autopilot flies.
+    Travel,
 };
 
 // An NPC pilot: Lua's pilot_think picks the state (strategy); C++ steering
@@ -148,6 +154,29 @@ struct ShipPilot
     std::uint32_t factionIndex = 0xffff'ffffu;
 };
 
+// One trader body, for the console probe that proves the promotion happened.
+struct TraderPuppetInfo
+{
+    std::uint32_t traderIndex = 0;
+    std::string name;
+    double distance = 0.0; // from the player, meters
+    double speed = 0.0;
+    const char* state = "";
+};
+
+// A body for one coarse EconomyTrader (Phase 8x). The entity is a view and
+// the trader is the record: this holds only the index that ties them, so
+// nothing about the haul can drift out of step with the economy that owns it.
+// Deliberately not serialised — a puppet is rebuilt from the record on load,
+// exactly as ambient wings are.
+struct TraderPuppet
+{
+    std::uint32_t traderIndex = 0;
+    // Where this leg ends, in system space. Recomputed when the leg changes
+    // rather than every tick, because it only moves when the record does.
+    sol::core::DVec3 destination;
+};
+
 // Runtime faction identity (Phase 8b): authored majors first, generated
 // pirate clans after, aligned with sim::SystemSpec::factionIndex and the
 // FactionSim agent order. Clans jitter their template def per clan seed.
@@ -161,6 +190,7 @@ struct GameFaction
     float forgiveness = 0.5f;
     std::vector<std::string> shipsPatrol;
     std::vector<std::string> shipsRaider;
+    std::vector<std::string> shipsTrader; // Phase 8x: hulls its haulers fly
 };
 
 struct RenderShape
@@ -325,6 +355,26 @@ inline constexpr double kGateRadiusMeters = 70.0;
 // steerTravel is still carrying real speed as it crosses, short enough that the
 // ship is not left a long way past the gate if the jump somehow does not fire.
 inline constexpr double kGateApproachOvershoot = 400.0;
+// Where a trader puppet stops when it reaches the end of its leg (Phase 8x).
+// Dictated by the two spheres 8r already measured rather than picked: the
+// station's avoidance sphere is 130 m and its berths ring at 200 m, so a
+// hauler holding at 250 m is clear of both and reads as waiting its turn.
+// A puppet that beats its own coarse clock parks here until the record
+// catches up, which is why this is an arrival range and not a stop.
+inline constexpr double kTraderArrivalRange = 250.0;
+// Spacing between lane slots (Phase 8x). A freighter is a 4x hull, so tens of
+// metres; 400 m is far enough that a convoy never touches even after the
+// approach compresses it, and near enough that it still reads as traffic
+// sharing one lane rather than ships scattered at random.
+inline constexpr double kTraderLaneSpacing = 400.0;
+// The window at each end of a leg where a trader flies itself instead of
+// being paced by the record (Phase 8x). The distance is where steerTravel's
+// own profile drops a hauler back into its normal envelope — 5.76 km for the
+// shipped freighter, so 6 km — and the time is roughly what that final
+// approach takes at those speeds. Together they are the seam between the
+// coarse sim and the bubble, which is the whole Simulation-LOD idea.
+inline constexpr double kTraderApproachDistance = 6'000.0;
+inline constexpr double kTraderApproachSeconds = 35.0;
 
 // How the player is looking at the world this frame (Phase 8j). The frame loop
 // owns the camera and the UI scale, and pushes both in here once per frame;
@@ -558,6 +608,15 @@ public:
     // --- Trading (Phase 7 economy; player trades ride the same markets the
     // NPC agents move) ---
     [[nodiscard]] const sol::sim::Economy& economy() const { return m_economy; }
+    // Whether a coarse trader currently has a body here (Phase 8x). Answered
+    // off the reconcile's own bookkeeping, so it cannot disagree with what is
+    // actually in the sky.
+    [[nodiscard]] bool traderHasBody(std::uint32_t traderIndex) const
+    {
+        return traderIndex < m_puppetPresent.size() && m_puppetPresent[traderIndex] != 0;
+    }
+    // Every trader body in the system, for the console.
+    void traderPuppetInfo(std::vector<TraderPuppetInfo>& out);
     [[nodiscard]] const std::vector<std::string>& commodityIds() const { return m_commodityIds; }
     [[nodiscard]] std::uint32_t commodityIndex(const char* id) const;
     [[nodiscard]] double playerCredits() const { return m_playerCredits; }
@@ -1194,6 +1253,29 @@ private:
     // Ambient NPC population for a freshly instantiated system: owner
     // patrol/raider wings by region security plus raid-intensity incursions.
     void spawnAmbientPilots(std::uint32_t systemIndex, const sol::sim::SystemSpec& spec);
+    // Reconciles trader bodies with the coarse fleet (Phase 8x): a body for
+    // every EconomyTrader flying an in-system leg here, and none for anyone
+    // else. Runs after the economy tick, which is the moment the set goes
+    // stale. The record decides who exists; this only draws the consequence.
+    void syncTraderPuppets();
+    // The leg a trader is currently flying: its two ends in system space, how
+    // far along the record says it is, and how long the leg is quoted at.
+    // Answers false when the trader is not flying an in-system leg here.
+    struct TraderLegPlacement
+    {
+        sol::core::DVec3 from;
+        sol::core::DVec3 to;
+        float progress = 0.0f;
+        double legSeconds = 0.0;
+    };
+    [[nodiscard]] bool traderLegSegment(std::uint32_t traderIndex,
+                                        TraderLegPlacement& out) const;
+    // Where the record says a trader is, on its schedule rather than its
+    // engines. See keepTraderOnSchedule for why the two differ.
+    [[nodiscard]] sol::core::DVec3 traderScheduledPoint(const TraderLegPlacement& leg) const;
+    void keepTraderOnSchedule(sol::ecs::Entity entity, const TraderLegPlacement& leg);
+    // Removes a spawned ship with none of the death path's consequences.
+    void despawnShip(std::uint32_t entityIndex);
     // Spawn at an explicit position (ambient wings); the public
     // spawnShipFromDef wraps this at a point ahead of the player.
     sol::ecs::Entity spawnShipAt(const sol::assets::ShipDef& def,
@@ -1209,6 +1291,9 @@ private:
 
     sol::ecs::Registry m_registry;
     std::vector<SpawnedShip> m_spawnedShips;
+    // Scratch for syncTraderPuppets: which coarse traders already have a body.
+    // A member so the per-tick reconcile does not allocate.
+    std::vector<std::uint8_t> m_puppetPresent;
     sol::sim::FlightInput m_shipInput;    // player input latch, applied in tick
     sol::sim::FlightInput m_appliedInput; // what the ship flew last tick
     bool m_autopilotActive = false;

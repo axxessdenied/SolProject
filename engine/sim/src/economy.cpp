@@ -13,7 +13,7 @@ namespace {
 
 constexpr std::uint32_t kInvalid = 0xffff'ffffu;
 constexpr std::uint64_t kEconomyStream = 101;
-constexpr std::uint8_t kUnreachable = 0xff;
+constexpr std::uint8_t kUnreachable = kUnreachableHops;
 
 [[nodiscard]] float rateAt(const std::vector<float>& rates, std::uint32_t commodity)
 {

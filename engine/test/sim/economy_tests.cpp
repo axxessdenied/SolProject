@@ -1,5 +1,6 @@
 #include <sol/sim/economy.hpp>
 #include <sol/sim/mining.hpp>
+#include <sol/sim/trade_route.hpp>
 #include <sol/sim/universe.hpp>
 
 #include <sol/core/serialize.hpp>
@@ -329,6 +330,164 @@ SOL_TEST(economy_save_load_round_trips_a_route)
     }
     SOL_CHECK(restored.route(0).leg == economy.route(0).leg);
     SOL_CHECK(restored.route(0).progress == economy.route(0).progress);
+}
+
+SOL_TEST(economy_trade_route_picks_the_gate_that_leads_home)
+{
+    // A hop count says how far the destination is, not which door leads
+    // there. The rule is one step of the BFS the hop table was built with:
+    // a gate is on a shortest path exactly when its far side is one hop
+    // closer than here. Asserted against a hand-written graph, because the
+    // way to get this wrong is to pick a gate that happens to exist.
+    //
+    //   0 -- 1 -- 2 -- 3        and a spur 0 -- 4 that leads nowhere useful
+    const auto hops = [](std::uint32_t from, std::uint32_t to) -> std::uint32_t {
+        static const std::uint32_t table[5][5] = {
+            {0, 1, 2, 3, 1}, {1, 0, 1, 2, 2}, {2, 1, 0, 1, 3},
+            {3, 2, 1, 0, 4}, {1, 2, 3, 4, 0},
+        };
+        return table[from][to];
+    };
+    const std::vector<GateSpec> fromZero = {{.toSystem = 1, .position = {}},
+                                            {.toSystem = 4, .position = {}}};
+    // Toward 3, only the gate to 1 shortens the trip; the spur to 4 lengthens
+    // it, and a naive "take the first gate" would have taken either.
+    SOL_CHECK(sol::sim::gateTowardSystem(std::span<const GateSpec>(fromZero), 0, 3, hops) == 0);
+    SOL_CHECK(sol::sim::gateTowardSystem(std::span<const GateSpec>(fromZero), 0, 4, hops) == 1);
+    // Standing in the destination, and an unreachable destination, both have
+    // no answer rather than a wrong one.
+    SOL_CHECK(sol::sim::gateTowardSystem(std::span<const GateSpec>(fromZero), 0, 0, hops) ==
+              sol::sim::kNoGate);
+    const std::vector<GateSpec> deadEnd = {{.toSystem = 0, .position = {}}};
+    SOL_CHECK(sol::sim::gateTowardSystem(std::span<const GateSpec>(deadEnd), 4, 3, hops) == 0);
+}
+
+SOL_TEST(economy_a_hopless_leg_folds_into_one_straight_run)
+{
+    // Two stations in one system is a single run with no gate in it, and the
+    // two leg windows are its two halves. Reading the arrive leg's progress
+    // raw would snap the trader back to its origin the moment it crossed the
+    // midpoint — a teleport in plain sight of anyone watching it cross.
+    using sol::sim::hoplessProgress;
+    SOL_CHECK(hoplessProgress(TraderLeg::Depart, 0.0f) == 0.0f);
+    SOL_CHECK(hoplessProgress(TraderLeg::Depart, 1.0f) == 0.5f);
+    SOL_CHECK(hoplessProgress(TraderLeg::Arrive, 0.0f) == 0.5f);
+    SOL_CHECK(hoplessProgress(TraderLeg::Arrive, 1.0f) == 1.0f);
+    // The seam is continuous: the end of one window and the start of the next
+    // are the same point, which is the whole reason for the fold.
+    SOL_CHECK(hoplessProgress(TraderLeg::Depart, 1.0f) ==
+              hoplessProgress(TraderLeg::Arrive, 0.0f));
+
+    // And the point itself moves monotonically down the line.
+    const sol::core::DVec3 from{0.0, 0.0, 0.0};
+    const sol::core::DVec3 to{1000.0, 0.0, 0.0};
+    SOL_CHECK(sol::sim::legPoint(from, to, 0.0f).x == 0.0);
+    SOL_CHECK(sol::sim::legPoint(from, to, 0.5f).x == 500.0);
+    SOL_CHECK(sol::sim::legPoint(from, to, 1.0f).x == 1000.0);
+}
+
+SOL_TEST(economy_the_schedule_brings_a_trader_in_on_time)
+{
+    // The two clocks do not agree and cannot: a leg is 90 s however far it
+    // is, while a freighter tops out at 3,000 km/s and needs about 260 s for
+    // the 600,000 km from a station to a gate. Left to fly freely it is still
+    // mid-lane when its books say it arrived. So the record paces the middle
+    // and the ship flies the ends, and this pins the shape of that.
+    using sol::sim::scheduledLaneDistance;
+    constexpr double kLeg = 90.0;
+    constexpr double kLength = 6.0e8;   // station -> gate, the shipped figure
+    constexpr double kApproach = 6000.0; // steerTravel's envelope distance
+    constexpr double kWindow = 35.0;
+    const auto at = [&](double remaining) {
+        return scheduledLaneDistance(remaining, kLeg, kLength, kApproach, kWindow);
+    };
+
+    // It starts a leg away and ends on the destination, exactly.
+    SOL_CHECK(std::abs(at(kLeg) - kLength) < 1.0);
+    SOL_CHECK(at(0.0) == 0.0);
+    // At the moment the ship takes over it is exactly at the approach
+    // distance, so the handover is a continuation and not a jump.
+    SOL_CHECK(std::abs(at(kWindow) - kApproach) < 1.0);
+    // Monotonic: a trader with less time left is always nearer. A schedule
+    // that ever backed up would drag a hauler the wrong way down its lane.
+    double previous = -1.0;
+    for (int i = 0; i <= 90; ++i) {
+        const double distance = at(static_cast<double>(i));
+        SOL_CHECK(distance >= previous);
+        previous = distance;
+    }
+    // Degenerate legs answer rather than divide: a zero-length leg and a
+    // zero-duration one both have to come back with something finite.
+    SOL_CHECK(scheduledLaneDistance(10.0, 0.0, kLength, kApproach, kWindow) == 0.0);
+    SOL_CHECK(std::isfinite(scheduledLaneDistance(10.0, kLeg, 0.0, kApproach, kWindow)));
+    // A leg too short to hold the window still keeps both ends honest.
+    SOL_CHECK(std::abs(scheduledLaneDistance(0.0, 10.0, 1000.0, kApproach, kWindow)) < 1.0e-9);
+    SOL_CHECK(std::abs(scheduledLaneDistance(10.0, 10.0, 1000.0, kApproach, kWindow) - 1000.0) <
+              1.0e-9);
+}
+
+SOL_TEST(economy_lane_slots_keep_a_convoy_from_sharing_coordinates)
+{
+    // The failure this exists to stop was measured, not imagined: the coarse
+    // fleet converges, so a dozen traders leave one station on one tick for
+    // one destination and the record puts them all at the same progress along
+    // the same line. Spawned there they share coordinates, the collision
+    // resolver depenetrates a zero-distance pair along an arbitrary axis, and
+    // the convoy kills itself in the first tick. Most of a 45-ship fleet was
+    // lost that way before this existed.
+    using sol::sim::laneSlotOffset;
+    const sol::core::DVec3 lane{0.0, 0.0, 6.0e8}; // a real leg: station -> gate
+    constexpr double kSpacing = 400.0;
+
+    std::vector<sol::core::DVec3> slots;
+    for (std::uint32_t i = 0; i < 120; ++i) { // the shipped fleet size
+        slots.push_back(laneSlotOffset(i, lane, kSpacing));
+    }
+    double closest = 1.0e30;
+    for (std::size_t a = 0; a < slots.size(); ++a) {
+        for (std::size_t b = a + 1; b < slots.size(); ++b) {
+            closest = std::min(closest, sol::core::length(slots[a] - slots[b]));
+        }
+    }
+    // Comfortably past any hull: the largest is a 4x freighter, tens of metres.
+    SOL_CHECK(closest > 200.0);
+
+    // Every slot is square to the lane, so the fleet is spread across it
+    // rather than strung out along it — offsetting along the lane would move
+    // traders off the progress the record says they are at.
+    for (std::uint32_t i = 0; i < 120; ++i) {
+        SOL_CHECK(std::abs(sol::core::dot(slots[i], sol::core::normalize(lane))) < 1.0e-6);
+    }
+    // Stable: the same trader asks twice and gets the same slot, or a convoy
+    // would shuffle every time the set is reconciled.
+    SOL_CHECK(laneSlotOffset(7, lane, kSpacing) == slots[7]);
+    // A degenerate lane must still answer, not divide by zero.
+    const sol::core::DVec3 nowhere = laneSlotOffset(3, {}, kSpacing);
+    SOL_CHECK(std::isfinite(nowhere.x) && std::isfinite(nowhere.y) && std::isfinite(nowhere.z));
+}
+
+SOL_TEST(economy_hop_count_agrees_with_the_leg_it_quoted)
+{
+    // hopCount is public now because placing a body needs it, and it has to
+    // be the same table that priced the trip — otherwise a puppet would fly
+    // toward a gate on a route the economy never planned.
+    const Galaxy galaxy = tinyGalaxy();
+    const EconomyParams params = tinyParams();
+    Economy economy;
+    economy.initialize(galaxy, params, 9);
+    SOL_CHECK(economy.hopCount(0, 0) == 0);
+    SOL_CHECK(economy.hopCount(0, 1) == 1);
+    SOL_CHECK(economy.hopCount(99, 0) == sol::sim::kUnreachableHops);
+
+    int guard = 0;
+    while (economy.traders()[0].phase != TraderPhase::InTransit && guard++ < 400) {
+        economy.tick(galaxy, 1.0);
+    }
+    SOL_REQUIRE(economy.traders()[0].phase == TraderPhase::InTransit);
+    const TraderRoute route = economy.route(0);
+    const double quoted = params.traderLegSeconds * 2.0 +
+                          static_cast<double>(route.hops) * params.jumpSeconds;
+    SOL_CHECK(economy.traders()[0].legTotal == quoted);
 }
 
 // --- Phase 8g: feedstock gating, extraction, and the spread ---

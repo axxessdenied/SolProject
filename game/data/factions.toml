@@ -19,6 +19,7 @@ forgiveness = 0.7
 relations = ["sol.guild:40", "sol.hegemony:-35", "sol.compact:10", "sol.ascendancy:10"]
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
+ships_trader = ["sol.freighter", "sol.shuttle"]
 
 [[faction]]
 id = "sol.guild"
@@ -31,6 +32,7 @@ forgiveness = 0.8
 relations = ["sol.hegemony:-10", "sol.compact:20"]
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
+ships_trader = ["sol.freighter", "sol.shuttle"]
 
 [[faction]]
 id = "sol.hegemony"
@@ -43,6 +45,7 @@ forgiveness = 0.3
 relations = ["sol.compact:-40", "sol.ascendancy:-20"]
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
+ships_trader = ["sol.freighter", "sol.shuttle"]
 
 [[faction]]
 id = "sol.compact"
@@ -54,6 +57,7 @@ aggression = 0.4
 forgiveness = 0.6
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
+ships_trader = ["sol.freighter", "sol.shuttle"]
 
 [[faction]]
 id = "sol.ascendancy"
@@ -65,6 +69,7 @@ aggression = 0.25
 forgiveness = 0.5
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
+ships_trader = ["sol.freighter", "sol.shuttle"]
 
 [[faction]]
 id = "sol.corsairs"
@@ -76,6 +81,7 @@ aggression = 0.8
 forgiveness = 0.2
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
+ships_trader = ["sol.freighter", "sol.shuttle"]
 
 [[faction]]
 id = "sol.reavers"
@@ -87,3 +93,4 @@ aggression = 0.95
 forgiveness = 0.1
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
+ships_trader = ["sol.freighter", "sol.shuttle"]

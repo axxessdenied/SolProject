@@ -224,6 +224,10 @@ struct FactionDef
     std::vector<FactionRelation> relations;
     std::vector<std::string> shipsPatrol; // ship def ids for ambient wings
     std::vector<std::string> shipsRaider;
+    // Hulls this faction's haulers fly (Phase 8x). A trader puppet is a body
+    // for a coarse EconomyTrader, and it needs a roster for the same reason a
+    // patrol wing does: the def decides what the player sees coming.
+    std::vector<std::string> shipsTrader;
     std::string source;
 };
 

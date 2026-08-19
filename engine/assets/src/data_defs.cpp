@@ -395,9 +395,11 @@ bool parseFaction(const TomlValue& table, const char* sourceName, std::vector<Fa
     reader.optionalRelationList("relations", def.relations);
     reader.optionalStringList("ships_patrol", def.shipsPatrol);
     reader.optionalStringList("ships_raider", def.shipsRaider);
+    reader.optionalStringList("ships_trader", def.shipsTrader);
 
     reader.rejectUnknownKeys({"id", "name", "description", "color", "kind", "aggression",
-                              "forgiveness", "relations", "ships_patrol", "ships_raider"});
+                              "forgiveness", "relations", "ships_patrol", "ships_raider",
+                              "ships_trader"});
     if (!reader.failed) {
         if (kind == "major") {
             def.kind = FactionKind::Major;

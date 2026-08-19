@@ -9,6 +9,7 @@
 #include "sol/core/serialize.hpp"
 #include "sol/sim/collision.hpp"
 #include "sol/sim/steering.hpp"
+#include "sol/sim/trade_route.hpp"
 #include "sol/sim/weapons.hpp"
 #include "sol/ecs/snapshot.hpp"
 #include "sol/platform/file_io.hpp"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 #include <span>
 #include <utility>
 #include <vector>
@@ -305,7 +307,8 @@ void SpaceWorld::initializeFactions()
                                   .aggression = def.aggression,
                                   .forgiveness = def.forgiveness,
                                   .shipsPatrol = def.shipsPatrol,
-                                  .shipsRaider = def.shipsRaider});
+                                  .shipsRaider = def.shipsRaider,
+                                  .shipsTrader = def.shipsTrader});
     }
     const std::size_t majorCount = m_factionTable.size();
     for (const sim::ClanSpec& clan : m_galaxy.clans) {
@@ -329,7 +332,8 @@ void SpaceWorld::initializeFactions()
              .aggression = jitterWeight(base.aggression),
              .forgiveness = jitterWeight(base.forgiveness),
              .shipsPatrol = base.shipsPatrol,
-             .shipsRaider = base.shipsRaider});
+             .shipsRaider = base.shipsRaider,
+             .shipsTrader = base.shipsTrader});
     }
 
     // FactionSim params: authored relations resolve def ids to table
@@ -2040,6 +2044,303 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             spawnWing(raider, m_factionTable[raider].shipsRaider, PilotRole::Fighter, count,
                       anchor + core::DVec3{9'000.0, 1'500.0, 6'000.0}, 1'200.0);
         }
+    }
+}
+
+namespace {
+
+// Shortest-arc rotation taking the ship's nose (-z) onto `direction`.
+core::Quat lookAlong(const core::DVec3& direction)
+{
+    const double distance = length(direction);
+    if (distance < 1.0e-6) {
+        return core::Quat::identity();
+    }
+    const core::DVec3 unit = direction * (1.0 / distance);
+    const core::Vec3 to{static_cast<float>(unit.x), static_cast<float>(unit.y),
+                        static_cast<float>(unit.z)};
+    const core::Vec3 nose{0.0f, 0.0f, -1.0f};
+    const float alignment = core::clamp(core::dot(nose, to), -1.0f, 1.0f);
+    if (alignment > 0.9999f) {
+        return core::Quat::identity();
+    }
+    if (alignment < -0.9999f) {
+        return core::fromAxisAngle({0.0f, 1.0f, 0.0f}, 3.14159265f); // exactly behind
+    }
+    return core::fromAxisAngle(core::normalize(core::cross(nose, to)), std::acos(alignment));
+}
+
+} // namespace
+
+// Removes a spawned ship without the death path's consequences: no wreck, no
+// loot, no kill credit. A puppet leaving the player's system has not died,
+// it has stopped being drawn.
+void SpaceWorld::despawnShip(std::uint32_t entityIndex)
+{
+    for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
+        if (m_spawnedShips[i].entity.index == entityIndex) {
+            m_spawnedShips.erase(m_spawnedShips.begin() + static_cast<std::ptrdiff_t>(i));
+            break;
+        }
+    }
+    m_registry.destroy(m_registry.entityFromIndex(entityIndex));
+}
+
+bool SpaceWorld::traderLegSegment(std::uint32_t traderIndex, TraderLegPlacement& out) const
+{
+    core::DVec3& from = out.from;
+    core::DVec3& to = out.to;
+    float& progress = out.progress;
+    const sim::TraderRoute route = m_economy.route(traderIndex);
+    if (route.system != m_currentSystem || route.leg == sim::TraderLeg::None ||
+        route.leg == sim::TraderLeg::Jump) {
+        return false;
+    }
+    const auto stationOf = [&](std::uint32_t market) {
+        const sim::StationMarket& row = m_economy.markets()[market];
+        return m_galaxy.systems[row.systemIndex].stations[row.stationIndex].position;
+    };
+    const core::DVec3 origin = stationOf(route.fromMarket);
+    const core::DVec3 destination = stationOf(route.toMarket);
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    const auto hops = [&](std::uint32_t a, std::uint32_t b) {
+        return static_cast<std::uint32_t>(m_economy.hopCount(a, b));
+    };
+
+    // Its slot in the lane, applied to BOTH ends: offsetting only the spawn
+    // would let the whole convoy converge again on the way in and pile up at
+    // the destination, which is the same stack one leg later.
+    const auto inSlot = [&](const core::DVec3& start, const core::DVec3& end) {
+        const core::DVec3 offset =
+            sim::laneSlotOffset(traderIndex, end - start, kTraderLaneSpacing);
+        from = start + offset;
+        to = end + offset;
+    };
+
+    if (route.hops == 0) {
+        // No gate in it at all: one straight run, and the two leg windows are
+        // its halves (sim::hoplessProgress owns that fold) — so it is quoted
+        // at both endpoints' time rather than one.
+        inSlot(origin, destination);
+        progress = sim::hoplessProgress(route.leg, route.progress);
+        out.legSeconds = m_economy.params().traderLegSeconds * 2.0;
+        return true;
+    }
+    out.legSeconds = m_economy.params().traderLegSeconds;
+
+    // The far end of the trip is out of this system, so the leg runs to or
+    // from whichever gate starts the shortest path — the same table that
+    // quoted the leg its travel time, so the body flies the route the economy
+    // actually planned.
+    const std::uint32_t otherSystem =
+        m_economy.markets()[route.leg == sim::TraderLeg::Depart ? route.toMarket
+                                                                : route.fromMarket]
+            .systemIndex;
+    const std::uint32_t gate = sim::gateTowardSystem(
+        std::span<const sim::GateSpec>(spec.gates), m_currentSystem, otherSystem, hops);
+    if (gate == sim::kNoGate) {
+        return false; // no lane out of here toward it: draw nothing rather than a guess
+    }
+    if (route.leg == sim::TraderLeg::Depart) {
+        inSlot(origin, spec.gates[gate].position);
+    } else {
+        inSlot(spec.gates[gate].position, destination);
+    }
+    progress = route.progress;
+    return true;
+}
+
+void SpaceWorld::syncTraderPuppets()
+{
+    if (m_defs == nullptr || m_factionTable.empty() || m_economy.markets().empty()) {
+        return;
+    }
+    const std::size_t fleet = m_economy.traders().size();
+    m_puppetPresent.assign(fleet, 0);
+
+    // Existing bodies first: anything whose record has moved on stops being
+    // here, and anything whose leg has changed under it is rebuilt rather than
+    // left flying at a destination nobody is going to.
+    std::vector<ecs::Entity> doomed;
+    ecs::Pool<TraderPuppet>& puppets = m_registry.storage<TraderPuppet>();
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        TraderPuppet& puppet = puppets.values()[i];
+        const ecs::Entity entity = m_registry.entityFromIndex(puppets.entityIndices()[i]);
+        TraderLegPlacement leg;
+        if (puppet.traderIndex >= fleet || !traderLegSegment(puppet.traderIndex, leg) ||
+            length(leg.to - puppet.destination) > 1.0) {
+            doomed.push_back(entity);
+            continue;
+        }
+        m_puppetPresent[puppet.traderIndex] = 1;
+        // A puppet's ROUTE is not Lua's to choose — it belongs to the record —
+        // but its fight-or-flight is. So Attack and Flee are left alone, while
+        // Idle (a fight it walked away from) and Patrol (init.lua's canned
+        // trader loop, which would fly it in circles off its own lane) are put
+        // back on the leg it is actually here to fly. Done before the pacing
+        // below, which declines to touch anything not on its leg.
+        ShipPilot* pilot = m_registry.tryGet<ShipPilot>(entity);
+        if (pilot != nullptr &&
+            (pilot->state == PilotState::Idle || pilot->state == PilotState::Patrol)) {
+            pilot->state = PilotState::Travel;
+        }
+        if (pilot != nullptr && pilot->state == PilotState::Travel) {
+            pilot->waypoint = leg.to;
+        }
+        keepTraderOnSchedule(entity, leg);
+    }
+    for (const ecs::Entity entity : doomed) {
+        despawnShip(entity.index);
+    }
+
+    // Then the fleet: every trader flying a leg here that has no body yet gets
+    // one, placed where the record says it already is rather than at the start
+    // of its leg — the player arriving mid-haul must find traffic in progress.
+    for (std::uint32_t t = 0; t < fleet; ++t) {
+        if (m_puppetPresent[t] != 0) {
+            continue;
+        }
+        TraderLegPlacement leg;
+        if (!traderLegSegment(t, leg)) {
+            continue;
+        }
+        const sim::TraderRoute route = m_economy.route(t);
+        // Allegiance follows the ground it is trading between, which is stable
+        // for the whole leg. Never left unaffiliated: Lua reads that as
+        // unconditionally player-hostile (the pre-8b rule), and a hauler
+        // opening fire on sight is the one thing this must not be.
+        std::uint32_t faction = systemOwnerFaction(
+            m_economy.markets()[route.fromMarket].systemIndex);
+        if (faction >= m_factionTable.size()) {
+            faction = systemOwnerFaction(m_economy.markets()[route.toMarket].systemIndex);
+        }
+        if (faction >= m_factionTable.size()) {
+            faction = 0;
+        }
+        const GameFaction& owner = m_factionTable[faction];
+        const std::vector<std::string>& roster =
+            owner.shipsTrader.empty() ? owner.shipsPatrol : owner.shipsTrader;
+        if (roster.empty()) {
+            continue;
+        }
+        // Keyed on the trader, not on a counter, so one hauler keeps the same
+        // hull every time the player meets it.
+        const std::string& defId = roster[t % roster.size()];
+        const assets::ShipDef* def = m_defs->findShip(defId.c_str());
+        if (def == nullptr) {
+            SOL_LOG_WARN("trader puppet: no ship def '%s'", defId.c_str());
+            continue;
+        }
+        const core::DVec3 position = traderScheduledPoint(leg);
+        const ecs::Entity entity = spawnShipAt(*def, *m_defs, position, owner.name.c_str());
+        m_registry.emplace<ShipPilot>(
+            entity, ShipPilot{.role = PilotRole::Trader,
+                              .state = PilotState::Travel,
+                              .waypoint = leg.to,
+                              .factionIndex = faction});
+        m_registry.emplace<TraderPuppet>(entity,
+                                         TraderPuppet{.traderIndex = t, .destination = leg.to});
+        // Pointed down its lane on the frame it appears. steerTravel would
+        // turn it anyway, but a system full of haulers facing nowhere is what
+        // the player would see in the first second after a jump.
+        Transform& transform = m_registry.storage<Transform>().get(entity.index);
+        transform.orientation = lookAlong(leg.to - position);
+        transform.previousOrientation = transform.orientation;
+        m_puppetPresent[t] = 1;
+    }
+}
+
+core::DVec3 SpaceWorld::traderScheduledPoint(const TraderLegPlacement& leg) const
+{
+    const core::DVec3 lane = leg.to - leg.from;
+    const double legLength = length(lane);
+    const double remaining =
+        (1.0 - static_cast<double>(leg.progress)) * leg.legSeconds;
+    const double distance =
+        sim::scheduledLaneDistance(remaining, leg.legSeconds, legLength,
+                                   kTraderApproachDistance, kTraderApproachSeconds);
+    if (legLength <= 0.0) {
+        return leg.to;
+    }
+    return leg.to - lane * (distance / legLength);
+}
+
+// Holds a puppet to the record's pace through the middle of its leg, and lets
+// go at both ends.
+//
+// The ship cannot fly the middle: a freighter needs about 260 s for a leg the
+// economy quotes at 90, so flying it freely means never arriving anywhere.
+// Through the middle the record therefore owns the position — invisibly, at
+// tens of thousands of km and speeds where a hull is far below a pixel — and
+// inside the approach window the ship owns it, which is the part with
+// anything to look at. That handover IS the Simulation-LOD promotion: coarse
+// where nobody is watching, full fidelity where they are.
+void SpaceWorld::keepTraderOnSchedule(ecs::Entity entity, const TraderLegPlacement& leg)
+{
+    ShipPilot* pilot = m_registry.tryGet<ShipPilot>(entity);
+    if (pilot != nullptr && pilot->state != PilotState::Travel) {
+        return; // fighting or running: its own business, and Lua's
+    }
+    const double elapsed = static_cast<double>(leg.progress) * leg.legSeconds;
+    const double remaining = leg.legSeconds - elapsed;
+    const double window = std::min(kTraderApproachSeconds, leg.legSeconds * 0.4);
+    if (elapsed <= window || remaining <= window) {
+        return; // near an endpoint: it flies itself
+    }
+    Transform* transform = m_registry.tryGet<Transform>(entity);
+    FlightBody* body = m_registry.tryGet<FlightBody>(entity);
+    if (transform == nullptr || body == nullptr) {
+        return;
+    }
+    const core::DVec3 point = traderScheduledPoint(leg);
+    transform->position = point;
+    // Both ends of the tick, or the collision sweep reads the schedule's jump
+    // as a hypersonic charge through everything between the two points.
+    transform->previousPosition = point;
+    const core::DVec3 lane = leg.to - point;
+    const double distance = length(lane);
+    if (distance > 1.0) {
+        transform->orientation = lookAlong(lane);
+        transform->previousOrientation = transform->orientation;
+        // Handed over already moving at the speed steerTravel's own profile
+        // wants at the approach distance, so the release is a continuation
+        // rather than a hauler stalling at the edge of the window.
+        const ShipControl* control = m_registry.tryGet<ShipControl>(entity);
+        const double envelope =
+            control != nullptr ? static_cast<double>(control->tuning.maxSpeed) * 2.0 : 200.0;
+        body->velocity = lane * (envelope / distance);
+    }
+}
+
+void SpaceWorld::traderPuppetInfo(std::vector<TraderPuppetInfo>& out)
+{
+    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel"};
+    out.clear();
+    const core::DVec3 eye = m_registry.storage<Transform>().get(playerEntityIndex()).position;
+    ecs::Pool<TraderPuppet>& puppets = m_registry.storage<TraderPuppet>();
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        const std::uint32_t entityIndex = puppets.entityIndices()[i];
+        const Transform* transform = m_registry.storage<Transform>().tryGet(entityIndex);
+        if (transform == nullptr) {
+            continue;
+        }
+        TraderPuppetInfo info;
+        info.traderIndex = puppets.values()[i].traderIndex;
+        info.distance = length(transform->position - eye);
+        const FlightBody* body = m_registry.storage<FlightBody>().tryGet(entityIndex);
+        info.speed = body != nullptr ? length(body->velocity) : 0.0;
+        const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
+        info.state = pilot != nullptr
+                         ? kStateNames[static_cast<std::uint32_t>(pilot->state) %
+                                       std::size(kStateNames)]
+                         : "none";
+        for (const SpawnedShip& spawned : m_spawnedShips) {
+            if (spawned.entity.index == entityIndex) {
+                info.name = spawned.name;
+                break;
+            }
+        }
+        out.push_back(std::move(info));
     }
 }
 
@@ -3944,7 +4245,7 @@ double SpaceWorld::shipHullFraction(ecs::Entity entity) const
 
 void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
 {
-    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee"};
+    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel"};
     constexpr float kThinkInterval = 0.5f; // 2 Hz strategy; steering runs at 60
 
     ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
@@ -3961,7 +4262,8 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
         out.push_back({
             .entity = m_registry.entityFromIndex(pilots.entityIndices()[i]),
             .role = pilotRoleName(pilot.role),
-            .state = kStateNames[static_cast<std::uint32_t>(pilot.state) % 4],
+            .state = kStateNames[static_cast<std::uint32_t>(pilot.state) %
+                                 std::size(kStateNames)],
             .attitude = attitude,
         });
     }
@@ -4181,6 +4483,15 @@ void SpaceWorld::tick(double dt)
                     break;
                 }
                 input = sim::steerPursue(self, control->tuning, pilot.waypoint, {}, 50.0);
+                break;
+            case PilotState::Travel:
+                // A trade leg is hundreds of thousands of kilometres, so this
+                // is the cruise drive and the same steering the player's
+                // autopilot flies. Arriving does NOT end the leg — the coarse
+                // record does that — so a puppet that beats its own clock
+                // simply holds station off the pad it came to.
+                input = sim::steerTravel(self, control->tuning, pilot.waypoint, {},
+                                         kTraderArrivalRange, obstacles);
                 break;
             case PilotState::Attack: {
                 const Transform* targetTransform =
@@ -4728,6 +5039,16 @@ void SpaceWorld::tick(double dt)
     {
         const std::uint32_t zone = profiler.beginZone("sim.coarse.economy");
         m_economy.tick(m_galaxy, dt, &m_feedstock);
+        profiler.endZone(zone);
+    }
+
+    // Bodies for the coarse traders flying a leg here (Phase 8x). Immediately
+    // after the economy tick, because that is the one place a trader's route
+    // can change — this is the LOD promotion §2 committed to and the coarse
+    // layer has been waiting for since Phase 7.
+    {
+        const std::uint32_t zone = profiler.beginZone("sim.puppets");
+        syncTraderPuppets();
         profiler.endZone(zone);
     }
 

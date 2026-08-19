@@ -23,6 +23,8 @@ namespace sol::sim {
 
 inline constexpr std::uint32_t kNoCommodity = 0xffff'ffffu;
 inline constexpr std::uint32_t kNoMarket = 0xffff'ffffu;
+// What hopCount() answers past maxTradeJumps: no route a trader would plan.
+inline constexpr std::uint8_t kUnreachableHops = 0xff;
 
 struct EconomyCommodity
 {
@@ -201,6 +203,12 @@ public:
     // the record — the trader stays the truth and this is a view of it.
     [[nodiscard]] TraderRoute route(std::uint32_t traderIndex) const;
 
+    // Gate hops between two systems, or kUnreachableHops beyond the range
+    // traders plan over. Public because placing a puppet needs to know which
+    // gate leads home, and this is the same table that quoted the leg's time —
+    // asking anything else would be a second answer to one question.
+    [[nodiscard]] std::uint8_t hopCount(std::uint32_t fromSystem, std::uint32_t toSystem) const;
+
     // Mid price at current stock: the curve itself, and what a price display
     // or a "is this dear or cheap" comparison wants.
     [[nodiscard]] float price(std::uint32_t market, std::uint32_t commodity) const;
@@ -256,7 +264,6 @@ private:
     // leg's clock are three facts about one decision; a caller that set two of
     // them would strand a trader in space with no idea where it came from.
     void beginTransit(EconomyTrader& trader, std::uint32_t destination, std::uint8_t hops);
-    [[nodiscard]] std::uint8_t hopCount(std::uint32_t fromSystem, std::uint32_t toSystem) const;
     [[nodiscard]] float tickPrice(std::uint32_t market, std::uint32_t commodity) const;
 
     EconomyParams m_params;

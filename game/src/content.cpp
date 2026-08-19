@@ -550,21 +550,48 @@ std::string traderRoutes(GameContent& content)
         } else {
             std::snprintf(hold, sizeof(hold), "empty");
         }
+        const char* body = world.traderHasBody(t) ? " *" : "";
         if (route.leg == sol::sim::TraderLeg::None) {
-            std::snprintf(buffer, sizeof(buffer), "#%u idle at %s (%s)", t,
-                          stationName(route.toMarket), hold);
+            std::snprintf(buffer, sizeof(buffer), "#%u idle at %s (%s)%s", t,
+                          stationName(route.toMarket), hold, body);
         } else {
-            std::snprintf(buffer, sizeof(buffer), "#%u %s  %s -> %s  %s %.0f%% (%u hop)", t,
+            std::snprintf(buffer, sizeof(buffer), "#%u %s  %s -> %s  %s %.0f%% (%u hop)%s", t,
                           hold, stationName(route.fromMarket), stationName(route.toMarket),
                           route.leg == sol::sim::TraderLeg::Depart ? "departing" : "arriving",
-                          static_cast<double>(route.progress) * 100.0, route.hops);
+                          static_cast<double>(route.progress) * 100.0, route.hops, body);
         }
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
+    std::uint32_t drawn = 0;
+    for (std::uint32_t t = 0; t < economy.traders().size(); ++t) {
+        drawn += world.traderHasBody(t) ? 1u : 0u;
+    }
     std::snprintf(buffer, sizeof(buffer),
-                  "%zu traders: %u idle, %u departing, %u jumping, %u arriving",
-                  economy.traders().size(), byLeg[0], byLeg[1], byLeg[2], byLeg[3]);
+                  "%zu traders: %u idle, %u departing, %u jumping, %u arriving; %u drawn here",
+                  economy.traders().size(), byLeg[0], byLeg[1], byLeg[2], byLeg[3], drawn);
     return (lines.empty() ? std::string("(none in this system)") : lines) + "\n" + buffer;
+}
+
+// What is actually in the sky, read off the entities rather than off the
+// record (Phase 8x). sol.traders() says who *should* have a body; this says
+// who does, and the two disagreeing is the whole failure mode of a promotion.
+std::string traderPuppets(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::vector<game::TraderPuppetInfo> puppets;
+    world.traderPuppetInfo(puppets);
+    std::string lines;
+    char buffer[256];
+    for (const game::TraderPuppetInfo& puppet : puppets) {
+        std::snprintf(buffer, sizeof(buffer), "#%u %s  %.0f km out, %.0f m/s, %s",
+                      puppet.traderIndex, puppet.name.c_str(), puppet.distance / 1000.0,
+                      puppet.speed, puppet.state);
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    std::snprintf(buffer, sizeof(buffer), "%zu trader bod%s in %s", puppets.size(),
+                  puppets.size() == 1 ? "y" : "ies",
+                  world.galaxy().systems[world.currentSystemIndex()].name.c_str());
+    return (lines.empty() ? std::string("(none)") : lines) + "\n" + buffer;
 }
 
 // --- Trading (works while docked; market = the docked station) ---
@@ -2407,6 +2434,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&targetShip>("sol", "target_ship", this);
     m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
     m_vm.registerFunction<&traderRoutes>("sol", "traders", this);
+    m_vm.registerFunction<&traderPuppets>("sol", "puppets", this);
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
     m_vm.registerFunction<&listModules>("sol", "modules", this);
