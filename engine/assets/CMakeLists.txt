@@ -3,6 +3,8 @@ add_library(sol_assets STATIC
     src/data_defs.cpp
     src/font.cpp
     src/loadout.cpp
+    src/mesh_build.cpp
+    src/mesh_edit.cpp
     src/truetype.cpp
 )
 add_library(sol::assets ALIAS sol_assets)

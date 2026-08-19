@@ -41,6 +41,16 @@ add_executable(sol_assets_tests
 target_link_libraries(sol_assets_tests PRIVATE sol::test sol::assets)
 add_test(NAME assets.unit COMMAND sol_assets_tests)
 
+# The editable mesh core (Phase 9 stage B). Headless by construction - no
+# device, no window - and the five shipped meshes are its regression net.
+add_executable(sol_geometry_tests
+    geometry/mesh_build_tests.cpp
+    geometry/mesh_edit_tests.cpp
+    geometry/shipped_mesh_tests.cpp
+)
+target_link_libraries(sol_geometry_tests PRIVATE sol::test sol::assets)
+add_test(NAME geometry.unit COMMAND sol_geometry_tests)
+
 add_executable(sol_platform_tests
     platform/input_bindings_tests.cpp
 )

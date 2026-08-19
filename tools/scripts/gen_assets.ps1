@@ -5,6 +5,16 @@
 # the comma binds tighter than + and silently corrupts data otherwise.
 # Everything here is seeded or analytic: rerunning must leave `git status`
 # clean apart from whatever was deliberately changed.
+#
+# ⚑ THE MESH HALF NOW HAS A SECOND IMPLEMENTATION, AND THEY MUST BE EDITED
+# TOGETHER. Phase 9 stage B ported Add-Box / Add-Beam / Add-Torus /
+# Add-FlatTriangle to sol::assets::MeshBuilder, and the five recipes below to
+# engine/test/geometry/shipped_meshes.hpp, where geometry.unit asserts the C++
+# reproduces these files BYTE FOR BYTE. That assertion carries the shipped
+# bytes as embedded hashes rather than reading the .gltf, so changing a mesh
+# HERE and regenerating will NOT fail the suite - it will just leave the port
+# quietly describing an asset that no longer exists. Change one, change both.
+# (This half retires for real when the .forge importer lands at stage D.)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 
