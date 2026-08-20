@@ -275,13 +275,52 @@ struct ForgePartRange
 // is the same fact that lets them be proved byte for byte.
 [[nodiscard]] bool forgeHasVertexAttribution(const ForgeDoc& doc);
 
-// One authored number a dragged point writes back to: a `Vec3` parameter of a
-// part, or one entry of a baked part's vertex list.
+// How a dragged point reaches the authored numbers behind it. The kind decides
+// the arithmetic; `param` names what the write lands in, so the tool can say it
+// out loud and an author can go and read that line.
+//
+// ⚑ The three classes stage E measured over all 61 parts in `assets/meshes/`:
+// the first two kinds are class (1), where the parameter IS the vertex; the
+// last two are class (2), where it is not and has to be solved for. Class (3)
+// - a torus ring, which is a function of two segment indices - has no kind here
+// at all, because there is nothing to write until the part is baked.
+enum class ForgeWriteKind
+{
+    // A `flat_triangle`'s p0/p1/p2, which `addFlatTriangle` emits one for one.
+    // The delta goes straight onto the named Vec3.
+    Vertex,
+    // One entry of a baked part's vertex list, addressed by `element`.
+    BakedVertex,
+    // ⚑ A box corner, which is not a parameter and SOLVES BACK to two: `center`
+    // moves by half the delta and `size` grows by it, which is exactly what
+    // pins the opposite corner. `element` is the corner's sign code - bit 0 is
+    // +x, bit 1 is +y, bit 2 is +z - so the pinned corner is `element ^ 7`.
+    //
+    // The code names which combination of half-extents the corner is, not where
+    // it sits, so it stays right for a box authored with a negative size.
+    BoxCorner,
+    // ⚑ A beam corner, which solves back to the END it stands at: `from` for
+    // element 0, `to` for element 1. A beam's cross-section is derived from its
+    // axis (`addBeam` builds `side` and `up` from the run), so NOT ONE of its
+    // eight corners is a number in the file and the only answer to a dragged
+    // corner is to move the end. A drag is therefore a re-aim: the other three
+    // corners at that end come with it, and the four at the pinned end swing as
+    // the cross-section is re-derived - by at most the section's half-diagonal,
+    // which is 0.05 m on every beam in `cockpit.forge`.
+    BeamEnd,
+};
+
+// One authored value a dragged point writes back through.
 struct ForgePointWrite
 {
-    std::size_t part = 0;      // into ForgeDoc::parts
-    std::string param;         // "p0", "p1", "p2", or "vertices"
-    std::uint32_t element = 0; // into a VertexList; 0 for a plain Vec3
+    std::size_t part = 0; // into ForgeDoc::parts
+    ForgeWriteKind kind = ForgeWriteKind::Vertex;
+    // "p0"/"p1"/"p2", "vertices", "center+size" or "from"/"to". For display and
+    // for the class (1) kinds, which look the parameter up by name.
+    std::string param;
+    // Into a VertexList for BakedVertex, a corner sign code for BoxCorner, an
+    // end index for BeamEnd, and 0 for a plain Vec3.
+    std::uint32_t element = 0;
 };
 
 // A distinct point of the built mesh, with every authored value standing at it.
@@ -298,15 +337,25 @@ struct ForgePoint
     // of a MeshData. An authored `-2.6` comes back here as -2.5999999046325684.
     // Nothing may write this number back into the document; see forgeMovePoint.
     BuildPoint position{0, 0, 0}; // in the frame the mesh is built in
+    // ⚑ DEDUPLICATED, which is why it is not simply one entry per corner. A box
+    // puts THREE render vertices at each of its eight corners and all three
+    // name the same `center`+`size` pair, so writing one per corner would apply
+    // the drag three times and send the corner three times as far as the hand.
     std::vector<ForgePointWrite> writes;
-    std::uint32_t corners = 0; // render vertices standing here
+    std::uint32_t corners = 0;  // render vertices standing here
+    std::uint32_t resolved = 0; // ...of which this many found an authored answer
 
     // ⚑ False when some corner at this point came out of a primitive with no
     // parametric answer - a torus ring vertex is a function of two segment
     // indices and there is nothing to write. Such a point is not movable until
     // its part is baked, which is the D checkpoint's rule meeting the two parts
     // in this repo that actually need it.
-    [[nodiscard]] bool movable() const { return corners > 0 && writes.size() == corners; }
+    //
+    // ⚑ It asks whether every corner was ANSWERED, not whether every corner
+    // produced a line. Those were the same question while a corner was always a
+    // parameter of its own; a box makes them different, and reading it the old
+    // way reports every box in the repo as unmovable.
+    [[nodiscard]] bool movable() const { return corners > 0 && resolved == corners; }
 };
 
 // Every distinct point of the mesh `doc` builds, with its writes resolved.
@@ -332,9 +381,27 @@ struct ForgePoint
 // writes back exactly what it read, which is the same fixed-point discipline
 // the comment-preserving writer exists to keep.
 //
+// ⚑ A CLASS (2) WRITE IS A RESIZE OR A RE-AIM, NOT A MOVE, and that is the
+// honest answer rather than a compromise: a box corner and a beam corner are
+// not numbers in the file, so the only thing that CAN be written is the pair
+// the corner is computed from. Dragging a box corner therefore moves the seven
+// corners that share a coordinate with it and pins the eighth. Dragging a beam
+// corner moves the whole end it stands at, and swings the corners at the far
+// end as the cross-section is re-derived from the new axis - bounded by the
+// section's half-diagonal, 0.05 m on every beam in `cockpit.forge`.
+//
+// ⚑ A write whose local delta is exactly zero is SKIPPED rather than applied,
+// which keeps the fixed point above true for a part that authors nothing.
+// `cube.forge` is the whole asset that does: every box parameter of it is at
+// the schema default, and `set` adds a key that is not there, so a write of
+// `value + 0` would materialise `center` and `size` on a click-and-release.
+//
 // Refuses a point that is not `movable()`, and refuses one whose part has a
 // singular world transform, rather than writing a number derived from a
-// division by zero. Nothing is written unless every write can be resolved.
+// division by zero. Refuses a drag that would push a box's `size` through zero
+// (it would light inside out) or collapse a beam onto its other end (it would
+// silently stop drawing). Nothing is written unless every write can be
+// resolved: a half-applied move is the seam this function exists to prevent.
 [[nodiscard]] bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta,
                                   std::string* error = nullptr);
 

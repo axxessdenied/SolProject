@@ -998,9 +998,16 @@ SOL_TEST(movingOnePointWritesEveryPartStandingAtItAndMovesNothingElse)
 // parts at once, and a modeller saving on every accepted edit would fill the
 // file with noise nobody typed. A delta added to the value already in the
 // document cannot do that, and this is the assertion that keeps it true.
+// ⚑ E2 WIDENED IT TO ALL SIX, AND `cube.forge` IS WHY. E1 asserted this over
+// `ship` and `asteroid`, both of which write down every number they use, so the
+// only way to fail was arithmetic. The cube authors NOTHING - every parameter of
+// its one box is at the schema default, which is the property that asset exists
+// to demonstrate - and `ForgePart::set` adds a key that is not there. A write of
+// `value + 0` would therefore MATERIALISE `center` and `size` into a four-line
+// file on a click-and-release, so a write of no distance is not performed.
 SOL_TEST(aMoveOfZeroDistanceLeavesTheFileByteForByteIdentical)
 {
-    const char* const names[] = {"ship", "asteroid"};
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -1029,6 +1036,12 @@ SOL_TEST(aMoveOfZeroDistanceLeavesTheFileByteForByteIdentical)
 // nothing authored to write, so the point is not movable and says so instead of
 // silently doing nothing. This is the D checkpoint's bake rule meeting the two
 // parts in this repo that actually need it - two out of sixty.
+//
+// ⚑ E2 IS WHAT MAKES THIS TEST WORTH KEEPING RATHER THAN A TAUTOLOGY. At E1 the
+// station had NOTHING movable, so "the torus refuses" was indistinguishable
+// from "everything refuses". Its nine boxes are class (2) now, so the file
+// answers 72 of its 552 points and still refuses the other 480 - which is the
+// bake rule holding a line rather than a whole asset sitting behind it.
 SOL_TEST(aTorusPointHasNoParametricAnswerAndRefusesTheMoveUntilItIsBaked)
 {
     const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/station.forge";
@@ -1041,19 +1054,31 @@ SOL_TEST(aTorusPointHasNoParametricAnswerAndRefusesTheMoveUntilItIsBaked)
     SOL_REQUIRE(assets::forgePoints(doc, points));
     SOL_REQUIRE(!points.empty());
 
-    // The station is nine boxes and a torus, so not one of its points has a
-    // parametric answer today: every one is class (2) or class (3).
+    // 40 x 12 ring positions under 41 x 13 emitted vertices, plus nine boxes at
+    // eight corners each.
+    SOL_CHECK(points.size() == 552);
     std::size_t movable = 0;
     for (const assets::ForgePoint& point : points) {
         if (point.movable()) {
             ++movable;
         }
     }
-    SOL_CHECK(movable == 0);
+    SOL_CHECK(movable == 72);
 
+    // The torus is the first part in the file, so it emitted the first vertex.
+    SOL_REQUIRE(doc.parts[0].primitive == ForgePrimitive::Torus);
+    SOL_CHECK(!points[0].movable());
+    SOL_CHECK(points[0].resolved == 0);
     std::string error;
     SOL_CHECK(!assets::forgeMovePoint(doc, points[0], {0.5, 0.0, 0.0}, &error));
     SOL_CHECK(!error.empty());
+
+    // And a hub corner, which is class (2), moves - the same document, the same
+    // call, a different answer because the primitive has one.
+    const std::size_t hub = pointAt(points, {22.0, 30.0, 22.0});
+    SOL_REQUIRE(hub < points.size());
+    SOL_CHECK(points[hub].movable());
+    SOL_CHECK(assets::forgeMovePoint(doc, points[hub], {1.0, 0.0, 0.0}, &error));
 }
 
 // A baked part's vertices ARE its authored numbers, so the asteroid - one
@@ -1164,4 +1189,334 @@ SOL_TEST(anEditedDocumentStillWritesEveryOtherLineUnchanged)
     SOL_CHECK(differing == 5);
     SOL_CHECK(std::count(source.begin(), source.end(), '\n') ==
               std::count(written.begin(), written.end(), '\n'));
+}
+
+// ---------------------------------------------------------------------------
+// Stage E2: class (2), where the corner is not a parameter and has to be
+// solved for. 35 of the 60 geometry parts in `assets/meshes/`.
+// ---------------------------------------------------------------------------
+
+// ⚑⚑ THE SIGN TABLE PINNED AGAINST REAL GEOMETRY, NOT AGAINST ITSELF. A box
+// corner is identified by WHICH of `addBox`'s 24 emitted vertices it is, which
+// is exact and free - but it is only right while that face order is, and a
+// table that agreed only with the code that wrote it would notice nothing if
+// `mesh_build.cpp` were reordered. So the assertion is that the sign bits and
+// the built position say the same thing about every one of the eight corners.
+SOL_TEST(theBoxCornerSignCodeAgreesWithWhereAddBoxActuallyPutTheVertex)
+{
+    // Deliberately off the origin and unequal on every axis: a cube at the
+    // origin would let a transposed table pass.
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"b\"\ntype = \"box\"\n"
+                               "center = [3.0, -2.0, 7.0]\nsize = [2.0, 6.0, 10.0]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    SOL_REQUIRE(points.size() == 8);
+
+    std::uint32_t seen = 0;
+    for (const assets::ForgePoint& point : points) {
+        // ⚑ Three render vertices per corner and ONE write: the dedup that
+        // class (1) never needed. Applying the drag once per corner would send
+        // the point three times as far as the hand that moved it.
+        SOL_CHECK(point.corners == 3);
+        SOL_CHECK(point.resolved == 3);
+        SOL_REQUIRE(point.writes.size() == 1);
+        SOL_CHECK(point.writes[0].kind == assets::ForgeWriteKind::BoxCorner);
+        SOL_CHECK(point.writes[0].param == "center+size");
+        SOL_CHECK(point.movable());
+
+        const std::uint32_t code = point.writes[0].element;
+        SOL_REQUIRE(code < 8);
+        seen |= 1u << code;
+        const double x = 3.0 + ((code & 1u) != 0 ? 1.0 : -1.0);
+        const double y = -2.0 + ((code & 2u) != 0 ? 3.0 : -3.0);
+        const double z = 7.0 + ((code & 4u) != 0 ? 5.0 : -5.0);
+        SOL_CHECK(std::abs(point.position.x - x) < 1e-5);
+        SOL_CHECK(std::abs(point.position.y - y) < 1e-5);
+        SOL_CHECK(std::abs(point.position.z - z) < 1e-5);
+    }
+    SOL_CHECK(seen == 0xFF); // all eight codes, each exactly once
+}
+
+// The same discipline for the beam: which END each of the 24 emitted vertices
+// stands at, checked against where the vertex actually came out.
+SOL_TEST(theBeamCornerEndAgreesWithWhichEndAddBeamActuallyPutTheVertexAt)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"b\"\ntype = \"beam\"\n"
+                               "from = [0.0, 0.0, 0.0]\nto = [10.0, 0.0, 0.0]\n"
+                               "width = 4.0\nheight = 4.0\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    SOL_REQUIRE(points.size() == 8);
+
+    std::size_t atFrom = 0;
+    for (const assets::ForgePoint& point : points) {
+        SOL_CHECK(point.corners == 3);
+        SOL_REQUIRE(point.writes.size() == 1);
+        SOL_CHECK(point.writes[0].kind == assets::ForgeWriteKind::BeamEnd);
+        const bool nearFrom = point.position.x < 5.0;
+        SOL_CHECK(point.writes[0].element == (nearFrom ? 0u : 1u));
+        SOL_CHECK(point.writes[0].param == (nearFrom ? "from" : "to"));
+        if (nearFrom) {
+            ++atFrom;
+        }
+    }
+    SOL_CHECK(atFrom == 4); // four corners ring each end
+}
+
+// ⚑⚑ THE SOLVE ITSELF, AND THE PIN IS NOT A RULE APPLIED ON TOP OF IT. Half the
+// delta goes into `center` and the whole of it into `size`; at the far corner,
+// which sits at `center - s*size/2`, those two halves cancel exactly. So the
+// opposite corner staying still is what the arithmetic MEANS, and a resize is
+// what an author dragging a box corner already expects to get.
+SOL_TEST(aBoxCornerDragResizesTheBoxAndPinsTheOppositeCorner)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"b\"\ntype = \"box\"\n"
+                               "center = [3.0, -2.0, 7.0]\nsize = [2.0, 6.0, 10.0]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> before;
+    SOL_REQUIRE(assets::forgePoints(doc, before));
+    const std::size_t corner = pointAt(before, {4.0, 1.0, 12.0});
+    SOL_REQUIRE(corner < before.size());
+
+    const assets::BuildPoint delta{0.5, 0.25, -0.125};
+    std::string error;
+    SOL_REQUIRE(assets::forgeMovePoint(doc, before[corner], delta, &error));
+    SOL_CHECK(error.empty());
+
+    const assets::BuildPoint center = doc.parts[0].value("center").vec;
+    const assets::BuildPoint size = doc.parts[0].value("size").vec;
+    SOL_CHECK(std::abs(center.x - 3.25) < 1e-12);
+    SOL_CHECK(std::abs(center.y - -1.875) < 1e-12);
+    SOL_CHECK(std::abs(center.z - 6.9375) < 1e-12);
+    SOL_CHECK(std::abs(size.x - 2.5) < 1e-12);
+    SOL_CHECK(std::abs(size.y - 6.25) < 1e-12);
+    SOL_CHECK(std::abs(size.z - 9.875) < 1e-12);
+
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    SOL_CHECK(after.size() == 8); // still a box, not a box and a stray corner
+    // The dragged corner is under the cursor...
+    SOL_CHECK(pointAt(after, {4.5, 1.25, 11.875}) < after.size());
+    // ...and the corner diagonally opposite has not moved at all.
+    SOL_CHECK(pointAt(after, {2.0, -5.0, 2.0}) < after.size());
+}
+
+// ⚑⚑ THE CONSEQUENCE THAT HAS TO BE SAID OUT LOUD RATHER THAN DISCOVERED. A
+// beam has NO authored corners - `side` and `up` are derived from its axis - so
+// the only answer to a dragged corner is to move the end it stands at. Two
+// things follow, and both look like bugs to anyone who has not been told: the
+// other three corners at that end come with it, and the four at the PINNED end
+// swing as the cross-section is re-derived from the new axis. This test uses a
+// deliberately fat section so the swing is large enough to assert.
+SOL_TEST(aBeamCornerDragReAimsTheEndItStandsAtAndSwingsTheFarEndWithIt)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"b\"\ntype = \"beam\"\n"
+                               "from = [0.0, 0.0, 0.0]\nto = [10.0, 0.0, 0.0]\n"
+                               "width = 4.0\nheight = 4.0\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> before;
+    SOL_REQUIRE(assets::forgePoints(doc, before));
+    const std::size_t corner = pointAt(before, {0.0, -2.0, -2.0});
+    SOL_REQUIRE(corner < before.size());
+
+    const assets::BuildPoint delta{0.0, 5.0, 0.0};
+    SOL_REQUIRE(assets::forgeMovePoint(doc, before[corner], delta));
+
+    // `from` took the whole delta and `to` was not touched.
+    const assets::BuildPoint from = doc.parts[0].value("from").vec;
+    const assets::BuildPoint to = doc.parts[0].value("to").vec;
+    SOL_CHECK(std::abs(from.x - 0.0) < 1e-12);
+    SOL_CHECK(std::abs(from.y - 5.0) < 1e-12);
+    SOL_CHECK(std::abs(from.z - 0.0) < 1e-12);
+    SOL_CHECK(std::abs(to.x - 10.0) < 1e-12);
+    SOL_CHECK(std::abs(to.y - 0.0) < 1e-12);
+    SOL_CHECK(std::abs(to.z - 0.0) < 1e-12);
+
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    SOL_CHECK(after.size() == 8);
+    // ⚑ The dragged corner does NOT land under the cursor, and that is the
+    // documented price rather than a defect: it is offset by the rotation of a
+    // cross-section it does not own, bounded by the section's half-diagonal
+    // (2.83 m here, 0.05 m on every beam in `cockpit.forge`). Asserted so that
+    // nobody later "fixes" it by writing a corner that has nowhere to live.
+    SOL_CHECK(pointAt(after, {0.0, 3.0, -2.0}, 1e-3) == after.size());
+    // And the far end's corners moved too, though `to` never changed.
+    SOL_CHECK(pointAt(after, {10.0, 2.0, 2.0}, 1e-3) == after.size());
+}
+
+// ⚑ A guard for a state the primitive answers in SILENCE. Push a box's size
+// through zero and `addBox` still builds it - inside out, because its six face
+// normals are authored constants, so every face is lit as though it faced into
+// the solid. A build that succeeds cannot report this, so the move refuses.
+SOL_TEST(aDragThroughABoxesOwnOppositeCornerIsRefusedRatherThanTurningItInsideOut)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"b\"\ntype = \"box\"\n"
+                               "center = [3.0, -2.0, 7.0]\nsize = [2.0, 6.0, 10.0]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    const std::size_t corner = pointAt(points, {4.0, 1.0, 12.0});
+    SOL_REQUIRE(corner < points.size());
+
+    // The box is 2 m on X; pulling that corner 3 m in -X puts it a metre past
+    // the face it was pinned against.
+    std::string error;
+    SOL_CHECK(!assets::forgeMovePoint(doc, points[corner], {-3.0, 0.0, 0.0}, &error));
+    SOL_CHECK(!error.empty());
+    // Refused means UNTOUCHED - not a partial write, and not a document that
+    // has to be undone to get back to where it was.
+    SOL_CHECK(doc.parts[0].value("size").vec.x == 2.0);
+    SOL_CHECK(doc.parts[0].value("center").vec.x == 3.0);
+
+    // A metre and a half is fine: it leaves half a metre of box.
+    SOL_CHECK(assets::forgeMovePoint(doc, points[corner], {-1.5, 0.0, 0.0}, &error));
+    SOL_CHECK(std::abs(doc.parts[0].value("size").vec.x - 0.5) < 1e-12);
+}
+
+// The same for the beam, and its silence is worse: `addBeam` RETURNS WITHOUT
+// EMITTING ANYTHING at zero length, so the part would leave the mesh with no
+// error raised anywhere and the file would still parse, build and save.
+SOL_TEST(aDragThatCollapsesABeamOntoItsOtherEndIsRefused)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"b\"\ntype = \"beam\"\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    SOL_REQUIRE(points.size() == 8);
+    const std::size_t corner = pointAt(points, {-0.05, 0.0, -0.05});
+    SOL_REQUIRE(corner < points.size());
+
+    // The default beam runs one metre up +Y.
+    std::string error;
+    SOL_CHECK(!assets::forgeMovePoint(doc, points[corner], {0.0, 1.0, 0.0}, &error));
+    SOL_CHECK(!error.empty());
+    SOL_CHECK(doc.parts[0].find("from") == nullptr); // still authoring nothing
+}
+
+// ⚑ A box already flat on an axis has two corners standing in the same place,
+// so there is no opposite corner to pin - it has no honest class (2) answer and
+// routes to the bake, exactly as a torus ring does. The threshold is the
+// caller's own point tolerance rather than a second number of this function's.
+SOL_TEST(aBoxFlatOnAnAxisHasNoOppositeCornerToPinAndGoesToTheBake)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"b\"\ntype = \"box\"\n"
+                               "center = [0.0, 0.0, 0.0]\nsize = [2.0, 0.0, 10.0]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    SOL_REQUIRE(points.size() == 4); // eight corners collapsed onto four places
+    for (const assets::ForgePoint& point : points) {
+        SOL_CHECK(point.corners == 6);
+        SOL_CHECK(point.resolved == 0);
+        SOL_CHECK(point.writes.empty());
+        SOL_CHECK(!point.movable());
+    }
+
+    std::string error;
+    SOL_CHECK(!assets::forgeMovePoint(doc, points[0], {0.0, 1.0, 0.0}, &error));
+    SOL_CHECK(!error.empty());
+}
+
+// ⚑ One point, two boxes, and both are resized by one drag. This is the same
+// property class (1) has on `ship.forge`'s shared corner - one drag, every
+// write - reaching the class where the corner is not a parameter at all. Two
+// boxes butted together are how a seam gets opened by a tool that writes one
+// of them, and the point count is the assertion: a partial write splits one
+// point into two.
+SOL_TEST(aCornerSharedByTwoBoxesResizesBothInOneDrag)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"left\"\ntype = \"box\"\n"
+                               "center = [-1.0, 0.0, 0.0]\nsize = [2.0, 2.0, 2.0]\n"
+                               "\n[[part]]\nid = \"right\"\ntype = \"box\"\n"
+                               "center = [1.0, 0.0, 0.0]\nsize = [2.0, 2.0, 2.0]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> before;
+    SOL_REQUIRE(assets::forgePoints(doc, before));
+    // Twelve: eight each, less the four they share on the x = 0 plane.
+    SOL_REQUIRE(before.size() == 12);
+
+    const std::size_t shared = pointAt(before, {0.0, 1.0, 1.0});
+    SOL_REQUIRE(shared < before.size());
+    SOL_CHECK(before[shared].corners == 6);
+    SOL_CHECK(before[shared].resolved == 6);
+    SOL_REQUIRE(before[shared].writes.size() == 2); // one per box, not one per corner
+
+    SOL_REQUIRE(assets::forgeMovePoint(doc, before[shared], {0.0, 0.5, 0.0}));
+
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    SOL_CHECK(after.size() == 12); // a write that reached one box would make 13
+    SOL_CHECK(pointAt(after, {0.0, 1.5, 1.0}) < after.size());
+    // Both boxes grew on Y, and each pinned its own far corner.
+    SOL_CHECK(std::abs(doc.parts[0].value("size").vec.y - 2.5) < 1e-12);
+    SOL_CHECK(std::abs(doc.parts[1].value("size").vec.y - 2.5) < 1e-12);
+    SOL_CHECK(pointAt(after, {-2.0, -1.0, -1.0}) < after.size());
+    SOL_CHECK(pointAt(after, {2.0, -1.0, -1.0}) < after.size());
+}
+
+// ⚑⚑ THE CENSUS, MEASURED OVER THE COMMITTED ASSETS RATHER THAN OVER FIXTURES.
+// E2's claim is that class (2) reaches 35 of the 60 geometry parts and that
+// what is left refusing is exactly the two toruses. These are the numbers that
+// claim comes to, and `cockpit.forge` is the one that matters: ten beams, seven
+// boxes and six triangles, with nothing left over - the asset the stage was
+// picked to make editable.
+SOL_TEST(everyCommittedAssetButTheTwoTorusesIsNowFullyMovable)
+{
+    struct Expected
+    {
+        const char* name;
+        std::size_t points;
+        std::size_t movable;
+    };
+    const Expected expected[] = {
+        {"cube", 8, 8},           // one box at its defaults
+        {"gate", 320, 64},        // a 32x8 ring plus eight boxes
+        {"ship", 12, 12},         // sixteen flat triangles: class (1), from E1
+        {"station", 552, 72},     // a 40x12 ring plus nine boxes
+        {"cockpit", 141, 141},    // ten beams, seven boxes, six triangles
+        {"asteroid", 162, 162},   // baked: its vertices ARE its parameters
+    };
+    for (const Expected& want : expected) {
+        const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + want.name + ".forge";
+        const std::string source = readWholeFile(path);
+        SOL_CHECK(!source.empty());
+        if (source.empty()) {
+            continue;
+        }
+        ForgeDoc doc;
+        SOL_REQUIRE(parses(source, doc));
+
+        std::vector<assets::ForgePoint> points;
+        SOL_REQUIRE(assets::forgePoints(doc, points));
+        std::size_t movable = 0;
+        for (const assets::ForgePoint& point : points) {
+            if (point.movable()) {
+                ++movable;
+            }
+            // Whatever the class, a resolved corner count never exceeds the
+            // corners standing there - the invariant `movable()` now rests on.
+            SOL_CHECK(point.resolved <= point.corners);
+        }
+        SOL_CHECK(points.size() == want.points);
+        SOL_CHECK(movable == want.movable);
+    }
 }

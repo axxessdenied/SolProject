@@ -215,6 +215,12 @@ void MeshBuilder::addBox(BuildPoint center, BuildPoint size, double tile)
     // Each face: outward normal, then four corners CCW viewed from outside.
     // The spans are how wide and tall the face physically is, so a tiled uv is
     // sized from the surface rather than stretched over it.
+    //
+    // ⚑ THIS ORDER IS LOAD-BEARING beyond the vertex numbering stage B's hashes
+    // pin. `forge_doc.cpp`'s `kBoxCornerCode` maps each of the 24 emitted
+    // vertices back to which of the eight corners it is, so that the Forge can
+    // solve a dragged corner into `center` and `size` - and `geometry.unit`
+    // asserts that table against the geometry this loop actually produces.
     const Face faces[6] = {
         {{0, 0, 1},
          {{-hx, -hy, hz}, {hx, -hy, hz}, {hx, hy, hz}, {-hx, hy, hz}},
@@ -274,6 +280,11 @@ void MeshBuilder::addBeam(BuildPoint from, BuildPoint to, double width, double h
     const double halfHeight = height / 2;
 
     // Corners 0-3 at `from` and 4-7 at `to`, each ring (-s,-u) (+s,-u) (+s,+u) (-s,+u).
+    //
+    // ⚑ Not one of these eight is an authored number - they are all derived
+    // from the two ends and the section - which is why the Forge answers a
+    // dragged beam corner by moving the END it belongs to. `kBeamCornerEnd` in
+    // `forge_doc.cpp` mirrors the face order below and geometry.unit pins it.
     BuildPoint corners[8];
     const BuildPoint ends[2] = {from, to};
     const double signs[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};

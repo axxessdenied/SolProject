@@ -4,6 +4,7 @@
 #include "sol/core/math/scalar.hpp"
 #include "sol/core/toml.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1145,6 +1146,54 @@ bool forgeHasVertexAttribution(const ForgeDoc& doc)
     return !doc.build.weld && !doc.build.optimize && doc.build.smoothAngleDegrees <= 0.0;
 }
 
+namespace {
+
+// ⚑ Which of a box's EIGHT corners each of `addBox`'s 24 emitted vertices is,
+// as sign bits: bit 0 is +x, bit 1 is +y, bit 2 is +z. Six faces of four, in
+// `mesh_build.cpp`'s own face order - and it is only correct while that order
+// is, which is why `geometry.unit` asserts this table against built geometry
+// rather than against itself.
+//
+// ⚑ Read off the EMISSION rather than off the position, on purpose. A code
+// taken from the sign of a coordinate is ambiguous on any axis where the box is
+// thin, needs the part's inverse transform to get into the box's own frame, and
+// comes out backwards on a box authored with a negative size. The emission
+// index carries the answer exactly and for free.
+constexpr std::uint8_t kBoxCornerCode[24] = {
+    4, 5, 7, 6, // +Z face
+    1, 0, 2, 3, // -Z face
+    5, 1, 3, 7, // +X face
+    0, 4, 6, 2, // -X face
+    6, 7, 3, 2, // +Y face
+    0, 1, 5, 4, // -Y face
+};
+
+// The same for a beam: which END each of `addBeam`'s 24 emitted vertices stands
+// at, 0 for `from` and 1 for `to`. Corners 0-3 ring `from` and 4-7 ring `to`.
+constexpr std::uint8_t kBeamCornerEnd[24] = {
+    1, 1, 1, 1, // the `to` cap
+    0, 0, 0, 0, // the `from` cap
+    0, 1, 1, 0, // +side
+    0, 0, 1, 1, // -side
+    0, 0, 1, 1, // +up
+    0, 1, 1, 0, // -up
+};
+
+// A box corner's `size` after a drag: the delta signed by which side of each
+// axis the corner stands on. This is the half of the solve that pins the
+// opposite corner, and it is sign-agnostic - a box authored with a negative
+// size still comes out right, because the code names the combination of
+// half-extents rather than a place.
+[[nodiscard]] BuildPoint boxSizeAfter(BuildPoint size, std::uint32_t code, BuildPoint delta)
+{
+    const double sx = (code & 1u) != 0 ? 1.0 : -1.0;
+    const double sy = (code & 2u) != 0 ? 1.0 : -1.0;
+    const double sz = (code & 4u) != 0 ? 1.0 : -1.0;
+    return {size.x + (sx * delta.x), size.y + (sy * delta.y), size.z + (sz * delta.z)};
+}
+
+} // namespace
+
 bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string* error,
                  double tolerance)
 {
@@ -1197,7 +1246,7 @@ bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string*
             }
         }
         if (found == nullptr) {
-            out.push_back({position, {}, 0});
+            out.push_back({position, {}, 0, 0});
             found = &out.back();
         }
         ++found->corners;
@@ -1207,31 +1256,81 @@ bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string*
             continue; // no range covers this vertex: leaves the point unmovable
         }
         const ForgePart& part = doc.parts[owner];
-        // ⚑ The three classes stage E's spec measured, and only the first two
-        // lines of this switch are the whole of class (1). A flat triangle emits
-        // p0, p1, p2 in that order and nothing else; a baked part emits its
-        // vertex list in order. Every other primitive computes its corners from
-        // parameters that are not corners, so there is no name to write and the
-        // point stays unmovable until the part is baked.
+        const std::uint32_t local = localOf[v];
+        // ⚑ The three classes stage E's spec measured over all 61 parts in
+        // `assets/meshes/`. The first two arms are class (1), where a parameter
+        // IS the vertex: a flat triangle emits p0, p1, p2 in that order and
+        // nothing else, and a baked part emits its vertex list in order. The
+        // next two are class (2), where the corner is not authored anywhere and
+        // has to be SOLVED for. Everything left is class (3) - a torus ring
+        // vertex is a function of two segment indices - and has no answer until
+        // the part is baked, which is the D checkpoint's rule.
+        ForgePointWrite write;
+        bool answered = false;
         switch (part.primitive) {
         case ForgePrimitive::FlatTriangle: {
             static constexpr const char* kCorners[3] = {"p0", "p1", "p2"};
-            const std::uint32_t local = localOf[v];
             if (local < 3) {
-                found->writes.push_back({owner, kCorners[local], 0});
+                write = {owner, ForgeWriteKind::Vertex, kCorners[local], 0};
+                answered = true;
             }
             break;
         }
         case ForgePrimitive::Mesh:
-            found->writes.push_back({owner, "vertices", localOf[v]});
+            write = {owner, ForgeWriteKind::BakedVertex, "vertices", local};
+            answered = true;
+            break;
+        case ForgePrimitive::Box: {
+            // ⚑ A box flat on an axis has two corners standing in the same
+            // place, so there is no opposite corner to pin and no honest
+            // answer - it goes to the bake, like a torus. The threshold is the
+            // caller's own point tolerance rather than a second number: a box
+            // thinner than the distance that makes two corners ONE POINT has
+            // already collapsed as far as this function is concerned.
+            const BuildPoint size = part.value("size").vec;
+            const bool solid = std::abs(size.x) > tolerance && std::abs(size.y) > tolerance &&
+                               std::abs(size.z) > tolerance;
+            if (solid && local < 24) {
+                write = {owner, ForgeWriteKind::BoxCorner, "center+size", kBoxCornerCode[local]};
+                answered = true;
+            }
+            break;
+        }
+        case ForgePrimitive::Beam:
+            if (local < 24) {
+                const std::uint32_t end = kBeamCornerEnd[local];
+                write = {owner, ForgeWriteKind::BeamEnd, end == 0 ? "from" : "to", end};
+                answered = true;
+            }
             break;
         case ForgePrimitive::Group:
-        case ForgePrimitive::Box:
-        case ForgePrimitive::Beam:
         case ForgePrimitive::Torus:
         case ForgePrimitive::Revolve:
         case ForgePrimitive::Extrude:
             break;
+        }
+
+        if (!answered) {
+            continue; // a corner with no number behind it: the point stays put
+        }
+        ++found->resolved;
+
+        // ⚑ Deduplicated, and this is where class (2) stops behaving like class
+        // (1). A box puts THREE render vertices at each of its eight corners
+        // and all three name the same `center`+`size` pair; a beam puts three
+        // at each corner of an end and all three name the same `from` or `to`.
+        // One entry per corner would apply the drag three times over and send
+        // the point three times as far as the hand that moved it.
+        bool already = false;
+        for (const ForgePointWrite& existing : found->writes) {
+            if (existing.part == write.part && existing.kind == write.kind &&
+                existing.element == write.element && existing.param == write.param) {
+                already = true;
+                break;
+            }
+        }
+        if (!already) {
+            found->writes.push_back(write);
         }
     }
     return true;
@@ -1275,29 +1374,122 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
         localDelta[i] = inverse.transformDirection(delta);
     }
 
+    // ⚑ The second half of the same all-or-nothing rule, and both guards below
+    // are for states the PRIMITIVE answers in silence rather than for arithmetic
+    // that could go wrong. A box whose `size` crosses zero turns inside out -
+    // `addBox`'s six face normals are authored constants, so every face would
+    // then be lit as though it faced into the solid. A beam whose ends meet
+    // makes `addBeam` RETURN WITHOUT EMITTING ANYTHING, so the part leaves the
+    // mesh with no error raised anywhere. Neither would be reported by a build
+    // that succeeds, which is exactly why they are refused here.
+    //
+    // The beam floor is the same 1e-5 that decides what one point is: a beam
+    // shorter than the distance at which its two ends weld together has already
+    // stopped being a beam, and `normalize3` of that run is noise.
+    constexpr double kMinimumRun = 1e-5;
     for (std::size_t i = 0; i < point.writes.size(); ++i) {
         const ForgePointWrite& write = point.writes[i];
-        ForgePart& part = doc.parts[write.part];
-        if (write.param == "vertices") {
-            ForgeValue vertices = part.value("vertices");
-            if (write.element >= vertices.vertices.size()) {
+        const ForgePart& part = doc.parts[write.part];
+        switch (write.kind) {
+        case ForgeWriteKind::BoxCorner: {
+            const BuildPoint size = part.value("size").vec;
+            const BuildPoint grown = boxSizeAfter(size, write.element, localDelta[i]);
+            if ((size.x * grown.x) <= 0.0 || (size.y * grown.y) <= 0.0 ||
+                (size.z * grown.z) <= 0.0) {
+                if (error != nullptr) {
+                    *error = "this drag pushes box '" + part.id +
+                             "' through its own opposite corner, which turns it inside out";
+                }
+                return false;
+            }
+            break;
+        }
+        case ForgeWriteKind::BeamEnd: {
+            BuildPoint from = part.value("from").vec;
+            BuildPoint to = part.value("to").vec;
+            BuildPoint& end = write.element == 0 ? from : to;
+            end = {end.x + localDelta[i].x, end.y + localDelta[i].y, end.z + localDelta[i].z};
+            const double dx = to.x - from.x;
+            const double dy = to.y - from.y;
+            const double dz = to.z - from.z;
+            if (std::sqrt((dx * dx) + (dy * dy) + (dz * dz)) <= kMinimumRun) {
+                if (error != nullptr) {
+                    *error = "this drag collapses beam '" + part.id +
+                             "' onto its other end, and a beam of no length draws nothing";
+                }
+                return false;
+            }
+            break;
+        }
+        case ForgeWriteKind::BakedVertex:
+            // Range-checked HERE rather than at the write, so a stale element
+            // refuses the whole move instead of leaving half of it applied.
+            if (write.element >= part.value("vertices").vertices.size()) {
                 if (error != nullptr) {
                     *error = "part '" + part.id + "' no longer has that baked vertex";
                 }
                 return false;
             }
-            BuildPoint& position = vertices.vertices[write.element].position;
-            position = {position.x + localDelta[i].x, position.y + localDelta[i].y,
-                        position.z + localDelta[i].z};
-            part.set("vertices", vertices);
-        } else {
+            break;
+        case ForgeWriteKind::Vertex:
+            break;
+        }
+    }
+
+    for (std::size_t i = 0; i < point.writes.size(); ++i) {
+        const ForgePointWrite& write = point.writes[i];
+        ForgePart& part = doc.parts[write.part];
+        const BuildPoint& local = localDelta[i];
+        // ⚑ A write that moves nothing is not performed at all, and `cube.forge`
+        // is why: every parameter of its one box is at the schema default, and
+        // `set` ADDS a key that is not there - so a click-and-release with zero
+        // drag distance would materialise `center` and `size` into a file whose
+        // whole point is that it authors neither. Same fixed point E1 fought
+        // for, arriving through the door E1 did not have an asset to test.
+        if (local.x == 0.0 && local.y == 0.0 && local.z == 0.0) {
+            continue;
+        }
+        switch (write.kind) {
+        case ForgeWriteKind::Vertex: {
             // ⚑ The value ALREADY IN THE DOCUMENT is what the delta is added
             // to, so an unmoved point writes back the author's own number
             // rather than a float round trip of it.
             ForgeValue value = part.value(write.param.c_str());
-            value.vec = {value.vec.x + localDelta[i].x, value.vec.y + localDelta[i].y,
-                         value.vec.z + localDelta[i].z};
+            value.vec = {value.vec.x + local.x, value.vec.y + local.y, value.vec.z + local.z};
             part.set(write.param.c_str(), value);
+            break;
+        }
+        case ForgeWriteKind::BakedVertex: {
+            ForgeValue vertices = part.value("vertices");
+            BuildPoint& position = vertices.vertices[write.element].position;
+            position = {position.x + local.x, position.y + local.y, position.z + local.z};
+            part.set("vertices", vertices);
+            break;
+        }
+        case ForgeWriteKind::BoxCorner: {
+            // ⚑ HALF the delta into `center` and the whole of it into `size`,
+            // and that split is the entire solve: the far corner sits at
+            // `center - s*size/2`, where the half that moved the centre and the
+            // half that grew the box cancel exactly. Pinning the opposite
+            // corner is not a rule applied on top - it is what this arithmetic
+            // means, which is why a resize is what an author dragging a box
+            // corner already expects to get.
+            ForgeValue center = part.value("center");
+            center.vec = {center.vec.x + (local.x / 2), center.vec.y + (local.y / 2),
+                          center.vec.z + (local.z / 2)};
+            ForgeValue size = part.value("size");
+            size.vec = boxSizeAfter(size.vec, write.element, local);
+            part.set("center", center);
+            part.set("size", size);
+            break;
+        }
+        case ForgeWriteKind::BeamEnd: {
+            const char* const name = write.element == 0 ? "from" : "to";
+            ForgeValue end = part.value(name);
+            end.vec = {end.vec.x + local.x, end.vec.y + local.y, end.vec.z + local.z};
+            part.set(name, end);
+            break;
+        }
         }
     }
     return true;
