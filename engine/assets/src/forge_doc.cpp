@@ -1262,14 +1262,32 @@ constexpr std::uint8_t kBeamCornerEnd[24] = {
 // typed. The whole phase fails on this one line if it is written the other way.
 constexpr double kGridStepsPerMetre = 10000.0; // 0.1 mm
 
+// ⚑⚑ A BOX CENTRE LIVES ON HALF THIS GRID, AND IT HAS TO, NOT AS A CONCESSION.
+// `center` is the MIDPOINT of two corners, so if both corners are on the 0.1 mm
+// grid their midpoint is on the 0.05 mm one - exactly, by construction. Rounding
+// a centre to the coarser grid would move a corner; rounding it to this one only
+// removes the binary noise it should never have carried.
+constexpr double kCentreStepsPerMetre = 20000.0; // 0.05 mm
+
+[[nodiscard]] double quantizeTo(double value, double stepsPerMetre)
+{
+    return std::round(value * stepsPerMetre) / stepsPerMetre;
+}
+
 [[nodiscard]] double quantize(double value)
 {
-    return std::round(value * kGridStepsPerMetre) / kGridStepsPerMetre;
+    return quantizeTo(value, kGridStepsPerMetre);
 }
 
 [[nodiscard]] BuildPoint quantizePoint(BuildPoint p)
 {
     return {quantize(p.x), quantize(p.y), quantize(p.z)};
+}
+
+[[nodiscard]] BuildPoint quantizeCentre(BuildPoint p)
+{
+    return {quantizeTo(p.x, kCentreStepsPerMetre), quantizeTo(p.y, kCentreStepsPerMetre),
+            quantizeTo(p.z, kCentreStepsPerMetre)};
 }
 
 // Whether a write would change anything. Exact equality on purpose: the left
@@ -1284,46 +1302,34 @@ constexpr double kGridStepsPerMetre = 10000.0; // 0.1 mm
 }
 
 // ⚑⚑ THE BOX IS THE ONE KIND WHERE THE PARAMETER IS NOT THE POINT, AND THAT IS
-// WHY IT NEEDS ITS OWN SOLVE RATHER THAN A ROUNDED `boxSizeAfter`. `center` and
-// `size` between them encode eight corners, so rounding the two of them
-// independently moves the corner the author is NOT dragging - by up to three
-// quarters of a grid step, on a property this file pins in a test and states in
-// three comment blocks.
+// WHY IT QUANTIZES THE DELTA WHERE EVERY OTHER KIND QUANTIZES THE RESULT.
+// `center` and `size` are DERIVED - they are not the number the author dragged
+// - so rounding the corner and solving them back from it injects arithmetic
+// noise into both. Measured live: a drag that produced a clean
+// `size = [1.1568, 0.8876, 0.9218]` produced `center = 0.07840000000000003`
+// beside it, because `(dragged + pinned) / 2` is not the double nearest 0.0784
+// when `dragged` is not exactly 0.6568. The value was RIGHT and unreadable.
 //
-// ⚑ Three things are desirable here and only two can hold at once: the far
-// corner stays put, the dragged corner lands on the grid, and both parameters
-// land on the grid. This picks the first two and pays for it in `center`, which
-// lands on a HALF grid step - one extra digit at most, and only when the box's
-// extent is an odd number of steps.
+// ⚑ Rounding the STEP instead keeps both parameters clean, because each is then
+// one addition away from a base the author already wrote in decimal: `size`
+// gains a 4-decimal number and `center` gains half of one, and dividing by two
+// is exact in binary.
 //
-// ⚑ Solved against the PINNED corner rather than by cancelling two halves, so
-// the opposite corner does not move BY CONSTRUCTION instead of by arithmetic
-// that happens to agree. That is strictly stronger than what it replaces.
-struct BoxSolve {
-    BuildPoint center;
-    BuildPoint size;
-    BuildPoint corner; // the dragged corner, on the grid
-};
-
-[[nodiscard]] BoxSolve solveBoxCorner(BuildPoint center, BuildPoint size, std::uint32_t code,
-                                      BuildPoint delta)
+// ⚑ AND IT KEEPS THE PIN THE WAY THE PIN WAS ALREADY KEPT. Half the step into
+// `center`, all of it into `size`; at the far corner, which sits at
+// `center - s*size/2`, those two halves cancel. That is unchanged from before
+// the grid existed, so the opposite corner stays put exactly as well as it
+// used to rather than as well as a new solve manages.
+//
+// ⚑ The cost, stated: a box whose corner was authored OFF the grid stays off
+// it, because a clean step from an odd base is still odd. Every box in this
+// repo is on it - no authored number here has more than three decimals.
+[[nodiscard]] BuildPoint boxSizeAfter(BuildPoint size, std::uint32_t code, BuildPoint delta)
 {
     const double sx = (code & 1u) != 0 ? 1.0 : -1.0;
     const double sy = (code & 2u) != 0 ? 1.0 : -1.0;
     const double sz = (code & 4u) != 0 ? 1.0 : -1.0;
-    const BuildPoint pinned{center.x - (sx * size.x / 2), center.y - (sy * size.y / 2),
-                            center.z - (sz * size.z / 2)};
-    const BuildPoint dragged = quantizePoint({center.x + (sx * size.x / 2) + delta.x,
-                                              center.y + (sy * size.y / 2) + delta.y,
-                                              center.z + (sz * size.z / 2) + delta.z});
-    BoxSolve out;
-    out.corner = dragged;
-    // corner - pinned is `s * size`, so recovering size is the same multiply.
-    out.size = {sx * (dragged.x - pinned.x), sy * (dragged.y - pinned.y),
-                sz * (dragged.z - pinned.z)};
-    out.center = {(dragged.x + pinned.x) / 2, (dragged.y + pinned.y) / 2,
-                  (dragged.z + pinned.z) / 2};
-    return out;
+    return {size.x + (sx * delta.x), size.y + (sy * delta.y), size.z + (sz * delta.z)};
 }
 
 } // namespace
@@ -1528,10 +1534,10 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
         switch (write.kind) {
         case ForgeWriteKind::BoxCorner: {
             const BuildPoint size = part.value("size").vec;
-            // The SAME solve the write below performs, so the drag this refuses
-            // and the box that drag would have produced are the same box.
+            // The SAME quantized step the write below applies, so the drag this
+            // refuses and the box that drag would have produced are one box.
             const BuildPoint grown =
-                solveBoxCorner(part.value("center").vec, size, write.element, localDelta[i]).size;
+                quantizePoint(boxSizeAfter(size, write.element, quantizePoint(localDelta[i])));
             if ((size.x * grown.x) <= 0.0 || (size.y * grown.y) <= 0.0 ||
                 (size.z * grown.z) <= 0.0) {
                 if (error != nullptr) {
@@ -1625,21 +1631,33 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
             break;
         }
         case ForgeWriteKind::BoxCorner: {
-            // ⚑ A resize pinning the opposite corner is what an author dragging
-            // a box corner already expects to get. It used to fall out of
-            // splitting the delta - half into `center`, all of it into `size`,
-            // the two halves cancelling at the far corner. Phase 14 solves
-            // against the pinned corner directly instead, because the dragged
-            // corner has to land on the grid and rounding two parameters
-            // independently would drag the pinned corner along with it.
+            // ⚑ HALF the step into `center` and the whole of it into `size`,
+            // and that split is the entire solve: the far corner sits at
+            // `center - s*size/2`, where the half that moved the centre and the
+            // half that grew the box cancel exactly. Pinning the opposite
+            // corner is not a rule applied on top - it is what this arithmetic
+            // means, which is why a resize is what an author dragging a box
+            // corner already expects to get.
+            //
+            // ⚑ Phase 14 changed one word of this: the STEP is quantized, where
+            // the delta used not to be. See `boxSizeAfter` for why it is the
+            // step and not the corner that gets rounded here.
+            const BuildPoint step = quantizePoint(local);
+            if (step.x == 0.0 && step.y == 0.0 && step.z == 0.0) {
+                continue; // a drag finer than the grid is not an edit
+            }
             ForgeValue center = part.value("center");
             ForgeValue size = part.value("size");
-            const BoxSolve solved = solveBoxCorner(center.vec, size.vec, write.element, local);
-            if (samePoint(solved.center, center.vec) && samePoint(solved.size, size.vec)) {
-                continue;
-            }
-            center.vec = solved.center;
-            size.vec = solved.size;
+            // ⚑ Quantized AFTER the addition as well as before it, and the live
+            // drive is what proved that necessary: `1.0 + 0.1568` is not the
+            // double nearest `1.1568`, because adding a small number to a large
+            // one shifts the exponent and the sum lands a ULP off the decimal.
+            // Two clean decimals do not add to a clean decimal in binary. Both
+            // roundings here are exact no-ops on the VALUE - they only strip
+            // noise - so the far corner still cancels as it always did.
+            center.vec = quantizeCentre({center.vec.x + (step.x / 2), center.vec.y + (step.y / 2),
+                                         center.vec.z + (step.z / 2)});
+            size.vec = quantizePoint(boxSizeAfter(size.vec, write.element, step));
             part.set("center", center);
             part.set("size", size);
             break;

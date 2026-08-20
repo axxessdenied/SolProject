@@ -1457,11 +1457,65 @@ SOL_TEST(aQuantizedBoxCornerDragStillLeavesTheOppositeCornerExactlyWhereItWas)
     // 1e-6 the pin was asserted at before this phase.
     SOL_CHECK(pointAt(after, {-0.5, -0.5, -0.5}) < after.size());
 
-    // The solve is exact, not merely close: size is corner-minus-pinned.
     const assets::BuildPoint size = doc.parts[0].value("size").vec;
     SOL_CHECK(std::abs(size.x - 1.3183) < 1e-12);
     SOL_CHECK(std::abs(size.y - 0.7282) < 1e-12);
     SOL_CHECK(std::abs(size.z - 1.1414) < 1e-12);
+
+    // ⚑⚑ AND `center` TOO, WHICH IS THE HALF A LIVE DRIVE CAUGHT AND THE UNIT
+    // tests had missed. Solving `center` back from the rounded corner gave the
+    // RIGHT value in an unreadable form - `0.07840000000000003` beside a clean
+    // `size` - because `(dragged + pinned) / 2` is not the double nearest the
+    // decimal. Rounding the STEP instead leaves it one exact halving from a
+    // number the author wrote. Asserting the TEXT is what makes this bite.
+    const assets::BuildPoint center = doc.parts[0].value("center").vec;
+    SOL_CHECK(std::abs(center.x - 0.15915) < 1e-12);
+    SOL_CHECK(std::abs(center.y - -0.1359) < 1e-12);
+    SOL_CHECK(std::abs(center.z - 0.0707) < 1e-12);
+
+    const std::string text = assets::writeForge(doc);
+    SOL_CHECK(text.find("center = [0.15915, -0.1359, 0.0707]") != std::string::npos);
+    SOL_CHECK(text.find("size = [1.3183, 0.7282, 1.1414]") != std::string::npos);
+}
+
+// ⚑⚑ THE EXACT CASE A LIVE DRIVE FOUND TWICE AND THE UNIT TESTS MISSED, PINNED
+// HERE SO IT CANNOT COME BACK. Dragging `cube.forge`'s one box - the asset that
+// authors NOTHING, so a save writes precisely `center` and `size` - produced
+// `size = [1.1567999999999996, ...]` beside a clean `center`, and on the
+// previous attempt a clean `size` beside `center = 0.07840000000000003`.
+//
+// ⚑ Both are the same fact: 1.0 + 0.1568 is NOT the double nearest 1.1568.
+// Adding a small number to a larger one shifts the exponent, so the sum lands a
+// ULP off the decimal and `appendNumber` honestly spells all seventeen digits.
+// Two clean decimals do not add to a clean decimal in binary - which is why the
+// step is rounded going in AND the result is rounded coming out.
+//
+// ⚑ The numbers below are the ones the Forge actually wrote, not invented ones.
+SOL_TEST(aBoxDragWritesCleanDecimalsEvenWhereTheAdditionIsNot)
+{
+    const std::string source = "name = \"cube\"\n\n[[part]]\nid = \"box\"\ntype = \"box\"\n"
+                               "center = [0.0, 0.0, 0.0]\nsize = [1.0, 1.0, 1.0]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    const std::size_t corner = pointAt(points, {0.5, 0.5, 0.5});
+    SOL_REQUIRE(corner < points.size());
+
+    // The drag the drive performed, to the digit.
+    SOL_REQUIRE(assets::forgeMovePoint(doc, points[corner],
+                                       {0.15680000000000005, -0.11239999999999994,
+                                        -0.07820000000000004}));
+
+    const std::string text = assets::writeForge(doc);
+    SOL_CHECK(text.find("center = [0.0784, -0.0562, -0.0391]") != std::string::npos);
+    SOL_CHECK(text.find("size = [1.1568, 0.8876, 0.9218]") != std::string::npos);
+
+    // The pin still holds, which is what the rounding must not have cost.
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    SOL_CHECK(pointAt(after, {-0.5, -0.5, -0.5}) < after.size());
 }
 
 // ⚑ The zero-delta rule of E2, extended from EXACTLY ZERO to BELOW THE GRID. A
