@@ -61,8 +61,17 @@ const ActionInfo kActions[] = {
 
     {Action::CycleNavTarget, ActionGroup::Targeting, "cycle_nav_target", "Cycle Nav Target",
      InputChord::ofKey(Key::T)},
+    // Phase 15. U and N rather than a modifier on T and C: a chord holds one
+    // key with no modifier field, and LeftShift is Boost, so the natural
+    // Shift+T would fire the engines on every step backwards. Each sits in the
+    // same physical cluster as the key it reverses (U beside T's row, N beside
+    // C's) and both rebind like any other row.
+    {Action::CycleNavTargetBack, ActionGroup::Targeting, "cycle_nav_target_back",
+     "Cycle Nav Target Back", InputChord::ofKey(Key::U)},
     {Action::CycleContact, ActionGroup::Targeting, "cycle_contact", "Cycle Contact",
      InputChord::ofKey(Key::C)},
+    {Action::CycleContactBack, ActionGroup::Targeting, "cycle_contact_back",
+     "Cycle Contact Back", InputChord::ofKey(Key::N)},
     {Action::SelectObjective, ActionGroup::Targeting, "select_objective", "Select Objective",
      InputChord::ofKey(Key::O)},
     {Action::NearestHostile, ActionGroup::Targeting, "nearest_hostile", "Nearest Hostile",

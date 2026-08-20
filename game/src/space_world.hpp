@@ -1116,8 +1116,12 @@ public:
     // selection). Returns a default-constructed info for a stale slot.
     [[nodiscard]] TargetInfo contactInfo(std::size_t shipSlot) const;
     [[nodiscard]] std::size_t contactCount() const { return m_spawnedShips.size(); }
-    void cycleNavTarget();
-    void cycleContact();
+    // Phase 15: `step` is +1 forward or -1 backward. A parameter rather than a
+    // second function so the two directions cannot drift apart - the fog walk
+    // and the resume-where-this-class-left-off rule are the same code either
+    // way, and only the sign of the step changes.
+    void cycleNavTarget(int step = 1);
+    void cycleContact(int step = 1);
     // Ship slots in cycleContact order: whoever is attacking the player
     // first, then hostiles, then the rest, each group nearest-first.
     void contactOrder(std::vector<std::size_t>& out) const;

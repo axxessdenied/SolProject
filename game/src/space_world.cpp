@@ -5019,29 +5019,33 @@ bool SpaceWorld::selectTarget(std::size_t index)
     return true;
 }
 
-void SpaceWorld::cycleNavTarget()
+void SpaceWorld::cycleNavTarget(int step)
 {
     if (m_targets.empty()) {
         return;
     }
+    // ⚑ Backwards is `+ size - 1`, never `- 1`: these are size_t, so stepping
+    // below zero wraps to a value no modulo brings back.
+    const std::size_t advance = step < 0 ? m_targets.size() - 1 : 1;
     // Already on a nav point: step to the next one. Coming back from the
     // contact cycle: return to where this class left off, so switching
     // classes costs one press rather than a walk back around the list.
-    std::size_t slot = m_targetIndex < m_targets.size() ? (m_targetIndex + 1) % m_targets.size()
-                                                        : m_navSlot % m_targets.size();
+    std::size_t slot = m_targetIndex < m_targets.size()
+                           ? (m_targetIndex + advance) % m_targets.size()
+                           : m_navSlot % m_targets.size();
     // Phase 8z: walk past what has not been found yet. The list still holds
     // every station and gate — it is world state and NPCs anchor to it — so the
     // cycle is where the player stops seeing them. A full lap finding nothing
     // leaves the selection alone rather than parking it on a hidden slot, which
     // is what keeps every downstream consumer (autopilot, hail, dock request,
     // the scan) free of a fog check of its own.
-    for (std::size_t step = 0; step < m_targets.size(); ++step) {
+    for (std::size_t walked = 0; walked < m_targets.size(); ++walked) {
         if (navTargetVisible(slot)) {
             m_navSlot = slot;
             m_targetIndex = slot;
             return;
         }
-        slot = (slot + 1) % m_targets.size();
+        slot = (slot + advance) % m_targets.size();
     }
 }
 
@@ -5109,23 +5113,30 @@ void SpaceWorld::contactOrder(std::vector<std::size_t>& out, std::vector<int>& t
     }
 }
 
-void SpaceWorld::cycleContact()
+void SpaceWorld::cycleContact(int step)
 {
     std::vector<std::size_t> order;
     contactOrder(order);
     if (order.empty()) {
         return;
     }
+    // Phase 15: the step walks the RANKING, not the slot — the order is
+    // threat-then-distance and stepping raw ship slots would wander through it
+    // arbitrarily. Backwards is `+ size - 1` for the size_t reason above.
+    const std::size_t advance = step < 0 ? order.size() - 1 : 1;
     // Coming from a nav target, the first press lands on the head of the
     // threat order — the thing shooting at you, which is the whole point of
-    // giving contacts their own key. Already on a ship, step along that
-    // order from wherever the current one sits in it.
-    std::size_t next = 0;
+    // giving contacts their own key. Backwards from a nav target lands on the
+    // TAIL, mirroring that, so a back-press after a forward-press returns
+    // where the player already was instead of skipping the list's far end.
+    // Already on a ship, step along the order from wherever the current one
+    // sits in it.
+    std::size_t next = step < 0 ? order.size() - 1 : 0;
     if (m_targetIndex >= m_targets.size()) {
         const std::size_t current = m_targetIndex - m_targets.size();
         for (std::size_t i = 0; i < order.size(); ++i) {
             if (order[i] == current) {
-                next = (i + 1) % order.size();
+                next = (i + advance) % order.size();
                 break;
             }
         }

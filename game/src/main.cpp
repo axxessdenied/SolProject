@@ -551,13 +551,21 @@ int main(int argc, char** argv)
 
         // One key walks the nav points, another walks the ships (Phase 8h):
         // two questions, two bindings, one selection.
-        if (gameplayPressed(game::Action::CycleNavTarget)) {
-            world.cycleNavTarget();
+        // Phase 15: each cycle has a reverse, and both directions run the same
+        // call and share the same readout so they cannot report differently.
+        const int navStep = gameplayPressed(game::Action::CycleNavTarget) ? 1
+                            : gameplayPressed(game::Action::CycleNavTargetBack) ? -1
+                                                                               : 0;
+        if (navStep != 0) {
+            world.cycleNavTarget(navStep);
             SOL_LOG_INFO("Target: %s", world.currentTargetInfo().nav.name.c_str());
         }
 
-        if (gameplayPressed(game::Action::CycleContact)) {
-            world.cycleContact();
+        const int contactStep = gameplayPressed(game::Action::CycleContact) ? 1
+                                : gameplayPressed(game::Action::CycleContactBack) ? -1
+                                                                                 : 0;
+        if (contactStep != 0) {
+            world.cycleContact(contactStep);
             const game::TargetInfo contact = world.currentTargetInfo();
             if (contact.isShip) {
                 SOL_LOG_INFO("Contact: %s [%s]", contact.nav.name.c_str(),

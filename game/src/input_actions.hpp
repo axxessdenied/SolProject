@@ -38,8 +38,17 @@ enum class Action : std::uint32_t
     PipBalance,
 
     // Targeting & navigation.
+    //
+    // Phase 15: the two *Back actions are separate rows rather than a modifier
+    // on their forward key, and that is not a compromise. InputChord is one
+    // key or one mouse button with no modifier field at all, and even with one
+    // Shift is already Boost - so Shift+T would light the engines every time a
+    // player stepped back through a target list. Inserting mid-enum is safe
+    // because settings serialize an action by its id string, not its ordinal.
     CycleNavTarget,
+    CycleNavTargetBack,
     CycleContact,
+    CycleContactBack,
     SelectObjective,
     NearestHostile,
     Autopilot,

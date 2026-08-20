@@ -87,6 +87,7 @@ set_tests_properties(game.smoke PROPERTIES LABELS gpu)
 # running the app.
 add_executable(sol_game_tests
     test/map_row_tests.cpp
+    test/target_cycle_tests.cpp
 )
 target_link_libraries(sol_game_tests PRIVATE sol::test sol_game_lib)
 add_test(NAME game.unit COMMAND sol_game_tests)
