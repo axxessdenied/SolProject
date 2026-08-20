@@ -242,13 +242,101 @@ struct ForgeDoc
 // nudge of a vertex and bury the change it actually made.
 [[nodiscard]] std::string writeForge(const ForgeDoc& doc);
 
-// Evaluates the tree into a mesh.
+// Where one part's vertices landed in the mesh buildForge produced (engine plan
+// Phase 9 stage E). Parts emit in file order into one builder, so a part's
+// vertices are a contiguous run and the range is a bracket around the emission
+// rather than a second traversal - which matters, because a second traversal
+// that disagreed with the first is exactly the two-implementations trap this
+// programme has now paid for twice.
+struct ForgePartRange
+{
+    std::size_t part = 0; // into ForgeDoc::parts
+    std::uint32_t firstVertex = 0;
+    std::uint32_t vertexCount = 0;
+};
+
+// Evaluates the tree into a mesh. When `ranges` is given it is filled with one
+// entry per geometry-carrying part, in emission order.
 //
 // ⚑ Parts are emitted in FILE order, not tree order, and that is load-bearing
 // rather than incidental: emission order fixes vertex numbering, so any other
 // order would produce a mesh that draws identically and hashes differently -
 // and stage B's whole regression net is hashes.
-[[nodiscard]] bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error = nullptr);
+//
+// ⚑ `ranges` comes back EMPTY when the `[build]` post-pass ran, and that is
+// honesty rather than an oversight: weld, optimize and a smoothing angle all
+// merge and renumber vertices, after which a built index no longer names the
+// part that emitted it. Ask forgeHasVertexAttribution first.
+[[nodiscard]] bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error = nullptr,
+                              std::vector<ForgePartRange>* ranges = nullptr);
+
+// True when a built vertex index names the part that emitted it - i.e. the
+// `[build]` post-pass is off. Not one of the six committed assets sets it, which
+// is the same fact that lets them be proved byte for byte.
+[[nodiscard]] bool forgeHasVertexAttribution(const ForgeDoc& doc);
+
+// One authored number a dragged point writes back to: a `Vec3` parameter of a
+// part, or one entry of a baked part's vertex list.
+struct ForgePointWrite
+{
+    std::size_t part = 0;      // into ForgeDoc::parts
+    std::string param;         // "p0", "p1", "p2", or "vertices"
+    std::uint32_t element = 0; // into a VertexList; 0 for a plain Vec3
+};
+
+// A distinct point of the built mesh, with every authored value standing at it.
+//
+// ⚑ This is the stage E mechanism, and the reason it is a SET rather than a
+// value: `ship.forge`'s front corner is carried by five parts under three
+// different parameter names, because a corner is shared across two quadrants.
+// Writing one of them and not the others opens a seam in the hull. One drag,
+// every write, or the tool is worse than the text editor it replaces.
+struct ForgePoint
+{
+    // ⚑ Where the point is DRAWN, which is what a pick has to match - and that
+    // means it is float precision promoted to double, because it was read out
+    // of a MeshData. An authored `-2.6` comes back here as -2.5999999046325684.
+    // Nothing may write this number back into the document; see forgeMovePoint.
+    BuildPoint position{0, 0, 0}; // in the frame the mesh is built in
+    std::vector<ForgePointWrite> writes;
+    std::uint32_t corners = 0; // render vertices standing here
+
+    // ⚑ False when some corner at this point came out of a primitive with no
+    // parametric answer - a torus ring vertex is a function of two segment
+    // indices and there is nothing to write. Such a point is not movable until
+    // its part is baked, which is the D checkpoint's rule meeting the two parts
+    // in this repo that actually need it.
+    [[nodiscard]] bool movable() const { return corners > 0 && writes.size() == corners; }
+};
+
+// Every distinct point of the mesh `doc` builds, with its writes resolved.
+//
+// ⚑ `tolerance` defaults to `WeldOptions::positionTolerance`, deliberately the
+// same number rather than a second one of this function's own: the tool's idea
+// of "one point" and the engine's have to agree, or the panel's welded-point
+// count and the point a drag moves describe different meshes.
+[[nodiscard]] bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out,
+                               std::string* error = nullptr, double tolerance = 1e-5);
+
+// Moves one point by `delta`, writing every parameter standing at it. The delta
+// is in the frame the mesh is built in and is rotated into each part's own
+// frame through the inverse of that part's world transform, so a part under a
+// rotated group gets the number it would have been authored with.
+//
+// ⚑⚑ A DELTA, NOT A DESTINATION, AND THE DIFFERENCE IS THE WHOLE DISCIPLINE.
+// `ForgePoint::position` is float - it was read out of the built mesh - so a
+// destination-based move would rebuild every authored double from a rounded
+// number, turning `p1 = [-2.6, -1.3, -1.0]` into `[-2.5999999046325684, ...]`
+// on a drag of zero distance. Every file would grow noise on the first click.
+// Adding a delta to the value already in the document means an unmoved point
+// writes back exactly what it read, which is the same fixed-point discipline
+// the comment-preserving writer exists to keep.
+//
+// Refuses a point that is not `movable()`, and refuses one whose part has a
+// singular world transform, rather than writing a number derived from a
+// division by zero. Nothing is written unless every write can be resolved.
+[[nodiscard]] bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta,
+                                  std::string* error = nullptr);
 
 // The world transform of one part: its own placement composed up the parent
 // chain. Exposed because the editor needs it to draw a part's own axes.

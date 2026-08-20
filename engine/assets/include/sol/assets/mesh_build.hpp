@@ -68,6 +68,19 @@ struct BuildTransform
     [[nodiscard]] BuildPoint transformDirection(BuildPoint v) const;
     [[nodiscard]] double determinant() const;
     [[nodiscard]] bool isIdentity() const;
+
+    // The affine inverse, for stage E: a drag happens in the frame the mesh is
+    // built in, and the number it has to write is in the part's own frame.
+    // False when the linear part is singular - a part scaled to zero on an axis
+    // has no inverse and the caller must refuse the edit rather than divide.
+    //
+    // ⚑ Built as the adjugate DIVIDED by the determinant, unlike the normal
+    // matrix a few lines below, which is the adjugate alone. That difference is
+    // the whole point: an undivided adjugate carries the determinant's sign, so
+    // under a mirroring transform it points the result exactly backwards. The
+    // division is what makes this a true inverse rather than the normal matrix
+    // reused for the wrong job.
+    [[nodiscard]] bool inverse(BuildTransform& out) const;
 };
 
 // Parent then child: the child's placement expressed in the parent's frame.

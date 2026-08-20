@@ -6,12 +6,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace sol;
 using assets::ForgeDoc;
@@ -795,4 +797,371 @@ SOL_TEST(forgeTriviaScannerReadsBracketsInsideStringsAsText)
     SOL_CHECK(doc.parts[1].leading == "\n# still attached\n");
     SOL_CHECK(!doc.hasUnplaceableComments);
     SOL_CHECK(assets::writeForge(doc) == source);
+}
+
+// --- stage E: the point a drag moves, and every parameter standing at it -----
+
+namespace {
+
+// The index of the point at `p`, or the count when there is none. Points come
+// back in first-emission order, which is stable but not meaningful, so every
+// test below names the point it wants by position.
+//
+// ⚑ The default tolerance is FLOAT-scale on purpose. A ForgePoint's position
+// was read out of a MeshData, so the authored `-2.6` arrives here as
+// -2.5999999046325684 - about 9.5e-8 away. A double-scale tolerance finds
+// nothing, which is how these tests first found that a move must be a delta
+// rather than a destination.
+[[nodiscard]] std::size_t pointAt(const std::vector<assets::ForgePoint>& points,
+                                  assets::BuildPoint p, double tolerance = 1e-6)
+{
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        if (std::abs(points[i].position.x - p.x) < tolerance &&
+            std::abs(points[i].position.y - p.y) < tolerance &&
+            std::abs(points[i].position.z - p.z) < tolerance) {
+            return i;
+        }
+    }
+    return points.size();
+}
+
+} // namespace
+
+// Emission is in file order into one builder, so a part's vertices are a
+// contiguous run. Nothing in the tool can attribute a picked vertex without
+// this, and a second traversal that disagreed with the emission would be the
+// two-implementations trap this programme has already paid for twice.
+SOL_TEST(forgePartRangesPartitionTheBuiltMeshExactly)
+{
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
+    for (const char* name : names) {
+        const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+        const std::string source = readWholeFile(path);
+        SOL_CHECK(!source.empty());
+        if (source.empty()) {
+            continue;
+        }
+        ForgeDoc doc;
+        SOL_REQUIRE(parses(source, doc));
+
+        assets::MeshData mesh;
+        std::vector<assets::ForgePartRange> ranges;
+        SOL_REQUIRE(assets::buildForge(doc, mesh, nullptr, &ranges));
+
+        // One range per geometry-carrying part, and a group carries none.
+        std::size_t geometryParts = 0;
+        for (const assets::ForgePart& part : doc.parts) {
+            if (part.primitive != ForgePrimitive::Group) {
+                ++geometryParts;
+            }
+        }
+        SOL_CHECK(ranges.size() == geometryParts);
+
+        // Contiguous from zero, covering every vertex exactly once.
+        std::uint32_t cursor = 0;
+        for (const assets::ForgePartRange& range : ranges) {
+            SOL_CHECK(range.firstVertex == cursor);
+            SOL_CHECK(range.vertexCount > 0);
+            SOL_CHECK(doc.parts[range.part].primitive != ForgePrimitive::Group);
+            cursor += range.vertexCount;
+        }
+        SOL_CHECK(cursor == mesh.vertices.size());
+    }
+}
+
+// ⚑ The post-pass merges and renumbers, after which a built index no longer
+// names a part. Handing the ranges back anyway would be a mapping that is wrong
+// in exactly the case the caller cannot check, so it comes back empty.
+SOL_TEST(forgeVertexAttributionIsRefusedWhenTheBuildPostPassRuns)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"a\"\ntype = \"box\"\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+    SOL_CHECK(assets::forgeHasVertexAttribution(doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_CHECK(assets::forgePoints(doc, points));
+    SOL_CHECK(!points.empty());
+
+    doc.build.optimize = true;
+    SOL_CHECK(!assets::forgeHasVertexAttribution(doc));
+
+    assets::MeshData mesh;
+    std::vector<assets::ForgePartRange> ranges;
+    SOL_REQUIRE(assets::buildForge(doc, mesh, nullptr, &ranges));
+    SOL_CHECK(ranges.empty());
+
+    std::string error;
+    SOL_CHECK(!assets::forgePoints(doc, points, &error));
+    SOL_CHECK(!error.empty());
+    SOL_CHECK(points.empty());
+}
+
+// ⚑ THE MOTIVATING CASE, AND THE NUMBERS ARE THE FILE'S RATHER THAN THE PLAN'S.
+// `ship.forge`'s own header says moving a front corner means editing "four of
+// them". It is five, under three different parameter names, because a front
+// corner is shared across two quadrants - and the header's ring tables document
+// nine points where the file has twelve.
+SOL_TEST(shipForgeFrontCornerIsCarriedByFivePartsUnderThreeParameterNames)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/ship.forge";
+    const std::string source = readWholeFile(path);
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    std::string error;
+    SOL_REQUIRE(assets::forgePoints(doc, points, &error));
+    SOL_CHECK(error.empty());
+
+    // 48 corners over 12 distinct points.
+    SOL_CHECK(points.size() == 12);
+    std::uint32_t corners = 0;
+    for (const assets::ForgePoint& point : points) {
+        corners += point.corners;
+        // Every part of this asset is a flat triangle, so every point is
+        // movable and every corner resolves to a write.
+        SOL_CHECK(point.movable());
+    }
+    SOL_CHECK(corners == 48);
+
+    const std::size_t index = pointAt(points, {-2.6, -1.3, -1.0});
+    SOL_REQUIRE(index < points.size());
+    SOL_CHECK(points[index].writes.size() == 5);
+    SOL_CHECK(points[index].corners == 5);
+
+    // nose_0.p2, hull_0a.p0, hull_0b.p0, nose_3.p1, hull_3a.p1 - three names.
+    std::vector<std::string> named;
+    for (const assets::ForgePointWrite& write : points[index].writes) {
+        named.push_back(doc.parts[write.part].id + "." + write.param);
+    }
+    std::sort(named.begin(), named.end());
+    SOL_REQUIRE(named.size() == 5);
+    SOL_CHECK(named[0] == "hull_0a.p0");
+    SOL_CHECK(named[1] == "hull_0b.p0");
+    SOL_CHECK(named[2] == "hull_3a.p1");
+    SOL_CHECK(named[3] == "nose_0.p2");
+    SOL_CHECK(named[4] == "nose_3.p1");
+}
+
+// One drag, every write. A move that reached four of the five parts would open
+// a seam in the hull, which is the defect the whole mechanism exists to prevent
+// - so the assertion is that the other eleven points did not move at all.
+SOL_TEST(movingOnePointWritesEveryPartStandingAtItAndMovesNothingElse)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/ship.forge";
+    const std::string source = readWholeFile(path);
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> before;
+    SOL_REQUIRE(assets::forgePoints(doc, before));
+    SOL_REQUIRE(before.size() == 12);
+    const std::size_t moved = pointAt(before, {-2.6, -1.3, -1.0});
+    SOL_REQUIRE(moved < before.size());
+
+    const assets::BuildPoint delta{-0.3, -0.15, 0.25};
+    std::string error;
+    SOL_REQUIRE(assets::forgeMovePoint(doc, before[moved], delta, &error));
+    SOL_CHECK(error.empty());
+
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    // Still twelve points: a write that missed a part would have split one
+    // point into two.
+    SOL_CHECK(after.size() == 12);
+
+    const std::size_t landed = pointAt(after, {-2.9, -1.45, -0.75});
+    SOL_REQUIRE(landed < after.size());
+    SOL_CHECK(after[landed].corners == 5);
+
+    // Every other point is exactly where it was.
+    std::size_t matched = 0;
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        if (i == moved) {
+            continue;
+        }
+        if (pointAt(after, before[i].position) < after.size()) {
+            ++matched;
+        }
+    }
+    SOL_CHECK(matched == 11);
+}
+
+// ⚑⚑ THE FIXED POINT, AND THE TESTS ABOVE ARE WHAT FOUND IT. A ForgePoint's
+// position is float, because it was read out of the built mesh. A move that
+// took a DESTINATION would rebuild every authored double from that rounded
+// number, so clicking a vertex and letting go - a drag of zero distance -
+// would rewrite `[-2.6, -1.3, -1.0]` as `[-2.5999999046325684, ...]` in five
+// parts at once, and a modeller saving on every accepted edit would fill the
+// file with noise nobody typed. A delta added to the value already in the
+// document cannot do that, and this is the assertion that keeps it true.
+SOL_TEST(aMoveOfZeroDistanceLeavesTheFileByteForByteIdentical)
+{
+    const char* const names[] = {"ship", "asteroid"};
+    for (const char* name : names) {
+        const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+        const std::string source = readWholeFile(path);
+        SOL_CHECK(!source.empty());
+        if (source.empty()) {
+            continue;
+        }
+        ForgeDoc doc;
+        SOL_REQUIRE(parses(source, doc));
+
+        std::vector<assets::ForgePoint> points;
+        SOL_REQUIRE(assets::forgePoints(doc, points));
+        SOL_REQUIRE(!points.empty());
+
+        // Every movable point, nudged by nothing at all.
+        for (const assets::ForgePoint& point : points) {
+            if (point.movable()) {
+                SOL_REQUIRE(assets::forgeMovePoint(doc, point, {0.0, 0.0, 0.0}));
+            }
+        }
+        SOL_CHECK(assets::writeForge(doc) == source);
+    }
+}
+
+// ⚑ A torus ring vertex is a function of two segment indices and there is
+// nothing authored to write, so the point is not movable and says so instead of
+// silently doing nothing. This is the D checkpoint's bake rule meeting the two
+// parts in this repo that actually need it - two out of sixty.
+SOL_TEST(aTorusPointHasNoParametricAnswerAndRefusesTheMoveUntilItIsBaked)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/station.forge";
+    const std::string source = readWholeFile(path);
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    SOL_REQUIRE(!points.empty());
+
+    // The station is nine boxes and a torus, so not one of its points has a
+    // parametric answer today: every one is class (2) or class (3).
+    std::size_t movable = 0;
+    for (const assets::ForgePoint& point : points) {
+        if (point.movable()) {
+            ++movable;
+        }
+    }
+    SOL_CHECK(movable == 0);
+
+    std::string error;
+    SOL_CHECK(!assets::forgeMovePoint(doc, points[0], {0.5, 0.0, 0.0}, &error));
+    SOL_CHECK(!error.empty());
+}
+
+// A baked part's vertices ARE its authored numbers, so the asteroid - one
+// `mesh` part of literal geometry - is fully movable without any further bake.
+SOL_TEST(aBakedPartIsFullyMovableBecauseItsVerticesAreItsParameters)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/asteroid.forge";
+    const std::string source = readWholeFile(path);
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+    SOL_REQUIRE(doc.parts.size() == 1);
+    SOL_REQUIRE(doc.parts[0].primitive == ForgePrimitive::Mesh);
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    SOL_REQUIRE(points.size() > 100);
+    for (const assets::ForgePoint& point : points) {
+        SOL_CHECK(point.movable());
+    }
+
+    const assets::BuildPoint start = points[0].position;
+    const assets::BuildPoint delta{0.25, -0.5, 0.125};
+    SOL_REQUIRE(assets::forgeMovePoint(doc, points[0], delta));
+
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}) <
+              after.size());
+}
+
+// ⚑ A part under a rotated, scaled parent must receive the number it would have
+// been AUTHORED with, not the world number - otherwise the first drag on a
+// child throws it across the frame by whatever its parent's transform was.
+// Deliberately NOT a 90 degree rotation, which round-trips by luck.
+SOL_TEST(aPointUnderATransformedParentIsWrittenBackInThePartsOwnFrame)
+{
+    const std::string source = "name = \"demo\"\n"
+                               "\n[[part]]\nid = \"frame\"\ntype = \"group\"\n"
+                               "position = [10.0, 0.0, -4.0]\n"
+                               "rotation = [0.0, 30.0, 0.0]\n"
+                               "scale = [2.0, 1.0, 0.5]\n"
+                               "\n[[part]]\nid = \"tri\"\ntype = \"flat_triangle\"\n"
+                               "parent = \"frame\"\n"
+                               "p0 = [0.0, 0.0, 0.0]\np1 = [1.0, 0.0, 0.0]\np2 = [0.0, 1.0, 0.0]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    SOL_REQUIRE(points.size() == 3);
+
+    // Drag the p1 corner to a chosen point in the frame the mesh is built in.
+    std::size_t target = points.size();
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        for (const assets::ForgePointWrite& write : points[i].writes) {
+            if (write.param == "p1") {
+                target = i;
+            }
+        }
+    }
+    SOL_REQUIRE(target < points.size());
+
+    // Drag two metres along world +X. The parent is scaled 2x on X and turned
+    // 30 degrees, so the authored number must move by neither two nor one.
+    const assets::BuildPoint start = points[target].position;
+    const assets::BuildPoint delta{2.0, 0.0, 0.0};
+    SOL_REQUIRE(assets::forgeMovePoint(doc, points[target], delta));
+
+    const assets::ForgeValue written = doc.parts[1].value("p1");
+    SOL_CHECK(std::abs(written.vec.x - (1.0 + delta.x)) > 0.1);
+
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}) <
+              after.size());
+}
+
+// The whole stage rides on the writer staying a fixed point: a modeller saves
+// on every accepted edit, so an edited document must write a file that differs
+// only in the lines the edit touched - not the header, not the dividers, not
+// the blank lines.
+SOL_TEST(anEditedDocumentStillWritesEveryOtherLineUnchanged)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/ship.forge";
+    const std::string source = readWholeFile(path);
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    const std::size_t moved = pointAt(points, {-2.6, -1.3, -1.0});
+    SOL_REQUIRE(moved < points.size());
+    SOL_REQUIRE(assets::forgeMovePoint(doc, points[moved], {-0.3, -0.15, 0.25}));
+
+    const std::string written = assets::writeForge(doc);
+    std::size_t differing = 0;
+    std::istringstream before(source);
+    std::istringstream after(written);
+    std::string a;
+    std::string b;
+    while (std::getline(before, a) && std::getline(after, b)) {
+        if (a != b) {
+            ++differing;
+        }
+    }
+    SOL_CHECK(differing == 5);
+    SOL_CHECK(std::count(source.begin(), source.end(), '\n') ==
+              std::count(written.begin(), written.end(), '\n'));
 }

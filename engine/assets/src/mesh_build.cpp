@@ -101,6 +101,27 @@ bool BuildTransform::isIdentity() const
            translation.y == 0.0 && translation.z == 0.0;
 }
 
+bool BuildTransform::inverse(BuildTransform& out) const
+{
+    // Rows of the inverse linear part, before the division.
+    const BuildPoint rowX = cross3(y, z);
+    const BuildPoint rowY = cross3(z, x);
+    const BuildPoint rowZ = cross3(x, y);
+    const double det = dot3(x, rowX);
+    if (det == 0.0) {
+        return false;
+    }
+    const double scale = 1.0 / det;
+
+    // Rows above, columns here: this struct stores basis COLUMNS, so the
+    // transpose happens in the assignment rather than in a separate step.
+    out.x = {rowX.x * scale, rowY.x * scale, rowZ.x * scale};
+    out.y = {rowX.y * scale, rowY.y * scale, rowZ.y * scale};
+    out.z = {rowX.z * scale, rowY.z * scale, rowZ.z * scale};
+    out.translation = flipped(out.transformDirection(translation));
+    return true;
+}
+
 BuildTransform operator*(const BuildTransform& parent, const BuildTransform& child)
 {
     BuildTransform out;

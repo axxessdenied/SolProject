@@ -995,9 +995,13 @@ ForgePart forgeBakePart(const std::string& id, const MeshData& mesh)
     return part;
 }
 
-bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error)
+bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error,
+                std::vector<ForgePartRange>* ranges)
 {
     const std::vector<BuildTransform> world = worldTransforms(doc);
+    if (ranges != nullptr) {
+        ranges->clear();
+    }
 
     MeshBuilder builder;
     for (std::size_t i = 0; i < doc.parts.size(); ++i) {
@@ -1005,6 +1009,7 @@ bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error)
         if (part.primitive == ForgePrimitive::Group) {
             continue;
         }
+        const std::uint32_t firstVertex = builder.vertexCount();
         builder.setTransform(world[i]);
 
         switch (part.primitive) {
@@ -1105,6 +1110,10 @@ bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error)
             break;
         }
         }
+
+        if (ranges != nullptr) {
+            ranges->push_back({i, firstVertex, builder.vertexCount() - firstVertex});
+        }
     }
 
     MeshData data = builder.build();
@@ -1118,9 +1127,179 @@ bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error)
             optimizeIndices(mesh);
         }
         data = toMeshData(mesh);
+        // ⚑ The post-pass merged and renumbered vertices, so the ranges just
+        // collected describe a mesh that no longer exists. Dropping them is the
+        // honest answer; handing them back would be a mapping that is wrong in
+        // exactly the case a caller cannot check.
+        if (ranges != nullptr) {
+            ranges->clear();
+        }
     }
 
     out = std::move(data);
+    return true;
+}
+
+bool forgeHasVertexAttribution(const ForgeDoc& doc)
+{
+    return !doc.build.weld && !doc.build.optimize && doc.build.smoothAngleDegrees <= 0.0;
+}
+
+bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string* error,
+                 double tolerance)
+{
+    out.clear();
+    if (!forgeHasVertexAttribution(doc)) {
+        if (error != nullptr) {
+            *error = "this document's [build] table welds or reorders vertices, so a built vertex "
+                     "no longer names the part that emitted it";
+        }
+        return false;
+    }
+
+    MeshData mesh;
+    std::vector<ForgePartRange> ranges;
+    if (!buildForge(doc, mesh, error, &ranges)) {
+        return false;
+    }
+
+    // Which part each built vertex came from. One pass over the ranges rather
+    // than a search per vertex: the asteroid is 1291 vertices and this runs on
+    // every rebuild.
+    std::vector<std::size_t> ownerOf(mesh.vertices.size(), doc.parts.size());
+    std::vector<std::uint32_t> localOf(mesh.vertices.size(), 0);
+    for (const ForgePartRange& range : ranges) {
+        for (std::uint32_t i = 0; i < range.vertexCount; ++i) {
+            const std::size_t vertex = range.firstVertex + i;
+            if (vertex < ownerOf.size()) {
+                ownerOf[vertex] = range.part;
+                localOf[vertex] = i;
+            }
+        }
+    }
+
+    const double toleranceSquared = tolerance * tolerance;
+    for (std::size_t v = 0; v < mesh.vertices.size(); ++v) {
+        const MeshVertex& vertex = mesh.vertices[v];
+        const BuildPoint position{vertex.position[0], vertex.position[1], vertex.position[2]};
+
+        // Linear over the points found so far. The meshes this tool authors are
+        // 16-1291 vertices and this is not the hot path; a grid would be the
+        // answer if a future asset made it one.
+        ForgePoint* found = nullptr;
+        for (ForgePoint& candidate : out) {
+            const double dx = candidate.position.x - position.x;
+            const double dy = candidate.position.y - position.y;
+            const double dz = candidate.position.z - position.z;
+            if ((dx * dx) + (dy * dy) + (dz * dz) <= toleranceSquared) {
+                found = &candidate;
+                break;
+            }
+        }
+        if (found == nullptr) {
+            out.push_back({position, {}, 0});
+            found = &out.back();
+        }
+        ++found->corners;
+
+        const std::size_t owner = ownerOf[v];
+        if (owner >= doc.parts.size()) {
+            continue; // no range covers this vertex: leaves the point unmovable
+        }
+        const ForgePart& part = doc.parts[owner];
+        // ⚑ The three classes stage E's spec measured, and only the first two
+        // lines of this switch are the whole of class (1). A flat triangle emits
+        // p0, p1, p2 in that order and nothing else; a baked part emits its
+        // vertex list in order. Every other primitive computes its corners from
+        // parameters that are not corners, so there is no name to write and the
+        // point stays unmovable until the part is baked.
+        switch (part.primitive) {
+        case ForgePrimitive::FlatTriangle: {
+            static constexpr const char* kCorners[3] = {"p0", "p1", "p2"};
+            const std::uint32_t local = localOf[v];
+            if (local < 3) {
+                found->writes.push_back({owner, kCorners[local], 0});
+            }
+            break;
+        }
+        case ForgePrimitive::Mesh:
+            found->writes.push_back({owner, "vertices", localOf[v]});
+            break;
+        case ForgePrimitive::Group:
+        case ForgePrimitive::Box:
+        case ForgePrimitive::Beam:
+        case ForgePrimitive::Torus:
+        case ForgePrimitive::Revolve:
+        case ForgePrimitive::Extrude:
+            break;
+        }
+    }
+    return true;
+}
+
+bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, std::string* error)
+{
+    if (!point.movable()) {
+        if (error != nullptr) {
+            *error = "this point has a corner with no parametric answer - bake its part first";
+        }
+        return false;
+    }
+
+    // ⚑ Every inverse is resolved BEFORE anything is written. A part with a
+    // singular world transform has to abort the whole move, not half of it: a
+    // hull with three of its five corners updated is a seam, which is the exact
+    // defect this function exists to prevent.
+    const std::vector<BuildTransform> world = worldTransforms(doc);
+    std::vector<BuildPoint> localDelta(point.writes.size());
+    for (std::size_t i = 0; i < point.writes.size(); ++i) {
+        const std::size_t part = point.writes[i].part;
+        if (part >= doc.parts.size()) {
+            if (error != nullptr) {
+                *error = "a write names a part this document no longer has";
+            }
+            return false;
+        }
+        BuildTransform inverse;
+        if (!world[part].inverse(inverse)) {
+            if (error != nullptr) {
+                *error = "part '" + doc.parts[part].id +
+                         "' is scaled flat, so there is no frame to write this point back into";
+            }
+            return false;
+        }
+        // ⚑ transformDirection, not transformPoint: a delta is a displacement
+        // and must not pick up the part's translation. Using the point form
+        // here would throw a child part across the frame by its parent's
+        // offset on the first drag - and a zero drag would not be a no-op.
+        localDelta[i] = inverse.transformDirection(delta);
+    }
+
+    for (std::size_t i = 0; i < point.writes.size(); ++i) {
+        const ForgePointWrite& write = point.writes[i];
+        ForgePart& part = doc.parts[write.part];
+        if (write.param == "vertices") {
+            ForgeValue vertices = part.value("vertices");
+            if (write.element >= vertices.vertices.size()) {
+                if (error != nullptr) {
+                    *error = "part '" + part.id + "' no longer has that baked vertex";
+                }
+                return false;
+            }
+            BuildPoint& position = vertices.vertices[write.element].position;
+            position = {position.x + localDelta[i].x, position.y + localDelta[i].y,
+                        position.z + localDelta[i].z};
+            part.set("vertices", vertices);
+        } else {
+            // ⚑ The value ALREADY IN THE DOCUMENT is what the delta is added
+            // to, so an unmoved point writes back the author's own number
+            // rather than a float round trip of it.
+            ForgeValue value = part.value(write.param.c_str());
+            value.vec = {value.vec.x + localDelta[i].x, value.vec.y + localDelta[i].y,
+                         value.vec.z + localDelta[i].z};
+            part.set(write.param.c_str(), value);
+        }
+    }
     return true;
 }
 

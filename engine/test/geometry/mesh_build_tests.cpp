@@ -215,3 +215,85 @@ SOL_TEST(clearReturnsABuilderToEmpty)
     SOL_CHECK(builder.triangleCount() == 0);
     SOL_CHECK(builder.build().vertices.empty());
 }
+
+// ⚑ Stage E needs this: a drag happens in the frame the mesh is built in and
+// the number it has to write is in the part's own frame.
+//
+// ⚑ NOT BUILT FROM 90 DEGREES, which round-trips by luck - the gotcha this repo
+// paid for is that 30 degrees comes back as 29.999999999999996 and 90, 45 and
+// 35 survive exactly. A test that used the safe angles would pass over a broken
+// inverse.
+SOL_TEST(buildTransformInverseRoundTripsARotatedNonUniformScale)
+{
+    const assets::BuildTransform transform = assets::BuildTransform::fromTrs(
+        {10.0, -2.5, 4.0}, {0.35, 0.7, -0.2}, {2.0, 0.5, 1.5});
+    assets::BuildTransform inverse;
+    SOL_REQUIRE(transform.inverse(inverse));
+
+    const assets::BuildPoint samples[] = {
+        {0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {-3.25, 7.5, 0.125}};
+    for (const assets::BuildPoint& p : samples) {
+        const assets::BuildPoint there = transform.transformPoint(p);
+        const assets::BuildPoint back = inverse.transformPoint(there);
+        SOL_CHECK(near(back.x, p.x, 1e-12));
+        SOL_CHECK(near(back.y, p.y, 1e-12));
+        SOL_CHECK(near(back.z, p.z, 1e-12));
+    }
+
+    // Composing the two gives the identity, which is the same claim made
+    // against the operator the part tree actually uses.
+    const assets::BuildTransform composed = transform * inverse;
+    SOL_CHECK(near(composed.x.x, 1.0, 1e-12));
+    SOL_CHECK(near(composed.y.y, 1.0, 1e-12));
+    SOL_CHECK(near(composed.z.z, 1.0, 1e-12));
+    SOL_CHECK(near(composed.translation.x, 0.0, 1e-12));
+    SOL_CHECK(near(composed.translation.y, 0.0, 1e-12));
+    SOL_CHECK(near(composed.translation.z, 0.0, 1e-12));
+}
+
+// ⚑ A mirroring transform has a NEGATIVE determinant, and this is where the
+// adjugate trap lives: the normal matrix a few lines away is the adjugate
+// WITHOUT the division, so it carries that sign. A true inverse divides, and a
+// test that only ever used a right-handed transform would never tell the two
+// apart.
+SOL_TEST(buildTransformInverseSurvivesAMirroringTransform)
+{
+    const assets::BuildTransform mirrored =
+        assets::BuildTransform::fromTrs({1.0, 2.0, 3.0}, {0.0, 0.35, 0.0}, {-2.0, 1.0, 1.0});
+    SOL_CHECK(mirrored.determinant() < 0.0);
+
+    assets::BuildTransform inverse;
+    SOL_REQUIRE(mirrored.inverse(inverse));
+    const assets::BuildPoint p{4.0, -1.5, 0.25};
+    const assets::BuildPoint back = inverse.transformPoint(mirrored.transformPoint(p));
+    SOL_CHECK(near(back.x, p.x, 1e-12));
+    SOL_CHECK(near(back.y, p.y, 1e-12));
+    SOL_CHECK(near(back.z, p.z, 1e-12));
+}
+
+// A part scaled flat has no frame to write a point back into, and saying so is
+// the difference between a refused edit and a number derived from a division
+// by zero.
+SOL_TEST(buildTransformInverseRefusesASingularTransform)
+{
+    const assets::BuildTransform flattened =
+        assets::BuildTransform::fromTrs({0, 0, 0}, {0, 0, 0}, {1.0, 0.0, 1.0});
+    assets::BuildTransform inverse;
+    SOL_CHECK(!flattened.inverse(inverse));
+}
+
+// The identity is its own inverse, and it matters that this is EXACT rather
+// than near: an untransformed part is the common case, and a drag on one must
+// write back the number the author typed, not that number plus an epsilon.
+SOL_TEST(buildTransformInverseOfTheIdentityIsExactlyTheIdentity)
+{
+    assets::BuildTransform inverse;
+    SOL_REQUIRE(assets::BuildTransform{}.inverse(inverse));
+    SOL_CHECK(inverse.isIdentity());
+
+    const assets::BuildPoint p{-2.6, -1.3, -1.0};
+    const assets::BuildPoint back = inverse.transformPoint(p);
+    SOL_CHECK(back.x == p.x);
+    SOL_CHECK(back.y == p.y);
+    SOL_CHECK(back.z == p.z);
+}
