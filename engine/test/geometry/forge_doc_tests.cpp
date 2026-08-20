@@ -648,7 +648,8 @@ segments_u = 2
 // first time somebody nudged a vertex and bury the one line that changed.
 SOL_TEST(everyCommittedForgeSourceRoundTripsByteForByte)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
+    const char* const names[] = {"cube",    "gate",     "ship",         "station",
+                                 "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -833,7 +834,8 @@ namespace {
 // two-implementations trap this programme has already paid for twice.
 SOL_TEST(forgePartRangesPartitionTheBuiltMeshExactly)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
+    const char* const names[] = {"cube",    "gate",     "ship",         "station",
+                                 "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -1007,7 +1009,8 @@ SOL_TEST(movingOnePointWritesEveryPartStandingAtItAndMovesNothingElse)
 // file on a click-and-release, so a write of no distance is not performed.
 SOL_TEST(aMoveOfZeroDistanceLeavesTheFileByteForByteIdentical)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
+    const char* const names[] = {"cube",    "gate",     "ship",         "station",
+                                 "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -1079,6 +1082,62 @@ SOL_TEST(aTorusPointHasNoParametricAnswerAndRefusesTheMoveUntilItIsBaked)
     SOL_REQUIRE(hub < points.size());
     SOL_CHECK(points[hub].movable());
     SOL_CHECK(assets::forgeMovePoint(doc, points[hub], {1.0, 0.0, 0.0}, &error));
+}
+
+// ⚑⚑ THE MEMBRANE'S RIM IS THE APERTURE THE GAME TESTS, AND THIS IS WHAT PINS
+// THEM TOGETHER. space_world.cpp's crossing test uses kGateRadiusMeters = 70 and
+// gate.forge's ring is authored so its inner radius is exactly that (78 - 8).
+// Phase 12 adds a THIRD thing that has to agree: a membrane of any other radius
+// would draw a second aperture disagreeing with the one the mechanic uses, which
+// is precisely the defect stage D closed when it found the old slab drawing
+// +/-35 m against a test that accepted 70. The number is asserted rather than
+// commented, because a comment does not fail.
+SOL_TEST(theGateMembraneFillsExactlyTheApertureTheCrossingTestUses)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/gate_membrane.forge";
+    const std::string source = readWholeFile(path);
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    assets::MeshData mesh;
+    SOL_REQUIRE(assets::buildForge(doc, mesh, nullptr, nullptr));
+    SOL_REQUIRE(!mesh.vertices.empty());
+
+    // The disc is turned to stand in the lane, so its extent is in X and Y and
+    // it is flat on Z - the same plane the ring occupies.
+    double maxRadius = 0.0;
+    double maxAbsZ = 0.0;
+    for (const assets::MeshVertex& vertex : mesh.vertices) {
+        const double x = static_cast<double>(vertex.position[0]);
+        const double y = static_cast<double>(vertex.position[1]);
+        const double z = static_cast<double>(vertex.position[2]);
+        maxRadius = std::max(maxRadius, std::sqrt((x * x) + (y * y)));
+        maxAbsZ = std::max(maxAbsZ, std::abs(z));
+    }
+    SOL_CHECK(std::abs(maxRadius - 70.0) < 1e-3);
+    SOL_CHECK(maxAbsZ < 1e-3);
+
+    // ⚑⚑ EVERY NORMAL IS -Z, AND THE SIGN IS THE WHOLE LIGHTING STORY.
+    //
+    // A gate is placed with facingRotation(outward radial from the hub), which
+    // takes the model's +Z onto that axis - so a -Z normal points back INWARD,
+    // at the hub, where the star is. Lambert is max(dot(n, toSun), 0) and
+    // toSun is that same inward direction, so the dot is +1.
+    //
+    // ⚑ The disc meets the sunlight dead-on rather than at an angle, and the
+    // fragment shader does NOT flip the normal for back faces - so lambert is
+    // all-or-nothing across BOTH faces together, not lit on one and black on
+    // the other. Wind this profile the other way and the membrane goes black
+    // from every angle at once, lit only by ambient and its emissive. That is
+    // what the emissive floor is insurance against, and it is why the sign is
+    // asserted here instead of being left to whoever next opens the asset.
+    SOL_REQUIRE(mesh.vertices.size() > 1);
+    for (const assets::MeshVertex& vertex : mesh.vertices) {
+        SOL_CHECK(std::abs(vertex.normal[0]) < 1e-3f);
+        SOL_CHECK(std::abs(vertex.normal[1]) < 1e-3f);
+        SOL_CHECK(std::abs(vertex.normal[2] + 1.0f) < 1e-3f);
+    }
 }
 
 // A baked part's vertices ARE its authored numbers, so the asteroid - one
@@ -1535,7 +1594,8 @@ SOL_TEST(everyCommittedAssetButTheTwoTorusesIsNowFullyMovable)
 // time anyone touches a vertex on it.
 SOL_TEST(bakingAnyPartOfAnyCommittedAssetLeavesTheBuiltMeshUnchanged)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
+    const char* const names[] = {"cube",    "gate",     "ship",         "station",
+                                 "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);

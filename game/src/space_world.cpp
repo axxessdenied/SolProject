@@ -2951,13 +2951,20 @@ void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
     // size of the one it drew. The ring's inner radius is 70 m exactly, which
     // closes that without touching the mechanic.
     const ModelId gateModel = modelByName("gate");
+    // Phase 12: the membrane is a second instance at the identical transform
+    // rather than a part of the gate mesh, because it draws under a different
+    // pipeline. It is non-solid in models.toml, so it joins neither the
+    // collision nor the avoidance set and cannot affect the crossing.
+    const ModelId membraneModel = modelByName("gate_membrane");
     const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
     for (const sim::GateSpec& gate : spec.gates) {
         const core::DVec3 outward = gate.position - hub;
         const double reach = length(outward);
         const core::DVec3 axis =
             reach > 0.0 ? outward * (1.0 / reach) : core::DVec3{0.0, 0.0, 1.0};
-        addStatic(gate.position, {1.0f, 1.0f, 1.0f}, gateModel, facingRotation(axis));
+        const core::Quat facing = facingRotation(axis);
+        addStatic(gate.position, {1.0f, 1.0f, 1.0f}, gateModel, facing);
+        addStatic(gate.position, {1.0f, 1.0f, 1.0f}, membraneModel, facing);
     }
 }
 

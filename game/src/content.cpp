@@ -180,11 +180,19 @@ std::string listModels(GameContent& content)
     const auto& models = content.defs().models();
     for (std::size_t i = 0; i < models.size(); ++i) {
         const assets::ModelDef& def = models[i];
+        // Phase 12: the blend state is reported too. Without it a drive cannot
+        // tell a translucent row from an opaque one, which is the same gap this
+        // probe exists to close for the mesh and texture indices.
+        char film[24] = {};
+        if (def.translucent) {
+            std::snprintf(film, sizeof(film), " [film a%.2f]", static_cast<double>(def.alpha));
+        }
         char line[192] = {};
-        std::snprintf(line, sizeof(line), "%s#%zu %s: %s/%s r%.0f a%.0f%s%s", i == 0 ? "" : "\n", i,
-                      def.id.c_str(), def.mesh.c_str(), def.texture.c_str(),
+        std::snprintf(line, sizeof(line), "%s#%zu %s: %s/%s r%.0f a%.0f%s%s%s", i == 0 ? "" : "\n",
+                      i, def.id.c_str(), def.mesh.c_str(), def.texture.c_str(),
                       static_cast<double>(def.radius), static_cast<double>(def.avoidRadius),
-                      def.solid ? "" : " [pass-through]", def.emissive > 0.0f ? " [lit]" : "");
+                      def.solid ? "" : " [pass-through]", def.emissive > 0.0f ? " [lit]" : "",
+                      film);
         out += line;
     }
     if (out.empty()) {

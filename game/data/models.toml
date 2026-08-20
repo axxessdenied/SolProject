@@ -61,6 +61,36 @@ texture = "hull"
 radius = 106.7
 solid = false
 
+# The membrane in the gate's aperture (Phase 12) - the first translucent model
+# in this game, and the reason `translucent` and `alpha` exist as def keys.
+#
+# It is a second model rather than a part of the gate because a .forge cooks to
+# one mesh drawn under one pipeline, and this one needs alpha blending while the
+# ring needs the opaque path. It rides at the gate's own transform.
+#
+# `radius` is the aperture's 70 m, the same number space_world.cpp's crossing
+# test uses. Nothing in the sim reads it - `solid = false` keeps the membrane
+# out of the collision and avoidance sets exactly as it keeps the gate out, so
+# flying through it cannot be affected by it. That is the point: it is something
+# you see, not something you hit.
+#
+# `emissive` is insurance, and it is worth saying what against. The lane axis
+# points at the system hub and the star sits on it, so this disc meets the
+# sunlight dead-on rather than across it - and the shader does not flip a normal
+# for back faces, so lambert is all-or-nothing across BOTH faces at once. As
+# authored the profile's normal is -Z, which faces the star, so the film is lit.
+# Wind that profile the other way and it goes black from every angle at the same
+# time. geometry.unit asserts the sign; this floor is what it would fall back to.
+[[model]]
+id = "gate_membrane"
+mesh = "gate_membrane"
+texture = "hull"
+radius = 70.0
+translucent = true
+alpha = 0.30
+emissive = 0.35
+solid = false
+
 # The player's own frame (Phase 8m), authored in SHIP space around the eye and
 # drawn at the ship's transform - so its radius is measured from the ship
 # origin, not from the cockpit's own centre, and comes out just inside the

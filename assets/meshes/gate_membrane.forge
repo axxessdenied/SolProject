@@ -1,0 +1,39 @@
+# The jump gate's membrane (engine plan Phase 12) - the first translucent
+# object in this game, and the first asset in this repo to use `revolve`.
+#
+# ⚑ IT IS A SEPARATE ASSET FROM gate.forge AND THAT IS STRUCTURAL, NOT TIDINESS.
+# A whole .forge cooks to ONE .smesh, which is handed to ONE draw call under ONE
+# pipeline - so a part cannot opt into different blend state. The membrane needs
+# the alpha-blended pipeline and the ring needs the opaque one, which makes them
+# two models by construction. models.toml carries `translucent` on the row.
+#
+# ⚑⚑ THE 70 m IS NOT A TASTE DECISION - IT IS THE SAME 70 THE GAME TESTS.
+# space_world.cpp's crossing test uses kGateRadiusMeters = 70, and gate.forge's
+# ring is authored so that its inner radius (major_radius - tube_radius, i.e.
+# 78 - 8) is exactly that. Stage D's whole point was that what is drawn is what
+# is tested. A membrane of any other radius would re-open that by hand: it would
+# draw a second aperture disagreeing with the one the mechanic uses. If the ring
+# ever moves, this number moves with it, and geometry.unit asserts the 70.
+name = "gate_membrane"
+
+# addRevolve sweeps about +Y, exactly as addTorus does, so the disc is turned
+# the same quarter turn the ring is turned by - a gate's model faces +Z (see
+# facingRotation in space_world.cpp) and an unrotated revolve would lie flat
+# across the lane instead of standing in it.
+#
+# The profile is (radius, height): two points at the same height, from the axis
+# out to the aperture edge. That is the whole disc. The centre ring collapses to
+# a point, so the innermost quad row is degenerate on one edge and rasterises as
+# a triangle fan - the ordinary cost of revolving a surface that touches its own
+# axis, and the reason a disc needs no new primitive.
+#
+# segments = 32 matches the ring's segments_u, so the membrane's rim and the
+# ring's inner curve are tessellated to the same 32 facets and cannot show a
+# sawtooth against each other.
+[[part]]
+id = "film"
+type = "revolve"
+rotation = [90.0, 0.0, 0.0]
+profile = [[0.0, 0.0], [70.0, 0.0]]
+segments = 32
+u_tiles = 4.0

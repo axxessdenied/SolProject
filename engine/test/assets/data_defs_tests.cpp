@@ -426,6 +426,53 @@ solid = false
     SOL_CHECK(!gate->solid);
     // Two models sharing one mesh is the normal case, not a special one.
     SOL_CHECK(gate->mesh == cube->mesh);
+
+    // Phase 12: a model is opaque unless it says otherwise, and the alpha
+    // default is the value the shader premultiplies by to reproduce the
+    // pre-Phase-12 output exactly. Both defaults are load-bearing: they are
+    // what makes adding the keys a no-op for the five models that predate them.
+    SOL_CHECK(!cube->translucent);
+    SOL_CHECK(cube->alpha == 1.0f);
+}
+
+// Phase 12. Translucency is declared on the MODEL rather than on the instance,
+// so that the second translucent thing in this game is a def row and no C++ at
+// all - the same bet Phase 9 stage A made when it turned a five-member enum
+// behind four hardcoded switches into this table.
+SOL_TEST(data_defs_model_translucency)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db, R"(
+[[model]]
+id = "membrane"
+mesh = "gate_membrane"
+texture = "hull"
+radius = 70.0
+translucent = true
+alpha = 0.30
+emissive = 0.35
+solid = false
+)",
+                    "models.toml", &error));
+
+    const auto* membrane = db.findModel("membrane");
+    SOL_REQUIRE(membrane != nullptr);
+    SOL_CHECK(membrane->translucent);
+    SOL_CHECK(std::abs(membrane->alpha - 0.30f) < 1e-6f);
+    SOL_CHECK(std::abs(membrane->emissive - 0.35f) < 1e-6f);
+    SOL_CHECK(!membrane->solid);
+
+    // Coverage outside 0..1 is meaningless under premultiplied blending and
+    // would read as a wrongly-lit model rather than as a bad number, so it dies
+    // at load while the file name is still in hand.
+    SOL_CHECK(!merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\nalpha = 1.5\n",
+                     "m.toml", &error));
+    SOL_CHECK(!merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\nalpha = -0.1\n",
+                     "m.toml", &error));
+    // translucent takes a bool, for the same reason solid does.
+    SOL_CHECK(!merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\ntranslucent = 1\n",
+                     "m.toml", &error));
 }
 
 SOL_TEST(data_defs_model_validation_errors)
