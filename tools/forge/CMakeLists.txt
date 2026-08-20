@@ -7,6 +7,7 @@ add_executable(sol_forge
     src/main.cpp
     src/mesh_library.cpp
     src/part_editor.cpp
+    src/point_tool.cpp
 )
 set_target_properties(sol_forge PROPERTIES OUTPUT_NAME forge)
 

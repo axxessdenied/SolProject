@@ -96,6 +96,9 @@ void PartEditor::openNew(const std::string& directory)
     m_open = true;
     m_dirty = true;
     m_buildError.clear();
+    // A new document has no history, and keeping the last one's would let an
+    // undo replace this file's contents with a different asset's.
+    m_undo.clear();
 }
 
 bool PartEditor::openFile(const std::string& path, std::string& status)
@@ -120,6 +123,7 @@ bool PartEditor::openFile(const std::string& path, std::string& status)
     m_open = true;
     m_dirty = false;
     m_buildError.clear();
+    m_undo.clear();
     status = "opened " + m_saveName + " (" + std::to_string(m_doc.parts.size()) + " parts)";
     return true;
 }
@@ -165,6 +169,49 @@ bool PartEditor::exportGltf(std::string& status)
     }
     status = "exported " + target;
     SOL_LOG_INFO("forge: %s (%zu verts)", status.c_str(), mesh.vertices.size());
+    return true;
+}
+
+void PartEditor::beginEdit()
+{
+    if (!m_open) {
+        return;
+    }
+    m_undo.push_back(m_doc);
+    if (m_undo.size() > kUndoDepth) {
+        m_undo.erase(m_undo.begin());
+    }
+}
+
+bool PartEditor::undo()
+{
+    if (m_undo.empty()) {
+        return false;
+    }
+    m_doc = std::move(m_undo.back());
+    m_undo.pop_back();
+    // ⚑ Still dirty after an undo, and deliberately. Undoing back to the state
+    // on disk is indistinguishable here from undoing to some other state, and
+    // claiming "saved" when the file has not been written since is the one lie
+    // that costs an author their work.
+    m_dirty = true;
+    if (m_selected >= static_cast<int>(m_doc.parts.size())) {
+        m_selected = m_doc.parts.empty() ? -1 : static_cast<int>(m_doc.parts.size()) - 1;
+    }
+    m_buildError.clear();
+    return true;
+}
+
+bool PartEditor::movePoint(const assets::ForgePoint& point, assets::BuildPoint delta,
+                           std::string& error)
+{
+    if (!m_open) {
+        return false;
+    }
+    if (!assets::forgeMovePoint(m_doc, point, delta, &error)) {
+        return false;
+    }
+    m_dirty = true;
     return true;
 }
 
@@ -214,6 +261,7 @@ bool PartEditor::drawPartList()
     if (ImGui::BeginCombo("##add", "add part")) {
         for (const ForgePrimitive primitive : assets::forgePrimitives()) {
             if (ImGui::Selectable(assets::forgePrimitiveName(primitive))) {
+                beginEdit();
                 ForgePart part;
                 part.primitive = primitive;
                 part.id = m_doc.uniqueId(assets::forgePrimitiveName(primitive));
@@ -234,6 +282,7 @@ bool PartEditor::drawPartList()
     const bool hasSelection = m_selected >= 0 && m_selected < static_cast<int>(m_doc.parts.size());
     ImGui::BeginDisabled(!hasSelection);
     if (ImGui::Button("duplicate") && hasSelection) {
+        beginEdit();
         ForgePart copy = m_doc.parts[static_cast<std::size_t>(m_selected)];
         copy.id = m_doc.uniqueId(copy.id);
         m_doc.parts.push_back(std::move(copy));
@@ -246,6 +295,7 @@ bool PartEditor::drawPartList()
         // no longer parses, so the children are re-hung on the grandparent.
         // Silently dropping them, or leaving a dangling `parent`, are both ways
         // of writing a file the cooker will reject.
+        beginEdit();
         const std::string removed = m_doc.parts[static_cast<std::size_t>(m_selected)].id;
         const std::string grandparent = m_doc.parts[static_cast<std::size_t>(m_selected)].parent;
         m_doc.parts.erase(m_doc.parts.begin() + m_selected);
@@ -450,6 +500,18 @@ bool PartEditor::draw()
             m_buildError = status;
         }
     }
+    ImGui::SameLine();
+    // ⚑ Named "undo drag" rather than "undo", because that is its reach in this
+    // slice: a point drag and the three part-list buttons. The parameter
+    // widgets below fire continuously while held, so an entry per frame would
+    // bury the state before the edit under sixty identical copies - and the
+    // asteroid's 99 KB is what makes that a real cost rather than a tidy one.
+    // Naming the gap in the button is cheaper than a person discovering it.
+    ImGui::BeginDisabled(m_undo.empty());
+    if (ImGui::Button("undo drag")) {
+        changed = undo();
+    }
+    ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("%s", m_dirty ? "* unsaved" : "saved");
 

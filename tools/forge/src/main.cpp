@@ -13,6 +13,7 @@
 #include "mesh_library.hpp"
 #include "orbit_camera.hpp"
 #include "part_editor.hpp"
+#include "point_tool.hpp"
 
 #include "sol/core/log.hpp"
 #include "sol/core/version.hpp"
@@ -23,6 +24,7 @@
 #include "sol/rhi/context.hpp"
 #include "sol/rhi/swapchain.hpp"
 #include "sol/ui/imgui_host.hpp"
+#include "sol/ui/pick.hpp"
 
 #include <imgui.h>
 
@@ -250,6 +252,7 @@ int main(int argc, char** argv)
     float sunElevation = 0.6f;
     bool showGrid = true;
     bool showBounds = true;
+    bool showPoints = true;
     float gridCell = 1.0f;
 
     // ⚑ Two different radii, and using the wrong one misframes half the
@@ -266,6 +269,7 @@ int main(int argc, char** argv)
     };
 
     forge::PartEditor editor;
+    forge::PointTool points;
 
     // One path from a buffer of triangles to what is on screen, whether those
     // triangles came off disk or out of the part tree a moment ago.
@@ -308,6 +312,10 @@ int main(int argc, char** argv)
             return;
         }
         uploadMesh(data, reframe);
+        // The points are resolved from the same document the mesh came from, so
+        // they are re-resolved wherever it is rebuilt - which is on every
+        // accepted edit, including each frame of a drag.
+        points.refresh(editor.doc());
     };
 
     const auto openMeshAt = [&](int index) {
@@ -328,10 +336,12 @@ int main(int argc, char** argv)
 
         // A `.forge` is a SOURCE, so opening one loads the tree behind the
         // mesh as well; everything else is triangles that can only be looked at.
+        points.close();
         if (forge::isPartSource(meshEntries[index])) {
             std::string openStatus;
             if (editor.openFile(meshEntries[index].path, openStatus)) {
                 status = openStatus;
+                points.refresh(editor.doc());
             } else {
                 status = openStatus;
             }
@@ -361,6 +371,8 @@ int main(int argc, char** argv)
     bool dragOrbit = false;
     bool dragPan = false;
     bool framePressed = false;
+    bool previousLeftDown = false;
+    bool undoPressed = false;
     double previousTime = platform::timeSeconds();
     float frameMilliseconds = 0.0f;
 
@@ -386,17 +398,69 @@ int main(int argc, char** argv)
         previousMouse = mouse;
 
         const bool leftDown = window.isMouseButtonDown(platform::MouseButton::Left);
+        const bool leftPressed = leftDown && !previousLeftDown;
+        previousLeftDown = leftDown;
         const bool middleDown = window.isMouseButtonDown(platform::MouseButton::Middle);
         const bool shiftDown = window.isKeyDown(platform::Key::LeftShift);
+
+        // --- point editing (stage E1), before the camera claims the drag ---
+        //
+        // ⚑ The order is the whole arbitration. LMB is the orbit AND the point
+        // drag, and a modeller reaching for a vertex must not spin the model
+        // instead. The point tool is offered the press first: if it takes one,
+        // the camera never sees a drag to claim. Deciding it the other way -
+        // camera first, point tool with whatever is left - is how a tool ends up
+        // needing a modifier key to select anything.
+        forge::PointTool::Viewport viewport;
+        viewport.cursor = mouse;
+        viewport.cursorDelta = mouseDelta;
+        viewport.center = {static_cast<float>(window.width()) * 0.5f,
+                           static_cast<float>(window.height()) * 0.5f};
+        viewport.height = static_cast<float>(window.height());
+        viewport.verticalFov = forge::kCameraVerticalFov;
+        viewport.focal = ui::focalLength(viewport.height,
+                                         std::tan(forge::kCameraVerticalFov * 0.5f));
+        viewport.cameraDistance = camera.distance();
+        viewport.view = camera.view();
+        viewport.leftPressed = leftPressed && !shiftDown;
+        viewport.leftDown = leftDown;
+        viewport.uiCaptured = imguiHost.wantsMouseCapture();
+        viewport.axisLock = -1;
+        if (!imguiHost.wantsKeyboardCapture()) {
+            if (window.isKeyDown(platform::Key::X)) {
+                viewport.axisLock = 0;
+            } else if (window.isKeyDown(platform::Key::Y)) {
+                viewport.axisLock = 1;
+            } else if (window.isKeyDown(platform::Key::Z)) {
+                viewport.axisLock = 2;
+            }
+        }
+        if (points.update(viewport, editor)) {
+            rebuildFromEditor(/*reframe=*/false);
+        }
+
+        // Ctrl+Z, edge triggered - a held chord must undo once, not sixty times.
+        const bool undoDown = window.isKeyDown(platform::Key::LeftControl) &&
+                              window.isKeyDown(platform::Key::Z) &&
+                              !imguiHost.wantsKeyboardCapture();
+        if (undoDown && !undoPressed && editor.undo()) {
+            rebuildFromEditor(/*reframe=*/false);
+        }
+        undoPressed = undoDown;
+
         // A drag is claimed on its first frame and kept for its duration:
         // deciding every frame would hand the camera a drag that began on a
         // slider the moment the cursor left the panel.
         if (!leftDown && !middleDown) {
             dragOrbit = false;
             dragPan = false;
-        } else if (!dragOrbit && !dragPan && !imguiHost.wantsMouseCapture()) {
+        } else if (!dragOrbit && !dragPan && !imguiHost.wantsMouseCapture() && !points.dragging()) {
             dragPan = middleDown || (leftDown && shiftDown);
             dragOrbit = !dragPan;
+        }
+        if (points.dragging()) {
+            dragOrbit = false;
+            dragPan = false;
         }
         if (dragOrbit) {
             camera.orbit(-mouseDelta.x * 0.008f, mouseDelta.y * 0.008f);
@@ -432,6 +496,14 @@ int main(int argc, char** argv)
         if (showBounds && (openIndex >= 0 || editor.isOpen())) {
             addWireBox(view.debugDraw(), report.boundsMin, report.boundsMax,
                        {0.30f, 0.75f, 0.35f, 1.0f});
+        }
+        // ⚑ Last of the debug lines on purpose. `DebugDrawRenderer::line()`
+        // drops silently once its 8192 vertices are spent, so whatever is drawn
+        // last is what goes missing - and the grid and the scale boxes are the
+        // frame's fixed furniture while the markers are the variable part. The
+        // tool's own budget keeps it well inside; this is the second belt.
+        if (showPoints && editor.isOpen()) {
+            points.drawMarkers(view.debugDraw(), viewport);
         }
 
         // --- panel ---
@@ -480,6 +552,13 @@ int main(int argc, char** argv)
                 if (editor.draw()) {
                     rebuildFromEditor(/*reframe=*/false);
                 }
+            }
+
+            // Stage E1. Below Parts because a point is a consequence of the
+            // parts above it, and above the Report for the same reason Parts is.
+            if (editor.isOpen() && ImGui::CollapsingHeader("Points",
+                                                           ImGuiTreeNodeFlags_DefaultOpen)) {
+                points.drawPanel(editor.doc());
             }
 
             if ((openIndex >= 0 || editor.isOpen()) &&
@@ -579,11 +658,13 @@ int main(int argc, char** argv)
             if (ImGui::CollapsingHeader("Scale", ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Checkbox("metric grid", &showGrid);
                 ImGui::Checkbox("mesh bounds", &showBounds);
+                ImGui::Checkbox("point markers", &showPoints);
                 for (auto& reference : references) {
                     ImGui::Checkbox(reference.label, &reference.enabled);
                 }
                 ImGui::Separator();
-                ImGui::TextDisabled("LMB orbit, shift+LMB or MMB pan");
+                ImGui::TextDisabled("LMB a marker drags a point, LMB else orbits");
+                ImGui::TextDisabled("shift+LMB or MMB pan");
                 ImGui::TextDisabled("wheel dolly, F frames the mesh");
                 ImGui::Text("camera %.3f m out", static_cast<double>(camera.distance()));
             }

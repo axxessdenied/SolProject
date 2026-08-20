@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace forge {
 
@@ -36,6 +37,22 @@ public:
     // must rebuild.
     [[nodiscard]] bool draw();
 
+    // ⚑ Undo is a COPY OF THE DOCUMENT, not a command pattern, and the reason
+    // is the document rather than laziness: `ForgeDoc` is a plain value and the
+    // five hand-authored assets are 0.5-5 KB. Only the baked asteroid at 99 KB
+    // even registers, which is what the depth cap is for. A command pattern
+    // would be a second description of every edit, and the second description
+    // is the one that gets out of step.
+    void beginEdit();
+    [[nodiscard]] bool undo();
+    [[nodiscard]] std::size_t undoDepth() const { return m_undo.size(); }
+
+    // Moves one point of the built mesh by `delta`, writing every authored
+    // value standing at it. Does NOT push undo - a drag calls beginEdit() once
+    // and this many times.
+    [[nodiscard]] bool movePoint(const sol::assets::ForgePoint& point,
+                                 sol::assets::BuildPoint delta, std::string& error);
+
     [[nodiscard]] bool isOpen() const { return m_open; }
     [[nodiscard]] const sol::assets::ForgeDoc& doc() const { return m_doc; }
     [[nodiscard]] bool dirty() const { return m_dirty; }
@@ -52,7 +69,13 @@ private:
     // combo must refuse or the tree becomes a loop.
     [[nodiscard]] bool isDescendant(std::size_t candidate, std::size_t part) const;
 
+    // ⚑ Deep enough to cover a session of nudging and shallow enough that the
+    // asteroid's 99 KB of baked vertices cannot quietly become nine megabytes
+    // of history.
+    static constexpr std::size_t kUndoDepth = 64;
+
     sol::assets::ForgeDoc m_doc;
+    std::vector<sol::assets::ForgeDoc> m_undo;
     std::string m_path;
     std::string m_buildError;
     std::string m_saveName;
