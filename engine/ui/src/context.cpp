@@ -50,6 +50,13 @@ void UiContext::beginFrame(const InputState& input, core::Vec2 screenSize, float
 
 void UiContext::endFrame()
 {
+    // First, because it is the last thing drawn: the DrawList batches in call
+    // order and has no z-order, so a tooltip queued during a list would be
+    // overdrawn by whatever the screen builds after it. By here every widget
+    // is behind us and the clip stack is empty, so this lands on top by
+    // construction rather than by a layer the DrawList does not have.
+    drawTooltip();
+
     // Focus moves at the end of the frame, when the full widget order is
     // known; the change lands on the next build, which is invisible at frame
     // rate and keeps nav independent of where the key was pressed.
@@ -198,6 +205,87 @@ void UiContext::label(const Rect& bounds, std::string_view text, const Color& co
         return;
     }
     m_drawList.addTextInBox(*record, bounds, text, color, align);
+}
+
+bool UiContext::labelElided(const Rect& bounds, std::string_view text, const Color& color,
+                            const char* styleName)
+{
+    const assets::FontStyleRecord* record =
+        style(styleName != nullptr ? styleName : m_theme.bodyStyle);
+    if (record == nullptr || m_font == nullptr) {
+        return false;
+    }
+    const float available = bounds.width();
+    if (text.empty() || m_font->measureWidth(*record, text) <= available) {
+        m_drawList.addTextInBox(*record, bounds, text, color);
+        return false;
+    }
+
+    static constexpr std::string_view kEllipsis = "...";
+    // Three periods rather than U+2026: the font falls back to '?' for any
+    // codepoint it was not baked with, and a horizontal ellipsis is exactly
+    // the sort of glyph a subset atlas leaves out.
+    const float ellipsisWidth = m_font->measureWidth(*record, kEllipsis);
+    if (ellipsisWidth > available) {
+        // Not even room to say it was cut. Drawing anyway would put the
+        // overflow back, which is the defect this exists to remove.
+        return true;
+    }
+
+    // Cut whole codepoints, never bytes: a truncation landing mid-sequence
+    // decodes to U+FFFD and draws as '?', so a long name would come out
+    // looking corrupted rather than long. Summing per-codepoint widths is
+    // exact here because measureWidth applies no kerning - see its header.
+    std::size_t cursor = 0;
+    std::size_t fits = 0;
+    float width = 0.0f;
+    while (cursor < text.size()) {
+        const std::size_t start = cursor;
+        (void)assets::nextCodepoint(text, cursor);
+        width += m_font->measureWidth(*record, text.substr(start, cursor - start));
+        if (width + ellipsisWidth > available) {
+            break;
+        }
+        fits = cursor;
+    }
+    std::string cut(text.substr(0, fits));
+    cut += kEllipsis;
+    m_drawList.addTextInBox(*record, bounds, cut, color);
+    return true;
+}
+
+void UiContext::tooltip(std::string_view text)
+{
+    if (!text.empty()) {
+        m_tooltip.assign(text);
+    }
+}
+
+void UiContext::drawTooltip()
+{
+    if (m_tooltip.empty()) {
+        return;
+    }
+    const assets::FontStyleRecord* record = style(m_theme.smallStyle);
+    if (record == nullptr || m_font == nullptr) {
+        m_tooltip.clear();
+        return;
+    }
+    const float width = m_font->measureWidth(*record, m_tooltip) + m_theme.padding;
+    const float height = m_theme.rowHeight;
+    // Below and right of the cursor so it does not sit under the hand, then
+    // pushed back inside the screen rather than off it - a tooltip that
+    // explains a name it has itself scrolled out of view explains nothing.
+    core::Vec2 min{m_input.mousePosition.x + 14.0f, m_input.mousePosition.y + 18.0f};
+    min.x = std::max(0.0f, std::min(min.x, m_screenSize.x - width));
+    min.y = std::max(0.0f, std::min(min.y, m_screenSize.y - height));
+    const Rect box{min, {min.x + width, min.y + height}};
+    m_drawList.addRoundedRect(box, m_theme.radius, m_theme.control);
+    m_drawList.addRectOutline(box, m_theme.panelEdge);
+    const float inset = m_theme.padding * 0.5f;
+    m_drawList.addTextInBox(*record, {{box.min.x + inset, box.min.y}, {box.max.x - inset, box.max.y}},
+                            m_tooltip, m_theme.textPrimary);
+    m_tooltip.clear();
 }
 
 void UiContext::panel(const Rect& bounds, std::string_view title)
@@ -473,7 +561,12 @@ bool UiContext::selectable(const Rect& bounds, std::string_view text, bool selec
                                  : (selected ? m_theme.textPrimary : m_theme.textDim);
     const Rect textBox = {{bounds.min.x + m_theme.spacing, bounds.min.y},
                           {bounds.max.x - m_theme.spacing, bounds.max.y}};
-    label(textBox, text, color);
+    // A row that had to hide part of a name owes the player the whole of it
+    // (Phase 10). Only then: a tooltip repeating a name already fully on
+    // screen is noise on every row of every list.
+    if (labelElided(textBox, text, color) && interaction.hovered) {
+        tooltip(text);
+    }
     return interaction.activated;
 }
 

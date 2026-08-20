@@ -764,3 +764,112 @@ SOL_TEST(ui_text_field_takes_the_arrows_away_from_the_tab_strip)
     ui.endFrame();
     SOL_CHECK(tab == 0);
 }
+
+// --- Elision and tooltips (Phase 10) ----------------------------------------
+
+namespace {
+
+// The synthetic font has no "body" style, so the theme's default would make
+// every elision test a no-op against a null style record. Every glyph in it
+// advances 5 px and '.' falls back to '?', which also advances 5, so "..."
+// is exactly 15 px wide and the arithmetic below is exact.
+UiContext hudThemed(const Font& font)
+{
+    UiContext ui;
+    ui.setFont(&font, 1);
+    sol::ui::Theme theme;
+    theme.bodyStyle = "hud";
+    ui.setTheme(theme);
+    return ui;
+}
+
+// Inked glyphs drawn this frame. Every glyph is one quad of four vertices and
+// only a space draws none, so this counts characters that reached the screen.
+std::size_t glyphsDrawn(const UiContext& ui)
+{
+    return ui.drawList().vertices().size() / 4;
+}
+
+} // namespace
+
+SOL_TEST(ui_label_elides_text_that_does_not_fit_its_box)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui = hudThemed(font);
+
+    // Fits: drawn whole, and reported as uncut.
+    ui.beginFrame(InputState{}, kScreen);
+    SOL_CHECK(!ui.labelElided({{0.0f, 0.0f}, {100.0f, 20.0f}}, "AAAA", ui.theme().textPrimary));
+    SOL_CHECK(glyphsDrawn(ui) == 4);
+    ui.endFrame();
+
+    // Does not fit: as many glyphs as leave room for the ellipsis, plus it.
+    // 30 px of box, 15 px of ellipsis, so three of the ten 'A's survive.
+    ui.beginFrame(InputState{}, kScreen);
+    SOL_CHECK(ui.labelElided({{0.0f, 0.0f}, {30.0f, 20.0f}}, "AAAAAAAAAA", ui.theme().textPrimary));
+    SOL_CHECK(glyphsDrawn(ui) == 6);
+    ui.endFrame();
+
+    // Not even room to say it was cut: nothing is drawn rather than the
+    // ellipsis itself overflowing, which is the defect being removed.
+    ui.beginFrame(InputState{}, kScreen);
+    SOL_CHECK(ui.labelElided({{0.0f, 0.0f}, {10.0f, 20.0f}}, "AAAAAAAAAA", ui.theme().textPrimary));
+    SOL_CHECK(glyphsDrawn(ui) == 0);
+    ui.endFrame();
+
+    // Empty text is not a cut.
+    ui.beginFrame(InputState{}, kScreen);
+    SOL_CHECK(!ui.labelElided({{0.0f, 0.0f}, {10.0f, 20.0f}}, "", ui.theme().textPrimary));
+    SOL_CHECK(glyphsDrawn(ui) == 0);
+    ui.endFrame();
+}
+
+SOL_TEST(ui_label_elides_on_whole_codepoints)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui = hudThemed(font);
+
+    // Eight two-byte characters (40 px) in a 25 px box: room for two of them
+    // plus the 15 px ellipsis. Cutting at 4 bytes is a character boundary;
+    // cutting at 3 or 5 would split a sequence, and the orphaned byte would
+    // decode to U+FFFD and draw as '?', so a long name would come out looking
+    // corrupted rather than long. Six glyphs would be that bug.
+    ui.beginFrame(InputState{}, kScreen);
+    SOL_CHECK(ui.labelElided({{0.0f, 0.0f}, {25.0f, 20.0f}},
+                             "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9",
+                             ui.theme().textPrimary));
+    SOL_CHECK(glyphsDrawn(ui) == 5); // two characters plus three dots
+    ui.endFrame();
+}
+
+SOL_TEST(ui_selectable_offers_a_hidden_name_as_a_tooltip)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+
+    // 60 px wide, so 48 px of text box once the theme's spacing is taken off
+    // both ends: twelve glyphs overrun it and two do not.
+    constexpr Rect kRow = {{100.0f, 100.0f}, {160.0f, 140.0f}};
+    constexpr const char* kLong = "AAAAAAAAAAAA";
+    constexpr const char* kShort = "AA";
+
+    // A tooltip is drawn in endFrame, after every widget, because the
+    // DrawList batches in call order and has no layer above the screen.
+    const auto tooltipVerts = [&](const InputState& input, const char* name) {
+        UiContext ui = hudThemed(font);
+        ui.beginFrame(input, kScreen);
+        (void)ui.selectable(kRow, name, false);
+        const std::size_t built = ui.drawList().vertices().size();
+        ui.endFrame();
+        return ui.drawList().vertices().size() - built;
+    };
+
+    SOL_CHECK(tooltipVerts(mouseAt(130.0f, 120.0f), kLong) > 0);
+    // Cursor elsewhere: the name is still cut, but nobody is asking.
+    SOL_CHECK(tooltipVerts(mouseAt(600.0f, 600.0f), kLong) == 0);
+    // Hovered but fully visible: a tooltip repeating what is already on
+    // screen would fire on every row of every list.
+    SOL_CHECK(tooltipVerts(mouseAt(130.0f, 120.0f), kShort) == 0);
+}

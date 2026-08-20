@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -132,6 +133,24 @@ public:
     void label(const Rect& bounds, std::string_view text, const Color& color,
                const char* styleName = nullptr, TextAlign align = TextAlign::Left);
 
+    // A label cut to fit its box, with a trailing ellipsis when it had to be
+    // (Phase 10). Returns whether it cut, so the caller can offer the whole
+    // text somewhere - measuring a second time to find that out is exactly the
+    // kind of duplicate answer that goes stale.
+    //
+    // Neither `label` nor `selectable` clips: they hand the text to
+    // addTextInBox, which draws past the box, which is how a long name has
+    // overrun its cell five times in this project. Clipping alone would only
+    // make the loss silent, so this truncates visibly instead.
+    [[nodiscard]] bool labelElided(const Rect& bounds, std::string_view text, const Color& color,
+                                   const char* styleName = nullptr);
+
+    // Queues a tooltip for the end of the frame. The DrawList has no z-order -
+    // it batches strictly in call order - so "above everything" can only mean
+    // "drawn last", and endFrame() is the one place that is true. One at a
+    // time, because the cursor is over one thing; the last caller wins.
+    void tooltip(std::string_view text);
+
     void panel(const Rect& bounds, std::string_view title = {});
 
     [[nodiscard]] bool button(const Rect& bounds, std::string_view label, bool enabled = true);
@@ -139,6 +158,12 @@ public:
     [[nodiscard]] bool slider(const Rect& bounds, std::string_view label, float& value, float minimum,
                               float maximum);
     // A selectable row (list entries, tabs when drawn as a strip).
+    //
+    // Since Phase 10 the label is elided to its box, and a label that had to
+    // be cut gives its full text as a tooltip while the cursor is on it. That
+    // is not a caller's decision to make: a row whose text runs out through
+    // its own edge is always a defect, and one whose text was hidden always
+    // owes the player a way to read it.
     [[nodiscard]] bool selectable(const Rect& bounds, std::string_view label, bool selected,
                                   bool enabled = true);
 
@@ -216,6 +241,7 @@ private:
     [[nodiscard]] Color controlColor(const Interaction& interaction, bool enabled) const;
     void drawFocusRing(const Rect& bounds, const Interaction& interaction);
     [[nodiscard]] const assets::FontStyleRecord* style(const char* name) const;
+    void drawTooltip();
 
     DrawList m_drawList;
     const assets::Font* m_font = nullptr;
@@ -252,6 +278,10 @@ private:
     bool m_textFieldFocused = false;
     bool m_textFieldFocusedLastFrame = false;
     bool m_frameOpen = false;
+    // Text queued for the end-of-frame tooltip. Copied rather than viewed: a
+    // caller's text is usually a formatted buffer that dies at the end of its
+    // own scope, and this is drawn a whole screen later.
+    std::string m_tooltip;
 };
 
 } // namespace sol::ui
