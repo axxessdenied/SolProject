@@ -3230,6 +3230,14 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     // a fresh start, just off the first station (or the hub failing that).
     const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
     core::DVec3 arrival = hub + core::DVec3{0.0, 0.0, 2.0e5};
+    // What the nose points at once you are there (Phase 10). The comment above
+    // has promised "facing the playfield" since Phase 7 and this function never
+    // wrote an orientation at all, so a crossing kept the heading it crossed
+    // with: the ring ended up dead ahead filling the view, and one press of W
+    // flew the player straight back through it, arriving in the same state.
+    // Note it is the HUB rather than "away from the gate" - at a gate the two
+    // are the same direction, and the hub is the one the player wants.
+    core::DVec3 lookAt = hub;
     if (fromSystem != kNoIndex) {
         for (const sim::GateSpec& gate : spec.gates) {
             if (gate.toSystem == fromSystem) {
@@ -3239,6 +3247,7 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
         }
     } else if (!spec.stations.empty()) {
         arrival = spec.stations[0].position + core::DVec3{0.0, 0.0, 800.0};
+        lookAt = spec.stations[0].position; // a new pilot faces their home port
     }
     m_playerSpawn = arrival;
 
@@ -3246,6 +3255,12 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     Transform& transform = m_registry.storage<Transform>().get(playerIndex);
     transform.position = arrival;
     transform.previousPosition = arrival;
+    // lookAlong, not facingRotation: the latter takes the model's +Z onto an
+    // axis, which is what turns the gate SLAB to its lane. A ship's nose is -Z,
+    // so facingRotation here would arrive with the tail toward the playfield.
+    transform.orientation = lookAlong(lookAt - arrival);
+    // Both ends of the tick. The render nlerps previous->current, so writing
+    // only one of the two swings the ship through the whole turn on screen.
     transform.previousOrientation = transform.orientation;
     m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     m_playerDamageTimer = 0.0f;
@@ -6312,6 +6327,13 @@ void SpaceWorld::tick(double dt)
             Transform& transform = m_registry.storage<Transform>().get(playerEntityIndex());
             transform.position = pad;
             transform.previousPosition = pad;
+            // loadSystem faced the ship at station 0 a moment ago; this moves it
+            // to whichever station it actually woke at, so the heading has to
+            // move with it (Phase 10). Facing the port you are parked at is the
+            // same rule a fresh start gets.
+            transform.orientation =
+                lookAlong(m_galaxy.systems[system].stations[m_dockedStation].position - pad);
+            transform.previousOrientation = transform.orientation;
             m_playerSpawn = pad;
             m_dockEventPending = true; // fresh board at the respawn dock
             // You wake up inside it, so you know it (Phase 8z). This runs after
