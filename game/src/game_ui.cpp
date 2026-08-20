@@ -124,6 +124,35 @@ void formatClosing(float metersPerSecond, char* buffer, std::size_t size)
     }
 }
 
+// Time to the target, in the range decisions/005 actually tunes for: "a
+// typical in-system leg lands in the tens of seconds and a long one stays
+// under a few minutes". Two answers are no answer at all - a negative, which
+// is how the HUD fill says the gap is not closing, and anything past a day,
+// which means the player is not meaningfully flying at the thing. Printing
+// 84719:12 for either would be answering a question nobody asked.
+//
+// `!(seconds >= 0.0)` rather than `seconds < 0.0` because it also catches a
+// NaN, which a zero-length target direction could hand us at point-blank
+// range. Named for the ETA rather than for durations in general: the mission
+// deadline formats itself a few hundred lines below and is deliberately left
+// alone, since it is a signed-off surface, it runs past an hour on a Hold
+// contract (`init.lua:303` is 1200 + 600 per jump), and this ladder would
+// change what it prints for no reported reason.
+void formatEta(double seconds, char* buffer, std::size_t size)
+{
+    constexpr double kDaySeconds = 24.0 * 60.0 * 60.0;
+    if (!(seconds >= 0.0) || seconds >= kDaySeconds) {
+        std::snprintf(buffer, size, "--");
+        return;
+    }
+    const int whole = static_cast<int>(seconds);
+    if (whole < 3600) {
+        std::snprintf(buffer, size, "%d:%02d", whole / 60, whole % 60);
+    } else {
+        std::snprintf(buffer, size, "%dh %02dm", whole / 3600, (whole % 3600) / 60);
+    }
+}
+
 void drawMeter(DrawList& list, const Rect& box, float fraction, const Color& fill)
 {
     list.addRoundedRect(box, box.height() * 0.5f, kMeterTrack);
@@ -444,7 +473,9 @@ void drawTargetReadout(DrawList& list, const Styles& styles, const Rect& panelAr
         return;
     }
     const bool showFaction = has(hud.targetFaction);
-    const float height = kPadding + 26.0f + (showFaction ? 20.0f : 0.0f) + 20.0f +
+    // The 20 after the faction row is distance/closing; the second is the ETA
+    // row Phase 11 added below it.
+    const float height = kPadding + 26.0f + (showFaction ? 20.0f : 0.0f) + 20.0f + 20.0f +
                          (hud.targetIsShip ? 3.0f * 18.0f + 4.0f : 0.0f) + kPadding * 0.5f;
     const Rect panel = {{panelArea.max.x - kTargetPanelWidth, panelArea.min.y},
                         {panelArea.max.x, panelArea.min.y + height}};
@@ -475,10 +506,24 @@ void drawTargetReadout(DrawList& list, const Styles& styles, const Rect& panelAr
     char closing[32] = {};
     formatClosing(hud.closingSpeedMetersPerSecond, closing, sizeof(closing));
     list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, distance, kTextDim);
-    // Closing is signed: negative means the gap is opening.
+    // Closing is signed: negative means the gap is opening. Since Phase 11 it
+    // is genuinely relative, so a target outrunning the player reads negative
+    // even when the player is the only one with a hand on the throttle.
     list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, closing,
                       hud.closingSpeedMetersPerSecond < 0.0f ? kWarning : kTextDim, TextAlign::Right);
     y += 24.0f;
+
+    // How long at that rate (Phase 11, playtest session 9). The row is always
+    // here rather than appearing when the sign is right: the panel would
+    // otherwise flicker its own height every time the closing rate crossed
+    // zero, and "you are not getting closer" is a thing worth saying out loud
+    // next to a speed already coloured as a warning.
+    char eta[32] = {};
+    formatEta(hud.etaSeconds, eta, sizeof(eta));
+    list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, "ETA", kTextDim);
+    list.addTextInBox(*styles.small, {{left, y}, {right, y + 20.0f}}, eta,
+                      hud.etaSeconds >= 0.0 ? kTextPrimary : kTextDim, TextAlign::Right);
+    y += 20.0f;
 
     if (hud.targetIsShip) {
         drawLabelledMeter(list, styles, {{left, y}, {right, y + 18.0f}}, "SH-F", hud.targetShieldFore,
