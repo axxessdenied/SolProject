@@ -2279,6 +2279,26 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             constexpr std::uint32_t kPatrolsPerRegion[3] = {3, 2, 1}; // core/frontier/fringe
             spawnWing(owner, faction.shipsPatrol, PilotRole::Patrol,
                       kPatrolsPerRegion[static_cast<std::size_t>(spec.region)], anchor, 700.0);
+
+            // Civilian traffic (Phase 13, note 5b). Before this, everything in
+            // the sky over a station was military: three interceptors in a core
+            // system and nothing else, with the nearest trader body typically
+            // ~900,000 km out on a coarse lane. A system did not feel dead
+            // because too little was generated - it felt dead because nothing
+            // generated near the player was going about its business.
+            //
+            // ⚑ These are SCENERY, not TraderPuppets. A puppet is a body for a
+            // coarse EconomyTrader and carries its cargo, route and attrition
+            // hooks; these carry none of that and move no goods, so they cannot
+            // touch a steady state 8g tuned from both directions. The day the
+            // economy wants intra-system hauls is a different phase.
+            //
+            // No Lua change: pilot_think's role == "trader" branch already
+            // flies a two-leg station circuit, and PilotRole::Trader,
+            // PilotState::Travel and shipsTrader all predate this.
+            constexpr std::uint32_t kCiviliansPerRegion[3] = {4, 3, 1};
+            spawnWing(owner, faction.shipsTrader, PilotRole::Trader,
+                      kCiviliansPerRegion[static_cast<std::size_t>(spec.region)], anchor, 1'500.0);
         }
     }
 
