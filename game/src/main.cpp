@@ -973,8 +973,25 @@ int main(int argc, char** argv)
         hud.boresightDirectionCamera = boresightCamera;
         hud.targetName = target.nav.name.c_str();
         hud.targetDistanceMeters = targetDistance;
-        hud.closingSpeedMetersPerSecond =
-            static_cast<float>(dot(shipState.velocity, targetDirection));
+        // Closing on a thing that moves (Phase 11). This projected the player's
+        // OWN velocity until now and never read the target's, so a trader
+        // leaving at 90 m/s while the player sat still read +0 m/s - under a
+        // readout whose own comment promises that negative means the gap is
+        // opening. Autopilot has known better since it learned to chase a
+        // hauler; the isShip guard is its idiom (`space_world.cpp`), and it is
+        // kept even though DVec3 zero-initialises, because `velocity` is
+        // documented "ships only" and this is where that has to be visible.
+        const sol::core::DVec3 targetVelocity =
+            target.isShip ? target.velocity : sol::core::DVec3{};
+        const double closingSpeed = dot(shipState.velocity - targetVelocity, targetDirection);
+        hud.closingSpeedMetersPerSecond = static_cast<float>(closingSpeed);
+        // ETA at the current rate, over the SAME surface distance the panel
+        // prints one line above it, so the two numbers on the row can never
+        // disagree with each other. Deliberately not autopilot's
+        // remaining-to-standoff figure, which is a third number the player
+        // cannot see and would read as a bug beside the distance they can.
+        // A zero or opening rate has no answer, and says so.
+        hud.etaSeconds = closingSpeed > 0.0 ? targetDistance / closingSpeed : -1.0;
         hud.targetDirectionCamera =
             rotate(conjugate(camera.orientation), toVec3(targetDirection));
         hud.tanHalfFovY = std::tan(game::kCameraVerticalFov * 0.5f);

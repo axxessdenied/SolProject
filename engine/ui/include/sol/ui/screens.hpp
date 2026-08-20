@@ -123,7 +123,15 @@ struct FlightHud
     const char* cameraMode = "";
     const char* targetName = "";
     double targetDistanceMeters = 0.0;
+    // Signed and RELATIVE since Phase 11: the target's own velocity is in it,
+    // so a trader leaving while the player sits still reads negative. Negative
+    // means the gap is opening.
     float closingSpeedMetersPerSecond = 0.0f;
+    // Seconds to the target at the current closing rate, over the same surface
+    // distance the panel prints (Phase 11). **Negative means there is no ETA**
+    // - the gap is not closing - which is a state the readout says out loud
+    // rather than hiding, so the row never appears and vanishes.
+    double etaSeconds = -1.0;
     core::Vec3 targetDirectionCamera; // unit, camera space (-Z forward)
     float tanHalfFovY = 1.0f;
 
