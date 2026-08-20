@@ -221,6 +221,54 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         m_galaxyParams.stationRules.push_back(rule);
     }
 
+    // What each faction BUILDS, resolved from station_bias (Phase 13). Rows are
+    // in the generator's faction order, which for majors is their order among
+    // the majors in def order — the same order claimTerritory hands out.
+    //
+    // ⚑ Pirate clans deliberately get no row and fall through at 1.0. Their
+    // faction indices are factionCount + clan index and the clan COUNT is not
+    // known until the galaxy is generated, so a row for them cannot exist yet;
+    // and the two pirate templates describe raiders, not builders. Named as a
+    // gap rather than half-built.
+    {
+        const std::vector<assets::StationDef>& stationDefs = defs.stations();
+        std::uint32_t majorIndex = 0;
+        bool anyBias = false;
+        std::vector<std::vector<float>> bias;
+        for (const assets::FactionDef& faction : defs.factions()) {
+            if (faction.kind == assets::FactionKind::Pirate) {
+                continue;
+            }
+            std::vector<float> row(stationDefs.size(), 1.0f);
+            for (const assets::StationBias& entry : faction.stationBias) {
+                std::size_t archetype = stationDefs.size();
+                for (std::size_t s = 0; s < stationDefs.size(); ++s) {
+                    if (stationDefs[s].id == entry.stationId) {
+                        archetype = s;
+                        break;
+                    }
+                }
+                if (archetype >= stationDefs.size()) {
+                    // A mod may remove an archetype a base faction names, which
+                    // is the same rule the economy's rate lists follow.
+                    SOL_LOG_WARN("faction '%s': unknown station '%s' in station_bias",
+                                 faction.id.c_str(), entry.stationId.c_str());
+                    continue;
+                }
+                row[archetype] = entry.weight;
+                anyBias = true;
+            }
+            bias.resize(majorIndex + 1);
+            bias[majorIndex] = std::move(row);
+            ++majorIndex;
+        }
+        // Left empty when nobody authored a character, so a galaxy with no
+        // biases is bit-identical to one generated before this key existed.
+        if (anyBias) {
+            m_galaxyParams.factionStationBias = std::move(bias);
+        }
+    }
+
     // Economy: commodities + archetype rates from the defs (unknown
     // commodity ids in a rate list are warnings, not errors — a mod may
     // remove a commodity a base station references).

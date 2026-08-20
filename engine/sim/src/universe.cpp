@@ -335,37 +335,61 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
 // means a rockless system builds something ELSE rather than building nothing,
 // so no system loses a station it would have had — only the outpost that could
 // never have produced anything moves aside for one that can.
-[[nodiscard]] float archetypeWeight(const StationRule& rule, std::size_t tier,
+// What the faction holding this system does to one archetype's odds
+// (Phase 13). Anything unstated — no bias table, a faction with no character,
+// a lawless system, a row that does not reach this archetype — is 1.0, which
+// is the pre-Phase-13 galaxy exactly.
+[[nodiscard]] float factionBias(const GalaxyParams& params, std::uint32_t faction,
+                                std::uint32_t archetype)
+{
+    if (faction >= params.factionStationBias.size()) {
+        return 1.0f;
+    }
+    const std::vector<float>& row = params.factionStationBias[faction];
+    return archetype < row.size() ? row[archetype] : 1.0f;
+}
+
+// The weight one archetype carries in one system: its region tuning, tilted by
+// its owner's character, vetoed to zero when it needs rock the system lacks.
+[[nodiscard]] float archetypeWeight(const GalaxyParams& params, std::uint32_t archetype,
+                                    std::size_t tier, std::uint32_t faction,
                                     std::uint32_t systemFieldCount, bool enforceFields)
 {
+    const StationRule& rule = params.stationRules[archetype];
     if (enforceFields && rule.requiresField && systemFieldCount == 0) {
         return 0.0f;
     }
-    return rule.weight[tier];
+    // ⚑ Multiply, never replace: the region tuning decides the baseline (ore in
+    // the fringe, factories in the core) and the faction only tilts it, so a
+    // character cannot quietly undo the economy's geography.
+    return rule.weight[tier] * factionBias(params, faction, archetype);
 }
 
 [[nodiscard]] std::uint32_t pickArchetype(const GalaxyParams& params, core::Rng& rng, Region region,
-                                          std::uint32_t systemFieldCount, bool enforceFields)
+                                          std::uint32_t faction, std::uint32_t systemFieldCount,
+                                          bool enforceFields)
 {
     if (params.stationRules.empty()) {
         return 0;
     }
+    const std::uint32_t ruleCount = static_cast<std::uint32_t>(params.stationRules.size());
     const std::size_t tier = static_cast<std::size_t>(region);
     float total = 0.0f;
-    for (const StationRule& rule : params.stationRules) {
-        total += archetypeWeight(rule, tier, systemFieldCount, enforceFields);
+    for (std::uint32_t i = 0; i < ruleCount; ++i) {
+        total += archetypeWeight(params, i, tier, faction, systemFieldCount, enforceFields);
     }
-    // Every candidate vetoed (or a ruleset with no weight in this tier at all):
-    // fall back to the unfiltered roll rather than refusing to build. A galaxy
-    // whose every archetype came out of the ground would otherwise generate
-    // systems with no stations, which is a worse world than an odd one.
+    // Every candidate vetoed — by the rock rule, or by a faction that zeroed
+    // everything it could build here. Fall back to the unfiltered roll rather
+    // than refusing to build: a system with no stations at all is a worse
+    // world than an out-of-character one, and a mod can produce this.
     if (total <= 0.0f) {
-        return enforceFields ? pickArchetype(params, rng, region, 0, false) : 0;
+        return enforceFields || faction != kNoFaction
+                   ? pickArchetype(params, rng, region, kNoFaction, 0, false)
+                   : 0;
     }
-    const std::uint32_t ruleCount = static_cast<std::uint32_t>(params.stationRules.size());
     float roll = rng.nextFloat01() * total;
     for (std::uint32_t i = 0; i < ruleCount; ++i) {
-        roll -= archetypeWeight(params.stationRules[i], tier, systemFieldCount, enforceFields);
+        roll -= archetypeWeight(params, i, tier, faction, systemFieldCount, enforceFields);
         if (roll <= 0.0f) {
             return i;
         }
@@ -410,7 +434,8 @@ void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec&
         minStations + (maxStations > minStations ? rng.range(maxStations - minStations + 1) : 0);
     for (std::uint32_t s = 0; s < stationCount; ++s) {
         StationSpec station;
-        station.archetype = pickArchetype(params, rng, system.region, fieldCount, enforceFields);
+        station.archetype = pickArchetype(params, rng, system.region, system.factionIndex,
+                                          fieldCount, enforceFields);
         station.name = system.name + " "
                        + kStationOrdinals[std::min<std::size_t>(s, std::size(kStationOrdinals)
                                                                        - 1)];

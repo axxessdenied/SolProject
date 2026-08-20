@@ -118,6 +118,7 @@ forgiveness = 0.7
 relations = ["sol.corsairs:-60", "sol.guild:40"]
 ships_patrol = ["sol.fighter"]
 ships_raider = ["sol.fighter"]
+station_bias = ["sol.station_factory:2.5", "sol.station_agri:0"]
 
 [[faction]]
 id = "sol.corsairs"
@@ -152,6 +153,16 @@ shield_strength_add = 50.0
     SOL_CHECK(db.findFaction("sol.guild")->aggression == 0.5f);
     SOL_CHECK(db.findFaction("sol.guild")->relations.empty());
 
+    // Phase 13: what a faction builds. A zero is a legal, deliberate "never",
+    // which is why the parser bounds it at >= 0 rather than > 0.
+    SOL_REQUIRE(navy->stationBias.size() == 2);
+    SOL_CHECK(navy->stationBias[0].stationId == "sol.station_factory");
+    SOL_CHECK(navy->stationBias[0].weight == 2.5f);
+    SOL_CHECK(navy->stationBias[1].stationId == "sol.station_agri");
+    SOL_CHECK(navy->stationBias[1].weight == 0.0f);
+    // A faction with no character says nothing, and that is the default.
+    SOL_CHECK(db.findFaction("sol.guild")->stationBias.empty());
+
     const sol::assets::ModuleDef* gated = db.findModule("sol.navy_shield");
     SOL_CHECK(gated != nullptr);
     SOL_CHECK(gated->gate.factions.size() == 1 && gated->gate.factions[0] == "sol.navy");
@@ -171,6 +182,17 @@ shield_strength_add = 50.0
     SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\nrelations = [\"sol.navy\"]\n",
                      "bad.toml", &error));
     SOL_CHECK(error.find("id:standing") != std::string::npos);
+    // Malformed and negative station_bias entries are schema errors; an unknown
+    // station id is NOT (a mod may remove an archetype, so it warns downstream).
+    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\nstation_bias = [\"sol.st\"]\n",
+                     "bad.toml", &error));
+    SOL_CHECK(error.find("id:weight") != std::string::npos);
+    SOL_CHECK(!merge(db,
+                     "[[faction]]\nid = \"f\"\nname = \"F\"\nstation_bias = [\"sol.st:-1\"]\n",
+                     "bad.toml", &error));
+    SOL_CHECK(merge(db,
+                    "[[faction]]\nid = \"f2\"\nname = \"F2\"\nstation_bias = [\"sol.nope:2\"]\n",
+                    "ok.toml", &error));
     SOL_CHECK(!merge(db, "[[module]]\nid = \"m\"\nname = \"M\"\nslot = \"cargo\"\nmin_rep = 150\n",
                      "bad.toml", &error));
     SOL_CHECK(error.find("min_rep") != std::string::npos);

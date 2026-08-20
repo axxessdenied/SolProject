@@ -84,6 +84,15 @@ struct GalaxyParams
     // Station count ranges [min, max] per region tier.
     std::uint32_t stationCount[3][2] = {{2, 4}, {1, 3}, {0, 2}};
     std::vector<StationRule> stationRules; // empty => every station archetype 0
+    // What each faction prefers to build, [faction][archetype] (Phase 13), as
+    // a multiplier on the region weight above. Empty — the default — means no
+    // faction has a character and every system builds to the region baseline,
+    // which is what the galaxy did before this existed. A row shorter than
+    // stationRules, or an index past the end, reads as 1.0.
+    //
+    // ⚑ Indexed by the faction that HOLDS the system, so a system that changed
+    // hands is not still building to its founder's taste.
+    std::vector<std::vector<float>> factionStationBias;
 };
 
 struct PlanetSpec

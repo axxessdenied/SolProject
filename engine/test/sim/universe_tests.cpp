@@ -317,6 +317,83 @@ SOL_TEST(universe_all_extractors_still_builds)
     SOL_CHECK(rockless > 0); // the fallback was actually exercised
 }
 
+// Phase 13, note 4: a faction builds what it is. The bias multiplies the
+// region weight, so what is asserted is a SHIFT in the mix, not a hard rule --
+// except for a zero, which is a deliberate "never" and is absolute.
+SOL_TEST(universe_faction_character_shapes_what_it_builds)
+{
+    GalaxyParams params = testParams(31337);
+    params.factionCount = 2;
+    params.fringeLawlessChance = 0.0f; // keep every system claimed, so the mix is readable
+    params.stationRules = {StationRule{{1.0f, 1.0f, 1.0f}}, StationRule{{1.0f, 1.0f, 1.0f}}};
+    // Faction 0 only ever builds archetype 0; faction 1 leans hard the other
+    // way but is not forbidden anything.
+    params.factionStationBias = {{4.0f, 0.0f}, {1.0f, 4.0f}};
+
+    const Galaxy galaxy = generateGalaxy(params);
+    std::uint32_t built[2][2] = {{0, 0}, {0, 0}};
+    for (const SystemSpec& system : galaxy.systems) {
+        if (system.factionIndex >= 2) {
+            continue; // lawless or a clan: no character, not part of the claim
+        }
+        for (const auto& station : system.stations) {
+            ++built[system.factionIndex][station.archetype];
+        }
+    }
+    // Both factions actually hold territory with stations on it.
+    SOL_REQUIRE(built[0][0] + built[0][1] > 0);
+    SOL_REQUIRE(built[1][0] + built[1][1] > 0);
+    // A zero bias is absolute: faction 0 never builds archetype 1, anywhere.
+    SOL_CHECK(built[0][1] == 0);
+    // A non-zero lean is a tilt, not a rule, so it is asserted as a ratio.
+    const double zeroShare =
+        static_cast<double>(built[0][0]) / (built[0][0] + built[0][1]);
+    const double oneShare = static_cast<double>(built[1][0]) / (built[1][0] + built[1][1]);
+    SOL_CHECK(zeroShare > oneShare);
+
+    // ⚑ And the neutral case is the one that must not regress: with no bias
+    // table at all, the galaxy is exactly what it was before this key existed.
+    GalaxyParams neutral = params;
+    neutral.factionStationBias.clear();
+    const Galaxy before = generateGalaxy(neutral);
+    bool anyDifference = false;
+    SOL_REQUIRE(before.systems.size() == galaxy.systems.size());
+    for (std::size_t i = 0; i < galaxy.systems.size(); ++i) {
+        anyDifference = anyDifference || !specsEqual(before.systems[i], galaxy.systems[i]);
+    }
+    SOL_CHECK(anyDifference); // the bias did something
+    const Galaxy neutralAgain = generateGalaxy(neutral);
+    for (std::size_t i = 0; i < before.systems.size(); ++i) {
+        SOL_CHECK(specsEqual(before.systems[i], neutralAgain.systems[i]));
+    }
+}
+
+// A faction that zeroes everything it could build still gets its stations,
+// rather than holding empty systems. Reachable from a mod, so it is pinned.
+SOL_TEST(universe_faction_that_forbids_everything_still_builds)
+{
+    GalaxyParams params = testParams(808);
+    params.factionCount = 1;
+    params.stationRules = {StationRule{{1.0f, 1.0f, 1.0f}}, StationRule{{1.0f, 1.0f, 1.0f}}};
+    params.factionStationBias = {{0.0f, 0.0f}};
+
+    const Galaxy guarded = generateGalaxy(params);
+    GalaxyParams neutral = params;
+    neutral.factionStationBias.clear();
+    const Galaxy plain = generateGalaxy(neutral);
+
+    std::size_t claimed = 0;
+    SOL_REQUIRE(guarded.systems.size() == plain.systems.size());
+    for (std::size_t i = 0; i < guarded.systems.size(); ++i) {
+        SOL_CHECK(guarded.systems[i].stations.size() == plain.systems[i].stations.size());
+        for (const auto& station : guarded.systems[i].stations) {
+            SOL_CHECK(station.archetype < params.stationRules.size());
+        }
+        claimed += guarded.systems[i].factionIndex == 0 ? 1 : 0;
+    }
+    SOL_CHECK(claimed > 0); // the all-zero faction actually held something
+}
+
 // Nothing about the rule may cost determinism, which is the property the whole
 // galaxy rests on.
 SOL_TEST(universe_field_rule_is_deterministic)

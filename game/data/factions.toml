@@ -7,6 +7,19 @@
 # relations are "faction_id:standing" (-100..100); declare each pair from
 # ONE side (both sides must agree if repeated). Unspecified major<->pirate
 # pairs default to -60 (open war); everything else defaults to 0.
+#
+# station_bias is what a faction BUILDS where it holds territory (Phase 13):
+# "station_id:multiplier" against the archetype's region weight in
+# stations.toml. It MULTIPLIES rather than replaces, so the region gradient
+# still decides the baseline - ore in the fringe, factories in the core - and
+# a faction only tilts it. Omit an archetype to leave it at 1.0; 0 means this
+# faction never builds one at all.
+#
+# ⚑ The descriptions below have asserted these characters since 8b and the
+# galaxy generator read none of it until now. The numbers are meant to follow
+# the prose, not the other way round: if you change what a faction IS, change
+# its bias to match. Pirate clans have no bias - they are raiders, and their
+# faction indices do not exist until the galaxy is generated.
 
 [[faction]]
 id = "sol.navy"
@@ -20,6 +33,9 @@ relations = ["sol.guild:40", "sol.hegemony:-35", "sol.compact:10", "sol.ascendan
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
 ships_trader = ["sol.freighter", "sol.shuttle"]
+# "System security": the Navy garrisons lanes, it does not run an economy, so
+# it is deliberately left NEUTRAL. Keeping one major unbiased means the
+# fall-through path stays covered by a shipped asset rather than only by a test.
 
 [[faction]]
 id = "sol.guild"
@@ -33,6 +49,11 @@ relations = ["sol.hegemony:-10", "sol.compact:20"]
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
 ships_trader = ["sol.freighter", "sol.shuttle"]
+# "Owns most stations and hates disruption": the Guild builds what MOVES, so
+# it leans to the ends of the chain a hauler is paid to connect - farms that
+# ship food out and yards that want metal in - and stays light on the middle.
+station_bias = ["sol.station_agri:1.6", "sol.station_factory:1.3",
+                "sol.station_refinery:0.7"]
 
 [[faction]]
 id = "sol.hegemony"
@@ -46,6 +67,10 @@ relations = ["sol.compact:-40", "sol.ascendancy:-20"]
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
 ships_trader = ["sol.freighter", "sol.shuttle"]
+# "Authoritarian INDUSTRIAL bloc": heavy industry end to end - it digs, it
+# smelts, it fabricates - and it does not feed itself if it can help it.
+station_bias = ["sol.station_factory:2.6", "sol.station_refinery:2.2",
+                "sol.station_mine:1.5", "sol.station_agri:0.4"]
 
 [[faction]]
 id = "sol.compact"
@@ -58,6 +83,11 @@ forgiveness = 0.6
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
 ships_trader = ["sol.freighter", "sol.shuttle"]
+# "SETTLER militias": settlers feed themselves and dig for what they cannot
+# grow. They do not build fabricator yards - that is what they buy from the
+# core, and resenting it is most of their politics.
+station_bias = ["sol.station_agri:2.4", "sol.station_mine:1.6",
+                "sol.station_factory:0.3"]
 
 [[faction]]
 id = "sol.ascendancy"
@@ -70,6 +100,10 @@ forgiveness = 0.5
 ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
 ships_trader = ["sol.freighter", "sol.shuttle"]
+# "TECHNOCRATIC enclave": precision manufacturing, and it buys its raw
+# materials rather than scraping them out of its own systems.
+station_bias = ["sol.station_factory:2.8", "sol.station_mine:0.35",
+                "sol.station_refinery:0.8"]
 
 [[faction]]
 id = "sol.corsairs"

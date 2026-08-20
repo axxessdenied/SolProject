@@ -210,6 +210,20 @@ struct FactionRelation
     float standing = 0.0f;
 };
 
+// How strongly a faction favours one station archetype in the territory it
+// holds ("sol.station_factory:2.5" in TOML), Phase 13.
+//
+// A MULTIPLIER on the archetype's region weight rather than a replacement for
+// it, so the economy's regional logic — ore in the fringe, factories in the
+// core — still sets the baseline and a faction only tilts it. 0 is a legal and
+// deliberate "never builds one"; the default, for an archetype a faction says
+// nothing about, is 1.0.
+struct StationBias
+{
+    std::string stationId;
+    float weight = 1.0f;
+};
+
 struct FactionDef
 {
     std::string id;
@@ -228,6 +242,15 @@ struct FactionDef
     // for a coarse EconomyTrader, and it needs a roster for the same reason a
     // patrol wing does: the def decides what the player sees coming.
     std::vector<std::string> shipsTrader;
+    // What this faction BUILDS where it holds territory (Phase 13). Empty —
+    // the default — means it builds to the region's baseline like everyone
+    // else, which is what every faction did before this existed.
+    //
+    // ⚑ These descriptions have asserted economic characters since 8b — an
+    // "authoritarian industrial bloc", "traders and haulers", "settler
+    // militias" — and the galaxy generator read none of it. This is the key
+    // that turns that prose into a number.
+    std::vector<StationBias> stationBias;
     std::string source;
 };
 
@@ -310,6 +333,7 @@ struct StationRate
     std::string commodityId;
     float rate = 0.0f; // units/s
 };
+
 
 // A station archetype: how often the galaxy generator places it per region
 // tier, and what its market produces/consumes (Phase 7 economy).

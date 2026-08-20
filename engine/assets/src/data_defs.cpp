@@ -156,6 +156,44 @@ struct FieldReader
         }
     }
 
+    // "station_id:multiplier" strings, multiplier >= 0 (Phase 13). Zero is a
+    // legal, deliberate "this faction never builds one" — which is why the
+    // bound is >= 0 rather than > 0.
+    void optionalBiasList(const char* key, std::vector<StationBias>& out)
+    {
+        const TomlValue* value = table.find(key);
+        if (value == nullptr) {
+            return;
+        }
+        if (!value->isArray()) {
+            fail(std::string("key '") + key + "' must be an array of \"id:weight\" strings");
+            return;
+        }
+        for (std::size_t i = 0; i < value->size(); ++i) {
+            const TomlValue& element = (*value)[i];
+            if (!element.isString()) {
+                fail(std::string("key '") + key + "' must be an array of \"id:weight\" strings");
+                return;
+            }
+            const std::string& text = element.asString();
+            const std::size_t colon = text.rfind(':');
+            if (colon == std::string::npos || colon == 0 || colon + 1 >= text.size()) {
+                fail(std::string("'") + key + "' entry '" + text + "' is not \"id:weight\"");
+                return;
+            }
+            StationBias bias;
+            bias.stationId = text.substr(0, colon);
+            char* end = nullptr;
+            bias.weight = std::strtof(text.c_str() + colon + 1, &end);
+            if (end != text.c_str() + text.size() || bias.weight < 0.0f) {
+                fail(std::string("'") + key + "' entry '" + text +
+                     "' needs a non-negative numeric weight");
+                return;
+            }
+            out.push_back(std::move(bias));
+        }
+    }
+
     // "faction_id:standing" strings, standing in [-100, 100] (Phase 8b
     // relations; unlike rate lists, negative values are the point).
     void optionalRelationList(const char* key, std::vector<FactionRelation>& out)
@@ -409,10 +447,11 @@ bool parseFaction(const TomlValue& table, const char* sourceName, std::vector<Fa
     reader.optionalStringList("ships_patrol", def.shipsPatrol);
     reader.optionalStringList("ships_raider", def.shipsRaider);
     reader.optionalStringList("ships_trader", def.shipsTrader);
+    reader.optionalBiasList("station_bias", def.stationBias);
 
     reader.rejectUnknownKeys({"id", "name", "description", "color", "kind", "aggression",
                               "forgiveness", "relations", "ships_patrol", "ships_raider",
-                              "ships_trader"});
+                              "ships_trader", "station_bias"});
     if (!reader.failed) {
         if (kind == "major") {
             def.kind = FactionKind::Major;
