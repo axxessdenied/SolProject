@@ -1,10 +1,10 @@
 #include "bc1.hpp"
 #include "font.hpp"
 #include "gltf.hpp"
+#include "mesh.hpp"
 #include "png.hpp"
 #include "sound.hpp"
 
-#include "sol/assets/forge_doc.hpp"
 #include "sol/assets/formats.hpp"
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
@@ -110,28 +110,19 @@ bool cookTexture(const std::string& source, const std::string& output)
     return true;
 }
 
+// ⚑ The format itself is `cooker::encodeMesh`, in the library, and this is only
+// the plumbing around it. It used to be one function here - which is why
+// `cooker.unit`, which links the library and not this file, could not reach the
+// `.smesh` layout at all and the D checkpoint's gap survived three slices.
 bool writeMesh(const assets::MeshData& mesh, const std::string& source, const std::string& output)
 {
-    assets::MeshFileHeader header = {};
-    header.vertexCount = static_cast<std::uint32_t>(mesh.vertices.size());
-    header.indexCount = static_cast<std::uint32_t>(mesh.indices.size());
-
-    std::vector<std::uint8_t> fileBytes(sizeof(header) +
-                                        mesh.vertices.size() * sizeof(assets::MeshVertex) +
-                                        mesh.indices.size() * sizeof(std::uint32_t));
-    std::uint8_t* cursor = fileBytes.data();
-    std::memcpy(cursor, &header, sizeof(header));
-    cursor += sizeof(header);
-    std::memcpy(cursor, mesh.vertices.data(), mesh.vertices.size() * sizeof(assets::MeshVertex));
-    cursor += mesh.vertices.size() * sizeof(assets::MeshVertex);
-    std::memcpy(cursor, mesh.indices.data(), mesh.indices.size() * sizeof(std::uint32_t));
-
+    const std::vector<std::uint8_t> fileBytes = cooker::encodeMesh(mesh);
     if (!platform::writeFileBytes(output.c_str(), fileBytes.data(), fileBytes.size())) {
         SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
         return false;
     }
-    SOL_LOG_INFO("cooked %s -> %s (%u vertices, %u indices)", source.c_str(), output.c_str(),
-                 header.vertexCount, header.indexCount);
+    SOL_LOG_INFO("cooked %s -> %s (%zu vertices, %zu indices)", source.c_str(), output.c_str(),
+                 mesh.vertices.size(), mesh.indices.size());
     return true;
 }
 
@@ -149,27 +140,10 @@ bool cookMesh(const std::string& source, const std::string& output)
 // came out as - so the cook is an evaluation rather than an import.
 bool cookForge(const std::string& source, const std::string& output)
 {
-    std::vector<std::uint8_t> sourceBytes;
-    if (!platform::readFileBytes(source.c_str(), sourceBytes)) {
-        SOL_LOG_ERROR("cooker: cannot read %s", source.c_str());
-        return false;
-    }
-
-    assets::ForgeDoc doc;
-    std::string error;
-    if (!assets::parseForge(reinterpret_cast<const char*>(sourceBytes.data()), sourceBytes.size(),
-                            source.c_str(), doc, &error)) {
-        SOL_LOG_ERROR("cooker: %s", error.c_str());
-        return false;
-    }
-
     assets::MeshData mesh;
-    if (!assets::buildForge(doc, mesh, &error)) {
-        SOL_LOG_ERROR("cooker: %s: %s", source.c_str(), error.c_str());
-        return false;
-    }
-    if (mesh.vertices.empty() || mesh.indices.empty()) {
-        SOL_LOG_ERROR("cooker: %s builds no geometry", source.c_str());
+    std::string error;
+    if (!cooker::importForgeMesh(source.c_str(), mesh, &error)) {
+        SOL_LOG_ERROR("cooker: %s", error.c_str());
         return false;
     }
     return writeMesh(mesh, source, output);

@@ -1,0 +1,209 @@
+// The Forge's first test suite (engine plan Phase 9, the E1-E3 checkpoint's
+// debt slice).
+//
+// ⚑ AGENTS section 7's rule is that the tool's UI is verified by RUNNING it -
+// "there is no suite for a viewport, and pretending otherwise is how game/src
+// ended up with 21,000 untested lines" - and that rule is kept here. Nothing
+// below opens a window, a device or an ImGui context. What is tested is
+// `mesh_library.cpp`, which is arithmetic over a mesh and a def row: it pulls
+// in no ImGui and needs no GPU, and it carries a threshold the D checkpoint
+// flagged as "a real decision sitting in untested code".
+
+#include "mesh_library.hpp"
+
+#include "sol/assets/forge_doc.hpp"
+#include "sol/platform/file_io.hpp"
+#include "sol/test/test.hpp"
+
+#include <cmath>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+using namespace sol;
+
+namespace {
+
+[[nodiscard]] forge::ModelMatch match(float authoredRadius, float measuredRadius)
+{
+    forge::ModelMatch out;
+    out.authoredRadius = authoredRadius;
+    out.radiusDelta = measuredRadius - authoredRadius;
+    return out;
+}
+
+[[nodiscard]] bool buildCommittedMesh(const char* name, assets::MeshData& out)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(path.c_str(), bytes)) {
+        return false;
+    }
+    assets::ForgeDoc doc;
+    if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(),
+                            doc, nullptr)) {
+        return false;
+    }
+    return assets::buildForge(doc, out, nullptr);
+}
+
+} // namespace
+
+// ⚑⚑ THE THRESHOLD THE D CHECKPOINT NAMED, PINNED AGAINST THE FIVE CASES THAT
+// SET IT. Agreement is RELATIVE, and the gate is the whole reason: it authors
+// 106.7 against a measured 106.7005, which is somebody rounding a number they
+// read off the Forge's own panel. An absolute tolerance flagged it as a defect.
+// One tenth of one percent separates that rounding from the four real
+// mismatches in this game by three orders of magnitude - and this is the test
+// that stops a future tweak collapsing that gap from either end.
+SOL_TEST(theRadiusToleranceSeparatesARoundingFromTheFourRealMismatches)
+{
+    // The rounding: 0.0005 m on a 107 m ring, 4.7e-6 of the authored value.
+    SOL_CHECK(match(106.7f, 106.7005f).radiusAgrees());
+
+    // ⚑⚑ THE FOUR THE TOOL EXISTS TO REPORT, WITH THEIR REAL MEASURED VALUES -
+    // AND THEY DO NOT ALL POINT THE SAME WAY, WHICH THE PLAN'S OWN LIST OF
+    // "2%, 12%, 13%, 16%" DOES NOT SAY. Positive means the collision sphere is
+    // SMALLER than the hull, so ships pass through the picture; negative means
+    // it is LARGER, so you stop short of a thing you can still see space around.
+    // Two of each, and they are opposite defects.
+    SOL_CHECK(!match(100.0f, 102.0f).radiusAgrees());  // station, +2.00%
+    SOL_CHECK(!match(1.0f, 1.1584f).radiusAgrees());   // asteroid, +15.84%
+    SOL_CHECK(!match(8.0f, 7.0064f).radiusAgrees());   // ship, -12.42%
+    SOL_CHECK(!match(1.0f, 0.8660f).radiusAgrees());   // cube, -13.40%
+
+    // The boundary itself, from both sides: one tenth of one percent.
+    SOL_CHECK(match(100.0f, 100.09f).radiusAgrees());
+    SOL_CHECK(!match(100.0f, 100.2f).radiusAgrees());
+
+    // ⚑ And the absolute floor, which is not decoration: without it a part
+    // authored at a millimetre would have a tolerance of a micron, and every
+    // float rounding in the build would read as a mismatch.
+    SOL_CHECK(match(0.001f, 0.00105f).radiusAgrees());
+    SOL_CHECK(!match(0.001f, 0.002f).radiusAgrees());
+
+    // A row that authors no radius at all cannot be said to disagree with one.
+    SOL_CHECK(match(0.0f, 0.0f).radiusAgrees());
+}
+
+// Signed, and the sign is the finding rather than the magnitude: POSITIVE means
+// the sphere the sim builds is SMALLER than the hull that is drawn, so ships
+// pass through the picture.
+SOL_TEST(theRadiusDeltaPercentIsSignedAndSurvivesAZeroAuthoredRadius)
+{
+    SOL_CHECK(std::fabs(match(100.0f, 102.0f).radiusDeltaPercent() - 2.0f) < 1e-3f);
+    SOL_CHECK(std::fabs(match(1.0f, 1.1584f).radiusDeltaPercent() - 15.84f) < 1e-2f);
+    // The other direction: a collision sphere larger than the hull.
+    SOL_CHECK(match(100.0f, 98.0f).radiusDeltaPercent() < 0.0f);
+    // No division by zero, and no infinity printed into a panel.
+    SOL_CHECK(match(0.0f, 5.0f).radiusDeltaPercent() == 0.0f);
+}
+
+// ⚑ Matching is by MESH STEM and is deliberately one-to-many: six `[[model]]`
+// rows already share five meshes in this game, so a viewer that showed only the
+// first would hide the row an author was actually looking for.
+SOL_TEST(everyModelRowNamingTheOpenMeshIsMatchedAndNoOthers)
+{
+    const std::string toml = R"(
+[[model]]
+id = "a"
+mesh = "cube"
+texture = "hull"
+radius = 1.0
+
+[[model]]
+id = "b"
+mesh = "cube"
+texture = "panel"
+radius = 2.0
+avoid_radius = 5.0
+
+[[model]]
+id = "c"
+mesh = "station"
+texture = "hull"
+radius = 100.0
+)";
+    assets::DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(defs.mergeToml(toml.c_str(), toml.size(), "test.toml", &error));
+    SOL_CHECK(error.empty());
+
+    forge::AssetEntry entry;
+    entry.stem = "cube";
+    forge::MeshReport report;
+    report.boundingRadius = 1.13f;
+
+    const std::vector<forge::ModelMatch> matches = forge::matchModels(defs, entry, report);
+    SOL_REQUIRE(matches.size() == 2);
+    SOL_CHECK(matches[0].id == "a");
+    SOL_CHECK(matches[1].id == "b");
+    SOL_CHECK(matches[0].texture == "hull");
+
+    // ⚑ `avoid_radius = 0` in the row means "the same as radius", and it is
+    // resolved HERE so the panel does not have to know that rule - two places
+    // knowing it is how they come to disagree.
+    SOL_CHECK(matches[0].authoredAvoidRadius == 1.0f);
+    SOL_CHECK(matches[1].authoredAvoidRadius == 5.0f);
+
+    // The measured radius is set against each row's own authored one.
+    SOL_CHECK(std::fabs(matches[0].radiusDelta - 0.13f) < 1e-5f);
+    SOL_CHECK(std::fabs(matches[1].radiusDelta - -0.87f) < 1e-5f);
+}
+
+// ⚑⚑ AND THE SAME QUESTION ASKED OF THE REAL ASSETS RATHER THAN OF FIXTURES.
+// The tolerance is only right if it reports what a human found by eye at stage
+// C, so this measures the committed `.forge` sources against the committed
+// `[[model]]` rows and pins the verdicts. It fails if somebody changes one of
+// those radii - which is correct: those four gaps are known gameplay decisions
+// about how close a ship may come, and moving one should be noticed.
+//
+// ⚑ Measured here, and the numbers are recorded because writing them down is
+// what this test is for:
+//   gate     106.7000 vs 106.7005   +0.00%   agrees
+//   station  100.0000 vs 102.0000   +2.00%   sphere INSIDE the hull
+//   asteroid   1.0000 vs   1.1584  +15.84%   sphere INSIDE the hull
+//   ship       8.0000 vs   7.0064  -12.42%   sphere OUTSIDE the hull
+//   cube       1.0000 vs   0.8660  -13.40%   sphere OUTSIDE the hull
+SOL_TEST(theCommittedMeshesAndTheirModelRowsStillDisagreeExactlyWhereTheyDid)
+{
+    assets::DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(forge::loadModelCatalog(SOL_MODEL_DATA_DIR, defs, &error));
+    SOL_CHECK(error.empty());
+    SOL_REQUIRE(!defs.models().empty());
+
+    struct Expected
+    {
+        const char* stem;
+        bool agrees;
+    };
+    // The gate is the one that matches; the other four are stage C's findings,
+    // recorded in the assets' own headers rather than quietly corrected.
+    const Expected expected[] = {
+        {"gate", true},   {"station", false}, {"asteroid", false},
+        {"ship", false},  {"cube", false},
+    };
+
+    for (const Expected& want : expected) {
+        assets::MeshData mesh;
+        SOL_REQUIRE(buildCommittedMesh(want.stem, mesh));
+        const forge::MeshReport report = forge::reportMesh(mesh);
+
+        forge::AssetEntry entry;
+        entry.stem = want.stem;
+        const std::vector<forge::ModelMatch> matches = forge::matchModels(defs, entry, report);
+        SOL_REQUIRE(!matches.empty());
+        for (const forge::ModelMatch& found : matches) {
+            SOL_CHECK(found.radiusAgrees() == want.agrees);
+            // ⚑ The SIGN is pinned as well as the verdict, because the sign is
+            // which defect it is and the plan's own list of four percentages
+            // does not carry it.
+            const bool sphereInsideHull = found.radiusDelta > 0.0f;
+            const bool expectInside = std::string(want.stem) == "station" ||
+                                      std::string(want.stem) == "asteroid" ||
+                                      std::string(want.stem) == "gate";
+            SOL_CHECK(sphereInsideHull == expectInside);
+        }
+    }
+}

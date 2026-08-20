@@ -44,3 +44,30 @@ add_dependencies(sol_forge sol_shaders sol_cook_assets)
 # smoke test does: ctest --preset dev-gpu
 add_test(NAME forge.smoke COMMAND sol_forge --frames 120)
 set_tests_properties(forge.smoke PROPERTIES LABELS gpu)
+
+# ⚑ The Forge's first HEADLESS suite, and it deliberately covers only what is
+# not a viewport. AGENTS.md 7 says the tool's UI is verified by running it -
+# there is no suite for a window and pretending otherwise is how game/src ended
+# up with 21,000 untested lines - so this compiles `mesh_library.cpp` alone,
+# which pulls in no ImGui, no device and no window. What it buys is the radius
+# tolerance, which the D checkpoint flagged as a real decision in untested code.
+add_executable(sol_forge_tests
+    src/mesh_library.cpp
+    test/mesh_library_tests.cpp
+)
+target_include_directories(sol_forge_tests PRIVATE src)
+target_link_libraries(sol_forge_tests PRIVATE
+    sol::test
+    sol::core
+    sol::platform
+    sol::assets
+    sol_cooker_lib
+)
+# The committed sources and the game's own `[[model]]` rows, so the thresholds
+# are pinned against the real assets rather than against fixtures that agree
+# with the code by construction.
+target_compile_definitions(sol_forge_tests PRIVATE
+    SOL_MESH_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/meshes"
+    SOL_MODEL_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data"
+)
+add_test(NAME forge.unit COMMAND sol_forge_tests)

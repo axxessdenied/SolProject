@@ -2,6 +2,7 @@ add_library(sol_cooker_lib STATIC
     src/bc1.cpp
     src/font.cpp
     src/gltf.cpp
+    src/mesh.cpp
     src/png.cpp
     src/sound.cpp
 )
@@ -21,4 +22,9 @@ add_executable(sol_cooker_tests
     test/font_tests.cpp
 )
 target_link_libraries(sol_cooker_tests PRIVATE sol_cooker_lib sol::test)
+# The committed `.forge` sources are what the mesh round trip cooks, so the
+# suite reads the real assets rather than a fixture that agrees with the code by
+# construction - the same reason geometry.unit is handed this directory.
+target_compile_definitions(sol_cooker_tests
+    PRIVATE SOL_MESH_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/meshes")
 add_test(NAME cooker.unit COMMAND sol_cooker_tests)

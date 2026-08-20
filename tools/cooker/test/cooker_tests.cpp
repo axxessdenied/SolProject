@@ -1,5 +1,6 @@
 #include "bc1.hpp"
 #include "gltf.hpp"
+#include "mesh.hpp"
 #include "png.hpp"
 #include "sound.hpp"
 
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 using namespace sol;
 
@@ -370,6 +372,143 @@ SOL_TEST(gltfExportRoundTripsThroughTheImporter)
     // bounds reads them rather than the vertices.
     SOL_CHECK(json.find("\"min\":[-3,0,-4.25]") != std::string::npos);
     SOL_CHECK(json.find("\"max\":[2.5,1.5,2]") != std::string::npos);
+
+    std::remove(path.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// The mesh cook. Reachable from here for the first time: until this slice
+// `writeMesh` and every `cook*` lived in the cooker's `main.cpp`, outside the
+// library this binary links, which is why the D checkpoint's "nothing compares
+// the cooked .smesh against anything" survived three slices of being written
+// down as still open.
+// ---------------------------------------------------------------------------
+
+// ⚑⚑ THE END-TO-END CLAIM, AND IT IS THE ONE NOTHING HAS EVER MADE: WHAT THE
+// GAME LOADS IS WHAT THE AUTHOR BUILT. `encodeMesh` lives in `tools/cooker` and
+// `assets::loadMesh` lives in `sol::assets` - two descriptions of one file
+// format, in two modules, which is exactly the pair that bit at stage D when
+// `cooker(.gltf)` and `cooker(.forge)` turned out never to have been the same
+// bytes. Each half agreeing with itself proves nothing; this is the two halves
+// agreeing with each other, over the real committed assets.
+SOL_TEST(everyCommittedForgeSourceReachesTheGameAsTheMeshItsAuthorBuilt)
+{
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
+    for (const char* name : names) {
+        const std::string source = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+
+        assets::MeshData built;
+        std::string error;
+        SOL_REQUIRE(cooker::importForgeMesh(source.c_str(), built, &error));
+        SOL_CHECK(error.empty());
+
+        const std::vector<std::uint8_t> bytes = cooker::encodeMesh(built);
+        // Header, then vertices, then indices - nothing else, no padding.
+        SOL_CHECK(bytes.size() == sizeof(assets::MeshFileHeader) +
+                                      (built.vertices.size() * sizeof(assets::MeshVertex)) +
+                                      (built.indices.size() * sizeof(std::uint32_t)));
+
+        const std::string path =
+            std::string(platform::executableDirectory()) + "test_cook_" + name + ".smesh";
+        SOL_REQUIRE(platform::writeFileBytes(path.c_str(), bytes.data(), bytes.size()));
+
+        // ⚑ Loaded through the RUNTIME's own loader, not a second reader
+        // written for the test. A reader that agreed with this writer because
+        // they were written together is the thing being ruled out.
+        assets::MeshData loaded;
+        SOL_REQUIRE(assets::loadMesh(path.c_str(), loaded));
+        SOL_REQUIRE(loaded.vertices.size() == built.vertices.size());
+        SOL_REQUIRE(loaded.indices.size() == built.indices.size());
+        SOL_CHECK(std::memcmp(loaded.vertices.data(), built.vertices.data(),
+                              built.vertices.size() * sizeof(assets::MeshVertex)) == 0);
+        SOL_CHECK(std::memcmp(loaded.indices.data(), built.indices.data(),
+                              built.indices.size() * sizeof(std::uint32_t)) == 0);
+
+        std::remove(path.c_str());
+    }
+}
+
+// ⚑ `encodeMesh` never SETS `magic` or `version` - it writes
+// `MeshFileHeader header = {}` and leans on the struct's default member
+// initialisers, while `loadMesh` validates both. That is correct today and was
+// asserted by nothing, so an explicit constructor or a stray `= {0}` would ship
+// files the game rejects while the cooker reported success on every one.
+SOL_TEST(theCookedMeshHeaderCarriesTheMagicAndVersionTheLoaderDemands)
+{
+    assets::MeshData mesh;
+    mesh.vertices = {{{0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                     {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                     {{0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}};
+    mesh.indices = {0, 1, 2};
+
+    const std::vector<std::uint8_t> bytes = cooker::encodeMesh(mesh);
+    assets::MeshFileHeader header = {};
+    SOL_REQUIRE(bytes.size() >= sizeof(header));
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    SOL_CHECK(header.magic == assets::kMeshMagic);
+    SOL_CHECK(header.version == assets::kFormatVersion);
+    SOL_CHECK(header.vertexCount == 3);
+    SOL_CHECK(header.indexCount == 3);
+}
+
+// The three ways a `.smesh` can be wrong, each refused rather than read past.
+// A loader that accepted any of them would hand the renderer a buffer built
+// from whatever happened to follow the header in memory.
+SOL_TEST(theMeshLoaderRefusesABadMagicABadVersionAndATruncatedFile)
+{
+    assets::MeshData mesh;
+    mesh.vertices = {{{0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                     {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                     {{0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}};
+    mesh.indices = {0, 1, 2};
+    const std::vector<std::uint8_t> good = cooker::encodeMesh(mesh);
+    const std::string path = std::string(platform::executableDirectory()) + "test_bad.smesh";
+
+    assets::MeshData loaded;
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), good.data(), good.size()));
+    SOL_CHECK(assets::loadMesh(path.c_str(), loaded)); // the positive control
+
+    std::vector<std::uint8_t> wrongMagic = good;
+    wrongMagic[0] ^= 0xFFu;
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), wrongMagic.data(), wrongMagic.size()));
+    SOL_CHECK(!assets::loadMesh(path.c_str(), loaded));
+
+    std::vector<std::uint8_t> wrongVersion = good;
+    const std::uint32_t bumped = assets::kFormatVersion + 1;
+    std::memcpy(wrongVersion.data() + sizeof(std::uint32_t), &bumped, sizeof(bumped));
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), wrongVersion.data(), wrongVersion.size()));
+    SOL_CHECK(!assets::loadMesh(path.c_str(), loaded));
+
+    // A count that promises more than the file holds is a size mismatch, not a
+    // short read - the same rule the sound loader keeps two tests above.
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), good.data(), good.size() - 4));
+    SOL_CHECK(!assets::loadMesh(path.c_str(), loaded));
+
+    std::remove(path.c_str());
+}
+
+// A source that does not parse, and one that parses into nothing, both fail the
+// import rather than cooking an empty mesh the game would draw as a hole.
+SOL_TEST(theForgeImportRefusesASourceThatBuildsNoGeometry)
+{
+    const std::string path = std::string(platform::executableDirectory()) + "test_empty.forge";
+    const std::string empty = "name = \"nothing\"\n";
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), empty.data(), empty.size()));
+
+    assets::MeshData mesh;
+    std::string error;
+    SOL_CHECK(!cooker::importForgeMesh(path.c_str(), mesh, &error));
+    SOL_CHECK(!error.empty());
+
+    const std::string broken = "name = \"bad\"\n[[part]]\nid = \"x\"\ntype = \"not_a_shape\"\n";
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), broken.data(), broken.size()));
+    error.clear();
+    SOL_CHECK(!cooker::importForgeMesh(path.c_str(), mesh, &error));
+    SOL_CHECK(!error.empty());
+
+    error.clear();
+    SOL_CHECK(!cooker::importForgeMesh("no_such_file.forge", mesh, &error));
+    SOL_CHECK(!error.empty());
 
     std::remove(path.c_str());
 }
