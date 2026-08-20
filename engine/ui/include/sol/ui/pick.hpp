@@ -132,6 +132,61 @@ inline constexpr float kRadarGrabPixels = 11.0f;
     return best;
 }
 
+// The streaming form of pickNearestPoint, for a caller that already walks its
+// candidates once to draw them and must not walk them twice to pick one.
+//
+// The map is why it exists (Phase 15). A marker's screen position is not a
+// field - it is derived inside the draw, which chooses the orbital or the
+// playfield tier and then applies the magnifier - so a separate pick pass
+// would be a SECOND expression of that projection, and the two would drift the
+// first time either tier changed. Feeding the pick from the draw's own loop
+// keeps one expression, and it inherits the draw's visibility rule for free:
+// a candidate the draw skips is a candidate the pick never sees.
+//
+// Ties go to the first considered, matching pickNearestPoint.
+class NearestPick
+{
+public:
+    // Default: inactive, so a frame with no click costs one branch per marker.
+    NearestPick() = default;
+
+    NearestPick(core::Vec2 cursor, float grabPixels)
+        : m_cursor(cursor)
+        , m_bestDistanceSquared(grabPixels * grabPixels)
+        , m_active(true)
+    {
+    }
+
+    [[nodiscard]] bool active() const { return m_active; }
+
+    void consider(std::size_t index, core::Vec2 at)
+    {
+        if (!m_active) {
+            return;
+        }
+        const float dx = at.x - m_cursor.x;
+        const float dy = at.y - m_cursor.y;
+        const float distanceSquared = dx * dx + dy * dy;
+        if (distanceSquared > m_bestDistanceSquared) {
+            return;
+        }
+        if (m_best != kNoPick && distanceSquared == m_bestDistanceSquared) {
+            return; // first wins
+        }
+        m_best = index;
+        m_bestDistanceSquared = distanceSquared;
+    }
+
+    // The winner's index as the caller numbered it, or kNoPick.
+    [[nodiscard]] std::size_t result() const { return m_best; }
+
+private:
+    core::Vec2 m_cursor;
+    float m_bestDistanceSquared = 0.0f;
+    std::size_t m_best = kNoPick;
+    bool m_active = false;
+};
+
 // True when `point` is inside a disc - used to route a click to the radar
 // rather than to the world behind it.
 [[nodiscard]] inline bool insideDisc(core::Vec2 point, core::Vec2 center, float radius)

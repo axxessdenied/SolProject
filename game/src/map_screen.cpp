@@ -2,6 +2,7 @@
 
 #include "sol/ui/layout.hpp"
 #include "sol/ui/map_projection.hpp"
+#include "sol/ui/pick.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -126,6 +127,15 @@ void clipped(UiContext& ui, const Rect& cell, std::string_view text, const Color
 constexpr float kMinZoom = 1.0f;
 constexpr float kMaxZoom = 8.0f;
 constexpr float kZoomPerNotch = 1.2f;
+// Phase 15. How far the cursor may travel between press and release and still
+// count as a click rather than a pan: a hand moves a pixel or two on any real
+// click, and a player nudging the map by three pixels meant to nudge it.
+constexpr float kClickSlopPixels = 4.0f;
+// The grab radius for a map marker. Wider than the radar's 11 px because a map
+// dot is 3.5 px across and the two tiers can place a station and its gates
+// within a few pixels of each other, and narrower than the flight view's 28
+// because the map is where a player goes to be precise.
+constexpr float kMapGrabPixels = 14.0f;
 
 using sol::ui::MapView;
 
@@ -133,7 +143,8 @@ using sol::ui::MapView;
 // cannot be thrown out of the panel entirely. Returns the transform to draw
 // with. Only responds while the cursor is inside `view`, so the wheel still
 // belongs to the system list when it is over the list.
-[[nodiscard]] MapView updateMapView(UiContext& ui, const Rect& view, MapScreenState& state)
+[[nodiscard]] MapView updateMapView(UiContext& ui, const Rect& view, MapScreenState& state,
+                                    bool& clicked)
 {
     const std::size_t tab = static_cast<std::size_t>(state.tab);
     const Vec2 origin = {(view.min.x + view.max.x) * 0.5f, (view.min.y + view.max.y) * 0.5f};
@@ -162,6 +173,15 @@ using sol::ui::MapView;
         state.dragging = true;
         state.dragAnchor = input.mousePosition;
         state.dragPanStart = pan;
+    }
+    // Phase 15: the press is already spoken for by the pan, so a click is a
+    // RELEASE that never became a drag. Tested before `dragging` is cleared,
+    // because that flag is the only record that the press started in here.
+    clicked = false;
+    if (state.dragging && !input.mouseDown) {
+        const float dx = input.mousePosition.x - state.dragAnchor.x;
+        const float dy = input.mousePosition.y - state.dragAnchor.y;
+        clicked = dx * dx + dy * dy <= kClickSlopPixels * kClickSlopPixels;
     }
     if (!input.mouseDown) {
         state.dragging = false;
@@ -263,7 +283,7 @@ private:
 // --- Galaxy view ------------------------------------------------------------
 
 void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int selected,
-                   const MapView& magnify)
+                   const MapView& magnify, sol::ui::NearestPick& pick)
 {
     ui.drawList().addRect(view, ui.theme().background.withAlpha(0.55f));
     ui.drawList().addRectOutline(view, ui.theme().panelEdge, 1.0f);
@@ -294,6 +314,9 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
             continue;
         }
         const Vec2 point = project(system.position);
+        // Fed from the draw's own loop, so the pick sees exactly the dots that
+        // were drawn - including the fog skip above it.
+        pick.consider(i, point);
         const Color color = systemColor(panel, system);
         if (system.knowledge == MapKnowledge::Charted) {
             // Hollow: you know it is there and what it is called, no more.
@@ -359,7 +382,7 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
 // --- System view ------------------------------------------------------------
 
 void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int selected,
-                   const MapView& magnify)
+                   const MapView& magnify, sol::ui::NearestPick& pick)
 {
     ui.drawList().addRect(view, ui.theme().background.withAlpha(0.55f));
     ui.drawList().addRectOutline(view, ui.theme().panelEdge, 1.0f);
@@ -429,6 +452,10 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
     for (std::size_t i = 0; i < panel.markers.size(); ++i) {
         const MapMarkerRow& marker = panel.markers[i];
         const Vec2 point = project(marker);
+        // Same rule as the galaxy map: the pick is fed by the draw, so it can
+        // never disagree with it about where a marker is or whether it is
+        // there at all.
+        pick.consider(i, point);
         const Color color = markerColor(ui, marker);
         const float size = marker.kind == MapMarkerRow::Kind::Star   ? 6.0f
                            : marker.kind == MapMarkerRow::Kind::Planet ? 5.0f
@@ -631,7 +658,14 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
     // transform and the footer needs to know whether there is anything to
     // reset. The wheel only bites inside the map area, so it still scrolls
     // the list when the cursor is over the list.
-    const MapView magnify = updateMapView(ui, mapBounds, state);
+    bool mapClicked = false;
+    const MapView magnify = updateMapView(ui, mapBounds, state, mapClicked);
+    // Phase 15: a click on the map selects the same way a click on a list row
+    // does. Resolved inside whichever view draws, because that is where a
+    // marker's screen position is worked out.
+    sol::ui::NearestPick pick = mapClicked
+                                    ? sol::ui::NearestPick(ui.input().mousePosition, kMapGrabPixels)
+                                    : sol::ui::NearestPick{};
     const bool zoomed = state.zoom[static_cast<std::size_t>(state.tab)] > 1.0f
                         || state.pan[static_cast<std::size_t>(state.tab)].x != 0.0f
                         || state.pan[static_cast<std::size_t>(state.tab)].y != 0.0f;
@@ -667,7 +701,13 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             }
         }
         drawSystemList(ui, panel, listColumn.remaining(), state);
-        drawGalaxyMap(ui, panel, mapBounds, state.selectedSystem, magnify);
+        drawGalaxyMap(ui, panel, mapBounds, state.selectedSystem, magnify, pick);
+        // Selecting only: a click on the map never plots, targets or engages.
+        // The footer buttons stay the only things that act, so a stray click
+        // on a crowded map cannot send the ship anywhere.
+        if (pick.result() != sol::ui::kNoPick) {
+            state.selectedSystem = static_cast<int>(pick.result());
+        }
 
         // Footer: what the selection is, and what can be done with it.
         Row buttons(footer, ui.theme().spacing);
@@ -716,7 +756,10 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
                 panel.viewIsCurrent ? ui.theme().textDim : ui.theme().accent,
                 ui.theme().smallStyle);
         drawMarkerList(ui, panel, listColumn.remaining(), state);
-        drawSystemMap(ui, panel, mapBounds, state.selectedMarker, magnify);
+        drawSystemMap(ui, panel, mapBounds, state.selectedMarker, magnify, pick);
+        if (pick.result() != sol::ui::kNoPick) {
+            state.selectedMarker = static_cast<int>(pick.result());
+        }
 
         // Footer computed above; the buttons sit on the last row of the frame.
         Row buttons(footer, ui.theme().spacing);

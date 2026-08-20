@@ -178,3 +178,47 @@ SOL_TEST(inside_disc_routes_the_click)
     // The disc sits above the bottom margin, and the flight view above it.
     SOL_CHECK(!insideDisc({640.0f, 360.0f}, center, sol::ui::kRadarRadius));
 }
+
+// Phase 15: the streaming pick the map feeds from its own draw loop.
+SOL_TEST(nearest_pick_takes_the_nearest_candidate_it_is_shown)
+{
+    sol::ui::NearestPick pick({100.0f, 100.0f}, 14.0f);
+    SOL_CHECK(pick.active());
+    pick.consider(0, {130.0f, 100.0f}); // 30 px away: outside the grab
+    SOL_CHECK(pick.result() == kNoPick);
+    pick.consider(1, {108.0f, 100.0f}); // 8 px
+    SOL_CHECK(pick.result() == 1);
+    pick.consider(2, {103.0f, 100.0f}); // 3 px: closer, so it wins
+    SOL_CHECK(pick.result() == 2);
+    pick.consider(3, {110.0f, 100.0f}); // 10 px: further, so it does not
+    SOL_CHECK(pick.result() == 2);
+}
+
+// The index is the caller's, not a count of how many were considered - the map
+// skips fogged markers, so the numbering has gaps by construction.
+SOL_TEST(nearest_pick_reports_the_index_it_was_given)
+{
+    sol::ui::NearestPick pick({0.0f, 0.0f}, 14.0f);
+    pick.consider(7, {1.0f, 0.0f});
+    SOL_CHECK(pick.result() == 7);
+}
+
+// Ties go to the first considered, the same rule pickNearestPoint follows.
+SOL_TEST(nearest_pick_breaks_a_tie_toward_the_first)
+{
+    sol::ui::NearestPick pick({0.0f, 0.0f}, 14.0f);
+    pick.consider(4, {5.0f, 0.0f});
+    pick.consider(5, {0.0f, 5.0f});
+    SOL_CHECK(pick.result() == 4);
+}
+
+// A default-constructed pick is what a frame with no click uses, and it must
+// answer kNoPick however many candidates the draw walks past it.
+SOL_TEST(an_inactive_nearest_pick_never_picks)
+{
+    sol::ui::NearestPick pick;
+    SOL_CHECK(!pick.active());
+    pick.consider(0, {0.0f, 0.0f});
+    pick.consider(1, {1.0f, 1.0f});
+    SOL_CHECK(pick.result() == kNoPick);
+}
