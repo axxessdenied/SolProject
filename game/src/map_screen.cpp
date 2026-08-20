@@ -739,12 +739,19 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
         // cells carry the two actions that *are* answerable from a distance.
         // Swapped rather than greyed: a route is the whole point of looking at
         // a system you are not in, and it would have no button otherwise.
+        // Phase 15: both carry the marker's own nav slot, never its row number.
+        // The row number counts only what the fog left visible, so on any map
+        // with an undiscovered station it names a different target than the one
+        // on screen - or names a hidden one, which selectTarget refuses without
+        // saying so, which is what "the buttons don't work" actually was.
+        const bool targetable = marker != nullptr && marker->navTarget != sol::ui::kNoNavTarget;
         if (panel.viewIsCurrent) {
-            if (ui.button(firstCell, "Set Target", hasMarker)) {
-                panel.action = {MapAction::Kind::SelectMarker, state.selectedMarker};
+            if (ui.button(firstCell, "Set Target", targetable)) {
+                panel.action = {MapAction::Kind::SelectMarker,
+                                static_cast<int>(marker->navTarget)};
             }
-            if (ui.button(secondCell, "Autopilot", hasMarker)) {
-                panel.action = {MapAction::Kind::Autopilot, state.selectedMarker};
+            if (ui.button(secondCell, "Autopilot", targetable)) {
+                panel.action = {MapAction::Kind::Autopilot, static_cast<int>(marker->navTarget)};
             }
         } else {
             if (ui.button(firstCell, "Plot Route")) {

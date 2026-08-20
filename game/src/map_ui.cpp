@@ -609,6 +609,12 @@ void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text, ui::Ma
              .scanned = scanned,
              .targeted = i == targeted,
              .bookmarkId = kind == SpaceWorld::NavKind::Bookmark ? world.navTargetBookmark(i) : 0u,
+             // Phase 15: the slot this row came from, so Set Target and
+             // Autopilot act on what the player is looking at. `i` counts nav
+             // slots and skips nothing; the row number counts only what
+             // survived the fog above, and the two diverge from the first
+             // undiscovered station onward.
+             .navTarget = static_cast<std::uint32_t>(i),
              .inPlayfield = !orbital});
     }
     panel.hubPosition = {static_cast<float>(hub.x), static_cast<float>(hub.z)};

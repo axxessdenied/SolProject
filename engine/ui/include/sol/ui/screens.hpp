@@ -466,6 +466,10 @@ struct MapLaneRow
     bool onRoute = false;
 };
 
+// A row that answers to no nav-target slot: every row of a system the player
+// is not standing in, because a remote system has no live nav list at all.
+inline constexpr std::uint32_t kNoNavTarget = 0xffff'ffffu;
+
 // One thing in the current system, for the system map.
 struct MapMarkerRow
 {
@@ -503,6 +507,14 @@ struct MapMarkerRow
     // handing it to navTargetBookmark() would delete whatever bookmark
     // happened to occupy that slot in the system the player is standing in.
     std::uint32_t bookmarkId = 0;
+    // Phase 15: which nav-target slot this row was built from, or kNoNavTarget
+    // on a remote view. Set Target and Autopilot carry THIS and never the row
+    // index, for the same reason `bookmarkId` exists one field up: the local
+    // fill walks every nav slot and skips the fogged ones, so its loop counter
+    // and the row number stop agreeing the moment anything is undiscovered -
+    // and a shifted index either selects the wrong thing or, if it lands on a
+    // fogged slot, is refused and silently does nothing at all.
+    std::uint32_t navTarget = kNoNavTarget;
     // False: an orbital body, positioned from the star. True: something in
     // the playfield around the primary planet, positioned from that planet
     // and drawn in the expanded bubble the system map puts there.
@@ -516,8 +528,8 @@ struct MapAction
         None = 0,
         PlotRoute,    // index = system row
         ClearRoute,
-        SelectMarker, // index = marker row: becomes the nav target
-        Autopilot,    // index = marker row: target it and engage
+        SelectMarker, // Phase 15: index = NAV-TARGET SLOT, not the marker row
+        Autopilot,    // Phase 15: index = nav-target slot: target it and engage
         Close,
         SetTradeCommodity, // Phase 8g: index = commodity, or -1 to turn it off
         DeleteBookmark,    // Phase 8h/8q: bookmarkId names the bookmark
