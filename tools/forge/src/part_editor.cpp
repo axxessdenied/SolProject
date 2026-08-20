@@ -96,6 +96,7 @@ void PartEditor::openNew(const std::string& directory)
     m_open = true;
     m_dirty = true;
     m_buildError.clear();
+    m_bakeError.clear();
     // A new document has no history, and keeping the last one's would let an
     // undo replace this file's contents with a different asset's.
     m_undo.clear();
@@ -123,6 +124,7 @@ bool PartEditor::openFile(const std::string& path, std::string& status)
     m_open = true;
     m_dirty = false;
     m_buildError.clear();
+    m_bakeError.clear();
     m_undo.clear();
     status = "opened " + m_saveName + " (" + std::to_string(m_doc.parts.size()) + " parts)";
     return true;
@@ -278,7 +280,13 @@ bool PartEditor::drawPartList()
         ImGui::EndCombo();
     }
 
-    ImGui::SameLine();
+    // ⚑ THE BUTTONS GET THEIR OWN ROW, AND THEY DID NOT USED TO. `add part` is a
+    // combo wide enough that `delete` was already running off the panel's right
+    // edge with only three widgets on the line - clipped, not scrollable, since
+    // stage D. Adding `bake` beside it is what made it visible, which is the
+    // SIXTH time this repo has met "a widget does not fit its box" and the first
+    // time it was a control rather than a sentence. Three buttons fit; four
+    // widgets never did.
     const bool hasSelection = m_selected >= 0 && m_selected < static_cast<int>(m_doc.parts.size());
     ImGui::BeginDisabled(!hasSelection);
     if (ImGui::Button("duplicate") && hasSelection) {
@@ -309,7 +317,43 @@ bool PartEditor::drawPartList()
         }
         changed = true;
     }
+
+    // ⚑ THE D CHECKPOINT'S RULE, AS A BUTTON. A hand edit bakes only the parts
+    // it touches; everything else stays parametric. This is where a torus stops
+    // being "no parametric answer, come back later" and becomes editable - the
+    // ring is a function of two segment indices and nothing else in the tool can
+    // give it a number to write.
+    const bool bakeable =
+        hasSelection &&
+        m_doc.parts[static_cast<std::size_t>(m_selected)].primitive != ForgePrimitive::Group &&
+        m_doc.parts[static_cast<std::size_t>(m_selected)].primitive != ForgePrimitive::Mesh;
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!bakeable);
+    if (ImGui::Button("bake") && bakeable) {
+        // ⚑ Baked into a COPY first, so a refusal touches neither the document
+        // nor the undo history. Pushing the entry and rolling it back would
+        // leave a no-op in the history for an author to press through, and
+        // `undo()` deliberately marks the document dirty - so the cheap version
+        // of this would claim unsaved work after a button that did nothing.
+        ForgeDoc next = m_doc;
+        std::string error;
+        if (assets::forgeBakeDocumentPart(next, static_cast<std::size_t>(m_selected), &error)) {
+            beginEdit();
+            m_doc = std::move(next);
+            m_bakeError.clear();
+            changed = true;
+        } else {
+            m_bakeError = error;
+        }
+    }
     ImGui::EndDisabled();
+    ImGui::EndDisabled();
+
+    if (!m_bakeError.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored({0.95f, 0.45f, 0.35f, 1.0f}, "%s", m_bakeError.c_str());
+        ImGui::PopTextWrapPos();
+    }
     return changed;
 }
 

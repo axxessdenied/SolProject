@@ -1520,3 +1520,228 @@ SOL_TEST(everyCommittedAssetButTheTwoTorusesIsNowFullyMovable)
         SOL_CHECK(movable == want.movable);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Stage E3: class (3), which has no parametric answer at all and gets one by
+// being baked - the D checkpoint's rule, per part.
+// ---------------------------------------------------------------------------
+
+// ⚑⚑ THE ASSERTION THAT DECIDED THE DESIGN, AND IT WAS WRITTEN BEFORE THE CODE.
+// Stage E left one question open: bake in the part's own LOCAL frame and keep
+// the tree, or fold the WORLD transform in and re-hang at the root. The answer
+// is a third option - fold the part's OWN placement and keep the parent - and
+// this is what makes it more than a preference. A bake that changed one bit of
+// one asset would mean the tool silently re-authors a shipped mesh the first
+// time anyone touches a vertex on it.
+SOL_TEST(bakingAnyPartOfAnyCommittedAssetLeavesTheBuiltMeshUnchanged)
+{
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
+    for (const char* name : names) {
+        const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+        const std::string source = readWholeFile(path);
+        SOL_CHECK(!source.empty());
+        if (source.empty()) {
+            continue;
+        }
+        ForgeDoc original;
+        SOL_REQUIRE(parses(source, original));
+
+        assets::MeshData before;
+        SOL_REQUIRE(assets::buildForge(original, before));
+
+        for (std::size_t i = 0; i < original.parts.size(); ++i) {
+            if (original.parts[i].primitive == ForgePrimitive::Group) {
+                continue;
+            }
+            ForgeDoc doc = original;
+            std::string error;
+            SOL_REQUIRE(assets::forgeBakeDocumentPart(doc, i, &error));
+            SOL_CHECK(error.empty());
+            SOL_CHECK(doc.parts[i].primitive == ForgePrimitive::Mesh);
+
+            assets::MeshData after;
+            SOL_REQUIRE(assets::buildForge(doc, after));
+            SOL_REQUIRE(after.vertices.size() == before.vertices.size());
+            SOL_REQUIRE(after.indices.size() == before.indices.size());
+            // Byte for byte, not nearly: positions, normals and uvs all.
+            SOL_CHECK(std::memcmp(after.vertices.data(), before.vertices.data(),
+                                  before.vertices.size() * sizeof(assets::MeshVertex)) == 0);
+            SOL_CHECK(std::memcmp(after.indices.data(), before.indices.data(),
+                                  before.indices.size() * sizeof(std::uint32_t)) == 0);
+        }
+    }
+}
+
+// ⚑ `gate.forge` is the whole reason the frame question was real: it is the
+// only asset with non-identity placements - a ring at 90 degrees about X and
+// six arms and housings at 90, 180 and 270 about Z - and none of those angles
+// is exact in radians. The test above covers it, and this one says out loud
+// which case it is, so a future reader does not have to rediscover that the
+// other five assets could not have distinguished the options.
+SOL_TEST(theGateIsTheOnlyAssetWhosePlacementsCouldTellTheBakeFramesApart)
+{
+    const std::string source = readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/gate.forge");
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::size_t turned = 0;
+    std::size_t groups = 0;
+    for (const assets::ForgePart& part : doc.parts) {
+        if (part.rotationDegrees.x != 0.0 || part.rotationDegrees.y != 0.0 ||
+            part.rotationDegrees.z != 0.0) {
+            ++turned;
+        }
+        if (part.primitive == ForgePrimitive::Group) {
+            ++groups;
+            // ⚑ The fact the whole decision rests on: the one group in this
+            // repo is at the identity, so folding the part's own placement is
+            // bit-exact rather than merely close.
+            SOL_CHECK(part.localTransform().isIdentity());
+        }
+    }
+    SOL_CHECK(turned == 7); // the ring plus six of the eight arms and housings
+    SOL_CHECK(groups == 1);
+}
+
+// ⚑ A bake that dropped the comment above the part would be the comment-
+// preserving writer's defect one function over - and in this repo a `[[part]]`
+// comment is where the knowledge lives (`gate.forge` explains its quarter turn
+// in one, `station.forge` its four spokes).
+//
+// ⚑ IT TAKES TWO PARTS TO ASSERT, BECAUSE NOT ONE PART IN THIS REPO CARRIES
+// BOTH A PARENT AND A COMMENT. A comment block introduces a GROUP of parts and
+// therefore sits above the first of them - which, for `gate.forge`'s armature,
+// is the group itself. So `ring` carries the comment and `arm_east` carries the
+// parent, and the bake has to keep whichever it is handed.
+SOL_TEST(bakingAPartKeepsItsIdItsParentAndTheCommentAboveIt)
+{
+    const std::string source = readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/gate.forge");
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    const std::size_t ring = doc.indexOf("ring");
+    const std::size_t arm = doc.indexOf("arm_east");
+    SOL_REQUIRE(ring < doc.parts.size());
+    SOL_REQUIRE(arm < doc.parts.size());
+    const std::string ringLeading = doc.parts[ring].leading;
+    const std::string armLeading = doc.parts[arm].leading;
+    const std::string parent = doc.parts[arm].parent;
+    SOL_REQUIRE(ringLeading.find('#') != std::string::npos); // it really does carry one
+    SOL_REQUIRE(!parent.empty());
+    // The ring is turned a quarter turn; the arm hangs off a group.
+    SOL_REQUIRE(!doc.parts[ring].localTransform().isIdentity());
+
+    SOL_REQUIRE(assets::forgeBakeDocumentPart(doc, ring));
+    SOL_REQUIRE(assets::forgeBakeDocumentPart(doc, arm));
+
+    SOL_CHECK(doc.parts[ring].id == "ring");
+    SOL_CHECK(doc.parts[ring].leading == ringLeading);
+    SOL_CHECK(doc.parts[arm].id == "arm_east");
+    SOL_CHECK(doc.parts[arm].parent == parent);
+    SOL_CHECK(doc.parts[arm].leading == armLeading);
+    // The placement was consumed into the geometry, so it is the identity now.
+    SOL_CHECK(doc.parts[ring].localTransform().isIdentity());
+    SOL_CHECK(doc.parts[arm].localTransform().isIdentity());
+
+    // And it still writes and re-reads as the same document.
+    const std::string written = assets::writeForge(doc);
+    ForgeDoc reread;
+    SOL_REQUIRE(parses(written, reread));
+    SOL_CHECK(reread.parts[ring].leading == ringLeading);
+    SOL_CHECK(reread.parts[arm].leading == armLeading);
+    SOL_CHECK(reread.parts[arm].parent == parent);
+}
+
+// ⚑⚑ THE PAYOFF, AND IT IS THE D CHECKPOINT'S RULE CLOSING ITS OWN LOOP. A
+// torus ring vertex is a function of two segment indices, so E1 and E2 both
+// refused it and both said "bake its part first". Baking the ring is what makes
+// that sentence true rather than a deferral: station.forge goes from 72 movable
+// points to all 552, on the same document, through the same call.
+SOL_TEST(bakingTheTorusIsWhatMakesTheRestOfTheStationMovable)
+{
+    const std::string source = readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/station.forge");
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+    SOL_REQUIRE(doc.parts[0].primitive == ForgePrimitive::Torus);
+
+    std::vector<assets::ForgePoint> before;
+    SOL_REQUIRE(assets::forgePoints(doc, before));
+    SOL_REQUIRE(before.size() == 552);
+    std::size_t movable = 0;
+    for (const assets::ForgePoint& point : before) {
+        if (point.movable()) {
+            ++movable;
+        }
+    }
+    SOL_CHECK(movable == 72);
+    // The refusal E1 shipped, still refusing.
+    std::string error;
+    SOL_CHECK(!assets::forgeMovePoint(doc, before[0], {1.0, 0.0, 0.0}, &error));
+    SOL_CHECK(!error.empty());
+
+    error.clear();
+    SOL_REQUIRE(assets::forgeBakeDocumentPart(doc, 0, &error));
+    SOL_CHECK(error.empty());
+
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    // ⚑ The same 552 points: the bake changed what can be WRITTEN, not what is
+    // drawn, which is the whole claim of the assertion above.
+    SOL_REQUIRE(after.size() == 552);
+    for (const assets::ForgePoint& point : after) {
+        SOL_CHECK(point.movable());
+    }
+
+    // And the ring point that refused a moment ago now moves.
+    const std::size_t ring = pointAt(after, before[0].position);
+    SOL_REQUIRE(ring < after.size());
+    SOL_REQUIRE(assets::forgeMovePoint(doc, after[ring], {1.0, 0.0, 0.0}, &error));
+    std::vector<assets::ForgePoint> moved;
+    SOL_REQUIRE(assets::forgePoints(doc, moved));
+    SOL_CHECK(pointAt(moved, {before[0].position.x + 1.0, before[0].position.y,
+                              before[0].position.z}) < moved.size());
+}
+
+// Baking twice is baking once: a `mesh` part is already literal, and a round
+// trip through the builder could only lose bits it has no reason to spend.
+SOL_TEST(bakingAnAlreadyBakedPartIsANoOpRatherThanARoundTrip)
+{
+    const std::string source = readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/gate.forge");
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    const std::size_t ring = doc.indexOf("ring");
+    SOL_REQUIRE(ring < doc.parts.size());
+    SOL_REQUIRE(assets::forgeBakeDocumentPart(doc, ring));
+    const std::string once = assets::writeForge(doc);
+
+    SOL_REQUIRE(assets::forgeBakeDocumentPart(doc, ring));
+    SOL_CHECK(assets::writeForge(doc) == once);
+}
+
+// A group carries no geometry, and an index past the end names nothing. Both
+// say so rather than baking an empty part into the document.
+SOL_TEST(bakingRefusesAGroupAndAPartThatIsNotThere)
+{
+    const std::string source = readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/gate.forge");
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    const std::size_t armature = doc.indexOf("armature");
+    SOL_REQUIRE(armature < doc.parts.size());
+    SOL_REQUIRE(doc.parts[armature].primitive == ForgePrimitive::Group);
+
+    std::string error;
+    SOL_CHECK(!assets::forgeBakeDocumentPart(doc, armature, &error));
+    SOL_CHECK(!error.empty());
+    SOL_CHECK(doc.parts[armature].primitive == ForgePrimitive::Group);
+
+    error.clear();
+    SOL_CHECK(!assets::forgeBakeDocumentPart(doc, doc.parts.size(), &error));
+    SOL_CHECK(!error.empty());
+}

@@ -278,10 +278,14 @@ void PointTool::drawPanel(const ForgeDoc& doc) const
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("nothing here has a parametric answer to a dragged point - a torus "
                             "ring vertex is two segment indices and there is no number behind it. "
-                            "Baking a part is what makes its vertices authored numbers.");
+                            "Select its part in Parts and press \"bake\": that turns the geometry "
+                            "into authored vertices without changing what is drawn.");
         ImGui::PopTextWrapPos();
     } else if (movable < m_points.size()) {
-        ImGui::TextDisabled("%zu point(s) need a bake first", m_points.size() - movable);
+        // ⚑ Names the button rather than the concept. E1 and E2 both said "bake
+        // its part first" at a tool that had no way to do it; E3 is what makes
+        // that an instruction instead of a deferral.
+        ImGui::TextDisabled("%zu point(s) need their part baked first", m_points.size() - movable);
     }
     if (movable > kMarkerBudget) {
         ImGui::TextDisabled("over %zu points: only the hovered and selected are marked",

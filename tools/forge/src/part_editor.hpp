@@ -78,6 +78,10 @@ private:
     std::vector<sol::assets::ForgeDoc> m_undo;
     std::string m_path;
     std::string m_buildError;
+    // Why the last bake was refused. Separate from m_buildError, which is the
+    // caller's rebuild failure - a bake that will not run and a document that
+    // will not build are different problems with different fixes.
+    std::string m_bakeError;
     std::string m_saveName;
     int m_selected = -1;
     bool m_open = false;

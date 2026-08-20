@@ -419,4 +419,37 @@ struct ForgePoint
 // a person can read it.
 [[nodiscard]] ForgePart forgeBakePart(const std::string& id, const MeshData& mesh);
 
+// Converts one part of a document into a literal `mesh` part in place (engine
+// plan Phase 9 stage E3) - the D checkpoint's rule, which is that a hand edit
+// bakes only the parts it touches and leaves every other part parametric.
+//
+// ⚑⚑ THE GEOMETRY IS STORED IN THE PARENT'S FRAME, NOT THE PART'S OWN AND NOT
+// THE WORLD'S, AND THAT IS THE ONE DECISION THIS FUNCTION MAKES. A part's world
+// transform is `P * L` - the parent chain times its own placement. Folding `L`
+// into the geometry and leaving the placement at identity means the rebuild
+// computes `P * (L * p)`, so the part STAYS HANGING WHERE THE AUTHOR PUT IT,
+// and it is bit-exact whenever `P` is the identity.
+//
+// The two alternatives are both worse and the reasons are measurable. Storing
+// the part's OWN local geometry and keeping its placement rounds in the MIDDLE:
+// the build path is `round(W * p)`, rounding once at `build()` per stage B's
+// rule, and the local form is `round(W * round(p))`, which differs whenever the
+// intermediate rounding tips a coordinate across a float boundary - and
+// `gate.forge`'s ring and six of its arms are turned by 90, 180 and 270
+// degrees, none of which is exact in radians. Folding the WHOLE world transform
+// in is bit-exact too, but it has to re-hang the part at the root, so baking
+// one strut detaches it from the assembly it belongs to.
+//
+// ⚑ `id`, `parent` and the part's `leading` trivia survive; the primitive, its
+// parameters and its placement are what the bake consumes. Keeping the comment
+// is not tidiness: in this repo a `[[part]]` comment block is where the
+// knowledge about the asset lives, and deleting one is the loss the
+// comment-preserving writer exists to prevent, arriving one stage later.
+//
+// Refuses a group (it carries no geometry), an index past the end, and any part
+// whose primitive will not build. A part that is already a `mesh` is left
+// exactly as it is rather than round-tripped, so baking twice is baking once.
+[[nodiscard]] bool forgeBakeDocumentPart(ForgeDoc& doc, std::size_t partIndex,
+                                         std::string* error = nullptr);
+
 } // namespace sol::assets

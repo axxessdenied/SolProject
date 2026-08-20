@@ -996,6 +996,161 @@ ForgePart forgeBakePart(const std::string& id, const MeshData& mesh)
     return part;
 }
 
+namespace {
+
+// One part's geometry into a builder whose transform the caller has already
+// set. Factored out at stage E3 because the bake needs the same emission the
+// build does, in a different frame - and two switches over the same primitives
+// would be two answers to what a `box` is, which is the trap this programme has
+// already paid for twice (the glTF/`.forge` pair, and the shipped-mesh script).
+[[nodiscard]] bool emitPart(MeshBuilder& builder, const ForgePart& part, std::string* error)
+{
+    switch (part.primitive) {
+    case ForgePrimitive::Group:
+        break;
+    case ForgePrimitive::Box:
+        builder.addBox(part.value("center").vec, part.value("size").vec,
+                       part.value("tile").scalar);
+        break;
+    case ForgePrimitive::Beam:
+        builder.addBeam(part.value("from").vec, part.value("to").vec, part.value("width").scalar,
+                        part.value("height").scalar, part.value("tile").scalar);
+        break;
+    case ForgePrimitive::Torus: {
+        const auto segU = static_cast<std::uint32_t>(part.value("segments_u").scalar);
+        const auto segV = static_cast<std::uint32_t>(part.value("segments_v").scalar);
+        if (segU < 3 || segV < 3) {
+            if (error != nullptr) {
+                *error = "part '" + part.id + "': a torus needs at least 3 segments each way";
+            }
+            return false;
+        }
+        builder.addTorus(part.value("major_radius").scalar, part.value("tube_radius").scalar, segU,
+                         segV, part.value("u_tiles").scalar);
+        break;
+    }
+    case ForgePrimitive::FlatTriangle:
+        builder.addFlatTriangle(part.value("p0").vec, part.value("p1").vec, part.value("p2").vec,
+                                part.value("uv0").uv, part.value("uv1").uv, part.value("uv2").uv);
+        break;
+    case ForgePrimitive::Revolve: {
+        const ForgeValue profile = part.value("profile");
+        const auto segments = static_cast<std::uint32_t>(part.value("segments").scalar);
+        if (profile.profile.size() < 2 || segments < 3) {
+            if (error != nullptr) {
+                *error = "part '" + part.id +
+                         "': a revolve needs at least 2 profile points and 3 segments";
+            }
+            return false;
+        }
+        builder.addRevolve(profile.profile, segments, part.value("u_tiles").scalar,
+                           part.value("cap_ends").scalar != 0.0);
+        break;
+    }
+    case ForgePrimitive::Extrude: {
+        const ForgeValue outline = part.value("outline");
+        if (outline.profile.size() < 3) {
+            if (error != nullptr) {
+                *error = "part '" + part.id + "': an extrude needs at least 3 outline points";
+            }
+            return false;
+        }
+        builder.addExtrude(outline.profile, part.value("from").vec, part.value("to").vec,
+                           part.value("tile").scalar, part.value("cap_ends").scalar != 0.0);
+        break;
+    }
+    case ForgePrimitive::Mesh: {
+        // find() rather than value(): a baked part's parameter is hundreds of
+        // vertices and value() returns a copy of it.
+        const ForgeValue* vertices = part.find("vertices");
+        const ForgeValue* indices = part.find("indices");
+        if (vertices == nullptr || indices == nullptr || vertices->vertices.empty() ||
+            indices->indices.empty()) {
+            if (error != nullptr) {
+                *error = "part '" + part.id + "': a mesh part needs vertices and indices";
+            }
+            return false;
+        }
+        if (indices->indices.size() % 3 != 0) {
+            if (error != nullptr) {
+                *error = "part '" + part.id + "': indices must come in threes";
+            }
+            return false;
+        }
+        const auto count = static_cast<std::uint32_t>(vertices->vertices.size());
+        for (const std::uint32_t index : indices->indices) {
+            if (index >= count) {
+                if (error != nullptr) {
+                    *error = "part '" + part.id + "': index " + std::to_string(index) +
+                             " is past the part's " + std::to_string(count) + " vertices";
+                }
+                return false;
+            }
+        }
+        // ⚑ Indices are part-local and the builder's are document-wide, so they
+        // are rebased. Anything else would make a baked part's meaning depend on
+        // what happened to be emitted before it.
+        const std::uint32_t base = builder.vertexCount();
+        for (const ForgeVertex& vertex : vertices->vertices) {
+            builder.addVertex(vertex.position, vertex.normal, vertex.uv);
+        }
+        for (std::size_t t = 0; t + 2 < indices->indices.size(); t += 3) {
+            builder.addTriangle(base + indices->indices[t], base + indices->indices[t + 1],
+                                base + indices->indices[t + 2]);
+        }
+        break;
+    }
+    }
+    return true;
+}
+
+} // namespace
+
+bool forgeBakeDocumentPart(ForgeDoc& doc, std::size_t partIndex, std::string* error)
+{
+    if (partIndex >= doc.parts.size()) {
+        if (error != nullptr) {
+            *error = "there is no part " + std::to_string(partIndex) + " to bake";
+        }
+        return false;
+    }
+    ForgePart& part = doc.parts[partIndex];
+    if (part.primitive == ForgePrimitive::Group) {
+        if (error != nullptr) {
+            *error = "part '" + part.id + "' is a group: it carries no geometry to bake";
+        }
+        return false;
+    }
+    if (part.primitive == ForgePrimitive::Mesh) {
+        return true; // already literal; a round trip here could only lose bits
+    }
+
+    // ⚑ The part's OWN placement, folded in - not its world transform. See the
+    // header: this is what keeps the baked part hanging off its parent while
+    // staying bit-exact for every asset whose groups are at the identity.
+    MeshBuilder builder;
+    builder.setTransform(part.localTransform());
+    if (!emitPart(builder, part, error)) {
+        return false;
+    }
+    const MeshData geometry = builder.build();
+    if (geometry.vertices.empty() || geometry.indices.empty()) {
+        if (error != nullptr) {
+            *error = "part '" + part.id + "' built no geometry, so there is nothing to bake";
+        }
+        return false;
+    }
+
+    ForgePart baked = forgeBakePart(part.id, geometry);
+    baked.parent = part.parent;
+    // ⚑ The comment block above the part comes with it. In this repo those
+    // blocks are where what is known about an asset is written down, and a bake
+    // that dropped one would be the writer slice's defect one function over.
+    baked.leading = std::move(part.leading);
+    part = std::move(baked);
+    return true;
+}
+
 bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error,
                 std::vector<ForgePartRange>* ranges)
 {
@@ -1012,106 +1167,9 @@ bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error,
         }
         const std::uint32_t firstVertex = builder.vertexCount();
         builder.setTransform(world[i]);
-
-        switch (part.primitive) {
-        case ForgePrimitive::Group:
-            break;
-        case ForgePrimitive::Box:
-            builder.addBox(part.value("center").vec, part.value("size").vec,
-                           part.value("tile").scalar);
-            break;
-        case ForgePrimitive::Beam:
-            builder.addBeam(part.value("from").vec, part.value("to").vec,
-                            part.value("width").scalar, part.value("height").scalar,
-                            part.value("tile").scalar);
-            break;
-        case ForgePrimitive::Torus: {
-            const auto segU = static_cast<std::uint32_t>(part.value("segments_u").scalar);
-            const auto segV = static_cast<std::uint32_t>(part.value("segments_v").scalar);
-            if (segU < 3 || segV < 3) {
-                if (error != nullptr) {
-                    *error = "part '" + part.id + "': a torus needs at least 3 segments each way";
-                }
-                return false;
-            }
-            builder.addTorus(part.value("major_radius").scalar, part.value("tube_radius").scalar,
-                             segU, segV, part.value("u_tiles").scalar);
-            break;
+        if (!emitPart(builder, part, error)) {
+            return false;
         }
-        case ForgePrimitive::FlatTriangle:
-            builder.addFlatTriangle(part.value("p0").vec, part.value("p1").vec,
-                                    part.value("p2").vec, part.value("uv0").uv,
-                                    part.value("uv1").uv, part.value("uv2").uv);
-            break;
-        case ForgePrimitive::Revolve: {
-            const ForgeValue profile = part.value("profile");
-            const auto segments = static_cast<std::uint32_t>(part.value("segments").scalar);
-            if (profile.profile.size() < 2 || segments < 3) {
-                if (error != nullptr) {
-                    *error = "part '" + part.id +
-                             "': a revolve needs at least 2 profile points and 3 segments";
-                }
-                return false;
-            }
-            builder.addRevolve(profile.profile, segments, part.value("u_tiles").scalar,
-                               part.value("cap_ends").scalar != 0.0);
-            break;
-        }
-        case ForgePrimitive::Extrude: {
-            const ForgeValue outline = part.value("outline");
-            if (outline.profile.size() < 3) {
-                if (error != nullptr) {
-                    *error = "part '" + part.id + "': an extrude needs at least 3 outline points";
-                }
-                return false;
-            }
-            builder.addExtrude(outline.profile, part.value("from").vec, part.value("to").vec,
-                               part.value("tile").scalar, part.value("cap_ends").scalar != 0.0);
-            break;
-        }
-        case ForgePrimitive::Mesh: {
-            // find() rather than value(): a baked part's parameter is hundreds
-            // of vertices and value() returns a copy of it.
-            const ForgeValue* vertices = part.find("vertices");
-            const ForgeValue* indices = part.find("indices");
-            if (vertices == nullptr || indices == nullptr || vertices->vertices.empty() ||
-                indices->indices.empty()) {
-                if (error != nullptr) {
-                    *error = "part '" + part.id + "': a mesh part needs vertices and indices";
-                }
-                return false;
-            }
-            if (indices->indices.size() % 3 != 0) {
-                if (error != nullptr) {
-                    *error = "part '" + part.id + "': indices must come in threes";
-                }
-                return false;
-            }
-            const auto count = static_cast<std::uint32_t>(vertices->vertices.size());
-            for (const std::uint32_t index : indices->indices) {
-                if (index >= count) {
-                    if (error != nullptr) {
-                        *error = "part '" + part.id + "': index " + std::to_string(index) +
-                                 " is past the part's " + std::to_string(count) + " vertices";
-                    }
-                    return false;
-                }
-            }
-            // ⚑ Indices are part-local and the builder's are document-wide, so
-            // they are rebased. Anything else would make a baked part's meaning
-            // depend on what happened to be emitted before it.
-            const std::uint32_t base = builder.vertexCount();
-            for (const ForgeVertex& vertex : vertices->vertices) {
-                builder.addVertex(vertex.position, vertex.normal, vertex.uv);
-            }
-            for (std::size_t t = 0; t + 2 < indices->indices.size(); t += 3) {
-                builder.addTriangle(base + indices->indices[t], base + indices->indices[t + 1],
-                                    base + indices->indices[t + 2]);
-            }
-            break;
-        }
-        }
-
         if (ranges != nullptr) {
             ranges->push_back({i, firstVertex, builder.vertexCount() - firstVertex});
         }
@@ -1340,7 +1398,8 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
 {
     if (!point.movable()) {
         if (error != nullptr) {
-            *error = "this point has a corner with no parametric answer - bake its part first";
+            *error = "this point has a corner with no parametric answer - bake its part first, "
+                 "which makes its vertices authored numbers without changing what is drawn";
         }
         return false;
     }
