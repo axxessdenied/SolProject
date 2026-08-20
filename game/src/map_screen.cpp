@@ -575,6 +575,24 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
     // flight HUD showing through a half-lit map is noise, not atmosphere.
     ui.drawList().addRect({{0.0f, 0.0f}, screen}, ui.theme().background);
     ui.pushId("map");
+
+    // The map follows the ship (Phase 10, playtest session 8 note 1). Snapping
+    // on CHANGE rather than every frame is the whole of the judgement here: a
+    // player browsing the galaxy must not be dragged back to their own system,
+    // and "Show Current" below stays the way to ask for it deliberately. This
+    // sits above the tab branch so it holds whichever tab is up, and so a jump
+    // taken with the map closed is picked up by the first build after it.
+    //
+    // Clearing the marker matters as much as the snap: selectedMarker indexes
+    // the new system's list, and the range guard further down only clamps it,
+    // so a system with as many markers would leave the selection silently
+    // pointing at a different object.
+    if (panel.currentIndex >= 0 && panel.currentIndex != state.followedSystem) {
+        state.followedSystem = panel.currentIndex;
+        state.selectedSystem = panel.currentIndex;
+        state.selectedMarker = -1;
+    }
+
     const float width = std::min(screen.x - 80.0f, 1180.0f);
     const float height = std::min(screen.y - 70.0f, 780.0f);
     const Rect frame = {{(screen.x - width) * 0.5f, (screen.y - height) * 0.5f},

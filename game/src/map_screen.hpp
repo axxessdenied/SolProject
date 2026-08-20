@@ -20,6 +20,13 @@ struct MapScreenState
     float scroll[TabCount] = {};
     int selectedSystem = -1; // row in MapPanel::systems; -1 = the current one
     int selectedMarker = -1;
+    // Which system the ship was in the last time this screen was built
+    // (Phase 10). The map follows the player on a jump, and "has the player
+    // moved?" is a question the screen cannot ask without remembering the
+    // answer from last time - the out-of-range guards below only ever caught a
+    // stale index, never a changed system. -1 means "never reconciled", so the
+    // first build after a new game snaps too.
+    int followedSystem = -1;
 
     // Zoom and pan, per tab so the two views keep their own framing
     // (Phase 8h). Applied in SCREEN space, after each view's own projection:
