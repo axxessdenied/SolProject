@@ -520,11 +520,19 @@ bool parseModel(const TomlValue& table, const char* sourceName, std::vector<Mode
     reader.optionalFloat("avoid_radius", def.avoidRadius);
     reader.optionalFloat("emissive", def.emissive);
     reader.optionalBool("solid", def.solid);
+    reader.optionalBool("translucent", def.translucent);
+    reader.optionalFloat("alpha", def.alpha);
 
     reader.rejectUnknownKeys({"id", "mesh", "texture", "radius", "avoid_radius", "emissive",
-                              "solid"});
+                              "solid", "translucent", "alpha"});
     if (!reader.failed && def.radius <= 0.0f) {
         reader.fail("'radius' must be > 0");
+    }
+    // Coverage outside 0..1 is meaningless under premultiplied blending and
+    // would read as a wrongly-lit model rather than as a bad number, so it is
+    // rejected at load where the file name is still in hand.
+    if (!reader.failed && (def.alpha < 0.0f || def.alpha > 1.0f)) {
+        reader.fail("'alpha' must be between 0 and 1");
     }
     // 0 is the sentinel for "same as radius"; anything positive but smaller
     // would put the avoidance sphere inside the collision sphere, i.e. steering

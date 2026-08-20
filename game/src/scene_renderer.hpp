@@ -214,8 +214,16 @@ private:
         std::uint32_t mesh = 0;
         std::uint32_t texture = 0;
         float emissive = 0.0f;
+        // Phase 12: translucency is a property of the MODEL, declared in
+        // models.toml, not of the instance - so the second translucent thing
+        // in this game is a def row and no C++ at all.
+        bool translucent = false;
+        float alpha = 1.0f;
     };
     std::vector<CatalogEntry> m_models;
+    // Translucent instances deferred out of the opaque loop and drawn after
+    // the sky (see the draw path for why the order is not negotiable).
+    std::vector<const RenderInstance*> m_translucentScratch;
     std::vector<sol::renderer::GpuMesh> m_meshes;
     std::vector<sol::renderer::GpuTexture> m_textures;
     std::vector<std::string> m_meshStems;

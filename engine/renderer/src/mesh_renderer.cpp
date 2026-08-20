@@ -77,7 +77,22 @@ bool MeshRenderer::createPipeline()
     desc.layout = m_pipelineLayout;
 
     VkPipeline newPipeline = VK_NULL_HANDLE;
-    const bool created = rhi::createGraphicsPipeline(device, desc, newPipeline);
+    bool created = rhi::createGraphicsPipeline(device, desc, newPipeline);
+
+    // Phase 12: the translucent variant is the same shaders, layout and vertex
+    // format with three fields moved. No depth write so it does not occlude
+    // what is behind it, and no back-face cull because the player flies
+    // through it and would otherwise watch it vanish on the way past.
+    VkPipeline newTranslucent = VK_NULL_HANDLE;
+    if (created) {
+        desc.blendMode = rhi::BlendMode::Alpha;
+        desc.depthWrite = false;
+        desc.cullBackFaces = false;
+        created = rhi::createGraphicsPipeline(device, desc, newTranslucent);
+        if (!created) {
+            vkDestroyPipeline(device, newPipeline, nullptr);
+        }
+    }
 
     vkDestroyShaderModule(device, vertexShader, nullptr);
     vkDestroyShaderModule(device, fragmentShader, nullptr);
@@ -85,10 +100,16 @@ bool MeshRenderer::createPipeline()
         return false;
     }
 
+    // Both or neither: a reload that built one pipeline and failed the other
+    // would leave the renderer in a state no code path expects.
     if (m_pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, m_pipeline, nullptr);
     }
+    if (m_translucentPipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, m_translucentPipeline, nullptr);
+    }
     m_pipeline = newPipeline;
+    m_translucentPipeline = newTranslucent;
     return true;
 }
 
@@ -104,10 +125,12 @@ void MeshRenderer::shutdown()
     }
     const VkDevice device = m_context->device();
     vkDestroyPipeline(device, m_pipeline, nullptr);
+    vkDestroyPipeline(device, m_translucentPipeline, nullptr);
     vkDestroyPipelineLayout(device, m_pipelineLayout, nullptr);
     vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, m_textureSetLayout, nullptr);
     m_pipeline = VK_NULL_HANDLE;
+    m_translucentPipeline = VK_NULL_HANDLE;
     m_pipelineLayout = VK_NULL_HANDLE;
     m_descriptorPool = VK_NULL_HANDLE;
     m_textureSetLayout = VK_NULL_HANDLE;
@@ -173,7 +196,18 @@ void MeshRenderer::destroyTexture(GpuTexture& texture)
 
 void MeshRenderer::bind(VkCommandBuffer commandBuffer, VkExtent2D extent) const
 {
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
+    bindPipeline(commandBuffer, extent, m_pipeline);
+}
+
+void MeshRenderer::bindTranslucent(VkCommandBuffer commandBuffer, VkExtent2D extent) const
+{
+    bindPipeline(commandBuffer, extent, m_translucentPipeline);
+}
+
+void MeshRenderer::bindPipeline(VkCommandBuffer commandBuffer, VkExtent2D extent,
+                                VkPipeline pipeline) const
+{
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
     // Negative viewport height: flips Vulkan's y-down clip space so the
     // engine's Y-up matrices land right side up (see math conventions).
@@ -189,7 +223,8 @@ void MeshRenderer::bind(VkCommandBuffer commandBuffer, VkExtent2D extent) const
 }
 
 void MeshRenderer::draw(VkCommandBuffer commandBuffer, const GpuMesh& mesh, const GpuTexture& texture,
-                        const core::Mat4& mvp, const core::Mat4& model, float emissive) const
+                        const core::Mat4& mvp, const core::Mat4& model, float emissive,
+                        float alpha) const
 {
     PushConstants push = {};
     push.mvp = mvp;
@@ -199,7 +234,9 @@ void MeshRenderer::draw(VkCommandBuffer commandBuffer, const GpuMesh& mesh, cons
     push.modelColumn1.w = emissive;
     push.modelColumn2 = model.column(2);
     push.modelColumn2.w = m_sunIntensity;
-    push.sunDirection = {m_sunDirection.x, m_sunDirection.y, m_sunDirection.z, 0.0f};
+    // .w was a dead lane until Phase 12; it is the alpha the shader
+    // premultiplies by, and 1.0 reproduces the pre-Phase-12 output exactly.
+    push.sunDirection = {m_sunDirection.x, m_sunDirection.y, m_sunDirection.z, alpha};
     vkCmdPushConstants(commandBuffer, m_pipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                        &push);

@@ -193,7 +193,8 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
 
     m_models.reserve(models.size());
     for (const assets::ModelDef& def : models) {
-        CatalogEntry entry = {.emissive = def.emissive};
+        CatalogEntry entry = {
+            .emissive = def.emissive, .translucent = def.translucent, .alpha = def.alpha};
         if (!meshIndex(def.mesh, entry.mesh) || !textureIndex(def.texture, entry.texture)) {
             SOL_LOG_ERROR("model '%s': cannot load mesh '%s' / texture '%s'", def.id.c_str(),
                           def.mesh.c_str(), def.texture.c_str());
@@ -292,13 +293,8 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     m_meshRenderer.setSunlight(sunDirection, kSunIntensity, kAmbient);
     m_meshRenderer.bind(commandBuffer, extent);
     m_drawCallCount = 0;
+    m_translucentScratch.clear();
     for (const RenderInstance& instance : instances) {
-        // Camera-relative: demote sim-space positions to float only after
-        // subtracting the camera position (the large-world rule).
-        const core::Vec3 relative = (instance.position - camera.position).toVec3();
-        const core::Mat4 model =
-            core::translation(relative) * toMat4(instance.rotation) * core::scale(instance.scale);
-
         // A stale or unset model draws nothing rather than crashing: the def
         // layer is reloadable at runtime, so an index can outlive its row.
         const std::uint32_t index = modelIndex(instance.model);
@@ -306,6 +302,20 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
             continue;
         }
         const CatalogEntry& entry = m_models[index];
+        // Phase 12: translucent models sit out the opaque block entirely and
+        // are replayed after the sky. Deferring the pointer rather than the
+        // built matrix keeps this loop doing one thing.
+        if (entry.translucent) {
+            m_translucentScratch.push_back(&instance);
+            continue;
+        }
+
+        // Camera-relative: demote sim-space positions to float only after
+        // subtracting the camera position (the large-world rule).
+        const core::Vec3 relative = (instance.position - camera.position).toVec3();
+        const core::Mat4 model =
+            core::translation(relative) * toMat4(instance.rotation) * core::scale(instance.scale);
+
         m_meshRenderer.draw(commandBuffer, m_meshes[entry.mesh], m_textures[entry.texture],
                             viewProjection * model, model, entry.emissive);
         ++m_drawCallCount;
@@ -354,6 +364,37 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     star.colorB = {5.0f, 3.6f, 2.2f};    // glow, HDR
     m_impostorRenderer.drawStar(commandBuffer, viewProjection, star);
     m_gpuProfiler.endZone(commandBuffer, gpuStarZone);
+
+    // --- Translucent meshes (Phase 12) ---
+    //
+    // ⚑⚑ THE POSITION OF THIS BLOCK IS THE WHOLE TRICK, AND IT IS NOT A STYLE
+    // CHOICE. The sky above is a full-screen pass that survives wherever depth
+    // is still at the reversed-Z clear, and a translucent draw writes no depth
+    // by design - so a membrane recorded in the opaque block would be painted
+    // over by the sky and would appear ONLY where a hull happened to sit
+    // behind it. That reads as broken blending and is in fact a misplaced
+    // pass. After the sky, before the particles: exhaust glow then reads as
+    // being in front of the film rather than trapped behind it.
+    //
+    // No back-to-front sort. The only translucent object in the game is one
+    // flat disc per gate and gates are ~100,000 km apart, so two cannot
+    // meaningfully overlap on screen; sorting is the right answer the day a
+    // second translucent KIND exists, and is machinery guarding nothing today.
+    if (!m_translucentScratch.empty()) {
+        const std::uint32_t gpuTranslucentZone =
+            m_gpuProfiler.beginZone(commandBuffer, "gpu.translucent");
+        m_meshRenderer.bindTranslucent(commandBuffer, extent);
+        for (const RenderInstance* instance : m_translucentScratch) {
+            const core::Vec3 relative = (instance->position - camera.position).toVec3();
+            const core::Mat4 model = core::translation(relative) * toMat4(instance->rotation) *
+                                     core::scale(instance->scale);
+            const CatalogEntry& entry = m_models[modelIndex(instance->model)];
+            m_meshRenderer.draw(commandBuffer, m_meshes[entry.mesh], m_textures[entry.texture],
+                                viewProjection * model, model, entry.emissive, entry.alpha);
+            ++m_drawCallCount;
+        }
+        m_gpuProfiler.endZone(commandBuffer, gpuTranslucentZone);
+    }
 
     const std::uint32_t gpuParticleZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.particles");
     m_particleScratch.clear();

@@ -55,11 +55,28 @@ public:
     // Recording: bind() once per pass, then draw() per object. emissive adds
     // unlit albedo glow (engine housings, windows).
     void bind(VkCommandBuffer commandBuffer, VkExtent2D extent) const;
+
+    // Phase 12: the same shaders, layout and descriptor sets under alpha
+    // blending, with no depth write and no back-face cull - a membrane is seen
+    // through, and seen from both sides because you fly through it.
+    //
+    // ⚑ Anything bound with this MUST be recorded after the sky. The sky pass
+    // survives wherever depth is still at the reversed-Z clear, and a
+    // translucent draw deliberately writes no depth, so a membrane drawn in
+    // the opaque block would be painted over by the sky and read as broken
+    // blending rather than as a misplaced pass.
+    void bindTranslucent(VkCommandBuffer commandBuffer, VkExtent2D extent) const;
+
+    // alpha is coverage in 0..1 and reaches the shader in the push block's one
+    // remaining dead lane. 1.0 is the opaque identity: the fragment shader
+    // premultiplies by it, so an opaque draw emits exactly what it always did.
     void draw(VkCommandBuffer commandBuffer, const GpuMesh& mesh, const GpuTexture& texture,
-              const core::Mat4& mvp, const core::Mat4& model, float emissive = 0.0f) const;
+              const core::Mat4& mvp, const core::Mat4& model, float emissive = 0.0f,
+              float alpha = 1.0f) const;
 
 private:
     [[nodiscard]] bool createPipeline();
+    void bindPipeline(VkCommandBuffer commandBuffer, VkExtent2D extent, VkPipeline pipeline) const;
 
     rhi::Context* m_context = nullptr;
     VkFormat m_colorFormat = VK_FORMAT_UNDEFINED;
@@ -70,6 +87,7 @@ private:
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
+    VkPipeline m_translucentPipeline = VK_NULL_HANDLE;
 
     core::Vec3 m_sunDirection = {0.0f, 1.0f, 0.0f};
     float m_sunIntensity = 1.0f;

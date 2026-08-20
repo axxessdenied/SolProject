@@ -293,6 +293,14 @@ struct ModelDef
     // "the only Cube left among statics" - which would have silently
     // un-solidified any future Cube-shaped static, as 8w's own gaps recorded.
     bool solid = true;
+    // Phase 12: drawn through the alpha-blended pipeline instead of the opaque
+    // one, and recorded after the sky. Declared on the MODEL rather than on
+    // the instance so that the next translucent thing in this game is a def
+    // row and no C++ at all. `alpha` is coverage in 0..1 and is only
+    // meaningful when `translucent` is set; the opaque path passes 1.0, which
+    // the shader premultiplies by and so leaves its output unchanged.
+    bool translucent = false;
+    float alpha = 1.0f;
     std::string source;
 };
 
