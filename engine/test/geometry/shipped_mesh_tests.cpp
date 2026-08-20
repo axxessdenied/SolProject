@@ -224,16 +224,27 @@ bool reportFirstDifference(const char* name, const MeshData& fromFile, const Mes
     return fromFile.indices == fromRecipe.indices;
 }
 
-void checkForgeSourceIsTheShippedMesh(const char* name, const MeshData& fromRecipe)
-{
-    MeshData fromFile;
-    SOL_REQUIRE(buildFromForgeSource(name, fromFile));
-    SOL_CHECK(reportFirstDifference(name, fromFile, fromRecipe));
-    checkAgainstShipped(name, fromFile);
-}
-
 } // namespace
 
+// ⚑⚑ THESE FIVE READ NO ASSET, AND AT PHASE 16 THAT BECAME THE POINT RATHER
+// THAN AN ACCIDENT. They compare the C++ recipe in `shipped_meshes.hpp` against
+// the hash table above - two frozen constants - so they CANNOT fail because
+// somebody edited a `.forge`, and they did not when two real edits arrived.
+//
+// What they are worth is no longer what their name says. The transcription they
+// were written to prove is finished: `gen_assets.ps1`'s mesh half and all five
+// `.gltf` files were deleted at the D checkpoint, so there is no longer an
+// original to have ported correctly. What survives is an EXACT-OUTPUT PIN ON
+// `MeshBuilder` - the recipe drives addBox 17 times, addFlatTriangle 14,
+// addBeam 10 and addTorus once, and these hashes are the only thing in the repo
+// that would notice a primitive generator changing a vertex order or a uv
+// derivation. `mesh_build_tests.cpp` covers the same primitives by PROPERTY
+// (volume, ends, Pappus, winding, border loops); exactness is what is left here
+// and it costs one frozen header to keep.
+//
+// So: do not delete these to "finish" retiring the transcription, and do not
+// extend them to cover a new asset - a new asset belongs in the invariant tests
+// further down, which read the file the game actually loads.
 SOL_TEST(cubeReproducesTheShippedMesh)
 {
     checkAgainstShipped("cube", shipped::buildCube());
@@ -259,37 +270,123 @@ SOL_TEST(cockpitReproducesTheShippedMesh)
     checkAgainstShipped("cockpit", shipped::buildCockpit());
 }
 
-// The committed sources, read from disk. These are the assertions that let the
-// PowerShell generator's mesh half be deleted: after this, the file in the repo
-// is the only thing describing these meshes, and if it stops describing them the
-// suite says so.
-SOL_TEST(theCubeForgeSourceIsTheShippedMesh)
+// ⚑⚑ THE COMMITTED SOURCES, READ FROM DISK - AND WHAT THIS ASSERTS CHANGED AT
+// PHASE 16. It used to compare each file against the C++ recipe above, vertex by
+// vertex, and against the hash table. That was right while the recipe was a
+// SECOND IMPLEMENTATION being checked against a PowerShell original - it is what
+// let the generator's mesh half be deleted. But the original is gone, the Forge
+// can now edit these files, and an exact match makes every genuine edit a test
+// failure: it rejected two real human edits before anyone noticed it had stopped
+// protecting anything and started forbidding the tool it was built to enable.
+//
+// So the net still reaches the files, and it now catches a mesh that is BROKEN
+// rather than one that is merely CHANGED. What follows is the difference between
+// "these numbers moved" and "this is not a solid any more".
+//
+// ⚑ The five recipe tests above are deliberately untouched. They read no asset
+// and cannot block an edit; see the note on their own block.
+constexpr const char* const kCommittedMeshes[] = {"cube",    "station",       "ship",
+                                                  "cockpit", "asteroid",      "gate",
+                                                  "gate_membrane"};
+
+// ⚑ `gate_membrane` is a single revolve of the profile [[0,0],[70,0]] - a flat
+// disc whose centre collapses to a point. It is a FILM, so it has a border loop
+// by construction and the closed-solid invariants below would fail it correctly.
+// Named here rather than skipped quietly: an exclusion someone can read is a
+// decision, an exclusion buried in a condition is a bug waiting to be restored.
+[[nodiscard]] bool isClosedSolid(std::string_view name)
 {
-    checkForgeSourceIsTheShippedMesh("cube", shipped::buildCube());
+    return name != "gate_membrane";
 }
 
-SOL_TEST(theStationForgeSourceIsTheShippedMesh)
+SOL_TEST(everyCommittedForgeSourceParsesAndBuildsGeometry)
 {
-    checkForgeSourceIsTheShippedMesh("station", shipped::buildStation());
+    for (const char* name : kCommittedMeshes) {
+        MeshData mesh;
+        SOL_REQUIRE(buildFromForgeSource(name, mesh));
+        SOL_CHECK(!mesh.vertices.empty());
+        SOL_CHECK(!mesh.indices.empty());
+        SOL_CHECK(mesh.indices.size() % 3 == 0);
+    }
 }
 
-SOL_TEST(theShipForgeSourceIsTheShippedMesh)
+// The invariant that actually protects a shipped asset. A hole, an inverted
+// face or a face welded to nothing survives every hash you could write about a
+// mesh that no longer has the property - and none of them show up in a
+// screenshot reliably. This is what the exact match was standing in front of.
+SOL_TEST(everyCommittedSolidIsAClosedManifoldWoundOutwards)
 {
-    checkForgeSourceIsTheShippedMesh("ship", shipped::buildShip());
+    for (const char* name : kCommittedMeshes) {
+        if (!isClosedSolid(name)) {
+            continue;
+        }
+        MeshData mesh;
+        SOL_REQUIRE(buildFromForgeSource(name, mesh));
+        const assets::EditMesh edit = assets::toEditMesh(mesh);
+        const assets::MeshAdjacency adjacency = assets::buildAdjacency(edit);
+        if (!adjacency.isManifold() || !adjacency.isClosed()
+            || adjacency.borderEdgeCount() != 0) {
+            std::printf("  %s: manifold %d closed %d border edges %u\n", name,
+                        adjacency.isManifold() ? 1 : 0, adjacency.isClosed() ? 1 : 0,
+                        adjacency.borderEdgeCount());
+        }
+        SOL_CHECK(adjacency.isManifold());
+        SOL_CHECK(adjacency.isClosed());
+        SOL_CHECK(adjacency.borderEdgeCount() == 0);
+        // Positive means the triangles wind outwards. An asset built inside-out
+        // renders as a shell you can see through from outside and is lit from
+        // nowhere - and mesh.frag never flips a normal for a back face, so
+        // nothing downstream would rescue it.
+        if (assets::signedVolume(edit) <= 0.0) {
+            // Negative means wound inside out; exactly zero means it is not a
+            // solid at all - a flattened box reads 0, not -1, and saying
+            // "inside out" there would send the reader the wrong way.
+            std::printf("  %s: signed volume %.6g - %s\n", name, assets::signedVolume(edit),
+                        assets::signedVolume(edit) < 0.0 ? "wound inside out"
+                                                         : "no enclosed volume");
+        }
+        SOL_CHECK(assets::signedVolume(edit) > 0.0);
+        // A closed solid may not carry a zero-area triangle: it contributes no
+        // pixels, no normal and no adjacency, and it is what a bad edit leaves
+        // behind when two points are dragged onto each other. Asserted only for
+        // solids - see the membrane's note on isClosedSolid.
+        assets::EditMesh scratch = edit;
+        const std::uint32_t removed = assets::removeDegenerateFaces(scratch);
+        if (removed != 0) {
+            std::printf("  %s: %u degenerate face(s)\n", name, removed);
+        }
+        SOL_CHECK(removed == 0);
+    }
 }
 
-SOL_TEST(theCockpitForgeSourceIsTheShippedMesh)
+// Welding is what turns a triangle soup into a surface with edges, and every
+// asset here is authored as shared corners. A file that welded to nothing would
+// still draw, and every adjacency-based operation in the Forge - point editing
+// included - would quietly have nothing to work on.
+SOL_TEST(everyCommittedMeshWeldsItsCornersOntoFewerPoints)
 {
-    checkForgeSourceIsTheShippedMesh("cockpit", shipped::buildCockpit());
+    for (const char* name : kCommittedMeshes) {
+        MeshData mesh;
+        SOL_REQUIRE(buildFromForgeSource(name, mesh));
+        const assets::EditMesh edit = assets::toEditMesh(mesh);
+        SOL_CHECK(!edit.positions.empty());
+        SOL_CHECK(edit.positions.size() < edit.vertices.size());
+    }
 }
 
-// ⚑ The asteroid is the one that is BAKED rather than transcribed, so this test
-// asserts something the other four do not: that a literal `mesh` part carrying
-// 960 written-out vertices still comes back as the exact mesh it was baked from.
-// It is the bake path's proof, and stage E inherits it built rather than argued.
-SOL_TEST(theAsteroidForgeSourceIsTheShippedMesh)
+// ⚑ The membrane's documented cost, pinned rather than waved past. Revolving a
+// profile that touches its own axis collapses the innermost ring to a point, so
+// that quad row is degenerate on one edge and rasterises as a triangle fan -
+// gate_membrane.forge's own header says so. It is one per segment, and tying
+// the count to `segments` is what makes this a statement about the shape rather
+// than a number somebody would re-bless. The first run of the invariant tests
+// above is what turned that comment into a measurement.
+SOL_TEST(theMembranesOnlyDegenerateFacesAreTheFanAtItsCentre)
 {
-    checkForgeSourceIsTheShippedMesh("asteroid", shipped::buildAsteroid());
+    MeshData mesh;
+    SOL_REQUIRE(buildFromForgeSource("gate_membrane", mesh));
+    assets::EditMesh edit = assets::toEditMesh(mesh);
+    SOL_CHECK(assets::removeDegenerateFaces(edit) == 32); // gate_membrane.forge: segments = 32
 }
 
 // The bake is only trustworthy if it is a round trip, so take the same recipe
@@ -313,31 +410,27 @@ SOL_TEST(bakingAMeshAndReadingItBackIsTheSameMesh)
     SOL_CHECK(reportFirstDifference("asteroid", rebuilt, shipped::buildAsteroid()));
 }
 
-// Every mesh in this game is built out of closed solids, and the weld is what
-// finds that out: 24 unshared corners collapse onto 8 points, and only then
-// does a box have edges to be adjacent across. A mesh that failed this would
-// have a hole in it that no screenshot would necessarily show.
-SOL_TEST(everyShippedMeshWeldsIntoAClosedManifoldSurface)
-{
-    const MeshData meshes[] = {shipped::buildCube(), shipped::buildStation(), shipped::buildShip(),
-                              shipped::buildAsteroid(), shipped::buildCockpit()};
-    for (const MeshData& mesh : meshes) {
-        const assets::EditMesh edit = assets::toEditMesh(mesh);
-        const assets::MeshAdjacency adjacency = assets::buildAdjacency(edit);
-        SOL_CHECK(adjacency.isManifold());
-        SOL_CHECK(adjacency.isClosed());
-        SOL_CHECK(adjacency.borderEdgeCount() == 0);
-    }
-}
-
+// ⚑ Phase 16 repointed this at `cube.forge`. It used to weld the C++ recipe,
+// which is a frozen constant the game never loads - so it proved the recipe was
+// a cube and said nothing at all about the asset. The numbers are the same
+// either way; the object under test is not.
 SOL_TEST(weldingTheCubeFindsEightPointsUnderTwentyFourCorners)
 {
-    const assets::EditMesh cube = assets::toEditMesh(shipped::buildCube());
+    MeshData mesh;
+    SOL_REQUIRE(buildFromForgeSource("cube", mesh));
+    const assets::EditMesh cube = assets::toEditMesh(mesh);
     SOL_CHECK(cube.positions.size() == 8);
     SOL_CHECK(cube.vertices.size() == 24); // every corner has its own face normal
     SOL_CHECK(cube.triangleCount() == 12);
 
     const assets::MeshAdjacency adjacency = assets::buildAdjacency(cube);
     SOL_CHECK(adjacency.edges.size() == 18); // 12 box edges + one diagonal per face
-    SOL_CHECK(assets::signedVolume(cube) > 0.999 && assets::signedVolume(cube) < 1.001);
+
+    // ⚑ Everything above is TOPOLOGY and survives an edit; the volume is not,
+    // and asserting it here was a size pin - the same ratchet in different
+    // clothes, caught by driving a real resize through forge.exe rather than by
+    // reading. A dragged cube is still a cube: eight points, twelve triangles,
+    // eighteen edges. It is just not a UNIT cube any more, and nothing about
+    // this asset's job requires that it be one. That it encloses a positive
+    // volume at all is asserted for every solid above.
 }
