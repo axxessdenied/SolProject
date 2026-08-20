@@ -1237,17 +1237,93 @@ constexpr std::uint8_t kBeamCornerEnd[24] = {
     0, 1, 1, 0, // -up
 };
 
-// A box corner's `size` after a drag: the delta signed by which side of each
-// axis the corner stands on. This is the half of the solve that pins the
-// opposite corner, and it is sign-agnostic - a box authored with a negative
-// size still comes out right, because the code names the combination of
-// half-extents rather than a place.
-[[nodiscard]] BuildPoint boxSizeAfter(BuildPoint size, std::uint32_t code, BuildPoint delta)
+// ⚑ The grid a dragged point lands on, in metres. A drag arrives as a mouse ray
+// cast against FLOAT geometry, so an unrounded result carries seventeen digits
+// of which the last nine are the decimal expansion of a binary value that holds
+// no information - the hand was never that precise and could not have been.
+// This is `appendMeshNumber`'s argument, made where the number is produced
+// rather than where it is printed.
+//
+// ⚑ 0.1 mm is measured rather than chosen: across the four authored assets
+// (`cockpit`, `ship`, `station`, `gate`) every number has at most THREE decimal
+// places - 508 at one, 145 at two, 4 at three, none beyond - so this grid
+// reproduces every value in the repo exactly, with a decimal place to spare.
+//
+// ⚑ Deliberately fixed rather than following the viewport's adaptive grid: a
+// file whose contents depend on how far the author had zoomed in is not
+// reproducible.
+//
+// ⚑⚑ EXPRESSED AS STEPS-PER-METRE, AND THAT IS NOT A STYLE CHOICE. The obvious
+// `std::round(v / 1e-4) * 1e-4` MULTIPLIES by 1e-4, which is not representable
+// in binary, so the result can land a ULP off the double nearest the decimal -
+// and `appendNumber`, faithfully reporting the double it was handed, would then
+// print all seventeen digits again. Dividing by an exact power of ten instead
+// yields the double nearest `n/10000` exactly, which is the number a person
+// typed. The whole phase fails on this one line if it is written the other way.
+constexpr double kGridStepsPerMetre = 10000.0; // 0.1 mm
+
+[[nodiscard]] double quantize(double value)
+{
+    return std::round(value * kGridStepsPerMetre) / kGridStepsPerMetre;
+}
+
+[[nodiscard]] BuildPoint quantizePoint(BuildPoint p)
+{
+    return {quantize(p.x), quantize(p.y), quantize(p.z)};
+}
+
+// Whether a write would change anything. Exact equality on purpose: the left
+// side has been through `quantize` and the right side is whatever the document
+// already holds, so this is false - and the snap therefore happens - when a
+// real drag lands on a value that was authored off the grid. That is intended;
+// the zero-delta guard below is what protects an authored number from a click
+// that never moved.
+[[nodiscard]] bool samePoint(BuildPoint a, BuildPoint b)
+{
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+// ⚑⚑ THE BOX IS THE ONE KIND WHERE THE PARAMETER IS NOT THE POINT, AND THAT IS
+// WHY IT NEEDS ITS OWN SOLVE RATHER THAN A ROUNDED `boxSizeAfter`. `center` and
+// `size` between them encode eight corners, so rounding the two of them
+// independently moves the corner the author is NOT dragging - by up to three
+// quarters of a grid step, on a property this file pins in a test and states in
+// three comment blocks.
+//
+// ⚑ Three things are desirable here and only two can hold at once: the far
+// corner stays put, the dragged corner lands on the grid, and both parameters
+// land on the grid. This picks the first two and pays for it in `center`, which
+// lands on a HALF grid step - one extra digit at most, and only when the box's
+// extent is an odd number of steps.
+//
+// ⚑ Solved against the PINNED corner rather than by cancelling two halves, so
+// the opposite corner does not move BY CONSTRUCTION instead of by arithmetic
+// that happens to agree. That is strictly stronger than what it replaces.
+struct BoxSolve {
+    BuildPoint center;
+    BuildPoint size;
+    BuildPoint corner; // the dragged corner, on the grid
+};
+
+[[nodiscard]] BoxSolve solveBoxCorner(BuildPoint center, BuildPoint size, std::uint32_t code,
+                                      BuildPoint delta)
 {
     const double sx = (code & 1u) != 0 ? 1.0 : -1.0;
     const double sy = (code & 2u) != 0 ? 1.0 : -1.0;
     const double sz = (code & 4u) != 0 ? 1.0 : -1.0;
-    return {size.x + (sx * delta.x), size.y + (sy * delta.y), size.z + (sz * delta.z)};
+    const BuildPoint pinned{center.x - (sx * size.x / 2), center.y - (sy * size.y / 2),
+                            center.z - (sz * size.z / 2)};
+    const BuildPoint dragged = quantizePoint({center.x + (sx * size.x / 2) + delta.x,
+                                              center.y + (sy * size.y / 2) + delta.y,
+                                              center.z + (sz * size.z / 2) + delta.z});
+    BoxSolve out;
+    out.corner = dragged;
+    // corner - pinned is `s * size`, so recovering size is the same multiply.
+    out.size = {sx * (dragged.x - pinned.x), sy * (dragged.y - pinned.y),
+                sz * (dragged.z - pinned.z)};
+    out.center = {(dragged.x + pinned.x) / 2, (dragged.y + pinned.y) / 2,
+                  (dragged.z + pinned.z) / 2};
+    return out;
 }
 
 } // namespace
@@ -1452,7 +1528,10 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
         switch (write.kind) {
         case ForgeWriteKind::BoxCorner: {
             const BuildPoint size = part.value("size").vec;
-            const BuildPoint grown = boxSizeAfter(size, write.element, localDelta[i]);
+            // The SAME solve the write below performs, so the drag this refuses
+            // and the box that drag would have produced are the same box.
+            const BuildPoint grown =
+                solveBoxCorner(part.value("center").vec, size, write.element, localDelta[i]).size;
             if ((size.x * grown.x) <= 0.0 || (size.y * grown.y) <= 0.0 ||
                 (size.z * grown.z) <= 0.0) {
                 if (error != nullptr) {
@@ -1467,7 +1546,10 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
             BuildPoint from = part.value("from").vec;
             BuildPoint to = part.value("to").vec;
             BuildPoint& end = write.element == 0 ? from : to;
-            end = {end.x + localDelta[i].x, end.y + localDelta[i].y, end.z + localDelta[i].z};
+            // Quantized here as well as at the write, so the run this refuses
+            // on and the run the beam ends up with are the same number.
+            end = quantizePoint(
+                {end.x + localDelta[i].x, end.y + localDelta[i].y, end.z + localDelta[i].z});
             const double dx = to.x - from.x;
             const double dy = to.y - from.y;
             const double dz = to.z - from.z;
@@ -1505,6 +1587,13 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
         // drag distance would materialise `center` and `size` into a file whose
         // whole point is that it authors neither. Same fixed point E1 fought
         // for, arriving through the door E1 did not have an asset to test.
+        //
+        // ⚑ This is the OUTER of two guards and it is the one that protects an
+        // AUTHORED number. Each case below refuses a second time when the
+        // quantized result equals the value already stored - which catches a
+        // drag finer than the grid, but only on a value already ON the grid. A
+        // point authored off-grid is snapped by any real drag, deliberately;
+        // this guard is what stops a click with no drag from snapping it.
         if (local.x == 0.0 && local.y == 0.0 && local.z == 0.0) {
             continue;
         }
@@ -1514,30 +1603,43 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
             // to, so an unmoved point writes back the author's own number
             // rather than a float round trip of it.
             ForgeValue value = part.value(write.param.c_str());
-            value.vec = {value.vec.x + local.x, value.vec.y + local.y, value.vec.z + local.z};
+            const BuildPoint moved = quantizePoint(
+                {value.vec.x + local.x, value.vec.y + local.y, value.vec.z + local.z});
+            if (samePoint(moved, value.vec)) {
+                continue;
+            }
+            value.vec = moved;
             part.set(write.param.c_str(), value);
             break;
         }
         case ForgeWriteKind::BakedVertex: {
             ForgeValue vertices = part.value("vertices");
             BuildPoint& position = vertices.vertices[write.element].position;
-            position = {position.x + local.x, position.y + local.y, position.z + local.z};
+            const BuildPoint moved = quantizePoint(
+                {position.x + local.x, position.y + local.y, position.z + local.z});
+            if (samePoint(moved, position)) {
+                continue;
+            }
+            position = moved;
             part.set("vertices", vertices);
             break;
         }
         case ForgeWriteKind::BoxCorner: {
-            // ⚑ HALF the delta into `center` and the whole of it into `size`,
-            // and that split is the entire solve: the far corner sits at
-            // `center - s*size/2`, where the half that moved the centre and the
-            // half that grew the box cancel exactly. Pinning the opposite
-            // corner is not a rule applied on top - it is what this arithmetic
-            // means, which is why a resize is what an author dragging a box
-            // corner already expects to get.
+            // ⚑ A resize pinning the opposite corner is what an author dragging
+            // a box corner already expects to get. It used to fall out of
+            // splitting the delta - half into `center`, all of it into `size`,
+            // the two halves cancelling at the far corner. Phase 14 solves
+            // against the pinned corner directly instead, because the dragged
+            // corner has to land on the grid and rounding two parameters
+            // independently would drag the pinned corner along with it.
             ForgeValue center = part.value("center");
-            center.vec = {center.vec.x + (local.x / 2), center.vec.y + (local.y / 2),
-                          center.vec.z + (local.z / 2)};
             ForgeValue size = part.value("size");
-            size.vec = boxSizeAfter(size.vec, write.element, local);
+            const BoxSolve solved = solveBoxCorner(center.vec, size.vec, write.element, local);
+            if (samePoint(solved.center, center.vec) && samePoint(solved.size, size.vec)) {
+                continue;
+            }
+            center.vec = solved.center;
+            size.vec = solved.size;
             part.set("center", center);
             part.set("size", size);
             break;
@@ -1545,7 +1647,12 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
         case ForgeWriteKind::BeamEnd: {
             const char* const name = write.element == 0 ? "from" : "to";
             ForgeValue end = part.value(name);
-            end.vec = {end.vec.x + local.x, end.vec.y + local.y, end.vec.z + local.z};
+            const BuildPoint moved = quantizePoint(
+                {end.vec.x + local.x, end.vec.y + local.y, end.vec.z + local.z});
+            if (samePoint(moved, end.vec)) {
+                continue;
+            }
+            end.vec = moved;
             part.set(name, end);
             break;
         }

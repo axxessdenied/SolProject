@@ -1164,8 +1164,12 @@ SOL_TEST(aBakedPartIsFullyMovableBecauseItsVerticesAreItsParameters)
     SOL_REQUIRE(assets::forgeMovePoint(doc, points[0], delta));
 
     std::vector<assets::ForgePoint> after;
+    // ⚑ To within the GRID, not exactly: Phase 14 snaps a dragged point to
+    // 0.1 mm, and an asteroid vertex starts at a float value that is nowhere
+    // near a grid line. Landing on the grid is the point of that phase, so the
+    // cursor and the corner agree only to the grid step.
     SOL_REQUIRE(assets::forgePoints(doc, after));
-    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}) <
+    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}, 1e-4) <
               after.size());
 }
 
@@ -1211,8 +1215,19 @@ SOL_TEST(aPointUnderATransformedParentIsWrittenBackInThePartsOwnFrame)
     SOL_CHECK(std::abs(written.vec.x - (1.0 + delta.x)) > 0.1);
 
     std::vector<assets::ForgePoint> after;
+    // ⚑ The grid is a property of the AUTHORED number, not of the viewport, and
+    // this is the test where the difference shows. Phase 14 snaps in the part's
+    // OWN frame, because the number a person reads in the file is the local one
+    // - so under a parent scaled 2x on X the world landing is off the cursor by
+    // up to a grid step times that scale. Snapping in world space instead would
+    // defeat the whole phase here: the inverse transform of a round world
+    // number is an irrational local one.
+    //
+    // The bound is worked out rather than guessed: half a grid step is 5e-5 in
+    // the part's frame, and the parent scales that by at most 2, so no world
+    // component can be off by more than ~1.03e-4. Measured here: 4.4e-5.
     SOL_REQUIRE(assets::forgePoints(doc, after));
-    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}) <
+    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}, 2e-4) <
               after.size());
 }
 
@@ -1366,6 +1381,146 @@ SOL_TEST(aBoxCornerDragResizesTheBoxAndPinsTheOppositeCorner)
     SOL_CHECK(pointAt(after, {4.5, 1.25, 11.875}) < after.size());
     // ...and the corner diagonally opposite has not moved at all.
     SOL_CHECK(pointAt(after, {2.0, -5.0, 2.0}) < after.size());
+}
+
+// ⚑⚑ PHASE 14'S OWN NOTE, AS A TEST, WITH THE NUMBERS THE PLAYTEST PRODUCED.
+// A human dragged the shared apex of the cockpit's four cowl triangles, saved,
+// and an authored `p2 = [0.0, 0.26, -6.95]` came back as
+// `[0.009169150493107736, 0.3069186387490481, -7.117375393866678]`. The drag
+// was a mouse ray cast against float geometry, so those digits were never
+// precision - and `.forge` is text precisely so a person can read it.
+//
+// ⚑ The assertion is on the EMITTED TEXT as well as on the stored double,
+// because the text is what the note was actually about.
+SOL_TEST(aDraggedVertexLandsOnTheGridAndWritesANumberAPersonCanRead)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"cowl\"\n"
+                               "type = \"flat_triangle\"\n"
+                               "p0 = [-0.34, 0.34, -6.0]\np1 = [0.34, 0.34, -6.0]\n"
+                               "p2 = [0.0, 0.26, -6.95]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    const std::size_t apex = pointAt(points, {0.0, 0.26, -6.95});
+    SOL_REQUIRE(apex < points.size());
+
+    // Exactly the displacement the playtest's saved file implies.
+    const assets::BuildPoint delta{0.009169150493107736, 0.0469186387490481,
+                                   -0.167375393866678};
+    SOL_REQUIRE(assets::forgeMovePoint(doc, points[apex], delta));
+
+    const assets::BuildPoint written = doc.parts[0].value("p2").vec;
+    SOL_CHECK(std::abs(written.x - 0.0092) < 1e-12);
+    SOL_CHECK(std::abs(written.y - 0.3069) < 1e-12);
+    SOL_CHECK(std::abs(written.z - -7.1174) < 1e-12);
+
+    const std::string text = assets::writeForge(doc);
+    SOL_CHECK(text.find("p2 = [0.0092, 0.3069, -7.1174]") != std::string::npos);
+    // And the untouched corners are still the author's own numbers.
+    SOL_CHECK(text.find("p0 = [-0.34, 0.34, -6.0]") != std::string::npos);
+}
+
+// ⚑⚑ THE BOX'S THREE-WAY TRADE, ASSERTED FROM BOTH ENDS AT ONCE. `center` and
+// `size` encode eight corners between them, so rounding the two independently
+// would drag the corner the author is NOT holding. Phase 14 solves against the
+// pinned corner instead, which makes this test the one that would catch a
+// regression to the easy implementation: the dragged corner lands on the grid
+// AND the opposite corner has not moved, at the same strength the pin was
+// asserted at before the grid existed.
+SOL_TEST(aQuantizedBoxCornerDragStillLeavesTheOppositeCornerExactlyWhereItWas)
+{
+    // Deliberately off-grid extents, so the solve has something to round.
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"b\"\ntype = \"box\"\n"
+                               "center = [0.0, 0.0, 0.0]\nsize = [1.0, 1.0, 1.0]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> before;
+    SOL_REQUIRE(assets::forgePoints(doc, before));
+    const std::size_t corner = pointAt(before, {0.5, 0.5, 0.5});
+    SOL_REQUIRE(corner < before.size());
+
+    // An awkward drag of the kind a hand on a mouse actually produces.
+    const assets::BuildPoint delta{0.318309886183791, -0.271828182845905,
+                                   0.141421356237309};
+    SOL_REQUIRE(assets::forgeMovePoint(doc, before[corner], delta));
+
+    // The dragged corner is on the grid...
+    const assets::BuildPoint want{0.8183, 0.2282, 0.6414};
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    SOL_CHECK(pointAt(after, want, 1e-4) < after.size());
+
+    // ...and the corner diagonally opposite has not moved AT ALL, at the same
+    // 1e-6 the pin was asserted at before this phase.
+    SOL_CHECK(pointAt(after, {-0.5, -0.5, -0.5}) < after.size());
+
+    // The solve is exact, not merely close: size is corner-minus-pinned.
+    const assets::BuildPoint size = doc.parts[0].value("size").vec;
+    SOL_CHECK(std::abs(size.x - 1.3183) < 1e-12);
+    SOL_CHECK(std::abs(size.y - 0.7282) < 1e-12);
+    SOL_CHECK(std::abs(size.z - 1.1414) < 1e-12);
+}
+
+// ⚑ The zero-delta rule of E2, extended from EXACTLY ZERO to BELOW THE GRID. A
+// hand on a mouse does not hold still, so a click that "did not move" can carry
+// a few microns - and a tool that saves after every edit would write that into
+// a file a person maintains. The document must come back byte-identical.
+SOL_TEST(aDragFinerThanTheGridWritesNothingAtAll)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"t\"\n"
+                               "type = \"flat_triangle\"\n"
+                               "p0 = [0.0, 0.0, 0.0]\np1 = [1.0, 0.0, 0.0]\n"
+                               "p2 = [0.0, 1.0, 0.0]\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+    const std::string before = assets::writeForge(doc);
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    const std::size_t corner = pointAt(points, {1.0, 0.0, 0.0});
+    SOL_REQUIRE(corner < points.size());
+
+    // Two hundredths of a millimetre, well inside one grid step.
+    const assets::BuildPoint delta{2e-5, -1e-5, 3e-5};
+    SOL_REQUIRE(assets::forgeMovePoint(doc, points[corner], delta));
+
+    SOL_CHECK(assets::writeForge(doc) == before);
+}
+
+// The same guarantee on the other two kinds whose parameter IS the point, so
+// neither is left behind: a beam end, and a baked vertex.
+SOL_TEST(aDraggedBeamEndAndABakedVertexBothLandOnTheGrid)
+{
+    const std::string source = "name = \"demo\"\n\n[[part]]\nid = \"b\"\ntype = \"beam\"\n"
+                               "from = [0.0, 0.0, 0.0]\nto = [0.0, 2.0, 0.0]\n"
+                               "width = 0.05\nheight = 0.05\n";
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    SOL_REQUIRE(!points.empty());
+
+    // Any corner at the `to` cap re-aims that end.
+    std::size_t corner = points.size();
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        for (const assets::ForgePointWrite& write : points[i].writes) {
+            if (write.kind == assets::ForgeWriteKind::BeamEnd && write.element == 1) {
+                corner = i;
+            }
+        }
+    }
+    SOL_REQUIRE(corner < points.size());
+    SOL_REQUIRE(assets::forgeMovePoint(doc, points[corner],
+                                       {0.123456789, 0.0, 0.098765432}));
+
+    const assets::BuildPoint end = doc.parts[0].value("to").vec;
+    SOL_CHECK(std::abs(end.x - 0.1235) < 1e-12);
+    SOL_CHECK(std::abs(end.z - 0.0988) < 1e-12);
+    SOL_CHECK(assets::writeForge(doc).find("0.1235") != std::string::npos);
 }
 
 // ⚑⚑ THE CONSEQUENCE THAT HAS TO BE SAID OUT LOUD RATHER THAN DISCOVERED. A
