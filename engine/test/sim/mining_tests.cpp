@@ -10,6 +10,7 @@
 #include <vector>
 
 using sol::sim::AsteroidFieldSpec;
+using sol::sim::fieldCountFor;
 using sol::sim::Galaxy;
 using sol::sim::GalaxyParams;
 using sol::sim::generateGalaxy;
@@ -552,6 +553,51 @@ SOL_TEST(mining_generated_galaxy_fields_follow_the_region_gradient)
         total += oreless.fieldCount(i);
     }
     SOL_CHECK(total == 0);
+}
+
+// ⚑ Phase 13's one-definition assertion, and the reason the rule was extracted
+// rather than copied. The galaxy GENERATOR now answers "does this system have
+// rock?" before any MiningSim exists, and the mining layer answers it again
+// when it builds the fields. Those two answers are the same function or this
+// whole phase is siting stations against a galaxy that does not exist.
+//
+// It also covers the oreless case, where the honest answer is zero everywhere
+// rather than "fields with nothing in them".
+SOL_TEST(mining_field_count_matches_the_fields_it_builds)
+{
+    GalaxyParams galaxyParams;
+    galaxyParams.seed = 4242;
+    galaxyParams.systemCount = 60;
+
+    MiningParams params;
+    params.ores = {OreEntry{.commodity = 0, .weight = {1.0f, 1.0f, 1.0f}}};
+    const Galaxy galaxy = generateGalaxy(galaxyParams, &params);
+
+    MiningSim mining;
+    mining.initialize(galaxy, params, 3, 4242);
+
+    std::vector<AsteroidFieldSpec> fields;
+    std::uint32_t withRock = 0;
+    std::uint32_t withoutRock = 0;
+    for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
+        mining.fieldsFor(galaxy, i, fields);
+        const std::uint32_t predicted = fieldCountFor(galaxy.systems[i], params);
+        SOL_CHECK(predicted == fields.size());
+        SOL_CHECK(predicted == mining.fieldCount(i));
+        (predicted == 0 ? withoutRock : withRock) += 1;
+        // The count is the first draw off the stream, so asking for it must not
+        // depend on anything downstream having been built.
+        SOL_CHECK(fieldCountFor(galaxy.systems[i], params) == predicted);
+    }
+    // Both branches were actually seen, so neither check passed vacuously.
+    SOL_CHECK(withRock > 0);
+    SOL_CHECK(withoutRock > 0);
+
+    // No ore table: zero fields, and the generator's view agrees.
+    const MiningParams oreless;
+    for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
+        SOL_CHECK(fieldCountFor(galaxy.systems[i], oreless) == 0);
+    }
 }
 
 SOL_TEST(mining_a_miner_only_crosses_to_a_rock_it_can_reach)

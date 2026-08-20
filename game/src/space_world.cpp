@@ -38,7 +38,10 @@ constexpr double kImpactDamageMinimum = 1.0;
 // the ECS snapshot. Bump the version on any layout change; old saves are
 // rejected cleanly by the magic/version check.
 constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
-constexpr std::uint32_t kSaveVersion = 14; // v14: per-station/gate discovery (8z)
+// v15: station archetypes now consult the system's asteroid fields and its
+// owner's character (Phase 13), so the same seed describes a different galaxy.
+// No migration, per precedent — a v14 save is rejected cleanly.
+constexpr std::uint32_t kSaveVersion = 15;
 
 // Market intel (Phase 8g): what a station's market report covers and costs.
 // Deliberately shorter than the traders' own horizon — a station's brokers
@@ -207,14 +210,25 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
                                                      : m_galaxyParams.factionCount) += 1;
     }
     for (const assets::StationDef& station : defs.stations()) {
-        m_galaxyParams.stationRules.push_back(
-            {{station.weightCore, station.weightFrontier, station.weightFringe}});
+        sim::StationRule rule;
+        rule.weight[0] = station.weightCore;
+        rule.weight[1] = station.weightFrontier;
+        rule.weight[2] = station.weightFringe;
+        // The same def key the economy reads for `extracts` below, asked one
+        // stage earlier: an archetype whose output comes out of the ground
+        // needs rock under it before it is worth siting (Phase 13).
+        rule.requiresField = station.producesFrom == "field";
+        m_galaxyParams.stationRules.push_back(rule);
     }
-    m_galaxy = sim::generateGalaxy(m_galaxyParams);
 
     // Economy: commodities + archetype rates from the defs (unknown
     // commodity ids in a rate list are warnings, not errors — a mod may
     // remove a commodity a base station references).
+    //
+    // ⚑ Built BEFORE the galaxy since Phase 13, and the order is load-bearing:
+    // station placement now consults each system's asteroid fields, and what
+    // is mineable is a pure function of the defs. Nothing here reads the
+    // galaxy, so this is a reordering rather than a change.
     m_economyParams = sim::EconomyParams{};
     m_commodityIds.clear();
     for (const assets::CommodityDef& commodity : defs.commodities()) {
@@ -223,6 +237,10 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     }
     const std::uint32_t commodityCount =
         static_cast<std::uint32_t>(m_commodityIds.size());
+
+    buildMiningParams();
+    m_galaxy = sim::generateGalaxy(m_galaxyParams, &m_miningParams);
+
     for (const assets::StationDef& station : defs.stations()) {
         sim::EconomyArchetype archetype;
         archetype.production.assign(commodityCount, 0.0f);
@@ -1430,29 +1448,42 @@ void SpaceWorld::ensureMiningPools()
     (void)m_registry.storage<OreChunk>();
 }
 
-void SpaceWorld::initializeMining()
+// Split out of initializeMining at Phase 13 so the galaxy generator can have
+// it: station placement needs to know which systems have rock, and a field is
+// a function of the mining params and the system seed. Depends only on the
+// defs and on m_commodityIds — nothing about the galaxy — which is what makes
+// calling it before generateGalaxy legal.
+void SpaceWorld::buildMiningParams()
 {
-    ensureMiningPools();
     m_miningParams = sim::MiningParams{};
     m_miningParams.ores.clear();
     // What a rock can be made of is a data question: any commodity whose def
     // carries an ore weight is something the galaxy has deposits of.
-    if (m_defs != nullptr) {
-        for (std::uint32_t i = 0; i < m_commodityIds.size(); ++i) {
-            const assets::CommodityDef* def = m_defs->findCommodity(m_commodityIds[i].c_str());
-            if (def == nullptr
-                || (def->oreWeightCore <= 0.0f && def->oreWeightFrontier <= 0.0f
-                    && def->oreWeightFringe <= 0.0f)) {
-                continue;
-            }
-            sim::OreEntry entry;
-            entry.commodity = i;
-            entry.weight[0] = def->oreWeightCore;
-            entry.weight[1] = def->oreWeightFrontier;
-            entry.weight[2] = def->oreWeightFringe;
-            m_miningParams.ores.push_back(entry);
-        }
+    if (m_defs == nullptr) {
+        return;
     }
+    for (std::uint32_t i = 0; i < m_commodityIds.size(); ++i) {
+        const assets::CommodityDef* def = m_defs->findCommodity(m_commodityIds[i].c_str());
+        if (def == nullptr
+            || (def->oreWeightCore <= 0.0f && def->oreWeightFrontier <= 0.0f
+                && def->oreWeightFringe <= 0.0f)) {
+            continue;
+        }
+        sim::OreEntry entry;
+        entry.commodity = i;
+        entry.weight[0] = def->oreWeightCore;
+        entry.weight[1] = def->oreWeightFrontier;
+        entry.weight[2] = def->oreWeightFringe;
+        m_miningParams.ores.push_back(entry);
+    }
+}
+
+void SpaceWorld::initializeMining()
+{
+    ensureMiningPools();
+    // Re-derived rather than assumed: the load path reaches here without
+    // having run generateUniverse, and it is the same pure function either way.
+    buildMiningParams();
     m_mining.initialize(m_galaxy, m_miningParams,
                         static_cast<std::uint32_t>(m_commodityIds.size()), m_universeSeed);
     m_fields.clear();
@@ -6697,7 +6728,13 @@ bool SpaceWorld::loadFrom(const char* path)
     if (galaxyChanged) {
         m_universeSeed = seed;
         m_galaxyParams.seed = seed;
-        m_galaxy = sim::generateGalaxy(m_galaxyParams);
+        // ⚑ The mining params are an INPUT to generation since Phase 13, so
+        // they are rebuilt first. initializeMining() further down would also
+        // build them, and that is far too late: without this the regenerated
+        // galaxy sites stations under a different rule than the one that
+        // created the save, and a load would silently describe another world.
+        buildMiningParams();
+        m_galaxy = sim::generateGalaxy(m_galaxyParams, &m_miningParams);
     }
     if (systemIndex >= m_galaxy.systems.size()) {
         return false;

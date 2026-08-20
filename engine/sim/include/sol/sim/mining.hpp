@@ -146,6 +146,20 @@ struct MiningParams
     std::uint32_t maxCargoStacks = 3; // wreck-loot validation (as SurveyParams)
 };
 
+// How many asteroid fields a system has, without building any of them
+// (Phase 13). Free rather than a member because the galaxy GENERATOR has to
+// ask it — a Mining Outpost in a system with no rock produces nothing forever
+// (stations.toml's produces_from = "field"), so placement has to know — and
+// generation runs long before any MiningSim exists.
+//
+// ⚑ This is the ONE definition of the rule: MiningSim::fieldsFor calls it for
+// its own count rather than repeating the draw. Copying MiningParams::
+// fieldCount into GalaxyParams was the obvious alternative and is exactly how
+// two answers to one question start. A field depends only on the system's seed
+// and region — never on what was built there — which is what makes asking this
+// during generation acyclic.
+[[nodiscard]] std::uint32_t fieldCountFor(const SystemSpec& spec, const MiningParams& params);
+
 // One rock as a miner sees it: somewhere to be, and something to fly into.
 struct MiningRock
 {

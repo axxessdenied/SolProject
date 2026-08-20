@@ -39,11 +39,23 @@ inline constexpr std::uint32_t kNoFaction = 0xffff'ffffu; // lawless system
 // gates is honestly nowhere.
 inline constexpr std::uint32_t kNoSystem = 0xffff'ffffu;
 
+// Mining tuning, needed here only so station placement can ask whether a
+// system has rock (Phase 13). Forward-declared rather than included: mining.hpp
+// includes THIS header, so taking it by name keeps generation free of the
+// mining layer while letting universe.cpp reach fieldCountFor.
+struct MiningParams;
+
 // How often one station archetype appears per region; the game supplies one
 // rule per station def, and specs refer back to it by index.
 struct StationRule
 {
     float weight[3] = {1.0f, 1.0f, 1.0f}; // Core, Frontier, Fringe
+    // This archetype's output comes out of the ground (Phase 13), so it needs
+    // asteroid fields in its own system to produce anything at all. Set from
+    // StationDef::producesFrom == "field", whose own comment has stated the
+    // rule since 8g: "a system with no rock supports no mine". Generation
+    // ignored it until now, which is what put outposts over empty systems.
+    bool requiresField = false;
 };
 
 struct GalaxyParams
@@ -146,7 +158,14 @@ struct Galaxy
 };
 
 // Generates the full galaxy plan. The gate graph is always connected.
-[[nodiscard]] Galaxy generateGalaxy(const GalaxyParams& params);
+//
+// `mining` is optional and opt-in (Phase 13): supplied, station placement
+// consults each system's asteroid field count and will not site an archetype
+// whose output comes out of the ground where there is none. Null keeps the
+// pre-Phase-13 behaviour exactly, which is why every caller that does not care
+// about rock — and every test written before this rule existed — is unchanged.
+[[nodiscard]] Galaxy generateGalaxy(const GalaxyParams& params,
+                                    const MiningParams* mining = nullptr);
 
 // Fewest-jumps route through the gate graph, inclusive of endpoints; empty
 // if unreachable (cannot happen for generateGalaxy output) or on bad input.

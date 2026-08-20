@@ -993,6 +993,10 @@ public:
     }
 
     [[nodiscard]] const sol::sim::Galaxy& galaxy() const { return m_galaxy; }
+    // The rules the galaxy was generated under (Phase 13). Exposed so a console
+    // probe can check placement against them over the WHOLE galaxy: the
+    // coherence rule spans 80 systems and no amount of flying can assert it.
+    [[nodiscard]] const sol::sim::GalaxyParams& galaxyParams() const { return m_galaxyParams; }
     [[nodiscard]] std::uint32_t currentSystemIndex() const { return m_currentSystem; }
     [[nodiscard]] const char* currentSystemName() const
     {
@@ -1439,6 +1443,7 @@ private:
     [[nodiscard]] double autopilotArrivalRange(const TargetInfo& target) const;
     // Mining layout for the current galaxy (sized like the economy's), and
     // the ore table read out of the commodity defs.
+    void buildMiningParams();
     void initializeMining();
     // Instantiates this system's rocks and wrecks as entities. Rocks come
     // from the seed; a rock already cut to nothing is simply not spawned.

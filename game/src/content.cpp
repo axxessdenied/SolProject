@@ -1609,6 +1609,98 @@ std::string resetBindings(GameContent& content)
     return "controls reset to defaults";
 }
 
+// --- World generation (Phase 13) ---------------------------------------------
+
+// Whether the galaxy adds up, measured over every system at once.
+//
+// ⚑ This exists for the same reason 8z's sol.system_map does: the claims this
+// phase makes are galaxy-wide — "no outpost sits over an empty system", "a
+// faction builds what it is" — and both span ~80 systems that no drive can fly.
+// A screenshot cannot assert either one. Prints the coherence count first
+// (which must read 0) and then the per-faction archetype mix.
+std::string worldgenReport(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const sol::sim::Galaxy& galaxy = world.galaxy();
+    const sol::sim::GalaxyParams& params = world.galaxyParams();
+    const sol::sim::MiningParams& mining = world.mining().params();
+    const std::vector<GameFaction>& factions = world.factions();
+    const std::size_t archetypes = params.stationRules.size();
+    if (archetypes == 0) {
+        return "no station rules";
+    }
+
+    std::uint32_t rocklessSystems = 0;
+    std::uint32_t extractorsWithoutRock = 0;
+    std::uint32_t stations = 0;
+    // [faction][archetype], with the lawless bucket last.
+    const std::size_t buckets = factions.size() + 1;
+    std::vector<std::uint32_t> mix(buckets * archetypes, 0);
+    std::vector<std::uint32_t> perFaction(buckets, 0);
+
+    for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
+        const sol::sim::SystemSpec& spec = galaxy.systems[i];
+        const bool rockless = sol::sim::fieldCountFor(spec, mining) == 0;
+        rocklessSystems += rockless ? 1 : 0;
+        // The owner, not the founding claim: a system that changed hands since
+        // 8u is held by whoever holds it, and that is who the mix is about.
+        const std::uint32_t owner = world.systemOwnerFaction(i);
+        const std::size_t bucket = owner < factions.size() ? owner : factions.size();
+        for (const sol::sim::StationSpec& station : spec.stations) {
+            if (station.archetype >= archetypes) {
+                continue;
+            }
+            ++stations;
+            ++perFaction[bucket];
+            ++mix[bucket * archetypes + station.archetype];
+            if (rockless && params.stationRules[station.archetype].requiresField) {
+                ++extractorsWithoutRock;
+            }
+        }
+    }
+
+    // ⚑ The counterfactual, generated here rather than by checking out dev and
+    // rebuilding: the same params with the rock rule OFF is exactly what this
+    // galaxy looked like before Phase 13, and generation is deterministic and
+    // cheap, so the A/B costs a few milliseconds and needs no second binary.
+    const sol::sim::Galaxy unguarded = sol::sim::generateGalaxy(params);
+    std::uint32_t extractorsBefore = 0;
+    std::uint32_t stationsBefore = 0;
+    for (std::uint32_t i = 0; i < unguarded.systems.size(); ++i) {
+        const bool rockless = sol::sim::fieldCountFor(unguarded.systems[i], mining) == 0;
+        for (const sol::sim::StationSpec& station : unguarded.systems[i].stations) {
+            ++stationsBefore;
+            if (rockless && station.archetype < archetypes
+                && params.stationRules[station.archetype].requiresField) {
+                ++extractorsBefore;
+            }
+        }
+    }
+
+    char buffer[256];
+    std::string out;
+    std::snprintf(buffer, sizeof(buffer),
+                  "%zu systems, %u with no rock; %u stations; %u extractor(s) sited without rock"
+                  " (rule off: %u of %u)",
+                  galaxy.systems.size(), rocklessSystems, stations, extractorsWithoutRock,
+                  extractorsBefore, stationsBefore);
+    out += buffer;
+    for (std::size_t b = 0; b < buckets; ++b) {
+        if (perFaction[b] == 0) {
+            continue;
+        }
+        std::snprintf(buffer, sizeof(buffer), "\n%-22s %3u:",
+                      b < factions.size() ? factions[b].name.c_str() : "(lawless)", perFaction[b]);
+        out += buffer;
+        for (std::size_t a = 0; a < archetypes; ++a) {
+            std::snprintf(buffer, sizeof(buffer), " %.0f%%",
+                          100.0 * mix[b * archetypes + a] / perFaction[b]);
+            out += buffer;
+        }
+    }
+    return out;
+}
+
 // --- Mining, salvage & refining (Phase 8f) -----------------------------------
 
 std::string listFields(GameContent& content)
@@ -2735,6 +2827,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&targetShip>("sol", "target_ship", this);
     m_vm.registerFunction<&traderStats>("sol", "trader_stats", this);
     m_vm.registerFunction<&traderRoutes>("sol", "traders", this);
+    m_vm.registerFunction<&worldgenReport>("sol", "worldgen", this);
     m_vm.registerFunction<&traderPuppets>("sol", "puppets", this);
     m_vm.registerFunction<&minerPuppets>("sol", "miners", this);
     m_vm.registerFunction<&traderHunters>("sol", "hunters", this);

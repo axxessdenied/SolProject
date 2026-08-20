@@ -1,5 +1,10 @@
 #include "sol/sim/universe.hpp"
 
+// Station placement asks whether a system has rock (Phase 13). The dependency
+// is one-way and lives here in the .cpp: mining.hpp includes universe.hpp, and
+// universe.hpp only forward-declares MiningParams, so there is no cycle.
+#include "sol/sim/mining.hpp"
+
 #include "sol/core/assert.hpp"
 #include "sol/core/random.hpp"
 
@@ -323,8 +328,24 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
     }
 }
 
-[[nodiscard]] std::uint32_t pickArchetype(const GalaxyParams& params, core::Rng& rng,
-                                          Region region)
+// The weight one archetype carries in one system: its region tuning, vetoed to
+// zero when it needs rock the system does not have (Phase 13).
+//
+// ⚑ A veto, not a re-roll. Zeroing the weight and rolling over what is left
+// means a rockless system builds something ELSE rather than building nothing,
+// so no system loses a station it would have had — only the outpost that could
+// never have produced anything moves aside for one that can.
+[[nodiscard]] float archetypeWeight(const StationRule& rule, std::size_t tier,
+                                    std::uint32_t systemFieldCount, bool enforceFields)
+{
+    if (enforceFields && rule.requiresField && systemFieldCount == 0) {
+        return 0.0f;
+    }
+    return rule.weight[tier];
+}
+
+[[nodiscard]] std::uint32_t pickArchetype(const GalaxyParams& params, core::Rng& rng, Region region,
+                                          std::uint32_t systemFieldCount, bool enforceFields)
 {
     if (params.stationRules.empty()) {
         return 0;
@@ -332,15 +353,19 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
     const std::size_t tier = static_cast<std::size_t>(region);
     float total = 0.0f;
     for (const StationRule& rule : params.stationRules) {
-        total += rule.weight[tier];
+        total += archetypeWeight(rule, tier, systemFieldCount, enforceFields);
     }
+    // Every candidate vetoed (or a ruleset with no weight in this tier at all):
+    // fall back to the unfiltered roll rather than refusing to build. A galaxy
+    // whose every archetype came out of the ground would otherwise generate
+    // systems with no stations, which is a worse world than an odd one.
     if (total <= 0.0f) {
-        return 0;
+        return enforceFields ? pickArchetype(params, rng, region, 0, false) : 0;
     }
     const std::uint32_t ruleCount = static_cast<std::uint32_t>(params.stationRules.size());
     float roll = rng.nextFloat01() * total;
     for (std::uint32_t i = 0; i < ruleCount; ++i) {
-        roll -= params.stationRules[i].weight[tier];
+        roll -= archetypeWeight(params.stationRules[i], tier, systemFieldCount, enforceFields);
         if (roll <= 0.0f) {
             return i;
         }
@@ -351,8 +376,16 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
 // Star, planets (AU-scale scenery; primary planet hosts the playfield),
 // stations near the primary planet, gates toward each linked neighbor.
 void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec& system,
-                    const std::vector<SystemSpec>& systems, core::Rng& rng)
+                    const std::vector<SystemSpec>& systems, core::Rng& rng,
+                    const MiningParams* mining)
 {
+    // Asked once per system, before any station is placed. A field is a pure
+    // function of the system's seed and region and never depends on what was
+    // built there, so this is a read of content that already exists rather
+    // than a decision that has to be sequenced against station placement.
+    const std::uint32_t fieldCount = mining != nullptr ? fieldCountFor(system, *mining) : 0;
+    const bool enforceFields = mining != nullptr;
+
     system.starRadius = 7.0e8 * (0.6 + 0.9 * rng.nextDouble01());
 
     const std::uint32_t planetCount = 1 + rng.range(4);
@@ -377,7 +410,7 @@ void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec&
         minStations + (maxStations > minStations ? rng.range(maxStations - minStations + 1) : 0);
     for (std::uint32_t s = 0; s < stationCount; ++s) {
         StationSpec station;
-        station.archetype = pickArchetype(params, rng, system.region);
+        station.archetype = pickArchetype(params, rng, system.region, fieldCount, enforceFields);
         station.name = system.name + " "
                        + kStationOrdinals[std::min<std::size_t>(s, std::size(kStationOrdinals)
                                                                        - 1)];
@@ -419,7 +452,7 @@ core::DVec3 playfieldHub(const SystemSpec& spec)
     return spec.planets[index].position;
 }
 
-Galaxy generateGalaxy(const GalaxyParams& params)
+Galaxy generateGalaxy(const GalaxyParams& params, const MiningParams* mining)
 {
     SOL_ASSERT(params.systemCount >= 2);
     Galaxy galaxy;
@@ -458,7 +491,7 @@ Galaxy generateGalaxy(const GalaxyParams& params)
     }
     for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
         core::Rng contentRng(galaxy.systems[i].seed, kStreamContents);
-        populateSystem(params, i, galaxy.systems[i], galaxy.systems, contentRng);
+        populateSystem(params, i, galaxy.systems[i], galaxy.systems, contentRng, mining);
     }
     return galaxy;
 }

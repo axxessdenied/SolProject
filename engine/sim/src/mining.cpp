@@ -29,6 +29,17 @@ constexpr std::uint32_t kMaxRocksPerField = 1024;
     return a + (b - a) * t;
 }
 
+// The field count draw, in one place because two callers make it: fieldsFor,
+// which then keeps drawing the fields themselves, and fieldCountFor, which
+// wants the number alone. Takes the rng rather than the seed so the caller
+// that continues gets a stream advanced exactly as far as the other's was.
+[[nodiscard]] std::uint32_t drawFieldCount(core::Rng& rng, const SystemSpec& spec,
+                                           const MiningParams& params)
+{
+    const std::size_t tier = static_cast<std::size_t>(spec.region);
+    return countInRange(rng, params.fieldCount[tier][0], params.fieldCount[tier][1]);
+}
+
 // Unit direction over the whole sphere: a rock tumbles about any axis, unlike
 // the flattened disc everything is *placed* on.
 [[nodiscard]] core::Vec3 randomUnitVector(core::Rng& rng)
@@ -90,6 +101,15 @@ void MiningSim::initialize(const Galaxy& galaxy, const MiningParams& params,
     }
 }
 
+std::uint32_t fieldCountFor(const SystemSpec& spec, const MiningParams& params)
+{
+    if (params.ores.empty()) {
+        return 0; // nothing mineable: no fields rather than empty ones
+    }
+    core::Rng rng(spec.seed, kFieldStream);
+    return drawFieldCount(rng, spec, params);
+}
+
 void MiningSim::fieldsFor(const Galaxy& galaxy, std::uint32_t system,
                           std::vector<AsteroidFieldSpec>& out) const
 {
@@ -99,9 +119,10 @@ void MiningSim::fieldsFor(const Galaxy& galaxy, std::uint32_t system,
     }
     const SystemSpec& spec = galaxy.systems[system];
     core::Rng rng(spec.seed, kFieldStream);
+    // The same draw fieldCountFor makes, off a stream in the same state — so
+    // the two cannot disagree — and the rng carries on into the fields.
+    const std::uint32_t count = drawFieldCount(rng, spec, m_params);
     const std::size_t tier = static_cast<std::size_t>(spec.region);
-    const std::uint32_t count =
-        countInRange(rng, m_params.fieldCount[tier][0], m_params.fieldCount[tier][1]);
     const core::DVec3 hub = playfieldHub(spec);
     out.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
