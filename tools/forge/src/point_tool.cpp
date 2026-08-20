@@ -272,14 +272,18 @@ void PointTool::drawPanel(const ForgeDoc& doc) const
 
     if (movable == 0) {
         // ⚑ The honest message, and it names the reason rather than the
-        // symptom: every part of this document computes its corners from
-        // parameters that are not corners, so there is no number to write.
+        // symptom. It got SHORTER at E2: a box corner used to be the example of
+        // something with no answer and now it is the commonest thing that has
+        // one, so what is left here is genuinely only the swept surfaces.
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("nothing here has a parametric answer to a dragged point - a box "
-                            "corner is its center and size, a torus ring is two segment indices. "
+        ImGui::TextDisabled("nothing here has a parametric answer to a dragged point - a torus "
+                            "ring vertex is two segment indices and there is no number behind it. "
                             "Baking a part is what makes its vertices authored numbers.");
         ImGui::PopTextWrapPos();
-    } else if (movable > kMarkerBudget) {
+    } else if (movable < m_points.size()) {
+        ImGui::TextDisabled("%zu point(s) need a bake first", m_points.size() - movable);
+    }
+    if (movable > kMarkerBudget) {
         ImGui::TextDisabled("over %zu points: only the hovered and selected are marked",
                             kMarkerBudget);
     }
@@ -300,17 +304,53 @@ void PointTool::drawPanel(const ForgeDoc& doc) const
         // editing this file by hand has to find all of these and get every one
         // right; `ship.forge`'s own header says four where the answer is five.
         ImGui::Text("written by %zu part(s):", point.writes.size());
+        bool resizes = false;
+        bool reAims = false;
         for (const ForgePointWrite& write : point.writes) {
             if (write.part >= doc.parts.size()) {
                 continue;
             }
-            if (write.param == "vertices") {
-                ImGui::TextDisabled("  %s.vertices[%u]", doc.parts[write.part].id.c_str(),
-                                    write.element);
-            } else {
-                ImGui::TextDisabled("  %s.%s", doc.parts[write.part].id.c_str(),
-                                    write.param.c_str());
+            const char* const id = doc.parts[write.part].id.c_str();
+            switch (write.kind) {
+            case assets::ForgeWriteKind::Vertex:
+                ImGui::TextDisabled("  %s.%s", id, write.param.c_str());
+                break;
+            case assets::ForgeWriteKind::BakedVertex:
+                ImGui::TextDisabled("  %s.vertices[%u]", id, write.element);
+                break;
+            case assets::ForgeWriteKind::BoxCorner:
+                // ⚑ The corner is named as its three signs, because that is
+                // what tells an author which corner is about to be PINNED - the
+                // opposite one, and there is nowhere else to read that off.
+                ImGui::TextDisabled("  %s.center+size   %cx%cy%cz", id,
+                                    (write.element & 1u) != 0 ? '+' : '-',
+                                    (write.element & 2u) != 0 ? '+' : '-',
+                                    (write.element & 4u) != 0 ? '+' : '-');
+                resizes = true;
+                break;
+            case assets::ForgeWriteKind::BeamEnd:
+                ImGui::TextDisabled("  %s.%s", id, write.param.c_str());
+                reAims = true;
+                break;
             }
+        }
+
+        // ⚑ Class (2) said out loud rather than left to be discovered. A drag
+        // on a corner that is not a parameter cannot move only that corner, and
+        // "I moved this and something else moved" is indistinguishable from a
+        // bug when nobody wrote down that it was the answer.
+        if (resizes || reAims) {
+            ImGui::PushTextWrapPos(0.0f);
+            if (resizes) {
+                ImGui::TextDisabled("a box corner is not a number in the file, so this drag "
+                                    "RESIZES the box and pins the corner opposite.");
+            }
+            if (reAims) {
+                ImGui::TextDisabled("a beam's corners come from its axis, so this drag RE-AIMS "
+                                    "that end: its other three corners come with it, and the far "
+                                    "end swings by up to half the section's diagonal.");
+            }
+            ImGui::PopTextWrapPos();
         }
     }
 

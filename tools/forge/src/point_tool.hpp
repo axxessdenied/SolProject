@@ -1,7 +1,8 @@
 #pragma once
 
-// Direct point editing in the viewport (engine plan Phase 9 stage E1) - the
-// stage where the Forge stops being a parameter panel and becomes a modeller.
+// Direct point editing in the viewport (engine plan Phase 9 stages E1 and E2) -
+// the stage where the Forge stops being a parameter panel and becomes a
+// modeller.
 //
 // ⚑ It does NOT edit geometry. It edits the AUTHORED NUMBERS behind geometry,
 // and the difference is the whole finding this stage was spec'd on: a
@@ -11,6 +12,13 @@
 // `forgeMovePoint` - resolves a picked point to every authored value standing
 // at it and writes all of them at once. `ship.forge`'s front corner is five
 // parts under three parameter names, and writing four of them opens a seam.
+//
+// ⚑ E2 ADDED THE CLASS WHERE THE CORNER IS NOT A NUMBER AT ALL - a box corner,
+// which solves back to `center` and `size` with the opposite corner pinned, and
+// a beam corner, which solves back to the end it stands at. That makes the drag
+// a RESIZE or a RE-AIM rather than a move, so more than the grabbed point has
+// to shift, and the panel says which before it happens. Everything the tool
+// itself does is unchanged: this file still only projects, hovers and drags.
 //
 // ⚑ What lives HERE rather than in the engine is only what needs a screen: the
 // projection, the hover, the drag and the markers. Everything a test could
