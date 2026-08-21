@@ -1310,8 +1310,16 @@ private:
     [[nodiscard]] double modelAvoidRadius(ModelId model) const;
     // False for a gate, which is a doorway you fly through (Phase 8w).
     [[nodiscard]] bool modelIsSolid(ModelId model) const;
-    // Resolves a catalog id once, at spawn time - never in a per-tick loop.
-    [[nodiscard]] ModelId modelByName(const char* id) const;
+    // The model filling one of the slots this game draws into, resolved once
+    // at spawn time and never in a per-tick loop.
+    //
+    // ⚑ Phase 19 REPLACED `modelByName(const char*)` with this, and the
+    // replacement is the point rather than a rename. There is now no way for
+    // game code to ask for a model by NAME at all: a drawable either fills a
+    // declared role, or it is named by a def the content author wrote. Take
+    // `model_roles.hpp` ids only - a raw model id here compiles and then
+    // silently fails `validateRoles` on nobody's watch.
+    [[nodiscard]] ModelId roleModel(const char* role) const;
 
     struct SpawnedShip
     {

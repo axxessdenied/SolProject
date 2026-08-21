@@ -1490,6 +1490,26 @@ std::string lodReportCommand(GameContent& content)
     return line;
 }
 
+// ⚑ The instrument for Phase 19, and permanent for the same reason
+// `sol.lod_pin` is: the whole claim of the phase is that a slot's answer lives
+// in a file, and this is what reads the answer back out of a running game
+// without a screenshot. `sol.roles()` after editing `models.toml` says whether
+// the edit took, and the model INDEX is included because that is what the
+// renderer and the sim actually key on.
+std::string rolesReport(GameContent& content)
+{
+    const sol::assets::DefDatabase& defs = content.defs();
+    std::string out;
+    for (const sol::assets::RoleDef& role : defs.roles()) {
+        const std::uint32_t index = defs.modelIndex(role.model.c_str());
+        char line[160];
+        std::snprintf(line, sizeof(line), "%s%s -> %s (model %u)", out.empty() ? "" : ", ",
+                      role.id.c_str(), role.model.c_str(), index);
+        out += line;
+    }
+    return out.empty() ? "no [[role]] rows loaded" : out;
+}
+
 // ⚑ The A/B lever for the level policy (Phase 17). `sol.lods` says which level
 // was drawn; this says which level to draw, so level 0 and level 1 can be
 // compared at ONE camera position instead of at two distances - which is the
@@ -2994,6 +3014,7 @@ void GameContent::registerBindings()
     // rate on this content can answer that.
     m_vm.registerFunction<&lodReportCommand>("sol", "lods", this);
     m_vm.registerFunction<&lodPinCommand>("sol", "lod_pin", this);
+    m_vm.registerFunction<&rolesReport>("sol", "roles", this);
     m_vm.registerFunction<&perfReport>("sol", "perf", this);
     m_vm.registerFunction<&perfZone>("sol", "perf_zone", this);
     m_vm.registerFunction<&perfZoneMax>("sol", "perf_zone_max", this);

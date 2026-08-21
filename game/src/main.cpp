@@ -6,6 +6,7 @@
 #include "map_screen.hpp"
 #include "map_ui.hpp"
 #include "menu_screens.hpp"
+#include "model_roles.hpp"
 #include "scene_renderer.hpp"
 #include "shader_watcher.hpp"
 #include "ship_camera.hpp"
@@ -300,8 +301,15 @@ int main(int argc, char** argv)
     }
     // Resolved once: the cockpit is the one drawable the game layer pushes
     // itself rather than reading off a RenderShape.
+    //
+    // ⚑ Phase 19 stage B. This site is why the recorded tally of hardcoded
+    // model names was wrong: it resolved "cockpit" by literal without going
+    // through `modelByName`, so the grep that produced the list of six could
+    // not see it. Stage D moves the resolve into `SpaceWorld` so it can follow
+    // the active ship - and so it is finally somewhere a test can reach, since
+    // main.cpp is the executable and everything else is in sol_game_lib.
     const game::ModelId cockpitModel =
-        static_cast<game::ModelId>(content.defs().modelIndex("cockpit"));
+        static_cast<game::ModelId>(content.defs().roleModelIndex(game::kRoleCockpit));
 
     devUi.setCommandHandler(&consoleCommandHandler, &content);
     // The console edits the same binding table the Controls screen does, so a

@@ -1,6 +1,7 @@
 #include "space_world.hpp"
 
 #include "game_audio.hpp"
+#include "model_roles.hpp"
 
 #include "sol/assets/loadout.hpp"
 #include "sol/core/log.hpp"
@@ -146,23 +147,35 @@ ecs::Snapshot makeSnapshotSchema()
     return schema;
 }
 
-// A named model, or the fallback hull. Phase 9 made this a def lookup; it used
-// to resolve exactly three strings against a five-member enum, which is why a
-// mesh could be authored and cooked and still have no way into the game.
+// A named model, or the fallback for its kind. Phase 9 made this a def lookup;
+// it used to resolve exactly three strings against a five-member enum, which is
+// why a mesh could be authored and cooked and still have no way into the game.
 // ⚑ The context and the fallback are ARGUMENTS since stage H, because stations
 // resolve through here too. Hardcoding them was harmless while a ship def was
 // the only caller and is not: the message would name the wrong def kind, and
-// falling back to "ship" would draw a SHUTTLE where a station belongs, which
-// reads as a spawn bug rather than as a bad name in a file.
+// falling back to a shuttle where a station belongs reads as a spawn bug
+// rather than as a bad name in a file.
+//
+// ⚑⚑ AND SINCE PHASE 19 THE FALLBACK IS A ROLE, NOT A MODEL NAME. Stage H
+// moved these two literals out of this function and into its call sites, which
+// looks like a generalisation and removed nothing - "station" and "ship" were
+// still model names compiled into the game, and they are two of the four this
+// phase found beyond the six that were recorded.
+//
+// ⚑ This keeps WARN-AND-FALL-BACK where `validateRoles` refuses, and the
+// difference is whose mistake it is: a def naming a bad model is one broken
+// ship in a file a modder can fix, while an unfilled role is the game having
+// no answer at all.
 ModelId modelIdFromName(const assets::DefDatabase& defs, const std::string& name,
-                        const char* context, const char* fallbackName)
+                        const char* context, const char* fallbackRole)
 {
     const std::uint32_t index = defs.modelIndex(name.c_str());
     if (index != assets::DefDatabase::kNoModel) {
         return static_cast<ModelId>(index);
     }
-    SOL_LOG_WARN("unknown model '%s' in %s; using '%s'", name.c_str(), context, fallbackName);
-    const std::uint32_t fallback = defs.modelIndex(fallbackName);
+    const std::uint32_t fallback = defs.roleModelIndex(fallbackRole);
+    SOL_LOG_WARN("unknown model '%s' in %s; using the '%s' role", name.c_str(), context,
+                 fallbackRole);
     return fallback == assets::DefDatabase::kNoModel ? kNoModel
                                                      : static_cast<ModelId>(fallback);
 }
@@ -1564,7 +1577,7 @@ void SpaceWorld::instantiateMiningEntities()
             const float scale = static_cast<float>(rock.radius);
             m_registry.emplace<RenderShape>(
                 entity,
-                RenderShape{.scale = {scale, scale, scale}, .model = modelByName("asteroid")});
+                RenderShape{.scale = {scale, scale, scale}, .model = roleModel(kRoleRock)});
             m_registry.emplace<MineableRock>(entity,
                                              MineableRock{.field = field,
                                                           .index = index,
@@ -1601,7 +1614,7 @@ void SpaceWorld::spawnOreChunk(const core::DVec3& position, const core::DVec3& v
     m_registry.emplace<Transform>(
         entity, Transform{.position = position, .previousPosition = position});
     m_registry.emplace<RenderShape>(
-        entity, RenderShape{.scale = {6.0f, 6.0f, 6.0f}, .model = modelByName("cube")});
+        entity, RenderShape{.scale = {6.0f, 6.0f, 6.0f}, .model = roleModel(kRoleOreChunk)});
     m_registry.emplace<OreChunk>(entity, OreChunk{.velocity = velocity,
                                                   .lifetime = kChunkLifetimeSeconds,
                                                   .commodity = commodity,
@@ -2221,10 +2234,10 @@ void SpaceWorld::tickMining(double dt)
         const ecs::Entity entity = m_registry.create();
         m_registry.emplace<Transform>(entity, Transform{.position = wreck->position,
                                                         .previousPosition = wreck->position});
-        // No wreck mesh yet: a dead hull is the ship model, oversized and
-        // adrift. A proper broken hull is polish, not mechanism.
+        // No wreck mesh yet: a dead hull is whatever fills the `wreck` role,
+        // oversized and adrift. A proper broken hull is polish, not mechanism.
         m_registry.emplace<RenderShape>(
-            entity, RenderShape{.scale = {1.4f, 1.4f, 1.4f}, .model = modelByName("ship")});
+            entity, RenderShape{.scale = {1.4f, 1.4f, 1.4f}, .model = roleModel(kRoleWreck)});
         m_registry.emplace<WreckMarker>(entity, WreckMarker{.id = id});
         wrecksChanged = true;
     }
@@ -3047,17 +3060,18 @@ void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
     //
     // Resolved once into a table rather than per station, because a name lookup
     // is a string compare and a system can hold a dozen of these. An archetype
-    // naming a model that does not exist falls back to "station" with a warning
-    // from `modelIdFromName`, which is the same treatment a ship def gets.
+    // naming a model that does not exist falls back to the `station` ROLE with
+    // a warning from `modelIdFromName` - the same treatment a ship def gets,
+    // and since Phase 19 the fallback is data rather than a literal here.
     std::vector<ModelId> stationModels;
     if (m_defs != nullptr) {
         stationModels.reserve(m_defs->stations().size());
         for (const assets::StationDef& archetype : m_defs->stations()) {
             stationModels.push_back(
-                modelIdFromName(*m_defs, archetype.model, "station def", "station"));
+                modelIdFromName(*m_defs, archetype.model, "station def", kRoleStation));
         }
     }
-    const ModelId defaultStationModel = modelByName("station");
+    const ModelId defaultStationModel = roleModel(kRoleStation);
     for (const sim::StationSpec& station : spec.stations) {
         const ModelId model = station.archetype < stationModels.size()
                                   ? stationModels[station.archetype]
@@ -3075,12 +3089,12 @@ void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
     // crossing anywhere inside 70 m, so the game tested for a hole twice the
     // size of the one it drew. The ring's inner radius is 70 m exactly, which
     // closes that without touching the mechanic.
-    const ModelId gateModel = modelByName("gate");
+    const ModelId gateModel = roleModel(kRoleGate);
     // Phase 12: the membrane is a second instance at the identical transform
     // rather than a part of the gate mesh, because it draws under a different
     // pipeline. It is non-solid in models.toml, so it joins neither the
     // collision nor the avoidance set and cannot affect the crossing.
-    const ModelId membraneModel = modelByName("gate_membrane");
+    const ModelId membraneModel = roleModel(kRoleGateMembrane);
     const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
     for (const sim::GateSpec& gate : spec.gates) {
         const core::DVec3 outward = gate.position - hub;
@@ -3264,14 +3278,17 @@ bool SpaceWorld::modelIsSolid(ModelId model) const
     return def == nullptr || def->solid;
 }
 
-ModelId SpaceWorld::modelByName(const char* id) const
+ModelId SpaceWorld::roleModel(const char* role) const
 {
     if (m_defs == nullptr) {
         return kNoModel;
     }
-    const std::uint32_t index = m_defs->modelIndex(id);
+    const std::uint32_t index = m_defs->roleModelIndex(role);
     if (index == assets::DefDatabase::kNoModel) {
-        SOL_LOG_WARN("no [[model]] def named '%s'", id);
+        // Unreachable through the game, which refuses to load defs that do not
+        // fill every role (`validateRoles`). Reachable from a test or a tool
+        // holding a partial database, so it degrades rather than asserting.
+        SOL_LOG_WARN("no [[role]] row fills '%s'", role);
         return kNoModel;
     }
     return static_cast<ModelId>(index);
@@ -4626,7 +4643,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
 {
     RenderShape& shape = m_registry.storage<RenderShape>().get(entityIndex);
     shape.scale = {def.scale, def.scale, def.scale};
-    shape.model = modelIdFromName(defs, def.model, "ship def", "ship");
+    shape.model = modelIdFromName(defs, def.model, "ship def", kRoleShip);
     m_registry.storage<ShipControl>().get(entityIndex).tuning = toShipTuning(def.flight);
     if (entityIndex == playerEntityIndex()) {
         m_playerCargoCapacity = def.cargoCapacity;
@@ -6323,7 +6340,7 @@ void SpaceWorld::tick(double dt)
             m_rockEvents.push_back({.commodity = commodity, .units = total});
         }
     }
-    const ModelId boltModel = modelByName("cube");
+    const ModelId boltModel = roleModel(kRoleBolt);
     for (const PendingBolt& bolt : newBolts) {
         const ecs::Entity e = m_registry.create();
         m_registry.emplace<Transform>(e, Transform{.position = bolt.position,

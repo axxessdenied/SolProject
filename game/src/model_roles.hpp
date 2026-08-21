@@ -42,14 +42,30 @@ inline constexpr const char* kRoleBolt = "bolt";
 // one drawable with no entity behind it.
 inline constexpr const char* kRoleCockpit = "cockpit";
 
+// ⚑ THE THREE BELOW ARE FALLBACKS, AND COUNTING THEM IS WHY THE RECORDED
+// TALLY OF SIX LITERALS WAS REALLY TEN. A def that names a model which does
+// not exist still has to draw SOMETHING, and until Phase 19 that something
+// was a string literal at the call site - two of which stage H itself
+// introduced, by turning `modelIdFromName`'s hardcoded fallback into an
+// argument and passing "station" and "ship" from the outside. Moving a
+// literal to the caller is not removing it.
+inline constexpr const char* kRoleStation = "station";
+inline constexpr const char* kRoleShip = "ship";
+
+// What a wreck is drawn as when the ship that died cannot be identified.
+// Phase 19 stage E prefers the victim's own def; this is what it falls back
+// to, so the site is data-driven whether or not that stage happens.
+inline constexpr const char* kRoleWreck = "wreck";
+
 // The vocabulary `DefDatabase::validateRoles` is checked against, in both
 // directions: a missing row is a refusal, and so is a row naming a role that
 // is not in here.
 //
 // ⚑ A real static array rather than a returned `std::initializer_list`, whose
 // backing store would not outlive the return statement.
-inline constexpr std::array<const char* const, 6> kModelRoles = {
-    kRoleGate, kRoleGateMembrane, kRoleRock, kRoleOreChunk, kRoleBolt, kRoleCockpit};
+inline constexpr std::array<const char* const, 9> kModelRoles = {
+    kRoleGate,    kRoleGateMembrane, kRoleRock, kRoleOreChunk, kRoleBolt,
+    kRoleCockpit, kRoleStation,      kRoleShip, kRoleWreck};
 
 // The roles above whose instance scale carries meaning, so the model filling
 // them must be authored at radius 1.0. Named here rather than in the test so

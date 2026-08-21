@@ -161,3 +161,26 @@ model = "cube"
 [[role]]
 id = "cockpit"
 model = "cockpit"
+
+# Fallbacks. A ship or station def naming a model that does not exist still
+# has to draw something, and these say what. Unlike a role above, reaching one
+# of these means a def somewhere is wrong and the log says so - they are the
+# shape you see when a name is broken, not a shape anything asks for.
+#
+# ⚑ These three are why the recorded count of hardcoded model names was six
+# and the real one was ten: a fallback is a model name too, and stage H moved
+# two of them from inside `modelIdFromName` out to its call sites, which reads
+# like a cleanup and removed nothing.
+[[role]]
+id = "station"
+model = "station"
+
+[[role]]
+id = "ship"
+model = "ship"
+
+# A dead hull, when the ship that died cannot be identified. Oversized and
+# adrift; a proper broken hull is polish, not mechanism.
+[[role]]
+id = "wreck"
+model = "ship"
