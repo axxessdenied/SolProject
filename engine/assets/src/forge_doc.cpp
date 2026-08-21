@@ -1863,75 +1863,101 @@ bool forgeMovePoints(ForgeDoc& doc, std::span<const ForgePoint> points, BuildPoi
         return false;
     }
 
-    // ⚑⚑ AND THE BOX ALGEBRA, WHICH SETTLES A QUESTION THE SPEC LEFT OPEN.
+    // ⚑⚑ AND THE BOX ALGEBRA, WHICH IS WHAT DECIDES WHICH SELECTIONS A BOX CAN
+    // HONESTLY ANSWER.
     //
     // A box corner sits at `center + s*size/2` with `s` in {-1,+1} per axis, so
-    // a change of `center` and `size` moves it by `dc + s*ds/2`. On one axis
-    // that expression takes exactly TWO values - one for each sign - so a set of
-    // corners can be moved along that axis if and only if they AGREE about the
-    // sign. Where they agree, E2's split (half the step into `center`, all of it
-    // into `size`) is the answer and it pins the far face exactly as it always
-    // did. Where they straddle - the two ends of an edge running along that axis
-    // - there is no `dc`/`ds` that moves them and leaves their neighbours, so
-    // the component is DROPPED rather than approximated.
+    // a change of the pair moves it by `dc + s*ds/2`. On one axis that takes
+    // exactly TWO values, one per sign - so a set of corners moves together
+    // along that axis only in terms of which SIDE each is on. Three selections
+    // come out of that, and only two of them are things a box can do:
     //
-    // The consequence is worth stating plainly, because the spec framed it as a
-    // choice between refusing an edge drag and widening it to the face: it is
-    // not a choice. A box has no shear, so the algebra widens on the axes it can
-    // express and drops the one along the edge, and refusing instead would make
-    // edge mode dead on the 35 of 61 parts that are boxes and beams.
+    //   ONE CORNER  - E2's case. Half the step into `center`, all of it into
+    //                 `size`; the opposite corner is pinned because those two
+    //                 halves cancel there. A resize is what an author dragging a
+    //                 corner expects, and this is unchanged from E2.
+    //   A WHOLE FACE- the four corners sharing one sign. Same split on that
+    //                 axis, and the opposite face does not move AT ALL. This is
+    //                 the case that pays out, and it is exact.
+    //   ANYTHING ELSE (an edge, or part of a face) - REFUSED. There is no
+    //                 `dc`/`ds` that moves two corners of an edge and leaves the
+    //                 other two on their face, because A BOX HAS NO SHEAR. The
+    //                 nearest thing the arithmetic can do is widen the whole
+    //                 face, which measured out as "grabbed 2, moved 4" - the two
+    //                 you took and the two you did not touch. That is
+    //                 indistinguishable from a bug, so it is not offered.
     //
-    // ⚑ `dropped` is a FLAG rather than the vector that survived, and that is
-    // deliberate. The drop is decided in each part's OWN frame, so composing the
-    // survivors of several parts into one world-space vector would be a number
-    // that is right only while every box stands at the identity - and
-    // `gate.forge` turns seven of its parts. A flag the panel can say out loud
-    // beats a vector that is quietly wrong on one asset.
+    // ⚑ The refusal is the D checkpoint's rule arriving where it belongs: a hand
+    // edit bakes the parts it touches. Baked, the same drag moves exactly the
+    // two corners grabbed - measured, "grabbed 2, moved 2" - and the cost is
+    // +37 lines on `cockpit.forge`'s 271. The bake is one button and E3 built it.
     for (std::size_t i = 0; i < collapsed.size(); ++i) {
         if (collapsed[i].kind != ForgeWriteKind::BoxCorner) {
             continue;
         }
         const std::uint32_t codes = boxCodes[i];
-        std::uint32_t representative = 0;
-        for (std::uint32_t code = 0; code < 8; ++code) {
-            if ((codes & (1u << code)) != 0) {
-                representative = code;
-                break;
-            }
+        std::uint32_t chosen = 8;
+        int faceAxis = -1;
+        for (std::uint32_t code = 0; code < 8 && chosen == 8; ++code) {
+            chosen = (codes & (1u << code)) != 0 ? code : chosen;
         }
-        for (int axis = 0; axis < 3; ++axis) {
-            bool positive = false;
-            bool negative = false;
-            for (std::uint32_t code = 0; code < 8; ++code) {
-                if ((codes & (1u << code)) == 0) {
+        std::uint32_t selected = 0;
+        for (std::uint32_t code = 0; code < 8; ++code) {
+            selected += static_cast<std::uint32_t>((codes & (1u << code)) != 0);
+        }
+        if (selected > 1) {
+            // Is it exactly one of the six faces? Build each face's mask and
+            // compare, rather than reasoning about which corners are missing.
+            for (int axis = 0; axis < 3 && faceAxis < 0; ++axis) {
+                for (std::uint32_t sign = 0; sign < 2; ++sign) {
+                    std::uint32_t mask = 0;
+                    for (std::uint32_t code = 0; code < 8; ++code) {
+                        if (((code >> axis) & 1u) == sign) {
+                            mask |= 1u << code;
+                        }
+                    }
+                    if (codes == mask) {
+                        faceAxis = axis;
+                        break;
+                    }
+                }
+            }
+            if (faceAxis < 0) {
+                if (error != nullptr) {
+                    *error = "a box edge has no parametric answer - bake part '" +
+                             doc.parts[collapsed[i].part].id +
+                             "' first, which makes its vertices authored numbers without changing "
+                             "what is drawn";
+                }
+                return false;
+            }
+            // ⚑ A FACE MOVES ALONG ITS OWN NORMAL, AND THE OTHER TWO COMPONENTS
+            // GO. On an axis the face's corners straddle, the only expressible
+            // move is `ds = 0, dc = delta` - which slides the WHOLE BOX
+            // sideways, all eight corners. That is the same "moved more than you
+            // grabbed" surprise wearing different clothes, so an off-normal pull
+            // is discarded and the author is told rather than shown.
+            for (int axis = 0; axis < 3; ++axis) {
+                if (axis == faceAxis) {
                     continue;
                 }
-                ((code & (1u << axis)) != 0 ? positive : negative) = true;
+                double& component = axis == 0   ? localDelta[i].x
+                                    : axis == 1 ? localDelta[i].y
+                                                : localDelta[i].z;
+                // ⚑ Reports a component actually LOST, not merely an axis the
+                // face straddles - every face straddles two, so a flag raised on
+                // the geometry alone fires on every clean drag and means
+                // nothing. Its own tests caught exactly that. The threshold is
+                // the write grid because a rotated part turns a clean world-axis
+                // pull into 1e-17 on the other two, and anything finer than the
+                // grid was never going to be written anyway.
+                if (std::abs(component) >= (0.5 / kGridStepsPerMetre) && dropped != nullptr) {
+                    *dropped = true;
+                }
+                component = 0.0;
             }
-            if (!(positive && negative)) {
-                continue; // the corners agree about this axis: E2's solve stands
-            }
-            double& component = axis == 0   ? localDelta[i].x
-                                : axis == 1 ? localDelta[i].y
-                                            : localDelta[i].z;
-            // ⚑ The flag reports a component that was actually LOST, not merely
-            // an axis the corners straddle. Every edge straddles one axis and
-            // every face straddles two, so a flag raised on the geometry alone
-            // fires on every well-behaved drag in the tool and means nothing.
-            // Its own tests caught that: the first version warned on a clean
-            // face drag whose dropped components were both zero.
-            //
-            // The threshold is the write grid rather than an exact compare,
-            // because a drag arrives through a part's inverse transform and a
-            // rotated part turns a clean world-axis pull into components of
-            // 1e-17 on the other two. Anything finer than the grid was never
-            // going to be written, so losing it costs the author nothing.
-            if (std::abs(component) >= (0.5 / kGridStepsPerMetre) && dropped != nullptr) {
-                *dropped = true;
-            }
-            component = 0.0;
         }
-        collapsed[i].element = representative;
+        collapsed[i].element = chosen;
     }
     return applyWrites(doc, collapsed, localDelta, error);
 }

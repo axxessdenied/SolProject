@@ -2184,58 +2184,52 @@ ForgeDoc openAsset(const char* name)
 
 } // namespace
 
-// ⚑⚑ THE DEFECT THE STAGE EXISTS TO PREVENT, PINNED FROM BOTH SIDES. Moving an
-// edge's two points is NOT calling the point move twice: a box puts one
-// `center`+`size` pair behind all eight corners, so the loop applies the resize
-// once per end and the edge travels twice as far as the hand. This asserts the
-// right answer AND the wrong one, so a future simplification back to a loop
-// fails here instead of silently doubling every edge drag in the tool.
-SOL_TEST(movingABoxEdgeAsASetMovesItOnceAndAsALoopMovesItTwice)
+// ⚑⚑ THE DEFECT THE STAGE EXISTS TO PREVENT, PINNED FROM BOTH SIDES. Moving a
+// face's four points is NOT calling the point move four times: a box puts ONE
+// `center`+`size` pair behind all eight of its corners, so the loop applies the
+// resize once per grabbed point and the face travels four times as far as the
+// hand. This asserts the right answer AND the wrong one, so a future
+// simplification back to a loop fails here rather than silently multiplying
+// every set drag in the tool.
+SOL_TEST(movingABoxFaceAsASetMovesItOnceAndAsALoopMovesItFourTimes)
 {
     const assets::BuildPoint drag{0.2, 0.0, 0.0};
 
     ForgeDoc set = openAsset("cube");
     SOL_REQUIRE(!set.parts.empty());
     std::vector<assets::ForgePoint> points;
-    std::vector<assets::ForgeEdge> edges;
-    SOL_REQUIRE(assets::forgeTopology(set, points, edges));
+    SOL_REQUIRE(assets::forgePoints(set, points));
 
-    // The edge running along Z at +x +y: two corners agreeing on x and y.
-    const std::size_t lo = pointAt(points, {0.5, 0.5, -0.5});
-    const std::size_t hi = pointAt(points, {0.5, 0.5, 0.5});
-    SOL_REQUIRE(lo < points.size() && hi < points.size());
+    std::vector<assets::ForgePoint> face;
+    for (const assets::ForgePoint& point : points) {
+        if (std::abs(point.position.x - 0.5) < 1e-4) {
+            face.push_back(point);
+        }
+    }
+    SOL_REQUIRE(face.size() == 4);
 
-    const std::vector<assets::ForgePoint> selection{points[lo], points[hi]};
     bool dropped = true;
-    SOL_REQUIRE(assets::forgeMovePoints(set, selection, drag, &dropped));
-    SOL_CHECK(!dropped); // x is expressible, so nothing was discarded
+    SOL_REQUIRE(assets::forgeMovePoints(set, face, drag, &dropped));
+    SOL_CHECK(!dropped); // the pull is along the face's own normal
 
     const std::size_t box = set.indexOf("box");
     SOL_REQUIRE(box < set.parts.size());
     SOL_CHECK(std::abs(set.parts[box].value("center").vec.x - 0.1) < 1e-9);
     SOL_CHECK(std::abs(set.parts[box].value("size").vec.x - 1.2) < 1e-9);
 
-    // The grabbed edge moved by exactly the drag, and the far face did not move
-    // at all - E2's pin, now over a set rather than over one corner.
-    std::vector<assets::ForgePoint> after;
-    SOL_REQUIRE(assets::forgePoints(set, after));
-    SOL_CHECK(pointAt(after, {0.7, 0.5, -0.5}) < after.size());
-    SOL_CHECK(pointAt(after, {0.7, 0.5, 0.5}) < after.size());
-    SOL_CHECK(pointAt(after, {-0.5, 0.5, 0.5}) < after.size());
-
-    // And the same drag through the point move, twice, which is the defect.
+    // And the same drag through the point move, once per corner, which is the
+    // defect: four applications of a pair only one of them should have written.
     ForgeDoc loop = openAsset("cube");
     std::vector<assets::ForgePoint> loopPoints;
     SOL_REQUIRE(assets::forgePoints(loop, loopPoints));
-    const std::size_t a = pointAt(loopPoints, {0.5, 0.5, -0.5});
-    const std::size_t b = pointAt(loopPoints, {0.5, 0.5, 0.5});
-    SOL_REQUIRE(a < loopPoints.size() && b < loopPoints.size());
-    SOL_REQUIRE(assets::forgeMovePoint(loop, loopPoints[a], drag));
-    SOL_REQUIRE(assets::forgeMovePoint(loop, loopPoints[b], drag));
-
+    for (const assets::ForgePoint& point : loopPoints) {
+        if (std::abs(point.position.x - 0.5) < 1e-4) {
+            SOL_REQUIRE(assets::forgeMovePoint(loop, point, drag));
+        }
+    }
     const std::size_t loopBox = loop.indexOf("box");
     SOL_REQUIRE(loopBox < loop.parts.size());
-    SOL_CHECK(std::abs(loop.parts[loopBox].value("size").vec.x - 1.4) < 1e-9); // twice the drag
+    SOL_CHECK(std::abs(loop.parts[loopBox].value("size").vec.x - 1.8) < 1e-9); // 4x the drag
 }
 
 // A whole face is the case a box answers exactly: four corners agreeing about
@@ -2271,10 +2265,13 @@ SOL_TEST(draggingABoxFaceMovesItByTheDragAndPinsTheOppositeFace)
     SOL_CHECK(std::abs(maximum - 0.75) < 1e-6); // the +x face moved by the drag
 }
 
-// ⚑ A box has no shear, so the component ALONG an edge cannot be expressed and
-// is dropped rather than approximated. The flag is how the tool says so, and
-// the document is untouched, which makes it a refusal rather than a rounding.
-SOL_TEST(draggingABoxEdgeAlongItsOwnRunDropsTheComponent)
+// ⚑⚑ AN EDGE OF A BOX IS REFUSED, AND THE MESSAGE NAMES THE BAKE. A box has no
+// shear, so there is no `center`/`size` change that moves two corners of an edge
+// and leaves the other two of their face standing. The nearest thing the
+// arithmetic can do is widen the whole face - measured, "grabbed 2, moved 4",
+// with the two nobody touched coming along - which is indistinguishable from a
+// bug. So the tool declines and points at the D checkpoint's rule instead.
+SOL_TEST(draggingABoxEdgeIsRefusedAndTheMessageNamesTheBake)
 {
     ForgeDoc doc = openAsset("cube");
     SOL_REQUIRE(!doc.parts.empty());
@@ -2285,12 +2282,82 @@ SOL_TEST(draggingABoxEdgeAlongItsOwnRunDropsTheComponent)
     const std::size_t lo = pointAt(points, {0.5, 0.5, -0.5});
     const std::size_t hi = pointAt(points, {0.5, 0.5, 0.5});
     SOL_REQUIRE(lo < points.size() && hi < points.size());
+    const std::vector<assets::ForgePoint> selection{points[lo], points[hi]};
+
+    // Refused whichever way it is pulled: across its run, and along it.
+    for (const assets::BuildPoint drag : {assets::BuildPoint{0.2, 0.0, 0.0},
+                                          assets::BuildPoint{0.0, 0.0, 0.3}}) {
+        std::string error;
+        SOL_CHECK(!assets::forgeMovePoints(doc, selection, drag, nullptr, &error));
+        SOL_CHECK(error.find("bake") != std::string::npos);
+        SOL_CHECK(error.find("box") != std::string::npos); // the part, by id
+    }
+    SOL_CHECK(assets::writeForge(doc) == before); // refused means untouched
+}
+
+// ⚑ AND THE PAYOFF, WHICH IS WHY THE REFUSAL IS NOT A DEAD END. Baked, the same
+// part answers the same drag exactly: the two corners grabbed move and the other
+// two of that face do not. This is the D checkpoint's rule doing the job it was
+// written for, and it is what the refusal above is pointing at.
+SOL_TEST(bakingTheBoxFirstLetsItsEdgeMoveExactly)
+{
+    ForgeDoc doc = openAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+    const std::size_t box = doc.indexOf("box");
+    SOL_REQUIRE(box < doc.parts.size());
+    SOL_REQUIRE(assets::forgeBakeDocumentPart(doc, box));
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    const std::size_t lo = pointAt(points, {0.5, 0.5, -0.5});
+    const std::size_t hi = pointAt(points, {0.5, 0.5, 0.5});
+    SOL_REQUIRE(lo < points.size() && hi < points.size());
 
     const std::vector<assets::ForgePoint> selection{points[lo], points[hi]};
+    bool dropped = true;
+    SOL_REQUIRE(assets::forgeMovePoints(doc, selection, {0.2, 0.0, 0.0}, &dropped));
+    SOL_CHECK(!dropped); // a baked vertex is its own number: nothing to discard
+
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    SOL_CHECK(after.size() == points.size()); // no seam opened
+    // The grabbed edge moved...
+    SOL_CHECK(pointAt(after, {0.7, 0.5, -0.5}) < after.size());
+    SOL_CHECK(pointAt(after, {0.7, 0.5, 0.5}) < after.size());
+    // ...and the rest of that face did NOT, which is the whole difference.
+    SOL_CHECK(pointAt(after, {0.5, -0.5, -0.5}) < after.size());
+    SOL_CHECK(pointAt(after, {0.5, -0.5, 0.5}) < after.size());
+}
+
+// ⚑ A FACE MOVES ALONG ITS OWN NORMAL. On an axis its corners straddle, the only
+// expressible move slides the WHOLE box - all eight corners - which is the same
+// "moved more than you grabbed" surprise in different clothes. The off-normal
+// pull is discarded and `dropped` is how the tool says so.
+SOL_TEST(anOffNormalPullOnABoxFaceIsDroppedRatherThanSlidingTheWholeBox)
+{
+    ForgeDoc doc = openAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+
+    std::vector<assets::ForgePoint> face;
+    for (const assets::ForgePoint& point : points) {
+        if (std::abs(point.position.x - 0.5) < 1e-4) {
+            face.push_back(point);
+        }
+    }
+    SOL_REQUIRE(face.size() == 4);
+
     bool dropped = false;
-    SOL_REQUIRE(assets::forgeMovePoints(doc, selection, {0.0, 0.0, 0.3}, &dropped));
+    SOL_REQUIRE(assets::forgeMovePoints(doc, face, {0.2, 0.35, 0.0}, &dropped));
     SOL_CHECK(dropped);
-    SOL_CHECK(assets::writeForge(doc) == before);
+
+    const std::size_t box = doc.indexOf("box");
+    SOL_REQUIRE(box < doc.parts.size());
+    // The normal component landed; the sideways one did not move the box at all.
+    SOL_CHECK(std::abs(doc.parts[box].value("size").vec.x - 1.2) < 1e-9);
+    SOL_CHECK(std::abs(doc.parts[box].value("center").vec.y - 0.0) < 1e-9);
+    SOL_CHECK(std::abs(doc.parts[box].value("size").vec.y - 1.0) < 1e-9);
 }
 
 // ⚑ A beam's four `from` corners are four distinct POINTS sharing ONE write, so
@@ -2350,15 +2417,20 @@ SOL_TEST(aZeroDistanceSetMoveLeavesEveryCommittedFileByteIdentical)
         std::vector<assets::ForgeEdge> edges;
         SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
 
-        std::size_t moved = 0;
+        // ⚑ Accepted or refused, the file must come back unchanged - and BOTH
+        // outcomes occur here, because a box edge is refused while a triangle's
+        // and a baked part's are taken. The property is the same either way: a
+        // click that grabs an edge and releases it costs the author nothing.
+        std::size_t taken = 0;
+        std::size_t refused = 0;
         for (const assets::ForgeEdge& edge : edges) {
             if (!points[edge.a].movable() || !points[edge.b].movable()) {
                 continue;
             }
             const std::vector<assets::ForgePoint> selection{points[edge.a], points[edge.b]};
-            SOL_REQUIRE(assets::forgeMovePoints(doc, selection, {0.0, 0.0, 0.0}));
-            ++moved;
+            (assets::forgeMovePoints(doc, selection, {0.0, 0.0, 0.0}) ? taken : refused) += 1;
         }
+        const std::size_t moved = taken;
         SOL_CHECK(assets::writeForge(doc) == before);
         if (assets::writeForge(doc) != before) {
             std::printf("  %s changed after %zu zero-distance edge move(s)\n", name, moved);
