@@ -434,6 +434,16 @@ int main(int argc, char** argv)
             } else if (window.isKeyDown(platform::Key::Z)) {
                 viewport.axisLock = 2;
             }
+            // ⚑ Stage E4b's element mode, on the digits rather than on a letter
+            // for two reasons that both matter here: it is the modeller
+            // convention, and every letter this tool could want is taken - X, Y
+            // and Z are the axis lock, F frames, and Z is also half of undo. A
+            // third digit is where faces land at E4d.
+            if (window.isKeyDown(platform::Key::Num1)) {
+                points.setMode(forge::PointTool::Mode::Point);
+            } else if (window.isKeyDown(platform::Key::Num2)) {
+                points.setMode(forge::PointTool::Mode::Edge);
+            }
         }
         if (points.update(viewport, editor)) {
             rebuildFromEditor(/*reframe=*/false);
@@ -554,9 +564,10 @@ int main(int argc, char** argv)
                 }
             }
 
-            // Stage E1. Below Parts because a point is a consequence of the
-            // parts above it, and above the Report for the same reason Parts is.
-            if (editor.isOpen() && ImGui::CollapsingHeader("Points",
+            // Stages E1, E2 and E4b. Below Parts because a point is a
+            // consequence of the parts above it, and above the Report for the
+            // same reason Parts is.
+            if (editor.isOpen() && ImGui::CollapsingHeader("Points & edges",
                                                            ImGuiTreeNodeFlags_DefaultOpen)) {
                 points.drawPanel(editor.doc());
             }
@@ -658,7 +669,7 @@ int main(int argc, char** argv)
             if (ImGui::CollapsingHeader("Scale", ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Checkbox("metric grid", &showGrid);
                 ImGui::Checkbox("mesh bounds", &showBounds);
-                ImGui::Checkbox("point markers", &showPoints);
+                ImGui::Checkbox("element markers", &showPoints);
                 for (auto& reference : references) {
                     ImGui::Checkbox(reference.label, &reference.enabled);
                 }

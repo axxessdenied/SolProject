@@ -12,6 +12,7 @@ namespace forge {
 
 using namespace sol;
 using assets::ForgeDoc;
+using assets::ForgeEdge;
 using assets::ForgePoint;
 using assets::ForgePointWrite;
 
@@ -36,6 +37,15 @@ namespace {
     return {view.m[1], view.m[5], view.m[9]};
 }
 
+// ⚑ Row 2 is the camera's BACKWARD axis, not its forward one - the camera looks
+// down -Z, so +Z_camera points at the viewer. Adding a little of it to a world
+// point pulls that point toward the camera, which is what the edge overlay
+// needs and the reason this is not simply `-cameraForward`.
+[[nodiscard]] core::Vec3 cameraBackward(const core::Mat4& view)
+{
+    return {view.m[2], view.m[6], view.m[10]};
+}
+
 [[nodiscard]] core::Vec3 asVec3(const assets::BuildPoint& p)
 {
     return {static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z)};
@@ -51,20 +61,65 @@ void addCross(renderer::DebugDrawRenderer& lines, core::Vec3 at, float half, cor
     lines.line({at.x, at.y, at.z - half}, {at.x, at.y, at.z + half}, color);
 }
 
+// Distance in pixels from `cursor` to the segment [a, b].
+//
+// ⚑ This is the whole edge hit test, and it is why edge picking did NOT need
+// Moller-Trumbore: an edge is a segment on screen once both ends are projected,
+// so the test is two dimensional. Faces are what need the ray, at E4d.
+//
+// A segment whose ends project to one pixel degenerates to a point, which is
+// the answer rather than a division by zero.
+[[nodiscard]] float distanceToSegment(core::Vec2 a, core::Vec2 b, core::Vec2 cursor)
+{
+    const float runX = b.x - a.x;
+    const float runY = b.y - a.y;
+    const float lengthSquared = runX * runX + runY * runY;
+    float along = 0.0f;
+    if (lengthSquared > 1e-6f) {
+        along = ((cursor.x - a.x) * runX + (cursor.y - a.y) * runY) / lengthSquared;
+        along = along < 0.0f ? 0.0f : (along > 1.0f ? 1.0f : along);
+    }
+    const float dx = cursor.x - (a.x + runX * along);
+    const float dy = cursor.y - (a.y + runY * along);
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+// A modeller aiming at a vertex is aiming precisely, so the point grab is
+// tighter than the HUD's 28 px - which exists because a fighter at four
+// kilometres is three pixels across and precision selection was the complaint.
+constexpr float kGrabPixels = 12.0f;
+
+// ⚑ Tighter than the point grab rather than looser, and that is deliberate: an
+// edge is a long target, so a generous radius buys nothing along its length and
+// costs everything across it - two edges of a box corner are a few pixels apart
+// near the corner. Aim at the MIDDLE of the edge to disambiguate, which is what
+// the panel says.
+constexpr float kEdgeGrabPixels = 8.0f;
+
 } // namespace
 
 void PointTool::refresh(const ForgeDoc& doc)
 {
     const std::size_t previousCount = m_points.size();
+    const std::size_t previousEdges = m_edges.size();
     m_points.clear();
+    m_edges.clear();
     m_unavailable.clear();
 
     std::string error;
-    if (!assets::forgePoints(doc, m_points, &error)) {
+    // ⚑ ONE call for both halves. `forgeTopology` builds the mesh once and
+    // dedups once, so the edges are numbered in the same vector the points are -
+    // which is the entire reason it exists instead of `MeshAdjacency`, whose
+    // edges index a differently-welded, later-renumbered vector. Two numberings
+    // that agree only by accident is a bug this repo has already shipped.
+    if (!assets::forgeTopology(doc, m_points, m_edges, &error)) {
         m_unavailable = error;
         m_hover = kNone;
         m_selected = kNone;
+        m_hoverEdge = kNone;
+        m_selectedEdge = kNone;
         m_dragging = false;
+        m_refused = false;
         return;
     }
 
@@ -72,10 +127,17 @@ void PointTool::refresh(const ForgeDoc& doc)
     // is every rebuild a drag causes. Dropping it would mean the grab was lost
     // on the first frame of every drag - the mesh is rebuilt from the document
     // after each accepted edit, and that rebuild lands inside the drag.
-    if (m_points.size() != previousCount) {
+    //
+    // ⚑ The edge count is part of that test since E4b, because an edge drag is
+    // the same continuous rebuild and a resize is not allowed to renumber it. A
+    // move that DID change the topology has moved the thing being held.
+    if (m_points.size() != previousCount || m_edges.size() != previousEdges) {
         m_hover = kNone;
         m_selected = kNone;
+        m_hoverEdge = kNone;
+        m_selectedEdge = kNone;
         m_dragging = false;
+        m_refused = false;
     }
     if (m_selected >= m_points.size()) {
         m_selected = kNone;
@@ -83,16 +145,44 @@ void PointTool::refresh(const ForgeDoc& doc)
     if (m_hover >= m_points.size()) {
         m_hover = kNone;
     }
+    if (m_selectedEdge >= m_edges.size()) {
+        m_selectedEdge = kNone;
+    }
+    if (m_hoverEdge >= m_edges.size()) {
+        m_hoverEdge = kNone;
+    }
 }
 
 void PointTool::close()
 {
     m_points.clear();
+    m_edges.clear();
+    m_dragSet.clear();
     m_unavailable.clear();
     m_hover = kNone;
     m_selected = kNone;
+    m_hoverEdge = kNone;
+    m_selectedEdge = kNone;
     m_dragging = false;
+    m_refused = false;
     m_error.clear();
+    m_dropped = false;
+}
+
+void PointTool::setMode(Mode mode)
+{
+    if (mode == m_mode) {
+        return;
+    }
+    m_mode = mode;
+    m_hover = kNone;
+    m_selected = kNone;
+    m_hoverEdge = kNone;
+    m_selectedEdge = kNone;
+    m_dragging = false;
+    m_refused = false;
+    m_error.clear();
+    m_dropped = false;
 }
 
 std::size_t PointTool::pickAt(const Viewport& viewport) const
@@ -120,12 +210,66 @@ std::size_t PointTool::pickAt(const Viewport& viewport) const
         candidates.push_back(i);
     }
 
-    // A modeller aiming at a vertex is aiming precisely, so the grab is tighter
-    // than the HUD's 28 px - which exists because a fighter at four kilometres
-    // is three pixels across and precision selection was the complaint.
-    constexpr float kGrabPixels = 12.0f;
     const std::size_t hit = ui::pickNearestPoint(screen, viewport.cursor, kGrabPixels);
     return hit == ui::kNoPick ? kNone : candidates[hit];
+}
+
+std::size_t PointTool::pickEdgeAt(const Viewport& viewport) const
+{
+    // ⚑ Both ends projected FORWARDS, the same ruling the point pick is built
+    // on: the edge a person clicks is the edge they were shown. An edge with an
+    // end behind the near plane is SKIPPED rather than clipped - the projection
+    // mirrors such a point, so clipping it here would be a second expression of
+    // the projection, and this file already refuses to keep two of those.
+    std::size_t best = kNone;
+    float bestDistance = kEdgeGrabPixels;
+    for (std::size_t i = 0; i < m_edges.size(); ++i) {
+        const ForgeEdge& edge = m_edges[i];
+        if (edge.a >= m_points.size() || edge.b >= m_points.size()) {
+            continue;
+        }
+        // An edge either of whose ends has no parametric answer cannot be
+        // moved, so it cannot be the answer to a click - the same rule the
+        // point pick applies, and for the same reason.
+        if (!m_points[edge.a].movable() || !m_points[edge.b].movable()) {
+            continue;
+        }
+        const ui::ScreenPoint a = ui::screenPoint(
+            core::transformPoint(viewport.view, asVec3(m_points[edge.a].position)), viewport.center,
+            viewport.focal);
+        const ui::ScreenPoint b = ui::screenPoint(
+            core::transformPoint(viewport.view, asVec3(m_points[edge.b].position)), viewport.center,
+            viewport.focal);
+        if (!a.inFront || !b.inFront) {
+            continue;
+        }
+        const float distance = distanceToSegment(a.position, b.position, viewport.cursor);
+        if (distance < bestDistance) {
+            best = i;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
+void PointTool::gatherSelection()
+{
+    m_dragSet.clear();
+    if (m_mode == Mode::Point) {
+        if (m_selected != kNone && m_selected < m_points.size()) {
+            m_dragSet.push_back(m_points[m_selected]);
+        }
+        return;
+    }
+    if (m_selectedEdge == kNone || m_selectedEdge >= m_edges.size()) {
+        return;
+    }
+    const ForgeEdge& edge = m_edges[m_selectedEdge];
+    if (edge.a >= m_points.size() || edge.b >= m_points.size()) {
+        return;
+    }
+    m_dragSet.push_back(m_points[edge.a]);
+    m_dragSet.push_back(m_points[edge.b]);
 }
 
 bool PointTool::update(const Viewport& viewport, PartEditor& editor)
@@ -144,18 +288,42 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
     }
 
     if (!m_dragging) {
-        m_hover = pickAt(viewport);
+        if (m_mode == Mode::Point) {
+            m_hover = pickAt(viewport);
+        } else {
+            m_hoverEdge = pickEdgeAt(viewport);
+        }
     }
 
     if (viewport.leftPressed && !m_dragging) {
-        m_selected = m_hover;
         m_error.clear();
-        if (m_selected != kNone) {
+        m_dropped = false;
+        core::Vec3 grabbed{};
+        bool grabbedAnything = false;
+        if (m_mode == Mode::Point) {
+            m_selected = m_hover;
+            if (m_selected != kNone) {
+                grabbed = asVec3(m_points[m_selected].position);
+                grabbedAnything = true;
+            }
+        } else {
+            m_selectedEdge = m_hoverEdge;
+            if (m_selectedEdge != kNone) {
+                // ⚑ The MIDPOINT, because an edge has two depths and the cursor
+                // has one. Fixing on either end would make the far half of the
+                // edge lag or lead the hand across the length of the drag.
+                const ForgeEdge& edge = m_edges[m_selectedEdge];
+                const core::Vec3 a = asVec3(m_points[edge.a].position);
+                const core::Vec3 b = asVec3(m_points[edge.b].position);
+                grabbed = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f};
+                grabbedAnything = true;
+            }
+        }
+        if (grabbedAnything) {
             m_dragging = true;
+            m_refused = false;
             // Depth along the camera's forward axis, fixed for the drag.
-            const core::Vec3 cameraSpace =
-                core::transformPoint(viewport.view, asVec3(m_points[m_selected].position));
-            m_dragDepth = -cameraSpace.z;
+            m_dragDepth = -core::transformPoint(viewport.view, grabbed).z;
             // ⚑ One undo entry per DRAG, not per frame. A drag rebuilds the
             // document on every accepted edit, so pushing per edit would bury
             // the state before the drag under sixty identical ones.
@@ -166,10 +334,19 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
 
     if (!viewport.leftDown) {
         m_dragging = false;
+        m_refused = false;
         return false;
     }
-    if (m_selected == kNone || m_selected >= m_points.size()) {
-        m_dragging = false;
+    // ⚑ Refused, but still HELD. Returning here keeps `dragging()` true, which
+    // is what stops main.cpp handing the rest of this press to the orbit
+    // camera - and it is also what stops the refusal being recomputed and
+    // re-reported sixty times a second.
+    if (m_refused) {
+        return false;
+    }
+    gatherSelection();
+    if (m_dragSet.empty()) {
+        m_refused = true;
         return false;
     }
     if (viewport.cursorDelta.x == 0.0f && viewport.cursorDelta.y == 0.0f) {
@@ -199,12 +376,19 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
     }
 
     const assets::BuildPoint move{delta.x, delta.y, delta.z};
-    if (!editor.movePoint(m_points[m_selected], move, m_error)) {
-        // The move was refused - an unmovable point, or a part scaled flat.
-        // Ending the drag is what stops it being reported once per frame.
-        m_dragging = false;
+    // ⚑ ONE call for one point and for two, rather than a branch here. The set
+    // move routes a single point straight back through E2's path, so a point
+    // drag is bit-for-bit the code it always was and there is no second
+    // arrangement of the same arithmetic to drift from the first.
+    bool dropped = false;
+    if (!editor.movePoints(m_dragSet, move, dropped, m_error)) {
+        // The move was refused - an unmovable point, a part scaled flat, or a
+        // box edge, which has no parametric answer at all. The press is KEPT
+        // (see m_refused) so the camera does not inherit the rest of it.
+        m_refused = true;
         return false;
     }
+    m_dropped = m_dropped || dropped;
     return true;
 }
 
@@ -221,6 +405,64 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
     constexpr core::Vec4 kMovable = {0.35f, 0.55f, 0.85f, 1.0f};
     constexpr core::Vec4 kHover = {0.95f, 0.80f, 0.30f, 1.0f};
     constexpr core::Vec4 kSelected = {0.30f, 0.95f, 0.45f, 1.0f};
+    // Dimmer than a point marker on purpose: in edge mode this is a full
+    // wireframe over a shaded mesh, and at the point colour it shouts.
+    constexpr core::Vec4 kEdge = {0.26f, 0.38f, 0.58f, 1.0f};
+
+    if (m_mode == Mode::Edge) {
+        // ⚑ Pulled toward the camera by a hair, and the reason is the depth
+        // test: `DebugDrawRenderer` tests depth and does not write it, so a line
+        // lying exactly in the surface it borders z-fights along its whole
+        // length. A point cross straddles the surface and half of it survives;
+        // an edge has no half to spare. The bias is a FRACTION of the camera
+        // distance rather than a constant, because the orbit camera covers four
+        // orders of magnitude and a fixed epsilon is right at exactly one of
+        // them.
+        const core::Vec3 toward = cameraBackward(viewport.view);
+        const float bias = viewport.cameraDistance * 0.0015f;
+        const auto addEdge = [&](const ForgeEdge& edge, core::Vec4 color) {
+            const core::Vec3 a = asVec3(m_points[edge.a].position);
+            const core::Vec3 b = asVec3(m_points[edge.b].position);
+            lines.line({a.x + toward.x * bias, a.y + toward.y * bias, a.z + toward.z * bias},
+                       {b.x + toward.x * bias, b.y + toward.y * bias, b.z + toward.z * bias},
+                       color);
+        };
+
+        std::size_t drawable = 0;
+        for (const ForgeEdge& edge : m_edges) {
+            if (m_points[edge.a].movable() && m_points[edge.b].movable()) {
+                ++drawable;
+            }
+        }
+        if (drawable <= kEdgeBudget) {
+            for (std::size_t i = 0; i < m_edges.size(); ++i) {
+                if (i == m_hoverEdge || i == m_selectedEdge) {
+                    continue;
+                }
+                const ForgeEdge& edge = m_edges[i];
+                if (!m_points[edge.a].movable() || !m_points[edge.b].movable()) {
+                    continue;
+                }
+                addEdge(edge, kEdge);
+            }
+        }
+        // Drawn last so they are the ones that survive if anything is dropped -
+        // the same order the point markers use, for the same reason.
+        if (m_hoverEdge != kNone && m_hoverEdge < m_edges.size() &&
+            m_hoverEdge != m_selectedEdge) {
+            addEdge(m_edges[m_hoverEdge], kHover);
+        }
+        if (m_selectedEdge != kNone && m_selectedEdge < m_edges.size()) {
+            const ForgeEdge& edge = m_edges[m_selectedEdge];
+            addEdge(edge, kSelected);
+            // The two ends get crosses as well: an author needs to see WHICH
+            // two points the drag is about to write, and a highlighted line
+            // does not say where it stops.
+            addCross(lines, asVec3(m_points[edge.a].position), half, kSelected);
+            addCross(lines, asVec3(m_points[edge.b].position), half, kSelected);
+        }
+        return;
+    }
 
     std::size_t movable = 0;
     for (const ForgePoint& point : m_points) {
@@ -246,7 +488,7 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
     }
 }
 
-void PointTool::drawPanel(const ForgeDoc& doc) const
+void PointTool::drawPanel(const ForgeDoc& doc)
 {
     if (!m_unavailable.empty()) {
         ImGui::PushTextWrapPos(0.0f);
@@ -261,6 +503,17 @@ void PointTool::drawPanel(const ForgeDoc& doc) const
         return;
     }
 
+    // ⚑ A radio rather than only a hotkey. The hotkey is what an author uses
+    // after the first session; the radio is what says the mode EXISTS, and an
+    // edge mode nobody can find is an edge mode nobody has.
+    if (ImGui::RadioButton("points", m_mode == Mode::Point)) {
+        setMode(Mode::Point);
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("edges", m_mode == Mode::Edge)) {
+        setMode(Mode::Edge);
+    }
+
     std::size_t movable = 0;
     for (const ForgePoint& point : m_points) {
         if (point.movable()) {
@@ -269,6 +522,20 @@ void PointTool::drawPanel(const ForgeDoc& doc) const
     }
     ImGui::Text("points         %zu", m_points.size());
     ImGui::Text("movable        %zu", movable);
+    if (m_mode == Mode::Edge) {
+        std::size_t drawable = 0;
+        for (const ForgeEdge& edge : m_edges) {
+            if (m_points[edge.a].movable() && m_points[edge.b].movable()) {
+                ++drawable;
+            }
+        }
+        ImGui::Text("edges          %zu", m_edges.size());
+        ImGui::Text("movable        %zu", drawable);
+        if (drawable > kEdgeBudget) {
+            ImGui::TextDisabled("over %zu edges: only the hovered and selected are drawn",
+                                kEdgeBudget);
+        }
+    }
 
     if (movable == 0) {
         // ⚑ The honest message, and it names the reason rather than the
@@ -298,18 +565,24 @@ void PointTool::drawPanel(const ForgeDoc& doc) const
         ImGui::PopTextWrapPos();
     }
 
-    ImGui::Separator();
-    if (m_selected == kNone || m_selected >= m_points.size()) {
-        ImGui::TextDisabled("no point selected");
-    } else {
-        const ForgePoint& point = m_points[m_selected];
-        ImGui::Text("at   %8.4f %8.4f %8.4f", point.position.x, point.position.y, point.position.z);
-        // ⚑ The count that is the whole argument for the stage. A person
-        // editing this file by hand has to find all of these and get every one
-        // right; `ship.forge`'s own header says four where the answer is five.
-        ImGui::Text("written by %zu part(s):", point.writes.size());
-        bool resizes = false;
-        bool reAims = false;
+    // ⚑ Sticky for the drag rather than per frame: this is a consequence the
+    // author cannot avoid, so it is the E2 precedent exactly - said in the
+    // panel, because a face is exact only along its own normal and a pull off
+    // that normal has nowhere to go. It is NOT the refusal above, which is a
+    // wrong answer the tool declines to give.
+    if (m_dropped) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored({0.95f, 0.80f, 0.30f, 1.0f},
+                           "part of that drag had no expressible answer and was dropped: a box "
+                           "face moves only along its own normal, because the only other thing "
+                           "the numbers can do is slide the whole box.");
+        ImGui::PopTextWrapPos();
+    }
+
+    // One point's authored values, listed. Shared by the point selection and by
+    // each end of an edge, because "written by" means the same thing in both
+    // and two copies of it would answer differently the first time either moved.
+    const auto listWrites = [&doc](const ForgePoint& point, bool& resizes, bool& reAims) {
         for (const ForgePointWrite& write : point.writes) {
             if (write.part >= doc.parts.size()) {
                 continue;
@@ -338,6 +611,70 @@ void PointTool::drawPanel(const ForgeDoc& doc) const
                 break;
             }
         }
+    };
+
+    ImGui::Separator();
+    if (m_mode == Mode::Edge) {
+        if (m_selectedEdge == kNone || m_selectedEdge >= m_edges.size()) {
+            ImGui::TextDisabled("no edge selected");
+        } else {
+            const ForgeEdge& edge = m_edges[m_selectedEdge];
+            const ForgePoint& a = m_points[edge.a];
+            const ForgePoint& b = m_points[edge.b];
+            const double dx = b.position.x - a.position.x;
+            const double dy = b.position.y - a.position.y;
+            const double dz = b.position.z - a.position.z;
+            ImGui::Text("from %8.4f %8.4f %8.4f", a.position.x, a.position.y, a.position.z);
+            ImGui::Text("to   %8.4f %8.4f %8.4f", b.position.x, b.position.y, b.position.z);
+            ImGui::Text("length %8.4f m", std::sqrt(dx * dx + dy * dy + dz * dz));
+            // ⚑ A border edge is a hole in the surface, and that is worth
+            // saying where it can be seen. `geometry.unit` asserts every
+            // committed solid has none, so one here means an edit opened one.
+            if (edge.faceCount == 1) {
+                ImGui::TextColored({0.95f, 0.80f, 0.30f, 1.0f},
+                                   "border edge - one face, so the surface is open here");
+            } else {
+                ImGui::TextDisabled("faces  %u", edge.faceCount);
+            }
+
+            bool resizes = false;
+            bool reAims = false;
+            ImGui::Text("end A written by %zu:", a.writes.size());
+            listWrites(a, resizes, reAims);
+            ImGui::Text("end B written by %zu:", b.writes.size());
+            listWrites(b, resizes, reAims);
+
+            ImGui::PushTextWrapPos(0.0f);
+            if (resizes) {
+                // ⚑ Said BEFORE it happens rather than only when the drag is
+                // refused, which is the difference between a tool that has a
+                // rule and a tool that appears broken. The bake is one button,
+                // in Parts, and E3 built it.
+                ImGui::TextColored({0.95f, 0.80f, 0.30f, 1.0f},
+                                   "a box has no shear, so an edge of one cannot be moved: "
+                                   "select its part in Parts and press \"bake\" first, which "
+                                   "makes its corners authored numbers without changing what "
+                                   "is drawn.");
+            }
+            if (reAims) {
+                ImGui::TextDisabled("a beam's corners come from its axis, so this drag RE-AIMS "
+                                    "the end they stand at, and the far end swings by up to "
+                                    "half the section's diagonal.");
+            }
+            ImGui::PopTextWrapPos();
+        }
+    } else if (m_selected == kNone || m_selected >= m_points.size()) {
+        ImGui::TextDisabled("no point selected");
+    } else {
+        const ForgePoint& point = m_points[m_selected];
+        ImGui::Text("at   %8.4f %8.4f %8.4f", point.position.x, point.position.y, point.position.z);
+        // ⚑ The count that is the whole argument for the stage. A person
+        // editing this file by hand has to find all of these and get every one
+        // right; `ship.forge`'s own header says four where the answer is five.
+        ImGui::Text("written by %zu part(s):", point.writes.size());
+        bool resizes = false;
+        bool reAims = false;
+        listWrites(point, resizes, reAims);
 
         // ⚑ Class (2) said out loud rather than left to be discovered. A drag
         // on a corner that is not a parameter cannot move only that corner, and
@@ -359,7 +696,13 @@ void PointTool::drawPanel(const ForgeDoc& doc) const
     }
 
     ImGui::Separator();
-    ImGui::TextDisabled("click a marker to select, drag to move");
+    if (m_mode == Mode::Edge) {
+        ImGui::TextDisabled("click an edge to select, drag to move both its ends");
+        ImGui::TextDisabled("aim at the middle of an edge, not at a corner");
+    } else {
+        ImGui::TextDisabled("click a marker to select, drag to move");
+    }
+    ImGui::TextDisabled("1 and 2 switch points and edges");
     ImGui::TextDisabled("hold X, Y or Z to lock the drag to an axis");
     ImGui::TextDisabled("ctrl+Z undoes the whole drag");
 }

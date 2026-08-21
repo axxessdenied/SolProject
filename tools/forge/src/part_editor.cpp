@@ -217,6 +217,19 @@ bool PartEditor::movePoint(const assets::ForgePoint& point, assets::BuildPoint d
     return true;
 }
 
+bool PartEditor::movePoints(std::span<const assets::ForgePoint> points, assets::BuildPoint delta,
+                            bool& dropped, std::string& error)
+{
+    if (!m_open) {
+        return false;
+    }
+    if (!assets::forgeMovePoints(m_doc, points, delta, &dropped, &error)) {
+        return false;
+    }
+    m_dirty = true;
+    return true;
+}
+
 bool PartEditor::isDescendant(std::size_t candidate, std::size_t part) const
 {
     if (candidate == part) {

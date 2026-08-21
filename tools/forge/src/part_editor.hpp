@@ -17,6 +17,7 @@
 #include "sol/assets/forge_doc.hpp"
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,18 @@ public:
     // and this many times.
     [[nodiscard]] bool movePoint(const sol::assets::ForgePoint& point,
                                  sol::assets::BuildPoint delta, std::string& error);
+
+    // Moves a SET of points by one delta - an edge's two - applying every
+    // authored value standing at any of them exactly ONCE.
+    //
+    // ⚑ NOT `movePoint` in a loop, and the difference is the whole of E4c: a
+    // box puts one `center`+`size` pair behind all eight of its corners, so a
+    // loop applies the resize once per grabbed point and the edge travels twice
+    // as far as the hand. `dropped` reports a component the box could not
+    // express - see `forgeMovePoints`.
+    [[nodiscard]] bool movePoints(std::span<const sol::assets::ForgePoint> points,
+                                  sol::assets::BuildPoint delta, bool& dropped,
+                                  std::string& error);
 
     [[nodiscard]] bool isOpen() const { return m_open; }
     [[nodiscard]] const sol::assets::ForgeDoc& doc() const { return m_doc; }

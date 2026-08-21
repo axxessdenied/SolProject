@@ -454,14 +454,24 @@ struct ForgeEdge
 //
 // ⚑⚑ A BOX CANNOT MOVE AN EDGE, AND THAT IS ALGEBRA RATHER THAN A LIMITATION
 // ANYONE CHOSE. A corner sits at `center + s*size/2`, so on each axis a change
-// of the pair moves a corner by one of exactly TWO amounts, one per sign. Where
-// the selected corners agree about an axis's sign, E2's split answers it and
-// the far face stays pinned; where they straddle it - the two ends of an edge
-// running along that axis - nothing can move them and leave their neighbours,
-// so that component is DROPPED. The visible consequence is that dragging a
-// box's edge sideways widens the whole face it lies on, and dragging it along
-// its own run does nothing at all. `dropped` is set when any component was
-// discarded, so the tool can say so rather than let it be discovered.
+// of the pair moves a corner by one of exactly TWO amounts, one per sign -
+// there is no shear to write. Three selections come out of that and a box can
+// only do two of them: ONE CORNER is E2's resize, unchanged, with the opposite
+// corner pinned; a WHOLE FACE is exact, with the opposite face pinned; and
+// ANYTHING ELSE - an edge, or part of a face - is REFUSED, with the error
+// naming the part to bake. The nearest thing the arithmetic could offer instead
+// is to widen the face the edge lies on, which measured out as "grabbed 2,
+// moved 4" and is indistinguishable from a bug. Baked, the same drag moves
+// exactly the two corners that were grabbed.
+//
+// ⚑ AND A FACE IS EXACT ONLY ALONG ITS OWN NORMAL. On an axis the face's
+// corners straddle, the only expressible move is `ds = 0, dc = delta`, which
+// slides the WHOLE box - the same "moved more than I grabbed" surprise wearing
+// different clothes - so an off-normal component is discarded and `dropped` is
+// set, letting the tool say so rather than leaving it to be discovered. It is a
+// FLAG and not the surviving vector because the drop is decided in each part's
+// own frame and `gate.forge` turns seven of its parts: a composed world vector
+// would be right only while every box stood at the identity.
 //
 // Refuses on the same terms as `forgeMovePoint`, and for the same reason:
 // nothing is written unless every write resolves, because a half-applied move
