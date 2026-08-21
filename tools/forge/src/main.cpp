@@ -15,6 +15,7 @@
 #include "part_editor.hpp"
 #include "point_tool.hpp"
 
+#include "sol/assets/mesh_lod.hpp"
 #include "sol/core/log.hpp"
 #include "sol/core/version.hpp"
 #include "sol/platform/file_io.hpp"
@@ -32,6 +33,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -227,6 +229,14 @@ int main(int argc, char** argv)
     int openIndex = -1;
     std::string status = "no mesh open";
 
+    // Stage F: the level chain the cooker would produce for whatever is open,
+    // and its meshes uploaded so a level can be LOOKED AT rather than only
+    // counted. `previewLevel` 0 is the authored mesh, which is what the tool
+    // has always drawn.
+    assets::LodChain chain;
+    std::vector<renderer::GpuMesh> levelMeshes;
+    int previewLevel = 0;
+
     // The checker is the default by choice, not by alphabet: the question a
     // viewer is usually being asked is whether the FORM is right, and a hull
     // texture hides a stretched uv and a face pointing the wrong way, both of
@@ -280,6 +290,12 @@ int main(int argc, char** argv)
         if (openMesh.indexCount > 0) {
             view.meshes().destroyMesh(openMesh);
         }
+        for (renderer::GpuMesh& level : levelMeshes) {
+            view.meshes().destroyMesh(level);
+        }
+        levelMeshes.clear();
+        previewLevel = 0;
+
         openMesh = view.meshes().createMesh(data);
         report = forge::reportMesh(data);
         // Re-matched on every upload, not only on open: editing a part changes
@@ -289,6 +305,18 @@ int main(int argc, char** argv)
             modelMatches = forge::matchModels(defs, meshEntries[static_cast<std::size_t>(openIndex)],
                                               report);
         }
+
+        // ⚑ Rebuilt on every upload for the same reason the model match is: an
+        // edit changes what the cook would produce, and a chain computed once
+        // would go stale the moment the tool was used for what it is for. It is
+        // the cooker's own function, so the panel cannot drift from the files -
+        // this shows what WILL be cooked, not a second opinion about it.
+        chain = assets::buildLodChain(data);
+        levelMeshes.reserve(chain.levels.size());
+        for (const assets::MeshLevel& level : chain.levels) {
+            levelMeshes.push_back(view.meshes().createMesh(level.mesh));
+        }
+
         if (reframe) {
             frameOpenMesh();
         }
@@ -422,8 +450,14 @@ int main(int argc, char** argv)
                                          std::tan(forge::kCameraVerticalFov * 0.5f));
         viewport.cameraDistance = camera.distance();
         viewport.view = camera.view();
-        viewport.leftPressed = leftPressed && !shiftDown;
-        viewport.leftDown = leftDown;
+        // ⚑ And the press is withheld entirely while a level is previewed, for
+        // the inverse of E4's own rule. That rule is "an element you can see is
+        // pickable"; the markers are not drawn during a preview, so picking one
+        // would select something invisible - and a drag would then edit the
+        // document while the screen shows a mesh the document does not contain.
+        // The camera still gets the press, so orbiting a level still works.
+        viewport.leftPressed = leftPressed && !shiftDown && previewLevel == 0;
+        viewport.leftDown = leftDown && previewLevel == 0;
         viewport.uiCaptured = imguiHost.wantsMouseCapture();
         viewport.axisLock = -1;
         if (!imguiHost.wantsKeyboardCapture()) {
@@ -514,7 +548,12 @@ int main(int argc, char** argv)
         // last is what goes missing - and the grid and the scale boxes are the
         // frame's fixed furniture while the markers are the variable part. The
         // tool's own budget keeps it well inside; this is the second belt.
-        if (showPoints && editor.isOpen()) {
+        // ⚑ Not while a level is previewed. The markers come from the DOCUMENT
+        // and the mesh on screen is a generated level, so drawing them together
+        // puts 162 crosses over a hull with 80 triangles that has no such
+        // points - an editable-looking overlay on something that is not the
+        // thing being edited. A preview is a look, not an edit surface.
+        if (showPoints && editor.isOpen() && previewLevel == 0) {
             points.drawMarkers(view.debugDraw(), viewport);
         }
 
@@ -654,6 +693,75 @@ int main(int argc, char** argv)
                 }
             }
 
+            // Stage F. Below the Report because a level is a consequence of the
+            // mesh the Report describes, and because the first number an author
+            // wants is the one they are giving up.
+            if ((openIndex >= 0 || editor.isOpen()) &&
+                ImGui::CollapsingHeader("Levels", ImGuiTreeNodeFlags_DefaultOpen)) {
+                const float focal = ui::focalLength(static_cast<float>(window.height()),
+                                                    std::tan(forge::kCameraVerticalFov * 0.5f));
+                if (ImGui::RadioButton("authored", previewLevel == 0)) {
+                    previewLevel = 0;
+                    frameOpenMesh();
+                }
+                for (std::size_t i = 0; i < chain.levels.size(); ++i) {
+                    const int number = static_cast<int>(i) + 1;
+                    char label[32];
+                    std::snprintf(label, sizeof(label), "lod%d", number);
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton(label, previewLevel == number)) {
+                        previewLevel = number;
+                        // ⚑ "At the distance the LOD is for" is the whole point
+                        // of the preview, and it is not a framing: the camera
+                        // stands exactly where this level takes over, which is
+                        // where the projected radius crosses its threshold.
+                        // Seeing a decimated hull filling the screen proves
+                        // nothing, because that is not where it is ever drawn.
+                        const float switchPixels =
+                            assets::kLevelSwitchPixels[i < std::size(assets::kLevelSwitchPixels)
+                                                           ? i
+                                                           : std::size(assets::kLevelSwitchPixels) - 1];
+                        const core::Vec3 center = (report.boundsMin + report.boundsMax) * 0.5f;
+                        camera.placeAt(center, report.boundingRadius * focal / switchPixels);
+                    }
+                }
+
+                ImGui::Separator();
+                for (std::size_t i = 0; i < chain.levels.size(); ++i) {
+                    const assets::MeshLevel& level = chain.levels[i];
+                    const float switchPixels =
+                        assets::kLevelSwitchPixels[i < std::size(assets::kLevelSwitchPixels)
+                                                       ? i
+                                                       : std::size(assets::kLevelSwitchPixels) - 1];
+                    ImGui::Text("lod%d  %u tri (%.0f%%)  %zu B", static_cast<int>(i) + 1,
+                                level.triangles,
+                                report.triangles > 0
+                                    ? 100.0 * level.triangles / static_cast<double>(report.triangles)
+                                    : 0.0,
+                                level.cookedBytes);
+                    // Signed, both of them: a level that GREW its volume is as
+                    // wrong as one that shrank, and the radius growing outward
+                    // is the one that pushes the hull past its collision sphere.
+                    ImGui::TextDisabled("      volume %+.2f%%   radius %+.2f%%   from %.0f m",
+                                        level.volumeDrift * 100.0, level.radiusDrift * 100.0,
+                                        static_cast<double>(report.boundingRadius * focal /
+                                                            switchPixels));
+                }
+
+                // ⚑ Always shown, whether or not anything was generated. A
+                // refusal is the normal answer here - four of the seven
+                // committed meshes are under the floor - and an author who is
+                // told nothing cannot tell "too small to be worth it" from
+                // "the tool is broken".
+                ImGui::PushTextWrapPos(0.0f);
+                if (chain.levels.empty()) {
+                    ImGui::TextDisabled("no levels: %s", chain.stopReason.c_str());
+                } else {
+                    ImGui::TextDisabled("chain stops here: %s", chain.stopReason.c_str());
+                }
+                ImGui::PopTextWrapPos();
+            }
+
             if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::BeginCombo("texture", textureLabels[static_cast<std::size_t>(textureIndex)].c_str())) {
                     for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
@@ -696,8 +804,15 @@ int main(int argc, char** argv)
         frame.sunDirection = {cosElevation * std::sin(sunAzimuth), std::sin(sunElevation),
                               cosElevation * std::cos(sunAzimuth)};
         frame.exposure = exposure;
-        if (openMesh.indexCount > 0) {
-            frame.items.push_back({&openMesh, &textures[static_cast<std::size_t>(textureIndex)],
+        // Stage F: the preview draws a generated level in the authored mesh's
+        // place. One item either way - the level is a mesh like any other, and
+        // making the viewport learn about levels would be a second rule.
+        renderer::GpuMesh* drawn = &openMesh;
+        if (previewLevel > 0 && static_cast<std::size_t>(previewLevel) <= levelMeshes.size()) {
+            drawn = &levelMeshes[static_cast<std::size_t>(previewLevel) - 1];
+        }
+        if (drawn->indexCount > 0) {
+            frame.items.push_back({drawn, &textures[static_cast<std::size_t>(textureIndex)],
                                    core::Mat4::identity(), emissive});
         }
 
@@ -737,6 +852,9 @@ int main(int argc, char** argv)
     }
 
     context.waitIdle();
+    for (renderer::GpuMesh& level : levelMeshes) {
+        view.meshes().destroyMesh(level);
+    }
     if (openMesh.indexCount > 0) {
         view.meshes().destroyMesh(openMesh);
     }

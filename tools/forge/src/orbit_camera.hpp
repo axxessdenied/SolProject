@@ -10,6 +10,7 @@
 
 #include "sol/core/math/math.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace forge {
@@ -57,6 +58,17 @@ public:
         m_target = center;
         const float fitted = radius > 0.0f ? radius / std::sin(verticalFov * 0.5f) : kMinDistance;
         m_distance = sol::core::clamp(fitted * 1.35f, kMinDistance, kMaxDistance);
+    }
+
+    // Stands the camera a stated distance off a point, keeping the current
+    // angles. `frame` fits a radius into the view and is what an author wants
+    // when opening a mesh; this is what stage F's preview wants, where the
+    // distance IS the question - "show me the level the game would draw at the
+    // range it takes over" is not a framing, it is a placement.
+    void placeAt(sol::core::Vec3 center, float distance)
+    {
+        m_target = center;
+        m_distance = std::clamp(distance, kMinDistance, kMaxDistance);
     }
 
     [[nodiscard]] sol::core::Vec3 target() const { return m_target; }
