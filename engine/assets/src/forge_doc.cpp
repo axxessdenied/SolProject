@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <span>
 #include <string_view>
 #include <tuple>
 
@@ -1554,24 +1555,22 @@ bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
     return true;
 }
 
-bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, std::string* error)
-{
-    if (!point.movable()) {
-        if (error != nullptr) {
-            *error = "this point has a corner with no parametric answer - bake its part first, "
-                 "which makes its vertices authored numbers without changing what is drawn";
-        }
-        return false;
-    }
+namespace {
 
-    // ⚑ Every inverse is resolved BEFORE anything is written. A part with a
-    // singular world transform has to abort the whole move, not half of it: a
-    // hull with three of its five corners updated is a seam, which is the exact
-    // defect this function exists to prevent.
+// Resolves every write's delta into its own part's frame, refusing the whole
+// move if any part cannot answer.
+//
+// ⚑ Every inverse is resolved BEFORE anything is written. A part with a
+// singular world transform has to abort the whole move, not half of it: a hull
+// with three of its five corners updated is a seam, which is the exact defect
+// this function exists to prevent.
+bool localDeltasFor(const ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
+                    BuildPoint delta, std::vector<BuildPoint>& out, std::string* error)
+{
     const std::vector<BuildTransform> world = worldTransforms(doc);
-    std::vector<BuildPoint> localDelta(point.writes.size());
-    for (std::size_t i = 0; i < point.writes.size(); ++i) {
-        const std::size_t part = point.writes[i].part;
+    out.assign(writes.size(), BuildPoint{0, 0, 0});
+    for (std::size_t i = 0; i < writes.size(); ++i) {
+        const std::size_t part = writes[i].part;
         if (part >= doc.parts.size()) {
             if (error != nullptr) {
                 *error = "a write names a part this document no longer has";
@@ -1590,8 +1589,42 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
         // and must not pick up the part's translation. Using the point form
         // here would throw a child part across the frame by its parent's
         // offset on the first drag - and a zero drag would not be a no-op.
-        localDelta[i] = inverse.transformDirection(delta);
+        out[i] = inverse.transformDirection(delta);
     }
+    return true;
+}
+
+// Guards the writes, then performs them. Extracted at E4 so that moving ONE
+// point and moving a SET of them are one implementation of what a write means -
+// the trap this programme has already paid for twice, most recently when the
+// bake and the build were two answers to what a `box` is.
+bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
+                 const std::vector<BuildPoint>& localDelta, std::string* error);
+
+} // namespace
+
+bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, std::string* error)
+{
+    if (!point.movable()) {
+        if (error != nullptr) {
+            *error = "this point has a corner with no parametric answer - bake its part first, "
+                 "which makes its vertices authored numbers without changing what is drawn";
+        }
+        return false;
+    }
+
+    std::vector<BuildPoint> localDelta;
+    if (!localDeltasFor(doc, point.writes, delta, localDelta, error)) {
+        return false;
+    }
+    return applyWrites(doc, point.writes, localDelta, error);
+}
+
+namespace {
+
+bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
+                 const std::vector<BuildPoint>& localDelta, std::string* error)
+{
 
     // ⚑ The second half of the same all-or-nothing rule, and both guards below
     // are for states the PRIMITIVE answers in silence rather than for arithmetic
@@ -1606,8 +1639,8 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
     // shorter than the distance at which its two ends weld together has already
     // stopped being a beam, and `normalize3` of that run is noise.
     constexpr double kMinimumRun = 1e-5;
-    for (std::size_t i = 0; i < point.writes.size(); ++i) {
-        const ForgePointWrite& write = point.writes[i];
+    for (std::size_t i = 0; i < writes.size(); ++i) {
+        const ForgePointWrite& write = writes[i];
         const ForgePart& part = doc.parts[write.part];
         switch (write.kind) {
         case ForgeWriteKind::BoxCorner: {
@@ -1661,8 +1694,8 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
         }
     }
 
-    for (std::size_t i = 0; i < point.writes.size(); ++i) {
-        const ForgePointWrite& write = point.writes[i];
+    for (std::size_t i = 0; i < writes.size(); ++i) {
+        const ForgePointWrite& write = writes[i];
         ForgePart& part = doc.parts[write.part];
         const BuildPoint& local = localDelta[i];
         // ⚑ A write that moves nothing is not performed at all, and `cube.forge`
@@ -1755,6 +1788,152 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
         }
     }
     return true;
+}
+
+} // namespace
+
+bool forgeMovePoints(ForgeDoc& doc, std::span<const ForgePoint> points, BuildPoint delta,
+                     bool* dropped, std::string* error)
+{
+    if (dropped != nullptr) {
+        *dropped = false;
+    }
+    if (points.empty()) {
+        return true;
+    }
+    // One point is E2's case exactly, and it goes through E2's path rather than
+    // through a second arrangement of the same arithmetic.
+    if (points.size() == 1) {
+        return forgeMovePoint(doc, points[0], delta, error);
+    }
+    for (const ForgePoint& point : points) {
+        if (!point.movable()) {
+            if (error != nullptr) {
+                *error = "one of these points has a corner with no parametric answer - bake its "
+                         "part first, which makes its vertices authored numbers without changing "
+                         "what is drawn";
+            }
+            return false;
+        }
+    }
+
+    // ⚑⚑ THE COLLAPSE, AND IT IS THE WHOLE STAGE. `forgeMovePoint` deduplicates
+    // the writes standing at ONE point; a set has to deduplicate ACROSS points,
+    // and the two are not the same question. A box puts a `center`+`size` write
+    // at every one of its eight corners, so grabbing two of them and calling the
+    // point move twice applies the resize TWICE and the edge travels twice as
+    // far as the hand. A beam is worse and does not even need an edge to show
+    // it: its four `from` corners are four distinct points sharing ONE write.
+    std::vector<ForgePointWrite> collapsed;
+    // Which box corner codes each collapsed box write was asked for. A box is
+    // one entry however many of its corners were grabbed - see below.
+    std::vector<std::uint32_t> boxCodes;
+    for (const ForgePoint& point : points) {
+        for (const ForgePointWrite& write : point.writes) {
+            // ⚑ A box collapses on (part) ALONE, ignoring the corner code,
+            // because `center` and `size` are one pair of numbers no matter how
+            // many corners named them. Everything else collapses on the full
+            // identity: a `p0` is one corner of one triangle, a baked vertex is
+            // one element, and a beam's `from` is one end - each already unique
+            // per part, so this only ever removes a genuine duplicate.
+            std::size_t existing = collapsed.size();
+            for (std::size_t i = 0; i < collapsed.size(); ++i) {
+                const bool same = collapsed[i].part == write.part &&
+                                  collapsed[i].kind == write.kind &&
+                                  (write.kind == ForgeWriteKind::BoxCorner ||
+                                   (collapsed[i].element == write.element &&
+                                    collapsed[i].param == write.param));
+                if (same) {
+                    existing = i;
+                    break;
+                }
+            }
+            if (existing == collapsed.size()) {
+                collapsed.push_back(write);
+                boxCodes.push_back(0);
+            }
+            if (write.kind == ForgeWriteKind::BoxCorner) {
+                boxCodes[existing] |= 1u << write.element;
+            }
+        }
+    }
+
+    std::vector<BuildPoint> localDelta;
+    if (!localDeltasFor(doc, collapsed, delta, localDelta, error)) {
+        return false;
+    }
+
+    // ⚑⚑ AND THE BOX ALGEBRA, WHICH SETTLES A QUESTION THE SPEC LEFT OPEN.
+    //
+    // A box corner sits at `center + s*size/2` with `s` in {-1,+1} per axis, so
+    // a change of `center` and `size` moves it by `dc + s*ds/2`. On one axis
+    // that expression takes exactly TWO values - one for each sign - so a set of
+    // corners can be moved along that axis if and only if they AGREE about the
+    // sign. Where they agree, E2's split (half the step into `center`, all of it
+    // into `size`) is the answer and it pins the far face exactly as it always
+    // did. Where they straddle - the two ends of an edge running along that axis
+    // - there is no `dc`/`ds` that moves them and leaves their neighbours, so
+    // the component is DROPPED rather than approximated.
+    //
+    // The consequence is worth stating plainly, because the spec framed it as a
+    // choice between refusing an edge drag and widening it to the face: it is
+    // not a choice. A box has no shear, so the algebra widens on the axes it can
+    // express and drops the one along the edge, and refusing instead would make
+    // edge mode dead on the 35 of 61 parts that are boxes and beams.
+    //
+    // ⚑ `dropped` is a FLAG rather than the vector that survived, and that is
+    // deliberate. The drop is decided in each part's OWN frame, so composing the
+    // survivors of several parts into one world-space vector would be a number
+    // that is right only while every box stands at the identity - and
+    // `gate.forge` turns seven of its parts. A flag the panel can say out loud
+    // beats a vector that is quietly wrong on one asset.
+    for (std::size_t i = 0; i < collapsed.size(); ++i) {
+        if (collapsed[i].kind != ForgeWriteKind::BoxCorner) {
+            continue;
+        }
+        const std::uint32_t codes = boxCodes[i];
+        std::uint32_t representative = 0;
+        for (std::uint32_t code = 0; code < 8; ++code) {
+            if ((codes & (1u << code)) != 0) {
+                representative = code;
+                break;
+            }
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            bool positive = false;
+            bool negative = false;
+            for (std::uint32_t code = 0; code < 8; ++code) {
+                if ((codes & (1u << code)) == 0) {
+                    continue;
+                }
+                ((code & (1u << axis)) != 0 ? positive : negative) = true;
+            }
+            if (!(positive && negative)) {
+                continue; // the corners agree about this axis: E2's solve stands
+            }
+            double& component = axis == 0   ? localDelta[i].x
+                                : axis == 1 ? localDelta[i].y
+                                            : localDelta[i].z;
+            // ⚑ The flag reports a component that was actually LOST, not merely
+            // an axis the corners straddle. Every edge straddles one axis and
+            // every face straddles two, so a flag raised on the geometry alone
+            // fires on every well-behaved drag in the tool and means nothing.
+            // Its own tests caught that: the first version warned on a clean
+            // face drag whose dropped components were both zero.
+            //
+            // The threshold is the write grid rather than an exact compare,
+            // because a drag arrives through a part's inverse transform and a
+            // rotated part turns a clean world-axis pull into components of
+            // 1e-17 on the other two. Anything finer than the grid was never
+            // going to be written, so losing it costs the author nothing.
+            if (std::abs(component) >= (0.5 / kGridStepsPerMetre) && dropped != nullptr) {
+                *dropped = true;
+            }
+            component = 0.0;
+        }
+        collapsed[i].element = representative;
+    }
+    return applyWrites(doc, collapsed, localDelta, error);
 }
 
 } // namespace sol::assets

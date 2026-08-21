@@ -442,6 +442,34 @@ struct ForgeEdge
 [[nodiscard]] bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta,
                                   std::string* error = nullptr);
 
+// Moves a SET of points by one delta - an edge's two, a face's three or four -
+// applying every authored value standing at any of them exactly ONCE.
+//
+// ⚑⚑ THIS IS NOT `forgeMovePoint` IN A LOOP, AND THE DIFFERENCE IS THE STAGE.
+// The point move deduplicates the writes standing at one point; a set has to
+// deduplicate ACROSS points, because a box puts the same `center`+`size` pair
+// behind all eight of its corners and a beam puts the same `from` behind the
+// four at one end. Called in a loop, an edge of a box travels TWICE as far as
+// the hand that dragged it, and the file records the doubled number.
+//
+// ⚑⚑ A BOX CANNOT MOVE AN EDGE, AND THAT IS ALGEBRA RATHER THAN A LIMITATION
+// ANYONE CHOSE. A corner sits at `center + s*size/2`, so on each axis a change
+// of the pair moves a corner by one of exactly TWO amounts, one per sign. Where
+// the selected corners agree about an axis's sign, E2's split answers it and
+// the far face stays pinned; where they straddle it - the two ends of an edge
+// running along that axis - nothing can move them and leave their neighbours,
+// so that component is DROPPED. The visible consequence is that dragging a
+// box's edge sideways widens the whole face it lies on, and dragging it along
+// its own run does nothing at all. `dropped` is set when any component was
+// discarded, so the tool can say so rather than let it be discovered.
+//
+// Refuses on the same terms as `forgeMovePoint`, and for the same reason:
+// nothing is written unless every write resolves, because a half-applied move
+// is the seam this whole mechanism exists to prevent.
+[[nodiscard]] bool forgeMovePoints(ForgeDoc& doc, std::span<const ForgePoint> points,
+                                   BuildPoint delta, bool* dropped = nullptr,
+                                   std::string* error = nullptr);
+
 // The world transform of one part: its own placement composed up the parent
 // chain. Exposed because the editor needs it to draw a part's own axes.
 [[nodiscard]] BuildTransform forgeWorldTransform(const ForgeDoc& doc, std::size_t partIndex);

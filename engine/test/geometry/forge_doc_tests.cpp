@@ -2168,3 +2168,200 @@ SOL_TEST(topologyRefusesADocumentWhoseBuildPassRenumbersVertices)
     SOL_CHECK(points.empty());
     SOL_CHECK(edges.empty());
 }
+
+namespace {
+
+ForgeDoc openAsset(const char* name)
+{
+    const std::string source =
+        readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge");
+    ForgeDoc doc;
+    if (!source.empty()) {
+        (void)parses(source, doc);
+    }
+    return doc;
+}
+
+} // namespace
+
+// ⚑⚑ THE DEFECT THE STAGE EXISTS TO PREVENT, PINNED FROM BOTH SIDES. Moving an
+// edge's two points is NOT calling the point move twice: a box puts one
+// `center`+`size` pair behind all eight corners, so the loop applies the resize
+// once per end and the edge travels twice as far as the hand. This asserts the
+// right answer AND the wrong one, so a future simplification back to a loop
+// fails here instead of silently doubling every edge drag in the tool.
+SOL_TEST(movingABoxEdgeAsASetMovesItOnceAndAsALoopMovesItTwice)
+{
+    const assets::BuildPoint drag{0.2, 0.0, 0.0};
+
+    ForgeDoc set = openAsset("cube");
+    SOL_REQUIRE(!set.parts.empty());
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    SOL_REQUIRE(assets::forgeTopology(set, points, edges));
+
+    // The edge running along Z at +x +y: two corners agreeing on x and y.
+    const std::size_t lo = pointAt(points, {0.5, 0.5, -0.5});
+    const std::size_t hi = pointAt(points, {0.5, 0.5, 0.5});
+    SOL_REQUIRE(lo < points.size() && hi < points.size());
+
+    const std::vector<assets::ForgePoint> selection{points[lo], points[hi]};
+    bool dropped = true;
+    SOL_REQUIRE(assets::forgeMovePoints(set, selection, drag, &dropped));
+    SOL_CHECK(!dropped); // x is expressible, so nothing was discarded
+
+    const std::size_t box = set.indexOf("box");
+    SOL_REQUIRE(box < set.parts.size());
+    SOL_CHECK(std::abs(set.parts[box].value("center").vec.x - 0.1) < 1e-9);
+    SOL_CHECK(std::abs(set.parts[box].value("size").vec.x - 1.2) < 1e-9);
+
+    // The grabbed edge moved by exactly the drag, and the far face did not move
+    // at all - E2's pin, now over a set rather than over one corner.
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(set, after));
+    SOL_CHECK(pointAt(after, {0.7, 0.5, -0.5}) < after.size());
+    SOL_CHECK(pointAt(after, {0.7, 0.5, 0.5}) < after.size());
+    SOL_CHECK(pointAt(after, {-0.5, 0.5, 0.5}) < after.size());
+
+    // And the same drag through the point move, twice, which is the defect.
+    ForgeDoc loop = openAsset("cube");
+    std::vector<assets::ForgePoint> loopPoints;
+    SOL_REQUIRE(assets::forgePoints(loop, loopPoints));
+    const std::size_t a = pointAt(loopPoints, {0.5, 0.5, -0.5});
+    const std::size_t b = pointAt(loopPoints, {0.5, 0.5, 0.5});
+    SOL_REQUIRE(a < loopPoints.size() && b < loopPoints.size());
+    SOL_REQUIRE(assets::forgeMovePoint(loop, loopPoints[a], drag));
+    SOL_REQUIRE(assets::forgeMovePoint(loop, loopPoints[b], drag));
+
+    const std::size_t loopBox = loop.indexOf("box");
+    SOL_REQUIRE(loopBox < loop.parts.size());
+    SOL_CHECK(std::abs(loop.parts[loopBox].value("size").vec.x - 1.4) < 1e-9); // twice the drag
+}
+
+// A whole face is the case a box answers exactly: four corners agreeing about
+// one axis move by the drag, and the opposite face stays where it was.
+SOL_TEST(draggingABoxFaceMovesItByTheDragAndPinsTheOppositeFace)
+{
+    ForgeDoc doc = openAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+
+    std::vector<assets::ForgePoint> face;
+    for (const assets::ForgePoint& point : points) {
+        if (std::abs(point.position.x - 0.5) < 1e-4) {
+            face.push_back(point);
+        }
+    }
+    SOL_REQUIRE(face.size() == 4);
+
+    bool dropped = true;
+    SOL_REQUIRE(assets::forgeMovePoints(doc, face, {0.25, 0.0, 0.0}, &dropped));
+    SOL_CHECK(!dropped);
+
+    std::vector<assets::ForgePoint> after;
+    SOL_REQUIRE(assets::forgePoints(doc, after));
+    double minimum = 1e9;
+    double maximum = -1e9;
+    for (const assets::ForgePoint& point : after) {
+        minimum = std::min(minimum, point.position.x);
+        maximum = std::max(maximum, point.position.x);
+    }
+    SOL_CHECK(std::abs(minimum + 0.5) < 1e-6);  // the -x face is pinned
+    SOL_CHECK(std::abs(maximum - 0.75) < 1e-6); // the +x face moved by the drag
+}
+
+// ⚑ A box has no shear, so the component ALONG an edge cannot be expressed and
+// is dropped rather than approximated. The flag is how the tool says so, and
+// the document is untouched, which makes it a refusal rather than a rounding.
+SOL_TEST(draggingABoxEdgeAlongItsOwnRunDropsTheComponent)
+{
+    ForgeDoc doc = openAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+    const std::string before = assets::writeForge(doc);
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    const std::size_t lo = pointAt(points, {0.5, 0.5, -0.5});
+    const std::size_t hi = pointAt(points, {0.5, 0.5, 0.5});
+    SOL_REQUIRE(lo < points.size() && hi < points.size());
+
+    const std::vector<assets::ForgePoint> selection{points[lo], points[hi]};
+    bool dropped = false;
+    SOL_REQUIRE(assets::forgeMovePoints(doc, selection, {0.0, 0.0, 0.3}, &dropped));
+    SOL_CHECK(dropped);
+    SOL_CHECK(assets::writeForge(doc) == before);
+}
+
+// ⚑ A beam's four `from` corners are four distinct POINTS sharing ONE write, so
+// the collapse matters there without an edge being involved at all. Two of them
+// dragged together move the end once.
+SOL_TEST(movingTwoCornersOfABeamsCapMovesThatEndOnlyOnce)
+{
+    ForgeDoc doc = openAsset("cockpit");
+    SOL_REQUIRE(!doc.parts.empty());
+
+    std::size_t beam = doc.parts.size();
+    for (std::size_t i = 0; i < doc.parts.size(); ++i) {
+        if (doc.parts[i].primitive == ForgePrimitive::Beam) {
+            beam = i;
+            break;
+        }
+    }
+    SOL_REQUIRE(beam < doc.parts.size());
+    const assets::BuildPoint from = doc.parts[beam].value("from").vec;
+
+    std::vector<assets::ForgePoint> points;
+    SOL_REQUIRE(assets::forgePoints(doc, points));
+    std::vector<assets::ForgePoint> capped;
+    for (const assets::ForgePoint& point : points) {
+        for (const assets::ForgePointWrite& write : point.writes) {
+            if (write.part == beam && write.kind == assets::ForgeWriteKind::BeamEnd &&
+                write.element == 0) {
+                capped.push_back(point);
+                break;
+            }
+        }
+    }
+    SOL_REQUIRE(capped.size() >= 2);
+
+    const std::vector<assets::ForgePoint> selection{capped[0], capped[1]};
+    SOL_REQUIRE(assets::forgeMovePoints(doc, selection, {0.1, 0.0, 0.0}));
+
+    // Once, not twice: 0.1 moved, not 0.2.
+    SOL_CHECK(std::abs(doc.parts[beam].value("from").vec.x - (from.x + 0.1)) < 1e-9);
+}
+
+// ⚑ THE FIXED POINT SURVIVES THE STAGE. E1 proved a zero-distance move writes
+// nothing, E2 widened it to the asset that authors nothing, Phase 14 kept it
+// through the quantizer - and a SET move is the fourth door onto the same rule.
+// A modeller saves on every accepted edit, so a click that grabs an edge and
+// releases it must leave the file exactly as it found it.
+SOL_TEST(aZeroDistanceSetMoveLeavesEveryCommittedFileByteIdentical)
+{
+    const char* const names[] = {"cube",    "gate",     "ship",         "station",
+                                 "cockpit", "asteroid", "gate_membrane"};
+    for (const char* name : names) {
+        ForgeDoc doc = openAsset(name);
+        SOL_REQUIRE(!doc.parts.empty());
+        const std::string before = assets::writeForge(doc);
+
+        std::vector<assets::ForgePoint> points;
+        std::vector<assets::ForgeEdge> edges;
+        SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+
+        std::size_t moved = 0;
+        for (const assets::ForgeEdge& edge : edges) {
+            if (!points[edge.a].movable() || !points[edge.b].movable()) {
+                continue;
+            }
+            const std::vector<assets::ForgePoint> selection{points[edge.a], points[edge.b]};
+            SOL_REQUIRE(assets::forgeMovePoints(doc, selection, {0.0, 0.0, 0.0}));
+            ++moved;
+        }
+        SOL_CHECK(assets::writeForge(doc) == before);
+        if (assets::writeForge(doc) != before) {
+            std::printf("  %s changed after %zu zero-distance edge move(s)\n", name, moved);
+        }
+    }
+}
