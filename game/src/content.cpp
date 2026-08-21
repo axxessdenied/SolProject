@@ -1489,6 +1489,26 @@ std::string lodReportCommand(GameContent& content)
     return line;
 }
 
+// ⚑ The A/B lever for the level policy (Phase 17). `sol.lods` says which level
+// was drawn; this says which level to draw, so level 0 and level 1 can be
+// compared at ONE camera position instead of at two distances - which is the
+// only way to see the switch itself rather than the approach around it.
+std::string lodPinCommand(GameContent& content, double level)
+{
+    (void)content;
+    const std::int32_t requested = static_cast<std::int32_t>(level);
+    lodPin() = requested < 0 ? kLodPinAutomatic : requested;
+    if (lodPin() == kLodPinAutomatic) {
+        return "lod pin off - levels are chosen by projected size again";
+    }
+    char line[128];
+    std::snprintf(line, sizeof(line),
+                  "lod pinned to level %d - every chained model draws it, clamped to the levels "
+                  "it has",
+                  static_cast<int>(lodPin()));
+    return line;
+}
+
 std::string perfReport(GameContent& content)
 {
     (void)content;
@@ -2972,6 +2992,7 @@ void GameContent::registerBindings()
     // Which level each instance drew at (Phase 9 stage F), because no frame
     // rate on this content can answer that.
     m_vm.registerFunction<&lodReportCommand>("sol", "lods", this);
+    m_vm.registerFunction<&lodPinCommand>("sol", "lod_pin", this);
     m_vm.registerFunction<&perfReport>("sol", "perf", this);
     m_vm.registerFunction<&perfZone>("sol", "perf_zone", this);
     m_vm.registerFunction<&perfZoneMax>("sol", "perf_zone_max", this);

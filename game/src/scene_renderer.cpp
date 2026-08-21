@@ -22,6 +22,12 @@ LodReport& lodReport()
     return report;
 }
 
+std::int32_t& lodPin()
+{
+    static std::int32_t pin = kLodPinAutomatic;
+    return pin;
+}
+
 namespace {
 
 #define GAME_VK_CHECK(expression)                                                                            \
@@ -44,6 +50,24 @@ constexpr float kSkyIntensity = 1.0f;
 // The cabin light Phase 8m added here as kCockpitEmissive is now the cockpit
 // model's own `emissive` in models.toml (Phase 9) - per-model lighting is a
 // property of the asset, not of the pass that draws it.
+
+// ⚑ ONE rule for both draw paths, which is the whole reason this is a function
+// rather than two `if`s. The translucent path already carries a comment about
+// refusing to let translucency become a second rule about which mesh to use;
+// a pin consulted in one path and not the other would be a third.
+std::uint32_t chooseLevel(float screenRadiusPixels, std::uint32_t levelCount)
+{
+    const std::int32_t pin = lodPin();
+    if (pin > kLodPinAutomatic) {
+        // Clamped to what exists exactly as `selectMeshLevel` clamps, so a pin
+        // past the end of a short chain draws that chain's last level instead
+        // of indexing off it. A model with no chain stays at 0, which is what
+        // makes it safe to pin globally while four of seven models are refused
+        // a chain at all.
+        return levelCount == 0 ? 0u : std::min(static_cast<std::uint32_t>(pin), levelCount - 1u);
+    }
+    return assets::selectMeshLevel(screenRadiusPixels, levelCount);
+}
 
 } // namespace
 
@@ -380,7 +404,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         const float widest = std::max({instance.scale.x, instance.scale.y, instance.scale.z});
         const float screenRadius = ui::screenRadiusPixels(
             static_cast<double>(entry.radius * widest), length(relative), lodFocal);
-        const std::uint32_t level = assets::selectMeshLevel(screenRadius, entry.levelCount);
+        const std::uint32_t level = chooseLevel(screenRadius, entry.levelCount);
 
         m_meshRenderer.draw(commandBuffer, m_meshes[entry.levels[level]],
                             m_textures[entry.texture], viewProjection * model, model,
@@ -469,7 +493,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
                 std::max({instance->scale.x, instance->scale.y, instance->scale.z});
             const float screenRadius = ui::screenRadiusPixels(
                 static_cast<double>(entry.radius * widest), length(relative), lodFocal);
-            const std::uint32_t level = assets::selectMeshLevel(screenRadius, entry.levelCount);
+            const std::uint32_t level = chooseLevel(screenRadius, entry.levelCount);
             m_meshRenderer.draw(commandBuffer, m_meshes[entry.levels[level]],
                                 m_textures[entry.texture], viewProjection * model, model,
                                 entry.emissive, entry.alpha);

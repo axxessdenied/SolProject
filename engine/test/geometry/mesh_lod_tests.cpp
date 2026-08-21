@@ -365,3 +365,36 @@ SOL_TEST(levelSelectionWalksTheThresholdsAndClampsToWhatExists)
     // A bad number degrades into extra work, never into a visibly wrong draw.
     SOL_CHECK(assets::selectMeshLevel(std::nanf(""), kLevels) == 0);
 }
+
+// ⚑ THE SHAPE OF THE POLICY, NOT ITS MAGNITUDE. `selectMeshLevel` walks the
+// thresholds with a single `while`, which is only a level chain if they
+// DESCEND - a pair that rose or repeated would make one entry unreachable and
+// the walk would skip a level in silence.
+//
+// ⚑ Phase 17 changed these values (96/32 -> 20/10) after measuring the pop the
+// original pair caused, and every test above survived that change untouched
+// because they reference the constants SYMBOLICALLY. That is deliberate and
+// worth keeping: pinning 20.0f here would re-create exactly the undefended
+// constant this phase existed to remove, with a test wrapped around it. The
+// derivation lives beside the values in mesh_lod.hpp; the only thing asserted
+// here is the property the algorithm depends on.
+SOL_TEST(theSwitchThresholdsDescendSoEveryLevelIsReachable)
+{
+    constexpr std::size_t kCount = std::size(assets::kLevelSwitchPixels);
+    static_assert(kCount >= 1, "a policy with no thresholds can never leave level 0");
+
+    for (std::size_t i = 0; i < kCount; ++i) {
+        SOL_CHECK(assets::kLevelSwitchPixels[i] > 0.0f);
+        if (i > 0) {
+            SOL_CHECK(assets::kLevelSwitchPixels[i] < assets::kLevelSwitchPixels[i - 1]);
+        }
+    }
+
+    // And every level the thresholds describe is actually reachable: walking
+    // just under each one lands on its own level rather than skipping past it.
+    for (std::size_t i = 0; i < kCount; ++i) {
+        const std::uint32_t levels = static_cast<std::uint32_t>(kCount) + 1;
+        SOL_CHECK(assets::selectMeshLevel(assets::kLevelSwitchPixels[i] - 0.01f, levels)
+                  == static_cast<std::uint32_t>(i) + 1);
+    }
+}

@@ -109,9 +109,44 @@ struct LodChain
 // Level `i` takes over when the projected screen RADIUS falls below
 // kLevelSwitchPixels[i - 1]. Descending, and the caller clamps to the levels
 // that actually exist. For scale, at 720p and a 70 degree vertical FOV the
-// focal length is 514 px: a station (100 m) crosses 96 px at about 535 m and
-// 32 px at about 1.6 km, while a ship (8 m) is 4 px tall at a kilometre.
-inline constexpr float kLevelSwitchPixels[] = {96.0f, 32.0f};
+// focal length is 514 px: a station (100 m) crosses 20 px at about 2.6 km and
+// 10 px at about 5.1 km, while a ship (8 m) is 4 px tall at a kilometre.
+//
+// ⚑⚑ THESE TWO NUMBERS ARE MEASURED, AND THE FIRST VERSION OF THEM WAS NOT.
+// Stage F shipped {96, 32} with fourteen lines above defending the UNIT and
+// nothing at all defending the VALUES, and playtest session 13 reported the
+// switch popping - which it does, unmissably, because 96 px of RADIUS is 192
+// px across, 27% of the height of a 720-high viewport.
+//
+// Phase 17 measured it: pin a level, capture, pin the next, capture, count the
+// pixels that differ, at a ladder of ranges with the ship dead still. Both
+// switches are a clean square law in the projected radius, with the noise
+// floor of Lyrioa's own traffic at zero below r = 96:
+//
+//     changed pixels ~= 0.26 * R^2   for level 0 -> 1
+//     changed pixels ~= 0.37 * R^2   for level 1 -> 2
+//
+// ⚑ THERE IS NO KNEE IN THAT CURVE, so there is no threshold to read off it -
+// the decimation error is scale-invariant in PROPORTIONAL terms and only ever
+// becomes invisible in ABSOLUTE ones. The ceiling used is ~100 changed pixels,
+// anchored on the 88-228 px that ordinary ambient traffic moves between two
+// captures of the same scene: a switch smaller than what the world is already
+// doing on its own is not a switch anybody can catch. That gives 20 px and
+// 10 px, where the events are ~104 and ~37 pixels against ~3,138 and ~379 at
+// the old values - roughly 30x and 10x smaller.
+//
+// ⚑ THE SECOND SWITCH IS 1.4x AS DISRUPTIVE AS THE FIRST at the same screen
+// size, which is why the pair is not a fixed ratio: matching the criterion
+// rather than the spacing is what puts them at 2:1 instead of the old 3:1.
+//
+// ⚑ AND THE REASON THIS COSTS NOTHING TO GET WRONG IN THE CONSERVATIVE
+// DIRECTION: stage F bought no frame time and never claimed to. The whole
+// model catalog is 2,298 triangles and the frame is vsync-bound, so there is
+// no budget on the other side of this trade to defend - every pixel of
+// earliness was pure cost. Switch as LATE as still switches at all. If a
+// future content load makes triangles matter, re-measure with `sol.lod_pin`
+// rather than reasoning about it; that lever exists for exactly this.
+inline constexpr float kLevelSwitchPixels[] = {20.0f, 10.0f};
 
 // Which level to draw. `levelCount` counts level 0, so 1 means "no chain" and
 // the answer is always 0.

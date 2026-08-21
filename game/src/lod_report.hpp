@@ -51,4 +51,23 @@ struct LodReport
 
 [[nodiscard]] LodReport& lodReport();
 
+// ⚑⚑ THE LEVER PHASE 17 NEEDED AND STAGE F DID NOT HAVE. `lodReport` says
+// which level was drawn; nothing could say which level to draw, so comparing
+// level 0 against level 1 at a fixed camera meant editing a `constexpr` and
+// rebuilding. That is too slow to sweep a ladder of ranges, and sweeping is
+// how the thresholds get set by measurement rather than by taste.
+//
+// ⚑ It reaches only states the renderer already reaches - it moves the same
+// selection the threshold moves - so 8u's rule (a dev lever that reaches a
+// state the sim cannot is a second implementation) is satisfied rather than
+// dodged. A pinned level is still clamped to the levels a model actually has.
+//
+// ⚑ It is PERMANENT, not scaffolding: it is the instrument for judging any
+// future change to the policy, and stage F's own history is the argument -
+// the first `sol.lods` measured nothing and had to be rebuilt into an
+// instrument, which is exactly the cost this avoids paying a third time.
+inline constexpr std::int32_t kLodPinAutomatic = -1;
+
+[[nodiscard]] std::int32_t& lodPin();
+
 } // namespace game
