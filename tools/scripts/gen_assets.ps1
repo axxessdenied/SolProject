@@ -1,9 +1,17 @@
-# Regenerates the procedural source assets (textures: checker.png, hull.png,
-# cockpit.png; sounds: the nine .wav cues of Phase 8t). Windows PowerShell 7+,
-# System.Drawing. NOTE: parenthesize all arithmetic inside array literals -
-# the comma binds tighter than + and silently corrupts data otherwise.
-# Everything here is seeded or analytic: rerunning must leave `git status`
-# clean apart from whatever was deliberately changed.
+# Regenerates the procedural source assets (sounds: the nine .wav cues of Phase
+# 8t). Windows PowerShell 7+. NOTE: parenthesize all arithmetic inside array
+# literals - the comma binds tighter than + and silently corrupts data
+# otherwise. Everything here is seeded or analytic: rerunning must leave
+# `git status` clean apart from whatever was deliberately changed.
+#
+# ⚑ THE TEXTURE HALF IS GONE TOO, AT PHASE 9's STAGE G, AND FOR THE SAME REASON
+# THE MESH HALF WENT. It drew checker/hull/cockpit with System.Drawing and
+# committed them as PNG, so the source of a texture was opaque binary, an edit
+# was undiffable, the Forge could not open it, and generating one needed Windows
+# with .NET present. They live in assets/textures/*.tex now - the same ops this
+# script used, written down - and the cooker evaluates them. The transcription
+# was proved pixel-exact against the PNGs it replaced before those were deleted.
+# The `System.Drawing` dependency left with them; only audio needs this script.
 #
 # ⚑ THE MESH HALF IS GONE, AND THAT WAS THE POINT OF PHASE 9's D CHECKPOINT.
 # This script used to emit every mesh in the game as base64-embedded glTF, and
@@ -20,93 +28,6 @@
 # is a [[part]] in the .forge file next to the mesh you want.
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
-
-# --- checker.png: 256x256, 32px squares, warm orange / deep space blue ---
-Add-Type -AssemblyName System.Drawing
-$size = 256; $cell = 32
-$bmp = New-Object System.Drawing.Bitmap($size, $size)
-$colorA = [System.Drawing.Color]::FromArgb(255, 232, 122, 42)   # orange
-$colorB = [System.Drawing.Color]::FromArgb(255, 30, 34, 48)     # dark blue-gray
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$brushA = New-Object System.Drawing.SolidBrush($colorA)
-$brushB = New-Object System.Drawing.SolidBrush($colorB)
-for ($y = 0; $y -lt $size / $cell; $y++) {
-    for ($x = 0; $x -lt $size / $cell; $x++) {
-        $brush = if ((($x + $y) % 2) -eq 0) { $brushA } else { $brushB }
-        $g.FillRectangle($brush, $x * $cell, $y * $cell, $cell, $cell)
-    }
-}
-# small marker square so orientation is visible
-$g.FillRectangle((New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)), 4, 4, 12, 12)
-$g.Dispose()
-New-Item -ItemType Directory -Force "$repo\assets\textures" | Out-Null
-$bmp.Save("$repo\assets\textures\checker.png", [System.Drawing.Imaging.ImageFormat]::Png)
-$bmp.Dispose()
-Write-Output "wrote checker.png"
-
-# --- hull.png: 256x256 dark panel grid for station/ship hulls ---
-$size = 256
-$bmp = New-Object System.Drawing.Bitmap($size, $size)
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.Clear([System.Drawing.Color]::FromArgb(255, 96, 100, 108))
-$rng = New-Object System.Random(1337)
-for ($i = 0; $i -lt 60; $i++) {
-    $w = $rng.Next(16, 64); $h = $rng.Next(12, 48)
-    $x = $rng.Next(0, $size - $w); $y = $rng.Next(0, $size - $h)
-    $shade = $rng.Next(78, 126)
-    $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, $shade, ($shade + 3), ($shade + 8)))
-    $g.FillRectangle($brush, $x, $y, $w, $h)
-    $brush.Dispose()
-}
-$linePen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255, 58, 60, 66), 2)
-for ($i = 0; $i -lt 8; $i++) {
-    $x = $rng.Next(0, $size); $g.DrawLine($linePen, $x, 0, $x, $size)
-    $y = $rng.Next(0, $size); $g.DrawLine($linePen, 0, $y, $size, $y)
-}
-$accent = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 205, 130, 40))
-for ($i = 0; $i -lt 6; $i++) {
-    $g.FillRectangle($accent, $rng.Next(0, $size - 20), $rng.Next(0, $size - 6), 20, 6)
-}
-$accent.Dispose(); $linePen.Dispose(); $g.Dispose()
-$bmp.Save("$repo\assets\textures\hull.png", [System.Drawing.Imaging.ImageFormat]::Png)
-$bmp.Dispose()
-Write-Output "wrote hull.png"
-
-# --- cockpit.png: 256x256 dark cabin panelling (Phase 8m) ---
-# The hull texture is a light exterior grey, and a cockpit wearing it reads as a
-# warehouse: the interior ends up brighter than the starfield it frames, and the
-# HUD has to compete with its own surroundings. A cabin is dark, with the light
-# coming from the instruments - so this is nearly black, with recessed panel
-# seams and a few amber strips picking out edges.
-$size = 256
-$bmp = New-Object System.Drawing.Bitmap($size, $size)
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.Clear([System.Drawing.Color]::FromArgb(255, 26, 28, 33))
-$rng = New-Object System.Random(8131)
-for ($i = 0; $i -lt 44; $i++) {
-    $w = $rng.Next(24, 96); $h = $rng.Next(18, 72)
-    $x = $rng.Next(0, $size - $w); $y = $rng.Next(0, $size - $h)
-    $shade = $rng.Next(20, 44)
-    $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, $shade, ($shade + 2), ($shade + 6)))
-    $g.FillRectangle($brush, $x, $y, $w, $h)
-    $brush.Dispose()
-}
-# Seams are LIGHTER than the panels here: a dark surface reads its detail off
-# highlights, not off shadows, and the sun grazing the dash has nothing to bite
-# on otherwise.
-$seamPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255, 62, 66, 76), 2)
-for ($i = 0; $i -lt 10; $i++) {
-    $x = $rng.Next(0, $size); $g.DrawLine($seamPen, $x, 0, $x, $size)
-    $y = $rng.Next(0, $size); $g.DrawLine($seamPen, 0, $y, $size, $y)
-}
-$glow = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 190, 116, 38))
-for ($i = 0; $i -lt 5; $i++) {
-    $g.FillRectangle($glow, $rng.Next(0, $size - 26), $rng.Next(0, $size - 4), 26, 4)
-}
-$glow.Dispose(); $seamPen.Dispose(); $g.Dispose()
-$bmp.Save("$repo\assets\textures\cockpit.png", [System.Drawing.Imaging.ImageFormat]::Png)
-$bmp.Dispose()
-Write-Output "wrote cockpit.png"
 
 # --- shared audio synthesis + WAV emit (Phase 8t) ---
 # Mono 16-bit PCM. Mono because a 3D voice can only be panned when the source

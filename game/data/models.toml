@@ -5,7 +5,7 @@
 # cooked mesh had no way of reaching the game at all.
 #
 # `mesh` and `texture` are cooked file stems: "ship" is assets/meshes/ship.forge
-# cooked to ship.smesh, "hull" is assets/textures/hull.png cooked to hull.stex.
+# cooked to ship.smesh, "hull" is assets/textures/hull.tex cooked to hull.stex.
 # `radius` is meters at instance scale 1 and the sim multiplies by the scale,
 # so a model authored at unit radius takes its size from the scale and one
 # authored at its real size is drawn at scale 1.

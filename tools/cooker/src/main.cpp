@@ -6,6 +6,7 @@
 #include "sound.hpp"
 
 #include "sol/assets/formats.hpp"
+#include "sol/assets/texture_doc.hpp"
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
 
@@ -79,17 +80,15 @@ bool isFontUpToDate(const std::string& manifest, const std::string& output)
     return true;
 }
 
-bool cookTexture(const std::string& source, const std::string& output)
+// Everything after the pixels exist, shared by both texture sources. A `.tex`
+// document and an imported `.png` differ only in where the image came from -
+// what happens to it afterwards is one implementation, which is the property
+// that let stage G change the source format without touching what the game
+// loads.
+bool writeTextureImage(const cooker::ImageRgba& sourceImage, const std::string& source,
+                       const std::string& output)
 {
-    std::vector<std::uint8_t> pngBytes;
-    if (!platform::readFileBytes(source.c_str(), pngBytes)) {
-        SOL_LOG_ERROR("cooker: cannot read %s", source.c_str());
-        return false;
-    }
-    cooker::ImageRgba image;
-    if (!cooker::decodePng(pngBytes.data(), pngBytes.size(), image)) {
-        return false;
-    }
+    cooker::ImageRgba image = sourceImage;
 
     assets::TextureFileHeader header = {};
     header.width = image.width;
@@ -121,6 +120,55 @@ bool cookTexture(const std::string& source, const std::string& output)
     SOL_LOG_INFO("cooked %s -> %s (%ux%u, %u mips)", source.c_str(), output.c_str(), header.width,
                  header.height, header.mipCount);
     return true;
+}
+
+// An imported image. Nothing in `assets/textures/` is a PNG since stage G, but
+// the decoder stays for the same reason the glTF importer did when stage D
+// deleted the last `.gltf`: it is how art from somewhere else gets in.
+bool cookTexture(const std::string& source, const std::string& output)
+{
+    std::vector<std::uint8_t> pngBytes;
+    if (!platform::readFileBytes(source.c_str(), pngBytes)) {
+        SOL_LOG_ERROR("cooker: cannot read %s", source.c_str());
+        return false;
+    }
+    cooker::ImageRgba image;
+    if (!cooker::decodePng(pngBytes.data(), pngBytes.size(), image)) {
+        return false;
+    }
+    return writeTextureImage(image, source, output);
+}
+
+// The authored source: a `.tex` document evaluated to pixels here rather than
+// drawn by a script on somebody's machine.
+bool cookTextureDoc(const std::string& source, const std::string& output)
+{
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(source.c_str(), bytes)) {
+        SOL_LOG_ERROR("cooker: cannot read %s", source.c_str());
+        return false;
+    }
+    assets::TextureDoc doc;
+    std::string error;
+    if (!assets::parseTexture(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
+                              source.c_str(), doc, &error)) {
+        SOL_LOG_ERROR("cooker: %s", error.c_str());
+        return false;
+    }
+    assets::TextureImage built;
+    if (!assets::buildTexture(doc, built, &error)) {
+        SOL_LOG_ERROR("cooker: %s: %s", source.c_str(), error.c_str());
+        return false;
+    }
+    if (doc.hasUnplaceableComments) {
+        SOL_LOG_WARN("cooker: %s carries a comment this format cannot place", source.c_str());
+    }
+
+    cooker::ImageRgba image;
+    image.width = built.width;
+    image.height = built.height;
+    image.pixels = std::move(built.pixels);
+    return writeTextureImage(image, source, output);
 }
 
 // ⚑ The format itself is `cooker::encodeMesh`, in the library, and this is only
@@ -262,6 +310,9 @@ int main(int argc, char** argv)
         if (extension == ".png") {
             job.output = outputDirectory + "/" + fileStem(source) + ".stex";
             job.cook = &cookTexture;
+        } else if (extension == ".tex") {
+            job.output = outputDirectory + "/" + fileStem(source) + ".stex";
+            job.cook = &cookTextureDoc;
         } else if (extension == ".gltf" || extension == ".glb") {
             job.output = outputDirectory + "/" + fileStem(source) + ".smesh";
             job.cook = &cookMesh;
