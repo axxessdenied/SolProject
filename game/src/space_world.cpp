@@ -2308,10 +2308,34 @@ void SpaceWorld::tickMining(double dt)
         const ecs::Entity entity = m_registry.create();
         m_registry.emplace<Transform>(entity, Transform{.position = wreck->position,
                                                         .previousPosition = wreck->position});
-        // No wreck mesh yet: a dead hull is whatever fills the `wreck` role,
-        // oversized and adrift. A proper broken hull is polish, not mechanism.
+        // ⚑ Phase 19 stage E: a wreck is drawn as THE SHIP THAT DIED, at that
+        // hull's own scale, because `WreckRecord::defId` has carried "the
+        // victim's ship def" since the record existed and this site threw it
+        // away to draw one model for every death. There is still no broken
+        // hull mesh - the oversize factor is the whole of the effect - but a
+        // freighter now leaves a freighter-sized derelict rather than a
+        // shuttle-sized one.
+        //
+        // ⚑ This is NOT cosmetic: the salvage beam sweeps `modelBaseRadius() *
+        // scale`, so a bigger wreck is a bigger thing to hit. It is the one
+        // behaviour change in the phase and was called out as such before it
+        // was built.
+        //
+        // A def that no longer exists (a save naming a removed hull) falls
+        // back to the `wreck` role at the old size, which is why that role
+        // exists at all.
+        ModelId wreckModel = roleModel(kRoleWreck);
+        float wreckScale = kWreckOversize;
+        if (m_defs != nullptr) {
+            if (const assets::ShipDef* victim = m_defs->findShip(wreck->defId.c_str())) {
+                wreckModel = modelIdFromName(*m_defs, victim->model, "wreck's ship def",
+                                             kRoleWreck);
+                wreckScale = victim->scale * kWreckOversize;
+            }
+        }
         m_registry.emplace<RenderShape>(
-            entity, RenderShape{.scale = {1.4f, 1.4f, 1.4f}, .model = roleModel(kRoleWreck)});
+            entity,
+            RenderShape{.scale = {wreckScale, wreckScale, wreckScale}, .model = wreckModel});
         m_registry.emplace<WreckMarker>(entity, WreckMarker{.id = id});
         wrecksChanged = true;
     }

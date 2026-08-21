@@ -520,6 +520,11 @@ struct ViewFrame
 // The new-game starter ship def; mods can override it (Phase 5 data pipeline).
 inline constexpr const char* kPlayerShipDefId = "sol.shuttle";
 
+// How much larger than the living hull a wreck is drawn (Phase 19 keeps the
+// figure it found inline). There is no broken-hull mesh: a dead ship is its
+// own model, oversized and adrift, and the oversize IS the effect.
+inline constexpr float kWreckOversize = 1.4f;
+
 // One ship the player owns (Phase 8a outfitting): its def, fit, crew, and —
 // unless it is the active ship — where it is stored.
 struct OwnedShip

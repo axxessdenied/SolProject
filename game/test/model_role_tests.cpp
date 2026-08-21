@@ -15,6 +15,7 @@
 #include <sol/core/log.hpp>
 #include <sol/test/test.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -290,6 +291,69 @@ SOL_TEST(the_cockpit_comes_from_the_active_ships_def)
         world.applyDefs(defs);
         SOL_CHECK(game::modelIndex(world.cockpitModel()) == defs.modelIndex("seat_default"));
     }
+}
+
+// Phase 19 stage E. `WreckRecord::defId` is commented "the victim's ship def"
+// and has been since the record existed; the spawn site ignored it and drew
+// one model at one size for every death.
+//
+// ⚑ THIS IS THE PHASE'S ONE BEHAVIOUR CHANGE, NOT A COSMETIC ONE. The salvage
+// beam sweeps `modelBaseRadius() * scale`, so a wreck's size is how hard it is
+// to hit - which is why the assertion is on the SCALE and not on the model.
+SOL_TEST(a_wreck_is_drawn_as_the_ship_that_died)
+{
+    DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(defs.mergeToml(kCockpitDefs, std::strlen(kCockpitDefs), "m.toml", &error));
+    constexpr const char* kFleet = R"(
+[[role]]
+id = "wreck"
+model = "hull"
+
+[[ship]]
+id = "sol.shuttle"
+name = "Shuttle"
+model = "hull"
+scale = 1.0
+
+[[ship]]
+id = "sol.freighter"
+name = "Freighter"
+model = "hull"
+scale = 4.0
+)";
+    SOL_REQUIRE(defs.mergeToml(kFleet, std::strlen(kFleet), "s.toml", &error));
+
+    game::SpaceWorld world;
+    world.spawn(1701);
+    world.generateUniverse(defs);
+    world.applyDefs(defs);
+
+    const std::uint32_t system = world.currentSystemIndex();
+    world.mining().addWreck(system, {0.0, 0.0, 5000.0}, "sol.shuttle", "Shuttle", 1);
+    world.mining().addWreck(system, {0.0, 0.0, 6000.0}, "sol.freighter", "Freighter", 2);
+
+    // Wreck records become entities on the sim's own schedule, so a tick is
+    // what brings them into the bubble.
+    world.tick(0.05);
+
+    // Read back through the renderer's own entry point rather than reaching
+    // into the ECS: what is asserted is what would actually be drawn.
+    std::vector<game::RenderInstance> instances;
+    world.buildRenderInstances(0.0f, false, instances);
+
+    bool sawShuttleWreck = false;
+    bool sawFreighterWreck = false;
+    for (const game::RenderInstance& instance : instances) {
+        sawShuttleWreck = sawShuttleWreck || std::abs(instance.scale.x - 1.4f) < 1e-4f;
+        sawFreighterWreck = sawFreighterWreck || std::abs(instance.scale.x - 5.6f) < 1e-4f;
+    }
+
+    // 1.0 x 1.4 and 4.0 x 1.4 - the two hulls differ only in scale, so their
+    // derelicts must too. Before stage E both read 1.4, and 5.6 is a size
+    // nothing else in this world is drawn at.
+    SOL_CHECK(sawShuttleWreck);
+    SOL_CHECK(sawFreighterWreck);
 }
 
 SOL_TEST(a_set_model_override_wins_and_a_broken_one_falls_back)
