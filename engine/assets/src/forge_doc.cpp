@@ -4,12 +4,14 @@
 #include "sol/core/math/scalar.hpp"
 #include "sol/core/toml.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <string_view>
+#include <tuple>
 
 namespace sol::assets {
 namespace {
@@ -1334,10 +1336,17 @@ constexpr double kCentreStepsPerMetre = 20000.0; // 0.05 mm
 
 } // namespace
 
-bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string* error,
-                 double tolerance)
+namespace {
+
+// The one build and the one dedup pass that both `forgePoints` and
+// `forgeTopology` run. It also reports which point each built vertex landed on,
+// which is what lets the edges be expressed in the SAME numbering as the points
+// rather than in `MeshAdjacency`'s - see `ForgeEdge` for why that matters.
+bool collectPoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, MeshData& mesh,
+                   std::vector<std::uint32_t>& pointOf, std::string* error, double tolerance)
 {
     out.clear();
+    pointOf.clear();
     if (!forgeHasVertexAttribution(doc)) {
         if (error != nullptr) {
             *error = "this document's [build] table welds or reorders vertices, so a built vertex "
@@ -1346,11 +1355,11 @@ bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string*
         return false;
     }
 
-    MeshData mesh;
     std::vector<ForgePartRange> ranges;
     if (!buildForge(doc, mesh, error, &ranges)) {
         return false;
     }
+    pointOf.assign(mesh.vertices.size(), 0);
 
     // Which part each built vertex came from. One pass over the ranges rather
     // than a search per vertex: the asteroid is 1291 vertices and this runs on
@@ -1375,20 +1384,25 @@ bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string*
         // Linear over the points found so far. The meshes this tool authors are
         // 16-1291 vertices and this is not the hot path; a grid would be the
         // answer if a future asset made it one.
-        ForgePoint* found = nullptr;
-        for (ForgePoint& candidate : out) {
-            const double dx = candidate.position.x - position.x;
-            const double dy = candidate.position.y - position.y;
-            const double dz = candidate.position.z - position.z;
+        std::size_t index = out.size();
+        for (std::size_t candidate = 0; candidate < out.size(); ++candidate) {
+            const double dx = out[candidate].position.x - position.x;
+            const double dy = out[candidate].position.y - position.y;
+            const double dz = out[candidate].position.z - position.z;
             if ((dx * dx) + (dy * dy) + (dz * dz) <= toleranceSquared) {
-                found = &candidate;
+                index = candidate;
                 break;
             }
         }
-        if (found == nullptr) {
+        if (index == out.size()) {
             out.push_back({position, {}, 0, 0});
-            found = &out.back();
         }
+        // ⚑ Recorded for EVERY vertex, including the ones that go on to find no
+        // authored answer below. An edge of a torus ring is still an edge - it
+        // is drawn, it is picked, and it is refused at the write with the bake
+        // offered. Skipping it here would make it invisible instead.
+        pointOf[v] = static_cast<std::uint32_t>(index);
+        ForgePoint* const found = &out[index];
         ++found->corners;
 
         const std::size_t owner = ownerOf[v];
@@ -1472,6 +1486,70 @@ bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string*
         if (!already) {
             found->writes.push_back(write);
         }
+    }
+    return true;
+}
+
+} // namespace
+
+bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string* error,
+                 double tolerance)
+{
+    MeshData mesh;
+    std::vector<std::uint32_t> pointOf;
+    return collectPoints(doc, out, mesh, pointOf, error, tolerance);
+}
+
+bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
+                   std::vector<ForgeEdge>& edges, std::string* error, double tolerance)
+{
+    edges.clear();
+    MeshData mesh;
+    std::vector<std::uint32_t> pointOf;
+    if (!collectPoints(doc, points, mesh, pointOf, error, tolerance)) {
+        return false;
+    }
+
+    // Collect every face's three sides, ordered so `a < b`, then sort and run
+    // over the duplicates - which is `buildAdjacency`'s shape, deliberately,
+    // because the two answer the same question and only differ in what they
+    // index. What is NOT shared is the numbering: these are point indices.
+    std::vector<ForgeEdge> refs;
+    const std::size_t faceCount = mesh.indices.size() / 3;
+    refs.reserve(faceCount * 3);
+    for (std::size_t face = 0; face < faceCount; ++face) {
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            const std::uint32_t ia = mesh.indices[(face * 3) + corner];
+            const std::uint32_t ib = mesh.indices[(face * 3) + ((corner + 1) % 3)];
+            if (ia >= pointOf.size() || ib >= pointOf.size()) {
+                continue; // an index past the vertices cannot name a point
+            }
+            std::uint32_t a = pointOf[ia];
+            std::uint32_t b = pointOf[ib];
+            if (a == b) {
+                // ⚑ Two corners of one face standing at one point. A revolve
+                // that touches its own axis fans to a point and does this once
+                // per segment - 32 times in `gate_membrane.forge` - and calling
+                // that an edge would put 32 zero-length edges in the pick list.
+                continue;
+            }
+            if (a > b) {
+                std::swap(a, b);
+            }
+            refs.push_back({a, b, 0});
+        }
+    }
+
+    std::sort(refs.begin(), refs.end(), [](const ForgeEdge& lhs, const ForgeEdge& rhs) {
+        return std::tuple{lhs.a, lhs.b} < std::tuple{rhs.a, rhs.b};
+    });
+    for (std::size_t i = 0; i < refs.size();) {
+        std::size_t j = i;
+        while (j < refs.size() && refs[j].a == refs[i].a && refs[j].b == refs[i].b) {
+            ++j;
+        }
+        edges.push_back({refs[i].a, refs[i].b, static_cast<std::uint32_t>(j - i)});
+        i = j;
     }
     return true;
 }

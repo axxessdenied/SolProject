@@ -367,6 +367,43 @@ struct ForgePoint
 [[nodiscard]] bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out,
                                std::string* error = nullptr, double tolerance = 1e-5);
 
+// One edge of the built mesh (engine plan Phase 9 stage E4): a pair of points
+// with at least one triangle standing on it.
+//
+// ⚑⚑ `a` and `b` index the ForgePoint vector, NOT an EditMesh, and that is the
+// whole reason this exists instead of `MeshAdjacency`. `buildAdjacency` already
+// produces a sorted unique edge list with its faces - but over
+// `EditMesh::positions`, which `toEditMesh` numbers with a spatial-hash welder
+// and `removeUnused` then RENUMBERS, while `forgePoints` numbers by its own
+// linear scan over every built vertex, referenced or not. Two independent welds
+// at the same tolerance are two numberings that agree only by accident, and a
+// tool that picked an edge in one and wrote through the other would move the
+// wrong point on the first asset where they diverged. This repo has shipped
+// that bug once already, one index meaning two things.
+struct ForgeEdge
+{
+    std::uint32_t a = 0; // a < b, both into the ForgePoint vector
+    std::uint32_t b = 0;
+    std::uint32_t faceCount = 0; // triangles standing on it; 1 means a border
+};
+
+// Every distinct point of the mesh `doc` builds, and every edge joining them,
+// from ONE build and ONE dedup pass.
+//
+// ⚑ Both halves come out of the same traversal on purpose. Deriving the edges
+// from a second pass - or from a second weld - is the two-implementations trap
+// this programme has already paid for twice (the mesh that was a `.gltf` and a
+// `.forge`, the `box` that the bake and the build each described). The points
+// this returns are exactly `forgePoints`', so a caller may use both.
+//
+// ⚑ A degenerate edge is not an adjacency: a face whose two corners weld to one
+// point contributes nothing, which is how `gate_membrane.forge` - a revolve
+// that touches its own axis and fans to a point, 32 degenerate faces, one per
+// segment - is described honestly rather than with 32 edges of no length.
+[[nodiscard]] bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
+                                 std::vector<ForgeEdge>& edges, std::string* error = nullptr,
+                                 double tolerance = 1e-5);
+
 // Moves one point by `delta`, writing every parameter standing at it. The delta
 // is in the frame the mesh is built in and is rotated into each part's own
 // frame through the inverse of that part's world transform, so a part under a

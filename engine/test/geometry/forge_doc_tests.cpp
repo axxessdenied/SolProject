@@ -5,6 +5,7 @@
 #include "shipped_meshes.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +13,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -2013,4 +2015,156 @@ SOL_TEST(bakingRefusesAGroupAndAPartThatIsNotThere)
     error.clear();
     SOL_CHECK(!assets::forgeBakeDocumentPart(doc, doc.parts.size(), &error));
     SOL_CHECK(!error.empty());
+}
+
+// ⚑⚑ STAGE E4. The edge list, in the numbering the tool already writes through.
+//
+// The stage's own one-line estimate said edge picking was "a projection over
+// data that exists", meaning `MeshAdjacency::edges`. The data exists and it is
+// indexed in a DIFFERENT numbering: `toEditMesh` welds with a spatial hash and
+// `removeUnused` renumbers, while `forgePoints` welds with its own linear scan
+// over every built vertex. This asserts the two agree about the TOPOLOGY - the
+// same edges between the same places - which is what makes `forgeTopology` a
+// re-expression rather than a second opinion, without ever assuming the two
+// index spaces are the same integers.
+SOL_TEST(everyCommittedAssetsEdgesAgreeWithAdjacencyAboutTheTopology)
+{
+    const char* const names[] = {"cube",    "gate",     "ship",         "station",
+                                 "cockpit", "asteroid", "gate_membrane"};
+    for (const char* name : names) {
+        const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+        const std::string source = readWholeFile(path);
+        SOL_REQUIRE(!source.empty());
+        ForgeDoc doc;
+        SOL_REQUIRE(parses(source, doc));
+
+        std::vector<assets::ForgePoint> points;
+        std::vector<assets::ForgeEdge> edges;
+        SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+
+        assets::MeshData mesh;
+        SOL_REQUIRE(assets::buildForge(doc, mesh));
+        const assets::EditMesh edit = assets::toEditMesh(mesh);
+        const assets::MeshAdjacency adjacency = assets::buildAdjacency(edit);
+
+        // The same number of edges, over the same number of points, however
+        // each side numbered them.
+        SOL_CHECK(points.size() == edit.positions.size());
+        SOL_CHECK(edges.size() == adjacency.edges.size());
+
+        // And every edge stands between the same two PLACES, compared as
+        // geometry rather than as indices. Position pairs, ordered within the
+        // pair, then sorted - so the two lists are equal as sets or they are not.
+        const auto keyOf = [](assets::BuildPoint p, assets::BuildPoint q) {
+            std::array<double, 6> key{p.x, p.y, p.z, q.x, q.y, q.z};
+            if (std::tuple{q.x, q.y, q.z} < std::tuple{p.x, p.y, p.z}) {
+                key = {q.x, q.y, q.z, p.x, p.y, p.z};
+            }
+            return key;
+        };
+        std::vector<std::array<double, 6>> mine;
+        mine.reserve(edges.size());
+        for (const assets::ForgeEdge& edge : edges) {
+            SOL_REQUIRE(edge.a < points.size() && edge.b < points.size());
+            SOL_CHECK(edge.a < edge.b);
+            SOL_CHECK(edge.faceCount >= 1);
+            mine.push_back(keyOf(points[edge.a].position, points[edge.b].position));
+        }
+        std::vector<std::array<double, 6>> theirs;
+        theirs.reserve(adjacency.edges.size());
+        for (const assets::MeshAdjacency::Edge& edge : adjacency.edges) {
+            const core::Vec3 a = edit.positions[edge.a];
+            const core::Vec3 b = edit.positions[edge.b];
+            theirs.push_back(keyOf({a.x, a.y, a.z}, {b.x, b.y, b.z}));
+        }
+        std::sort(mine.begin(), mine.end());
+        std::sort(theirs.begin(), theirs.end());
+        SOL_CHECK(mine == theirs);
+        if (mine != theirs) {
+            std::printf("  %s: %zu edges vs %zu\n", name, mine.size(), theirs.size());
+        }
+    }
+}
+
+// The numbers, on the asset whose numbers a person can check by hand. A cube is
+// 8 points, 12 triangles and 18 edges, and every edge of a closed solid carries
+// exactly two faces - which is also Euler: 8 - 18 + 12 = 2.
+SOL_TEST(theCubesEdgesAreEighteenAndEveryOneCarriesTwoFaces)
+{
+    const std::string source = readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/cube.forge");
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+
+    SOL_CHECK(points.size() == 8);
+    SOL_CHECK(edges.size() == 18);
+    for (const assets::ForgeEdge& edge : edges) {
+        SOL_CHECK(edge.faceCount == 2);
+    }
+
+    // Sorted and unique, which is what lets a pick binary-search it later and
+    // what proves the run-length pass collapsed the duplicates rather than
+    // emitting one entry per face.
+    for (std::size_t i = 1; i < edges.size(); ++i) {
+        SOL_CHECK(std::tuple{edges[i - 1].a, edges[i - 1].b} < std::tuple{edges[i].a, edges[i].b});
+    }
+}
+
+// ⚑ `gate_membrane.forge` is a revolve that touches its own axis, so it fans to
+// a point and carries exactly one degenerate face per segment - 32 of them,
+// which Phase 16 measured and pinned. A degenerate face's collapsed side is not
+// an edge: it joins a point to itself, has no length, and could never be picked
+// or dragged. It contributes nothing here rather than 32 zero-length entries.
+SOL_TEST(theMembranesDegenerateFacesContributeNoEdges)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/gate_membrane.forge";
+    const std::string source = readWholeFile(path);
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+
+    for (const assets::ForgeEdge& edge : edges) {
+        SOL_CHECK(edge.a != edge.b);
+    }
+
+    // The film is open, so it has a border - and a border edge carries one face
+    // where a closed solid's carries two. That it has any at all is the honest
+    // description of a surface with an outline, and it is why the closed-solid
+    // invariants exclude this asset by name.
+    std::uint32_t border = 0;
+    for (const assets::ForgeEdge& edge : edges) {
+        border += static_cast<std::uint32_t>(edge.faceCount == 1);
+    }
+    SOL_CHECK(border > 0);
+}
+
+// The same refusal `forgePoints` gives, for the same reason: a `[build]`
+// post-pass renumbers vertices, so a built index no longer names a part and
+// neither the points nor the edges over them mean anything.
+SOL_TEST(topologyRefusesADocumentWhoseBuildPassRenumbersVertices)
+{
+    const std::string source = readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/cube.forge");
+    SOL_REQUIRE(!source.empty());
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+    SOL_CHECK(!edges.empty());
+
+    doc.build.optimize = true;
+    std::string error;
+    SOL_CHECK(!assets::forgeTopology(doc, points, edges, &error));
+    SOL_CHECK(!error.empty());
+    SOL_CHECK(points.empty());
+    SOL_CHECK(edges.empty());
 }
