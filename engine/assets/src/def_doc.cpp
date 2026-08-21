@@ -1,6 +1,7 @@
 #include "sol/assets/def_doc.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -387,17 +388,18 @@ std::string writeDefs(const DefDoc& doc)
     return out;
 }
 
-std::string defNumber(double value)
+std::string defNumber(float value)
 {
+    const auto wide = static_cast<double>(value);
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%.17g", value);
-    for (int precision = 1; precision <= 17; ++precision) {
+    std::snprintf(buffer, sizeof(buffer), "%.9g", wide);
+    for (int precision = 1; precision <= 9; ++precision) {
         char candidate[64];
-        std::snprintf(candidate, sizeof(candidate), "%.*g", precision, value);
+        std::snprintf(candidate, sizeof(candidate), "%.*g", precision, wide);
         if (std::strpbrk(candidate, "eE") != nullptr) {
             continue; // a plain form is what a person types; keep looking
         }
-        if (std::strtod(candidate, nullptr) == value) {
+        if (static_cast<float>(std::strtod(candidate, nullptr)) == value) {
             std::memcpy(buffer, candidate, sizeof(buffer));
             break;
         }
@@ -409,6 +411,16 @@ std::string defNumber(double value)
         text += ".0";
     }
     return text;
+}
+
+std::string defNumber(float value, int decimals)
+{
+    double scale = 1.0;
+    for (int i = 0; i < decimals; ++i) {
+        scale *= 10.0;
+    }
+    const double rounded = std::round(static_cast<double>(value) * scale) / scale;
+    return defNumber(static_cast<float>(rounded));
 }
 
 std::string defString(std::string_view value)

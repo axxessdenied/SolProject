@@ -196,8 +196,8 @@ SOL_TEST(defDocumentKeepsAnExponentForm)
     SOL_REQUIRE(range != nullptr);
     SOL_CHECK(range->value() == "2.5e8");
     // What a value-parsing writer would have produced instead.
-    SOL_CHECK(assets::defNumber(2.5e8) == "250000000.0");
-    SOL_CHECK(range->value() != assets::defNumber(2.5e8));
+    SOL_CHECK(assets::defNumber(2.5e8f) == "250000000.0");
+    SOL_CHECK(range->value() != assets::defNumber(2.5e8f));
 }
 
 // `alpha = 0.30` and `emissive = 0.10` lose their zero through a number.
@@ -212,8 +212,8 @@ SOL_TEST(defDocumentKeepsAFractionalTrailingZero)
     const assets::DefKey* alpha = membrane->find("alpha");
     SOL_REQUIRE(alpha != nullptr);
     SOL_CHECK(alpha->value() == "0.30");
-    SOL_CHECK(assets::defNumber(0.30) == "0.3");
-    SOL_CHECK(alpha->value() != assets::defNumber(0.30));
+    SOL_CHECK(assets::defNumber(0.30f) == "0.3");
+    SOL_CHECK(alpha->value() != assets::defNumber(0.30f));
 }
 
 // A trailing comment sits on four committed lines. It is not trivia this model
@@ -248,7 +248,7 @@ SOL_TEST(defDocumentEditChangesOnlyTheLineItTouched)
     SOL_REQUIRE(parses(source, doc));
     DefRow* asteroid = doc.find("model", "asteroid");
     SOL_REQUIRE(asteroid != nullptr);
-    asteroid->set("radius", assets::defNumber(1.1584));
+    asteroid->set("radius", assets::defNumber(1.1584f));
 
     const std::string written = assets::writeDefs(doc);
     SOL_CHECK(written != source);
@@ -284,7 +284,7 @@ SOL_TEST(defDocumentAddsAKeyAtTheEndOfItsRow)
     DefRow* ship = doc.find("model", "ship");
     SOL_REQUIRE(ship != nullptr);
     const std::size_t before = ship->keys.size();
-    ship->set("emissive", assets::defNumber(0.05));
+    ship->set("emissive", assets::defNumber(0.05f));
     SOL_CHECK(ship->keys.size() == before + 1);
     SOL_CHECK(ship->keys.back().name == "emissive");
 
@@ -304,7 +304,7 @@ SOL_TEST(defDocumentAppendsARowAfterTheLastOne)
     row.set("id", assets::defString("beacon"));
     row.set("mesh", assets::defString("gate"));
     row.set("texture", assets::defString("hull"));
-    row.set("radius", assets::defNumber(12.0));
+    row.set("radius", assets::defNumber(12.0f));
 
     const std::string written = assets::writeDefs(doc);
     SOL_CHECK(written.rfind("\n[[model]]\nid = \"beacon\"\nmesh = \"gate\"\ntexture = \"hull\"\n"
@@ -466,15 +466,44 @@ SOL_TEST(defDocumentRefusesWhatItCannotRepresent)
 
 SOL_TEST(defNumberWritesWhatAPersonWouldType)
 {
-    SOL_CHECK(assets::defNumber(1.0) == "1.0");
-    SOL_CHECK(assets::defNumber(8.0) == "8.0");
-    SOL_CHECK(assets::defNumber(106.7) == "106.7");
-    SOL_CHECK(assets::defNumber(1.1584) == "1.1584");
-    SOL_CHECK(assets::defNumber(0.35) == "0.35");
+    SOL_CHECK(assets::defNumber(1.0f) == "1.0");
+    SOL_CHECK(assets::defNumber(8.0f) == "8.0");
+    SOL_CHECK(assets::defNumber(106.7f) == "106.7");
+    SOL_CHECK(assets::defNumber(1.1584f) == "1.1584");
+    SOL_CHECK(assets::defNumber(0.35f) == "0.35");
     // ⚑ The round numbers an author is most likely to type are exactly the ones
     // a naive shortest-form writer mangles: 90 has the shortest form `9e+01`.
-    SOL_CHECK(assets::defNumber(90.0) == "90.0");
-    SOL_CHECK(assets::defNumber(100.0) == "100.0");
+    SOL_CHECK(assets::defNumber(90.0f) == "90.0");
+    SOL_CHECK(assets::defNumber(100.0f) == "100.0");
+    // ⚑ And the reason it takes a float: the asteroid's MEASURED radius is what
+    // the "use measured radius" button writes, and through a double it would
+    // arrive in the file as 1.1584000587463379.
+    const float measured = 1.1584f;
+    SOL_CHECK(assets::defNumber(measured) == "1.1584");
+    SOL_CHECK(assets::defNumber(102.0f) == "102.0");
     SOL_CHECK(assets::defString("sol.beacon") == "\"sol.beacon\"");
     SOL_CHECK(assets::defBool(false) == "false");
+}
+
+// ⚑ Phase 14's rule in a second format: the file gets what the panel SHOWED.
+// The asteroid's measured radius is what the "use measured" button writes, and
+// unrounded it lands in models.toml as 1.1583778 among neighbours carrying one
+// decimal - while the button's own label says 1.1584.
+SOL_TEST(defNumberRoundsToThePrecisionThePanelShows)
+{
+    const float measured = 1.1583778f;
+    SOL_CHECK(assets::defNumber(measured) == "1.1583778");
+    SOL_CHECK(assets::defNumber(measured, 4) == "1.1584");
+    SOL_CHECK(assets::defNumber(102.00194f, 4) == "102.0019");
+    SOL_CHECK(assets::defNumber(0.3499f, 3) == "0.35");
+    // A whole number keeps its dot, so the schema still reads a float.
+    SOL_CHECK(assets::defNumber(8.00001f, 4) == "8.0");
+    SOL_CHECK(assets::defNumber(100.0f, 4) == "100.0");
+
+    // ⚑ And the rounding cannot re-open the mismatch the button exists to
+    // close. Half a unit in the fourth decimal is 0.00005 m; `ModelMatch`
+    // agrees within 0.1%, so on the SMALLEST radius in this game (1.0 m) the
+    // worst rounding error is 0.005% - three orders of magnitude inside it.
+    const float worst = 0.00005f / 1.0f;
+    SOL_CHECK(worst * 100.0f < 0.001f * 100.0f);
 }

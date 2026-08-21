@@ -9,6 +9,7 @@
 // boxes and the metric grid are here and why the lighting numbers are the
 // game's rather than a viewer's own.
 
+#include "def_editor.hpp"
 #include "forge_view.hpp"
 #include "mesh_library.hpp"
 #include "orbit_camera.hpp"
@@ -219,14 +220,32 @@ int main(int argc, char** argv)
     // noticed by a person holding a panel next to a text file, which is exactly
     // how stage C found it.
     assets::DefDatabase defs;
+    const std::string dataDirectory = SOL_MODEL_DATA_DIR;
     {
-        const std::string dataDirectory = SOL_MODEL_DATA_DIR;
         std::string defError;
         if (!forge::loadModelCatalog(dataDirectory, defs, &defError)) {
             SOL_LOG_WARN("forge: cannot read model defs: %s", defError.c_str());
         }
         SOL_LOG_INFO("forge: %zu [[model]] row(s) from %s", defs.models().size(),
                      dataDirectory.c_str());
+    }
+
+    // Stage H: the same rows as a DOCUMENT, so they can be written as well as
+    // read. Two views of one file on purpose - `defs` is what the game would
+    // load and `defEditor` is what an author is typing into - and the editor
+    // re-derives its own database from the text after every accepted edit, so
+    // the panel never shows a number the game would not agree with.
+    forge::DefEditor defEditor;
+    defEditor.load(dataDirectory);
+    std::string defStatus = defEditor.loaded() ? "def rows loaded" : defEditor.error();
+    // The stems the texture combo offers, which is exactly what the tool can
+    // open rather than whatever a text field might be made to say.
+    std::vector<std::string> textureStems;
+    for (const forge::AssetEntry& textureEntry : loadedTextureEntries) {
+        if (std::find(textureStems.begin(), textureStems.end(), textureEntry.stem) ==
+            textureStems.end()) {
+            textureStems.push_back(textureEntry.stem);
+        }
     }
 
     renderer::GpuMesh openMesh = {};
@@ -740,50 +759,42 @@ int main(int argc, char** argv)
                 ImGui::Text("closed         %s", report.closed ? "yes" : "no");
                 ImGui::Text("border edges   %u", report.borderEdges);
 
-                // ⚑ The measured radius set beside the authored one. Stage C
-                // could measure and could not read, so its two mismatches had
-                // to be spotted by a human comparing a panel with a text file.
-                ImGui::Separator();
-                if (modelMatches.empty()) {
-                    ImGui::TextDisabled("no [[model]] row names this mesh");
-                } else {
-                    for (const forge::ModelMatch& match : modelMatches) {
-                        ImGui::Text("[[model]] %s", match.id.c_str());
-                        ImGui::Text("  texture      %s", match.texture.c_str());
-                        ImGui::Text("  radius       %.4f m authored",
-                                    static_cast<double>(match.authoredRadius));
-                        if (match.radiusAgrees()) {
-                            ImGui::TextDisabled("  matches the mesh");
-                        } else {
-                            // ⚑ Wrapped, because the first version of this line
-                            // ran off the panel and stopped at "the collision
-                            // sphere sits" - which is the fourth time this repo
-                            // has shipped a widget that does not fit its box,
-                            // and the sentence IS the finding.
-                            ImGui::PushTextWrapPos(0.0f);
-                            ImGui::PushStyleColor(ImGuiCol_Text,
-                                                  ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
-                            if (match.radiusDelta > 0.0f) {
-                                ImGui::Text("  MESH IS %.4f m (%.1f%%) LARGER: the collision "
-                                            "sphere sits inside the hull, so ships pass through "
-                                            "the picture",
-                                            static_cast<double>(match.radiusDelta),
-                                            static_cast<double>(match.radiusDeltaPercent()));
-                            } else {
-                                ImGui::Text("  MESH IS %.4f m (%.1f%%) SMALLER: the sphere reaches "
-                                            "past what is drawn, so ships stop short of nothing",
-                                            static_cast<double>(-match.radiusDelta),
-                                            static_cast<double>(-match.radiusDeltaPercent()));
-                            }
-                            ImGui::PopStyleColor();
-                            ImGui::PopTextWrapPos();
+            }
+
+            // ⚑ Stage H, and it is deliberately its own section rather than a
+            // tail on the Report. The Report describes the MESH; these rows are
+            // the CONTENT that names it, and until this stage the tool could
+            // print them and not change one - which is how the four radius
+            // mismatches in this game came to be reported for five stages by a
+            // warning whose only remedy was a text editor.
+            if (openIndex >= 0 &&
+                ImGui::CollapsingHeader("Def rows", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (defEditor.drawModelRows(meshEntries[static_cast<std::size_t>(openIndex)],
+                                            report, textureStems)) {
+                    // The panel measures against the editor's own validated
+                    // reading, so nothing here needs the boot-time catalog.
+                }
+                if (ImGui::Button("save defs")) {
+                    if (defEditor.save(defStatus)) {
+                        // The boot catalog is what every other panel reads, so
+                        // it has to follow the file rather than drift from it.
+                        std::string defError;
+                        if (!forge::loadModelCatalog(dataDirectory, defs, &defError)) {
+                            defStatus = defError;
                         }
-                        ImGui::Text("  avoid        %.4f m",
-                                    static_cast<double>(match.authoredAvoidRadius));
-                        ImGui::Text("  emissive     %.3f", static_cast<double>(match.emissive));
-                        ImGui::Text("  solid        %s", match.solid ? "yes" : "no (fly through)");
+                        modelMatches = forge::matchModels(
+                            defs, meshEntries[static_cast<std::size_t>(openIndex)], report);
                     }
                 }
+                ImGui::SameLine();
+                if (ImGui::Button("undo def")) {
+                    if (!defEditor.undo()) {
+                        defStatus = "nothing to undo";
+                    }
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", defEditor.dirty() ? "* unsaved" : "saved");
+                ImGui::TextDisabled("%s", defStatus.c_str());
             }
 
             // Stage F. Below the Report because a level is a consequence of the

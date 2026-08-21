@@ -3,6 +3,7 @@
 # inside the game - the shipping binary carries no editor, and ImGui stays dev
 # tooling (AGENTS.md 5).
 add_executable(sol_forge
+    src/def_editor.cpp
     src/forge_view.cpp
     src/main.cpp
     src/mesh_library.cpp

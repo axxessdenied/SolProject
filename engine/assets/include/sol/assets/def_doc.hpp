@@ -141,12 +141,33 @@ struct DefDoc
 // built agrees with the writer by construction.
 [[nodiscard]] std::string writeDefs(const DefDoc& doc);
 
-// Value formatters, so the two callers that set a number do not each invent
-// one. `defNumber` writes the shortest form that reparses to the same double,
-// preferring a plain form over an exponent and always carrying a `.` so TOML
-// reads a float - the rule `forge_doc` arrived at, applied only to values the
-// tool is CHANGING, where the author's own spelling is being replaced anyway.
-[[nodiscard]] std::string defNumber(double value);
+// Value formatters, so the callers that set a value do not each invent one.
+// Applied only to values the tool is CHANGING, where the author's own spelling
+// is being replaced anyway - everything untouched keeps its own text.
+//
+// ⚑ It takes a FLOAT deliberately. Every number `DefDatabase` reads lands in a
+// float field, so the extra digits a double writer emits are not precision -
+// they are the decimal expansion of a binary value carrying no more
+// information, and a measured radius would arrive in the file as
+// `1.1584000587463379`. The shortest form that survives a round trip through
+// float is `1.1584`, which is also what a person would have typed.
+//
+// Prefers a plain form over an exponent, and always carries a `.` so TOML reads
+// a float rather than an integer. Both rules are `forge_doc`'s, and the first
+// exists because the shortest form of 90 is `9e+01`.
+[[nodiscard]] std::string defNumber(float value);
+
+// ⚑ The same, rounded to `decimals` places first, so a def file gets exactly
+// the number the panel DISPLAYED. This is Phase 14's rule arriving in a second
+// format: a measured radius written at full float precision reads
+// `1.1583778` in a file whose neighbours carry one decimal, and it makes a
+// button labelled "use measured 1.1584 m" write something else - a small lie in
+// the UI on top of an unreadable line.
+//
+// Rounding cannot re-open the mismatch it is used to close: `ModelMatch`
+// agrees within 0.1% and half a unit in the fourth decimal of a metre is 0.004%
+// of the smallest radius in this game, three orders of magnitude inside it.
+[[nodiscard]] std::string defNumber(float value, int decimals);
 [[nodiscard]] std::string defString(std::string_view value);
 [[nodiscard]] std::string defBool(bool value);
 
