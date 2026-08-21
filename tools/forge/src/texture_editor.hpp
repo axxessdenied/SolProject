@@ -45,6 +45,16 @@ public:
     void beginEdit();
     [[nodiscard]] bool undo();
 
+    // ⚑ Pushes undo on the frame the LAST-SUBMITTED widget became active, which
+    // is the whole difference between one undo entry per gesture and one per
+    // frame. A DragInt reports an edit on every frame the mouse moves, so
+    // pushing from the write-back path turns a 24-frame drag into 24 entries -
+    // one press of `undo` then steps back a single frame and the other 23 evict
+    // real history. `PartEditor` has always known this (its `movePoint` pushes
+    // nothing and the caller opens the gesture once); this is the same rule
+    // where the gesture belongs to ImGui rather than to the viewport.
+    void noteActivation();
+
     [[nodiscard]] bool isOpen() const { return m_open; }
     [[nodiscard]] const sol::assets::TextureDoc& doc() const { return m_doc; }
     [[nodiscard]] bool dirty() const { return m_dirty; }

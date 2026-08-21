@@ -175,6 +175,13 @@ void TextureEditor::beginEdit()
     }
 }
 
+void TextureEditor::noteActivation()
+{
+    if (ImGui::IsItemActivated()) {
+        beginEdit();
+    }
+}
+
 bool TextureEditor::undo()
 {
     if (m_undo.empty()) {
@@ -266,13 +273,16 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                 value.integer = shown;
                 edited = true;
             }
+            noteActivation();
             break;
         }
         case TextureParamKind::Color:
             edited = colorEdit(spec.name, value.color);
+            noteActivation();
             break;
         case TextureParamKind::ColorOffset:
             edited = offsetEdit(spec.name, value.color);
+            noteActivation();
             break;
         case TextureParamKind::RectList: {
             ImGui::Text("%s  (%zu)", spec.name, value.rects.size());
@@ -287,8 +297,10 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                                           std::max(0, row[3])};
                         edited = true;
                     }
+                    noteActivation();
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) {
+                        beginEdit();
                         value.rects.erase(value.rects.begin() + static_cast<std::ptrdiff_t>(i));
                         edited = true;
                         ImGui::PopID();
@@ -299,6 +311,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             }
             ImGui::EndChild();
             if (ImGui::SmallButton("add rect")) {
+                beginEdit();
                 value.rects.push_back(value.rects.empty() ? TextureRect{0, 0, 16, 16}
                                                           : value.rects.back());
                 edited = true;
@@ -318,8 +331,10 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                                            std::max(0, row[3]), std::clamp(row[4], 0, 255)};
                         edited = true;
                     }
+                    noteActivation();
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) {
+                        beginEdit();
                         value.panels.erase(value.panels.begin() + static_cast<std::ptrdiff_t>(i));
                         edited = true;
                         ImGui::PopID();
@@ -330,6 +345,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             }
             ImGui::EndChild();
             if (ImGui::SmallButton("add panel")) {
+                beginEdit();
                 value.panels.push_back(value.panels.empty() ? TexturePanel{0, 0, 32, 24, 100}
                                                             : value.panels.back());
                 edited = true;
@@ -346,8 +362,10 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                     value.integers[i] = shown;
                     edited = true;
                 }
+                noteActivation();
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) {
+                    beginEdit();
                     value.integers.erase(value.integers.begin() +
                                          static_cast<std::ptrdiff_t>(i));
                     edited = true;
@@ -360,6 +378,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                 }
             }
             if (ImGui::SmallButton("add line")) {
+                beginEdit();
                 value.integers.push_back(value.integers.empty() ? 0 : value.integers.back());
                 edited = true;
             }
@@ -369,8 +388,14 @@ bool TextureEditor::drawParams(TextureLayer& layer)
         ImGui::PopID();
         // Written back only on an actual edit, so redrawing the panel never
         // dirties a document nobody changed.
+        //
+        // ⚑ NO beginEdit() HERE. A drag reports an edit on every frame it
+        // moves, and pushing undo from this path is what made one `undo` step
+        // back a single frame of a gesture (146 -> 143 on a drag from 72, live).
+        // The gesture opens once, in noteActivation(), when the widget becomes
+        // active. The buttons below DO push their own, because a press is one
+        // gesture and one entry.
         if (edited) {
-            beginEdit();
             layer.set(spec.name, value);
             m_dirty = true;
             changed = true;
