@@ -3,6 +3,7 @@
 #include "mesh.hpp"
 #include "png.hpp"
 #include "sound.hpp"
+#include "texture.hpp"
 
 #include "sol/assets/asset_loader.hpp"
 #include "sol/assets/formats.hpp"
@@ -655,4 +656,60 @@ SOL_TEST(everyLevelACommittedForgeProducesLoadsThroughTheRuntimeLoader)
         }
     }
     SOL_CHECK(chainsSeen > 0); // never a vacuous pass
+}
+
+// ⚑ The layout the game loads, asserted end to end for the first time. The mip
+// chain and the header used to be assembled in the cooker's `main.cpp`, outside
+// the library this suite links - the same shape that kept `.smesh` untestable
+// until the E1-E3 debt slice moved `encodeMesh`. Stage G moved this one because
+// the Forge needed to call it too, and a second mip loop in the tool would be a
+// second answer to what a cooked texture is.
+SOL_TEST(textureRoundTripsThroughTheCookedFormat)
+{
+    cooker::ImageRgba image;
+    image.width = 8;
+    image.height = 8;
+    image.pixels.assign(static_cast<std::size_t>(image.width) * image.height * 4, 0);
+    for (std::size_t i = 0; i < image.pixels.size(); i += 4) {
+        image.pixels[i] = 200;      // r
+        image.pixels[i + 1] = 40;   // g
+        image.pixels[i + 2] = 90;   // b
+        image.pixels[i + 3] = 255;
+    }
+
+    const assets::TextureData encoded = cooker::encodeTexture(image);
+    SOL_CHECK(encoded.width == 8);
+    SOL_CHECK(encoded.height == 8);
+    SOL_CHECK(encoded.format == assets::TextureFormat::BC1);
+    // 8, 4, 2, 1 - the chain runs to a single texel rather than stopping at a
+    // block, because a mip smaller than 4x4 is still a mip the sampler wants.
+    SOL_REQUIRE(encoded.mips.size() == 4);
+    SOL_CHECK(encoded.mips[0].size() == 8 * 8 / 16 * 8);
+
+    const std::vector<std::uint8_t> bytes = cooker::serializeTexture(encoded);
+    std::size_t payload = 0;
+    for (const std::vector<std::uint8_t>& mip : encoded.mips) {
+        payload += mip.size();
+    }
+    SOL_CHECK(bytes.size() == sizeof(assets::TextureFileHeader) + payload);
+
+    const std::string path = std::string(platform::executableDirectory()) + "test_roundtrip.stex";
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), bytes.data(), bytes.size()));
+
+    assets::TextureData loaded;
+    SOL_REQUIRE(assets::loadTexture(path.c_str(), loaded));
+    SOL_CHECK(loaded.width == encoded.width);
+    SOL_CHECK(loaded.height == encoded.height);
+    SOL_CHECK(loaded.format == encoded.format);
+    SOL_REQUIRE(loaded.mips.size() == encoded.mips.size());
+    for (std::size_t i = 0; i < loaded.mips.size(); ++i) {
+        SOL_CHECK(loaded.mips[i] == encoded.mips[i]);
+    }
+
+    // A truncated payload is a size mismatch, not a short read.
+    SOL_REQUIRE(platform::writeFileBytes(path.c_str(), bytes.data(), bytes.size() - 2));
+    assets::TextureData shortLoad;
+    SOL_CHECK(!assets::loadTexture(path.c_str(), shortLoad));
+
+    std::remove(path.c_str());
 }

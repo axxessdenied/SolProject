@@ -207,3 +207,38 @@ SOL_TEST(theCommittedMeshesAndTheirModelRowsStillDisagreeExactlyWhereTheyDid)
         }
     }
 }
+
+// ⚑ The headless half of stage G, and it is worth having because the encode is
+// the part an author cannot see: the panel shows a colour, the viewport shows a
+// lit hull, and neither says whether what reached the GPU is the BC1 chain the
+// game will load or the raw RGBA the document built. A tool that is prettier
+// than the game is worse than useless, so the property asserted is that the
+// tool's own load produces the cooked form.
+SOL_TEST(aTextureSourceLoadsAsTheCookedFormRatherThanRawPixels)
+{
+    const std::vector<forge::AssetEntry> entries =
+        forge::listTextures(SOL_TEXTURE_SOURCE_DIR, SOL_TEXTURE_SOURCE_DIR);
+
+    std::size_t sourcesSeen = 0;
+    for (const forge::AssetEntry& entry : entries) {
+        if (!forge::isTextureSource(entry)) {
+            continue;
+        }
+        ++sourcesSeen;
+        assets::TextureData data;
+        std::string error;
+        if (!forge::loadTexture(entry, data, &error)) {
+            std::printf("  %s: %s\n", entry.label.c_str(), error.c_str());
+        }
+        SOL_REQUIRE(forge::loadTexture(entry, data, &error));
+        SOL_CHECK(data.width == 256);
+        SOL_CHECK(data.height == 256);
+        SOL_CHECK(data.format == assets::TextureFormat::BC1);
+        // 256 down to 1 is nine levels, and the chain running all the way is
+        // what separates "encoded" from "handed over as one big image".
+        SOL_CHECK(data.mips.size() == 9);
+        SOL_REQUIRE(!data.mips.empty());
+        SOL_CHECK(data.mips[0].size() == 256 / 4 * 256 / 4 * 8);
+    }
+    SOL_CHECK(sourcesSeen == 3); // never a vacuous pass
+}

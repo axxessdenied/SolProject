@@ -1,8 +1,10 @@
 #include "mesh_library.hpp"
 
 #include "gltf.hpp"
+#include "texture.hpp"
 
 #include "sol/assets/forge_doc.hpp"
+#include "sol/assets/texture_doc.hpp"
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
 
@@ -63,16 +65,75 @@ std::vector<AssetEntry> listMeshes(const std::string& sourceDirectory,
     return entries;
 }
 
-std::vector<AssetEntry> listTextures(const std::string& cookedDirectory)
+std::vector<AssetEntry> listTextures(const std::string& sourceDirectory,
+                                     const std::string& cookedDirectory)
 {
     std::vector<AssetEntry> entries;
-    collect(cookedDirectory, ".stex", "", entries);
+    collect(sourceDirectory, ".tex", "  (source)", entries);
+    collect(cookedDirectory, ".stex", "  (cooked)", entries);
     return entries;
 }
 
 bool isPartSource(const AssetEntry& entry)
 {
     return endsWith(entry.path, ".forge");
+}
+
+bool isTextureSource(const AssetEntry& entry)
+{
+    return endsWith(entry.path, ".tex");
+}
+
+bool loadTexture(const AssetEntry& entry, assets::TextureData& out, std::string* error)
+{
+    if (!isTextureSource(entry)) {
+        if (assets::loadTexture(entry.path.c_str(), out)) {
+            return true;
+        }
+        if (error != nullptr) {
+            *error = "cannot load " + entry.label;
+        }
+        return false;
+    }
+
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(entry.path.c_str(), bytes)) {
+        if (error != nullptr) {
+            *error = "cannot read " + entry.path;
+        }
+        return false;
+    }
+    assets::TextureDoc doc;
+    std::string parseError;
+    if (!assets::parseTexture(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
+                              entry.path.c_str(), doc, &parseError)) {
+        SOL_LOG_ERROR("forge: %s", parseError.c_str());
+        if (error != nullptr) {
+            *error = parseError;
+        }
+        return false;
+    }
+    return buildTextureData(doc, out, error);
+}
+
+bool buildTextureData(const assets::TextureDoc& doc, assets::TextureData& out, std::string* error)
+{
+    assets::TextureImage image;
+    std::string buildError;
+    if (!assets::buildTexture(doc, image, &buildError)) {
+        SOL_LOG_ERROR("forge: %s", buildError.c_str());
+        if (error != nullptr) {
+            *error = buildError;
+        }
+        return false;
+    }
+
+    cooker::ImageRgba rgba;
+    rgba.width = image.width;
+    rgba.height = image.height;
+    rgba.pixels = std::move(image.pixels);
+    out = cooker::encodeTexture(rgba);
+    return true;
 }
 
 bool loadMesh(const AssetEntry& entry, assets::MeshData& out)

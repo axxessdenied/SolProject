@@ -8,6 +8,7 @@
 #include "sol/assets/asset_loader.hpp"
 #include "sol/assets/data_defs.hpp"
 #include "sol/assets/mesh_edit.hpp"
+#include "sol/assets/texture_doc.hpp"
 #include "sol/core/math/vec.hpp"
 
 #include <cstdint>
@@ -32,14 +33,36 @@ struct AssetEntry
 [[nodiscard]] std::vector<AssetEntry> listMeshes(const std::string& sourceDirectory,
                                                  const std::string& cookedDirectory);
 
-// Cooked `.stex` beside the executable. A mesh does not name its texture (that
-// is the `[[model]]` row's job, and stage H's), so the viewer lets one be
-// picked.
-[[nodiscard]] std::vector<AssetEntry> listTextures(const std::string& cookedDirectory);
+// Authored `.tex` under the source tree first, then cooked `.stex` beside the
+// executable - the same order as listMeshes and for the same reason. A mesh does
+// not name its texture (that is the `[[model]]` row's job, and stage H's), so
+// the viewer lets one be picked.
+[[nodiscard]] std::vector<AssetEntry> listTextures(const std::string& sourceDirectory,
+                                                   const std::string& cookedDirectory);
 
-// A `.forge` part tree: the only kind of asset this tool can edit rather than
+// A `.forge` part tree: the only kind of MESH this tool can edit rather than
 // just open.
 [[nodiscard]] bool isPartSource(const AssetEntry& entry);
+
+// A `.tex` document: likewise, the only kind of texture it can edit.
+[[nodiscard]] bool isTextureSource(const AssetEntry& entry);
+
+// Dispatches on extension: `.tex` is parsed, evaluated and encoded exactly as
+// the cooker would, `.stex` goes through the runtime loader.
+//
+// ⚑ The encode matters and is not an optimisation: an author looking at a
+// texture in this tool is looking at BC1 with a mip chain, which is what the
+// game uploads. Showing the RGBA the document built would make the tool prettier
+// than the game and hide every artefact the compression introduces - the same
+// mistake as previewing a mesh at a distance no player ever sees it from.
+[[nodiscard]] bool loadTexture(const AssetEntry& entry, sol::assets::TextureData& out,
+                               std::string* error = nullptr);
+
+// The same evaluation and encode from a document already in memory: what the
+// editor calls after every accepted edit, so the hull in the viewport changes
+// while the panel is still open.
+[[nodiscard]] bool buildTextureData(const sol::assets::TextureDoc& doc,
+                                    sol::assets::TextureData& out, std::string* error = nullptr);
 
 // Dispatches on extension: `.forge` is parsed and evaluated, `.gltf`/`.glb` go
 // through the cooker's importer, `.smesh` through the runtime loader. All three

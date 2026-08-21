@@ -8,6 +8,7 @@ add_executable(sol_forge
     src/mesh_library.cpp
     src/part_editor.cpp
     src/point_tool.cpp
+    src/texture_editor.cpp
 )
 set_target_properties(sol_forge PROPERTIES OUTPUT_NAME forge)
 
@@ -68,6 +69,7 @@ target_link_libraries(sol_forge_tests PRIVATE
 # with the code by construction.
 target_compile_definitions(sol_forge_tests PRIVATE
     SOL_MESH_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/meshes"
+    SOL_TEXTURE_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/textures"
     SOL_MODEL_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data"
 )
 add_test(NAME forge.unit COMMAND sol_forge_tests)

@@ -14,6 +14,7 @@
 #include "orbit_camera.hpp"
 #include "part_editor.hpp"
 #include "point_tool.hpp"
+#include "texture_editor.hpp"
 
 #include "sol/assets/mesh_lod.hpp"
 #include "sol/core/log.hpp"
@@ -182,27 +183,31 @@ int main(int argc, char** argv)
 
     std::vector<forge::AssetEntry> meshEntries =
         forge::listMeshes(assetsDirectory, cookedDirectory);
-    const std::vector<forge::AssetEntry> textureEntries = forge::listTextures(cookedDirectory);
-    SOL_LOG_INFO("forge: %zu mesh(es) under %s and %s, %zu cooked texture(s)", meshEntries.size(),
-                 assetsDirectory.c_str(), cookedDirectory.c_str(), textureEntries.size());
+    std::vector<forge::AssetEntry> textureEntries =
+        forge::listTextures(assetsDirectory, cookedDirectory);
+    SOL_LOG_INFO("forge: %zu mesh(es) and %zu texture(s) under %s and %s", meshEntries.size(),
+                 textureEntries.size(), assetsDirectory.c_str(), cookedDirectory.c_str());
 
-    // Every cooked texture is uploaded once at startup - there are three, they
-    // are BC1, and it means switching one costs no device idle in the middle
-    // of a frame.
+    // Every texture is uploaded once at startup - there are a handful, they are
+    // BC1, and it means switching one costs no device idle in the middle of a
+    // frame. A `.tex` source is evaluated and encoded here exactly as the cooker
+    // would, so what shades the mesh is the compressed image the game loads.
     std::vector<renderer::GpuTexture> textures;
     std::vector<std::string> textureLabels;
+    std::vector<forge::AssetEntry> loadedTextureEntries;
     for (const forge::AssetEntry& entry : textureEntries) {
         assets::TextureData data;
-        if (!assets::loadTexture(entry.path.c_str(), data)) {
+        if (!forge::loadTexture(entry, data)) {
             SOL_LOG_WARN("forge: cannot load texture %s", entry.path.c_str());
             continue;
         }
         textures.push_back(view.meshes().createTexture(data));
         textureLabels.push_back(entry.label);
+        loadedTextureEntries.push_back(entry);
     }
     if (textures.empty()) {
-        SOL_LOG_ERROR("forge: no cooked textures under %s - build the cooker target first",
-                      cookedDirectory.c_str());
+        SOL_LOG_ERROR("forge: no textures under %s or %s - build the cooker target first",
+                      assetsDirectory.c_str(), cookedDirectory.c_str());
         return EXIT_FAILURE;
     }
 
@@ -248,6 +253,12 @@ int main(int argc, char** argv)
             break;
         }
     }
+
+    // Stage G: the open `.tex` document, and which uploaded texture it stands
+    // behind. -1 means the editor's document has no slot on the GPU yet, which
+    // is the state a brand new texture starts in.
+    forge::TextureEditor textureEditor;
+    int editingTextureIndex = -1;
 
     ScaleReference references[] = {
         {"station (200 m)", 200.0f, {0.20f, 0.55f, 0.70f, 1.0f}, true},
@@ -346,6 +357,53 @@ int main(int argc, char** argv)
         points.refresh(editor.doc());
     };
 
+    // Stage G. The image is rebuilt and re-uploaded on every accepted edit, for
+    // the same reason the mesh is: a 256x256 document is cheaper to evaluate
+    // whole than to work out what changed, and an author moving a panel wants
+    // to see the hull change while their hand is still on the number.
+    const auto rebuildTexture = [&]() {
+        assets::TextureData data;
+        std::string error;
+        if (!forge::buildTextureData(textureEditor.doc(), data, &error)) {
+            textureEditor.setBuildError(error);
+            return;
+        }
+        textureEditor.setBuildError({});
+        if (editingTextureIndex < 0 ||
+            editingTextureIndex >= static_cast<int>(textures.size())) {
+            return;
+        }
+        // The texture being replaced may still be referenced by a frame the GPU
+        // has not finished, exactly as with a mesh.
+        context.waitIdle();
+        const auto slot = static_cast<std::size_t>(editingTextureIndex);
+        view.meshes().destroyTexture(textures[slot]);
+        textures[slot] = view.meshes().createTexture(data);
+    };
+
+    const auto openTextureAt = [&](int index) {
+        if (index < 0 || index >= static_cast<int>(loadedTextureEntries.size())) {
+            return;
+        }
+        textureIndex = index;
+        if (!forge::isTextureSource(loadedTextureEntries[static_cast<std::size_t>(index)])) {
+            // A cooked `.stex` can be looked at and not edited: there is no
+            // document behind it to change.
+            textureEditor.close();
+            editingTextureIndex = -1;
+            return;
+        }
+        std::string textureStatus;
+        if (!textureEditor.openFile(
+                loadedTextureEntries[static_cast<std::size_t>(index)].path, textureStatus)) {
+            status = textureStatus;
+            editingTextureIndex = -1;
+            return;
+        }
+        editingTextureIndex = index;
+        status = textureStatus;
+    };
+
     const auto openMeshAt = [&](int index) {
         if (index < 0 || index >= static_cast<int>(meshEntries.size())) {
             return;
@@ -394,6 +452,10 @@ int main(int argc, char** argv)
         }
     };
     openMeshAt(meshEntries.empty() ? -1 : 0);
+    // The texture the mesh is already wearing is the one to open, so the panel
+    // opens on something rather than on "nothing selected" beside a hull that
+    // visibly has a texture on it.
+    openTextureAt(textureIndex);
 
     core::Vec2 previousMouse = window.mousePosition();
     bool dragOrbit = false;
@@ -762,12 +824,41 @@ int main(int argc, char** argv)
                 ImGui::PopTextWrapPos();
             }
 
+            // Stage G. Selecting a texture here does BOTH things - it shades the
+            // open mesh with it and, if it is a `.tex`, opens it for editing -
+            // because two lists that each did half would be two answers to
+            // "which texture am I looking at".
+            if (ImGui::CollapsingHeader("Textures", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::BeginChild("##textures", {0.0f, 90.0f}, ImGuiChildFlags_Borders)) {
+                    for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
+                        if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
+                                              i == textureIndex)) {
+                            openTextureAt(i);
+                        }
+                    }
+                }
+                ImGui::EndChild();
+                if (ImGui::Button("new texture")) {
+                    textureEditor.openNew(assetsDirectory + "/textures");
+                    editingTextureIndex = -1;
+                    rebuildTexture();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", textureEditor.isOpen()
+                                              ? "editing the selected source"
+                                              : "cooked textures are read-only");
+                ImGui::Separator();
+                if (textureEditor.draw()) {
+                    rebuildTexture();
+                }
+            }
+
             if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::BeginCombo("texture", textureLabels[static_cast<std::size_t>(textureIndex)].c_str())) {
                     for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
                         if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
                                               i == textureIndex)) {
-                            textureIndex = i;
+                            openTextureAt(i);
                         }
                     }
                     ImGui::EndCombo();

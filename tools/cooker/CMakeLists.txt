@@ -5,6 +5,7 @@ add_library(sol_cooker_lib STATIC
     src/mesh.cpp
     src/png.cpp
     src/sound.cpp
+    src/texture.cpp
 )
 target_include_directories(sol_cooker_lib PUBLIC src)
 target_link_libraries(sol_cooker_lib PUBLIC sol::assets)

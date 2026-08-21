@@ -4,6 +4,7 @@
 #include "mesh.hpp"
 #include "png.hpp"
 #include "sound.hpp"
+#include "texture.hpp"
 
 #include "sol/assets/formats.hpp"
 #include "sol/assets/texture_doc.hpp"
@@ -85,40 +86,18 @@ bool isFontUpToDate(const std::string& manifest, const std::string& output)
 // what happens to it afterwards is one implementation, which is the property
 // that let stage G change the source format without touching what the game
 // loads.
-bool writeTextureImage(const cooker::ImageRgba& sourceImage, const std::string& source,
+bool writeTextureImage(const cooker::ImageRgba& image, const std::string& source,
                        const std::string& output)
 {
-    cooker::ImageRgba image = sourceImage;
-
-    assets::TextureFileHeader header = {};
-    header.width = image.width;
-    header.height = image.height;
-    header.format = assets::TextureFormat::BC1;
-
-    // Full mip chain, box-filtered.
-    std::vector<std::vector<std::uint8_t>> mips;
-    cooker::ImageRgba level = std::move(image);
-    while (true) {
-        mips.push_back(cooker::encodeBc1(level));
-        if (level.width == 1 && level.height == 1) {
-            break;
-        }
-        level = cooker::downsampleHalf(level);
-    }
-    header.mipCount = static_cast<std::uint32_t>(mips.size());
-
-    std::vector<std::uint8_t> fileBytes(sizeof(header));
-    std::memcpy(fileBytes.data(), &header, sizeof(header));
-    for (const std::vector<std::uint8_t>& mip : mips) {
-        fileBytes.insert(fileBytes.end(), mip.begin(), mip.end());
-    }
+    const assets::TextureData data = cooker::encodeTexture(image);
+    const std::vector<std::uint8_t> fileBytes = cooker::serializeTexture(data);
 
     if (!platform::writeFileBytes(output.c_str(), fileBytes.data(), fileBytes.size())) {
         SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
         return false;
     }
-    SOL_LOG_INFO("cooked %s -> %s (%ux%u, %u mips)", source.c_str(), output.c_str(), header.width,
-                 header.height, header.mipCount);
+    SOL_LOG_INFO("cooked %s -> %s (%ux%u, %zu mips)", source.c_str(), output.c_str(), data.width,
+                 data.height, data.mips.size());
     return true;
 }
 
