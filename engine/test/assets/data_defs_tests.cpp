@@ -523,6 +523,160 @@ solid = false
                      "m.toml", &error));
 }
 
+// Phase 19. A `[[role]]` row says which model fills a slot the engine draws
+// into, so that a gate, a rock, an ore chunk and a bolt stop being string
+// literals compiled into the game. `sol::assets` deliberately does NOT know
+// what those slots are - the caller hands in its own vocabulary - so every
+// test here invents one, which is also what proves the layering.
+namespace {
+
+constexpr const char* kTestRoles[] = {"gate", "rock"};
+
+constexpr const char* kRoleModels = R"(
+[[model]]
+id = "gate"
+mesh = "gate"
+texture = "hull"
+radius = 70.0
+
+[[model]]
+id = "asteroid"
+mesh = "asteroid"
+texture = "hull"
+radius = 1.0
+)";
+
+} // namespace
+
+SOL_TEST(data_defs_parse_roles)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
+    SOL_REQUIRE(merge(db, R"(
+[[role]]
+id = "gate"
+model = "gate"
+
+[[role]]
+id = "rock"
+model = "asteroid"
+)",
+                      "models.toml", &error));
+
+    SOL_CHECK(db.roles().size() == 2);
+    SOL_REQUIRE(db.findRole("gate") != nullptr);
+    SOL_CHECK(db.findRole("gate")->model == "gate");
+    SOL_CHECK(db.findRole("nothing") == nullptr);
+
+    // What callers actually want is the model INDEX, resolved once at spawn
+    // rather than per instance, exactly as `modelIndex` is used elsewhere.
+    SOL_CHECK(db.roleModelIndex("rock") == db.modelIndex("asteroid"));
+    SOL_CHECK(db.roleModelIndex("nothing") == DefDatabase::kNoModel);
+
+    SOL_CHECK(db.validateRoles(kTestRoles, &error));
+
+    // Two keys and no more: a strict schema is what makes a typo die at load
+    // rather than silently draw nothing at play time.
+    SOL_CHECK(!merge(db, "[[role]]\nid = \"gate\"\nmodel = \"gate\"\nscale = 2.0\n", "m.toml",
+                     &error));
+    SOL_CHECK(!merge(db, "[[role]]\nid = \"gate\"\n", "m.toml", &error));
+    SOL_CHECK(!merge(db, "[[role]]\nmodel = \"gate\"\n", "m.toml", &error));
+    // A singleton `[role]` is not a schema this loader has: every def kind is
+    // an array of tables, which is the reason roles are id-keyed rows at all.
+    SOL_CHECK(!merge(db, "[role]\ngate = \"gate\"\n", "m.toml", &error));
+}
+
+// ⚑ THE REASON ROLES ARE AN ID-KEYED ARRAY AND NOT A SINGLETON TABLE: this
+// comes free. `mergeDef` replaces by id, so a later layer re-points a role
+// exactly the way it re-points a ship, with no merge rule invented for it.
+SOL_TEST(data_defs_role_overridden_by_a_later_layer)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
+    SOL_REQUIRE(
+        merge(db, "[[role]]\nid = \"rock\"\nmodel = \"asteroid\"\n", "models.toml", &error));
+    SOL_REQUIRE(merge(db, "[[role]]\nid = \"rock\"\nmodel = \"gate\"\n", "mod.toml", &error));
+
+    // Replaced in place, not appended: one row per slot, and the last layer
+    // to speak wins.
+    SOL_CHECK(db.roles().size() == 1);
+    SOL_CHECK(db.findRole("rock")->model == "gate");
+    SOL_CHECK(db.findRole("rock")->source == "mod.toml");
+}
+
+// ⚑ ROLES REFUSE WHERE A SHIP DEF WARNS, AND THE ASYMMETRY IS DELIBERATE.
+// `modelIdFromName` falls back to a real hull and logs, which is right when
+// one bad name breaks one ship. A role has nothing to fall back to once the
+// literal it replaced is gone, so a bad one would un-draw every gate in the
+// galaxy in silence.
+SOL_TEST(data_defs_role_validation_refuses_rather_than_warns)
+{
+    // A role naming a model that does not exist.
+    {
+        DefDatabase db;
+        std::string error;
+        SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
+        SOL_REQUIRE(merge(db, R"(
+[[role]]
+id = "gate"
+model = "gate"
+
+[[role]]
+id = "rock"
+model = "not_a_model"
+)",
+                          "models.toml", &error));
+        SOL_CHECK(!db.validateRoles(kTestRoles, &error));
+        // The message has to name the file, because that is the whole
+        // advantage a refusal has over a warning at play time.
+        SOL_CHECK(error.find("models.toml") != std::string::npos);
+        SOL_CHECK(error.find("not_a_model") != std::string::npos);
+    }
+    // A required role nobody filled.
+    {
+        DefDatabase db;
+        std::string error;
+        SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
+        SOL_REQUIRE(merge(db, "[[role]]\nid = \"gate\"\nmodel = \"gate\"\n", "models.toml",
+                          &error));
+        SOL_CHECK(!db.validateRoles(kTestRoles, &error));
+        SOL_CHECK(error.find("rock") != std::string::npos);
+    }
+    // A role the engine does not ask for. It would otherwise do nothing at
+    // all, quietly and forever, which is the failure a strict schema exists
+    // to prevent - so it is rejected the same way an unknown KEY is.
+    {
+        DefDatabase db;
+        std::string error;
+        SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
+        SOL_REQUIRE(merge(db, R"(
+[[role]]
+id = "gate"
+model = "gate"
+
+[[role]]
+id = "rock"
+model = "asteroid"
+
+[[role]]
+id = "cockpti"
+model = "gate"
+)",
+                          "models.toml", &error));
+        SOL_CHECK(!db.validateRoles(kTestRoles, &error));
+        SOL_CHECK(error.find("cockpti") != std::string::npos);
+    }
+    // And the empty vocabulary accepts an empty table, so a library with no
+    // roles at all is not a broken one.
+    {
+        DefDatabase db;
+        std::string error;
+        SOL_CHECK(db.validateRoles({}, &error));
+    }
+}
+
 SOL_TEST(data_defs_model_validation_errors)
 {
     DefDatabase db;

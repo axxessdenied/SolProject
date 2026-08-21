@@ -87,7 +87,16 @@ set_tests_properties(game.smoke PROPERTIES LABELS gpu)
 # running the app.
 add_executable(sol_game_tests
     test/map_row_tests.cpp
+    test/model_role_tests.cpp
     test/target_cycle_tests.cpp
 )
 target_link_libraries(sol_game_tests PRIVATE sol::test sol_game_lib)
+# Phase 19. The role contract is a statement about THIS game's committed data
+# and THIS game's role vocabulary, and only this suite can see both: the
+# vocabulary lives in game/src and assets.unit cannot link it, while the data
+# lives in game/data and only assets.unit had a path to it. Same split as
+# stage H's - the rule goes where a test can reach it, decided before the
+# promise rather than after.
+target_compile_definitions(sol_game_tests
+    PRIVATE SOL_DEF_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data")
 add_test(NAME game.unit COMMAND sol_game_tests)

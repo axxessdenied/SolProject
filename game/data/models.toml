@@ -105,3 +105,59 @@ texture = "cockpit"
 radius = 8.0
 emissive = 0.10
 solid = false
+
+# ---------------------------------------------------------------------------
+# Roles (Phase 19): which model fills each slot the engine draws into.
+#
+# A [[model]] row says a mesh EXISTS. A [[role]] row says what the game reaches
+# for when it needs a gate, a rock, a bolt. Before this section those answers
+# were string literals in space_world.cpp and main.cpp, which is why Phase 9
+# stage A's exit criterion turned out to be narrowly true: a *ship* def could
+# fly an authored mesh, and nothing else in the world could use one at all.
+#
+# The slot names are fixed by the engine (game/src/model_roles.hpp) - data
+# cannot invent a new kind of thing - but every answer below is editable, and
+# a mod overrides one exactly the way it overrides a ship, by id.
+#
+# ⚑ Loading REFUSES, rather than warning, if a role here is unknown, names a
+# model that does not exist, or is missing entirely. A ship def with a bad
+# model name falls back to the shuttle hull and logs; a role has nothing to
+# fall back to, and a silently invisible gate in all eighty systems is worse
+# than a refusal that names this file.
+
+[[role]]
+id = "gate"
+model = "gate"
+
+# Drawn at the identical transform as the gate, under the blended pipeline
+# (Phase 12). Splitting it from the ring is what lets it be a separate model.
+[[role]]
+id = "gate_membrane"
+model = "gate_membrane"
+
+# ⚑ THE THREE BELOW MUST NAME A MODEL AUTHORED AT radius = 1.0, and this is a
+# contract about PHYSICS, not about looks. Each is drawn at an instance scale
+# that means something in metres - a rock's scale IS its radius, a chunk is
+# 6 m, a bolt is 0.3 x 0.3 x 4 m - and `modelBaseRadius() * scale` is what the
+# collision set, the avoidance set and the mining/salvage beam sweep all read.
+# Point one of these at a model of some other radius and every instance of it
+# silently changes size and hit sphere, with nothing visibly wrong to explain
+# it. `assets.unit` asserts this rather than trusting anyone to read the
+# comment.
+[[role]]
+id = "rock"
+model = "asteroid"
+
+[[role]]
+id = "ore_chunk"
+model = "cube"
+
+[[role]]
+id = "bolt"
+model = "cube"
+
+# The one drawable with no entity behind it: the game layer pushes it at the
+# ship's transform rather than reading it off a RenderShape.
+[[role]]
+id = "cockpit"
+model = "cockpit"

@@ -3,6 +3,7 @@
 #include "game_audio.hpp"
 #include "lod_report.hpp"
 #include "map_ui.hpp"
+#include "model_roles.hpp"
 #include "ship_ui.hpp"
 #include "target_pick.hpp"
 
@@ -3027,6 +3028,14 @@ bool GameContent::reloadDefs()
         }
     }
     if (!fresh.validateFactions(&error)) { // cross-def check needs the merged set
+        SOL_LOG_ERROR("data defs: %s", error.c_str());
+        return false;
+    }
+    // Phase 19: every slot the engine draws into must be filled, by a model
+    // that exists. This runs on the HOT-RELOAD path too, and refusing here is
+    // what makes that safe - a typo in a role leaves the running game on the
+    // defs it already had rather than un-drawing every gate in the galaxy.
+    if (!fresh.validateRoles(modelRoles(), &error)) {
         SOL_LOG_ERROR("data defs: %s", error.c_str());
         return false;
     }

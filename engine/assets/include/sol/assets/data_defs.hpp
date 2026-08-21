@@ -13,6 +13,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -327,6 +328,31 @@ struct ModelDef
     std::string source;
 };
 
+// A SLOT the engine draws into, and the model that fills it (Phase 19).
+//
+// Stage A of Phase 9 replaced the ModelId enum with a def lookup and left a
+// second wall standing: the only model resolution that read data was a ship
+// def's, and every other thing in the world - the gate, its membrane, a rock,
+// an ore chunk, a bolt, the cockpit - was fetched by a string literal compiled
+// into C++. A `[[role]]` row is how those names leave the source.
+//
+// ⚑ The ROLE ids stay in C++ and only the ANSWERS move out, which is the
+// distinction the whole phase turns on: the set of slots is a property of the
+// engine (it either draws a cockpit or it does not), while what fills one is a
+// property of the content. See `game/src/model_roles.hpp` for the list this
+// game asks for.
+//
+// ⚑ It is an id-keyed ARRAY rather than a singleton `[world]` table because a
+// singleton does not parse - `mergeToml` requires an array of tables - and
+// because `id` is what `mergeDef` merges on, so a mod re-points a role exactly
+// the way it re-points a ship, with no merge rule invented for the occasion.
+struct RoleDef
+{
+    std::string id;    // the slot, e.g. "gate"; must be one the engine asks for
+    std::string model; // a `[[model]]` id; must exist, checked at load
+    std::string source;
+};
+
 // One production or consumption line on a station ("sol.food:0.5" in TOML).
 struct StationRate
 {
@@ -401,6 +427,19 @@ public:
     // a mod may remove a faction another def still references.
     [[nodiscard]] bool validateFactions(std::string* outError = nullptr) const;
 
+    // Cross-def check for `[[role]]` rows, and it REFUSES rather than warns
+    // (Phase 19). `modelIdFromName`'s warn-and-fall-back is right for a ship
+    // def - one bad name breaks one ship and a real hull is still there to
+    // stand in - but a role has no fallback once the literal it replaced is
+    // gone, and a silently invisible gate in all eighty systems is worse than
+    // a refusal that names the file. Same treatment `loadModels` gives a mesh
+    // that is not on disk.
+    //
+    // `required` is the caller's vocabulary: `sol::assets` validates whatever
+    // list it is handed and does not itself know what a cockpit is.
+    [[nodiscard]] bool validateRoles(std::span<const char* const> required,
+                                     std::string* outError = nullptr) const;
+
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;
     [[nodiscard]] const FactionDef* findFaction(const char* id) const;
@@ -410,12 +449,18 @@ public:
     [[nodiscard]] const CrewDef* findCrew(const char* id) const;
     [[nodiscard]] const SoundDef* findSound(const char* id) const;
     [[nodiscard]] const ModelDef* findModel(const char* id) const;
+    [[nodiscard]] const RoleDef* findRole(const char* id) const;
 
     // Index of a model by id, or kNoModel. The renderer and the sim both key
     // off this index rather than off the string, so a name is resolved once at
     // spawn and never in a per-tick loop.
     static constexpr std::uint32_t kNoModel = 0xFFFFFFFFu;
     [[nodiscard]] std::uint32_t modelIndex(const char* id) const;
+
+    // The model index filling a role, or kNoModel. After `validateRoles` has
+    // passed this cannot fail for a required role, so callers resolve once at
+    // spawn and do not branch per instance.
+    [[nodiscard]] std::uint32_t roleModelIndex(const char* id) const;
 
     // First-definition order; later layers replace elements in place, so
     // indices stay stable across a reload that only edits values.
@@ -428,6 +473,7 @@ public:
     [[nodiscard]] const std::vector<CrewDef>& crew() const { return m_crew; }
     [[nodiscard]] const std::vector<SoundDef>& sounds() const { return m_sounds; }
     [[nodiscard]] const std::vector<ModelDef>& models() const { return m_models; }
+    [[nodiscard]] const std::vector<RoleDef>& roles() const { return m_roles; }
 
 private:
     std::vector<ShipDef> m_ships;
@@ -439,6 +485,7 @@ private:
     std::vector<CrewDef> m_crew;
     std::vector<SoundDef> m_sounds;
     std::vector<ModelDef> m_models;
+    std::vector<RoleDef> m_roles;
 };
 
 } // namespace sol::assets

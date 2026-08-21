@@ -592,6 +592,32 @@ bool parseModel(const TomlValue& table, const char* sourceName, std::vector<Mode
     return true;
 }
 
+// A `[[role]]` row (Phase 19). Two keys and no validation beyond the schema:
+// whether the model exists, and whether the role is one the engine asks for,
+// are both CROSS-def questions that need the merged database - a role may
+// legitimately be defined in an earlier layer than the model that fills it.
+// `validateRoles` is where those are answered, which is the same split
+// `validateFactions` already draws.
+bool parseRole(const TomlValue& table, const char* sourceName, std::vector<RoleDef>& out,
+               std::string* outError)
+{
+    RoleDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": role '" + def.id + "'";
+    }
+    reader.requireString("model", def.model);
+    reader.rejectUnknownKeys({"id", "model"});
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
 bool parseStation(const TomlValue& table, const char* sourceName, std::vector<StationDef>& out,
                   std::string* outError)
 {
@@ -724,6 +750,7 @@ void DefDatabase::clear()
     m_crew.clear();
     m_sounds.clear();
     m_models.clear();
+    m_roles.clear();
 }
 
 bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* sourceName,
@@ -748,6 +775,7 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     std::vector<CrewDef> crew = m_crew;
     std::vector<SoundDef> sounds = m_sounds;
     std::vector<ModelDef> models = m_models;
+    std::vector<RoleDef> roles = m_roles;
 
     for (const auto& [key, value] : root.members()) {
         bool (*parse)(const TomlValue&, const char*, void*, std::string*) = nullptr;
@@ -797,11 +825,16 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
                 return parseModel(t, s, *static_cast<std::vector<ModelDef>*>(v), e);
             };
             target = &models;
+        } else if (key == "role") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseRole(t, s, *static_cast<std::vector<RoleDef>*>(v), e);
+            };
+            target = &roles;
         } else {
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
                             "' (expected ship, weapon, faction, commodity, station, module, "
-                            "crew, sound, or model)";
+                            "crew, sound, model, or role)";
             }
             return false;
         }
@@ -829,6 +862,7 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
     m_crew = std::move(crew);
     m_sounds = std::move(sounds);
     m_models = std::move(models);
+    m_roles = std::move(roles);
     return true;
 }
 
@@ -922,6 +956,58 @@ std::uint32_t DefDatabase::modelIndex(const char* id) const
         }
     }
     return kNoModel;
+}
+
+const RoleDef* DefDatabase::findRole(const char* id) const
+{
+    const auto it =
+        std::find_if(m_roles.begin(), m_roles.end(), [&](const RoleDef& d) { return d.id == id; });
+    return it != m_roles.end() ? &*it : nullptr;
+}
+
+std::uint32_t DefDatabase::roleModelIndex(const char* id) const
+{
+    const RoleDef* role = findRole(id);
+    return role == nullptr ? kNoModel : modelIndex(role->model.c_str());
+}
+
+bool DefDatabase::validateRoles(std::span<const char* const> required,
+                                std::string* outError) const
+{
+    // Every role the caller asks for must be filled, and filled by a model
+    // that exists. Both are refusals rather than warnings - see the header.
+    for (const char* id : required) {
+        const RoleDef* role = findRole(id);
+        if (role == nullptr) {
+            if (outError != nullptr) {
+                *outError = std::string("no [[role]] row for '") + id +
+                            "'; every slot the engine draws must be filled by data";
+            }
+            return false;
+        }
+        if (modelIndex(role->model.c_str()) == kNoModel) {
+            if (outError != nullptr) {
+                *outError = role->source + ": role '" + role->id + "' names model '" +
+                            role->model + "', which no [[model]] row defines";
+            }
+            return false;
+        }
+    }
+    // A role OUTSIDE the caller's vocabulary is a typo that would otherwise do
+    // nothing at all, quietly, forever - the failure mode a strict schema
+    // exists to prevent, so it is rejected the same way an unknown key is.
+    for (const RoleDef& role : m_roles) {
+        const bool known = std::any_of(required.begin(), required.end(),
+                                       [&](const char* id) { return role.id == id; });
+        if (!known) {
+            if (outError != nullptr) {
+                *outError = role.source + ": unknown role '" + role.id +
+                            "'; the engine draws no such thing";
+            }
+            return false;
+        }
+    }
+    return true;
 }
 
 const CommodityDef* DefDatabase::findCommodity(const char* id) const
