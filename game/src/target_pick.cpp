@@ -101,7 +101,8 @@ void fillPickCandidates(const SpaceWorld& world, const ViewFrame& view,
         // across its disc rather than only at the point its centre projects
         // to. Small-angle: the error at anything the player can click past is
         // far under a pixel, and at point-blank the grab floor covers it.
-        candidate.screenRadius = static_cast<float>(surfaceRadius / range) * focal;
+        // Shared with LOD selection since stage F - see pick.hpp.
+        candidate.screenRadius = sol::ui::screenRadiusPixels(surfaceRadius, range, focal);
         candidate.rangeMeters = range;
         candidate.selection = static_cast<std::uint32_t>(selection);
         out.push_back(candidate);

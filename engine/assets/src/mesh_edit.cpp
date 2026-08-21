@@ -669,6 +669,18 @@ void optimizeIndices(EditMesh& mesh)
         return;
     }
 
+    // ⚑ Measured over the committed assets at stage F: this reorder makes the
+    // cache WORSE on the two best-shared meshes in the repo - gate 0.804 ->
+    // 0.895 and station 0.701 -> 0.810 - because `MeshBuilder` emits boxes and
+    // beams in an order already near the ~0.6 floor, and a greedy heuristic
+    // cannot beat an order that is already good. This function promises an
+    // improvement, so it keeps the BETTER of the two orders rather than the
+    // newer one: still worth running on imported soup, a no-op on everything
+    // authored here. It survived because its only test runs on an icosphere.
+    const float scoreBefore = averageCacheMissRatio(mesh);
+    const std::vector<std::uint32_t> indicesBefore = mesh.indices;
+    const std::vector<EditVertex> verticesBefore = mesh.vertices;
+
     // Faces per vertex, CSR.
     std::vector<std::uint32_t> faceStart(vertexCount + 1, 0);
     for (const std::uint32_t index : mesh.indices) {
@@ -791,6 +803,11 @@ void optimizeIndices(EditMesh& mesh)
         index = remap[index];
     }
     mesh.vertices = std::move(vertices);
+
+    if (averageCacheMissRatio(mesh) > scoreBefore) {
+        mesh.indices = indicesBefore;
+        mesh.vertices = verticesBefore;
+    }
 }
 
 float averageCacheMissRatio(const EditMesh& mesh, std::uint32_t cacheSize)

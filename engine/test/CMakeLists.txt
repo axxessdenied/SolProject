@@ -47,6 +47,7 @@ add_executable(sol_geometry_tests
     geometry/forge_doc_tests.cpp
     geometry/mesh_build_tests.cpp
     geometry/mesh_edit_tests.cpp
+    geometry/mesh_lod_tests.cpp
     geometry/shipped_mesh_tests.cpp
 )
 target_link_libraries(sol_geometry_tests PRIVATE sol::test sol::assets)

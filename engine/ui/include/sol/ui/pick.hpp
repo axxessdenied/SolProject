@@ -31,6 +31,24 @@ namespace sol::ui {
     return (screenHeight * 0.5f) / tangent;
 }
 
+// How big a sphere of `worldRadius` at `distance` is on screen, as a radius in
+// pixels. Small-angle, which is what makes it one multiply: the error at
+// anything far enough away to matter is well under a pixel, and up close the
+// callers are already clamping for their own reasons.
+//
+// ⚑ It was inline in `target_pick.cpp` and is shared from here since stage F,
+// because LOD selection asks the identical question and this project keeps
+// paying for the second expression of a thing that already existed. The edges
+// agree, which is the part that makes sharing legal (Phase 11): both callers
+// want "enormous" when the camera is inside the sphere, and both get it.
+[[nodiscard]] inline float screenRadiusPixels(double worldRadius, double distance, float focal)
+{
+    if (!(distance > 0.0)) {
+        return focal; // at or through the centre: as big as the screen gets
+    }
+    return static_cast<float>(worldRadius / distance) * focal;
+}
+
 // Camera-space direction to a screen point. `inFront` is false when the
 // direction is behind the near plane, where the projection would mirror it.
 struct ScreenPoint

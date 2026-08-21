@@ -117,6 +117,12 @@ void recomputeNormals(EditMesh& mesh, float smoothAngleDegrees = 0.0f);
 // Reorders triangles for the post-transform cache, then renumbers vertices in
 // first-use order for the fetch cache. Geometry and topology are untouched -
 // only the order they are visited in changes.
+//
+// ⚑ It keeps the BETTER of the two orders, measured. A greedy reorder cannot
+// beat an order that is already good, and `MeshBuilder`'s output is: on the
+// committed assets this pass made the cache worse on the gate and the station
+// until it was made conditional. So it is safe to run on anything, and on
+// authored geometry it is usually a no-op.
 void optimizeIndices(EditMesh& mesh);
 
 // Average cache misses per triangle under a FIFO cache of `cacheSize`; 3.0 is

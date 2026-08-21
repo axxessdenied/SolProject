@@ -269,3 +269,33 @@ SOL_TEST(a_ray_through_the_boresight_is_the_forward_axis)
     const Vec3 below = sol::ui::rayDirectionCamera({kCenter.x, kCenter.y + 100.0f}, kCenter, kFocal);
     SOL_CHECK(below.y < 0.0f);
 }
+
+// ⚑ The screen size of a thing, shared by the target pick and by stage F's LOD
+// selection since it was lifted out of `target_pick.cpp`. It is pinned against
+// the projection it must agree with rather than against its own arithmetic: a
+// sphere of radius r at distance d must project to the same pixels as a POINT
+// standing r off the boresight at that distance, because that is what "how big
+// is it on screen" means and it is the relation a second expression would drift
+// from.
+SOL_TEST(a_screen_radius_matches_the_projection_of_a_point_at_its_edge)
+{
+    const double distance = 2000.0;
+    const double radius = 100.0;
+
+    const float pixels = sol::ui::screenRadiusPixels(radius, distance, kFocal);
+    // The same offset projected forwards through screenPoint.
+    const Vec3 edge = {static_cast<float>(radius), 0.0f, -static_cast<float>(distance)};
+    const sol::ui::ScreenPoint point = sol::ui::screenPoint(edge, kCenter, kFocal);
+    SOL_REQUIRE(point.inFront);
+    SOL_CHECK(nearlyEqual(pixels, point.position.x - kCenter.x));
+
+    // Twice as far is half the size, which is the whole content of the rule.
+    SOL_CHECK(nearlyEqual(sol::ui::screenRadiusPixels(radius, distance * 2.0, kFocal),
+                          pixels * 0.5f));
+
+    // ⚑ The edge both callers need to agree about: standing at or inside the
+    // centre must read enormous rather than dividing by zero, so a pick stays
+    // grabbable and an LOD stays at its most detailed level.
+    SOL_CHECK(sol::ui::screenRadiusPixels(radius, 0.0, kFocal) >= kFocal);
+    SOL_CHECK(sol::ui::screenRadiusPixels(radius, -1.0, kFocal) >= kFocal);
+}
