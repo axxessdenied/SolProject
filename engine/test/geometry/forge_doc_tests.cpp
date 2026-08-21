@@ -2901,3 +2901,597 @@ SOL_TEST(aZeroDistanceSetMoveLeavesEveryCommittedFileByteIdentical)
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Stage E5a: the three topology operations, headless.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+const char* const kAllAssets[] = {"asteroid", "cockpit", "cube",   "gate",
+                                  "gate_membrane", "ship", "station"};
+
+struct Solid
+{
+    bool built = false;
+    bool manifold = false;
+    std::uint32_t borderEdges = 0;
+    std::uint32_t degenerates = 0;
+    double volume = 0.0;
+    std::size_t triangles = 0;
+};
+
+// Phase 16's asset invariants, aimed at a mesh the TOOL made rather than at a
+// committed file. That is the whole point of reusing them here: a side wall
+// wound the wrong way is invisible to every count and obvious to the volume.
+[[nodiscard]] Solid inspect(const ForgeDoc& doc)
+{
+    Solid out;
+    assets::MeshData mesh;
+    if (!assets::buildForge(doc, mesh)) {
+        return out;
+    }
+    out.built = true;
+    out.triangles = mesh.indices.size() / 3;
+    assets::EditMesh edit = assets::toEditMesh(mesh);
+    for (std::uint32_t face = 0; face < edit.triangleCount(); ++face) {
+        const std::uint32_t a = edit.facePosition(face, 0);
+        const std::uint32_t b = edit.facePosition(face, 1);
+        const std::uint32_t c = edit.facePosition(face, 2);
+        out.degenerates += static_cast<std::uint32_t>(a == b || b == c || a == c);
+    }
+    const assets::MeshAdjacency adjacency = assets::buildAdjacency(edit);
+    out.manifold = adjacency.isManifold();
+    out.borderEdges = adjacency.borderEdgeCount();
+    out.volume = assets::signedVolume(edit);
+    return out;
+}
+
+// The group of the first face whose three corners all sit at `value` on `axis` -
+// which on a box is one of its six faces, addressed by where it is rather than
+// by a triangle number nobody can read.
+[[nodiscard]] std::vector<std::uint32_t> faceGroupAt(
+    const std::vector<assets::ForgePoint>& points, const std::vector<assets::ForgeFace>& faces,
+    int axis, double value)
+{
+    for (std::size_t seed = 0; seed < faces.size(); ++seed) {
+        const std::uint32_t three[3] = {faces[seed].a, faces[seed].b, faces[seed].c};
+        bool onIt = true;
+        for (const std::uint32_t corner : three) {
+            const assets::BuildPoint& p = points[corner].position;
+            const double coordinate = axis == 0 ? p.x : (axis == 1 ? p.y : p.z);
+            onIt = onIt && std::abs(coordinate - value) < 1e-6;
+        }
+        if (onIt) {
+            std::vector<std::uint32_t> group;
+            assets::forgeFaceGroup(points, faces, seed, group);
+            return group;
+        }
+    }
+    return {};
+}
+
+// Every vertex of a part referenced by at least one of its triangles. An extrude
+// that duplicated where it should have moved leaves orphans, and an orphan is a
+// point the tool draws and no triangle owns.
+[[nodiscard]] bool noOrphanVertices(const assets::ForgePart& part)
+{
+    const ForgeValue* const vertices = part.find("vertices");
+    const ForgeValue* const indices = part.find("indices");
+    if (vertices == nullptr || indices == nullptr) {
+        return false;
+    }
+    std::vector<bool> used(vertices->vertices.size(), false);
+    for (const std::uint32_t index : indices->indices) {
+        if (index < used.size()) {
+            used[index] = true;
+        }
+    }
+    return std::find(used.begin(), used.end(), false) == used.end();
+}
+
+} // namespace
+
+// ⚑⚑ E5's FIRST FINDING, AND IT WAS SITTING IN E4's OUTPUT ALL ALONG:
+// `ForgeEdge::faceCount` COUNTED DEGENERATE FACES, SO ON THE ONE OPEN SURFACE IN
+// THIS REPO NO EDGE READ TWO. `gate_membrane.forge` is a flat disc fanned to a
+// point - 32 real triangles and 32 with no area - and a face whose two corners
+// weld to one point still has a third side, pushed twice. Its 32 axis edges read
+// FOUR and its 32 rim edges read one. E4 only ever asked whether a triangle was
+// there; a split asks WHICH, and would have tried to split two with no area.
+//
+// ⚑ The edge SET must not move, only the tally - which is what separates a fix
+// from a change of meaning.
+SOL_TEST(aFilmsAxisEdgesCountTwoRealFacesRatherThanFourWithTheDegenerateOnes)
+{
+    ForgeDoc doc = openAsset("gate_membrane");
+    SOL_REQUIRE(!doc.parts.empty());
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    SOL_CHECK(points.size() == 33); // 32 around the rim and one on the axis
+    SOL_CHECK(edges.size() == 64);
+    SOL_CHECK(faces.size() == 32);
+
+    std::size_t border = 0;
+    std::size_t interior = 0;
+    std::size_t overcounted = 0;
+    for (const assets::ForgeEdge& edge : edges) {
+        border += static_cast<std::size_t>(edge.faceCount == 1);
+        interior += static_cast<std::size_t>(edge.faceCount == 2);
+        overcounted += static_cast<std::size_t>(edge.faceCount > 2);
+    }
+    SOL_CHECK(border == 32);      // the rim, correctly open
+    SOL_CHECK(interior == 32);    // the axis, which used to read four
+    SOL_CHECK(overcounted == 0);
+}
+
+// The edge SET is unchanged by that fix, asserted over every committed asset so
+// nobody has to take the reasoning on trust.
+SOL_TEST(theEdgeCountsOfEveryCommittedAssetAreUnchangedByTheDegenerateFix)
+{
+    struct Expected
+    {
+        const char* name;
+        std::size_t points;
+        std::size_t edges;
+        std::size_t faces;
+    };
+    constexpr Expected kExpected[] = {
+        {"asteroid", 162, 480, 320},   {"cockpit", 141, 315, 210}, {"cube", 8, 18, 12},
+        {"gate", 320, 912, 608},       {"gate_membrane", 33, 64, 32},
+        {"ship", 12, 24, 16},          {"station", 552, 1602, 1068},
+    };
+    for (const Expected& want : kExpected) {
+        ForgeDoc doc = openAsset(want.name);
+        SOL_REQUIRE(!doc.parts.empty());
+        std::vector<assets::ForgePoint> points;
+        std::vector<assets::ForgeEdge> edges;
+        std::vector<assets::ForgeFace> faces;
+        SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+        SOL_CHECK(points.size() == want.points);
+        SOL_CHECK(edges.size() == want.edges);
+        SOL_CHECK(faces.size() == want.faces);
+        if (edges.size() != want.edges) {
+            std::printf("  %s: %zu edges, expected %zu\n", want.name, edges.size(), want.edges);
+        }
+    }
+}
+
+// ⚑ A face now names the part that emitted it and which of that part's own
+// triangles it is. E4 needed neither - a face drag moves POINTS, and a point
+// already carries every part standing at it - and a topology change needs both,
+// because it rewrites one part's index list.
+SOL_TEST(everyFaceNamesThePartThatEmittedItAndWhichOfItsTrianglesItIs)
+{
+    for (const char* const name : kAllAssets) {
+        ForgeDoc doc = openAsset(name);
+        SOL_REQUIRE(!doc.parts.empty());
+        std::vector<assets::ForgePoint> points;
+        std::vector<assets::ForgeEdge> edges;
+        std::vector<assets::ForgeFace> faces;
+        SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+        // The triangle numbers of one part are distinct, and none of them is
+        // past the triangle count that part's own baked index list would have.
+        std::vector<std::uint32_t> highest(doc.parts.size(), 0);
+        std::vector<std::size_t> seen(doc.parts.size(), 0);
+        for (const assets::ForgeFace& face : faces) {
+            SOL_REQUIRE(face.part < doc.parts.size());
+            highest[face.part] = std::max(highest[face.part], face.triangle);
+            ++seen[face.part];
+        }
+        for (std::size_t part = 0; part < doc.parts.size(); ++part) {
+            if (seen[part] == 0) {
+                continue;
+            }
+            ForgeDoc baked = openAsset(name);
+            SOL_REQUIRE(assets::forgeBakeDocumentPart(baked, part));
+            const ForgeValue* const indices = baked.parts[part].find("indices");
+            SOL_REQUIRE(indices != nullptr);
+            SOL_CHECK(static_cast<std::size_t>(highest[part]) * 3 + 2 < indices->indices.size());
+        }
+    }
+}
+
+// ⚑⚑ THE MEASUREMENT THAT REORDERED THE STAGE: `ship.forge`'s HULL QUADS ARE
+// TWO PARTS EACH. E5's one-line estimate said the operations "operate on baked
+// parts", which assumes one. A coplanar face group floods over POINTS, and a
+// point is shared across parts - that is E1's whole mechanism - so three of this
+// asset's thirteen groups span two `flat_triangle` parts, and all 24 of its
+// edges have their two faces in different parts.
+SOL_TEST(theShipsHullQuadsAreEachTwoPartsAndAllItsEdgesAreCrossPart)
+{
+    ForgeDoc doc = openAsset("ship");
+    SOL_REQUIRE(!doc.parts.empty());
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+    SOL_REQUIRE(faces.size() == 16);
+
+    std::vector<bool> seen(faces.size(), false);
+    std::size_t crossPart = 0;
+    for (std::size_t seed = 0; seed < faces.size(); ++seed) {
+        if (seen[seed]) {
+            continue;
+        }
+        std::vector<std::uint32_t> group;
+        assets::forgeFaceGroup(points, faces, seed, group);
+        std::vector<std::size_t> parts;
+        for (const std::uint32_t index : group) {
+            seen[index] = true;
+            if (std::find(parts.begin(), parts.end(), faces[index].part) == parts.end()) {
+                parts.push_back(faces[index].part);
+            }
+        }
+        crossPart += static_cast<std::size_t>(parts.size() > 1);
+    }
+    SOL_CHECK(crossPart == 3); // hull_0a+0b, hull_2a+2b, rear_lower+rear_upper
+
+    std::size_t crossPartEdges = 0;
+    for (const assets::ForgeEdge& edge : edges) {
+        std::vector<std::size_t> parts;
+        for (const assets::ForgeFace& face : faces) {
+            const std::uint32_t three[3] = {face.a, face.b, face.c};
+            const bool hasA = std::find(std::begin(three), std::end(three), edge.a) !=
+                              std::end(three);
+            const bool hasB = std::find(std::begin(three), std::end(three), edge.b) !=
+                              std::end(three);
+            if (hasA && hasB &&
+                std::find(parts.begin(), parts.end(), face.part) == parts.end()) {
+                parts.push_back(face.part);
+            }
+        }
+        crossPartEdges += static_cast<std::size_t>(parts.size() > 1);
+    }
+    SOL_CHECK(crossPartEdges == 24); // every single one
+}
+
+// ⚑⚑ MERGING TWO ADJACENT PARTS IS BIT-EXACT, WHICH IS E3's ASSERTION OVER A
+// SECOND OPERATION. Parts emit in FILE order, so the survivor has to be the
+// EARLIER of the two or every vertex after it renumbers. This is what makes the
+// extrude's cross-part refusal a rule rather than an obstacle: the fix it names
+// costs the built mesh nothing.
+SOL_TEST(mergingTwoAdjacentPartsLeavesTheBuiltMeshIdentical)
+{
+    ForgeDoc doc = openAsset("ship");
+    SOL_REQUIRE(!doc.parts.empty());
+    assets::MeshData before;
+    SOL_REQUIRE(assets::buildForge(doc, before));
+
+    const std::size_t a = doc.indexOf("hull_0a");
+    const std::size_t b = doc.indexOf("hull_0b");
+    SOL_REQUIRE(a < doc.parts.size() && b < doc.parts.size());
+    SOL_REQUIRE(b == a + 1); // adjacent, which is what makes it exact
+
+    std::string error;
+    SOL_REQUIRE(assets::forgeMergeParts(doc, b, a, &error)); // either order
+    SOL_CHECK(doc.parts.size() == 15);
+    SOL_CHECK(doc.indexOf("hull_0a") == a);        // the earlier id survives
+    SOL_CHECK(doc.indexOf("hull_0b") == std::string::npos);
+    SOL_CHECK(doc.parts[a].primitive == ForgePrimitive::Mesh);
+
+    assets::MeshData after;
+    SOL_REQUIRE(assets::buildForge(doc, after));
+    SOL_REQUIRE(before.vertices.size() == after.vertices.size());
+    SOL_REQUIRE(before.indices.size() == after.indices.size());
+    SOL_CHECK(std::memcmp(before.vertices.data(), after.vertices.data(),
+                          before.vertices.size() * sizeof(assets::MeshVertex)) == 0);
+    SOL_CHECK(std::memcmp(before.indices.data(), after.indices.data(),
+                          before.indices.size() * sizeof(std::uint32_t)) == 0);
+}
+
+// The merge's three refusals, and each one leaves the document exactly as it
+// found it. The parent rule is E3's bake frame talking: a baked part's geometry
+// is stored in its PARENT's frame, so two parents means two frames.
+SOL_TEST(mergingRefusesItselfAGroupAndTwoDifferentParents)
+{
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(R"(name = "merge"
+
+[[part]]
+id = "frame"
+type = "group"
+
+[[part]]
+id = "loose"
+type = "box"
+
+[[part]]
+id = "hung"
+type = "box"
+parent = "frame"
+)",
+                       doc));
+    const std::string before = assets::writeForge(doc);
+
+    std::string error;
+    SOL_CHECK(!assets::forgeMergeParts(doc, 1, 1, &error));
+    SOL_CHECK(error.find("itself") != std::string::npos);
+    SOL_CHECK(!assets::forgeMergeParts(doc, 0, 1, &error));
+    SOL_CHECK(error.find("group") != std::string::npos);
+    SOL_CHECK(!assets::forgeMergeParts(doc, 1, 2, &error));
+    SOL_CHECK(error.find("parent") != std::string::npos);
+    SOL_CHECK(assets::writeForge(doc) == before);
+
+    // And a part that other parts hang off is not deleted out from under them.
+    ForgeDoc tree;
+    SOL_REQUIRE(parses(R"(name = "tree"
+
+[[part]]
+id = "a"
+type = "box"
+
+[[part]]
+id = "b"
+type = "group"
+
+[[part]]
+id = "c"
+type = "box"
+parent = "b"
+)",
+                       tree));
+    SOL_CHECK(!assets::forgeMergeParts(tree, 0, 1, &error));
+}
+
+// ⚑ A split composes across parts and that is why it is the cheap one: each face
+// answers for itself, so a split landing in two parts is two independent splits,
+// and the midpoints weld because a midpoint commutes with an affine transform.
+// On `ship.forge` that is not an edge case - it is EVERY edge.
+SOL_TEST(splittingAShipEdgeSplitsBothPartsStandingOnIt)
+{
+    ForgeDoc doc = openAsset("ship");
+    SOL_REQUIRE(!doc.parts.empty());
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    // The shared side of the bottom hull quad: two parts, one edge.
+    const std::size_t lo = pointAt(points, {-2.6, -1.3, -1.0});
+    const std::size_t hi = pointAt(points, {3.5, -1.7, 5.0});
+    SOL_REQUIRE(lo < points.size() && hi < points.size());
+
+    const Solid before = inspect(doc);
+    SOL_REQUIRE(before.built);
+
+    std::string error;
+    SOL_REQUIRE(assets::forgeSplitEdge(doc, points, faces,
+                                       static_cast<std::uint32_t>(lo),
+                                       static_cast<std::uint32_t>(hi), &error));
+
+    // Both parts baked, and only those two.
+    SOL_CHECK(doc.parts[doc.indexOf("hull_0a")].primitive == ForgePrimitive::Mesh);
+    SOL_CHECK(doc.parts[doc.indexOf("hull_0b")].primitive == ForgePrimitive::Mesh);
+    SOL_CHECK(doc.parts[doc.indexOf("nose_0")].primitive == ForgePrimitive::FlatTriangle);
+    SOL_CHECK(doc.parts.size() == 16); // a split adds no parts
+
+    const Solid after = inspect(doc);
+    SOL_CHECK(after.built);
+    SOL_CHECK(after.triangles == before.triangles + 2); // one new triangle each
+    SOL_CHECK(after.manifold);
+    SOL_CHECK(after.borderEdges == before.borderEdges);
+    SOL_CHECK(after.degenerates == 0);
+    // ⚑ THE ASSERTION THAT MATTERS: a midpoint lies ON the surface, so the solid
+    // it bounds is the same solid. A split that changed the volume moved
+    // something, and a split that failed to weld across the seam would have torn
+    // the hull open and changed it too.
+    SOL_CHECK(std::abs(after.volume - before.volume) < 1e-4);
+
+    std::vector<assets::ForgePoint> afterPoints;
+    SOL_REQUIRE(assets::forgePoints(doc, afterPoints));
+    SOL_CHECK(afterPoints.size() == points.size() + 1); // ONE new point, not two
+    SOL_CHECK(pointAt(afterPoints, {0.45, -1.5, 2.0}) < afterPoints.size());
+}
+
+// The cube's edge split, where the volume assertion is exact rather than nearly:
+// nothing about a closed unit box changes when one of its diagonals gains a
+// point in the middle.
+SOL_TEST(splittingACubeEdgeKeepsItClosedAndKeepsItsVolume)
+{
+    ForgeDoc doc = openAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    std::string error;
+    SOL_REQUIRE(assets::forgeSplitEdge(doc, points, faces, edges[0].a, edges[0].b, &error));
+    SOL_CHECK(doc.parts[0].primitive == ForgePrimitive::Mesh); // the box baked
+
+    const Solid after = inspect(doc);
+    SOL_CHECK(after.built);
+    SOL_CHECK(after.manifold);
+    SOL_CHECK(after.borderEdges == 0);
+    SOL_CHECK(after.degenerates == 0);
+    SOL_CHECK(std::abs(after.volume - 1.0) < 1e-5);
+    SOL_CHECK(after.triangles == 14); // 12, and the two faces on that edge split
+
+    // A pair that is not an edge, and one past the end, are both refused.
+    ForgeDoc untouched = openAsset("cube");
+    const std::string before = assets::writeForge(untouched);
+    std::vector<assets::ForgePoint> p2;
+    std::vector<assets::ForgeEdge> e2;
+    std::vector<assets::ForgeFace> f2;
+    SOL_REQUIRE(assets::forgeTopology(untouched, p2, e2, f2));
+    SOL_CHECK(!assets::forgeSplitEdge(untouched, p2, f2, 0, 0, &error));
+    SOL_CHECK(!assets::forgeSplitEdge(untouched, p2, f2, 0, 99, &error));
+    SOL_CHECK(assets::writeForge(untouched) == before);
+}
+
+// ⚑⚑ THE ASSERTION THAT DECIDED THE EXTRUDE'S DESIGN, WRITTEN BEFORE IT: Phase
+// 16's asset invariants aimed at a mesh the TOOL made. A wall wound the wrong
+// way is invisible to every count and obvious to the signed volume, and a wall
+// that missed a border edge leaves the solid open.
+SOL_TEST(anExtrudedCubeFaceIsStillAClosedSolidWoundOutwards)
+{
+    ForgeDoc doc = openAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    const std::vector<std::uint32_t> group = faceGroupAt(points, faces, 2, 0.5);
+    SOL_REQUIRE(group.size() == 2); // the +z face, both its triangles
+
+    double offset = 0.0;
+    std::string error;
+    SOL_REQUIRE(assets::forgeExtrudeFaces(doc, faces, group, &offset, &error));
+    // ⚑ A tenth of the group's longest border edge, on the 0.1 mm write grid.
+    // Not zero, because `forgePoints` decides identity by POSITION and a face
+    // duplicated in place welds straight back into the one it came from.
+    SOL_CHECK(std::abs(offset - 0.1) < 1e-12);
+
+    const Solid after = inspect(doc);
+    SOL_CHECK(after.built);
+    SOL_CHECK(after.manifold);
+    SOL_CHECK(after.borderEdges == 0);
+    SOL_CHECK(after.degenerates == 0);
+    SOL_CHECK(after.triangles == 20); // 12, plus four walls of two
+    SOL_CHECK(after.volume > 0.0);    // wound outwards
+    // A 1 x 1 x 0.1 slab on top of a unit cube, and nothing else moved.
+    SOL_CHECK(std::abs(after.volume - 1.1) < 1e-5);
+    SOL_CHECK(noOrphanVertices(doc.parts[0]));
+
+    std::vector<assets::ForgePoint> afterPoints;
+    std::vector<assets::ForgeEdge> afterEdges;
+    std::vector<assets::ForgeFace> afterFaces;
+    SOL_REQUIRE(assets::forgeTopology(doc, afterPoints, afterEdges, afterFaces));
+    SOL_CHECK(afterPoints.size() == 12);
+    SOL_CHECK(afterEdges.size() == 30);
+    SOL_CHECK(afterFaces.size() == 20);
+    // V - E + F = 2, still one closed surface of genus zero.
+    SOL_CHECK((static_cast<int>(afterPoints.size()) - static_cast<int>(afterEdges.size()) +
+               static_cast<int>(afterFaces.size())) == 2);
+    SOL_CHECK(pointAt(afterPoints, {0.5, 0.5, 0.6}) < afterPoints.size());  // raised
+    SOL_CHECK(pointAt(afterPoints, {0.5, 0.5, 0.5}) < afterPoints.size());  // and the rim stayed
+}
+
+// ⚑⚑ THE REFUSAL THAT SET THE SLICE ORDER, AND ITS PAYOFF IN THE SAME TEST. A
+// wall straddling the seam between two parts belongs to neither, so a cross-part
+// extrude is declined with `merge` named - and merging first makes the identical
+// call work. This is E4c's rule one level up, with the escape hatch built.
+SOL_TEST(aCrossPartFaceIsRefusedNamingMergeAndMergingFirstMakesItWork)
+{
+    ForgeDoc doc = openAsset("ship");
+    SOL_REQUIRE(!doc.parts.empty());
+    const std::string before = assets::writeForge(doc);
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    // The bottom hull quad: `hull_0a` and `hull_0b`, coplanar, one face to look
+    // at and two parts to write through.
+    std::vector<std::uint32_t> group;
+    for (std::size_t seed = 0; seed < faces.size() && group.empty(); ++seed) {
+        std::vector<std::uint32_t> candidate;
+        assets::forgeFaceGroup(points, faces, seed, candidate);
+        if (candidate.size() == 2 && faces[candidate[0]].part != faces[candidate[1]].part) {
+            group = candidate;
+        }
+    }
+    SOL_REQUIRE(group.size() == 2);
+
+    std::string error;
+    SOL_CHECK(!assets::forgeExtrudeFaces(doc, faces, group, nullptr, &error));
+    SOL_CHECK(error.find("merge") != std::string::npos);
+    SOL_CHECK(assets::writeForge(doc) == before); // refused means untouched
+
+    // Merge the two parts the message named, re-read the topology, and the same
+    // face goes through.
+    const std::size_t partA = faces[group[0]].part;
+    const std::size_t partB = faces[group[1]].part;
+    SOL_REQUIRE(assets::forgeMergeParts(doc, partA, partB, &error));
+
+    std::vector<assets::ForgePoint> merged;
+    std::vector<assets::ForgeEdge> mergedEdges;
+    std::vector<assets::ForgeFace> mergedFaces;
+    SOL_REQUIRE(assets::forgeTopology(doc, merged, mergedEdges, mergedFaces));
+    std::vector<std::uint32_t> mergedGroup;
+    for (std::size_t seed = 0; seed < mergedFaces.size() && mergedGroup.empty(); ++seed) {
+        std::vector<std::uint32_t> candidate;
+        assets::forgeFaceGroup(merged, mergedFaces, seed, candidate);
+        if (candidate.size() == 2 && mergedFaces[candidate[0]].part == std::min(partA, partB)) {
+            mergedGroup = candidate;
+        }
+    }
+    SOL_REQUIRE(mergedGroup.size() == 2);
+
+    const Solid was = inspect(doc);
+    double offset = 0.0;
+    SOL_REQUIRE(assets::forgeExtrudeFaces(doc, mergedFaces, mergedGroup, &offset, &error));
+    SOL_CHECK(offset > 0.0);
+
+    const Solid now = inspect(doc);
+    SOL_CHECK(now.built);
+    SOL_CHECK(now.manifold);
+    SOL_CHECK(now.borderEdges == 0);
+    SOL_CHECK(now.degenerates == 0);
+    SOL_CHECK(now.triangles == was.triangles + 8); // four border sides, two each
+    SOL_CHECK(now.volume > was.volume);            // raised OUTWARDS, not inwards
+    SOL_CHECK(noOrphanVertices(doc.parts[std::min(partA, partB)]));
+}
+
+// ⚑ A vertex the group shares with a triangle OUTSIDE it is duplicated rather
+// than moved, and `gate_membrane.forge` is the case that exercises it: its 32
+// zero-area triangles stand on the same axis vertices the film's real ones do,
+// and they are not in the group. Moving those would drag geometry nobody
+// selected; duplicating them leaves no orphan behind either.
+SOL_TEST(extrudingAFilmDuplicatesTheVerticesItSharesWithTrianglesOutsideTheGroup)
+{
+    ForgeDoc doc = openAsset("gate_membrane");
+    SOL_REQUIRE(!doc.parts.empty());
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    std::vector<std::uint32_t> group;
+    assets::forgeFaceGroup(points, faces, 0, group);
+    SOL_REQUIRE(group.size() == 32); // a flat disc really is one face
+
+    double offset = 0.0;
+    std::string error;
+    SOL_REQUIRE(assets::forgeExtrudeFaces(doc, faces, group, &offset, &error));
+    SOL_CHECK(offset > 0.0);
+    SOL_CHECK(doc.parts[0].primitive == ForgePrimitive::Mesh);
+    SOL_CHECK(noOrphanVertices(doc.parts[0]));
+
+    const Solid after = inspect(doc);
+    SOL_CHECK(after.built);
+    // 32 raised triangles, 32 degenerate ones still where they were, and a
+    // 32-sided wall of two triangles each.
+    SOL_CHECK(after.triangles == 64 + 64);
+    SOL_CHECK(after.borderEdges == 32); // it was an open film and it still is
+}
+
+// The extrude's refusals, each leaving the document byte-identical - the fixed
+// point E1 established, met by an operation that changes topology.
+SOL_TEST(aRefusedExtrudeLeavesTheDocumentByteIdentical)
+{
+    ForgeDoc doc = openAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+    const std::string before = assets::writeForge(doc);
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    std::string error;
+    double offset = 1.0;
+    SOL_CHECK(!assets::forgeExtrudeFaces(doc, faces, {}, &offset, &error));
+    SOL_CHECK(offset == 0.0); // reported as nothing done, not left stale
+    const std::uint32_t past[] = {99u};
+    SOL_CHECK(!assets::forgeExtrudeFaces(doc, faces, past, &offset, &error));
+    SOL_CHECK(assets::writeForge(doc) == before);
+}

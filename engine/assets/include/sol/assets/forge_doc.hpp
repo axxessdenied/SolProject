@@ -412,6 +412,21 @@ struct ForgeFace
     std::uint32_t a = 0; // all three into the ForgePoint vector
     std::uint32_t b = 0;
     std::uint32_t c = 0;
+
+    // ⚑⚑ WHICH PART EMITTED THIS TRIANGLE, AND WHICH OF ITS OWN TRIANGLES IT IS
+    // (engine plan Phase 9 stage E5). E4 never needed either: a face drag moves
+    // POINTS, and a point already carries every part standing at it. A topology
+    // change is the opposite - it rewrites one part's index list, so it has to
+    // know whose, and where.
+    //
+    // ⚑ `triangle` counts the part's OWN triangles including the degenerate ones
+    // that never reach this vector, because a baked part's `indices` carries them
+    // too and the number has to address that list. It is stable across the bake:
+    // `forgeBakeDocumentPart` emits the part through the same `emitPart` the
+    // whole-document build does, so the k-th triangle stays the k-th triangle -
+    // which is the property E3's byte-for-byte assertion already pins.
+    std::size_t part = 0;
+    std::uint32_t triangle = 0;
 };
 
 [[nodiscard]] bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
@@ -583,5 +598,117 @@ void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFac
 // exactly as it is rather than round-tripped, so baking twice is baking once.
 [[nodiscard]] bool forgeBakeDocumentPart(ForgeDoc& doc, std::size_t partIndex,
                                          std::string* error = nullptr);
+
+// ⚑⚑ THE THREE TOPOLOGY OPERATIONS (engine plan Phase 9 stage E5), AND THE ONE
+// THING THEY ALL SHARE: THEY EDIT A BAKED PART'S OWN LISTS IN PLACE.
+//
+// The stage E spec named `mesh_edit`'s `append`, `weld` and
+// `removeDegenerateFaces` as the plumbing. None of them is called here, and the
+// measurement that settles it is one line: `toEditMesh` followed by
+// `toMeshData` changes the vertex count on three of the seven committed assets
+// (asteroid 960 -> 954, cockpit 426 -> 424, ship 48 -> 42). `EditMesh` is a
+// GLOBAL representation - it welds every position and merges every identical
+// corner across the whole mesh - while a baked part writes one vertex per line
+// precisely so an edit is a small diff. A one-face extrude routed through it
+// would rewrite all 99,115 bytes of `asteroid.forge` and shift every
+// `BakedVertex` element index the point tool writes through. `mesh_edit` is
+// stage F's layer, where a whole-mesh weld and decimate is the intention.
+//
+// ⚑ Every one of these bakes the parts it touches, because a topology change
+// has no parametric answer by construction - a box with a face pulled out of it
+// is not a box. The bake is performed rather than demanded, unlike the point
+// tool's refusals, because unlike a drag there is no version of the operation
+// that leaves the part parametric. What the CALLER owes an author is the
+// warning, since the cost varies by 750x across the primitives: baking one
+// `flat_triangle` costs `ship.forge` two lines and baking `station.forge`'s
+// `habitat_ring` costs it 1,492.
+
+// Merges two parts into one. The EARLIER of the two survives - keeping its id,
+// its parent and its `leading` comment block - and the later one's geometry is
+// appended to it and the part erased.
+//
+// ⚑⚑ EARLIER RATHER THAN "TARGET" IS WHAT KEEPS IT BIT-EXACT. Parts emit in
+// FILE order, so a merge that put the survivor anywhere but the earlier slot
+// would renumber every vertex after it. Merging two ADJACENT parts leaves
+// `buildForge`'s output identical by memcmp; merging two distant ones is the
+// same geometry renumbered, which is honest but is not the same file.
+//
+// ⚑ Both parts must share a `parent`, and that is E3's bake frame talking
+// rather than a convenience: a baked part's geometry is stored in its PARENT's
+// frame, so concatenating across two different parents would need one side
+// re-expressed through the world and back - exact only while both parents are
+// the identity. Nothing in `assets/meshes/` is affected: only `gate.forge` sets
+// a parent at all, and all eight of those name one bare group.
+//
+// Refuses two indices that are the same, either being a group, either failing
+// to bake, and a later part that other parts hang off - re-parenting the
+// orphans silently is the kind of edit nobody would find again.
+[[nodiscard]] bool forgeMergeParts(ForgeDoc& doc, std::size_t partA, std::size_t partB,
+                                   std::string* error = nullptr);
+
+// Splits the edge joining points `a` and `b` at its midpoint: every face
+// standing on it becomes two, and the parts that emitted them are baked.
+//
+// ⚑⚑ A SPLIT COMPOSES ACROSS PARTS AND THAT IS WHY IT IS THE CHEAP ONE. Each
+// face answers for itself - insert the midpoint, replace the triangle with two -
+// so a split that lands in two different parts is just two independent splits,
+// and the new point welds to its twin next door because both are the midpoint of
+// the same pair under an affine transform. Nothing is created that belongs to
+// nobody. That matters more than it sounds: 24 of `ship.forge`'s 24 edges have
+// their two faces in DIFFERENT parts, so on the asset stage E exists for, every
+// single edge is the cross-part case.
+//
+// ⚑ The midpoint is taken between the two PART-LOCAL vertices, not between the
+// two `ForgePoint` positions, so no frame conversion is involved and the answer
+// is right for a part hanging under a turned parent.
+//
+// Refuses a pair with no non-degenerate face standing on it, and refuses the
+// whole edit if any part on the edge will not bake.
+[[nodiscard]] bool forgeSplitEdge(ForgeDoc& doc, std::span<const ForgePoint> points,
+                                  std::span<const ForgeFace> faces, std::uint32_t a,
+                                  std::uint32_t b, std::string* error = nullptr);
+
+// Raises a coplanar face group along its own normal and walls in the gap it
+// leaves - the extrude. `group` is `forgeFaceGroup`'s output.
+//
+// ⚑⚑ IT REFUSES A GROUP THAT SPANS TWO PARTS, AND NAMES `merge`. A split is per
+// face; an extrude raises WALLS around the group's border, and a wall straddling
+// the seam between two parts belongs to neither. This is E4c's rule one level up
+// - refuse a wrong result you could have declined, and route to the escape hatch
+// - and the escape hatch is `forgeMergeParts` above, which is why merge is built
+// before extrude rather than beside it. Measured: 4 of the 1,273 face groups in
+// `assets/meshes/` span two parts (`ship.forge`'s `hull_0a`+`hull_0b`,
+// `hull_2a`+`hull_2b` and `rear_lower`+`rear_upper`, and `cockpit.forge`'s
+// `cowl_back_lower`+`cowl_back_upper`), all four are ADJACENT pairs, and merging
+// them is what an author wanted anyway: two triangles that are one quad.
+//
+// ⚑⚑ THE OFFSET CANNOT BE ZERO, WHICH IS THE ONE PLACE THE STANDARD IDIOM DOES
+// NOT TRANSFER. The modeller's gesture is extrude-then-move: the geometry is
+// created flush and the existing drag positions it. Here a point's identity is
+// POSITIONAL - `forgePoints` welds at `WeldOptions::positionTolerance` - so a
+// face duplicated in place welds straight back into the face it came from and
+// the drag moves both. Nor can it be a fixed number of metres: this tool's orbit
+// camera covers four orders of magnitude and an offset that reads on the
+// station's 102 m ring is wider than the whole `cockpit.forge` dash. So it is a
+// FRACTION OF THE GROUP'S OWN LONGEST BORDER EDGE, quantized to the same 0.1 mm
+// write grid a drag lands on and floored at one step of it. `offset` reports
+// what was used, in metres, so the tool can say it.
+//
+// ⚑ A vertex the group shares with a triangle OUTSIDE it is duplicated rather
+// than moved, so the neighbour keeps its corner. A vertex used only by the group
+// is moved in place, which is what keeps the diff to the lines that changed.
+//
+// Refuses an empty group, a group with no area, a group spanning parts, and a
+// part that will not bake. Nothing is written unless the whole operation
+// resolves.
+// ⚑ It takes no `ForgePoint` span, unlike everything else in stage E, and that
+// is the finding rather than an omission: an extrude is entirely a PART-LOCAL
+// operation. The geometry, the normal it raises along and the offset are all in
+// the frame the part's own numbers are written in, so there is no inverse
+// transform in it anywhere - where a drag arrives in the built frame and has to
+// be brought back.
+[[nodiscard]] bool forgeExtrudeFaces(ForgeDoc& doc, std::span<const ForgeFace> faces,
+                                     std::span<const std::uint32_t> group, double* offset = nullptr,
+                                     std::string* error = nullptr);
 
 } // namespace sol::assets

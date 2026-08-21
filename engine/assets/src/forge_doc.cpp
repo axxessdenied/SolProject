@@ -1344,10 +1344,12 @@ namespace {
 // which is what lets the edges be expressed in the SAME numbering as the points
 // rather than in `MeshAdjacency`'s - see `ForgeEdge` for why that matters.
 bool collectPoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, MeshData& mesh,
-                   std::vector<std::uint32_t>& pointOf, std::string* error, double tolerance)
+                   std::vector<std::uint32_t>& pointOf, std::vector<std::size_t>& ownerOf,
+                   std::string* error, double tolerance)
 {
     out.clear();
     pointOf.clear();
+    ownerOf.clear();
     if (!forgeHasVertexAttribution(doc)) {
         if (error != nullptr) {
             *error = "this document's [build] table welds or reorders vertices, so a built vertex "
@@ -1365,7 +1367,11 @@ bool collectPoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, MeshData& 
     // Which part each built vertex came from. One pass over the ranges rather
     // than a search per vertex: the asteroid is 1291 vertices and this runs on
     // every rebuild.
-    std::vector<std::size_t> ownerOf(mesh.vertices.size(), doc.parts.size());
+    //
+    // ⚑ Reported to the caller since E5, because a face has to name the part
+    // that emitted it and this is the only place that mapping exists. Deriving
+    // it a second time is the trap `forgeTopology` was written to avoid.
+    ownerOf.assign(mesh.vertices.size(), doc.parts.size());
     std::vector<std::uint32_t> localOf(mesh.vertices.size(), 0);
     for (const ForgePartRange& range : ranges) {
         for (std::uint32_t i = 0; i < range.vertexCount; ++i) {
@@ -1498,7 +1504,8 @@ bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string*
 {
     MeshData mesh;
     std::vector<std::uint32_t> pointOf;
-    return collectPoints(doc, out, mesh, pointOf, error, tolerance);
+    std::vector<std::size_t> ownerOf;
+    return collectPoints(doc, out, mesh, pointOf, ownerOf, error, tolerance);
 }
 
 bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
@@ -1509,9 +1516,15 @@ bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
     faces.clear();
     MeshData mesh;
     std::vector<std::uint32_t> pointOf;
-    if (!collectPoints(doc, points, mesh, pointOf, error, tolerance)) {
+    std::vector<std::size_t> ownerOf;
+    if (!collectPoints(doc, points, mesh, pointOf, ownerOf, error, tolerance)) {
         return false;
     }
+    // How many of its own triangles each part has emitted so far, so a face can
+    // say WHICH of them it is. Counted over every triangle including the
+    // degenerate ones, because a baked part's `indices` carries those too and
+    // the number has to address that list.
+    std::vector<std::uint32_t> trianglesOfPart(doc.parts.size() + 1, 0);
 
     // Collect every face's three sides, ordered so `a < b`, then sort and run
     // over the duplicates - which is `buildAdjacency`'s shape, deliberately,
@@ -1529,30 +1542,33 @@ bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
         const std::uint32_t i0 = mesh.indices[face * 3];
         const std::uint32_t i1 = mesh.indices[(face * 3) + 1];
         const std::uint32_t i2 = mesh.indices[(face * 3) + 2];
-        if (i0 < pointOf.size() && i1 < pointOf.size() && i2 < pointOf.size()) {
-            const std::uint32_t p0 = pointOf[i0];
-            const std::uint32_t p1 = pointOf[i1];
-            const std::uint32_t p2 = pointOf[i2];
-            // Three DISTINCT points or it has no area - see ForgeFace.
-            if (p0 != p1 && p1 != p2 && p0 != p2) {
-                faces.push_back({p0, p1, p2});
-            }
+        if (i0 >= pointOf.size() || i1 >= pointOf.size() || i2 >= pointOf.size()) {
+            continue; // an index past the vertices cannot name a point
         }
+        const std::size_t owner = ownerOf[i0];
+        const std::uint32_t local = trianglesOfPart[owner]++;
+
+        const std::uint32_t p0 = pointOf[i0];
+        const std::uint32_t p1 = pointOf[i1];
+        const std::uint32_t p2 = pointOf[i2];
+        // ⚑ Three DISTINCT points or it has no area - see ForgeFace. A face that
+        // fails this contributes nothing to the EDGES either, and that is E5's
+        // correction rather than E4's rule: a face with two corners at one point
+        // still has a third side, and counting it inflated the tally. On
+        // `gate_membrane.forge` - 32 real triangles fanned to a point and 32
+        // degenerate ones - the 32 axis edges read a face count of FOUR and the
+        // 32 rim edges read one, so nothing read two on the only open surface in
+        // the repo. E4 only ever asked whether a triangle was there; a split
+        // asks which, and would have tried to split two with no area.
+        if (p0 == p1 || p1 == p2 || p0 == p2) {
+            continue;
+        }
+        faces.push_back({p0, p1, p2, owner, local});
+
+        const std::uint32_t corners[3] = {p0, p1, p2};
         for (std::size_t corner = 0; corner < 3; ++corner) {
-            const std::uint32_t ia = mesh.indices[(face * 3) + corner];
-            const std::uint32_t ib = mesh.indices[(face * 3) + ((corner + 1) % 3)];
-            if (ia >= pointOf.size() || ib >= pointOf.size()) {
-                continue; // an index past the vertices cannot name a point
-            }
-            std::uint32_t a = pointOf[ia];
-            std::uint32_t b = pointOf[ib];
-            if (a == b) {
-                // ⚑ Two corners of one face standing at one point. A revolve
-                // that touches its own axis fans to a point and does this once
-                // per segment - 32 times in `gate_membrane.forge` - and calling
-                // that an edge would put 32 zero-length edges in the pick list.
-                continue;
-            }
+            std::uint32_t a = corners[corner];
+            std::uint32_t b = corners[(corner + 1) % 3];
             if (a > b) {
                 std::swap(a, b);
             }
@@ -2124,6 +2140,536 @@ bool forgeMovePoints(ForgeDoc& doc, std::span<const ForgePoint> points, BuildPoi
         collapsed[i].element = chosen;
     }
     return applyWrites(doc, collapsed, localDelta, error);
+}
+
+namespace {
+
+// ⚑ `ForgePart::find` is const because everything before E5 only ever READ a
+// parameter back. A topology change rewrites a baked part's two lists in place,
+// and copying a 1,291-vertex `ForgeValue` through `value()` and `set()` to move
+// one triangle is the sort of thing nobody notices until the asteroid is open.
+[[nodiscard]] ForgeValue* findMutable(ForgePart& part, const char* name)
+{
+    for (std::pair<std::string, ForgeValue>& entry : part.params) {
+        if (entry.first == name) {
+            return &entry.second;
+        }
+    }
+    return nullptr;
+}
+
+// The two lists of a part that is already, or has just been, a `mesh`.
+struct BakedLists
+{
+    ForgeValue* vertices = nullptr;
+    ForgeValue* indices = nullptr;
+    [[nodiscard]] bool valid() const { return vertices != nullptr && indices != nullptr; }
+};
+
+[[nodiscard]] BakedLists bakeFor(ForgeDoc& doc, std::size_t partIndex, std::string* error)
+{
+    if (!forgeBakeDocumentPart(doc, partIndex, error)) {
+        return {};
+    }
+    ForgePart& part = doc.parts[partIndex];
+    BakedLists lists{findMutable(part, "vertices"), findMutable(part, "indices")};
+    if (!lists.valid() && error != nullptr) {
+        *error = "part '" + part.id + "' baked without vertices or indices";
+    }
+    return lists;
+}
+
+// Which corner of `face` stands at point `p`, or 3 when none does.
+[[nodiscard]] std::uint32_t cornerAt(const ForgeFace& face, std::uint32_t p)
+{
+    const std::uint32_t corners[3] = {face.a, face.b, face.c};
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        if (corners[i] == p) {
+            return i;
+        }
+    }
+    return 3;
+}
+
+// ⚑ The smallest offset an extrude may use: one step of the same 0.1 mm grid a
+// dragged point lands on. Anything finer is invisible in the file AND welds back
+// into the face it came from, since `forgePoints` decides identity by position.
+constexpr double kMinExtrude = 1.0 / kGridStepsPerMetre;
+// ⚑ Of the group's longest border edge, so a 0.22 m cowl face and a 102 m
+// station ring both come out with something an author can see. A fixed metre
+// value cannot work across an orbit camera covering four orders of magnitude.
+constexpr double kExtrudeFraction = 0.1;
+
+} // namespace
+
+bool forgeMergeParts(ForgeDoc& doc, std::size_t partA, std::size_t partB, std::string* error)
+{
+    if (partA >= doc.parts.size() || partB >= doc.parts.size()) {
+        if (error != nullptr) {
+            *error = "there is no such part to merge";
+        }
+        return false;
+    }
+    if (partA == partB) {
+        if (error != nullptr) {
+            *error = "part '" + doc.parts[partA].id + "' cannot be merged into itself";
+        }
+        return false;
+    }
+    // ⚑ The EARLIER part survives, and that is what keeps the merge bit-exact:
+    // parts emit in FILE order, so a survivor anywhere but the earlier slot
+    // renumbers every vertex after it.
+    const std::size_t keep = std::min(partA, partB);
+    const std::size_t consume = std::max(partA, partB);
+    for (const std::size_t index : {keep, consume}) {
+        if (doc.parts[index].primitive == ForgePrimitive::Group) {
+            if (error != nullptr) {
+                *error = "part '" + doc.parts[index].id +
+                         "' is a group: it carries no geometry to merge";
+            }
+            return false;
+        }
+    }
+    if (doc.parts[keep].parent != doc.parts[consume].parent) {
+        if (error != nullptr) {
+            *error = "part '" + doc.parts[keep].id + "' and part '" + doc.parts[consume].id +
+                     "' hang off different parents, and a baked part's geometry is stored in its "
+                     "parent's frame - move one of them first";
+        }
+        return false;
+    }
+    for (const ForgePart& part : doc.parts) {
+        if (!part.parent.empty() && part.parent == doc.parts[consume].id) {
+            if (error != nullptr) {
+                *error = "part '" + part.id + "' hangs off part '" + doc.parts[consume].id +
+                         "', which this merge would delete - re-parent it first";
+            }
+            return false;
+        }
+    }
+
+    // ⚑ Into a copy, so a refusal halfway through leaves the document exactly as
+    // it was. E3's bake takes the same care and for the same reason: a
+    // half-applied edit is the seam this whole mechanism exists to prevent.
+    ForgeDoc working = doc;
+    const BakedLists keepLists = bakeFor(working, keep, error);
+    if (!keepLists.valid()) {
+        return false;
+    }
+    const BakedLists eatLists = bakeFor(working, consume, error);
+    if (!eatLists.valid()) {
+        return false;
+    }
+
+    // Re-read rather than reuse `keepLists`, so nothing here depends on whether
+    // baking the second part could have touched the first's storage.
+    ForgeValue* const target = findMutable(working.parts[keep], "vertices");
+    ForgeValue* const targetIndices = findMutable(working.parts[keep], "indices");
+    const ForgeValue* const source = findMutable(working.parts[consume], "vertices");
+    const ForgeValue* const sourceIndices = findMutable(working.parts[consume], "indices");
+    if (target == nullptr || targetIndices == nullptr || source == nullptr ||
+        sourceIndices == nullptr) {
+        if (error != nullptr) {
+            *error = "a merged part lost its lists";
+        }
+        return false;
+    }
+    const auto base = static_cast<std::uint32_t>(target->vertices.size());
+    target->vertices.insert(target->vertices.end(), source->vertices.begin(),
+                            source->vertices.end());
+    targetIndices->indices.reserve(targetIndices->indices.size() + sourceIndices->indices.size());
+    for (const std::uint32_t index : sourceIndices->indices) {
+        targetIndices->indices.push_back(base + index);
+    }
+    working.parts.erase(working.parts.begin() + static_cast<std::ptrdiff_t>(consume));
+    doc = std::move(working);
+    return true;
+}
+
+bool forgeSplitEdge(ForgeDoc& doc, std::span<const ForgePoint> points,
+                    std::span<const ForgeFace> faces, std::uint32_t a, std::uint32_t b,
+                    std::string* error)
+{
+    if (a == b || a >= points.size() || b >= points.size()) {
+        if (error != nullptr) {
+            *error = "that is not an edge of this mesh";
+        }
+        return false;
+    }
+    std::vector<const ForgeFace*> onEdge;
+    for (const ForgeFace& face : faces) {
+        if (cornerAt(face, a) < 3 && cornerAt(face, b) < 3) {
+            onEdge.push_back(&face);
+        }
+    }
+    if (onEdge.empty()) {
+        if (error != nullptr) {
+            *error = "no triangle stands on that edge, so there is nothing to split";
+        }
+        return false;
+    }
+
+    ForgeDoc working = doc;
+    // Every part with a triangle on this edge - 24 of `ship.forge`'s 24 edges
+    // have two, because each of its triangles is its own part.
+    std::vector<std::size_t> parts;
+    for (const ForgeFace* face : onEdge) {
+        if (std::find(parts.begin(), parts.end(), face->part) == parts.end()) {
+            parts.push_back(face->part);
+        }
+    }
+    for (const std::size_t part : parts) {
+        if (part >= working.parts.size()) {
+            if (error != nullptr) {
+                *error = "a triangle on that edge names no part";
+            }
+            return false;
+        }
+        if (!forgeBakeDocumentPart(working, part, error)) {
+            return false;
+        }
+    }
+
+    for (const std::size_t part : parts) {
+        ForgeValue* const vertices = findMutable(working.parts[part], "vertices");
+        ForgeValue* const indices = findMutable(working.parts[part], "indices");
+        if (vertices == nullptr || indices == nullptr) {
+            if (error != nullptr) {
+                *error = "part '" + working.parts[part].id + "' baked without vertices or indices";
+            }
+            return false;
+        }
+        // One midpoint per pair of PART-LOCAL vertices, so two triangles sharing
+        // the edge share the new corner - and two faces meeting at a hard edge,
+        // which name different vertices at the same place, correctly get one
+        // each and keep the crease.
+        std::vector<std::pair<std::uint64_t, std::uint32_t>> midpoints;
+        for (const ForgeFace* face : onEdge) {
+            if (face->part != part) {
+                continue;
+            }
+            const std::size_t triangle = static_cast<std::size_t>(face->triangle) * 3;
+            if (triangle + 2 >= indices->indices.size()) {
+                if (error != nullptr) {
+                    *error = "part '" + working.parts[part].id + "' has no triangle " +
+                             std::to_string(face->triangle);
+                }
+                return false;
+            }
+            // The edge as the triangle winds it: x -> y, with z the third corner.
+            // Splitting (x, y, z) into (x, m, z) and (m, y, z) keeps the winding
+            // of both halves, which is the whole reason to bother with the order.
+            const std::uint32_t ja = cornerAt(*face, a);
+            const std::uint32_t jb = cornerAt(*face, b);
+            const std::uint32_t x = ((ja + 1) % 3 == jb) ? ja : jb;
+            const std::uint32_t y = (x + 1) % 3;
+            const std::uint32_t z = (y + 1) % 3;
+            const std::uint32_t vx = indices->indices[triangle + x];
+            const std::uint32_t vy = indices->indices[triangle + y];
+            const std::uint32_t vz = indices->indices[triangle + z];
+            if (vx >= vertices->vertices.size() || vy >= vertices->vertices.size()) {
+                if (error != nullptr) {
+                    *error = "part '" + working.parts[part].id + "' indexes past its own vertices";
+                }
+                return false;
+            }
+
+            const std::uint64_t key = (static_cast<std::uint64_t>(std::min(vx, vy)) << 32) |
+                                      static_cast<std::uint64_t>(std::max(vx, vy));
+            std::uint32_t midpoint = 0;
+            bool found = false;
+            for (const std::pair<std::uint64_t, std::uint32_t>& made : midpoints) {
+                if (made.first == key) {
+                    midpoint = made.second;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // ⚑ Between the two PART-LOCAL vertices, never between the two
+                // ForgePoint positions: a midpoint commutes with an affine
+                // transform, so this is right under a turned parent and needs no
+                // inverse to get there.
+                const ForgeVertex& one = vertices->vertices[vx];
+                const ForgeVertex& two = vertices->vertices[vy];
+                ForgeVertex made;
+                made.position = {(one.position.x + two.position.x) * 0.5,
+                                 (one.position.y + two.position.y) * 0.5,
+                                 (one.position.z + two.position.z) * 0.5};
+                made.normal = core::normalize(BuildPoint{one.normal.x + two.normal.x,
+                                                         one.normal.y + two.normal.y,
+                                                         one.normal.z + two.normal.z});
+                if (made.normal.x == 0.0 && made.normal.y == 0.0 && made.normal.z == 0.0) {
+                    made.normal = one.normal; // two normals that cancel: keep one
+                }
+                made.uv = {(one.uv.u + two.uv.u) * 0.5, (one.uv.v + two.uv.v) * 0.5};
+                midpoint = static_cast<std::uint32_t>(vertices->vertices.size());
+                vertices->vertices.push_back(made);
+                midpoints.emplace_back(key, midpoint);
+            }
+
+            indices->indices[triangle + 0] = vx;
+            indices->indices[triangle + 1] = midpoint;
+            indices->indices[triangle + 2] = vz;
+            indices->indices.push_back(midpoint);
+            indices->indices.push_back(vy);
+            indices->indices.push_back(vz);
+        }
+    }
+    doc = std::move(working);
+    return true;
+}
+
+bool forgeExtrudeFaces(ForgeDoc& doc, std::span<const ForgeFace> faces,
+                       std::span<const std::uint32_t> group, double* offset, std::string* error)
+{
+    if (offset != nullptr) {
+        *offset = 0.0;
+    }
+    if (group.empty()) {
+        if (error != nullptr) {
+            *error = "nothing is selected to extrude";
+        }
+        return false;
+    }
+    for (const std::uint32_t index : group) {
+        if (index >= faces.size()) {
+            if (error != nullptr) {
+                *error = "that selection names a triangle this mesh does not have";
+            }
+            return false;
+        }
+    }
+    // ⚑⚑ THE REFUSAL THAT DECIDED THE SLICE ORDER. A split is per face and
+    // composes across parts; an extrude raises WALLS around the group's border,
+    // and a wall straddling a seam between two parts belongs to neither. So it
+    // is refused with the escape hatch named - E4c's rule one level up - and the
+    // escape hatch is the merge above, which is why merge is built first.
+    const std::size_t part = faces[group[0]].part;
+    for (const std::uint32_t index : group) {
+        if (faces[index].part != part) {
+            if (error != nullptr) {
+                *error = "this face is made of triangles from part '" + doc.parts[part].id +
+                         "' and part '" + doc.parts[faces[index].part].id +
+                         "' - merge them into one part first, and the extrude will have somewhere "
+                         "to put the walls it raises";
+            }
+            return false;
+        }
+    }
+    if (part >= doc.parts.size()) {
+        if (error != nullptr) {
+            *error = "that face names no part";
+        }
+        return false;
+    }
+
+    ForgeDoc working = doc;
+    const BakedLists lists = bakeFor(working, part, error);
+    if (!lists.valid()) {
+        return false;
+    }
+    std::vector<ForgeVertex>& vertices = lists.vertices->vertices;
+    std::vector<std::uint32_t>& indices = lists.indices->indices;
+
+    // The group's triangles, as offsets into this part's own index list.
+    std::vector<std::size_t> triangles;
+    triangles.reserve(group.size());
+    for (const std::uint32_t index : group) {
+        const std::size_t triangle = static_cast<std::size_t>(faces[index].triangle) * 3;
+        if (triangle + 2 >= indices.size()) {
+            if (error != nullptr) {
+                *error = "part '" + working.parts[part].id + "' has no triangle " +
+                         std::to_string(faces[index].triangle);
+            }
+            return false;
+        }
+        triangles.push_back(triangle);
+    }
+    // ⚑ DEDUPLICATED, AND A MUTATION IS WHAT FOUND IT. `forgeFaceGroup` never
+    // names a triangle twice, but with the cross-part refusal disabled two faces
+    // of DIFFERENT parts both resolved to triangle 0 of the one part being
+    // extruded - and the second visit re-pointed an already-raised index through
+    // `raisedOf`, walking off the end of it. The refusal is what stops that
+    // reaching here, but a bounds guard should not depend on a rule one function
+    // up: a repeated triangle is now one triangle.
+    std::sort(triangles.begin(), triangles.end());
+    triangles.erase(std::unique(triangles.begin(), triangles.end()), triangles.end());
+    for (const std::size_t triangle : triangles) {
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            if (indices[triangle + corner] >= vertices.size()) {
+                if (error != nullptr) {
+                    *error = "part '" + working.parts[part].id + "' indexes past its own vertices";
+                }
+                return false;
+            }
+        }
+    }
+
+    // ⚑ Everything below is in the PART'S OWN frame, which is why there is no
+    // inverse transform anywhere in this function: the geometry, the normal and
+    // the offset are all expressed in the numbers that get written.
+    //
+    // The group's corners welded by POSITION, not by vertex index. Two triangles
+    // that are one quad may name six vertices - `ship.forge`'s merged hull pairs
+    // do - and a border computed over indices would call their shared side two
+    // borders and wall up the middle of the face.
+    std::vector<BuildPoint> local;
+    std::vector<std::uint32_t> localOfCorner(triangles.size() * 3, 0);
+    constexpr double kWeld = 1e-5;
+    for (std::size_t t = 0; t < triangles.size(); ++t) {
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            const BuildPoint position = vertices[indices[triangles[t] + corner]].position;
+            std::size_t found = local.size();
+            for (std::size_t candidate = 0; candidate < local.size(); ++candidate) {
+                const BuildPoint gap = local[candidate] - position;
+                if (core::dot(gap, gap) <= kWeld * kWeld) {
+                    found = candidate;
+                    break;
+                }
+            }
+            if (found == local.size()) {
+                local.push_back(position);
+            }
+            localOfCorner[(t * 3) + corner] = static_cast<std::uint32_t>(found);
+        }
+    }
+
+    const BuildPoint normal = core::normalize(core::cross(local[localOfCorner[1]] - local[localOfCorner[0]],
+                                                          local[localOfCorner[2]] - local[localOfCorner[0]]));
+    if (normal.x == 0.0 && normal.y == 0.0 && normal.z == 0.0) {
+        if (error != nullptr) {
+            *error = "that face has no area, so there is no direction to extrude it in";
+        }
+        return false;
+    }
+
+    // A directed side appearing without its reverse is on the border. For a
+    // consistently wound group every interior side appears exactly twice, once
+    // each way, so this needs no adjacency structure.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> sides;
+    sides.reserve(triangles.size() * 3);
+    for (std::size_t t = 0; t < triangles.size(); ++t) {
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            sides.emplace_back(localOfCorner[(t * 3) + corner],
+                               localOfCorner[(t * 3) + ((corner + 1) % 3)]);
+        }
+    }
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> border;
+    for (const std::pair<std::uint32_t, std::uint32_t>& side : sides) {
+        const bool paired = std::find(sides.begin(), sides.end(),
+                                      std::pair{side.second, side.first}) != sides.end();
+        if (!paired) {
+            border.push_back(side);
+        }
+    }
+    if (border.empty()) {
+        if (error != nullptr) {
+            *error = "this face has no border - it is a closed surface on its own, so an extrude "
+                     "would have nothing to wall in";
+        }
+        return false;
+    }
+
+    double longest = 0.0;
+    for (const std::pair<std::uint32_t, std::uint32_t>& side : border) {
+        longest = std::max(longest, core::length(local[side.second] - local[side.first]));
+    }
+    const double distance = std::max(kMinExtrude, quantize(longest * kExtrudeFraction));
+    const BuildPoint delta{normal.x * distance, normal.y * distance, normal.z * distance};
+
+    // ⚑ A vertex used ONLY by the group is moved where it stands, which keeps
+    // the diff to the lines that actually changed. One shared with a triangle
+    // outside the group is duplicated instead, so the neighbour keeps its
+    // corner - and neither case leaves an unreferenced vertex behind, which
+    // `forgePoints` would otherwise show as a point no triangle uses.
+    std::vector<std::uint32_t> useCount(vertices.size(), 0);
+    for (const std::uint32_t index : indices) {
+        if (index < useCount.size()) {
+            ++useCount[index];
+        }
+    }
+    std::vector<std::uint32_t> insideCount(vertices.size(), 0);
+    for (const std::size_t triangle : triangles) {
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            ++insideCount[indices[triangle + corner]];
+        }
+    }
+    std::vector<std::uint32_t> raisedOf(vertices.size(), 0);
+    std::vector<bool> hasRaised(vertices.size(), false);
+    for (const std::size_t triangle : triangles) {
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            const std::uint32_t vertex = indices[triangle + corner];
+            if (hasRaised[vertex]) {
+                continue;
+            }
+            if (useCount[vertex] == insideCount[vertex]) {
+                vertices[vertex].position = vertices[vertex].position + delta;
+                raisedOf[vertex] = vertex;
+            } else {
+                ForgeVertex copy = vertices[vertex];
+                copy.position = copy.position + delta;
+                raisedOf[vertex] = static_cast<std::uint32_t>(vertices.size());
+                vertices.push_back(copy);
+            }
+            hasRaised[vertex] = true;
+        }
+    }
+    for (const std::size_t triangle : triangles) {
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            const std::uint32_t vertex = indices[triangle + corner];
+            if (vertex < raisedOf.size() && hasRaised[vertex]) {
+                indices[triangle + corner] = raisedOf[vertex];
+            }
+        }
+    }
+
+    // The walls. Each border side gets four vertices of its own, because a wall
+    // is flat and shares no normal with the face it came off - the same reason
+    // `addBox` spends 24 vertices on eight corners.
+    for (const std::pair<std::uint32_t, std::uint32_t>& side : border) {
+        std::uint32_t fromVertex = 0;
+        std::uint32_t toVertex = 0;
+        bool found = false;
+        for (std::size_t t = 0; t < triangles.size() && !found; ++t) {
+            for (std::size_t corner = 0; corner < 3; ++corner) {
+                if (localOfCorner[(t * 3) + corner] == side.first &&
+                    localOfCorner[(t * 3) + ((corner + 1) % 3)] == side.second) {
+                    // Read back through raisedOf: these corners have already been
+                    // re-pointed, and the wall wants the ORIGINAL uvs.
+                    fromVertex = indices[triangles[t] + corner];
+                    toVertex = indices[triangles[t] + ((corner + 1) % 3)];
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            continue;
+        }
+        const BuildPoint fromBase = local[side.first];
+        const BuildPoint toBase = local[side.second];
+        // ⚑ cross(edge, delta), which is outward for a group wound CCW seen from
+        // its own normal - the same handedness `addQuad` documents.
+        const BuildPoint wall = core::normalize(core::cross(toBase - fromBase, delta));
+        const BuildUv fromUv = vertices[fromVertex].uv;
+        const BuildUv toUv = vertices[toVertex].uv;
+        const auto base = static_cast<std::uint32_t>(vertices.size());
+        vertices.push_back({fromBase, wall, fromUv});
+        vertices.push_back({toBase, wall, toUv});
+        vertices.push_back({toBase + delta, wall, toUv});
+        vertices.push_back({fromBase + delta, wall, fromUv});
+        // addQuad's split, so a wall reads the same way as every other quad this
+        // engine emits: (a,b,c) then (a,c,d).
+        const std::uint32_t quad[6] = {base, base + 1, base + 2, base, base + 2, base + 3};
+        indices.insert(indices.end(), std::begin(quad), std::end(quad));
+    }
+
+    if (offset != nullptr) {
+        *offset = distance;
+    }
+    doc = std::move(working);
+    return true;
 }
 
 } // namespace sol::assets
