@@ -1,0 +1,291 @@
+# The freighter's flight deck - the second interior this game has, and the
+# first thing authored against Phase 19's `cockpit` key on a ship def.
+#
+# ⚑ IT IS AUTHORED IN SHIP SPACE AROUND THE SAME EYE AS assets/meshes/
+# cockpit.forge, and that is not a copied convention - it is forced. The eye is
+# `kCockpitOffset = (0, 0.8, -5)` in ship_camera.hpp, a CONSTANT that does not
+# scale with the hull, and the cockpit instance is pushed at scale 1 whatever
+# the ship's own scale is. A freighter is drawn at scale 4 and its pilot's head
+# is in exactly the same place as a shuttle pilot's. So this is not a bigger
+# cabin: it is a different one, the same size, around the same point.
+#
+# ⚑ WHAT MAKES IT READ AS A HAULER RATHER THAN AS A FIGHTER, all of it
+# deliberate contrast with cockpit.forge:
+#   - a LETTERBOX windscreen (header at 1.28 where the shuttle's is 1.38) that
+#     is WIDER (+-1.05 against +-0.80), so you look out along a nose instead of
+#     up out of a bubble
+#   - a CENTRE SCREEN POST splitting that window, which no fighter would carry
+#     and every heavy vehicle does
+#   - heavier structure throughout: 0.10 beams against the shuttle's 0.07
+#   - a SECOND CREW STATION to starboard with a throttle quadrant between the
+#     seats, so the deck reads as crewed rather than as a single-seat pod
+#   - an OVERHEAD PANEL above and forward of the eye
+#   - and a BLUNT stepped nose where the shuttle tapers to a point
+#
+# ⚑ EVERY PART IS A CLOSED SOLID (box or beam) AND NONE IS EXACTLY FLUSH WITH
+# ANOTHER. That is what keeps the welded mesh manifold with zero border edges:
+# parts may interpenetrate freely, but two exactly coincident faces would weld
+# into an edge with four triangles on it. cockpit.forge needed six
+# `flat_triangle` parts and an explicit closing back for its nose cowl; a box
+# is closed already, which is why this file has none.
+#
+# Beams are 2.6 texture repeats per metre throughout, as in cockpit.forge: this
+# is a metre from the player's eye, where a 0..1 stretch across a face smears.
+name = "freighter_cockpit"
+
+# --- cab frame ------------------------------------------------------------
+# Sill corners (+-1.25, 0.44, -6.15) forward and (+-1.20, 0.42, -4.60) aft;
+# windscreen header (+-1.05, 1.28, -6.02); roof (+-0.95, 1.52, -4.60), which
+# rises going back so there is headroom behind the seats and none over the
+# glass.
+
+[[part]]
+id = "front_sill"
+type = "beam"
+from = [-1.25, 0.44, -6.15]
+to = [1.25, 0.44, -6.15]
+width = 0.1
+height = 0.1
+tile = 2.6
+
+[[part]]
+id = "a_pillar_port"
+type = "beam"
+from = [-1.25, 0.44, -6.15]
+to = [-1.05, 1.28, -6.02]
+width = 0.1
+height = 0.1
+tile = 2.6
+
+[[part]]
+id = "a_pillar_starboard"
+type = "beam"
+from = [1.25, 0.44, -6.15]
+to = [1.05, 1.28, -6.02]
+width = 0.1
+height = 0.1
+tile = 2.6
+
+# The split screen. Thinner than the pillars so it reads as a divider rather
+# than as structure, and it is the single clearest tell that this is not the
+# shuttle's canopy.
+#
+# ⚑ IT IS AT x = 0.43, NOT AT x = 0, AND THE FIRST DRAFT HAD IT CENTRED. Only
+# flying it showed why that is wrong: the pilot's eye is at x = 0, so a centred
+# post lands exactly on the boresight and runs straight down through the
+# reticle. Here it divides the pilot's window from the co-pilot's, which is
+# both what a two-crew deck actually looks like and out of the eyeline. The
+# Forge's Report cannot see this - it is a fact about where the head is, and
+# the tool's camera orbits the model from outside.
+[[part]]
+id = "screen_post"
+type = "beam"
+from = [0.43, 0.44, -6.15]
+to = [0.43, 1.28, -6.02]
+width = 0.08
+height = 0.08
+tile = 2.6
+
+[[part]]
+id = "windscreen_header"
+type = "beam"
+from = [-1.05, 1.28, -6.02]
+to = [1.05, 1.28, -6.02]
+width = 0.1
+height = 0.1
+tile = 2.6
+
+[[part]]
+id = "roof_rail_port"
+type = "beam"
+from = [-1.05, 1.28, -6.02]
+to = [-0.95, 1.52, -4.6]
+width = 0.1
+height = 0.1
+tile = 2.6
+
+[[part]]
+id = "roof_rail_starboard"
+type = "beam"
+from = [1.05, 1.28, -6.02]
+to = [0.95, 1.52, -4.6]
+width = 0.1
+height = 0.1
+tile = 2.6
+
+[[part]]
+id = "roof_cross"
+type = "beam"
+from = [-0.95, 1.52, -4.6]
+to = [0.95, 1.52, -4.6]
+width = 0.1
+height = 0.1
+tile = 2.6
+
+[[part]]
+id = "sill_port"
+type = "beam"
+from = [-1.25, 0.44, -6.15]
+to = [-1.2, 0.42, -4.6]
+width = 0.12
+height = 0.11
+tile = 2.6
+
+[[part]]
+id = "sill_starboard"
+type = "beam"
+from = [1.25, 0.44, -6.15]
+to = [1.2, 0.42, -4.6]
+width = 0.12
+height = 0.11
+tile = 2.6
+
+[[part]]
+id = "c_pillar_port"
+type = "beam"
+from = [-1.2, 0.42, -4.6]
+to = [-0.95, 1.52, -4.6]
+width = 0.1
+height = 0.1
+tile = 2.6
+
+[[part]]
+id = "c_pillar_starboard"
+type = "beam"
+from = [1.2, 0.42, -4.6]
+to = [0.95, 1.52, -4.6]
+width = 0.1
+height = 0.1
+tile = 2.6
+
+# --- console and overhead -------------------------------------------------
+
+# Above and forward of the eye, tucked under the roof line between the header
+# and the roof cross. It is the part you notice first when you look up, which
+# is the point.
+[[part]]
+id = "overhead_panel"
+type = "box"
+center = [0.0, 1.42, -5.7]
+size = [1.6, 0.14, 0.66]
+tile = 2.6
+
+[[part]]
+id = "dash"
+type = "box"
+center = [0.0, 0.3, -5.86]
+size = [2.5, 0.3, 0.56]
+tile = 2.6
+
+# A stepped instrument shelf standing off the dash, so the console has a
+# profile instead of being one slab.
+[[part]]
+id = "dash_shelf"
+type = "box"
+center = [0.0, 0.54, -5.6]
+size = [2.1, 0.14, 0.3]
+tile = 2.6
+
+[[part]]
+id = "console_port"
+type = "box"
+center = [-1.14, 0.58, -5.25]
+size = [0.28, 0.24, 1.1]
+tile = 2.6
+
+[[part]]
+id = "console_starboard"
+type = "box"
+center = [1.14, 0.58, -5.25]
+size = [0.28, 0.24, 1.1]
+tile = 2.6
+
+# Between the two seats, where a hauler's throttles live.
+[[part]]
+id = "pedestal"
+type = "box"
+center = [0.43, 0.5, -5.2]
+size = [0.34, 0.24, 0.62]
+tile = 2.6
+
+[[part]]
+id = "floor"
+type = "box"
+center = [0.0, 0.06, -5.3]
+size = [2.3, 0.08, 1.6]
+tile = 2.6
+
+# --- crew -----------------------------------------------------------------
+# ⚑ THE PILOT'S SEAT IS AT x = 0 BECAUSE THE EYE IS, and the eye cannot move.
+# The second station is offset to starboard rather than the pair being
+# symmetric about the centreline - which is what a two-crew deck actually
+# looks like from the left-hand seat, and the only arrangement that puts the
+# player IN a chair rather than between two of them.
+
+[[part]]
+id = "seat_pan"
+type = "box"
+center = [0.0, 0.26, -4.98]
+size = [0.6, 0.14, 0.58]
+tile = 2.6
+
+[[part]]
+id = "seat_back"
+type = "box"
+center = [0.0, 0.7, -4.7]
+size = [0.62, 0.8, 0.12]
+tile = 2.6
+
+[[part]]
+id = "headrest"
+type = "box"
+center = [0.0, 1.15, -4.68]
+size = [0.34, 0.2, 0.12]
+tile = 2.6
+
+[[part]]
+id = "crew_seat_pan"
+type = "box"
+center = [0.86, 0.26, -4.9]
+size = [0.56, 0.14, 0.54]
+tile = 2.6
+
+[[part]]
+id = "crew_seat_back"
+type = "box"
+center = [0.86, 0.68, -4.64]
+size = [0.58, 0.76, 0.12]
+tile = 2.6
+
+[[part]]
+id = "crew_headrest"
+type = "box"
+center = [0.86, 1.1, -4.62]
+size = [0.3, 0.18, 0.12]
+tile = 2.6
+
+[[part]]
+id = "rear_bulkhead"
+type = "box"
+center = [0.0, 0.98, -4.5]
+size = [2.5, 1.16, 0.12]
+tile = 2.6
+
+# --- nose -----------------------------------------------------------------
+# Two blunt steps instead of the shuttle's four-sided taper to a point. It sits
+# below the sight line from the eye, so it reads as a long bonnet you look over
+# rather than as something in the way.
+
+[[part]]
+id = "nose_fascia"
+type = "box"
+center = [0.0, 0.26, -6.55]
+size = [2.2, 0.24, 0.85]
+tile = 2.6
+
+[[part]]
+id = "nose_lip"
+type = "box"
+center = [0.0, 0.17, -7.15]
+size = [1.5, 0.16, 0.45]
+tile = 2.6

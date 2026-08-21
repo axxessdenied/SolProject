@@ -184,3 +184,22 @@ model = "ship"
 [[role]]
 id = "wreck"
 model = "ship"
+
+# The freighter's flight deck (Phase 19). The row itself was written by the
+# Forge's `create [[model]] row` button, which measured `radius` off the mesh -
+# 7.4173 m, and it said so.
+#
+# ⚑ THE THREE VALUES BELOW ARE THE ONES THE TOOL CANNOT INFER, and they are
+# what makes this an INTERIOR rather than a prop. `texture` defaulted to
+# `checker` because a combo has to default to something; `emissive` is here for
+# the same reason cockpit.toml's is - vacuum ambient is 1.2%, which is right
+# for a hull seen from outside and PITCH BLACK for a room you are sitting in;
+# and `solid` is off because this is a room, not an obstacle. Geometry cannot
+# tell you any of that.
+[[model]]
+id = "freighter_cockpit"
+mesh = "freighter_cockpit"
+texture = "cockpit"
+radius = 7.4173
+emissive = 0.10
+solid = false

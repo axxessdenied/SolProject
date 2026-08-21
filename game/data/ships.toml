@@ -74,6 +74,10 @@ crew_berths = 1
 id = "sol.freighter"
 name = "Freighter"
 model = "ship"
+# ⚑ The first ship in this game to fly its own interior (Phase 19). The eye
+# does not move with `scale` - kCockpitOffset is a constant - so this is not a
+# bigger cabin than the shuttle's, it is a different one at the same size.
+cockpit = "freighter_cockpit"
 scale = 4.0
 forward_accel = 18.0
 reverse_accel = 10.0

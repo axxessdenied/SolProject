@@ -285,9 +285,9 @@ SOL_TEST(cockpitReproducesTheShippedMesh)
 //
 // ⚑ The five recipe tests above are deliberately untouched. They read no asset
 // and cannot block an edit; see the note on their own block.
-constexpr const char* const kCommittedMeshes[] = {"cube",    "station",       "ship",
-                                                  "cockpit", "asteroid",      "gate",
-                                                  "gate_membrane"};
+constexpr const char* const kCommittedMeshes[] = {"cube",     "station",  "ship",
+                                                  "cockpit",  "asteroid", "gate",
+                                                  "gate_membrane", "freighter_cockpit"};
 
 // ⚑ `gate_membrane` is a single revolve of the profile [[0,0],[70,0]] - a flat
 // disc whose centre collapses to a point. It is a FILM, so it has a border loop

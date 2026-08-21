@@ -120,7 +120,17 @@ SOL_TEST(defDocumentsKeepEveryRowAndKeyTheSchemaSees)
     SOL_REQUIRE(!source.empty());
     DefDoc doc;
     SOL_REQUIRE(parses(source, doc));
-    SOL_CHECK(doc.count("model") == 7);
+    // ⚑ Derived, not pinned. This asserts what the test is NAMED for - the
+    // document sees every row the schema does - and a literal 7 asserted the
+    // number of models the game happens to ship, which is a different claim
+    // that fails the first time anyone adds one. Phase 16 retired exactly this
+    // shape for the shipped meshes; adding `freighter_cockpit` found two more
+    // of it here.
+    assets::DefDatabase schema;
+    std::string schemaError;
+    SOL_REQUIRE(schema.mergeToml(source.c_str(), source.size(), "models.toml", &schemaError));
+    SOL_CHECK(doc.count("model") == schema.models().size());
+    SOL_CHECK(doc.count("model") >= 7); // the set it shipped with, as a floor
 
     const DefRow* gate = doc.find("model", "gate");
     SOL_REQUIRE(gate != nullptr);
@@ -300,6 +310,13 @@ SOL_TEST(defDocumentAppendsARowAfterTheLastOne)
     SOL_REQUIRE(!source.empty());
     DefDoc doc;
     SOL_REQUIRE(parses(source, doc));
+    // The count BEFORE, so the assertion below is "appending adds one" rather
+    // than "the game ships eight models".
+    assets::DefDatabase beforeDefs;
+    std::string beforeError;
+    SOL_REQUIRE(beforeDefs.mergeToml(source.c_str(), source.size(), "models.toml", &beforeError));
+    const std::size_t modelsBefore = beforeDefs.models().size();
+
     DefRow& row = doc.append("model");
     row.set("id", assets::defString("beacon"));
     row.set("mesh", assets::defString("gate"));
@@ -313,7 +330,7 @@ SOL_TEST(defDocumentAppendsARowAfterTheLastOne)
     assets::DefDatabase defs;
     std::string error;
     SOL_REQUIRE(defs.mergeToml(written.c_str(), written.size(), "models.toml", &error));
-    SOL_CHECK(defs.models().size() == 8);
+    SOL_CHECK(defs.models().size() == modelsBefore + 1);
     const assets::ModelDef* beacon = defs.findModel("beacon");
     SOL_REQUIRE(beacon != nullptr);
     SOL_CHECK(beacon->mesh == "gate");
