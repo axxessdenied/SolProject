@@ -410,11 +410,12 @@ bool parseWeapon(const TomlValue& table, const char* sourceName, std::vector<Wea
     reader.optionalFloat("energy_cost", def.energyCost);
     reader.optionalFloat("mining_power", def.miningPower);
     reader.optionalFloat("price", def.price);
+    reader.optionalString("model", def.model);
     reader.optionalGate(def.gate);
 
     reader.rejectUnknownKeys({"id", "name", "kind", "damage", "rate_of_fire", "range",
                               "projectile_speed", "energy_cost", "mining_power", "price",
-                              "factions", "min_rep"});
+                              "model", "factions", "min_rep"});
     if (!reader.failed && def.kind != "projectile" && def.kind != "hitscan") {
         reader.fail("'kind' must be \"projectile\" or \"hitscan\"");
     }
@@ -488,9 +489,11 @@ bool parseCommodity(const TomlValue& table, const char* sourceName,
     reader.optionalFloat("ore_weight_core", def.oreWeightCore);
     reader.optionalFloat("ore_weight_frontier", def.oreWeightFrontier);
     reader.optionalFloat("ore_weight_fringe", def.oreWeightFringe);
+    reader.optionalString("model", def.model);
+    reader.optionalString("chunk_model", def.chunkModel);
 
-    reader.rejectUnknownKeys(
-        {"id", "name", "base_price", "ore_weight_core", "ore_weight_frontier", "ore_weight_fringe"});
+    reader.rejectUnknownKeys({"id", "name", "base_price", "ore_weight_core", "ore_weight_frontier",
+                              "ore_weight_fringe", "model", "chunk_model"});
     if (!reader.failed && def.basePrice <= 0.0f) {
         reader.fail("'base_price' must be > 0");
     }

@@ -9,8 +9,10 @@
 // cross-check in `mesh_library.cpp` rather than in the widget.
 
 #include "model_roles.hpp"
+#include "space_world.hpp"
 
 #include <sol/assets/data_defs.hpp>
+#include <sol/core/log.hpp>
 #include <sol/test/test.hpp>
 
 #include <cstdio>
@@ -122,4 +124,105 @@ SOL_TEST(real_size_roles_are_not_under_the_unit_radius_contract)
         gateIsUnderContract = gateIsUnderContract || std::string(role) == game::kRoleGate;
     }
     SOL_CHECK(!gateIsUnderContract);
+}
+
+// ⚑⚑ THE CLAIM THE WHOLE OVERRIDE HALF OF PHASE 19 RESTS ON, AND IT IS THE
+// KIND OF CLAIM THAT ROTS SILENTLY: "adding these keys changed nothing for
+// the defs the game ships". It is only true while an EMPTY override resolves
+// to exactly the role's model, so that is asserted rather than commented.
+SOL_TEST(an_unset_model_override_resolves_to_its_role)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(loadCommittedDefs(db, error));
+
+    const game::ModelId rock =
+        game::modelOverrideOr(db, "", "test", game::kRoleRock, true);
+    SOL_CHECK(game::modelIndex(rock) == db.roleModelIndex(game::kRoleRock));
+
+    // Every weapon and commodity the base game ships leaves these unset, which
+    // is what makes stage C invisible in play until somebody writes a name.
+    for (const sol::assets::WeaponDef& weapon : db.weapons()) {
+        SOL_CHECK(weapon.model.empty());
+    }
+    for (const sol::assets::CommodityDef& commodity : db.commodities()) {
+        SOL_CHECK(commodity.model.empty());
+        SOL_CHECK(commodity.chunkModel.empty());
+    }
+}
+
+// ⚑⚑ THIS TEST EXISTS BECAUSE THE OBVIOUS ONE ABOVE CANNOT FAIL, AND A
+// MUTATION IS WHAT PROVED IT. Deleting `modelOverrideOr`'s empty-name branch
+// leaves every RESULT identical - `modelIdFromName("")` finds nothing and
+// falls back to the same role - so all twelve tests stayed green on a version
+// with the branch gone. The branch's real job is the LOG: without it, the
+// normal case (an unset override, which is every def the game ships) warns
+// once per commodity per system load.
+//
+// Stage F's lesson in a new shape: a test that cannot distinguish the rule
+// from its fallback is testing the fallback. Assert the thing the branch
+// actually controls.
+namespace {
+
+int g_warnings = 0;
+
+void countWarnings(sol::core::LogLevel level, const char* message, void* userData)
+{
+    (void)message;
+    (void)userData;
+    if (level == sol::core::LogLevel::Warn) {
+        ++g_warnings;
+    }
+}
+
+} // namespace
+
+SOL_TEST(an_unset_override_is_silent_while_a_broken_one_warns)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(loadCommittedDefs(db, error));
+
+    sol::core::setLogSink(&countWarnings, nullptr);
+
+    g_warnings = 0;
+    (void)game::modelOverrideOr(db, "", "commodity 'sol.ore'", game::kRoleRock, true);
+    const int afterUnset = g_warnings;
+
+    g_warnings = 0;
+    (void)game::modelOverrideOr(db, "no_such_model", "commodity 'sol.ore'", game::kRoleRock, true);
+    const int afterBroken = g_warnings;
+
+    // ⚑ The unit-radius contract warns too, and it is a SEPARATE warning from
+    // the unknown-name one: a model that exists but is the wrong size is a
+    // different mistake from a name nothing defines.
+    g_warnings = 0;
+    (void)game::modelOverrideOr(db, "station", "commodity 'sol.ore'", game::kRoleRock, true);
+    const int afterWrongRadius = g_warnings;
+
+    sol::core::setLogSink(nullptr, nullptr);
+
+    SOL_CHECK(afterUnset == 0);
+    SOL_CHECK(afterBroken > 0);
+    SOL_CHECK(afterWrongRadius > 0);
+}
+
+SOL_TEST(a_set_model_override_wins_and_a_broken_one_falls_back)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(loadCommittedDefs(db, error));
+
+    // A name that exists is taken literally - that IS the feature.
+    const game::ModelId named =
+        game::modelOverrideOr(db, "station", "test", game::kRoleRock, false);
+    SOL_CHECK(game::modelIndex(named) == db.modelIndex("station"));
+
+    // A name nothing defines warns and lands on the role, rather than
+    // refusing the way an unfilled ROLE does. The asymmetry is deliberate:
+    // one broken override is one broken ore in somebody's mod, while an
+    // unfilled role is the game having no answer at all.
+    const game::ModelId broken =
+        game::modelOverrideOr(db, "no_such_model", "test", game::kRoleRock, true);
+    SOL_CHECK(game::modelIndex(broken) == db.roleModelIndex(game::kRoleRock));
 }

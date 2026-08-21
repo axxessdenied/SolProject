@@ -192,6 +192,13 @@ struct WeaponDef
     // an ordinary hardpoint choice, not a mode.
     float miningPower = 0.0f;
     float price = 500.0f;           // shipyard price (Phase 8a outfitting)
+    // What its bolt is drawn as (Phase 19). Empty means the `bolt` role, so
+    // adding this key changed nothing for the four shipped weapons. A hitscan
+    // weapon spawns no projectile and ignores it.
+    //
+    // ⚑ Under the unit-radius contract: a bolt is drawn at 0.3 x 0.3 x 4 m,
+    // so the model must be authored at radius 1.
+    std::string model;
     CatalogGate gate;
     std::string source;
 };
@@ -265,6 +272,16 @@ struct CommodityDef
     float oreWeightCore = 0.0f;
     float oreWeightFrontier = 0.0f;
     float oreWeightFringe = 0.0f;
+    // What a rock of this ore, and a chunk cut out of one, are drawn as
+    // (Phase 19). Empty means the `rock` and `ore_chunk` roles, so adding
+    // these changed nothing for the shipped commodities. Only a commodity
+    // with an ore weight is ever mined, so on anything else they are inert.
+    //
+    // ⚑ Both are under the unit-radius contract: a rock's instance scale IS
+    // its radius in metres and a chunk is drawn at 6 m, so a model of any
+    // other radius silently resizes every instance AND its mining hit sphere.
+    std::string model;
+    std::string chunkModel;
     std::string source;
 };
 

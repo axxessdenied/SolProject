@@ -677,6 +677,61 @@ model = "gate"
     }
 }
 
+// Phase 19 stage C. A weapon and a commodity may each name what their
+// drawable is, and every def the base game ships leaves them empty - which is
+// the only reason adding the keys is a no-op. Resolution (empty means "the
+// role") is game-side and tested in `game.unit`; what belongs here is that the
+// schema takes them and still refuses everything else.
+SOL_TEST(data_defs_parse_drawable_overrides)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, R"(
+[[weapon]]
+id = "w.plain"
+name = "Plain"
+kind = "projectile"
+
+[[weapon]]
+id = "w.fancy"
+name = "Fancy"
+kind = "projectile"
+model = "tracer"
+
+[[commodity]]
+id = "c.plain"
+name = "Plain"
+
+[[commodity]]
+id = "c.ice"
+name = "Ice"
+model = "ice_rock"
+chunk_model = "ice_shard"
+)",
+                      "defs.toml", &error));
+
+    // Absent is EMPTY, not a name - the fallback is a decision the game makes
+    // at resolve time, so the parser must not invent one here.
+    SOL_CHECK(db.findWeapon("w.plain")->model.empty());
+    SOL_CHECK(db.findWeapon("w.fancy")->model == "tracer");
+    SOL_CHECK(db.findCommodity("c.plain")->model.empty());
+    SOL_CHECK(db.findCommodity("c.plain")->chunkModel.empty());
+    SOL_CHECK(db.findCommodity("c.ice")->model == "ice_rock");
+    SOL_CHECK(db.findCommodity("c.ice")->chunkModel == "ice_shard");
+
+    // ⚑ The rock and the chunk are SEPARATE keys because they are separate
+    // drawables at separate scales - a chunk is not a small rock.
+    SOL_CHECK(db.findCommodity("c.ice")->model != db.findCommodity("c.ice")->chunkModel);
+
+    // Still a strict schema: a plausible near-miss is an error, not a silent
+    // no-op, which is the whole reason these are typed keys and not free text.
+    SOL_CHECK(!merge(db, "[[commodity]]\nid = \"c\"\nname = \"C\"\nchunk = \"x\"\n", "d.toml",
+                     &error));
+    SOL_CHECK(!merge(db, "[[weapon]]\nid = \"w\"\nname = \"W\"\nkind = \"projectile\"\n"
+                         "bolt_model = \"x\"\n",
+                     "d.toml", &error));
+}
+
 SOL_TEST(data_defs_model_validation_errors)
 {
     DefDatabase db;

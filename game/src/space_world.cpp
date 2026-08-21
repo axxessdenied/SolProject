@@ -180,6 +180,52 @@ ModelId modelIdFromName(const assets::DefDatabase& defs, const std::string& name
                                                      : static_cast<ModelId>(fallback);
 }
 
+// An optional per-def model override, or the role that backs it (Phase 19).
+// Empty is the normal case and every shipped def takes it, which is what makes
+// adding these keys a no-op: the world draws exactly what the role says until
+// somebody writes a name in.
+//
+// ⚑ `unitRadius` is the contract from `model_roles.hpp` arriving where it can
+// actually be broken. A role's model is pinned by a test against committed
+// data; an OVERRIDE is written by whoever is editing weapons.toml or
+// commodities.toml, and no test of ours will ever see their file. A rock is
+// drawn at a scale that IS its radius in metres, so a model of some other
+// radius resizes every instance and its mining hit sphere at once - with
+// nothing on screen to say why, which is the only reason this warns at all.
+} // namespace
+
+ModelId modelOverrideOr(const assets::DefDatabase& defs, const std::string& name,
+                        const char* context, const char* role, bool unitRadius)
+{
+    ModelId resolved = kNoModel;
+    // ⚑ THE EMPTY BRANCH IS ABOUT THE LOG, NOT THE ANSWER, AND SAYING SO IS
+    // THE POINT. Deleting it leaves every result identical, because
+    // `modelIdFromName("")` also finds nothing and also falls back to the
+    // role - the two paths converge by construction. What it would cost is a
+    // WARNING for every unset override on every system load, i.e. the normal
+    // case shouting about itself. A mutation proved the results identical and
+    // green, so the test that guards this asserts the log rather than the
+    // return value; anything else here is tautological.
+    if (name.empty()) {
+        const std::uint32_t index = defs.roleModelIndex(role);
+        resolved = index == assets::DefDatabase::kNoModel ? kNoModel
+                                                          : static_cast<ModelId>(index);
+    } else {
+        resolved = modelIdFromName(defs, name, context, role);
+    }
+    if (unitRadius && !name.empty() && resolved != kNoModel) {
+        const assets::ModelDef& model = defs.models()[modelIndex(resolved)];
+        if (model.radius != 1.0f) {
+            SOL_LOG_WARN("%s names model '%s' with radius %.3f; this slot is drawn at a scale "
+                         "that means metres, so it wants a model authored at radius 1",
+                         context, model.id.c_str(), static_cast<double>(model.radius));
+        }
+    }
+    return resolved;
+}
+
+namespace {
+
 sim::ShipTuning toShipTuning(const assets::ShipFlightTuning& flight)
 {
     return {
@@ -1563,6 +1609,28 @@ void SpaceWorld::initializeMining()
 
 void SpaceWorld::instantiateMiningEntities()
 {
+    // Phase 19: what a rock and its chunks are drawn as comes from the ORE's
+    // def row, so ice and raw ore need not be the same grey lump. Resolved
+    // once into a table rather than per rock, for the same reason the station
+    // models are: a name lookup is a string compare and a field holds dozens.
+    // Every shipped commodity leaves both keys empty and gets the role.
+    std::vector<ModelId> rockModels;
+    std::vector<ModelId> chunkModels;
+    if (m_defs != nullptr) {
+        rockModels.reserve(m_commodityIds.size());
+        chunkModels.reserve(m_commodityIds.size());
+        for (const std::string& id : m_commodityIds) {
+            const assets::CommodityDef* def = m_defs->findCommodity(id.c_str());
+            const std::string context = "commodity '" + id + "'";
+            rockModels.push_back(modelOverrideOr(*m_defs, def == nullptr ? std::string() : def->model,
+                                                 context.c_str(), kRoleRock, true));
+            chunkModels.push_back(
+                modelOverrideOr(*m_defs, def == nullptr ? std::string() : def->chunkModel,
+                                context.c_str(), kRoleOreChunk, true));
+        }
+    }
+    m_chunkModels = chunkModels; // the chunk spawn happens later, on a cut
+
     std::vector<sim::RockSpec> rocks;
     for (std::uint32_t field = 0; field < m_fields.size(); ++field) {
         m_mining.rocksFor(m_galaxy, m_currentSystem, field, rocks);
@@ -1577,7 +1645,10 @@ void SpaceWorld::instantiateMiningEntities()
             const float scale = static_cast<float>(rock.radius);
             m_registry.emplace<RenderShape>(
                 entity,
-                RenderShape{.scale = {scale, scale, scale}, .model = roleModel(kRoleRock)});
+                RenderShape{.scale = {scale, scale, scale},
+                            .model = rock.commodity < rockModels.size()
+                                         ? rockModels[rock.commodity]
+                                         : roleModel(kRoleRock)});
             m_registry.emplace<MineableRock>(entity,
                                              MineableRock{.field = field,
                                                           .index = index,
@@ -1614,7 +1685,10 @@ void SpaceWorld::spawnOreChunk(const core::DVec3& position, const core::DVec3& v
     m_registry.emplace<Transform>(
         entity, Transform{.position = position, .previousPosition = position});
     m_registry.emplace<RenderShape>(
-        entity, RenderShape{.scale = {6.0f, 6.0f, 6.0f}, .model = roleModel(kRoleOreChunk)});
+        entity, RenderShape{.scale = {6.0f, 6.0f, 6.0f},
+                            .model = commodity < m_chunkModels.size()
+                                         ? m_chunkModels[commodity]
+                                         : roleModel(kRoleOreChunk)});
     m_registry.emplace<OreChunk>(entity, OreChunk{.velocity = velocity,
                                                   .lifetime = kChunkLifetimeSeconds,
                                                   .commodity = commodity,
@@ -4680,6 +4754,10 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
             weapon.projectileSpeed = weaponDef->projectileSpeed;
             weapon.energyCost = weaponDef->energyCost;
             weapon.miningPower = weaponDef->miningPower;
+            // Resolved here because this is the one place that holds the
+            // WeaponDef; the muzzle only ever sees the flattened component.
+            weapon.boltModel =
+                modelOverrideOr(defs, weaponDef->model, "weapon def", kRoleBolt, true);
         } else {
             SOL_LOG_WARN("ship '%s': unknown weapon def '%s'", def.id.c_str(),
                          def.weaponId.c_str());
@@ -6167,6 +6245,7 @@ void SpaceWorld::tick(double dt)
         double lifetime;
         float damage;
         std::uint32_t shooterIndex;
+        ModelId model; // Phase 19: the firing weapon's, not one model for all
     };
     std::vector<PendingBolt> newBolts;
     // Mining beams land after the loop: cutting spawns ore chunks and can
@@ -6307,6 +6386,7 @@ void SpaceWorld::tick(double dt)
                                                     : 1.0f),
                 .damage = weapon.damage,
                 .shooterIndex = entityIndex,
+                .model = weapon.boltModel,
             });
         }
     }
@@ -6340,7 +6420,6 @@ void SpaceWorld::tick(double dt)
             m_rockEvents.push_back({.commodity = commodity, .units = total});
         }
     }
-    const ModelId boltModel = roleModel(kRoleBolt);
     for (const PendingBolt& bolt : newBolts) {
         const ecs::Entity e = m_registry.create();
         m_registry.emplace<Transform>(e, Transform{.position = bolt.position,
@@ -6348,7 +6427,7 @@ void SpaceWorld::tick(double dt)
                                                    .orientation = bolt.orientation,
                                                    .previousOrientation = bolt.orientation});
         m_registry.emplace<RenderShape>(
-            e, RenderShape{.scale = {0.3f, 0.3f, 4.0f}, .model = boltModel});
+            e, RenderShape{.scale = {0.3f, 0.3f, 4.0f}, .model = bolt.model});
         m_registry.emplace<Projectile>(e, Projectile{.velocity = bolt.velocity,
                                                      .lifetime = bolt.lifetime,
                                                      .damage = bolt.damage,

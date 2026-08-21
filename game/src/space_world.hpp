@@ -107,6 +107,11 @@ struct ShipWeapon
     float energyCost = 0.0f;      // capacitor draw per shot
     float cooldown = 0.0f;        // seconds until the next shot
     float miningPower = 0.0f;     // Phase 8f: yield units cut per second
+    // What its bolt draws as (Phase 19), resolved once when the loadout is
+    // applied. It lives here rather than being looked up at the muzzle
+    // because this component is FLATTENED from its def and keeps no def id -
+    // which is exactly why the bolt was a hardcoded "cube" until now.
+    ModelId boltModel = kNoModel;
 };
 
 // A live bolt: Transform carries the position, this the rest.
@@ -526,6 +531,23 @@ struct OwnedShip
     std::uint32_t storedSystem = 0xffff'ffffu;  // active ship ignores these
     std::uint32_t storedStation = 0xffff'ffffu;
 };
+
+// What a per-def model OVERRIDE resolves to (Phase 19). An empty `name` means
+// "whatever fills `role`", which is what every def the base game ships relies
+// on; a name that no [[model]] defines warns and falls back to the role too,
+// the same warn-rather-than-refuse treatment a ship def's model gets.
+//
+// ⚑ Declared here rather than left static in the .cpp because it is the rule
+// the whole override half of the phase rests on, and "adding these keys
+// changed nothing" is a claim that needs a test rather than a comment.
+//
+// `unitRadius` says the slot is drawn at a scale that means metres, so a model
+// of any other radius silently changes both size and hit sphere - see
+// `model_roles.hpp`. Role models are pinned by a test against committed data;
+// an override is written in somebody else's file, so it can only be warned at.
+[[nodiscard]] ModelId modelOverrideOr(const sol::assets::DefDatabase& defs,
+                                      const std::string& name, const char* context,
+                                      const char* role, bool unitRadius);
 
 class SpaceWorld
 {
@@ -1666,6 +1688,11 @@ private:
     std::vector<sol::sim::MissionEvent> m_missionEventScratch;
     bool m_dockEventPending = false;
     std::vector<std::string> m_commodityIds; // economy index -> def id
+    // Phase 19: economy index -> the model a chunk of that ore draws as.
+    // Cached because a chunk is spawned on a CUT, long after the mining
+    // entities were instantiated, and re-resolving per chunk would be a
+    // string compare inside the weapon loop.
+    std::vector<ModelId> m_chunkModels;
     double m_playerCredits = 1'000.0;
     std::vector<float> m_playerCargo; // per commodity
     float m_playerCargoCapacity = 50.0f;
