@@ -34,6 +34,7 @@ add_test(NAME ecs.unit COMMAND sol_ecs_tests)
 
 add_executable(sol_assets_tests
     assets/data_defs_tests.cpp
+    assets/def_doc_tests.cpp
     assets/font_tests.cpp
     assets/loadout_tests.cpp
     assets/texture_doc_tests.cpp
@@ -43,8 +44,14 @@ target_link_libraries(sol_assets_tests PRIVATE sol::test sol::assets)
 # The committed `.tex` sources are this suite's regression net for the same
 # reason the `.forge` files are geometry.unit's: an invariant asserted against a
 # fixture the code built agrees with the code by construction.
+#
+# SOL_DEF_DATA_DIR is the same argument one directory over (Phase 9 stage H):
+# the def document's round trip is only worth anything against the files a
+# person actually hand-wrote, since those are the ones carrying the comments,
+# the integer spellings and the exponent forms it exists to preserve.
 target_compile_definitions(sol_assets_tests
-    PRIVATE SOL_TEXTURE_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/textures")
+    PRIVATE SOL_TEXTURE_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/textures"
+            SOL_DEF_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data")
 add_test(NAME assets.unit COMMAND sol_assets_tests)
 
 # The editable mesh core (Phase 9 stage B). Headless by construction - no
