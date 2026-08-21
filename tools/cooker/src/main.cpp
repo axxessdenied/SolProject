@@ -49,6 +49,19 @@ bool isUpToDate(const std::string& source, const std::string& output)
     return outputTime != 0 && sourceTime != 0 && outputTime >= sourceTime;
 }
 
+// ⚑ A `.forge` cooks to a SET of files since stage F - level 0 plus however
+// many levels the policy accepts - and how many that is cannot be known without
+// building the mesh and decimating it. A staleness check that cannot know how
+// many outputs to look for is exactly how a stale level survives a re-cook and
+// gets drawn at distance, where nobody is looking closely. So this one does not
+// try to be clever: a part tree always cooks. It is cheap (the seven committed
+// assets are 2,298 triangles between them) and it is the only version of this
+// check that cannot be wrong.
+bool isForgeUpToDate(const std::string&, const std::string&)
+{
+    return false;
+}
+
 // A font manifest pulls in the TTFs beside it, so its own timestamp is not
 // enough to decide staleness - editing a font file has to force a re-cook too.
 bool isFontUpToDate(const std::string& manifest, const std::string& output)
@@ -146,7 +159,21 @@ bool cookForge(const std::string& source, const std::string& output)
         SOL_LOG_ERROR("cooker: %s", error.c_str());
         return false;
     }
-    return writeMesh(mesh, source, output);
+
+    // Stage F: the cook produces a level SET. Generation is a policy over the
+    // built mesh (assets/mesh_lod.hpp) and most assets are refused by the
+    // triangle floor, which is the correct answer and not a failure - so the
+    // reason is logged either way and an author never has to guess.
+    const assets::LodChain chain = assets::buildLodChain(mesh);
+    std::uint32_t levels = 0;
+    if (!cooker::writeMeshLevels(mesh, chain, output, levels, &error)) {
+        SOL_LOG_ERROR("cooker: %s", error.c_str());
+        return false;
+    }
+    SOL_LOG_INFO("cooked %s -> %s (%zu vertices, %zu indices, %u level(s): %s)", source.c_str(),
+                 output.c_str(), mesh.vertices.size(), mesh.indices.size(), levels,
+                 chain.stopReason.c_str());
+    return true;
 }
 
 bool cookFont(const std::string& source, const std::string& output)
@@ -241,6 +268,7 @@ int main(int argc, char** argv)
         } else if (extension == ".forge") {
             job.output = outputDirectory + "/" + fileStem(source) + ".smesh";
             job.cook = &cookForge;
+            job.isCurrent = &isForgeUpToDate;
         } else if (extension == ".font") {
             job.output = outputDirectory + "/" + fileStem(source) + ".sfont";
             job.cook = &cookFont;

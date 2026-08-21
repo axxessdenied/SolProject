@@ -512,3 +512,147 @@ SOL_TEST(theForgeImportRefusesASourceThatBuildsNoGeometry)
 
     std::remove(path.c_str());
 }
+
+// ---------------------------------------------------------------------------
+// The level set (engine plan Phase 9 stage F). A `.forge` no longer cooks to
+// one file, and the two things that can go wrong with a set of files are the
+// naming and the leftovers.
+// ---------------------------------------------------------------------------
+
+SOL_TEST(aLevelIsNamedBesideTheMeshItBelongsTo)
+{
+    const std::string base = "cooked/station.smesh";
+    SOL_CHECK(cooker::meshLevelPath(base, 0) == base);
+    SOL_CHECK(cooker::meshLevelPath(base, 1) == "cooked/station.lod1.smesh");
+    SOL_CHECK(cooker::meshLevelPath(base, 2) == "cooked/station.lod2.smesh");
+    // A path with no extension still names something usable rather than
+    // splicing ".lod1" into the middle of a directory name.
+    SOL_CHECK(cooker::meshLevelPath("cooked/station", 1) == "cooked/station.lod1");
+}
+
+namespace {
+
+// A triangle at a stated size, so the levels below are distinguishable by
+// their contents rather than only by their names.
+[[nodiscard]] assets::MeshData oneTriangle(float scale)
+{
+    assets::MeshData mesh;
+    mesh.vertices = {{{0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                     {{scale, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                     {{0.0f, 0.0f, scale}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}};
+    mesh.indices = {0, 1, 2};
+    return mesh;
+}
+
+[[nodiscard]] assets::LodChain chainOf(std::initializer_list<float> scales)
+{
+    assets::LodChain chain;
+    for (const float scale : scales) {
+        assets::MeshLevel level;
+        level.mesh = oneTriangle(scale);
+        level.triangles = 1;
+        chain.levels.push_back(std::move(level));
+    }
+    return chain;
+}
+
+} // namespace
+
+// ⚑⚑ THE TRAP THIS STAGE ADDS, AND IT IS THE ONE THAT WOULD NEVER BE NOTICED:
+// a cooked directory is not rebuilt from scratch, so an asset edited below the
+// triangle floor - or one whose second level stops clearing a band - leaves a
+// `.lod2.smesh` behind that the runtime would load and draw AT DISTANCE, which
+// is precisely where nobody is looking closely enough to catch it.
+SOL_TEST(cookingAShorterChainDeletesTheLevelsItNoLongerProduces)
+{
+    const std::string base = std::string(platform::executableDirectory()) + "test_levels.smesh";
+    std::string error;
+    std::uint32_t written = 0;
+
+    SOL_REQUIRE(cooker::writeMeshLevels(oneTriangle(1.0f), chainOf({0.5f, 0.25f}), base, written,
+                                        &error));
+    SOL_CHECK(error.empty());
+    SOL_CHECK(written == 3); // level 0 and two below it
+    for (std::uint32_t level = 0; level < 3; ++level) {
+        assets::MeshData loaded;
+        SOL_CHECK(assets::loadMesh(cooker::meshLevelPath(base, level).c_str(), loaded));
+    }
+
+    // Now the same asset cooks to fewer levels. The positive control is in the
+    // same run: level 0 must still be there afterwards, so this is a deletion
+    // and not a wipe.
+    SOL_REQUIRE(cooker::writeMeshLevels(oneTriangle(1.0f), chainOf({0.5f}), base, written, &error));
+    SOL_CHECK(written == 2);
+    assets::MeshData loaded;
+    SOL_CHECK(assets::loadMesh(cooker::meshLevelPath(base, 0).c_str(), loaded));
+    SOL_CHECK(assets::loadMesh(cooker::meshLevelPath(base, 1).c_str(), loaded));
+    SOL_CHECK(!assets::loadMesh(cooker::meshLevelPath(base, 2).c_str(), loaded));
+
+    // And a chain of none leaves exactly one file behind.
+    SOL_REQUIRE(cooker::writeMeshLevels(oneTriangle(1.0f), {}, base, written, &error));
+    SOL_CHECK(written == 1);
+    SOL_CHECK(assets::loadMesh(cooker::meshLevelPath(base, 0).c_str(), loaded));
+    SOL_CHECK(!assets::loadMesh(cooker::meshLevelPath(base, 1).c_str(), loaded));
+
+    for (std::uint32_t level = 0; level < 3; ++level) {
+        std::remove(cooker::meshLevelPath(base, level).c_str());
+    }
+}
+
+// ⚑ Level 0 is the bytes the game already loads, and stage F must not have
+// moved them. `writeMeshLevels` has to write exactly what `encodeMesh` alone
+// would have written - the claim `cooker.unit`'s end-to-end test and E3's
+// bake-save-recook recipe both rest on.
+SOL_TEST(theLevelZeroFileIsExactlyWhatTheEncoderAloneWouldHaveWritten)
+{
+    const std::string base = std::string(platform::executableDirectory()) + "test_level0.smesh";
+    const assets::MeshData source = oneTriangle(3.0f);
+    std::string error;
+    std::uint32_t written = 0;
+    SOL_REQUIRE(cooker::writeMeshLevels(source, chainOf({0.5f}), base, written, &error));
+
+    std::vector<std::uint8_t> onDisk;
+    SOL_REQUIRE(platform::readFileBytes(base.c_str(), onDisk));
+    const std::vector<std::uint8_t> expected = cooker::encodeMesh(source);
+    SOL_REQUIRE(onDisk.size() == expected.size());
+    SOL_CHECK(std::memcmp(onDisk.data(), expected.data(), expected.size()) == 0);
+
+    for (std::uint32_t level = 0; level < 2; ++level) {
+        std::remove(cooker::meshLevelPath(base, level).c_str());
+    }
+}
+
+// The committed assets, through the cook the cooker actually runs: whatever
+// chain the policy produces must reach the game through the runtime's own
+// loader, and every level must be a mesh rather than a file that merely exists.
+SOL_TEST(everyLevelACommittedForgeProducesLoadsThroughTheRuntimeLoader)
+{
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid"};
+    std::uint32_t chainsSeen = 0;
+    for (const char* name : names) {
+        const std::string sourcePath = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+        assets::MeshData built;
+        std::string error;
+        SOL_REQUIRE(cooker::importForgeMesh(sourcePath.c_str(), built, &error));
+
+        const assets::LodChain chain = assets::buildLodChain(built);
+        const std::string base =
+            std::string(platform::executableDirectory()) + "test_chain_" + name + ".smesh";
+        std::uint32_t written = 0;
+        SOL_REQUIRE(cooker::writeMeshLevels(built, chain, base, written, &error));
+        SOL_CHECK(written == chain.levels.size() + 1);
+
+        for (std::uint32_t level = 1; level <= chain.levels.size(); ++level) {
+            assets::MeshData loaded;
+            SOL_REQUIRE(assets::loadMesh(cooker::meshLevelPath(base, level).c_str(), loaded));
+            SOL_CHECK(!loaded.vertices.empty());
+            SOL_CHECK(loaded.indices.size() % 3 == 0);
+            SOL_CHECK(loaded.indices.size() == chain.levels[level - 1].mesh.indices.size());
+            ++chainsSeen;
+        }
+        for (std::uint32_t level = 0; level <= chain.levels.size(); ++level) {
+            std::remove(cooker::meshLevelPath(base, level).c_str());
+        }
+    }
+    SOL_CHECK(chainsSeen > 0); // never a vacuous pass
+}
