@@ -171,6 +171,18 @@ struct DVec3
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
+// ⚑ The double half of `cross`, which was missing while `dot`, `length` and
+// `normalize` all had one. The Forge's ray-triangle pick (engine plan Phase 9
+// stage E4d) is what needed it, and the alternative - a private copy inside
+// `forge_doc.cpp` - collided with this namespace's own `dot` by ADL the moment
+// it was written, because `BuildPoint` IS a `DVec3`. That collision is the
+// small version of the finding this project keeps meeting: a second expression
+// of an existing thing, in a namespace that already had one.
+[[nodiscard]] constexpr DVec3 cross(DVec3 a, DVec3 b)
+{
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
 [[nodiscard]] inline double length(DVec3 v)
 {
     return std::sqrt(dot(v, v));

@@ -2040,7 +2040,8 @@ SOL_TEST(everyCommittedAssetsEdgesAgreeWithAdjacencyAboutTheTopology)
 
         std::vector<assets::ForgePoint> points;
         std::vector<assets::ForgeEdge> edges;
-        SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+        std::vector<assets::ForgeFace> faces;
+        SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
 
         assets::MeshData mesh;
         SOL_REQUIRE(assets::buildForge(doc, mesh));
@@ -2098,7 +2099,8 @@ SOL_TEST(theCubesEdgesAreEighteenAndEveryOneCarriesTwoFaces)
 
     std::vector<assets::ForgePoint> points;
     std::vector<assets::ForgeEdge> edges;
-    SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
 
     SOL_CHECK(points.size() == 8);
     SOL_CHECK(edges.size() == 18);
@@ -2129,7 +2131,8 @@ SOL_TEST(theMembranesDegenerateFacesContributeNoEdges)
 
     std::vector<assets::ForgePoint> points;
     std::vector<assets::ForgeEdge> edges;
-    SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
 
     for (const assets::ForgeEdge& edge : edges) {
         SOL_CHECK(edge.a != edge.b);
@@ -2158,15 +2161,475 @@ SOL_TEST(topologyRefusesADocumentWhoseBuildPassRenumbersVertices)
 
     std::vector<assets::ForgePoint> points;
     std::vector<assets::ForgeEdge> edges;
-    SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
     SOL_CHECK(!edges.empty());
+    SOL_CHECK(!faces.empty());
 
     doc.build.optimize = true;
     std::string error;
-    SOL_CHECK(!assets::forgeTopology(doc, points, edges, &error));
+    SOL_CHECK(!assets::forgeTopology(doc, points, edges, faces, &error));
     SOL_CHECK(!error.empty());
     SOL_CHECK(points.empty());
     SOL_CHECK(edges.empty());
+    SOL_CHECK(faces.empty());
+}
+
+// --- E4d: faces, the ray, and the widening a box makes compulsory ------------
+
+namespace {
+
+ForgeDoc openTopologyAsset(const char* name)
+{
+    const std::string source =
+        readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge");
+    ForgeDoc doc;
+    if (source.empty() || !parses(source, doc)) {
+        return {};
+    }
+    return doc;
+}
+
+// The distinct points a face group stands on - the set a face drag hands to
+// `forgeMovePoints`. Deduplicated by INDEX, because two triangles of a quad
+// name their shared pair twice and a set with a repeat is a doubled write.
+std::vector<assets::ForgePoint> pointsOfGroup(const std::vector<assets::ForgePoint>& points,
+                                              const std::vector<assets::ForgeFace>& faces,
+                                              const std::vector<std::uint32_t>& group)
+{
+    std::vector<std::uint32_t> corners;
+    for (const std::uint32_t index : group) {
+        const std::uint32_t three[3] = {faces[index].a, faces[index].b, faces[index].c};
+        for (const std::uint32_t corner : three) {
+            if (std::find(corners.begin(), corners.end(), corner) == corners.end()) {
+                corners.push_back(corner);
+            }
+        }
+    }
+    std::vector<assets::ForgePoint> set;
+    set.reserve(corners.size());
+    for (const std::uint32_t corner : corners) {
+        set.push_back(points[corner]);
+    }
+    return set;
+}
+
+} // namespace
+
+// The cube's face count is the arithmetic the whole stage rests on: 6 quads, 12
+// triangles, and Euler holding at 8 - 18 + 12 = 2.
+SOL_TEST(theCubesFacesAreItsTwelveTrianglesInThePointNumbering)
+{
+    ForgeDoc doc = openTopologyAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    SOL_CHECK(points.size() == 8);
+    SOL_CHECK(edges.size() == 18);
+    SOL_CHECK(faces.size() == 12);
+    // V - E + F = 2 for any closed surface of genus zero. It is the cheapest
+    // cross-check there is that the three lists describe ONE mesh.
+    SOL_CHECK((static_cast<int>(points.size()) - static_cast<int>(edges.size()) +
+               static_cast<int>(faces.size())) == 2);
+    for (const assets::ForgeFace& face : faces) {
+        SOL_CHECK(face.a < points.size());
+        SOL_CHECK(face.b < points.size());
+        SOL_CHECK(face.c < points.size());
+        SOL_CHECK(face.a != face.b);
+        SOL_CHECK(face.b != face.c);
+        SOL_CHECK(face.a != face.c);
+    }
+}
+
+// ⚑ The same exclusion the edges get, measured from the other side. Phase 16
+// pinned `gate_membrane` at exactly 32 degenerate faces; they are the ones whose
+// corners do not weld to three distinct points, so the face list is exactly 32
+// short of the triangle count.
+SOL_TEST(theMembranesThirtyTwoDegenerateFacesAreNotInTheFaceList)
+{
+    ForgeDoc doc = openTopologyAsset("gate_membrane");
+    SOL_REQUIRE(!doc.parts.empty());
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    assets::MeshData mesh;
+    SOL_REQUIRE(assets::buildForge(doc, mesh));
+    const std::size_t triangles = mesh.indices.size() / 3;
+    SOL_CHECK(triangles == faces.size() + 32);
+}
+
+// ⚑ The ray's own round trip against `screenPoint` is asserted in `ui.unit`,
+// beside `rayDirectionCamera` - `geometry.unit` links no `engine/ui`, and
+// promising a test in a suite that cannot see the code is exactly the linkage
+// mistake Phase 15 recorded twice.
+
+// Möller-Trumbore against the cube, from six directions with a known answer:
+// a ray down each axis at the origin must enter the near face first.
+SOL_TEST(aRayIntoTheCubeEntersTheFaceItPointsAt)
+{
+    ForgeDoc doc = openTopologyAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    // The cube is the unit box at the origin, so a ray from 3 m out along an
+    // axis enters at 2.5 m - and that number is what proves it took the NEAR
+    // face rather than the far one, which a plane test with no ordering would.
+    const assets::BuildPoint origins[] = {{3, 0, 0},  {-3, 0, 0}, {0, 3, 0},
+                                          {0, -3, 0}, {0, 0, 3},  {0, 0, -3}};
+    for (const assets::BuildPoint& origin : origins) {
+        const assets::BuildPoint direction{-origin.x / 3.0, -origin.y / 3.0, -origin.z / 3.0};
+        std::size_t face = 0;
+        double distance = 0.0;
+        SOL_REQUIRE(assets::forgePickFace(points, faces, origin, direction, face, distance));
+        SOL_CHECK(std::abs(distance - 2.5) < 1e-6);
+        SOL_CHECK(face < faces.size());
+    }
+
+    // A ray that misses entirely finds nothing, and leaves its outputs alone.
+    std::size_t face = 99;
+    double distance = -1.0;
+    SOL_CHECK(!assets::forgePickFace(points, faces, {3, 3, 3}, {1, 0, 0}, face, distance));
+    SOL_CHECK(face == 99);
+    SOL_CHECK(distance == -1.0);
+
+    // ⚑ And a ray pointing AWAY from the cube finds nothing either, which is
+    // the `along <= 0` clause. Without it every pick would answer with whatever
+    // is behind the author's head.
+    SOL_CHECK(!assets::forgePickFace(points, faces, {3, 0, 0}, {1, 0, 0}, face, distance));
+}
+
+// ⚑⚑ THE WIDENING, AND IT IS THE REASON E4d NEEDED A GROUP AT ALL. A box face is
+// TWO triangles, `forgeMovePoints` can express a whole face and nothing less, so
+// handing it the picked triangle would be refused on every box in the repo.
+SOL_TEST(aPickedTriangleOfABoxWidensToTheWholeQuad)
+{
+    ForgeDoc doc = openTopologyAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+    SOL_REQUIRE(faces.size() == 12);
+
+    // Every one of the twelve, so this cannot pass by finding one lucky quad.
+    for (std::size_t seed = 0; seed < faces.size(); ++seed) {
+        std::vector<std::uint32_t> group;
+        assets::forgeFaceGroup(points, faces, seed, group);
+        SOL_CHECK(group.size() == 2);
+
+        // Two triangles, four distinct points, all sharing one coordinate -
+        // which is what makes them a FACE rather than merely two coplanar
+        // triangles that happen to touch.
+        const std::vector<assets::ForgePoint> corners = pointsOfGroup(points, faces, group);
+        SOL_CHECK(corners.size() == 4);
+
+        int agreeing = 0;
+        for (int axis = 0; axis < 3; ++axis) {
+            const auto at = [&](const assets::ForgePoint& corner) {
+                const assets::BuildPoint& p = corner.position;
+                return axis == 0 ? p.x : (axis == 1 ? p.y : p.z);
+            };
+            bool same = true;
+            for (const assets::ForgePoint& corner : corners) {
+                same = same && std::abs(at(corner) - at(corners[0])) < 1e-6;
+            }
+            agreeing += static_cast<int>(same);
+        }
+        SOL_CHECK(agreeing == 1); // exactly one axis: it is a face, not an edge
+    }
+}
+
+namespace {
+
+// The unit normal of a face, in the test's own arithmetic rather than the
+// implementation's - a group's contract has to be checkable without borrowing
+// the expression it is a contract on.
+assets::BuildPoint normalOf(const std::vector<assets::ForgePoint>& points,
+                            const assets::ForgeFace& face)
+{
+    const assets::BuildPoint u = points[face.b].position - points[face.a].position;
+    const assets::BuildPoint v = points[face.c].position - points[face.a].position;
+    return core::normalize(core::cross(u, v));
+}
+
+// cos(0.5 degrees) - `forgeFaceGroup`'s own threshold, restated here because a
+// test that read it out of the implementation would agree with any value.
+constexpr double kCoplanarCheck = 0.9999619;
+
+} // namespace
+
+// ⚑⚑ THE MEMBRANE IS A FLAT DISC, AND THIS IS THE ASSERTION THAT SAYS SO. Its
+// profile is `[[0.0, 0.0], [70.0, 0.0]]` - two points at the SAME height - so
+// the revolve sweeps a flat fan and all 32 of its non-degenerate triangles lie
+// in one plane. The whole film is therefore ONE face, which is the honest answer
+// rather than a failure of the flood: an author dragging any part of it means
+// all of it.
+//
+// ⚑ The first version of this test assumed a revolve must bend and pinned the
+// group under eight. It failed, and the asset was right.
+SOL_TEST(theMembranesFlatDiscIsOneFaceOfThirtyTwoTriangles)
+{
+    ForgeDoc doc = openTopologyAsset("gate_membrane");
+    SOL_REQUIRE(!doc.parts.empty());
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+    SOL_REQUIRE(faces.size() == 32);
+
+    for (std::size_t seed = 0; seed < faces.size(); ++seed) {
+        std::vector<std::uint32_t> group;
+        assets::forgeFaceGroup(points, faces, seed, group);
+        SOL_CHECK(group.size() == 32);
+        SOL_CHECK(group[0] == seed); // the seed is always its own group's first
+    }
+}
+
+// The contract over the committed assets: no group ever contains a face that
+// disagrees with its seed's plane.
+//
+// ⚑⚑ THIS ONE CANNOT TELL A STEPWISE IMPLEMENTATION FROM A SEED-WISE ONE, AND
+// SAYING SO IS THE POINT. No asset in this repo bends slowly enough for the two
+// to differ: the finest curve here is a 32-segment torus at 11.25 degrees per
+// segment, which BOTH rules reject in a single step. Comparing against the
+// current face instead of the seed leaves all 117 tests green - measured, not
+// assumed. The test below is the one that separates them, and it had to be
+// built rather than found.
+SOL_TEST(everyFaceInAGroupIsCoplanarWithTheGroupsSeed)
+{
+    const char* const names[] = {"gate", "station", "asteroid", "cockpit", "ship"};
+    for (const char* const name : names) {
+        ForgeDoc doc = openTopologyAsset(name);
+        SOL_REQUIRE(!doc.parts.empty());
+
+        std::vector<assets::ForgePoint> points;
+        std::vector<assets::ForgeEdge> edges;
+        std::vector<assets::ForgeFace> faces;
+        SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+        SOL_REQUIRE(!faces.empty());
+
+        for (std::size_t seed = 0; seed < faces.size(); ++seed) {
+            std::vector<std::uint32_t> group;
+            assets::forgeFaceGroup(points, faces, seed, group);
+            SOL_REQUIRE(!group.empty());
+            SOL_REQUIRE(group[0] == seed);
+            const assets::BuildPoint seedNormal = normalOf(points, faces[seed]);
+            for (const std::uint32_t index : group) {
+                SOL_CHECK(core::dot(seedNormal, normalOf(points, faces[index])) >= kCoplanarCheck);
+            }
+        }
+    }
+}
+
+// ⚑⚑ THE TEST THAT ACTUALLY SEPARATES THE TWO RULES, AND IT IS SYNTHETIC
+// BECAUSE NO ASSET IN THIS REPO CAN. A strip of twenty quads, each hinged 0.2
+// degrees from the last: every neighbour looks flat against the one before it
+// (0.2 < the 0.5-degree threshold), so a STEPWISE flood walks the whole strip
+// and returns all forty triangles - a selection curving four degrees through
+// space that nobody could have meant. Measured against the SEED it stops where
+// the accumulated turn passes the threshold, which is two quads either side.
+//
+// ⚑ VALIDATED BY BREAKING IT: comparing against the current face instead of the
+// seed makes this read 40 where it must read 10. That is the whole mutation, and
+// it is invisible to every other test in this file.
+SOL_TEST(aSlowlyBendingStripStopsAtTheSeedsPlaneRatherThanCreepingAlongIt)
+{
+    // The strip runs along the polyline in xy and is extruded one metre in z,
+    // so quad `i`'s normal is perpendicular to its own segment and the turn
+    // between consecutive quads is exactly the hinge angle.
+    constexpr int kQuads = 20;
+    constexpr double kHinge = 0.2 * 3.14159265358979323846 / 180.0;
+
+    std::vector<assets::ForgePoint> points;
+    double x = 0.0;
+    double y = 0.0;
+    for (int i = 0; i <= kQuads; ++i) {
+        assets::ForgePoint low;
+        low.position = {x, y, 0.0};
+        assets::ForgePoint high;
+        high.position = {x, y, 1.0};
+        points.push_back(low);
+        points.push_back(high);
+        const double angle = static_cast<double>(i) * kHinge;
+        x += std::cos(angle);
+        y += std::sin(angle);
+    }
+
+    std::vector<assets::ForgeFace> faces;
+    for (std::uint32_t i = 0; i < kQuads; ++i) {
+        const std::uint32_t a = 2 * i;
+        faces.push_back({a, a + 2, a + 1});
+        faces.push_back({a + 1, a + 2, a + 3});
+    }
+    SOL_REQUIRE(faces.size() == 40);
+
+    // Both triangles of a quad are exactly coplanar, so a group is always an
+    // even number of them - and seeded in the middle it reaches two quads each
+    // way before the accumulated turn (0.6 degrees) passes the threshold.
+    std::vector<std::uint32_t> group;
+    assets::forgeFaceGroup(points, faces, /*seed=*/20, group);
+    SOL_CHECK(group.size() == 10);
+
+    // The far end of the strip is four degrees off the seed and must not be in
+    // it - the assertion a stepwise flood fails outright.
+    SOL_CHECK(std::find(group.begin(), group.end(), 0u) == group.end());
+    SOL_CHECK(std::find(group.begin(), group.end(), 39u) == group.end());
+}
+
+// ⚑⚑ AND THE PAYOFF, WHICH IS THE CASE E4c COULD ONLY ASSERT BY HAND: a face
+// group fed to `forgeMovePoints` is ACCEPTED where an edge is refused, moves the
+// face by exactly the delta, and leaves the opposite face where it was.
+SOL_TEST(aWidenedBoxFaceMovesByTheDeltaAndPinsTheFaceOpposite)
+{
+    ForgeDoc doc = openTopologyAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    // The +x face: pick the triangle whose three corners are all at x = +0.5.
+    std::size_t seed = faces.size();
+    for (std::size_t i = 0; i < faces.size() && seed == faces.size(); ++i) {
+        const std::uint32_t three[3] = {faces[i].a, faces[i].b, faces[i].c};
+        bool allPositiveX = true;
+        for (const std::uint32_t corner : three) {
+            allPositiveX = allPositiveX && std::abs(points[corner].position.x - 0.5) < 1e-6;
+        }
+        seed = allPositiveX ? i : seed;
+    }
+    SOL_REQUIRE(seed < faces.size());
+
+    std::vector<std::uint32_t> group;
+    assets::forgeFaceGroup(points, faces, seed, group);
+    SOL_REQUIRE(group.size() == 2);
+
+    const std::vector<assets::ForgePoint> set = pointsOfGroup(points, faces, group);
+    SOL_REQUIRE(set.size() == 4);
+
+    // The picked TRIANGLE alone is three of four corners, and that is refused -
+    // which is what the widening exists to avoid, asserted rather than assumed.
+    ForgeDoc refused = doc;
+    const std::vector<assets::ForgePoint> triangle = {
+        points[faces[seed].a], points[faces[seed].b], points[faces[seed].c]};
+    std::string error;
+    SOL_CHECK(!assets::forgeMovePoints(refused, triangle, {0.2, 0.0, 0.0}, nullptr, &error));
+    SOL_CHECK(!error.empty());
+
+    // The widened FACE is accepted, and it is exact along its own normal.
+    bool dropped = true;
+    SOL_REQUIRE(assets::forgeMovePoints(doc, set, {0.2, 0.0, 0.0}, &dropped, &error));
+    SOL_CHECK(!dropped);
+
+    std::vector<assets::ForgePoint> after;
+    std::vector<assets::ForgeEdge> afterEdges;
+    std::vector<assets::ForgeFace> afterFaces;
+    SOL_REQUIRE(assets::forgeTopology(doc, after, afterEdges, afterFaces));
+    SOL_REQUIRE(after.size() == 8);
+
+    double maxX = -10.0;
+    double minX = 10.0;
+    for (const assets::ForgePoint& point : after) {
+        maxX = point.position.x > maxX ? point.position.x : maxX;
+        minX = point.position.x < minX ? point.position.x : minX;
+    }
+    SOL_CHECK(std::abs(maxX - 0.7) < 1e-4);  // moved by exactly the delta
+    SOL_CHECK(std::abs(minX + 0.5) < 1e-4);  // and the far face did not move
+}
+
+// ⚑ Off the normal there is no answer, and the flag says so. On an axis a face's
+// corners straddle, the only expressible move slides the WHOLE box - so the
+// component is discarded rather than silently applied to eight corners.
+SOL_TEST(aBoxFacePulledOffItsNormalDropsThatComponentAndSaysSo)
+{
+    ForgeDoc doc = openTopologyAsset("cube");
+    SOL_REQUIRE(!doc.parts.empty());
+
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeEdge> edges;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+
+    std::vector<assets::ForgePoint> set;
+    for (const assets::ForgePoint& point : points) {
+        if (std::abs(point.position.x - 0.5) < 1e-6) {
+            set.push_back(point);
+        }
+    }
+    SOL_REQUIRE(set.size() == 4);
+
+    bool dropped = false;
+    std::string error;
+    SOL_REQUIRE(assets::forgeMovePoints(doc, set, {0.2, 0.3, 0.0}, &dropped, &error));
+    SOL_CHECK(dropped);
+
+    std::vector<assets::ForgePoint> after;
+    std::vector<assets::ForgeEdge> afterEdges;
+    std::vector<assets::ForgeFace> afterFaces;
+    SOL_REQUIRE(assets::forgeTopology(doc, after, afterEdges, afterFaces));
+    double maxX = -10.0;
+    double maxY = -10.0;
+    for (const assets::ForgePoint& point : after) {
+        maxX = point.position.x > maxX ? point.position.x : maxX;
+        maxY = point.position.y > maxY ? point.position.y : maxY;
+    }
+    SOL_CHECK(std::abs(maxX - 0.7) < 1e-4); // the normal component landed
+    SOL_CHECK(std::abs(maxY - 0.5) < 1e-4); // the off-normal one did not
+}
+
+// ⚑ E1's fixed point, met by a FACE instead of a point. A drag of zero distance
+// over every committed asset must leave every one of them byte-identical - the
+// rule that caught `cube.forge` materialising `center` and `size` on a click.
+SOL_TEST(aZeroDistanceFaceDragLeavesEveryCommittedFileByteIdentical)
+{
+    const char* const names[] = {"cube",    "gate",     "ship",         "station",
+                                 "cockpit", "asteroid", "gate_membrane"};
+    for (const char* const name : names) {
+        ForgeDoc doc = openTopologyAsset(name);
+        SOL_REQUIRE(!doc.parts.empty());
+        const std::string before = assets::writeForge(doc);
+
+        std::vector<assets::ForgePoint> points;
+        std::vector<assets::ForgeEdge> edges;
+        std::vector<assets::ForgeFace> faces;
+        SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
+        SOL_REQUIRE(!faces.empty());
+
+        // The first face whose group is entirely movable - which on the gate and
+        // the station is a box, and on the asteroid is a baked triangle.
+        for (std::size_t seed = 0; seed < faces.size(); ++seed) {
+            std::vector<std::uint32_t> group;
+            assets::forgeFaceGroup(points, faces, seed, group);
+            const std::vector<assets::ForgePoint> set = pointsOfGroup(points, faces, group);
+            bool movable = true;
+            for (const assets::ForgePoint& point : set) {
+                movable = movable && point.movable();
+            }
+            if (!movable) {
+                continue;
+            }
+            std::string error;
+            // A refusal is fine - a box edge-shaped group is refused by design.
+            // What is NOT fine is an accepted zero move that writes anything.
+            (void)assets::forgeMovePoints(doc, set, {0.0, 0.0, 0.0}, nullptr, &error);
+            break;
+        }
+        SOL_CHECK(assets::writeForge(doc) == before);
+    }
 }
 
 namespace {
@@ -2415,7 +2878,8 @@ SOL_TEST(aZeroDistanceSetMoveLeavesEveryCommittedFileByteIdentical)
 
         std::vector<assets::ForgePoint> points;
         std::vector<assets::ForgeEdge> edges;
-        SOL_REQUIRE(assets::forgeTopology(doc, points, edges));
+        std::vector<assets::ForgeFace> faces;
+        SOL_REQUIRE(assets::forgeTopology(doc, points, edges, faces));
 
         // ⚑ Accepted or refused, the file must come back unchanged - and BOTH
         // outcomes occur here, because a box edge is refused while a triangle's

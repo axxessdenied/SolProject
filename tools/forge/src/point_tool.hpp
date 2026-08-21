@@ -80,6 +80,7 @@ public:
     {
         Point,
         Edge,
+        Face,
     };
 
     struct Viewport
@@ -140,9 +141,19 @@ private:
     [[nodiscard]] std::size_t pickAt(const Viewport& viewport) const;
     // Nearest edge to the cursor by screen-space point-to-segment distance.
     [[nodiscard]] std::size_t pickEdgeAt(const Viewport& viewport) const;
+    // The face the cursor's ray enters first, WIDENED to its coplanar group -
+    // see forgeFaceGroup for why the widening cannot wait until the write.
+    // Fills m_group; returns the seed face or kNone.
+    [[nodiscard]] std::size_t pickFaceAt(const Viewport& viewport,
+                                         std::vector<std::uint32_t>& group) const;
     // Fills m_dragSet with the points the current selection moves - one in
-    // Point mode, two in Edge mode. Empty when nothing is selected.
+    // Point mode, two in Edge mode, the group's corners in Face mode. Empty
+    // when nothing is selected.
     void gatherSelection();
+    // Drops every hover and every selection. One place, because there are
+    // three of each now and forgetting one leaves a highlight alive in a mode
+    // nobody is looking at.
+    void clearSelection();
 
     std::vector<sol::assets::ForgePoint> m_points;
     // ⚑ From the SAME traversal as the points, which is the whole reason
@@ -150,9 +161,15 @@ private:
     // a second weld is the two-implementations trap this programme has paid for
     // twice, and `MeshAdjacency` numbers a different vector entirely.
     std::vector<sol::assets::ForgeEdge> m_edges;
+    std::vector<sol::assets::ForgeFace> m_faces;
     // The drag's set, rebuilt each frame it is needed. A member rather than a
     // local so a drag does not reallocate sixty times a second.
     std::vector<sol::assets::ForgePoint> m_dragSet;
+    // The selected and hovered face GROUPS, as face indices. Held rather than
+    // recomputed per frame because the flood is a search and the hover runs
+    // every frame the cursor moves.
+    std::vector<std::uint32_t> m_group;
+    std::vector<std::uint32_t> m_hoverGroup;
     // Why there are no points, when there are none - a `[build]` post-pass or
     // a document that does not build. Said out loud rather than left as an
     // empty panel, because "nothing happens when I click" is not a diagnosis.
@@ -165,6 +182,10 @@ private:
     // vectors, and one index meaning two things is a bug this repo has shipped.
     std::size_t m_hoverEdge = kNone;
     std::size_t m_selectedEdge = kNone;
+    // Into m_faces: the SEED of each group, which is the triangle the ray
+    // actually entered. The group itself is in m_group / m_hoverGroup.
+    std::size_t m_hoverFace = kNone;
+    std::size_t m_selectedFace = kNone;
     bool m_dragging = false;
     // The move was refused and this press will not be retried - but the press
     // is still HELD, so the tool keeps it away from the camera until release.

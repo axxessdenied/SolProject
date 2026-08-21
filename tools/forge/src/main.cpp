@@ -443,6 +443,8 @@ int main(int argc, char** argv)
                 points.setMode(forge::PointTool::Mode::Point);
             } else if (window.isKeyDown(platform::Key::Num2)) {
                 points.setMode(forge::PointTool::Mode::Edge);
+            } else if (window.isKeyDown(platform::Key::Num3)) {
+                points.setMode(forge::PointTool::Mode::Face);
             }
         }
         if (points.update(viewport, editor)) {
@@ -567,7 +569,7 @@ int main(int argc, char** argv)
             // Stages E1, E2 and E4b. Below Parts because a point is a
             // consequence of the parts above it, and above the Report for the
             // same reason Parts is.
-            if (editor.isOpen() && ImGui::CollapsingHeader("Points & edges",
+            if (editor.isOpen() && ImGui::CollapsingHeader("Points, edges & faces",
                                                            ImGuiTreeNodeFlags_DefaultOpen)) {
                 points.drawPanel(editor.doc());
             }

@@ -6,13 +6,17 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <vector>
 
 namespace forge {
 
 using namespace sol;
 using assets::ForgeDoc;
 using assets::ForgeEdge;
+using assets::ForgeFace;
 using assets::ForgePoint;
 using assets::ForgePointWrite;
 
@@ -96,6 +100,23 @@ constexpr float kGrabPixels = 12.0f;
 // the panel says.
 constexpr float kEdgeGrabPixels = 8.0f;
 
+// ⚑ A face pick has NO grab radius, and that is the difference a ray makes: a
+// triangle has an interior, so the cursor is either inside it or it is not.
+// Points and edges need a radius because they have no area to be inside of.
+
+// The camera's world-space eye. The view matrix maps world to camera as
+// `R * (p - eye)` with the rotation stored by rows, so the translation column
+// holds `-R * eye` and the eye comes back by applying R's transpose.
+[[nodiscard]] core::Vec3 cameraEye(const core::Mat4& view)
+{
+    const core::Vec3 right = cameraRight(view);
+    const core::Vec3 up = cameraUp(view);
+    const core::Vec3 backward = cameraBackward(view);
+    return {-((view.m[12] * right.x) + (view.m[13] * up.x) + (view.m[14] * backward.x)),
+            -((view.m[12] * right.y) + (view.m[13] * up.y) + (view.m[14] * backward.y)),
+            -((view.m[12] * right.z) + (view.m[13] * up.z) + (view.m[14] * backward.z))};
+}
+
 } // namespace
 
 void PointTool::refresh(const ForgeDoc& doc)
@@ -104,6 +125,7 @@ void PointTool::refresh(const ForgeDoc& doc)
     const std::size_t previousEdges = m_edges.size();
     m_points.clear();
     m_edges.clear();
+    m_faces.clear();
     m_unavailable.clear();
 
     std::string error;
@@ -112,14 +134,9 @@ void PointTool::refresh(const ForgeDoc& doc)
     // which is the entire reason it exists instead of `MeshAdjacency`, whose
     // edges index a differently-welded, later-renumbered vector. Two numberings
     // that agree only by accident is a bug this repo has already shipped.
-    if (!assets::forgeTopology(doc, m_points, m_edges, &error)) {
+    if (!assets::forgeTopology(doc, m_points, m_edges, m_faces, &error)) {
         m_unavailable = error;
-        m_hover = kNone;
-        m_selected = kNone;
-        m_hoverEdge = kNone;
-        m_selectedEdge = kNone;
-        m_dragging = false;
-        m_refused = false;
+        clearSelection();
         return;
     }
 
@@ -132,12 +149,7 @@ void PointTool::refresh(const ForgeDoc& doc)
     // the same continuous rebuild and a resize is not allowed to renumber it. A
     // move that DID change the topology has moved the thing being held.
     if (m_points.size() != previousCount || m_edges.size() != previousEdges) {
-        m_hover = kNone;
-        m_selected = kNone;
-        m_hoverEdge = kNone;
-        m_selectedEdge = kNone;
-        m_dragging = false;
-        m_refused = false;
+        clearSelection();
     }
     if (m_selected >= m_points.size()) {
         m_selected = kNone;
@@ -151,20 +163,40 @@ void PointTool::refresh(const ForgeDoc& doc)
     if (m_hoverEdge >= m_edges.size()) {
         m_hoverEdge = kNone;
     }
+    if (m_selectedFace >= m_faces.size()) {
+        m_selectedFace = kNone;
+        m_group.clear();
+    }
+    if (m_hoverFace >= m_faces.size()) {
+        m_hoverFace = kNone;
+        m_hoverGroup.clear();
+    }
+}
+
+// One place, because there are now three selections and forgetting one of them
+// leaves a highlight alive in a mode nobody is looking at.
+void PointTool::clearSelection()
+{
+    m_hover = kNone;
+    m_selected = kNone;
+    m_hoverEdge = kNone;
+    m_selectedEdge = kNone;
+    m_hoverFace = kNone;
+    m_selectedFace = kNone;
+    m_group.clear();
+    m_hoverGroup.clear();
+    m_dragging = false;
+    m_refused = false;
 }
 
 void PointTool::close()
 {
     m_points.clear();
     m_edges.clear();
+    m_faces.clear();
     m_dragSet.clear();
     m_unavailable.clear();
-    m_hover = kNone;
-    m_selected = kNone;
-    m_hoverEdge = kNone;
-    m_selectedEdge = kNone;
-    m_dragging = false;
-    m_refused = false;
+    clearSelection();
     m_error.clear();
     m_dropped = false;
 }
@@ -175,12 +207,7 @@ void PointTool::setMode(Mode mode)
         return;
     }
     m_mode = mode;
-    m_hover = kNone;
-    m_selected = kNone;
-    m_hoverEdge = kNone;
-    m_selectedEdge = kNone;
-    m_dragging = false;
-    m_refused = false;
+    clearSelection();
     m_error.clear();
     m_dropped = false;
 }
@@ -252,6 +279,43 @@ std::size_t PointTool::pickEdgeAt(const Viewport& viewport) const
     return best;
 }
 
+std::size_t PointTool::pickFaceAt(const Viewport& viewport, std::vector<std::uint32_t>& group) const
+{
+    group.clear();
+    if (m_faces.empty()) {
+        return kNone;
+    }
+    // ⚑ A RAY, not a projection - and `rayDirectionCamera` is the one place in
+    // this programme that runs a projection backwards. It is allowed because a
+    // pixel names a DIRECTION exactly; what `pick.hpp` forbids is inverting to
+    // recover a position, which would need a depth nobody has. `ui.unit` pins
+    // the round trip against `screenPoint` so neither sign is trusted alone.
+    const core::Vec3 local =
+        ui::rayDirectionCamera(viewport.cursor, viewport.center, viewport.focal);
+    const core::Vec3 right = cameraRight(viewport.view);
+    const core::Vec3 up = cameraUp(viewport.view);
+    const core::Vec3 backward = cameraBackward(viewport.view);
+    // local.z is exactly -1, so this is `u*right + v*up - backward`.
+    const core::Vec3 direction{(local.x * right.x) + (local.y * up.x) + (local.z * backward.x),
+                               (local.x * right.y) + (local.y * up.y) + (local.z * backward.y),
+                               (local.x * right.z) + (local.y * up.z) + (local.z * backward.z)};
+    const core::Vec3 eye = cameraEye(viewport.view);
+
+    std::size_t face = 0;
+    double distance = 0.0;
+    if (!assets::forgePickFace(m_points, m_faces, {eye.x, eye.y, eye.z},
+                               {direction.x, direction.y, direction.z}, face, distance)) {
+        return kNone;
+    }
+    // ⚑ WIDENED HERE, at pick time, and it has to be here. A box face is two
+    // triangles and `forgeMovePoints` can express a whole face or nothing, so a
+    // tool that carried the picked TRIANGLE forward would be refused on every
+    // box in the repo. By the time the write set is built, "three corners" and
+    // "an author who meant four" are indistinguishable.
+    assets::forgeFaceGroup(m_points, m_faces, face, group);
+    return face;
+}
+
 void PointTool::gatherSelection()
 {
     m_dragSet.clear();
@@ -261,15 +325,41 @@ void PointTool::gatherSelection()
         }
         return;
     }
-    if (m_selectedEdge == kNone || m_selectedEdge >= m_edges.size()) {
+    if (m_mode == Mode::Edge) {
+        if (m_selectedEdge == kNone || m_selectedEdge >= m_edges.size()) {
+            return;
+        }
+        const ForgeEdge& edge = m_edges[m_selectedEdge];
+        if (edge.a >= m_points.size() || edge.b >= m_points.size()) {
+            return;
+        }
+        m_dragSet.push_back(m_points[edge.a]);
+        m_dragSet.push_back(m_points[edge.b]);
         return;
     }
-    const ForgeEdge& edge = m_edges[m_selectedEdge];
-    if (edge.a >= m_points.size() || edge.b >= m_points.size()) {
-        return;
+
+    // ⚑ DEDUPLICATED BY INDEX, because the two triangles of a quad name their
+    // shared pair twice. A set with a repeat in it is a doubled write, which is
+    // the exact defect `forgeMovePoints` exists to prevent - handing it one from
+    // this side would be the tool re-introducing it.
+    std::vector<std::uint32_t> corners;
+    for (const std::uint32_t index : m_group) {
+        if (index >= m_faces.size()) {
+            continue;
+        }
+        const ForgeFace& face = m_faces[index];
+        const std::uint32_t three[3] = {face.a, face.b, face.c};
+        for (const std::uint32_t corner : three) {
+            if (corner < m_points.size() &&
+                std::find(corners.begin(), corners.end(), corner) == corners.end()) {
+                corners.push_back(corner);
+            }
+        }
     }
-    m_dragSet.push_back(m_points[edge.a]);
-    m_dragSet.push_back(m_points[edge.b]);
+    m_dragSet.reserve(corners.size());
+    for (const std::uint32_t corner : corners) {
+        m_dragSet.push_back(m_points[corner]);
+    }
 }
 
 bool PointTool::update(const Viewport& viewport, PartEditor& editor)
@@ -290,8 +380,10 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
     if (!m_dragging) {
         if (m_mode == Mode::Point) {
             m_hover = pickAt(viewport);
-        } else {
+        } else if (m_mode == Mode::Edge) {
             m_hoverEdge = pickEdgeAt(viewport);
+        } else {
+            m_hoverFace = pickFaceAt(viewport, m_hoverGroup);
         }
     }
 
@@ -306,7 +398,7 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
                 grabbed = asVec3(m_points[m_selected].position);
                 grabbedAnything = true;
             }
-        } else {
+        } else if (m_mode == Mode::Edge) {
             m_selectedEdge = m_hoverEdge;
             if (m_selectedEdge != kNone) {
                 // ⚑ The MIDPOINT, because an edge has two depths and the cursor
@@ -317,6 +409,25 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
                 const core::Vec3 b = asVec3(m_points[edge.b].position);
                 grabbed = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f};
                 grabbedAnything = true;
+            }
+        } else {
+            m_selectedFace = m_hoverFace;
+            m_group = m_hoverGroup;
+            if (m_selectedFace != kNone) {
+                // The group's centroid, for the same reason an edge takes its
+                // midpoint: one cursor, several depths, and the honest single
+                // answer is the middle of what was grabbed.
+                gatherSelection();
+                core::Vec3 sum{};
+                for (const ForgePoint& point : m_dragSet) {
+                    sum.x += static_cast<float>(point.position.x);
+                    sum.y += static_cast<float>(point.position.y);
+                    sum.z += static_cast<float>(point.position.z);
+                }
+                const float count = m_dragSet.empty() ? 1.0f
+                                                      : static_cast<float>(m_dragSet.size());
+                grabbed = {sum.x / count, sum.y / count, sum.z / count};
+                grabbedAnything = !m_dragSet.empty();
             }
         }
         if (grabbedAnything) {
@@ -409,7 +520,7 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
     // wireframe over a shaded mesh, and at the point colour it shouts.
     constexpr core::Vec4 kEdge = {0.26f, 0.38f, 0.58f, 1.0f};
 
-    if (m_mode == Mode::Edge) {
+    if (m_mode == Mode::Edge || m_mode == Mode::Face) {
         // ⚑ Pulled toward the camera by a hair, and the reason is the depth
         // test: `DebugDrawRenderer` tests depth and does not write it, so a line
         // lying exactly in the surface it borders z-fights along its whole
@@ -446,8 +557,50 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
                 addEdge(edge, kEdge);
             }
         }
+        // A face group is drawn as the three sides of each of its triangles -
+        // the quad's outline plus its diagonal - because the only primitive
+        // this frame has is a line and a filled highlight is not available.
+        const auto addGroup = [&](const std::vector<std::uint32_t>& group, core::Vec4 color) {
+            for (const std::uint32_t index : group) {
+                if (index >= m_faces.size()) {
+                    continue;
+                }
+                const ForgeFace& face = m_faces[index];
+                addEdge({face.a < face.b ? face.a : face.b, face.a < face.b ? face.b : face.a, 0},
+                        color);
+                addEdge({face.b < face.c ? face.b : face.c, face.b < face.c ? face.c : face.b, 0},
+                        color);
+                addEdge({face.a < face.c ? face.a : face.c, face.a < face.c ? face.c : face.a, 0},
+                        color);
+            }
+        };
+
         // Drawn last so they are the ones that survive if anything is dropped -
         // the same order the point markers use, for the same reason.
+        if (m_mode == Mode::Face) {
+            if (m_hoverFace != kNone && m_hoverFace != m_selectedFace) {
+                addGroup(m_hoverGroup, kHover);
+            }
+            if (m_selectedFace != kNone) {
+                addGroup(m_group, kSelected);
+                // A cross on every corner the drag will write. Read off the
+                // group rather than off m_dragSet, which is only filled while a
+                // press is live - the crosses have to survive the release. A
+                // shared corner is crossed twice and the second lands exactly on
+                // the first, which costs six lines and looks like one mark.
+                for (const std::uint32_t index : m_group) {
+                    if (index >= m_faces.size()) {
+                        continue;
+                    }
+                    const ForgeFace& face = m_faces[index];
+                    const std::uint32_t three[3] = {face.a, face.b, face.c};
+                    for (const std::uint32_t corner : three) {
+                        addCross(lines, asVec3(m_points[corner].position), half, kSelected);
+                    }
+                }
+            }
+            return;
+        }
         if (m_hoverEdge != kNone && m_hoverEdge < m_edges.size() &&
             m_hoverEdge != m_selectedEdge) {
             addEdge(m_edges[m_hoverEdge], kHover);
@@ -513,6 +666,10 @@ void PointTool::drawPanel(const ForgeDoc& doc)
     if (ImGui::RadioButton("edges", m_mode == Mode::Edge)) {
         setMode(Mode::Edge);
     }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("faces", m_mode == Mode::Face)) {
+        setMode(Mode::Face);
+    }
 
     std::size_t movable = 0;
     for (const ForgePoint& point : m_points) {
@@ -522,7 +679,7 @@ void PointTool::drawPanel(const ForgeDoc& doc)
     }
     ImGui::Text("points         %zu", m_points.size());
     ImGui::Text("movable        %zu", movable);
-    if (m_mode == Mode::Edge) {
+    if (m_mode == Mode::Edge || m_mode == Mode::Face) {
         std::size_t drawable = 0;
         for (const ForgeEdge& edge : m_edges) {
             if (m_points[edge.a].movable() && m_points[edge.b].movable()) {
@@ -530,7 +687,11 @@ void PointTool::drawPanel(const ForgeDoc& doc)
             }
         }
         ImGui::Text("edges          %zu", m_edges.size());
-        ImGui::Text("movable        %zu", drawable);
+        if (m_mode == Mode::Face) {
+            ImGui::Text("faces          %zu", m_faces.size());
+        } else {
+            ImGui::Text("movable        %zu", drawable);
+        }
         if (drawable > kEdgeBudget) {
             ImGui::TextDisabled("over %zu edges: only the hovered and selected are drawn",
                                 kEdgeBudget);
@@ -614,7 +775,62 @@ void PointTool::drawPanel(const ForgeDoc& doc)
     };
 
     ImGui::Separator();
-    if (m_mode == Mode::Edge) {
+    if (m_mode == Mode::Face) {
+        if (m_selectedFace == kNone || m_group.empty()) {
+            ImGui::TextDisabled("no face selected");
+        } else {
+            // ⚑ The two numbers that say the widening HAPPENED. A box face reads
+            // "2 triangles, 4 corners" where the ray entered one triangle of
+            // three - and if it ever reads 1 and 3 on a box, the flood is broken
+            // and the drag is about to be refused.
+            std::vector<std::uint32_t> corners;
+            for (const std::uint32_t index : m_group) {
+                if (index >= m_faces.size()) {
+                    continue;
+                }
+                const ForgeFace& face = m_faces[index];
+                const std::uint32_t three[3] = {face.a, face.b, face.c};
+                for (const std::uint32_t corner : three) {
+                    if (std::find(corners.begin(), corners.end(), corner) == corners.end()) {
+                        corners.push_back(corner);
+                    }
+                }
+            }
+            ImGui::Text("triangles      %zu", m_group.size());
+            ImGui::Text("corners        %zu", corners.size());
+
+            bool resizes = false;
+            bool reAims = false;
+            bool anyUnmovable = false;
+            for (const std::uint32_t corner : corners) {
+                const ForgePoint& point = m_points[corner];
+                anyUnmovable = anyUnmovable || !point.movable();
+                ImGui::Text("at   %8.4f %8.4f %8.4f", point.position.x, point.position.y,
+                            point.position.z);
+                listWrites(point, resizes, reAims);
+            }
+
+            ImGui::PushTextWrapPos(0.0f);
+            if (anyUnmovable) {
+                ImGui::TextColored({0.95f, 0.80f, 0.30f, 1.0f},
+                                   "a corner of this face has no parametric answer - select its "
+                                   "part in Parts and press \"bake\" first.");
+            } else if (resizes) {
+                // ⚑ The case that PAYS OUT, and it is worth saying so rather
+                // than only warning. A box face is the one class-(2) selection
+                // that is exact: E2's split on the axis the corners agree
+                // about, with the opposite face pinned.
+                ImGui::TextDisabled("this face RESIZES its box along its own normal and pins the "
+                                    "face opposite. A pull off that normal has no answer and is "
+                                    "dropped - a box can only slide whole.");
+            }
+            if (reAims) {
+                ImGui::TextDisabled("a beam's corners come from its axis, so this drag RE-AIMS "
+                                    "the end they stand at.");
+            }
+            ImGui::PopTextWrapPos();
+        }
+    } else if (m_mode == Mode::Edge) {
         if (m_selectedEdge == kNone || m_selectedEdge >= m_edges.size()) {
             ImGui::TextDisabled("no edge selected");
         } else {
@@ -696,13 +912,16 @@ void PointTool::drawPanel(const ForgeDoc& doc)
     }
 
     ImGui::Separator();
-    if (m_mode == Mode::Edge) {
+    if (m_mode == Mode::Face) {
+        ImGui::TextDisabled("click anywhere on a face to select the whole of it");
+        ImGui::TextDisabled("a box face moves along its own normal - hold that axis");
+    } else if (m_mode == Mode::Edge) {
         ImGui::TextDisabled("click an edge to select, drag to move both its ends");
         ImGui::TextDisabled("aim at the middle of an edge, not at a corner");
     } else {
         ImGui::TextDisabled("click a marker to select, drag to move");
     }
-    ImGui::TextDisabled("1 and 2 switch points and edges");
+    ImGui::TextDisabled("1, 2 and 3 switch points, edges and faces");
     ImGui::TextDisabled("hold X, Y or Z to lock the drag to an axis");
     ImGui::TextDisabled("ctrl+Z undoes the whole drag");
 }

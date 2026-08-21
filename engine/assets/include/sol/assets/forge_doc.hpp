@@ -400,9 +400,66 @@ struct ForgeEdge
 // point contributes nothing, which is how `gate_membrane.forge` - a revolve
 // that touches its own axis and fans to a point, 32 degenerate faces, one per
 // segment - is described honestly rather than with 32 edges of no length.
+// One triangle of the built mesh, in the same numbering as the points and the
+// edges (engine plan Phase 9 stage E4d).
+//
+// ⚑ A face whose corners do not weld to THREE distinct points is not here, for
+// the same reason a degenerate edge is not: it has no area, so no ray can enter
+// it and no drag can move it. `gate_membrane.forge` contributes 32 of them, one
+// per segment, where its revolve touches its own axis and fans to a point.
+struct ForgeFace
+{
+    std::uint32_t a = 0; // all three into the ForgePoint vector
+    std::uint32_t b = 0;
+    std::uint32_t c = 0;
+};
+
 [[nodiscard]] bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
-                                 std::vector<ForgeEdge>& edges, std::string* error = nullptr,
-                                 double tolerance = 1e-5);
+                                 std::vector<ForgeEdge>& edges, std::vector<ForgeFace>& faces,
+                                 std::string* error = nullptr, double tolerance = 1e-5);
+
+// The nearest face a ray enters, by Möller-Trumbore.
+//
+// ⚑⚑ THIS IS THE ONE PIECE OF E4's ESTIMATE THAT STOOD: nothing in this repo
+// matched `Trumbore`, `rayTriangle` or `intersectTriangle`, and face picking is
+// the first thing that has ever needed one. Edge picking did NOT - an edge is a
+// segment on screen once its ends are projected, so a two-dimensional
+// point-to-segment distance is the whole test. A face has an interior, and the
+// projection of a triangle is a triangle, so the honest test is the ray.
+//
+// ⚑ It is here, over `ForgePoint` indices, rather than in a general geometry
+// header over an `EditMesh`, for the reason `forgeTopology` exists at all: the
+// thing a click resolves to has to be numbered in the vector the tool WRITES
+// through, or the pick and the write describe different meshes.
+//
+// `direction` need not be normalised; `distance` comes back in units of it.
+// Back faces are hit as readily as front ones - the tool draws both sides and an
+// author may be looking at either.
+[[nodiscard]] bool forgePickFace(std::span<const ForgePoint> points,
+                                 std::span<const ForgeFace> faces, BuildPoint origin,
+                                 BuildPoint direction, std::size_t& face, double& distance);
+
+// Every triangle coplanar with and edge-connected to `seed` - the QUAD behind a
+// picked half of one.
+//
+// ⚑⚑ THIS EXISTS BECAUSE A BOX FACE IS TWO TRIANGLES AND THE ENGINE REFUSES
+// THREE CORNERS OUT OF FOUR. `forgeMovePoints` can express a whole box face
+// exactly and nothing less than one, so a tool that handed it the picked
+// TRIANGLE would be refused on every box in the repo - the commonest primitive
+// there is. The widening happens at PICK time, which is the only place it can:
+// by the time the write set is built, "three corners" and "an author who meant
+// four" are indistinguishable.
+//
+// ⚑ Coplanarity is measured against the SEED's normal, never against each
+// neighbour's own. Comparing step by step lets a chain of small angles walk the
+// group right around a cylinder, one nearly-flat hop at a time, and arrive at a
+// selection nobody could have meant. Against the seed, a curved surface stops
+// at the first bend by construction.
+//
+// Returns the seed alone when nothing is coplanar with it, which is the answer
+// for a `flat_triangle` and for every face of a faceted hull.
+void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFace> faces,
+                    std::size_t seed, std::vector<std::uint32_t>& out);
 
 // Moves one point by `delta`, writing every parameter standing at it. The delta
 // is in the frame the mesh is built in and is rotated into each part's own

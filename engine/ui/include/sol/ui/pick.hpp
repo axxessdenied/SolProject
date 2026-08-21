@@ -51,6 +51,30 @@ struct ScreenPoint
             true};
 }
 
+// The camera-space direction through a screen point - `screenPoint` run
+// backwards.
+//
+// ⚑⚑ THIS IS NOT THE INVERSION THIS FILE'S RULING FORBIDS, AND THE DISTINCTION
+// IS THE WHOLE REASON IT IS ALLOWED HERE. What is forbidden is inverting the
+// projection to recover a POSITION, which needs a depth nobody has. A pixel
+// does not name a position, but it names a DIRECTION exactly and uniquely, and
+// that direction is all a ray needs - the depth comes back out of the geometry
+// the ray is tested against, not out of the projection. The Forge's face
+// picking (engine plan Phase 9 stage E4d) is the first caller: a triangle has
+// an interior, so unlike a point or an edge it cannot be answered by projecting
+// its corners forward and measuring pixels.
+//
+// The result is NOT normalised: `z` is exactly -1, so the caller can read the
+// depth of a hit straight off the parameter along it if it wants to.
+[[nodiscard]] inline core::Vec3 rayDirectionCamera(core::Vec2 screen, core::Vec2 center,
+                                                   float focal)
+{
+    const float safe = focal > 0.0001f ? focal : 1.0f;
+    // The sign on y is `screenPoint`'s own, kept in one place rather than
+    // rederived: screen y grows downward and camera y grows up.
+    return {(screen.x - center.x) / safe, -(screen.y - center.y) / safe, -1.0f};
+}
+
 // One thing that can be clicked in the flight view. `directionCamera` is a
 // unit direction in camera space; `screenRadius` is how big the thing is on
 // screen, so a station is picked anywhere across its disc rather than at the

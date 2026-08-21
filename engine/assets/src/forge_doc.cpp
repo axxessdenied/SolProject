@@ -1502,9 +1502,11 @@ bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string*
 }
 
 bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
-                   std::vector<ForgeEdge>& edges, std::string* error, double tolerance)
+                   std::vector<ForgeEdge>& edges, std::vector<ForgeFace>& faces,
+                   std::string* error, double tolerance)
 {
     edges.clear();
+    faces.clear();
     MeshData mesh;
     std::vector<std::uint32_t> pointOf;
     if (!collectPoints(doc, points, mesh, pointOf, error, tolerance)) {
@@ -1519,6 +1521,23 @@ bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
     const std::size_t faceCount = mesh.indices.size() / 3;
     refs.reserve(faceCount * 3);
     for (std::size_t face = 0; face < faceCount; ++face) {
+        // ⚑ The face list comes out of the SAME loop as the edges, which is the
+        // point of `forgeTopology` extended one more time: one build, one dedup,
+        // one numbering. A second pass over `mesh.indices` would be a second
+        // expression of "which point is this corner", and this file has already
+        // written down twice why that is the trap.
+        const std::uint32_t i0 = mesh.indices[face * 3];
+        const std::uint32_t i1 = mesh.indices[(face * 3) + 1];
+        const std::uint32_t i2 = mesh.indices[(face * 3) + 2];
+        if (i0 < pointOf.size() && i1 < pointOf.size() && i2 < pointOf.size()) {
+            const std::uint32_t p0 = pointOf[i0];
+            const std::uint32_t p1 = pointOf[i1];
+            const std::uint32_t p2 = pointOf[i2];
+            // Three DISTINCT points or it has no area - see ForgeFace.
+            if (p0 != p1 && p1 != p2 && p0 != p2) {
+                faces.push_back({p0, p1, p2});
+            }
+        }
         for (std::size_t corner = 0; corner < 3; ++corner) {
             const std::uint32_t ia = mesh.indices[(face * 3) + corner];
             const std::uint32_t ib = mesh.indices[(face * 3) + ((corner + 1) % 3)];
@@ -1553,6 +1572,151 @@ bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
         i = j;
     }
     return true;
+}
+
+namespace {
+
+// ⚑ `core::dot`, `core::cross` and `core::normalize`, not private copies -
+// `BuildPoint` IS a `core::DVec3`, so a local `dot` here is found by ADL
+// alongside the real one and the call is ambiguous. The compiler said so
+// immediately, which is the cheap version of a lesson this project has paid
+// for expensively: two expressions of one thing.
+[[nodiscard]] BuildPoint faceNormal(std::span<const ForgePoint> points, const ForgeFace& face)
+{
+    const BuildPoint normal = core::cross(points[face.b].position - points[face.a].position,
+                                          points[face.c].position - points[face.a].position);
+    // Zero when the face has no area, which `normalize` already answers that way.
+    return core::normalize(normal);
+}
+
+} // namespace
+
+bool forgePickFace(std::span<const ForgePoint> points, std::span<const ForgeFace> faces,
+                   BuildPoint origin, BuildPoint direction, std::size_t& face, double& distance)
+{
+    // ⚑ Möller-Trumbore, and the thing worth knowing about it is that it never
+    // builds the plane: it solves the ray against the triangle's own barycentric
+    // frame, so the same determinant that rejects a parallel ray also produces
+    // the two coordinates that decide whether the hit is inside. No plane, no
+    // normal, no separate containment test - which is why it is the one everyone
+    // writes and why there is no second expression of "inside" to get wrong.
+    bool hit = false;
+    double nearest = 0.0;
+    std::size_t nearestFace = 0;
+    // Relative to the ray, so a model 100 m across and one 0.2 m across are
+    // tested on the same terms.
+    constexpr double kParallel = 1e-12;
+
+    for (std::size_t i = 0; i < faces.size(); ++i) {
+        const ForgeFace& candidate = faces[i];
+        if (candidate.a >= points.size() || candidate.b >= points.size() ||
+            candidate.c >= points.size()) {
+            continue;
+        }
+        const BuildPoint& a = points[candidate.a].position;
+        const BuildPoint edge1 = points[candidate.b].position - a;
+        const BuildPoint edge2 = points[candidate.c].position - a;
+        const BuildPoint across = core::cross(direction, edge2);
+        const double determinant = core::dot(edge1, across);
+        // ⚑ No sign test on the determinant, which is where a face pick differs
+        // from a renderer's: a negative one means the ray entered from BEHIND,
+        // and the Forge draws both sides of everything. Culling here would make
+        // the inside of an open shape unclickable while it was plainly visible.
+        if (determinant > -kParallel && determinant < kParallel) {
+            continue; // the ray runs parallel to the triangle's plane
+        }
+        const double inverse = 1.0 / determinant;
+        const BuildPoint toOrigin = origin - a;
+        const double u = core::dot(toOrigin, across) * inverse;
+        if (u < 0.0 || u > 1.0) {
+            continue;
+        }
+        const BuildPoint edgeCross = core::cross(toOrigin, edge1);
+        const double v = core::dot(direction, edgeCross) * inverse;
+        if (v < 0.0 || (u + v) > 1.0) {
+            continue;
+        }
+        const double along = core::dot(edge2, edgeCross) * inverse;
+        if (along <= 0.0) {
+            continue; // behind the eye
+        }
+        if (!hit || along < nearest) {
+            hit = true;
+            nearest = along;
+            nearestFace = i;
+        }
+    }
+
+    if (hit) {
+        face = nearestFace;
+        distance = nearest;
+    }
+    return hit;
+}
+
+void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFace> faces,
+                    std::size_t seed, std::vector<std::uint32_t>& out)
+{
+    out.clear();
+    if (seed >= faces.size()) {
+        return;
+    }
+    out.push_back(static_cast<std::uint32_t>(seed));
+
+    const BuildPoint seedNormal = faceNormal(points, faces[seed]);
+    if (seedNormal.x == 0.0 && seedNormal.y == 0.0 && seedNormal.z == 0.0) {
+        return; // no area, so no plane to be coplanar with
+    }
+    // cos(0.5 degrees). Tight enough that a revolve's neighbouring segment is
+    // never swept in - `gate_membrane` turns 11.25 degrees per segment, the
+    // finest angle any asset here uses - and loose enough that a box face built
+    // from two triangles is one group in float-derived positions.
+    constexpr double kCoplanar = 0.9999619;
+
+    // Which faces stand at each point, so a neighbour search is a lookup rather
+    // than a scan over every triangle. `station.forge` is 1068 of them.
+    std::vector<std::vector<std::uint32_t>> facesAt(points.size());
+    for (std::uint32_t i = 0; i < faces.size(); ++i) {
+        facesAt[faces[i].a].push_back(i);
+        facesAt[faces[i].b].push_back(i);
+        facesAt[faces[i].c].push_back(i);
+    }
+
+    std::vector<bool> taken(faces.size(), false);
+    taken[seed] = true;
+    for (std::size_t cursor = 0; cursor < out.size(); ++cursor) {
+        const ForgeFace& current = faces[out[cursor]];
+        const std::uint32_t corners[3] = {current.a, current.b, current.c};
+        for (const std::uint32_t corner : corners) {
+            for (const std::uint32_t neighbour : facesAt[corner]) {
+                if (taken[neighbour]) {
+                    continue;
+                }
+                // Sharing an EDGE, not merely a corner. Two quads meeting at one
+                // point of a lattice are not one face, and flooding through a
+                // corner would join them.
+                const ForgeFace& other = faces[neighbour];
+                const std::uint32_t mine[3] = {current.a, current.b, current.c};
+                const std::uint32_t theirs[3] = {other.a, other.b, other.c};
+                int shared = 0;
+                for (const std::uint32_t m : mine) {
+                    for (const std::uint32_t t : theirs) {
+                        shared += static_cast<int>(m == t);
+                    }
+                }
+                if (shared < 2) {
+                    continue;
+                }
+                // ⚑ Against the SEED's normal, never the current face's - see
+                // the header. Stepwise comparison walks around a cylinder.
+                if (core::dot(seedNormal, faceNormal(points, other)) < kCoplanar) {
+                    continue;
+                }
+                taken[neighbour] = true;
+                out.push_back(neighbour);
+            }
+        }
+    }
 }
 
 namespace {

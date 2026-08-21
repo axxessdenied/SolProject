@@ -222,3 +222,50 @@ SOL_TEST(an_inactive_nearest_pick_never_picks)
     pick.consider(1, {1.0f, 1.0f});
     SOL_CHECK(pick.result() == kNoPick);
 }
+
+// ⚑⚑ THE ROUND TRIP THAT MAKES THE RAY TRUSTWORTHY, and it is the one thing in
+// the Forge's face picking (engine plan Phase 9 stage E4d) that could not be
+// checked by reading the code. `screenPoint` projects a camera-space point to a
+// pixel; `rayDirectionCamera` turns a pixel back into a direction. Composed,
+// the direction must point AT the point it came from - which pins both signs,
+// including the y flip a screen and a camera disagree about, without ever
+// trusting either expression on its own.
+//
+// ⚑ The samples are off-axis on every component and asymmetric on purpose: a
+// transposed or sign-flipped expression passes trivially on anything centred.
+SOL_TEST(a_ray_through_a_projected_point_points_back_at_it)
+{
+    const Vec3 samples[] = {{1.5f, 0.75f, -4.0f},
+                            {-2.25f, 1.9f, -10.0f},
+                            {0.4f, -3.1f, -2.5f},
+                            {-0.05f, -0.02f, -0.3f}};
+    for (const Vec3& point : samples) {
+        const sol::ui::ScreenPoint projected = screenPoint(point, kCenter, kFocal);
+        SOL_REQUIRE(projected.inFront);
+        const Vec3 direction = sol::ui::rayDirectionCamera(projected.position, kCenter, kFocal);
+
+        // The ray is `t * direction`, and `direction.z` is exactly -1 - so at
+        // `t = -point.z` the ray must BE the point.
+        const float t = -point.z;
+        SOL_CHECK(nearlyEqual(direction.x * t, point.x));
+        SOL_CHECK(nearlyEqual(direction.y * t, point.y));
+        SOL_CHECK(nearlyEqual(direction.z * t, point.z));
+    }
+}
+
+// The boresight is the degenerate case and the one a sign error survives, so it
+// is asserted separately: dead centre must give exactly the forward axis.
+SOL_TEST(a_ray_through_the_boresight_is_the_forward_axis)
+{
+    const Vec3 direction = sol::ui::rayDirectionCamera(kCenter, kCenter, kFocal);
+    SOL_CHECK(direction.x == 0.0f);
+    SOL_CHECK(direction.y == 0.0f);
+    SOL_CHECK(direction.z == -1.0f);
+
+    // And a pixel to the RIGHT of centre leans +x, one BELOW centre leans -y.
+    // Two statements nobody can get backwards by reading them.
+    const Vec3 right = sol::ui::rayDirectionCamera({kCenter.x + 100.0f, kCenter.y}, kCenter, kFocal);
+    SOL_CHECK(right.x > 0.0f);
+    const Vec3 below = sol::ui::rayDirectionCamera({kCenter.x, kCenter.y + 100.0f}, kCenter, kFocal);
+    SOL_CHECK(below.y < 0.0f);
+}
