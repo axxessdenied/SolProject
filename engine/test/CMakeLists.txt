@@ -36,9 +36,15 @@ add_executable(sol_assets_tests
     assets/data_defs_tests.cpp
     assets/font_tests.cpp
     assets/loadout_tests.cpp
+    assets/texture_doc_tests.cpp
     assets/truetype_tests.cpp
 )
 target_link_libraries(sol_assets_tests PRIVATE sol::test sol::assets)
+# The committed `.tex` sources are this suite's regression net for the same
+# reason the `.forge` files are geometry.unit's: an invariant asserted against a
+# fixture the code built agrees with the code by construction.
+target_compile_definitions(sol_assets_tests
+    PRIVATE SOL_TEXTURE_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/textures")
 add_test(NAME assets.unit COMMAND sol_assets_tests)
 
 # The editable mesh core (Phase 9 stage B). Headless by construction - no

@@ -1,0 +1,21 @@
+# checker.tex - the orientation checker (Phase 5), worn by the cube.
+#
+# Unlike the other two this one is a genuine recipe rather than a transcription:
+# the PowerShell that drew it had no random numbers in it at all, so what is
+# written here is what its author actually decided. The white square is a marker
+# so which way up a uv map has come out is visible at a glance.
+size = [256, 256]
+
+[[op]]
+kind = "checker"
+cell = 32
+color_a = [232, 122, 42]
+color_b = [30, 34, 48]
+
+# The orientation marker, top-left.
+[[op]]
+kind = "rects"
+color = [255, 255, 255]
+rects = [
+  [4, 4, 12, 12],
+]

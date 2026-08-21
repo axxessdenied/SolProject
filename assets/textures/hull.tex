@@ -1,0 +1,107 @@
+# hull.tex - the dark panel grid the station, gate, ship and asteroid wear.
+#
+# Transcribed at stage G from tools/scripts/gen_assets.ps1, which drew it with
+# System.Drawing and committed the result as a PNG. The panel and seam positions
+# came out of System.Random(1337); they are written down here rather than
+# regenerated because .NET's generator has no C++ twin, and because a seed is a
+# texture you can regenerate but cannot edit. The pixels are unchanged - the
+# suite asserts this file builds the exact image the PNG decoded to.
+#
+# Ops apply in file order, so the seams cross the panels and the amber strips sit
+# on top of both. The two seam directions are one op because they share a colour;
+# the script interleaved them, which for one colour is the same picture.
+size = [256, 256]
+
+# The bare hull between the panels.
+[[op]]
+kind = "fill"
+color = [96, 100, 108]
+
+# Plating. Each row is [x, y, w, h, shade]; the colour is the shade plus the
+# tint, so the whole hull warms or cools by editing three numbers.
+[[op]]
+kind = "panels"
+tint = [0, 3, 8]
+panels = [
+  [72, 223, 26, 16, 118],
+  [37, 81, 62, 46, 92],
+  [170, 11, 30, 22, 118],
+  [224, 185, 16, 43, 78],
+  [207, 23, 38, 43, 113],
+  [22, 193, 38, 27, 118],
+  [190, 112, 53, 34, 101],
+  [112, 69, 49, 31, 83],
+  [15, 137, 59, 17, 117],
+  [92, 180, 26, 19, 122],
+  [60, 203, 51, 22, 121],
+  [46, 47, 32, 17, 96],
+  [75, 115, 40, 42, 102],
+  [51, 129, 48, 24, 84],
+  [136, 176, 39, 24, 82],
+  [85, 61, 30, 40, 103],
+  [77, 221, 27, 13, 83],
+  [14, 140, 38, 24, 85],
+  [74, 215, 41, 23, 106],
+  [128, 12, 18, 41, 85],
+  [168, 131, 57, 46, 99],
+  [118, 171, 35, 36, 106],
+  [196, 145, 42, 40, 84],
+  [95, 98, 39, 30, 80],
+  [143, 95, 32, 22, 106],
+  [163, 35, 23, 47, 79],
+  [69, 32, 39, 20, 109],
+  [162, 109, 29, 18, 111],
+  [58, 0, 54, 40, 106],
+  [137, 182, 52, 26, 83],
+  [22, 3, 42, 25, 116],
+  [93, 5, 44, 23, 92],
+  [80, 155, 35, 47, 83],
+  [176, 3, 31, 28, 118],
+  [220, 158, 30, 40, 89],
+  [137, 171, 41, 47, 118],
+  [185, 14, 51, 23, 101],
+  [71, 78, 21, 17, 81],
+  [134, 36, 61, 39, 91],
+  [109, 201, 55, 27, 90],
+  [149, 209, 29, 34, 117],
+  [75, 175, 51, 26, 90],
+  [131, 39, 44, 36, 104],
+  [70, 62, 20, 14, 78],
+  [105, 225, 24, 17, 120],
+  [174, 107, 41, 15, 98],
+  [177, 125, 21, 28, 105],
+  [224, 55, 22, 35, 113],
+  [112, 12, 49, 39, 101],
+  [116, 148, 28, 16, 87],
+  [58, 207, 51, 16, 82],
+  [167, 12, 21, 17, 91],
+  [193, 74, 46, 33, 85],
+  [16, 129, 22, 45, 98],
+  [11, 125, 36, 15, 92],
+  [88, 102, 35, 34, 107],
+  [42, 57, 35, 33, 110],
+  [172, 108, 62, 17, 99],
+  [175, 204, 62, 46, 82],
+  [48, 190, 21, 42, 94],
+]
+
+# Seams. A width-2 pen centred on c covers [c-1, c].
+[[op]]
+kind = "lines"
+color = [58, 60, 66]
+width = 2
+vertical = [86, 230, 193, 21, 142, 128, 64, 222]
+horizontal = [16, 50, 163, 195, 176, 196, 110, 10]
+
+# Hazard striping.
+[[op]]
+kind = "rects"
+color = [205, 130, 40]
+rects = [
+  [93, 166, 20, 6],
+  [153, 49, 20, 6],
+  [231, 9, 20, 6],
+  [144, 41, 20, 6],
+  [108, 121, 20, 6],
+  [47, 18, 20, 6],
+]

@@ -20,8 +20,14 @@ target_link_libraries(sol_cooker PRIVATE sol_cooker_lib)
 add_executable(sol_cooker_tests
     test/cooker_tests.cpp
     test/font_tests.cpp
+    test/texture_tests.cpp
 )
 target_link_libraries(sol_cooker_tests PRIVATE sol_cooker_lib sol::test)
+# Stage G's acceptance gate reads both the `.tex` source and the `.png` it
+# replaces, and this is the only suite that links the decoder and sol::assets at
+# once. The define goes with the test that needs it.
+target_compile_definitions(sol_cooker_tests
+    PRIVATE SOL_TEXTURE_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/textures")
 # The committed `.forge` sources are what the mesh round trip cooks, so the
 # suite reads the real assets rather than a fixture that agrees with the code by
 # construction - the same reason geometry.unit is handed this directory.

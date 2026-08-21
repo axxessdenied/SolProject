@@ -1,0 +1,87 @@
+# cockpit.tex - the cabin panelling the player sits inside (Phase 8m).
+#
+# Transcribed at stage G from tools/scripts/gen_assets.ps1; see hull.tex for why
+# the placements are written down rather than seeded.
+#
+# The hull texture is a light exterior grey, and a cockpit wearing it reads as a
+# warehouse: the interior ends up brighter than the starfield it frames, and the
+# HUD has to compete with its own surroundings. A cabin is dark, with the light
+# coming from the instruments - so this is nearly black, with recessed panel
+# seams and a few amber strips picking out edges.
+size = [256, 256]
+
+[[op]]
+kind = "fill"
+color = [26, 28, 33]
+
+[[op]]
+kind = "panels"
+tint = [0, 2, 6]
+panels = [
+  [45, 12, 64, 50, 25],
+  [138, 216, 39, 20, 34],
+  [55, 142, 70, 42, 30],
+  [48, 153, 24, 61, 36],
+  [37, 113, 37, 54, 34],
+  [154, 87, 41, 54, 31],
+  [157, 190, 93, 29, 39],
+  [143, 174, 34, 36, 38],
+  [45, 82, 70, 55, 40],
+  [177, 99, 44, 54, 41],
+  [201, 217, 28, 37, 26],
+  [114, 102, 87, 41, 43],
+  [39, 100, 62, 36, 34],
+  [92, 180, 55, 44, 27],
+  [76, 5, 72, 26, 20],
+  [150, 150, 58, 41, 27],
+  [43, 105, 65, 63, 29],
+  [184, 127, 67, 35, 42],
+  [30, 163, 75, 53, 25],
+  [164, 167, 46, 44, 30],
+  [173, 42, 80, 29, 25],
+  [144, 178, 89, 69, 38],
+  [194, 34, 56, 54, 30],
+  [120, 14, 73, 23, 20],
+  [198, 194, 31, 45, 34],
+  [142, 147, 24, 71, 37],
+  [156, 55, 95, 53, 32],
+  [8, 62, 49, 64, 31],
+  [3, 170, 71, 43, 31],
+  [229, 77, 26, 55, 32],
+  [157, 150, 38, 63, 27],
+  [13, 129, 43, 36, 25],
+  [10, 49, 90, 35, 38],
+  [122, 131, 81, 55, 21],
+  [57, 135, 83, 21, 28],
+  [15, 93, 70, 44, 33],
+  [48, 48, 46, 71, 32],
+  [41, 178, 34, 68, 25],
+  [104, 22, 25, 61, 33],
+  [166, 2, 47, 39, 36],
+  [71, 58, 48, 71, 36],
+  [32, 91, 33, 45, 36],
+  [109, 7, 80, 31, 41],
+  [132, 160, 91, 23, 35],
+]
+
+# Seams are LIGHTER than the panels here: a dark surface reads its detail off
+# highlights, not off shadows, and the sun grazing the dash has nothing to bite
+# on otherwise.
+[[op]]
+kind = "lines"
+color = [62, 66, 76]
+width = 2
+vertical = [222, 193, 11, 158, 4, 61, 19, 55, 164, 144]
+horizontal = [131, 105, 8, 56, 5, 178, 194, 85, 233, 104]
+
+# Instrument glow.
+[[op]]
+kind = "rects"
+color = [190, 116, 38]
+rects = [
+  [148, 197, 26, 4],
+  [173, 66, 26, 4],
+  [105, 194, 26, 4],
+  [40, 105, 26, 4],
+  [50, 156, 26, 4],
+]

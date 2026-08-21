@@ -7,6 +7,7 @@ add_library(sol_assets STATIC
     src/mesh_build.cpp
     src/mesh_edit.cpp
     src/mesh_lod.cpp
+    src/texture_doc.cpp
     src/truetype.cpp
 )
 add_library(sol::assets ALIAS sol_assets)
