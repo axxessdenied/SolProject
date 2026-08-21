@@ -79,6 +79,13 @@ void DevUi::build(const OverlayStats& stats)
                 ImGui::Text("cam  %.2f  %.2f  %.2f", stats.cameraPosition.x, stats.cameraPosition.y,
                             stats.cameraPosition.z);
                 ImGui::Text("speed %.1f m/s   draws %u", stats.cameraSpeed, stats.drawCalls);
+                if (stats.lodDrawn[1] != 0 || stats.lodDrawn[2] != 0) {
+                    // Only once something is actually drawing below level 0:
+                    // a row that reads "lod 19/0/0" every frame is a row
+                    // nobody reads by the second day.
+                    ImGui::Text("lod  %u / %u / %u", stats.lodDrawn[0], stats.lodDrawn[1],
+                                stats.lodDrawn[2]);
+                }
                 ImGui::Text("sim  tick %llu   entities %u   alpha %.2f",
                             static_cast<unsigned long long>(stats.simTicks), stats.simEntities,
                             stats.simAlpha);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lod_report.hpp"
+
 #include "sol/core/math/math.hpp"
 #include "sol/renderer/debug_draw_renderer.hpp"
 #include "sol/renderer/impostor_renderer.hpp"
@@ -211,7 +213,17 @@ private:
     // a model row holds the indices into those two pools.
     struct CatalogEntry
     {
-        std::uint32_t mesh = 0;
+        // Level 0 first, then whatever `.lodN.smesh` siblings the cook left
+        // beside it. `levelCount` is 1 for every model that has no chain,
+        // which is what makes a model without levels draw exactly as it did
+        // before stage F rather than through a special case.
+        std::uint32_t levels[kMaxDrawLevels] = {};
+        std::uint32_t levelCount = 1;
+        // The def's own radius, kept here because selection needs it every
+        // frame and the def database is not in the draw's reach. ⚑ It is the
+        // DRAWING's radius only: collision, weapons and avoidance keep reading
+        // the def, because a level is a picture of a shape and not the shape.
+        float radius = 1.0f;
         std::uint32_t texture = 0;
         float emissive = 0.0f;
         // Phase 12: translucency is a property of the MODEL, declared in

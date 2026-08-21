@@ -1,15 +1,26 @@
 #include "scene_renderer.hpp"
 
 #include "sol/assets/asset_loader.hpp"
+#include "sol/assets/mesh_lod.hpp"
 #include "sol/core/log.hpp"
 #include "sol/core/profiler.hpp"
+#include "sol/platform/file_io.hpp"
 #include "sol/renderer/scene_pass.hpp"
+#include "sol/ui/pick.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace game {
 
 using namespace sol;
+
+LodReport& lodReport()
+{
+    static LodReport report;
+    return report;
+}
 
 namespace {
 
@@ -191,20 +202,51 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
         return true;
     };
 
+    LodReport& report = lodReport();
+    report.levelsLoaded = 0;
+    report.modelsWithLevels = 0;
+
     m_models.reserve(models.size());
     for (const assets::ModelDef& def : models) {
-        CatalogEntry entry = {
-            .emissive = def.emissive, .translucent = def.translucent, .alpha = def.alpha};
-        if (!meshIndex(def.mesh, entry.mesh) || !textureIndex(def.texture, entry.texture)) {
+        CatalogEntry entry = {.radius = def.radius,
+                              .emissive = def.emissive,
+                              .translucent = def.translucent,
+                              .alpha = def.alpha};
+        if (!meshIndex(def.mesh, entry.levels[0]) || !textureIndex(def.texture, entry.texture)) {
             SOL_LOG_ERROR("model '%s': cannot load mesh '%s' / texture '%s'", def.id.c_str(),
                           def.mesh.c_str(), def.texture.c_str());
             unloadModels();
             return false;
         }
+
+        // ⚑ The chain is whatever the cook left on disk, and its ABSENCE is the
+        // normal case rather than an error - four of the seven committed meshes
+        // are under the triangle floor. So the existence check is a timestamp
+        // probe and not a failed load: `assets::loadMesh` logs when it cannot
+        // read a file, which is right when someone asked for that file by name
+        // and wrong for an optional sibling nobody promised.
+        for (std::uint32_t level = 1; level < kMaxDrawLevels; ++level) {
+            const std::string stem = def.mesh + ".lod" + std::to_string(level);
+            if (platform::fileModificationTime((cookedBase + stem + ".smesh").c_str()) == 0) {
+                break; // the chain ends where the files do
+            }
+            if (!meshIndex(stem, entry.levels[level])) {
+                SOL_LOG_ERROR("model '%s': level %u exists but will not load", def.id.c_str(),
+                              level);
+                unloadModels();
+                return false;
+            }
+            entry.levelCount = level + 1;
+        }
+        if (entry.levelCount > 1) {
+            report.levelsLoaded += entry.levelCount - 1;
+            ++report.modelsWithLevels;
+        }
         m_models.push_back(entry);
     }
-    SOL_LOG_INFO("models: %zu (%zu meshes, %zu textures)", m_models.size(), m_meshes.size(),
-                 m_textures.size());
+    SOL_LOG_INFO("models: %zu (%zu meshes, %zu textures, %u level(s) over %u model(s))",
+                 m_models.size(), m_meshes.size(), m_textures.size(), report.levelsLoaded,
+                 report.modelsWithLevels);
     return true;
 }
 
@@ -294,6 +336,21 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     m_meshRenderer.bind(commandBuffer, extent);
     m_drawCallCount = 0;
     m_translucentScratch.clear();
+
+    // Stage F: how big a thing is on screen decides which level it draws, and
+    // the focal length is the same one the target pick projects through - one
+    // expression of "how big is this", shared, so a level and a hit box cannot
+    // disagree about how far away something looks.
+    const float lodFocal =
+        ui::focalLength(static_cast<float>(extent.height), std::tan(kCameraVerticalFov * 0.5f));
+    LodReport& report = lodReport();
+    for (std::uint32_t& count : report.drawn) {
+        count = 0;
+    }
+    report.largestChainedRadius = 0.0f;
+    report.largestChainedLevel = 0;
+    report.viewportHeight = static_cast<float>(extent.height);
+
     for (const RenderInstance& instance : instances) {
         // A stale or unset model draws nothing rather than crashing: the def
         // layer is reloadable at runtime, so an index can outlive its row.
@@ -316,9 +373,24 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         const core::Mat4 model =
             core::translation(relative) * toMat4(instance.rotation) * core::scale(instance.scale);
 
-        m_meshRenderer.draw(commandBuffer, m_meshes[entry.mesh], m_textures[entry.texture],
-                            viewProjection * model, model, entry.emissive);
+        // ⚑ The instance scale is not uniform in general (a rock takes its size
+        // from it), so the silhouette is bounded by the LARGEST axis. Erring
+        // large means erring towards detail, which is the safe direction: the
+        // cost of being wrong is a few triangles, not a visible pop.
+        const float widest = std::max({instance.scale.x, instance.scale.y, instance.scale.z});
+        const float screenRadius = ui::screenRadiusPixels(
+            static_cast<double>(entry.radius * widest), length(relative), lodFocal);
+        const std::uint32_t level = assets::selectMeshLevel(screenRadius, entry.levelCount);
+
+        m_meshRenderer.draw(commandBuffer, m_meshes[entry.levels[level]],
+                            m_textures[entry.texture], viewProjection * model, model,
+                            entry.emissive);
         ++m_drawCallCount;
+        ++report.drawn[level];
+        if (entry.levelCount > 1 && screenRadius > report.largestChainedRadius) {
+            report.largestChainedRadius = screenRadius;
+            report.largestChainedLevel = level;
+        }
     }
 
     m_gpuProfiler.endZone(commandBuffer, gpuMeshZone);
@@ -389,9 +461,20 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
             const core::Mat4 model = core::translation(relative) * toMat4(instance->rotation) *
                                      core::scale(instance->scale);
             const CatalogEntry& entry = m_models[modelIndex(instance->model)];
-            m_meshRenderer.draw(commandBuffer, m_meshes[entry.mesh], m_textures[entry.texture],
-                                viewProjection * model, model, entry.emissive, entry.alpha);
+            // Selected the same way as an opaque draw, so translucency does not
+            // quietly become a second rule about which mesh to use. Nothing
+            // translucent has a chain today, which is exactly why it must be
+            // written the same rather than left as an assumption.
+            const float widest =
+                std::max({instance->scale.x, instance->scale.y, instance->scale.z});
+            const float screenRadius = ui::screenRadiusPixels(
+                static_cast<double>(entry.radius * widest), length(relative), lodFocal);
+            const std::uint32_t level = assets::selectMeshLevel(screenRadius, entry.levelCount);
+            m_meshRenderer.draw(commandBuffer, m_meshes[entry.levels[level]],
+                                m_textures[entry.texture], viewProjection * model, model,
+                                entry.emissive, entry.alpha);
             ++m_drawCallCount;
+            ++report.drawn[level];
         }
         m_gpuProfiler.endZone(commandBuffer, gpuTranslucentZone);
     }

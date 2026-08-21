@@ -957,6 +957,9 @@ int main(int argc, char** argv)
         stats.cameraPosition = camera.position;
         stats.cameraSpeed = static_cast<float>(length(shipState.velocity));
         stats.drawCalls = renderer.drawCallCount();
+        for (std::size_t i = 0; i < std::size(stats.lodDrawn); ++i) {
+            stats.lodDrawn[i] = game::lodReport().drawn[i];
+        }
         stats.simTicks = simLoop.tickCount();
         stats.simEntities = world.entityCount();
         stats.simAlpha = simAlpha;

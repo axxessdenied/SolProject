@@ -18,6 +18,10 @@ struct OverlayStats
     core::DVec3 cameraPosition;
     float cameraSpeed = 0.0f;
     std::uint32_t drawCalls = 0;
+    // Opaque meshes drawn at each LOD level this frame (Phase 9 stage F), so a
+    // level switch is something a person can WATCH rather than infer. All zero
+    // draws the row exactly as it was before levels existed.
+    std::uint32_t lodDrawn[3] = {};
     std::uint64_t simTicks = 0;
     std::uint32_t simEntities = 0;
     float simAlpha = 0.0f;

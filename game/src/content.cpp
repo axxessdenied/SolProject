@@ -1,10 +1,12 @@
 #include "content.hpp"
 
 #include "game_audio.hpp"
+#include "lod_report.hpp"
 #include "map_ui.hpp"
 #include "ship_ui.hpp"
 #include "target_pick.hpp"
 
+#include "sol/assets/mesh_lod.hpp"
 #include "sol/core/log.hpp"
 #include "sol/core/profiler.hpp"
 #include "sol/platform/file_io.hpp"
@@ -1461,6 +1463,31 @@ std::string shipInfo(GameContent& content)
 // The overlay draws the same tree, but a screenshot is not an assertion: a
 // drive has to be able to state a budget and have the run fail when it is
 // missed. These read the same Profiler the overlay does.
+
+// ⚑ Stage F's own probe, and the stage needs one more than most: the whole
+// model catalog is 2,298 triangles and the frame is vsync-bound, so LOD
+// selection can never be shown to work by a frame rate. What can be asserted is
+// which level each instance chose, which is what this prints.
+//
+// `loaded` separates the two failures that look identical from outside: zero
+// levels loaded is a COOK problem, levels loaded but nothing ever drawn below
+// level 0 is a SELECTION problem.
+std::string lodReportCommand(GameContent& content)
+{
+    (void)content;
+    const LodReport& report = lodReport();
+    char line[256];
+    std::snprintf(line, sizeof(line),
+                  "levels loaded %u over %u model(s); drawn lod0 %u, lod1 %u, lod2 %u; biggest "
+                  "with a chain %.1f px -> lod%u (switches at %.0f / %.0f, viewport %.0f px)",
+                  report.levelsLoaded, report.modelsWithLevels, report.drawn[0], report.drawn[1],
+                  report.drawn[2], static_cast<double>(report.largestChainedRadius),
+                  report.largestChainedLevel,
+                  static_cast<double>(sol::assets::kLevelSwitchPixels[0]),
+                  static_cast<double>(sol::assets::kLevelSwitchPixels[1]),
+                  static_cast<double>(report.viewportHeight));
+    return line;
+}
 
 std::string perfReport(GameContent& content)
 {
@@ -2942,6 +2969,9 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&systemMap>("sol", "system_map", this);
     m_vm.registerFunction<&warpBookmark>("sol", "warp_bookmark", this);
     m_vm.registerFunction<&shipInfo>("sol", "ship_info", this);
+    // Which level each instance drew at (Phase 9 stage F), because no frame
+    // rate on this content can answer that.
+    m_vm.registerFunction<&lodReportCommand>("sol", "lods", this);
     m_vm.registerFunction<&perfReport>("sol", "perf", this);
     m_vm.registerFunction<&perfZone>("sol", "perf_zone", this);
     m_vm.registerFunction<&perfZoneMax>("sol", "perf_zone_max", this);
