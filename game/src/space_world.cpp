@@ -4376,6 +4376,7 @@ void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
     } else if (const assets::ShipDef* playerDef = defs.findShip(kPlayerShipDefId)) {
         // Pre-universe (fleet not initialized yet): raw starter def.
         applyShipDef(playerEntityIndex(), *playerDef, defs);
+        applyCockpitOf(*playerDef);
     } else {
         SOL_LOG_WARN("player ship def '%s' missing; keeping current tuning", kPlayerShipDefId);
     }
@@ -4458,7 +4459,30 @@ void SpaceWorld::applyActiveLoadout()
     if (m_defs == nullptr || m_fleet.empty()) {
         return;
     }
-    applyShipDef(playerEntityIndex(), resolvedShipDef(activeShip()), *m_defs);
+    const assets::ShipDef def = resolvedShipDef(activeShip());
+    applyShipDef(playerEntityIndex(), def, *m_defs);
+    applyCockpitOf(def);
+}
+
+// Phase 19: the seat belongs to the ship, so it is resolved wherever a def is
+// applied to the PLAYER's entity - which is two places, not one. Missing the
+// second is a defect a test found: `applyDefs` has a pre-universe branch for
+// an empty fleet that applies the starter def directly, and on a fresh boot
+// that is the only one of the two that runs. Not under the unit-radius
+// contract: a cockpit is authored at its real size and drawn at scale 1.
+void SpaceWorld::applyCockpitOf(const assets::ShipDef& def)
+{
+    if (m_defs == nullptr) {
+        return;
+    }
+    m_cockpitModel = modelOverrideOr(*m_defs, def.cockpit, "ship def", kRoleCockpit, false);
+}
+
+ModelId SpaceWorld::cockpitModel() const
+{
+    // Before any loadout has been applied - a fresh world, or a test holding
+    // no fleet - the role is still the right answer.
+    return m_cockpitModel == kNoModel ? roleModel(kRoleCockpit) : m_cockpitModel;
 }
 
 bool SpaceWorld::refuse(const std::string& reason, std::string* outError) const

@@ -16,6 +16,7 @@
 #include <sol/test/test.hpp>
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -205,6 +206,90 @@ SOL_TEST(an_unset_override_is_silent_while_a_broken_one_warns)
     SOL_CHECK(afterUnset == 0);
     SOL_CHECK(afterBroken > 0);
     SOL_CHECK(afterWrongRadius > 0);
+}
+
+// Phase 19 stage D. The seat belongs to the SHIP, so the answer has to come
+// from the active ship's def rather than being resolved once for the life of
+// the process the way `main.cpp` used to.
+//
+// ⚑ This test could not have been written before the resolve moved. It is the
+// only model resolution the game had outside `sol_game_lib`, and a test binary
+// links the library, not the executable - so "the cockpit is right" was
+// unassertable for as long as the literal sat in main().
+namespace {
+
+// Two interiors and two hulls, so "it followed the def" and "it fell back to
+// the role" are distinguishable answers rather than the same model twice.
+constexpr const char* kCockpitDefs = R"(
+[[model]]
+id = "seat_default"
+mesh = "cockpit"
+texture = "cockpit"
+radius = 8.0
+
+[[model]]
+id = "seat_freighter"
+mesh = "cockpit"
+texture = "cockpit"
+radius = 8.0
+
+[[model]]
+id = "hull"
+mesh = "ship"
+texture = "hull"
+radius = 8.0
+
+[[role]]
+id = "cockpit"
+model = "seat_default"
+)";
+
+[[nodiscard]] std::string shipsNaming(const char* cockpitKey)
+{
+    std::string toml = R"(
+[[ship]]
+id = "sol.shuttle"
+name = "Shuttle"
+model = "hull"
+)";
+    toml += cockpitKey;
+    return toml;
+}
+
+} // namespace
+
+SOL_TEST(the_cockpit_comes_from_the_active_ships_def)
+{
+    // A hull that names its own interior gets it.
+    {
+        DefDatabase defs;
+        std::string error;
+        SOL_REQUIRE(defs.mergeToml(kCockpitDefs, std::strlen(kCockpitDefs), "m.toml", &error));
+        const std::string ships = shipsNaming("cockpit = \"seat_freighter\"\n");
+        SOL_REQUIRE(defs.mergeToml(ships.c_str(), ships.size(), "s.toml", &error));
+
+        game::SpaceWorld world;
+        world.spawn(1701);
+        world.generateUniverse(defs);
+        world.applyDefs(defs);
+        SOL_CHECK(game::modelIndex(world.cockpitModel()) == defs.modelIndex("seat_freighter"));
+    }
+    // A hull that names none falls back to the role, which is what all three
+    // shipped hulls do - so stage D is invisible until somebody authors a
+    // second interior.
+    {
+        DefDatabase defs;
+        std::string error;
+        SOL_REQUIRE(defs.mergeToml(kCockpitDefs, std::strlen(kCockpitDefs), "m.toml", &error));
+        const std::string ships = shipsNaming("");
+        SOL_REQUIRE(defs.mergeToml(ships.c_str(), ships.size(), "s.toml", &error));
+
+        game::SpaceWorld world;
+        world.spawn(1701);
+        world.generateUniverse(defs);
+        world.applyDefs(defs);
+        SOL_CHECK(game::modelIndex(world.cockpitModel()) == defs.modelIndex("seat_default"));
+    }
 }
 
 SOL_TEST(a_set_model_override_wins_and_a_broken_one_falls_back)

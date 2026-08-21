@@ -326,6 +326,7 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     }
     reader.requireString("name", def.name);
     reader.optionalString("model", def.model);
+    reader.optionalString("cockpit", def.cockpit);
     reader.optionalFloat("scale", def.scale);
 
     ShipFlightTuning& flight = def.flight;
@@ -367,7 +368,8 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     reader.optionalUint("crew_berths", def.crewBerths);
     reader.optionalGate(def.gate);
 
-    reader.rejectUnknownKeys({"id", "name", "model", "scale", "forward_accel", "reverse_accel",
+    reader.rejectUnknownKeys({"id", "name", "model", "cockpit", "scale", "forward_accel",
+                              "reverse_accel",
                               "lateral_accel", "vertical_accel", "max_speed", "max_turn_rate",
                               "angular_accel", "boost_accel_scale", "boost_speed_scale",
                               "cruise_speed_scale", "cruise_accel_scale", "shield_strength",

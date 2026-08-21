@@ -1231,6 +1231,19 @@ public:
     // includeShip is false (first-person view).
     void buildRenderInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const;
 
+    // The interior to draw when the player is in the seat (Phase 19), from the
+    // ACTIVE ship's def and so following a fleet switch. The cockpit is the
+    // one drawable the game layer pushes itself rather than reading off a
+    // RenderShape, which is why it is not in the list above.
+    //
+    // ⚑ This used to be resolved once in `main.cpp` and held in a local for
+    // the life of the process - correct only for as long as every hull shared
+    // one interior. It lives here now for two reasons: the answer has to
+    // change when the active ship does, and `main.cpp` is the executable while
+    // everything else is in `sol_game_lib`, so as long as it sat there it was
+    // the one model resolution in the game that no test could reach.
+    [[nodiscard]] ModelId cockpitModel() const;
+
     void buildParticleInstances(float alpha, std::vector<ParticleInstance>& out) const
     {
         m_thrusters.buildInstances(alpha, out);
@@ -1342,6 +1355,8 @@ private:
     // `model_roles.hpp` ids only - a raw model id here compiles and then
     // silently fails `validateRoles` on nobody's watch.
     [[nodiscard]] ModelId roleModel(const char* role) const;
+    // Resolves the seat for a def just applied to the player's entity.
+    void applyCockpitOf(const sol::assets::ShipDef& def);
 
     struct SpawnedShip
     {
@@ -1693,6 +1708,11 @@ private:
     // entities were instantiated, and re-resolving per chunk would be a
     // string compare inside the weapon loop.
     std::vector<ModelId> m_chunkModels;
+    // Phase 19: the active ship's interior, refreshed by applyActiveLoadout -
+    // the one funnel every fleet switch, purchase and refit already goes
+    // through. Cached because main.cpp asks for it once per frame in the seat
+    // and the answer is two string scans.
+    ModelId m_cockpitModel = kNoModel;
     double m_playerCredits = 1'000.0;
     std::vector<float> m_playerCargo; // per commodity
     float m_playerCargoCapacity = 50.0f;

@@ -109,6 +109,12 @@ struct ShipDef
     std::string id;   // stable, namespaced, e.g. "sol.shuttle"
     std::string name; // display name
     std::string model = "ship";
+    // The interior drawn when the player flies THIS ship from the seat
+    // (Phase 19). Empty means the `cockpit` role, which is what all three
+    // shipped hulls take - so a freighter and an interceptor still share one
+    // interior until somebody authors a second. Only ever consulted for the
+    // player's active ship; an NPC has no seat.
+    std::string cockpit;
     float scale = 1.0f;
     ShipFlightTuning flight;
     ShipDefenseTuning defense;

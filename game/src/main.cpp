@@ -299,18 +299,6 @@ int main(int argc, char** argv)
     if (!renderer.loadModels(content.defs().models(), cookedDirectory.c_str())) {
         return EXIT_FAILURE;
     }
-    // Resolved once: the cockpit is the one drawable the game layer pushes
-    // itself rather than reading off a RenderShape.
-    //
-    // ⚑ Phase 19 stage B. This site is why the recorded tally of hardcoded
-    // model names was wrong: it resolved "cockpit" by literal without going
-    // through `modelByName`, so the grep that produced the list of six could
-    // not see it. Stage D moves the resolve into `SpaceWorld` so it can follow
-    // the active ship - and so it is finally somewhere a test can reach, since
-    // main.cpp is the executable and everything else is in sol_game_lib.
-    const game::ModelId cockpitModel =
-        static_cast<game::ModelId>(content.defs().roleModelIndex(game::kRoleCockpit));
-
     devUi.setCommandHandler(&consoleCommandHandler, &content);
     // The console edits the same binding table the Controls screen does, so a
     // rebind can be driven and asserted on without clicking through the list.
@@ -859,10 +847,14 @@ int main(int argc, char** argv)
             // Attached to the SHIP, not the camera. That is what lets free-look
             // look around the frame instead of dragging it along, and what puts
             // the moving sun on the dash.
+            // ⚑ Asked per frame rather than resolved once at startup (Phase
+            // 19): the interior belongs to the ACTIVE ship, and the player can
+            // switch hulls without the process restarting. The world caches
+            // it, so this is a field read.
             renderInstances.push_back({.position = shipTransform.position,
                                        .rotation = shipTransform.orientation,
                                        .scale = {1.0f, 1.0f, 1.0f},
-                                       .model = cockpitModel});
+                                       .model = world.cockpitModel()});
         }
         world.buildParticleInstances(simAlpha, particleInstances);
 
