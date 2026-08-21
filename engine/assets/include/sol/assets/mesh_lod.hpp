@@ -148,6 +148,28 @@ struct LodChain
 // rather than reasoning about it; that lever exists for exactly this.
 inline constexpr float kLevelSwitchPixels[] = {20.0f, 10.0f};
 
+// ⚑⚑ HOW FAR A LEVEL MUST CLIMB BACK BEFORE IT IS GIVEN UP (Phase 18), as a
+// fraction of the threshold it fell past. Selection is otherwise a pure
+// function of the current frame, so a radius parked on a threshold re-decides
+// every frame and can answer differently each time - a shimmer while holding
+// station, distinct from the pop while approaching that Phase 17 fixed.
+//
+// ⚑ THE MARGIN IS SPENT ON ONE SIDE ONLY. Dropping detail still happens at
+// exactly the measured threshold, so `kLevelSwitchPixels` keeps the pixel
+// budget behind it; only the return trip pays. The cost of that asymmetry is
+// stated rather than hidden: the up-switch lands at 22 px rather than 20,
+// where the event is ~126 changed pixels instead of ~104 - still far under the
+// 88-228 px of ambient motion the thresholds were anchored against.
+//
+// ⚑ A RATIO rather than a pixel count, for the same reason the policy is in
+// pixels at all: it means one number for every model at every resolution.
+inline constexpr float kLevelSwitchHysteresis = 0.10f;
+
+// Passed as `previousLevel` when there is no history - a first sight, or a
+// drawable with no identity to remember (the cockpit is pushed by the game
+// layer and has no entity behind it). Selection then answers statelessly.
+inline constexpr std::uint32_t kNoPreviousLevel = 0xFFFFFFFFu;
+
 // Which level to draw. `levelCount` counts level 0, so 1 means "no chain" and
 // the answer is always 0.
 //
@@ -155,6 +177,15 @@ inline constexpr float kLevelSwitchPixels[] = {20.0f, 10.0f};
 // needs nothing from `sol::ui` - the projection lives in `pick.hpp` beside the
 // focal length it shares with the target pick, and there is exactly one
 // expression of "how big is this on screen" in the codebase.
-[[nodiscard]] std::uint32_t selectMeshLevel(float screenRadiusPixels, std::uint32_t levelCount);
+//
+// ⚑ AND IT TAKES THE PREVIOUS LEVEL RATHER THAN KEEPING IT, so the rule stays
+// a function of its arguments and stays assertable without a device. The
+// renderer owns the memory because only the renderer knows which instance is
+// which; the POLICY stays here, where `geometry.unit` can reach it. A
+// `previousLevel` that is out of range for this chain is ignored rather than
+// trusted - a model whose chain shrank under a re-cook must not be indexed
+// through a level it no longer has.
+[[nodiscard]] std::uint32_t selectMeshLevel(float screenRadiusPixels, std::uint32_t levelCount,
+                                            std::uint32_t previousLevel = kNoPreviousLevel);
 
 } // namespace sol::assets

@@ -143,7 +143,8 @@ LodChain buildLodChain(const MeshData& source, const LodOptions& options)
     return chain;
 }
 
-std::uint32_t selectMeshLevel(float screenRadiusPixels, std::uint32_t levelCount)
+std::uint32_t selectMeshLevel(float screenRadiusPixels, std::uint32_t levelCount,
+                              std::uint32_t previousLevel)
 {
     if (levelCount <= 1) {
         return 0;
@@ -158,7 +159,34 @@ std::uint32_t selectMeshLevel(float screenRadiusPixels, std::uint32_t levelCount
     while (level < kThresholdCount && screenRadiusPixels < kLevelSwitchPixels[level]) {
         ++level;
     }
-    return std::min(level, levelCount - 1);
+    level = std::min(level, levelCount - 1);
+
+    // ⚑ Phase 18. With no history this is exactly the stateless answer above,
+    // which is what keeps a first sight - and every model with no chain -
+    // bit-identical to stage F.
+    if (previousLevel == kNoPreviousLevel || previousLevel >= levelCount) {
+        return level;
+    }
+    // ⚑ THE MARGIN IS ONLY EVER SPENT GIVING DETAIL BACK. Dropping detail
+    // still happens exactly at the threshold Phase 17 measured, so those two
+    // numbers keep the pixel budget behind them; it is the return trip that
+    // has to climb past the threshold by `kLevelSwitchHysteresis` before it
+    // counts. Written as `>=` against the raised bar so a level that has not
+    // earned its way back simply stays put.
+    if (level < previousLevel) {
+        // Going UP in detail: every threshold between here and the level we
+        // are holding must be cleared with the margin, not just the nearest -
+        // a single frame can span two bands if the camera cuts.
+        std::uint32_t held = previousLevel;
+        while (held > level
+               && screenRadiusPixels
+                      >= kLevelSwitchPixels[held - 1] * (1.0f + kLevelSwitchHysteresis)) {
+            --held;
+        }
+        return held;
+    }
+    // Going DOWN in detail, or unchanged: the measured threshold, unmodified.
+    return level;
 }
 
 } // namespace sol::assets

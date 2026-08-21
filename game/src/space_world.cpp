@@ -6724,12 +6724,18 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip,
             continue;
         }
         const Transform& transform = transforms.get(entityIndices[i]);
+        // ⚑ The identity was always here and was always dropped (Phase 18):
+        // the pool is being walked by entity index already, and the renderer
+        // needs it to remember what this instance drew last frame. Rebuilt to
+        // the full handle so a recycled slot reads as a different object.
+        const ecs::Entity entity = m_registry.entityFromIndex(entityIndices[i]);
         out.push_back(RenderInstance{
             .position = transform.previousPosition +
                         (transform.position - transform.previousPosition) * alphaD,
             .rotation = nlerp(transform.previousOrientation, transform.orientation, alpha),
             .scale = shape[i].scale,
             .model = shape[i].model,
+            .key = makeInstanceKey(entity.index, entity.generation),
         });
     }
 }

@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace game {
@@ -60,6 +61,33 @@ inline constexpr ModelId kNoModel = static_cast<ModelId>(0xFFFFFFFFu);
     return static_cast<std::uint32_t>(id);
 }
 
+// ⚑⚑ "THIS IS THE SAME OBJECT AS LAST FRAME" (Phase 18), which is the one
+// thing a RenderInstance never used to say. LOD selection is otherwise a pure
+// function of the current frame, so a radius parked on a threshold re-decides
+// every frame; remembering what an instance drew last needs a key that
+// survives to the next frame.
+//
+// ⚑ IT PACKS THE FULL ECS HANDLE, `{generation, index}`, AND NOT THE BARE
+// INDEX. Slots are recycled and `Registry::destroy` bumps the generation for
+// exactly that reason - keyed on the index alone, a despawned freighter's
+// level would be inherited by whatever spawns into its slot, which is a wrong
+// draw with no error and is Phase 15's row-vs-nav-slot in new clothes.
+//
+// ⚑ Packed rather than typed so `sol/ecs` stays out of the renderer's public
+// header, and so "no identity" is a default rather than a branch: the cockpit
+// is pushed by the game layer with no entity behind it, and needs none - it
+// has no chain, so its level is always 0 however it is asked.
+using RenderInstanceKey = std::uint64_t;
+inline constexpr RenderInstanceKey kNoInstanceKey = 0;
+
+[[nodiscard]] inline constexpr RenderInstanceKey makeInstanceKey(std::uint32_t index,
+                                                                 std::uint32_t generation)
+{
+    // +1 on the index so slot 0 of generation 0 is not the "no identity"
+    // sentinel - the player's own ship has been entity 0 since Phase 4.
+    return (static_cast<RenderInstanceKey>(generation) << 32) | (index + 1u);
+}
+
 // One drawable produced by the sim for the current frame; positions are
 // sim-space doubles, made camera-relative at record time (large-world rule).
 struct RenderInstance
@@ -68,6 +96,7 @@ struct RenderInstance
     sol::core::Quat rotation = sol::core::Quat::identity();
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
     ModelId model = kNoModel;
+    RenderInstanceKey key = kNoInstanceKey;
 };
 
 // One additive billboard in sim space (thruster exhaust etc.).
@@ -198,6 +227,14 @@ private:
                         const CameraFrame& camera, std::span<const RenderInstance> instances,
                         std::span<const ParticleInstance> particles, const SceneInfo& scene);
 
+    // ⚑ ONE rule for both draw paths, which is why this is a function and not
+    // two `if`s: the translucent pass already carries a comment about refusing
+    // to become a second rule about which mesh to use, and a pin or a
+    // hysteresis band honoured in one path and not the other would be a third.
+    // Reads `m_lodLast`, writes `m_lodThis`.
+    [[nodiscard]] std::uint32_t chooseLevel(RenderInstanceKey key, float screenRadiusPixels,
+                                            std::uint32_t levelCount);
+
     sol::rhi::Context* m_context = nullptr;
     sol::rhi::Swapchain* m_swapchain = nullptr;
 
@@ -233,6 +270,19 @@ private:
         float alpha = 1.0f;
     };
     std::vector<CatalogEntry> m_models;
+    // ⚑⚑ WHAT EACH INSTANCE DREW LAST FRAME (Phase 18), which is the only
+    // state in this whole draw path. The RULE lives in `mesh_lod.hpp` and
+    // takes the previous level as an argument, so it stays pure and stays
+    // assertable without a device; what has to live here is the memory,
+    // because only the renderer knows which instance is which.
+    //
+    // ⚑ TWO MAPS RATHER THAN ONE PLUS A SWEEP: each frame reads `m_lodLast`
+    // and writes `m_lodThis`, then they swap. An instance that was not drawn
+    // this frame simply does not carry over, so eviction is free and a
+    // despawned entity cannot accumulate - which matters because a system
+    // jump retires every entity in the bubble at once.
+    std::unordered_map<RenderInstanceKey, std::uint32_t> m_lodLast;
+    std::unordered_map<RenderInstanceKey, std::uint32_t> m_lodThis;
     // Translucent instances deferred out of the opaque loop and drawn after
     // the sky (see the draw path for why the order is not negotiable).
     std::vector<const RenderInstance*> m_translucentScratch;

@@ -51,11 +51,10 @@ constexpr float kSkyIntensity = 1.0f;
 // model's own `emissive` in models.toml (Phase 9) - per-model lighting is a
 // property of the asset, not of the pass that draws it.
 
-// ⚑ ONE rule for both draw paths, which is the whole reason this is a function
-// rather than two `if`s. The translucent path already carries a comment about
-// refusing to let translucency become a second rule about which mesh to use;
-// a pin consulted in one path and not the other would be a third.
-std::uint32_t chooseLevel(float screenRadiusPixels, std::uint32_t levelCount)
+} // namespace
+
+std::uint32_t SceneRenderer::chooseLevel(RenderInstanceKey key, float screenRadiusPixels,
+                                         std::uint32_t levelCount)
 {
     const std::int32_t pin = lodPin();
     if (pin > kLodPinAutomatic) {
@@ -64,12 +63,28 @@ std::uint32_t chooseLevel(float screenRadiusPixels, std::uint32_t levelCount)
         // of indexing off it. A model with no chain stays at 0, which is what
         // makes it safe to pin globally while four of seven models are refused
         // a chain at all.
-        return levelCount == 0 ? 0u : std::min(static_cast<std::uint32_t>(pin), levelCount - 1u);
+        const std::uint32_t pinned =
+            levelCount == 0 ? 0u : std::min(static_cast<std::uint32_t>(pin), levelCount - 1u);
+        // ⚑ Recorded rather than skipped, so `sol.lod_pin(-1)` resumes from
+        // the level actually on screen instead of from one nobody chose.
+        if (key != kNoInstanceKey) {
+            m_lodThis[key] = pinned;
+        }
+        return pinned;
     }
-    return assets::selectMeshLevel(screenRadiusPixels, levelCount);
-}
 
-} // namespace
+    // ⚑ An instance with no identity gets no memory and answers statelessly.
+    // The only one is the cockpit, which has no chain, so this costs nothing
+    // real - but it must be a supported case rather than an assumption.
+    if (key == kNoInstanceKey) {
+        return assets::selectMeshLevel(screenRadiusPixels, levelCount);
+    }
+    const auto it = m_lodLast.find(key);
+    const std::uint32_t previous = it == m_lodLast.end() ? assets::kNoPreviousLevel : it->second;
+    const std::uint32_t level = assets::selectMeshLevel(screenRadiusPixels, levelCount, previous);
+    m_lodThis[key] = level;
+    return level;
+}
 
 bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
                                const char* shaderDirectory, const char* cookedDirectory)
@@ -375,6 +390,15 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     report.largestChainedLevel = 0;
     report.viewportHeight = static_cast<float>(extent.height);
 
+    // ⚑ Phase 18's frame boundary, and the only one there is: what the last
+    // frame decided becomes what this frame reads, and this frame starts
+    // empty. Both the opaque loop below and the translucent pass after the sky
+    // run inside this call, so they share one swap by construction rather than
+    // by anyone remembering to keep them in step. Anything not drawn this
+    // frame is dropped here, which is the whole eviction policy.
+    m_lodLast.swap(m_lodThis);
+    m_lodThis.clear();
+
     for (const RenderInstance& instance : instances) {
         // A stale or unset model draws nothing rather than crashing: the def
         // layer is reloadable at runtime, so an index can outlive its row.
@@ -404,7 +428,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         const float widest = std::max({instance.scale.x, instance.scale.y, instance.scale.z});
         const float screenRadius = ui::screenRadiusPixels(
             static_cast<double>(entry.radius * widest), length(relative), lodFocal);
-        const std::uint32_t level = chooseLevel(screenRadius, entry.levelCount);
+        const std::uint32_t level = chooseLevel(instance.key, screenRadius, entry.levelCount);
 
         m_meshRenderer.draw(commandBuffer, m_meshes[entry.levels[level]],
                             m_textures[entry.texture], viewProjection * model, model,
@@ -493,7 +517,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
                 std::max({instance->scale.x, instance->scale.y, instance->scale.z});
             const float screenRadius = ui::screenRadiusPixels(
                 static_cast<double>(entry.radius * widest), length(relative), lodFocal);
-            const std::uint32_t level = chooseLevel(screenRadius, entry.levelCount);
+            const std::uint32_t level = chooseLevel(instance->key, screenRadius, entry.levelCount);
             m_meshRenderer.draw(commandBuffer, m_meshes[entry.levels[level]],
                                 m_textures[entry.texture], viewProjection * model, model,
                                 entry.emissive, entry.alpha);

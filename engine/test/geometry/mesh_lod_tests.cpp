@@ -378,6 +378,87 @@ SOL_TEST(levelSelectionWalksTheThresholdsAndClampsToWhatExists)
 // constant this phase existed to remove, with a test wrapped around it. The
 // derivation lives beside the values in mesh_lod.hpp; the only thing asserted
 // here is the property the algorithm depends on.
+// ⚑⚑ THE PROPERTY THAT *IS* HYSTERESIS: the same radius answers differently
+// depending on which side it arrived from. Everything else in this test is
+// bookkeeping; if this one assertion held with the margin at zero, the feature
+// would not exist.
+SOL_TEST(aLevelIsGivenBackHigherThanItWasTakenAway)
+{
+    constexpr std::uint32_t kLevels = 3;
+    const float t0 = assets::kLevelSwitchPixels[0];
+
+    // Falling past the threshold drops detail AT the threshold - Phase 17
+    // measured that boundary and this phase does not move it.
+    SOL_CHECK(assets::selectMeshLevel(t0 - 0.01f, kLevels, 0) == 1);
+
+    // Rising back through it does NOT immediately restore detail: just above
+    // the bare threshold, a level already at 1 stays at 1.
+    SOL_CHECK(assets::selectMeshLevel(t0 + 0.01f, kLevels, 1) == 1);
+    // ... and only lets go once it has climbed past the margin.
+    const float restored = t0 * (1.0f + assets::kLevelSwitchHysteresis);
+    SOL_CHECK(assets::selectMeshLevel(restored - 0.01f, kLevels, 1) == 1);
+    SOL_CHECK(assets::selectMeshLevel(restored + 0.01f, kLevels, 1) == 0);
+
+    // ⚑ The asymmetry stated directly: one radius, two answers, decided by
+    // where it came from. This is the line that fails if the margin is zero.
+    const float inBand = t0 + 0.01f;
+    SOL_CHECK(assets::selectMeshLevel(inBand, kLevels, 0) == 0);
+    SOL_CHECK(assets::selectMeshLevel(inBand, kLevels, 1) == 1);
+}
+
+// ⚑ The defect this exists to kill, reproduced as the test: a radius jittering
+// either side of a threshold must not change the level once. Without the
+// margin the answers alternate 0,1,0,1 with the object's silhouette stepping
+// every frame.
+SOL_TEST(aRadiusJitteringOnAThresholdDoesNotChangeLevel)
+{
+    constexpr std::uint32_t kLevels = 3;
+    const float t0 = assets::kLevelSwitchPixels[0];
+    // Measured in Phase 18: dR/dd is -0.0078 px per metre at this threshold,
+    // so a ship drifting metres moves the radius hundredths of a pixel. This
+    // is that drift, exaggerated tenfold.
+    const float jitter[] = {-0.2f, 0.2f, -0.15f, 0.25f, -0.3f, 0.1f};
+
+    std::uint32_t level = assets::selectMeshLevel(t0 - 0.2f, kLevels, assets::kNoPreviousLevel);
+    SOL_CHECK(level == 1);
+    for (const float offset : jitter) {
+        const std::uint32_t next = assets::selectMeshLevel(t0 + offset, kLevels, level);
+        SOL_CHECK(next == level);
+        level = next;
+    }
+}
+
+// ⚑ A frame that spans two bands - a camera cut, a warp - must land on the
+// level the radius actually deserves, not walk one step per frame towards it.
+// The margin applies to every threshold crossed, not just the nearest.
+SOL_TEST(regainingDetailCanCrossMoreThanOneBandInAFrame)
+{
+    constexpr std::uint32_t kLevels = 3;
+    const float far = assets::kLevelSwitchPixels[0] * (1.0f + assets::kLevelSwitchHysteresis) * 4.0f;
+    SOL_CHECK(assets::selectMeshLevel(far, kLevels, 2) == 0);
+    // And the same in the losing direction, which never had a margin at all.
+    SOL_CHECK(assets::selectMeshLevel(0.0f, kLevels, 0) == 2);
+}
+
+// ⚑ With no history the answer must be bit-identical to stage F's, because
+// that is what a first sight and every chainless model get. A regression here
+// would move the thresholds the player just signed off.
+SOL_TEST(withNoHistorySelectionIsExactlyTheStatelessRule)
+{
+    for (std::uint32_t levels = 0; levels <= 4; ++levels) {
+        for (float r = 0.0f; r < 120.0f; r += 0.37f) {
+            SOL_CHECK(assets::selectMeshLevel(r, levels, assets::kNoPreviousLevel)
+                      == assets::selectMeshLevel(r, levels));
+        }
+    }
+    // ⚑ And a previous level this chain cannot honour is ignored rather than
+    // trusted: a re-cook can shorten a chain under a level someone remembers.
+    SOL_CHECK(assets::selectMeshLevel(1000.0f, 2, 7) == 0);
+    SOL_CHECK(assets::selectMeshLevel(0.0f, 2, 7) == 1);
+    // A chainless model answers 0 whatever it is told it drew last.
+    SOL_CHECK(assets::selectMeshLevel(0.0f, 1, 2) == 0);
+}
+
 SOL_TEST(theSwitchThresholdsDescendSoEveryLevelIsReachable)
 {
     constexpr std::size_t kCount = std::size(assets::kLevelSwitchPixels);
