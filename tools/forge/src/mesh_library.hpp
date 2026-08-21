@@ -144,4 +144,25 @@ struct ModelMatch
                                                   const AssetEntry& entry,
                                                   const MeshReport& report);
 
+// A `[[ship]]` or `[[station]]` row naming a `[[model]]` that does not exist.
+//
+// ⚑ THE CHECK THE STRICT SCHEMA DOES NOT DO, and stage H is what makes it
+// matter. `parseShip` reads `model` with `optionalString` and never resolves it,
+// so a typo LOADS CLEANLY and surfaces at spawn as a log warning behind a
+// fallback that draws something plausible - a freighter wearing a shuttle. It
+// is a cross-def question, which is the layer `validateFactions` already
+// occupies, and it belongs here rather than in `data_defs.cpp` for the reason
+// that file states: a mod layer may remove a def another layer still names.
+//
+// Headless on purpose. The tool's panel prevents the mistake by offering a
+// combo, but a rule enforced only by a widget is a rule with no test.
+struct MissingModelRef
+{
+    std::string defType; // "ship" | "station"
+    std::string defId;
+    std::string model; // the name that resolves to nothing
+};
+
+[[nodiscard]] std::vector<MissingModelRef> missingModelRefs(const sol::assets::DefDatabase& defs);
+
 } // namespace forge

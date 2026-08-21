@@ -210,6 +210,22 @@ bool loadModelCatalog(const std::string& dataDirectory, assets::DefDatabase& out
     return out.mergeDirectory(dataDirectory.c_str(), error);
 }
 
+std::vector<MissingModelRef> missingModelRefs(const assets::DefDatabase& defs)
+{
+    std::vector<MissingModelRef> missing;
+    for (const assets::ShipDef& ship : defs.ships()) {
+        if (defs.findModel(ship.model.c_str()) == nullptr) {
+            missing.push_back({"ship", ship.id, ship.model});
+        }
+    }
+    for (const assets::StationDef& station : defs.stations()) {
+        if (defs.findModel(station.model.c_str()) == nullptr) {
+            missing.push_back({"station", station.id, station.model});
+        }
+    }
+    return missing;
+}
+
 std::vector<ModelMatch> matchModels(const assets::DefDatabase& defs, const AssetEntry& entry,
                                     const MeshReport& report)
 {

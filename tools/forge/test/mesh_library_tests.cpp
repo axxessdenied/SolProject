@@ -242,3 +242,69 @@ SOL_TEST(aTextureSourceLoadsAsTheCookedFormRatherThanRawPixels)
     }
     SOL_CHECK(sourcesSeen == 3); // never a vacuous pass
 }
+
+// ⚑⚑ THE CROSS-REFERENCE THE STRICT SCHEMA DOES NOT CHECK, asserted over the
+// game's own committed def files (Phase 9 stage H). `parseShip` reads `model`
+// with `optionalString` and never resolves it, so a `[[ship]]` naming a model
+// that does not exist LOADS CLEANLY and only surfaces at spawn as a log warning
+// behind a fallback that draws something plausible.
+//
+// This is Phase 16's shape one directory over: an invariant over the shipped
+// data rather than a pin on its values. Adding a ship or a station is fine;
+// pointing one at a model that is not there is not.
+SOL_TEST(noShippedDefNamesAModelThatDoesNotExist)
+{
+    assets::DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(forge::loadModelCatalog(SOL_MODEL_DATA_DIR, defs, &error));
+    SOL_REQUIRE(!defs.models().empty());
+    // Never a vacuous pass: both def kinds have to be present to be checked.
+    SOL_CHECK(defs.ships().size() >= 3);
+    SOL_CHECK(defs.stations().size() >= 4);
+
+    const std::vector<forge::MissingModelRef> missing = forge::missingModelRefs(defs);
+    for (const forge::MissingModelRef& ref : missing) {
+        std::printf("  [[%s]] %s names model '%s', which does not exist\n", ref.defType.c_str(),
+                    ref.defId.c_str(), ref.model.c_str());
+    }
+    SOL_CHECK(missing.empty());
+}
+
+// The same check, made to fail - because an invariant that no committed file
+// can trip is one nobody has seen work (E4d, and G's channel clamp).
+SOL_TEST(aDefNamingAMissingModelIsReported)
+{
+    assets::DefDatabase db;
+    std::string error;
+    const std::string toml = R"(
+[[model]]
+id = "real"
+mesh = "m"
+texture = "t"
+
+[[ship]]
+id = "sol.good"
+name = "Good"
+model = "real"
+
+[[ship]]
+id = "sol.bad"
+name = "Bad"
+model = "typo"
+
+[[station]]
+id = "sol.bad_station"
+name = "Bad Station"
+model = "also_typo"
+)";
+    SOL_REQUIRE(db.mergeToml(toml.c_str(), toml.size(), "fixture.toml", &error));
+
+    const std::vector<forge::MissingModelRef> missing = forge::missingModelRefs(db);
+    SOL_REQUIRE(missing.size() == 2);
+    SOL_CHECK(missing[0].defType == "ship");
+    SOL_CHECK(missing[0].defId == "sol.bad");
+    SOL_CHECK(missing[0].model == "typo");
+    SOL_CHECK(missing[1].defType == "station");
+    SOL_CHECK(missing[1].defId == "sol.bad_station");
+    SOL_CHECK(missing[1].model == "also_typo");
+}

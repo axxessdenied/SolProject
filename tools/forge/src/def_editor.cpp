@@ -429,7 +429,11 @@ bool DefEditor::drawContentRow(std::size_t document, DefRow& row,
         }
         ImGui::EndCombo();
     }
-    if (std::find(models.begin(), models.end(), model) == models.end()) {
+    // ⚑ Asked of the validated DATABASE rather than of the combo's list, so the
+    // panel and `missingModelRefs` are one implementation - and `m_defs` is
+    // rebuilt on every accepted edit, so a model row created this session and
+    // not yet saved already counts as existing.
+    if (m_defs.findModel(model.c_str()) == nullptr) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
         ImGui::Text("  NO [[model]] ROW NAMED '%s': this parses cleanly and falls back at spawn, "
