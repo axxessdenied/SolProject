@@ -341,6 +341,16 @@ struct StationDef
 {
     std::string id;
     std::string name;
+    // Which `[[model]]` this archetype is drawn as (Phase 9 stage H).
+    //
+    // ⚑ Before this key existed a station's LOOK was C++: `space_world.cpp`
+    // resolved `modelByName("station")` once and handed the same model to every
+    // station in the galaxy, so an authored station mesh had no way of reaching
+    // the game at all. Stage A took `ModelId` out of the enum and left it a
+    // hardcoded NAME, and this is the first of those names to become data.
+    // The default is the model every archetype already drew, so it changes
+    // nothing until somebody authors a second one.
+    std::string model = "station";
     float weightCore = 1.0f;
     float weightFrontier = 1.0f;
     float weightFringe = 1.0f;

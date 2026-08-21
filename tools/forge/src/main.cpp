@@ -769,11 +769,15 @@ int main(int argc, char** argv)
             // warning whose only remedy was a text editor.
             if (openIndex >= 0 &&
                 ImGui::CollapsingHeader("Def rows", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (defEditor.drawModelRows(meshEntries[static_cast<std::size_t>(openIndex)],
-                                            report, textureStems)) {
-                    // The panel measures against the editor's own validated
-                    // reading, so nothing here needs the boot-time catalog.
-                }
+                // The panel measures against the editor's own validated reading
+                // of the text, so neither call needs the boot-time catalog.
+                (void)defEditor.drawModelRows(meshEntries[static_cast<std::size_t>(openIndex)],
+                                              report, textureStems);
+                // Stage H3: the content that names those models. Below them
+                // because a ship row is a consequence of the model row above it,
+                // exactly as Points sits below Parts.
+                ImGui::SeparatorText("in the game");
+                (void)defEditor.drawContentRows();
                 if (ImGui::Button("save defs")) {
                     if (defEditor.save(defStatus)) {
                         // The boot catalog is what every other panel reads, so

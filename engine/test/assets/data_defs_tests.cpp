@@ -307,6 +307,10 @@ stock_capacity = 1200.0
     SOL_CHECK(agri->produces[0].rate == 0.8f);
     SOL_CHECK(agri->consumes.size() == 1);
     SOL_CHECK(agri->stockCapacity == 1200.0f);
+    // ⚑ Phase 9 stage H. The default is the model every archetype already drew,
+    // so adding the key changed nothing the game draws; what it changed is that
+    // a station's LOOK stopped being a name compiled into space_world.cpp.
+    SOL_CHECK(agri->model == "station");
 
     // Malformed rate strings are load errors and leave the db untouched.
     SOL_CHECK(!merge(db, R"(
@@ -318,6 +322,28 @@ produces = ["sol.food"]
                      "bad.toml", &error));
     SOL_CHECK(error.find("id:rate") != std::string::npos);
     SOL_CHECK(db.findStation("sol.bad") == nullptr);
+
+    // A station naming its own model, which is the whole point of the key.
+    SOL_CHECK(merge(db, R"(
+[[station]]
+id = "sol.station_relay"
+name = "Relay"
+model = "gate"
+)",
+                    "relay.toml", &error));
+    const sol::assets::StationDef* relay = db.findStation("sol.station_relay");
+    SOL_CHECK(relay != nullptr);
+    SOL_CHECK(relay->model == "gate");
+    // An empty one is refused rather than silently meaning "no model at all",
+    // which would draw nothing and read as a missing station.
+    SOL_CHECK(!merge(db, R"(
+[[station]]
+id = "sol.station_void"
+name = "Void"
+model = ""
+)",
+                     "void.toml", &error));
+    SOL_CHECK(error.find("model") != std::string::npos);
     SOL_CHECK(!merge(db, R"(
 [[station]]
 id = "sol.bad2"

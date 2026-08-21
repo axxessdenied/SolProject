@@ -149,14 +149,20 @@ ecs::Snapshot makeSnapshotSchema()
 // A named model, or the fallback hull. Phase 9 made this a def lookup; it used
 // to resolve exactly three strings against a five-member enum, which is why a
 // mesh could be authored and cooked and still have no way into the game.
-ModelId modelIdFromName(const assets::DefDatabase& defs, const std::string& name)
+// ⚑ The context and the fallback are ARGUMENTS since stage H, because stations
+// resolve through here too. Hardcoding them was harmless while a ship def was
+// the only caller and is not: the message would name the wrong def kind, and
+// falling back to "ship" would draw a SHUTTLE where a station belongs, which
+// reads as a spawn bug rather than as a bad name in a file.
+ModelId modelIdFromName(const assets::DefDatabase& defs, const std::string& name,
+                        const char* context, const char* fallbackName)
 {
     const std::uint32_t index = defs.modelIndex(name.c_str());
     if (index != assets::DefDatabase::kNoModel) {
         return static_cast<ModelId>(index);
     }
-    SOL_LOG_WARN("unknown model '%s' in ship def; using 'ship'", name.c_str());
-    const std::uint32_t fallback = defs.modelIndex("ship");
+    SOL_LOG_WARN("unknown model '%s' in %s; using '%s'", name.c_str(), context, fallbackName);
+    const std::uint32_t fallback = defs.modelIndex(fallbackName);
     return fallback == assets::DefDatabase::kNoModel ? kNoModel
                                                      : static_cast<ModelId>(fallback);
 }
@@ -3034,9 +3040,29 @@ void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
                                                    .previousOrientation = orientation});
         m_registry.emplace<RenderShape>(e, RenderShape{.scale = scale, .model = model});
     };
-    const ModelId stationModel = modelByName("station");
+    // ⚑ Phase 9 stage H: a station's model comes from its ARCHETYPE's def row
+    // rather than from a name compiled in here. `StationSpec::archetype` indexes
+    // `stationRules`, which `generateUniverse` builds from `defs.stations()` in
+    // def order, so the archetype is a direct index into the same list.
+    //
+    // Resolved once into a table rather than per station, because a name lookup
+    // is a string compare and a system can hold a dozen of these. An archetype
+    // naming a model that does not exist falls back to "station" with a warning
+    // from `modelIdFromName`, which is the same treatment a ship def gets.
+    std::vector<ModelId> stationModels;
+    if (m_defs != nullptr) {
+        stationModels.reserve(m_defs->stations().size());
+        for (const assets::StationDef& archetype : m_defs->stations()) {
+            stationModels.push_back(
+                modelIdFromName(*m_defs, archetype.model, "station def", "station"));
+        }
+    }
+    const ModelId defaultStationModel = modelByName("station");
     for (const sim::StationSpec& station : spec.stations) {
-        addStatic(station.position, {1.0f, 1.0f, 1.0f}, stationModel);
+        const ModelId model = station.archetype < stationModels.size()
+                                  ? stationModels[station.archetype]
+                                  : defaultStationModel;
+        addStatic(station.position, {1.0f, 1.0f, 1.0f}, model);
     }
     // Gates FACE THEIR LANE (Phase 8w) rather than all presenting the same
     // arbitrary world-Z side: the player has to fly through the opening now, so
@@ -4600,7 +4626,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex, const assets::ShipDef& 
 {
     RenderShape& shape = m_registry.storage<RenderShape>().get(entityIndex);
     shape.scale = {def.scale, def.scale, def.scale};
-    shape.model = modelIdFromName(defs, def.model);
+    shape.model = modelIdFromName(defs, def.model, "ship def", "ship");
     m_registry.storage<ShipControl>().get(entityIndex).tuning = toShipTuning(def.flight);
     if (entityIndex == playerEntityIndex()) {
         m_playerCargoCapacity = def.cargoCapacity;

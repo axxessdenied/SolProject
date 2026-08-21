@@ -604,6 +604,7 @@ bool parseStation(const TomlValue& table, const char* sourceName, std::vector<St
         reader.context = std::string(sourceName) + ": station '" + def.id + "'";
     }
     reader.requireString("name", def.name);
+    reader.optionalString("model", def.model);
     reader.optionalFloat("weight_core", def.weightCore);
     reader.optionalFloat("weight_frontier", def.weightFrontier);
     reader.optionalFloat("weight_fringe", def.weightFringe);
@@ -615,9 +616,13 @@ bool parseStation(const TomlValue& table, const char* sourceName, std::vector<St
     reader.optionalString("refine_input", def.refineInput);
     reader.optionalString("refine_output", def.refineOutput);
 
-    reader.rejectUnknownKeys({"id", "name", "weight_core", "weight_frontier", "weight_fringe",
-                              "produces", "consumes", "feedstock", "produces_from",
-                              "stock_capacity", "refine_input", "refine_output"});
+    reader.rejectUnknownKeys({"id", "name", "model", "weight_core", "weight_frontier",
+                              "weight_fringe", "produces", "consumes", "feedstock",
+                              "produces_from", "stock_capacity", "refine_input",
+                              "refine_output"});
+    if (!reader.failed && def.model.empty()) {
+        reader.fail("'model' must name a [[model]] row when given");
+    }
     if (!reader.failed && def.stockCapacity <= 0.0f) {
         reader.fail("'stock_capacity' must be > 0");
     }
