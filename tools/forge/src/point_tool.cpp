@@ -171,6 +171,47 @@ void PointTool::refresh(const ForgeDoc& doc)
         m_hoverFace = kNone;
         m_hoverGroup.clear();
     }
+
+    // ⚑ The extrude's re-selection, consumed here because this is the first
+    // moment the raised face exists in a numbering anyone can name. Matched by
+    // NORMAL first and centroid second: the walls the extrude raised stand at
+    // right angles to the face, so requiring the plane excludes them by
+    // construction rather than by hoping the distances come out right.
+    if (m_reselect) {
+        m_reselect = false;
+        constexpr double kCoplanar = 0.9999619; // cos(0.5 degrees), as the flood uses
+        std::size_t best = kNone;
+        double nearest = 0.0;
+        for (std::size_t i = 0; i < m_faces.size(); ++i) {
+            const ForgeFace& face = m_faces[i];
+            const assets::BuildPoint normal =
+                core::normalize(core::cross(m_points[face.b].position - m_points[face.a].position,
+                                            m_points[face.c].position - m_points[face.a].position));
+            if (core::dot(normal, m_reselectNormal) < kCoplanar) {
+                continue;
+            }
+            const assets::BuildPoint centre{
+                (m_points[face.a].position.x + m_points[face.b].position.x +
+                 m_points[face.c].position.x) /
+                    3.0,
+                (m_points[face.a].position.y + m_points[face.b].position.y +
+                 m_points[face.c].position.y) /
+                    3.0,
+                (m_points[face.a].position.z + m_points[face.b].position.z +
+                 m_points[face.c].position.z) /
+                    3.0};
+            const assets::BuildPoint gap = centre - m_reselectCentre;
+            const double distance = core::dot(gap, gap);
+            if (best == kNone || distance < nearest) {
+                best = i;
+                nearest = distance;
+            }
+        }
+        if (best != kNone) {
+            m_selectedFace = best;
+            assets::forgeFaceGroup(m_points, m_faces, best, m_group);
+        }
+    }
 }
 
 // One place, because there are now three selections and forgetting one of them
@@ -198,7 +239,9 @@ void PointTool::close()
     m_unavailable.clear();
     clearSelection();
     m_error.clear();
+    m_note.clear();
     m_dropped = false;
+    m_reselect = false;
 }
 
 void PointTool::setMode(Mode mode)
@@ -209,7 +252,9 @@ void PointTool::setMode(Mode mode)
     m_mode = mode;
     clearSelection();
     m_error.clear();
+    m_note.clear();
     m_dropped = false;
+    m_reselect = false;
 }
 
 std::size_t PointTool::pickAt(const Viewport& viewport) const
@@ -389,6 +434,7 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
 
     if (viewport.leftPressed && !m_dragging) {
         m_error.clear();
+        m_note.clear();
         m_dropped = false;
         core::Vec3 grabbed{};
         bool grabbedAnything = false;
@@ -641,19 +687,21 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
     }
 }
 
-void PointTool::drawPanel(const ForgeDoc& doc)
+bool PointTool::drawPanel(PartEditor& editor)
 {
+    const ForgeDoc& doc = editor.doc();
+    bool changed = false;
     if (!m_unavailable.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
         ImGui::TextUnformatted(m_unavailable.c_str());
         ImGui::PopStyleColor();
         ImGui::PopTextWrapPos();
-        return;
+        return false;
     }
     if (m_points.empty()) {
         ImGui::TextDisabled("no points - open a .forge document");
-        return;
+        return false;
     }
 
     // ⚑ A radio rather than only a hotkey. The hotkey is what an author uses
@@ -720,9 +768,86 @@ void PointTool::drawPanel(const ForgeDoc& doc)
                             kMarkerBudget);
     }
 
+    // ⚑⚑ THE TWO TOPOLOGY EDITS (E5c and E5d), EACH ON THE SELECTION ITS MODE
+    // ALREADY HAS. A split takes the selected edge; an extrude takes the
+    // selected face GROUP, which is the widening E4d had to do at pick time -
+    // three corners of four is refused by the engine, and by the time a write
+    // set is built "three corners" and "an author who meant four" cannot be told
+    // apart.
+    if (m_mode == Mode::Edge && m_selectedEdge != kNone && m_selectedEdge < m_edges.size()) {
+        if (ImGui::Button("split edge")) {
+            const ForgeEdge& edge = m_edges[m_selectedEdge];
+            std::string error;
+            if (editor.splitEdge(m_points, m_faces, edge.a, edge.b, error)) {
+                m_error.clear();
+                // The edge that was selected does not exist any more - it is two
+                // now - so there is nothing honest to keep highlighted.
+                m_note = "split: a point was added at the middle, and every triangle standing on "
+                         "that edge became two. Pick either half.";
+                changed = true;
+            } else {
+                m_error = error;
+            }
+        }
+    }
+    if (m_mode == Mode::Face && m_selectedFace != kNone && !m_group.empty()) {
+        if (ImGui::Button("extrude")) {
+            // Where the raised face should end up, recorded BEFORE the edit so
+            // the rebuild can be matched against it - see m_reselect.
+            const ForgeFace& seed = m_faces[m_selectedFace];
+            const assets::BuildPoint normal = core::normalize(
+                core::cross(m_points[seed.b].position - m_points[seed.a].position,
+                            m_points[seed.c].position - m_points[seed.a].position));
+            assets::BuildPoint centre{0.0, 0.0, 0.0};
+            std::size_t corners = 0;
+            for (const std::uint32_t index : m_group) {
+                const ForgeFace& face = m_faces[index];
+                for (const std::uint32_t corner : {face.a, face.b, face.c}) {
+                    centre = centre + m_points[corner].position;
+                    ++corners;
+                }
+            }
+            centre = {centre.x / static_cast<double>(corners),
+                      centre.y / static_cast<double>(corners),
+                      centre.z / static_cast<double>(corners)};
+
+            double offset = 0.0;
+            std::string error;
+            if (editor.extrudeFaces(m_faces, m_group, offset, error)) {
+                m_error.clear();
+                char note[192];
+                std::snprintf(note, sizeof(note),
+                              "extruded %zu triangle(s) by %.4f m along the face's own normal - "
+                              "drag it to place it.",
+                              m_group.size(), offset);
+                m_note = note;
+                m_reselect = true;
+                m_reselectNormal = normal;
+                m_reselectCentre = centre + assets::BuildPoint{normal.x * offset,
+                                                              normal.y * offset,
+                                                              normal.z * offset};
+                changed = true;
+            } else {
+                m_error = error;
+            }
+        }
+        ImGui::SameLine();
+        // ⚑ Said before the press rather than after it, because the offset is
+        // NOT zero and cannot be: a face duplicated in place welds straight back
+        // into the one it came from, since a point's identity here is its
+        // position. An author who expected "extrude then move from flush" needs
+        // to know that before they wonder what moved.
+        ImGui::TextDisabled("(raises it off its own plane first)");
+    }
+
     if (!m_error.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored({0.95f, 0.45f, 0.35f, 1.0f}, "%s", m_error.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    if (!m_note.empty() && m_error.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored({0.55f, 0.85f, 0.55f, 1.0f}, "%s", m_note.c_str());
         ImGui::PopTextWrapPos();
     }
 
@@ -924,6 +1049,7 @@ void PointTool::drawPanel(const ForgeDoc& doc)
     ImGui::TextDisabled("1, 2 and 3 switch points, edges and faces");
     ImGui::TextDisabled("hold X, Y or Z to lock the drag to an axis");
     ImGui::TextDisabled("ctrl+Z undoes the whole drag");
+    return changed;
 }
 
 } // namespace forge

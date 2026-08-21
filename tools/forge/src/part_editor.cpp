@@ -7,6 +7,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -96,7 +97,7 @@ void PartEditor::openNew(const std::string& directory)
     m_open = true;
     m_dirty = true;
     m_buildError.clear();
-    m_bakeError.clear();
+    m_editError.clear();
     // A new document has no history, and keeping the last one's would let an
     // undo replace this file's contents with a different asset's.
     m_undo.clear();
@@ -124,7 +125,7 @@ bool PartEditor::openFile(const std::string& path, std::string& status)
     m_open = true;
     m_dirty = false;
     m_buildError.clear();
-    m_bakeError.clear();
+    m_editError.clear();
     m_undo.clear();
     status = "opened " + m_saveName + " (" + std::to_string(m_doc.parts.size()) + " parts)";
     return true;
@@ -226,6 +227,45 @@ bool PartEditor::movePoints(std::span<const assets::ForgePoint> points, assets::
     if (!assets::forgeMovePoints(m_doc, points, delta, &dropped, &error)) {
         return false;
     }
+    m_dirty = true;
+    return true;
+}
+
+// ⚑ Both of these work on a COPY and only push undo once the engine has
+// accepted, which is the discipline E3's bake set: the cheap version - push,
+// try, roll back - leaves a no-op in the history for an author to press
+// through, and `undo()` marks the document dirty, so a refused button would
+// claim unsaved work.
+bool PartEditor::splitEdge(std::span<const assets::ForgePoint> points,
+                           std::span<const assets::ForgeFace> faces, std::uint32_t a,
+                           std::uint32_t b, std::string& error)
+{
+    if (!m_open) {
+        return false;
+    }
+    ForgeDoc next = m_doc;
+    if (!assets::forgeSplitEdge(next, points, faces, a, b, &error)) {
+        return false;
+    }
+    beginEdit();
+    m_doc = std::move(next);
+    m_dirty = true;
+    return true;
+}
+
+bool PartEditor::extrudeFaces(std::span<const assets::ForgeFace> faces,
+                              std::span<const std::uint32_t> group, double& offset,
+                              std::string& error)
+{
+    if (!m_open) {
+        return false;
+    }
+    ForgeDoc next = m_doc;
+    if (!assets::forgeExtrudeFaces(next, faces, group, &offset, &error)) {
+        return false;
+    }
+    beginEdit();
+    m_doc = std::move(next);
     m_dirty = true;
     return true;
 }
@@ -353,18 +393,67 @@ bool PartEditor::drawPartList()
         if (assets::forgeBakeDocumentPart(next, static_cast<std::size_t>(m_selected), &error)) {
             beginEdit();
             m_doc = std::move(next);
-            m_bakeError.clear();
+            m_editError.clear();
             changed = true;
         } else {
-            m_bakeError = error;
+            m_editError = error;
         }
     }
     ImGui::EndDisabled();
     ImGui::EndDisabled();
 
-    if (!m_bakeError.empty()) {
+    // ⚑⚑ MERGE GETS ITS OWN ROW, AND IT IS A COMBO RATHER THAN A VIEWPORT
+    // MULTI-SELECT. It needs TWO objects and every selection in this tool holds
+    // one; a viewport multi-select is a selection model, an undo question and a
+    // highlight scheme all at once, while a combo naming the other part is the
+    // idiom this panel already uses for `parent`. And it is a row of its own
+    // because the line above is already three buttons wide - the E3 finding was
+    // that four widgets never fit, and repeating it here would be the seventh
+    // sighting of the same defect.
+    //
+    // ⚑ It is built BEFORE the extrude for a reason: an extrude refuses a face
+    // whose triangles come from two parts and tells the author to merge them,
+    // and a refusal that names something unbuilt is a lie.
+    const bool mergeable =
+        hasSelection && m_doc.parts[static_cast<std::size_t>(m_selected)].primitive !=
+                            ForgePrimitive::Group;
+    ImGui::BeginDisabled(!mergeable);
+    if (ImGui::BeginCombo("##merge", "merge with...")) {
+        for (std::size_t i = 0; i < m_doc.parts.size(); ++i) {
+            const ForgePart& candidate = m_doc.parts[i];
+            // Only what the engine can actually take: not itself, not a group,
+            // and under the same parent - a baked part's geometry is stored in
+            // its parent's frame, so two parents would be two frames.
+            if (!mergeable || static_cast<int>(i) == m_selected ||
+                candidate.primitive == ForgePrimitive::Group ||
+                candidate.parent != m_doc.parts[static_cast<std::size_t>(m_selected)].parent) {
+                continue;
+            }
+            if (ImGui::Selectable(candidate.id.c_str())) {
+                // Into a copy, like the bake: a refusal must leave the document
+                // and the undo history exactly as it found them.
+                ForgeDoc next = m_doc;
+                std::string error;
+                if (assets::forgeMergeParts(next, static_cast<std::size_t>(m_selected), i,
+                                            &error)) {
+                    beginEdit();
+                    m_doc = std::move(next);
+                    // The EARLIER part survives, so that is what stays selected.
+                    m_selected = std::min(m_selected, static_cast<int>(i));
+                    m_editError.clear();
+                    changed = true;
+                } else {
+                    m_editError = error;
+                }
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+
+    if (!m_editError.empty()) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored({0.95f, 0.45f, 0.35f, 1.0f}, "%s", m_bakeError.c_str());
+        ImGui::TextColored({0.95f, 0.45f, 0.35f, 1.0f}, "%s", m_editError.c_str());
         ImGui::PopTextWrapPos();
     }
     return changed;

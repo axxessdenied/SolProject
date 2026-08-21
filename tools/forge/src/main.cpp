@@ -571,7 +571,12 @@ int main(int argc, char** argv)
             // same reason Parts is.
             if (editor.isOpen() && ImGui::CollapsingHeader("Points, edges & faces",
                                                            ImGuiTreeNodeFlags_DefaultOpen)) {
-                points.drawPanel(editor.doc());
+                // ⚑ It can change the document since E5: a split and an extrude
+                // are presses rather than drags, so this panel is a third place
+                // an edit can come from and it needs the same rebuild.
+                if (points.drawPanel(editor)) {
+                    rebuildFromEditor(/*reframe=*/false);
+                }
             }
 
             if ((openIndex >= 0 || editor.isOpen()) &&

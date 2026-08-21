@@ -66,6 +66,18 @@ public:
                                   sol::assets::BuildPoint delta, bool& dropped,
                                   std::string& error);
 
+    // ⚑ THE TWO TOPOLOGY EDITS (stage E5), AND UNLIKE THE MOVES ABOVE THEY PUSH
+    // UNDO THEMSELVES. A drag is one gesture spread over sixty frames, so it
+    // calls beginEdit() once and movePoints() many times; a split and an extrude
+    // are each one discrete press with one entry to undo. Both bake the parts
+    // they touch, because a box with a face pulled out of it is not a box.
+    [[nodiscard]] bool splitEdge(std::span<const sol::assets::ForgePoint> points,
+                                 std::span<const sol::assets::ForgeFace> faces, std::uint32_t a,
+                                 std::uint32_t b, std::string& error);
+    [[nodiscard]] bool extrudeFaces(std::span<const sol::assets::ForgeFace> faces,
+                                    std::span<const std::uint32_t> group, double& offset,
+                                    std::string& error);
+
     [[nodiscard]] bool isOpen() const { return m_open; }
     [[nodiscard]] const sol::assets::ForgeDoc& doc() const { return m_doc; }
     [[nodiscard]] bool dirty() const { return m_dirty; }
@@ -91,10 +103,13 @@ private:
     std::vector<sol::assets::ForgeDoc> m_undo;
     std::string m_path;
     std::string m_buildError;
-    // Why the last bake was refused. Separate from m_buildError, which is the
-    // caller's rebuild failure - a bake that will not run and a document that
-    // will not build are different problems with different fixes.
-    std::string m_bakeError;
+    // Why the last part-list edit - a bake, or since E5b a merge - was refused.
+    // Separate from m_buildError, which is the caller's rebuild failure: an edit
+    // that will not run and a document that will not build are different
+    // problems with different fixes. It is NOT a second string per operation,
+    // because "this edit was declined and here is why" is one thing however many
+    // buttons can say it.
+    std::string m_editError;
     std::string m_saveName;
     int m_selected = -1;
     bool m_open = false;

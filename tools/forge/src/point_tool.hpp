@@ -117,10 +117,17 @@ public:
     [[nodiscard]] bool update(const Viewport& viewport, PartEditor& editor);
 
     void drawMarkers(sol::renderer::DebugDrawRenderer& lines, const Viewport& viewport) const;
-    // The panel section. Draws nothing that edits the DOCUMENT - every edit is
-    // a drag - but it is no longer const, because the mode radio is a control
-    // and a mode is what the next click means.
-    void drawPanel(const sol::assets::ForgeDoc& doc);
+    // The panel section. Returns true when the document changed and the caller
+    // must rebuild.
+    //
+    // ⚑⚑ IT EDITS THE DOCUMENT SINCE E5, WHICH IT DID NOT BEFORE. Every edit up
+    // to E4 was a DRAG - this file only projected, hovered and moved - and a
+    // split and an extrude are neither. They are discrete presses that change
+    // TOPOLOGY, so they are buttons rather than a gesture, and deliberately not
+    // bare letter keys: `X`, `Y`, `Z` and `F` are already unmodified letters in
+    // this viewport, and a stray press that reshapes the mesh is a worse failure
+    // than one that locks an axis.
+    [[nodiscard]] bool drawPanel(PartEditor& editor);
 
     // ⚑⚑ TRUE FOR THE WHOLE BUTTON PRESS, INCLUDING AFTER A REFUSAL, AND THAT
     // IS WHAT THE E4b DRIVE FOUND. `main.cpp` hands the camera any press the
@@ -203,6 +210,23 @@ private:
     // pulled off its own normal. Sticky for the drag rather than per frame,
     // because a message that flickers with the mouse is a message nobody reads.
     bool m_dropped = false;
+
+    // ⚑⚑ THE FACE AN EXTRUDE JUST RAISED, SO THE NEXT DRAG MOVES IT. An extrude
+    // changes the point count, and `refresh` drops the selection when that
+    // happens - which is right for every other edit and wrong for the one whose
+    // whole purpose is to change it. Without this an author extrudes, watches
+    // the highlight vanish, and has to hunt for the thing they just made.
+    //
+    // ⚑ Recorded as WHERE the new face should be rather than as an index,
+    // because the face list is renumbered by the rebuild that stands between the
+    // press and the re-selection. It is armed by the press and consumed by the
+    // next refresh.
+    bool m_reselect = false;
+    sol::assets::BuildPoint m_reselectCentre{};
+    sol::assets::BuildPoint m_reselectNormal{};
+    // What the last accepted topology edit did, for the panel to say. Cleared by
+    // the next selection, like every other message here.
+    std::string m_note;
 };
 
 } // namespace forge
