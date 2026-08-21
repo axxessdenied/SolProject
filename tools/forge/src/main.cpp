@@ -29,6 +29,7 @@
 #include "sol/ui/pick.hpp"
 
 #include <imgui.h>
+#include <imgui_impl_vulkan.h>
 
 #include <cmath>
 #include <cstdint>
@@ -260,6 +261,16 @@ int main(int argc, char** argv)
     forge::TextureEditor textureEditor;
     int editingTextureIndex = -1;
 
+    // ⚑ The flat preview, and it is not a luxury: every number in this document
+    // is a PIXEL COORDINATE, and a texture judged only on a lumpy asteroid is a
+    // set of numbers whose effect you cannot see. The mesh answers "does it look
+    // right in the game"; this answers "is the panel where I put it".
+    //
+    // ImGui's Vulkan backend hands out its own descriptor set for an image, so
+    // this is a second view of the SAME GpuTexture the mesh samples - there is
+    // no second upload and no second encode to disagree with the first.
+    VkDescriptorSet texturePreview = VK_NULL_HANDLE;
+
     ScaleReference references[] = {
         {"station (200 m)", 200.0f, {0.20f, 0.55f, 0.70f, 1.0f}, true},
         {"ship (12 m)", 12.0f, {0.85f, 0.55f, 0.15f, 1.0f}, true},
@@ -357,6 +368,22 @@ int main(int argc, char** argv)
         points.refresh(editor.doc());
     };
 
+    // Points the flat preview at whichever texture is currently shading the
+    // mesh. Called wherever that texture changes IDENTITY or CONTENT, since a
+    // descriptor set outlives neither.
+    const auto refreshTexturePreview = [&]() {
+        if (texturePreview != VK_NULL_HANDLE) {
+            ImGui_ImplVulkan_RemoveTexture(texturePreview);
+            texturePreview = VK_NULL_HANDLE;
+        }
+        if (textureIndex < 0 || textureIndex >= static_cast<int>(textures.size())) {
+            return;
+        }
+        const renderer::GpuTexture& texture = textures[static_cast<std::size_t>(textureIndex)];
+        texturePreview = ImGui_ImplVulkan_AddTexture(texture.sampler, texture.image.view,
+                                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    };
+
     // Stage G. The image is rebuilt and re-uploaded on every accepted edit, for
     // the same reason the mesh is: a 256x256 document is cheaper to evaluate
     // whole than to work out what changed, and an author moving a panel wants
@@ -379,6 +406,9 @@ int main(int argc, char** argv)
         const auto slot = static_cast<std::size_t>(editingTextureIndex);
         view.meshes().destroyTexture(textures[slot]);
         textures[slot] = view.meshes().createTexture(data);
+        if (editingTextureIndex == textureIndex) {
+            refreshTexturePreview();
+        }
     };
 
     const auto openTextureAt = [&](int index) {
@@ -386,6 +416,7 @@ int main(int argc, char** argv)
             return;
         }
         textureIndex = index;
+        refreshTexturePreview();
         if (!forge::isTextureSource(loadedTextureEntries[static_cast<std::size_t>(index)])) {
             // A cooked `.stex` can be looked at and not edited: there is no
             // document behind it to change.
@@ -838,6 +869,14 @@ int main(int argc, char** argv)
                     }
                 }
                 ImGui::EndChild();
+                if (texturePreview != VK_NULL_HANDLE) {
+                    // Square and modest: big enough to see where a panel sits,
+                    // small enough that the ops it belongs to stay on screen
+                    // beside it.
+                    ImGui::Image(reinterpret_cast<ImTextureID>(texturePreview), {200.0f, 200.0f});
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("as cooked\n(BC1)");
+                }
                 if (ImGui::Button("new texture")) {
                     textureEditor.openNew(assetsDirectory + "/textures");
                     editingTextureIndex = -1;
@@ -943,6 +982,11 @@ int main(int argc, char** argv)
     }
 
     context.waitIdle();
+    // Before the ImGui host goes down: the set belongs to its descriptor pool.
+    if (texturePreview != VK_NULL_HANDLE) {
+        ImGui_ImplVulkan_RemoveTexture(texturePreview);
+        texturePreview = VK_NULL_HANDLE;
+    }
     for (renderer::GpuMesh& level : levelMeshes) {
         view.meshes().destroyMesh(level);
     }
