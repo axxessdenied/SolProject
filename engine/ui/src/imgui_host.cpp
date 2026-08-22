@@ -34,7 +34,8 @@ void checkVkResult(VkResult result)
 } // namespace
 
 bool ImGuiHost::initialize(platform::Window& window, rhi::Context& context, VkFormat colorFormat,
-                           VkFormat depthFormat, std::uint32_t swapchainImageCount)
+                           VkFormat depthFormat, std::uint32_t swapchainImageCount,
+                           const HostOptions& options)
 {
     if (g_hostLive) {
         SOL_LOG_ERROR("[imgui] a host is already live; ImGui's context is process-global");
@@ -44,7 +45,32 @@ bool ImGuiHost::initialize(platform::Window& window, rhi::Context& context, VkFo
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
-    ImGui::GetIO().IniFilename = nullptr; // no imgui.ini litter
+
+    // ⚑⚑ THE DEFAULT IS STILL "NO imgui.ini LITTER" AND THAT IS STILL RIGHT FOR
+    // THE GAME. What changed is that it stopped being right for EVERY client: a
+    // tool with dockable windows keeps the author's arrangement in this file,
+    // and without it the arrangement is rebuilt by hand on every launch.
+    //
+    // ⚑ ImGui KEEPS THE POINTER AND NEVER THE STRING, and it writes the file
+    // long after this function has returned - so the storage has to outlive the
+    // call, which is why the host owns a copy rather than forwarding what the
+    // caller passed.
+    if (options.iniPath.empty()) {
+        ImGui::GetIO().IniFilename = nullptr;
+    } else {
+        m_iniPath = options.iniPath;
+        ImGui::GetIO().IniFilename = m_iniPath.c_str();
+    }
+
+    // ⚑ Docking only - deliberately NOT ImGuiConfigFlags_ViewportsEnable, which
+    // would let panels leave the window entirely. That needs
+    // ImGui::UpdatePlatformWindows()/RenderPlatformWindowsDefault() after
+    // Render() and viewport support live in both backends, none of which this
+    // host does; enabling the flag without them draws nothing and looks like a
+    // corrupted panel.
+    if (options.docking) {
+        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    }
 
     if (!devUiPlatformInit(window.nativeHandle())) {
         SOL_LOG_ERROR("[imgui] platform backend init failed");
@@ -103,7 +129,10 @@ void ImGuiHost::shutdown()
     }
     ImGui_ImplVulkan_Shutdown();
     devUiPlatformShutdown();
+    // ⚑ DestroyContext is what FLUSHES a dirty layout to disk, so `m_iniPath`
+    // has to still be alive here - clear it only afterwards.
     ImGui::DestroyContext();
+    m_iniPath.clear();
     if (m_descriptorPool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
         m_descriptorPool = VK_NULL_HANDLE;

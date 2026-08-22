@@ -234,9 +234,22 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
+    // ⚑⚑ THE FORGE IS THE ONE CLIENT THAT OPTS INTO BOTH OF THESE, AND THEY ARE
+    // A PAIR. Docking makes the panel's sections into windows an author can
+    // arrange; the ini is what makes that arrangement survive a launch. Without
+    // the second, the first is a REGRESSION - stage J's whole finding was that
+    // a cost paid on every launch is paid forever, and rebuilding a layout by
+    // hand is a bigger version of the climb J deleted.
+    //
+    // ⚑ It sits beside the executable, i.e. under `build/`, so it is a build
+    // artefact rather than repo litter - which is what "no imgui.ini litter"
+    // was protecting, and it still holds for the game.
     sol::ui::ImGuiHost imguiHost;
+    sol::ui::HostOptions hostOptions;
+    hostOptions.docking = true;
+    hostOptions.iniPath = executableDir + "forge.ini";
     if (!imguiHost.initialize(window, context, swapchain.imageFormat(), VK_FORMAT_D32_SFLOAT,
-                              swapchain.imageCount())) {
+                              swapchain.imageCount(), hostOptions)) {
         return EXIT_FAILURE;
     }
     view.setImGuiHost(&imguiHost);
