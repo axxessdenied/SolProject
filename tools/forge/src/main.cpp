@@ -679,280 +679,322 @@ int main(int argc, char** argv)
                                 frameMilliseconds, static_cast<double>(gridCell));
             ImGui::Separator();
 
-            if (ImGui::CollapsingHeader("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::BeginChild("##meshes", {0.0f, 190.0f}, ImGuiChildFlags_Borders)) {
-                    for (int i = 0; i < static_cast<int>(meshEntries.size()); ++i) {
-                        if (ImGui::Selectable(meshEntries[i].label.c_str(), i == openIndex)) {
-                            openMeshAt(i);
+            // ⚑⚑ STAGE J: FOUR TABS, AND THE COUNT WAS DECIDED BY ARITHMETIC.
+            // Every stage since C added a section to one scrolling column, and by
+            // stage I the panel was 2,901 px of content in an 860 px window - so
+            // `Textures`, at 750 px the LARGEST section in the tool, began 903 px
+            // below the fold. The tabs are not decoration: a three-way split
+            // (mesh / texture / view) leaves the mesh tab still needing 929 px of
+            // scroll, because `Parts` and `Def rows` are the two biggest mesh
+            // sections and end up together. Splitting the mesh half at the seam
+            // these sections already describe in prose - what you EDIT above, what
+            // the edit MEASURES below - gets the worst tab down to 144 px.
+            //
+            // ⚑ Nothing switches tab on its own. Opening a `.tex` does not jump
+            // here and a bake does not jump to the Report: the tab belongs to the
+            // author, not to the tool. A panel that moves under the hand is the
+            // failure the "save moves" trap has now been recorded three times.
+            if (ImGui::BeginTabBar("##sections")) {
+                // What you author. The mesh list is here rather than above the
+                // bar because opening a mesh is the first thing you do TO a mesh.
+                if (ImGui::BeginTabItem("Mesh")) {
+                    if (ImGui::CollapsingHeader("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::BeginChild("##meshes", {0.0f, 190.0f}, ImGuiChildFlags_Borders)) {
+                            for (int i = 0; i < static_cast<int>(meshEntries.size()); ++i) {
+                                if (ImGui::Selectable(meshEntries[i].label.c_str(), i == openIndex)) {
+                                    openMeshAt(i);
+                                }
+                            }
+                        }
+                        ImGui::EndChild();
+                        if (ImGui::Button("Reload") && openIndex >= 0) {
+                            openMeshAt(openIndex);
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("New parts")) {
+                            editor.openNew(assetsDirectory + "/meshes");
+                            openIndex = -1;
+                            rebuildFromEditor(/*reframe=*/true);
+                            status = "new part document";
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Rescan")) {
+                            // A save writes a new file into the source tree, and the
+                            // list was read once at startup.
+                            meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
+                            openIndex = -1;
+                            status = std::to_string(meshEntries.size()) + " assets";
+                        }
+                        ImGui::TextDisabled("%s", status.c_str());
+                    }
+
+                    // The authoring half (stage D). It sits above the report on purpose:
+                    // the numbers below are what the edit above just changed.
+                    if (ImGui::CollapsingHeader("Parts", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (editor.draw()) {
+                            rebuildFromEditor(/*reframe=*/false);
                         }
                     }
-                }
-                ImGui::EndChild();
-                if (ImGui::Button("Reload") && openIndex >= 0) {
-                    openMeshAt(openIndex);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("New parts")) {
-                    editor.openNew(assetsDirectory + "/meshes");
-                    openIndex = -1;
-                    rebuildFromEditor(/*reframe=*/true);
-                    status = "new part document";
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Rescan")) {
-                    // A save writes a new file into the source tree, and the
-                    // list was read once at startup.
-                    meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
-                    openIndex = -1;
-                    status = std::to_string(meshEntries.size()) + " assets";
-                }
-                ImGui::TextDisabled("%s", status.c_str());
-            }
 
-            // The authoring half (stage D). It sits above the report on purpose:
-            // the numbers below are what the edit above just changed.
-            if (ImGui::CollapsingHeader("Parts", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (editor.draw()) {
-                    rebuildFromEditor(/*reframe=*/false);
-                }
-            }
-
-            // Stages E1, E2 and E4b. Below Parts because a point is a
-            // consequence of the parts above it, and above the Report for the
-            // same reason Parts is.
-            if (editor.isOpen() && ImGui::CollapsingHeader("Points, edges & faces",
-                                                           ImGuiTreeNodeFlags_DefaultOpen)) {
-                // ⚑ It can change the document since E5: a split and an extrude
-                // are presses rather than drags, so this panel is a third place
-                // an edit can come from and it needs the same rebuild.
-                if (points.drawPanel(editor)) {
-                    rebuildFromEditor(/*reframe=*/false);
-                }
-            }
-
-            if ((openIndex >= 0 || editor.isOpen()) &&
-                ImGui::CollapsingHeader("Report", ImGuiTreeNodeFlags_DefaultOpen)) {
-                const core::Vec3 size = report.boundsMax - report.boundsMin;
-                ImGui::Text("triangles      %u", report.triangles);
-                // Corners and points are different numbers and the gap is the
-                // shading: a hard edge splits one point into several corners.
-                ImGui::Text("render verts   %u", report.renderVertices);
-                ImGui::Text("welded points  %u", report.positions);
-                ImGui::Text("bounds min     %8.3f %8.3f %8.3f", static_cast<double>(report.boundsMin.x),
-                            static_cast<double>(report.boundsMin.y),
-                            static_cast<double>(report.boundsMin.z));
-                ImGui::Text("bounds max     %8.3f %8.3f %8.3f", static_cast<double>(report.boundsMax.x),
-                            static_cast<double>(report.boundsMax.y),
-                            static_cast<double>(report.boundsMax.z));
-                ImGui::Text("size (m)       %8.3f %8.3f %8.3f", static_cast<double>(size.x),
-                            static_cast<double>(size.y), static_cast<double>(size.z));
-                ImGui::Separator();
-                ImGui::Text("radius         %.4f m", static_cast<double>(report.boundingRadius));
-                ImGui::TextDisabled("  the `radius` a [[model]] row would carry");
-                ImGui::Text("surface area   %.4g m2", report.surfaceArea);
-                ImGui::Text("volume         %.4g m3", report.signedVolume);
-                ImGui::Text("cache misses   %.2f / tri", static_cast<double>(report.cacheMissRatio));
-                ImGui::Separator();
-                // A hull that is not closed has a hole in it, and a hole is
-                // invisible from outside until the camera goes through it.
-                ImGui::Text("manifold       %s", report.manifold ? "yes" : "NO");
-                ImGui::Text("closed         %s", report.closed ? "yes" : "no");
-                ImGui::Text("border edges   %u", report.borderEdges);
-
-            }
-
-            // ⚑ Stage H, and it is deliberately its own section rather than a
-            // tail on the Report. The Report describes the MESH; these rows are
-            // the CONTENT that names it, and until this stage the tool could
-            // print them and not change one - which is how the four radius
-            // mismatches in this game came to be reported for five stages by a
-            // warning whose only remedy was a text editor.
-            if (openIndex >= 0 &&
-                ImGui::CollapsingHeader("Def rows", ImGuiTreeNodeFlags_DefaultOpen)) {
-                // The panel measures against the editor's own validated reading
-                // of the text, so neither call needs the boot-time catalog.
-                (void)defEditor.drawModelRows(meshEntries[static_cast<std::size_t>(openIndex)],
-                                              report, textureStems);
-                // Stage H3: the content that names those models. Below them
-                // because a ship row is a consequence of the model row above it,
-                // exactly as Points sits below Parts.
-                ImGui::SeparatorText("in the game");
-                (void)defEditor.drawContentRows();
-                if (ImGui::Button("save defs")) {
-                    if (defEditor.save(defStatus)) {
-                        // The boot catalog is what every other panel reads, so
-                        // it has to follow the file rather than drift from it.
-                        std::string defError;
-                        if (!forge::loadModelCatalog(dataDirectory, defs, &defError)) {
-                            defStatus = defError;
-                        }
-                        modelMatches = forge::matchModels(
-                            defs, meshEntries[static_cast<std::size_t>(openIndex)], report);
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("undo def")) {
-                    if (!defEditor.undo()) {
-                        defStatus = "nothing to undo";
-                    }
-                }
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", defEditor.dirty() ? "* unsaved" : "saved");
-                ImGui::TextDisabled("%s", defStatus.c_str());
-            }
-
-            // Stage F. Below the Report because a level is a consequence of the
-            // mesh the Report describes, and because the first number an author
-            // wants is the one they are giving up.
-            if ((openIndex >= 0 || editor.isOpen()) &&
-                ImGui::CollapsingHeader("Levels", ImGuiTreeNodeFlags_DefaultOpen)) {
-                const float focal = ui::focalLength(static_cast<float>(window.height()),
-                                                    std::tan(forge::kCameraVerticalFov * 0.5f));
-                if (ImGui::RadioButton("authored", previewLevel == 0)) {
-                    previewLevel = 0;
-                    frameOpenMesh();
-                }
-                for (std::size_t i = 0; i < chain.levels.size(); ++i) {
-                    const int number = static_cast<int>(i) + 1;
-                    char label[32];
-                    std::snprintf(label, sizeof(label), "lod%d", number);
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton(label, previewLevel == number)) {
-                        previewLevel = number;
-                        // ⚑ "At the distance the LOD is for" is the whole point
-                        // of the preview, and it is not a framing: the camera
-                        // stands exactly where this level takes over, which is
-                        // where the projected radius crosses its threshold.
-                        // Seeing a decimated hull filling the screen proves
-                        // nothing, because that is not where it is ever drawn.
-                        const float switchPixels =
-                            assets::kLevelSwitchPixels[i < std::size(assets::kLevelSwitchPixels)
-                                                           ? i
-                                                           : std::size(assets::kLevelSwitchPixels) - 1];
-                        const core::Vec3 center = (report.boundsMin + report.boundsMax) * 0.5f;
-                        camera.placeAt(center, report.boundingRadius * focal / switchPixels);
-                    }
-                }
-
-                ImGui::Separator();
-                for (std::size_t i = 0; i < chain.levels.size(); ++i) {
-                    const assets::MeshLevel& level = chain.levels[i];
-                    const float switchPixels =
-                        assets::kLevelSwitchPixels[i < std::size(assets::kLevelSwitchPixels)
-                                                       ? i
-                                                       : std::size(assets::kLevelSwitchPixels) - 1];
-                    ImGui::Text("lod%d  %u tri (%.0f%%)  %zu B", static_cast<int>(i) + 1,
-                                level.triangles,
-                                report.triangles > 0
-                                    ? 100.0 * level.triangles / static_cast<double>(report.triangles)
-                                    : 0.0,
-                                level.cookedBytes);
-                    // Signed, both of them: a level that GREW its volume is as
-                    // wrong as one that shrank, and the radius growing outward
-                    // is the one that pushes the hull past its collision sphere.
-                    ImGui::TextDisabled("      volume %+.2f%%   radius %+.2f%%   from %.0f m",
-                                        level.volumeDrift * 100.0, level.radiusDrift * 100.0,
-                                        static_cast<double>(report.boundingRadius * focal /
-                                                            switchPixels));
-                }
-
-                // ⚑ Always shown, whether or not anything was generated. A
-                // refusal is the normal answer here - four of the seven
-                // committed meshes are under the floor - and an author who is
-                // told nothing cannot tell "too small to be worth it" from
-                // "the tool is broken".
-                ImGui::PushTextWrapPos(0.0f);
-                if (chain.levels.empty()) {
-                    ImGui::TextDisabled("no levels: %s", chain.stopReason.c_str());
-                } else {
-                    ImGui::TextDisabled("chain stops here: %s", chain.stopReason.c_str());
-                }
-                ImGui::PopTextWrapPos();
-            }
-
-            // Stage G. Selecting a texture here does BOTH things - it shades the
-            // open mesh with it and, if it is a `.tex`, opens it for editing -
-            // because two lists that each did half would be two answers to
-            // "which texture am I looking at".
-            if (ImGui::CollapsingHeader("Textures", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::BeginChild("##textures", {0.0f, 90.0f}, ImGuiChildFlags_Borders)) {
-                    for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
-                        if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
-                                              i == textureIndex)) {
-                            openTextureAt(i);
+                    // Stages E1, E2 and E4b. Below Parts because a point is a
+                    // consequence of the parts above it, and above the Report for the
+                    // same reason Parts is.
+                    if (editor.isOpen() && ImGui::CollapsingHeader("Points, edges & faces",
+                                                                   ImGuiTreeNodeFlags_DefaultOpen)) {
+                        // ⚑ It can change the document since E5: a split and an extrude
+                        // are presses rather than drags, so this panel is a third place
+                        // an edit can come from and it needs the same rebuild.
+                        if (points.drawPanel(editor)) {
+                            rebuildFromEditor(/*reframe=*/false);
                         }
                     }
+                    ImGui::EndTabItem();
                 }
-                ImGui::EndChild();
-                if (texturePreview != VK_NULL_HANDLE) {
-                    // ⚑⚑ STAGE I: 1:1, AND THE SIZE IS THE FEATURE. This shipped
-                    // at a flat 200 px for a 256 px document, which puts 1.28
-                    // texture pixels under every screen pixel - so a drag could
-                    // only produce offsets of round(n * 1.28), and 56 of the 257
-                    // possible offsets could not be produced at all. The first
-                    // one missing is 2. Every value in this document is an exact
-                    // integer, and a fractional preview is what made that untrue.
-                    if (textureEditor.isOpen()) {
-                        if (textureEditor.drawPreview(texturePreview,
-                                                      ImGui::GetContentRegionAvail().x)) {
+
+                // What the mesh you authored MEASURES, what NAMES it, and what it
+                // decimates to - three readings of the thing edited on the first
+                // tab, which is why they travel together.
+                if (ImGui::BeginTabItem("Report")) {
+                    if ((openIndex >= 0 || editor.isOpen()) &&
+                        ImGui::CollapsingHeader("Report", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        const core::Vec3 size = report.boundsMax - report.boundsMin;
+                        ImGui::Text("triangles      %u", report.triangles);
+                        // Corners and points are different numbers and the gap is the
+                        // shading: a hard edge splits one point into several corners.
+                        ImGui::Text("render verts   %u", report.renderVertices);
+                        ImGui::Text("welded points  %u", report.positions);
+                        ImGui::Text("bounds min     %8.3f %8.3f %8.3f",
+                                    static_cast<double>(report.boundsMin.x),
+                                    static_cast<double>(report.boundsMin.y),
+                                    static_cast<double>(report.boundsMin.z));
+                        ImGui::Text("bounds max     %8.3f %8.3f %8.3f",
+                                    static_cast<double>(report.boundsMax.x),
+                                    static_cast<double>(report.boundsMax.y),
+                                    static_cast<double>(report.boundsMax.z));
+                        ImGui::Text("size (m)       %8.3f %8.3f %8.3f", static_cast<double>(size.x),
+                                    static_cast<double>(size.y), static_cast<double>(size.z));
+                        ImGui::Separator();
+                        ImGui::Text("radius         %.4f m", static_cast<double>(report.boundingRadius));
+                        ImGui::TextDisabled("  the `radius` a [[model]] row would carry");
+                        ImGui::Text("surface area   %.4g m2", report.surfaceArea);
+                        ImGui::Text("volume         %.4g m3", report.signedVolume);
+                        ImGui::Text("cache misses   %.2f / tri", static_cast<double>(report.cacheMissRatio));
+                        ImGui::Separator();
+                        // A hull that is not closed has a hole in it, and a hole is
+                        // invisible from outside until the camera goes through it.
+                        ImGui::Text("manifold       %s", report.manifold ? "yes" : "NO");
+                        ImGui::Text("closed         %s", report.closed ? "yes" : "no");
+                        ImGui::Text("border edges   %u", report.borderEdges);
+
+                    }
+
+                    // ⚑ Stage H, and it is deliberately its own section rather than a
+                    // tail on the Report. The Report describes the MESH; these rows are
+                    // the CONTENT that names it, and until this stage the tool could
+                    // print them and not change one - which is how the four radius
+                    // mismatches in this game came to be reported for five stages by a
+                    // warning whose only remedy was a text editor.
+                    if (openIndex >= 0 &&
+                        ImGui::CollapsingHeader("Def rows", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        // The panel measures against the editor's own validated reading
+                        // of the text, so neither call needs the boot-time catalog.
+                        (void)defEditor.drawModelRows(meshEntries[static_cast<std::size_t>(openIndex)],
+                                                      report, textureStems);
+                        // Stage H3: the content that names those models. Below them
+                        // because a ship row is a consequence of the model row above it,
+                        // exactly as Points sits below Parts.
+                        ImGui::SeparatorText("in the game");
+                        (void)defEditor.drawContentRows();
+                        if (ImGui::Button("save defs")) {
+                            if (defEditor.save(defStatus)) {
+                                // The boot catalog is what every other panel reads, so
+                                // it has to follow the file rather than drift from it.
+                                std::string defError;
+                                if (!forge::loadModelCatalog(dataDirectory, defs, &defError)) {
+                                    defStatus = defError;
+                                }
+                                modelMatches = forge::matchModels(
+                                    defs, meshEntries[static_cast<std::size_t>(openIndex)], report);
+                            }
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("undo def")) {
+                            if (!defEditor.undo()) {
+                                defStatus = "nothing to undo";
+                            }
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("%s", defEditor.dirty() ? "* unsaved" : "saved");
+                        ImGui::TextDisabled("%s", defStatus.c_str());
+                    }
+
+                    // Stage F. Below the Report because a level is a consequence of the
+                    // mesh the Report describes, and because the first number an author
+                    // wants is the one they are giving up.
+                    if ((openIndex >= 0 || editor.isOpen()) &&
+                        ImGui::CollapsingHeader("Levels", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        const float focal = ui::focalLength(static_cast<float>(window.height()),
+                                                            std::tan(forge::kCameraVerticalFov * 0.5f));
+                        if (ImGui::RadioButton("authored", previewLevel == 0)) {
+                            previewLevel = 0;
+                            frameOpenMesh();
+                        }
+                        for (std::size_t i = 0; i < chain.levels.size(); ++i) {
+                            const int number = static_cast<int>(i) + 1;
+                            char label[32];
+                            std::snprintf(label, sizeof(label), "lod%d", number);
+                            ImGui::SameLine();
+                            if (ImGui::RadioButton(label, previewLevel == number)) {
+                                previewLevel = number;
+                                // ⚑ "At the distance the LOD is for" is the whole point
+                                // of the preview, and it is not a framing: the camera
+                                // stands exactly where this level takes over, which is
+                                // where the projected radius crosses its threshold.
+                                // Seeing a decimated hull filling the screen proves
+                                // nothing, because that is not where it is ever drawn.
+                                const float switchPixels = assets::kLevelSwitchPixels
+                                    [i < std::size(assets::kLevelSwitchPixels)
+                                         ? i
+                                         : std::size(assets::kLevelSwitchPixels) - 1];
+                                const core::Vec3 center = (report.boundsMin + report.boundsMax) * 0.5f;
+                                camera.placeAt(center, report.boundingRadius * focal / switchPixels);
+                            }
+                        }
+
+                        ImGui::Separator();
+                        for (std::size_t i = 0; i < chain.levels.size(); ++i) {
+                            const assets::MeshLevel& level = chain.levels[i];
+                            const float switchPixels =
+                                assets::kLevelSwitchPixels[i < std::size(assets::kLevelSwitchPixels)
+                                                               ? i
+                                                               : std::size(assets::kLevelSwitchPixels) - 1];
+                            ImGui::Text("lod%d  %u tri (%.0f%%)  %zu B", static_cast<int>(i) + 1,
+                                        level.triangles,
+                                        report.triangles > 0
+                                            ? 100.0 * level.triangles / static_cast<double>(report.triangles)
+                                            : 0.0,
+                                        level.cookedBytes);
+                            // Signed, both of them: a level that GREW its volume is as
+                            // wrong as one that shrank, and the radius growing outward
+                            // is the one that pushes the hull past its collision sphere.
+                            ImGui::TextDisabled("      volume %+.2f%%   radius %+.2f%%   from %.0f m",
+                                                level.volumeDrift * 100.0, level.radiusDrift * 100.0,
+                                                static_cast<double>(report.boundingRadius * focal /
+                                                                    switchPixels));
+                        }
+
+                        // ⚑ Always shown, whether or not anything was generated. A
+                        // refusal is the normal answer here - four of the seven
+                        // committed meshes are under the floor - and an author who is
+                        // told nothing cannot tell "too small to be worth it" from
+                        // "the tool is broken".
+                        ImGui::PushTextWrapPos(0.0f);
+                        if (chain.levels.empty()) {
+                            ImGui::TextDisabled("no levels: %s", chain.stopReason.c_str());
+                        } else {
+                            ImGui::TextDisabled("chain stops here: %s", chain.stopReason.c_str());
+                        }
+                        ImGui::PopTextWrapPos();
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                // The other document. It gets a whole tab because it IS a whole
+                // editor - a peer of the mesh half, not a section of it.
+                if (ImGui::BeginTabItem("Texture")) {
+                    // Stage G. Selecting a texture here does BOTH things - it shades the
+                    // open mesh with it and, if it is a `.tex`, opens it for editing -
+                    // because two lists that each did half would be two answers to
+                    // "which texture am I looking at".
+                    if (ImGui::CollapsingHeader("Textures", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::BeginChild("##textures", {0.0f, 90.0f}, ImGuiChildFlags_Borders)) {
+                            for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
+                                if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
+                                                      i == textureIndex)) {
+                                    openTextureAt(i);
+                                }
+                            }
+                        }
+                        ImGui::EndChild();
+                        if (texturePreview != VK_NULL_HANDLE) {
+                            // ⚑⚑ STAGE I: 1:1, AND THE SIZE IS THE FEATURE. This shipped
+                            // at a flat 200 px for a 256 px document, which puts 1.28
+                            // texture pixels under every screen pixel - so a drag could
+                            // only produce offsets of round(n * 1.28), and 56 of the 257
+                            // possible offsets could not be produced at all. The first
+                            // one missing is 2. Every value in this document is an exact
+                            // integer, and a fractional preview is what made that untrue.
+                            if (textureEditor.isOpen()) {
+                                if (textureEditor.drawPreview(texturePreview,
+                                                              ImGui::GetContentRegionAvail().x)) {
+                                    rebuildTexture();
+                                }
+                                ImGui::TextDisabled("as cooked (BC1) - click a shape, drag to move it");
+                            } else {
+                                // A cooked texture has no document behind it, so there is
+                                // nothing to pick: it stays the picture it always was.
+                                ImGui::Image(reinterpret_cast<ImTextureID>(texturePreview),
+                                             {200.0f, 200.0f});
+                                ImGui::SameLine();
+                                ImGui::TextDisabled("as cooked\n(BC1)");
+                            }
+                        }
+                        if (ImGui::Button("new texture")) {
+                            textureEditor.openNew(assetsDirectory + "/textures");
+                            editingTextureIndex = -1;
                             rebuildTexture();
                         }
-                        ImGui::TextDisabled("as cooked (BC1) - click a shape, drag to move it");
-                    } else {
-                        // A cooked texture has no document behind it, so there is
-                        // nothing to pick: it stays the picture it always was.
-                        ImGui::Image(reinterpret_cast<ImTextureID>(texturePreview),
-                                     {200.0f, 200.0f});
                         ImGui::SameLine();
-                        ImGui::TextDisabled("as cooked\n(BC1)");
-                    }
-                }
-                if (ImGui::Button("new texture")) {
-                    textureEditor.openNew(assetsDirectory + "/textures");
-                    editingTextureIndex = -1;
-                    rebuildTexture();
-                }
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", textureEditor.isOpen()
-                                              ? "editing the selected source"
-                                              : "cooked textures are read-only");
-                ImGui::Separator();
-                if (textureEditor.draw()) {
-                    rebuildTexture();
-                }
-            }
-
-            if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::BeginCombo("texture", textureLabels[static_cast<std::size_t>(textureIndex)].c_str())) {
-                    for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
-                        if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
-                                              i == textureIndex)) {
-                            openTextureAt(i);
+                        ImGui::TextDisabled("%s", textureEditor.isOpen()
+                                                      ? "editing the selected source"
+                                                      : "cooked textures are read-only");
+                        ImGui::Separator();
+                        if (textureEditor.draw()) {
+                            rebuildTexture();
                         }
                     }
-                    ImGui::EndCombo();
+                    ImGui::EndTabItem();
                 }
-                ImGui::SliderFloat("emissive", &emissive, 0.0f, 1.0f);
-                ImGui::SliderFloat("exposure", &exposure, 0.1f, 4.0f);
-                ImGui::SliderFloat("sun azimuth", &sunAzimuth, -core::kPi, core::kPi);
-                ImGui::SliderFloat("sun elevation", &sunElevation, -core::kHalfPi, core::kHalfPi);
-                ImGui::TextDisabled("sun %.1f, ambient %.3f (the game's own)",
-                                    static_cast<double>(forge::kSunIntensity),
-                                    static_cast<double>(forge::kAmbient));
-            }
 
-            if (ImGui::CollapsingHeader("Scale", ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::Checkbox("metric grid", &showGrid);
-                ImGui::Checkbox("mesh bounds", &showBounds);
-                ImGui::Checkbox("element markers", &showPoints);
-                for (auto& reference : references) {
-                    ImGui::Checkbox(reference.label, &reference.enabled);
+                // Neither document: how you are LOOKING at whichever one is open.
+                if (ImGui::BeginTabItem("View")) {
+                    if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        const auto shading = static_cast<std::size_t>(textureIndex);
+                        if (ImGui::BeginCombo("texture", textureLabels[shading].c_str())) {
+                            for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
+                                if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
+                                                      i == textureIndex)) {
+                                    openTextureAt(i);
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                        ImGui::SliderFloat("emissive", &emissive, 0.0f, 1.0f);
+                        ImGui::SliderFloat("exposure", &exposure, 0.1f, 4.0f);
+                        ImGui::SliderFloat("sun azimuth", &sunAzimuth, -core::kPi, core::kPi);
+                        ImGui::SliderFloat("sun elevation", &sunElevation, -core::kHalfPi, core::kHalfPi);
+                        ImGui::TextDisabled("sun %.1f, ambient %.3f (the game's own)",
+                                            static_cast<double>(forge::kSunIntensity),
+                                            static_cast<double>(forge::kAmbient));
+                    }
+
+                    if (ImGui::CollapsingHeader("Scale", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        ImGui::Checkbox("metric grid", &showGrid);
+                        ImGui::Checkbox("mesh bounds", &showBounds);
+                        ImGui::Checkbox("element markers", &showPoints);
+                        for (auto& reference : references) {
+                            ImGui::Checkbox(reference.label, &reference.enabled);
+                        }
+                        ImGui::Separator();
+                        ImGui::TextDisabled("LMB a marker drags a point, LMB else orbits");
+                        ImGui::TextDisabled("shift+LMB or MMB pan");
+                        ImGui::TextDisabled("wheel dolly, F frames the mesh");
+                        ImGui::Text("camera %.3f m out", static_cast<double>(camera.distance()));
+                    }
+                    ImGui::EndTabItem();
                 }
-                ImGui::Separator();
-                ImGui::TextDisabled("LMB a marker drags a point, LMB else orbits");
-                ImGui::TextDisabled("shift+LMB or MMB pan");
-                ImGui::TextDisabled("wheel dolly, F frames the mesh");
-                ImGui::Text("camera %.3f m out", static_cast<double>(camera.distance()));
+
+                ImGui::EndTabBar();
             }
         }
         ImGui::End();
