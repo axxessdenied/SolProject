@@ -771,8 +771,9 @@ int main(int argc, char** argv)
         // feature rather than decoration on it, which is why the tool went nine
         // stages without a menu and needs one now.
         //
-        // ⚑ It is also the one piece of chrome that CANNOT be undocked, closed
-        // or covered - which is exactly the property the status block needs.
+        // ⚑ It is also one of three pieces of chrome that CANNOT be undocked,
+        // closed or covered - the others being the toolbar and the status bar
+        // below, both of which need exactly that property.
         if (ImGui::BeginMainMenuBar()) {
             if (ImGui::BeginMenu("Panels")) {
                 ImGui::MenuItem("Mesh", nullptr, &showMesh);
@@ -793,40 +794,94 @@ int main(int argc, char** argv)
                 ImGui::EndMenu();
             }
 
-            // ⚑⚑ THE STATUS BLOCK, WHICH MOVED HERE AND WENT BACK TO ONE LINE.
-            // Its CONTENT is unchanged and signed off; what changed is that the
-            // two-line break was never a preference, it was a 350 px panel
-            // measured at 7.00 px/char against a 351 px worst case - J4's
-            // "over by exactly one pixel". A menu bar is the full window wide,
-            // so the constraint that forced the break is simply gone.
-            //
-            // ⚑ The reason it belongs in the CHROME rather than in a window is
-            // the reason it was written at all: it has to be visible while the
-            // author's hand is moving, and any window can now be closed, hidden
-            // behind a tab, or dragged off. This cannot.
-            //
-            // ⚑⚑ THE SLOT HOLDS `volume` RATHER THAN `radius`, AND THE TWO ARE
-            // NOT INTERCHANGEABLE - THEY ANSWER DIFFERENT KINDS OF QUESTION.
-            // `volume` is a PER-DRAG canary: E5 measured that a wall or a split
-            // triangle wound backwards leaves a mesh closed, manifold AND
-            // border-free, so the signed volume is the only number here that
-            // catches an inside-out extrude, and it moves the instant one
-            // happens. `radius` is a STATIC check - authored-versus-measured -
-            // and it already has a better home in the `Report`, where the
-            // [[model]] row prints the authored value beside it, warns when they
-            // disagree, and offers stage H's `use measured` button. A number you
-            // watch while your hand moves belongs here; a number you reconcile
-            // against a def belongs beside the def.
-            //
-            // ⚑ IT STATES, IT DOES NOT JUDGE - deliberately, and this is the
-            // trap it was written around. Colouring "not closed" or a zero
-            // volume as a fault would paint `gate_membrane` amber: it is a FILM,
-            // so it has a border loop by construction and encloses nothing,
-            // which is why Phase 16's invariants exclude it BY NAME. A verdict
-            // here would need that same exclusion list, and a status line has no
-            // business carrying one. The Report says `closed no / border edges
-            // 32` in the plain colour; so does this.
-            ImGui::Separator();
+            ImGui::EndMainMenuBar();
+        }
+
+        // ⚑⚑ THE PRIMITIVES TOOLBAR. `add part` has been a COMBO since stage D -
+        // two clicks and a read to put a box down, for the one action an author
+        // repeats more than any other. A row of buttons is one click.
+        //
+        // ⚑ It is DERIVED from `forgePrimitives()` rather than listed, so the
+        // toolbar cannot drift from the vocabulary the document format actually
+        // has; adding a primitive to the enum puts a button here for free.
+        //
+        // ⚑ `mesh` is the one deliberate omission, and it is not an oversight:
+        // `mesh` is what `bake` PRODUCES - literal vertices and indices - so a
+        // button that added an empty one would hand the author an invisible part
+        // with nothing in it. The `add part` combo still offers it, so nothing
+        // has been taken away.
+        //
+        // ⚑ Both bars are submitted BEFORE the dockspace, because a side bar
+        // reports its size into the viewport's work area and the dockspace is
+        // sized from what is left.
+        const ImGuiWindowFlags kBarFlags =
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+        const float toolbarHeight =
+            ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+        if (ImGui::BeginViewportSideBar("##toolbar", ImGui::GetMainViewport(), ImGuiDir_Up,
+                                        toolbarHeight, kBarFlags)) {
+            ImGui::TextDisabled("add");
+            // ⚑ Disabled rather than hidden when nothing is open: a toolbar whose
+            // buttons come and go is a toolbar whose positions move, which is the
+            // "save moves" trap in its fourth costume.
+            ImGui::BeginDisabled(!editor.isOpen());
+            for (const assets::ForgePrimitive primitive : assets::forgePrimitives()) {
+                if (primitive == assets::ForgePrimitive::Mesh) {
+                    continue;
+                }
+                const char* const name = assets::forgePrimitiveName(primitive);
+                ImGui::SameLine();
+                if (ImGui::Button(name)) {
+                    if (editor.addPrimitive(primitive)) {
+                        rebuildFromEditor(/*reframe=*/false);
+                        status = std::string("added ") + name;
+                    }
+                }
+            }
+            ImGui::EndDisabled();
+        }
+        ImGui::End();
+
+        // ⚑⚑ THE STATUS BLOCK, WHICH IS ITS OWN BAR ALONG THE BOTTOM. It has now
+        // been in three places: above the tab bar (J2-J5), briefly in the menu
+        // bar, and here. Its CONTENT has not changed since J5 and is the one part
+        // of the Forge a person has signed off - what keeps moving is only where
+        // a full-width line can live.
+        //
+        // ⚑ One line, because the two-line break was never a preference: it was a
+        // 350 px panel at 7.00 px/char against a 351 px worst case, J4's "over by
+        // exactly one pixel". A bar spanning the window has no such constraint.
+        //
+        // ⚑ It belongs in the CHROME rather than in a window for the reason it
+        // was written at all: it has to be visible while the author's hand is
+        // moving, and every window can now be closed, hidden behind a tab or
+        // dragged off. A side bar cannot be any of those - `BeginViewportSideBar`
+        // sets NoDocking itself.
+        //
+        // ⚑⚑ THE SLOT HOLDS `volume` RATHER THAN `radius`, AND THE TWO ARE NOT
+        // INTERCHANGEABLE - THEY ANSWER DIFFERENT KINDS OF QUESTION. `volume` is
+        // a PER-DRAG canary: E5 measured that a wall or a split triangle wound
+        // backwards leaves a mesh closed, manifold AND border-free, so the signed
+        // volume is the only number here that catches an inside-out extrude, and
+        // it moves the instant one happens. `radius` is a STATIC check -
+        // authored-versus-measured - and it already has a better home in the
+        // `Report`, where the [[model]] row prints the authored value beside it,
+        // warns when they disagree, and offers stage H's `use measured` button. A
+        // number you watch while your hand moves belongs here; a number you
+        // reconcile against a def belongs beside the def.
+        //
+        // ⚑ IT STATES, IT DOES NOT JUDGE - deliberately, and this is the trap it
+        // was written around. Colouring "not closed" or a zero volume as a fault
+        // would paint `gate_membrane` amber: it is a FILM, so it has a border
+        // loop by construction and encloses nothing, which is why Phase 16's
+        // invariants exclude it BY NAME. A verdict here would need that same
+        // exclusion list, and a status line has no business carrying one. The
+        // Report says `closed no / border edges 32` in the plain colour; so does
+        // this.
+        const float statusHeight =
+            ImGui::GetTextLineHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+        if (ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down,
+                                        statusHeight, kBarFlags)) {
             if (openIndex >= 0 || editor.isOpen()) {
                 ImGui::TextDisabled("%u tri   vol %.4g m3   %s   %u border edge%s",
                                     report.triangles, report.signedVolume,
@@ -838,8 +893,8 @@ int main(int argc, char** argv)
                 ImGui::TextDisabled("no mesh open");
             }
 
-            // Right-aligned, because it is the one reading here that is about
-            // the TOOL rather than about the mesh.
+            // Right-aligned, because it is the one reading here that is about the
+            // TOOL rather than about the mesh.
             char frameText[96];
             std::snprintf(frameText, sizeof(frameText), "%.1f fps  (%.2f ms)   grid %.2g m",
                           frameMilliseconds > 0.0f ? 1000.0f / frameMilliseconds : 0.0f,
@@ -847,8 +902,8 @@ int main(int argc, char** argv)
             const float frameWidth = ImGui::CalcTextSize(frameText).x;
             ImGui::SameLine(ImGui::GetWindowWidth() - frameWidth - 16.0f);
             ImGui::TextDisabled("%s", frameText);
-            ImGui::EndMainMenuBar();
         }
+        ImGui::End();
 
         // ⚑⚑ `PassthruCentralNode` IS WHAT KEEPS THE VIEWPORT USABLE, AND IT IS
         // LOAD-BEARING RATHER THAN COSMETIC. The dockspace covers the whole
@@ -884,12 +939,24 @@ int main(int argc, char** argv)
         const ImGuiDockNode* rootNode = ImGui::DockBuilderGetNode(dockspaceId);
         const bool haveLayout = rootNode != nullptr && rootNode->IsSplitNode();
 
+        // ⚑⚑ AND IT WAITS UNTIL THE BARS HAVE REPORTED THEIR INSETS. A side bar
+        // reports its size into the work area FOR THE NEXT FRAME (ImGui's own
+        // comment), and the menu bar does the same - so on frame one `WorkSize`
+        // is the whole viewport and a layout built there is sized against ~72 px
+        // that belong to chrome. Measured: it left the restored tab bar sitting
+        // TWO PIXELS below the freshly built one, self-consistent afterwards but
+        // never agreeing with itself across the first launch. Gating on "the
+        // work area is smaller than the viewport" is the same wait-until-it-
+        // exists idiom the Mesh focus uses, and it costs one frame.
+        const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+        const bool barInsetsKnown = mainViewport->WorkSize.y < mainViewport->Size.y - 1.0f;
+
         // ⚑ Built only when there is nothing saved, so `forge.ini` always wins.
         // A tool that re-imposed its own default over the author's arrangement
         // on every launch would be the persistence bug with extra steps.
-        if (!haveLayout || resetLayout) {
+        if ((!haveLayout || resetLayout) && barInsetsKnown) {
             resetLayout = false;
-            const ImVec2 workSize = ImGui::GetMainViewport()->WorkSize;
+            const ImVec2 workSize = mainViewport->WorkSize;
             ImGui::DockBuilderRemoveNode(dockspaceId);
             // ⚑ `DockSpace` only, and NOT `PassthruCentralNode` beside it. The
             // passthrough is a per-frame flag that `DockSpaceOverViewport`

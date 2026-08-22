@@ -38,6 +38,17 @@ public:
     // must rebuild.
     [[nodiscard]] bool draw();
 
+    // Adds one primitive part and selects it. Pushes undo itself, so it is a
+    // whole gesture rather than the middle of one.
+    //
+    // ⚑ THIS IS A METHOD RATHER THAN A LOOP BODY BECAUSE IT NOW HAS TWO
+    // CALLERS: the `add part` combo in this panel, and the primitives toolbar
+    // above the dockspace. The rule about where a new part LANDS (beside the
+    // selection, not at the root) is the sort of thing that quietly diverges
+    // when it is written twice - a rule applied in two places becomes a defect
+    // in the one nobody looked at.
+    [[nodiscard]] bool addPrimitive(sol::assets::ForgePrimitive primitive);
+
     // ⚑ Undo is a COPY OF THE DOCUMENT, not a command pattern, and the reason
     // is the document rather than laziness: `ForgeDoc` is a plain value and the
     // five hand-authored assets are 0.5-5 KB. Only the baked asteroid at 99 KB

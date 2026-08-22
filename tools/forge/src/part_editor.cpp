@@ -316,18 +316,7 @@ bool PartEditor::drawPartList()
     if (ImGui::BeginCombo("##add", "add part")) {
         for (const ForgePrimitive primitive : assets::forgePrimitives()) {
             if (ImGui::Selectable(assets::forgePrimitiveName(primitive))) {
-                beginEdit();
-                ForgePart part;
-                part.primitive = primitive;
-                part.id = m_doc.uniqueId(assets::forgePrimitiveName(primitive));
-                // A new part lands beside the selection rather than at the root,
-                // which is almost always where an author wants it next.
-                if (m_selected >= 0) {
-                    part.parent = m_doc.parts[static_cast<std::size_t>(m_selected)].parent;
-                }
-                m_doc.parts.push_back(part);
-                m_selected = static_cast<int>(m_doc.parts.size()) - 1;
-                changed = true;
+                changed = addPrimitive(primitive) || changed;
             }
         }
         ImGui::EndCombo();
@@ -613,6 +602,27 @@ bool PartEditor::drawSelectedPart()
         }
     }
     return changed;
+}
+
+bool PartEditor::addPrimitive(ForgePrimitive primitive)
+{
+    // ⚑ A toolbar button can be pressed with nothing open, and the panel's combo
+    // never could - so the guard belongs here rather than at either call site.
+    if (!m_open) {
+        return false;
+    }
+    beginEdit();
+    ForgePart part;
+    part.primitive = primitive;
+    part.id = m_doc.uniqueId(assets::forgePrimitiveName(primitive));
+    // A new part lands beside the selection rather than at the root, which is
+    // almost always where an author wants it next.
+    if (m_selected >= 0 && m_selected < static_cast<int>(m_doc.parts.size())) {
+        part.parent = m_doc.parts[static_cast<std::size_t>(m_selected)].parent;
+    }
+    m_doc.parts.push_back(part);
+    m_selected = static_cast<int>(m_doc.parts.size()) - 1;
+    return true;
 }
 
 bool PartEditor::draw()
