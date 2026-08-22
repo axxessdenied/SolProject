@@ -165,4 +165,38 @@ struct MissingModelRef
 
 [[nodiscard]] std::vector<MissingModelRef> missingModelRefs(const sol::assets::DefDatabase& defs);
 
+// --- the texture preview's geometry (stage I) --------------------------------
+//
+// ⚑ Here rather than in `texture_editor.cpp` for the reason stage H finally
+// applied BEFORE promising a test rather than after: that file pulls in ImGui
+// and cannot be in a suite. A rule enforced only by a widget is a rule with no
+// test, and both rules below are exactly the kind that fail by one.
+
+// Screen pixels per texture pixel, always a whole number and never less than 1.
+//
+// ⚑⚑ THE INTEGER IS THE WHOLE POINT AND IT IS WHAT MADE THIS STAGE POSSIBLE AT
+// ALL. The preview shipped at 200 px for a 256 px document, which puts 1.28
+// texture pixels under every screen pixel - so a drag could only produce offsets
+// of round(n * 1.28), and 56 of the 257 possible offsets could not be produced
+// AT ALL. The first one missing is 2: a drag went 0, 1, 3. Every value in a
+// texture document is an exact integer, and a fractional scale is precisely what
+// makes that untrue.
+[[nodiscard]] int texturePreviewScale(int textureWidth, float availableWidth);
+
+// The texture pixel under a cursor, given the preview's top-left corner. False
+// when the cursor is outside the image.
+[[nodiscard]] bool texturePixelAt(sol::core::Vec2 cursor, sol::core::Vec2 origin, int scale,
+                                  int width, int height, int& x, int& y);
+
+// How far a gesture has travelled, in whole texture pixels.
+//
+// ⚑⚑ ABSOLUTE BY CONSTRUCTION: round(total), NEVER a sum of rounded per-frame
+// deltas. `PointTool` drags on a per-frame `cursorDelta` and that is right for a
+// mesh authored in double; here every write is an integer, and the two are not
+// the same arithmetic. Three frames of 0.4 px round to zero apiece while the
+// hand moved 1.2, so an accumulating drag sticks and then jumps a whole pixel
+// at once. The caller keeps the cursor position the gesture STARTED at, which
+// is what makes the wrong version inexpressible rather than merely discouraged.
+[[nodiscard]] int textureDragOffset(float startCursor, float cursor, int scale);
+
 } // namespace forge

@@ -911,6 +911,57 @@ bool textureRowPosition(const TextureDoc& doc, TextureHit hit, int& x, int& y)
     return false;
 }
 
+bool textureRowBounds(const TextureDoc& doc, TextureHit hit, TextureRect& out)
+{
+    if (!hit.movable() || static_cast<std::size_t>(hit.layer) >= doc.layers.size()) {
+        return false;
+    }
+    const TextureLayer& layer = doc.layers[static_cast<std::size_t>(hit.layer)];
+    const auto row = static_cast<std::size_t>(hit.row);
+    switch (layer.op) {
+    case TextureOp::Fill:
+    case TextureOp::Checker:
+        return false;
+    case TextureOp::Rects: {
+        const std::vector<TextureRect> rects = layer.value("rects").rects;
+        if (row >= rects.size()) {
+            return false;
+        }
+        out = rects[row];
+        return true;
+    }
+    case TextureOp::Panels: {
+        const std::vector<TexturePanel> panels = layer.value("panels").panels;
+        if (row >= panels.size()) {
+            return false;
+        }
+        out = {panels[row].x, panels[row].y, panels[row].w, panels[row].h};
+        return true;
+    }
+    case TextureOp::Lines: {
+        const char* param = nullptr;
+        std::size_t index = 0;
+        if (!resolveLineRow(layer, hit.row, param, index)) {
+            return false;
+        }
+        const int width = static_cast<int>(layer.value("width").integer);
+        if (width <= 0) {
+            return false;
+        }
+        // ⚑ The pen's span, from the same helper the drawing uses, so an
+        // outline cannot sit one pixel off the seam it is outlining.
+        const auto centre = static_cast<int>(layer.value(param).integers[index]);
+        if (std::string_view(param) == "vertical") {
+            out = {penStart(centre, width), 0, width, doc.height};
+        } else {
+            out = {0, penStart(centre, width), doc.width, width};
+        }
+        return true;
+    }
+    }
+    return false;
+}
+
 bool textureSetRowPosition(TextureDoc& doc, TextureHit hit, int x, int y)
 {
     if (!hit.movable() || static_cast<std::size_t>(hit.layer) >= doc.layers.size()) {

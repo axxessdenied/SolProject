@@ -248,4 +248,47 @@ std::vector<ModelMatch> matchModels(const assets::DefDatabase& defs, const Asset
     return matches;
 }
 
+// --- the texture preview's geometry (stage I) --------------------------------
+
+int texturePreviewScale(int textureWidth, float availableWidth)
+{
+    if (textureWidth <= 0) {
+        return 1;
+    }
+    const int fits = static_cast<int>(availableWidth) / textureWidth;
+    return fits < 1 ? 1 : fits;
+}
+
+bool texturePixelAt(core::Vec2 cursor, core::Vec2 origin, int scale, int width, int height, int& x,
+                    int& y)
+{
+    if (scale <= 0 || width <= 0 || height <= 0) {
+        return false;
+    }
+    const float localX = cursor.x - origin.x;
+    const float localY = cursor.y - origin.y;
+    // Guarded before the cast, because a cast to int truncates TOWARD ZERO and
+    // a cursor one pixel above the image would land on row 0 rather than off it.
+    if (localX < 0.0f || localY < 0.0f) {
+        return false;
+    }
+    const int px = static_cast<int>(localX) / scale;
+    const int py = static_cast<int>(localY) / scale;
+    if (px >= width || py >= height) {
+        return false;
+    }
+    x = px;
+    y = py;
+    return true;
+}
+
+int textureDragOffset(float startCursor, float cursor, int scale)
+{
+    if (scale <= 0) {
+        return 0;
+    }
+    return static_cast<int>(
+        std::lround((cursor - startCursor) / static_cast<float>(scale)));
+}
+
 } // namespace forge

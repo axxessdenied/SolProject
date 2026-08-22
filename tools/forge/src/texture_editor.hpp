@@ -39,6 +39,17 @@ public:
     // must rebuild and re-upload.
     [[nodiscard]] bool draw();
 
+    // Draws the flat preview as an EDIT SURFACE (stage I): click a panel to
+    // select it, drag it to move it. `image` is the caller's ImGui handle for
+    // the texture this document built - the editor never uploads anything, so
+    // there is still exactly one path from a document to what the GPU holds.
+    // Returns true when the document changed.
+    //
+    // ⚑ The gesture belongs to an `InvisibleButton` rather than to the viewport,
+    // which is what keeps G's undo rule working unchanged: `ImGui::Image` is not
+    // an activatable item and has no `IsItemActivated` to hang a gesture on.
+    [[nodiscard]] bool drawPreview(void* image, float availableWidth);
+
     // Undo is a copy of the document, per the E1 precedent: `TextureDoc` is a
     // plain value and the three committed sources are 0.6-3 KB, so a command
     // pattern would be a second description of every edit for no gain.
@@ -68,14 +79,47 @@ private:
 
     static constexpr std::size_t kUndoDepth = 64;
 
+    // Recomputed lazily, on the press that needs it rather than on every edit:
+    // a drag does not re-pick, so the map is stale exactly while nobody is
+    // asking it anything.
+    void refreshHitMap();
+    // Clears everything the preview gesture holds about a document.
+    void resetPick();
+
+    // Highlights the row the preview picked and scrolls it into view once.
+    // Returns whether a style was pushed, which `endPickedRow` must pop.
+    [[nodiscard]] bool beginPickedRow(std::size_t ordinal);
+    void endPickedRow(bool picked);
+
     sol::assets::TextureDoc m_doc;
     std::vector<sol::assets::TextureDoc> m_undo;
     std::string m_path;
     std::string m_buildError;
     std::string m_saveName;
     int m_selected = -1;
+    // Which row of the selected op the preview picked, so the list can scroll
+    // to it and the picture can outline it. -1 when the op has no rows.
+    int m_selectedRow = -1;
+    bool m_scrollToSelectedRow = false;
     bool m_open = false;
     bool m_dirty = false;
+
+    // --- the preview gesture (stage I) ---
+    std::vector<sol::assets::TextureHit> m_hitMap;
+    bool m_hitMapDirty = true;
+    sol::assets::TextureHit m_dragHit;
+    bool m_dragging = false;
+    // ⚑ The value and the cursor position the gesture STARTED at. Everything is
+    // computed from these rather than from the previous frame, because rounding
+    // a per-frame delta does not compose to rounding the total.
+    float m_dragStartCursor[2] = {0.0f, 0.0f};
+    int m_dragStartPosition[2] = {0, 0};
+    // ⚑ Set on the first frame the row actually MOVES, not on the press. A
+    // click that selects without moving must leave the document alone (E1's
+    // zero-delta rule) AND leave no undo entry behind it (G's one-gesture
+    // rule); this one flag is what satisfies both, and it is also what lets a
+    // drag wander back to where it started and still be applied.
+    bool m_dragMoved = false;
 };
 
 } // namespace forge

@@ -308,3 +308,87 @@ model = "also_typo"
     SOL_CHECK(missing[1].defId == "sol.bad_station");
     SOL_CHECK(missing[1].model == "also_typo");
 }
+
+// --- the texture preview's geometry (stage I) --------------------------------
+
+SOL_TEST(thePreviewScaleIsAWholeNumberOfScreenPixelsPerTexturePixel)
+{
+    // ⚑⚑ THE MEASUREMENT THAT MADE THIS STAGE NECESSARY. The preview shipped at
+    // 200 px for a 256 px document. That is 1.28 texture pixels per screen
+    // pixel, so a drag could only produce offsets of round(n * 1.28) - and 56
+    // of the 257 possible offsets could not be produced at all, starting with
+    // 2. Every value in a texture document is an exact integer; a fractional
+    // scale is what makes that untrue.
+    SOL_CHECK(forge::texturePreviewScale(256, 350.0f) == 1);
+    SOL_CHECK(forge::texturePreviewScale(256, 255.0f) == 1); // never below 1:1
+    SOL_CHECK(forge::texturePreviewScale(256, 200.0f) == 1); // what shipped
+    SOL_CHECK(forge::texturePreviewScale(256, 512.0f) == 2);
+    SOL_CHECK(forge::texturePreviewScale(256, 767.0f) == 2); // 2.996 is not 3
+    SOL_CHECK(forge::texturePreviewScale(256, 768.0f) == 3);
+    // A degenerate document must not divide by zero or scale by zero.
+    SOL_CHECK(forge::texturePreviewScale(0, 350.0f) == 1);
+    SOL_CHECK(forge::texturePreviewScale(-8, 350.0f) == 1);
+}
+
+SOL_TEST(aCursorMapsToTheTexturePixelUnderIt)
+{
+    const core::Vec2 origin{100.0f, 40.0f};
+    int x = -1;
+    int y = -1;
+
+    // At 1:1 the mapping is a translation, and the pixel is the one the cursor
+    // is INSIDE - the whole of [100, 101) is column 0.
+    SOL_REQUIRE(forge::texturePixelAt({100.0f, 40.0f}, origin, 1, 256, 256, x, y));
+    SOL_CHECK(x == 0 && y == 0);
+    SOL_REQUIRE(forge::texturePixelAt({100.9f, 40.9f}, origin, 1, 256, 256, x, y));
+    SOL_CHECK(x == 0 && y == 0);
+    SOL_REQUIRE(forge::texturePixelAt({101.0f, 41.0f}, origin, 1, 256, 256, x, y));
+    SOL_CHECK(x == 1 && y == 1);
+
+    // At 2x a texture pixel is two screen pixels wide, both of them its own.
+    SOL_REQUIRE(forge::texturePixelAt({103.0f, 40.0f}, origin, 2, 256, 256, x, y));
+    SOL_CHECK(x == 1 && y == 0);
+    SOL_REQUIRE(forge::texturePixelAt({104.0f, 40.0f}, origin, 2, 256, 256, x, y));
+    SOL_CHECK(x == 2 && y == 0);
+
+    // ⚑ Outside is REFUSED rather than clamped. A cursor above or left of the
+    // image would otherwise land on row 0 - a cast to int truncates toward
+    // zero, so -0.5 becomes 0 - and a click just off the top edge would grab
+    // whatever sits in the corner.
+    SOL_CHECK(!forge::texturePixelAt({99.5f, 40.0f}, origin, 1, 256, 256, x, y));
+    SOL_CHECK(!forge::texturePixelAt({100.0f, 39.5f}, origin, 1, 256, 256, x, y));
+    SOL_CHECK(!forge::texturePixelAt({356.0f, 40.0f}, origin, 1, 256, 256, x, y));
+    SOL_CHECK(!forge::texturePixelAt({100.0f, 296.0f}, origin, 1, 256, 256, x, y));
+}
+
+SOL_TEST(aDragOffsetIsRoundedOnceFromTheWholeGestureAndNeverAccumulated)
+{
+    // ⚑⚑ ASSERTION (4) OF STAGE I, AND THE INPUT HAD TO BE BUILT BECAUSE NO
+    // REAL MOUSE PRODUCES IT RELIABLY. `PointTool` drags on a per-frame
+    // cursorDelta, which is correct for a mesh authored in double. Here every
+    // write is an integer, and the two are not the same arithmetic: a hand
+    // moving slowly enough that each FRAME rounds to zero still moves.
+    const float frames[] = {0.4f, 0.8f, 1.2f, 1.6f, 2.0f};
+    int accumulated = 0;
+    float previous = 0.0f;
+    for (const float position : frames) {
+        accumulated += forge::textureDragOffset(previous, position, 1);
+        previous = position;
+    }
+    // Five frames of 0.4 px each round to zero on their own...
+    SOL_CHECK(accumulated == 0);
+    // ...while the gesture plainly travelled two pixels, which is what a caller
+    // holding the START of the drag reads.
+    SOL_CHECK(forge::textureDragOffset(0.0f, 2.0f, 1) == 2);
+
+    // The rule itself, at 1:1 and scaled.
+    SOL_CHECK(forge::textureDragOffset(10.0f, 10.0f, 1) == 0); // a click is not a drag
+    SOL_CHECK(forge::textureDragOffset(10.0f, 13.0f, 1) == 3);
+    SOL_CHECK(forge::textureDragOffset(10.0f, 7.0f, 1) == -3);
+    SOL_CHECK(forge::textureDragOffset(10.0f, 16.0f, 2) == 3);
+    // Rounding is symmetric about zero, or a drag left would travel further
+    // than the same drag right.
+    SOL_CHECK(forge::textureDragOffset(0.0f, 1.5f, 1) == 2);
+    SOL_CHECK(forge::textureDragOffset(0.0f, -1.5f, 1) == -2);
+    SOL_CHECK(forge::textureDragOffset(0.0f, 100.0f, 0) == 0);
+}

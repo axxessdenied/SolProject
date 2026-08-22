@@ -244,6 +244,11 @@ struct TextureHit
 // the axis it does not have reads back as the value it will keep.
 [[nodiscard]] bool textureRowPosition(const TextureDoc& doc, TextureHit hit, int& x, int& y);
 
+// The box a row occupies, unclipped, so an editor can outline what is selected.
+// A seam's box is the pen's span across the whole canvas, which is what it
+// paints. False for a row with no geometry.
+[[nodiscard]] bool textureRowBounds(const TextureDoc& doc, TextureHit hit, TextureRect& out);
+
 // Places a row at an ABSOLUTE position, which is the whole shape of the drag
 // gesture rather than an implementation detail of it.
 //

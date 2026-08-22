@@ -1,5 +1,7 @@
 #include "texture_editor.hpp"
 
+#include "mesh_library.hpp"
+
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
 
@@ -102,6 +104,7 @@ void TextureEditor::openNew(const std::string& directory)
     m_dirty = true;
     m_buildError.clear();
     m_undo.clear();
+    resetPick();
 }
 
 bool TextureEditor::openFile(const std::string& path, std::string& status)
@@ -127,6 +130,7 @@ bool TextureEditor::openFile(const std::string& path, std::string& status)
     m_dirty = false;
     m_buildError.clear();
     m_undo.clear();
+    resetPick();
     status = "opened " + m_saveName + " (" + std::to_string(m_doc.layers.size()) + " ops, " +
              std::to_string(m_doc.width) + "x" + std::to_string(m_doc.height) + ")";
     return true;
@@ -162,6 +166,21 @@ void TextureEditor::close()
     m_selected = -1;
     m_open = false;
     m_dirty = false;
+    resetPick();
+}
+
+// Everything the preview gesture holds about a document, cleared together -
+// a stale hit map or a half-finished drag surviving into a NEW document is the
+// shape of bug that writes to the wrong file.
+void TextureEditor::resetPick()
+{
+    m_hitMap.clear();
+    m_hitMapDirty = true;
+    m_dragHit = {};
+    m_dragging = false;
+    m_dragMoved = false;
+    m_selectedRow = -1;
+    m_scrollToSelectedRow = false;
 }
 
 void TextureEditor::beginEdit()
@@ -191,8 +210,142 @@ bool TextureEditor::undo()
     m_undo.pop_back();
     m_selected = std::min(m_selected, static_cast<int>(m_doc.layers.size()) - 1);
     m_dirty = true;
+    m_hitMapDirty = true;
     m_buildError.clear();
     return true;
+}
+
+bool TextureEditor::beginPickedRow(std::size_t ordinal)
+{
+    if (m_selectedRow < 0 || static_cast<std::size_t>(m_selectedRow) != ordinal) {
+        return false;
+    }
+    // ⚑ Scrolled to ONCE, on the frame the pick happened. Doing it every frame
+    // would fight an author trying to scroll the list by hand, which is the
+    // same mistake as a map that snaps back while you are panning it.
+    if (m_scrollToSelectedRow) {
+        ImGui::SetScrollHereY(0.5f);
+        m_scrollToSelectedRow = false;
+    }
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(96, 72, 24, 255));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(124, 94, 32, 255));
+    return true;
+}
+
+void TextureEditor::endPickedRow(bool picked)
+{
+    if (picked) {
+        ImGui::PopStyleColor(2);
+    }
+}
+
+void TextureEditor::refreshHitMap()
+{
+    if (!m_hitMapDirty) {
+        return;
+    }
+    if (!assets::textureAttribution(m_doc, m_hitMap)) {
+        m_hitMap.clear();
+    }
+    m_hitMapDirty = false;
+}
+
+bool TextureEditor::drawPreview(void* image, float availableWidth)
+{
+    if (!m_open || m_doc.width <= 0 || m_doc.height <= 0 || image == nullptr) {
+        return false;
+    }
+
+    const int scale = texturePreviewScale(m_doc.width, availableWidth);
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec2 size{static_cast<float>(m_doc.width * scale),
+                      static_cast<float>(m_doc.height * scale)};
+
+    // ⚑ The button is submitted FIRST and the image drawn into the window's own
+    // list behind it. Submitting an Image and then an InvisibleButton over it
+    // would work too, but this way the last-submitted item - which is what
+    // IsItemActivated names - is unambiguously the surface being pressed.
+    ImGui::InvisibleButton("##preview", size);
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    ImGui::GetWindowDrawList()->AddImage(reinterpret_cast<ImTextureID>(image), origin,
+                                         {origin.x + size.x, origin.y + size.y});
+
+    bool changed = false;
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+
+    if (ImGui::IsItemActivated()) {
+        m_dragging = false;
+        m_dragMoved = false;
+        int px = 0;
+        int py = 0;
+        if (texturePixelAt({mouse.x, mouse.y}, {origin.x, origin.y}, scale, m_doc.width,
+                           m_doc.height, px, py)) {
+            refreshHitMap();
+            const std::size_t index =
+                static_cast<std::size_t>(py) * m_doc.width + static_cast<std::size_t>(px);
+            const assets::TextureHit hit =
+                index < m_hitMap.size() ? m_hitMap[index] : assets::TextureHit{};
+            if (hit.valid()) {
+                // Selection follows the pick ACROSS ops, because two lists that
+                // disagreed about what is selected would be two answers to
+                // "what am I editing".
+                m_selected = hit.layer;
+                m_selectedRow = hit.row;
+                m_scrollToSelectedRow = hit.row >= 0;
+            }
+            if (hit.movable() && assets::textureRowPosition(m_doc, hit, m_dragStartPosition[0],
+                                                            m_dragStartPosition[1])) {
+                m_dragHit = hit;
+                m_dragging = true;
+                m_dragStartCursor[0] = mouse.x;
+                m_dragStartCursor[1] = mouse.y;
+            }
+        }
+    }
+
+    if (m_dragging && active) {
+        const int dx = textureDragOffset(m_dragStartCursor[0], mouse.x, scale);
+        const int dy = textureDragOffset(m_dragStartCursor[1], mouse.y, scale);
+        // ⚑ Nothing is written until the row has actually moved once - so a
+        // click that only selects leaves the file byte-identical and leaves no
+        // undo entry. After that first movement every frame is applied, INCLUDING
+        // one that comes back to zero, or a drag wandering back to where it
+        // started would leave the row stranded at its furthest point.
+        if (dx != 0 || dy != 0 || m_dragMoved) {
+            if (!m_dragMoved) {
+                beginEdit();
+                m_dragMoved = true;
+            }
+            if (assets::textureSetRowPosition(m_doc, m_dragHit, m_dragStartPosition[0] + dx,
+                                              m_dragStartPosition[1] + dy)) {
+                m_dirty = true;
+                m_hitMapDirty = true;
+                changed = true;
+            }
+        }
+    }
+    if (!active) {
+        m_dragging = false;
+    }
+
+    // The selected row, outlined in the picture. Without it the only feedback
+    // for a pick is a highlighted line in a list below the fold, and picking one
+    // of sixty overlapping panels is exactly where that is not enough.
+    assets::TextureRect bounds;
+    const assets::TextureHit selection{m_selected, m_selectedRow};
+    if (assets::textureRowBounds(m_doc, selection, bounds)) {
+        const ImVec2 min{origin.x + static_cast<float>(bounds.x * scale),
+                         origin.y + static_cast<float>(bounds.y * scale)};
+        const ImVec2 max{min.x + static_cast<float>(bounds.w * scale),
+                         min.y + static_cast<float>(bounds.h * scale)};
+        ImGui::GetWindowDrawList()->AddRect(min, max, IM_COL32(255, 190, 60, 255));
+    }
+
+    if (hovered && !m_dragging) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    return changed;
 }
 
 bool TextureEditor::drawOpList()
@@ -206,6 +359,9 @@ bool TextureEditor::drawOpList()
                           assets::textureOpName(m_doc.layers[i].op));
             if (ImGui::Selectable(label, static_cast<int>(i) == m_selected)) {
                 m_selected = static_cast<int>(i);
+                // Picking an op from the list is not picking a row inside it,
+                // and leaving the old ordinal would highlight an unrelated line.
+                m_selectedRow = -1;
             }
             ImGui::PopID();
         }
@@ -262,6 +418,11 @@ bool TextureEditor::drawOpList()
 bool TextureEditor::drawParams(TextureLayer& layer)
 {
     bool changed = false;
+    // ⚑ The row ordinal the preview reports runs across a whole OP, and `lines`
+    // is the op with two lists in it - so a running base is what turns "row 2"
+    // into "the first horizontal seam". It matches the order `drawLayerInto`
+    // paints in, which is where the ordinal is defined.
+    std::size_t rowBase = 0;
     for (const TextureParamSpec& spec : assets::textureParams(layer.op)) {
         TextureValue value = layer.value(spec.name);
         bool edited = false;
@@ -289,6 +450,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             if (ImGui::BeginChild("##rects", {0.0f, 140.0f}, ImGuiChildFlags_Borders)) {
                 for (std::size_t i = 0; i < value.rects.size(); ++i) {
                     ImGui::PushID(static_cast<int>(i));
+                    const bool picked = beginPickedRow(rowBase + i);
                     int row[4] = {value.rects[i].x, value.rects[i].y, value.rects[i].w,
                                   value.rects[i].h};
                     ImGui::SetNextItemWidth(-40.0f);
@@ -303,13 +465,16 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                         beginEdit();
                         value.rects.erase(value.rects.begin() + static_cast<std::ptrdiff_t>(i));
                         edited = true;
+                        endPickedRow(picked);
                         ImGui::PopID();
                         break;
                     }
+                    endPickedRow(picked);
                     ImGui::PopID();
                 }
             }
             ImGui::EndChild();
+            rowBase += value.rects.size();
             if (ImGui::SmallButton("add rect")) {
                 beginEdit();
                 value.rects.push_back(value.rects.empty() ? TextureRect{0, 0, 16, 16}
@@ -323,6 +488,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             if (ImGui::BeginChild("##panels", {0.0f, 140.0f}, ImGuiChildFlags_Borders)) {
                 for (std::size_t i = 0; i < value.panels.size(); ++i) {
                     ImGui::PushID(static_cast<int>(i));
+                    const bool picked = beginPickedRow(rowBase + i);
                     int row[5] = {value.panels[i].x, value.panels[i].y, value.panels[i].w,
                                   value.panels[i].h, value.panels[i].shade};
                     ImGui::SetNextItemWidth(-40.0f);
@@ -337,13 +503,16 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                         beginEdit();
                         value.panels.erase(value.panels.begin() + static_cast<std::ptrdiff_t>(i));
                         edited = true;
+                        endPickedRow(picked);
                         ImGui::PopID();
                         break;
                     }
+                    endPickedRow(picked);
                     ImGui::PopID();
                 }
             }
             ImGui::EndChild();
+            rowBase += value.panels.size();
             if (ImGui::SmallButton("add panel")) {
                 beginEdit();
                 value.panels.push_back(value.panels.empty() ? TexturePanel{0, 0, 32, 24, 100}
@@ -356,6 +525,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             ImGui::Text("%s  (%zu)", spec.name, value.integers.size());
             for (std::size_t i = 0; i < value.integers.size(); ++i) {
                 ImGui::PushID(static_cast<int>(i));
+                const bool picked = beginPickedRow(rowBase + i);
                 int shown = static_cast<int>(value.integers[i]);
                 ImGui::SetNextItemWidth(90.0f);
                 if (ImGui::DragInt("##v", &shown, 0.5f, -4096, 4096)) {
@@ -369,14 +539,17 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                     value.integers.erase(value.integers.begin() +
                                          static_cast<std::ptrdiff_t>(i));
                     edited = true;
+                    endPickedRow(picked);
                     ImGui::PopID();
                     break;
                 }
+                endPickedRow(picked);
                 ImGui::PopID();
                 if ((i % 3) != 2 && i + 1 < value.integers.size()) {
                     ImGui::SameLine();
                 }
             }
+            rowBase += value.integers.size();
             if (ImGui::SmallButton("add line")) {
                 beginEdit();
                 value.integers.push_back(value.integers.empty() ? 0 : value.integers.back());
@@ -478,6 +651,11 @@ bool TextureEditor::draw()
     changed = drawOpList() || changed;
     ImGui::Separator();
     changed = drawSelectedOp() || changed;
+    // ⚑ One place, so no edit path can forget it: any change to the document
+    // invalidates which row is on top at a pixel.
+    if (changed) {
+        m_hitMapDirty = true;
+    }
     return changed;
 }
 

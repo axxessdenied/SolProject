@@ -885,12 +885,27 @@ int main(int argc, char** argv)
                 }
                 ImGui::EndChild();
                 if (texturePreview != VK_NULL_HANDLE) {
-                    // Square and modest: big enough to see where a panel sits,
-                    // small enough that the ops it belongs to stay on screen
-                    // beside it.
-                    ImGui::Image(reinterpret_cast<ImTextureID>(texturePreview), {200.0f, 200.0f});
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("as cooked\n(BC1)");
+                    // ⚑⚑ STAGE I: 1:1, AND THE SIZE IS THE FEATURE. This shipped
+                    // at a flat 200 px for a 256 px document, which puts 1.28
+                    // texture pixels under every screen pixel - so a drag could
+                    // only produce offsets of round(n * 1.28), and 56 of the 257
+                    // possible offsets could not be produced at all. The first
+                    // one missing is 2. Every value in this document is an exact
+                    // integer, and a fractional preview is what made that untrue.
+                    if (textureEditor.isOpen()) {
+                        if (textureEditor.drawPreview(texturePreview,
+                                                      ImGui::GetContentRegionAvail().x)) {
+                            rebuildTexture();
+                        }
+                        ImGui::TextDisabled("as cooked (BC1) - click a shape, drag to move it");
+                    } else {
+                        // A cooked texture has no document behind it, so there is
+                        // nothing to pick: it stays the picture it always was.
+                        ImGui::Image(reinterpret_cast<ImTextureID>(texturePreview),
+                                     {200.0f, 200.0f});
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("as cooked\n(BC1)");
+                    }
                 }
                 if (ImGui::Button("new texture")) {
                     textureEditor.openNew(assetsDirectory + "/textures");
