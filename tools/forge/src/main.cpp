@@ -707,15 +707,39 @@ int main(int argc, char** argv)
             // and stage H exist for) while writing the station's 102.0000 as
             // 102, and the wrap means a mesh bigger than anything committed
             // costs a second line instead of losing its last field.
+            //
+            // ⚑⚑ TWO LINES, AND THE SPLIT IS WHAT THE BORDER COUNT COST. The
+            // panel holds about 51 characters; size plus all three topology
+            // facts runs 55 in full words, so one line would wrap mid-field on
+            // the COMMON case. The alternative was `rad`/`brd`, and this tool
+            // writes things out ("welded points", "cache misses", "border
+            // edges") - so the break is deliberate and grouped: what the mesh
+            // MEASURES above, what it IS below.
+            //
+            // ⚑⚑ AND THE BORDER COUNT IS NOT REDUNDANT WITH `closed`, WHICH IS
+            // WHY IT EARNS THE SECOND LINE. `isClosed()` asks that every edge
+            // carry exactly two faces; `borderEdgeCount()` counts edges carrying
+            // exactly one. An edge with THREE faces makes a mesh not-closed with
+            // ZERO border edges - so "open" alone cannot tell a hole from a
+            // non-manifold junction, and the count is what separates them.
             ImGui::PushTextWrapPos(0.0f);
             if (openIndex >= 0 || editor.isOpen()) {
-                ImGui::TextDisabled("%u tri  radius %.5g m  vol %.4g m3  %s", report.triangles,
-                                    static_cast<double>(report.boundingRadius), report.signedVolume,
-                                    !report.manifold  ? "not manifold"
-                                    : report.closed   ? "closed"
-                                                      : "open");
+                ImGui::TextDisabled("%u tri   radius %.5g m   vol %.4g m3", report.triangles,
+                                    static_cast<double>(report.boundingRadius),
+                                    report.signedVolume);
+                ImGui::TextDisabled("%s   %u border edge%s",
+                                    !report.manifold ? "not manifold"
+                                    : report.closed  ? "closed"
+                                                     : "open",
+                                    report.borderEdges, report.borderEdges == 1 ? "" : "s");
             } else {
                 ImGui::TextDisabled("no mesh open");
+                // ⚑ Holds the second line even with nothing open, so the status
+                // block is a FIXED height and the tab bar never moves. A panel
+                // whose furniture shifts with state is the trap this file has
+                // now met three times from the other side ("save moves"), and
+                // here it would move the one row every drive recipe clicks.
+                ImGui::NewLine();
             }
             ImGui::PopTextWrapPos();
             ImGui::Separator();
