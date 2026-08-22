@@ -20,11 +20,29 @@ namespace forge {
 // One openable file on disk. `label` is what the list shows; the extension is
 // what decides which loader runs; `stem` is what a `[[model]]` row names, which
 // is how a mesh on disk is tied to the content that uses it.
+//
+// ⚑⚑ `group` WAS A SUFFIX ON `label` UNTIL SESSION 14 TURNED IT INTO A FIELD,
+// AND THE POINT IS THAT THE GROUPING ALREADY EXISTED - it was just spelled in a
+// way only a human reading the row could use. `listMeshes` has always emitted
+// its categories in contiguous runs, so a list can draw a header per run
+// without sorting, indexing or a second pass. Promoting the suffix costs
+// nothing because it was never the thing distinguishing two rows: the file
+// EXTENSION already does that (`checker.tex` against `checker.stex`), which is
+// why the tag can leave the label without any caller losing information.
 struct AssetEntry
 {
     std::string label;
     std::string path;
     std::string stem;
+    // Display name of the run this entry belongs to. Rows are CONTIGUOUS by
+    // group, which is the property the list draw depends on.
+    std::string group;
+    // Build output: openable so it can be looked at, never editable, and
+    // collapsed by default because it is the majority of the list and the
+    // minority of the interest. ⚑ It is also the half that grows on its own -
+    // stage F emits a `.lodN.smesh` sibling per level, so a chained model adds
+    // up to two rows here with no author action at all.
+    bool cooked = false;
 };
 
 // Authored `.gltf` under the source tree first, then cooked `.smesh` beside

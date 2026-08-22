@@ -33,7 +33,9 @@
 #include <imgui_impl_vulkan.h>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -85,6 +87,62 @@ struct ScaleReference
     core::Vec4 color;
     bool enabled;
 };
+
+// ⚑⚑ SESSION 14's NOTE 1: AN ASSET LIST DRAWN AS COLLAPSIBLE RUNS RATHER THAN
+// ONE FLAT COLUMN. The mesh list was 21 rows of which 13 were cooked output -
+// 62% of it build product that cannot be edited - and the ratio DEGRADES ON ITS
+// OWN, because stage F emits a `.lodN.smesh` sibling per level, so every new
+// chained model adds up to two more rows nobody opens. The fixed 190 px box
+// showed ~11 rows, so four more authored meshes would have pushed the EDITABLE
+// rows into a scroll owned by output.
+//
+// ⚑ It needs no sort and no index: `listMeshes` already emits its categories in
+// contiguous runs, so one pass finds each run's end, and knowing the end is
+// what lets the header say how much is hidden while it is closed.
+//
+// ⚑⚑ THE `###` IS LOAD-BEARING, NOT STYLE. ImGui keys a tree node's open/closed
+// state on its LABEL, and this label carries a COUNT - so without a stable ID
+// suffix, cooking a new asset (13 -> 15) would silently re-open a section the
+// author had closed. The visible text may change; the identity may not.
+//
+// ⚑ Lives here rather than in `mesh_library.cpp` because that file is compiled
+// standalone into `sol_forge_tests`, which links no ImGui at all (see the
+// tools/forge/CMakeLists.txt comment). A draw helper there would break the
+// suite's linkage - Phase 15's lesson, applied before the promise this time.
+// Returns the row clicked this frame, or -1.
+[[nodiscard]] int drawAssetList(const char* id, const std::vector<forge::AssetEntry>& entries,
+                                int selected, float height)
+{
+    int clicked = -1;
+    if (ImGui::BeginChild(id, {0.0f, height}, ImGuiChildFlags_Borders)) {
+        std::size_t first = 0;
+        while (first < entries.size()) {
+            std::size_t end = first;
+            while (end < entries.size() && entries[end].group == entries[first].group) {
+                ++end;
+            }
+            char header[96];
+            std::snprintf(header, sizeof(header), "%s (%zu)###%s", entries[first].group.c_str(),
+                          end - first, entries[first].group.c_str());
+            // Build output arrives closed: it is the majority of the list and
+            // the minority of the interest, and it is the half that grows on
+            // its own. Everything an author can actually edit arrives open.
+            if (ImGui::CollapsingHeader(header,
+                                        entries[first].cooked ? 0
+                                                              : ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (std::size_t row = first; row < end; ++row) {
+                    if (ImGui::Selectable(entries[row].label.c_str(),
+                                          static_cast<int>(row) == selected)) {
+                        clicked = static_cast<int>(row);
+                    }
+                }
+            }
+            first = end;
+        }
+    }
+    ImGui::EndChild();
+    return clicked;
+}
 
 void addWireBox(renderer::DebugDrawRenderer& lines, core::Vec3 min, core::Vec3 max,
                 core::Vec4 color)
@@ -777,14 +835,18 @@ int main(int argc, char** argv)
                 // bar because opening a mesh is the first thing you do TO a mesh.
                 if (ImGui::BeginTabItem("Mesh")) {
                     if (ImGui::CollapsingHeader("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        if (ImGui::BeginChild("##meshes", {0.0f, 190.0f}, ImGuiChildFlags_Borders)) {
-                            for (int i = 0; i < static_cast<int>(meshEntries.size()); ++i) {
-                                if (ImGui::Selectable(meshEntries[i].label.c_str(), i == openIndex)) {
-                                    openMeshAt(i);
-                                }
-                            }
+                        // ⚑ 230 px rather than J's 190 because the group headers
+                        // are new height: 8 `parts` rows at a 17 px pitch plus
+                        // three headers needs ~199, so keeping 190 would have
+                        // made the list WORSE at showing the very rows this
+                        // change is about. It costs the `Mesh` tab ~40 px, which
+                        // is the one tab that already scrolls - `Texture`, with
+                        // its 5 px of headroom, does not carry this list.
+                        const int clicked =
+                            drawAssetList("##meshes", meshEntries, openIndex, 230.0f);
+                        if (clicked >= 0) {
+                            openMeshAt(clicked);
                         }
-                        ImGui::EndChild();
                         if (ImGui::Button("Reload") && openIndex >= 0) {
                             openMeshAt(openIndex);
                         }

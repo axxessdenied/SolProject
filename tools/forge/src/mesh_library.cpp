@@ -38,14 +38,14 @@ namespace {
     return dot == std::string::npos ? name : name.substr(0, dot);
 }
 
-void collect(const std::string& directory, const char* extension, const char* tag,
+void collect(const std::string& directory, const char* extension, const char* group, bool cooked,
              std::vector<AssetEntry>& out)
 {
     std::vector<std::string> files = platform::listFiles(directory.c_str());
     std::sort(files.begin(), files.end());
     for (const std::string& path : files) {
         if (endsWith(path, extension)) {
-            out.push_back({fileName(path) + tag, path, fileStem(path)});
+            out.push_back({fileName(path), path, fileStem(path), group, cooked});
         }
     }
 }
@@ -58,10 +58,12 @@ std::vector<AssetEntry> listMeshes(const std::string& sourceDirectory,
     std::vector<AssetEntry> entries;
     // `.forge` first: it is the only kind of source that can be EDITED here,
     // and the others are what an asset came out as rather than what it is.
-    collect(sourceDirectory, ".forge", "  (parts)", entries);
-    collect(sourceDirectory, ".gltf", "  (source)", entries);
-    collect(sourceDirectory, ".glb", "  (source)", entries);
-    collect(cookedDirectory, ".smesh", "  (cooked)", entries);
+    // ⚑ The ORDER is what makes the groups contiguous, and the list draw
+    // depends on that - do not sort `entries` afterwards.
+    collect(sourceDirectory, ".forge", "parts", /*cooked=*/false, entries);
+    collect(sourceDirectory, ".gltf", "source", /*cooked=*/false, entries);
+    collect(sourceDirectory, ".glb", "source", /*cooked=*/false, entries);
+    collect(cookedDirectory, ".smesh", "cooked", /*cooked=*/true, entries);
     return entries;
 }
 
@@ -69,8 +71,8 @@ std::vector<AssetEntry> listTextures(const std::string& sourceDirectory,
                                      const std::string& cookedDirectory)
 {
     std::vector<AssetEntry> entries;
-    collect(sourceDirectory, ".tex", "  (source)", entries);
-    collect(cookedDirectory, ".stex", "  (cooked)", entries);
+    collect(sourceDirectory, ".tex", "source", /*cooked=*/false, entries);
+    collect(cookedDirectory, ".stex", "cooked", /*cooked=*/true, entries);
     return entries;
 }
 
