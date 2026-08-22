@@ -678,42 +678,50 @@ int main(int argc, char** argv)
                                 frameMilliseconds > 0.0f ? 1000.0f / frameMilliseconds : 0.0f,
                                 frameMilliseconds, static_cast<double>(gridCell));
 
-            // ⚑⚑ THE ONE LINE THAT IS OUTSIDE THE TABS, AND IT EXISTS TO PAY FOR
-            // THEM. Splitting the panel put `Points, edges & faces` and the
-            // Report on different tabs, so an author dragging a corner lost the
-            // numbers that corner moves. These four follow every edit and are
-            // the ones with no other channel: the viewport shows the SHAPE, the
-            // part list shows the TREE, and nothing else shows what the mesh now
-            // MEASURES. `radius` is here rather than `size` because it is the
-            // number a [[model]] row carries and the one the tool warns about,
-            // and `volume` because E5 measured that a wall or a split triangle
-            // wound backwards leaves a mesh closed, manifold and border-free -
-            // the signed volume is the only one of these that catches it.
+            // ⚑⚑ THE STATUS BLOCK THAT SITS OUTSIDE THE TABS, AND IT EXISTS TO
+            // PAY FOR THEM. Splitting the panel put `Points, edges & faces` and
+            // the Report on different tabs, so an author dragging a corner lost
+            // the numbers that corner moves. What is here has no other channel:
+            // the viewport shows the SHAPE, the part list shows the TREE, and
+            // nothing else shows what the mesh now MEASURES. `radius` rather
+            // than `size` because it is the number a [[model]] row carries and
+            // the one the tool has warned about since stage C.
+            //
+            // ⚑ `volume` WAS HERE AND WAS DROPPED ON REQUEST. Recording why it
+            // was proposed, because the check it carried now lives ONLY on the
+            // Report tab: E5 measured that a wall or a split triangle wound
+            // backwards leaves a mesh closed, manifold AND border-free, so the
+            // signed volume is the only one of these numbers that catches an
+            // inside-out extrude.
             //
             // ⚑ IT STATES, IT DOES NOT JUDGE - deliberately, and this is the
-            // trap it was written around. Colouring "not closed" or "volume <= 0"
-            // as a fault would paint `gate_membrane` amber: it is a FILM, so it
-            // has a border loop by construction and encloses nothing, which is
-            // why Phase 16's invariants exclude it BY NAME. A verdict here would
-            // need that same exclusion list, and a status line has no business
-            // carrying one. The Report says `closed no / border edges 32` in the
-            // plain colour; so does this.
-            // ⚑⚑ IT WRAPS, AND `%.5g` IS NOT A TIDY-UP. The first version used
-            // `%.4f` for the radius and three-space columns, which fits the
-            // asteroid and TRUNCATES `station.forge` to `... vol 3.783e+05 m3
-            // c` - clipping the health word off the largest mesh in the repo,
-            // i.e. losing the status on exactly the asset most likely to have a
-            // problem. `%.5g` keeps the asteroid's 1.1584 (the number Phase 14
-            // and stage H exist for) while writing the station's 102.0000 as
-            // 102, and the wrap means a mesh bigger than anything committed
-            // costs a second line instead of losing its last field.
+            // trap it was written around. Colouring "not closed" or a zero
+            // volume as a fault would paint `gate_membrane` amber: it is a FILM,
+            // so it has a border loop by construction and encloses nothing,
+            // which is why Phase 16's invariants exclude it BY NAME. A verdict
+            // here would need that same exclusion list, and a status line has no
+            // business carrying one. The Report says `closed no / border edges
+            // 32` in the plain colour; so does this.
             //
-            // ⚑⚑ TWO LINES, AND THE SPLIT IS WHAT THE BORDER COUNT COST. The
-            // panel holds about 51 characters; size plus all three topology
-            // facts runs 55 in full words, so one line would wrap mid-field on
-            // the COMMON case. The alternative was `rad`/`brd`, and this tool
-            // writes things out ("welded points", "cache misses", "border
-            // edges") - so the break is deliberate and grouped: what the mesh
+            // ⚑⚑ `%.5g` IS NOT A TIDY-UP. The first version used `%.4f` and
+            // three-space columns, which fits the asteroid and TRUNCATED
+            // `station.forge` to `... vol 3.783e+05 m3   c` - clipping the
+            // health word off the largest mesh in the repo, i.e. losing the
+            // status on exactly the asset most likely to have a problem. `%.5g`
+            // keeps the asteroid's 1.1584 (the number Phase 14 and stage H exist
+            // for) while writing the station's 102.0000 as 102.
+            //
+            // ⚑⚑ TWO LINES, AND THE BUDGET IS MEASURED RATHER THAN ESTIMATED:
+            // the content region is 350 px at 7.00 px/char, i.e. 50 characters,
+            // and the widest one-line form ("64 tri  radius 70 m  not manifold
+            // 32 border edges") measures 351 - over by ONE PIXEL. Dropping
+            // `volume` does not recover it. ⚑ And the pixel is not worth
+            // chasing, which is the reusable part: that string only comes close
+            // because the one non-manifold asset in the repo happens to be
+            // SMALL. A large one ("1068 tri ... not manifold ... 32 border
+            // edges") needs 371. A single line would fit by coincidence of which
+            // asset is currently abnormal - J2's "checked against one asset"
+            // lesson in the layout. Two lines are grouped instead: what the mesh
             // MEASURES above, what it IS below.
             //
             // ⚑⚑ AND THE BORDER COUNT IS NOT REDUNDANT WITH `closed`, WHICH IS
@@ -724,9 +732,8 @@ int main(int argc, char** argv)
             // non-manifold junction, and the count is what separates them.
             ImGui::PushTextWrapPos(0.0f);
             if (openIndex >= 0 || editor.isOpen()) {
-                ImGui::TextDisabled("%u tri   radius %.5g m   vol %.4g m3", report.triangles,
-                                    static_cast<double>(report.boundingRadius),
-                                    report.signedVolume);
+                ImGui::TextDisabled("%u tri   radius %.5g m", report.triangles,
+                                    static_cast<double>(report.boundingRadius));
                 ImGui::TextDisabled("%s   %u border edge%s",
                                     !report.manifold ? "not manifold"
                                     : report.closed  ? "closed"
