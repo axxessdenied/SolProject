@@ -677,6 +677,47 @@ int main(int argc, char** argv)
             ImGui::TextDisabled("%.1f fps  (%.2f ms)   grid %.2g m",
                                 frameMilliseconds > 0.0f ? 1000.0f / frameMilliseconds : 0.0f,
                                 frameMilliseconds, static_cast<double>(gridCell));
+
+            // ⚑⚑ THE ONE LINE THAT IS OUTSIDE THE TABS, AND IT EXISTS TO PAY FOR
+            // THEM. Splitting the panel put `Points, edges & faces` and the
+            // Report on different tabs, so an author dragging a corner lost the
+            // numbers that corner moves. These four follow every edit and are
+            // the ones with no other channel: the viewport shows the SHAPE, the
+            // part list shows the TREE, and nothing else shows what the mesh now
+            // MEASURES. `radius` is here rather than `size` because it is the
+            // number a [[model]] row carries and the one the tool warns about,
+            // and `volume` because E5 measured that a wall or a split triangle
+            // wound backwards leaves a mesh closed, manifold and border-free -
+            // the signed volume is the only one of these that catches it.
+            //
+            // ⚑ IT STATES, IT DOES NOT JUDGE - deliberately, and this is the
+            // trap it was written around. Colouring "not closed" or "volume <= 0"
+            // as a fault would paint `gate_membrane` amber: it is a FILM, so it
+            // has a border loop by construction and encloses nothing, which is
+            // why Phase 16's invariants exclude it BY NAME. A verdict here would
+            // need that same exclusion list, and a status line has no business
+            // carrying one. The Report says `closed no / border edges 32` in the
+            // plain colour; so does this.
+            // ⚑⚑ IT WRAPS, AND `%.5g` IS NOT A TIDY-UP. The first version used
+            // `%.4f` for the radius and three-space columns, which fits the
+            // asteroid and TRUNCATES `station.forge` to `... vol 3.783e+05 m3
+            // c` - clipping the health word off the largest mesh in the repo,
+            // i.e. losing the status on exactly the asset most likely to have a
+            // problem. `%.5g` keeps the asteroid's 1.1584 (the number Phase 14
+            // and stage H exist for) while writing the station's 102.0000 as
+            // 102, and the wrap means a mesh bigger than anything committed
+            // costs a second line instead of losing its last field.
+            ImGui::PushTextWrapPos(0.0f);
+            if (openIndex >= 0 || editor.isOpen()) {
+                ImGui::TextDisabled("%u tri  radius %.5g m  vol %.4g m3  %s", report.triangles,
+                                    static_cast<double>(report.boundingRadius), report.signedVolume,
+                                    !report.manifold  ? "not manifold"
+                                    : report.closed   ? "closed"
+                                                      : "open");
+            } else {
+                ImGui::TextDisabled("no mesh open");
+            }
+            ImGui::PopTextWrapPos();
             ImGui::Separator();
 
             // ⚑⚑ STAGE J: FOUR TABS, AND THE COUNT WAS DECIDED BY ARITHMETIC.
