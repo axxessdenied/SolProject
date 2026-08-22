@@ -196,4 +196,63 @@ struct TextureImage
 // is broken rather than merely unusual.
 [[nodiscard]] std::size_t textureLayerCoverage(const TextureDoc& doc, std::size_t layerIndex);
 
+// --- picking (stage I) ------------------------------------------------------
+//
+// ⚑⚑ THE ROW ORDINAL IS THE ORDER THE BUILDER DRAWS IN, NOT A SECOND NUMBERING
+// BESIDE IT. `rects` and `panels` number their own list. `lines` numbers its
+// `vertical` entries and then its `horizontal` ones, because that is the order
+// they are painted. `fill` and `checker` have no list at all, so they report a
+// layer with NO row - which the caller must be able to tell apart from "the
+// first rect", or a click on bare hull moves something.
+
+// How many rows of a layer can be addressed by ordinal. Zero for `fill` and
+// `checker`, which paint without a row list.
+[[nodiscard]] std::size_t textureRowCount(const TextureLayer& layer);
+
+struct TextureHit
+{
+    // Index into `TextureDoc::layers`, or -1 for a pixel nothing painted.
+    int layer = -1;
+    // Row ordinal within that layer, or -1 when the op has no row list.
+    int row = -1;
+
+    [[nodiscard]] bool valid() const { return layer >= 0; }
+    // True when there is a row with a position to move, which is the question
+    // a drag actually asks.
+    [[nodiscard]] bool movable() const { return layer >= 0 && row >= 0; }
+};
+
+// Which authored row is on TOP at every pixel, row-major, one entry per pixel.
+//
+// ⚑ Answered by evaluating the document and keeping the identity of whatever
+// wrote each pixel last, so it agrees with the picture by construction. A
+// geometric "is the cursor inside this rect" would be a second implementation
+// of the half-open box, the clipping, the file order and the width-2 pen, and
+// the first one to drift would select something the image does not show.
+//
+// ⚑ THE WHOLE MAP RATHER THAN ONE PIXEL, because the answer costs a full
+// evaluation either way: a caller that asked per pixel would pay for one
+// document build per query. An editor already rebuilds on every accepted edit,
+// so this is computed exactly where the image is and cached beside it.
+[[nodiscard]] bool textureAttribution(const TextureDoc& doc, std::vector<TextureHit>& out);
+
+// One pixel of the above, for a caller holding no map. Costs a full evaluation,
+// so do not call it in a loop over pixels.
+[[nodiscard]] TextureHit textureHitTest(const TextureDoc& doc, int x, int y);
+
+// Where a row currently sits. For a `lines` seam - which is ONE coordinate -
+// the axis it does not have reads back as the value it will keep.
+[[nodiscard]] bool textureRowPosition(const TextureDoc& doc, TextureHit hit, int& x, int& y);
+
+// Places a row at an ABSOLUTE position, which is the whole shape of the drag
+// gesture rather than an implementation detail of it.
+//
+// ⚑⚑ THERE IS DELIBERATELY NO `moveRow(dx, dy)`. Every value here is an
+// integer, and rounding a per-frame delta does not compose to rounding the
+// total: three frames of 0.4 px round to zero apiece while the hand moved 1.2,
+// so an accumulating drag sticks and then jumps. The caller keeps the value the
+// gesture started from and sets an absolute one, which makes the wrong
+// arithmetic inexpressible instead of merely discouraged.
+[[nodiscard]] bool textureSetRowPosition(TextureDoc& doc, TextureHit hit, int x, int y);
+
 } // namespace sol::assets

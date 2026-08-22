@@ -207,7 +207,27 @@ void scanContentLine(std::string_view line, int& depth, bool& sawComment)
     return std::clamp(v, 0, 255);
 }
 
-void plot(TextureImage& image, std::vector<std::uint8_t>* touched, int x, int y, TextureColor c)
+// Which layer and row last painted each pixel, recorded by the same walk that
+// paints it.
+//
+// ⚑⚑ THIS IS THE `touched` MASK STAGE G ALREADY HAD, RECORDING AN ORDINAL
+// INSTEAD OF A FLAG, AND THAT IS THE WHOLE REASON A HIT TEST CAN BE TRUSTED. A
+// hand-written "is the cursor inside this rect" would be a SECOND
+// implementation of the pixel rules - it would have to re-derive the half-open
+// box, the clipping, the file order and the width-2 pen's [c-1, c] - and the
+// first one to drift would put the selection somewhere the picture does not
+// show. Here the attribution IS the drawing, with the writer's identity kept.
+struct PaintMask
+{
+    // -1 where nothing has been painted. Either may be null; `rows` alone is
+    // what a single-layer coverage count needs.
+    std::vector<std::int32_t>* rows = nullptr;
+    std::vector<std::int32_t>* layers = nullptr;
+    std::int32_t currentRow = 0;
+    std::int32_t currentLayer = 0;
+};
+
+void plot(TextureImage& image, PaintMask* mask, int x, int y, TextureColor c)
 {
     if (x < 0 || y < 0 || x >= static_cast<int>(image.width) ||
         y >= static_cast<int>(image.height)) {
@@ -218,20 +238,33 @@ void plot(TextureImage& image, std::vector<std::uint8_t>* touched, int x, int y,
     image.pixels[index * 4 + 1] = static_cast<std::uint8_t>(clampChannel(c.g));
     image.pixels[index * 4 + 2] = static_cast<std::uint8_t>(clampChannel(c.b));
     image.pixels[index * 4 + 3] = 255;
-    if (touched != nullptr) {
-        (*touched)[index] = 1;
+    if (mask != nullptr) {
+        if (mask->rows != nullptr) {
+            (*mask->rows)[index] = mask->currentRow;
+        }
+        if (mask->layers != nullptr) {
+            (*mask->layers)[index] = mask->currentLayer;
+        }
     }
 }
 
 // [x, x+w) x [y, y+h), clipped. Measured off the committed PNGs: this is what
 // GDI+'s FillRectangle covered.
-void fillRect(TextureImage& image, std::vector<std::uint8_t>* touched, int x, int y, int w, int h,
-              TextureColor color)
+void fillRect(TextureImage& image, PaintMask* mask, int x, int y, int w, int h, TextureColor color)
 {
     for (int row = y; row < y + h; ++row) {
         for (int column = x; column < x + w; ++column) {
-            plot(image, touched, column, row, color);
+            plot(image, mask, column, row, color);
         }
+    }
+}
+
+// The row the walk is about to draw. Kept as one call so the ordinal a hit test
+// reports and the order `drawLayerInto` draws in cannot become two decisions.
+void setRow(PaintMask* mask, std::size_t row)
+{
+    if (mask != nullptr) {
+        mask->currentRow = static_cast<std::int32_t>(row);
     }
 }
 
@@ -243,9 +276,15 @@ void fillRect(TextureImage& image, std::vector<std::uint8_t>* touched, int x, in
     return centre - width / 2;
 }
 
+// ⚑ THE ROW ORDINAL IS THE ORDER THIS FUNCTION DRAWS IN, AND THAT IS THE
+// DEFINITION RATHER THAN A CONVENTION BESIDE IT. `rects` and `panels` number
+// their own list; `lines` numbers its `vertical` entries and then its
+// `horizontal` ones, because that is the order they are painted; `fill` and
+// `checker` have no list and draw as a single row 0.
 void drawLayerInto(const TextureDoc& doc, const TextureLayer& layer, TextureImage& image,
-                   std::vector<std::uint8_t>* touched)
+                   PaintMask* touched)
 {
+    setRow(touched, 0);
     switch (layer.op) {
     case TextureOp::Fill: {
         const TextureColor color = layer.value("color").color;
@@ -273,17 +312,21 @@ void drawLayerInto(const TextureDoc& doc, const TextureLayer& layer, TextureImag
     }
     case TextureOp::Rects: {
         const TextureColor color = layer.value("color").color;
-        for (const TextureRect& rect : layer.value("rects").rects) {
-            fillRect(image, touched, rect.x, rect.y, rect.w, rect.h, color);
+        const std::vector<TextureRect> rects = layer.value("rects").rects;
+        for (std::size_t i = 0; i < rects.size(); ++i) {
+            setRow(touched, i);
+            fillRect(image, touched, rects[i].x, rects[i].y, rects[i].w, rects[i].h, color);
         }
         break;
     }
     case TextureOp::Panels: {
         const TextureColor tint = layer.value("tint").color;
-        for (const TexturePanel& panel : layer.value("panels").panels) {
-            const TextureColor color{panel.shade + tint.r, panel.shade + tint.g,
-                                     panel.shade + tint.b};
-            fillRect(image, touched, panel.x, panel.y, panel.w, panel.h, color);
+        const std::vector<TexturePanel> panels = layer.value("panels").panels;
+        for (std::size_t i = 0; i < panels.size(); ++i) {
+            setRow(touched, i);
+            const TextureColor color{panels[i].shade + tint.r, panels[i].shade + tint.g,
+                                     panels[i].shade + tint.b};
+            fillRect(image, touched, panels[i].x, panels[i].y, panels[i].w, panels[i].h, color);
         }
         break;
     }
@@ -293,13 +336,17 @@ void drawLayerInto(const TextureDoc& doc, const TextureLayer& layer, TextureImag
         if (width <= 0) {
             break;
         }
-        for (const std::int64_t c : layer.value("vertical").integers) {
-            fillRect(image, touched, penStart(static_cast<int>(c), width), 0, width, doc.height,
-                     color);
+        const std::vector<std::int64_t> vertical = layer.value("vertical").integers;
+        const std::vector<std::int64_t> horizontal = layer.value("horizontal").integers;
+        for (std::size_t i = 0; i < vertical.size(); ++i) {
+            setRow(touched, i);
+            fillRect(image, touched, penStart(static_cast<int>(vertical[i]), width), 0, width,
+                     doc.height, color);
         }
-        for (const std::int64_t c : layer.value("horizontal").integers) {
-            fillRect(image, touched, 0, penStart(static_cast<int>(c), width), doc.width, width,
-                     color);
+        for (std::size_t i = 0; i < horizontal.size(); ++i) {
+            setRow(touched, vertical.size() + i);
+            fillRect(image, touched, 0, penStart(static_cast<int>(horizontal[i]), width), doc.width,
+                     width, color);
         }
         break;
     }
@@ -711,14 +758,208 @@ std::size_t textureLayerCoverage(const TextureDoc& doc, std::size_t layerIndex)
     image.height = static_cast<std::uint32_t>(doc.height);
     image.pixels.assign(static_cast<std::size_t>(image.width) * image.height * 4, 0);
 
-    std::vector<std::uint8_t> touched(static_cast<std::size_t>(doc.width) * doc.height, 0);
-    drawLayerInto(doc, doc.layers[layerIndex], image, &touched);
+    std::vector<std::int32_t> rows(static_cast<std::size_t>(doc.width) * doc.height, -1);
+    PaintMask mask;
+    mask.rows = &rows;
+    drawLayerInto(doc, doc.layers[layerIndex], image, &mask);
 
     std::size_t count = 0;
-    for (const std::uint8_t flag : touched) {
-        count += flag;
+    for (const std::int32_t row : rows) {
+        count += row >= 0 ? 1u : 0u;
     }
     return count;
+}
+
+std::size_t textureRowCount(const TextureLayer& layer)
+{
+    switch (layer.op) {
+    case TextureOp::Fill:
+    case TextureOp::Checker:
+        return 0;
+    case TextureOp::Rects:
+        return layer.value("rects").rects.size();
+    case TextureOp::Panels:
+        return layer.value("panels").panels.size();
+    case TextureOp::Lines:
+        return layer.value("vertical").integers.size() +
+               layer.value("horizontal").integers.size();
+    }
+    return 0;
+}
+
+bool textureAttribution(const TextureDoc& doc, std::vector<TextureHit>& out)
+{
+    out.clear();
+    if (doc.width <= 0 || doc.height <= 0) {
+        return false;
+    }
+
+    TextureImage image;
+    image.width = static_cast<std::uint32_t>(doc.width);
+    image.height = static_cast<std::uint32_t>(doc.height);
+    image.pixels.assign(static_cast<std::size_t>(image.width) * image.height * 4, 0);
+
+    const std::size_t pixels = static_cast<std::size_t>(doc.width) * doc.height;
+    std::vector<std::int32_t> rows(pixels, -1);
+    std::vector<std::int32_t> layers(pixels, -1);
+    PaintMask mask;
+    mask.rows = &rows;
+    mask.layers = &layers;
+    for (std::size_t i = 0; i < doc.layers.size(); ++i) {
+        mask.currentLayer = static_cast<std::int32_t>(i);
+        drawLayerInto(doc, doc.layers[i], image, &mask);
+    }
+
+    // An op with no row list draws as row 0 and has nothing to move, which a
+    // caller must be able to tell apart from "the first rect". Resolved once
+    // per layer here rather than once per pixel.
+    std::vector<bool> addressable(doc.layers.size(), false);
+    for (std::size_t i = 0; i < doc.layers.size(); ++i) {
+        addressable[i] = textureRowCount(doc.layers[i]) != 0;
+    }
+
+    out.resize(pixels);
+    for (std::size_t i = 0; i < pixels; ++i) {
+        TextureHit hit;
+        hit.layer = layers[i];
+        if (hit.layer >= 0) {
+            hit.row = addressable[static_cast<std::size_t>(hit.layer)] ? rows[i] : -1;
+        }
+        out[i] = hit;
+    }
+    return true;
+}
+
+TextureHit textureHitTest(const TextureDoc& doc, int x, int y)
+{
+    if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) {
+        return {};
+    }
+    std::vector<TextureHit> map;
+    if (!textureAttribution(doc, map)) {
+        return {};
+    }
+    return map[static_cast<std::size_t>(y) * doc.width + static_cast<std::size_t>(x)];
+}
+
+namespace {
+
+// The named parameter and the index within it that a row ordinal refers to.
+// `vertical` runs first because that is the order `drawLayerInto` paints in.
+[[nodiscard]] bool resolveLineRow(const TextureLayer& layer, int row, const char*& param,
+                                  std::size_t& index)
+{
+    const std::size_t verticals = layer.value("vertical").integers.size();
+    const auto ordinal = static_cast<std::size_t>(row);
+    if (ordinal < verticals) {
+        param = "vertical";
+        index = ordinal;
+        return true;
+    }
+    param = "horizontal";
+    index = ordinal - verticals;
+    return index < layer.value("horizontal").integers.size();
+}
+
+} // namespace
+
+bool textureRowPosition(const TextureDoc& doc, TextureHit hit, int& x, int& y)
+{
+    if (!hit.movable() || static_cast<std::size_t>(hit.layer) >= doc.layers.size()) {
+        return false;
+    }
+    const TextureLayer& layer = doc.layers[static_cast<std::size_t>(hit.layer)];
+    const auto row = static_cast<std::size_t>(hit.row);
+    switch (layer.op) {
+    case TextureOp::Fill:
+    case TextureOp::Checker:
+        return false;
+    case TextureOp::Rects: {
+        const std::vector<TextureRect> rects = layer.value("rects").rects;
+        if (row >= rects.size()) {
+            return false;
+        }
+        x = rects[row].x;
+        y = rects[row].y;
+        return true;
+    }
+    case TextureOp::Panels: {
+        const std::vector<TexturePanel> panels = layer.value("panels").panels;
+        if (row >= panels.size()) {
+            return false;
+        }
+        x = panels[row].x;
+        y = panels[row].y;
+        return true;
+    }
+    case TextureOp::Lines: {
+        const char* param = nullptr;
+        std::size_t index = 0;
+        if (!resolveLineRow(layer, hit.row, param, index)) {
+            return false;
+        }
+        // ⚑ A seam is ONE coordinate, so the axis it does not have reads back
+        // as the position it will keep. Reporting a zero here would make a drag
+        // that starts on a seam snap the other axis to the canvas edge.
+        const auto coordinate = static_cast<int>(layer.value(param).integers[index]);
+        const bool isVertical = std::string_view(param) == "vertical";
+        x = isVertical ? coordinate : 0;
+        y = isVertical ? 0 : coordinate;
+        return true;
+    }
+    }
+    return false;
+}
+
+bool textureSetRowPosition(TextureDoc& doc, TextureHit hit, int x, int y)
+{
+    if (!hit.movable() || static_cast<std::size_t>(hit.layer) >= doc.layers.size()) {
+        return false;
+    }
+    TextureLayer& layer = doc.layers[static_cast<std::size_t>(hit.layer)];
+    const auto row = static_cast<std::size_t>(hit.row);
+    switch (layer.op) {
+    case TextureOp::Fill:
+    case TextureOp::Checker:
+        return false;
+    case TextureOp::Rects: {
+        TextureValue value = layer.value("rects");
+        if (row >= value.rects.size()) {
+            return false;
+        }
+        value.rects[row].x = x;
+        value.rects[row].y = y;
+        layer.set("rects", value);
+        return true;
+    }
+    case TextureOp::Panels: {
+        TextureValue value = layer.value("panels");
+        if (row >= value.panels.size()) {
+            return false;
+        }
+        value.panels[row].x = x;
+        value.panels[row].y = y;
+        layer.set("panels", value);
+        return true;
+    }
+    case TextureOp::Lines: {
+        const char* param = nullptr;
+        std::size_t index = 0;
+        if (!resolveLineRow(layer, hit.row, param, index)) {
+            return false;
+        }
+        // The one-axis case: a vertical seam takes x and a horizontal one takes
+        // y, and the other is DROPPED rather than written somewhere harmless.
+        TextureValue value = layer.value(param);
+        if (index >= value.integers.size()) {
+            return false;
+        }
+        value.integers[index] = std::string_view(param) == "vertical" ? x : y;
+        layer.set(param, value);
+        return true;
+    }
+    }
+    return false;
 }
 
 } // namespace sol::assets
