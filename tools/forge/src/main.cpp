@@ -93,6 +93,77 @@ struct ScaleReference
     bool enabled;
 };
 
+// ⚑⚑ WHICH PANELS ARE OPEN, PERSISTED INTO `forge.ini` ALONGSIDE THE LAYOUT.
+// Reported by the user: closing a panel and relaunching brought it back.
+//
+// ⚑⚑ IT IS THE SAME LESSON AS THE DOCK LAYOUT, ONE LEVEL UP - "a round trip has
+// two halves" applied to a SECOND PIECE OF STATE. Stage K taught ImGui to
+// remember where the panels are; it never taught anything to remember WHETHER
+// they are. `Begin(name, p_open)` treats `p_open` as the APPLICATION's bool:
+// ImGui saves a window's position, size, dock node and selected tab, and never
+// that flag - so the layout round-tripped perfectly while the visibility beside
+// it silently reset every launch. Fixing one piece of a file's contents is not
+// fixing the file.
+//
+// ⚑ A settings HANDLER rather than a file of our own, because the alternative
+// is two files with two lifetimes that have to agree: this writes into the same
+// `forge.ini`, at the same moment, and is flushed by the same DestroyContext.
+// ⚑ It must be registered BEFORE the first NewFrame - that is when ImGui loads
+// the ini - which is why it is installed right after the host comes up.
+struct PanelToggle
+{
+    const char* name; // exactly the window name, so the ini reads as itself
+    bool* shown;
+};
+
+struct PanelToggles
+{
+    PanelToggle items[4];
+
+    [[nodiscard]] bool* find(const char* name) const
+    {
+        for (const PanelToggle& item : items) {
+            if (std::strcmp(item.name, name) == 0) {
+                return item.shown;
+            }
+        }
+        return nullptr;
+    }
+};
+
+void* panelsReadOpen(ImGuiContext*, ImGuiSettingsHandler* handler, const char* name)
+{
+    // One entry, `[ForgePanels][Visible]`. An unknown entry returns null and
+    // ImGui skips its lines rather than handing them to ReadLine.
+    return std::strcmp(name, "Visible") == 0 ? handler->UserData : nullptr;
+}
+
+void panelsReadLine(ImGuiContext*, ImGuiSettingsHandler*, void* entry, const char* line)
+{
+    auto* toggles = static_cast<PanelToggles*>(entry);
+    char name[32] = {};
+    int shown = 0;
+    if (std::sscanf(line, "%31[^=]=%d", name, &shown) != 2) {
+        return;
+    }
+    // ⚑ An unrecognised name is IGNORED rather than treated as an error: a
+    // panel renamed or removed in a later stage must not stop the rest of the
+    // file loading, and an older ini must still open in a newer tool.
+    if (bool* flag = toggles->find(name)) {
+        *flag = shown != 0;
+    }
+}
+
+void panelsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buffer)
+{
+    const auto* toggles = static_cast<const PanelToggles*>(handler->UserData);
+    buffer->appendf("[%s][Visible]\n", handler->TypeName);
+    for (const PanelToggle& item : toggles->items) {
+        buffer->appendf("%s=%d\n", item.name, *item.shown ? 1 : 0);
+    }
+    buffer->append("\n");
+}
+
 // ⚑⚑ SESSION 14's NOTE 1: AN ASSET LIST DRAWN AS COLLAPSIBLE RUNS RATHER THAN
 // ONE FLAT COLUMN. The mesh list was 21 rows of which 13 were cooked output -
 // 62% of it build product that cannot be edited - and the ratio DEGRADES ON ITS
@@ -398,6 +469,32 @@ int main(int argc, char** argv)
     bool showView = true;
     bool resetLayout = false;
     bool focusMeshPending = false;
+
+    // ⚑ Registered here rather than inside the host, because WHICH panels exist
+    // is the Forge's business and the host is shared with the game.
+    PanelToggles panelToggles = {{{"Mesh", &showMesh},
+                                  {"Report", &showReport},
+                                  {"Texture", &showTexture},
+                                  {"View", &showView}}};
+    // ⚑ ImGui only rewrites the ini when something MARKS it dirty, and it has no
+    // idea these bools exist - so a toggle would be forgotten unless the change
+    // is reported. Compared per frame rather than at each of the several places
+    // a panel can close (menu item, window X, `Reset layout`), because a rule
+    // spread over three call sites is a rule that gets missed at one of them.
+    bool wasShown[4] = {showMesh, showReport, showTexture, showView};
+    {
+        ImGuiSettingsHandler handler;
+        handler.TypeName = "ForgePanels";
+        handler.TypeHash = ImHashStr("ForgePanels");
+        handler.ReadOpenFn = &panelsReadOpen;
+        handler.ReadLineFn = &panelsReadLine;
+        handler.WriteAllFn = &panelsWriteAll;
+        handler.UserData = &panelToggles;
+        // ⚑ Copied by value into the context, so the local dying here is fine -
+        // but `UserData` is NOT copied, and `panelToggles` must outlive the
+        // context. It does: both live for the whole of main().
+        ImGui::AddSettingsHandler(&handler);
+    }
 
     // ⚑ Two different radii, and using the wrong one misframes half the
     // shipped assets. The report's `radius` is measured from the ORIGIN,
@@ -1352,6 +1449,19 @@ int main(int argc, char** argv)
                 }
             }
             ImGui::End();
+        }
+
+        // ⚑ One place that notices a panel opened or closed, whichever of the
+        // three routes did it. Without this the toggle is real for the session
+        // and gone on the next launch, which is exactly what was reported.
+        {
+            const bool shown[4] = {showMesh, showReport, showTexture, showView};
+            for (int i = 0; i < 4; ++i) {
+                if (shown[i] != wasShown[i]) {
+                    wasShown[i] = shown[i];
+                    ImGui::MarkIniSettingsDirty();
+                }
+            }
         }
 
         // --- draw ---
