@@ -152,8 +152,24 @@ Mat4 nodeLocalTransform(const JsonValue& node)
     return core::translation(translationVec) * toMat4(rotation) * core::scale(scaleVec);
 }
 
+// The matrix a NORMAL is transformed by, which is not the one a position is
+// transformed by whenever the node scales unevenly.
+//
+// ⚑⚑ THIS WAS `transform` ITSELF UNTIL STAGE L, UNDER A COMMENT THAT SAID SO
+// ("assumes no non-uniform scale on normals"), AND THE ASSUMPTION WAS SAFE ONLY
+// BECAUSE NOTHING EVER EXERCISED IT: every mesh in `assets/meshes/` is a
+// `.forge`, and the generator that wrote the last `.gltf` never scaled a node at
+// all. A Blender scene breaks that on day one - `S` `X` `2` is a keystroke, and
+// the exporter writes it straight into the node - so the bridge is what makes
+// this reachable. Scaling a direction by S skews it off the surface; the
+// inverse transpose is what keeps it perpendicular.
+[[nodiscard]] Mat4 normalTransform(const Mat4& transform)
+{
+    return core::transpose(core::inverse(transform));
+}
+
 bool appendPrimitive(const JsonValue& document, const BufferSet& buffers, const JsonValue& primitive,
-                     const Mat4& transform, assets::MeshData& out)
+                     const Mat4& transform, const Mat4& normalMatrix, assets::MeshData& out)
 {
     if (const JsonValue* mode = primitive.find("mode");
         mode != nullptr && static_cast<int>(mode->asNumber()) != 4) {
@@ -209,9 +225,8 @@ bool appendPrimitive(const JsonValue& document, const BufferSet& buffers, const 
         }
 
         const Vec3 worldPosition = transformPoint(transform, {position[0], position[1], position[2]});
-        // Rotation part only; assumes no non-uniform scale on normals (v0).
         const Vec3 worldNormal =
-            normalize(transformDirection(transform, {normal[0], normal[1], normal[2]}));
+            normalize(transformDirection(normalMatrix, {normal[0], normal[1], normal[2]}));
 
         assets::MeshVertex vertex = {};
         vertex.position[0] = worldPosition.x;
@@ -271,8 +286,12 @@ bool traverseNode(const JsonValue& document, const BufferSet& buffers, std::size
         }
         const JsonValue* primitives = (*meshes)[index].find("primitives");
         if (primitives != nullptr) {
+            // Once per node rather than per vertex: the transform is constant
+            // over the primitive and the adjugate inverse is not cheap.
+            const Mat4 normalMatrix = normalTransform(transform);
             for (std::size_t p = 0; p < primitives->size(); ++p) {
-                if (!appendPrimitive(document, buffers, (*primitives)[p], transform, out)) {
+                if (!appendPrimitive(document, buffers, (*primitives)[p], transform, normalMatrix,
+                                     out)) {
                     return false;
                 }
             }

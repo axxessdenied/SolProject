@@ -10,6 +10,7 @@
 #include "sol/platform/file_io.hpp"
 #include "sol/test/test.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -133,6 +134,72 @@ SOL_TEST(gltfImportsTriangleWithNodeTransform)
     SOL_CHECK(mesh.vertices[0].position[0] == 10.0f);
     SOL_CHECK(mesh.vertices[1].position[0] == 11.0f);
     SOL_CHECK(mesh.vertices[2].position[1] == 1.0f);
+
+    std::remove(path.c_str());
+}
+
+// ⚑⚑ THE INPUT HAD TO BE BUILT, WHICH IS THE POINT: NOTHING COMMITTED CAN TRIP
+// THIS. Every mesh in `assets/meshes/` is a `.forge`, and the generator that
+// wrote the last `.gltf` never scaled a node - so the importer carried a normal
+// rule that is wrong under non-uniform scale for as long as it has existed, with
+// a comment saying so, and no asset in the repo could tell. Stage L's Blender
+// bridge is what makes it reachable: `S` `X` `2` on an object is one keystroke
+// and the exporter writes it into the node.
+//
+// ⚑ The case is chosen so the two rules cannot be confused: a 45 degree normal
+// under a 2x stretch in X gives (0.4472, 0.8944) transformed correctly and
+// (0.8944, 0.4472) transformed by the node matrix - THE SAME TWO NUMBERS,
+// EXACTLY SWAPPED. A tolerance cannot straddle them and a sign error cannot
+// fake one.
+SOL_TEST(gltfNormalsSurviveANodeThatScalesUnevenly)
+{
+    // A triangle in the plane whose normal is (1,1,0)/sqrt(2), under scale
+    // [2,1,1]. Stretching X flattens the surface towards the X axis, so the
+    // normal must rotate TOWARDS Y - the opposite of what scaling it does.
+    const char* gltf = R"({
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0, "scale": [2, 1, 1]}],
+        "meshes": [{"primitives": [
+            {"attributes": {"POSITION": 0, "NORMAL": 1}, "indices": 2}]}],
+        "buffers": [{"byteLength": 78, "uri":
+            "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAgL8AAAAAAAAAAAAAAAAAAIA/8wQ1P/MENT8AAAAA8wQ1P/MENT8AAAAA8wQ1P/MENT8AAAAAAAABAAIA"}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+            {"buffer": 0, "byteOffset": 36, "byteLength": 36},
+            {"buffer": 0, "byteOffset": 72, "byteLength": 6}
+        ],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+            {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+            {"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
+        ]
+    })";
+
+    const std::string path = std::string(platform::executableDirectory()) + "test_skewnormal.gltf";
+    SOL_CHECK(platform::writeFileBytes(path.c_str(), gltf, std::strlen(gltf)));
+
+    assets::MeshData mesh;
+    SOL_CHECK(cooker::importGltf(path.c_str(), mesh));
+    SOL_CHECK(mesh.vertices.size() == 3);
+
+    for (const assets::MeshVertex& vertex : mesh.vertices) {
+        SOL_CHECK(std::fabs(vertex.normal[0] - 0.4472136f) < 1e-4f);
+        SOL_CHECK(std::fabs(vertex.normal[1] - 0.8944272f) < 1e-4f);
+        SOL_CHECK(std::fabs(vertex.normal[2]) < 1e-6f);
+        // Still unit length, which scaling by the node matrix would also
+        // satisfy - so it is the ordering above that carries the assertion.
+        const float length = std::sqrt(vertex.normal[0] * vertex.normal[0] +
+                                       vertex.normal[1] * vertex.normal[1] +
+                                       vertex.normal[2] * vertex.normal[2]);
+        SOL_CHECK(std::fabs(length - 1.0f) < 1e-5f);
+    }
+
+    // The positions are stretched by the node matrix itself, unchanged by any
+    // of this: a normal rule that also moved a vertex would be a different bug.
+    SOL_CHECK(std::fabs(mesh.vertices[1].position[0] - 2.0f) < 1e-6f);
+    SOL_CHECK(std::fabs(mesh.vertices[1].position[1] + 1.0f) < 1e-6f);
 
     std::remove(path.c_str());
 }
