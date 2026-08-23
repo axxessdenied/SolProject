@@ -1,6 +1,7 @@
 #include "bc1.hpp"
 #include "gltf.hpp"
 #include "mesh.hpp"
+#include "outputs.hpp"
 #include "png.hpp"
 #include "sound.hpp"
 #include "texture.hpp"
@@ -202,6 +203,109 @@ SOL_TEST(gltfNormalsSurviveANodeThatScalesUnevenly)
     SOL_CHECK(std::fabs(mesh.vertices[1].position[1] + 1.0f) < 1e-6f);
 
     std::remove(path.c_str());
+}
+
+// --- the stray sweep -------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] bool contains(const std::vector<std::string>& names, const char* name)
+{
+    for (const std::string& candidate : names) {
+        if (candidate == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+// ⚑⚑ A LIVE MESH CLAIMS ITS WHOLE LOD SIBLING RANGE, NOT JUST THE LEVELS IT
+// HAPPENS TO HAVE. How many levels an asset generates is not known until it
+// cooks, and a cook is SKIPPED when the output is up to date - so a sweep that
+// only claimed the levels present would delete a live asset's LODs on the first
+// incremental build. Trimming a chain that legitimately got SHORTER stays
+// `writeMeshLevels`'s job, where the new length is actually known.
+SOL_TEST(aLiveMeshClaimsEveryLevelItCouldEverHave)
+{
+    const std::vector<std::string> expected =
+        cooker::expectedOutputNames({"out/station.smesh", "out/hull.stex"});
+
+    SOL_CHECK(contains(expected, "station.smesh"));
+    SOL_CHECK(contains(expected, "hull.stex"));
+    for (std::uint32_t level = 1; level <= cooker::kMaxMeshLevels; ++level) {
+        SOL_CHECK(contains(expected, ("station.lod" + std::to_string(level) + ".smesh").c_str()));
+    }
+    // A texture has no sibling range, so it must not invent one.
+    SOL_CHECK(!contains(expected, "hull.lod1.stex"));
+
+    // ⚑ Names, not paths: the output directory is flat, and the cooker builds
+    // its paths from an argv string whose separators do not survive a round
+    // trip through `listFiles`.
+    SOL_CHECK(!contains(expected, "out/station.smesh"));
+}
+
+// ⚑⚑ THE CASE THE SWEEP EXISTS FOR: a deleted source. The cook walks SOURCES,
+// so nothing ever visits an asset that is gone - its `.smesh` AND every level
+// beside it would otherwise sit in the cooked directory forever, listed by the
+// Forge as rows that open and never edit.
+SOL_TEST(anOutputWhoseSourceIsGoneIsAStrayAndSoAreItsLevels)
+{
+    const std::vector<std::string> expected = cooker::expectedOutputNames({"out/station.smesh"});
+    const std::vector<std::string> present = {
+        "out/station.smesh", "out/station.lod1.smesh", "out/station.lod2.smesh",
+        "out/deleted.smesh", "out/deleted.lod1.smesh",
+    };
+
+    const std::vector<std::string> strays = cooker::strayOutputNames(expected, present);
+    SOL_REQUIRE(strays.size() == 2);
+    SOL_CHECK(contains(strays, "out/deleted.smesh"));
+    SOL_CHECK(contains(strays, "out/deleted.lod1.smesh"));
+
+    // ⚑ And the negative half, which is the one that matters: the live asset's
+    // levels survive. A sweep that got this wrong would delete a real LOD chain
+    // on every build, and the damage would only show up at distance.
+    SOL_CHECK(!contains(strays, "out/station.smesh"));
+    SOL_CHECK(!contains(strays, "out/station.lod1.smesh"));
+    SOL_CHECK(!contains(strays, "out/station.lod2.smesh"));
+}
+
+// ⚑ The output directory is not ours alone. A sweep that deleted whatever it
+// did not recognise is one nobody could safely add a format beside.
+SOL_TEST(theSweepTouchesOnlyTheFourFormatsTheCookerWrites)
+{
+    const std::vector<std::string> expected = cooker::expectedOutputNames({"out/ship.smesh"});
+    const std::vector<std::string> present = {
+        "out/orphan.smesh",  "out/orphan.stex", "out/orphan.saud", "out/orphan.sfont",
+        "out/mesh.frag.spv", "out/notes.txt",   "out/imgui.ini",   "out/no_extension",
+    };
+
+    const std::vector<std::string> strays = cooker::strayOutputNames(expected, present);
+    SOL_REQUIRE(strays.size() == 4);
+    SOL_CHECK(contains(strays, "out/orphan.smesh"));
+    SOL_CHECK(contains(strays, "out/orphan.stex"));
+    SOL_CHECK(contains(strays, "out/orphan.saud"));
+    SOL_CHECK(contains(strays, "out/orphan.sfont"));
+    // The compiled shaders live beside the cooked assets and are not ours.
+    SOL_CHECK(!contains(strays, "out/mesh.frag.spv"));
+    SOL_CHECK(!contains(strays, "out/notes.txt"));
+    SOL_CHECK(!contains(strays, "out/imgui.ini"));
+    SOL_CHECK(!contains(strays, "out/no_extension"));
+}
+
+// ⚑⚑ THE TYPO CASE, AND IT IS THE ONE THAT WOULD HURT MOST. With no jobs every
+// cooked file is unclaimed, so the rule below is correct and catastrophic at
+// the same time - which is exactly why `main.cpp` refuses to ACT on it and logs
+// instead. Pinned here so the day someone "simplifies" that guard away, the
+// reason it exists is written down beside the behaviour it permits.
+SOL_TEST(withNoJobsEveryCookedFileLooksLikeAStrayWhichIsWhyTheCallerRefuses)
+{
+    const std::vector<std::string> expected = cooker::expectedOutputNames({});
+    SOL_CHECK(expected.empty());
+
+    const std::vector<std::string> present = {"out/station.smesh", "out/hull.stex"};
+    SOL_CHECK(cooker::strayOutputNames(expected, present).size() == 2);
 }
 
 // --- sound (Phase 8t) ---

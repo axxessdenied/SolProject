@@ -3,6 +3,7 @@ add_library(sol_cooker_lib STATIC
     src/font.cpp
     src/gltf.cpp
     src/mesh.cpp
+    src/outputs.cpp
     src/png.cpp
     src/sound.cpp
     src/texture.cpp

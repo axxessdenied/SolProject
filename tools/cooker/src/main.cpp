@@ -2,6 +2,7 @@
 #include "font.hpp"
 #include "gltf.hpp"
 #include "mesh.hpp"
+#include "outputs.hpp"
 #include "png.hpp"
 #include "sound.hpp"
 #include "texture.hpp"
@@ -42,6 +43,25 @@ std::string directoryOf(const std::string& path)
 {
     const std::size_t slash = path.find_last_of("/\\");
     return slash == std::string::npos ? std::string() : path.substr(0, slash);
+}
+
+// ⚑ The output directory arrives from argv and may be spelled `.\build\bin\cooked`,
+// while `platform::listFiles` hands back '/' separators - so "is this file
+// directly in the output directory" is a comparison between two spellings of
+// the same place. Trailing separators go too, because `out/` and `out` are one
+// directory and only one of them ever matches.
+std::string normalizeSeparators(const std::string& path)
+{
+    std::string out = path;
+    for (char& c : out) {
+        if (c == '\\') {
+            c = '/';
+        }
+    }
+    while (out.size() > 1 && out.back() == '/') {
+        out.pop_back();
+    }
+    return out;
 }
 
 bool isUpToDate(const std::string& source, const std::string& output)
@@ -344,6 +364,57 @@ int main(int argc, char** argv)
             ++cooked;
         } else {
             ++failed;
+        }
+    }
+
+    // ⚑⚑ THE SWEEP: OUTPUTS WHOSE SOURCE HAS BEEN DELETED. The loop above walks
+    // SOURCES, so it can never visit an asset that is gone - `foo.forge` deleted
+    // leaves `foo.smesh` and its levels on disk forever, and a rebuild will not
+    // clear them. Stage F's `writeMeshLevels` solves the neighbouring case (a
+    // chain that got shorter) but only for an asset that still cooks.
+    //
+    // ⚑ NOT RUN AFTER A FAILURE. A job that failed may not have written its
+    // output, and deleting the previous good one would turn a build error into
+    // a missing asset - the cook's own report is "nothing changed", so leave the
+    // directory as it is and let the author fix the source.
+    if (failed == 0) {
+        std::vector<std::string> jobOutputs;
+        jobOutputs.reserve(jobs.size());
+        for (const Job& job : jobs) {
+            jobOutputs.push_back(job.output);
+        }
+
+        // ⚑⚑ THE GUARD THAT MATTERS MOST, AND IT IS A TYPO GUARD RATHER THAN A
+        // LOGIC ONE: with no jobs, EVERY cooked file is unclaimed and the sweep
+        // would empty the directory. That is exactly what a mistyped source
+        // path looks like from in here - `listFiles` on a directory that does
+        // not exist returns nothing and reports nothing wrong.
+        if (jobOutputs.empty()) {
+            SOL_LOG_WARN("cooker: no sources under %s - skipping the stray sweep",
+                         sourceDirectory.c_str());
+        } else {
+            const std::vector<std::string> expected = cooker::expectedOutputNames(jobOutputs);
+            // Only files sitting directly in the output directory: `listFiles`
+            // recurses, and a nested tree is not something this cook produced.
+            std::vector<std::string> present;
+            for (const std::string& path : platform::listFiles(outputDirectory.c_str())) {
+                if (directoryOf(path) == normalizeSeparators(outputDirectory)) {
+                    present.push_back(path);
+                }
+            }
+
+            int swept = 0;
+            for (const std::string& stray : cooker::strayOutputNames(expected, present)) {
+                if (platform::deleteFile(stray.c_str())) {
+                    SOL_LOG_INFO("cooker: removed %s - its source is gone", stray.c_str());
+                    ++swept;
+                } else {
+                    SOL_LOG_WARN("cooker: cannot remove stray %s", stray.c_str());
+                }
+            }
+            if (swept != 0) {
+                SOL_LOG_INFO("cooker: swept %d orphaned output(s)", swept);
+            }
         }
     }
 
