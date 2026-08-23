@@ -268,8 +268,29 @@ bool appendPrimitive(const JsonValue& document, const BufferSet& buffers, const 
     return true;
 }
 
+// A node's own name, then the mesh it points at, then nothing. Blender writes
+// the object name onto the NODE and the object-data name onto the mesh, and it
+// is the first an author sees in the outliner - so that is the one worth
+// carrying into a part id.
+std::string nodeName(const JsonValue& document, const JsonValue& node)
+{
+    if (const JsonValue* name = node.find("name"); name != nullptr && !name->asString().empty()) {
+        return name->asString();
+    }
+    if (const JsonValue* meshIndex = node.find("mesh"); meshIndex != nullptr) {
+        const JsonValue* meshes = document.find("meshes");
+        const std::size_t index = static_cast<std::size_t>(meshIndex->asNumber());
+        if (meshes != nullptr && index < meshes->size()) {
+            if (const JsonValue* name = (*meshes)[index].find("name"); name != nullptr) {
+                return name->asString();
+            }
+        }
+    }
+    return {};
+}
+
 bool traverseNode(const JsonValue& document, const BufferSet& buffers, std::size_t nodeIndex,
-                  const Mat4& parentTransform, assets::MeshData& out)
+                  const Mat4& parentTransform, std::vector<GltfPart>& out)
 {
     const JsonValue* nodes = document.find("nodes");
     if (nodes == nullptr || nodeIndex >= nodes->size()) {
@@ -285,15 +306,24 @@ bool traverseNode(const JsonValue& document, const BufferSet& buffers, std::size
             return false;
         }
         const JsonValue* primitives = (*meshes)[index].find("primitives");
-        if (primitives != nullptr) {
+        if (primitives != nullptr && primitives->size() > 0) {
+            // ⚑ One part per NODE, not per primitive: a glTF mesh's primitives
+            // are its MATERIAL split, and this engine draws one texture per
+            // mesh, so they are one object to everything downstream.
+            GltfPart part;
+            part.name = nodeName(document, node);
+
             // Once per node rather than per vertex: the transform is constant
             // over the primitive and the adjugate inverse is not cheap.
             const Mat4 normalMatrix = normalTransform(transform);
             for (std::size_t p = 0; p < primitives->size(); ++p) {
                 if (!appendPrimitive(document, buffers, (*primitives)[p], transform, normalMatrix,
-                                     out)) {
+                                     part.mesh)) {
                     return false;
                 }
+            }
+            if (!part.mesh.vertices.empty() && !part.mesh.indices.empty()) {
+                out.push_back(std::move(part));
             }
         }
     }
@@ -396,7 +426,7 @@ bool decodeBase64(const char* text, std::size_t length, std::vector<std::uint8_t
     return true;
 }
 
-bool importGltf(const char* path, assets::MeshData& out)
+bool importGltfParts(const char* path, std::vector<GltfPart>& out)
 {
     std::vector<std::uint8_t> fileData;
     if (!platform::readFileBytes(path, fileData)) {
@@ -452,8 +482,7 @@ bool importGltf(const char* path, assets::MeshData& out)
         return false;
     }
 
-    out.vertices.clear();
-    out.indices.clear();
+    out.clear();
 
     // Default scene, or scene 0.
     std::size_t sceneIndex = 0;
@@ -477,9 +506,32 @@ bool importGltf(const char* path, assets::MeshData& out)
         }
     }
 
-    if (out.vertices.empty() || out.indices.empty()) {
+    if (out.empty()) {
         SOL_LOG_ERROR("gltf: no triangle data in %s", path);
         return false;
+    }
+    return true;
+}
+
+// ⚑ A MERGE OVER `importGltfParts` RATHER THAN A SECOND WALK. The cooker wants
+// one mesh and stage L's import wants them separate, and two traversals would be
+// two answers to what a glTF node is - the trap this programme has already paid
+// for twice (the glTF/`.forge` pair, and the shipped-mesh script).
+bool importGltf(const char* path, assets::MeshData& out)
+{
+    std::vector<GltfPart> parts;
+    if (!importGltfParts(path, parts)) {
+        return false;
+    }
+
+    out.vertices.clear();
+    out.indices.clear();
+    for (const GltfPart& part : parts) {
+        const std::uint32_t baseVertex = static_cast<std::uint32_t>(out.vertices.size());
+        out.vertices.insert(out.vertices.end(), part.mesh.vertices.begin(), part.mesh.vertices.end());
+        for (const std::uint32_t index : part.mesh.indices) {
+            out.indices.push_back(baseVertex + index);
+        }
     }
     return true;
 }

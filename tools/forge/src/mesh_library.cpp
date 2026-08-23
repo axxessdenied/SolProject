@@ -81,6 +81,89 @@ bool isPartSource(const AssetEntry& entry)
     return endsWith(entry.path, ".forge");
 }
 
+std::string forgePartIdFromName(const std::string& name)
+{
+    std::string id;
+    id.reserve(name.size());
+    for (const char c : name) {
+        const bool keep = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                          c == '_';
+        if (keep) {
+            id.push_back(c);
+        } else if (!id.empty() && id.back() != '_') {
+            id.push_back('_');
+        }
+    }
+    while (!id.empty() && id.back() == '_') {
+        id.pop_back();
+    }
+    return id.empty() ? std::string("part") : id;
+}
+
+bool importGltfIntoDoc(const std::string& gltfPath, assets::ForgeDoc& doc, ImportOutcome& outcome,
+                       std::string* error)
+{
+    outcome = {};
+
+    std::vector<cooker::GltfPart> imported;
+    if (!cooker::importGltfParts(gltfPath.c_str(), imported)) {
+        if (error != nullptr) {
+            *error = "cannot import " + fileName(gltfPath);
+        }
+        return false;
+    }
+
+    if (doc.name.empty()) {
+        doc.name = fileStem(gltfPath);
+    }
+
+    // ⚑ Ids are resolved against BOTH the document and what this import has
+    // already placed: a glTF may carry two nodes of the same name, and letting
+    // the second overwrite the first would silently drop a part - the failure
+    // mode a merge-by-id is supposed to prevent.
+    std::vector<std::string> claimed;
+    const auto isClaimed = [&claimed](const std::string& id) {
+        return std::find(claimed.begin(), claimed.end(), id) != claimed.end();
+    };
+
+    for (const cooker::GltfPart& part : imported) {
+        std::string id = forgePartIdFromName(part.name);
+        if (isClaimed(id)) {
+            std::string candidate;
+            for (int suffix = 2; suffix < 10000; ++suffix) {
+                candidate = id + "_" + std::to_string(suffix);
+                if (!isClaimed(candidate) && doc.indexOf(candidate) == std::string::npos) {
+                    break;
+                }
+            }
+            id = candidate;
+        }
+        claimed.push_back(id);
+
+        assets::ForgePart baked = assets::forgeBakePart(id, part.mesh);
+
+        const std::size_t existing = doc.indexOf(id);
+        if (existing == std::string::npos) {
+            doc.parts.push_back(std::move(baked));
+            outcome.added.push_back(id);
+        } else {
+            // Whole replacement, keeping only what is not Blender's to own: the
+            // tree position and the author's comment above it.
+            baked.parent = doc.parts[existing].parent;
+            baked.leading = doc.parts[existing].leading;
+            doc.parts[existing] = std::move(baked);
+            outcome.replaced.push_back(id);
+        }
+    }
+
+    for (const assets::ForgePart& part : doc.parts) {
+        if (!isClaimed(part.id)) {
+            outcome.kept.push_back(part.id);
+        }
+    }
+    return true;
+}
+
 bool isTextureSource(const AssetEntry& entry)
 {
     return endsWith(entry.path, ".tex");

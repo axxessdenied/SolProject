@@ -15,6 +15,10 @@
 #include <string>
 #include <vector>
 
+namespace sol::assets {
+struct ForgeDoc;
+}
+
 namespace forge {
 
 // One openable file on disk. `label` is what the list shows; the extension is
@@ -86,6 +90,56 @@ struct AssetEntry
 // through the cooker's importer, `.smesh` through the runtime loader. All three
 // give the same buffer the game would draw, which is the point.
 [[nodiscard]] bool loadMesh(const AssetEntry& entry, sol::assets::MeshData& out);
+
+// --- the Blender bridge (stage L) -------------------------------------------
+//
+// ⚑⚑ WHY A glTF BECOMES A `.forge` RATHER THAN STAYING A glTF. The Forge can
+// already OPEN a `.gltf` and the cooker can already COOK one, so a Blender
+// export is a shippable asset today with no code at all - but `isPartSource`
+// admits only `.forge`, so it arrives read-only, and every tool this programme
+// built for stages E through I is unavailable on it. Converting is what makes
+// Blender a front end to this tool rather than a second pipeline beside it.
+//
+// ⚑⚑ AND WHY THE glTF MUST NOT LIVE UNDER `assets/`. The cooker walks the
+// source tree with a RECURSIVE `listFiles` into ONE FLAT output directory and
+// keys outputs on the file STEM, so `ship.gltf` and `ship.forge` both cook to
+// `ship.smesh` - and the collision guard does not skip that pair, it aborts the
+// entire cook ("nothing cooked", exit 1). An inbox anywhere under `assets/`
+// would therefore break the whole build the moment its first import succeeded.
+// The drop directory is outside it, and the glTF is TRANSPORT: once converted
+// the `.forge` is the source, which is what `gltf.hpp` already argued when it
+// called export an interop action rather than a pipeline step.
+
+// A part id derived from a Blender object name: everything outside
+// [A-Za-z0-9_] becomes an underscore, runs collapse, and an empty result
+// becomes "part". `Hull.001` and `Wing L` are the cases that matter.
+[[nodiscard]] std::string forgePartIdFromName(const std::string& name);
+
+// What an import did to a part tree, so the tool can say it rather than leaving
+// the author to diff the file.
+struct ImportOutcome
+{
+    std::vector<std::string> added;
+    std::vector<std::string> replaced;
+    // Parts already in the document that this glTF did not name. ⚑ LEFT ALONE,
+    // deliberately: an author who added a part in the Forge should not lose it
+    // because they re-exported from Blender, and deleting someone's work is a
+    // worse failure than leaving a part they must remove by hand.
+    std::vector<std::string> kept;
+};
+
+// Brings every mesh-bearing node of `gltfPath` into `doc` as a literal `mesh`
+// part - the same representation the `bake` button produces, which is why every
+// stage E-I tool works on the result without knowing where it came from.
+//
+// ⚑ PARTS ARE MATCHED BY ID, and a match is replaced WHOLE: geometry and
+// placement both, keeping only the id, the `parent` and the comment trivia
+// above it. Blender is authoritative for the shape and the position of a part
+// that came from Blender; a placement kept across a re-import would be applied
+// on top of a transform already baked into the vertices, which is a silent
+// double transform rather than a preserved intent.
+[[nodiscard]] bool importGltfIntoDoc(const std::string& gltfPath, sol::assets::ForgeDoc& doc,
+                                     ImportOutcome& outcome, std::string* error = nullptr);
 
 // Everything the viewer prints about a mesh.
 //

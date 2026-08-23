@@ -9,6 +9,7 @@
 // in no ImGui and needs no GPU, and it carries a threshold the D checkpoint
 // flagged as "a real decision sitting in untested code".
 
+#include "gltf.hpp"
 #include "mesh_library.hpp"
 
 #include "sol/assets/forge_doc.hpp"
@@ -17,6 +18,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -391,4 +394,200 @@ SOL_TEST(aDragOffsetIsRoundedOnceFromTheWholeGestureAndNeverAccumulated)
     SOL_CHECK(forge::textureDragOffset(0.0f, 1.5f, 1) == 2);
     SOL_CHECK(forge::textureDragOffset(0.0f, -1.5f, 1) == -2);
     SOL_CHECK(forge::textureDragOffset(0.0f, 100.0f, 0) == 0);
+}
+
+// --- the Blender bridge (stage L) --------------------------------------------
+
+namespace {
+
+// Two nodes pointing at one triangle mesh, ten metres apart, named the way
+// Blender names things: a duplicate suffixed `.001`, and a name with a space.
+constexpr const char* kTwoNodeGltf = R"({
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0, 1]}],
+    "nodes": [
+        {"mesh": 0, "name": "Hull.001"},
+        {"mesh": 0, "name": "Wing L", "translation": [10, 0, 0]}
+    ],
+    "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+    "buffers": [{"byteLength": 42, "uri":
+        "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAABAAIA"}],
+    "bufferViews": [
+        {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+        {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+    ],
+    "accessors": [
+        {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+        {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+    ]
+})";
+
+[[nodiscard]] std::string writeFixture(const char* name, const char* text)
+{
+    const std::string path = std::string(platform::executableDirectory()) + name;
+    if (!platform::writeFileBytes(path.c_str(), text, std::strlen(text))) {
+        return {};
+    }
+    return path;
+}
+
+[[nodiscard]] bool hasPart(const assets::ForgeDoc& doc, const char* id)
+{
+    return doc.indexOf(id) != std::string::npos;
+}
+
+} // namespace
+
+// ⚑ A Blender object name is not a part id, and the two cases that matter both
+// come from ordinary use: duplicating an object appends `.001`, and nothing
+// stops a name carrying a space.
+SOL_TEST(aBlenderObjectNameBecomesAUsablePartId)
+{
+    SOL_CHECK(forge::forgePartIdFromName("Hull") == "Hull");
+    SOL_CHECK(forge::forgePartIdFromName("Hull.001") == "Hull_001");
+    SOL_CHECK(forge::forgePartIdFromName("Wing L") == "Wing_L");
+    // Runs collapse rather than stacking underscores, and edges are trimmed, so
+    // a decorated name stays readable in the Parts panel.
+    SOL_CHECK(forge::forgePartIdFromName("front -- nose") == "front_nose");
+    SOL_CHECK(forge::forgePartIdFromName(".hidden.") == "hidden");
+    // A name made entirely of separators still has to produce something legal:
+    // an empty id fails parseForge, so the import would write a file it could
+    // not read back.
+    SOL_CHECK(forge::forgePartIdFromName("...") == "part");
+    SOL_CHECK(forge::forgePartIdFromName("") == "part");
+}
+
+// ⚑⚑ THE STAGE'S EXIT CRITERION AS ONE ASSERTION: the mesh the GAME gets out of
+// the imported `.forge` is the mesh the COOKER would have got out of the glTF
+// directly. It goes the whole way round - import, bake to `mesh` parts, write
+// TOML, parse it back, build - because every one of those steps is a place the
+// geometry could quietly change, and the `.forge` is what ships from here on.
+SOL_TEST(aGltfImportedAsPartsBuildsBackToTheMeshTheCookerWouldHaveCooked)
+{
+    const std::string path = writeFixture("test_bridge_two.gltf", kTwoNodeGltf);
+    SOL_CHECK(!path.empty());
+
+    assets::MeshData direct;
+    SOL_CHECK(cooker::importGltf(path.c_str(), direct));
+
+    assets::ForgeDoc doc;
+    forge::ImportOutcome outcome;
+    SOL_CHECK(forge::importGltfIntoDoc(path, doc, outcome, nullptr));
+    SOL_CHECK(outcome.added.size() == 2);
+    SOL_CHECK(outcome.replaced.empty());
+
+    // Through the text, which is the part that actually ships.
+    const std::string text = assets::writeForge(doc);
+    assets::ForgeDoc reparsed;
+    std::string error;
+    SOL_CHECK(assets::parseForge(text.c_str(), text.size(), "bridge", reparsed, &error));
+    assets::MeshData rebuilt;
+    SOL_CHECK(assets::buildForge(reparsed, rebuilt, &error));
+
+    SOL_CHECK(rebuilt.vertices.size() == direct.vertices.size());
+    SOL_CHECK(rebuilt.indices.size() == direct.indices.size());
+    for (std::size_t i = 0; i < direct.vertices.size(); ++i) {
+        for (int axis = 0; axis < 3; ++axis) {
+            SOL_CHECK(rebuilt.vertices[i].position[axis] == direct.vertices[i].position[axis]);
+            SOL_CHECK(rebuilt.vertices[i].normal[axis] == direct.vertices[i].normal[axis]);
+        }
+    }
+    for (std::size_t i = 0; i < direct.indices.size(); ++i) {
+        SOL_CHECK(rebuilt.indices[i] == direct.indices[i]);
+    }
+
+    std::remove(path.c_str());
+}
+
+// ⚑ ONE PART PER NODE, WITH THE NODE TRANSFORM BAKED IN. A merged import would
+// pass the round-trip test above just as happily while handing the author one
+// opaque part - so the count and the naming carry their own assertion.
+SOL_TEST(eachBlenderObjectArrivesAsItsOwnNamedPart)
+{
+    const std::string path = writeFixture("test_bridge_named.gltf", kTwoNodeGltf);
+    SOL_CHECK(!path.empty());
+
+    assets::ForgeDoc doc;
+    forge::ImportOutcome outcome;
+    SOL_CHECK(forge::importGltfIntoDoc(path, doc, outcome, nullptr));
+
+    SOL_CHECK(doc.parts.size() == 2);
+    SOL_CHECK(hasPart(doc, "Hull_001"));
+    SOL_CHECK(hasPart(doc, "Wing_L"));
+    // The document names itself after the file, so a fresh import writes a
+    // `.forge` that is complete rather than one missing its `name` key.
+    SOL_CHECK(doc.name == "test_bridge_named");
+
+    // Both are literal geometry, which is what makes every stage E-I tool work
+    // on them: it is exactly what `bake` produces.
+    for (const assets::ForgePart& part : doc.parts) {
+        SOL_CHECK(part.primitive == assets::ForgePrimitive::Mesh);
+        // ⚑ And no placement, because the node transform is already in the
+        // vertices. A part carrying both would draw its translation twice.
+        SOL_CHECK(part.position.x == 0.0 && part.position.y == 0.0 && part.position.z == 0.0);
+        SOL_CHECK(part.scale.x == 1.0 && part.scale.y == 1.0 && part.scale.z == 1.0);
+    }
+
+    // The second node's +10 X translation reached the geometry rather than the
+    // placement, so the two parts do not sit on top of each other.
+    assets::MeshData built;
+    SOL_CHECK(assets::buildForge(doc, built, nullptr));
+    float maxX = 0.0f;
+    for (const assets::MeshVertex& vertex : built.vertices) {
+        maxX = std::fmax(maxX, vertex.position[0]);
+    }
+    SOL_CHECK(std::fabs(maxX - 11.0f) < 1e-5f);
+
+    std::remove(path.c_str());
+}
+
+// ⚑⚑ THE RULE A SECOND EXPORT FROM BLENDER DEPENDS ON, AND THE ONE THAT MAKES
+// THE BRIDGE USABLE MORE THAN ONCE. Re-importing replaces the parts the glTF
+// names and LEAVES EVERYTHING ELSE - so an author can bring a hull over from
+// Blender, add a `beam` in the Forge, re-export the hull, and still have their
+// beam. Overwriting the file wholesale is the obvious implementation and it
+// silently deletes their work.
+SOL_TEST(aSecondImportReplacesItsOwnPartsAndKeepsTheAuthorsOwn)
+{
+    const std::string path = writeFixture("test_bridge_again.gltf", kTwoNodeGltf);
+    SOL_CHECK(!path.empty());
+
+    assets::ForgeDoc doc;
+    forge::ImportOutcome first;
+    SOL_CHECK(forge::importGltfIntoDoc(path, doc, first, nullptr));
+
+    // What an author does next: add a part of their own, and comment one of
+    // the imported ones.
+    assets::ForgePart strut;
+    strut.id = "strut";
+    strut.primitive = assets::ForgePrimitive::Box;
+    doc.parts.push_back(strut);
+    const std::size_t hull = doc.indexOf("Hull_001");
+    SOL_CHECK(hull != std::string::npos);
+    doc.parts[hull].leading = "# the bit that came from Blender\n";
+    // And nudges it, which the re-import must NOT preserve - the geometry
+    // coming back already carries Blender's own placement.
+    doc.parts[hull].position = {5.0, 0.0, 0.0};
+
+    forge::ImportOutcome second;
+    SOL_CHECK(forge::importGltfIntoDoc(path, doc, second, nullptr));
+
+    SOL_CHECK(second.replaced.size() == 2);
+    SOL_CHECK(second.added.empty());
+    SOL_CHECK(second.kept.size() == 1 && second.kept[0] == "strut");
+
+    // Three parts, not five: matched BY ID rather than appended.
+    SOL_CHECK(doc.parts.size() == 3);
+    SOL_CHECK(hasPart(doc, "strut"));
+
+    const std::size_t rehulled = doc.indexOf("Hull_001");
+    SOL_CHECK(rehulled != std::string::npos);
+    // The comment above it survives - the writer is faithful and an import that
+    // ate an author's note would be the one thing this format exists to prevent.
+    SOL_CHECK(doc.parts[rehulled].leading == "# the bit that came from Blender\n");
+    // The nudge does not, which is the deliberate half of the rule.
+    SOL_CHECK(doc.parts[rehulled].position.x == 0.0);
+
+    std::remove(path.c_str());
 }
