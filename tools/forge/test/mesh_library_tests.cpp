@@ -12,6 +12,7 @@
 #include "gltf.hpp"
 #include "list_layout.hpp"
 #include "mesh_library.hpp"
+#include "part_pick.hpp"
 
 #include "sol/assets/forge_doc.hpp"
 #include "sol/platform/file_io.hpp"
@@ -50,6 +51,32 @@ namespace {
     }
     return assets::buildForge(doc, out, nullptr);
 }
+
+// Stage N. The document AND its topology, because a part box is a fact about
+// the triangles a part emitted and the face list is where that is recorded.
+[[nodiscard]] bool loadCommittedTopology(const char* name, assets::ForgeDoc& doc,
+                                         std::vector<assets::ForgePoint>& points,
+                                         std::vector<assets::ForgeFace>& faces)
+{
+    const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(path.c_str(), bytes)) {
+        return false;
+    }
+    if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(),
+                            doc, nullptr)) {
+        return false;
+    }
+    std::vector<assets::ForgeEdge> edges;
+    return assets::forgeTopology(doc, points, edges, faces, nullptr);
+}
+
+// ⚑ Every hand-authored source in the repo, so the assertions below run against
+// the real spread rather than against the two that are convenient: 28 parts down
+// to 1, a flat disc, a baked 99 KB blob and a torus with no parametric points.
+constexpr const char* kCommittedParts[] = {"freighter_cockpit", "cockpit",  "ship",
+                                           "station",           "gate",     "asteroid",
+                                           "cube",              "gate_membrane"};
 
 } // namespace
 
@@ -698,4 +725,175 @@ SOL_TEST(thePartFilterMatchesTheWayAnAuthorTypes)
     // have made undefined behaviour.
     SOL_CHECK(forge::listMatchesFilter("caf\xC3\xA9_strut", "strut"));
     SOL_CHECK(!forge::listMatchesFilter("caf\xC3\xA9_strut", "cafe"));
+}
+
+// ⚑⚑ STAGE N's CENTRAL ASSERTION, AND IT IS TWO PROPERTIES RATHER THAN A
+// RECOMPUTATION. Writing min/max a second time here would be a second
+// implementation of the thing under test, agreeing with it by construction and
+// catching nothing. Instead: CONTAINMENT - every corner of every triangle a part
+// emitted lies inside that part's box - rules out a box that is too SMALL, and
+// TIGHTNESS - each of the six planes is touched by at least one corner - rules
+// out one that is too LARGE. Together they pin the box exactly.
+//
+// ⚑ Compared with `==` rather than a tolerance on purpose: the bounds are copied
+// verbatim out of `ForgePoint::position`, so a touching plane is bitwise equal to
+// the corner that set it. A tolerance would hide a systematic drift, which is
+// the only interesting way this can be wrong.
+SOL_TEST(everyPartsBoxHoldsItsOwnTrianglesAndNothingSpare)
+{
+    for (const char* name : kCommittedParts) {
+        assets::ForgeDoc doc;
+        std::vector<assets::ForgePoint> points;
+        std::vector<assets::ForgeFace> faces;
+        SOL_REQUIRE(loadCommittedTopology(name, doc, points, faces));
+
+        std::vector<forge::PartBounds> bounds;
+        forge::forgePartBounds(points, faces, doc.parts.size(), bounds);
+        SOL_REQUIRE(bounds.size() == doc.parts.size());
+
+        for (const assets::ForgeFace& face : faces) {
+            if (face.part >= doc.parts.size()) {
+                continue;
+            }
+            const forge::PartBounds& box = bounds[face.part];
+            SOL_CHECK(box.any);
+            const std::uint32_t corners[3] = {face.a, face.b, face.c};
+            for (const std::uint32_t corner : corners) {
+                const assets::BuildPoint& p = points[corner].position;
+                SOL_CHECK(p.x >= box.min.x && p.x <= box.max.x);
+                SOL_CHECK(p.y >= box.min.y && p.y <= box.max.y);
+                SOL_CHECK(p.z >= box.min.z && p.z <= box.max.z);
+            }
+        }
+
+        std::vector<int> touched(doc.parts.size() * 6, 0);
+        for (const assets::ForgeFace& face : faces) {
+            if (face.part >= doc.parts.size()) {
+                continue;
+            }
+            const forge::PartBounds& box = bounds[face.part];
+            const std::uint32_t corners[3] = {face.a, face.b, face.c};
+            for (const std::uint32_t corner : corners) {
+                const assets::BuildPoint& p = points[corner].position;
+                int* hit = touched.data() + face.part * 6;
+                hit[0] += p.x == box.min.x ? 1 : 0;
+                hit[1] += p.y == box.min.y ? 1 : 0;
+                hit[2] += p.z == box.min.z ? 1 : 0;
+                hit[3] += p.x == box.max.x ? 1 : 0;
+                hit[4] += p.y == box.max.y ? 1 : 0;
+                hit[5] += p.z == box.max.z ? 1 : 0;
+            }
+        }
+        for (std::size_t part = 0; part < doc.parts.size(); ++part) {
+            if (!bounds[part].any) {
+                continue;
+            }
+            for (std::size_t plane = 0; plane < 6; ++plane) {
+                SOL_CHECK(touched[(part * 6) + plane] > 0);
+            }
+        }
+    }
+}
+
+// ⚑⚑ THE BOX VECTOR IS INDEXED BY THE PANEL's OWN PART INDEX, AND THAT IS WHAT A
+// "SKIP THE EMPTY ONES" OPTIMISATION WOULD SILENTLY BREAK. The viewport hands
+// `PartEditor::selectPart` a raw index into `doc.parts`; if this vector were
+// packed to only the parts that emitted geometry, every part after the first
+// empty one would light up the wrong box - and on the committed assets, where
+// nothing is empty, the defect would be invisible.
+SOL_TEST(thereIsOneBoxPerDocumentPartWhetherOrNotItHasGeometry)
+{
+    for (const char* name : kCommittedParts) {
+        assets::ForgeDoc doc;
+        std::vector<assets::ForgePoint> points;
+        std::vector<assets::ForgeFace> faces;
+        SOL_REQUIRE(loadCommittedTopology(name, doc, points, faces));
+
+        std::vector<forge::PartBounds> bounds;
+        forge::forgePartBounds(points, faces, doc.parts.size(), bounds);
+        SOL_REQUIRE(bounds.size() == doc.parts.size());
+
+        for (std::size_t part = 0; part < doc.parts.size(); ++part) {
+            bool emitted = false;
+            for (const assets::ForgeFace& face : faces) {
+                emitted = emitted || face.part == part;
+            }
+            SOL_CHECK(bounds[part].any == emitted);
+        }
+    }
+
+    // The headline case, pinned: 28 parts is the largest thing in the repo, and
+    // stage L's one-part-per-Blender-object rule is what takes it past forty.
+    assets::ForgeDoc cockpit;
+    std::vector<assets::ForgePoint> points;
+    std::vector<assets::ForgeFace> faces;
+    SOL_REQUIRE(loadCommittedTopology("freighter_cockpit", cockpit, points, faces));
+    SOL_CHECK(cockpit.parts.size() == 28);
+    std::vector<forge::PartBounds> bounds;
+    forge::forgePartBounds(points, faces, cockpit.parts.size(), bounds);
+    for (const forge::PartBounds& box : bounds) {
+        SOL_CHECK(box.any); // every one of the 28 is clickable
+    }
+}
+
+// ⚑⚑ THE NO-OWNER SENTINEL IS ONE PAST THE END AND IT IS NOT HYPOTHETICAL:
+// `collectPoints` does `ownerOf.assign(mesh.vertices.size(), doc.parts.size())`
+// and only overwrites it inside a part's own vertex range, so a vertex produced
+// by a `[build]` post-pass belongs to no part. Indexing on it is an
+// out-of-range read a release build does not catch.
+//
+// ⚑ Built by hand rather than found in the repo, because no committed asset
+// produces one - E4d's rule again: a mutation no asset can see still needs a
+// can-fail test.
+SOL_TEST(aTriangleThatBelongsToNoPartSelectsNothing)
+{
+    std::vector<assets::ForgePoint> points(3);
+    points[0].position = {0.0, 0.0, 0.0};
+    points[1].position = {1.0, 0.0, 0.0};
+    points[2].position = {0.0, 1.0, 0.0};
+
+    constexpr std::size_t kPartCount = 2;
+    std::vector<assets::ForgeFace> faces;
+    faces.push_back({0, 1, 2, kPartCount, 0}); // the sentinel
+
+    SOL_CHECK(forge::forgePartOfFace(faces, 0, kPartCount) == forge::kNoPart);
+    // And past the end of the face list, which is what a missed ray produces one
+    // call site up.
+    SOL_CHECK(forge::forgePartOfFace(faces, 1, kPartCount) == forge::kNoPart);
+
+    std::vector<forge::PartBounds> bounds;
+    forge::forgePartBounds(points, faces, kPartCount, bounds);
+    SOL_REQUIRE(bounds.size() == kPartCount);
+    SOL_CHECK(!bounds[0].any); // and emphatically NOT charged to part zero
+    SOL_CHECK(!bounds[1].any);
+
+    // The same triangle owned by a real part does land, so the guard is
+    // rejecting the sentinel rather than rejecting everything.
+    faces[0].part = 1;
+    SOL_CHECK(forge::forgePartOfFace(faces, 0, kPartCount) == 1);
+    forge::forgePartBounds(points, faces, kPartCount, bounds);
+    SOL_CHECK(!bounds[0].any);
+    SOL_CHECK(bounds[1].any);
+    SOL_CHECK(bounds[1].min.x == 0.0 && bounds[1].max.x == 1.0);
+    SOL_CHECK(bounds[1].max.y == 1.0);
+    SOL_CHECK(bounds[1].min.z == 0.0 && bounds[1].max.z == 0.0); // flat is correct
+}
+
+// ⚑ The guard must not reject a LEGITIMATE part, which is the failure a `<=` or
+// a `>` in `forgePartOfFace` produces and which the sentinel test above cannot
+// see on its own: every real triangle in the repo has to resolve.
+SOL_TEST(everyCommittedTriangleResolvesToThePartThatEmittedIt)
+{
+    for (const char* name : kCommittedParts) {
+        assets::ForgeDoc doc;
+        std::vector<assets::ForgePoint> points;
+        std::vector<assets::ForgeFace> faces;
+        SOL_REQUIRE(loadCommittedTopology(name, doc, points, faces));
+        SOL_REQUIRE(!faces.empty());
+        for (std::size_t i = 0; i < faces.size(); ++i) {
+            const std::size_t part = forge::forgePartOfFace(faces, i, doc.parts.size());
+            SOL_CHECK(part != forge::kNoPart);
+            SOL_CHECK(part == faces[i].part);
+        }
+    }
 }

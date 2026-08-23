@@ -103,6 +103,22 @@ public:
                                     std::span<const std::uint32_t> group, double& offset,
                                     std::string& error);
 
+    // Stage N. Selects a part from OUTSIDE the panel - the viewport pick - and
+    // arms the scroll that a click on the row would have got for free: at 20
+    // visible rows of 40, a selection below the fold is a selection you cannot
+    // see (stage I's precedent, where the texture op list scrolls to its row).
+    //
+    // ⚑ Selection alone never dirties the document, so this does not touch
+    // `m_dirty`. ⚑ The other half of "the author can see what they picked" -
+    // a filter that would hide the row - is handled in `drawPartList`, which
+    // always draws the selected row; see the comment there for why it cannot be
+    // done by clearing the filter from here.
+    void selectPart(std::size_t part);
+    // `kNoPart` when nothing is selected. `std::size_t` rather than the `int`
+    // this holds internally, because the viewport side speaks in part indices
+    // and one signed/unsigned seam is enough.
+    [[nodiscard]] std::size_t selectedPart() const;
+
     [[nodiscard]] bool isOpen() const { return m_open; }
     [[nodiscard]] const sol::assets::ForgeDoc& doc() const { return m_doc; }
     [[nodiscard]] bool dirty() const { return m_dirty; }
@@ -141,6 +157,10 @@ private:
     // sanitised Blender object name at its longest.
     char m_partFilter[64] = {};
     int m_selected = -1;
+    // Stage N. Armed by `selectPart` and consumed by the next `drawPartList`,
+    // because the row that must be scrolled to does not exist until the list is
+    // submitted - and the pick happens in the viewport, before any of it runs.
+    bool m_scrollToSelected = false;
     bool m_open = false;
     bool m_dirty = false;
 };

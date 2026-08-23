@@ -50,6 +50,19 @@ namespace {
     return {view.m[2], view.m[6], view.m[10]};
 }
 
+// The camera's world-space eye. The view matrix maps world to camera as
+// `R * (p - eye)` with the rotation stored by rows, so the translation column
+// holds `-R * eye` and the eye comes back by applying R's transpose.
+[[nodiscard]] core::Vec3 cameraEye(const core::Mat4& view)
+{
+    const core::Vec3 right = cameraRight(view);
+    const core::Vec3 up = cameraUp(view);
+    const core::Vec3 backward = cameraBackward(view);
+    return {-((view.m[12] * right.x) + (view.m[13] * up.x) + (view.m[14] * backward.x)),
+            -((view.m[12] * right.y) + (view.m[13] * up.y) + (view.m[14] * backward.y)),
+            -((view.m[12] * right.z) + (view.m[13] * up.z) + (view.m[14] * backward.z))};
+}
+
 [[nodiscard]] core::Vec3 asVec3(const assets::BuildPoint& p)
 {
     return {static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z)};
@@ -63,6 +76,75 @@ void addCross(renderer::DebugDrawRenderer& lines, core::Vec3 at, float half, cor
     lines.line({at.x - half, at.y, at.z}, {at.x + half, at.y, at.z}, color);
     lines.line({at.x, at.y - half, at.z}, {at.x, at.y + half, at.z}, color);
     lines.line({at.x, at.y, at.z - half}, {at.x, at.y, at.z + half}, color);
+}
+
+// A part marker (stage N): the twelve edges of its axis-aligned box, drawn IN
+// FRONT of the mesh.
+//
+// ⚑ TWELVE LINES WHATEVER THE PART, WHICH IS THE ENTIRE REASON IT IS A BOX. See
+// `part_pick.hpp` - `DebugDrawRenderer` drops lines SILENTLY once its 8192
+// vertices are spent, and a per-part wireframe of the baked asteroid would be
+// the whole mesh. A part that is flat in one axis draws a rectangle, which is
+// correct rather than degenerate: `gate_membrane.forge` IS a flat disc.
+//
+// ⚑⚑ AND THE PART THAT WAS MEASURED RATHER THAN REASONED ABOUT: THE BOX HAS TO
+// BE PULLED TOWARD THE EYE OR IT IS INVISIBLE FOR EXACTLY THE PARTS THIS STAGE
+// EXISTS TO FIND. `DebugDrawRenderer` tests depth against the mesh, and an
+// INTERIOR part's box is inside the hull by definition - the first live run
+// selected `console_starboard` on `freighter_cockpit`, the Parts list scrolled
+// to it and highlighted it, and the viewport showed nothing at all. Most parts
+// of a cockpit are interior parts, and the reverse gesture (click a ROW, see
+// where it is) then shows nothing whatsoever.
+//
+// ⚑⚑ THE PULL IS A UNIFORM SCALE ABOUT THE EYE, WHICH LEAVES THE OUTLINE
+// PIXEL-IDENTICAL. Every corner moves along its own view ray, and a projection
+// maps that whole ray to one screen point - so `p' = eye + (p - eye) * k`
+// changes the depth and nothing else. That is what makes this an overlay rather
+// than a distortion, and it is why a per-corner bias (which is what the EDGE
+// markers use) would be wrong here: a bias moves corners at different depths by
+// the same amount and skews the box.
+//
+// ⚑ `k` is chosen so the NEAREST corner lands at `kFrontDepth`, comfortably
+// ahead of the 0.05 m near plane, and is never pushed further AWAY than it
+// already is. A box that straddles the camera is left alone: it has a corner at
+// or behind the eye, there is no scale that fixes that, and the projection
+// mirrors such a point rather than clipping it.
+void addBox(renderer::DebugDrawRenderer& lines, const PartBounds& bounds,
+            const PointTool::Viewport& viewport, core::Vec4 color)
+{
+    constexpr float kFrontDepth = 0.12f; // metres, against a 0.05 m near plane
+
+    const core::Vec3 lo = asVec3(bounds.min);
+    const core::Vec3 hi = asVec3(bounds.max);
+    core::Vec3 corner[8] = {{lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z},
+                            {lo.x, hi.y, lo.z}, {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z},
+                            {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z}};
+
+    float nearest = 0.0f;
+    bool behind = false;
+    for (const core::Vec3& p : corner) {
+        const float depth = -core::transformPoint(viewport.view, p).z;
+        if (depth <= 0.0f) {
+            behind = true;
+            break;
+        }
+        nearest = (nearest == 0.0f || depth < nearest) ? depth : nearest;
+    }
+    if (!behind && nearest > kFrontDepth) {
+        const core::Vec3 eye = cameraEye(viewport.view);
+        const float k = kFrontDepth / nearest;
+        for (core::Vec3& p : corner) {
+            p = {eye.x + (p.x - eye.x) * k, eye.y + (p.y - eye.y) * k,
+                 eye.z + (p.z - eye.z) * k};
+        }
+    }
+
+    // Two rings and the four uprights between them.
+    for (int i = 0; i < 4; ++i) {
+        lines.line(corner[i], corner[(i + 1) % 4], color);
+        lines.line(corner[i + 4], corner[((i + 1) % 4) + 4], color);
+        lines.line(corner[i], corner[i + 4], color);
+    }
 }
 
 // Distance in pixels from `cursor` to the segment [a, b].
@@ -104,19 +186,6 @@ constexpr float kEdgeGrabPixels = 8.0f;
 // triangle has an interior, so the cursor is either inside it or it is not.
 // Points and edges need a radius because they have no area to be inside of.
 
-// The camera's world-space eye. The view matrix maps world to camera as
-// `R * (p - eye)` with the rotation stored by rows, so the translation column
-// holds `-R * eye` and the eye comes back by applying R's transpose.
-[[nodiscard]] core::Vec3 cameraEye(const core::Mat4& view)
-{
-    const core::Vec3 right = cameraRight(view);
-    const core::Vec3 up = cameraUp(view);
-    const core::Vec3 backward = cameraBackward(view);
-    return {-((view.m[12] * right.x) + (view.m[13] * up.x) + (view.m[14] * backward.x)),
-            -((view.m[12] * right.y) + (view.m[13] * up.y) + (view.m[14] * backward.y)),
-            -((view.m[12] * right.z) + (view.m[13] * up.z) + (view.m[14] * backward.z))};
-}
-
 } // namespace
 
 void PointTool::refresh(const ForgeDoc& doc)
@@ -136,9 +205,15 @@ void PointTool::refresh(const ForgeDoc& doc)
     // that agree only by accident is a bug this repo has already shipped.
     if (!assets::forgeTopology(doc, m_points, m_edges, m_faces, &error)) {
         m_unavailable = error;
+        m_partBounds.clear();
         clearSelection();
         return;
     }
+    // Stage N. Sized to the DOCUMENT's part count rather than to the parts that
+    // emitted a face, so the index a face carries is the index the panel uses -
+    // a part with no geometry gets an entry with `any` false rather than
+    // shifting every part after it.
+    forgePartBounds(m_points, m_faces, doc.parts.size(), m_partBounds);
 
     // ⚑ The selection survives a rebuild whose point COUNT is unchanged, which
     // is every rebuild a drag causes. Dropping it would mean the grab was lost
@@ -170,6 +245,9 @@ void PointTool::refresh(const ForgeDoc& doc)
     if (m_hoverFace >= m_faces.size()) {
         m_hoverFace = kNone;
         m_hoverGroup.clear();
+    }
+    if (m_hoverPart != kNoPart && m_hoverPart >= m_partBounds.size()) {
+        m_hoverPart = kNoPart;
     }
 
     // ⚑ The extrude's re-selection, consumed here because this is the first
@@ -224,6 +302,7 @@ void PointTool::clearSelection()
     m_selectedEdge = kNone;
     m_hoverFace = kNone;
     m_selectedFace = kNone;
+    m_hoverPart = kNoPart;
     m_group.clear();
     m_hoverGroup.clear();
     m_dragging = false;
@@ -236,6 +315,7 @@ void PointTool::close()
     m_edges.clear();
     m_faces.clear();
     m_dragSet.clear();
+    m_partBounds.clear();
     m_unavailable.clear();
     clearSelection();
     m_error.clear();
@@ -324,9 +404,8 @@ std::size_t PointTool::pickEdgeAt(const Viewport& viewport) const
     return best;
 }
 
-std::size_t PointTool::pickFaceAt(const Viewport& viewport, std::vector<std::uint32_t>& group) const
+std::size_t PointTool::pickRawFaceAt(const Viewport& viewport) const
 {
-    group.clear();
     if (m_faces.empty()) {
         return kNone;
     }
@@ -352,6 +431,16 @@ std::size_t PointTool::pickFaceAt(const Viewport& viewport, std::vector<std::uin
                                {direction.x, direction.y, direction.z}, face, distance)) {
         return kNone;
     }
+    return face;
+}
+
+std::size_t PointTool::pickFaceAt(const Viewport& viewport, std::vector<std::uint32_t>& group) const
+{
+    group.clear();
+    const std::size_t face = pickRawFaceAt(viewport);
+    if (face == kNone) {
+        return kNone;
+    }
     // ⚑ WIDENED HERE, at pick time, and it has to be here. A box face is two
     // triangles and `forgeMovePoints` can express a whole face or nothing, so a
     // tool that carried the picked TRIANGLE forward would be refused on every
@@ -361,9 +450,30 @@ std::size_t PointTool::pickFaceAt(const Viewport& viewport, std::vector<std::uin
     return face;
 }
 
+std::size_t PointTool::pickPartAt(const Viewport& viewport) const
+{
+    const std::size_t face = pickRawFaceAt(viewport);
+    if (face == kNone) {
+        return kNoPart;
+    }
+    // ⚑ NOT widened, and that is the whole difference from a face pick. E4d's
+    // coplanar flood exists because `forgeMovePoints` must be handed a whole
+    // face; a part pick already has its answer in the triangle the ray entered,
+    // and `forgeFaceGroup` can cross a part boundary anyway (4 of `ship.forge`'s
+    // 1,273 groups do), so widening first would make the answer worse as well as
+    // slower.
+    return forgePartOfFace(m_faces, face, m_partBounds.size());
+}
+
 void PointTool::gatherSelection()
 {
     m_dragSet.clear();
+    // Stage N moves nothing, so it has no drag set. Said here rather than left
+    // to fall through the face branch, which would gather the last hovered
+    // group and hand a mode that cannot drag something to drag.
+    if (m_mode == Mode::Part) {
+        return;
+    }
     if (m_mode == Mode::Point) {
         if (m_selected != kNone && m_selected < m_points.size()) {
             m_dragSet.push_back(m_points[m_selected]);
@@ -427,9 +537,28 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
             m_hover = pickAt(viewport);
         } else if (m_mode == Mode::Edge) {
             m_hoverEdge = pickEdgeAt(viewport);
-        } else {
+        } else if (m_mode == Mode::Face) {
             m_hoverFace = pickFaceAt(viewport, m_hoverGroup);
+        } else {
+            m_hoverPart = pickPartAt(viewport);
         }
+    }
+
+    // ⚑⚑ STAGE N's WHOLE PRESS, AND IT DELIBERATELY CLAIMS NOTHING. A part pick
+    // starts no drag, so `m_dragging` stays false and `main.cpp` hands the rest
+    // of the press to the orbit camera exactly as it does for a click that hit
+    // nothing - which means LMB still spins the model in this mode, with no
+    // modifier and no change to the arbitration. Selecting a part is not an
+    // edit: no `beginEdit`, no rebuild, and the document is not dirtied.
+    if (m_mode == Mode::Part) {
+        if (viewport.leftPressed) {
+            m_error.clear();
+            m_note.clear();
+            if (m_hoverPart != kNoPart) {
+                editor.selectPart(m_hoverPart);
+            }
+        }
+        return false;
     }
 
     if (viewport.leftPressed && !m_dragging) {
@@ -549,7 +678,8 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
     return true;
 }
 
-void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& viewport) const
+void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& viewport,
+                            std::size_t selectedPart) const
 {
     if (m_points.empty()) {
         return;
@@ -565,6 +695,26 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
     // Dimmer than a point marker on purpose: in edge mode this is a full
     // wireframe over a shaded mesh, and at the point colour it shouts.
     constexpr core::Vec4 kEdge = {0.26f, 0.38f, 0.58f, 1.0f};
+
+    // ⚑⚑ STAGE N DRAWS IN ITS OWN MODE AND NOWHERE ELSE, WHICH IS ALSO THIS
+    // STAGE'S FALSIFICATION TEST: modes 1/2/3 must come out pixel-identical to
+    // before it existed. A part box is a big shape and the other three modes are
+    // about small ones - a box round the whole hull while you are nudging one
+    // vertex of it is furniture, not information.
+    if (m_mode == Mode::Part) {
+        // The selection first and the hover last, so the hover is the one that
+        // survives if the buffer is spent - the opposite of the other modes'
+        // ordering, and deliberately so: here the hover is what tracks the hand
+        // and the selection is already named in the panel.
+        if (selectedPart < m_partBounds.size() && m_partBounds[selectedPart].any) {
+            addBox(lines, m_partBounds[selectedPart], viewport, kSelected);
+        }
+        if (m_hoverPart != kNoPart && m_hoverPart != selectedPart &&
+            m_hoverPart < m_partBounds.size() && m_partBounds[m_hoverPart].any) {
+            addBox(lines, m_partBounds[m_hoverPart], viewport, kHover);
+        }
+        return;
+    }
 
     if (m_mode == Mode::Edge || m_mode == Mode::Face) {
         // ⚑ Pulled toward the camera by a hair, and the reason is the depth
@@ -717,6 +867,39 @@ bool PointTool::drawPanel(PartEditor& editor)
     ImGui::SameLine();
     if (ImGui::RadioButton("faces", m_mode == Mode::Face)) {
         setMode(Mode::Face);
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("parts", m_mode == Mode::Part)) {
+        setMode(Mode::Part);
+    }
+
+    // ⚑ Part mode returns before everything below it, and that is deliberate
+    // rather than tidy. The rest of this panel is about DRAGGING a point -
+    // movable counts, the bake instruction, the split and extrude buttons - and
+    // none of it applies to a mode that only selects. Showing it greyed would be
+    // four lines of scarce column saying "not this mode".
+    if (m_mode == Mode::Part) {
+        std::size_t withGeometry = 0;
+        for (const PartBounds& bounds : m_partBounds) {
+            withGeometry += bounds.any ? 1u : 0u;
+        }
+        const auto idOf = [&doc](std::size_t part) -> const char* {
+            return part < doc.parts.size() ? doc.parts[part].id.c_str() : "-";
+        };
+        ImGui::Text("parts          %zu", doc.parts.size());
+        // ⚑ Said out loud, because a part with no triangles cannot be clicked
+        // and "I can see it in the list and cannot pick it" needs a reason on
+        // screen rather than a shrug. `gate_membrane.forge` fans 32 degenerate
+        // triangles that `forgeTopology` drops.
+        if (withGeometry != doc.parts.size()) {
+            ImGui::Text("pickable       %zu", withGeometry);
+        }
+        ImGui::Text("hover          %s", m_hoverPart == kNoPart ? "-" : idOf(m_hoverPart));
+        ImGui::Text("selected       %s", idOf(editor.selectedPart()));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("click a part to select it in Parts; drag to orbit as usual.");
+        ImGui::PopTextWrapPos();
+        return changed;
     }
 
     std::size_t movable = 0;

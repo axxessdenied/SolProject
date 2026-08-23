@@ -2,6 +2,7 @@
 
 #include "gltf.hpp"
 #include "list_layout_style.hpp"
+#include "part_pick.hpp"
 
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
@@ -294,6 +295,23 @@ bool PartEditor::isDescendant(std::size_t candidate, std::size_t part) const
     return false;
 }
 
+void PartEditor::selectPart(std::size_t part)
+{
+    if (part >= m_doc.parts.size()) {
+        return;
+    }
+    m_selected = static_cast<int>(part);
+    m_scrollToSelected = true;
+}
+
+std::size_t PartEditor::selectedPart() const
+{
+    if (m_selected < 0 || m_selected >= static_cast<int>(m_doc.parts.size())) {
+        return kNoPart;
+    }
+    return static_cast<std::size_t>(m_selected);
+}
+
 bool PartEditor::drawPartList()
 {
     bool changed = false;
@@ -314,9 +332,34 @@ bool PartEditor::drawPartList()
     }
     const std::string_view needle{m_partFilter};
 
-    std::size_t matches = 0;
-    for (const ForgePart& part : m_doc.parts) {
-        matches += listMatchesFilter(part.id, needle) ? 1u : 0u;
+    // ⚑⚑ THE SELECTED ROW IS ALWAYS DRAWN, MATCH OR NO MATCH (stage N), AND
+    // THIS IS THE TRAP STAGE M LEFT FOR STAGE N. The filter draws only matching
+    // rows while `m_selected` indexes the whole of `m_doc.parts`, so a viewport
+    // pick on a part the filter excludes selects a row THAT IS NOT ON SCREEN -
+    // no highlight anywhere, which reads exactly like the click having done
+    // nothing while the parameter fields below quietly change to another part.
+    //
+    // ⚑⚑ AND THE REASON IT IS THIS RULE RATHER THAN "CLEAR THE FILTER", WHICH
+    // WAS THE FIRST ANSWER AND IS THE OBVIOUS ONE: AN ACTIVE `InputText` OWNS
+    // ITS BUFFER. ImGui keeps the edited text in its own state while the field
+    // is active and writes that copy back into the caller's buffer, so clearing
+    // `m_partFilter` from outside the widget is silently undone in the SAME
+    // frame - measured, not guessed: `selectPart` logged "clearing filter
+    // 'floor'" and `drawPartList` went on seeing 'floor' with no intervening
+    // empty. Fighting that needs `ClearActiveID` out of `imgui_internal.h`.
+    // ⚑ Showing the row instead is better on its own terms anyway: it keeps the
+    // filter the author was part-way through typing, and it also covers the
+    // reverse order - select a row, then type a filter that excludes it.
+    const auto rowVisible = [&](std::size_t index) {
+        return listMatchesFilter(m_doc.parts[index].id, needle) ||
+               static_cast<int>(index) == m_selected;
+    };
+
+    std::size_t matches = 0;      // rows the list will draw, for its height
+    std::size_t needleHits = 0;   // rows the FILTER matched, for the message
+    for (std::size_t i = 0; i < m_doc.parts.size(); ++i) {
+        needleHits += listMatchesFilter(m_doc.parts[i].id, needle) ? 1u : 0u;
+        matches += rowVisible(i) ? 1u : 0u;
     }
 
     // Stage M: as tall as the tree wants, up to 45% of the panel. The document
@@ -328,7 +371,7 @@ bool PartEditor::drawPartList()
     if (ImGui::BeginChild("##parts", {0.0f, partsHeight}, ImGuiChildFlags_Borders)) {
         for (int i = 0; i < static_cast<int>(m_doc.parts.size()); ++i) {
             const ForgePart& part = m_doc.parts[static_cast<std::size_t>(i)];
-            if (!listMatchesFilter(part.id, needle)) {
+            if (!rowVisible(static_cast<std::size_t>(i))) {
                 continue;
             }
             ImGui::PushID(i);
@@ -339,13 +382,27 @@ bool PartEditor::drawPartList()
             if (ImGui::Selectable(label, i == m_selected)) {
                 m_selected = i;
             }
+            // Stage N: bring a selection made in the VIEWPORT into view here.
+            // ⚑ After the widget, because `SetScrollHereY` scrolls to the item
+            // just submitted - the same ordering trap stage G met with
+            // `IsItemActivated`, where placing the call before the widget reads
+            // the previous one.
+            if (m_scrollToSelected && i == m_selected) {
+                ImGui::SetScrollHereY(0.5f);
+            }
             ImGui::PopID();
         }
-        if (matches == 0) {
+        // ⚑ On the NEEDLE's hits, not on the drawn rows: with a selection
+        // showing through, `matches` is never zero and the message would never
+        // appear even when the filter genuinely found nothing.
+        if (needleHits == 0) {
             ImGui::TextDisabled("no part matches \"%s\"", m_partFilter);
         }
     }
     ImGui::EndChild();
+    // ⚑ Consumed whether or not a row was found to scroll to, or a selection
+    // the filter still hides would re-arm it every frame and pin the list.
+    m_scrollToSelected = false;
 
     if (ImGui::BeginCombo("##add", "add part")) {
         for (const ForgePrimitive primitive : assets::forgePrimitives()) {

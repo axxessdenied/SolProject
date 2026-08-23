@@ -32,6 +32,8 @@
 // assert without a device is in `sol::assets`, which is the same line stage B
 // drew and the reason the geometry suite can prove this at all.
 
+#include "part_pick.hpp"
+
 #include "sol/assets/forge_doc.hpp"
 #include "sol/core/math/math.hpp"
 #include "sol/renderer/debug_draw_renderer.hpp"
@@ -76,11 +78,21 @@ public:
 
     // What a click selects. ONE element at a time - multi-selection is E5's
     // problem, and E1 took one point before this stage took a set.
+    //
+    // ⚑⚑ `Part` (stage N) IS THE ONE THAT DOES NOT EDIT, AND IT IS A MODE RATHER
+    // THAN A SIDE EFFECT OF THE OTHER THREE FOR TWO REASONS. The first is
+    // ambiguity: only a FACE names one part. A point stands in up to five at
+    // once - `ship.forge`'s front corner, under three parameter names - and 24
+    // of that file's 24 edges are cross-part, so "also select the part" would be
+    // correct in one mode of three and a guess in the other two. The second is
+    // intent: the other three modes edit, and a stray click while dragging
+    // vertices must not silently repoint the parameter panel under the hand.
     enum class Mode
     {
         Point,
         Edge,
         Face,
+        Part,
     };
 
     struct Viewport
@@ -116,7 +128,16 @@ public:
     // caller must rebuild the mesh.
     [[nodiscard]] bool update(const Viewport& viewport, PartEditor& editor);
 
-    void drawMarkers(sol::renderer::DebugDrawRenderer& lines, const Viewport& viewport) const;
+    // ⚑ `selectedPart` is the EDITOR's, passed in rather than mirrored here, and
+    // that is what makes the highlight work in both directions: the box is drawn
+    // from the panel's selection, so clicking a ROW in the parts list lights the
+    // part up in the viewport exactly as clicking the geometry does. On a
+    // forty-object import that reverse direction is plausibly the bigger win -
+    // arrowing down a list watching boxes move is how you learn what an imported
+    // scene is made of. Mirroring it into a member would be a second copy of one
+    // selection, which is the drift this tool has already paid for twice.
+    void drawMarkers(sol::renderer::DebugDrawRenderer& lines, const Viewport& viewport,
+                     std::size_t selectedPart) const;
     // The panel section. Returns true when the document changed and the caller
     // must rebuild.
     //
@@ -148,11 +169,19 @@ private:
     [[nodiscard]] std::size_t pickAt(const Viewport& viewport) const;
     // Nearest edge to the cursor by screen-space point-to-segment distance.
     [[nodiscard]] std::size_t pickEdgeAt(const Viewport& viewport) const;
+    // The face the cursor's ray enters first, un-widened. Stage N split this out
+    // of pickFaceAt: a PART pick wants the triangle the ray hit and nothing
+    // else, because `ForgeFace::part` is already the answer and flooding to a
+    // coplanar group would be work whose result it then discards.
+    [[nodiscard]] std::size_t pickRawFaceAt(const Viewport& viewport) const;
     // The face the cursor's ray enters first, WIDENED to its coplanar group -
     // see forgeFaceGroup for why the widening cannot wait until the write.
     // Fills m_group; returns the seed face or kNone.
     [[nodiscard]] std::size_t pickFaceAt(const Viewport& viewport,
                                          std::vector<std::uint32_t>& group) const;
+    // The part the cursor's ray lands in, or kNoPart. Guards the document's
+    // no-owner sentinel through forgePartOfFace.
+    [[nodiscard]] std::size_t pickPartAt(const Viewport& viewport) const;
     // Fills m_dragSet with the points the current selection moves - one in
     // Point mode, two in Edge mode, the group's corners in Face mode. Empty
     // when nothing is selected.
@@ -177,6 +206,11 @@ private:
     // every frame the cursor moves.
     std::vector<std::uint32_t> m_group;
     std::vector<std::uint32_t> m_hoverGroup;
+    // Stage N: one box per part, rebuilt with the topology rather than per
+    // frame. It is a walk of every face, which is 1,068 on the largest hand-
+    // authored asset and ~35,000 on the baked asteroid - fine once per rebuild
+    // and wasteful sixty times a second for a picture that cannot have changed.
+    std::vector<PartBounds> m_partBounds;
     // Why there are no points, when there are none - a `[build]` post-pass or
     // a document that does not build. Said out loud rather than left as an
     // empty panel, because "nothing happens when I click" is not a diagnosis.
@@ -193,6 +227,10 @@ private:
     // actually entered. The group itself is in m_group / m_hoverGroup.
     std::size_t m_hoverFace = kNone;
     std::size_t m_selectedFace = kNone;
+    // Stage N. Only the HOVER lives here - the selected part belongs to the
+    // PartEditor, because the parts list and the viewport are two views of one
+    // selection and a second copy is a second thing to keep in step.
+    std::size_t m_hoverPart = kNoPart;
     bool m_dragging = false;
     // The move was refused and this press will not be retried - but the press
     // is still HELD, so the tool keeps it away from the camera until release.

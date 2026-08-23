@@ -1002,6 +1002,10 @@ int main(int argc, char** argv)
                 points.setMode(forge::PointTool::Mode::Edge);
             } else if (window.isKeyDown(platform::Key::Num3)) {
                 points.setMode(forge::PointTool::Mode::Face);
+            } else if (window.isKeyDown(platform::Key::Num4)) {
+                // Stage N. The fourth digit is the one that selects rather than
+                // edits - see PointTool::Mode for why it is a mode at all.
+                points.setMode(forge::PointTool::Mode::Part);
             }
         }
         if (points.update(viewport, editor)) {
@@ -1077,7 +1081,7 @@ int main(int argc, char** argv)
         // points - an editable-looking overlay on something that is not the
         // thing being edited. A preview is a look, not an edit surface.
         if (showPoints && editor.isOpen() && previewLevel == 0) {
-            points.drawMarkers(view.debugDraw(), viewport);
+            points.drawMarkers(view.debugDraw(), viewport, editor.selectedPart());
         }
 
         // ⚑ Throttled to about twice a second rather than run every frame: it
