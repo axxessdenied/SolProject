@@ -1,5 +1,6 @@
 #include "texture_editor.hpp"
 
+#include "list_layout_style.hpp"
 #include "mesh_library.hpp"
 
 #include "sol/core/log.hpp"
@@ -351,7 +352,13 @@ bool TextureEditor::drawPreview(void* image, float availableWidth)
 bool TextureEditor::drawOpList()
 {
     bool changed = false;
-    if (ImGui::BeginChild("##ops", {0.0f, 120.0f}, ImGuiChildFlags_Borders)) {
+    // Stage M: the op list is short by nature - four layers is a whole texture -
+    // so it sizes to its content and the 40 px it used to waste goes to the
+    // param list below, which is the one that never has enough.
+    const float outerHeight = ImGui::GetWindowHeight();
+    const float opsHeight =
+        listHeight(textRowMetrics(), m_doc.layers.size(), kMinListRows, 0.25f, outerHeight);
+    if (ImGui::BeginChild("##ops", {0.0f, opsHeight}, ImGuiChildFlags_Borders)) {
         for (std::size_t i = 0; i < m_doc.layers.size(); ++i) {
             ImGui::PushID(static_cast<int>(i));
             char label[96];
@@ -447,7 +454,13 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             break;
         case TextureParamKind::RectList: {
             ImGui::Text("%s  (%zu)", spec.name, value.rects.size());
-            if (ImGui::BeginChild("##rects", {0.0f, 140.0f}, ImGuiChildFlags_Borders)) {
+            // Stage M. ⚑ frameRowMetrics, not textRowMetrics: these rows are
+            // DragInt4 widgets at 23 px, not 17 px text lines, which is why the
+            // shipped 140 px showed 5 rows where a row count suggested 8.
+            const float rectsOuter = ImGui::GetWindowHeight();
+            const float rectsHeight =
+                listHeight(frameRowMetrics(), value.rects.size(), kMinListRows, 0.45f, rectsOuter);
+            if (ImGui::BeginChild("##rects", {0.0f, rectsHeight}, ImGuiChildFlags_Borders)) {
                 for (std::size_t i = 0; i < value.rects.size(); ++i) {
                     ImGui::PushID(static_cast<int>(i));
                     const bool picked = beginPickedRow(rowBase + i);
@@ -485,7 +498,12 @@ bool TextureEditor::drawParams(TextureLayer& layer)
         }
         case TextureParamKind::PanelList: {
             ImGui::Text("%s  (%zu)", spec.name, value.panels.size());
-            if (ImGui::BeginChild("##panels", {0.0f, 140.0f}, ImGuiChildFlags_Borders)) {
+            // Stage M, and this is the worst case in the tool: `hull.tex` has 60
+            // of these and the shipped height showed 5 of them, 8%.
+            const float panelsOuter = ImGui::GetWindowHeight();
+            const float panelsHeight =
+                listHeight(frameRowMetrics(), value.panels.size(), kMinListRows, 0.45f, panelsOuter);
+            if (ImGui::BeginChild("##panels", {0.0f, panelsHeight}, ImGuiChildFlags_Borders)) {
                 for (std::size_t i = 0; i < value.panels.size(); ++i) {
                     ImGui::PushID(static_cast<int>(i));
                     const bool picked = beginPickedRow(rowBase + i);

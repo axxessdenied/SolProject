@@ -11,6 +11,7 @@
 
 #include "def_editor.hpp"
 #include "forge_view.hpp"
+#include "list_layout_style.hpp"
 #include "mesh_library.hpp"
 #include "orbit_camera.hpp"
 #include "part_editor.hpp"
@@ -186,10 +187,34 @@ void panelsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffe
 // tools/forge/CMakeLists.txt comment). A draw helper there would break the
 // suite's linkage - Phase 15's lesson, applied before the promise this time.
 // Returns the row clicked this frame, or -1.
+// ⚑⚑ STAGE M: THIS LIST IS THE ONE WHOSE HEIGHT IS NOT A ROW COUNT TIMES A
+// PITCH, AND THAT IS WHY IT CARRIES STATE. Two things make it awkward, and both
+// were found by predicting a number and measuring a different one.
+//
+// (1) A collapsed group contributes ONE row - its header - instead of all of
+// its entries, and whether a group is open is not known until `CollapsingHeader`
+// has been called, which happens INSIDE the child whose height must already be
+// decided. So `visibleContent` is what the last frame actually submitted, owned
+// by the caller and fed back in. A one-frame lag on a height is invisible at
+// 60 Hz and self-corrects immediately, because every row is still submitted
+// whatever the height - a short child scrolls, it does not skip. Frame one uses
+// the floor.
+//
+// (2) ⚑⚑ THE ROWS ARE NOT ALL THE SAME HEIGHT. A `CollapsingHeader` is a framed
+// item at `GetFrameHeightWithSpacing()` (23 px) while an entry is a text row at
+// 17. Sizing ten mixed rows as ten uniform ones came out 12 px short and left
+// the list still scrolling. So the state is a HEIGHT, accumulated per row from
+// that row's own pitch, not a count.
 [[nodiscard]] int drawAssetList(const char* id, const std::vector<forge::AssetEntry>& entries,
-                                int selected, float height)
+                                int selected, float share, float& visibleContent)
 {
     int clicked = -1;
+    const forge::ListMetrics rowMetrics = forge::textRowMetrics();
+    const float headerPitch = forge::frameRowMetrics().rowPitch;
+    const float height = forge::listHeightForContent(rowMetrics, visibleContent,
+                                                     forge::kMinListRows, share,
+                                                     ImGui::GetWindowHeight());
+    float submitted = 0.0f;
     if (ImGui::BeginChild(id, {0.0f, height}, ImGuiChildFlags_Borders)) {
         std::size_t first = 0;
         while (first < entries.size()) {
@@ -200,6 +225,7 @@ void panelsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffe
             char header[96];
             std::snprintf(header, sizeof(header), "%s (%zu)###%s", entries[first].group.c_str(),
                           end - first, entries[first].group.c_str());
+            submitted += headerPitch; // the header is a row of the list too, and a taller one
             // Build output arrives closed: it is the majority of the list and
             // the minority of the interest, and it is the half that grows on
             // its own. Everything an author can actually edit arrives open.
@@ -211,10 +237,12 @@ void panelsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffe
                                           static_cast<int>(row) == selected)) {
                         clicked = static_cast<int>(row);
                     }
+                    submitted += rowMetrics.rowPitch;
                 }
             }
             first = end;
         }
+        visibleContent = submitted;
     }
     ImGui::EndChild();
     return clicked;
@@ -434,6 +462,10 @@ int main(int argc, char** argv)
     forge::MeshReport report;
     std::vector<forge::ModelMatch> modelMatches;
     int openIndex = -1;
+    // Stage M: the height the mesh list actually submitted last frame. Not a row
+    // count, because a collapsed group is one row and a group header is taller
+    // than an entry. See drawAssetList.
+    float meshListContent = 0.0f;
     std::string status = "no mesh open";
 
     // Stage F: the level chain the cooker would produce for whatever is open,
@@ -1363,7 +1395,7 @@ int main(int argc, char** argv)
                     // is the one tab that already scrolls - `Texture`, with
                     // its 5 px of headroom, does not carry this list.
                     const int clicked =
-                        drawAssetList("##meshes", meshEntries, openIndex, 230.0f);
+                        drawAssetList("##meshes", meshEntries, openIndex, 0.30f, meshListContent);
                     if (clicked >= 0) {
                         openMeshAt(clicked);
                     }
@@ -1580,7 +1612,15 @@ int main(int argc, char** argv)
                 // because two lists that each did half would be two answers to
                 // "which texture am I looking at".
                 if (ImGui::CollapsingHeader("Textures", ImGuiTreeNodeFlags_DefaultOpen)) {
-                    if (ImGui::BeginChild("##textures", {0.0f, 90.0f}, ImGuiChildFlags_Borders)) {
+                    // Stage M. ⚑ Six rows, not three: the list carries the cooked
+                    // `.stex` siblings as well as the sources, so the shipped
+                    // 90 px was already 24 px short of its own content.
+                    const float texOuter = ImGui::GetWindowHeight();
+                    const float texHeight = forge::listHeight(forge::textRowMetrics(),
+                                                              textureLabels.size(),
+                                                              forge::kMinListRows, 0.20f, texOuter);
+                    if (ImGui::BeginChild("##textures", {0.0f, texHeight},
+                                          ImGuiChildFlags_Borders)) {
                         for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
                             if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
                                                   i == textureIndex)) {

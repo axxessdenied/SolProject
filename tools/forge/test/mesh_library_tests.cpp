@@ -10,6 +10,7 @@
 // flagged as "a real decision sitting in untested code".
 
 #include "gltf.hpp"
+#include "list_layout.hpp"
 #include "mesh_library.hpp"
 
 #include "sol/assets/forge_doc.hpp"
@@ -590,4 +591,111 @@ SOL_TEST(aSecondImportReplacesItsOwnPartsAndKeepsTheAuthorsOwn)
     SOL_CHECK(doc.parts[rehulled].position.x == 0.0);
 
     std::remove(path.c_str());
+}
+
+// ⚑⚑ STAGE M. These pin the height rule to numbers MEASURED FROM THE RUNNING
+// TOOL rather than derived on paper. Before the change, the parts list reported
+// `scrollMaxY 318` at its shipped 170 px with 28 rows, and the panel list 1252
+// at 140 px with 60 - so the height at which each would stop scrolling was
+// 170 + 318 = 488 and 140 + 1252 = 1392. Those two numbers are the fixture: if
+// the formula ever stops reproducing them it has stopped describing ImGui.
+namespace {
+
+// The Forge's own style at the default font: 13 px ProggyClean, ItemSpacing.y 4,
+// WindowPadding.y 8. No font is loaded (imgui_host.cpp calls only
+// StyleColorsDark), which is what makes these constants legitimate.
+constexpr forge::ListMetrics kTextRows{17.0f, 4.0f, 8.0f};
+constexpr forge::ListMetrics kFrameRows{23.0f, 4.0f, 8.0f};
+
+} // namespace
+
+SOL_TEST(theExactHeightReproducesWhatTheRunningToolMeasured)
+{
+    // 28 parts of freighter_cockpit.forge, at a text row's pitch.
+    SOL_CHECK(forge::listHeightForRows(kTextRows, 28) == 488.0f);
+    // 60 panel rows of hull.tex, which are DRAG WIDGETS and 6 px taller each.
+    SOL_CHECK(forge::listHeightForRows(kFrameRows, 60) == 1392.0f);
+
+    // ⚑ And the mixed case, which is the one that caught a wrong prediction: the
+    // mesh list is 2 CollapsingHeaders (framed, 23 px) plus 8 Selectables (17).
+    // Sized as ten uniform rows it came out 182 and still scrolled by 12; the
+    // right answer is 194, and only a per-row pitch can express that.
+    const float mixed = 2.0f * kFrameRows.rowPitch + 8.0f * kTextRows.rowPitch;
+    SOL_CHECK(forge::listHeightForContent(kTextRows, mixed, 0, 1.0f, 10000.0f) == 194.0f);
+    SOL_CHECK(forge::listHeightForRows(kTextRows, 10) == 182.0f);
+}
+
+SOL_TEST(aListShowsExactlyTheRowsItWasSizedForAndNotOneMore)
+{
+    // The two directions must agree, or the tool would size for n and show n-1.
+    for (std::size_t rows = 1; rows <= 60; ++rows) {
+        const float exact = forge::listHeightForRows(kTextRows, rows);
+        SOL_CHECK(forge::listRowsForHeight(kTextRows, exact) == rows);
+        // One pixel short and the last row no longer fits: the fit is tight
+        // rather than accidentally generous.
+        SOL_CHECK(forge::listRowsForHeight(kTextRows, exact - 1.0f) == rows - 1);
+    }
+}
+
+SOL_TEST(theShareCapsAListAndTheFloorOutranksTheShare)
+{
+    // Measured: at an 817 px panel, 0.45 gives the parts list 367 px, which is
+    // 20 of 28 rows where the shipped 170 px gave 9.
+    const float capped = forge::listHeight(kTextRows, 28, forge::kMinListRows, 0.45f, 817.0f);
+    SOL_CHECK(capped > 367.0f && capped < 368.0f);
+    SOL_CHECK(forge::listRowsForHeight(kTextRows, capped) == 20);
+    SOL_CHECK(forge::listRowsForHeight(kTextRows, 170.0f) == 9);
+
+    // Measured: dragging the panel to 978 px takes the same list to 440 px and
+    // 25 rows. This is the whole point of the stage - a fixed height cannot
+    // satisfy it, so no regression to a constant can pass this assertion.
+    const float taller = forge::listHeight(kTextRows, 28, forge::kMinListRows, 0.45f, 978.0f);
+    SOL_CHECK(taller > capped);
+    SOL_CHECK(forge::listRowsForHeight(kTextRows, taller) == 25);
+
+    // A list that already fits is NOT grown to fill the share: the anti-waste
+    // half, which is what reclaims 40 px from the four-row op list.
+    const float fits = forge::listHeight(kTextRows, 4, forge::kMinListRows, 0.45f, 817.0f);
+    SOL_CHECK(fits == forge::listHeightForRows(kTextRows, 4));
+
+    // ⚑ THE FLOOR WINS A SHORT PANEL OUTRIGHT, AND THIS IS THE ASSERTION THAT
+    // WOULD CATCH AN INVERTED CLAMP. Measured live at a 128 px panel: the cap
+    // works out at 0.30 * 128 = 38.4, below the 4-row floor of 80, and the list
+    // came back at exactly 80.0 rather than at 38 or at something negative.
+    const float floored = forge::listHeight(kTextRows, 21, forge::kMinListRows, 0.30f, 128.0f);
+    SOL_CHECK(floored == 80.0f);
+    SOL_CHECK(floored == forge::listHeightForRows(kTextRows, forge::kMinListRows));
+
+    // An empty document still gets the floor rather than a sliver.
+    SOL_CHECK(forge::listHeight(kTextRows, 0, forge::kMinListRows, 0.45f, 817.0f) == 80.0f);
+    // And a degenerate panel cannot produce a negative height.
+    SOL_CHECK(forge::listHeight(kTextRows, 28, forge::kMinListRows, 0.45f, 0.0f) == 80.0f);
+}
+
+SOL_TEST(thePartFilterMatchesTheWayAnAuthorTypes)
+{
+    // Empty needle keeps everything, which is what an untouched filter box means.
+    SOL_CHECK(forge::listMatchesFilter("hull_2a", ""));
+
+    // Case-insensitive in both directions: Blender capitalises object names and
+    // nobody types the capital.
+    SOL_CHECK(forge::listMatchesFilter("Fin_001", "fin"));
+    SOL_CHECK(forge::listMatchesFilter("fin_001", "FIN"));
+
+    // A SUBSTRING, not a prefix - the 40-object case is `Fin_001`..`Fin_012`
+    // alongside `left_fin`, and a prefix match would miss half of them.
+    SOL_CHECK(forge::listMatchesFilter("left_fin", "fin"));
+    SOL_CHECK(forge::listMatchesFilter("hull_2a", "l_2"));
+
+    SOL_CHECK(!forge::listMatchesFilter("hull_2a", "wing"));
+    // A needle longer than the label can never match, and must not read past it.
+    SOL_CHECK(!forge::listMatchesFilter("fin", "fin_001"));
+    SOL_CHECK(!forge::listMatchesFilter("", "fin"));
+    SOL_CHECK(forge::listMatchesFilter("", ""));
+
+    // ⚑ High-bit bytes must not be folded: a part id is a sanitised Blender
+    // object name and arrives as UTF-8. This is the case std::tolower would
+    // have made undefined behaviour.
+    SOL_CHECK(forge::listMatchesFilter("caf\xC3\xA9_strut", "strut"));
+    SOL_CHECK(!forge::listMatchesFilter("caf\xC3\xA9_strut", "cafe"));
 }

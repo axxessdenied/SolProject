@@ -136,6 +136,10 @@ private:
     // buttons can say it.
     std::string m_editError;
     std::string m_saveName;
+    // Stage M. A fixed buffer rather than a std::string because that is what
+    // ImGui::InputText writes into; 64 is generous for a part id, which is a
+    // sanitised Blender object name at its longest.
+    char m_partFilter[64] = {};
     int m_selected = -1;
     bool m_open = false;
     bool m_dirty = false;

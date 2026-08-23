@@ -1,6 +1,7 @@
 #include "part_editor.hpp"
 
 #include "gltf.hpp"
+#include "list_layout_style.hpp"
 
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
@@ -297,9 +298,39 @@ bool PartEditor::drawPartList()
 {
     bool changed = false;
 
-    if (ImGui::BeginChild("##parts", {0.0f, 170.0f}, ImGuiChildFlags_Borders)) {
+    // ⚑ Stage M's filter, and it is offered only on a document long enough to
+    // need finding rather than reading. It filters the DRAW and never the
+    // indexing - `m_selected` stays an index into `m_doc.parts`, exactly as K1
+    // kept `openIndex` flat when it grouped the mesh list - so nothing else in
+    // this file has to know the filter exists.
+    const bool offerFilter = m_doc.parts.size() >= kFilterFromRows;
+    if (offerFilter) {
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##partfilter", "filter parts", m_partFilter,
+                                 sizeof(m_partFilter));
+    } else {
+        // A short document cannot leave a stale filter hiding its own parts.
+        m_partFilter[0] = '\0';
+    }
+    const std::string_view needle{m_partFilter};
+
+    std::size_t matches = 0;
+    for (const ForgePart& part : m_doc.parts) {
+        matches += listMatchesFilter(part.id, needle) ? 1u : 0u;
+    }
+
+    // Stage M: as tall as the tree wants, up to 45% of the panel. The document
+    // being edited is what this window is FOR, so it gets the larger of the two
+    // shares here; the mesh list above it is navigation.
+    const float outerHeight = ImGui::GetWindowHeight();
+    const float partsHeight =
+        listHeight(textRowMetrics(), matches, kMinListRows, 0.45f, outerHeight);
+    if (ImGui::BeginChild("##parts", {0.0f, partsHeight}, ImGuiChildFlags_Borders)) {
         for (int i = 0; i < static_cast<int>(m_doc.parts.size()); ++i) {
             const ForgePart& part = m_doc.parts[static_cast<std::size_t>(i)];
+            if (!listMatchesFilter(part.id, needle)) {
+                continue;
+            }
             ImGui::PushID(i);
             const int depth = depthOf(m_doc, static_cast<std::size_t>(i));
             char label[192];
@@ -309,6 +340,9 @@ bool PartEditor::drawPartList()
                 m_selected = i;
             }
             ImGui::PopID();
+        }
+        if (matches == 0) {
+            ImGui::TextDisabled("no part matches \"%s\"", m_partFilter);
         }
     }
     ImGui::EndChild();
