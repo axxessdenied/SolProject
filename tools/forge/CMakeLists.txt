@@ -35,9 +35,17 @@ target_link_libraries(sol_forge PRIVATE
 # parsed by sol::assets::DefDatabase, which is engine. It is what lets the
 # viewer compare a measured radius against the authored one instead of leaving
 # that to a person reading a panel and a text file side by side.
+# ⚑⚑ THE BLENDER DROP DIRECTORY, AND IT IS OUTSIDE `assets/` FOR A HARD REASON
+# RATHER THAN A TIDY ONE (stage L). The cooker walks the source tree with a
+# RECURSIVE listFiles into ONE FLAT output directory and keys every output on
+# the file STEM, so `ship.gltf` anywhere under `assets/` and `ship.forge` in
+# `assets/meshes/` both cook to `ship.smesh` - and the collision guard does not
+# skip that pair, it aborts the WHOLE cook ("nothing cooked", exit 1). An inbox
+# under `assets/` would break the entire build the first time an import worked.
 target_compile_definitions(sol_forge PRIVATE
     SOL_ASSETS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets"
     SOL_MODEL_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data"
+    SOL_FORGE_INBOX_DIR="${CMAKE_SOURCE_DIR}/blender-inbox"
 )
 
 add_dependencies(sol_forge sol_shaders sol_cook_assets)

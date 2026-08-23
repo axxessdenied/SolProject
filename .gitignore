@@ -33,3 +33,10 @@ Desktop.ini
 # Logs and local scratch
 *.log
 .cache/
+
+# What Blender drops for the Forge to import (engine plan Phase 9 stage L).
+# The glTF is TRANSPORT, not source: the Forge converts it to a `.forge` under
+# assets/meshes/ and that is what gets committed. The directory itself is
+# tracked so the addon has somewhere to write on a fresh clone.
+blender-inbox/*
+!blender-inbox/README.md

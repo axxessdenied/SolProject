@@ -265,6 +265,34 @@ float addGrid(renderer::DebugDrawRenderer& lines, float cameraDistance)
     return cell;
 }
 
+// The Blender bridge's two bits of path arithmetic (stage L). `mesh_library`
+// has both privately and this file cannot reach them; they are four lines each
+// and promoting them to the header for one caller would be a worse trade.
+[[nodiscard]] std::string forgeFileStem(const std::string& path)
+{
+    const std::size_t slash = path.find_last_of("/\\");
+    const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    const std::size_t dot = name.find_last_of('.');
+    return dot == std::string::npos ? name : name.substr(0, dot);
+}
+
+// Lower-cased, because a drop directory is written to by another program and
+// Blender will happily hand back `.GLTF` on a case-insensitive filesystem.
+[[nodiscard]] std::string forgeLowerExtension(const std::string& path)
+{
+    const std::size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos) {
+        return {};
+    }
+    std::string extension = path.substr(dot);
+    for (char& c : extension) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return extension;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -299,6 +327,13 @@ int main(int argc, char** argv)
     const std::string assetsDirectory = std::strlen(SOL_ASSETS_SOURCE_DIR) > 0
                                             ? SOL_ASSETS_SOURCE_DIR
                                             : executableDir + "assets";
+    // ⚑⚑ WHERE BLENDER DROPS, AND IT IS NOT UNDER `assets/` (stage L). The
+    // cooker scans the source tree RECURSIVELY into one flat output directory
+    // keyed on the file STEM, so a `ship.gltf` anywhere beneath it collides with
+    // `ship.forge` - and that guard aborts the ENTIRE cook rather than skipping
+    // the pair. The glTF is transport: once imported, the `.forge` is the source.
+    const std::string inboxDirectory =
+        std::strlen(SOL_FORGE_INBOX_DIR) > 0 ? SOL_FORGE_INBOX_DIR : executableDir + "blender-inbox";
 
     rhi::Swapchain swapchain;
     if (!swapchain.create(context, window.width(), window.height(), /*vsync=*/true)) {
@@ -691,6 +726,144 @@ int main(int argc, char** argv)
             }
         }
     };
+    // --- the Blender bridge (stage L) ---------------------------------------
+    //
+    // ⚑ A POLL RATHER THAN A WATCH, AND RATHER THAN AN IPC. `fileModificationTime`
+    // and `listFiles` are already in the platform layer, so noticing a drop costs
+    // no new platform surface and nothing Windows-shaped above it (AGENTS.md 4).
+    // A socket or a named pipe would buy latency this does not need: the author
+    // is alt-tabbing out of Blender, which is hundreds of milliseconds anyway.
+    struct InboxEntry
+    {
+        std::string path;
+        std::uint64_t modified = 0;
+    };
+    std::vector<InboxEntry> inboxSeen;
+    int inboxPollCountdown = 0;
+    std::string inboxStatus;
+    bool inboxAuto = true;
+
+    const auto importFromInbox = [&](const std::string& gltfPath) {
+        const std::string stem = forgeFileStem(gltfPath);
+        const std::string target = assetsDirectory + "/meshes/" + stem + ".forge";
+
+        // ⚑ REFUSED WHILE THE TARGET HAS UNSAVED EDITS, because the alternative
+        // loses them SILENTLY: merging into the file on disk while the editor
+        // holds its own copy means the author's next `save` writes the import
+        // straight back out again. Saying so and waiting is the honest move.
+        if (editor.isOpen() && editor.dirty() && editor.path() == target) {
+            inboxStatus = stem + ".gltf waiting - save or reload " + stem + ".forge first";
+            SOL_LOG_WARN("forge: %s", inboxStatus.c_str());
+            return false;
+        }
+
+        // Merge into whatever is already there rather than replacing the file:
+        // a part the author added in the Forge is not Blender's to delete.
+        assets::ForgeDoc doc;
+        std::vector<std::uint8_t> bytes;
+        if (platform::readFileBytes(target.c_str(), bytes)) {
+            std::string parseError;
+            if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
+                                    target.c_str(), doc, &parseError)) {
+                inboxStatus = "cannot merge into " + stem + ".forge: " + parseError;
+                SOL_LOG_ERROR("forge: %s", inboxStatus.c_str());
+                return false;
+            }
+        }
+
+        forge::ImportOutcome outcome;
+        std::string importError;
+        if (!forge::importGltfIntoDoc(gltfPath, doc, outcome, &importError)) {
+            inboxStatus = importError;
+            SOL_LOG_ERROR("forge: %s", inboxStatus.c_str());
+            return false;
+        }
+
+        const std::string text = assets::writeForge(doc);
+        if (!platform::writeFileBytes(target.c_str(), text.data(), text.size())) {
+            inboxStatus = "cannot write " + target;
+            SOL_LOG_ERROR("forge: %s", inboxStatus.c_str());
+            return false;
+        }
+
+        inboxStatus = stem + ".forge  " + std::to_string(outcome.added.size()) + " added, " +
+                      std::to_string(outcome.replaced.size()) + " replaced";
+        if (!outcome.kept.empty()) {
+            inboxStatus += ", " + std::to_string(outcome.kept.size()) + " kept";
+        }
+        SOL_LOG_INFO("forge: imported %s -> %s", gltfPath.c_str(), inboxStatus.c_str());
+
+        // The list was read at startup and an import has just added to it.
+        meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
+        for (std::size_t i = 0; i < meshEntries.size(); ++i) {
+            if (meshEntries[i].path == target ||
+                (meshEntries[i].stem == stem && forge::isPartSource(meshEntries[i]))) {
+                // ⚑ Opening it IS the feature - the author pressed a button in
+                // Blender to see it here, so this is not the "save moves" trap
+                // that kept stage J from switching tabs on its own. The one case
+                // it holds back from is an unsaved edit to something ELSE.
+                if (!editor.dirty()) {
+                    openMeshAt(static_cast<int>(i));
+                }
+                break;
+            }
+        }
+        status = inboxStatus;
+        return true;
+    };
+
+    // Every drop that is new or has changed since the last look. Returns how
+    // many were imported.
+    const auto pollInbox = [&](bool announceEmpty) {
+        std::vector<std::string> files = platform::listFiles(inboxDirectory.c_str());
+        std::sort(files.begin(), files.end());
+        int imported = 0;
+        int seen = 0;
+        for (const std::string& path : files) {
+            const std::string lower = forgeLowerExtension(path);
+            if (lower != ".gltf" && lower != ".glb") {
+                continue;
+            }
+            ++seen;
+            const std::uint64_t modified = platform::fileModificationTime(path.c_str());
+            const auto existing = std::find_if(inboxSeen.begin(), inboxSeen.end(),
+                                               [&path](const InboxEntry& e) { return e.path == path; });
+            if (existing != inboxSeen.end() && existing->modified == modified) {
+                continue;
+            }
+            if (importFromInbox(path)) {
+                ++imported;
+            }
+            // Recorded either way: a drop that fails to import must not be
+            // retried sixty times a second for the rest of the session.
+            if (existing != inboxSeen.end()) {
+                existing->modified = modified;
+            } else {
+                inboxSeen.push_back({path, modified});
+            }
+        }
+        if (imported == 0 && announceEmpty) {
+            inboxStatus = seen == 0 ? "nothing in " + inboxDirectory
+                                    : std::to_string(seen) + " drop(s), none changed";
+            status = inboxStatus;
+        }
+        return imported;
+    };
+
+    // ⚑ The FIRST poll only takes a census: anything already sitting in the
+    // inbox at launch is a drop from a previous session that has already been
+    // imported, and re-importing it would undo whatever the author did in the
+    // Forge afterwards. Only a file that changes WHILE the tool is running is a
+    // new send from Blender.
+    for (const std::string& path : platform::listFiles(inboxDirectory.c_str())) {
+        const std::string lower = forgeLowerExtension(path);
+        if (lower == ".gltf" || lower == ".glb") {
+            inboxSeen.push_back({path, platform::fileModificationTime(path.c_str())});
+        }
+    }
+    SOL_LOG_INFO("forge: watching %s (%zu drop(s) already there)", inboxDirectory.c_str(),
+                 inboxSeen.size());
+
     openMeshAt(meshEntries.empty() ? -1 : 0);
     // The texture the mesh is already wearing is the one to open, so the panel
     // opens on something rather than on "nothing selected" beside a hull that
@@ -859,6 +1032,14 @@ int main(int argc, char** argv)
             points.drawMarkers(view.debugDraw(), viewport);
         }
 
+        // ⚑ Throttled to about twice a second rather than run every frame: it
+        // is a directory listing plus a stat per drop, and the thing it is
+        // waiting for is a human alt-tabbing out of Blender.
+        if (inboxAuto && --inboxPollCountdown <= 0) {
+            inboxPollCountdown = 30;
+            (void)pollInbox(/*announceEmpty=*/false);
+        }
+
         // --- panel ---
         imguiHost.beginFrame();
 
@@ -877,6 +1058,28 @@ int main(int argc, char** argv)
                 ImGui::MenuItem("Report", nullptr, &showReport);
                 ImGui::MenuItem("Texture", nullptr, &showTexture);
                 ImGui::MenuItem("View", nullptr, &showView);
+                ImGui::EndMenu();
+            }
+            // ⚑ The bridge gets a menu rather than a button because it is
+            // mostly meant to be invisible: the author presses `Send to Forge`
+            // in Blender and the mesh is here. What needs a home is the state
+            // of the thing - where it is watching, whether it is, and a manual
+            // poke for when a drop is already sitting there from last session.
+            if (ImGui::BeginMenu("Blender")) {
+                ImGui::MenuItem("Watch the inbox", nullptr, &inboxAuto);
+                if (ImGui::MenuItem("Import now")) {
+                    // Forgets what it has seen, so this re-imports a drop that
+                    // is already there - which is the whole point of asking.
+                    inboxSeen.clear();
+                    (void)pollInbox(/*announceEmpty=*/true);
+                }
+                ImGui::Separator();
+                ImGui::TextDisabled("drop .gltf into");
+                ImGui::TextDisabled("%s", inboxDirectory.c_str());
+                if (!inboxStatus.empty()) {
+                    ImGui::Separator();
+                    ImGui::TextDisabled("%s", inboxStatus.c_str());
+                }
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Layout")) {
