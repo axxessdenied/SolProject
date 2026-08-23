@@ -622,7 +622,37 @@ bool PartEditor::addPrimitive(ForgePrimitive primitive)
     }
     m_doc.parts.push_back(part);
     m_selected = static_cast<int>(m_doc.parts.size()) - 1;
+    // ⚑⚑ THE DIRTY MARK BELONGS HERE, AND LEAVING IT TO THE CALLER WAS A REAL
+    // DEFECT SHIPPED BY K5 AND FOUND BY THE USER AT STAGE L. `draw()` sets it
+    // from its own `changed` flag at the tail, which covered the `add part`
+    // combo because the combo lives inside `draw()` - but the TOOLBAR calls this
+    // method from `main.cpp`, outside any of that, so a toolbar-added part left
+    // the document marked CLEAN. K5's own comment above warned that a rule
+    // written twice diverges in the copy nobody looked at; it moved the
+    // PLACEMENT rule in here and left this one behind.
+    //
+    // What it cost: stage L's import refuses to merge over an unsaved document
+    // and asks `dirty()`, so a part added from the toolbar was invisible to that
+    // guard - the import merged into the file on disk, which had never seen it,
+    // and the author's part was gone on the next reload.
+    m_dirty = true;
     return true;
+}
+
+void PartEditor::adoptDoc(ForgeDoc doc)
+{
+    beginEdit();
+    m_doc = std::move(doc);
+    m_dirty = true;
+    // The selection is an index into a part list that has just been rebuilt, so
+    // it can point past the end or at something else entirely. Clamped rather
+    // than cleared: an import usually replaces parts in place, so the row the
+    // author was on is very often still the row they want.
+    if (m_selected >= static_cast<int>(m_doc.parts.size())) {
+        m_selected = m_doc.parts.empty() ? -1 : static_cast<int>(m_doc.parts.size()) - 1;
+    }
+    m_buildError.clear();
+    m_editError.clear();
 }
 
 bool PartEditor::draw()

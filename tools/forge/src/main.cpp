@@ -747,27 +747,32 @@ int main(int argc, char** argv)
         const std::string stem = forgeFileStem(gltfPath);
         const std::string target = assetsDirectory + "/meshes/" + stem + ".forge";
 
-        // ⚑ REFUSED WHILE THE TARGET HAS UNSAVED EDITS, because the alternative
-        // loses them SILENTLY: merging into the file on disk while the editor
-        // holds its own copy means the author's next `save` writes the import
-        // straight back out again. Saying so and waiting is the honest move.
-        if (editor.isOpen() && editor.dirty() && editor.path() == target) {
-            inboxStatus = stem + ".gltf waiting - save or reload " + stem + ".forge first";
-            SOL_LOG_WARN("forge: %s", inboxStatus.c_str());
-            return false;
-        }
-
-        // Merge into whatever is already there rather than replacing the file:
-        // a part the author added in the Forge is not Blender's to delete.
+        // ⚑⚑ THE BASE IS THE OPEN DOCUMENT WHEN THERE IS ONE, AND THE FILE ONLY
+        // OTHERWISE. THIS IS THE FIX FOR A DEFECT A USER FOUND: they imported,
+        // added a part in the Forge, re-sent from Blender, and their part was
+        // gone. The file on disk is NOT the document - it is the document as of
+        // the last save - so merging into it discards every edit since, and
+        // `openMeshAt` below then reloads that loss over the top.
+        //
+        // ⚑ The first answer was to ask `dirty()` and refuse, and it was the
+        // weaker one twice over: it depends on every edit path remembering to
+        // raise that flag (`addPrimitive` did not, which is how this got out),
+        // and it makes the author alt-tab and save to accept an import they just
+        // asked for. Merging into what is on screen needs no flag to be correct.
+        const bool editingTarget = editor.isOpen() && editor.path() == target;
         assets::ForgeDoc doc;
-        std::vector<std::uint8_t> bytes;
-        if (platform::readFileBytes(target.c_str(), bytes)) {
-            std::string parseError;
-            if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
-                                    target.c_str(), doc, &parseError)) {
-                inboxStatus = "cannot merge into " + stem + ".forge: " + parseError;
-                SOL_LOG_ERROR("forge: %s", inboxStatus.c_str());
-                return false;
+        if (editingTarget) {
+            doc = editor.doc();
+        } else {
+            std::vector<std::uint8_t> bytes;
+            if (platform::readFileBytes(target.c_str(), bytes)) {
+                std::string parseError;
+                if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
+                                        target.c_str(), doc, &parseError)) {
+                    inboxStatus = "cannot merge into " + stem + ".forge: " + parseError;
+                    SOL_LOG_ERROR("forge: %s", inboxStatus.c_str());
+                    return false;
+                }
             }
         }
 
@@ -793,19 +798,30 @@ int main(int argc, char** argv)
         }
         SOL_LOG_INFO("forge: imported %s -> %s", gltfPath.c_str(), inboxStatus.c_str());
 
-        // The list was read at startup and an import has just added to it.
+        // The list was read at startup and an import may have just added to it.
         meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
-        for (std::size_t i = 0; i < meshEntries.size(); ++i) {
-            if (meshEntries[i].path == target ||
-                (meshEntries[i].stem == stem && forge::isPartSource(meshEntries[i]))) {
-                // ⚑ Opening it IS the feature - the author pressed a button in
-                // Blender to see it here, so this is not the "save moves" trap
-                // that kept stage J from switching tabs on its own. The one case
-                // it holds back from is an unsaved edit to something ELSE.
-                if (!editor.dirty()) {
-                    openMeshAt(static_cast<int>(i));
+
+        if (editingTarget) {
+            // ⚑ ADOPTED RATHER THAN RE-OPENED. Re-reading the file would work
+            // now that it holds the merge, but it would throw away the undo
+            // stack and the selection for no reason - and it would make the
+            // import the one edit in this tool a person cannot take back.
+            editor.adoptDoc(std::move(doc));
+            points.refresh(editor.doc());
+            rebuildFromEditor(/*reframe=*/false);
+        } else {
+            for (std::size_t i = 0; i < meshEntries.size(); ++i) {
+                if (meshEntries[i].path == target ||
+                    (meshEntries[i].stem == stem && forge::isPartSource(meshEntries[i]))) {
+                    // ⚑ Opening it IS the feature - the author pressed a button
+                    // in Blender to see it here, so this is not the "save moves"
+                    // trap that kept stage J from switching tabs on its own. It
+                    // holds back only for an unsaved edit to something ELSE.
+                    if (!editor.dirty()) {
+                        openMeshAt(static_cast<int>(i));
+                    }
+                    break;
                 }
-                break;
             }
         }
         status = inboxStatus;

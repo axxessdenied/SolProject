@@ -49,6 +49,20 @@ public:
     // in the one nobody looked at.
     [[nodiscard]] bool addPrimitive(sol::assets::ForgePrimitive primitive);
 
+    // Replaces the whole document as ONE undoable edit, keeping the open file's
+    // path and save name.
+    //
+    // ⚑⚑ STAGE L's IMPORT NEEDS THIS BECAUSE THE FILE ON DISK IS NOT THE
+    // DOCUMENT. A re-send from Blender must merge into what the AUTHOR HAS ON
+    // SCREEN, which may be ahead of the file by every edit since the last save -
+    // merging into the file instead silently discards them, which is exactly
+    // what a user hit: a part added here, a re-send from Blender, and the part
+    // was gone. Asking `dirty()` and refusing was the first answer and it is the
+    // weaker one: it depends on every edit path remembering to raise that flag
+    // (one of them did not), and it makes the author alt-tab and save to accept
+    // an import they just asked for.
+    void adoptDoc(sol::assets::ForgeDoc doc);
+
     // ⚑ Undo is a COPY OF THE DOCUMENT, not a command pattern, and the reason
     // is the document rather than laziness: `ForgeDoc` is a plain value and the
     // five hand-authored assets are 0.5-5 KB. Only the baked asteroid at 99 KB
