@@ -1096,6 +1096,39 @@ int main(int argc, char** argv)
         }
         framePressed = frameDown;
 
+        // ⚑⚑⚑ THE OVERLAY MUST BE BUILT AGAINST THE CAMERA THIS FRAME WILL
+        // RENDER WITH, NOT THE ONE THE USER PICKED AGAINST. Those are two
+        // different matrices whenever the camera moved this frame, and the
+        // difference is a whole orbit step. `viewport.view` above is deliberately
+        // the PRE-orbit camera, because that is the image the cursor was over
+        // when the press was read and picking must agree with what was on
+        // screen; but everything below here is geometry handed to the renderer,
+        // which draws it with `camera.view()` AFTER the orbit (see `frame.view`).
+        //
+        // ⚑⚑ IT WENT UNNOTICED UNTIL STAGE O BECAUSE ALMOST NOTHING HERE IS
+        // VIEW-DEPENDENT. A point cross and an edge line are world-space
+        // positions that come out right whichever matrix computed them - the
+        // stale view changes nothing about where they land. Stage N's part box
+        // is the exception, and the exception is exactly the thing that makes it
+        // work: it RELOCATES its corners to 0.12 m from the eye to beat the
+        // depth test, and that is only correct when drawn from the eye it was
+        // scaled about.
+        //
+        // ⚑⚑ MEASURED, BECAUSE THE MAGNITUDE IS THE WHOLE POINT: one orbit step
+        // moves the eye 0.3739 m, the pull magnifies any eye error by
+        // `distance / 0.12` = 41x on `freighter_cockpit`, so the box was landing
+        // 15.5 m from its part on a model 4.98 m away and 7.4 m across - flung
+        // clean off the mesh rather than lagging it. Zero error on a still
+        // camera, which is why every headless drive and every static screenshot
+        // passed and a person rotating the view found it in a minute.
+        // ⚑ A SEPARATE VIEWPORT RATHER THAN AN ASSIGNMENT INTO THE ONE ABOVE, so
+        // `viewport` means exactly one thing for its whole life - the image the
+        // press was read against - and a pick added below here cannot silently
+        // acquire the wrong camera.
+        forge::PointTool::Viewport overlay = viewport;
+        overlay.view = camera.view();
+        overlay.cameraDistance = camera.distance();
+
         // --- viewport geometry ---
         if (showGrid) {
             gridCell = addGrid(view.debugDraw(), camera.distance());
@@ -1130,7 +1163,7 @@ int main(int argc, char** argv)
         // reporting. See `PartEditor::takeHoveredPart`.
         const std::size_t rowHoverPart = editor.takeHoveredPart();
         if (showPoints && editor.isOpen() && previewLevel == 0) {
-            points.drawMarkers(view.debugDraw(), viewport, editor.selectedPart(), rowHoverPart);
+            points.drawMarkers(view.debugDraw(), overlay, editor.selectedPart(), rowHoverPart);
         }
 
         // ⚑ Throttled to about twice a second rather than run every frame: it
