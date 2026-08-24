@@ -124,4 +124,30 @@ inline void forgePartBounds(std::span<const sol::assets::ForgePoint> points,
     }
 }
 
+// Which part gets the hover box, given what each surface is pointing at
+// (engine plan Phase 9 stage O). `kNoPart` for none.
+//
+// ⚑⚑ TWO SURFACES CAN POINT AT A PART AND THERE IS ONE BOX, SO THE PRECEDENCE
+// HAS TO BE STATED SOMEWHERE RATHER THAN FALL OUT OF WHICH ONE WROTE LAST. The
+// viewport wins when it has an answer: it is the surface the ray was cast for,
+// and `PointTool::update` clears it the moment ImGui takes the mouse, so the
+// two are mutually exclusive in practice and this is a tie-break that should
+// never be reached. It is written down anyway - "they cannot both be set" is an
+// invariant held by a different file, and this stage exists because the last
+// one left a hover uncleared.
+//
+// ⚑ THE SELECTION SUPPRESSES THE HOVER, WHICH IS THE CLAUSE THAT CARRIES THE
+// MEANING. The selected part already has a green box; drawing amber over it is
+// two answers to one question, and it would make hovering the row you are on
+// look like a state change. `drawMarkers` has enforced this for the viewport
+// hover since stage N - this lifts the rule out of the draw so the list hover
+// cannot arrive without it.
+[[nodiscard]] inline constexpr std::size_t forgeHoverBox(std::size_t viewportHover,
+                                                         std::size_t listHover,
+                                                         std::size_t selected) noexcept
+{
+    const std::size_t hover = viewportHover != kNoPart ? viewportHover : listHover;
+    return hover == selected ? kNoPart : hover;
+}
+
 } // namespace forge

@@ -529,6 +529,20 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
     // camera, and for the same reason.
     if (viewport.uiCaptured && !m_dragging) {
         m_hover = kNone;
+        // ⚑⚑ STAGE O, AND IT IS A LATENT DEFECT OF STAGE N's THAT STAGE O MAKES
+        // REACHABLE. This early return dropped only `m_hover`, so hovering a
+        // triangle and then moving the cursor onto the panel left the amber
+        // part box drawn over a part nobody was pointing at any more. Visible
+        // since stage N, harmless while the viewport was the only thing that
+        // could set it - and NOT harmless now, because the parts list can set
+        // it too and a stale ray answer would fight a live row answer for one
+        // box, with the winner decided by ordering rather than by the rule in
+        // `forgeHoverBox`.
+        // ⚑ `m_hoverEdge` and `m_hoverFace` have exactly the same problem and
+        // are deliberately left alone: fixing them changes what modes 1/2/3
+        // draw, and stage N's falsification test is that this programme's part
+        // work does not touch them. Recorded, not fixed.
+        m_hoverPart = kNoPart;
         return false;
     }
 
@@ -679,7 +693,7 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
 }
 
 void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& viewport,
-                            std::size_t selectedPart) const
+                            std::size_t selectedPart, std::size_t listHoverPart) const
 {
     if (m_points.empty()) {
         return;
@@ -709,9 +723,14 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
         if (selectedPart < m_partBounds.size() && m_partBounds[selectedPart].any) {
             addBox(lines, m_partBounds[selectedPart], viewport, kSelected);
         }
-        if (m_hoverPart != kNoPart && m_hoverPart != selectedPart &&
-            m_hoverPart < m_partBounds.size() && m_partBounds[m_hoverPart].any) {
-            addBox(lines, m_partBounds[m_hoverPart], viewport, kHover);
+        // ⚑ STAGE O: EITHER SURFACE CAN DRIVE THE HOVER NOW - the cursor over a
+        // triangle, or over that part's row in the list - and which one wins is
+        // `forgeHoverBox`'s to say rather than this function's. The suppression
+        // under the selection moved in there with it, so the row hover cannot
+        // arrive without the rule the ray hover already had.
+        const std::size_t hoverPart = forgeHoverBox(m_hoverPart, listHoverPart, selectedPart);
+        if (hoverPart < m_partBounds.size() && m_partBounds[hoverPart].any) {
+            addBox(lines, m_partBounds[hoverPart], viewport, kHover);
         }
         return;
     }
@@ -837,7 +856,7 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
     }
 }
 
-bool PointTool::drawPanel(PartEditor& editor)
+bool PointTool::drawPanel(PartEditor& editor, std::size_t listHoverPart)
 {
     const ForgeDoc& doc = editor.doc();
     bool changed = false;
@@ -894,7 +913,18 @@ bool PointTool::drawPanel(PartEditor& editor)
         if (withGeometry != doc.parts.size()) {
             ImGui::Text("pickable       %zu", withGeometry);
         }
-        ImGui::Text("hover          %s", m_hoverPart == kNoPart ? "-" : idOf(m_hoverPart));
+        // ⚑⚑ STAGE O: THROUGH THE SAME RULE THE BOX USES, NOT A SECOND COPY OF
+        // IT. This line read `m_hoverPart` alone, which stage O turns into a
+        // lie: the ray hover is cleared the moment ImGui takes the mouse, so
+        // pointing at a ROW would draw a box while the readout said "-".
+        // Restating the precedence here instead of calling `forgeHoverBox`
+        // would be *a rule applied in two places*, which is a defect this tool
+        // has shipped four times.
+        // ⚑ `kNoPart` for the selection deliberately: the box suppresses itself
+        // under the selection, but the question this line answers is "what is
+        // under the cursor", and the selected part is still under it.
+        const std::size_t pointedAt = forgeHoverBox(m_hoverPart, listHoverPart, kNoPart);
+        ImGui::Text("hover          %s", pointedAt == kNoPart ? "-" : idOf(pointedAt));
         ImGui::Text("selected       %s", idOf(editor.selectedPart()));
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("click a part to select it in Parts; drag to orbit as usual.");

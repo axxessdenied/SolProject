@@ -897,3 +897,55 @@ SOL_TEST(everyCommittedTriangleResolvesToThePartThatEmittedIt)
         }
     }
 }
+
+// Stage O. Two surfaces can point at a part and there is one box.
+//
+// ⚑ The viewport wins by rule rather than by write order. `PointTool::update`
+// clears the viewport hover the moment ImGui takes the mouse, so the two are
+// meant to be mutually exclusive - but "they cannot both be set" is an
+// invariant held in another file, and stage O exists because stage N left a
+// hover uncleared in exactly that way.
+SOL_TEST(theViewportHoverOutranksTheRowHoverAndEitherCanDrawTheBox)
+{
+    constexpr std::size_t kNone = forge::kNoPart;
+
+    // One surface at a time - the ordinary case, once per surface.
+    SOL_CHECK(forge::forgeHoverBox(2, kNone, kNone) == 2);
+    SOL_CHECK(forge::forgeHoverBox(kNone, 5, kNone) == 5);
+
+    // Both at once: the viewport is the surface the ray was cast for. This is
+    // reachable for exactly one frame, when the cursor crosses off the list
+    // into the viewport before the panel has run again.
+    SOL_CHECK(forge::forgeHoverBox(2, 5, kNone) == 2);
+
+    // Neither, which is every frame the cursor is over furniture.
+    SOL_CHECK(forge::forgeHoverBox(kNone, kNone, kNone) == kNone);
+    // ⚑ And with a live selection, because a selection is not a hover: the
+    // green box is drawn from the editor and must not gain an amber twin just
+    // because nothing is being pointed at.
+    SOL_CHECK(forge::forgeHoverBox(kNone, kNone, 3) == kNone);
+}
+
+// ⚑ The clause that carries the meaning, and it has to hold for BOTH surfaces
+// or the list hover arrives without the rule the viewport hover already had.
+SOL_TEST(theSelectedPartNeverGetsASecondBox)
+{
+    constexpr std::size_t kNone = forge::kNoPart;
+
+    SOL_CHECK(forge::forgeHoverBox(3, kNone, 3) == kNone); // stage N's path
+    SOL_CHECK(forge::forgeHoverBox(kNone, 3, 3) == kNone); // stage O's path
+
+    // A neighbour of the selection still draws - the suppression is about the
+    // one part, not about there being a selection at all.
+    SOL_CHECK(forge::forgeHoverBox(kNone, 4, 3) == 4);
+    SOL_CHECK(forge::forgeHoverBox(4, kNone, 3) == 4);
+
+    // ⚑ Part zero is an ordinary part and the sentinel is SIZE_MAX, so a rule
+    // that discriminates on a magnitude (`hover > 0`, `!hover`) rather than on
+    // a sentinel compare has to fail somewhere. Measured rather than assumed:
+    // the `!= 0` mutant fails these AND four others, because `kNoPart != 0` is
+    // itself true and the mutant therefore swallows every no-ray-hover case -
+    // so this pair is a second net over that class, not the only one.
+    SOL_CHECK(forge::forgeHoverBox(kNone, 0, 3) == 0);
+    SOL_CHECK(forge::forgeHoverBox(0, kNone, kNone) == 0);
+}

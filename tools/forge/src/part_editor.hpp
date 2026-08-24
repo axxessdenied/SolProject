@@ -14,6 +14,8 @@
 // turn an authored 0.075 into 0.07500000298023224 the first time a panel was
 // drawn - dirtying a file nobody touched.
 
+#include "part_pick.hpp"
+
 #include "sol/assets/forge_doc.hpp"
 
 #include <cstddef>
@@ -119,6 +121,30 @@ public:
     // and one signed/unsigned seam is enough.
     [[nodiscard]] std::size_t selectedPart() const;
 
+    // Stage O. The part whose row the cursor was over when the list was last
+    // submitted, or `kNoPart`. THE READ CLEARS IT, which is the whole design
+    // and not a convenience.
+    //
+    // ⚑⚑ IT IS CONSUME-ONCE BECAUSE THE PRODUCER IS NOT GUARANTEED TO RUN.
+    // `drawPartList` lives inside `if (ImGui::Begin("Mesh", ...))`, so a closed,
+    // collapsed or undocked-away Mesh panel stops writing this while the last
+    // value still names a row - a hover box round a part nobody is pointing at,
+    // driven by a list that is not on screen. Clearing at the top of
+    // `drawPartList` does not fix that, because the top of `drawPartList` is
+    // exactly what stops running. Taking the value away at the point of use
+    // makes staleness inexpressible instead of merely unlikely.
+    //
+    // ⚑ THE CALLER MUST TAKE IT EVERY FRAME AND UNCONDITIONALLY - outside the
+    // `showPoints`/`isOpen`/preview guards that decide whether the markers draw
+    // at all, or a frame that skips the draw also skips the clear and hands the
+    // next drawn frame a stale row.
+    //
+    // ⚑ It is last frame's answer: `main.cpp` builds the debug lines before it
+    // submits the panel, so the surface that knows what the cursor is over runs
+    // after the lines it feeds. 16 ms of lag on a value that only exists while
+    // a hand is holding still.
+    [[nodiscard]] std::size_t takeHoveredPart();
+
     [[nodiscard]] bool isOpen() const { return m_open; }
     [[nodiscard]] const sol::assets::ForgeDoc& doc() const { return m_doc; }
     [[nodiscard]] bool dirty() const { return m_dirty; }
@@ -161,6 +187,11 @@ private:
     // because the row that must be scrolled to does not exist until the list is
     // submitted - and the pick happens in the viewport, before any of it runs.
     bool m_scrollToSelected = false;
+    // Stage O, and the same idiom pointed the other way: armed by
+    // `drawPartList` and consumed by the next `takeHoveredPart`. Not an `int`
+    // like `m_selected`, because unlike a selection this only ever travels to
+    // the viewport, which speaks in part indices.
+    std::size_t m_hoveredPart = kNoPart;
     bool m_open = false;
     bool m_dirty = false;
 };

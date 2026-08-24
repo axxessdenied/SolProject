@@ -74,6 +74,30 @@ std::uint64_t parseMaxFrames(int argc, char** argv)
     return 0;
 }
 
+// --open <substring>: open the first mesh whose stem contains `substring`
+// instead of the first row in the list.
+//
+// ⚑⚑ PERMANENT BECAUSE IT HAS BEEN HAND-ADDED AND DELETED TWICE ALREADY, at
+// stages M and N, and this is the third stage that needs it. A drive that has
+// to CLICK a mesh row needs that row's pixel, and since stage M list heights
+// are `clamp(content, minRows, share x windowHeight)` - so the row moves with
+// the window size AND with which document is open. Every such coordinate has
+// gone stale at least once (the recorded count of "the UI element your edit
+// moves is the one the drive clicks" is six). This reaches any document with
+// no coordinates at all, and being permanent it is exercised by the same
+// builds as everything else rather than being re-derived from memory each
+// time. It is also how `forge.smoke` could one day open something other than
+// the alphabetically-first asset.
+const char* parseOpenStem(int argc, char** argv)
+{
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::strcmp(argv[i], "--open") == 0) {
+            return argv[i + 1];
+        }
+    }
+    return nullptr;
+}
+
 // The three sizes a person needs in their eye to judge an asset in this game,
 // drawn as wireframe boxes around the ORIGIN. Two are shipped facts rather
 // than invented ones - a station's model radius is 100 m and a ship's hull is
@@ -912,7 +936,25 @@ int main(int argc, char** argv)
     SOL_LOG_INFO("forge: watching %s (%zu drop(s) already there)", inboxDirectory.c_str(),
                  inboxSeen.size());
 
-    openMeshAt(meshEntries.empty() ? -1 : 0);
+    // ⚑ `--open` picks the row; with no match, or no flag, the first row as
+    // before. A miss is logged rather than silent, because a drive that
+    // mistypes a stem would otherwise measure the alphabetically-first asset
+    // and read as a feature that quietly did nothing.
+    int openAt = meshEntries.empty() ? -1 : 0;
+    if (const char* wanted = parseOpenStem(argc, argv); wanted != nullptr) {
+        bool found = false;
+        for (std::size_t i = 0; i < meshEntries.size() && !found; ++i) {
+            if (meshEntries[i].stem.find(wanted) != std::string::npos &&
+                forge::isPartSource(meshEntries[i])) {
+                openAt = static_cast<int>(i);
+                found = true;
+            }
+        }
+        if (!found) {
+            SOL_LOG_WARN("forge: --open '%s' matched no editable mesh", wanted);
+        }
+    }
+    openMeshAt(openAt);
     // The texture the mesh is already wearing is the one to open, so the panel
     // opens on something rather than on "nothing selected" beside a hull that
     // visibly has a texture on it.
@@ -1080,8 +1122,15 @@ int main(int argc, char** argv)
         // puts 162 crosses over a hull with 80 triangles that has no such
         // points - an editable-looking overlay on something that is not the
         // thing being edited. A preview is a look, not an edit surface.
+        // ⚑⚑ STAGE O: TAKEN UNCONDITIONALLY, OUTSIDE THE GUARD BELOW, AND THAT
+        // IS THE POINT OF IT. The read is what clears the value, so a frame
+        // that skips the markers - points hidden, no document, a level being
+        // previewed - must still take it, or the next frame that DOES draw
+        // inherits whichever row the cursor was over before the panel stopped
+        // reporting. See `PartEditor::takeHoveredPart`.
+        const std::size_t rowHoverPart = editor.takeHoveredPart();
         if (showPoints && editor.isOpen() && previewLevel == 0) {
-            points.drawMarkers(view.debugDraw(), viewport, editor.selectedPart());
+            points.drawMarkers(view.debugDraw(), viewport, editor.selectedPart(), rowHoverPart);
         }
 
         // ⚑ Throttled to about twice a second rather than run every frame: it
@@ -1440,7 +1489,7 @@ int main(int argc, char** argv)
                     // ⚑ It can change the document since E5: a split and an extrude
                     // are presses rather than drags, so this panel is a third place
                     // an edit can come from and it needs the same rebuild.
-                    if (points.drawPanel(editor)) {
+                    if (points.drawPanel(editor, rowHoverPart)) {
                         rebuildFromEditor(/*reframe=*/false);
                     }
                 }

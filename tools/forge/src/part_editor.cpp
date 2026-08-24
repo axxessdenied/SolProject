@@ -312,6 +312,13 @@ std::size_t PartEditor::selectedPart() const
     return static_cast<std::size_t>(m_selected);
 }
 
+std::size_t PartEditor::takeHoveredPart()
+{
+    const std::size_t hovered = m_hoveredPart;
+    m_hoveredPart = kNoPart;
+    return hovered;
+}
+
 bool PartEditor::drawPartList()
 {
     bool changed = false;
@@ -381,6 +388,18 @@ bool PartEditor::drawPartList()
                           assets::forgePrimitiveName(part.primitive));
             if (ImGui::Selectable(label, i == m_selected)) {
                 m_selected = i;
+            }
+            // ⚑⚑ STAGE O: THE ROW UNDER THE CURSOR LIGHTS ITS PART UP IN THE
+            // VIEWPORT, WHICH IS THE ONE PAIRING STAGE N LEFT UNWIRED. N drew a
+            // box for a *committed* selection from either surface and for an
+            // *uncommitted* hover from the viewport only - so answering "which
+            // lump is that" from the list meant clicking, i.e. committing to a
+            // selection in order to ask a question. This is a read: it does not
+            // touch `m_selected`, does not arm the scroll, and cannot dirty the
+            // document. ⚑ After the widget, like the scroll below and for the
+            // same reason - `IsItemHovered` reports on the item just submitted.
+            if (ImGui::IsItemHovered()) {
+                m_hoveredPart = static_cast<std::size_t>(i);
             }
             // Stage N: bring a selection made in the VIEWPORT into view here.
             // ⚑ After the widget, because `SetScrollHereY` scrolls to the item

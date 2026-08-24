@@ -136,8 +136,18 @@ public:
     // arrowing down a list watching boxes move is how you learn what an imported
     // scene is made of. Mirroring it into a member would be a second copy of one
     // selection, which is the drift this tool has already paid for twice.
+    //
+    // ⚑⚑ `listHoverPart` IS STAGE O, AND IT IS THE SAME ARGUMENT ONE STEP
+    // FURTHER. The selection was passed in so the panel could light the
+    // viewport; the row HOVER is passed in so it can do it before you commit.
+    // Both surfaces stay outside this class for the same reason - the parts
+    // list is the thing that knows what the cursor is over, and mirroring that
+    // here would be a second copy of it to keep in step. ⚑ It is last frame's
+    // value by construction (`main.cpp` draws the lines before it submits the
+    // panel) and the caller must take it EVERY frame; see
+    // `PartEditor::takeHoveredPart`.
     void drawMarkers(sol::renderer::DebugDrawRenderer& lines, const Viewport& viewport,
-                     std::size_t selectedPart) const;
+                     std::size_t selectedPart, std::size_t listHoverPart) const;
     // The panel section. Returns true when the document changed and the caller
     // must rebuild.
     //
@@ -148,7 +158,9 @@ public:
     // bare letter keys: `X`, `Y`, `Z` and `F` are already unmodified letters in
     // this viewport, and a stray press that reshapes the mesh is a worse failure
     // than one that locks an axis.
-    [[nodiscard]] bool drawPanel(PartEditor& editor);
+    // ⚑ `listHoverPart` is the same value `drawMarkers` was given this frame,
+    // so the `hover` readout and the box on screen cannot disagree.
+    [[nodiscard]] bool drawPanel(PartEditor& editor, std::size_t listHoverPart);
 
     // ⚑⚑ TRUE FOR THE WHOLE BUTTON PRESS, INCLUDING AFTER A REFUSAL, AND THAT
     // IS WHAT THE E4b DRIVE FOUND. `main.cpp` hands the camera any press the
