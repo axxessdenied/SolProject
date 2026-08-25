@@ -718,6 +718,14 @@ bool parseForge(const char* text, std::size_t length, const char* sourceName, Fo
                 }
             }
 
+            if (const TomlValue* origin = table.find("origin"); origin != nullptr) {
+                if (!origin->isString()) {
+                    reader.fail("'origin' must be a string");
+                    return false;
+                }
+                part.origin = origin->asString();
+            }
+
             if (const TomlValue* position = table.find("position"); position != nullptr) {
                 if (!reader.readVec(*position, "position", part.position)) {
                     return false;
@@ -739,8 +747,8 @@ bool parseForge(const char* text, std::size_t length, const char* sourceName, Fo
             // author staring at a torus that ignored the number they typed.
             const std::span<const ForgeParamSpec> schema = forgeParams(part.primitive);
             for (const auto& [key, value] : table.members()) {
-                if (key == "id" || key == "type" || key == "parent" || key == "position" ||
-                    key == "rotation" || key == "scale") {
+                if (key == "id" || key == "type" || key == "parent" || key == "origin" ||
+                    key == "position" || key == "rotation" || key == "scale") {
                     continue;
                 }
                 const ForgeParamSpec* spec = nullptr;
@@ -852,6 +860,11 @@ std::string writeForge(const ForgeDoc& doc)
         out += std::string("type = \"") + forgePrimitiveName(part.primitive) + "\"\n";
         if (!part.parent.empty()) {
             out += "parent = \"" + part.parent + "\"\n";
+        }
+        // Omitted when empty, exactly as `parent` is, so a part the Forge made
+        // and every committed asset write back byte-identical.
+        if (!part.origin.empty()) {
+            out += "origin = \"" + part.origin + "\"\n";
         }
         if (part.position.x != 0.0 || part.position.y != 0.0 || part.position.z != 0.0) {
             out += "position = ";

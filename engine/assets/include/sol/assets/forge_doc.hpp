@@ -129,6 +129,17 @@ struct ForgePart
     std::string parent; // empty: a root part
     ForgePrimitive primitive = ForgePrimitive::Group;
 
+    // ⚑ WHERE THIS PART CAME FROM, when it came from somewhere: the Blender
+    // object's uid, carried across in the glTF's node `extras` (Phase 9 stage
+    // P). Empty on every part the Forge itself made, and on every committed
+    // asset - the writer omits it, so nothing gains a line.
+    //
+    // It exists because an `id` is a LABEL and a re-import needs an IDENTITY.
+    // Matching on the name makes a rename indistinguishable from a delete plus
+    // an add, which leaves the author two copies of one object with the live
+    // geometry in the one carrying none of their placement.
+    std::string origin;
+
     // Placement in the parent's frame.
     //
     // ⚑ Rotation is stored in DEGREES, which is a deliberate exception to the

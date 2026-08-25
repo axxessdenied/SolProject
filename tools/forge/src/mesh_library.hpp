@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sol::assets {
@@ -121,6 +122,11 @@ struct ImportOutcome
 {
     std::vector<std::string> added;
     std::vector<std::string> replaced;
+    // Parts whose object was RENAMED in Blender: {was, is}. They are neither
+    // added nor replaced - the geometry was replaced like any other match, but
+    // the part answers to a different name afterwards, and an author who is not
+    // told that will read it as one part vanishing and another appearing.
+    std::vector<std::pair<std::string, std::string>> renamed;
     // Parts already in the document that this glTF did not name. ⚑ LEFT ALONE,
     // deliberately: an author who added a part in the Forge should not lose it
     // because they re-exported from Blender, and deleting someone's work is a
@@ -132,12 +138,21 @@ struct ImportOutcome
 // part - the same representation the `bake` button produces, which is why every
 // stage E-I tool works on the result without knowing where it came from.
 //
-// ⚑ PARTS ARE MATCHED BY ID, and a match is replaced WHOLE: geometry and
-// placement both, keeping only the id, the `parent` and the comment trivia
-// above it. Blender is authoritative for the shape and the position of a part
-// that came from Blender; a placement kept across a re-import would be applied
-// on top of a transform already baked into the vertices, which is a silent
-// double transform rather than a preserved intent.
+// ⚑ PARTS ARE MATCHED BY ORIGIN FIRST AND BY ID ONLY AS A FALLBACK (stage P),
+// and a match is replaced WHOLE: geometry and placement both, keeping only the
+// `parent` and the comment trivia above it. Blender is authoritative for the
+// shape and the position of a part that came from Blender; a placement kept
+// across a re-import would be applied on top of a transform already baked into
+// the vertices, which is a silent double transform rather than a preserved
+// intent. The NAME is Blender's on the same argument, so a matched part is
+// renamed to follow its object and every child naming it as `parent` follows.
+//
+// ⚑⚑ THE FALLBACK IS THE MIGRATION PATH AND IT IS DELIBERATELY NARROW: a name
+// matches only a part carrying NO origin. Once a part knows which object it
+// came from, that outranks the name in both directions - it finds the part
+// whose object was renamed, and it refuses to hand an object a part that
+// belongs to a different one, which is what renaming ONTO another object's old
+// name would otherwise do.
 [[nodiscard]] bool importGltfIntoDoc(const std::string& gltfPath, sol::assets::ForgeDoc& doc,
                                      ImportOutcome& outcome, std::string* error = nullptr);
 

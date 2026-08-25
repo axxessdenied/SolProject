@@ -139,6 +139,56 @@ SOL_TEST(gltfImportsTriangleWithNodeTransform)
     std::remove(path.c_str());
 }
 
+// ⚑ STAGE P's CHANNEL. `extras` is where glTF lets an exporter put its own
+// data, and the Send-to-Forge addon stamps the Blender object's uid there -
+// which is the only field in the file that survives a rename. Verified against
+// real Blender 5.2 before this was built: an object custom property comes out
+// as `extras: {"sol_forge_uid": ...}` on the NODE, beside the name.
+//
+// The absent and wrong-typed cases are here because they are normal: every
+// glTF written by anything else, and everything exported before stage P, has no
+// extras at all, and an empty origin must read as "unidentified" rather than
+// as a failure.
+SOL_TEST(aNodesOriginIdIsReadFromExtrasAndIsEmptyWhenThereIsNone)
+{
+    const char* gltf = R"({
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0, 1, 2]}],
+        "nodes": [
+            {"mesh": 0, "name": "Hull", "extras": {"sol_forge_uid": "abc123"}},
+            {"mesh": 0, "name": "Plain"},
+            {"mesh": 0, "name": "Odd", "extras": {"sol_forge_uid": 7}}
+        ],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+        "buffers": [{"byteLength": 42, "uri":
+            "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAABAAIA"}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+            {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+        ],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+            {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+        ]
+    })";
+
+    const std::string path = std::string(platform::executableDirectory()) + "test_extras.gltf";
+    SOL_CHECK(platform::writeFileBytes(path.c_str(), gltf, std::strlen(gltf)));
+
+    std::vector<cooker::GltfPart> parts;
+    SOL_CHECK(cooker::importGltfParts(path.c_str(), parts));
+    SOL_REQUIRE(parts.size() == 3);
+
+    SOL_CHECK(parts[0].name == "Hull" && parts[0].originId == "abc123");
+    // No extras at all: every file written by anything but this addon.
+    SOL_CHECK(parts[1].name == "Plain" && parts[1].originId.empty());
+    // Somebody else's key that happens to collide - not a string, so not ours.
+    SOL_CHECK(parts[2].name == "Odd" && parts[2].originId.empty());
+
+    std::remove(path.c_str());
+}
+
 // ⚑⚑ THE INPUT HAD TO BE BUILT, WHICH IS THE POINT: NOTHING COMMITTED CAN TRIP
 // THIS. Every mesh in `assets/meshes/` is a `.forge`, and the generator that
 // wrote the last `.gltf` never scaled a node - so the importer carried a normal

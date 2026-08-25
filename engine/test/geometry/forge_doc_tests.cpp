@@ -270,6 +270,57 @@ cap_ends = true
     SOL_CHECK(assets::writeForge(reparsed) == text);
 }
 
+// ⚑ STAGE P's `origin` - where a part came from, when it came from somewhere.
+// It has to survive the file or it is not an identity, and it has to be ABSENT
+// from a part that has none or every committed asset gains a line on its next
+// save (which `everyCommittedForgeSourceRoundTripsByteForByte` then catches
+// from the other end).
+SOL_TEST(aPartsOriginSurvivesTheFileAndAPartWithoutOneGainsNoLine)
+{
+    ForgeDoc doc;
+    SOL_REQUIRE(parses(R"(
+name = "rig"
+
+[[part]]
+id = "hull"
+type = "box"
+origin = "3f2b91c4e7a04d1e"
+
+[[part]]
+id = "strut"
+type = "box"
+position = [1.0, 0.0, 0.0]
+)",
+                       doc));
+
+    SOL_REQUIRE(doc.parts.size() == 2);
+    SOL_CHECK(doc.parts[0].origin == "3f2b91c4e7a04d1e");
+    // A part the Forge made itself, which must stay anonymous: `kept` tells an
+    // author's part from Blender's by exactly this emptiness.
+    SOL_CHECK(doc.parts[1].origin.empty());
+
+    const std::string text = assets::writeForge(doc);
+    SOL_CHECK(text.find("origin = \"3f2b91c4e7a04d1e\"") != std::string::npos);
+    // Once, not twice - the anonymous part contributes no key at all.
+    SOL_CHECK(text.find("origin") == text.rfind("origin"));
+
+    ForgeDoc reparsed;
+    SOL_REQUIRE(parses(text, reparsed));
+    SOL_REQUIRE(reparsed.parts.size() == 2);
+    SOL_CHECK(reparsed.parts[0].origin == doc.parts[0].origin);
+    SOL_CHECK(reparsed.parts[1].origin.empty());
+    SOL_CHECK(assets::writeForge(reparsed) == text);
+}
+
+// ⚑ The parser is strict by design - an unrecognised key is an error rather
+// than a shrug - and adding a key must not weaken that. A non-string `origin`
+// is the shape a hand-edit gets wrong.
+SOL_TEST(anOriginThatIsNotAStringIsRefusedRatherThanCoerced)
+{
+    ForgeDoc doc;
+    SOL_CHECK(!parses("[[part]]\nid = \"a\"\ntype = \"box\"\norigin = 7\n", doc));
+}
+
 SOL_TEST(forgeComposesTransformsDownTheParentChain)
 {
     ForgeDoc doc;

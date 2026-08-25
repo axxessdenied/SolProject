@@ -117,48 +117,107 @@ bool importGltfIntoDoc(const std::string& gltfPath, assets::ForgeDoc& doc, Impor
         doc.name = fileStem(gltfPath);
     }
 
-    // ⚑ Ids are resolved against BOTH the document and what this import has
-    // already placed: a glTF may carry two nodes of the same name, and letting
-    // the second overwrite the first would silently drop a part - the failure
-    // mode a merge-by-id is supposed to prevent.
-    std::vector<std::string> claimed;
-    const auto isClaimed = [&claimed](const std::string& id) {
-        return std::find(claimed.begin(), claimed.end(), id) != claimed.end();
+    // ⚑ Claimed by INDEX rather than by id, because stage P lets a match be
+    // renamed: an id is no longer a stable handle on a part for the duration of
+    // this loop. Two nodes may also carry the same name, or - after a
+    // `Shift+D` that Blender let copy the uid - the same origin, and letting
+    // the second take the first's part would silently drop one.
+    std::vector<std::size_t> taken;
+    const auto isTaken = [&taken](std::size_t index) {
+        return std::find(taken.begin(), taken.end(), index) != taken.end();
+    };
+
+    // Free of everything except `self`, which is what lets a part keep the id
+    // it already has rather than suffixing itself out of its own name.
+    const auto isIdFree = [&doc](const std::string& id, std::size_t self) {
+        for (std::size_t i = 0; i < doc.parts.size(); ++i) {
+            if (i != self && doc.parts[i].id == id) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto freeId = [&isIdFree](const std::string& wanted, std::size_t self) {
+        if (isIdFree(wanted, self)) {
+            return wanted;
+        }
+        for (int suffix = 2; suffix < 10000; ++suffix) {
+            std::string candidate = wanted + "_" + std::to_string(suffix);
+            if (isIdFree(candidate, self)) {
+                return candidate;
+            }
+        }
+        return wanted;
     };
 
     for (const cooker::GltfPart& part : imported) {
-        std::string id = forgePartIdFromName(part.name);
-        if (isClaimed(id)) {
-            std::string candidate;
-            for (int suffix = 2; suffix < 10000; ++suffix) {
-                candidate = id + "_" + std::to_string(suffix);
-                if (!isClaimed(candidate) && doc.indexOf(candidate) == std::string::npos) {
+        const std::string wanted = forgePartIdFromName(part.name);
+
+        // The origin finds the part whose object was renamed. Only an unclaimed
+        // one: a duplicated object arrives carrying its source's uid, and it is
+        // a NEW part rather than a second claim on an existing one.
+        std::size_t target = std::string::npos;
+        if (!part.originId.empty()) {
+            for (std::size_t i = 0; i < doc.parts.size(); ++i) {
+                if (!isTaken(i) && doc.parts[i].origin == part.originId) {
+                    target = i;
                     break;
                 }
             }
-            id = candidate;
         }
-        claimed.push_back(id);
+        // The name is the fallback, and only onto a part that has never been
+        // identified - see the header. This is what matches a document written
+        // before stage P, once, after which it carries an origin.
+        if (target == std::string::npos) {
+            for (std::size_t i = 0; i < doc.parts.size(); ++i) {
+                if (!isTaken(i) && doc.parts[i].origin.empty() && doc.parts[i].id == wanted) {
+                    target = i;
+                    break;
+                }
+            }
+        }
 
-        assets::ForgePart baked = assets::forgeBakePart(id, part.mesh);
-
-        const std::size_t existing = doc.indexOf(id);
-        if (existing == std::string::npos) {
+        if (target == std::string::npos) {
+            const std::string id = freeId(wanted, std::string::npos);
+            assets::ForgePart baked = assets::forgeBakePart(id, part.mesh);
+            baked.origin = part.originId;
+            taken.push_back(doc.parts.size());
             doc.parts.push_back(std::move(baked));
             outcome.added.push_back(id);
-        } else {
-            // Whole replacement, keeping only what is not Blender's to own: the
-            // tree position and the author's comment above it.
-            baked.parent = doc.parts[existing].parent;
-            baked.leading = doc.parts[existing].leading;
-            doc.parts[existing] = std::move(baked);
-            outcome.replaced.push_back(id);
+            continue;
         }
+
+        const std::string previousId = doc.parts[target].id;
+        const std::string id = freeId(wanted, target);
+
+        // Whole replacement, keeping only what is not Blender's to own: the
+        // tree position and the author's comment above it.
+        assets::ForgePart baked = assets::forgeBakePart(id, part.mesh);
+        baked.parent = doc.parts[target].parent;
+        baked.leading = doc.parts[target].leading;
+        baked.origin = part.originId;
+        doc.parts[target] = std::move(baked);
+        taken.push_back(target);
+
+        if (id == previousId) {
+            outcome.replaced.push_back(id);
+            continue;
+        }
+        // ⚑ A part is named by its children, so a rename that stops there
+        // leaves them parented to something that no longer exists - which
+        // `worldTransforms` reads as "no parent" and silently draws at the
+        // document origin.
+        for (assets::ForgePart& child : doc.parts) {
+            if (child.parent == previousId) {
+                child.parent = id;
+            }
+        }
+        outcome.renamed.emplace_back(previousId, id);
     }
 
-    for (const assets::ForgePart& part : doc.parts) {
-        if (!isClaimed(part.id)) {
-            outcome.kept.push_back(part.id);
+    for (std::size_t i = 0; i < doc.parts.size(); ++i) {
+        if (!isTaken(i)) {
+            outcome.kept.push_back(doc.parts[i].id);
         }
     }
     return true;

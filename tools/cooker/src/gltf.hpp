@@ -16,6 +16,14 @@ struct GltfPart
     // object name in practice, and it is what a `.forge` part id is derived
     // from - which is how a re-import knows which part it is replacing.
     std::string name;
+
+    // ⚑ The exporting tool's own identity for this object, read from the node's
+    // `extras.sol_forge_uid` and EMPTY when the file does not carry one (stage
+    // P). It is what survives a rename, which the name by definition does not -
+    // so a re-import can tell "this object was renamed" from "this is a new
+    // object", which are the same event when you only have the name.
+    std::string originId;
+
     assets::MeshData mesh;
 };
 

@@ -849,8 +849,22 @@ int main(int argc, char** argv)
 
         inboxStatus = stem + ".forge  " + std::to_string(outcome.added.size()) + " added, " +
                       std::to_string(outcome.replaced.size()) + " replaced";
+        // ⚑ A rename is NAMED, not just counted. It is the one outcome an
+        // author cannot reconstruct from the Parts list afterwards - a part
+        // under a new name is indistinguishable from a new part beside a
+        // deleted one, which is the whole confusion this stage removes.
+        if (!outcome.renamed.empty()) {
+            inboxStatus += ", " + std::to_string(outcome.renamed.size()) + " renamed (" +
+                           outcome.renamed.front().first + " -> " + outcome.renamed.front().second;
+            inboxStatus += outcome.renamed.size() > 1
+                               ? ", +" + std::to_string(outcome.renamed.size() - 1) + " more)"
+                               : ")";
+        }
         if (!outcome.kept.empty()) {
             inboxStatus += ", " + std::to_string(outcome.kept.size()) + " kept";
+        }
+        for (const auto& [was, is] : outcome.renamed) {
+            SOL_LOG_INFO("forge: renamed part '%s' -> '%s'", was.c_str(), is.c_str());
         }
         SOL_LOG_INFO("forge: imported %s -> %s", gltfPath.c_str(), inboxStatus.c_str());
 

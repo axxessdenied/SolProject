@@ -620,6 +620,283 @@ SOL_TEST(aSecondImportReplacesItsOwnPartsAndKeepsTheAuthorsOwn)
     std::remove(path.c_str());
 }
 
+// --- identity that survives a rename (stage P) --------------------------------
+
+namespace {
+
+// The same two nodes as `kTwoNodeGltf`, now carrying the uid the addon stamps.
+// `extras` is where a glTF exporter puts its own data, and it is the only field
+// here that is orthogonal to the name.
+constexpr const char* kIdentifiedGltf = R"({
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0, 1]}],
+    "nodes": [
+        {"mesh": 0, "name": "Hull.001", "extras": {"sol_forge_uid": "uid-hull"}},
+        {"mesh": 0, "name": "Wing L", "translation": [10, 0, 0],
+         "extras": {"sol_forge_uid": "uid-wing"}}
+    ],
+    "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+    "buffers": [{"byteLength": 42, "uri":
+        "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAABAAIA"}],
+    "bufferViews": [
+        {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+        {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+    ],
+    "accessors": [
+        {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+        {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+    ]
+})";
+
+// The author renamed `Hull.001` to `Fuselage` in Blender. Same uid, same
+// everything else - which is exactly the information the name cannot carry.
+constexpr const char* kRenamedGltf = R"({
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0, 1]}],
+    "nodes": [
+        {"mesh": 0, "name": "Fuselage", "extras": {"sol_forge_uid": "uid-hull"}},
+        {"mesh": 0, "name": "Wing L", "translation": [10, 0, 0],
+         "extras": {"sol_forge_uid": "uid-wing"}}
+    ],
+    "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+    "buffers": [{"byteLength": 42, "uri":
+        "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAABAAIA"}],
+    "bufferViews": [
+        {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+        {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+    ],
+    "accessors": [
+        {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+        {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+    ]
+})";
+
+// What `Shift+D` actually produces: a second object wearing the FIRST one's
+// uid, because Blender copies custom properties on duplicate. Measured against
+// Blender 5.2, not assumed.
+constexpr const char* kDuplicatedUidGltf = R"({
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0, 1]}],
+    "nodes": [
+        {"mesh": 0, "name": "Hull", "extras": {"sol_forge_uid": "uid-hull"}},
+        {"mesh": 0, "name": "Hull.001", "translation": [10, 0, 0],
+         "extras": {"sol_forge_uid": "uid-hull"}}
+    ],
+    "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+    "buffers": [{"byteLength": 42, "uri":
+        "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAABAAIA"}],
+    "bufferViews": [
+        {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+        {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+    ],
+    "accessors": [
+        {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+        {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+    ]
+})";
+
+} // namespace
+
+// ⚑⚑ THE ASSERTION THAT SEPARATES STAGE P FROM WHAT IT REPLACES. Before it, a
+// rename was indistinguishable from a delete plus an add: the renamed object
+// missed every part and was ADDED, and the part it used to be was never claimed
+// so it survived in `kept` - two lumps in one place, with the live geometry in
+// the copy carrying none of the author's placement. The part count is the
+// cheapest way to say that, and `renamed` is the way the tool says it out loud.
+SOL_TEST(aRenamedBlenderObjectUpdatesItsPartInsteadOfLeavingADuplicate)
+{
+    const std::string before = writeFixture("test_rename_before.gltf", kIdentifiedGltf);
+    const std::string after = writeFixture("test_rename_after.gltf", kRenamedGltf);
+    SOL_CHECK(!before.empty() && !after.empty());
+
+    assets::ForgeDoc doc;
+    forge::ImportOutcome first;
+    SOL_CHECK(forge::importGltfIntoDoc(before, doc, first, nullptr));
+    SOL_CHECK(doc.parts.size() == 2);
+    SOL_CHECK(first.added.size() == 2);
+    // The identity landed in the document, or nothing below can work.
+    const std::size_t hull = doc.indexOf("Hull_001");
+    SOL_CHECK(hull != std::string::npos && doc.parts[hull].origin == "uid-hull");
+
+    forge::ImportOutcome second;
+    SOL_CHECK(forge::importGltfIntoDoc(after, doc, second, nullptr));
+
+    // Still two parts. Under the old rule this was three.
+    SOL_CHECK(doc.parts.size() == 2);
+    SOL_CHECK(second.added.empty());
+    // And the part that "disappeared" is not sitting in `kept` waiting to be
+    // deleted by hand - it is the same part, renamed.
+    SOL_CHECK(second.kept.empty());
+    // REQUIRE rather than CHECK: the two lines below index it, and a mutant
+    // that empties this vector should report a failed check rather than take
+    // the process out with a subscript assertion.
+    SOL_REQUIRE(second.renamed.size() == 1);
+    SOL_CHECK(second.renamed[0].first == "Hull_001");
+    SOL_CHECK(second.renamed[0].second == "Fuselage");
+    SOL_CHECK(second.replaced.size() == 1 && second.replaced[0] == "Wing_L");
+
+    SOL_CHECK(hasPart(doc, "Fuselage"));
+    SOL_CHECK(!hasPart(doc, "Hull_001"));
+
+    std::remove(before.c_str());
+    std::remove(after.c_str());
+}
+
+// ⚑ A PART IS NAMED BY ITS CHILDREN, so a rename that stops at the part leaves
+// them parented to something that no longer exists - which `worldTransforms`
+// reads as "no parent" and silently draws at the document origin. A part whose
+// children quietly teleport is a worse outcome than the duplicate this stage
+// exists to remove.
+SOL_TEST(aRenamedPartIsStillNamedByTheChildrenItCarries)
+{
+    const std::string before = writeFixture("test_rename_kid_before.gltf", kIdentifiedGltf);
+    const std::string after = writeFixture("test_rename_kid_after.gltf", kRenamedGltf);
+    SOL_CHECK(!before.empty() && !after.empty());
+
+    assets::ForgeDoc doc;
+    forge::ImportOutcome first;
+    SOL_CHECK(forge::importGltfIntoDoc(before, doc, first, nullptr));
+
+    // What an author does: hang something of their own off the imported hull.
+    assets::ForgePart antenna;
+    antenna.id = "antenna";
+    antenna.primitive = assets::ForgePrimitive::Box;
+    antenna.parent = "Hull_001";
+    doc.parts.push_back(antenna);
+
+    forge::ImportOutcome second;
+    SOL_CHECK(forge::importGltfIntoDoc(after, doc, second, nullptr));
+
+    const std::size_t child = doc.indexOf("antenna");
+    SOL_CHECK(child != std::string::npos);
+    SOL_CHECK(doc.parts[child].parent == "Fuselage");
+    // The author's own part is still theirs - it is kept, not renamed.
+    SOL_CHECK(second.kept.size() == 1 && second.kept[0] == "antenna");
+    // And it never acquires an origin: an origin means "this came from
+    // Blender", and `kept` could not tell the two apart otherwise.
+    SOL_CHECK(doc.parts[child].origin.empty());
+
+    std::remove(before.c_str());
+    std::remove(after.c_str());
+}
+
+// ⚑⚑ THE HAZARD THAT MAKES THE NAIVE VERSION OF THIS STAGE WORSE THAN WHAT IT
+// REPLACES, ASSERTED RATHER THAN TRUSTED. Blender copies custom properties on
+// `Shift+D` and `Alt+D` alike, so two objects can arrive wearing one uid. The
+// addon re-stamps at send time, but the importer must not fall over if one
+// slips through: matching an ALREADY-CLAIMED part would let the second node
+// overwrite the first and silently drop a part.
+SOL_TEST(twoObjectsWearingOneUidStillArriveAsTwoParts)
+{
+    const std::string path = writeFixture("test_dup_uid.gltf", kDuplicatedUidGltf);
+    SOL_CHECK(!path.empty());
+
+    assets::ForgeDoc doc;
+    forge::ImportOutcome outcome;
+    SOL_CHECK(forge::importGltfIntoDoc(path, doc, outcome, nullptr));
+
+    SOL_CHECK(doc.parts.size() == 2);
+    SOL_CHECK(outcome.added.size() == 2);
+    SOL_CHECK(hasPart(doc, "Hull") && hasPart(doc, "Hull_001"));
+
+    // Re-importing the same file is still two parts, not four: the first node
+    // takes the first part and the second cannot take it again.
+    forge::ImportOutcome again;
+    SOL_CHECK(forge::importGltfIntoDoc(path, doc, again, nullptr));
+    SOL_CHECK(doc.parts.size() == 2);
+    SOL_CHECK(again.added.empty());
+
+    std::remove(path.c_str());
+}
+
+// ⚑⚑ THE OTHER HALF OF THE FALLBACK RULE, AND THE DESTRUCTIVE ONE. A name may
+// only match a part that has NEVER been identified. Without that clause a NEW
+// object that happens to take an existing part's name walks straight into it
+// and overwrites another object's work - the same destruction stage L already
+// had to fix once, arriving by a different door.
+//
+// It is written from the doc side rather than through a second glTF because
+// what is being pinned is the RULE, not the file: an origin, once present,
+// outranks the name.
+SOL_TEST(aNewObjectDoesNotCaptureThePartOfAnIdentifiedOneWithTheSameName)
+{
+    const std::string path = writeFixture("test_name_capture.gltf", kIdentifiedGltf);
+    SOL_CHECK(!path.empty());
+
+    // A document whose `Hull_001` already belongs to some OTHER Blender object.
+    assets::ForgeDoc doc;
+    assets::ForgePart squatter;
+    squatter.id = "Hull_001";
+    squatter.primitive = assets::ForgePrimitive::Box;
+    squatter.origin = "uid-somebody-else";
+    doc.parts.push_back(squatter);
+
+    forge::ImportOutcome outcome;
+    SOL_CHECK(forge::importGltfIntoDoc(path, doc, outcome, nullptr));
+
+    // The incoming `Hull.001` carries `uid-hull`, which matches nothing here,
+    // so it must arrive as a NEW part beside the squatter rather than eating it.
+    SOL_CHECK(doc.parts.size() == 3);
+    SOL_CHECK(outcome.replaced.empty() && outcome.renamed.empty());
+    SOL_CHECK(outcome.added.size() == 2);
+    SOL_CHECK(outcome.kept.size() == 1 && outcome.kept[0] == "Hull_001");
+
+    // The squatter is untouched and still owned by whoever owned it.
+    const std::size_t kept = doc.indexOf("Hull_001");
+    SOL_CHECK(kept != std::string::npos);
+    SOL_CHECK(doc.parts[kept].origin == "uid-somebody-else");
+    SOL_CHECK(doc.parts[kept].primitive == assets::ForgePrimitive::Box);
+    // And the newcomer took a suffixed id rather than the taken one.
+    SOL_REQUIRE(hasPart(doc, "Hull_001_2"));
+    SOL_CHECK(doc.parts[doc.indexOf("Hull_001_2")].origin == "uid-hull");
+
+    std::remove(path.c_str());
+}
+
+// ⚑ THE MIGRATION PATH, WHICH IS THE ONLY REASON NAME MATCHING SURVIVES AT ALL.
+// Every part in every committed `.forge` predates this stage and carries no
+// origin, so the first send after it must still find its target by name - and
+// must RECORD the origin, or the second send is in the same position as the
+// first and a rename never becomes possible.
+SOL_TEST(aPartWithNoOriginIsMatchedByNameOnceAndCarriesOneAfterwards)
+{
+    const std::string old = writeFixture("test_migrate_old.gltf", kTwoNodeGltf);
+    const std::string identified = writeFixture("test_migrate_new.gltf", kIdentifiedGltf);
+    const std::string renamed = writeFixture("test_migrate_renamed.gltf", kRenamedGltf);
+    SOL_CHECK(!old.empty() && !identified.empty() && !renamed.empty());
+
+    // A document as it exists today: imported before stage P, no identities.
+    assets::ForgeDoc doc;
+    forge::ImportOutcome first;
+    SOL_CHECK(forge::importGltfIntoDoc(old, doc, first, nullptr));
+    SOL_CHECK(doc.parts.size() == 2);
+    for (const assets::ForgePart& part : doc.parts) {
+        SOL_CHECK(part.origin.empty());
+    }
+
+    // The first send from the upgraded addon: matched by name, and identified.
+    forge::ImportOutcome second;
+    SOL_CHECK(forge::importGltfIntoDoc(identified, doc, second, nullptr));
+    SOL_CHECK(doc.parts.size() == 2);
+    SOL_CHECK(second.replaced.size() == 2 && second.added.empty() && second.renamed.empty());
+    SOL_REQUIRE(hasPart(doc, "Hull_001") && hasPart(doc, "Wing_L"));
+    SOL_CHECK(doc.parts[doc.indexOf("Hull_001")].origin == "uid-hull");
+    SOL_CHECK(doc.parts[doc.indexOf("Wing_L")].origin == "uid-wing");
+
+    // And now a rename works, which it could not have before the send above.
+    forge::ImportOutcome third;
+    SOL_CHECK(forge::importGltfIntoDoc(renamed, doc, third, nullptr));
+    SOL_CHECK(doc.parts.size() == 2);
+    SOL_CHECK(third.renamed.size() == 1 && third.added.empty());
+
+    std::remove(old.c_str());
+    std::remove(identified.c_str());
+    std::remove(renamed.c_str());
+}
+
 // ⚑⚑ STAGE M. These pin the height rule to numbers MEASURED FROM THE RUNNING
 // TOOL rather than derived on paper. Before the change, the parts list reported
 // `scrollMaxY 318` at its shipped 170 px with 28 rows, and the panel list 1252

@@ -289,6 +289,25 @@ std::string nodeName(const JsonValue& document, const JsonValue& node)
     return {};
 }
 
+// The identity the Send-to-Forge addon stamps on the Blender object, which
+// rides in the node's `extras` because that is the one place glTF sets aside
+// for an exporter's own data. Absent from every file any other program wrote,
+// and from anything exported before stage P - so the empty string is a normal
+// answer here, not a failure.
+std::string nodeOriginId(const JsonValue& node)
+{
+    const JsonValue* extras = node.find("extras");
+    if (extras == nullptr) {
+        return {};
+    }
+    const JsonValue* uid = extras->find("sol_forge_uid");
+    // Anything but a string is somebody else's key that happens to collide.
+    if (uid == nullptr || !uid->isString()) {
+        return {};
+    }
+    return uid->asString();
+}
+
 bool traverseNode(const JsonValue& document, const BufferSet& buffers, std::size_t nodeIndex,
                   const Mat4& parentTransform, std::vector<GltfPart>& out)
 {
@@ -312,6 +331,7 @@ bool traverseNode(const JsonValue& document, const BufferSet& buffers, std::size
             // mesh, so they are one object to everything downstream.
             GltfPart part;
             part.name = nodeName(document, node);
+            part.originId = nodeOriginId(node);
 
             // Once per node rather than per vertex: the transform is constant
             // over the primitive and the adjugate inverse is not cheap.

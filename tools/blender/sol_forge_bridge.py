@@ -20,11 +20,14 @@
 #                  compressed file fails at read rather than looking wrong
 #   no materials   a mesh's texture comes from its `[[model]]` row, not glTF
 #   no animation   nothing in this engine has a bone (plan Phase 9, out of scope)
+#   extras ON      the object's uid rides in the node's `extras`, and it is the
+#                  only thing that survives a rename - without it the Forge
+#                  cannot tell a renamed object from a new one (plan stage P)
 
 bl_info = {
     "name": "Send to Forge (SolProject)",
     "author": "SolProject",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Forge, and File > Export",
     "description": "Export meshes into the Forge's inbox, which imports them as .forge parts",
@@ -32,12 +35,42 @@ bl_info = {
 }
 
 import os
+import uuid
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy.types import AddonPreferences, Operator, Panel
 
 INBOX_NAME = "blender-inbox"
+
+# The custom property carrying an object's identity across to the Forge. It
+# rides in the glTF node's `extras`, which is the one place the format sets
+# aside for an exporter's own data.
+UID_KEY = "sol_forge_uid"
+
+
+def _stamp_uids(objects):
+    """Give every object a uid that is unique WITHIN THIS SEND.
+
+    ⚑ THE RE-STAMP IS THE POINT, NOT THE STAMP. `Shift+D` and `Alt+D` both COPY
+    custom properties, so after the most ordinary gesture in modelling there are
+    two objects wearing one uid - measured, not assumed. A bridge that stamped
+    only when the key was absent would hand the Forge two objects claiming one
+    part, and the second would overwrite the first: worse than the name matching
+    it replaces, and invisible from the names.
+
+    Returns the number of uids written, which is what the operator reports.
+    """
+    seen = set()
+    written = 0
+    for obj in objects:
+        uid = obj.get(UID_KEY)
+        if not isinstance(uid, str) or not uid or uid in seen:
+            uid = uuid.uuid4().hex
+            obj[UID_KEY] = uid
+            written += 1
+        seen.add(uid)
+    return written
 
 
 def _inbox_path(context):
@@ -93,7 +126,10 @@ def _export(context, filepath, use_selection):
         "export_morph": False,
         "export_cameras": False,
         "export_lights": False,
-        "export_extras": False,
+        # ⚑ ON, and it is what makes a rename survive: the object's uid rides in
+        # the node's `extras` and nothing else carries it. It also exports any
+        # other custom properties the author has, which the Forge ignores.
+        "export_extras": True,
         "export_draco_mesh_compression_enable": False,
     }
     kwargs = _supported_kwargs(bpy.ops.export_scene.gltf, wanted)
@@ -166,6 +202,9 @@ class SOLFORGE_OT_send(Operator):
             self.report({"ERROR"}, "No mesh objects to send")
             return {"CANCELLED"}
 
+        # Before the export, so the uids are in the file the exporter reads.
+        stamped = _stamp_uids(objects)
+
         try:
             result = _export(context, target, self.use_selection)
         except Exception as failure:  # the exporter raises on a bad combination
@@ -175,10 +214,11 @@ class SOLFORGE_OT_send(Operator):
             self.report({"ERROR"}, "Export was cancelled")
             return {"CANCELLED"}
 
+        note = " ({} newly identified)".format(stamped) if stamped else ""
         self.report(
             {"INFO"},
-            "Sent {} object(s) as {}.glb - the Forge imports it as {}.forge".format(
-                len(objects), stem, stem
+            "Sent {} object(s) as {}.glb - the Forge imports it as {}.forge{}".format(
+                len(objects), stem, stem, note
             ),
         )
         return {"FINISHED"}
