@@ -42,6 +42,12 @@ int runAllTests()
         ++testCount;
         g_failuresInCurrentTest = 0;
         std::printf("[ RUN  ] %s\n", testCase->name);
+        // ⚑ FLUSHED BEFORE THE TEST RUNS, NOT AFTER IT. stdout is buffered and a
+        // CRT assertion goes to stderr UNBUFFERED, so a test that aborts - an
+        // out-of-range subscript, a failed SOL_ASSERT - takes the whole pending
+        // buffer with it and the name of the test that crashed is exactly what
+        // is lost. This repo has paid for that twice while chasing mutants.
+        std::fflush(stdout);
         testCase->fn();
         if (g_failuresInCurrentTest == 0) {
             std::printf("[  OK  ] %s\n", testCase->name);
