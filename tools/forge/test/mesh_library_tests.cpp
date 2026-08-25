@@ -949,3 +949,31 @@ SOL_TEST(theSelectedPartNeverGetsASecondBox)
     SOL_CHECK(forge::forgeHoverBox(kNone, 0, 3) == 0);
     SOL_CHECK(forge::forgeHoverBox(0, kNone, kNone) == 0);
 }
+
+// Stage O2, and the user found the need for it: "the orange box skips from part
+// to part". While the camera orbits, the model turns under a stationary cursor
+// and a per-frame hover walks through everything that passes beneath it -
+// measured at 100 suppressed changes across 3 parts in one 24-step drag.
+SOL_TEST(theHoverHoldsItsAnswerWhileTheCameraIsBeingDragged)
+{
+    // Held from an earlier frame: a drag. Both buttons that move the camera.
+    SOL_CHECK(forge::forgeCameraHoldsMouse(/*leftDown=*/true, /*leftPressed=*/false,
+                                           /*middleDown=*/false));
+    SOL_CHECK(forge::forgeCameraHoldsMouse(false, false, true));
+    SOL_CHECK(forge::forgeCameraHoldsMouse(true, false, true));
+
+    // ⚑ THE CLAUSE THAT KEEPS THE TOOL USABLE: the frame the button goes DOWN is
+    // a click, not a drag. Freezing it would mean the pick never runs on the one
+    // frame that matters and NO PART COULD EVER BE SELECTED BY CLICKING - a
+    // total loss of stage N, from a rule meant only to steady a highlight.
+    SOL_CHECK(!forge::forgeCameraHoldsMouse(/*leftDown=*/true, /*leftPressed=*/true,
+                                            /*middleDown=*/false));
+
+    // Nothing held: the ordinary case, every frame the cursor is just moving.
+    SOL_CHECK(!forge::forgeCameraHoldsMouse(false, false, false));
+
+    // ⚑ A middle drag freezes even on its first frame, and that is correct
+    // rather than sloppy: MMB is pan-only, it never selects, so there is no
+    // press frame to protect.
+    SOL_CHECK(forge::forgeCameraHoldsMouse(false, true, true));
+}

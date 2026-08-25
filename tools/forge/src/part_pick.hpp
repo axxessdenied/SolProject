@@ -150,4 +150,28 @@ inline void forgePartBounds(std::span<const sol::assets::ForgePoint> points,
     return hover == selected ? kNoPart : hover;
 }
 
+// True when a mouse button that drives the CAMERA is being held, so the part
+// hover should hold its answer instead of recomputing (engine plan stage O2).
+//
+// ⚑⚑ THE USER FOUND WHY THIS EXISTS: "the orange box skips from part to part".
+// While you orbit, the model turns under a stationary cursor, so a hover
+// recomputed every frame walks through every part that passes beneath it -
+// measured at 100 frames of change across 3 other parts in ONE 24-step drag.
+// During an orbit you are not pointing at anything, so the last answer stands.
+//
+// ⚑⚑ `!leftPressed` IS THE CLAUSE THAT KEEPS THE TOOL USABLE AND IT IS EASY TO
+// DROP. The frame the button goes down is a CLICK, and freezing it would mean
+// the pick never runs and no part could ever be selected by clicking. Held from
+// an earlier frame is a drag; down this frame is a press.
+//
+// ⚑ Only Part mode may ask. In the other three the same expression is true
+// during the tool's OWN drag, and `main.cpp` decides who owns a press only
+// AFTER this class has been offered it - that ordering is stage E1's
+// arbitration - so there is no "the camera is orbiting" flag to be told.
+[[nodiscard]] inline constexpr bool forgeCameraHoldsMouse(bool leftDown, bool leftPressed,
+                                                          bool middleDown) noexcept
+{
+    return (leftDown && !leftPressed) || middleDown;
+}
+
 } // namespace forge

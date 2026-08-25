@@ -1023,6 +1023,7 @@ int main(int argc, char** argv)
         // The camera still gets the press, so orbiting a level still works.
         viewport.leftPressed = leftPressed && !shiftDown && previewLevel == 0;
         viewport.leftDown = leftDown && previewLevel == 0;
+        viewport.middleDown = middleDown;
         viewport.uiCaptured = imguiHost.wantsMouseCapture();
         viewport.axisLock = -1;
         if (!imguiHost.wantsKeyboardCapture()) {

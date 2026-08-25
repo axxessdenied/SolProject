@@ -186,6 +186,13 @@ constexpr float kEdgeGrabPixels = 8.0f;
 // triangle has an interior, so the cursor is either inside it or it is not.
 // Points and edges need a radius because they have no area to be inside of.
 
+// The rule itself is `forgeCameraHoldsMouse` in part_pick.hpp, where the
+// headless suite can reach it; this only unpacks the viewport.
+[[nodiscard]] bool cameraHoldingTheMouse(const PointTool::Viewport& viewport)
+{
+    return forgeCameraHoldsMouse(viewport.leftDown, viewport.leftPressed, viewport.middleDown);
+}
+
 } // namespace
 
 void PointTool::refresh(const ForgeDoc& doc)
@@ -553,7 +560,18 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
             m_hoverEdge = pickEdgeAt(viewport);
         } else if (m_mode == Mode::Face) {
             m_hoverFace = pickFaceAt(viewport, m_hoverGroup);
-        } else {
+        } else if (!cameraHoldingTheMouse(viewport)) {
+            // ⚑⚑ STAGE O2: FROZEN FOR THE DURATION OF A CAMERA DRAG, AND THE
+            // USER FOUND WHY. Reported as "the orange box skips from part to
+            // part": while you orbit, the model turns under a stationary cursor,
+            // so a hover recomputed every frame walks through every part that
+            // passes beneath it - sixty answers to a question nobody asked,
+            // because DURING AN ORBIT YOU ARE NOT POINTING AT ANYTHING. Holding
+            // the last answer keeps one box still through the gesture, and the
+            // hover catches up in a single step on release.
+            // ⚑ Freeze rather than clear: nothing appears or disappears as the
+            // drag begins, which is what makes it read as the same highlight
+            // rather than as a flicker at the start of every rotation.
             m_hoverPart = pickPartAt(viewport);
         }
     }

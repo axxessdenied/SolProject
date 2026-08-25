@@ -107,6 +107,13 @@ public:
         sol::core::Mat4 view = sol::core::Mat4::identity();
         bool leftPressed = false; // went down this frame
         bool leftDown = false;
+        // ⚑ Stage O2. Raw input like the two above, carried because the MIDDLE
+        // button pans and a pan moves the eye exactly as an orbit does - so a
+        // hover frozen only for LMB would still skip parts under a middle drag.
+        // Deliberately NOT gated on `previewLevel` the way the left button is:
+        // that gate exists to withhold a PRESS from the tool, and this is not a
+        // press, it is "the camera is moving".
+        bool middleDown = false;
         bool uiCaptured = false; // ImGui wants the mouse: the viewport gets nothing
         // -1 free in the view plane, 0/1/2 to lock the drag to world X/Y/Z.
         int axisLock = -1;
