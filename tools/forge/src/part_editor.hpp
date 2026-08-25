@@ -139,11 +139,19 @@ public:
     // at all, or a frame that skips the draw also skips the clear and hands the
     // next drawn frame a stale row.
     //
-    // ⚑ It is last frame's answer: `main.cpp` builds the debug lines before it
-    // submits the panel, so the surface that knows what the cursor is over runs
-    // after the lines it feeds. 16 ms of lag on a value that only exists while
-    // a hand is holding still.
+    // ⚑ It is THIS frame's answer: the markers are submitted after the whole
+    // panel, so the surface that knows what the cursor is over has already run.
+    // It was last frame's when stage O landed, and the lag went away when the
+    // overlay moved below the panel to fix the camera residual - but the
+    // consume-once rule stays, because what it guards is not the lag, it is the
+    // producer not running at all.
     [[nodiscard]] std::size_t takeHoveredPart();
+    // ⚑ A PEEK, for the panel's own `hover` readout, which is drawn in the same
+    // pass that produces the value and so must not consume it. The DRAW is the
+    // consumer and there is exactly one of those; this is a look. Read it only
+    // from inside the panel pass, where `drawPartList` has already run this
+    // frame - anywhere else it is a value in the middle of being produced.
+    [[nodiscard]] std::size_t hoveredPart() const { return m_hoveredPart; }
 
     [[nodiscard]] bool isOpen() const { return m_open; }
     [[nodiscard]] const sol::assets::ForgeDoc& doc() const { return m_doc; }

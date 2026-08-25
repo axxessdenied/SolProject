@@ -1097,39 +1097,6 @@ int main(int argc, char** argv)
         }
         framePressed = frameDown;
 
-        // ⚑⚑⚑ THE OVERLAY MUST BE BUILT AGAINST THE CAMERA THIS FRAME WILL
-        // RENDER WITH, NOT THE ONE THE USER PICKED AGAINST. Those are two
-        // different matrices whenever the camera moved this frame, and the
-        // difference is a whole orbit step. `viewport.view` above is deliberately
-        // the PRE-orbit camera, because that is the image the cursor was over
-        // when the press was read and picking must agree with what was on
-        // screen; but everything below here is geometry handed to the renderer,
-        // which draws it with `camera.view()` AFTER the orbit (see `frame.view`).
-        //
-        // ⚑⚑ IT WENT UNNOTICED UNTIL STAGE O BECAUSE ALMOST NOTHING HERE IS
-        // VIEW-DEPENDENT. A point cross and an edge line are world-space
-        // positions that come out right whichever matrix computed them - the
-        // stale view changes nothing about where they land. Stage N's part box
-        // is the exception, and the exception is exactly the thing that makes it
-        // work: it RELOCATES its corners to 0.12 m from the eye to beat the
-        // depth test, and that is only correct when drawn from the eye it was
-        // scaled about.
-        //
-        // ⚑⚑ MEASURED, BECAUSE THE MAGNITUDE IS THE WHOLE POINT: one orbit step
-        // moves the eye 0.3739 m, the pull magnifies any eye error by
-        // `distance / 0.12` = 41x on `freighter_cockpit`, so the box was landing
-        // 15.5 m from its part on a model 4.98 m away and 7.4 m across - flung
-        // clean off the mesh rather than lagging it. Zero error on a still
-        // camera, which is why every headless drive and every static screenshot
-        // passed and a person rotating the view found it in a minute.
-        // ⚑ A SEPARATE VIEWPORT RATHER THAN AN ASSIGNMENT INTO THE ONE ABOVE, so
-        // `viewport` means exactly one thing for its whole life - the image the
-        // press was read against - and a pick added below here cannot silently
-        // acquire the wrong camera.
-        forge::PointTool::Viewport overlay = viewport;
-        overlay.view = camera.view();
-        overlay.cameraDistance = camera.distance();
-
         // --- viewport geometry ---
         if (showGrid) {
             gridCell = addGrid(view.debugDraw(), camera.distance());
@@ -1146,27 +1113,6 @@ int main(int argc, char** argv)
             addWireBox(view.debugDraw(), report.boundsMin, report.boundsMax,
                        {0.30f, 0.75f, 0.35f, 1.0f});
         }
-        // ⚑ Last of the debug lines on purpose. `DebugDrawRenderer::line()`
-        // drops silently once its 8192 vertices are spent, so whatever is drawn
-        // last is what goes missing - and the grid and the scale boxes are the
-        // frame's fixed furniture while the markers are the variable part. The
-        // tool's own budget keeps it well inside; this is the second belt.
-        // ⚑ Not while a level is previewed. The markers come from the DOCUMENT
-        // and the mesh on screen is a generated level, so drawing them together
-        // puts 162 crosses over a hull with 80 triangles that has no such
-        // points - an editable-looking overlay on something that is not the
-        // thing being edited. A preview is a look, not an edit surface.
-        // ⚑⚑ STAGE O: TAKEN UNCONDITIONALLY, OUTSIDE THE GUARD BELOW, AND THAT
-        // IS THE POINT OF IT. The read is what clears the value, so a frame
-        // that skips the markers - points hidden, no document, a level being
-        // previewed - must still take it, or the next frame that DOES draw
-        // inherits whichever row the cursor was over before the panel stopped
-        // reporting. See `PartEditor::takeHoveredPart`.
-        const std::size_t rowHoverPart = editor.takeHoveredPart();
-        if (showPoints && editor.isOpen() && previewLevel == 0) {
-            points.drawMarkers(view.debugDraw(), overlay, editor.selectedPart(), rowHoverPart);
-        }
-
         // ⚑ Throttled to about twice a second rather than run every frame: it
         // is a directory listing plus a stat per drop, and the thing it is
         // waiting for is a human alt-tabbing out of Blender.
@@ -1523,7 +1469,7 @@ int main(int argc, char** argv)
                     // ⚑ It can change the document since E5: a split and an extrude
                     // are presses rather than drags, so this panel is a third place
                     // an edit can come from and it needs the same rebuild.
-                    if (points.drawPanel(editor, rowHoverPart)) {
+                    if (points.drawPanel(editor, editor.hoveredPart())) {
                         rebuildFromEditor(/*reframe=*/false);
                     }
                 }
@@ -1808,6 +1754,60 @@ int main(int argc, char** argv)
                     ImGui::MarkIniSettingsDirty();
                 }
             }
+        }
+
+        // --- the markers, AFTER the panel ---
+        //
+        // ⚑⚑⚑ THE OVERLAY IS BUILT AGAINST THE CAMERA THIS FRAME WILL RENDER
+        // WITH, AND THAT IS WHY IT LIVES DOWN HERE RATHER THAN WITH THE OTHER
+        // DEBUG GEOMETRY. `viewport.view` far above is deliberately the camera
+        // as it was when the press was read - picking must agree with the image
+        // the cursor was over - but these lines are handed to the renderer,
+        // which draws them with `camera.view()` as it stands at `frame.view`
+        // below. Any camera move between the two is an error in the overlay, and
+        // the camera moves in more places than the obvious one: the
+        // orbit/pan/dolly block, the `F` key, the `Levels` radios in the Report
+        // panel (which frame the range each level is for), and any panel action
+        // that rebuilds with `reframe` - opening a mesh, `Reload`. The first two
+        // are above; the rest are inside the panel, which is why submitting
+        // AFTER the whole panel is the only placement that covers all of them
+        // rather than the ones anybody happened to think of.
+        //
+        // ⚑⚑ IT MATTERS FOR EXACTLY ONE THING, AND THAT THING IS WHY IT HID FOR
+        // FIVE STAGES. A point cross and an edge line are world-space positions
+        // that come out right whichever matrix computed them. Stage N's part box
+        // is the exception, and the exception is the trick that makes it work at
+        // all: it RELOCATES its corners to 0.12 m from the eye to beat the depth
+        // test, so it is only correct drawn from the eye it was scaled about,
+        // and any mismatch is magnified by `distance / 0.12`. Measured at 41x on
+        // `freighter_cockpit` - 0.3739 m of orbit became 15.5 m of slip on a
+        // 7.4 m model, flung clean off the mesh rather than lagging it.
+        //
+        // ⚑ Last of the debug lines on purpose, which this ordering preserves -
+        // the panel submits none. `DebugDrawRenderer::line()` drops silently
+        // once its 8192 vertices are spent, so whatever is drawn last is what
+        // goes missing, and the grid and the scale boxes are the frame's fixed
+        // furniture while the markers are the variable part.
+        // ⚑ Not while a level is previewed. The markers come from the DOCUMENT
+        // and the mesh on screen is a generated level, so drawing them together
+        // puts 162 crosses over a hull with 80 triangles that has no such
+        // points - an editable-looking overlay on something that is not the
+        // thing being edited. A preview is a look, not an edit surface.
+        forge::PointTool::Viewport overlay = viewport;
+        overlay.view = camera.view();
+        overlay.cameraDistance = camera.distance();
+        // ⚑⚑ STAGE O: TAKEN UNCONDITIONALLY, OUTSIDE THE GUARD BELOW. The read
+        // is what clears the value, so a frame that skips the markers - points
+        // hidden, no document, a level being previewed - must still take it, or
+        // the next frame that DOES draw inherits whichever row the cursor was
+        // over before the panel stopped reporting.
+        // ⚑ Being after the panel, this is THIS frame's hover rather than the
+        // previous frame's: the row was submitted a few lines ago. The lag the
+        // consume-once rule was designed around is gone; the rule stays, because
+        // what it actually guards is the producer not running at all.
+        const std::size_t rowHoverPart = editor.takeHoveredPart();
+        if (showPoints && editor.isOpen() && previewLevel == 0) {
+            points.drawMarkers(view.debugDraw(), overlay, editor.selectedPart(), rowHoverPart);
         }
 
         // --- draw ---

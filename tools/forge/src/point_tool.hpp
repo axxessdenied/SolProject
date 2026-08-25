@@ -165,8 +165,10 @@ public:
     // bare letter keys: `X`, `Y`, `Z` and `F` are already unmodified letters in
     // this viewport, and a stray press that reshapes the mesh is a worse failure
     // than one that locks an axis.
-    // ⚑ `listHoverPart` is the same value `drawMarkers` was given this frame,
-    // so the `hover` readout and the box on screen cannot disagree.
+    // ⚑ `listHoverPart` is `PartEditor::hoveredPart()` - a PEEK at the value
+    // this frame's parts list just produced, not the consuming take the draw
+    // uses. The markers are submitted after the whole panel, so both see the
+    // same frame's hover and the readout cannot disagree with the box.
     [[nodiscard]] bool drawPanel(PartEditor& editor, std::size_t listHoverPart);
 
     // ⚑⚑ TRUE FOR THE WHOLE BUTTON PRESS, INCLUDING AFTER A REFUSAL, AND THAT
