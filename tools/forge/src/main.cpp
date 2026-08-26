@@ -1023,6 +1023,33 @@ int main(int argc, char** argv)
     bool previousLeftDown = false;
     bool undoPressed = false;
     bool redoPressed = false;
+    // ⚑⚑⚑ EVERY TEXTURE REBUILD IS RAISED HERE AND PERFORMED AT ONE POINT NEAR
+    // THE TOP OF THE FRAME, BECAUSE REBUILDING MID-FRAME FREES A DESCRIPTOR SET
+    // THIS FRAME'S DRAW LIST ALREADY NAMES. `rebuildTexture` ends in
+    // `refreshTexturePreview`, which calls `ImGui_ImplVulkan_RemoveTexture` ->
+    // `vkFreeDescriptorSets` IMMEDIATELY (imgui_impl_vulkan.cpp:1253 - no fence,
+    // no frame-in-flight tracking). The Texture panel has already recorded that
+    // handle via `AddImage` (`texture_editor.cpp`) by the time `drawPreview`
+    // returns true, so the bind recorded at render time names a freed set.
+    //
+    // ⚑ `context.waitIdle()` inside `rebuildTexture` does NOT cover this: it
+    // waits for SUBMITTED work, and this frame has not been submitted yet.
+    //
+    // ⚑⚑ IT IS INTERMITTENT BY NATURE, WHICH IS WHY IT SURVIVED: free-then-
+    // allocate usually hands the SAME pool slot straight back, leaving the
+    // recorded handle accidentally valid. When the pool hands out a fresh slot
+    // instead, the same code faults - the user's log shows handles stepping +8
+    // per burst, i.e. no reuse, while eight driven gestures here never once
+    // failed to reuse. Do not treat "it did not reproduce" as "it is fixed".
+    bool textureRebuildPending = false;
+    // ⚑⚑ SAME REASON, SECOND ROUTE: `openTextureAt` ALSO ends in
+    // `refreshTexturePreview`, so a panel that switches texture mid-frame frees
+    // the set too. The Textures list happens to sit ABOVE the preview and the
+    // `View` combo sits BELOW it - so one is safe today and one is not, and
+    // which is which depends on the order four dockable panels are submitted in.
+    // ⚑ Both go through here rather than one, because "safe as long as nobody
+    // moves that call" is the shape of defect this tool keeps rediscovering.
+    int pendingTextureOpen = -1;
     double previousTime = platform::timeSeconds();
     float frameMilliseconds = 0.0f;
 
@@ -1189,11 +1216,31 @@ int main(int argc, char** argv)
                 // the one that must be re-uploaded. Neither call does any work
                 // when its editor is closed.
                 rebuildFromEditor(/*reframe=*/false);
-                rebuildTexture();
+                textureRebuildPending = true;
             }
         }
         undoPressed = undoDown;
         redoPressed = redoDown;
+
+        // ⚑⚑ THE ONE PLACE A TEXTURE IS REBUILT, AND IT IS HERE BECAUSE THIS IS
+        // ABOVE EVERY `Begin` IN THE TOOL - the menu bar, both side bars and all
+        // four panels are submitted below, so no draw list can yet be naming the
+        // descriptor set this may free. Requests raised by the panels therefore
+        // land on the NEXT frame (16 ms, invisible, and the same trade stage Q
+        // already took for the panels' undo buttons); the undo/redo block just
+        // above is early enough to be served in this one.
+        //
+        // ⚑ Collapsing to one call per frame is a side benefit rather than the
+        // point: a drag in the picker used to rebuild once per widget per frame.
+        if (pendingTextureOpen >= 0) {
+            const int index = pendingTextureOpen;
+            pendingTextureOpen = -1;
+            openTextureAt(index);
+        }
+        if (textureRebuildPending) {
+            textureRebuildPending = false;
+            rebuildTexture();
+        }
 
         // A drag is claimed on its first frame and kept for its duration:
         // deciding every frame would hand the camera a drag that began on a
@@ -1821,7 +1868,7 @@ int main(int argc, char** argv)
                         for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
                             if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
                                                   i == textureIndex)) {
-                                openTextureAt(i);
+                                pendingTextureOpen = i;
                             }
                         }
                     }
@@ -1837,7 +1884,12 @@ int main(int argc, char** argv)
                         if (textureEditor.isOpen()) {
                             if (textureEditor.drawPreview(texturePreview,
                                                           ImGui::GetContentRegionAvail().x)) {
-                                rebuildTexture();
+                                // ⚑ RAISED, NOT PERFORMED. `drawPreview` has
+                                // already recorded `texturePreview` into this
+                                // frame's draw list, so freeing it here is a
+                                // use-after-free that only shows when the pool
+                                // declines to hand the same slot back.
+                                textureRebuildPending = true;
                             }
                             ImGui::TextDisabled("as cooked (BC1) - click a shape, drag to move it");
                         } else {
@@ -1852,7 +1904,7 @@ int main(int argc, char** argv)
                     if (ImGui::Button("new texture")) {
                         textureEditor.openNew(assetsDirectory + "/textures");
                         editingTextureIndex = -1;
-                        rebuildTexture();
+                        textureRebuildPending = true;
                     }
                     ImGui::SameLine();
                     ImGui::TextDisabled("%s", textureEditor.isOpen()
@@ -1860,7 +1912,7 @@ int main(int argc, char** argv)
                                                   : "cooked textures are read-only");
                     ImGui::Separator();
                     if (textureEditor.draw()) {
-                        rebuildTexture();
+                        textureRebuildPending = true;
                     }
                 }
             }
@@ -1876,7 +1928,7 @@ int main(int argc, char** argv)
                         for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
                             if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
                                                   i == textureIndex)) {
-                                openTextureAt(i);
+                                pendingTextureOpen = i;
                             }
                         }
                         ImGui::EndCombo();
