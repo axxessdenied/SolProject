@@ -240,4 +240,27 @@ const char* boundChordName(const sol::platform::BindingTable& table, Action acti
     return chord.bound() ? sol::platform::chordName(chord) : "";
 }
 
+KeyboardRouting routeKeyboard(bool inFlight,
+                              bool jumping,
+                              bool bookmarkPromptOpen,
+                              bool imguiWantsKeyboard)
+{
+    // ImGui first, and it takes everything. The dev console is drawn over the
+    // game rather than inside it, so when it holds the keyboard there is no
+    // consumer left underneath: not the ship, and not the game's own UI. This
+    // is the row the old single bool got wrong.
+    if (imguiWantsKeyboard) {
+        return {};
+    }
+
+    KeyboardRouting routing;
+    // A game text field suppresses gameplay without suppressing the UI - the
+    // prompt is *made of* menu keys, so Backspace has to reach it while W must
+    // not reach the throttle. Outside flight there is no gameplay to suppress
+    // and the menus own the keyboard anyway.
+    routing.gameplay = inFlight && !jumping && !bookmarkPromptOpen;
+    routing.menus = !inFlight || bookmarkPromptOpen;
+    return routing;
+}
+
 } // namespace game

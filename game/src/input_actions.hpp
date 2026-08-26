@@ -125,4 +125,38 @@ inline bool released(const sol::platform::BindingTable& table, Action action)
     return table.released(static_cast<std::uint32_t>(action));
 }
 
+// Who is allowed to act on a keypress this frame (Phase 20).
+//
+// The two answers are separate because they disagree. A key is a physical
+// fact by the time the game sees it - the platform layer records keyDown[]
+// *before* the dev-UI hook swallows the message, deliberately, so that a key
+// ImGui takes the "up" for cannot latch down forever - so the only thing
+// standing between a focused text field and the ship's throttle is a gate at
+// the consumer, and there are two consumers that want opposite things.
+struct KeyboardRouting
+{
+    // Flight actions and the flight mapper: thrust, targeting, the map key.
+    bool gameplay = false;
+    // The game's own UI: menu navigation, sliders, and the text-editing keys
+    // the bookmark prompt is built out of.
+    bool menus = false;
+};
+
+// The truth table this game needs, and the reason it is a function.
+//
+//   nothing owns the keyboard  -> gameplay in flight, menus outside it
+//   the bookmark prompt owns it -> gameplay OFF, menus ON
+//   ImGui owns it               -> BOTH off
+//
+// The middle row is why a single `typing` bool could not express this: the
+// bookmark prompt wants gameplay suppressed *and* the UI fed, because its own
+// backspace and Enter are menu keys. ImGui wants neither, and a bool that
+// means "suppress gameplay" and "feed the UI" at the same time has no way to
+// say so. Phase 20 was that bool answering the ImGui case with the bookmark
+// prompt's answer, which is how typing in the dev console flew the ship.
+[[nodiscard]] KeyboardRouting routeKeyboard(bool inFlight,
+                                            bool jumping,
+                                            bool bookmarkPromptOpen,
+                                            bool imguiWantsKeyboard);
+
 } // namespace game

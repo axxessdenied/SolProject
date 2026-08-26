@@ -86,6 +86,7 @@ set_tests_properties(game.smoke PROPERTIES LABELS gpu)
 # targeting, the map's rows - and NOT the renderer, which is still verified by
 # running the app.
 add_executable(sol_game_tests
+    test/keyboard_routing_tests.cpp
     test/map_row_tests.cpp
     test/model_role_tests.cpp
     test/target_cycle_tests.cpp
