@@ -467,13 +467,24 @@ int main(int argc, char** argv)
         // resolve it against. It is a ride, not a piloting segment.
         const bool jumping = world.jumpActive();
         const bool simRunning = (inFlight || docked || onMap || onShipInfo) && !jumping;
-        // A text field open over the flight view owns the keyboard, on exactly
-        // the terms a menu does (Phase 8h): the letters are a name being typed,
-        // not thrust and target commands. Without this "Rich Rock" flies the
-        // ship, and Enter and Backspace never reach the field at all.
-        const bool typing = bookmarkPrompt.open;
-        const bool uiHasKeys = !inFlight || typing;     // menus, station, map
-        const bool inMenuScreen = uiHasKeys && !docked; // where Esc means "back out"
+        // Who owns the keyboard this frame (Phase 20). A text field open over
+        // the flight view owns it on exactly the terms a menu does (Phase 8h):
+        // the letters are a name being typed, not thrust and target commands.
+        // Without this "Rich Rock" flies the ship, and Enter and Backspace
+        // never reach the field at all.
+        //
+        // The dev console is the second claimant and it wants the opposite of
+        // what the bookmark prompt wants, which is why this is a function in
+        // sol_game_lib rather than a bool here: a key is a physical fact by the
+        // time it arrives (the platform layer records it BEFORE the dev-UI hook
+        // swallows the message, deliberately, so a key ImGui takes the "up" for
+        // cannot latch down forever), so this gate is the only thing standing
+        // between a focused console and the throttle. It lives in the library
+        // because main.cpp is the whole of the sol_game target and no suite can
+        // link it.
+        const game::KeyboardRouting keys =
+            game::routeKeyboard(inFlight, bookmarkPrompt.open, imguiHost.wantsKeyboardCapture());
+        const bool inMenuScreen = keys.menus && !docked; // where Esc means "back out"
 
         // Bindings (Phase 8k). Sampled once, here, so every action this frame
         // reads one consistent picture of the keyboard and mouse - and so the
@@ -485,8 +496,11 @@ int main(int argc, char** argv)
         const sol::platform::BindingTable& binds = settings.bindings;
 
         // A gameplay action only counts in the cockpit, and never while a text
-        // field is open over it: the letters are a name being typed.
-        const bool gameplayLive = inFlight && !typing && !jumping;
+        // field is open over it: the letters are a name being typed. The jump
+        // term is separate from the routing on purpose - a jump is a question
+        // about whether the ship is steerable, not about who is typing, and
+        // the flight mapper below deliberately does not ask it.
+        const bool gameplayLive = keys.gameplay && !jumping;
         const auto gameplayPressed = [&](game::Action action) {
             return gameplayLive && game::pressed(binds, action);
         };
@@ -498,7 +512,7 @@ int main(int argc, char** argv)
         // The map handles Esc itself (it closes), so it is excluded here even
         // though its clock is running - and so does an open text field, where
         // Esc means "abandon what I was typing" rather than "pause".
-        if (escapeEdge && (inFlight || docked) && !typing) {
+        if (escapeEdge && (inFlight || docked) && keys.shortcuts) {
             state = game::GameState::Paused;
             window.setCursorLocked(false);
         }
@@ -669,8 +683,7 @@ int main(int argc, char** argv)
         }
 
         // The map opens from flight or from a station and closes from itself.
-        if ((inFlight || docked || onMap) && !typing && !imguiHost.wantsMouseCapture() &&
-            game::pressed(binds, game::Action::OpenMap)) {
+        if ((inFlight || docked || onMap) && keys.shortcuts && game::pressed(binds, game::Action::OpenMap)) {
             if (onMap) {
                 state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
             } else {
@@ -683,7 +696,7 @@ int main(int argc, char** argv)
         // from a station, closes from itself, and does not stop the clock.
         // Suppressed while a text field is open, or "i" in a bookmark name
         // would leave the cockpit.
-        if ((inFlight || docked || onShipInfo) && !typing && !imguiHost.wantsMouseCapture() &&
+        if ((inFlight || docked || onShipInfo) && keys.shortcuts &&
             game::pressed(binds, game::Action::OpenShipInfo)) {
             if (onShipInfo) {
                 state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
@@ -708,13 +721,13 @@ int main(int argc, char** argv)
         }
 
         // In free-cam mode the mouse/keys drive the debug camera, not the ship.
-        if (!inFlight || typing) {
+        if (!keys.gameplay) {
             // The mapper reads the window directly, so it is skipped entirely
             // rather than fed neutral input - otherwise Tab would toggle
             // cruise while the player is tabbing through a menu, and typing a
-            // bookmark name would fly the ship. It also owns the cursor lock,
-            // so release it here or a screen opened mid-turn inherits a
-            // captured mouse.
+            // bookmark name (or a line into the dev console) would fly the
+            // ship. It also owns the cursor lock, so release it here or a
+            // screen opened mid-turn inherits a captured mouse.
             world.setShipInput({});
             window.setCursorLocked(false);
         } else if (cameraMode == game::CameraMode::Free) {
@@ -1314,7 +1327,7 @@ int main(int argc, char** argv)
         // Navigation keys are edge-triggered: holding Tab must not race
         // through every widget on the screen in one frame.
         const auto menuKeyEdge = [&](sol::platform::Key key, bool& previous) {
-            const bool down = uiHasKeys && window.isKeyDown(key) && !imguiHost.wantsMouseCapture();
+            const bool down = keys.menus && window.isKeyDown(key);
             const bool edge = down && !previous;
             previous = down;
             return edge;
@@ -1327,9 +1340,11 @@ int main(int argc, char** argv)
         uiInput.navActivate = menuKeyEdge(sol::platform::Key::Enter, previousNavActivate) ||
                               menuKeyEdge(sol::platform::Key::Space, previousNavSpace);
         // Sliders step while held, so left/right stay level-triggered - but
-        // they stand down for ImGui on the same terms as every other nav key,
-        // or a cursor resting on the dev overlay would disable half of them.
-        const bool arrowsLive = uiHasKeys && !imguiHost.wantsMouseCapture();
+        // they stand down for ImGui on the same terms as every other nav key.
+        // That term used to be the MOUSE capture flag, which got it wrong in
+        // both directions: a cursor merely resting on the dev overlay killed
+        // them, and a focused console left them live.
+        const bool arrowsLive = keys.menus;
         uiInput.navLeft = arrowsLive && window.isKeyDown(sol::platform::Key::Left);
         uiInput.navRight = arrowsLive && window.isKeyDown(sol::platform::Key::Right);
         // Only a menu treats Esc as "back out". While docked it opened the

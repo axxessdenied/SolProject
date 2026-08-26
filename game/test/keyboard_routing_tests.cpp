@@ -15,21 +15,23 @@ namespace {
 // The case that was broken, and the reason the whole phase exists. Typing into
 // the dev console fired every bound action AND ran the flight mapper, because
 // nothing in the game's gates consulted ImGui's keyboard capture at all.
-SOL_TEST(imgui_capture_in_flight_stops_gameplay_and_menus_alike)
+SOL_TEST(imgui_capture_in_flight_stops_every_consumer)
 {
-    const game::KeyboardRouting routing = game::routeKeyboard(true, false, false, true);
+    const game::KeyboardRouting routing = game::routeKeyboard(true, false, true);
     SOL_CHECK(!routing.gameplay);
     SOL_CHECK(!routing.menus);
+    SOL_CHECK(!routing.shortcuts);
 }
 
-SOL_TEST(imgui_capture_outside_flight_stops_menus_too)
+SOL_TEST(imgui_capture_outside_flight_stops_every_consumer)
 {
     // The dev console is drawn over the game, not inside it, so a menu screen
     // underneath must not read the keys either - or arrows typed into the
     // console would walk the pause menu's selection.
-    const game::KeyboardRouting routing = game::routeKeyboard(false, false, false, true);
+    const game::KeyboardRouting routing = game::routeKeyboard(false, false, true);
     SOL_CHECK(!routing.gameplay);
     SOL_CHECK(!routing.menus);
+    SOL_CHECK(!routing.shortcuts);
 }
 
 // The asymmetry that a single bool could not express. The bookmark prompt is
@@ -39,41 +41,57 @@ SOL_TEST(imgui_capture_outside_flight_stops_menus_too)
 // the mutation that reintroduces the phase's defect.
 SOL_TEST(the_bookmark_prompt_suppresses_gameplay_but_still_feeds_the_ui)
 {
-    const game::KeyboardRouting routing = game::routeKeyboard(true, false, true, false);
+    const game::KeyboardRouting routing = game::routeKeyboard(true, true, false);
     SOL_CHECK(!routing.gameplay);
     SOL_CHECK(routing.menus);
+    // And "i" in a bookmark name must not open the ship readout, which is the
+    // case main.cpp's own comment called out long before this phase existed.
+    SOL_CHECK(!routing.shortcuts);
 }
 
 // ImGui wins over the game's own text field. A console opened on top of a
 // half-typed bookmark name must not keep editing it from underneath.
 SOL_TEST(imgui_capture_outranks_the_bookmark_prompt)
 {
-    const game::KeyboardRouting routing = game::routeKeyboard(true, false, true, true);
+    const game::KeyboardRouting routing = game::routeKeyboard(true, true, true);
     SOL_CHECK(!routing.gameplay);
     SOL_CHECK(!routing.menus);
+    SOL_CHECK(!routing.shortcuts);
 }
 
-SOL_TEST(an_unclaimed_keyboard_in_flight_flies_the_ship_and_nothing_else)
+SOL_TEST(an_unclaimed_keyboard_in_flight_flies_the_ship)
 {
-    const game::KeyboardRouting routing = game::routeKeyboard(true, false, false, false);
+    const game::KeyboardRouting routing = game::routeKeyboard(true, false, false);
     SOL_CHECK(routing.gameplay);
     SOL_CHECK(!routing.menus);
+    SOL_CHECK(routing.shortcuts);
 }
 
-SOL_TEST(an_unclaimed_keyboard_outside_flight_drives_the_menus_and_nothing_else)
+SOL_TEST(an_unclaimed_keyboard_outside_flight_drives_the_menus)
 {
-    const game::KeyboardRouting routing = game::routeKeyboard(false, false, false, false);
+    const game::KeyboardRouting routing = game::routeKeyboard(false, false, false);
     SOL_CHECK(!routing.gameplay);
     SOL_CHECK(routing.menus);
+    SOL_CHECK(routing.shortcuts);
 }
 
-// Jumping is a cutscene the player cannot steer out of. It suppresses gameplay
-// only - a jump does not hand the keyboard to the menus.
-SOL_TEST(a_jump_suppresses_gameplay_without_handing_the_keys_to_the_menus)
+// The three consumers are genuinely three: for every pair there is a reachable
+// state where they disagree. Without this a later reader could reasonably fold
+// `shortcuts` back into one of the others and only a playtest would find out.
+SOL_TEST(the_three_answers_are_not_two_answers_wearing_a_disguise)
 {
-    const game::KeyboardRouting routing = game::routeKeyboard(true, true, false, false);
-    SOL_CHECK(!routing.gameplay);
-    SOL_CHECK(!routing.menus);
+    // gameplay and menus part company in both directions.
+    const game::KeyboardRouting flying = game::routeKeyboard(true, false, false);
+    SOL_CHECK(flying.gameplay && !flying.menus);
+    const game::KeyboardRouting docked = game::routeKeyboard(false, false, false);
+    SOL_CHECK(!docked.gameplay && docked.menus);
+    // shortcuts outlives gameplay: the map and ship-readout keys open from a
+    // station, where there is no gameplay to speak of.
+    SOL_CHECK(docked.shortcuts && !docked.gameplay);
+    // and shortcuts dies while menus live on, which is the bookmark prompt and
+    // the only row in the table where those two part company.
+    const game::KeyboardRouting naming = game::routeKeyboard(true, true, false);
+    SOL_CHECK(naming.menus && !naming.shortcuts);
 }
 
 } // namespace

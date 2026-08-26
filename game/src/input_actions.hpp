@@ -127,26 +127,34 @@ inline bool released(const sol::platform::BindingTable& table, Action action)
 
 // Who is allowed to act on a keypress this frame (Phase 20).
 //
-// The two answers are separate because they disagree. A key is a physical
+// The answers are separate because the consumers disagree. A key is a physical
 // fact by the time the game sees it - the platform layer records keyDown[]
 // *before* the dev-UI hook swallows the message, deliberately, so that a key
 // ImGui takes the "up" for cannot latch down forever - so the only thing
 // standing between a focused text field and the ship's throttle is a gate at
-// the consumer, and there are two consumers that want opposite things.
+// the consumer, and the consumers want different things from the same key.
 struct KeyboardRouting
 {
-    // Flight actions and the flight mapper: thrust, targeting, the map key.
+    // Cockpit-only actions and the flight mapper: thrust, pips, targeting.
     bool gameplay = false;
     // The game's own UI: menu navigation, sliders, and the text-editing keys
     // the bookmark prompt is built out of.
     bool menus = false;
+    // Keys that mean the same thing from more than one state and so belong to
+    // neither of the above: the Map and Ship Readout keys open from flight,
+    // from a station or from themselves, and Esc reaches the pause menu from
+    // flight or a station. They are gated only on whether a text field has the
+    // keyboard, which is why they need their own answer rather than borrowing
+    // one that also encodes *where* the player is.
+    bool shortcuts = false;
 };
 
 // The truth table this game needs, and the reason it is a function.
 //
-//   nothing owns the keyboard  -> gameplay in flight, menus outside it
-//   the bookmark prompt owns it -> gameplay OFF, menus ON
-//   ImGui owns it               -> BOTH off
+//   nothing owns the keyboard   -> gameplay in flight, menus outside it,
+//                                  shortcuts always
+//   the bookmark prompt owns it -> gameplay OFF, menus ON, shortcuts OFF
+//   ImGui owns it               -> ALL three off
 //
 // The middle row is why a single `typing` bool could not express this: the
 // bookmark prompt wants gameplay suppressed *and* the UI fed, because its own
@@ -154,9 +162,13 @@ struct KeyboardRouting
 // means "suppress gameplay" and "feed the UI" at the same time has no way to
 // say so. Phase 20 was that bool answering the ImGui case with the bookmark
 // prompt's answer, which is how typing in the dev console flew the ship.
-[[nodiscard]] KeyboardRouting routeKeyboard(bool inFlight,
-                                            bool jumping,
-                                            bool bookmarkPromptOpen,
-                                            bool imguiWantsKeyboard);
+//
+// ⚑ This answers "who owns the keyboard" and NOTHING ELSE. In particular it
+// does not take `jumping`: whether the ship is steerable during a jump is a
+// question about game state, not about who is typing, and the two want
+// different answers at different call sites - the discrete actions stand down
+// for a jump and the flight mapper never did. Folding it in here would repeat
+// exactly the conflation this phase exists to undo.
+[[nodiscard]] KeyboardRouting routeKeyboard(bool inFlight, bool bookmarkPromptOpen, bool imguiWantsKeyboard);
 
 } // namespace game
