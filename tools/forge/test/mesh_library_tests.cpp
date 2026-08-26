@@ -1731,3 +1731,97 @@ SOL_TEST(aFreshMessageArrivesLitAndSettlesIntoChrome)
     SOL_CHECK(forge::statusAppearance(-1.0f).highlight == 1.0f);
     SOL_CHECK(forge::statusAppearance(-1.0f).visible);
 }
+
+// --- the inbox lifecycle (stage R) -------------------------------------------
+
+namespace {
+
+constexpr const char* kInbox = "C:/repo/blender-inbox";
+
+} // namespace
+
+SOL_TEST(theArchiveIsASubdirectoryOfTheInboxAndKeepsTheFileName)
+{
+    SOL_CHECK(forge::forgeInboxArchive(kInbox) == "C:/repo/blender-inbox/imported");
+    SOL_CHECK(forge::forgeArchivedDropPath("C:/repo/blender-inbox/Hull.glb", kInbox) ==
+              "C:/repo/blender-inbox/imported/Hull.glb");
+
+    // A re-send lands on its own previous archive rather than beside it, which
+    // is what stops the archive growing a copy per export.
+    SOL_CHECK(forge::forgeArchivedDropPath("C:/repo/blender-inbox/Hull.glb", kInbox) ==
+              forge::forgeArchivedDropPath("C:/repo/blender-inbox/imported/Hull.glb", kInbox));
+}
+
+SOL_TEST(aDirectorySpelledWithBackslashesOrATrailingSlashGivesTheSameArchive)
+{
+    // The inbox path arrives from a build definition, so its spelling is not
+    // this file's to choose - and a comparison against a differently spelled
+    // prefix silently answers "not archived" for everything.
+    const std::string expected = "C:/repo/blender-inbox/imported";
+    SOL_CHECK(forge::forgeInboxArchive("C:/repo/blender-inbox/") == expected);
+    SOL_CHECK(forge::forgeInboxArchive("C:\\repo\\blender-inbox") == expected);
+    SOL_CHECK(forge::forgeInboxArchive("C:\\repo\\blender-inbox\\") == expected);
+}
+
+SOL_TEST(aDropAlreadyFiledInTheArchiveIsNotPending)
+{
+    // ⚑ THE ONE THAT MATTERS: `platform::listFiles` is RECURSIVE, so the
+    // archive's own contents come back from a listing of the inbox. Without
+    // this the tool re-imports every filed drop on the next poll, re-files it,
+    // and never stops - a loop rather than a duplicate.
+    SOL_CHECK(forge::forgeIsPendingDrop("C:/repo/blender-inbox/Hull.glb", kInbox));
+    SOL_CHECK(!forge::forgeIsPendingDrop("C:/repo/blender-inbox/imported/Hull.glb", kInbox));
+
+    // Nested deeper still, in case an author files by hand.
+    SOL_CHECK(!forge::forgeIsPendingDrop("C:/repo/blender-inbox/imported/old/Hull.glb", kInbox));
+
+    // Matched as a directory prefix, not as a substring: a sibling whose name
+    // merely starts the same way is still pending.
+    SOL_CHECK(forge::forgeIsPendingDrop("C:/repo/blender-inbox/imported_backup/Hull.glb", kInbox));
+    SOL_CHECK(forge::forgeIsPendingDrop("C:/repo/blender-inbox/reimported/Hull.glb", kInbox));
+}
+
+SOL_TEST(onlyGltfAndGlbAreDropsAndTheCaseDoesNotMatter)
+{
+    SOL_CHECK(forge::forgeIsPendingDrop("C:/repo/blender-inbox/Hull.gltf", kInbox));
+    SOL_CHECK(forge::forgeIsPendingDrop("C:/repo/blender-inbox/Hull.GLB", kInbox));
+    SOL_CHECK(forge::forgeIsPendingDrop("C:/repo/blender-inbox/Hull.GlTf", kInbox));
+
+    // The directory's own README is the file the repo commits there, and a
+    // stray .blend or .txt is not transport.
+    SOL_CHECK(!forge::forgeIsPendingDrop("C:/repo/blender-inbox/README.md", kInbox));
+    SOL_CHECK(!forge::forgeIsPendingDrop("C:/repo/blender-inbox/Hull.blend", kInbox));
+    SOL_CHECK(!forge::forgeIsPendingDrop("C:/repo/blender-inbox/noextension", kInbox));
+}
+
+SOL_TEST(pendingDropsFiltersTheArchiveOutAndOrdersWhatIsLeft)
+{
+    const std::vector<std::string> listed = {
+        "C:/repo/blender-inbox/imported/Older.glb",
+        "C:/repo/blender-inbox/Zulu.glb",
+        "C:/repo/blender-inbox/README.md",
+        "C:/repo/blender-inbox/Alpha.gltf",
+        "C:/repo/blender-inbox/imported/Alpha.gltf",
+        "C:/repo/blender-inbox/Mike.glb",
+    };
+    const std::vector<std::string> pending = forge::forgePendingDrops(listed, kInbox);
+
+    SOL_REQUIRE(pending.size() == 3);
+    SOL_CHECK(pending[0] == "C:/repo/blender-inbox/Alpha.gltf");
+    SOL_CHECK(pending[1] == "C:/repo/blender-inbox/Mike.glb");
+    SOL_CHECK(pending[2] == "C:/repo/blender-inbox/Zulu.glb");
+
+    // A drop and its own earlier archive share a name; only the pending one
+    // survives, which is the case a substring filter would get wrong.
+    SOL_CHECK(forge::forgePendingDrops({"C:/repo/blender-inbox/imported/Alpha.gltf"}, kInbox).empty());
+}
+
+SOL_TEST(anEmptyOrArchiveOnlyInboxHasNothingPending)
+{
+    // The steady state after a drain, and the one the poll sees twice a second
+    // for the rest of the session: it must be cheap and it must be empty.
+    SOL_CHECK(forge::forgePendingDrops({}, kInbox).empty());
+    SOL_CHECK(forge::forgePendingDrops(
+                  {"C:/repo/blender-inbox/imported/A.glb", "C:/repo/blender-inbox/imported/B.glb"}, kInbox)
+                  .empty());
+}

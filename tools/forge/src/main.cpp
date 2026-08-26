@@ -330,22 +330,10 @@ float addGrid(renderer::DebugDrawRenderer& lines, float cameraDistance)
     return dot == std::string::npos ? name : name.substr(0, dot);
 }
 
-// Lower-cased, because a drop directory is written to by another program and
-// Blender will happily hand back `.GLTF` on a case-insensitive filesystem.
-[[nodiscard]] std::string forgeLowerExtension(const std::string& path)
-{
-    const std::size_t dot = path.find_last_of('.');
-    if (dot == std::string::npos) {
-        return {};
-    }
-    std::string extension = path.substr(dot);
-    for (char& c : extension) {
-        if (c >= 'A' && c <= 'Z') {
-            c = static_cast<char>(c - 'A' + 'a');
-        }
-    }
-    return extension;
-}
+// ⚑ The extension check that used to live here went with stage R: deciding
+// which files in the inbox are drops is now `forgeIsPendingDrop`, in the
+// headless slice, because it has to answer the archive question at the same
+// time and that one is worth a test rather than a comment.
 
 // Trims `text` with a trailing ellipsis until it fits `width` pixels, and
 // returns it unchanged when it already does.
@@ -836,17 +824,37 @@ int main(int argc, char** argv)
     // no new platform surface and nothing Windows-shaped above it (AGENTS.md 4).
     // A socket or a named pipe would buy latency this does not need: the author
     // is alt-tabbing out of Blender, which is hundreds of milliseconds anyway.
-    struct InboxEntry
+    // ⚑⚑ WHAT IS HELD IN MEMORY IS ONLY WHAT DISK CANNOT SAY (stage R). A drop
+    // that imports LEAVES the inbox for `imported/`, so nothing needs
+    // remembering to stop it importing twice - the file is not there any more.
+    // A drop that FAILS stays where it is, and without this would be retried
+    // twice a second for the rest of the session. That asymmetry is the whole
+    // of the state: pending is a file in the inbox, done is a file in the
+    // archive, and failed is the one fact neither directory can carry.
+    struct FailedDrop
     {
         std::string path;
         std::uint64_t modified = 0;
+        std::string error;
     };
-    std::vector<InboxEntry> inboxSeen;
+
+    std::vector<FailedDrop> inboxFailed;
     int inboxPollCountdown = 0;
     std::string inboxStatus;
     bool inboxAuto = true;
+    const std::string inboxArchive = forge::forgeInboxArchive(inboxDirectory);
 
-    const auto importFromInbox = [&](const std::string& gltfPath) {
+    // What one drop's import did, so a drain of several can report once and
+    // open once instead of doing both per file.
+    struct InboxImport
+    {
+        bool ok = false;
+        int openRow = -1;    // the mesh row to open, or -1 for none
+        std::string message; // what a single import would have said on its own
+    };
+
+    const auto importFromInbox = [&](const std::string& gltfPath) -> InboxImport {
+        InboxImport result;
         const std::string stem = forgeFileStem(gltfPath);
         const std::string target = assetsDirectory + "/meshes/" + stem + ".forge";
 
@@ -870,11 +878,14 @@ int main(int argc, char** argv)
             std::vector<std::uint8_t> bytes;
             if (platform::readFileBytes(target.c_str(), bytes)) {
                 std::string parseError;
-                if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
-                                        target.c_str(), doc, &parseError)) {
-                    inboxStatus = "cannot merge into " + stem + ".forge: " + parseError;
-                    SOL_LOG_ERROR("forge: %s", inboxStatus.c_str());
-                    return false;
+                if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()),
+                                        bytes.size(),
+                                        target.c_str(),
+                                        doc,
+                                        &parseError)) {
+                    result.message = "cannot merge into " + stem + ".forge: " + parseError;
+                    SOL_LOG_ERROR("forge: %s", result.message.c_str());
+                    return result;
                 }
             }
         }
@@ -882,38 +893,52 @@ int main(int argc, char** argv)
         forge::ImportOutcome outcome;
         std::string importError;
         if (!forge::importGltfIntoDoc(gltfPath, doc, outcome, &importError)) {
-            inboxStatus = importError;
-            SOL_LOG_ERROR("forge: %s", inboxStatus.c_str());
-            return false;
+            result.message = importError;
+            SOL_LOG_ERROR("forge: %s", result.message.c_str());
+            return result;
         }
 
         const std::string text = assets::writeForge(doc);
         if (!platform::writeFileBytes(target.c_str(), text.data(), text.size())) {
-            inboxStatus = "cannot write " + target;
-            SOL_LOG_ERROR("forge: %s", inboxStatus.c_str());
-            return false;
+            result.message = "cannot write " + target;
+            SOL_LOG_ERROR("forge: %s", result.message.c_str());
+            return result;
         }
 
-        inboxStatus = stem + ".forge  " + std::to_string(outcome.added.size()) + " added, " +
-                      std::to_string(outcome.replaced.size()) + " replaced";
+        // ⚑⚑⚑ FILED BEFORE ANYTHING ELSE IS REPORTED, BECAUSE THIS IS THE
+        // RECORD THAT THE IMPORT HAPPENED (stage R). Until the drop leaves the
+        // inbox it is indistinguishable from one still waiting, which is the
+        // whole defect this stage closes. It is deliberately NOT fatal: the
+        // `.forge` is already written, so failing the import here would report
+        // a failure for work that succeeded. The drop is left where it is and
+        // named, which is the honest outcome - it will be offered again.
+        if (!platform::createDirectories(inboxArchive.c_str()) ||
+            !platform::moveFile(gltfPath.c_str(),
+                                forge::forgeArchivedDropPath(gltfPath, inboxDirectory).c_str())) {
+            SOL_LOG_ERROR(
+                "forge: imported %s but could not file it under %s", gltfPath.c_str(), inboxArchive.c_str());
+        }
+
+        result.message = stem + ".forge  " + std::to_string(outcome.added.size()) + " added, " +
+                         std::to_string(outcome.replaced.size()) + " replaced";
         // ⚑ A rename is NAMED, not just counted. It is the one outcome an
         // author cannot reconstruct from the Parts list afterwards - a part
         // under a new name is indistinguishable from a new part beside a
         // deleted one, which is the whole confusion this stage removes.
         if (!outcome.renamed.empty()) {
-            inboxStatus += ", " + std::to_string(outcome.renamed.size()) + " renamed (" +
-                           outcome.renamed.front().first + " -> " + outcome.renamed.front().second;
-            inboxStatus += outcome.renamed.size() > 1
-                               ? ", +" + std::to_string(outcome.renamed.size() - 1) + " more)"
-                               : ")";
+            result.message += ", " + std::to_string(outcome.renamed.size()) + " renamed (" +
+                              outcome.renamed.front().first + " -> " + outcome.renamed.front().second;
+            result.message += outcome.renamed.size() > 1
+                                  ? ", +" + std::to_string(outcome.renamed.size() - 1) + " more)"
+                                  : ")";
         }
         if (!outcome.kept.empty()) {
-            inboxStatus += ", " + std::to_string(outcome.kept.size()) + " kept";
+            result.message += ", " + std::to_string(outcome.kept.size()) + " kept";
         }
         for (const auto& [was, is] : outcome.renamed) {
             SOL_LOG_INFO("forge: renamed part '%s' -> '%s'", was.c_str(), is.c_str());
         }
-        SOL_LOG_INFO("forge: imported %s -> %s", gltfPath.c_str(), inboxStatus.c_str());
+        SOL_LOG_INFO("forge: imported %s -> %s", gltfPath.c_str(), result.message.c_str());
 
         // The list was read at startup and an import may have just added to it.
         meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
@@ -934,68 +959,107 @@ int main(int argc, char** argv)
                     // in Blender to see it here, so this is not the "save moves"
                     // trap that kept stage J from switching tabs on its own. It
                     // holds back only for an unsaved edit to something ELSE.
+                    //
+                    // ⚑⚑ NAMED RATHER THAN OPENED, because a drain can carry
+                    // several (stage R): opening each in turn leaves the author
+                    // looking at the last one having watched three others flash
+                    // past. The caller opens one, once, when it knows how many
+                    // there were.
                     if (!editor.dirty()) {
-                        openMeshAt(static_cast<int>(i));
+                        result.openRow = static_cast<int>(i);
                     }
                     break;
                 }
             }
         }
-        status = inboxStatus;
-        return true;
+        result.ok = true;
+        return result;
     };
 
-    // Every drop that is new or has changed since the last look. Returns how
-    // many were imported.
+    // ⚑⚑⚑ ONE RULE, AND IT REPLACED TWO CONTRADICTORY GUESSES (stage R):
+    // WHATEVER IS IN THE INBOX IS PENDING, AND PENDING DRAINS. There used to be
+    // a launch census that assumed everything present had already been imported
+    // - so a drop made while the Forge was shut was never imported, ever - and
+    // an `Import now` that assumed nothing had, so one click re-imported every
+    // stale drop at once. Both existed only because "done" was not written down
+    // anywhere. It is a directory now, so neither guess is needed and the launch
+    // case and the running case are the same case.
     const auto pollInbox = [&](bool announceEmpty) {
-        std::vector<std::string> files = platform::listFiles(inboxDirectory.c_str());
-        std::sort(files.begin(), files.end());
+        const std::vector<std::string> pending =
+            forge::forgePendingDrops(platform::listFiles(inboxDirectory.c_str()), inboxDirectory);
+
         int imported = 0;
-        int seen = 0;
-        for (const std::string& path : files) {
-            const std::string lower = forgeLowerExtension(path);
-            if (lower != ".gltf" && lower != ".glb") {
-                continue;
-            }
-            ++seen;
+        int openRow = -1;
+        std::string lastMessage;
+        for (const std::string& path : pending) {
             const std::uint64_t modified = platform::fileModificationTime(path.c_str());
-            const auto existing = std::find_if(inboxSeen.begin(), inboxSeen.end(),
-                                               [&path](const InboxEntry& e) { return e.path == path; });
-            if (existing != inboxSeen.end() && existing->modified == modified) {
+            const auto failed = std::find_if(inboxFailed.begin(),
+                                             inboxFailed.end(),
+                                             [&path](const FailedDrop& f) { return f.path == path; });
+            // A drop that could not be imported stays in the inbox, so without
+            // this it would be retried on every poll for the rest of the
+            // session. Retried only when the file itself changes, which is the
+            // author having done something about it.
+            if (failed != inboxFailed.end() && failed->modified == modified) {
                 continue;
             }
-            if (importFromInbox(path)) {
+
+            const InboxImport result = importFromInbox(path);
+            if (result.ok) {
                 ++imported;
-            }
-            // Recorded either way: a drop that fails to import must not be
-            // retried sixty times a second for the rest of the session.
-            if (existing != inboxSeen.end()) {
-                existing->modified = modified;
+                lastMessage = result.message;
+                if (result.openRow >= 0) {
+                    openRow = result.openRow;
+                }
+                if (failed != inboxFailed.end()) {
+                    inboxFailed.erase(failed);
+                }
+            } else if (failed != inboxFailed.end()) {
+                failed->modified = modified;
+                failed->error = result.message;
             } else {
-                inboxSeen.push_back({path, modified});
+                inboxFailed.push_back({path, modified, result.message});
             }
         }
-        if (imported == 0 && announceEmpty) {
-            inboxStatus = seen == 0 ? "nothing in " + inboxDirectory
-                                    : std::to_string(seen) + " drop(s), none changed";
+
+        // ⚑⚑ ONE MESSAGE AND ONE OPENED DOCUMENT FOR A DRAIN OF ANY SIZE.
+        // Q4 made the status line an event, and four events in one frame is
+        // three the author never sees - measured before this stage, where one
+        // click imported four drops and the bar named only the last.
+        if (imported == 1) {
+            inboxStatus = lastMessage;
+        } else if (imported > 1) {
+            inboxStatus = "imported " + std::to_string(imported) + " drops";
+        }
+        if (imported > 0) {
+            // ⚑⚑ OPENED FIRST AND ANNOUNCED SECOND, AND THE ORDER IS THE WHOLE
+            // POINT: `openMeshAt` writes its own message. Announcing before
+            // opening let a four-drop drain report `opened Cube_039.forge (40
+            // parts)` and nothing about the other three - this stage's own
+            // defect reappearing inside its own fix. Caught by driving it
+            // rather than by reading it.
+            if (openRow >= 0) {
+                openMeshAt(openRow);
+            }
+            status = inboxStatus;
+        } else if (announceEmpty) {
+            inboxStatus = pending.empty()
+                              ? "nothing waiting in " + inboxDirectory
+                              : std::to_string(pending.size()) + " drop(s) waiting, none importable";
             status = inboxStatus;
         }
         return imported;
     };
 
-    // ⚑ The FIRST poll only takes a census: anything already sitting in the
-    // inbox at launch is a drop from a previous session that has already been
-    // imported, and re-importing it would undo whatever the author did in the
-    // Forge afterwards. Only a file that changes WHILE the tool is running is a
-    // new send from Blender.
-    for (const std::string& path : platform::listFiles(inboxDirectory.c_str())) {
-        const std::string lower = forgeLowerExtension(path);
-        if (lower == ".gltf" || lower == ".glb") {
-            inboxSeen.push_back({path, platform::fileModificationTime(path.c_str())});
-        }
+    // The archive is made once, here, rather than re-derived per move.
+    if (!platform::createDirectories(inboxArchive.c_str())) {
+        SOL_LOG_ERROR("forge: cannot create %s - imported drops will stay in the inbox",
+                      inboxArchive.c_str());
     }
-    SOL_LOG_INFO("forge: watching %s (%zu drop(s) already there)", inboxDirectory.c_str(),
-                 inboxSeen.size());
+    SOL_LOG_INFO("forge: watching %s (%zu waiting, filing into %s)",
+                 inboxDirectory.c_str(),
+                 forge::forgePendingDrops(platform::listFiles(inboxDirectory.c_str()), inboxDirectory).size(),
+                 inboxArchive.c_str());
 
     // ⚑ `--open` picks the row; with no match, or no flag, the first row as
     // before. A miss is logged rather than silent, because a drive that
@@ -1332,14 +1396,37 @@ int main(int argc, char** argv)
             if (ImGui::BeginMenu("Blender")) {
                 ImGui::MenuItem("Watch the inbox", nullptr, &inboxAuto);
                 if (ImGui::MenuItem("Import now")) {
-                    // Forgets what it has seen, so this re-imports a drop that
-                    // is already there - which is the whole point of asking.
-                    inboxSeen.clear();
+                    // ⚑⚑ AN HONEST "LOOK NOW", AND IT USED TO BE ANYTHING BUT
+                    // (stage R). It cleared everything the tool had seen, so
+                    // one click re-imported every stale drop in the directory -
+                    // measured at four documents written from a single press.
+                    // With an archive there is nothing to forget: what is still
+                    // in the inbox is what has not been imported.
                     (void)pollInbox(/*announceEmpty=*/true);
                 }
                 ImGui::Separator();
                 ImGui::TextDisabled("drop .gltf into");
                 ImGui::TextDisabled("%s", inboxDirectory.c_str());
+                // ⚑ The two states disk cannot show at a glance: what is
+                // waiting, and what was tried and could not be read. Everything
+                // else is visible in the archive directory itself.
+                const std::vector<std::string> waiting =
+                    forge::forgePendingDrops(platform::listFiles(inboxDirectory.c_str()), inboxDirectory);
+                if (!waiting.empty()) {
+                    ImGui::Separator();
+                    for (const std::string& path : waiting) {
+                        const auto failedDrop =
+                            std::find_if(inboxFailed.begin(),
+                                         inboxFailed.end(),
+                                         [&path](const FailedDrop& f) { return f.path == path; });
+                        if (failedDrop != inboxFailed.end()) {
+                            ImGui::TextDisabled("failed  %s", forgeFileStem(path).c_str());
+                            ImGui::TextDisabled("        %s", failedDrop->error.c_str());
+                        } else {
+                            ImGui::TextDisabled("waiting  %s", forgeFileStem(path).c_str());
+                        }
+                    }
+                }
                 if (!inboxStatus.empty()) {
                     ImGui::Separator();
                     ImGui::TextDisabled("%s", inboxStatus.c_str());

@@ -28,6 +28,12 @@ namespace sol::platform {
 // when it was already missing).
 [[nodiscard]] bool deleteFile(const char* path);
 
+// Moves a regular file, replacing any file already at the destination. Parent
+// directories of the destination are not created. Prefer this over
+// read-write-delete: a move is one operation that either happened or did not,
+// and a half-written copy beside a deleted original is worse than either.
+[[nodiscard]] bool moveFile(const char* fromPath, const char* toPath);
+
 // Runs a command line synchronously; returns the process exit code, or -1
 // if the process could not be started.
 [[nodiscard]] int runProcess(const char* commandLine);

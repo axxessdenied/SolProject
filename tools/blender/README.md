@@ -63,9 +63,9 @@ came from Blender, and keeping a placement would apply it on top of a transform
 already baked into the vertices. Comments above a part, and its `parent`, do
 survive.
 
-The Forge will **refuse** to import while you have unsaved changes to the mesh
-it is about to merge into, and say so in the `Blender` menu — otherwise your
-next save would quietly write the import back out again.
+An import merges into the document you have **open**, not the file on disk, so
+unsaved work is not discarded by a re-send — and it lands on the undo stack
+like any other edit, so `Ctrl+Z` takes it back.
 
 ## Settings the addon pins, and why
 
@@ -91,3 +91,8 @@ aborts the **entire** cook. See `blender-inbox/README.md`.
 
 The glTF is transport. Once imported, the `.forge` is the source, and it is the
 one that gets committed.
+
+**You do not have to have the Forge running when you press the button.** A drop
+waits in `blender-inbox/` until it is imported, and is moved into
+`blender-inbox/imported/` once it has been — so opening the Forge later picks up
+everything sent while it was shut, and picks up each drop exactly once.

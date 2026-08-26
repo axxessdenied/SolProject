@@ -73,9 +73,15 @@ target_compile_definitions(sol_geometry_tests
 add_test(NAME geometry.unit COMMAND sol_geometry_tests)
 
 add_executable(sol_platform_tests
+    platform/file_io_tests.cpp
     platform/input_bindings_tests.cpp
 )
 target_link_libraries(sol_platform_tests PRIVATE sol::test sol::platform)
+# The file_io tests write real files, so they need a directory they are allowed
+# to make a mess in. Under the build tree rather than the source tree, and named
+# rather than derived from the CWD, which differs under ctest and a debugger.
+target_compile_definitions(sol_platform_tests
+    PRIVATE SOL_PLATFORM_TEST_SCRATCH_DIR="${CMAKE_CURRENT_BINARY_DIR}/scratch")
 add_test(NAME platform.unit COMMAND sol_platform_tests)
 
 # The mixer is exercised headlessly by calling renderAudio directly - no

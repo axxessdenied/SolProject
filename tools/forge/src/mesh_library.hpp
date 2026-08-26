@@ -156,6 +156,46 @@ struct ImportOutcome
 [[nodiscard]] bool importGltfIntoDoc(const std::string& gltfPath, sol::assets::ForgeDoc& doc,
                                      ImportOutcome& outcome, std::string* error = nullptr);
 
+// --- the inbox lifecycle (stage R) -------------------------------------------
+//
+// ⚑⚑⚑ THE WHOLE STAGE IS ONE MISSING FACT: WHICH DROPS ARE DONE. Before this,
+// a drop that had been imported was byte-for-byte indistinguishable from one
+// that had not, and the only record was an in-memory list that died with the
+// process. So the tool guessed, and guessed differently in two places: at
+// launch it assumed everything present was already done (a drop made while the
+// Forge was shut never imported, ever), and `Import now` assumed nothing was
+// (one click re-imported every stale drop the directory had accumulated).
+// Filing an imported drop under `imported/` makes "done" a fact on disk, and
+// the two guesses collapse into one rule: what is in the inbox is pending.
+//
+// ⚑⚑⚑ AND THE TRAP THIS MUST NOT WALK INTO IS THE ONE THAT PUT THE INBOX
+// OUTSIDE `assets/` IN THE FIRST PLACE: `platform::listFiles` IS RECURSIVE. It
+// returns `blender-inbox/imported/Hull.glb` for a listing of `blender-inbox`,
+// so an archive inside the watched directory re-imports on the next poll and
+// re-files itself forever - a loop rather than a duplicate. That is what
+// `forgeIsPendingDrop` exists to prevent, and why it is tested rather than
+// commented.
+
+// Where an imported drop is filed: a subdirectory of the inbox, so the whole
+// lifecycle is one folder an author can open in a file manager. No trailing
+// separator.
+[[nodiscard]] std::string forgeInboxArchive(const std::string& inboxDirectory);
+
+// Whether a path from `listFiles(inboxDirectory)` is a drop still waiting to be
+// imported: a `.gltf`/`.glb` that is not already filed under the archive.
+[[nodiscard]] bool forgeIsPendingDrop(const std::string& path, const std::string& inboxDirectory);
+
+// Every pending drop in a `listFiles` result, in a stable order so a drain of
+// several reports the same way twice.
+[[nodiscard]] std::vector<std::string> forgePendingDrops(std::vector<std::string> listed,
+                                                         const std::string& inboxDirectory);
+
+// Where `dropPath` goes once it has been imported. Keeps the file name, so a
+// re-send of the same object replaces its own previous archive rather than
+// accumulating copies.
+[[nodiscard]] std::string forgeArchivedDropPath(const std::string& dropPath,
+                                                const std::string& inboxDirectory);
+
 // Everything the viewer prints about a mesh.
 //
 // ⚑ `renderVertices` and `positions` are different numbers and the gap between

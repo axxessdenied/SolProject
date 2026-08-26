@@ -110,6 +110,16 @@ bool deleteFile(const char* path)
     return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
 }
 
+bool moveFile(const char* fromPath, const char* toPath)
+{
+    // MOVEFILE_REPLACE_EXISTING so a re-send overwrites its own previous
+    // archive rather than failing; COPY_ALLOWED because the destination can sit
+    // on another volume, which a bare rename cannot cross.
+    return MoveFileExW(utf8ToWide(fromPath).c_str(),
+                       utf8ToWide(toPath).c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
+}
+
 bool createDirectories(const char* path)
 {
     const std::wstring widePath = utf8ToWide(path);

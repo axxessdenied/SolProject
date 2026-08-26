@@ -7,7 +7,22 @@ nothing in it is committed except this file.
 Install the addon from `tools/blender/` and use **Send to Forge** (`File ▸
 Export`, or the `Forge` panel in the 3D viewport sidebar). The Forge polls this
 directory about twice a second while it is running, so the mesh appears without
-alt-tabbing back to press anything.
+alt-tabbing back to press anything — and if the Forge is **not** running, the
+drop is imported the next time you open it.
+
+## What is waiting and what is done
+
+**A file in this directory is waiting to be imported. A file in `imported/`
+has been.** That is the whole state, and it is a directory rather than a note
+somewhere so you can read it without the Forge open.
+
+The glTF is moved into `imported/` the moment its `.forge` is written, which is
+what stops it being imported a second time. Nothing prunes `imported/`; delete
+what you no longer want. To re-import something, drag it back out here.
+
+A drop that **fails** to import stays put and is listed under the `Blender`
+menu with its error. It is retried when you change the file, or next time the
+Forge starts — not sixty times a second in between.
 
 ## Why this is not under `assets/`
 
@@ -34,5 +49,6 @@ a glTF is what another program can open, and the `.forge` is what an asset *is*.
   extrude, split, the Report, def rows, LOD levels.
 - Re-sending the same file **replaces those parts by id** and leaves everything
   else alone, so a part you added in the Forge survives a re-export.
-- It will refuse while you have unsaved changes to the mesh it is about to
-  merge into, and say so, rather than quietly losing them.
+- It merges into the document you have **open**, not the file on disk, so
+  unsaved work is not silently discarded — and the import is undoable like any
+  other edit.

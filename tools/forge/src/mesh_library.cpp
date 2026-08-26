@@ -38,7 +38,56 @@ namespace {
     return dot == std::string::npos ? name : name.substr(0, dot);
 }
 
-void collect(const std::string& directory, const char* extension, const char* group, bool cooked,
+[[nodiscard]] bool startsWith(const std::string& text, std::string_view prefix)
+{
+    return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
+}
+
+// A drop directory is written to by another program, so both halves of a path
+// comparison have to be normalised before they can be compared at all:
+// `listFiles` emits '/', but a directory handed in from a build definition or a
+// command line may carry '\' and a trailing separator.
+[[nodiscard]] std::string normalisedPath(const std::string& path)
+{
+    std::string out = path;
+    for (char& c : out) {
+        if (c == '\\') {
+            c = '/';
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] std::string normalisedDirectory(const std::string& directory)
+{
+    std::string out = normalisedPath(directory);
+    while (!out.empty() && out.back() == '/') {
+        out.pop_back();
+    }
+    return out;
+}
+
+// Lower-cased, because Blender will happily hand back `.GLTF` on a
+// case-insensitive filesystem and a drop that imports must not depend on which.
+[[nodiscard]] std::string lowerExtension(const std::string& path)
+{
+    const std::size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos) {
+        return {};
+    }
+    std::string extension = path.substr(dot);
+    for (char& c : extension) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return extension;
+}
+
+void collect(const std::string& directory,
+             const char* extension,
+             const char* group,
+             bool cooked,
              std::vector<AssetEntry>& out)
 {
     std::vector<std::string> files = platform::listFiles(directory.c_str());
@@ -304,6 +353,43 @@ bool loadMesh(const AssetEntry& entry, assets::MeshData& out)
         return cooker::importGltf(entry.path.c_str(), out);
     }
     return assets::loadMesh(entry.path.c_str(), out);
+}
+
+std::string forgeInboxArchive(const std::string& inboxDirectory)
+{
+    return normalisedDirectory(inboxDirectory) + "/imported";
+}
+
+bool forgeIsPendingDrop(const std::string& path, const std::string& inboxDirectory)
+{
+    const std::string extension = lowerExtension(path);
+    if (extension != ".gltf" && extension != ".glb") {
+        return false;
+    }
+    // ⚑ The archive sits INSIDE the directory being listed and `listFiles` is
+    // recursive, so without this a filed drop is imported again on the next
+    // poll, filed again, and the tool never stops. Compared as a directory
+    // prefix (with the separator) rather than as a substring, so a sibling
+    // named `imported_backup/` is not swept up by it.
+    const std::string archivePrefix = forgeInboxArchive(inboxDirectory) + "/";
+    return !startsWith(normalisedPath(path), archivePrefix);
+}
+
+std::vector<std::string> forgePendingDrops(std::vector<std::string> listed, const std::string& inboxDirectory)
+{
+    listed.erase(std::remove_if(listed.begin(),
+                                listed.end(),
+                                [&inboxDirectory](const std::string& path) {
+                                    return !forgeIsPendingDrop(path, inboxDirectory);
+                                }),
+                 listed.end());
+    std::sort(listed.begin(), listed.end());
+    return listed;
+}
+
+std::string forgeArchivedDropPath(const std::string& dropPath, const std::string& inboxDirectory)
+{
+    return forgeInboxArchive(inboxDirectory) + "/" + fileName(dropPath);
 }
 
 MeshReport reportMesh(const assets::MeshData& data)
