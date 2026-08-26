@@ -9,6 +9,7 @@
 // in no ImGui and needs no GPU, and it carries a threshold the D checkpoint
 // flagged as "a real decision sitting in untested code".
 
+#include "edit_history.hpp"
 #include "gltf.hpp"
 #include "list_layout.hpp"
 #include "mesh_library.hpp"
@@ -1253,4 +1254,334 @@ SOL_TEST(theHoverHoldsItsAnswerWhileTheCameraIsBeingDragged)
     // rather than sloppy: MMB is pan-only, it never selects, so there is no
     // press frame to protect.
     SOL_CHECK(forge::forgeCameraHoldsMouse(false, true, true));
+}
+
+// ---------------------------------------------------------------------------
+// Stage Q - the edit history.
+//
+// ⚑ `EditHistory` is deliberately free of ImGui so it can be tested here: the
+// ORDERING is the part with all the rules and the drawing is the part with
+// none. What CANNOT be reached from a suite is `noteActivation`, which is one
+// `ImGui::IsItemActivated()` call - so "one drag is one undo entry", the single
+// most valuable behaviour in the stage, has to be proved by driving the tool.
+// It is named here so the gap is not mistaken for coverage.
+
+namespace {
+
+using Editor = forge::EditHistory::Editor;
+
+// A stand-in for one editor's snapshot stacks, with the same LIFO discipline
+// the three real ones have. It records what it was ASKED to do, so a test can
+// assert on the routing - which is the thing the history decides.
+struct FakeEditor
+{
+    int state = 0;
+    std::vector<int> undo;
+    std::vector<int> redo;
+    int undoSteps = 0;
+    int redoSteps = 0;
+
+    void edit(forge::EditHistory& history, Editor which, const char* label, int next)
+    {
+        undo.push_back(state);
+        redo.clear();
+        history.note(which, label);
+        state = next;
+    }
+
+    [[nodiscard]] bool undoStep()
+    {
+        if (undo.empty()) {
+            return false;
+        }
+        ++undoSteps;
+        redo.push_back(state);
+        state = undo.back();
+        undo.pop_back();
+        return true;
+    }
+
+    [[nodiscard]] bool redoStep()
+    {
+        if (redo.empty()) {
+            return false;
+        }
+        ++redoSteps;
+        undo.push_back(state);
+        state = redo.back();
+        redo.pop_back();
+        return true;
+    }
+};
+
+} // namespace
+
+// The stage's headline behaviour: two editors, edits interleaved, and undo
+// walks back through them in the order they were MADE - not in the order of
+// whichever panel happens to be on screen, which is what the tool did before
+// and what deleted a part from an invisible document.
+SOL_TEST(undoWalksBackThroughBothEditorsInTheOrderTheEditsWereMade)
+{
+    forge::EditHistory history;
+    FakeEditor mesh;
+    FakeEditor texture;
+
+    mesh.edit(history, Editor::Mesh, "move part", 1);
+    texture.edit(history, Editor::Texture, "recolour", 10);
+    mesh.edit(history, Editor::Mesh, "add box", 2);
+
+    const auto apply = [&](Editor which) {
+        return which == Editor::Mesh ? mesh.undoStep() : texture.undoStep();
+    };
+
+    // Most recent first, and the label names the gesture rather than the panel.
+    std::string label;
+    SOL_REQUIRE(history.undo(apply, &label));
+    SOL_CHECK(label == "add box");
+    SOL_CHECK(mesh.state == 1);
+    SOL_CHECK(texture.state == 10);
+
+    SOL_REQUIRE(history.undo(apply, &label));
+    SOL_CHECK(label == "recolour");
+    SOL_CHECK(texture.state == 0);
+    SOL_CHECK(mesh.state == 1);
+
+    SOL_REQUIRE(history.undo(apply, &label));
+    SOL_CHECK(label == "move part");
+    SOL_CHECK(mesh.state == 0);
+
+    SOL_CHECK(!history.canUndo());
+    SOL_CHECK(!history.undo(apply, &label));
+    // Three undos, and each editor was asked exactly as often as it had edits.
+    SOL_CHECK(mesh.undoSteps == 2);
+    SOL_CHECK(texture.undoSteps == 1);
+}
+
+SOL_TEST(redoReturnsEveryDocumentToWhereItWas)
+{
+    forge::EditHistory history;
+    FakeEditor mesh;
+    FakeEditor texture;
+
+    mesh.edit(history, Editor::Mesh, "move part", 1);
+    texture.edit(history, Editor::Texture, "recolour", 10);
+    mesh.edit(history, Editor::Mesh, "add box", 2);
+
+    const auto undoApply = [&](Editor which) {
+        return which == Editor::Mesh ? mesh.undoStep() : texture.undoStep();
+    };
+    const auto redoApply = [&](Editor which) {
+        return which == Editor::Mesh ? mesh.redoStep() : texture.redoStep();
+    };
+
+    while (history.canUndo()) {
+        SOL_REQUIRE(history.undo(undoApply));
+    }
+    SOL_CHECK(mesh.state == 0);
+    SOL_CHECK(texture.state == 0);
+
+    // Forward again, in the order they were made.
+    std::string label;
+    SOL_REQUIRE(history.redo(redoApply, &label));
+    SOL_CHECK(label == "move part");
+    SOL_CHECK(mesh.state == 1);
+    SOL_REQUIRE(history.redo(redoApply, &label));
+    SOL_CHECK(label == "recolour");
+    SOL_CHECK(texture.state == 10);
+    SOL_REQUIRE(history.redo(redoApply, &label));
+    SOL_CHECK(label == "add box");
+    SOL_CHECK(mesh.state == 2);
+
+    SOL_CHECK(!history.canRedo());
+    SOL_CHECK(!history.redo(redoApply));
+}
+
+// M1. A new edit ends the forward branch - the standard rule, and without it a
+// redo would step into a future the author has already replaced.
+SOL_TEST(aNewEditDiscardsTheForwardBranch)
+{
+    forge::EditHistory history;
+    FakeEditor mesh;
+    FakeEditor texture;
+
+    mesh.edit(history, Editor::Mesh, "move part", 1);
+    const auto undoApply = [&](Editor) { return mesh.undoStep(); };
+    SOL_REQUIRE(history.undo(undoApply));
+    SOL_CHECK(history.canRedo());
+
+    // The new edit is in a DIFFERENT editor, which is the case the sweep exists
+    // for: the mesh editor cannot know its own forward snapshot has just been
+    // orphaned, because nothing asked it anything.
+    texture.edit(history, Editor::Texture, "recolour", 10);
+    SOL_CHECK(!history.canRedo());
+    // ⚑ And the flag that makes the caller drop the orphan. Consume-once: a
+    // second read in the same frame must not sweep twice.
+    SOL_CHECK(history.takeRedoDiscarded());
+    SOL_CHECK(!history.takeRedoDiscarded());
+}
+
+// M3, and it is the subtle one: BOTH CAPS ARE 64 AND THEY DO NOT EVICT
+// TOGETHER. The history counts edits from all three editors while each editor
+// counts only its own, so a mesh editor fills its stack long before the history
+// fills its own if a texture is being edited alongside. Without `evicted`, the
+// history names a snapshot that has already gone - and because a failed `apply`
+// deliberately leaves the entry in place rather than compounding the error,
+// UNDO IS THEN WEDGED PERMANENTLY: every later press finds the same dead entry
+// on top and does nothing, with real history sitting underneath it.
+SOL_TEST(evictingASnapshotAlsoRetiresTheEntryThatNamedIt)
+{
+    // The editors' cap, which is the only one in the design. ⚑ This test's
+    // first version gave the history a cap of its own as well, and that is how
+    // it found the defect it was written for from the other end: two bounds on
+    // one quantity trimmed each eviction TWICE, dropping an undo step whose
+    // snapshot the editor was still holding. See `edit_history.hpp`.
+    constexpr std::size_t kEditorDepth = 64;
+
+    forge::EditHistory history;
+    FakeEditor mesh;
+    FakeEditor texture;
+
+    // Fill the mesh editor exactly to its cap, with a texture edit interleaved
+    // so the two stacks are demonstrably different lengths - which is the
+    // reason the caps cannot be assumed to evict together.
+    texture.edit(history, Editor::Texture, "recolour", 10);
+    for (std::size_t i = 0; i < kEditorDepth + 1; ++i) {
+        mesh.undo.push_back(mesh.state);
+        history.note(Editor::Mesh, "move part");
+        // The editor's own cap, and the report that goes with it.
+        if (mesh.undo.size() > kEditorDepth) {
+            mesh.undo.erase(mesh.undo.begin());
+            history.evicted(Editor::Mesh);
+        }
+        mesh.state = static_cast<int>(i) + 1;
+    }
+
+    SOL_REQUIRE(mesh.undo.size() == kEditorDepth);
+    // ⚑ The history holds the UNION: the mesh's 64 plus the texture's one.
+    SOL_CHECK(history.undoDepth() == kEditorDepth + 1);
+
+    // Every entry the history offers can actually be taken - which is the whole
+    // claim, and what a missing `evicted` breaks on the very first press,
+    // wedging undo for the rest of the session.
+    const auto apply = [&](Editor which) {
+        return which == Editor::Mesh ? mesh.undoStep() : texture.undoStep();
+    };
+    std::size_t taken = 0;
+    while (history.canUndo()) {
+        SOL_REQUIRE(history.undo(apply));
+        ++taken;
+    }
+    SOL_CHECK(taken == kEditorDepth + 1);
+    SOL_CHECK(mesh.undoSteps == static_cast<int>(kEditorDepth));
+    SOL_CHECK(texture.undoSteps == 1);
+}
+
+// M4, and the only one whose consequence is destructive: opening a second
+// document throws the first's snapshots away, and an order left standing would
+// let one press overwrite the newly opened file with the previous asset's
+// contents.
+SOL_TEST(openingAnotherDocumentLeavesNothingToUndoIntoTheOldOne)
+{
+    forge::EditHistory history;
+    FakeEditor mesh;
+    FakeEditor texture;
+
+    mesh.edit(history, Editor::Mesh, "move part", 1);
+    texture.edit(history, Editor::Texture, "recolour", 10);
+    mesh.edit(history, Editor::Mesh, "add box", 2);
+    SOL_CHECK(history.undoDepth() == 3);
+
+    // The mesh editor opens a different file: its snapshots go, and so must
+    // every entry naming it, in both directions.
+    mesh.undo.clear();
+    mesh.redo.clear();
+    history.forget(Editor::Mesh);
+
+    // What is left is the texture's edit, and only that.
+    SOL_REQUIRE(history.undoDepth() == 1);
+    SOL_CHECK(history.undoLabel() == "recolour");
+    const auto apply = [&](Editor which) {
+        return which == Editor::Mesh ? mesh.undoStep() : texture.undoStep();
+    };
+    SOL_REQUIRE(history.undo(apply));
+    SOL_CHECK(texture.state == 0);
+    // ⚑ THE ASSERTION THAT MATTERS: the mesh editor was never asked to step, so
+    // the freshly opened document was not touched.
+    SOL_CHECK(mesh.undoSteps == 0);
+    SOL_CHECK(!history.canUndo());
+}
+
+// The safety net under M3 and M4. If the order and the snapshots ever do come
+// apart, the history must not compound it by moving an entry whose step did not
+// happen - a redo that then "returns" to a state nothing ever produced is worse
+// than a press that does nothing.
+SOL_TEST(anApplyThatRefusesLeavesTheHistoryExactlyAsItWas)
+{
+    forge::EditHistory history;
+    history.note(Editor::Mesh, "move part");
+
+    const auto refuse = [](Editor) { return false; };
+    SOL_CHECK(!history.undo(refuse));
+    SOL_CHECK(history.undoDepth() == 1);
+    SOL_CHECK(history.redoDepth() == 0);
+    SOL_CHECK(history.undoLabel() == "move part");
+}
+
+// M8. The routing IS the stage: an entry has to name the editor that made it or
+// undo acts on the wrong document, which is the defect this was built to fix.
+// Asserted by which editor gets ASKED rather than by comparing states, because
+// two editors can hold equal values by coincidence.
+SOL_TEST(eachStepIsRoutedToTheEditorThatMadeThatEdit)
+{
+    forge::EditHistory history;
+    FakeEditor mesh;
+    FakeEditor texture;
+    FakeEditor def;
+
+    mesh.edit(history, Editor::Mesh, "move part", 1);
+    def.edit(history, Editor::Def, "set radius", 7);
+    texture.edit(history, Editor::Texture, "recolour", 10);
+
+    std::vector<Editor> asked;
+    const auto apply = [&](Editor which) {
+        asked.push_back(which);
+        switch (which) {
+        case Editor::Mesh:
+            return mesh.undoStep();
+        case Editor::Texture:
+            return texture.undoStep();
+        case Editor::Def:
+            return def.undoStep();
+        }
+        return false;
+    };
+    while (history.canUndo()) {
+        SOL_REQUIRE(history.undo(apply));
+    }
+
+    SOL_REQUIRE(asked.size() == 3);
+    SOL_CHECK(asked[0] == Editor::Texture);
+    SOL_CHECK(asked[1] == Editor::Def);
+    SOL_CHECK(asked[2] == Editor::Mesh);
+    SOL_CHECK(mesh.undoSteps == 1);
+    SOL_CHECK(texture.undoSteps == 1);
+    SOL_CHECK(def.undoSteps == 1);
+}
+
+// The buttons in all three panels mean what Ctrl+Z means, and the read that
+// services them is consume-once - a press held across two frames must step
+// once, exactly as the keyboard chord does.
+SOL_TEST(aPanelButtonRequestIsDeliveredOnceAndOnlyOnce)
+{
+    forge::EditHistory history;
+    SOL_CHECK(!history.takeUndoRequest());
+    SOL_CHECK(!history.takeRedoRequest());
+
+    history.requestUndo();
+    SOL_CHECK(history.takeUndoRequest());
+    SOL_CHECK(!history.takeUndoRequest());
+
+    history.requestRedo();
+    SOL_CHECK(history.takeRedoRequest());
+    SOL_CHECK(!history.takeRedoRequest());
 }

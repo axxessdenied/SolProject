@@ -1,6 +1,7 @@
 #include "part_editor.hpp"
 
 #include "gltf.hpp"
+#include "history_buttons.hpp"
 #include "list_layout_style.hpp"
 #include "part_pick.hpp"
 
@@ -102,7 +103,7 @@ void PartEditor::openNew(const std::string& directory)
     m_editError.clear();
     // A new document has no history, and keeping the last one's would let an
     // undo replace this file's contents with a different asset's.
-    m_undo.clear();
+    forgetHistory();
 }
 
 bool PartEditor::openFile(const std::string& path, std::string& status)
@@ -128,9 +129,24 @@ bool PartEditor::openFile(const std::string& path, std::string& status)
     m_dirty = false;
     m_buildError.clear();
     m_editError.clear();
-    m_undo.clear();
+    forgetHistory();
     status = "opened " + m_saveName + " (" + std::to_string(m_doc.parts.size()) + " parts)";
     return true;
+}
+
+// ⚑⚑ THE THIRD OF THE FOUR WAYS THE ORDER AND THE SNAPSHOTS COME APART, and
+// the only one whose consequence is destructive rather than merely wrong: with
+// the order left standing, a `Ctrl+Z` after opening a second asset would
+// replace this document's contents with the previous file's. Throwing the
+// snapshots away without telling the history is exactly the bug - the history
+// would still offer the step.
+void PartEditor::forgetHistory()
+{
+    m_undo.clear();
+    m_redo.clear();
+    if (m_history != nullptr) {
+        m_history->forget(EditHistory::Editor::Mesh);
+    }
 }
 
 bool PartEditor::save(std::string& status)
@@ -177,34 +193,71 @@ bool PartEditor::exportGltf(std::string& status)
     return true;
 }
 
-void PartEditor::beginEdit()
+void PartEditor::beginEdit(std::string label)
 {
     if (!m_open) {
         return;
     }
     m_undo.push_back(m_doc);
+    // ⚑ A new edit ends the forward branch. This clears only THIS editor's
+    // snapshots; the history drops the ORDER for all three and raises the flag
+    // that makes the caller sweep the others, because an edit here can
+    // invalidate a redo entry belonging to the texture editor.
+    m_redo.clear();
+    if (m_history != nullptr) {
+        m_history->note(EditHistory::Editor::Mesh, std::move(label));
+    }
     if (m_undo.size() > kUndoDepth) {
         m_undo.erase(m_undo.begin());
+        // ⚑⚑ THE CAPS DO NOT EVICT TOGETHER even though both are 64: the
+        // history counts edits from all three editors and this one counts
+        // only its own. Telling it is what stops it promising a step whose
+        // snapshot has already gone.
+        if (m_history != nullptr) {
+            m_history->evicted(EditHistory::Editor::Mesh);
+        }
     }
 }
 
-bool PartEditor::undo()
+bool PartEditor::undoStep()
 {
     if (m_undo.empty()) {
         return false;
     }
+    m_redo.push_back(std::move(m_doc));
     m_doc = std::move(m_undo.back());
     m_undo.pop_back();
-    // ⚑ Still dirty after an undo, and deliberately. Undoing back to the state
-    // on disk is indistinguishable here from undoing to some other state, and
-    // claiming "saved" when the file has not been written since is the one lie
-    // that costs an author their work.
+    afterStep();
+    return true;
+}
+
+bool PartEditor::redoStep()
+{
+    if (m_redo.empty()) {
+        return false;
+    }
+    m_undo.push_back(std::move(m_doc));
+    m_doc = std::move(m_redo.back());
+    m_redo.pop_back();
+    afterStep();
+    return true;
+}
+
+// ⚑ SHARED BY BOTH DIRECTIONS ON PURPOSE. Everything here is a consequence of
+// "the document was replaced by a snapshot", which is equally true stepping
+// back and stepping forward - and a rule applied in two places becomes a defect
+// in the one nobody looked at, which this tool has now recorded five times.
+void PartEditor::afterStep()
+{
+    // ⚑ Still dirty after a step, and deliberately. Landing on the state on
+    // disk is indistinguishable here from landing on any other, and claiming
+    // "saved" when the file has not been written since is the one lie that
+    // costs an author their work.
     m_dirty = true;
     if (m_selected >= static_cast<int>(m_doc.parts.size())) {
         m_selected = m_doc.parts.empty() ? -1 : static_cast<int>(m_doc.parts.size()) - 1;
     }
     m_buildError.clear();
-    return true;
 }
 
 bool PartEditor::movePoint(const assets::ForgePoint& point, assets::BuildPoint delta,
@@ -249,7 +302,7 @@ bool PartEditor::splitEdge(std::span<const assets::ForgePoint> points,
     if (!assets::forgeSplitEdge(next, points, faces, a, b, &error)) {
         return false;
     }
-    beginEdit();
+    beginEdit("split edge");
     m_doc = std::move(next);
     m_dirty = true;
     return true;
@@ -266,7 +319,7 @@ bool PartEditor::extrudeFaces(std::span<const assets::ForgeFace> faces,
     if (!assets::forgeExtrudeFaces(next, faces, group, &offset, &error)) {
         return false;
     }
-    beginEdit();
+    beginEdit("extrude");
     m_doc = std::move(next);
     m_dirty = true;
     return true;
@@ -442,7 +495,7 @@ bool PartEditor::drawPartList()
     const bool hasSelection = m_selected >= 0 && m_selected < static_cast<int>(m_doc.parts.size());
     ImGui::BeginDisabled(!hasSelection);
     if (ImGui::Button("duplicate") && hasSelection) {
-        beginEdit();
+        beginEdit("duplicate part");
         ForgePart copy = m_doc.parts[static_cast<std::size_t>(m_selected)];
         copy.id = m_doc.uniqueId(copy.id);
         m_doc.parts.push_back(std::move(copy));
@@ -455,7 +508,7 @@ bool PartEditor::drawPartList()
         // no longer parses, so the children are re-hung on the grandparent.
         // Silently dropping them, or leaving a dangling `parent`, are both ways
         // of writing a file the cooker will reject.
-        beginEdit();
+        beginEdit("delete part");
         const std::string removed = m_doc.parts[static_cast<std::size_t>(m_selected)].id;
         const std::string grandparent = m_doc.parts[static_cast<std::size_t>(m_selected)].parent;
         m_doc.parts.erase(m_doc.parts.begin() + m_selected);
@@ -490,7 +543,7 @@ bool PartEditor::drawPartList()
         ForgeDoc next = m_doc;
         std::string error;
         if (assets::forgeBakeDocumentPart(next, static_cast<std::size_t>(m_selected), &error)) {
-            beginEdit();
+            beginEdit("bake part");
             m_doc = std::move(next);
             m_editError.clear();
             changed = true;
@@ -535,7 +588,7 @@ bool PartEditor::drawPartList()
                 std::string error;
                 if (assets::forgeMergeParts(next, static_cast<std::size_t>(m_selected), i,
                                             &error)) {
-                    beginEdit();
+                    beginEdit("merge parts");
                     m_doc = std::move(next);
                     // The EARLIER part survives, so that is what stays selected.
                     m_selected = std::min(m_selected, static_cast<int>(i));
@@ -558,6 +611,33 @@ bool PartEditor::drawPartList()
     return changed;
 }
 
+// ⚑⚑⚑ STAGE Q's WHOLE POINT, IN ONE FUNCTION CALL PER WIDGET. Before it, every
+// parameter here was UNMEASURABLY absent from the history: `drawParams`
+// contained no `beginEdit` at all, so dragging `position` moved a part three
+// metres across twelve logged frames with the undo depth sitting at zero and
+// the document dirty. There was nothing to press `Ctrl+Z` on.
+//
+// ⚑⚑ IT MUST BE `IsItemActivated`, NOT THE WRITE-BACK PATH, and the reason is
+// the one the `undo drag` button's old name was apologising for: a drag reports
+// an edit on every frame the mouse moves, so pushing a snapshot from the edit
+// would bury the state before the gesture under sixty identical copies and one
+// press of undo would step back a single frame. Activation fires once, on the
+// frame the widget takes the mouse. `TextureEditor::noteActivation` has done
+// exactly this since stage G, with a comment observing that `PartEditor` "has
+// always known this" - it had, and it had never applied it here.
+//
+// ⚑ IT WORKS OVER A `DragScalarN` TOO, which is not obvious: three sub-widgets
+// are submitted inside one group, and `imgui.cpp:11828` forwards the group's
+// `ActiveId` to `LastItemData` precisely so `IsItemActive`/`IsItemActivated`
+// are functional over the whole thing. Checked in the vendored source, not
+// assumed.
+void PartEditor::noteActivation(const char* label)
+{
+    if (ImGui::IsItemActivated()) {
+        beginEdit(label);
+    }
+}
+
 bool PartEditor::drawParams(ForgePart& part)
 {
     bool changed = false;
@@ -568,6 +648,7 @@ bool PartEditor::drawParams(ForgePart& part)
         switch (spec.kind) {
         case ForgeParamKind::Scalar:
             edited = dragDouble(spec.name, value.scalar, 0.05);
+            noteActivation(spec.name);
             break;
         case ForgeParamKind::Integer: {
             int shown = static_cast<int>(value.scalar);
@@ -575,6 +656,7 @@ bool PartEditor::drawParams(ForgePart& part)
                 value.scalar = shown;
                 edited = true;
             }
+            noteActivation(spec.name);
             break;
         }
         case ForgeParamKind::Boolean: {
@@ -583,13 +665,19 @@ bool PartEditor::drawParams(ForgePart& part)
                 value.scalar = shown ? 1.0 : 0.0;
                 edited = true;
             }
+            // ⚑ A checkbox is a press rather than a drag, so activation and
+            // edit are the same frame - but it goes through the same call so
+            // there is one rule here, not one rule and an exception.
+            noteActivation(spec.name);
             break;
         }
         case ForgeParamKind::Vec3:
             edited = dragDoubleN(spec.name, &value.vec.x, 3, 0.05);
+            noteActivation(spec.name);
             break;
         case ForgeParamKind::Uv:
             edited = dragDoubleN(spec.name, &value.uv.u, 2, 0.01);
+            noteActivation(spec.name);
             break;
         case ForgeParamKind::Profile: {
             ImGui::Text("%s  (%zu points)", spec.name, value.profile.size());
@@ -600,8 +688,10 @@ bool PartEditor::drawParams(ForgePart& part)
                 if (dragDoubleN(label, &value.profile[i].x, 2, 0.05)) {
                     edited = true;
                 }
+                noteActivation("move profile point");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) {
+                    beginEdit("remove profile point");
                     value.profile.erase(value.profile.begin() +
                                         static_cast<std::ptrdiff_t>(i));
                     edited = true;
@@ -611,6 +701,7 @@ bool PartEditor::drawParams(ForgePart& part)
                 ImGui::PopID();
             }
             if (ImGui::SmallButton("add point")) {
+                beginEdit("add profile point");
                 value.profile.push_back(value.profile.empty()
                                             ? assets::BuildProfilePoint{1.0, 0.0}
                                             : value.profile.back());
@@ -642,12 +733,30 @@ bool PartEditor::drawSelectedPart()
 
     char idBuffer[128];
     std::snprintf(idBuffer, sizeof(idBuffer), "%s", part.id.c_str());
-    if (ImGui::InputText("id", idBuffer, sizeof(idBuffer))) {
+    const bool idEdited = ImGui::InputText("id", idBuffer, sizeof(idBuffer));
+    // ⚑⚑ A TEXT FIELD CANNOT USE `IsItemActivated` THE WAY A DRAG DOES.
+    // Activation is the CLICK INTO the field, which is not an edit - clicking
+    // in and straight back out would leave a no-op in the history for an author
+    // to press through, which is the thing the `bake` button goes out of its
+    // way to avoid. So the snapshot is taken on the first REPORTED CHANGE while
+    // the field is active, and once per session rather than once per keystroke:
+    // typing "Fuselage" is one rename, not eight.
+    //
+    // ⚑ It is still taken before the document is touched, because `InputText`
+    // writes into the caller's char buffer and `part.id` is assigned below.
+    if (!ImGui::IsItemActive()) {
+        m_idEditOpen = false;
+    }
+    if (idEdited) {
         const std::string wanted = idBuffer;
         // A rename has to carry the children with it, and an empty or taken id
         // is refused rather than written - both would produce a file that no
         // longer parses.
         if (!wanted.empty() && m_doc.indexOf(wanted) == std::string::npos) {
+            if (!m_idEditOpen) {
+                m_idEditOpen = true;
+                beginEdit("rename part");
+            }
             const std::string previous = part.id;
             part.id = wanted;
             for (ForgePart& other : m_doc.parts) {
@@ -666,6 +775,7 @@ bool PartEditor::drawSelectedPart()
                 // Parameters are kept across a type change: the schema decides
                 // which ones are read, so a box turned into a beam and back
                 // still has the size it started with.
+                beginEdit("change type");
                 part.primitive = primitive;
                 changed = true;
             }
@@ -676,6 +786,7 @@ bool PartEditor::drawSelectedPart()
     const char* parentLabel = part.parent.empty() ? "(root)" : part.parent.c_str();
     if (ImGui::BeginCombo("parent", parentLabel)) {
         if (ImGui::Selectable("(root)", part.parent.empty())) {
+            beginEdit("reparent");
             part.parent.clear();
             changed = true;
         }
@@ -686,6 +797,7 @@ bool PartEditor::drawSelectedPart()
                 continue;
             }
             if (ImGui::Selectable(m_doc.parts[i].id.c_str(), m_doc.parts[i].id == part.parent)) {
+                beginEdit("reparent");
                 part.parent = m_doc.parts[i].id;
                 changed = true;
             }
@@ -694,15 +806,21 @@ bool PartEditor::drawSelectedPart()
     }
 
     ImGui::Separator();
+    // ⚑ THESE THREE ARE THE MOST-USED WIDGETS IN THE TOOL and were the least
+    // recoverable: the measurement that opened this stage was a `position` drag
+    // moving a part three metres with nothing on the undo stack at all.
     if (dragDoubleN("position", &part.position.x, 3, 0.05)) {
         changed = true;
     }
+    noteActivation("move part");
     if (dragDoubleN("rotation", &part.rotationDegrees.x, 3, 1.0)) {
         changed = true;
     }
+    noteActivation("rotate part");
     if (dragDoubleN("scale", &part.scale.x, 3, 0.01)) {
         changed = true;
     }
+    noteActivation("scale part");
     ImGui::TextDisabled("rotation is degrees, X then Y then Z");
 
     if (!assets::forgeParams(part.primitive).empty()) {
@@ -721,7 +839,7 @@ bool PartEditor::addPrimitive(ForgePrimitive primitive)
     if (!m_open) {
         return false;
     }
-    beginEdit();
+    beginEdit(std::string("add ") + assets::forgePrimitiveName(primitive));
     ForgePart part;
     part.primitive = primitive;
     part.id = m_doc.uniqueId(assets::forgePrimitiveName(primitive));
@@ -751,7 +869,11 @@ bool PartEditor::addPrimitive(ForgePrimitive primitive)
 
 void PartEditor::adoptDoc(ForgeDoc doc)
 {
-    beginEdit();
+    // ⚑ A Blender re-send is an edit like any other and is recorded like one -
+    // which is what the import path already assumed when it chose to adopt the
+    // merged document rather than re-open the file, so as not to "make the
+    // import the one edit in this tool a person cannot take back".
+    beginEdit("import from Blender");
     m_doc = std::move(doc);
     m_dirty = true;
     // The selection is an index into a part list that has just been rebuilt, so
@@ -797,17 +919,20 @@ bool PartEditor::draw()
         }
     }
     ImGui::SameLine();
-    // ⚑ Named "undo drag" rather than "undo", because that is its reach in this
-    // slice: a point drag and the three part-list buttons. The parameter
-    // widgets below fire continuously while held, so an entry per frame would
-    // bury the state before the edit under sixty identical copies - and the
-    // asteroid's 99 KB is what makes that a real cost rather than a tidy one.
-    // Naming the gap in the button is cheaper than a person discovering it.
-    ImGui::BeginDisabled(m_undo.empty());
-    if (ImGui::Button("undo drag")) {
-        changed = undo();
+    // ⚑⚑ IT GETS ITS PLAIN NAME BACK AT STAGE Q. It was called `undo drag` for
+    // eight stages, with a comment naming its own gap - "that is its reach in
+    // this slice: a point drag and the three part-list buttons" - because the
+    // parameter widgets fired continuously while held and an entry per frame
+    // would have buried the state before the edit under sixty identical copies.
+    // The reasoning was right; the conclusion was a placeholder. `IsItemActivated`
+    // is what closes it, so the button can say what it does.
+    //
+    // ⚑ AND IT NOW MEANS WHAT `Ctrl+Z` MEANS. It does not undo "this panel" -
+    // there is one history in this tool and this is a second way to reach it,
+    // so pressing it while the last edit was a texture edit undoes that.
+    if (m_history != nullptr) {
+        drawHistoryButtons(*m_history);
     }
-    ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("%s", m_dirty ? "* unsaved" : "saved");
 

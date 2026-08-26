@@ -15,6 +15,8 @@
 // is the discipline behind it - write back only when a widget reports an edit,
 // so redrawing a panel never dirties a file nobody touched.
 
+#include "edit_history.hpp"
+
 #include "sol/assets/texture_doc.hpp"
 
 #include <cstddef>
@@ -53,8 +55,16 @@ public:
     // Undo is a copy of the document, per the E1 precedent: `TextureDoc` is a
     // plain value and the three committed sources are 0.6-3 KB, so a command
     // pattern would be a second description of every edit for no gain.
-    void beginEdit();
-    [[nodiscard]] bool undo();
+    // Stage Q: `label` is what the status line says the undo took back, and
+    // the step functions are driven by `EditHistory` rather than by this
+    // editor's own button. See `edit_history.hpp`.
+    void beginEdit(std::string label);
+    [[nodiscard]] bool undoStep();
+    [[nodiscard]] bool redoStep();
+    void clearRedo() { m_redo.clear(); }
+    void setHistory(EditHistory* history) { m_history = history; }
+    [[nodiscard]] std::size_t undoDepth() const { return m_undo.size(); }
+    [[nodiscard]] std::size_t redoDepth() const { return m_redo.size(); }
 
     // ⚑ Pushes undo on the frame the LAST-SUBMITTED widget became active, which
     // is the whole difference between one undo entry per gesture and one per
@@ -64,7 +74,7 @@ public:
     // real history. `PartEditor` has always known this (its `movePoint` pushes
     // nothing and the caller opens the gesture once); this is the same rule
     // where the gesture belongs to ImGui rather than to the viewport.
-    void noteActivation();
+    void noteActivation(const char* label);
 
     [[nodiscard]] bool isOpen() const { return m_open; }
     [[nodiscard]] const sol::assets::TextureDoc& doc() const { return m_doc; }
@@ -76,6 +86,10 @@ private:
     [[nodiscard]] bool drawOpList();
     [[nodiscard]] bool drawSelectedOp();
     [[nodiscard]] bool drawParams(sol::assets::TextureLayer& layer);
+    // What both directions must do once the document has been replaced.
+    void afterStep();
+    // Throws this editor's snapshots away AND tells the history.
+    void forgetHistory();
 
     static constexpr std::size_t kUndoDepth = 64;
 
@@ -93,6 +107,8 @@ private:
 
     sol::assets::TextureDoc m_doc;
     std::vector<sol::assets::TextureDoc> m_undo;
+    std::vector<sol::assets::TextureDoc> m_redo;
+    EditHistory* m_history = nullptr;
     std::string m_path;
     std::string m_buildError;
     std::string m_saveName;

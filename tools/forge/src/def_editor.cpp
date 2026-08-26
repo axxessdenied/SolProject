@@ -89,7 +89,7 @@ void DefEditor::load(const std::string& dataDirectory)
     m_dataDirectory = dataDirectory;
     m_loaded = false;
     m_error.clear();
-    m_undo.clear();
+    forgetHistory();
     m_openModels.clear();
     m_docs[kModels] = Document{.file = "models.toml"};
     m_docs[kShips] = Document{.file = "ships.toml"};
@@ -151,31 +151,65 @@ bool DefEditor::dirty() const
     return false;
 }
 
-void DefEditor::beginEdit(std::size_t document)
+void DefEditor::beginEdit(std::size_t document, std::string label)
 {
     if (!m_loaded || document >= kDocumentCount) {
         return;
     }
     m_undo.push_back(UndoEntry{.document = document, .doc = m_docs[document].doc});
+    m_redo.clear();
+    if (m_history != nullptr) {
+        m_history->note(EditHistory::Editor::Def, std::move(label));
+    }
     if (m_undo.size() > kUndoDepth) {
         m_undo.erase(m_undo.begin());
+        if (m_history != nullptr) {
+            m_history->evicted(EditHistory::Editor::Def);
+        }
     }
 }
 
-void DefEditor::noteActivation(std::size_t document)
+void DefEditor::noteActivation(std::size_t document, const char* label)
 {
     if (ImGui::IsItemActivated()) {
-        beginEdit(document);
+        beginEdit(document, label);
     }
 }
 
-bool DefEditor::undo()
+void DefEditor::forgetHistory()
+{
+    m_undo.clear();
+    m_redo.clear();
+    if (m_history != nullptr) {
+        m_history->forget(EditHistory::Editor::Def);
+    }
+}
+
+bool DefEditor::undoStep()
 {
     if (m_undo.empty()) {
         return false;
     }
     UndoEntry entry = std::move(m_undo.back());
     m_undo.pop_back();
+    // ⚑ The forward entry carries the document as it stands NOW, under the same
+    // index the backward one named - so a redo puts back exactly what the undo
+    // took, in the file it took it from.
+    m_redo.push_back(UndoEntry{.document = entry.document, .doc = m_docs[entry.document].doc});
+    m_docs[entry.document].doc = std::move(entry.doc);
+    m_docs[entry.document].dirty = true;
+    (void)revalidate();
+    return true;
+}
+
+bool DefEditor::redoStep()
+{
+    if (m_redo.empty()) {
+        return false;
+    }
+    UndoEntry entry = std::move(m_redo.back());
+    m_redo.pop_back();
+    m_undo.push_back(UndoEntry{.document = entry.document, .doc = m_docs[entry.document].doc});
     m_docs[entry.document].doc = std::move(entry.doc);
     m_docs[entry.document].dirty = true;
     (void)revalidate();
@@ -257,7 +291,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
             for (const std::string& stem : textureStems) {
                 const bool selected = stem == texture;
                 if (ImGui::Selectable(stem.c_str(), selected) && !selected) {
-                    beginEdit(kModels);
+                    beginEdit(kModels, "set texture");
                     row.set("texture", assets::defString(stem));
                     changed = true;
                 }
@@ -271,7 +305,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
             row.set("radius", assets::defNumber(radius, kMetreDecimals));
             changed = true;
         }
-        noteActivation(kModels);
+        noteActivation(kModels, "set radius");
 
         // The stage-C warning, and the button it never had. `ModelMatch` owns
         // the agreement rule so that the panel and `forge.unit` cannot drift.
@@ -301,7 +335,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
             std::snprintf(label, sizeof(label), "use measured %.4f m",
                           static_cast<double>(report.boundingRadius));
             if (ImGui::Button(label)) {
-                beginEdit(kModels);
+                beginEdit(kModels, "use measured radius");
                 row.set("radius", assets::defNumber(report.boundingRadius, kMetreDecimals));
                 changed = true;
             }
@@ -315,7 +349,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
             row.set("avoid_radius", assets::defNumber(avoid, kMetreDecimals));
             changed = true;
         }
-        noteActivation(kModels);
+        noteActivation(kModels, "set avoid_radius");
         if (avoid == 0.0f) {
             ImGui::TextDisabled("  0 = the same as radius");
         } else if (avoid < radius) {
@@ -328,11 +362,11 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
             row.set("emissive", assets::defNumber(emissive, kUnitDecimals));
             changed = true;
         }
-        noteActivation(kModels);
+        noteActivation(kModels, "set emissive");
 
         bool solid = boolOr(row, "solid", true);
         if (ImGui::Checkbox("solid", &solid)) {
-            beginEdit(kModels);
+            beginEdit(kModels, "toggle solid");
             row.set("solid", assets::defBool(solid));
             changed = true;
         }
@@ -341,7 +375,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
 
         bool translucent = boolOr(row, "translucent", false);
         if (ImGui::Checkbox("translucent", &translucent)) {
-            beginEdit(kModels);
+            beginEdit(kModels, "toggle translucent");
             row.set("translucent", assets::defBool(translucent));
             changed = true;
         }
@@ -352,7 +386,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
                 row.set("alpha", assets::defNumber(alpha, kUnitDecimals));
                 changed = true;
             }
-            noteActivation(kModels);
+            noteActivation(kModels, "set alpha");
         }
         ImGui::PopID();
         ImGui::Separator();
@@ -368,7 +402,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
                             "from inside this tool");
         ImGui::PopTextWrapPos();
         if (ImGui::Button("create [[model]] row")) {
-            beginEdit(kModels);
+            beginEdit(kModels, "create [[model]] row");
             DefRow& row = m_docs[kModels].doc.append("model");
             // Prefilled from what is on screen: the stem names the mesh, the
             // measurement sets the radius, and the texture is whichever one the
@@ -409,7 +443,7 @@ bool DefEditor::drawContentRow(std::size_t document, DefRow& row,
         row.set("name", assets::defString(name));
         changed = true;
     }
-    noteActivation(document);
+    noteActivation(document, "set name");
 
     // ⚑ A COMBO, not a text field, and this is the cross-check the schema does
     // not do: `parseShip` reads `model` with `optionalString` and never resolves
@@ -422,7 +456,7 @@ bool DefEditor::drawContentRow(std::size_t document, DefRow& row,
         for (const std::string& candidate : models) {
             const bool selected = candidate == model;
             if (ImGui::Selectable(candidate.c_str(), selected) && !selected) {
-                beginEdit(document);
+                beginEdit(document, "set model");
                 row.set("model", assets::defString(candidate));
                 changed = true;
             }
@@ -451,7 +485,7 @@ bool DefEditor::drawContentRow(std::size_t document, DefRow& row,
             row.set("scale", assets::defNumber(scale, kMetreDecimals));
             changed = true;
         }
-        noteActivation(document);
+        noteActivation(document, "set scale");
         ImGui::TextDisabled("  the sim multiplies the model's radius by this");
     }
     ImGui::PopID();
@@ -501,7 +535,7 @@ bool DefEditor::drawContentRows()
     // schema default, which is a flyable ship - `ShipDef`'s defaults are a
     // complete tuning, not zeroes.
     if (ImGui::Button("create [[ship]] row")) {
-        beginEdit(kShips);
+        beginEdit(kShips, "create [[ship]] row");
         DefDoc& doc = m_docs[kShips].doc;
         DefRow& row = doc.append("ship");
         const std::string base = "sol." + m_openModels.front();

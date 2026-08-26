@@ -645,7 +645,7 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
             // ⚑ One undo entry per DRAG, not per frame. A drag rebuilds the
             // document on every accepted edit, so pushing per edit would bury
             // the state before the drag under sixty identical ones.
-            editor.beginEdit();
+            editor.beginEdit(m_mode == Mode::Edge ? "move edge" : "move point");
         }
         return false;
     }

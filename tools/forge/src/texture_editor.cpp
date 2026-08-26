@@ -1,5 +1,6 @@
 #include "texture_editor.hpp"
 
+#include "history_buttons.hpp"
 #include "list_layout_style.hpp"
 #include "mesh_library.hpp"
 
@@ -104,7 +105,7 @@ void TextureEditor::openNew(const std::string& directory)
     m_open = true;
     m_dirty = true;
     m_buildError.clear();
-    m_undo.clear();
+    forgetHistory();
     resetPick();
 }
 
@@ -130,7 +131,7 @@ bool TextureEditor::openFile(const std::string& path, std::string& status)
     m_open = true;
     m_dirty = false;
     m_buildError.clear();
-    m_undo.clear();
+    forgetHistory();
     resetPick();
     status = "opened " + m_saveName + " (" + std::to_string(m_doc.layers.size()) + " ops, " +
              std::to_string(m_doc.width) + "x" + std::to_string(m_doc.height) + ")";
@@ -160,7 +161,7 @@ bool TextureEditor::save(std::string& status)
 void TextureEditor::close()
 {
     m_doc = TextureDoc{};
-    m_undo.clear();
+    forgetHistory();
     m_path.clear();
     m_saveName.clear();
     m_buildError.clear();
@@ -184,36 +185,73 @@ void TextureEditor::resetPick()
     m_scrollToSelectedRow = false;
 }
 
-void TextureEditor::beginEdit()
+void TextureEditor::beginEdit(std::string label)
 {
     if (!m_open) {
         return;
     }
     m_undo.push_back(m_doc);
+    // Stage Q - see the identical block in `PartEditor::beginEdit` for why the
+    // clear here is only this editor's and the history raises a flag for the
+    // rest.
+    m_redo.clear();
+    if (m_history != nullptr) {
+        m_history->note(EditHistory::Editor::Texture, std::move(label));
+    }
     if (m_undo.size() > kUndoDepth) {
         m_undo.erase(m_undo.begin());
+        if (m_history != nullptr) {
+            m_history->evicted(EditHistory::Editor::Texture);
+        }
     }
 }
 
-void TextureEditor::noteActivation()
+void TextureEditor::noteActivation(const char* label)
 {
     if (ImGui::IsItemActivated()) {
-        beginEdit();
+        beginEdit(label);
     }
 }
 
-bool TextureEditor::undo()
+void TextureEditor::forgetHistory()
+{
+    m_undo.clear();
+    m_redo.clear();
+    if (m_history != nullptr) {
+        m_history->forget(EditHistory::Editor::Texture);
+    }
+}
+
+bool TextureEditor::undoStep()
 {
     if (m_undo.empty()) {
         return false;
     }
+    m_redo.push_back(std::move(m_doc));
     m_doc = std::move(m_undo.back());
     m_undo.pop_back();
+    afterStep();
+    return true;
+}
+
+bool TextureEditor::redoStep()
+{
+    if (m_redo.empty()) {
+        return false;
+    }
+    m_undo.push_back(std::move(m_doc));
+    m_doc = std::move(m_redo.back());
+    m_redo.pop_back();
+    afterStep();
+    return true;
+}
+
+void TextureEditor::afterStep()
+{
     m_selected = std::min(m_selected, static_cast<int>(m_doc.layers.size()) - 1);
     m_dirty = true;
     m_hitMapDirty = true;
     m_buildError.clear();
-    return true;
 }
 
 bool TextureEditor::beginPickedRow(std::size_t ordinal)
@@ -315,7 +353,7 @@ bool TextureEditor::drawPreview(void* image, float availableWidth)
         // started would leave the row stranded at its furthest point.
         if (dx != 0 || dy != 0 || m_dragMoved) {
             if (!m_dragMoved) {
-                beginEdit();
+                beginEdit("move shape");
                 m_dragMoved = true;
             }
             if (assets::textureSetRowPosition(m_doc, m_dragHit, m_dragStartPosition[0] + dx,
@@ -378,7 +416,7 @@ bool TextureEditor::drawOpList()
     if (ImGui::BeginCombo("##add", "add op")) {
         for (const TextureOp op : assets::textureOps()) {
             if (ImGui::Selectable(assets::textureOpName(op))) {
-                beginEdit();
+                beginEdit("add op");
                 TextureLayer layer;
                 layer.op = op;
                 m_doc.layers.push_back(std::move(layer));
@@ -394,7 +432,7 @@ bool TextureEditor::drawOpList()
     const auto selected = static_cast<std::size_t>(m_selected);
     ImGui::BeginDisabled(!hasSelection);
     if (ImGui::Button("delete") && hasSelection) {
-        beginEdit();
+        beginEdit("delete op");
         m_doc.layers.erase(m_doc.layers.begin() + static_cast<std::ptrdiff_t>(selected));
         m_selected = m_doc.layers.empty() ? -1 : std::min(m_selected, static_cast<int>(m_doc.layers.size()) - 1);
         m_dirty = true;
@@ -404,7 +442,7 @@ bool TextureEditor::drawOpList()
     // ⚑ Order IS the picture here - a fill moved below the panels erases them -
     // so moving an op up and down is an edit rather than a view preference.
     if (ImGui::Button("up") && hasSelection && selected > 0) {
-        beginEdit();
+        beginEdit("move op up");
         std::swap(m_doc.layers[selected], m_doc.layers[selected - 1]);
         m_selected = static_cast<int>(selected) - 1;
         m_dirty = true;
@@ -412,7 +450,7 @@ bool TextureEditor::drawOpList()
     }
     ImGui::SameLine();
     if (ImGui::Button("down") && hasSelection && selected + 1 < m_doc.layers.size()) {
-        beginEdit();
+        beginEdit("move op down");
         std::swap(m_doc.layers[selected], m_doc.layers[selected + 1]);
         m_selected = static_cast<int>(selected) + 1;
         m_dirty = true;
@@ -441,16 +479,16 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                 value.integer = shown;
                 edited = true;
             }
-            noteActivation();
+            noteActivation(spec.name);
             break;
         }
         case TextureParamKind::Color:
             edited = colorEdit(spec.name, value.color);
-            noteActivation();
+            noteActivation(spec.name);
             break;
         case TextureParamKind::ColorOffset:
             edited = offsetEdit(spec.name, value.color);
-            noteActivation();
+            noteActivation(spec.name);
             break;
         case TextureParamKind::RectList: {
             ImGui::Text("%s  (%zu)", spec.name, value.rects.size());
@@ -472,10 +510,10 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                                           std::max(0, row[3])};
                         edited = true;
                     }
-                    noteActivation();
+                    noteActivation("edit rect");
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) {
-                        beginEdit();
+                        beginEdit("remove rect");
                         value.rects.erase(value.rects.begin() + static_cast<std::ptrdiff_t>(i));
                         edited = true;
                         endPickedRow(picked);
@@ -489,7 +527,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             ImGui::EndChild();
             rowBase += value.rects.size();
             if (ImGui::SmallButton("add rect")) {
-                beginEdit();
+                beginEdit("add rect");
                 value.rects.push_back(value.rects.empty() ? TextureRect{0, 0, 16, 16}
                                                           : value.rects.back());
                 edited = true;
@@ -515,10 +553,10 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                                            std::max(0, row[3]), std::clamp(row[4], 0, 255)};
                         edited = true;
                     }
-                    noteActivation();
+                    noteActivation("edit panel");
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) {
-                        beginEdit();
+                        beginEdit("remove panel");
                         value.panels.erase(value.panels.begin() + static_cast<std::ptrdiff_t>(i));
                         edited = true;
                         endPickedRow(picked);
@@ -532,7 +570,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             ImGui::EndChild();
             rowBase += value.panels.size();
             if (ImGui::SmallButton("add panel")) {
-                beginEdit();
+                beginEdit("add panel");
                 value.panels.push_back(value.panels.empty() ? TexturePanel{0, 0, 32, 24, 100}
                                                             : value.panels.back());
                 edited = true;
@@ -550,10 +588,10 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                     value.integers[i] = shown;
                     edited = true;
                 }
-                noteActivation();
+                noteActivation("edit line");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) {
-                    beginEdit();
+                    beginEdit("remove line");
                     value.integers.erase(value.integers.begin() +
                                          static_cast<std::ptrdiff_t>(i));
                     edited = true;
@@ -569,7 +607,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             }
             rowBase += value.integers.size();
             if (ImGui::SmallButton("add line")) {
-                beginEdit();
+                beginEdit("add line");
                 value.integers.push_back(value.integers.empty() ? 0 : value.integers.back());
                 edited = true;
             }
@@ -607,7 +645,7 @@ bool TextureEditor::drawSelectedOp()
     if (ImGui::BeginCombo("kind", assets::textureOpName(layer.op))) {
         for (const TextureOp op : assets::textureOps()) {
             if (ImGui::Selectable(assets::textureOpName(op), op == layer.op) && op != layer.op) {
-                beginEdit();
+                beginEdit("change op kind");
                 // Parameters are kept across a kind change, exactly as the part
                 // editor keeps them across a primitive change: the schema
                 // decides which are read, so a fill turned into a checker and
@@ -647,11 +685,10 @@ bool TextureEditor::draw()
         }
     }
     ImGui::SameLine();
-    ImGui::BeginDisabled(m_undo.empty());
-    if (ImGui::Button("undo") && undo()) {
-        changed = true;
+    // Stage Q: the same pair as the other two panels, meaning the same thing.
+    if (m_history != nullptr) {
+        drawHistoryButtons(*m_history);
     }
-    ImGui::EndDisabled();
 
     if (m_doc.hasUnplaceableComments) {
         ImGui::PushTextWrapPos(0.0f);

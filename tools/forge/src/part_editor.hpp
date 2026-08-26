@@ -14,6 +14,7 @@
 // turn an authored 0.075 into 0.07500000298023224 the first time a panel was
 // drawn - dirtying a file nobody touched.
 
+#include "edit_history.hpp"
 #include "part_pick.hpp"
 
 #include "sol/assets/forge_doc.hpp"
@@ -71,9 +72,23 @@ public:
     // even registers, which is what the depth cap is for. A command pattern
     // would be a second description of every edit, and the second description
     // is the one that gets out of step.
-    void beginEdit();
-    [[nodiscard]] bool undo();
+    //
+    // ⚑⚑ STAGE Q: `label` IS WHAT THE STATUS LINE SAYS THE UNDO TOOK BACK, and
+    // it is a parameter rather than a member because the gesture knows what it
+    // was and this class does not. Every call site names itself.
+    void beginEdit(std::string label);
+    // One step back, and one forward. ⚑ These are STORAGE OPERATIONS, driven by
+    // `EditHistory` rather than by a key or a button: which editor steps, and
+    // in what order, is the one thing no editor can know on its own.
+    [[nodiscard]] bool undoStep();
+    [[nodiscard]] bool redoStep();
+    // Drops the forward snapshots. ⚑ Called when the history discards a redo
+    // branch, which can happen because a DIFFERENT editor was edited - so it
+    // is not something this class can notice for itself.
+    void clearRedo() { m_redo.clear(); }
+    void setHistory(EditHistory* history) { m_history = history; }
     [[nodiscard]] std::size_t undoDepth() const { return m_undo.size(); }
+    [[nodiscard]] std::size_t redoDepth() const { return m_redo.size(); }
 
     // Moves one point of the built mesh by `delta`, writing every authored
     // value standing at it. Does NOT push undo - a drag calls beginEdit() once
@@ -162,6 +177,14 @@ public:
     void setBuildError(const std::string& error) { m_buildError = error; }
 
 private:
+    // What both directions must do once the document has been replaced.
+    void afterStep();
+    // Throws this editor's snapshots away AND tells the history, which must
+    // happen together or the history offers a step that cannot be taken.
+    void forgetHistory();
+    // Opens one undo entry for the gesture the widget just submitted has begun.
+    // Call it immediately after the widget, per stage G's rule.
+    void noteActivation(const char* label);
     [[nodiscard]] bool drawPartList();
     [[nodiscard]] bool drawSelectedPart();
     [[nodiscard]] bool drawParams(sol::assets::ForgePart& part);
@@ -176,6 +199,12 @@ private:
 
     sol::assets::ForgeDoc m_doc;
     std::vector<sol::assets::ForgeDoc> m_undo;
+    // ⚑ REDO COSTS NOTHING EXTRA, which is worth saying because the cap above
+    // exists to bound exactly this. An undo MOVES a snapshot from one stack to
+    // the other rather than copying it, and `beginEdit` clears this before
+    // pushing, so the SUM of the two is still bounded by `kUndoDepth`.
+    std::vector<sol::assets::ForgeDoc> m_redo;
+    EditHistory* m_history = nullptr;
     std::string m_path;
     std::string m_buildError;
     // Why the last part-list edit - a bake, or since E5b a merge - was refused.
@@ -191,6 +220,9 @@ private:
     // sanitised Blender object name at its longest.
     char m_partFilter[64] = {};
     int m_selected = -1;
+    // Whether the `id` field has already opened an undo entry for the run of
+    // keystrokes it is in the middle of. See `drawSelectedPart`.
+    bool m_idEditOpen = false;
     // Stage N. Armed by `selectPart` and consumed by the next `drawPartList`,
     // because the row that must be scrolled to does not exist until the list is
     // submitted - and the pick happens in the viewport, before any of it runs.

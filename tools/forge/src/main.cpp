@@ -11,6 +11,7 @@
 
 #include "def_editor.hpp"
 #include "forge_view.hpp"
+#include "history_buttons.hpp"
 #include "list_layout_style.hpp"
 #include "mesh_library.hpp"
 #include "orbit_camera.hpp"
@@ -603,6 +604,16 @@ int main(int argc, char** argv)
     forge::PartEditor editor;
     forge::PointTool points;
 
+    // ⚑⚑ STAGE Q: ONE HISTORY FOR THE WHOLE TOOL. It is declared here, beside
+    // the editors it orders, and handed to each of them - `Ctrl+Z` undoes the
+    // last thing the author did, in whichever of the three documents they did
+    // it. Before Q, `Ctrl+Z` meant the mesh editor whatever was on screen, and
+    // the parameter widgets were not in any history at all.
+    forge::EditHistory history;
+    editor.setHistory(&history);
+    textureEditor.setHistory(&history);
+    defEditor.setHistory(&history);
+
     // One path from a buffer of triangles to what is on screen, whether those
     // triangles came off disk or out of the part tree a moment ago.
     const auto uploadMesh = [&](const assets::MeshData& data, bool reframe) {
@@ -980,6 +991,7 @@ int main(int argc, char** argv)
     bool framePressed = false;
     bool previousLeftDown = false;
     bool undoPressed = false;
+    bool redoPressed = false;
     double previousTime = platform::timeSeconds();
     float frameMilliseconds = 0.0f;
 
@@ -1069,14 +1081,88 @@ int main(int argc, char** argv)
             rebuildFromEditor(/*reframe=*/false);
         }
 
-        // Ctrl+Z, edge triggered - a held chord must undo once, not sixty times.
-        const bool undoDown = window.isKeyDown(platform::Key::LeftControl) &&
-                              window.isKeyDown(platform::Key::Z) &&
-                              !imguiHost.wantsKeyboardCapture();
-        if (undoDown && !undoPressed && editor.undo()) {
-            rebuildFromEditor(/*reframe=*/false);
+        // ⚑⚑⚑ STAGE Q: ONE PLACE THAT UNDOES, AND IT ASKS THE HISTORY WHICH
+        // EDITOR RATHER THAN ASSUMING ONE. Before Q this called `editor.undo()`
+        // unconditionally, so a press while working on a texture silently
+        // deleted a part from a mesh document that was not even on screen -
+        // measured at `332 tri -> 320 tri` with only the Texture panel visible.
+        //
+        // ⚑ Both chords are edge triggered: a held chord must step once, not
+        // sixty times. The keyboard guard is unchanged and is about ImGui
+        // owning the keys while a text field is active, NOT about which panel
+        // is focused - focus is not usable here, because clicking the 3D
+        // viewport drops it entirely. See `edit_history.hpp`.
+        const bool controlDown = window.isKeyDown(platform::Key::LeftControl) &&
+                                 !imguiHost.wantsKeyboardCapture();
+        const bool undoDown = controlDown && window.isKeyDown(platform::Key::Z);
+        // ⚑ `Ctrl+Y` as well as `Ctrl+Shift+Z`, because both are muscle memory
+        // and neither costs anything - and `Shift` is otherwise the pan
+        // modifier here, which is a mouse gesture and cannot collide.
+        const bool redoDown =
+            controlDown && (window.isKeyDown(platform::Key::Y) ||
+                            (window.isKeyDown(platform::Key::Z) && shiftDown));
+
+        // ⚑ TAKEN UNCONDITIONALLY AND BEFORE THE `||`, not inside it: these are
+        // consume-once reads, and short-circuiting past one leaves a button
+        // press pending that would fire again on the next frame. The panels'
+        // buttons arrive here one frame late, because the panel pass runs below
+        // this - 16 ms, and it is the same ordering stage O measured.
+        const bool undoButton = history.takeUndoRequest();
+        const bool redoButton = history.takeRedoRequest();
+        const bool undoNow = (undoDown && !undoPressed) || undoButton;
+        const bool redoNow = (redoDown && !redoPressed) || redoButton;
+
+        // Redo is tested FIRST because Ctrl+Shift+Z satisfies the undo chord
+        // too, and taking a step back when the author asked for one forward is
+        // worse than either doing nothing.
+        if (redoNow) {
+            std::string label;
+            const bool stepped = history.redo(
+                [&](forge::EditHistory::Editor which) {
+                    switch (which) {
+                    case forge::EditHistory::Editor::Mesh:
+                        return editor.redoStep();
+                    case forge::EditHistory::Editor::Texture:
+                        return textureEditor.redoStep();
+                    case forge::EditHistory::Editor::Def:
+                        return defEditor.redoStep();
+                    }
+                    return false;
+                },
+                &label);
+            if (stepped) {
+                status = "redo: " + label;
+                rebuildFromEditor(/*reframe=*/false);
+                rebuildTexture();
+            }
+        } else if (undoNow) {
+            std::string label;
+            const bool stepped = history.undo(
+                [&](forge::EditHistory::Editor which) {
+                    switch (which) {
+                    case forge::EditHistory::Editor::Mesh:
+                        return editor.undoStep();
+                    case forge::EditHistory::Editor::Texture:
+                        return textureEditor.undoStep();
+                    case forge::EditHistory::Editor::Def:
+                        return defEditor.undoStep();
+                    }
+                    return false;
+                },
+                &label);
+            if (stepped) {
+                status = "undo: " + label;
+                // ⚑ BOTH REBUILDS, UNCONDITIONALLY, and that is the price of
+                // the global model: the step may have landed in a document
+                // this frame is not showing, and the one that did change is
+                // the one that must be re-uploaded. Neither call does any work
+                // when its editor is closed.
+                rebuildFromEditor(/*reframe=*/false);
+                rebuildTexture();
+            }
         }
         undoPressed = undoDown;
+        redoPressed = redoDown;
 
         // A drag is claimed on its first frame and kept for its duration:
         // deciding every frame would hand the camera a drag that began on a
@@ -1563,11 +1649,10 @@ int main(int argc, char** argv)
                         }
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("undo def")) {
-                        if (!defEditor.undo()) {
-                            defStatus = "nothing to undo";
-                        }
-                    }
+                    // Stage Q: `undo def` was the third button in this tool
+                    // that undid only its own editor. It is the same pair as
+                    // the other two panels now, meaning the same thing.
+                    forge::drawHistoryButtons(history);
                     ImGui::SameLine();
                     ImGui::TextDisabled("%s", defEditor.dirty() ? "* unsaved" : "saved");
                     ImGui::TextDisabled("%s", defStatus.c_str());
@@ -1755,6 +1840,19 @@ int main(int argc, char** argv)
                 }
             }
             ImGui::End();
+        }
+
+        // ⚑⚑ STAGE Q, AND IT IS THE SAME "ONE PLACE NOTICES" IDIOM AS THE BLOCK
+        // BELOW. A new edit ends the forward branch, and the entries it discards
+        // can name a DIFFERENT editor from the one being edited - so the editor
+        // that made the edit cannot drop those snapshots, because it does not
+        // know they exist. The history raises the flag; this reads it once and
+        // sweeps all three. Consume-once, so a second read in the same frame
+        // cannot sweep twice.
+        if (history.takeRedoDiscarded()) {
+            editor.clearRedo();
+            textureEditor.clearRedo();
+            defEditor.clearRedo();
         }
 
         // ⚑ One place that notices a panel opened or closed, whichever of the

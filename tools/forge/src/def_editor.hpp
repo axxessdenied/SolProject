@@ -30,6 +30,7 @@
 // that exist, so the mistake is not expressible, and a row already on disk that
 // names a missing model is reported.
 
+#include "edit_history.hpp"
 #include "mesh_library.hpp"
 
 #include "sol/assets/data_defs.hpp"
@@ -74,14 +75,21 @@ public:
 
     // Undo is a copy of the document, per E1's precedent and G's: a `DefDoc` is
     // a plain value and the largest def file in this game is 139 lines.
-    void beginEdit(std::size_t document);
-    [[nodiscard]] bool undo();
+    void beginEdit(std::size_t document, std::string label);
+    [[nodiscard]] bool undoStep();
+    [[nodiscard]] bool redoStep();
+    void clearRedo() { m_redo.clear(); }
+    void setHistory(EditHistory* history) { m_history = history; }
+    [[nodiscard]] std::size_t undoDepth() const { return m_undo.size(); }
+    [[nodiscard]] std::size_t redoDepth() const { return m_redo.size(); }
     // ⚑ G2d's rule, and the reason it is a separate call: a DragFloat reports an
     // edit on every frame the mouse moves, so pushing undo from the write-back
     // path turns one drag into twenty-four entries. This pushes on the frame the
     // LAST-SUBMITTED widget became active, so it must be called immediately
     // after the widget it is about.
-    void noteActivation(std::size_t document);
+    void noteActivation(std::size_t document, const char* label);
+    // Throws this editor's snapshots away AND tells the history.
+    void forgetHistory();
 
 private:
     // One def file, as text and as the game's reading of it.
@@ -117,6 +125,8 @@ private:
 
     Document m_docs[kDocumentCount];
     std::vector<UndoEntry> m_undo;
+    std::vector<UndoEntry> m_redo;
+    EditHistory* m_history = nullptr;
     sol::assets::DefDatabase m_defs;
     // The model ids on the mesh currently open, which is what decides whether a
     // content row is worth showing. Set by drawModelRows, read by drawContentRows.
