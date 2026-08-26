@@ -1,8 +1,7 @@
-#include <sol/sim/damage.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cmath>
+
+#include <sol/sim/damage.hpp>
+#include <sol/test/test.hpp>
 
 using sol::core::DVec3;
 using sol::core::Quat;

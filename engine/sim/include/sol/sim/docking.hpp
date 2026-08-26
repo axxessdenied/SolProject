@@ -53,18 +53,16 @@ inline constexpr double kBerthApproachSpeed = 50.0;
 {
     const double angle =
         6.283185307179586 * static_cast<double>(berth % kBerthCount) / static_cast<double>(kBerthCount);
-    return station + core::DVec3{std::cos(angle) * kBerthRingRadius, 0.0,
-                                 std::sin(angle) * kBerthRingRadius};
+    return station + core::DVec3{std::cos(angle) * kBerthRingRadius, 0.0, std::sin(angle) * kBerthRingRadius};
 }
 
 // Parked: inside the capture sphere and slow enough to be stopping rather than
 // passing through. Both halves matter — distance alone would dock a ship that
 // crossed the berth at cruise speed.
-[[nodiscard]] inline bool inBerth(const core::DVec3& ship, double speedMetersPerSecond,
-                                  const core::DVec3& berth)
+[[nodiscard]] inline bool
+inBerth(const core::DVec3& ship, double speedMetersPerSecond, const core::DVec3& berth)
 {
-    return length(ship - berth) <= kBerthCaptureRadius
-           && speedMetersPerSecond <= kBerthApproachSpeed;
+    return length(ship - berth) <= kBerthCaptureRadius && speedMetersPerSecond <= kBerthApproachSpeed;
 }
 
 } // namespace sol::sim

@@ -61,9 +61,13 @@ public:
     void beginEdit(std::string label);
     [[nodiscard]] bool undoStep();
     [[nodiscard]] bool redoStep();
+
     void clearRedo() { m_redo.clear(); }
+
     void setHistory(EditHistory* history) { m_history = history; }
+
     [[nodiscard]] std::size_t undoDepth() const { return m_undo.size(); }
+
     [[nodiscard]] std::size_t redoDepth() const { return m_redo.size(); }
 
     // ⚑ Pushes undo on the frame the LAST-SUBMITTED widget became active, which
@@ -77,9 +81,13 @@ public:
     void noteActivation(const char* label);
 
     [[nodiscard]] bool isOpen() const { return m_open; }
+
     [[nodiscard]] const sol::assets::TextureDoc& doc() const { return m_doc; }
+
     [[nodiscard]] bool dirty() const { return m_dirty; }
+
     [[nodiscard]] const std::string& path() const { return m_path; }
+
     void setBuildError(const std::string& error) { m_buildError = error; }
 
 private:

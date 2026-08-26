@@ -16,11 +16,10 @@
 // emptied, so a script edit between sessions cannot rewrite a wreck the
 // player has already scanned.
 
-#include "sol/sim/universe.hpp"
-
 #include "sol/core/math/math.hpp"
 #include "sol/core/random.hpp"
 #include "sol/core/serialize.hpp"
+#include "sol/sim/universe.hpp"
 
 #include <cstdint>
 #include <string>
@@ -99,8 +98,8 @@ struct SignalLoot
 // Shared loot validation: known commodities, positive unit amounts,
 // non-negative credits, and a stack ceiling. Phase 8f wrecks are composed
 // game-side exactly as signal loot is, so they answer to the same rule.
-[[nodiscard]] bool validSignalLoot(const SignalLoot& loot, std::uint32_t commodityCount,
-                                   std::uint32_t maxCargoStacks);
+[[nodiscard]] bool
+validSignalLoot(const SignalLoot& loot, std::uint32_t commodityCount, std::uint32_t maxCargoStacks);
 
 // What the player remembers about one market's prices, and when they looked
 // (Phase 8g). This lives here rather than in Economy because Economy holds
@@ -128,10 +127,10 @@ struct Bookmark
     // every later index out from under them.
     std::uint32_t id = 0;
     std::uint32_t system = 0;
-    core::DVec3 position;      // sim space, meters
-    std::string name;          // player-typed, or generated from context
-    std::uint32_t label = 0;   // colour/category tier; 0 = plain
-    double createdAt = 0.0;    // sim seconds
+    core::DVec3 position;    // sim space, meters
+    std::string name;        // player-typed, or generated from context
+    std::uint32_t label = 0; // colour/category tier; 0 = plain
+    double createdAt = 0.0;  // sim seconds
 };
 
 struct SurveyParams
@@ -169,12 +168,13 @@ class SurveySim
 public:
     // Sizes the knowledge table to the galaxy and precomputes signal counts.
     // Deterministic for (galaxy, params, seed).
-    void initialize(const Galaxy& galaxy, const SurveyParams& params, std::uint32_t commodityCount,
+    void initialize(const Galaxy& galaxy,
+                    const SurveyParams& params,
+                    std::uint32_t commodityCount,
                     std::uint64_t seed);
 
     // --- Content (pure functions of the system seed) ---
-    void signalsFor(const Galaxy& galaxy, std::uint32_t system,
-                    std::vector<SignalSpec>& out) const;
+    void signalsFor(const Galaxy& galaxy, std::uint32_t system, std::vector<SignalSpec>& out) const;
     [[nodiscard]] std::uint32_t signalCount(std::uint32_t system) const;
     // 1 star + the system's planets; what "every body scanned" counts.
     [[nodiscard]] std::uint32_t bodyCount(const Galaxy& galaxy, std::uint32_t system) const;
@@ -226,10 +226,8 @@ public:
     // False when out of range or already known; true when this call is what
     // changed it. Identifying discovers first, exactly as resolving a signal
     // does, so a scan that beats the pulse to something is not a special case.
-    bool notifyStationDiscovered(const Galaxy& galaxy, std::uint32_t system,
-                                 std::uint32_t station);
-    bool notifyStationIdentified(const Galaxy& galaxy, std::uint32_t system,
-                                 std::uint32_t station);
+    bool notifyStationDiscovered(const Galaxy& galaxy, std::uint32_t system, std::uint32_t station);
+    bool notifyStationIdentified(const Galaxy& galaxy, std::uint32_t system, std::uint32_t station);
 
     [[nodiscard]] bool gateDiscovered(std::uint32_t system, std::uint32_t gate) const;
     [[nodiscard]] bool gateIdentified(std::uint32_t system, std::uint32_t gate) const;
@@ -258,6 +256,7 @@ public:
 
     // --- Survey ledger ---
     [[nodiscard]] const std::vector<SurveyEntry>& ledger() const { return m_ledger; }
+
     [[nodiscard]] double ledgerValue() const;
     // Sells everything and returns the credits (the caller pays the player).
     double sellLedger();
@@ -265,21 +264,29 @@ public:
     // --- Market intel (Phase 8g) ---
     // Writes (or refreshes) what the player knows about a market's prices.
     void recordMarket(std::uint32_t market, const std::vector<float>& prices, double now);
+
     [[nodiscard]] const std::vector<MarketMemory>& marketMemory() const { return m_marketMemory; }
+
     [[nodiscard]] const MarketMemory* remembered(std::uint32_t market) const;
     [[nodiscard]] bool isStale(const MarketMemory& memory, double now) const;
     // The best remembered price for a commodity anywhere but `excludeMarket`,
     // with the market it was seen at and how old that reading is. Returns
     // false when nothing is remembered. This is what the station Trade tab's
     // "elsewhere" column and the galaxy map's trade overlay both read.
-    bool bestRemembered(std::uint32_t commodity, std::uint32_t excludeMarket, double now,
-                        std::uint32_t* outMarket, float* outPrice, double* outAge) const;
+    bool bestRemembered(std::uint32_t commodity,
+                        std::uint32_t excludeMarket,
+                        double now,
+                        std::uint32_t* outMarket,
+                        float* outPrice,
+                        double* outAge) const;
 
     // --- Bookmarks (Phase 8h) ---
     // Records a place and returns its id, or 0 when this system is at the cap.
-    [[nodiscard]] std::uint32_t addBookmark(std::uint32_t system, const core::DVec3& position,
-                                            std::string name, std::uint32_t label, double now);
+    [[nodiscard]] std::uint32_t addBookmark(
+        std::uint32_t system, const core::DVec3& position, std::string name, std::uint32_t label, double now);
+
     [[nodiscard]] const std::vector<Bookmark>& bookmarks() const { return m_bookmarks; }
+
     // Ids of the bookmarks in one system, in creation order. Ids, not indices,
     // because a caller holding one across a deletion elsewhere must not have
     // it silently become a different bookmark.
@@ -292,8 +299,11 @@ public:
     // --- Plotted route (galaxy map; no auto-jump, decisions/005) ---
     // Stored as the remaining systems including the current one at index 0.
     void setRoute(std::vector<std::uint32_t> route);
+
     void clearRoute() { m_route.clear(); }
+
     [[nodiscard]] const std::vector<std::uint32_t>& route() const { return m_route; }
+
     // The system the player should jump to next, or kNoSystem.
     [[nodiscard]] std::uint32_t nextHop() const;
 

@@ -25,12 +25,14 @@ public:
         const std::vector<std::uint8_t> bytes = test::buildSyntheticFont();
         m_written = platform::writeFileBytes(m_path.c_str(), bytes.data(), bytes.size());
     }
+
     ~ScopedTestFont() { std::remove(m_path.c_str()); }
 
     ScopedTestFont(const ScopedTestFont&) = delete;
     ScopedTestFont& operator=(const ScopedTestFont&) = delete;
 
     [[nodiscard]] bool written() const { return m_written; }
+
     [[nodiscard]] const std::string& directory() const { return m_directory; }
 
 private:
@@ -39,7 +41,9 @@ private:
     bool m_written = false;
 };
 
-bool bake(const ScopedTestFont& font, const char* manifest, cooker::BakedFont& out,
+bool bake(const ScopedTestFont& font,
+          const char* manifest,
+          cooker::BakedFont& out,
           std::string* outError = nullptr)
 {
     return cooker::bakeFont(manifest, std::strlen(manifest), font.directory(), out, outError);
@@ -64,8 +68,7 @@ size = 20
 // Printable ASCII plus the one extra codepoint the manifest asks for.
 constexpr std::uint32_t kExpectedPerStyle = (126 - 32 + 1) + 1;
 
-assets::FontGlyphRecord findGlyph(const cooker::BakedFont& font, std::uint32_t style,
-                                  std::uint32_t codepoint)
+assets::FontGlyphRecord findGlyph(const cooker::BakedFont& font, std::uint32_t style, std::uint32_t codepoint)
 {
     const assets::FontStyleRecord& record = font.styles[style];
     for (std::uint32_t i = 0; i < record.glyphCount; ++i) {
@@ -220,11 +223,11 @@ SOL_TEST(fontManifestRejectsBadInput)
     std::string error;
 
     // Unknown keys are errors, matching the strict-schema defs contract.
-    SOL_CHECK(!bake(font, "wobble = 3\n[[style]]\nname=\"a\"\nsource=\"test_synthetic.ttf\"\nsize=10\n",
-                    baked, &error));
+    SOL_CHECK(!bake(
+        font, "wobble = 3\n[[style]]\nname=\"a\"\nsource=\"test_synthetic.ttf\"\nsize=10\n", baked, &error));
     SOL_CHECK(!error.empty());
-    SOL_CHECK(!bake(font, "[[style]]\nname=\"a\"\nsource=\"test_synthetic.ttf\"\nsize=10\nbold=true\n",
-                    baked, &error));
+    SOL_CHECK(!bake(
+        font, "[[style]]\nname=\"a\"\nsource=\"test_synthetic.ttf\"\nsize=10\nbold=true\n", baked, &error));
 
     // A font with no styles produces nothing usable.
     SOL_CHECK(!bake(font, "atlas_width = 128\n", baked, &error));
@@ -237,13 +240,16 @@ SOL_TEST(fontManifestRejectsBadInput)
     SOL_CHECK(!bake(font,
                     "[[style]]\nname=\"a\"\nsource=\"test_synthetic.ttf\"\nsize=10\n"
                     "[[style]]\nname=\"a\"\nsource=\"test_synthetic.ttf\"\nsize=12\n",
-                    baked, &error));
+                    baked,
+                    &error));
     SOL_CHECK(!bake(font, "[[style]]\nname=\"a\"\nsource=\"missing.ttf\"\nsize=10\n", baked, &error));
 
     // An atlas too narrow for the largest glyph fails loudly rather than
     // silently clipping text.
-    SOL_CHECK(!bake(font, "atlas_width = 8\n[[style]]\nname=\"a\"\nsource=\"test_synthetic.ttf\"\nsize=64\n",
-                    baked, &error));
+    SOL_CHECK(!bake(font,
+                    "atlas_width = 8\n[[style]]\nname=\"a\"\nsource=\"test_synthetic.ttf\"\nsize=64\n",
+                    baked,
+                    &error));
 
     // A file that is not a TrueType font is rejected, not half-parsed.
     const std::string decoy = font.directory() + "not_a_font.ttf";

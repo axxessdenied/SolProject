@@ -1,6 +1,5 @@
-#include <sol/ui/layout.hpp>
-
 #include <sol/test/test.hpp>
+#include <sol/ui/layout.hpp>
 
 using sol::ui::Column;
 using sol::ui::inset;

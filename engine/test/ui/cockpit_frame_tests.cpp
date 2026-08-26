@@ -1,10 +1,9 @@
+#include <cmath>
+
 #include <sol/core/math/scalar.hpp>
+#include <sol/test/test.hpp>
 #include <sol/ui/cockpit_frame.hpp>
 #include <sol/ui/radar_projection.hpp>
-
-#include <sol/test/test.hpp>
-
-#include <cmath>
 
 using sol::core::Quat;
 using sol::core::Vec2;
@@ -64,15 +63,13 @@ SOL_TEST(cockpit_anchors_land_on_the_dash_below_the_glass)
 {
     const HudFrame frame = cockpitFrame(Quat::identity(), kScreen, kTanHalfFov);
     SOL_CHECK(frame.cockpit);
-    SOL_CHECK(frame.leftConsole.visible && frame.rightConsole.visible &&
-              frame.centreConsole.visible);
+    SOL_CHECK(frame.leftConsole.visible && frame.rightConsole.visible && frame.centreConsole.visible);
 
     // Symmetric about the boresight, and the centre console is on it.
     const float centreX = kScreen.x * 0.5f;
     SOL_CHECK(frame.leftConsole.position.x < centreX);
     SOL_CHECK(frame.rightConsole.position.x > centreX);
-    SOL_CHECK(nearlyEqual(centreX - frame.leftConsole.position.x,
-                          frame.rightConsole.position.x - centreX));
+    SOL_CHECK(nearlyEqual(centreX - frame.leftConsole.position.x, frame.rightConsole.position.x - centreX));
     SOL_CHECK(nearlyEqual(frame.centreConsole.position.x, centreX));
 
     // Every mount point is below the glass and on the screen: a panel pinned
@@ -122,8 +119,7 @@ SOL_TEST(the_aperture_is_the_glass_and_leaves_the_boresight_in_it)
 
     // Symmetric, and wider than it is tall - it is a canopy, not a letterbox.
     SOL_CHECK(nearlyEqual(frame.apertureMin.x, kScreen.x - frame.apertureMax.x));
-    SOL_CHECK(frame.apertureMax.x - frame.apertureMin.x >
-              frame.apertureMax.y - frame.apertureMin.y);
+    SOL_CHECK(frame.apertureMax.x - frame.apertureMin.x > frame.apertureMax.y - frame.apertureMin.y);
 }
 
 SOL_TEST(the_frame_scales_with_the_screen_rather_than_being_written_in_pixels)
@@ -154,8 +150,7 @@ SOL_TEST(the_frame_sits_at_fixed_angles_so_a_narrower_view_sees_less_of_it)
     // Narrowing the field of view narrows the cone until the pillars fall
     // outside it altogether, so there is MORE glass on screen, not less - and
     // the dash, which is much closer to the boresight, is still there.
-    SOL_CHECK(narrow.apertureMax.x - narrow.apertureMin.x >
-              wide.apertureMax.x - wide.apertureMin.x);
+    SOL_CHECK(narrow.apertureMax.x - narrow.apertureMin.x > wide.apertureMax.x - wide.apertureMin.x);
     SOL_CHECK(narrow.apertureMax.y < kScreen.y); // the shelf survives the zoom
 
     // The consoles are the same story from the other side: magnified with

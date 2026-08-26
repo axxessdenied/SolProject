@@ -7,15 +7,14 @@
 // os, package, or debug — and print is routed to the output sink (dev
 // console) or the engine log.
 
-#include <sol/scripting/binding.hpp>
-
-#include <sol/core/assert.hpp>
-
 #include <lua.hpp>
 
 #include <cstddef>
 #include <string>
 #include <type_traits>
+
+#include <sol/core/assert.hpp>
+#include <sol/scripting/binding.hpp>
 
 namespace sol::scripting {
 
@@ -32,8 +31,7 @@ public:
     void setOutputSink(OutputSink sink, void* userData);
 
     // chunkName appears in error messages and tracebacks (e.g. "console").
-    [[nodiscard]] bool doString(const char* code, const char* chunkName,
-                                std::string* outError = nullptr);
+    [[nodiscard]] bool doString(const char* code, const char* chunkName, std::string* outError = nullptr);
     [[nodiscard]] bool doFile(const char* path, std::string* outError = nullptr);
 
     template <auto Fn>
@@ -46,7 +44,8 @@ public:
     }
 
     template <auto Fn>
-    void registerFunction(const char* tableName, const char* name,
+    void registerFunction(const char* tableName,
+                          const char* name,
                           typename detail::ContextFunction<Fn>::ContextType* context)
     {
         SOL_ASSERT(context != nullptr);
@@ -105,8 +104,8 @@ private:
     // Pushes the named global table, creating it if needed; nullptr pushes
     // the globals table itself.
     void pushBindingTable(const char* tableName);
-    [[nodiscard]] bool run(const char* code, std::size_t length, const char* chunkName,
-                           std::string* outError);
+    [[nodiscard]] bool
+    run(const char* code, std::size_t length, const char* chunkName, std::string* outError);
     // Expects handler at handlerIndex and function + args on top; pops both.
     [[nodiscard]] bool protectedCall(int argCount, int handlerIndex, std::string* outError);
     void writeOutput(const char* line);

@@ -42,8 +42,11 @@ std::int16_t clampToInt16(float value)
 
 // Every supported storage width collapses to int16 here, so the rest of the
 // pipeline has exactly one sample type to reason about.
-bool convertSamples(const std::uint8_t* data, std::size_t size, std::uint16_t format,
-                    std::uint16_t bitsPerSample, std::vector<std::int16_t>& out)
+bool convertSamples(const std::uint8_t* data,
+                    std::size_t size,
+                    std::uint16_t format,
+                    std::uint16_t bitsPerSample,
+                    std::vector<std::int16_t>& out)
 {
     const std::size_t bytesPerSample = bitsPerSample / 8u;
     if (bytesPerSample == 0 || size % bytesPerSample != 0) {
@@ -86,8 +89,8 @@ bool convertSamples(const std::uint8_t* data, std::size_t size, std::uint16_t fo
         return true;
     case 32:
         for (std::size_t i = 0; i < count; ++i) {
-            out[i] = static_cast<std::int16_t>(
-                static_cast<std::uint16_t>(readLittleEndian32(data + i * 4) >> 16));
+            out[i] =
+                static_cast<std::int16_t>(static_cast<std::uint16_t>(readLittleEndian32(data + i * 4) >> 16));
         }
         return true;
     default:
@@ -184,8 +187,8 @@ bool importOgg(const std::uint8_t* data, std::size_t size, assets::SoundData& ou
     int channels = 0;
     int sampleRate = 0;
     short* decoded = nullptr;
-    const int frames = stb_vorbis_decode_memory(data, static_cast<int>(size), &channels,
-                                                &sampleRate, &decoded);
+    const int frames =
+        stb_vorbis_decode_memory(data, static_cast<int>(size), &channels, &sampleRate, &decoded);
     if (frames < 0 || decoded == nullptr) {
         SOL_LOG_ERROR("ogg: decode failed");
         std::free(decoded);

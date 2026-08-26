@@ -131,8 +131,8 @@ struct DefDoc
 // Parses a def document. Fails only on a line that is neither trivia, a table
 // header nor `key = value` - the schema's job is `DefDatabase`'s, and running
 // two validators over one file is how they come to disagree.
-[[nodiscard]] bool parseDefs(const char* text, std::size_t length, const char* sourceName,
-                             DefDoc& out, std::string* error = nullptr);
+[[nodiscard]] bool parseDefs(
+    const char* text, std::size_t length, const char* sourceName, DefDoc& out, std::string* error = nullptr);
 
 // Serialises back. ⚑ For a document that came from `parseDefs`, all nine
 // committed `game/data/*.toml` files come back BYTE FOR BYTE - comments, blank

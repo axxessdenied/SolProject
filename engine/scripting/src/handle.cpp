@@ -1,9 +1,9 @@
-#include <sol/scripting/handle.hpp>
-
 #include <lua.hpp>
 
 #include <cinttypes>
 #include <cstdio>
+
+#include <sol/scripting/handle.hpp>
 
 namespace sol::scripting {
 
@@ -29,8 +29,7 @@ int handleToString(lua_State* state)
 {
     auto* slot = static_cast<std::uint64_t*>(lua_touserdata(state, 1));
     char text[64];
-    std::snprintf(text, sizeof text, "%s(0x%016" PRIx64 ")",
-                  lua_tostring(state, lua_upvalueindex(1)), *slot);
+    std::snprintf(text, sizeof text, "%s(0x%016" PRIx64 ")", lua_tostring(state, lua_upvalueindex(1)), *slot);
     lua_pushstring(state, text);
     return 1;
 }

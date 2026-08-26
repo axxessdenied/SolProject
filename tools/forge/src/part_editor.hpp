@@ -82,19 +82,23 @@ public:
     // in what order, is the one thing no editor can know on its own.
     [[nodiscard]] bool undoStep();
     [[nodiscard]] bool redoStep();
+
     // Drops the forward snapshots. ⚑ Called when the history discards a redo
     // branch, which can happen because a DIFFERENT editor was edited - so it
     // is not something this class can notice for itself.
     void clearRedo() { m_redo.clear(); }
+
     void setHistory(EditHistory* history) { m_history = history; }
+
     [[nodiscard]] std::size_t undoDepth() const { return m_undo.size(); }
+
     [[nodiscard]] std::size_t redoDepth() const { return m_redo.size(); }
 
     // Moves one point of the built mesh by `delta`, writing every authored
     // value standing at it. Does NOT push undo - a drag calls beginEdit() once
     // and this many times.
-    [[nodiscard]] bool movePoint(const sol::assets::ForgePoint& point,
-                                 sol::assets::BuildPoint delta, std::string& error);
+    [[nodiscard]] bool
+    movePoint(const sol::assets::ForgePoint& point, sol::assets::BuildPoint delta, std::string& error);
 
     // Moves a SET of points by one delta - an edge's two - applying every
     // authored value standing at any of them exactly ONCE.
@@ -105,7 +109,8 @@ public:
     // as far as the hand. `dropped` reports a component the box could not
     // express - see `forgeMovePoints`.
     [[nodiscard]] bool movePoints(std::span<const sol::assets::ForgePoint> points,
-                                  sol::assets::BuildPoint delta, bool& dropped,
+                                  sol::assets::BuildPoint delta,
+                                  bool& dropped,
                                   std::string& error);
 
     // ⚑ THE TWO TOPOLOGY EDITS (stage E5), AND UNLIKE THE MOVES ABOVE THEY PUSH
@@ -114,10 +119,13 @@ public:
     // are each one discrete press with one entry to undo. Both bake the parts
     // they touch, because a box with a face pulled out of it is not a box.
     [[nodiscard]] bool splitEdge(std::span<const sol::assets::ForgePoint> points,
-                                 std::span<const sol::assets::ForgeFace> faces, std::uint32_t a,
-                                 std::uint32_t b, std::string& error);
+                                 std::span<const sol::assets::ForgeFace> faces,
+                                 std::uint32_t a,
+                                 std::uint32_t b,
+                                 std::string& error);
     [[nodiscard]] bool extrudeFaces(std::span<const sol::assets::ForgeFace> faces,
-                                    std::span<const std::uint32_t> group, double& offset,
+                                    std::span<const std::uint32_t> group,
+                                    double& offset,
                                     std::string& error);
 
     // Stage N. Selects a part from OUTSIDE the panel - the viewport pick - and
@@ -161,6 +169,7 @@ public:
     // consume-once rule stays, because what it guards is not the lag, it is the
     // producer not running at all.
     [[nodiscard]] std::size_t takeHoveredPart();
+
     // ⚑ A PEEK, for the panel's own `hover` readout, which is drawn in the same
     // pass that produces the value and so must not consume it. The DRAW is the
     // consumer and there is exactly one of those; this is a look. Read it only
@@ -169,9 +178,13 @@ public:
     [[nodiscard]] std::size_t hoveredPart() const { return m_hoveredPart; }
 
     [[nodiscard]] bool isOpen() const { return m_open; }
+
     [[nodiscard]] const sol::assets::ForgeDoc& doc() const { return m_doc; }
+
     [[nodiscard]] bool dirty() const { return m_dirty; }
+
     [[nodiscard]] const std::string& path() const { return m_path; }
+
     // Set by the caller when a rebuild fails, so the panel can say so beside
     // the part that caused it rather than only in the log.
     void setBuildError(const std::string& error) { m_buildError = error; }

@@ -225,13 +225,12 @@ SOL_TEST(clearReturnsABuilderToEmpty)
 // inverse.
 SOL_TEST(buildTransformInverseRoundTripsARotatedNonUniformScale)
 {
-    const assets::BuildTransform transform = assets::BuildTransform::fromTrs(
-        {10.0, -2.5, 4.0}, {0.35, 0.7, -0.2}, {2.0, 0.5, 1.5});
+    const assets::BuildTransform transform =
+        assets::BuildTransform::fromTrs({10.0, -2.5, 4.0}, {0.35, 0.7, -0.2}, {2.0, 0.5, 1.5});
     assets::BuildTransform inverse;
     SOL_REQUIRE(transform.inverse(inverse));
 
-    const assets::BuildPoint samples[] = {
-        {0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {-3.25, 7.5, 0.125}};
+    const assets::BuildPoint samples[] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {-3.25, 7.5, 0.125}};
     for (const assets::BuildPoint& p : samples) {
         const assets::BuildPoint there = transform.transformPoint(p);
         const assets::BuildPoint back = inverse.transformPoint(there);

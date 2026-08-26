@@ -55,8 +55,7 @@ inline constexpr std::size_t kMinListRows = 4;
 // 170 px the parts list reported `scrollMaxY 318` for 28 rows, and 170 + 318 =
 // 488 = 28*17 - 4 + 2*8. The panel list reported 1252 for 60 rows at 140 px,
 // and 140 + 1252 = 1392 = 60*23 - 4 + 2*8. Both exact.
-[[nodiscard]] constexpr float listHeightForRows(const ListMetrics& metrics,
-                                                std::size_t rows) noexcept
+[[nodiscard]] constexpr float listHeightForRows(const ListMetrics& metrics, std::size_t rows) noexcept
 {
     const float frame = metrics.padding * 2.0f;
     if (rows == 0) {
@@ -67,8 +66,7 @@ inline constexpr std::size_t kMinListRows = 4;
 
 // How many whole rows a child of `height` can show. The inverse of the above,
 // and what a test asserts against so the two cannot drift apart.
-[[nodiscard]] constexpr std::size_t listRowsForHeight(const ListMetrics& metrics,
-                                                      float height) noexcept
+[[nodiscard]] constexpr std::size_t listRowsForHeight(const ListMetrics& metrics, float height) noexcept
 {
     if (metrics.rowPitch <= 0.0f) {
         return 0;
@@ -102,8 +100,10 @@ inline constexpr std::size_t kMinListRows = 4;
 // entries, and a header is a FRAMED item: 23 px against a text row's 17. Sized
 // as ten uniform rows it came out 12 px short and still scrolled - measured, not
 // reasoned about. `rowsHeight` is the sum of each submitted row's own pitch.
-[[nodiscard]] constexpr float listHeightForContent(const ListMetrics& metrics, float rowsHeight,
-                                                   std::size_t minRows, float share,
+[[nodiscard]] constexpr float listHeightForContent(const ListMetrics& metrics,
+                                                   float rowsHeight,
+                                                   std::size_t minRows,
+                                                   float share,
                                                    float windowHeight) noexcept
 {
     const float frame = metrics.padding * 2.0f;
@@ -116,12 +116,14 @@ inline constexpr std::size_t kMinListRows = 4;
 }
 
 // The common case: every row is the same kind.
-[[nodiscard]] constexpr float listHeight(const ListMetrics& metrics, std::size_t rows,
-                                         std::size_t minRows, float share,
+[[nodiscard]] constexpr float listHeight(const ListMetrics& metrics,
+                                         std::size_t rows,
+                                         std::size_t minRows,
+                                         float share,
                                          float windowHeight) noexcept
 {
-    return listHeightForContent(metrics, static_cast<float>(rows) * metrics.rowPitch, minRows,
-                                share, windowHeight);
+    return listHeightForContent(
+        metrics, static_cast<float>(rows) * metrics.rowPitch, minRows, share, windowHeight);
 }
 
 // A list long enough to need finding rather than reading. Below this a filter
@@ -139,8 +141,7 @@ inline constexpr std::size_t kFilterFromRows = 12;
 // ⚑ ASCII-only `tolower` by hand rather than <cctype>: `std::tolower` on a
 // char with the high bit set is undefined behaviour, and part ids come from
 // Blender object names, which are UTF-8 and routinely carry accented letters.
-[[nodiscard]] constexpr bool listMatchesFilter(std::string_view label,
-                                               std::string_view needle) noexcept
+[[nodiscard]] constexpr bool listMatchesFilter(std::string_view label, std::string_view needle) noexcept
 {
     if (needle.empty()) {
         return true;

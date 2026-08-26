@@ -25,9 +25,9 @@ struct Registrar
 } // namespace sol::test
 
 #define SOL_TEST(name)                                                                                       \
-    static void solTestFn_##name();                                                                         \
-    static sol::test::TestCase solTestCase_##name{#name, &solTestFn_##name, nullptr};                       \
-    static sol::test::Registrar solTestRegistrar_##name{solTestCase_##name};                                \
+    static void solTestFn_##name();                                                                          \
+    static sol::test::TestCase solTestCase_##name{#name, &solTestFn_##name, nullptr};                        \
+    static sol::test::Registrar solTestRegistrar_##name{solTestCase_##name};                                 \
     static void solTestFn_##name()
 
 // Variadic so brace-initializer commas in the expression survive preprocessing.

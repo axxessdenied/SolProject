@@ -89,17 +89,51 @@ struct MeshTruth
 // not a port. The bounds and counts are here so a failure says WHICH mesh and
 // roughly where, instead of just "a hash differs".
 constexpr MeshTruth kTruth[] = {
-    {"cube", 24, 36, {-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}, 0xD54F551B2AE3C265ull,
-     0x6032C0607D875265ull, 0x7F80BDFB898C8865ull, 0x38B7B89A9FF6B085ull},
-    {"station", 749, 3204, {-102.0f, -62.75f, -102.0f}, {102.0f, 62.75f, 102.0f}, 0x9164D80B9F285D5Cull,
-     0xCBFC1809D25FCDA2ull, 0xF708CF4F0DAB071Aull, 0x365C17E6DFC64487ull},
-    {"ship", 48, 48, {-3.5f, -1.7f, -7.0f}, {3.5f, 3.8f, 5.0f}, 0x6FDCF786BC787F0Aull,
-     0x549928798A5CCC71ull, 0x9C40FB9BBE5B2855ull, 0xC6F41FFC2CC5CE45ull},
-    {"asteroid", 960, 960, {-0.88261f, -0.93068194f, -0.9930186f},
-     {0.9194313f, 1.1016827f, 1.0695491f}, 0x1345E8CF33314B84ull, 0xEEE801D275D83D4Cull,
-     0x237C8E77FE444289ull, 0x9C9A64472BE9E2A5ull},
-    {"cockpit", 426, 630, {-1.03001f, 0.04f, -6.95f}, {1.03001f, 1.495f, -4.55f},
-     0xE47E0E3AECDB31CDull, 0x52BD83BD5AEDB9DFull, 0x50D536A3D4B02F8Dull, 0xC3C7FAA905C5C338ull},
+    {"cube",
+     24,
+     36,
+     {-0.5f, -0.5f, -0.5f},
+     {0.5f, 0.5f, 0.5f},
+     0xD54F551B2AE3C265ull,
+     0x6032C0607D875265ull,
+     0x7F80BDFB898C8865ull,
+     0x38B7B89A9FF6B085ull},
+    {"station",
+     749,
+     3204,
+     {-102.0f, -62.75f, -102.0f},
+     {102.0f, 62.75f, 102.0f},
+     0x9164D80B9F285D5Cull,
+     0xCBFC1809D25FCDA2ull,
+     0xF708CF4F0DAB071Aull,
+     0x365C17E6DFC64487ull},
+    {"ship",
+     48,
+     48,
+     {-3.5f, -1.7f, -7.0f},
+     {3.5f, 3.8f, 5.0f},
+     0x6FDCF786BC787F0Aull,
+     0x549928798A5CCC71ull,
+     0x9C40FB9BBE5B2855ull,
+     0xC6F41FFC2CC5CE45ull},
+    {"asteroid",
+     960,
+     960,
+     {-0.88261f, -0.93068194f, -0.9930186f},
+     {0.9194313f, 1.1016827f, 1.0695491f},
+     0x1345E8CF33314B84ull,
+     0xEEE801D275D83D4Cull,
+     0x237C8E77FE444289ull,
+     0x9C9A64472BE9E2A5ull},
+    {"cockpit",
+     426,
+     630,
+     {-1.03001f, 0.04f, -6.95f},
+     {1.03001f, 1.495f, -4.55f},
+     0xE47E0E3AECDB31CDull,
+     0x52BD83BD5AEDB9DFull,
+     0x50D536A3D4B02F8Dull,
+     0xC3C7FAA905C5C338ull},
 };
 
 [[nodiscard]] const MeshTruth& truthFor(const char* name)
@@ -118,8 +152,11 @@ bool checkHash(const char* mesh, const char* attribute, std::uint64_t actual, st
     if (actual == expected) {
         return true;
     }
-    std::printf("  %s.%s: got 0x%016llX, want 0x%016llX\n", mesh, attribute,
-                static_cast<unsigned long long>(actual), static_cast<unsigned long long>(expected));
+    std::printf("  %s.%s: got 0x%016llX, want 0x%016llX\n",
+                mesh,
+                attribute,
+                static_cast<unsigned long long>(actual),
+                static_cast<unsigned long long>(expected));
     return false;
 }
 
@@ -197,8 +234,10 @@ void checkAgainstShipped(const char* name, const MeshData& mesh)
 bool reportFirstDifference(const char* name, const MeshData& fromFile, const MeshData& fromRecipe)
 {
     if (fromFile.vertices.size() != fromRecipe.vertices.size()) {
-        std::printf("  %s: %zu vertices from the file, %zu from the recipe\n", name,
-                    fromFile.vertices.size(), fromRecipe.vertices.size());
+        std::printf("  %s: %zu vertices from the file, %zu from the recipe\n",
+                    name,
+                    fromFile.vertices.size(),
+                    fromRecipe.vertices.size());
         return false;
     }
     for (std::size_t i = 0; i < fromFile.vertices.size(); ++i) {
@@ -206,18 +245,35 @@ bool reportFirstDifference(const char* name, const MeshData& fromFile, const Mes
         const assets::MeshVertex& b = fromRecipe.vertices[i];
         for (int c = 0; c < 3; ++c) {
             if (a.position[c] != b.position[c] || a.normal[c] != b.normal[c]) {
-                std::printf("  %s vertex %zu: file pos (%.9g %.9g %.9g) nrm (%.9g %.9g %.9g)\n", name,
-                            i, a.position[0], a.position[1], a.position[2], a.normal[0], a.normal[1],
+                std::printf("  %s vertex %zu: file pos (%.9g %.9g %.9g) nrm (%.9g %.9g %.9g)\n",
+                            name,
+                            i,
+                            a.position[0],
+                            a.position[1],
+                            a.position[2],
+                            a.normal[0],
+                            a.normal[1],
                             a.normal[2]);
-                std::printf("  %s vertex %zu: want pos (%.9g %.9g %.9g) nrm (%.9g %.9g %.9g)\n", name,
-                            i, b.position[0], b.position[1], b.position[2], b.normal[0], b.normal[1],
+                std::printf("  %s vertex %zu: want pos (%.9g %.9g %.9g) nrm (%.9g %.9g %.9g)\n",
+                            name,
+                            i,
+                            b.position[0],
+                            b.position[1],
+                            b.position[2],
+                            b.normal[0],
+                            b.normal[1],
                             b.normal[2]);
                 return false;
             }
         }
         if (a.uv[0] != b.uv[0] || a.uv[1] != b.uv[1]) {
-            std::printf("  %s vertex %zu uv: file (%.9g %.9g), want (%.9g %.9g)\n", name, i, a.uv[0],
-                        a.uv[1], b.uv[0], b.uv[1]);
+            std::printf("  %s vertex %zu uv: file (%.9g %.9g), want (%.9g %.9g)\n",
+                        name,
+                        i,
+                        a.uv[0],
+                        a.uv[1],
+                        b.uv[0],
+                        b.uv[1]);
             return false;
         }
     }
@@ -285,9 +341,8 @@ SOL_TEST(cockpitReproducesTheShippedMesh)
 //
 // ⚑ The five recipe tests above are deliberately untouched. They read no asset
 // and cannot block an edit; see the note on their own block.
-constexpr const char* const kCommittedMeshes[] = {"cube",     "station",  "ship",
-                                                  "cockpit",  "asteroid", "gate",
-                                                  "gate_membrane", "freighter_cockpit"};
+constexpr const char* const kCommittedMeshes[] = {
+    "cube", "station", "ship", "cockpit", "asteroid", "gate", "gate_membrane", "freighter_cockpit"};
 
 // ⚑ `gate_membrane` is a single revolve of the profile [[0,0],[70,0]] - a flat
 // disc whose centre collapses to a point. It is a FILM, so it has a border loop
@@ -324,10 +379,11 @@ SOL_TEST(everyCommittedSolidIsAClosedManifoldWoundOutwards)
         SOL_REQUIRE(buildFromForgeSource(name, mesh));
         const assets::EditMesh edit = assets::toEditMesh(mesh);
         const assets::MeshAdjacency adjacency = assets::buildAdjacency(edit);
-        if (!adjacency.isManifold() || !adjacency.isClosed()
-            || adjacency.borderEdgeCount() != 0) {
-            std::printf("  %s: manifold %d closed %d border edges %u\n", name,
-                        adjacency.isManifold() ? 1 : 0, adjacency.isClosed() ? 1 : 0,
+        if (!adjacency.isManifold() || !adjacency.isClosed() || adjacency.borderEdgeCount() != 0) {
+            std::printf("  %s: manifold %d closed %d border edges %u\n",
+                        name,
+                        adjacency.isManifold() ? 1 : 0,
+                        adjacency.isClosed() ? 1 : 0,
                         adjacency.borderEdgeCount());
         }
         SOL_CHECK(adjacency.isManifold());
@@ -341,9 +397,10 @@ SOL_TEST(everyCommittedSolidIsAClosedManifoldWoundOutwards)
             // Negative means wound inside out; exactly zero means it is not a
             // solid at all - a flattened box reads 0, not -1, and saying
             // "inside out" there would send the reader the wrong way.
-            std::printf("  %s: signed volume %.6g - %s\n", name, assets::signedVolume(edit),
-                        assets::signedVolume(edit) < 0.0 ? "wound inside out"
-                                                         : "no enclosed volume");
+            std::printf("  %s: signed volume %.6g - %s\n",
+                        name,
+                        assets::signedVolume(edit),
+                        assets::signedVolume(edit) < 0.0 ? "wound inside out" : "no enclosed volume");
         }
         SOL_CHECK(assets::signedVolume(edit) > 0.0);
         // A closed solid may not carry a zero-area triangle: it contributes no

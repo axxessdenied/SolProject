@@ -44,10 +44,10 @@ struct ShipTuning
 
 struct ShipState
 {
-    core::DVec3 position;                              // sim space, meters
-    core::DVec3 velocity;                              // sim space, m/s
-    core::Quat orientation = core::Quat::identity();   // body -> sim space
-    core::Vec3 angularVelocity;                        // body space, rad/s
+    core::DVec3 position;                            // sim space, meters
+    core::DVec3 velocity;                            // sim space, m/s
+    core::Quat orientation = core::Quat::identity(); // body -> sim space
+    core::Vec3 angularVelocity;                      // body space, rad/s
 };
 
 struct FlightInput
@@ -71,7 +71,7 @@ void stepShipFlight(ShipState& state, const ShipTuning& tuning, const FlightInpu
 // The instantaneous linear acceleration (body space, m/s^2) a step with this
 // state+input+dt applies; exposed so thruster effects and the HUD can mirror
 // what the flight model actually does.
-[[nodiscard]] core::Vec3 shipLinearAccelBody(const ShipState& state, const ShipTuning& tuning,
-                                             const FlightInput& input, double dt);
+[[nodiscard]] core::Vec3
+shipLinearAccelBody(const ShipState& state, const ShipTuning& tuning, const FlightInput& input, double dt);
 
 } // namespace sol::sim

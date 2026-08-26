@@ -18,6 +18,7 @@ namespace assets = sol::assets;
 using sol::core::Vec2;
 using sol::ui::Color;
 using sol::ui::Column;
+using sol::ui::inset;
 using sol::ui::MapAction;
 using sol::ui::MapKnowledge;
 using sol::ui::MapLaneRow;
@@ -29,7 +30,6 @@ using sol::ui::rgba;
 using sol::ui::Row;
 using sol::ui::TextAlign;
 using sol::ui::UiContext;
-using sol::ui::inset;
 
 namespace {
 
@@ -69,13 +69,13 @@ constexpr const char* const kTabLabels[MapScreenState::TabCount] = {"Galaxy", "S
     if (!system.hasTrade) {
         return rgba(0x44505CFFu);
     }
-    const float level = system.tradeLevel < 0.0f ? 0.0f
-                        : system.tradeLevel > 1.0f ? 1.0f
-                                                   : system.tradeLevel;
+    const float level = system.tradeLevel < 0.0f ? 0.0f : system.tradeLevel > 1.0f ? 1.0f : system.tradeLevel;
     const Color cheap = rgba(0x69C48CFFu);
     const Color dear = rgba(0xE0704CFFu);
-    Color color{cheap.r + (dear.r - cheap.r) * level, cheap.g + (dear.g - cheap.g) * level,
-                cheap.b + (dear.b - cheap.b) * level, 1.0f};
+    Color color{cheap.r + (dear.r - cheap.r) * level,
+                cheap.g + (dear.g - cheap.g) * level,
+                cheap.b + (dear.b - cheap.b) * level,
+                1.0f};
     return system.tradeStale ? color.withAlpha(0.45f) : color;
 }
 
@@ -110,15 +110,18 @@ constexpr const char* const kTabLabels[MapScreenState::TabCount] = {"Galaxy", "S
     return ui.theme().textDim;
 }
 
-void clipped(UiContext& ui, const Rect& cell, std::string_view text, const Color& color,
-             const char* style = nullptr, TextAlign align = TextAlign::Left)
+void clipped(UiContext& ui,
+             const Rect& cell,
+             std::string_view text,
+             const Color& color,
+             const char* style = nullptr,
+             TextAlign align = TextAlign::Left)
 {
     if (cell.empty() || text.empty()) {
         return;
     }
     ui.drawList().pushClip(cell);
-    ui.label({{cell.min.x + 4.0f, cell.min.y}, {cell.max.x - 4.0f, cell.max.y}}, text, color, style,
-             align);
+    ui.label({{cell.min.x + 4.0f, cell.min.y}, {cell.max.x - 4.0f, cell.max.y}}, text, color, style, align);
     ui.drawList().popClip();
 }
 
@@ -143,15 +146,13 @@ using sol::ui::MapView;
 // cannot be thrown out of the panel entirely. Returns the transform to draw
 // with. Only responds while the cursor is inside `view`, so the wheel still
 // belongs to the system list when it is over the list.
-[[nodiscard]] MapView updateMapView(UiContext& ui, const Rect& view, MapScreenState& state,
-                                    bool& clicked)
+[[nodiscard]] MapView updateMapView(UiContext& ui, const Rect& view, MapScreenState& state, bool& clicked)
 {
     const std::size_t tab = static_cast<std::size_t>(state.tab);
     const Vec2 origin = {(view.min.x + view.max.x) * 0.5f, (view.min.y + view.max.y) * 0.5f};
     const sol::ui::InputState& input = ui.input();
-    const bool inside = input.mousePosition.x >= view.min.x && input.mousePosition.x <= view.max.x
-                        && input.mousePosition.y >= view.min.y
-                        && input.mousePosition.y <= view.max.y;
+    const bool inside = input.mousePosition.x >= view.min.x && input.mousePosition.x <= view.max.x &&
+                        input.mousePosition.y >= view.min.y && input.mousePosition.y <= view.max.y;
 
     float& zoom = state.zoom[tab];
     Vec2& pan = state.pan[tab];
@@ -206,8 +207,12 @@ using sol::ui::MapView;
 class LabelPlacer
 {
 public:
-    void place(UiContext& ui, const assets::FontStyleRecord& style, Vec2 anchor,
-               const char* text, const Color& color, float gap)
+    void place(UiContext& ui,
+               const assets::FontStyleRecord& style,
+               Vec2 anchor,
+               const char* text,
+               const Color& color,
+               float gap)
     {
         if (text == nullptr || text[0] == '\0') {
             return;
@@ -215,9 +220,9 @@ public:
         const float height = style.lineHeight > 1.0f ? style.lineHeight : 14.0f;
         // Estimated rather than measured: the draw list has no width query,
         // and for keeping names off each other an estimate is enough.
-        const float width =
-            std::min(130.0f, 8.0f + 0.52f * style.pixelSize * static_cast<float>(
-                                                 std::char_traits<char>::length(text)));
+        const float width = std::min(130.0f,
+                                     8.0f + 0.52f * style.pixelSize *
+                                                static_cast<float>(std::char_traits<char>::length(text)));
 
         // Try the natural spot first, then the other side of the marker, then
         // step away vertically in both directions alternately. Most labels
@@ -225,8 +230,7 @@ public:
         // legible but a map full of them is not.
         const auto boxAt = [&](bool rightSide, float dy) {
             const float left = rightSide ? anchor.x + gap : anchor.x - gap - width;
-            return Rect{{left, anchor.y - height * 0.5f + dy},
-                        {left + width, anchor.y + height * 0.5f + dy}};
+            return Rect{{left, anchor.y - height * 0.5f + dy}, {left + width, anchor.y + height * 0.5f + dy}};
         };
         Rect box = boxAt(true, 0.0f);
         bool placedCleanly = !collides(box);
@@ -261,16 +265,16 @@ public:
         if (std::abs(labelEdge.y - anchor.y) > 1.0f || box.min.x < anchor.x) {
             ui.drawList().addLine(anchor, labelEdge, color.withAlpha(0.4f), 1.0f);
         }
-        ui.drawList().addTextInBox(style, box, text, color,
-                                   box.min.x < anchor.x ? TextAlign::Right : TextAlign::Left);
+        ui.drawList().addTextInBox(
+            style, box, text, color, box.min.x < anchor.x ? TextAlign::Right : TextAlign::Left);
     }
 
 private:
     [[nodiscard]] bool collides(const Rect& box) const
     {
         for (const Rect& other : m_placed) {
-            if (box.min.x < other.max.x && box.max.x > other.min.x && box.min.y < other.max.y
-                && box.max.y > other.min.y) {
+            if (box.min.x < other.max.x && box.max.x > other.min.x && box.min.y < other.max.y &&
+                box.max.y > other.min.y) {
                 return true;
             }
         }
@@ -282,8 +286,12 @@ private:
 
 // --- Galaxy view ------------------------------------------------------------
 
-void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int selected,
-                   const MapView& magnify, sol::ui::NearestPick& pick)
+void drawGalaxyMap(UiContext& ui,
+                   const MapPanel& panel,
+                   const Rect& view,
+                   int selected,
+                   const MapView& magnify,
+                   sol::ui::NearestPick& pick)
 {
     ui.drawList().addRect(view, ui.theme().background.withAlpha(0.55f));
     ui.drawList().addRectOutline(view, ui.theme().panelEdge, 1.0f);
@@ -303,8 +311,10 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         }
         const MapSystemRow& from = panel.systems[static_cast<std::size_t>(lane.from)];
         const MapSystemRow& to = panel.systems[static_cast<std::size_t>(lane.to)];
-        ui.drawList().addLine(project(from.position), project(to.position),
-                              lane.onRoute ? kLaneRoute : kLane, lane.onRoute ? 2.5f : 1.0f);
+        ui.drawList().addLine(project(from.position),
+                              project(to.position),
+                              lane.onRoute ? kLaneRoute : kLane,
+                              lane.onRoute ? 2.5f : 1.0f);
     }
 
     LabelPlacer labels;
@@ -324,7 +334,8 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         } else {
             ui.drawList().addRoundedRect({{point.x - kNodeRadius, point.y - kNodeRadius},
                                           {point.x + kNodeRadius, point.y + kNodeRadius}},
-                                         kNodeRadius, color);
+                                         kNodeRadius,
+                                         color);
         }
         if (system.knowledge == MapKnowledge::Surveyed) {
             ui.drawList().addCircle(point, kNodeRadius + 3.5f, ui.theme().positive, 1.4f, 12);
@@ -343,10 +354,10 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
             const float reach = 3.5f;
             const Vec2 pin = {point.x, point.y - kNodeRadius - 8.0f};
             const Color gold = rgba(0xFFC850FFu);
-            ui.drawList().addTriangle({pin.x, pin.y - reach}, {pin.x - reach, pin.y},
-                                      {pin.x + reach, pin.y}, gold);
-            ui.drawList().addTriangle({pin.x, pin.y + reach}, {pin.x - reach, pin.y},
-                                      {pin.x + reach, pin.y}, gold);
+            ui.drawList().addTriangle(
+                {pin.x, pin.y - reach}, {pin.x - reach, pin.y}, {pin.x + reach, pin.y}, gold);
+            ui.drawList().addTriangle(
+                {pin.x, pin.y + reach}, {pin.x - reach, pin.y}, {pin.x + reach, pin.y}, gold);
         }
         // And a magenta ring around the node the tracked mission points at
         // (Phase 8i). Drawn widest of the lot so it survives a system that is
@@ -360,18 +371,22 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         // are concentric, so a system that is both still reads as both. The
         // colour is the attacker's because the owner's is already the node.
         if (system.contested) {
-            ui.drawList().addCircle(point, kNodeRadius + 16.0f,
-                                    Color{system.contestColor.x, system.contestColor.y,
-                                          system.contestColor.z, 1.0f},
-                                    2.0f, 24);
+            ui.drawList().addCircle(
+                point,
+                kNodeRadius + 16.0f,
+                Color{system.contestColor.x, system.contestColor.y, system.contestColor.z, 1.0f},
+                2.0f,
+                24);
         }
         // A gate names where it leads, so a charted system carries its name -
         // dimmed, because that name is all you have until you go. The gap
         // clears the widest ring drawn above (the current-system ring at
         // kNodeRadius + 10), or the selection would sit on top of the text.
-        labels.place(ui, *ui.drawList().font()->style(ui.theme().smallStyle), point, system.name,
-                     system.knowledge >= MapKnowledge::Visited ? ui.theme().textDim
-                                                               : ui.theme().textDisabled,
+        labels.place(ui,
+                     *ui.drawList().font()->style(ui.theme().smallStyle),
+                     point,
+                     system.name,
+                     system.knowledge >= MapKnowledge::Visited ? ui.theme().textDim : ui.theme().textDisabled,
                      kNodeRadius + (system.contested      ? 19.0f
                                     : system.hasObjective ? 16.0f
                                                           : 13.0f));
@@ -381,8 +396,12 @@ void drawGalaxyMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
 
 // --- System view ------------------------------------------------------------
 
-void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int selected,
-                   const MapView& magnify, sol::ui::NearestPick& pick)
+void drawSystemMap(UiContext& ui,
+                   const MapPanel& panel,
+                   const Rect& view,
+                   int selected,
+                   const MapView& magnify,
+                   sol::ui::NearestPick& pick)
 {
     ui.drawList().addRect(view, ui.theme().background.withAlpha(0.55f));
     ui.drawList().addRectOutline(view, ui.theme().panelEdge, 1.0f);
@@ -414,8 +433,7 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
     const auto project = [&](const MapMarkerRow& marker) {
         return magnify(marker.inPlayfield
                            ? sol::ui::playfieldPoint(marker.position, hub, bubbleRadius, bubbleSpan)
-                           : sol::ui::orbitMapPoint(marker.position, center, orbitRadius,
-                                                    orbitSpan));
+                           : sol::ui::orbitMapPoint(marker.position, center, orbitRadius, orbitSpan));
     };
 
     ui.drawList().pushClip(view);
@@ -428,24 +446,29 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         }
         // Measured before the magnifier and scaled after, so the ring stays
         // concentric with the star under any pan.
-        const Vec2 orbit =
-            sol::ui::orbitMapPoint(marker.position, center, orbitRadius, orbitSpan);
+        const Vec2 orbit = sol::ui::orbitMapPoint(marker.position, center, orbitRadius, orbitSpan);
         const float dx = orbit.x - center.x;
         const float dy = orbit.y - center.y;
-        ui.drawList().addCircle(starPoint, magnify.scaled(std::sqrt(dx * dx + dy * dy)),
-                                ui.theme().panelEdge.withAlpha(0.45f), 1.0f, 48);
+        ui.drawList().addCircle(starPoint,
+                                magnify.scaled(std::sqrt(dx * dx + dy * dy)),
+                                ui.theme().panelEdge.withAlpha(0.45f),
+                                1.0f,
+                                48);
     }
     // The bubble's own edge, so the change of scale is visible rather than an
     // unannounced lie about how far apart these things are. Drawn only when
     // there is something in the playfield to expand: a Charted system (Phase
     // 8q) shows its star and nothing else, and an empty bubble there would be
     // a ring around a region the player has been told nothing about.
-    const bool anyInPlayfield = std::any_of(
-        panel.markers.begin(), panel.markers.end(),
-        [](const MapMarkerRow& marker) { return marker.inPlayfield; });
+    const bool anyInPlayfield = std::any_of(panel.markers.begin(),
+                                            panel.markers.end(),
+                                            [](const MapMarkerRow& marker) { return marker.inPlayfield; });
     if (anyInPlayfield) {
-        ui.drawList().addCircle(magnify(hub), magnify.scaled(bubbleRadius + 8.0f),
-                                ui.theme().panelEdge.withAlpha(0.8f), 1.0f, 40);
+        ui.drawList().addCircle(magnify(hub),
+                                magnify.scaled(bubbleRadius + 8.0f),
+                                ui.theme().panelEdge.withAlpha(0.8f),
+                                1.0f,
+                                40);
     }
 
     LabelPlacer labels;
@@ -457,17 +480,17 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         // there at all.
         pick.consider(i, point);
         const Color color = markerColor(ui, marker);
-        const float size = marker.kind == MapMarkerRow::Kind::Star   ? 6.0f
+        const float size = marker.kind == MapMarkerRow::Kind::Star     ? 6.0f
                            : marker.kind == MapMarkerRow::Kind::Planet ? 5.0f
                                                                        : 3.5f;
         if (marker.kind == MapMarkerRow::Kind::Bookmark) {
             // A diamond, so the player's own marks are distinguishable from
             // the galaxy's furniture by shape and not only by colour.
             const float reach = size + 1.5f;
-            ui.drawList().addTriangle({point.x, point.y - reach}, {point.x - reach, point.y},
-                                      {point.x + reach, point.y}, color);
-            ui.drawList().addTriangle({point.x, point.y + reach}, {point.x - reach, point.y},
-                                      {point.x + reach, point.y}, color);
+            ui.drawList().addTriangle(
+                {point.x, point.y - reach}, {point.x - reach, point.y}, {point.x + reach, point.y}, color);
+            ui.drawList().addTriangle(
+                {point.x, point.y + reach}, {point.x - reach, point.y}, {point.x + reach, point.y}, color);
         } else if (marker.kind == MapMarkerRow::Kind::Objective) {
             // A ring around a centre dot - the waypoint glyph, and the only
             // marker on the map that is a halo rather than a solid, so where
@@ -475,12 +498,10 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
             // (Phase 8i).
             const float inner = size - 1.5f;
             ui.drawList().addRoundedRect(
-                {{point.x - inner, point.y - inner}, {point.x + inner, point.y + inner}}, inner,
-                color);
+                {{point.x - inner, point.y - inner}, {point.x + inner, point.y + inner}}, inner, color);
             ui.drawList().addCircle(point, size + 3.0f, color, 1.6f, 16);
         } else {
-            ui.drawList().addRoundedRect({{point.x - size, point.y - size},
-                                          {point.x + size, point.y + size}},
+            ui.drawList().addRoundedRect({{point.x - size, point.y - size}, {point.x + size, point.y + size}},
                                          marker.kind == MapMarkerRow::Kind::Gate ? 1.0f : size,
                                          color);
         }
@@ -490,13 +511,16 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
         if (static_cast<int>(i) == selected) {
             ui.drawList().addCircle(point, size + 9.0f, kCurrentRing, 1.4f, 16);
         }
-        labels.place(ui, *ui.drawList().font()->style(ui.theme().smallStyle), point, marker.name,
-                     ui.theme().textDim, size + 10.0f);
+        labels.place(ui,
+                     *ui.drawList().font()->style(ui.theme().smallStyle),
+                     point,
+                     marker.name,
+                     ui.theme().textDim,
+                     size + 10.0f);
     }
     // The ship, where it actually is, which is inside the bubble.
     if (panel.hasShip) {
-        const Vec2 ship = magnify(
-            sol::ui::playfieldPoint(panel.shipPosition, hub, bubbleRadius, bubbleSpan));
+        const Vec2 ship = magnify(sol::ui::playfieldPoint(panel.shipPosition, hub, bubbleRadius, bubbleSpan));
         ui.drawList().addCircle(ship, 4.0f, ui.theme().textPrimary, 1.6f, 12);
     }
     ui.drawList().popClip();
@@ -504,8 +528,7 @@ void drawSystemMap(UiContext& ui, const MapPanel& panel, const Rect& view, int s
 
 // --- Lists ------------------------------------------------------------------
 
-void drawSystemList(UiContext& ui, const MapPanel& panel, const Rect& bounds,
-                    MapScreenState& state)
+void drawSystemList(UiContext& ui, const MapPanel& panel, const Rect& bounds, MapScreenState& state)
 {
     float contentHeight = 0.0f;
     for (const MapSystemRow& system : panel.systems) {
@@ -513,8 +536,7 @@ void drawSystemList(UiContext& ui, const MapPanel& panel, const Rect& bounds,
             contentHeight += kRowHeight + ui.theme().spacing;
         }
     }
-    const Rect content =
-        ui.beginScroll(bounds, contentHeight, state.scroll[MapScreenState::Galaxy]);
+    const Rect content = ui.beginScroll(bounds, contentHeight, state.scroll[MapScreenState::Galaxy]);
     Column column(content, 0.0f, ui.theme().spacing);
     for (std::size_t i = 0; i < panel.systems.size(); ++i) {
         const MapSystemRow& system = panel.systems[i];
@@ -529,7 +551,8 @@ void drawSystemList(UiContext& ui, const MapPanel& panel, const Rect& bounds,
         // A dot in the owner's color carries the faction without a column.
         ui.drawList().addRoundedRect({{marker.min.x + 3.0f, marker.min.y + kRowHeight * 0.5f - 4.0f},
                                       {marker.min.x + 11.0f, marker.min.y + kRowHeight * 0.5f + 4.0f}},
-                                     4.0f, systemColor(panel, system));
+                                     4.0f,
+                                     systemColor(panel, system));
         if (ui.selectable(name, system.name, static_cast<int>(i) == state.selectedSystem)) {
             state.selectedSystem = static_cast<int>(i);
         }
@@ -539,34 +562,28 @@ void drawSystemList(UiContext& ui, const MapPanel& panel, const Rect& bounds,
         if (panel.tradeCommodity >= 0) {
             if (system.hasTrade) {
                 char buffer[32] = {};
-                std::snprintf(buffer, sizeof(buffer), "%.2f",
-                              static_cast<double>(system.tradePrice));
-                clipped(ui, name, buffer, tradeColor(system), ui.theme().smallStyle,
-                        TextAlign::Right);
+                std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(system.tradePrice));
+                clipped(ui, name, buffer, tradeColor(system), ui.theme().smallStyle, TextAlign::Right);
             } else {
-                clipped(ui, name, "no data", ui.theme().textDisabled, ui.theme().smallStyle,
-                        TextAlign::Right);
+                clipped(
+                    ui, name, "no data", ui.theme().textDisabled, ui.theme().smallStyle, TextAlign::Right);
             }
         } else if (system.current) {
             clipped(ui, name, "here", ui.theme().accent, ui.theme().smallStyle, TextAlign::Right);
         } else if (system.onRoute) {
             clipped(ui, name, "route", kLaneRoute, ui.theme().smallStyle, TextAlign::Right);
         } else if (system.knowledge == MapKnowledge::Charted) {
-            clipped(ui, name, "uncharted", ui.theme().textDisabled, ui.theme().smallStyle,
-                    TextAlign::Right);
+            clipped(ui, name, "uncharted", ui.theme().textDisabled, ui.theme().smallStyle, TextAlign::Right);
         }
         ui.popId();
     }
     ui.endScroll();
 }
 
-void drawMarkerList(UiContext& ui, const MapPanel& panel, const Rect& bounds,
-                    MapScreenState& state)
+void drawMarkerList(UiContext& ui, const MapPanel& panel, const Rect& bounds, MapScreenState& state)
 {
-    const float contentHeight =
-        static_cast<float>(panel.markers.size()) * (kRowHeight + ui.theme().spacing);
-    const Rect content =
-        ui.beginScroll(bounds, contentHeight, state.scroll[MapScreenState::System]);
+    const float contentHeight = static_cast<float>(panel.markers.size()) * (kRowHeight + ui.theme().spacing);
+    const Rect content = ui.beginScroll(bounds, contentHeight, state.scroll[MapScreenState::System]);
     Column column(content, 0.0f, ui.theme().spacing);
     for (std::size_t i = 0; i < panel.markers.size(); ++i) {
         const MapMarkerRow& marker = panel.markers[i];
@@ -578,12 +595,12 @@ void drawMarkerList(UiContext& ui, const MapPanel& panel, const Rect& bounds,
         const Rect name = cursor.remaining();
         ui.drawList().addRoundedRect({{dot.min.x + 3.0f, dot.min.y + kRowHeight * 0.5f - 4.0f},
                                       {dot.min.x + 11.0f, dot.min.y + kRowHeight * 0.5f + 4.0f}},
-                                     4.0f, markerColor(ui, marker));
+                                     4.0f,
+                                     markerColor(ui, marker));
         if (ui.selectable(name, marker.name, static_cast<int>(i) == state.selectedMarker)) {
             state.selectedMarker = static_cast<int>(i);
         }
-        clipped(ui, detail, marker.detail, ui.theme().textDim, ui.theme().smallStyle,
-                TextAlign::Right);
+        clipped(ui, detail, marker.detail, ui.theme().textDim, ui.theme().smallStyle, TextAlign::Right);
         ui.popId();
     }
     ui.endScroll();
@@ -641,9 +658,9 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
 
     ui.label(header,
              state.tab == MapScreenState::System ? panel.viewSystemName : panel.currentSystem,
-             ui.theme().textPrimary, ui.theme().headingStyle);
-    ui.label(header, panel.knownSummary, ui.theme().textDim, ui.theme().bodyStyle,
-             TextAlign::Right);
+             ui.theme().textPrimary,
+             ui.theme().headingStyle);
+    ui.label(header, panel.knownSummary, ui.theme().textDim, ui.theme().bodyStyle, TextAlign::Right);
 
     // Footer first: the body is whatever the header, tabs, and footer leave,
     // and it has to be known before either view draws into it.
@@ -663,18 +680,16 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
     // Phase 15: a click on the map selects the same way a click on a list row
     // does. Resolved inside whichever view draws, because that is where a
     // marker's screen position is worked out.
-    sol::ui::NearestPick pick = mapClicked
-                                    ? sol::ui::NearestPick(ui.input().mousePosition, kMapGrabPixels)
-                                    : sol::ui::NearestPick{};
-    const bool zoomed = state.zoom[static_cast<std::size_t>(state.tab)] > 1.0f
-                        || state.pan[static_cast<std::size_t>(state.tab)].x != 0.0f
-                        || state.pan[static_cast<std::size_t>(state.tab)].y != 0.0f;
+    sol::ui::NearestPick pick =
+        mapClicked ? sol::ui::NearestPick(ui.input().mousePosition, kMapGrabPixels) : sol::ui::NearestPick{};
+    const bool zoomed = state.zoom[static_cast<std::size_t>(state.tab)] > 1.0f ||
+                        state.pan[static_cast<std::size_t>(state.tab)].x != 0.0f ||
+                        state.pan[static_cast<std::size_t>(state.tab)].y != 0.0f;
     bool resetView = false;
 
     bool closed = false;
     if (state.tab == MapScreenState::Galaxy) {
-        if (state.selectedSystem < 0
-            || state.selectedSystem >= static_cast<int>(panel.systems.size())) {
+        if (state.selectedSystem < 0 || state.selectedSystem >= static_cast<int>(panel.systems.size())) {
             state.selectedSystem = panel.currentIndex;
         }
         // Trade overlay picker (Phase 8g), above the list. One cycling button
@@ -687,9 +702,10 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             const int commodityCount = static_cast<int>(panel.commodityNames.size());
             char label[64] = {};
             if (panel.tradeCommodity >= 0 && panel.tradeCommodity < commodityCount) {
-                std::snprintf(label, sizeof(label), "Colour: %s",
-                              panel.commodityNames[static_cast<std::size_t>(
-                                  panel.tradeCommodity)]);
+                std::snprintf(label,
+                              sizeof(label),
+                              "Colour: %s",
+                              panel.commodityNames[static_cast<std::size_t>(panel.tradeCommodity)]);
             } else {
                 std::snprintf(label, sizeof(label), "Colour: owners");
             }
@@ -723,8 +739,9 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
                 : nullptr;
         // With the overlay up the footer explains the color scale, which is
         // the thing a player needs to read the map at all.
-        clipped(ui, detailCell,
-                panel.tradeCommodity >= 0 ? panel.tradeSummary
+        clipped(ui,
+                detailCell,
+                panel.tradeCommodity >= 0                            ? panel.tradeSummary
                 : selected != nullptr && selected->detail[0] != '\0' ? selected->detail
                                                                      : panel.routeSummary,
                 ui.theme().textDim);
@@ -742,8 +759,7 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             closed = true;
         }
     } else {
-        if (state.selectedMarker < 0
-            || state.selectedMarker >= static_cast<int>(panel.markers.size())) {
+        if (state.selectedMarker < 0 || state.selectedMarker >= static_cast<int>(panel.markers.size())) {
             state.selectedMarker = panel.markers.empty() ? -1 : 0;
         }
         // Which system is on show and how far away it is (Phase 8q). It sits
@@ -752,7 +768,9 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
         // colour when the answer is "not where you are", because everything
         // below it is then a report rather than a live readout.
         Column listColumn(listBounds, 0.0f, ui.theme().spacing);
-        clipped(ui, listColumn.row(kRowHeight), panel.viewSummary,
+        clipped(ui,
+                listColumn.row(kRowHeight),
+                panel.viewSummary,
                 panel.viewIsCurrent ? ui.theme().textDim : ui.theme().accent,
                 ui.theme().smallStyle);
         drawMarkerList(ui, panel, listColumn.remaining(), state);
@@ -775,8 +793,7 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
             hasMarker ? &panel.markers[static_cast<std::size_t>(state.selectedMarker)] : nullptr;
         // Only the player's own marks can be deleted; a planet cannot.
         const bool deletable = marker != nullptr && marker->kind == MapMarkerRow::Kind::Bookmark;
-        clipped(ui, detailCell, marker != nullptr ? marker->detail : "nothing in range",
-                ui.theme().textDim);
+        clipped(ui, detailCell, marker != nullptr ? marker->detail : "nothing in range", ui.theme().textDim);
         // Set Target and Autopilot are statements about a nav-target slot in
         // the system the player is standing in, so on a remote view their two
         // cells carry the two actions that *are* answerable from a distance.
@@ -790,8 +807,7 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
         const bool targetable = marker != nullptr && marker->navTarget != sol::ui::kNoNavTarget;
         if (panel.viewIsCurrent) {
             if (ui.button(firstCell, "Set Target", targetable)) {
-                panel.action = {MapAction::Kind::SelectMarker,
-                                static_cast<int>(marker->navTarget)};
+                panel.action = {MapAction::Kind::SelectMarker, static_cast<int>(marker->navTarget)};
             }
             if (ui.button(secondCell, "Autopilot", targetable)) {
                 panel.action = {MapAction::Kind::Autopilot, static_cast<int>(marker->navTarget)};

@@ -2,8 +2,10 @@
 
 namespace sol::renderer {
 
-void beginHdrScenePass(VkCommandBuffer commandBuffer, const rhi::Image& hdrColor,
-                       const rhi::Image& depth, VkClearColorValue clearColor)
+void beginHdrScenePass(VkCommandBuffer commandBuffer,
+                       const rhi::Image& hdrColor,
+                       const rhi::Image& depth,
+                       VkClearColorValue clearColor)
 {
     VkImageMemoryBarrier2 barriers[2] = {};
 
@@ -85,8 +87,10 @@ void endHdrScenePass(VkCommandBuffer commandBuffer, const rhi::Image& hdrColor)
     vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
 }
 
-void beginPresentPass(VkCommandBuffer commandBuffer, const rhi::Swapchain& swapchain,
-                      std::uint32_t imageIndex, const rhi::Image& depth)
+void beginPresentPass(VkCommandBuffer commandBuffer,
+                      const rhi::Swapchain& swapchain,
+                      std::uint32_t imageIndex,
+                      const rhi::Image& depth)
 {
     VkImageMemoryBarrier2 barriers[2] = {};
 
@@ -106,8 +110,8 @@ void beginPresentPass(VkCommandBuffer commandBuffer, const rhi::Swapchain& swapc
     barriers[1].srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     barriers[1].dstStageMask =
         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-    barriers[1].dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    barriers[1].dstAccessMask =
+        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     barriers[1].oldLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     barriers[1].newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     barriers[1].image = depth.image;
@@ -147,8 +151,7 @@ void beginPresentPass(VkCommandBuffer commandBuffer, const rhi::Swapchain& swapc
     vkCmdBeginRendering(commandBuffer, &renderingInfo);
 }
 
-void endPresentPass(VkCommandBuffer commandBuffer, const rhi::Swapchain& swapchain,
-                    std::uint32_t imageIndex)
+void endPresentPass(VkCommandBuffer commandBuffer, const rhi::Swapchain& swapchain, std::uint32_t imageIndex)
 {
     vkCmdEndRendering(commandBuffer);
 

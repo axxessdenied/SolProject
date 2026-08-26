@@ -53,7 +53,8 @@ public:
 
     // Draws the `[[model]]` rows naming this mesh, with the measured report
     // beside the authored numbers. Returns true when a document changed.
-    [[nodiscard]] bool drawModelRows(const AssetEntry& entry, const MeshReport& report,
+    [[nodiscard]] bool drawModelRows(const AssetEntry& entry,
+                                     const MeshReport& report,
                                      const std::vector<std::string>& textureStems);
 
     // Draws the `[[ship]]` and `[[station]]` rows that name any of those models
@@ -70,7 +71,9 @@ public:
     [[nodiscard]] bool save(std::string& status);
 
     [[nodiscard]] bool loaded() const { return m_loaded; }
+
     [[nodiscard]] bool dirty() const;
+
     [[nodiscard]] const std::string& error() const { return m_error; }
 
     // Undo is a copy of the document, per E1's precedent and G's: a `DefDoc` is
@@ -78,10 +81,15 @@ public:
     void beginEdit(std::size_t document, std::string label);
     [[nodiscard]] bool undoStep();
     [[nodiscard]] bool redoStep();
+
     void clearRedo() { m_redo.clear(); }
+
     void setHistory(EditHistory* history) { m_history = history; }
+
     [[nodiscard]] std::size_t undoDepth() const { return m_undo.size(); }
+
     [[nodiscard]] std::size_t redoDepth() const { return m_redo.size(); }
+
     // ⚑ G2d's rule, and the reason it is a separate call: a DragFloat reports an
     // edit on every frame the mouse moves, so pushing undo from the write-back
     // path turns one drag into twenty-four entries. This pushes on the frame the
@@ -120,8 +128,8 @@ private:
     // The `[[model]]` ids that exist, for the combos and the cross-check.
     [[nodiscard]] std::vector<std::string> modelIds() const;
     // One `[[ship]]`/`[[station]]` row's asset keys. Returns true when changed.
-    [[nodiscard]] bool drawContentRow(std::size_t document, sol::assets::DefRow& row,
-                                      const std::vector<std::string>& models);
+    [[nodiscard]] bool
+    drawContentRow(std::size_t document, sol::assets::DefRow& row, const std::vector<std::string>& models);
 
     Document m_docs[kDocumentCount];
     std::vector<UndoEntry> m_undo;

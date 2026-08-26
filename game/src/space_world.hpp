@@ -15,8 +15,8 @@
 #include "sol/sim/flight.hpp"
 #include "sol/sim/jump_transition.hpp"
 #include "sol/sim/mining.hpp"
-#include "sol/sim/pilot_tips.hpp"
 #include "sol/sim/missions.hpp"
+#include "sol/sim/pilot_tips.hpp"
 #include "sol/sim/power.hpp"
 #include "sol/sim/predation.hpp"
 #include "sol/sim/steering.hpp"
@@ -50,7 +50,7 @@ struct Transform
 // assembled from Transform + this each tick).
 struct FlightBody
 {
-    sol::core::DVec3 velocity;      // m/s, sim space
+    sol::core::DVec3 velocity;       // m/s, sim space
     sol::core::Vec3 angularVelocity; // rad/s, body space
 };
 
@@ -204,9 +204,9 @@ struct TraderPuppet
 // view. Transient like TraderPuppet — rebuilt from the books on load.
 struct MinerPuppet
 {
-    std::uint32_t market = 0;    // economy market index of the outpost it feeds
-    std::uint32_t commodity = 0; // what that outpost digs
-    std::uint32_t field = 0;     // asteroid field it is working
+    std::uint32_t market = 0;          // economy market index of the outpost it feeds
+    std::uint32_t commodity = 0;       // what that outpost digs
+    std::uint32_t field = 0;           // asteroid field it is working
     std::uint32_t rock = 0xffff'ffffu; // entity index of the rock, or none
     float rockSeconds = 0.0f;          // time left before it moves to the next
     std::uint32_t rockStep = 0;        // which rock in the field it took last
@@ -220,10 +220,10 @@ struct MinerPuppetInfo
     std::uint32_t market = 0;
     std::string name;
     std::string station;
-    double distance = 0.0;   // from the player, meters
+    double distance = 0.0;     // from the player, meters
     double rockDistance = 0.0; // from the rock it is working, meters
-    double speed = 0.0;      // moving means it is between rocks, not working one
-    bool working = false;    // it has a rock at all
+    double speed = 0.0;        // moving means it is between rocks, not working one
+    bool working = false;      // it has a rock at all
 };
 
 // One fighter and whatever it is going for, for the console probe. The
@@ -321,8 +321,8 @@ struct WreckMarker
 // the beam only breaks the rock, the ship still has to gather what came off.
 struct OreChunk
 {
-    sol::core::DVec3 velocity;   // sim space, m/s
-    double lifetime = 0.0;       // seconds remaining before it is lost
+    sol::core::DVec3 velocity; // sim space, m/s
+    double lifetime = 0.0;     // seconds remaining before it is lost
     std::uint32_t commodity = 0;
     float units = 0.0f;
 };
@@ -351,7 +351,7 @@ struct WreckEvent
 {
     std::uint32_t id = 0;
     std::uint32_t system = 0;
-    std::string defId;      // the victim's ship def
+    std::string defId;       // the victim's ship def
     std::string factionName; // empty for unaffiliated spawns
     std::uint64_t seed = 0;
 };
@@ -369,12 +369,12 @@ struct RockEvent
 struct ProspectInfo
 {
     bool valid = false;
-    bool wreck = false;      // a hull to cut rather than a rock
-    std::string name;        // commodity name, or the wreck's
+    bool wreck = false; // a hull to cut rather than a rock
+    std::string name;   // commodity name, or the wreck's
     float unitsLeft = 0.0f;
     float unitsTotal = 0.0f;
     double distance = 0.0;
-    bool inRange = false;    // inside the fitted weapon's reach
+    bool inRange = false; // inside the fitted weapon's reach
 };
 
 struct NavTarget
@@ -390,8 +390,8 @@ struct NavTarget
 // names the sites of systems the player is not in (Phase 8q) and has to name
 // them the same way - two copies of this is how the local and the remote map
 // come to call one site two different things.
-[[nodiscard]] std::string signalTargetName(sol::sim::SignalKind kind, bool resolved, bool emptied,
-                                           std::size_t ordinal);
+[[nodiscard]] std::string
+signalTargetName(sol::sim::SignalKind kind, bool resolved, bool emptied, std::size_t ordinal);
 
 // What anything unidentified is called, whatever it turns out to be (Phase 8z).
 // A station, a gate and a derelict all read "Contact 4" until something scans
@@ -406,12 +406,12 @@ struct TargetInfo
 {
     NavTarget nav;
     bool isShip = false;
-    sol::core::DVec3 velocity;  // ships only
-    float shieldFore = 0.0f;    // fractions, ships only
+    sol::core::DVec3 velocity; // ships only
+    float shieldFore = 0.0f;   // fractions, ships only
     float shieldAft = 0.0f;
     float hull = 0.0f;
-    std::string factionName;    // empty for unaffiliated/static targets
-    const char* attitude = "";  // player standing vs its faction (HUD tag)
+    std::string factionName;   // empty for unaffiliated/static targets
+    const char* attitude = ""; // player standing vs its faction (HUD tag)
 };
 
 // Physical extent of the built structures. Used as the NPC avoidance sphere
@@ -530,10 +530,10 @@ inline constexpr float kWreckOversize = 1.4f;
 struct OwnedShip
 {
     std::string defId;
-    std::string weaponId;               // fitted weapon; empty = unarmed mount
-    std::vector<std::string> moduleIds; // fitted modules (order irrelevant)
-    std::vector<std::string> crewIds;   // hired crew aboard
-    std::uint32_t storedSystem = 0xffff'ffffu;  // active ship ignores these
+    std::string weaponId;                      // fitted weapon; empty = unarmed mount
+    std::vector<std::string> moduleIds;        // fitted modules (order irrelevant)
+    std::vector<std::string> crewIds;          // hired crew aboard
+    std::uint32_t storedSystem = 0xffff'ffffu; // active ship ignores these
     std::uint32_t storedStation = 0xffff'ffffu;
 };
 
@@ -551,8 +551,10 @@ struct OwnedShip
 // `model_roles.hpp`. Role models are pinned by a test against committed data;
 // an override is written in somebody else's file, so it can only be warned at.
 [[nodiscard]] ModelId modelOverrideOr(const sol::assets::DefDatabase& defs,
-                                      const std::string& name, const char* context,
-                                      const char* role, bool unitRadius);
+                                      const std::string& name,
+                                      const char* context,
+                                      const char* role,
+                                      bool unitRadius);
 
 class SpaceWorld
 {
@@ -584,6 +586,7 @@ public:
     void advanceJumpTransition(double deltaSeconds);
 
     [[nodiscard]] const sol::sim::JumpTransition& jumpTransition() const { return m_jump; }
+
     [[nodiscard]] bool jumpActive() const { return m_jump.active(); }
 
     // Distance to the nearest gate, or a negative value with no gates.
@@ -606,10 +609,14 @@ public:
     // dispatcher can refuse. The player's route is requestDocking() below.
     [[nodiscard]] bool tryDockNearestStation(double range);
     [[nodiscard]] bool undock();
+
     [[nodiscard]] bool isDocked() const { return m_dockedStation != kNoIndex; }
+
     [[nodiscard]] const char* dockedStationName() const;
+
     // Station index in the current system, or ~0u while flying.
     [[nodiscard]] std::uint32_t dockedStationIndex() const { return m_dockedStation; }
+
     // Distance to the nearest station, or a negative value with none.
     [[nodiscard]] double nearestStationDistance() const;
 
@@ -651,8 +658,11 @@ public:
     // station that is no longer the one asked about.
     bool grantDocking(std::uint32_t station, std::uint32_t berth, const std::string& message);
     void denyDocking(std::uint32_t station, const std::string& message);
+
     [[nodiscard]] const DockClearance& clearance() const { return m_clearance; }
+
     [[nodiscard]] bool hasClearance() const { return m_clearance.station != kNoIndex; }
+
     // Where the cleared berth is, in sim space. Only meaningful with a
     // clearance; returns the origin otherwise.
     [[nodiscard]] sol::core::DVec3 clearedBerthPoint() const;
@@ -670,9 +680,11 @@ public:
         std::string text;
         double secondsLeft = 0.0;
     };
+
     static constexpr std::size_t kCommsLines = 3;
     static constexpr double kCommsMessageSeconds = 8.0;
     void say(const std::string& from, const std::string& text);
+
     [[nodiscard]] std::span<const CommsMessage> comms() const { return m_comms; }
 
     // --- Territory (Phase 8u) ---
@@ -702,6 +714,7 @@ public:
     // recordless road here — a miner IS its body — so this only ever destroys a
     // ship that is in the sky, through the death path a raider's shot uses.
     bool killMinerPuppet(std::uint32_t market);
+
     // How many traders have been lost since this session started. A probe, not
     // sim state: it is never saved, and nothing reads it but the console.
     [[nodiscard]] std::uint32_t traderLossCount() const { return m_traderLossCount; }
@@ -743,11 +756,13 @@ public:
     bool hailTarget();
     // Pending hail for GameContent to answer. True once per request.
     [[nodiscard]] bool takeHailRequest(HailRequest& out);
+
     // The three answers, valid only while a hail is being answered. Each says
     // the words and records them against the pilot; the two tip forms also
     // write what the pilot knew into SurveySim, where the Trade tab and the
     // maps already read it back.
     [[nodiscard]] bool answeringHail() const { return !isNull(m_answeringHail.pilot); }
+
     bool replyHail(const std::string& message);
     bool tipMarket(const std::string& message);
     bool tipPlace(const std::string& message);
@@ -755,12 +770,14 @@ public:
     // and its own scriptless default has had a turn, so a hook that errors
     // halfway cannot leave the builders callable from on_tick.
     void finishHail();
+
     // How many pilots have been hailed in this system (the console probe).
     [[nodiscard]] std::size_t hailCount() const { return m_hails.size(); }
 
     // --- Trading (Phase 7 economy; player trades ride the same markets the
     // NPC agents move) ---
     [[nodiscard]] const sol::sim::Economy& economy() const { return m_economy; }
+
     // Whether a coarse trader currently has a body here (Phase 8x). Answered
     // off the reconcile's own bookkeeping, so it cannot disagree with what is
     // actually in the sky.
@@ -768,16 +785,17 @@ public:
     {
         return traderIndex < m_puppetPresent.size() && m_puppetPresent[traderIndex] != 0;
     }
+
     // Where that body is, when there is one. The escort marker's whole job
     // (Phase 8x §E), and the reason it can be a moving one.
-    [[nodiscard]] bool traderBodyPosition(std::uint32_t traderIndex,
-                                          sol::core::DVec3* out) const;
+    [[nodiscard]] bool traderBodyPosition(std::uint32_t traderIndex, sol::core::DVec3* out) const;
     // Every trader body in the system, for the console.
     void traderPuppetInfo(std::vector<TraderPuppetInfo>& out);
     // Every miner body in the system, and the outposts that are drawing
     // without one — because the two disagreeing is what a broken promotion
     // looks like from the outside (Phase 8x stage 6).
     void minerPuppetInfo(std::vector<MinerPuppetInfo>& out);
+
     // Seconds an outpost's draw is stopped for, or 0. The probe's other half:
     // a mine with no miner and no hold is a bug, and one with a hold is the
     // player's own doing.
@@ -785,24 +803,33 @@ public:
     {
         return market < m_minerHold.size() ? m_minerHold[market] : 0.0;
     }
+
     [[nodiscard]] const std::vector<std::string>& commodityIds() const { return m_commodityIds; }
+
     [[nodiscard]] std::uint32_t commodityIndex(const char* id) const;
+
     [[nodiscard]] double playerCredits() const { return m_playerCredits; }
+
     // Dev-console cheat (sol.warp): teleports the flying player to a
     // station-relative offset in the current system. False while docked or
     // with a bad station index.
     bool warpToStationOffset(std::uint32_t station, const sol::core::DVec3& offset);
+
     // Dev-console cheat (sol.add_credits); clamps at zero.
     void addCredits(double amount)
     {
         m_playerCredits = m_playerCredits + amount > 0.0 ? m_playerCredits + amount : 0.0;
     }
+
     [[nodiscard]] float playerCargo(std::uint32_t commodity) const
     {
         return commodity < m_playerCargo.size() ? m_playerCargo[commodity] : 0.0f;
     }
+
     [[nodiscard]] float playerCargoTotal() const;
+
     [[nodiscard]] float playerCargoCapacity() const { return m_playerCargoCapacity; }
+
     // Market of the docked station, or an invalid index while flying.
     [[nodiscard]] std::uint32_t dockedMarket() const;
     // Buy/sell at the docked station, clamped to stock, cargo space, and
@@ -817,14 +844,15 @@ public:
     static constexpr double kResaleRate = 0.5;     // sell-back, of list price
 
     [[nodiscard]] const std::vector<OwnedShip>& fleet() const { return m_fleet; }
+
     [[nodiscard]] std::size_t activeShipIndex() const { return m_activeShip; }
+
     [[nodiscard]] const OwnedShip& activeShip() const { return m_fleet[m_activeShip]; }
+
     // Hull + fitted modules + weapon at list price (crew hires excluded).
     [[nodiscard]] double shipValue(const OwnedShip& ship) const;
-    [[nodiscard]] double insuranceDeductible() const
-    {
-        return kInsuranceRate * shipValue(activeShip());
-    }
+
+    [[nodiscard]] double insuranceDeductible() const { return kInsuranceRate * shipValue(activeShip()); }
 
     bool buyModule(const char* moduleId, std::string* outError = nullptr);
     bool sellModule(const char* moduleId, std::string* outError = nullptr);
@@ -836,12 +864,15 @@ public:
     bool fireCrew(const char* crewId, std::string* outError = nullptr);
 
     // --- Factions & reputation (Phase 8b) ---
-    static constexpr float kClanInitialStanding = -20.0f; // dockable, wary
+    static constexpr float kClanInitialStanding = -20.0f;   // dockable, wary
     static constexpr float kDefaultPirateRelation = -60.0f; // unspecified pairs
 
     [[nodiscard]] const std::vector<GameFaction>& factions() const { return m_factionTable; }
+
     [[nodiscard]] const sol::sim::FactionSim& factionSim() const { return m_factionSim; }
+
     [[nodiscard]] sol::sim::FactionSim& factionSim() { return m_factionSim; }
+
     // The faction holding a system (and its stations) NOW, or an out-of-table
     // value for ownerless systems (factionCount == 0 galaxies). Since Phase
     // 8u this is dynamic state in FactionSim rather than the generated plan:
@@ -849,9 +880,9 @@ public:
     // every consumer of ownership in this game reads it through here.
     [[nodiscard]] std::uint32_t systemOwnerFaction(std::uint32_t systemIndex) const
     {
-        return systemIndex < m_galaxy.systems.size() ? m_factionSim.systemOwner(systemIndex)
-                                                     : kNoIndex;
+        return systemIndex < m_galaxy.systems.size() ? m_factionSim.systemOwner(systemIndex) : kNoIndex;
     }
+
     // "hostile"/"neutral"/"friendly" for a faction table index; "" outside it.
     [[nodiscard]] const char* playerAttitudeName(std::uint32_t faction) const;
     // Whether the docked station's owner stocks a gated def (Phase 8a caveat
@@ -859,6 +890,7 @@ public:
     [[nodiscard]] bool stationSells(const sol::assets::CatalogGate& gate) const;
     // Lua-chosen raid (sol.faction_raid); validates via the sim's candidates.
     bool commitFactionRaid(std::uint32_t faction, std::uint32_t targetSystem);
+
     // Scriptless fallback for one due decision (no faction_think hook).
     void applyDefaultFactionDecision(const sol::sim::FactionDecision& decision)
     {
@@ -867,11 +899,14 @@ public:
 
     // --- Missions & contracts (Phase 8c) ---
     [[nodiscard]] const sol::sim::MissionSim& missionSim() const { return m_missions; }
+
     [[nodiscard]] sol::sim::MissionSim& missionSim() { return m_missions; }
+
     // Player accept/abandon with the game-side gates (docked; standing with
     // the poster enforces the offer's min_rep tier).
     bool acceptMission(std::uint32_t offerIndex, std::string* outError = nullptr);
     bool abandonMission(std::uint32_t activeIndex);
+
     // True once after each successful dock (and death-respawn re-dock);
     // GameContent consumes it to re-open the board and run the Lua hook.
     [[nodiscard]] bool consumeDockEvent()
@@ -880,6 +915,7 @@ public:
         m_dockEventPending = false;
         return pending;
     }
+
     // Drains mission events whose consequences (payout, standing) this world
     // already applied; GameContent forwards campaign ones to Lua.
     void takeMissionEvents(std::vector<sol::sim::MissionEvent>& out);
@@ -899,20 +935,28 @@ public:
     static constexpr double kSurveyStandingRate = 0.001;
 
     [[nodiscard]] const sol::sim::SurveySim& survey() const { return m_survey; }
+
     [[nodiscard]] sol::sim::SurveySim& survey() { return m_survey; }
+
     // Every site in the current system, discovered or not (the HUD only ever
     // shows the ones SurveySim says the player has found).
     [[nodiscard]] std::span<const SignalInstance> signals() const { return m_signals; }
+
     [[nodiscard]] float scanRange() const { return m_scanRange; }
+
     [[nodiscard]] float scanSpeed() const { return m_scanSpeed; }
+
     [[nodiscard]] double targetScanRange() const
     {
         return static_cast<double>(m_scanRange) * kTargetScanRangeFraction;
     }
+
     // 0 right after a pulse, 1 when the next one is ready.
     [[nodiscard]] float pulseCharge() const;
+
     // 0..1 progress of the scan in flight, and what it is resolving.
     [[nodiscard]] float scanProgress() const { return m_scanProgress; }
+
     [[nodiscard]] const char* scanTargetName() const;
     // Fires a pulse: returns how many new contacts it found, or -1 when the
     // scanner is still charging (or the ship is docked).
@@ -939,21 +983,27 @@ public:
     // comes off drifts as ore chunks the ship then has to gather.
     static constexpr double kChunkLifetimeSeconds = 90.0;
     static constexpr double kChunkDriftSpeed = 30.0;
-    static constexpr double kChunkSpread = 0.45; // how far off "toward you"
+    static constexpr double kChunkSpread = 0.45;     // how far off "toward you"
     static constexpr float kChunkUnitCeiling = 6.0f; // one chunk never holds more
     // Standing paid for a refinery order, per credit of fee.
     static constexpr double kRefineStandingRate = 0.0008;
 
     [[nodiscard]] const sol::sim::MiningSim& mining() const { return m_mining; }
+
     [[nodiscard]] sol::sim::MiningSim& mining() { return m_mining; }
+
     [[nodiscard]] float collectorRange() const { return m_collectorRange; }
+
     // What the boresight is on, for the prospecting readout. Rocks are read
     // off the crosshair rather than through the target cycle: a field holds
     // dozens of them, and T-cycling through forty rocks is not a UI.
     [[nodiscard]] ProspectInfo prospectAhead() const;
+
     // Units collected in the last moment, for the HUD ticker (0 when idle).
     [[nodiscard]] float lastCollectedUnits() const { return m_collectTicker; }
+
     [[nodiscard]] const char* lastCollectedName() const { return m_collectName.c_str(); }
+
     // Dev/console: empties the rock the boresight is on into the hold.
     bool mineAhead();
     // Dev/console (sol.warp_rock): parks the ship just off the nearest rock
@@ -989,6 +1039,7 @@ public:
     // The counterpart to 8e's survey ledger: there the player sells what they
     // found, here they buy what someone else found.
     [[nodiscard]] double worldSeconds() const { return m_worldSeconds; }
+
     // Cost of the intel package sold at the docked station, and how many
     // markets it would actually add or refresh.
     [[nodiscard]] double intelPrice() const;
@@ -1001,8 +1052,11 @@ public:
     void recordDockedMarket();
     // Best remembered price for a commodity away from the docked station.
     // False when the player has never seen it anywhere else.
-    bool bestKnownPrice(std::uint32_t commodity, std::uint32_t* outSystem, float* outPrice,
-                        double* outAge, bool* outStale) const;
+    bool bestKnownPrice(std::uint32_t commodity,
+                        std::uint32_t* outSystem,
+                        float* outPrice,
+                        double* outAge,
+                        bool* outStale) const;
     // How much of its nominal output the docked station is managing, and what
     // is holding it back (empty when nothing is).
     [[nodiscard]] float marketSatisfaction(std::uint32_t market) const;
@@ -1010,7 +1064,9 @@ public:
 
     // Hardcore/ironman (decisions/007): set at new game, carried by the save.
     void setHardcore(bool hardcore) { m_hardcore = hardcore; }
+
     [[nodiscard]] bool hardcore() const { return m_hardcore; }
+
     // True once after a hardcore death; the caller deletes the save file.
     [[nodiscard]] bool consumeHardcoreDeath()
     {
@@ -1020,37 +1076,46 @@ public:
     }
 
     [[nodiscard]] const sol::sim::Galaxy& galaxy() const { return m_galaxy; }
+
     // The rules the galaxy was generated under (Phase 13). Exposed so a console
     // probe can check placement against them over the WHOLE galaxy: the
     // coherence rule spans 80 systems and no amount of flying can assert it.
     [[nodiscard]] const sol::sim::GalaxyParams& galaxyParams() const { return m_galaxyParams; }
+
     [[nodiscard]] std::uint32_t currentSystemIndex() const { return m_currentSystem; }
+
     [[nodiscard]] const char* currentSystemName() const
     {
-        return m_currentSystem < m_galaxy.systems.size()
-                   ? m_galaxy.systems[m_currentSystem].name.c_str()
-                   : "(void)";
+        return m_currentSystem < m_galaxy.systems.size() ? m_galaxy.systems[m_currentSystem].name.c_str()
+                                                         : "(void)";
     }
 
     void setShipInput(const sol::sim::FlightInput& input) { m_shipInput = input; }
+
     void tick(double dt);
 
     // --- Autopilot (playtest QoL): flies the ship to the selected nav target
     // and stops at the arrival range; any manual steering/thrust cancels it.
     // Engage fails while docked or with nothing targeted.
     bool engageAutopilot();
+
     void disengageAutopilot() { m_autopilotActive = false; }
+
     [[nodiscard]] bool autopilotActive() const { return m_autopilotActive; }
+
     [[nodiscard]] double autopilotArrivalRange() const { return m_autopilotRange; }
+
     void setAutopilotArrivalRange(double meters);
 
     // Interpolated blend of previous->current tick state at alpha.
     [[nodiscard]] Transform shipRenderTransform(float alpha) const;
     [[nodiscard]] sol::sim::ShipState shipState() const;
+
     [[nodiscard]] const sol::sim::ShipTuning& shipTuning() const
     {
         return m_registry.storage<ShipControl>().get(playerEntityIndex()).tuning;
     }
+
     // The input the ship actually flew last tick (autopilot's when engaged,
     // the player's otherwise) — what the HUD flags should reflect.
     [[nodiscard]] const sol::sim::FlightInput& shipInput() const { return m_appliedInput; }
@@ -1058,21 +1123,26 @@ public:
     // Player pip triage (keys 1/2/3, 4 to balance).
     void playerAddPip(sol::sim::PowerSystem system);
     void playerBalancePips();
+
     [[nodiscard]] const sol::sim::PowerState& playerPower() const
     {
         return m_registry.storage<ShipPower>().get(playerEntityIndex()).state;
     }
+
     [[nodiscard]] const sol::sim::PowerTuning& powerTuning() const
     {
         return m_registry.storage<ShipPower>().get(playerEntityIndex()).tuning;
     }
+
     [[nodiscard]] const ShipDefense& playerDefense() const
     {
         return m_registry.storage<ShipDefense>().get(playerEntityIndex());
     }
 
     [[nodiscard]] const CelestialBody& sun() const { return m_star; }
+
     [[nodiscard]] std::span<const CelestialBody> planets() const { return m_planets; }
+
     [[nodiscard]] std::span<const GateInstance> gates() const { return m_gates; }
 
     // What a nav-target slot is, so the map can draw the right glyph and the
@@ -1111,10 +1181,12 @@ public:
         Identified, // scanned, or never hidden in the first place
     };
     [[nodiscard]] NavKnowledge navKnowledge(std::size_t index) const;
+
     [[nodiscard]] bool navTargetVisible(std::size_t index) const
     {
         return navKnowledge(index) != NavKnowledge::Hidden;
     }
+
     // The kind a seam should DRAW. An unidentified thing draws as a Signal on
     // the radar and the map — the glyph that already means "something is there
     // and you do not know what" — so the shape never leaks what the name is
@@ -1142,7 +1214,9 @@ public:
     // radar fill, and the console listing all want it, not just the
     // selection). Returns a default-constructed info for a stale slot.
     [[nodiscard]] TargetInfo contactInfo(std::size_t shipSlot) const;
+
     [[nodiscard]] std::size_t contactCount() const { return m_spawnedShips.size(); }
+
     // Phase 15: `step` is +1 forward or -1 backward. A parameter rather than a
     // second function so the two directions cannot drift apart - the fog walk
     // and the resume-where-this-class-left-off rule are the same code either
@@ -1157,9 +1231,12 @@ public:
     // hostile" is then read off the sort that already ran, rather than from a
     // second definition of hostile that can drift away from this one.
     void contactOrder(std::vector<std::size_t>& out, std::vector<int>& tiers) const;
+
     [[nodiscard]] bool targetIsContact() const { return m_targetIndex >= m_targets.size(); }
+
     // The static nav points of this system, in target-cycle order.
     [[nodiscard]] std::span<const NavTarget> navTargets() const { return m_targets; }
+
     [[nodiscard]] NavKind navTargetKind(std::size_t index) const;
     // Body index (0 = star) for a Planet/Star slot; ~0u for anything else.
     [[nodiscard]] std::uint32_t navTargetBody(std::size_t index) const;
@@ -1217,7 +1294,9 @@ public:
     // --- Picking (Phase 8j) ---
     // How the world is being viewed, for the click-to-select in target_pick.hpp.
     void setViewFrame(const ViewFrame& view) { m_viewFrame = view; }
+
     [[nodiscard]] const ViewFrame& viewFrame() const { return m_viewFrame; }
+
     // Selects the first live spawned ship whose display name contains
     // namePart (dev/console QoL; T-cycling is the player path).
     bool targetShipByName(const char* namePart);
@@ -1226,6 +1305,7 @@ public:
     {
         return m_registry.storage<ShipWeapon>().get(playerEntityIndex());
     }
+
     // 1 right after the player takes a hit, decaying to 0 (HUD flash).
     [[nodiscard]] float playerDamageFlash() const
     {
@@ -1270,14 +1350,14 @@ public:
 
     // Spawns a flyable def-driven ship just ahead of the player. Returns the
     // new entity.
-    sol::ecs::Entity spawnShipFromDef(const sol::assets::ShipDef& def,
-                                      const sol::assets::DefDatabase& defs);
+    sol::ecs::Entity spawnShipFromDef(const sol::assets::ShipDef& def, const sol::assets::DefDatabase& defs);
 
     // As above, plus an AI pilot in the given role (starts Idle until Lua's
     // pilot_think assigns work). factionIndex tags the pilot's allegiance;
     // ~0u spawns the pre-8b unaffiliated kind.
     sol::ecs::Entity spawnPilotFromDef(const sol::assets::ShipDef& def,
-                                       const sol::assets::DefDatabase& defs, PilotRole role,
+                                       const sol::assets::DefDatabase& defs,
+                                       PilotRole role,
                                        std::uint32_t factionIndex = kNoIndex);
 
     // --- Pilot commands (the Lua-facing strategy API, called via bindings) ---
@@ -1309,6 +1389,7 @@ public:
     // Every hunter in the system and the hauler it is going for, for the
     // console.
     void hunterInfo(std::vector<HunterInfo>& out);
+
     // The playfield anchor Lua patrol offsets are relative to: the first
     // station of the current system, or the first nav target without one.
     [[nodiscard]] sol::core::DVec3 stationPosition() const
@@ -1332,6 +1413,7 @@ public:
         // handed a pirate flag.
         bool pirate = false;
     };
+
     void collectDuePilotThinks(double dt, std::vector<PilotThink>& out);
 
 private:
@@ -1405,11 +1487,13 @@ private:
     // on a kill is handled by handleShipDestroyed). `attackerIndex` is who
     // dealt it, or kNoIndex where nobody is to blame (a ram) - when it is the
     // player, the target's assist window is re-armed (Phase 8l).
-    void noteDamage(std::uint32_t targetIndex, const sol::core::DVec3& hitPosition,
+    void noteDamage(std::uint32_t targetIndex,
+                    const sol::core::DVec3& hitPosition,
                     const sol::sim::DamageResult& result,
                     std::uint32_t attackerIndex = kNoIndex);
 
-    void applyShipDef(std::uint32_t entityIndex, const sol::assets::ShipDef& def,
+    void applyShipDef(std::uint32_t entityIndex,
+                      const sol::assets::ShipDef& def,
                       const sol::assets::DefDatabase& defs);
     // The ship's base def with its fit and crew resolved (Phase 8a); falls
     // back to the base def when ids have gone missing from the data.
@@ -1419,6 +1503,7 @@ private:
     void applyActiveLoadout();
     // Shared refusal path for outfitting mutations.
     bool refuse(const std::string& reason, std::string* outError) const;
+
     // A docked ship is inside the station and takes no damage — otherwise
     // hostiles camp the pad and re-kill on respawn (fatal under decisions/007
     // hardcore, where each death would delete the save).
@@ -1426,10 +1511,10 @@ private:
     {
         return entityIndex == playerEntityIndex() && isDocked();
     }
+
     // Resets the fleet to the single new-game starter ship.
     void resetFleetToStarter();
-    void handleShipDestroyed(std::uint32_t entityIndex,
-                             std::uint32_t attackerIndex = kNoIndex);
+    void handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t attackerIndex = kNoIndex);
     // Rebuilds the runtime faction table (majors + jittered clans) and
     // (re)initializes the FactionSim and MissionSim against the current
     // galaxy; called by generateUniverse and by loadFrom after a galaxy
@@ -1472,6 +1557,7 @@ private:
     // Autopilot, which is the fog leaking through the one seam that does not
     // go through the cycle.
     void snapSelectionToVisible();
+
     // Where the tracked objective's nav slot goes, when it has one here. Two
     // kinds do: a FlyTo, which has carried a position since 8c, and an Escort
     // whose hauler currently has a body in this system (Phase 8x §E).
@@ -1487,6 +1573,7 @@ private:
         double radius = 0.0; // FlyTo's completion sphere; an escort has none
         bool moving = false; // an escort: re-read every tick, and named apart
     };
+
     [[nodiscard]] bool objectiveMarker(ObjectiveMarker* out) const;
     // Rebuilds the tail only when the objective slot's presence or position no
     // longer matches the tracked mission. Called each tick; costs a pointer
@@ -1510,10 +1597,11 @@ private:
     float cutWreck(std::uint32_t entityIndex, float units);
     // One chunk off a cut surface: it leaves toward whoever is cutting, with
     // a spread, so mining is gathering rather than chasing.
-    void spawnCutChunk(const sol::core::DVec3& origin, double surface, std::uint32_t commodity,
+    void spawnCutChunk(const sol::core::DVec3& origin, double surface, std::uint32_t commodity, float units);
+    void spawnOreChunk(const sol::core::DVec3& position,
+                       const sol::core::DVec3& velocity,
+                       std::uint32_t commodity,
                        float units);
-    void spawnOreChunk(const sol::core::DVec3& position, const sol::core::DVec3& velocity,
-                       std::uint32_t commodity, float units);
     // Fits a salvaged module if it is legal on the active ship; used by both
     // site salvage and wreck cutting.
     bool tryFitSalvagedModule(const std::string& moduleId, std::string& outName);
@@ -1585,12 +1673,13 @@ private:
     // The rock a miner should be working: the nearest one holding what its
     // outpost digs on the first pick, then round the same field. Answers false
     // when there is nothing of that commodity left in the sky.
-    [[nodiscard]] bool chooseMinerRock(MinerPuppet& miner, const sol::core::DVec3& from,
-                                       bool sameField) const;
+    [[nodiscard]] bool
+    chooseMinerRock(MinerPuppet& miner, const sol::core::DVec3& from, bool sameField) const;
     // Where a miner should sit to work the rock it has picked (its hold point
     // off the surface), and where that rock is. False when the rock is gone.
-    [[nodiscard]] bool minerWorkPoint(const MinerPuppet& miner, sol::core::DVec3& rock,
-                                      sol::core::DVec3& hold) const;
+    [[nodiscard]] bool
+    minerWorkPoint(const MinerPuppet& miner, sol::core::DVec3& rock, sol::core::DVec3& hold) const;
+
     // The leg a trader is currently flying: its two ends in system space, how
     // far along the record says it is, and how long the leg is quoted at.
     // Answers false when the trader is not flying an in-system leg here.
@@ -1601,8 +1690,8 @@ private:
         float progress = 0.0f;
         double legSeconds = 0.0;
     };
-    [[nodiscard]] bool traderLegSegment(std::uint32_t traderIndex,
-                                        TraderLegPlacement& out) const;
+
+    [[nodiscard]] bool traderLegSegment(std::uint32_t traderIndex, TraderLegPlacement& out) const;
     // Where the record says a trader is, on its schedule rather than its
     // engines. See keepTraderOnSchedule for why the two differ.
     [[nodiscard]] sol::core::DVec3 traderScheduledPoint(const TraderLegPlacement& leg) const;
@@ -1615,11 +1704,14 @@ private:
     // spawnShipFromDef wraps this at a point ahead of the player.
     sol::ecs::Entity spawnShipAt(const sol::assets::ShipDef& def,
                                  const sol::assets::DefDatabase& defs,
-                                 const sol::core::DVec3& position, const char* factionName);
+                                 const sol::core::DVec3& position,
+                                 const char* factionName);
+
     [[nodiscard]] std::uint32_t playerEntityIndex() const
     {
         return m_registry.storage<PlayerShip>().entityIndices()[0];
     }
+
     // The autopilot's flight input for this tick, or the player's when it is
     // off/cancelled; also arrives/disengages as a side effect.
     [[nodiscard]] sol::sim::FlightInput autopilotInput();
@@ -1652,7 +1744,7 @@ private:
     sol::sim::FlightInput m_shipInput;    // player input latch, applied in tick
     sol::sim::FlightInput m_appliedInput; // what the ship flew last tick
     bool m_autopilotActive = false;
-    double m_autopilotRange = 1'500.0; // arrival standoff, meters (see engage)
+    double m_autopilotRange = 1'500.0;                           // arrival standoff, meters (see engage)
     std::vector<sol::sim::AvoidanceSphere> m_autopilotObstacles; // per-tick scratch
     ThrusterParticles m_thrusters;
     CombatEffects m_combatEffects;
@@ -1742,6 +1834,7 @@ private:
     // says it once per approach rather than sixty times a second.
     double m_berthRefusalTimer = 0.0;
     std::vector<CommsMessage> m_comms;
+
     // Pilot comms (Phase 8s). What a pilot has already said, so a second hail
     // repeats them instead of re-rolling. Keyed by the whole Entity — index AND
     // generation — because entity indices are reused when a ship dies, and a
@@ -1754,6 +1847,7 @@ private:
         std::string from;
         std::string text;
     };
+
     std::vector<HailMemory> m_hails;
     // Territory (Phase 8u): what the player has already been told about the
     // contest over their head, so an opening is announced once rather than
@@ -1772,8 +1866,8 @@ private:
     // the one bridge between the two, and it exists for exactly one decision:
     // whether an escort contract was failed or merely lost.
     std::vector<std::uint32_t> m_playerKilledTraders;
-    HailRequest m_pendingHail;  // queued by hailTarget, drained by GameContent
-    HailMemory m_answeringHail; // who the three answers below are speaking as
+    HailRequest m_pendingHail;     // queued by hailTarget, drained by GameContent
+    HailMemory m_answeringHail;    // who the three answers below are speaking as
     std::uint32_t m_hailCount = 0; // so a re-hail of a NEW pilot can differ
     // Death respawn into another system defers to end-of-tick: loadSystem
     // mid-tick would invalidate the pass scratch (collision slots, pools).
@@ -1788,12 +1882,14 @@ private:
     sol::sim::SurveySim m_survey;
     sol::sim::SurveyParams m_surveyParams;
     std::vector<SignalInstance> m_signals;
+
     // The dynamic target tail: what each slot past the statics stands for.
     struct DynamicTarget
     {
         NavKind kind = NavKind::Signal;
         std::uint32_t index = 0; // signal index, field index, or wreck id
     };
+
     std::vector<DynamicTarget> m_dynamicTargets;
     std::size_t m_signalTargetBase = 0;
     std::size_t m_planetTargetBase = 0;
@@ -1802,7 +1898,7 @@ private:
     float m_scanSpeed = 1.0f;
     double m_pulseCooldown = 0.0;
     float m_scanProgress = 0.0f;
-    std::size_t m_scanTarget = 0;      // target index the scan is running on
+    std::size_t m_scanTarget = 0; // target index the scan is running on
     bool m_scanActive = false;
     std::vector<SurveyEvent> m_surveyEvents;
 

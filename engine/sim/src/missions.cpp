@@ -20,9 +20,12 @@ void setError(std::string* outError, const char* message)
 
 } // namespace
 
-void MissionSim::initialize(const Galaxy& galaxy, const MissionParams& params,
-                            std::uint32_t factionCount, std::uint32_t commodityCount,
-                            std::uint32_t traderCount, std::uint64_t seed)
+void MissionSim::initialize(const Galaxy& galaxy,
+                            const MissionParams& params,
+                            std::uint32_t factionCount,
+                            std::uint32_t commodityCount,
+                            std::uint32_t traderCount,
+                            std::uint64_t seed)
 {
     m_params = params;
     m_systemCount = static_cast<std::uint32_t>(galaxy.systems.size());
@@ -72,7 +75,8 @@ bool MissionSim::tickBoard(double dt)
     return false;
 }
 
-void MissionSim::jumpDepths(const Galaxy& galaxy, std::uint32_t fromSystem,
+void MissionSim::jumpDepths(const Galaxy& galaxy,
+                            std::uint32_t fromSystem,
                             std::vector<std::uint8_t>& out) const
 {
     constexpr std::uint8_t kUnvisited = 0xff;
@@ -83,8 +87,7 @@ void MissionSim::jumpDepths(const Galaxy& galaxy, std::uint32_t fromSystem,
     out[fromSystem] = 0;
     std::vector<std::uint32_t> frontier{fromSystem};
     std::vector<std::uint32_t> next;
-    for (std::uint8_t d = 1;
-         d <= m_params.candidateReach && !frontier.empty(); ++d) {
+    for (std::uint8_t d = 1; d <= m_params.candidateReach && !frontier.empty(); ++d) {
         next.clear();
         for (const std::uint32_t index : frontier) {
             for (const GateSpec& gate : galaxy.systems[index].gates) {
@@ -98,8 +101,10 @@ void MissionSim::jumpDepths(const Galaxy& galaxy, std::uint32_t fromSystem,
     }
 }
 
-void MissionSim::haulCandidates(const Galaxy& galaxy, const Economy& economy,
-                                std::uint32_t fromSystem, std::uint32_t fromStation,
+void MissionSim::haulCandidates(const Galaxy& galaxy,
+                                const Economy& economy,
+                                std::uint32_t fromSystem,
+                                std::uint32_t fromStation,
                                 std::vector<HaulCandidate>& out) const
 {
     out.clear();
@@ -108,8 +113,7 @@ void MissionSim::haulCandidates(const Galaxy& galaxy, const Economy& economy,
     }
     std::vector<std::uint8_t> depth;
     jumpDepths(galaxy, fromSystem, depth);
-    for (std::uint32_t marketIndex = 0;
-         marketIndex < economy.markets().size(); ++marketIndex) {
+    for (std::uint32_t marketIndex = 0; marketIndex < economy.markets().size(); ++marketIndex) {
         const StationMarket& market = economy.markets()[marketIndex];
         if (depth[market.systemIndex] == 0xff) {
             continue;
@@ -117,10 +121,9 @@ void MissionSim::haulCandidates(const Galaxy& galaxy, const Economy& economy,
         if (market.systemIndex == fromSystem && market.stationIndex == fromStation) {
             continue; // hauling to where you already stand is no contract
         }
-        const float capacity =
-            market.archetype < economy.params().archetypes.size()
-                ? economy.params().archetypes[market.archetype].stockCapacity
-                : 0.0f;
+        const float capacity = market.archetype < economy.params().archetypes.size()
+                                   ? economy.params().archetypes[market.archetype].stockCapacity
+                                   : 0.0f;
         if (capacity <= 0.0f) {
             continue;
         }
@@ -139,7 +142,8 @@ void MissionSim::haulCandidates(const Galaxy& galaxy, const Economy& economy,
     }
 }
 
-void MissionSim::bountyCandidates(const Galaxy& galaxy, const FactionSim& factions,
+void MissionSim::bountyCandidates(const Galaxy& galaxy,
+                                  const FactionSim& factions,
                                   std::uint32_t fromSystem,
                                   std::vector<BountyCandidate>& out) const
 {
@@ -159,15 +163,14 @@ void MissionSim::bountyCandidates(const Galaxy& galaxy, const FactionSim& factio
             raider >= m_factionCount) {
             continue;
         }
-        out.push_back({.system = s,
-                       .clan = raider,
-                       .intensity = intensity,
-                       .jumps = depth[s]});
+        out.push_back({.system = s, .clan = raider, .intensity = intensity, .jumps = depth[s]});
     }
 }
 
-void MissionSim::contestCandidates(const Galaxy& galaxy, const FactionSim& factions,
-                                   std::uint32_t fromSystem, std::uint32_t boardOwner,
+void MissionSim::contestCandidates(const Galaxy& galaxy,
+                                   const FactionSim& factions,
+                                   std::uint32_t fromSystem,
+                                   std::uint32_t boardOwner,
                                    std::vector<ContestCandidate>& out) const
 {
     out.clear();
@@ -199,8 +202,10 @@ void MissionSim::contestCandidates(const Galaxy& galaxy, const FactionSim& facti
     }
 }
 
-void MissionSim::escortCandidates(const Galaxy& galaxy, const Economy& economy,
-                                  const FactionSim& factions, std::uint32_t fromSystem,
+void MissionSim::escortCandidates(const Galaxy& galaxy,
+                                  const Economy& economy,
+                                  const FactionSim& factions,
+                                  std::uint32_t fromSystem,
                                   std::vector<EscortCandidate>& out) const
 {
     out.clear();
@@ -208,8 +213,7 @@ void MissionSim::escortCandidates(const Galaxy& galaxy, const Economy& economy,
         return;
     }
     const std::vector<EconomyTrader>& fleet = economy.traders();
-    const std::uint32_t count =
-        std::min(m_traderCount, static_cast<std::uint32_t>(fleet.size()));
+    const std::uint32_t count = std::min(m_traderCount, static_cast<std::uint32_t>(fleet.size()));
     for (std::uint32_t t = 0; t < count; ++t) {
         const TraderRoute route = economy.route(t);
         // Leaving HERE, right now. An arriving hauler is already home and a
@@ -243,11 +247,9 @@ float MissionSim::boardRoll()
     return m_rng.nextFloat01();
 }
 
-bool MissionSim::objectiveInRange(const Galaxy& galaxy,
-                                  const MissionObjective& objective) const
+bool MissionSim::objectiveInRange(const Galaxy& galaxy, const MissionObjective& objective) const
 {
-    const bool killAnywhere =
-        objective.kind == ObjectiveKind::Kill && objective.system == kAnySystem;
+    const bool killAnywhere = objective.kind == ObjectiveKind::Kill && objective.system == kAnySystem;
     if (!killAnywhere && objective.system >= m_systemCount) {
         return false;
     }
@@ -278,8 +280,10 @@ bool MissionSim::objectiveInRange(const Galaxy& galaxy,
     return false;
 }
 
-bool MissionSim::postOffer(const Galaxy& galaxy, const Economy& economy,
-                           const FactionSim& factions, Mission mission,
+bool MissionSim::postOffer(const Galaxy& galaxy,
+                           const Economy& economy,
+                           const FactionSim& factions,
+                           Mission mission,
                            std::string* outError)
 {
     if (m_boardSystem == kNoFaction) {
@@ -309,9 +313,7 @@ bool MissionSim::postOffer(const Galaxy& galaxy, const Economy& economy,
         }
     }
     if (mission.campaign()) {
-        const auto sameId = [&](const Mission& other) {
-            return other.campaignId == mission.campaignId;
-        };
+        const auto sameId = [&](const Mission& other) { return other.campaignId == mission.campaignId; };
         if (std::any_of(m_offers.begin(), m_offers.end(), sameId) ||
             std::any_of(m_active.begin(), m_active.end(), sameId)) {
             setError(outError, "campaign mission already offered or active");
@@ -328,12 +330,10 @@ bool MissionSim::postOffer(const Galaxy& galaxy, const Economy& economy,
         if (objective.kind == ObjectiveKind::Deliver) {
             std::vector<HaulCandidate> candidates;
             haulCandidates(galaxy, economy, m_boardSystem, m_boardStation, candidates);
-            const auto match = std::find_if(
-                candidates.begin(), candidates.end(), [&](const HaulCandidate& c) {
-                    return c.system == objective.system &&
-                           c.station == objective.station &&
-                           c.commodity == objective.commodity &&
-                           objective.units <= c.units;
+            const auto match =
+                std::find_if(candidates.begin(), candidates.end(), [&](const HaulCandidate& c) {
+                    return c.system == objective.system && c.station == objective.station &&
+                           c.commodity == objective.commodity && objective.units <= c.units;
                 });
             if (match == candidates.end()) {
                 setError(outError, "no such shortage");
@@ -342,8 +342,8 @@ bool MissionSim::postOffer(const Galaxy& galaxy, const Economy& economy,
         } else if (objective.kind == ObjectiveKind::Kill) {
             std::vector<BountyCandidate> candidates;
             bountyCandidates(galaxy, factions, m_boardSystem, candidates);
-            const auto match = std::find_if(
-                candidates.begin(), candidates.end(), [&](const BountyCandidate& c) {
+            const auto match =
+                std::find_if(candidates.begin(), candidates.end(), [&](const BountyCandidate& c) {
                     return c.system == objective.system && c.clan == objective.faction;
                 });
             if (match == candidates.end() || objective.kills > m_params.maxBountyKills) {
@@ -353,8 +353,8 @@ bool MissionSim::postOffer(const Galaxy& galaxy, const Economy& economy,
         } else if (objective.kind == ObjectiveKind::Hold) {
             std::vector<ContestCandidate> candidates;
             contestCandidates(galaxy, factions, m_boardSystem, mission.poster, candidates);
-            const auto match = std::find_if(
-                candidates.begin(), candidates.end(), [&](const ContestCandidate& c) {
+            const auto match =
+                std::find_if(candidates.begin(), candidates.end(), [&](const ContestCandidate& c) {
                     // The named side must be one of the two actually fighting,
                     // so a board cannot sell a defence of a bystander.
                     return c.system == objective.system &&
@@ -367,8 +367,8 @@ bool MissionSim::postOffer(const Galaxy& galaxy, const Economy& economy,
         } else if (objective.kind == ObjectiveKind::Escort) {
             std::vector<EscortCandidate> candidates;
             escortCandidates(galaxy, economy, factions, m_boardSystem, candidates);
-            const auto match = std::find_if(
-                candidates.begin(), candidates.end(), [&](const EscortCandidate& c) {
+            const auto match =
+                std::find_if(candidates.begin(), candidates.end(), [&](const EscortCandidate& c) {
                     // Both halves are checked: a board cannot sell a run to
                     // somewhere the hauler named is not actually going, which
                     // would be a contract that could only ever fail.
@@ -388,8 +388,7 @@ bool MissionSim::postOffer(const Galaxy& galaxy, const Economy& economy,
     return true;
 }
 
-bool MissionSim::accept(std::uint32_t offerIndex, float standingWithPoster,
-                        std::string* outError)
+bool MissionSim::accept(std::uint32_t offerIndex, float standingWithPoster, std::string* outError)
 {
     if (offerIndex >= m_offers.size()) {
         setError(outError, "no such offer");
@@ -405,9 +404,7 @@ bool MissionSim::accept(std::uint32_t offerIndex, float standingWithPoster,
     }
     m_active.push_back(std::move(m_offers[offerIndex]));
     m_offers.erase(m_offers.begin() + offerIndex);
-    m_events.push_back({.kind = MissionEventKind::Accepted,
-                        .mission = m_active.back(),
-                        .objective = 0});
+    m_events.push_back({.kind = MissionEventKind::Accepted, .mission = m_active.back(), .objective = 0});
     return true;
 }
 
@@ -440,9 +437,8 @@ bool MissionSim::advanceObjective(std::uint32_t activeIndex)
     if (mission.currentObjective < mission.objectives.size()) {
         return false;
     }
-    m_events.push_back({.kind = MissionEventKind::Completed,
-                        .mission = mission,
-                        .objective = mission.currentObjective - 1});
+    m_events.push_back(
+        {.kind = MissionEventKind::Completed, .mission = mission, .objective = mission.currentObjective - 1});
     removeActive(activeIndex);
     return true;
 }
@@ -458,8 +454,7 @@ void MissionSim::removeActive(std::uint32_t activeIndex)
 void MissionSim::notifyDock(std::uint32_t system, std::uint32_t station)
 {
     for (std::uint32_t i = 0; i < m_active.size();) {
-        const MissionObjective& objective =
-            m_active[i].objectives[m_active[i].currentObjective];
+        const MissionObjective& objective = m_active[i].objectives[m_active[i].currentObjective];
         if (objective.kind == ObjectiveKind::Dock && objective.system == system &&
             objective.station == station) {
             if (advanceObjective(i)) {
@@ -473,12 +468,9 @@ void MissionSim::notifyDock(std::uint32_t system, std::uint32_t station)
 void MissionSim::notifyKill(std::uint32_t victimFaction, std::uint32_t system)
 {
     for (std::uint32_t i = 0; i < m_active.size();) {
-        MissionObjective& objective =
-            m_active[i].objectives[m_active[i].currentObjective];
-        if (objective.kind == ObjectiveKind::Kill &&
-            objective.faction == victimFaction &&
-            (objective.system == kAnySystem || objective.system == system) &&
-            objective.kills > 0) {
+        MissionObjective& objective = m_active[i].objectives[m_active[i].currentObjective];
+        if (objective.kind == ObjectiveKind::Kill && objective.faction == victimFaction &&
+            (objective.system == kAnySystem || objective.system == system) && objective.kills > 0) {
             --objective.kills;
             if (objective.kills == 0 && advanceObjective(i)) {
                 continue;
@@ -491,8 +483,7 @@ void MissionSim::notifyKill(std::uint32_t victimFaction, std::uint32_t system)
 void MissionSim::notifyContestResolved(std::uint32_t system, std::uint32_t winner)
 {
     for (std::uint32_t i = 0; i < m_active.size();) {
-        const MissionObjective& objective =
-            m_active[i].objectives[m_active[i].currentObjective];
+        const MissionObjective& objective = m_active[i].objectives[m_active[i].currentObjective];
         if (objective.kind != ObjectiveKind::Hold || objective.system != system) {
             ++i;
             continue;
@@ -517,8 +508,7 @@ void MissionSim::notifyContestResolved(std::uint32_t system, std::uint32_t winne
 void MissionSim::notifyTraderArrived(std::uint32_t trader, std::uint32_t system)
 {
     for (std::uint32_t i = 0; i < m_active.size();) {
-        const MissionObjective& objective =
-            m_active[i].objectives[m_active[i].currentObjective];
+        const MissionObjective& objective = m_active[i].objectives[m_active[i].currentObjective];
         // The system is checked as well as the trader because a hauler outlives
         // its haul: it lands, goes Idle, and picks a new destination minutes
         // later. Only the arrival the contract was written about pays.
@@ -535,14 +525,12 @@ void MissionSim::notifyTraderArrived(std::uint32_t trader, std::uint32_t system)
 void MissionSim::notifyTraderLost(std::uint32_t trader, bool byPlayer)
 {
     for (std::uint32_t i = 0; i < m_active.size();) {
-        const MissionObjective& objective =
-            m_active[i].objectives[m_active[i].currentObjective];
+        const MissionObjective& objective = m_active[i].objectives[m_active[i].currentObjective];
         if (objective.kind != ObjectiveKind::Escort || objective.trader != trader) {
             ++i;
             continue;
         }
-        m_events.push_back({.kind = byPlayer ? MissionEventKind::Failed
-                                             : MissionEventKind::Lost,
+        m_events.push_back({.kind = byPlayer ? MissionEventKind::Failed : MissionEventKind::Lost,
                             .mission = m_active[i],
                             .objective = m_active[i].currentObjective});
         removeActive(i);
@@ -552,8 +540,7 @@ void MissionSim::notifyTraderLost(std::uint32_t trader, bool byPlayer)
 void MissionSim::notifyPosition(std::uint32_t system, const core::DVec3& position)
 {
     for (std::uint32_t i = 0; i < m_active.size();) {
-        const MissionObjective& objective =
-            m_active[i].objectives[m_active[i].currentObjective];
+        const MissionObjective& objective = m_active[i].objectives[m_active[i].currentObjective];
         if (objective.kind == ObjectiveKind::FlyTo && objective.system == system &&
             core::length(position - objective.position) <= objective.radius) {
             if (advanceObjective(i)) {
@@ -564,14 +551,15 @@ void MissionSim::notifyPosition(std::uint32_t system, const core::DVec3& positio
     }
 }
 
-float MissionSim::recordDelivery(std::uint32_t activeIndex, std::uint32_t system,
-                                 std::uint32_t station, float available)
+float MissionSim::recordDelivery(std::uint32_t activeIndex,
+                                 std::uint32_t system,
+                                 std::uint32_t station,
+                                 float available)
 {
     if (activeIndex >= m_active.size() || available <= 0.0f) {
         return 0.0f;
     }
-    MissionObjective& objective =
-        m_active[activeIndex].objectives[m_active[activeIndex].currentObjective];
+    MissionObjective& objective = m_active[activeIndex].objectives[m_active[activeIndex].currentObjective];
     if (objective.kind != ObjectiveKind::Deliver || objective.system != system ||
         objective.station != station) {
         return 0.0f;
@@ -625,9 +613,8 @@ void writeObjective(core::BinaryWriter& writer, const MissionObjective& objectiv
     objective.kind = static_cast<ObjectiveKind>(kind);
     return reader.read(objective.system) && reader.read(objective.station) &&
            reader.read(objective.commodity) && reader.read(objective.units) &&
-           reader.read(objective.faction) && reader.read(objective.kills) &&
-           reader.read(objective.trader) && reader.read(objective.position.x) &&
-           reader.read(objective.position.y) &&
+           reader.read(objective.faction) && reader.read(objective.kills) && reader.read(objective.trader) &&
+           reader.read(objective.position.x) && reader.read(objective.position.y) &&
            reader.read(objective.position.z) && reader.read(objective.radius) &&
            reader.readString(objective.text);
 }
@@ -655,8 +642,7 @@ void writeMission(core::BinaryWriter& writer, const Mission& mission)
     if (!reader.readString(mission.title) || !reader.readString(mission.campaignId) ||
         !reader.read(mission.poster) || !reader.read(mission.rewardCredits) ||
         !reader.read(mission.standingReward) || !reader.read(mission.standingPenalty) ||
-        !reader.read(mission.deadline) || !reader.read(mission.minRep) ||
-        !reader.read(objectiveCount)) {
+        !reader.read(mission.deadline) || !reader.read(mission.minRep) || !reader.read(objectiveCount)) {
         return false;
     }
     mission.objectives.resize(objectiveCount);
@@ -665,8 +651,7 @@ void writeMission(core::BinaryWriter& writer, const Mission& mission)
             return false;
         }
     }
-    return reader.read(mission.currentObjective) &&
-           mission.currentObjective < mission.objectives.size();
+    return reader.read(mission.currentObjective) && mission.currentObjective < mission.objectives.size();
 }
 
 } // namespace
@@ -701,10 +686,9 @@ bool MissionSim::load(core::BinaryReader& reader)
     std::uint32_t factionCount = 0;
     std::uint32_t commodityCount = 0;
     std::uint32_t traderCount = 0;
-    if (!reader.read(systemCount) || systemCount != m_systemCount ||
-        !reader.read(factionCount) || factionCount != m_factionCount ||
-        !reader.read(commodityCount) || commodityCount != m_commodityCount ||
-        !reader.read(traderCount) || traderCount != m_traderCount) {
+    if (!reader.read(systemCount) || systemCount != m_systemCount || !reader.read(factionCount) ||
+        factionCount != m_factionCount || !reader.read(commodityCount) ||
+        commodityCount != m_commodityCount || !reader.read(traderCount) || traderCount != m_traderCount) {
         return false; // galaxy/defs mismatch: initialize() first
     }
     std::uint32_t offerCount = 0;
@@ -728,9 +712,8 @@ bool MissionSim::load(core::BinaryReader& reader)
         }
     }
     core::Rng::RawState rngState;
-    if (!reader.read(m_boardSystem) || !reader.read(m_boardStation) ||
-        !reader.read(m_boardAccumulator) || !reader.read(m_tracked) ||
-        !reader.read(m_campaignStage) || !reader.read(rngState.state) ||
+    if (!reader.read(m_boardSystem) || !reader.read(m_boardStation) || !reader.read(m_boardAccumulator) ||
+        !reader.read(m_tracked) || !reader.read(m_campaignStage) || !reader.read(rngState.state) ||
         !reader.read(rngState.inc)) {
         return false;
     }

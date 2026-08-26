@@ -1,12 +1,11 @@
-#include <sol/assets/font.hpp>
-
-#include <sol/test/synthetic_cooked_font.hpp>
-#include <sol/test/test.hpp>
-
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
+
+#include <sol/assets/font.hpp>
+#include <sol/test/synthetic_cooked_font.hpp>
+#include <sol/test/test.hpp>
 
 using sol::assets::Font;
 using sol::assets::FontFileHeader;

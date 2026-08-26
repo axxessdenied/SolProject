@@ -1,11 +1,10 @@
-#include <sol/sim/survey.hpp>
-#include <sol/sim/universe.hpp>
-
-#include <sol/core/serialize.hpp>
-#include <sol/test/test.hpp>
-
 #include <cstdint>
 #include <vector>
+
+#include <sol/core/serialize.hpp>
+#include <sol/sim/survey.hpp>
+#include <sol/sim/universe.hpp>
+#include <sol/test/test.hpp>
 
 using sol::sim::Galaxy;
 using sol::sim::GalaxyParams;
@@ -101,8 +100,7 @@ SOL_TEST(survey_signals_are_deterministic_per_seed)
     const SurveyParams params = lineParams();
     for (std::size_t i = 0; i < first.size(); ++i) {
         SOL_CHECK(otherSignals[i].seed == first[i].seed);
-        const sol::core::DVec3 offset =
-            first[i].position - galaxy.systems[2].planets[1].position;
+        const sol::core::DVec3 offset = first[i].position - galaxy.systems[2].planets[1].position;
         const double distance = sol::core::length(offset);
         SOL_CHECK(distance >= params.signalMinDistance * 0.999);
         SOL_CHECK(distance <= params.signalMaxDistance * 1.001);
@@ -233,8 +231,8 @@ SOL_TEST(survey_values_scale_with_region_and_settlement)
     SOL_REQUIRE(core.ledger().size() == 1);
     SOL_REQUIRE(fringe.ledger().size() == 1);
     SOL_CHECK(core.ledger()[0].kind == SurveyKind::System);
-    SOL_CHECK(!core.ledger()[0].firstDiscovery);   // a station means neighbors
-    SOL_CHECK(fringe.ledger()[0].firstDiscovery);  // unsettled: nobody charted it
+    SOL_CHECK(!core.ledger()[0].firstDiscovery);  // a station means neighbors
+    SOL_CHECK(fringe.ledger()[0].firstDiscovery); // unsettled: nobody charted it
 
     const double expectedCore = params.valueSystem * params.regionMultiplier[0];
     const double expectedFringe =
@@ -270,10 +268,10 @@ SOL_TEST(survey_completion_needs_every_body_and_site)
     SOL_CHECK(survey.notifySignalResolved(galaxy, 0, 0));
     SOL_CHECK(survey.knowledge(0) == KnowledgeState::Surveyed);
 
-    const double expected = params.valueSystem * params.regionMultiplier[0]
-                            + 3.0 * params.valueBody * params.regionMultiplier[0]
-                            + params.valueSite * params.regionMultiplier[0]
-                            + params.valueCompletion * params.regionMultiplier[0];
+    const double expected = params.valueSystem * params.regionMultiplier[0] +
+                            3.0 * params.valueBody * params.regionMultiplier[0] +
+                            params.valueSite * params.regionMultiplier[0] +
+                            params.valueCompletion * params.regionMultiplier[0];
     SOL_CHECK(survey.ledgerValue() == expected);
 
     // Completion pays once, and a scan in a system you have never visited is
@@ -413,8 +411,7 @@ SOL_TEST(survey_save_load_round_trips)
     SOL_CHECK(survey.setLoot(2, 0, loot));
     survey.setRoute({2, 1, 0});
     survey.recordMarket(3, {11.0f, 42.0f}, 640.0);
-    const std::uint32_t bookmarkId =
-        survey.addBookmark(2, {1.5e8, -2.0e7, 9.0e7}, "Good rock", 3, 812.5);
+    const std::uint32_t bookmarkId = survey.addBookmark(2, {1.5e8, -2.0e7, 9.0e7}, "Good rock", 3, 812.5);
     SOL_CHECK(bookmarkId != 0);
 
     sol::core::BinaryWriter writer;

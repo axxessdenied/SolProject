@@ -66,8 +66,7 @@ inline constexpr core::Vec3 kApertureRight = {0.80f, 0.00f, -0.86f};
 // edge, and no frame to be occluded by. `radarCentre` is passed in rather than
 // recomputed because radar_projection.hpp owns where the disc goes — Phase 8j
 // made a blip clickable, so the draw and the hit test must read one function.
-[[nodiscard]] inline HudFrame screenFrame(core::Vec2 screenSize, float margin,
-                                          core::Vec2 radarCentre)
+[[nodiscard]] inline HudFrame screenFrame(core::Vec2 screenSize, float margin, core::Vec2 radarCentre)
 {
     HudFrame frame;
     frame.cockpit = false;
@@ -85,8 +84,7 @@ inline constexpr core::Vec3 kApertureRight = {0.80f, 0.00f, -0.86f};
 // rotate(conjugate(headToShip), point). The ship's orientation cancels out
 // entirely, which is why this function needs nothing from the world: the
 // cockpit and the eye are both bolted to the same hull.
-[[nodiscard]] inline HudFrame cockpitFrame(core::Quat headToShip, core::Vec2 screenSize,
-                                           float tanHalfFovY)
+[[nodiscard]] inline HudFrame cockpitFrame(core::Quat headToShip, core::Vec2 screenSize, float tanHalfFovY)
 {
     const core::Vec2 centre = {screenSize.x * 0.5f, screenSize.y * 0.5f};
     const float focal = focalLength(screenSize.y, tanHalfFovY);

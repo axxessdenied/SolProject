@@ -37,8 +37,10 @@ const char* signalKindName(SignalKind kind)
     return "Signal";
 }
 
-void SurveySim::initialize(const Galaxy& galaxy, const SurveyParams& params,
-                           std::uint32_t commodityCount, std::uint64_t seed)
+void SurveySim::initialize(const Galaxy& galaxy,
+                           const SurveyParams& params,
+                           std::uint32_t commodityCount,
+                           std::uint64_t seed)
 {
     m_params = params;
     m_systemCount = static_cast<std::uint32_t>(galaxy.systems.size());
@@ -63,8 +65,7 @@ void SurveySim::initialize(const Galaxy& galaxy, const SurveyParams& params,
     }
 }
 
-void SurveySim::signalsFor(const Galaxy& galaxy, std::uint32_t system,
-                           std::vector<SignalSpec>& out) const
+void SurveySim::signalsFor(const Galaxy& galaxy, std::uint32_t system, std::vector<SignalSpec>& out) const
 {
     out.clear();
     if (system >= galaxy.systems.size()) {
@@ -79,11 +80,10 @@ void SurveySim::signalsFor(const Galaxy& galaxy, std::uint32_t system,
     out.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
         SignalSpec signal;
-        signal.kind = static_cast<SignalKind>(
-            rng.range(static_cast<std::uint32_t>(SignalKind::Count)));
+        signal.kind = static_cast<SignalKind>(rng.range(static_cast<std::uint32_t>(SignalKind::Count)));
         const double distance =
-            m_params.signalMinDistance
-            + (m_params.signalMaxDistance - m_params.signalMinDistance) * rng.nextDouble01();
+            m_params.signalMinDistance +
+            (m_params.signalMaxDistance - m_params.signalMinDistance) * rng.nextDouble01();
         signal.position = hub + randomPlayfieldDirection(rng) * distance;
         signal.seed = rng.nextU64();
         out.push_back(std::move(signal));
@@ -144,13 +144,10 @@ void SurveySim::addEntry(const Galaxy& galaxy, std::uint32_t system, SurveyKind 
     case SurveyKind::Count:
         return;
     }
-    const double value = base * static_cast<double>(m_params.regionMultiplier[tier])
-                         * (first ? static_cast<double>(m_params.firstDiscoveryBonus) : 1.0);
-    m_ledger.push_back({.system = system,
-                        .kind = kind,
-                        .region = spec.region,
-                        .firstDiscovery = first,
-                        .value = value});
+    const double value = base * static_cast<double>(m_params.regionMultiplier[tier]) *
+                         (first ? static_cast<double>(m_params.firstDiscoveryBonus) : 1.0);
+    m_ledger.push_back(
+        {.system = system, .kind = kind, .region = spec.region, .firstDiscovery = first, .value = value});
 }
 
 void SurveySim::checkSurveyed(const Galaxy& galaxy, std::uint32_t system)
@@ -166,8 +163,7 @@ void SurveySim::checkSurveyed(const Galaxy& galaxy, std::uint32_t system)
     const std::uint32_t signals = signalCount(system);
     const std::uint32_t bodyMask = bodies >= kMaskBits ? ~0u : (1u << bodies) - 1u;
     const std::uint32_t signalMask = signals >= kMaskBits ? ~0u : (1u << signals) - 1u;
-    if ((state.bodiesScanned & bodyMask) != bodyMask
-        || (state.signalsResolved & signalMask) != signalMask) {
+    if ((state.bodiesScanned & bodyMask) != bodyMask || (state.signalsResolved & signalMask) != signalMask) {
         return;
     }
     state.state = KnowledgeState::Surveyed;
@@ -250,16 +246,14 @@ namespace {
 
 [[nodiscard]] std::uint32_t stationCountIn(const Galaxy& galaxy, std::uint32_t system)
 {
-    return system < galaxy.systems.size()
-               ? static_cast<std::uint32_t>(galaxy.systems[system].stations.size())
-               : 0u;
+    return system < galaxy.systems.size() ? static_cast<std::uint32_t>(galaxy.systems[system].stations.size())
+                                          : 0u;
 }
 
 [[nodiscard]] std::uint32_t gateCountIn(const Galaxy& galaxy, std::uint32_t system)
 {
-    return system < galaxy.systems.size()
-               ? static_cast<std::uint32_t>(galaxy.systems[system].gates.size())
-               : 0u;
+    return system < galaxy.systems.size() ? static_cast<std::uint32_t>(galaxy.systems[system].gates.size())
+                                          : 0u;
 }
 
 } // namespace
@@ -280,11 +274,9 @@ bool SurveySim::stationIdentified(std::uint32_t system, std::uint32_t station) c
     return (m_systems[system].stationsIdentified & (1u << station)) != 0;
 }
 
-bool SurveySim::notifyStationDiscovered(const Galaxy& galaxy, std::uint32_t system,
-                                        std::uint32_t station)
+bool SurveySim::notifyStationDiscovered(const Galaxy& galaxy, std::uint32_t system, std::uint32_t station)
 {
-    if (system >= m_systems.size() || station >= stationCountIn(galaxy, system)
-        || station >= kMaskBits) {
+    if (system >= m_systems.size() || station >= stationCountIn(galaxy, system) || station >= kMaskBits) {
         return false;
     }
     if (m_systems[system].state < KnowledgeState::Visited) {
@@ -297,11 +289,9 @@ bool SurveySim::notifyStationDiscovered(const Galaxy& galaxy, std::uint32_t syst
     return true;
 }
 
-bool SurveySim::notifyStationIdentified(const Galaxy& galaxy, std::uint32_t system,
-                                        std::uint32_t station)
+bool SurveySim::notifyStationIdentified(const Galaxy& galaxy, std::uint32_t system, std::uint32_t station)
 {
-    if (system >= m_systems.size() || station >= stationCountIn(galaxy, system)
-        || station >= kMaskBits) {
+    if (system >= m_systems.size() || station >= stationCountIn(galaxy, system) || station >= kMaskBits) {
         return false;
     }
     if (m_systems[system].state < KnowledgeState::Visited) {
@@ -333,8 +323,7 @@ bool SurveySim::gateIdentified(std::uint32_t system, std::uint32_t gate) const
     return (m_systems[system].gatesIdentified & (1u << gate)) != 0;
 }
 
-bool SurveySim::notifyGateDiscovered(const Galaxy& galaxy, std::uint32_t system,
-                                     std::uint32_t gate)
+bool SurveySim::notifyGateDiscovered(const Galaxy& galaxy, std::uint32_t system, std::uint32_t gate)
 {
     if (system >= m_systems.size() || gate >= gateCountIn(galaxy, system) || gate >= kMaskBits) {
         return false;
@@ -349,8 +338,7 @@ bool SurveySim::notifyGateDiscovered(const Galaxy& galaxy, std::uint32_t system,
     return true;
 }
 
-bool SurveySim::notifyGateIdentified(const Galaxy& galaxy, std::uint32_t system,
-                                     std::uint32_t gate)
+bool SurveySim::notifyGateIdentified(const Galaxy& galaxy, std::uint32_t system, std::uint32_t gate)
 {
     if (system >= m_systems.size() || gate >= gateCountIn(galaxy, system) || gate >= kMaskBits) {
         return false;
@@ -368,8 +356,7 @@ bool SurveySim::notifyGateIdentified(const Galaxy& galaxy, std::uint32_t system,
     // entire payload of identifying a gate, and the reason the galaxy map is
     // now something you fill in rather than something handed to you.
     const std::uint32_t destination = galaxy.systems[system].gates[gate].toSystem;
-    if (destination < m_systems.size()
-        && m_systems[destination].state == KnowledgeState::Unknown) {
+    if (destination < m_systems.size() && m_systems[destination].state == KnowledgeState::Unknown) {
         m_systems[destination].state = KnowledgeState::Charted;
     }
     return true;
@@ -411,8 +398,7 @@ bool SurveySim::notifySignalDiscovered(std::uint32_t system, std::uint32_t signa
     return true;
 }
 
-bool SurveySim::notifySignalResolved(const Galaxy& galaxy, std::uint32_t system,
-                                     std::uint32_t signal)
+bool SurveySim::notifySignalResolved(const Galaxy& galaxy, std::uint32_t system, std::uint32_t signal)
 {
     if (system >= m_systems.size() || signal >= signalCount(system)) {
         return false;
@@ -429,8 +415,8 @@ bool SurveySim::notifySignalResolved(const Galaxy& galaxy, std::uint32_t system,
 
 bool SurveySim::notifySignalEmptied(std::uint32_t system, std::uint32_t signal)
 {
-    if (system >= m_systems.size() || signal >= signalCount(system)
-        || !signalResolved(system, signal) || signalEmptied(system, signal)) {
+    if (system >= m_systems.size() || signal >= signalCount(system) || !signalResolved(system, signal) ||
+        signalEmptied(system, signal)) {
         return false;
     }
     m_systems[system].signalsEmptied |= 1u << signal;
@@ -451,8 +437,7 @@ std::size_t SurveySim::findLoot(std::uint32_t system, std::uint32_t signal) cons
     return m_loot.size();
 }
 
-bool validSignalLoot(const SignalLoot& loot, std::uint32_t commodityCount,
-                     std::uint32_t maxCargoStacks)
+bool validSignalLoot(const SignalLoot& loot, std::uint32_t commodityCount, std::uint32_t maxCargoStacks)
 {
     if (loot.cargo.size() > maxCargoStacks || loot.credits < 0.0) {
         return false;
@@ -510,7 +495,9 @@ void SurveySim::recordMarket(std::uint32_t market, const std::vector<float>& pri
         return; // a snapshot that doesn't match the commodity table is no snapshot
     }
     const auto at = std::lower_bound(
-        m_marketMemory.begin(), m_marketMemory.end(), market,
+        m_marketMemory.begin(),
+        m_marketMemory.end(),
+        market,
         [](const MarketMemory& record, std::uint32_t value) { return record.market < value; });
     if (at != m_marketMemory.end() && at->market == market) {
         at->prices = prices;
@@ -525,7 +512,9 @@ void SurveySim::recordMarket(std::uint32_t market, const std::vector<float>& pri
 const MarketMemory* SurveySim::remembered(std::uint32_t market) const
 {
     const auto at = std::lower_bound(
-        m_marketMemory.begin(), m_marketMemory.end(), market,
+        m_marketMemory.begin(),
+        m_marketMemory.end(),
+        market,
         [](const MarketMemory& record, std::uint32_t value) { return record.market < value; });
     return at != m_marketMemory.end() && at->market == market ? &*at : nullptr;
 }
@@ -535,8 +524,12 @@ bool SurveySim::isStale(const MarketMemory& memory, double now) const
     return now - memory.takenAt > m_params.intelStaleSeconds;
 }
 
-bool SurveySim::bestRemembered(std::uint32_t commodity, std::uint32_t excludeMarket, double now,
-                               std::uint32_t* outMarket, float* outPrice, double* outAge) const
+bool SurveySim::bestRemembered(std::uint32_t commodity,
+                               std::uint32_t excludeMarket,
+                               double now,
+                               std::uint32_t* outMarket,
+                               float* outPrice,
+                               double* outAge) const
 {
     if (commodity >= m_commodityCount) {
         return false;
@@ -573,8 +566,8 @@ bool SurveySim::bestRemembered(std::uint32_t commodity, std::uint32_t excludeMar
 
 // --- Bookmarks (Phase 8h) ----------------------------------------------------
 
-std::uint32_t SurveySim::addBookmark(std::uint32_t system, const core::DVec3& position,
-                                     std::string name, std::uint32_t label, double now)
+std::uint32_t SurveySim::addBookmark(
+    std::uint32_t system, const core::DVec3& position, std::string name, std::uint32_t label, double now)
 {
     if (bookmarkCountIn(system) >= m_params.maxBookmarksPerSystem) {
         return 0;
@@ -727,17 +720,17 @@ bool SurveySim::load(core::BinaryReader& reader)
 {
     std::uint32_t systemCount = 0;
     std::uint32_t commodityCount = 0;
-    if (!reader.read(systemCount) || systemCount != m_systemCount || !reader.read(commodityCount)
-        || commodityCount != m_commodityCount) {
+    if (!reader.read(systemCount) || systemCount != m_systemCount || !reader.read(commodityCount) ||
+        commodityCount != m_commodityCount) {
         return false; // galaxy/defs mismatch: initialize() first
     }
     for (SystemSurvey& system : m_systems) {
         std::uint8_t state = 0;
-        if (!reader.read(state) || state > static_cast<std::uint8_t>(KnowledgeState::Surveyed)
-            || !reader.read(system.bodiesScanned) || !reader.read(system.signalsDiscovered)
-            || !reader.read(system.signalsResolved) || !reader.read(system.signalsEmptied)
-            || !reader.read(system.stationsDiscovered) || !reader.read(system.stationsIdentified)
-            || !reader.read(system.gatesDiscovered) || !reader.read(system.gatesIdentified)) {
+        if (!reader.read(state) || state > static_cast<std::uint8_t>(KnowledgeState::Surveyed) ||
+            !reader.read(system.bodiesScanned) || !reader.read(system.signalsDiscovered) ||
+            !reader.read(system.signalsResolved) || !reader.read(system.signalsEmptied) ||
+            !reader.read(system.stationsDiscovered) || !reader.read(system.stationsIdentified) ||
+            !reader.read(system.gatesDiscovered) || !reader.read(system.gatesIdentified)) {
             return false;
         }
         system.state = static_cast<KnowledgeState>(state);
@@ -751,10 +744,10 @@ bool SurveySim::load(core::BinaryReader& reader)
         std::uint32_t kind = 0;
         std::uint8_t region = 0;
         std::uint8_t first = 0;
-        if (!reader.read(entry.system) || entry.system >= m_systemCount || !reader.read(kind)
-            || kind >= static_cast<std::uint32_t>(SurveyKind::Count) || !reader.read(region)
-            || region > static_cast<std::uint8_t>(Region::Fringe) || !reader.read(first)
-            || !reader.read(entry.value)) {
+        if (!reader.read(entry.system) || entry.system >= m_systemCount || !reader.read(kind) ||
+            kind >= static_cast<std::uint32_t>(SurveyKind::Count) || !reader.read(region) ||
+            region > static_cast<std::uint8_t>(Region::Fringe) || !reader.read(first) ||
+            !reader.read(entry.value)) {
             return false;
         }
         entry.kind = static_cast<SurveyKind>(kind);
@@ -768,15 +761,14 @@ bool SurveySim::load(core::BinaryReader& reader)
     m_loot.resize(lootCount);
     for (LootRecord& record : m_loot) {
         std::uint32_t cargoCount = 0;
-        if (!reader.read(record.system) || record.system >= m_systemCount
-            || !reader.read(record.signal) || !reader.read(cargoCount)
-            || cargoCount > m_params.maxCargoStacks) {
+        if (!reader.read(record.system) || record.system >= m_systemCount || !reader.read(record.signal) ||
+            !reader.read(cargoCount) || cargoCount > m_params.maxCargoStacks) {
             return false;
         }
         record.loot.cargo.resize(cargoCount);
         for (SignalCargo& cargo : record.loot.cargo) {
-            if (!reader.read(cargo.commodity) || cargo.commodity >= m_commodityCount
-                || !reader.read(cargo.units)) {
+            if (!reader.read(cargo.commodity) || cargo.commodity >= m_commodityCount ||
+                !reader.read(cargo.units)) {
                 return false;
             }
         }
@@ -806,12 +798,11 @@ bool SurveySim::load(core::BinaryReader& reader)
     }
     m_bookmarks.resize(bookmarkCount);
     for (Bookmark& bookmark : m_bookmarks) {
-        if (!reader.read(bookmark.id) || bookmark.id == 0
-            || bookmark.id >= m_nextBookmarkId || !reader.read(bookmark.system)
-            || bookmark.system >= m_systemCount
-            || !reader.read(bookmark.position.x) || !reader.read(bookmark.position.y)
-            || !reader.read(bookmark.position.z) || !reader.readString(bookmark.name)
-            || !reader.read(bookmark.label) || !reader.read(bookmark.createdAt)) {
+        if (!reader.read(bookmark.id) || bookmark.id == 0 || bookmark.id >= m_nextBookmarkId ||
+            !reader.read(bookmark.system) || bookmark.system >= m_systemCount ||
+            !reader.read(bookmark.position.x) || !reader.read(bookmark.position.y) ||
+            !reader.read(bookmark.position.z) || !reader.readString(bookmark.name) ||
+            !reader.read(bookmark.label) || !reader.read(bookmark.createdAt)) {
             return false;
         }
     }

@@ -26,13 +26,18 @@ public:
         core::Vec4 color;    // linear HDR, additive
     };
 
-    [[nodiscard]] bool initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
-                                  const char* shaderDirectory, std::uint32_t framesInFlight);
+    [[nodiscard]] bool initialize(rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
+                                  const char* shaderDirectory,
+                                  std::uint32_t framesInFlight);
     void shutdown();
     [[nodiscard]] bool reloadPipeline();
 
-    void draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-              const core::Mat4& viewProjection, const core::Quat& cameraOrientation,
+    void draw(VkCommandBuffer commandBuffer,
+              std::uint32_t frameIndex,
+              const core::Mat4& viewProjection,
+              const core::Quat& cameraOrientation,
               std::span<const Particle> particles);
 
 private:

@@ -6,9 +6,9 @@
 namespace {
 
 using sol::core::resolveTimestampPair;
-using sol::core::TimestampPair;
 using sol::core::timestampDelta;
 using sol::core::timestampMask;
+using sol::core::TimestampPair;
 
 // A plausible discrete-GPU period: one tick per nanosecond.
 constexpr double kOneNsPerTick = 1.0;

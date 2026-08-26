@@ -1,5 +1,4 @@
 #include "sol/core/events.hpp"
-
 #include "sol/test/test.hpp"
 
 #include <vector>
@@ -73,8 +72,7 @@ SOL_TEST(events_unsubscribeStopsDelivery)
 {
     EventBus bus;
     int received = 0;
-    const SubscriptionId id =
-        bus.subscribe<Damage>([&received](const Damage& d) { received += d.amount; });
+    const SubscriptionId id = bus.subscribe<Damage>([&received](const Damage& d) { received += d.amount; });
 
     bus.publish(Damage{.amount = 1});
     bus.dispatch();

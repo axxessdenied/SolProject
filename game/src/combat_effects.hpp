@@ -37,8 +37,13 @@ private:
         float size = 0.5f;
     };
 
-    void burst(const sol::core::DVec3& position, int count, float minSpeed, float maxSpeed,
-               sol::core::Vec3 color, float size, float lifetime);
+    void burst(const sol::core::DVec3& position,
+               int count,
+               float minSpeed,
+               float maxSpeed,
+               sol::core::Vec3 color,
+               float size,
+               float lifetime);
 
     static constexpr std::size_t kMaxParticles = 2'000;
 

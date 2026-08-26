@@ -18,8 +18,11 @@ struct PushConstants
 
 } // namespace
 
-bool ParticleRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
-                                  const char* shaderDirectory, std::uint32_t framesInFlight)
+bool ParticleRenderer::initialize(rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
+                                  const char* shaderDirectory,
+                                  std::uint32_t framesInFlight)
 {
     m_context = &context;
     m_colorFormat = colorFormat;
@@ -29,12 +32,14 @@ bool ParticleRenderer::initialize(rhi::Context& context, VkFormat colorFormat, V
     m_vertexBuffers.resize(framesInFlight);
     m_mappedPointers.resize(framesInFlight);
     for (std::uint32_t i = 0; i < framesInFlight; ++i) {
-        m_vertexBuffers[i] = rhi::createBuffer(context, kMaxParticles * 6 * sizeof(Vertex),
-                                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        if (vkMapMemory(context.device(), m_vertexBuffers[i].memory, 0, VK_WHOLE_SIZE, 0,
-                        &m_mappedPointers[i]) != VK_SUCCESS) {
+        m_vertexBuffers[i] =
+            rhi::createBuffer(context,
+                              kMaxParticles * 6 * sizeof(Vertex),
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (vkMapMemory(
+                context.device(), m_vertexBuffers[i].memory, 0, VK_WHOLE_SIZE, 0, &m_mappedPointers[i]) !=
+            VK_SUCCESS) {
             return false;
         }
     }
@@ -89,18 +94,24 @@ bool ParticleRenderer::reloadPipeline()
     return true;
 }
 
-void ParticleRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-                            const core::Mat4& viewProjection, const core::Quat& cameraOrientation,
+void ParticleRenderer::draw(VkCommandBuffer commandBuffer,
+                            std::uint32_t frameIndex,
+                            const core::Mat4& viewProjection,
+                            const core::Quat& cameraOrientation,
                             std::span<const Particle> particles)
 {
     if (particles.empty()) {
         return;
     }
-    const std::uint32_t count =
-        std::min(static_cast<std::uint32_t>(particles.size()), kMaxParticles);
+    const std::uint32_t count = std::min(static_cast<std::uint32_t>(particles.size()), kMaxParticles);
 
     static constexpr core::Vec2 kCorners[6] = {
-        {-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {1.0f, -1.0f},
+        {1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {1.0f, 1.0f},
+        {-1.0f, 1.0f},
     };
     Vertex* vertex = static_cast<Vertex*>(m_mappedPointers[frameIndex]);
     for (std::uint32_t i = 0; i < count; ++i) {
@@ -117,8 +128,11 @@ void ParticleRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIn
     const core::Vec3 up = rotate(cameraOrientation, {0.0f, 1.0f, 0.0f});
     push.cameraRight = {right.x, right.y, right.z, 0.0f};
     push.cameraUp = {up.x, up.y, up.z, 0.0f};
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
+    vkCmdPushConstants(commandBuffer,
+                       m_pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0,
+                       sizeof(push),
                        &push);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[frameIndex].buffer, &offset);

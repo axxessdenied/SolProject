@@ -1,10 +1,9 @@
 #pragma once
 
+#include "sol/core/assert.hpp"
 #include "sol/ecs/entity.hpp"
 #include "sol/ecs/sparse_set.hpp"
 #include "sol/ecs/view.hpp"
-
-#include "sol/core/assert.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -53,14 +52,10 @@ public:
 
     [[nodiscard]] bool isAlive(Entity entity) const
     {
-        return entity.index < m_generations.size()
-            && m_generations[entity.index] == entity.generation;
+        return entity.index < m_generations.size() && m_generations[entity.index] == entity.generation;
     }
 
-    [[nodiscard]] std::size_t aliveCount() const
-    {
-        return m_generations.size() - m_freeList.size();
-    }
+    [[nodiscard]] std::size_t aliveCount() const { return m_generations.size() - m_freeList.size(); }
 
     // Rebuilds the full handle for a slot (pools store bare indices; callers
     // iterating a pool need this to destroy or re-reference entities).

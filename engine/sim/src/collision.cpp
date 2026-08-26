@@ -10,8 +10,12 @@ namespace {
 // floating-point dust next tick.
 constexpr double kSeparationSlack = 1.0 + 1.0e-9;
 
-void resolvePair(CollisionBody& a, CollisionBody& b, std::uint32_t indexA, std::uint32_t indexB,
-                 double restitution, std::vector<Contact>& outContacts)
+void resolvePair(CollisionBody& a,
+                 CollisionBody& b,
+                 std::uint32_t indexA,
+                 std::uint32_t indexB,
+                 double restitution,
+                 std::vector<Contact>& outContacts)
 {
     const double inverseMassSum = a.inverseMass + b.inverseMass;
     if (inverseMassSum <= 0.0) {
@@ -78,13 +82,16 @@ void resolvePair(CollisionBody& a, CollisionBody& b, std::uint32_t indexA, std::
 
 } // namespace
 
-void resolveCollisions(std::span<CollisionBody> bodies, double restitution,
-                       std::vector<Contact>& outContacts)
+void resolveCollisions(std::span<CollisionBody> bodies, double restitution, std::vector<Contact>& outContacts)
 {
     for (std::size_t i = 0; i + 1 < bodies.size(); ++i) {
         for (std::size_t j = i + 1; j < bodies.size(); ++j) {
-            resolvePair(bodies[i], bodies[j], static_cast<std::uint32_t>(i),
-                        static_cast<std::uint32_t>(j), restitution, outContacts);
+            resolvePair(bodies[i],
+                        bodies[j],
+                        static_cast<std::uint32_t>(i),
+                        static_cast<std::uint32_t>(j),
+                        restitution,
+                        outContacts);
         }
     }
 }

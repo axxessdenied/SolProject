@@ -235,8 +235,11 @@ struct ForgeDoc
 // the parent graph is acyclic, the primitive is known, and every parameter is
 // a name the primitive's schema carries. On failure returns false and sets
 // `error` to a message naming the source.
-[[nodiscard]] bool parseForge(const char* text, std::size_t length, const char* sourceName,
-                              ForgeDoc& out, std::string* error = nullptr);
+[[nodiscard]] bool parseForge(const char* text,
+                              std::size_t length,
+                              const char* sourceName,
+                              ForgeDoc& out,
+                              std::string* error = nullptr);
 
 // Serialises back to TOML. Round-trip stable: parsing the output gives an equal
 // document. A parameter the source never mentioned stays unmentioned, so a file
@@ -278,7 +281,9 @@ struct ForgePartRange
 // honesty rather than an oversight: weld, optimize and a smoothing angle all
 // merge and renumber vertices, after which a built index no longer names the
 // part that emitted it. Ask forgeHasVertexAttribution first.
-[[nodiscard]] bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error = nullptr,
+[[nodiscard]] bool buildForge(const ForgeDoc& doc,
+                              MeshData& out,
+                              std::string* error = nullptr,
                               std::vector<ForgePartRange>* ranges = nullptr);
 
 // True when a built vertex index names the part that emitted it - i.e. the
@@ -375,8 +380,10 @@ struct ForgePoint
 // same number rather than a second one of this function's own: the tool's idea
 // of "one point" and the engine's have to agree, or the panel's welded-point
 // count and the point a drag moves describe different meshes.
-[[nodiscard]] bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out,
-                               std::string* error = nullptr, double tolerance = 1e-5);
+[[nodiscard]] bool forgePoints(const ForgeDoc& doc,
+                               std::vector<ForgePoint>& out,
+                               std::string* error = nullptr,
+                               double tolerance = 1e-5);
 
 // One edge of the built mesh (engine plan Phase 9 stage E4): a pair of points
 // with at least one triangle standing on it.
@@ -440,9 +447,12 @@ struct ForgeFace
     std::uint32_t triangle = 0;
 };
 
-[[nodiscard]] bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
-                                 std::vector<ForgeEdge>& edges, std::vector<ForgeFace>& faces,
-                                 std::string* error = nullptr, double tolerance = 1e-5);
+[[nodiscard]] bool forgeTopology(const ForgeDoc& doc,
+                                 std::vector<ForgePoint>& points,
+                                 std::vector<ForgeEdge>& edges,
+                                 std::vector<ForgeFace>& faces,
+                                 std::string* error = nullptr,
+                                 double tolerance = 1e-5);
 
 // The nearest face a ray enters, by Möller-Trumbore.
 //
@@ -462,8 +472,11 @@ struct ForgeFace
 // Back faces are hit as readily as front ones - the tool draws both sides and an
 // author may be looking at either.
 [[nodiscard]] bool forgePickFace(std::span<const ForgePoint> points,
-                                 std::span<const ForgeFace> faces, BuildPoint origin,
-                                 BuildPoint direction, std::size_t& face, double& distance);
+                                 std::span<const ForgeFace> faces,
+                                 BuildPoint origin,
+                                 BuildPoint direction,
+                                 std::size_t& face,
+                                 double& distance);
 
 // Every triangle coplanar with and edge-connected to `seed` - the QUAD behind a
 // picked half of one.
@@ -484,8 +497,10 @@ struct ForgeFace
 //
 // Returns the seed alone when nothing is coplanar with it, which is the answer
 // for a `flat_triangle` and for every face of a faceted hull.
-void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFace> faces,
-                    std::size_t seed, std::vector<std::uint32_t>& out);
+void forgeFaceGroup(std::span<const ForgePoint> points,
+                    std::span<const ForgeFace> faces,
+                    std::size_t seed,
+                    std::vector<std::uint32_t>& out);
 
 // Moves one point by `delta`, writing every parameter standing at it. The delta
 // is in the frame the mesh is built in and is rotated into each part's own
@@ -522,8 +537,8 @@ void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFac
 // (it would light inside out) or collapse a beam onto its other end (it would
 // silently stop drawing). Nothing is written unless every write can be
 // resolved: a half-applied move is the seam this function exists to prevent.
-[[nodiscard]] bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta,
-                                  std::string* error = nullptr);
+[[nodiscard]] bool
+forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, std::string* error = nullptr);
 
 // Moves a SET of points by one delta - an edge's two, a face's three or four -
 // applying every authored value standing at any of them exactly ONCE.
@@ -559,8 +574,10 @@ void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFac
 // Refuses on the same terms as `forgeMovePoint`, and for the same reason:
 // nothing is written unless every write resolves, because a half-applied move
 // is the seam this whole mechanism exists to prevent.
-[[nodiscard]] bool forgeMovePoints(ForgeDoc& doc, std::span<const ForgePoint> points,
-                                   BuildPoint delta, bool* dropped = nullptr,
+[[nodiscard]] bool forgeMovePoints(ForgeDoc& doc,
+                                   std::span<const ForgePoint> points,
+                                   BuildPoint delta,
+                                   bool* dropped = nullptr,
                                    std::string* error = nullptr);
 
 // The world transform of one part: its own placement composed up the parent
@@ -607,8 +624,7 @@ void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFac
 // Refuses a group (it carries no geometry), an index past the end, and any part
 // whose primitive will not build. A part that is already a `mesh` is left
 // exactly as it is rather than round-tripped, so baking twice is baking once.
-[[nodiscard]] bool forgeBakeDocumentPart(ForgeDoc& doc, std::size_t partIndex,
-                                         std::string* error = nullptr);
+[[nodiscard]] bool forgeBakeDocumentPart(ForgeDoc& doc, std::size_t partIndex, std::string* error = nullptr);
 
 // ⚑⚑ THE THREE TOPOLOGY OPERATIONS (engine plan Phase 9 stage E5), AND THE ONE
 // THING THEY ALL SHARE: THEY EDIT A BAKED PART'S OWN LISTS IN PLACE.
@@ -654,8 +670,8 @@ void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFac
 // Refuses two indices that are the same, either being a group, either failing
 // to bake, and a later part that other parts hang off - re-parenting the
 // orphans silently is the kind of edit nobody would find again.
-[[nodiscard]] bool forgeMergeParts(ForgeDoc& doc, std::size_t partA, std::size_t partB,
-                                   std::string* error = nullptr);
+[[nodiscard]] bool
+forgeMergeParts(ForgeDoc& doc, std::size_t partA, std::size_t partB, std::string* error = nullptr);
 
 // Splits the edge joining points `a` and `b` at its midpoint: every face
 // standing on it becomes two, and the parts that emitted them are baked.
@@ -675,9 +691,12 @@ void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFac
 //
 // Refuses a pair with no non-degenerate face standing on it, and refuses the
 // whole edit if any part on the edge will not bake.
-[[nodiscard]] bool forgeSplitEdge(ForgeDoc& doc, std::span<const ForgePoint> points,
-                                  std::span<const ForgeFace> faces, std::uint32_t a,
-                                  std::uint32_t b, std::string* error = nullptr);
+[[nodiscard]] bool forgeSplitEdge(ForgeDoc& doc,
+                                  std::span<const ForgePoint> points,
+                                  std::span<const ForgeFace> faces,
+                                  std::uint32_t a,
+                                  std::uint32_t b,
+                                  std::string* error = nullptr);
 
 // Raises a coplanar face group along its own normal and walls in the gap it
 // leaves - the extrude. `group` is `forgeFaceGroup`'s output.
@@ -718,8 +737,10 @@ void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFac
 // the frame the part's own numbers are written in, so there is no inverse
 // transform in it anywhere - where a drag arrives in the built frame and has to
 // be brought back.
-[[nodiscard]] bool forgeExtrudeFaces(ForgeDoc& doc, std::span<const ForgeFace> faces,
-                                     std::span<const std::uint32_t> group, double* offset = nullptr,
+[[nodiscard]] bool forgeExtrudeFaces(ForgeDoc& doc,
+                                     std::span<const ForgeFace> faces,
+                                     std::span<const std::uint32_t> group,
+                                     double* offset = nullptr,
                                      std::string* error = nullptr);
 
 } // namespace sol::assets

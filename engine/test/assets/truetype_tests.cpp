@@ -1,10 +1,9 @@
-#include <sol/assets/truetype.hpp>
-
-#include <sol/test/synthetic_font.hpp>
-#include <sol/test/test.hpp>
-
 #include <cstdint>
 #include <vector>
+
+#include <sol/assets/truetype.hpp>
+#include <sol/test/synthetic_font.hpp>
+#include <sol/test/test.hpp>
 
 using sol::assets::FontMetrics;
 using sol::assets::GlyphBitmap;

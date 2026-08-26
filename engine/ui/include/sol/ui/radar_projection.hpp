@@ -78,8 +78,8 @@ inline constexpr float kRadarLabelBand = 20.0f;
 // turns with the ship: a contact drawn at the top of the disc is dead ahead,
 // and one at the left is off the port bow. Screen y grows downward, so
 // forward (-z in ship space) maps to -y on screen.
-[[nodiscard]] inline core::Vec2 radarPoint(core::Vec3 offsetMeters, core::Vec2 center,
-                                           float discRadius, float range)
+[[nodiscard]] inline core::Vec2
+radarPoint(core::Vec3 offsetMeters, core::Vec2 center, float discRadius, float range)
 {
     const double x = offsetMeters.x;
     const double z = offsetMeters.z;
@@ -132,8 +132,8 @@ inline constexpr float kRadarLabelBand = 20.0f;
 // altitude stalk. This composition is what a click has to be tested against -
 // the dot the player sees is the dot they aim at - so the draw loop and the
 // hit test both read it here rather than each composing their own.
-[[nodiscard]] inline core::Vec2 radarDot(core::Vec3 offsetMeters, core::Vec2 center,
-                                         float discRadius, float range, float stalkLimit)
+[[nodiscard]] inline core::Vec2
+radarDot(core::Vec3 offsetMeters, core::Vec2 center, float discRadius, float range, float stalkLimit)
 {
     const core::Vec2 point = radarPoint(offsetMeters, center, discRadius, range);
     return {point.x, point.y + radarStalk(offsetMeters, stalkLimit)};

@@ -1,10 +1,10 @@
 #include "sol/rhi/gpu_profiler.hpp"
 
+#include "vk_check.hpp"
+
 #include "sol/core/gpu_timestamp.hpp"
 #include "sol/core/log.hpp"
 #include "sol/core/profiler.hpp"
-
-#include "vk_check.hpp"
 
 namespace sol::rhi {
 
@@ -127,8 +127,7 @@ std::uint32_t GpuProfiler::beginZone(VkCommandBuffer commandBuffer, const char* 
     const std::uint32_t query = slot.queryCount++;
     const std::uint32_t index = static_cast<std::uint32_t>(slot.events.size());
     slot.events.push_back(Event{.name = name, .query = query, .open = true});
-    vkCmdWriteTimestamp2(commandBuffer, kTimestampStage, m_pool,
-                         m_frameIndex * kQueriesPerFrame + query);
+    vkCmdWriteTimestamp2(commandBuffer, kTimestampStage, m_pool, m_frameIndex * kQueriesPerFrame + query);
     return index;
 }
 
@@ -144,8 +143,7 @@ void GpuProfiler::endZone(VkCommandBuffer commandBuffer, std::uint32_t zone)
 
     const std::uint32_t query = slot.queryCount++;
     slot.events.push_back(Event{.name = nullptr, .query = query, .open = false});
-    vkCmdWriteTimestamp2(commandBuffer, kTimestampStage, m_pool,
-                         m_frameIndex * kQueriesPerFrame + query);
+    vkCmdWriteTimestamp2(commandBuffer, kTimestampStage, m_pool, m_frameIndex * kQueriesPerFrame + query);
     slot.pending = true;
 }
 
@@ -159,10 +157,15 @@ bool GpuProfiler::resolve(Slot& slot, std::uint32_t frameIndex)
     // read never blocks the CPU on the GPU. VK_NOT_READY is an ordinary
     // answer here, not an error - it means "ask again next frame".
     const std::size_t words = static_cast<std::size_t>(slot.queryCount) * kWordsPerQuery;
-    const VkResult result = vkGetQueryPoolResults(
-        m_context->device(), m_pool, frameIndex * kQueriesPerFrame, slot.queryCount,
-        words * sizeof(std::uint64_t), m_readback.data(), kWordsPerQuery * sizeof(std::uint64_t),
-        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+    const VkResult result =
+        vkGetQueryPoolResults(m_context->device(),
+                              m_pool,
+                              frameIndex * kQueriesPerFrame,
+                              slot.queryCount,
+                              words * sizeof(std::uint64_t),
+                              m_readback.data(),
+                              kWordsPerQuery * sizeof(std::uint64_t),
+                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
     if (result != VK_SUCCESS && result != VK_NOT_READY) {
         return true; // a real failure: drop it rather than retry forever
     }
@@ -189,6 +192,7 @@ bool GpuProfiler::resolve(Slot& slot, std::uint32_t frameIndex)
         std::uint32_t zone = core::kInvalidZone;
         std::uint32_t query = 0;
     };
+
     Open stack[kMaxZones];
     std::uint32_t depth = 0;
 

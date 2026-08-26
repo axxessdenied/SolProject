@@ -1,8 +1,7 @@
-#include <sol/sim/weapons.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cmath>
+
+#include <sol/sim/weapons.hpp>
+#include <sol/test/test.hpp>
 
 using sol::core::DVec3;
 using sol::sim::computeInterceptDirection;
@@ -39,8 +38,7 @@ SOL_TEST(weapons_intercept_shooter_velocity_inherited)
     // stationary - direct line, guaranteed hit.
     DVec3 direction;
     const DVec3 velocity{0.0, 0.0, -200.0};
-    SOL_CHECK(computeInterceptDirection({}, velocity, {0.0, 100.0, 0.0}, velocity, 400.0,
-                                        direction));
+    SOL_CHECK(computeInterceptDirection({}, velocity, {0.0, 100.0, 0.0}, velocity, 400.0, direction));
     SOL_CHECK(std::abs(direction.y - 1.0) < 1e-9);
 }
 
@@ -48,8 +46,7 @@ SOL_TEST(weapons_intercept_impossible_falls_back_to_direct)
 {
     // Target receding at twice the projectile speed.
     DVec3 direction;
-    SOL_CHECK(!computeInterceptDirection({}, {}, {0.0, 0.0, -1000.0}, {0.0, 0.0, -800.0}, 400.0,
-                                         direction));
+    SOL_CHECK(!computeInterceptDirection({}, {}, {0.0, 0.0, -1000.0}, {0.0, 0.0, -800.0}, 400.0, direction));
     SOL_CHECK(std::abs(direction.z + 1.0) < 1e-9); // direct line fallback
 }
 

@@ -14,11 +14,16 @@ void* g_sinkUserData = nullptr;
 const char* levelPrefix(LogLevel level)
 {
     switch (level) {
-    case LogLevel::Trace: return "[trace] ";
-    case LogLevel::Info: return "[info ] ";
-    case LogLevel::Warn: return "[warn ] ";
-    case LogLevel::Error: return "[error] ";
-    case LogLevel::Fatal: return "[FATAL] ";
+    case LogLevel::Trace:
+        return "[trace] ";
+    case LogLevel::Info:
+        return "[info ] ";
+    case LogLevel::Warn:
+        return "[warn ] ";
+    case LogLevel::Error:
+        return "[error] ";
+    case LogLevel::Fatal:
+        return "[FATAL] ";
     }
     return "[?    ] ";
 }

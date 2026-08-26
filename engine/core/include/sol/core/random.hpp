@@ -16,10 +16,7 @@ class Rng
 public:
     Rng() { seed(0x853c'49e6'748f'ea9bull, 0); }
 
-    explicit Rng(std::uint64_t seedValue, std::uint64_t stream = 0)
-    {
-        seed(seedValue, stream);
-    }
+    explicit Rng(std::uint64_t seedValue, std::uint64_t stream = 0) { seed(seedValue, stream); }
 
     void seed(std::uint64_t seedValue, std::uint64_t stream = 0)
     {
@@ -34,8 +31,7 @@ public:
     {
         const std::uint64_t old = m_state;
         m_state = old * 6364136223846793005ull + m_inc;
-        const std::uint32_t xorshifted =
-            static_cast<std::uint32_t>(((old >> 18u) ^ old) >> 27u);
+        const std::uint32_t xorshifted = static_cast<std::uint32_t>(((old >> 18u) ^ old) >> 27u);
         const std::uint32_t rot = static_cast<std::uint32_t>(old >> 59u);
         return (xorshifted >> rot) | (xorshifted << ((0u - rot) & 31u));
     }
@@ -63,22 +59,13 @@ public:
     }
 
     // Uniform in [0, 1).
-    [[nodiscard]] float nextFloat01()
-    {
-        return static_cast<float>(nextU32() >> 8u) * 0x1.0p-24f;
-    }
+    [[nodiscard]] float nextFloat01() { return static_cast<float>(nextU32() >> 8u) * 0x1.0p-24f; }
 
     // Uniform in [0, 1).
-    [[nodiscard]] double nextDouble01()
-    {
-        return static_cast<double>(nextU64() >> 11u) * 0x1.0p-53;
-    }
+    [[nodiscard]] double nextDouble01() { return static_cast<double>(nextU64() >> 11u) * 0x1.0p-53; }
 
     // Uniform in [min, max].
-    [[nodiscard]] float rangeFloat(float min, float max)
-    {
-        return min + (max - min) * nextFloat01();
-    }
+    [[nodiscard]] float rangeFloat(float min, float max) { return min + (max - min) * nextFloat01(); }
 
     // Raw generator state, for serialization (determinism across save/load).
     struct RawState
@@ -86,7 +73,9 @@ public:
         std::uint64_t state = 0;
         std::uint64_t inc = 1;
     };
+
     [[nodiscard]] RawState rawState() const { return {m_state, m_inc}; }
+
     void setRawState(RawState raw)
     {
         m_state = raw.state;

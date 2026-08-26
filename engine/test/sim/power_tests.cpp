@@ -1,8 +1,7 @@
-#include <sol/sim/power.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cmath>
+
+#include <sol/sim/power.hpp>
+#include <sol/test/test.hpp>
 
 using sol::sim::addPip;
 using sol::sim::balancePips;
@@ -57,8 +56,7 @@ SOL_TEST(power_response_scales_interpolate)
     const PowerPips full{4, 4, 4};
     SOL_CHECK(std::abs(weaponRechargeScale(zero, tuning) - 0.2f) < 1e-6f);
     SOL_CHECK(std::abs(weaponRechargeScale(full, tuning) - 1.6f) < 1e-6f);
-    SOL_CHECK(std::abs(engineScale(PowerPips{2, 2, 2}, tuning) -
-                       (0.8f + (1.15f - 0.8f) * 0.5f)) < 1e-6f);
+    SOL_CHECK(std::abs(engineScale(PowerPips{2, 2, 2}, tuning) - (0.8f + (1.15f - 0.8f) * 0.5f)) < 1e-6f);
     SOL_CHECK(std::abs(shieldRegenScale(zero, tuning) - 1.5f) < 1e-6f); // 6 clamps to max 4
 }
 
@@ -66,14 +64,12 @@ SOL_TEST(power_engine_pips_scale_tuning)
 {
     const PowerTuning power;
     sol::sim::ShipTuning tuning; // forward 60, maxSpeed 220
-    const sol::sim::ShipTuning boosted =
-        applyEnginePips(tuning, PowerPips{0, 4, 2}, power);
+    const sol::sim::ShipTuning boosted = applyEnginePips(tuning, PowerPips{0, 4, 2}, power);
     SOL_CHECK(std::abs(boosted.forwardAccel - 60.0f * 1.15f) < 1e-4f);
     SOL_CHECK(std::abs(boosted.maxSpeed - 220.0f * 1.15f) < 1e-4f);
     SOL_CHECK(boosted.maxTurnRate == tuning.maxTurnRate); // turn rates untouched
 
-    const sol::sim::ShipTuning starved =
-        applyEnginePips(tuning, PowerPips{4, 0, 2}, power);
+    const sol::sim::ShipTuning starved = applyEnginePips(tuning, PowerPips{4, 0, 2}, power);
     SOL_CHECK(std::abs(starved.maxSpeed - 220.0f * 0.8f) < 1e-4f);
 }
 

@@ -18,10 +18,10 @@ enum class ShieldFacing
 
 struct DefenseTuning
 {
-    float shieldStrength = 100.0f;   // hp per facing
-    float shieldRegenRate = 8.0f;    // hp/s at regen scale 1 (SYS pips scale it)
-    float shieldRegenDelay = 4.0f;   // seconds a facing stays down after a hit
-    float armor = 50.0f;             // ablative, does not regenerate
+    float shieldStrength = 100.0f; // hp per facing
+    float shieldRegenRate = 8.0f;  // hp/s at regen scale 1 (SYS pips scale it)
+    float shieldRegenDelay = 4.0f; // seconds a facing stays down after a hit
+    float armor = 50.0f;           // ablative, does not regenerate
     float hull = 100.0f;
 };
 
@@ -49,15 +49,13 @@ struct DamageResult
 
 // Facing for a hit arriving from toSource (unit-ish vector, ship position
 // toward the damage source, sim space), given the ship's orientation.
-[[nodiscard]] ShieldFacing facingForHit(const core::Quat& orientation,
-                                        const core::DVec3& toSource);
+[[nodiscard]] ShieldFacing facingForHit(const core::Quat& orientation, const core::DVec3& toSource);
 
 void resetDefense(DefenseState& state, const DefenseTuning& tuning);
 
 // Shield facing -> armor -> hull. The hit facing's regen delay restarts even
 // when shields absorb everything.
-DamageResult applyDamage(DefenseState& state, const DefenseTuning& tuning, ShieldFacing facing,
-                         float amount);
+DamageResult applyDamage(DefenseState& state, const DefenseTuning& tuning, ShieldFacing facing, float amount);
 
 // Regenerates shields (per facing, after its delay) by regenScale (SYS pips).
 void stepDefense(DefenseState& state, const DefenseTuning& tuning, float regenScale, double dt);

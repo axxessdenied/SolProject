@@ -16,7 +16,9 @@ struct PushConstants
 
 } // namespace
 
-bool TonemapRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
+bool TonemapRenderer::initialize(rhi::Context& context,
+                                 VkFormat colorFormat,
+                                 VkFormat depthFormat,
                                  const char* shaderDirectory)
 {
     m_context = &context;
@@ -28,8 +30,7 @@ bool TonemapRenderer::initialize(rhi::Context& context, VkFormat colorFormat, Vk
     m_descriptorPool = rhi::createTextureDescriptorPool(context.device(), 1);
     m_descriptorSet = rhi::allocateDescriptorSet(context.device(), m_descriptorPool, m_setLayout);
     m_sampler = rhi::createClampSampler(context);
-    m_pipelineLayout =
-        rhi::createPipelineLayout(context.device(), &m_setLayout, 1, sizeof(PushConstants));
+    m_pipelineLayout = rhi::createPipelineLayout(context.device(), &m_setLayout, 1, sizeof(PushConstants));
     return reloadPipeline();
 }
 
@@ -75,22 +76,21 @@ void TonemapRenderer::draw(VkCommandBuffer commandBuffer, VkExtent2D extent, flo
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
-    const VkViewport viewport = {0.0f,
-                                 0.0f,
-                                 static_cast<float>(extent.width),
-                                 static_cast<float>(extent.height),
-                                 0.0f,
-                                 1.0f};
+    const VkViewport viewport = {
+        0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
     const VkRect2D scissor = {{0, 0}, extent};
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
     const PushConstants push = {{exposure, 0.0f, 0.0f, 0.0f}};
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
+    vkCmdPushConstants(commandBuffer,
+                       m_pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0,
+                       sizeof(push),
                        &push);
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1,
-                            &m_descriptorSet, 0, nullptr);
+    vkCmdBindDescriptorSets(
+        commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 }
 

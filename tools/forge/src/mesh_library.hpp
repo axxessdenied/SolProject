@@ -78,14 +78,15 @@ struct AssetEntry
 // game uploads. Showing the RGBA the document built would make the tool prettier
 // than the game and hide every artefact the compression introduces - the same
 // mistake as previewing a mesh at a distance no player ever sees it from.
-[[nodiscard]] bool loadTexture(const AssetEntry& entry, sol::assets::TextureData& out,
-                               std::string* error = nullptr);
+[[nodiscard]] bool
+loadTexture(const AssetEntry& entry, sol::assets::TextureData& out, std::string* error = nullptr);
 
 // The same evaluation and encode from a document already in memory: what the
 // editor calls after every accepted edit, so the hull in the viewport changes
 // while the panel is still open.
 [[nodiscard]] bool buildTextureData(const sol::assets::TextureDoc& doc,
-                                    sol::assets::TextureData& out, std::string* error = nullptr);
+                                    sol::assets::TextureData& out,
+                                    std::string* error = nullptr);
 
 // Dispatches on extension: `.forge` is parsed and evaluated, `.gltf`/`.glb` go
 // through the cooker's importer, `.smesh` through the runtime loader. All three
@@ -153,8 +154,10 @@ struct ImportOutcome
 // whose object was renamed, and it refuses to hand an object a part that
 // belongs to a different one, which is what renaming ONTO another object's old
 // name would otherwise do.
-[[nodiscard]] bool importGltfIntoDoc(const std::string& gltfPath, sol::assets::ForgeDoc& doc,
-                                     ImportOutcome& outcome, std::string* error = nullptr);
+[[nodiscard]] bool importGltfIntoDoc(const std::string& gltfPath,
+                                     sol::assets::ForgeDoc& doc,
+                                     ImportOutcome& outcome,
+                                     std::string* error = nullptr);
 
 // --- the inbox lifecycle (stage R) -------------------------------------------
 //
@@ -262,14 +265,13 @@ struct ModelMatch
 // AGENTS.md 4 draws; `sol::assets::DefDatabase` is engine, and models.toml is a
 // file. A missing directory is not an error - an installed tool without the
 // source tree beside it simply reports no authored rows.
-[[nodiscard]] bool loadModelCatalog(const std::string& dataDirectory,
-                                    sol::assets::DefDatabase& out, std::string* error);
+[[nodiscard]] bool
+loadModelCatalog(const std::string& dataDirectory, sol::assets::DefDatabase& out, std::string* error);
 
 // Every row whose `mesh` stem is this asset's, which is usually one and is
 // deliberately allowed to be several: six models already share five meshes.
-[[nodiscard]] std::vector<ModelMatch> matchModels(const sol::assets::DefDatabase& defs,
-                                                  const AssetEntry& entry,
-                                                  const MeshReport& report);
+[[nodiscard]] std::vector<ModelMatch>
+matchModels(const sol::assets::DefDatabase& defs, const AssetEntry& entry, const MeshReport& report);
 
 // A `[[ship]]` or `[[station]]` row naming a `[[model]]` that does not exist.
 //
@@ -312,8 +314,8 @@ struct MissingModelRef
 
 // The texture pixel under a cursor, given the preview's top-left corner. False
 // when the cursor is outside the image.
-[[nodiscard]] bool texturePixelAt(sol::core::Vec2 cursor, sol::core::Vec2 origin, int scale,
-                                  int width, int height, int& x, int& y);
+[[nodiscard]] bool texturePixelAt(
+    sol::core::Vec2 cursor, sol::core::Vec2 origin, int scale, int width, int height, int& x, int& y);
 
 // How far a gesture has travelled, in whole texture pixels.
 //

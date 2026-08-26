@@ -17,8 +17,10 @@ namespace game {
 // generated detail strings — a deque so growth never moves entries the rows
 // already point at. All row vectors are cleared and rebuilt; spans in
 // `panel` are set to them.
-void fillStationOutfitting(const SpaceWorld& world, const sol::assets::DefDatabase& defs,
-                           std::deque<std::string>& text, sol::ui::StationPanel& panel,
+void fillStationOutfitting(const SpaceWorld& world,
+                           const sol::assets::DefDatabase& defs,
+                           std::deque<std::string>& text,
+                           sol::ui::StationPanel& panel,
                            std::vector<sol::ui::OutfitRow>& moduleRows,
                            std::vector<sol::ui::OutfitRow>& weaponRows,
                            std::vector<sol::ui::OutfitRow>& crewCatalogRows,
@@ -29,7 +31,8 @@ void fillStationOutfitting(const SpaceWorld& world, const sol::assets::DefDataba
 
 // Fills the Missions tab (Phase 8c): the board's offers (with the min_rep
 // tier gate evaluated against player standing) and the journal.
-void fillStationMissions(const SpaceWorld& world, std::deque<std::string>& text,
+void fillStationMissions(const SpaceWorld& world,
+                         std::deque<std::string>& text,
                          sol::ui::StationPanel& panel,
                          std::vector<sol::ui::MissionRow>& offerRows,
                          std::vector<sol::ui::MissionRow>& journalRows);

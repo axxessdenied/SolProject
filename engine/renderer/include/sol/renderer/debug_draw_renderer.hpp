@@ -19,20 +19,23 @@ class DebugDrawRenderer
 public:
     static constexpr std::uint32_t kMaxVertices = 8192;
 
-    [[nodiscard]] bool initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
-                                  const char* shaderDirectory, std::uint32_t framesInFlight);
+    [[nodiscard]] bool initialize(rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
+                                  const char* shaderDirectory,
+                                  std::uint32_t framesInFlight);
     void shutdown();
     [[nodiscard]] bool reloadPipeline();
 
     void clear() { m_vertices.clear(); }
+
     void line(core::Vec3 a, core::Vec3 b, core::Vec4 color);
     void arrow(core::Vec3 from, core::Vec3 to, core::Vec4 color);
     // RGB basis lines for an orientation at a position.
     void axes(core::Vec3 origin, const core::Quat& orientation, float length);
 
     // Uploads this frame's lines and records the draw.
-    void draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-              const core::Mat4& viewProjection);
+    void draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, const core::Mat4& viewProjection);
 
 private:
     struct Vertex

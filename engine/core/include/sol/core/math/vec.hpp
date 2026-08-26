@@ -10,9 +10,13 @@ struct Vec2
     float y = 0.0f;
 
     [[nodiscard]] constexpr Vec2 operator+(Vec2 rhs) const { return {x + rhs.x, y + rhs.y}; }
+
     [[nodiscard]] constexpr Vec2 operator-(Vec2 rhs) const { return {x - rhs.x, y - rhs.y}; }
+
     [[nodiscard]] constexpr Vec2 operator*(float s) const { return {x * s, y * s}; }
+
     [[nodiscard]] constexpr Vec2 operator-() const { return {-x, -y}; }
+
     [[nodiscard]] constexpr bool operator==(const Vec2&) const = default;
 };
 
@@ -23,11 +27,17 @@ struct Vec3
     float z = 0.0f;
 
     [[nodiscard]] constexpr Vec3 operator+(Vec3 rhs) const { return {x + rhs.x, y + rhs.y, z + rhs.z}; }
+
     [[nodiscard]] constexpr Vec3 operator-(Vec3 rhs) const { return {x - rhs.x, y - rhs.y, z - rhs.z}; }
+
     [[nodiscard]] constexpr Vec3 operator*(float s) const { return {x * s, y * s, z * s}; }
+
     [[nodiscard]] constexpr Vec3 operator*(Vec3 rhs) const { return {x * rhs.x, y * rhs.y, z * rhs.z}; }
+
     [[nodiscard]] constexpr Vec3 operator/(float s) const { return {x / s, y / s, z / s}; }
+
     [[nodiscard]] constexpr Vec3 operator-() const { return {-x, -y, -z}; }
+
     [[nodiscard]] constexpr bool operator==(const Vec3&) const = default;
 
     constexpr Vec3& operator+=(Vec3 rhs)
@@ -37,6 +47,7 @@ struct Vec3
         z += rhs.z;
         return *this;
     }
+
     constexpr Vec3& operator-=(Vec3 rhs)
     {
         x -= rhs.x;
@@ -44,6 +55,7 @@ struct Vec3
         z -= rhs.z;
         return *this;
     }
+
     constexpr Vec3& operator*=(float s)
     {
         x *= s;
@@ -64,11 +76,14 @@ struct Vec4
     {
         return {x + rhs.x, y + rhs.y, z + rhs.z, w + rhs.w};
     }
+
     [[nodiscard]] constexpr Vec4 operator-(Vec4 rhs) const
     {
         return {x - rhs.x, y - rhs.y, z - rhs.z, w - rhs.w};
     }
+
     [[nodiscard]] constexpr Vec4 operator*(float s) const { return {x * s, y * s, z * s, w * s}; }
+
     [[nodiscard]] constexpr bool operator==(const Vec4&) const = default;
 
     [[nodiscard]] constexpr Vec3 xyz() const { return {x, y, z}; }
@@ -82,9 +97,13 @@ struct DVec3
     double z = 0.0;
 
     [[nodiscard]] constexpr DVec3 operator+(DVec3 rhs) const { return {x + rhs.x, y + rhs.y, z + rhs.z}; }
+
     [[nodiscard]] constexpr DVec3 operator-(DVec3 rhs) const { return {x - rhs.x, y - rhs.y, z - rhs.z}; }
+
     [[nodiscard]] constexpr DVec3 operator*(double s) const { return {x * s, y * s, z * s}; }
+
     [[nodiscard]] constexpr DVec3 operator-() const { return {-x, -y, -z}; }
+
     [[nodiscard]] constexpr bool operator==(const DVec3&) const = default;
 
     constexpr DVec3& operator+=(DVec3 rhs)
@@ -196,8 +215,7 @@ struct DVec3
 
 [[nodiscard]] inline bool nearlyEqual(Vec3 a, Vec3 b, float epsilon = 1e-5f)
 {
-    return nearlyEqual(a.x, b.x, epsilon) && nearlyEqual(a.y, b.y, epsilon) &&
-           nearlyEqual(a.z, b.z, epsilon);
+    return nearlyEqual(a.x, b.x, epsilon) && nearlyEqual(a.y, b.y, epsilon) && nearlyEqual(a.z, b.z, epsilon);
 }
 
 } // namespace sol::core

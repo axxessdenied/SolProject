@@ -1,14 +1,13 @@
+#include <cmath>
+#include <cstdint>
+#include <span>
+
+#include <sol/core/serialize.hpp>
 #include <sol/sim/economy.hpp>
 #include <sol/sim/mining.hpp>
 #include <sol/sim/trade_route.hpp>
 #include <sol/sim/universe.hpp>
-
-#include <sol/core/serialize.hpp>
 #include <sol/test/test.hpp>
-
-#include <cmath>
-#include <cstdint>
-#include <span>
 
 using sol::sim::Economy;
 using sol::sim::EconomyArchetype;
@@ -257,8 +256,7 @@ SOL_TEST(economy_trader_route_decomposes_a_haul)
         } else {
             SOL_CHECK(route.leg == TraderLeg::Arrive);
             SOL_CHECK(route.system == toSystem);
-            SOL_CHECK(std::abs(route.progress - static_cast<float>(elapsed - 10) / 5.0f) <
-                      1.0e-5f);
+            SOL_CHECK(std::abs(route.progress - static_cast<float>(elapsed - 10) / 5.0f) < 1.0e-5f);
         }
     }
 
@@ -353,13 +351,15 @@ SOL_TEST(economy_trade_route_picks_the_gate_that_leads_home)
     //   0 -- 1 -- 2 -- 3        and a spur 0 -- 4 that leads nowhere useful
     const auto hops = [](std::uint32_t from, std::uint32_t to) -> std::uint32_t {
         static const std::uint32_t table[5][5] = {
-            {0, 1, 2, 3, 1}, {1, 0, 1, 2, 2}, {2, 1, 0, 1, 3},
-            {3, 2, 1, 0, 4}, {1, 2, 3, 4, 0},
+            {0, 1, 2, 3, 1},
+            {1, 0, 1, 2, 2},
+            {2, 1, 0, 1, 3},
+            {3, 2, 1, 0, 4},
+            {1, 2, 3, 4, 0},
         };
         return table[from][to];
     };
-    const std::vector<GateSpec> fromZero = {{.toSystem = 1, .position = {}},
-                                            {.toSystem = 4, .position = {}}};
+    const std::vector<GateSpec> fromZero = {{.toSystem = 1, .position = {}}, {.toSystem = 4, .position = {}}};
     // Toward 3, only the gate to 1 shortens the trip; the spur to 4 lengthens
     // it, and a naive "take the first gate" would have taken either.
     SOL_CHECK(sol::sim::gateTowardSystem(std::span<const GateSpec>(fromZero), 0, 3, hops) == 0);
@@ -385,8 +385,7 @@ SOL_TEST(economy_a_hopless_leg_folds_into_one_straight_run)
     SOL_CHECK(hoplessProgress(TraderLeg::Arrive, 1.0f) == 1.0f);
     // The seam is continuous: the end of one window and the start of the next
     // are the same point, which is the whole reason for the fold.
-    SOL_CHECK(hoplessProgress(TraderLeg::Depart, 1.0f) ==
-              hoplessProgress(TraderLeg::Arrive, 0.0f));
+    SOL_CHECK(hoplessProgress(TraderLeg::Depart, 1.0f) == hoplessProgress(TraderLeg::Arrive, 0.0f));
 
     // And the point itself moves monotonically down the line.
     const sol::core::DVec3 from{0.0, 0.0, 0.0};
@@ -405,7 +404,7 @@ SOL_TEST(economy_the_schedule_brings_a_trader_in_on_time)
     // and the ship flies the ends, and this pins the shape of that.
     using sol::sim::scheduledLaneDistance;
     constexpr double kLeg = 90.0;
-    constexpr double kLength = 6.0e8;   // station -> gate, the shipped figure
+    constexpr double kLength = 6.0e8;    // station -> gate, the shipped figure
     constexpr double kApproach = 6000.0; // steerTravel's envelope distance
     constexpr double kWindow = 35.0;
     const auto at = [&](double remaining) {
@@ -432,8 +431,7 @@ SOL_TEST(economy_the_schedule_brings_a_trader_in_on_time)
     SOL_CHECK(std::isfinite(scheduledLaneDistance(10.0, kLeg, 0.0, kApproach, kWindow)));
     // A leg too short to hold the window still keeps both ends honest.
     SOL_CHECK(std::abs(scheduledLaneDistance(0.0, 10.0, 1000.0, kApproach, kWindow)) < 1.0e-9);
-    SOL_CHECK(std::abs(scheduledLaneDistance(10.0, 10.0, 1000.0, kApproach, kWindow) - 1000.0) <
-              1.0e-9);
+    SOL_CHECK(std::abs(scheduledLaneDistance(10.0, 10.0, 1000.0, kApproach, kWindow) - 1000.0) < 1.0e-9);
 }
 
 SOL_TEST(economy_lane_slots_keep_a_convoy_from_sharing_coordinates)
@@ -535,8 +533,8 @@ SOL_TEST(economy_hop_count_agrees_with_the_leg_it_quoted)
     }
     SOL_REQUIRE(economy.traders()[0].phase == TraderPhase::InTransit);
     const TraderRoute route = economy.route(0);
-    const double quoted = params.traderLegSeconds * 2.0 +
-                          static_cast<double>(route.hops) * params.jumpSeconds;
+    const double quoted =
+        params.traderLegSeconds * 2.0 + static_cast<double>(route.hops) * params.jumpSeconds;
     SOL_CHECK(economy.traders()[0].legTotal == quoted);
 }
 
@@ -550,8 +548,7 @@ namespace {
 EconomyParams chainParams()
 {
     EconomyParams params;
-    params.commodities = {EconomyCommodity{.basePrice = 10.0f},
-                          EconomyCommodity{.basePrice = 30.0f}};
+    params.commodities = {EconomyCommodity{.basePrice = 10.0f}, EconomyCommodity{.basePrice = 30.0f}};
     EconomyArchetype mine;
     mine.production = {1.0f, 0.0f};
     mine.stockCapacity = 1'000.0f;
@@ -763,7 +760,8 @@ enum Archetype : std::uint32_t
 
     const auto archetype = [](std::initializer_list<float> production,
                               std::initializer_list<float> consumption,
-                              std::initializer_list<float> feedstock, bool extracts) {
+                              std::initializer_list<float> feedstock,
+                              bool extracts) {
         EconomyArchetype out;
         out.production = production;
         out.consumption = consumption;
@@ -782,10 +780,8 @@ enum Archetype : std::uint32_t
     //                            food   ore  metal  mach
     params.archetypes[Agri] = archetype({0.26f, 0, 0, 0}, {0, 0, 0, 0.11f}, {}, false);
     params.archetypes[Mine] = archetype({0, 0.28f, 0, 0}, {0.05f, 0, 0, 0}, {}, true);
-    params.archetypes[Refinery] =
-        archetype({0, 0, 0.11f, 0}, {0.035f, 0, 0, 0}, {0, 0.17f, 0, 0}, false);
-    params.archetypes[Factory] =
-        archetype({0, 0, 0, 0.12f}, {0.05f, 0, 0, 0}, {0, 0, 0.15f, 0}, false);
+    params.archetypes[Refinery] = archetype({0, 0, 0.11f, 0}, {0.035f, 0, 0, 0}, {0, 0.17f, 0, 0}, false);
+    params.archetypes[Factory] = archetype({0, 0, 0, 0.12f}, {0.05f, 0, 0, 0}, {0, 0, 0.15f, 0}, false);
     return params;
 }
 
@@ -883,8 +879,7 @@ SOL_TEST(economy_shipped_rates_hold_a_steady_state)
             const float cap = economy.capacityOf(m);
             stock += units;
             capacity += cap;
-            const EconomyArchetype& archetype =
-                params.archetypes[economy.markets()[m].archetype];
+            const EconomyArchetype& archetype = params.archetypes[economy.markets()[m].archetype];
             const bool needs = archetype.feedstock[c] > 0.0f || archetype.consumption[c] > 0.0f;
             const bool produces = archetype.production[c] > 0.0f;
             wants += needs ? 1u : 0u;
@@ -994,8 +989,7 @@ SOL_TEST(economy_a_detained_trader_holds_its_clock_and_then_carries_on)
     Economy economy;
     economy.initialize(galaxy, tinyParams(), 5);
     SOL_REQUIRE(economy.traders().size() == 1);
-    for (int second = 0; second < 200 && economy.traders()[0].phase != TraderPhase::InTransit;
-         ++second) {
+    for (int second = 0; second < 200 && economy.traders()[0].phase != TraderPhase::InTransit; ++second) {
         economy.tick(galaxy, 1.0);
     }
     SOL_REQUIRE(economy.traders()[0].phase == TraderPhase::InTransit);
@@ -1079,8 +1073,7 @@ SOL_TEST(economy_initialize_scatters_the_fleet_instead_of_starting_it_in_step)
     SOL_CHECK(byLeg[static_cast<std::size_t>(TraderLeg::Jump)] > 0);
     SOL_CHECK(byLeg[static_cast<std::size_t>(TraderLeg::Arrive)] > 0);
     // And the fleet is not bunched: the old behaviour put all of it in Idle.
-    SOL_CHECK(byLeg[static_cast<std::size_t>(TraderLeg::None)] <
-              economy.traders().size() / 2);
+    SOL_CHECK(byLeg[static_cast<std::size_t>(TraderLeg::None)] < economy.traders().size() / 2);
     // ⚑ It also creates no goods. The scattered legs are deadheads, so the
     // galaxy's books open holding exactly what they always did — without which
     // this would be a quiet change to the equilibrium 8g tuned.
@@ -1172,8 +1165,7 @@ SOL_TEST(economy_holds_a_steady_state_while_losing_traders)
             const float cap = economy.capacityOf(m);
             stock += units;
             capacity += cap;
-            const EconomyArchetype& archetype =
-                params.archetypes[economy.markets()[m].archetype];
+            const EconomyArchetype& archetype = params.archetypes[economy.markets()[m].archetype];
             const bool needs = archetype.feedstock[c] > 0.0f || archetype.consumption[c] > 0.0f;
             const bool produces = archetype.production[c] > 0.0f;
             wants += needs ? 1u : 0u;

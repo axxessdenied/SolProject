@@ -40,8 +40,7 @@ VkDescriptorPool createTextureDescriptorPool(VkDevice device, std::uint32_t maxS
     return pool;
 }
 
-VkDescriptorSet allocateDescriptorSet(VkDevice device, VkDescriptorPool pool,
-                                      VkDescriptorSetLayout layout)
+VkDescriptorSet allocateDescriptorSet(VkDevice device, VkDescriptorPool pool, VkDescriptorSetLayout layout)
 {
     VkDescriptorSetAllocateInfo allocateInfo = {};
     allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;

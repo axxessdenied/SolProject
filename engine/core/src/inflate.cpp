@@ -115,19 +115,21 @@ struct Huffman
 };
 
 // Length codes 257..285: base lengths and extra bits.
-constexpr std::uint16_t kLengthBase[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19, 23, 27,
+constexpr std::uint16_t kLengthBase[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
                                            31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
 constexpr std::uint8_t kLengthExtra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
                                            2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
 
 // Distance codes 0..29.
-constexpr std::uint16_t kDistBase[30] = {1,    2,    3,    4,    5,    7,     9,     13,    17,   25,
-                                         33,   49,   65,   97,   129,  193,   257,   385,   513,  769,
-                                         1025, 1537, 2049, 3073, 4097, 6145,  8193,  12289, 16385, 24577};
-constexpr std::uint8_t kDistExtra[30] = {0, 0, 0,  0,  1,  1,  2,  2,  3,  3,  4,  4,  5,  5,  6,
-                                         6, 7, 7,  8,  8,  9,  9,  10, 10, 11, 11, 12, 12, 13, 13};
+constexpr std::uint16_t kDistBase[30] = {1,    2,    3,    4,    5,    7,    9,    13,    17,    25,
+                                         33,   49,   65,   97,   129,  193,  257,  385,   513,   769,
+                                         1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
+constexpr std::uint8_t kDistExtra[30] = {0, 0, 0, 0, 1, 1, 2, 2,  3,  3,  4,  4,  5,  5,  6,
+                                         6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
-bool inflateBlockData(BitReader& reader, const Huffman& litLen, const Huffman& dist,
+bool inflateBlockData(BitReader& reader,
+                      const Huffman& litLen,
+                      const Huffman& dist,
                       std::vector<std::uint8_t>& out)
 {
     while (true) {
@@ -169,13 +171,18 @@ bool inflateBlockData(BitReader& reader, const Huffman& litLen, const Huffman& d
 bool inflateFixedBlock(BitReader& reader, std::vector<std::uint8_t>& out)
 {
     std::uint8_t litLenLengths[kMaxLitLenSymbols];
-    for (int i = 0; i < 144; ++i) litLenLengths[i] = 8;
-    for (int i = 144; i < 256; ++i) litLenLengths[i] = 9;
-    for (int i = 256; i < 280; ++i) litLenLengths[i] = 7;
-    for (int i = 280; i < 288; ++i) litLenLengths[i] = 8;
+    for (int i = 0; i < 144; ++i)
+        litLenLengths[i] = 8;
+    for (int i = 144; i < 256; ++i)
+        litLenLengths[i] = 9;
+    for (int i = 256; i < 280; ++i)
+        litLenLengths[i] = 7;
+    for (int i = 280; i < 288; ++i)
+        litLenLengths[i] = 8;
 
     std::uint8_t distLengths[kMaxDistSymbols];
-    for (int i = 0; i < kMaxDistSymbols; ++i) distLengths[i] = 5;
+    for (int i = 0; i < kMaxDistSymbols; ++i)
+        distLengths[i] = 5;
 
     Huffman litLen;
     Huffman dist;
@@ -194,8 +201,8 @@ bool inflateDynamicBlock(BitReader& reader, std::vector<std::uint8_t>& out)
         return false;
     }
 
-    static constexpr std::uint8_t kCodeLenOrder[kMaxCodeLenSymbols] = {16, 17, 18, 0, 8,  7, 9,  6, 10, 5,
-                                                                       11, 4,  12, 3, 13, 2, 14, 1, 15};
+    static constexpr std::uint8_t kCodeLenOrder[kMaxCodeLenSymbols] = {
+        16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
     std::uint8_t codeLenLengths[kMaxCodeLenSymbols] = {};
     for (int i = 0; i < hclen; ++i) {
         codeLenLengths[kCodeLenOrder[i]] = static_cast<std::uint8_t>(reader.bits(3));
@@ -255,8 +262,8 @@ bool inflateStoredBlock(BitReader& reader, std::vector<std::uint8_t>& out)
     }
     const std::uint16_t length =
         static_cast<std::uint16_t>(reader.data[reader.bytePos] | (reader.data[reader.bytePos + 1] << 8));
-    const std::uint16_t inverted = static_cast<std::uint16_t>(reader.data[reader.bytePos + 2] |
-                                                              (reader.data[reader.bytePos + 3] << 8));
+    const std::uint16_t inverted =
+        static_cast<std::uint16_t>(reader.data[reader.bytePos + 2] | (reader.data[reader.bytePos + 3] << 8));
     reader.bytePos += 4;
     if (length != static_cast<std::uint16_t>(~inverted)) {
         return false;
@@ -284,10 +291,17 @@ bool rawInflate(const std::uint8_t* data, std::size_t size, std::vector<std::uin
 
         bool ok = false;
         switch (type) {
-        case 0: ok = inflateStoredBlock(reader, out); break;
-        case 1: ok = inflateFixedBlock(reader, out); break;
-        case 2: ok = inflateDynamicBlock(reader, out); break;
-        default: return false;
+        case 0:
+            ok = inflateStoredBlock(reader, out);
+            break;
+        case 1:
+            ok = inflateFixedBlock(reader, out);
+            break;
+        case 2:
+            ok = inflateDynamicBlock(reader, out);
+            break;
+        default:
+            return false;
         }
         if (!ok || reader.overrun) {
             return false;
@@ -333,10 +347,9 @@ bool zlibInflate(const std::uint8_t* data, std::size_t size, std::vector<std::ui
     }
 
     const std::uint8_t* checksum = data + size - 4;
-    const std::uint32_t expected = (static_cast<std::uint32_t>(checksum[0]) << 24) |
-                                   (static_cast<std::uint32_t>(checksum[1]) << 16) |
-                                   (static_cast<std::uint32_t>(checksum[2]) << 8) |
-                                   static_cast<std::uint32_t>(checksum[3]);
+    const std::uint32_t expected =
+        (static_cast<std::uint32_t>(checksum[0]) << 24) | (static_cast<std::uint32_t>(checksum[1]) << 16) |
+        (static_cast<std::uint32_t>(checksum[2]) << 8) | static_cast<std::uint32_t>(checksum[3]);
     return adler32(out.data() + startSize, out.size() - startSize) == expected;
 }
 

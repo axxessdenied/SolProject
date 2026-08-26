@@ -15,8 +15,9 @@ class Column
 public:
     Column(const Rect& bounds, float padding = 0.0f, float spacing = 0.0f)
         : m_bounds{{bounds.min.x + padding, bounds.min.y + padding},
-                   {bounds.max.x - padding, bounds.max.y - padding}},
-          m_spacing(spacing), m_cursor(bounds.min.y + padding)
+                   {bounds.max.x - padding, bounds.max.y - padding}}
+        , m_spacing(spacing)
+        , m_cursor(bounds.min.y + padding)
     {
     }
 
@@ -38,7 +39,9 @@ public:
     }
 
     [[nodiscard]] float cursor() const { return m_cursor; }
+
     [[nodiscard]] float width() const { return m_bounds.width(); }
+
     // Height consumed so far, spacing after the last row excluded.
     [[nodiscard]] float consumed() const
     {
@@ -91,8 +94,8 @@ public:
         if (count <= 0) {
             return free;
         }
-        const float each = (free.width() - m_spacing * static_cast<float>(count - 1)) /
-                           static_cast<float>(count);
+        const float each =
+            (free.width() - m_spacing * static_cast<float>(count - 1)) / static_cast<float>(count);
         const float start = free.min.x + (each + m_spacing) * static_cast<float>(index);
         return {{start, free.min.y}, {start + each, free.max.y}};
     }

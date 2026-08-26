@@ -28,13 +28,14 @@ void fail(std::string* outError, std::string message)
     }
 }
 
-bool checkKeys(const TomlValue& table, std::initializer_list<const char*> allowed, const char* context,
+bool checkKeys(const TomlValue& table,
+               std::initializer_list<const char*> allowed,
+               const char* context,
                std::string* outError)
 {
     for (const std::pair<std::string, TomlValue>& member : table.members()) {
-        const bool known = std::any_of(allowed.begin(), allowed.end(), [&](const char* key) {
-            return member.first == key;
-        });
+        const bool known =
+            std::any_of(allowed.begin(), allowed.end(), [&](const char* key) { return member.first == key; });
         if (!known) {
             fail(outError, std::string(context) + ": unknown key '" + member.first + "'");
             return false;
@@ -61,8 +62,11 @@ struct PendingGlyph
 
 } // namespace
 
-bool bakeFont(const char* manifestText, std::size_t manifestLength, const std::string& sourceDirectory,
-              BakedFont& out, std::string* outError)
+bool bakeFont(const char* manifestText,
+              std::size_t manifestLength,
+              const std::string& sourceDirectory,
+              BakedFont& out,
+              std::string* outError)
 {
     out = BakedFont();
 
@@ -163,8 +167,8 @@ bool bakeFont(const char* manifestText, std::size_t manifestLength, const std::s
             }
         }
 
-        const std::string sourcePath = sourceDirectory.empty() ? source->asString()
-                                                               : sourceDirectory + "/" + source->asString();
+        const std::string sourcePath =
+            sourceDirectory.empty() ? source->asString() : sourceDirectory + "/" + source->asString();
         auto cached = sourceCache.find(sourcePath);
         if (cached == sourceCache.end()) {
             std::vector<std::uint8_t> bytes;
@@ -177,8 +181,8 @@ bool bakeFont(const char* manifestText, std::size_t manifestLength, const std::s
 
         assets::TrueTypeFont font;
         if (!font.parse(cached->second)) {
-            fail(outError, "font style '" + name->asString() + "': " + sourcePath +
-                               " is not a TrueType outline font");
+            fail(outError,
+                 "font style '" + name->asString() + "': " + sourcePath + " is not a TrueType outline font");
             return false;
         }
 
@@ -202,8 +206,9 @@ bool bakeFont(const char* manifestText, std::size_t manifestLength, const std::s
             PendingGlyph entry;
             entry.codepoint = codepoint;
             if (!font.rasterizeGlyph(glyph, scale, entry.bitmap)) {
-                fail(outError, "font style '" + name->asString() + "': failed to rasterize U+" +
-                                   std::to_string(static_cast<std::uint32_t>(codepoint)));
+                fail(outError,
+                     "font style '" + name->asString() + "': failed to rasterize U+" +
+                         std::to_string(static_cast<std::uint32_t>(codepoint)));
                 return false;
             }
             pending.push_back(std::move(entry));
@@ -260,7 +265,8 @@ bool bakeFont(const char* manifestText, std::size_t manifestLength, const std::s
             const std::size_t destination =
                 static_cast<std::size_t>(placements[i].second + y) * out.atlasWidth + placements[i].first;
             std::memcpy(out.atlas.data() + destination,
-                        bitmap.coverage.data() + static_cast<std::size_t>(y) * bitmap.width, bitmap.width);
+                        bitmap.coverage.data() + static_cast<std::size_t>(y) * bitmap.width,
+                        bitmap.width);
         }
     }
 

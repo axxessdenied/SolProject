@@ -1,9 +1,8 @@
-#include <sol/ui/pick.hpp>
-#include <sol/ui/radar_projection.hpp>
+#include <vector>
 
 #include <sol/test/test.hpp>
-
-#include <vector>
+#include <sol/ui/pick.hpp>
+#include <sol/ui/radar_projection.hpp>
 
 using sol::core::Vec2;
 using sol::core::Vec3;
@@ -29,8 +28,8 @@ const float kFocal = focalLength(720.0f, 1.0f); // 45 degrees half-angle: focal 
 // A candidate `pixels` to the right of the boresight at `range` meters. Built
 // from the projection's own inverse relation so the tests state where a thing
 // is on screen rather than restating the arithmetic that puts it there.
-PickCandidate at(float pixelsRight, float pixelsDown, double range, std::uint32_t selection,
-                 float screenRadius = 0.0f)
+PickCandidate
+at(float pixelsRight, float pixelsDown, double range, std::uint32_t selection, float screenRadius = 0.0f)
 {
     PickCandidate candidate;
     candidate.directionCamera = {pixelsRight / kFocal, -pixelsDown / kFocal, -1.0f};
@@ -87,14 +86,12 @@ SOL_TEST(pick_takes_the_nearest_to_the_cursor_then_the_nearer_in_world)
 {
     // A fighter 10 px right at 2 km, a freighter 4 px right at 90 km: the
     // cursor is on the freighter, and screen distance decides.
-    const std::vector<PickCandidate> candidates = {at(10.0f, 0.0f, 2000.0, 1),
-                                                   at(4.0f, 0.0f, 90000.0, 2)};
+    const std::vector<PickCandidate> candidates = {at(10.0f, 0.0f, 2000.0, 1), at(4.0f, 0.0f, 90000.0, 2)};
     SOL_CHECK(pickNearest(candidates, {kCenter.x + 4.0f, kCenter.y}, kCenter, kFocal) == 1);
 
     // Exactly co-located on screen: the nearer one in world wins, so a fighter
     // silhouetted against a planet is picked over the planet.
-    const std::vector<PickCandidate> stacked = {at(6.0f, 0.0f, 1.0e9, 3),
-                                                at(6.0f, 0.0f, 3000.0, 4)};
+    const std::vector<PickCandidate> stacked = {at(6.0f, 0.0f, 1.0e9, 3), at(6.0f, 0.0f, 3000.0, 4)};
     const std::size_t hit = pickNearest(stacked, {kCenter.x + 6.0f, kCenter.y}, kCenter, kFocal);
     SOL_CHECK(hit == 1);
     SOL_CHECK(stacked[hit].selection == 4);
@@ -129,12 +126,10 @@ SOL_TEST(radar_dot_is_where_the_blip_is_drawn)
 
     // The composition the draw loop performs: plotted point, carried to the
     // end of its altitude stalk. The hit test is only honest if it agrees.
-    const Vec2 point =
-        sol::ui::radarPoint(offset, center, sol::ui::kRadarPlotRadius, range);
+    const Vec2 point = sol::ui::radarPoint(offset, center, sol::ui::kRadarPlotRadius, range);
     const float stalk = sol::ui::radarStalk(offset, sol::ui::kRadarStalkLimit);
     const Vec2 dot =
-        sol::ui::radarDot(offset, center, sol::ui::kRadarPlotRadius, range,
-                          sol::ui::kRadarStalkLimit);
+        sol::ui::radarDot(offset, center, sol::ui::kRadarPlotRadius, range, sol::ui::kRadarStalkLimit);
     SOL_CHECK(nearlyEqual(dot.x, point.x));
     SOL_CHECK(nearlyEqual(dot.y, point.y + stalk));
     SOL_CHECK(!nearlyEqual(stalk, 0.0f)); // the case worth testing is a real stalk
@@ -147,13 +142,12 @@ SOL_TEST(radar_pick_hits_the_blip_that_was_drawn)
 
     // A high near contact, a low far one, and one past the rim that clamps -
     // the three cases the disc draws differently and the pick must not.
-    const std::vector<Vec3> offsets = {{200.0f, 400.0f, -300.0f},
-                                       {-9000.0f, -2000.0f, 5000.0f},
-                                       {0.0f, 0.0f, -1.0e12f}};
+    const std::vector<Vec3> offsets = {
+        {200.0f, 400.0f, -300.0f}, {-9000.0f, -2000.0f, 5000.0f}, {0.0f, 0.0f, -1.0e12f}};
     std::vector<Vec2> dots;
     for (const Vec3& offset : offsets) {
-        dots.push_back(sol::ui::radarDot(offset, center, sol::ui::kRadarPlotRadius, range,
-                                         sol::ui::kRadarStalkLimit));
+        dots.push_back(
+            sol::ui::radarDot(offset, center, sol::ui::kRadarPlotRadius, range, sol::ui::kRadarStalkLimit));
     }
 
     for (std::size_t i = 0; i < dots.size(); ++i) {
@@ -171,10 +165,9 @@ SOL_TEST(inside_disc_routes_the_click)
 {
     const Vec2 center = sol::ui::radarCenter({1280.0f, 720.0f}, 24.0f);
     SOL_CHECK(insideDisc(center, center, sol::ui::kRadarRadius));
-    SOL_CHECK(insideDisc({center.x + sol::ui::kRadarRadius - 1.0f, center.y}, center,
-                         sol::ui::kRadarRadius));
-    SOL_CHECK(!insideDisc({center.x + sol::ui::kRadarRadius + 1.0f, center.y}, center,
-                          sol::ui::kRadarRadius));
+    SOL_CHECK(insideDisc({center.x + sol::ui::kRadarRadius - 1.0f, center.y}, center, sol::ui::kRadarRadius));
+    SOL_CHECK(
+        !insideDisc({center.x + sol::ui::kRadarRadius + 1.0f, center.y}, center, sol::ui::kRadarRadius));
     // The disc sits above the bottom margin, and the flight view above it.
     SOL_CHECK(!insideDisc({640.0f, 360.0f}, center, sol::ui::kRadarRadius));
 }
@@ -235,10 +228,8 @@ SOL_TEST(an_inactive_nearest_pick_never_picks)
 // transposed or sign-flipped expression passes trivially on anything centred.
 SOL_TEST(a_ray_through_a_projected_point_points_back_at_it)
 {
-    const Vec3 samples[] = {{1.5f, 0.75f, -4.0f},
-                            {-2.25f, 1.9f, -10.0f},
-                            {0.4f, -3.1f, -2.5f},
-                            {-0.05f, -0.02f, -0.3f}};
+    const Vec3 samples[] = {
+        {1.5f, 0.75f, -4.0f}, {-2.25f, 1.9f, -10.0f}, {0.4f, -3.1f, -2.5f}, {-0.05f, -0.02f, -0.3f}};
     for (const Vec3& point : samples) {
         const sol::ui::ScreenPoint projected = screenPoint(point, kCenter, kFocal);
         SOL_REQUIRE(projected.inFront);
@@ -290,8 +281,7 @@ SOL_TEST(a_screen_radius_matches_the_projection_of_a_point_at_its_edge)
     SOL_CHECK(nearlyEqual(pixels, point.position.x - kCenter.x));
 
     // Twice as far is half the size, which is the whole content of the rule.
-    SOL_CHECK(nearlyEqual(sol::ui::screenRadiusPixels(radius, distance * 2.0, kFocal),
-                          pixels * 0.5f));
+    SOL_CHECK(nearlyEqual(sol::ui::screenRadiusPixels(radius, distance * 2.0, kFocal), pixels * 0.5f));
 
     // ⚑ The edge both callers need to agree about: standing at or inside the
     // centre must read enormous rather than dividing by zero, so a pick stays

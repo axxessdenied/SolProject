@@ -35,25 +35,30 @@ class TomlValue
 public:
     // Parses a complete document; on failure returns false and sets outError
     // to "line N: message".
-    [[nodiscard]] static bool parse(const char* text, std::size_t length, TomlValue& out,
-                                    std::string* outError = nullptr);
+    [[nodiscard]] static bool
+    parse(const char* text, std::size_t length, TomlValue& out, std::string* outError = nullptr);
 
     [[nodiscard]] TomlType type() const { return m_type; }
+
     [[nodiscard]] bool isBool() const { return m_type == TomlType::Bool; }
+
     [[nodiscard]] bool isInteger() const { return m_type == TomlType::Integer; }
+
     [[nodiscard]] bool isFloat() const { return m_type == TomlType::Float; }
+
     [[nodiscard]] bool isString() const { return m_type == TomlType::String; }
+
     [[nodiscard]] bool isArray() const { return m_type == TomlType::Array; }
+
     [[nodiscard]] bool isTable() const { return m_type == TomlType::Table; }
 
-    [[nodiscard]] bool asBool(bool fallback = false) const
-    {
-        return isBool() ? m_bool : fallback;
-    }
+    [[nodiscard]] bool asBool(bool fallback = false) const { return isBool() ? m_bool : fallback; }
+
     [[nodiscard]] std::int64_t asInteger(std::int64_t fallback = 0) const
     {
         return isInteger() ? m_integer : fallback;
     }
+
     // Floats and integers both read as double (data files rarely care).
     [[nodiscard]] double asFloat(double fallback = 0.0) const
     {
@@ -62,6 +67,7 @@ public:
         }
         return isInteger() ? static_cast<double>(m_integer) : fallback;
     }
+
     [[nodiscard]] const std::string& asString() const { return m_string; }
 
     // Array/table element count; 0 for other types.
@@ -78,10 +84,7 @@ public:
     [[nodiscard]] const TomlValue* findPath(const char* path) const;
 
     // Table member iteration, in file order.
-    [[nodiscard]] const std::vector<std::pair<std::string, TomlValue>>& members() const
-    {
-        return m_table;
-    }
+    [[nodiscard]] const std::vector<std::pair<std::string, TomlValue>>& members() const { return m_table; }
 
 private:
     friend class TomlParser;

@@ -24,91 +24,115 @@ struct ActionInfo
 // drift apart across four switch statements.
 const ActionInfo kActions[] = {
     {Action::PitchUp, ActionGroup::Flight, "pitch_up", "Pitch Up", InputChord::ofKey(Key::Up)},
-    {Action::PitchDown, ActionGroup::Flight, "pitch_down", "Pitch Down",
-     InputChord::ofKey(Key::Down)},
+    {Action::PitchDown, ActionGroup::Flight, "pitch_down", "Pitch Down", InputChord::ofKey(Key::Down)},
     {Action::YawLeft, ActionGroup::Flight, "yaw_left", "Yaw Left", InputChord::ofKey(Key::Left)},
-    {Action::YawRight, ActionGroup::Flight, "yaw_right", "Yaw Right",
-     InputChord::ofKey(Key::Right)},
+    {Action::YawRight, ActionGroup::Flight, "yaw_right", "Yaw Right", InputChord::ofKey(Key::Right)},
     {Action::RollLeft, ActionGroup::Flight, "roll_left", "Roll Left", InputChord::ofKey(Key::Q)},
-    {Action::RollRight, ActionGroup::Flight, "roll_right", "Roll Right",
-     InputChord::ofKey(Key::E)},
-    {Action::ThrustForward, ActionGroup::Flight, "thrust_forward", "Thrust Forward",
+    {Action::RollRight, ActionGroup::Flight, "roll_right", "Roll Right", InputChord::ofKey(Key::E)},
+    {Action::ThrustForward,
+     ActionGroup::Flight,
+     "thrust_forward",
+     "Thrust Forward",
      InputChord::ofKey(Key::W)},
-    {Action::ThrustReverse, ActionGroup::Flight, "thrust_reverse", "Thrust Reverse",
+    {Action::ThrustReverse,
+     ActionGroup::Flight,
+     "thrust_reverse",
+     "Thrust Reverse",
      InputChord::ofKey(Key::S)},
-    {Action::StrafeLeft, ActionGroup::Flight, "strafe_left", "Strafe Left",
-     InputChord::ofKey(Key::A)},
-    {Action::StrafeRight, ActionGroup::Flight, "strafe_right", "Strafe Right",
-     InputChord::ofKey(Key::D)},
-    {Action::StrafeUp, ActionGroup::Flight, "strafe_up", "Strafe Up",
-     InputChord::ofKey(Key::Space)},
-    {Action::StrafeDown, ActionGroup::Flight, "strafe_down", "Strafe Down",
+    {Action::StrafeLeft, ActionGroup::Flight, "strafe_left", "Strafe Left", InputChord::ofKey(Key::A)},
+    {Action::StrafeRight, ActionGroup::Flight, "strafe_right", "Strafe Right", InputChord::ofKey(Key::D)},
+    {Action::StrafeUp, ActionGroup::Flight, "strafe_up", "Strafe Up", InputChord::ofKey(Key::Space)},
+    {Action::StrafeDown,
+     ActionGroup::Flight,
+     "strafe_down",
+     "Strafe Down",
      InputChord::ofKey(Key::LeftControl)},
     {Action::Boost, ActionGroup::Flight, "boost", "Boost", InputChord::ofKey(Key::LeftShift)},
 
-    {Action::ToggleAssist, ActionGroup::Systems, "toggle_assist", "Flight Assist",
-     InputChord::ofKey(Key::X)},
-    {Action::ToggleCruise, ActionGroup::Systems, "toggle_cruise", "Cruise",
-     InputChord::ofKey(Key::Tab)},
-    {Action::PipWeapons, ActionGroup::Systems, "pip_weapons", "Power to Weapons",
+    {Action::ToggleAssist, ActionGroup::Systems, "toggle_assist", "Flight Assist", InputChord::ofKey(Key::X)},
+    {Action::ToggleCruise, ActionGroup::Systems, "toggle_cruise", "Cruise", InputChord::ofKey(Key::Tab)},
+    {Action::PipWeapons,
+     ActionGroup::Systems,
+     "pip_weapons",
+     "Power to Weapons",
      InputChord::ofKey(Key::Num1)},
-    {Action::PipEngines, ActionGroup::Systems, "pip_engines", "Power to Engines",
+    {Action::PipEngines,
+     ActionGroup::Systems,
+     "pip_engines",
+     "Power to Engines",
      InputChord::ofKey(Key::Num2)},
-    {Action::PipShields, ActionGroup::Systems, "pip_shields", "Power to Shields",
+    {Action::PipShields,
+     ActionGroup::Systems,
+     "pip_shields",
+     "Power to Shields",
      InputChord::ofKey(Key::Num3)},
-    {Action::PipBalance, ActionGroup::Systems, "pip_balance", "Balance Power",
-     InputChord::ofKey(Key::Num4)},
+    {Action::PipBalance, ActionGroup::Systems, "pip_balance", "Balance Power", InputChord::ofKey(Key::Num4)},
 
-    {Action::CycleNavTarget, ActionGroup::Targeting, "cycle_nav_target", "Cycle Nav Target",
+    {Action::CycleNavTarget,
+     ActionGroup::Targeting,
+     "cycle_nav_target",
+     "Cycle Nav Target",
      InputChord::ofKey(Key::T)},
     // Phase 15. U and N rather than a modifier on T and C: a chord holds one
     // key with no modifier field, and LeftShift is Boost, so the natural
     // Shift+T would fire the engines on every step backwards. Each sits in the
     // same physical cluster as the key it reverses (U beside T's row, N beside
     // C's) and both rebind like any other row.
-    {Action::CycleNavTargetBack, ActionGroup::Targeting, "cycle_nav_target_back",
-     "Cycle Nav Target Back", InputChord::ofKey(Key::U)},
-    {Action::CycleContact, ActionGroup::Targeting, "cycle_contact", "Cycle Contact",
+    {Action::CycleNavTargetBack,
+     ActionGroup::Targeting,
+     "cycle_nav_target_back",
+     "Cycle Nav Target Back",
+     InputChord::ofKey(Key::U)},
+    {Action::CycleContact,
+     ActionGroup::Targeting,
+     "cycle_contact",
+     "Cycle Contact",
      InputChord::ofKey(Key::C)},
-    {Action::CycleContactBack, ActionGroup::Targeting, "cycle_contact_back",
-     "Cycle Contact Back", InputChord::ofKey(Key::N)},
-    {Action::SelectObjective, ActionGroup::Targeting, "select_objective", "Select Objective",
+    {Action::CycleContactBack,
+     ActionGroup::Targeting,
+     "cycle_contact_back",
+     "Cycle Contact Back",
+     InputChord::ofKey(Key::N)},
+    {Action::SelectObjective,
+     ActionGroup::Targeting,
+     "select_objective",
+     "Select Objective",
      InputChord::ofKey(Key::O)},
-    {Action::NearestHostile, ActionGroup::Targeting, "nearest_hostile", "Nearest Hostile",
+    {Action::NearestHostile,
+     ActionGroup::Targeting,
+     "nearest_hostile",
+     "Nearest Hostile",
      InputChord::ofKey(Key::H)},
-    {Action::Autopilot, ActionGroup::Targeting, "autopilot", "Autopilot",
-     InputChord::ofKey(Key::F)},
-    {Action::DockSalvage, ActionGroup::Targeting, "dock_salvage", "Dock / Salvage",
+    {Action::Autopilot, ActionGroup::Targeting, "autopilot", "Autopilot", InputChord::ofKey(Key::F)},
+    {Action::DockSalvage,
+     ActionGroup::Targeting,
+     "dock_salvage",
+     "Dock / Salvage",
      InputChord::ofKey(Key::G)},
-    {Action::ScanPulse, ActionGroup::Targeting, "scan_pulse", "Scan Pulse",
-     InputChord::ofKey(Key::R)},
-    {Action::Bookmark, ActionGroup::Targeting, "bookmark", "Drop Bookmark",
-     InputChord::ofKey(Key::B)},
+    {Action::ScanPulse, ActionGroup::Targeting, "scan_pulse", "Scan Pulse", InputChord::ofKey(Key::R)},
+    {Action::Bookmark, ActionGroup::Targeting, "bookmark", "Drop Bookmark", InputChord::ofKey(Key::B)},
     // Phase 8s. Its own verb rather than a fifth rung on the interact key,
     // which already means five things and would have to guess between a ship
     // and a station when both are in range. Y because both mnemonic keys are
     // gone - H is Nearest Hostile and C is Cycle Contact, both in this group -
     // and Y is free in the same physical cluster as T and H.
-    {Action::HailTarget, ActionGroup::Targeting, "hail_target", "Hail Target",
-     InputChord::ofKey(Key::Y)},
+    {Action::HailTarget, ActionGroup::Targeting, "hail_target", "Hail Target", InputChord::ofKey(Key::Y)},
 
-    {Action::CycleCamera, ActionGroup::Views, "cycle_camera", "Cycle Camera",
-     InputChord::ofKey(Key::V)},
+    {Action::CycleCamera, ActionGroup::Views, "cycle_camera", "Cycle Camera", InputChord::ofKey(Key::V)},
     {Action::OpenMap, ActionGroup::Views, "open_map", "Map", InputChord::ofKey(Key::M)},
-    {Action::OpenShipInfo, ActionGroup::Views, "open_ship_info", "Ship Readout",
-     InputChord::ofKey(Key::I)},
-    {Action::Fire, ActionGroup::Views, "fire", "Fire / Mine",
-     InputChord::ofMouse(MouseButton::Middle)},
-    {Action::Select, ActionGroup::Views, "select", "Select Target",
-     InputChord::ofMouse(MouseButton::Left)},
-    {Action::LookAround, ActionGroup::Views, "look_around", "Mouse Steering",
+    {Action::OpenShipInfo, ActionGroup::Views, "open_ship_info", "Ship Readout", InputChord::ofKey(Key::I)},
+    {Action::Fire, ActionGroup::Views, "fire", "Fire / Mine", InputChord::ofMouse(MouseButton::Middle)},
+    {Action::Select, ActionGroup::Views, "select", "Select Target", InputChord::ofMouse(MouseButton::Left)},
+    {Action::LookAround,
+     ActionGroup::Views,
+     "look_around",
+     "Mouse Steering",
      InputChord::ofMouse(MouseButton::Right)},
     // Phase 8m. A key rather than a button because all three mouse buttons are
     // spoken for above, and Z rather than Left Alt because Windows routes Alt
     // through WM_SYSKEYDOWN and the window menu - the same message path Phase
     // 8h had to leave falling through to DefWindowProc for Alt+F4.
-    {Action::FreeLook, ActionGroup::Views, "free_look", "Free Look",
-     InputChord::ofKey(Key::Z)},
+    {Action::FreeLook, ActionGroup::Views, "free_look", "Free Look", InputChord::ofKey(Key::Z)},
 };
 
 static_assert(sizeof(kActions) / sizeof(kActions[0]) == kActionCount,
@@ -126,8 +150,18 @@ const ActionInfo& info(Action action)
 // menu navigation, but a menu and the cockpit never own the keyboard at the
 // same time, which has been true since long before bindings existed.
 constexpr Key kReservedKeys[] = {
-    Key::Escape, Key::Enter, Key::Backspace, Key::Delete, Key::Home, Key::End,
-    Key::F1,     Key::F2,    Key::F3,        Key::F5,     Key::F9,   Key::F10,
+    Key::Escape,
+    Key::Enter,
+    Key::Backspace,
+    Key::Delete,
+    Key::Home,
+    Key::End,
+    Key::F1,
+    Key::F2,
+    Key::F3,
+    Key::F5,
+    Key::F9,
+    Key::F10,
 };
 
 } // namespace
@@ -135,11 +169,16 @@ constexpr Key kReservedKeys[] = {
 const char* actionGroupLabel(ActionGroup group)
 {
     switch (group) {
-    case ActionGroup::Flight: return "Flight";
-    case ActionGroup::Systems: return "Systems";
-    case ActionGroup::Targeting: return "Targeting & Navigation";
-    case ActionGroup::Views: return "Views & Mouse";
-    case ActionGroup::Count: break;
+    case ActionGroup::Flight:
+        return "Flight";
+    case ActionGroup::Systems:
+        return "Systems";
+    case ActionGroup::Targeting:
+        return "Targeting & Navigation";
+    case ActionGroup::Views:
+        return "Views & Mouse";
+    case ActionGroup::Count:
+        break;
     }
     return "";
 }

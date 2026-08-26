@@ -18,8 +18,11 @@ struct PushConstants
 
 } // namespace
 
-bool UiRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
-                            const char* shaderDirectory, std::uint32_t framesInFlight)
+bool UiRenderer::initialize(rhi::Context& context,
+                            VkFormat colorFormat,
+                            VkFormat depthFormat,
+                            const char* shaderDirectory,
+                            std::uint32_t framesInFlight)
 {
     m_context = &context;
     m_colorFormat = colorFormat;
@@ -32,16 +35,20 @@ bool UiRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkForma
     m_indexMapped.resize(framesInFlight);
     for (std::uint32_t i = 0; i < framesInFlight; ++i) {
         m_vertexBuffers[i] =
-            rhi::createBuffer(context, kMaxVertices * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            rhi::createBuffer(context,
+                              kMaxVertices * sizeof(Vertex),
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        m_indexBuffers[i] = rhi::createBuffer(context, kMaxIndices * sizeof(std::uint16_t),
-                                              VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        if (vkMapMemory(context.device(), m_vertexBuffers[i].memory, 0, VK_WHOLE_SIZE, 0,
-                        &m_vertexMapped[i]) != VK_SUCCESS ||
-            vkMapMemory(context.device(), m_indexBuffers[i].memory, 0, VK_WHOLE_SIZE, 0,
-                        &m_indexMapped[i]) != VK_SUCCESS) {
+        m_indexBuffers[i] =
+            rhi::createBuffer(context,
+                              kMaxIndices * sizeof(std::uint16_t),
+                              VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (vkMapMemory(
+                context.device(), m_vertexBuffers[i].memory, 0, VK_WHOLE_SIZE, 0, &m_vertexMapped[i]) !=
+                VK_SUCCESS ||
+            vkMapMemory(context.device(), m_indexBuffers[i].memory, 0, VK_WHOLE_SIZE, 0, &m_indexMapped[i]) !=
+                VK_SUCCESS) {
             return false;
         }
     }
@@ -62,8 +69,8 @@ bool UiRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkForma
     whiteDesc.mipCount = 1;
     whiteDesc.mipData = &whiteData;
     whiteDesc.mipSizes = &whiteSize;
-    whiteDesc.swizzle = {VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE,
-                         VK_COMPONENT_SWIZZLE_R};
+    whiteDesc.swizzle = {
+        VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R};
     m_whiteImage = rhi::createSampledTexture(context, whiteDesc);
     if (registerTexture(m_whiteImage.view, m_sampler) != 0) {
         return false;
@@ -133,17 +140,22 @@ bool UiRenderer::reloadPipeline()
     return true;
 }
 
-void UiRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, core::Vec2 uiSize,
-                      VkExtent2D framebufferExtent, std::span<const Vertex> vertices,
-                      std::span<const std::uint16_t> indices, std::span<const Batch> batches)
+void UiRenderer::draw(VkCommandBuffer commandBuffer,
+                      std::uint32_t frameIndex,
+                      core::Vec2 uiSize,
+                      VkExtent2D framebufferExtent,
+                      std::span<const Vertex> vertices,
+                      std::span<const std::uint16_t> indices,
+                      std::span<const Batch> batches)
 {
-    if (batches.empty() || vertices.empty() || indices.empty() || uiSize.x <= 0.0f ||
-        uiSize.y <= 0.0f || framebufferExtent.width == 0 || framebufferExtent.height == 0) {
+    if (batches.empty() || vertices.empty() || indices.empty() || uiSize.x <= 0.0f || uiSize.y <= 0.0f ||
+        framebufferExtent.width == 0 || framebufferExtent.height == 0) {
         return;
     }
     if (vertices.size() > kMaxVertices || indices.size() > kMaxIndices) {
         SOL_LOG_ERROR("ui: geometry overflow (%zu verts, %zu indices) - frame dropped",
-                      vertices.size(), indices.size());
+                      vertices.size(),
+                      indices.size());
         return;
     }
 
@@ -160,8 +172,12 @@ void UiRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, c
     const float clipScaleY = static_cast<float>(framebufferExtent.height) / uiSize.y;
     const float maxScissorX = static_cast<float>(framebufferExtent.width);
     const float maxScissorY = static_cast<float>(framebufferExtent.height);
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+    vkCmdPushConstants(commandBuffer,
+                       m_pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0,
+                       sizeof(push),
+                       &push);
 
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[frameIndex].buffer, &offset);
@@ -195,8 +211,14 @@ void UiRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, c
 
         const std::uint32_t texture = batch.texture < m_textureSets.size() ? batch.texture : 0;
         if (texture != boundTexture) {
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1,
-                                    &m_textureSets[texture], 0, nullptr);
+            vkCmdBindDescriptorSets(commandBuffer,
+                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    m_pipelineLayout,
+                                    0,
+                                    1,
+                                    &m_textureSets[texture],
+                                    0,
+                                    nullptr);
             boundTexture = texture;
         }
         vkCmdDrawIndexed(commandBuffer, batch.indexCount, 1, batch.firstIndex, 0, 0);

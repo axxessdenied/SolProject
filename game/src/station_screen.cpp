@@ -13,6 +13,7 @@ using sol::ui::Color;
 using sol::ui::Column;
 using sol::ui::FactionRow;
 using sol::ui::FleetRow;
+using sol::ui::inset;
 using sol::ui::MissionRow;
 using sol::ui::OutfitRow;
 using sol::ui::Rect;
@@ -23,7 +24,6 @@ using sol::ui::StationPanel;
 using sol::ui::TextAlign;
 using sol::ui::TradeRow;
 using sol::ui::UiContext;
-using sol::ui::inset;
 
 namespace {
 
@@ -55,15 +55,18 @@ constexpr int kTradeAmountCount = 3;
 
 // Text that must not spill into the next column - detail strings are generated
 // from defs and can be any length.
-void clipped(UiContext& ui, const Rect& cell, std::string_view text, const Color& color,
-             const char* style = nullptr, TextAlign align = TextAlign::Left)
+void clipped(UiContext& ui,
+             const Rect& cell,
+             std::string_view text,
+             const Color& color,
+             const char* style = nullptr,
+             TextAlign align = TextAlign::Left)
 {
     if (cell.empty() || text.empty()) {
         return;
     }
     ui.drawList().pushClip(cell);
-    ui.label({{cell.min.x + 4.0f, cell.min.y}, {cell.max.x - 4.0f, cell.max.y}}, text, color, style,
-             align);
+    ui.label({{cell.min.x + 4.0f, cell.min.y}, {cell.max.x - 4.0f, cell.max.y}}, text, color, style, align);
     ui.drawList().popClip();
 }
 
@@ -79,8 +82,8 @@ void rowBackground(UiContext& ui, const Rect& row, int index)
 void sectionHeader(UiContext& ui, const Rect& row, std::string_view text)
 {
     ui.label(row, text, ui.theme().textDim, ui.theme().strongStyle);
-    ui.drawList().addLine({row.min.x, row.max.y - 1.0f}, {row.max.x, row.max.y - 1.0f},
-                          ui.theme().panelEdge, 1.0f);
+    ui.drawList().addLine(
+        {row.min.x, row.max.y - 1.0f}, {row.max.x, row.max.y - 1.0f}, ui.theme().panelEdge, 1.0f);
 }
 
 void emptyNote(UiContext& ui, Column& column, std::string_view text)
@@ -108,8 +111,8 @@ struct CatalogCells
 
 // Buttons are reserved per list rather than per row, so a row without a Sell
 // button still lines its Buy button up with the ones above it.
-[[nodiscard]] CatalogCells catalogCells(const UiContext& ui, const Rect& row, bool showPrice,
-                                        bool reserveSecondary)
+[[nodiscard]] CatalogCells
+catalogCells(const UiContext& ui, const Rect& row, bool showPrice, bool reserveSecondary)
 {
     Row cursor(row, ui.theme().spacing);
     CatalogCells cells;
@@ -144,8 +147,11 @@ struct CatalogClick
     bool secondary = false;
 };
 
-[[nodiscard]] CatalogClick catalogList(UiContext& ui, Column& column, std::string_view id,
-                                       std::span<const OutfitRow> rows, const CatalogStyle& style)
+[[nodiscard]] CatalogClick catalogList(UiContext& ui,
+                                       Column& column,
+                                       std::string_view id,
+                                       std::span<const OutfitRow> rows,
+                                       const CatalogStyle& style)
 {
     CatalogClick click;
     if (rows.empty()) {
@@ -159,8 +165,7 @@ struct CatalogClick
         const OutfitRow& item = rows[static_cast<std::size_t>(i)];
         const Rect row = column.row(kRowHeight);
         rowBackground(ui, row, i);
-        const CatalogCells cells =
-            catalogCells(ui, row, style.showPrice, style.secondary != nullptr);
+        const CatalogCells cells = catalogCells(ui, row, style.showPrice, style.secondary != nullptr);
         ui.pushId(i);
 
         if (style.showCount && item.fitted > 0) {
@@ -172,8 +177,7 @@ struct CatalogClick
         clipped(ui, cells.detail, item.detail, ui.theme().textDim);
         if (style.showPrice) {
             std::snprintf(buffer, sizeof(buffer), "%.0f cr", static_cast<double>(item.price));
-            clipped(ui, cells.price, buffer, ui.theme().textPrimary, ui.theme().bodyStyle,
-                    TextAlign::Right);
+            clipped(ui, cells.price, buffer, ui.theme().textPrimary, ui.theme().bodyStyle, TextAlign::Right);
         }
         if (ui.button(inset(cells.primary, 2.0f), style.primary)) {
             click = {.row = i, .secondary = false};
@@ -220,8 +224,7 @@ struct TradeCells
     return cells;
 }
 
-void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
-                   const Rect& content)
+void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
     Column outer(content, 0.0f, theme.spacing);
@@ -239,8 +242,7 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
             }
         }
         ui.popId();
-        ui.label(cursor.remaining(), "Units per trade", theme.textDim, theme.bodyStyle,
-                 TextAlign::Right);
+        ui.label(cursor.remaining(), "Units per trade", theme.textDim, theme.bodyStyle, TextAlign::Right);
     }
 
     // The market report (Phase 8g). 8e sells the player's survey data to the
@@ -254,8 +256,11 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
             panel.action = {.kind = StationAction::Kind::BuyMarketIntel};
         }
         if (panel.trade.intelMarkets > 0) {
-            std::snprintf(buffer, sizeof(buffer), "Market report: %u markets nearby, %.0f cr",
-                          panel.trade.intelMarkets, panel.trade.intelPrice);
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "Market report: %u markets nearby, %.0f cr",
+                          panel.trade.intelMarkets,
+                          panel.trade.intelPrice);
         } else {
             std::snprintf(buffer, sizeof(buffer), "No markets in reach to report on");
         }
@@ -270,8 +275,7 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
         tradeCells(ui, {captionRow.min, {captionRow.max.x - barInset, captionRow.max.y}});
     clipped(ui, captions.name, "Commodity", theme.textDim, theme.smallStyle);
     clipped(ui, captions.price, "Price", theme.textDim, theme.smallStyle, TextAlign::Right);
-    clipped(ui, captions.elsewhere, "Best elsewhere", theme.textDim, theme.smallStyle,
-            TextAlign::Right);
+    clipped(ui, captions.elsewhere, "Best elsewhere", theme.textDim, theme.smallStyle, TextAlign::Right);
     clipped(ui, captions.stock, "Stock", theme.textDim, theme.smallStyle, TextAlign::Right);
     clipped(ui, captions.held, "Held", theme.textDim, theme.smallStyle, TextAlign::Right);
 
@@ -299,8 +303,11 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
         // bought intel a one-time unlock instead of something worth
         // refreshing.
         if (goods.hasElsewhere) {
-            std::snprintf(buffer, sizeof(buffer), "%.2f  %s  %s",
-                          static_cast<double>(goods.elsewherePrice), goods.elsewhereName,
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%.2f  %s  %s",
+                          static_cast<double>(goods.elsewherePrice),
+                          goods.elsewhereName,
                           goods.elsewhereAge);
             const bool worthIt = goods.elsewherePrice > goods.price * 1.15f;
             const auto color = goods.elsewhereStale ? theme.textDim
@@ -314,8 +321,12 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
         std::snprintf(buffer, sizeof(buffer), "%.0f", static_cast<double>(goods.stock));
         clipped(ui, cells.stock, buffer, theme.textDim, theme.bodyStyle, TextAlign::Right);
         std::snprintf(buffer, sizeof(buffer), "%.0f", static_cast<double>(goods.cargo));
-        clipped(ui, cells.held, buffer, goods.cargo > 0.0f ? theme.accent : theme.textDim,
-                theme.bodyStyle, TextAlign::Right);
+        clipped(ui,
+                cells.held,
+                buffer,
+                goods.cargo > 0.0f ? theme.accent : theme.textDim,
+                theme.bodyStyle,
+                TextAlign::Right);
 
         // The world clamps a trade to credits, hold space, and stock, so a
         // button is disabled only when it could do nothing at all.
@@ -337,39 +348,36 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
 
 // --- Outfitting ---
 
-void buildOutfittingTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
-                        const Rect& content)
+void buildOutfittingTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
     const float contentHeight = kRowHeight * 2.0f + theme.spacing * 2.0f +
                                 (kSectionHeight + theme.spacing) * 2.0f +
                                 listHeight(ui, std::max<std::size_t>(panel.modules.size(), 1)) +
                                 listHeight(ui, std::max<std::size_t>(panel.weapons.size(), 1));
-    const Rect list =
-        ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Outfitting]);
+    const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Outfitting]);
     Column column(list, 0.0f, theme.spacing);
 
     clipped(ui, column.row(kRowHeight), panel.fitSummary, theme.textPrimary, theme.bodyStyle);
     char buffer[96] = {};
-    std::snprintf(buffer, sizeof(buffer), "Insurance deductible at current fit: %.0f cr",
-                  panel.deductible);
+    std::snprintf(buffer, sizeof(buffer), "Insurance deductible at current fit: %.0f cr", panel.deductible);
     clipped(ui, column.row(kRowHeight), buffer, theme.textDim, theme.smallStyle);
 
     sectionHeader(ui, column.row(kSectionHeight), "Modules (Sell removes one fitted instance at resale)");
-    const CatalogClick module = catalogList(ui, column, "modules", panel.modules,
-                                            {.primary = "Buy", .secondary = "Sell"});
+    const CatalogClick module =
+        catalogList(ui, column, "modules", panel.modules, {.primary = "Buy", .secondary = "Sell"});
     if (module.row >= 0) {
-        panel.action = {module.secondary ? StationAction::Kind::SellModule
-                                         : StationAction::Kind::BuyModule,
-                        panel.modules[static_cast<std::size_t>(module.row)].id, module.row};
+        panel.action = {module.secondary ? StationAction::Kind::SellModule : StationAction::Kind::BuyModule,
+                        panel.modules[static_cast<std::size_t>(module.row)].id,
+                        module.row};
     }
 
     sectionHeader(ui, column.row(kSectionHeight), "Weapon mount (swapping sells the old weapon at resale)");
-    const CatalogClick weapon =
-        catalogList(ui, column, "weapons", panel.weapons, {.primary = "Mount"});
+    const CatalogClick weapon = catalogList(ui, column, "weapons", panel.weapons, {.primary = "Mount"});
     if (weapon.row >= 0) {
         panel.action = {StationAction::Kind::BuyWeapon,
-                        panel.weapons[static_cast<std::size_t>(weapon.row)].id, weapon.row};
+                        panel.weapons[static_cast<std::size_t>(weapon.row)].id,
+                        weapon.row};
     }
 
     ui.endScroll();
@@ -377,15 +385,13 @@ void buildOutfittingTab(UiContext& ui, StationPanel& panel, StationScreenState& 
 
 // --- Shipyard ---
 
-void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
-                      const Rect& content)
+void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
     const float contentHeight = (kSectionHeight + theme.spacing) * 2.0f +
                                 listHeight(ui, std::max<std::size_t>(panel.fleet.size(), 1)) +
                                 listHeight(ui, std::max<std::size_t>(panel.shipCatalog.size(), 1));
-    const Rect list =
-        ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Shipyard]);
+    const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Shipyard]);
     Column column(list, 0.0f, theme.spacing);
 
     sectionHeader(ui, column.row(kSectionHeight), "Your fleet");
@@ -402,7 +408,8 @@ void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& st
         ui.pushId(i);
 
         clipped(ui, cells.name, ship.name, theme.textPrimary, theme.strongStyle);
-        clipped(ui, cells.detail,
+        clipped(ui,
+                cells.detail,
                 ship.active ? "active" : (ship.storedHere ? "stored here" : "stored elsewhere"),
                 ship.active ? theme.accent : theme.textDim);
         std::snprintf(buffer, sizeof(buffer), "%.0f cr", static_cast<double>(ship.value));
@@ -426,8 +433,8 @@ void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& st
     const CatalogClick ship =
         catalogList(ui, column, "ships", panel.shipCatalog, {.primary = "Buy", .showCount = false});
     if (ship.row >= 0) {
-        panel.action = {StationAction::Kind::BuyShip,
-                        panel.shipCatalog[static_cast<std::size_t>(ship.row)].id, ship.row};
+        panel.action = {
+            StationAction::Kind::BuyShip, panel.shipCatalog[static_cast<std::size_t>(ship.row)].id, ship.row};
     }
 
     ui.endScroll();
@@ -435,8 +442,7 @@ void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& st
 
 // --- Crew ---
 
-void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
-                  const Rect& content)
+void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
     const float contentHeight = (kSectionHeight + theme.spacing) * 2.0f +
@@ -446,7 +452,10 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
     Column column(list, 0.0f, theme.spacing);
 
     sectionHeader(ui, column.row(kSectionHeight), "Aboard");
-    const CatalogClick aboard = catalogList(ui, column, "aboard", panel.crewAboard,
+    const CatalogClick aboard = catalogList(ui,
+                                            column,
+                                            "aboard",
+                                            panel.crewAboard,
                                             {.primary = "Dismiss",
                                              .secondary = nullptr,
                                              .empty = "(no crew aboard)",
@@ -454,15 +463,16 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                                              .showCount = false});
     if (aboard.row >= 0) {
         panel.action = {StationAction::Kind::FireCrew,
-                        panel.crewAboard[static_cast<std::size_t>(aboard.row)].id, aboard.row};
+                        panel.crewAboard[static_cast<std::size_t>(aboard.row)].id,
+                        aboard.row};
     }
 
     sectionHeader(ui, column.row(kSectionHeight), "For hire (one-time fee, no refund)");
-    const CatalogClick hire =
-        catalogList(ui, column, "hire", panel.crewCatalog, {.primary = "Hire"});
+    const CatalogClick hire = catalogList(ui, column, "hire", panel.crewCatalog, {.primary = "Hire"});
     if (hire.row >= 0) {
         panel.action = {StationAction::Kind::HireCrew,
-                        panel.crewCatalog[static_cast<std::size_t>(hire.row)].id, hire.row};
+                        panel.crewCatalog[static_cast<std::size_t>(hire.row)].id,
+                        hire.row};
     }
 
     ui.endScroll();
@@ -483,15 +493,13 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
     return lines;
 }
 
-void buildFactionsTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
-                      const Rect& content)
+void buildFactionsTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
     const float contentHeight = (kSectionHeight + theme.spacing) * 2.0f +
                                 listHeight(ui, panel.factions.size()) +
                                 listHeight(ui, noteLineCount(panel.factionNotes));
-    const Rect list =
-        ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Factions]);
+    const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Factions]);
     Column column(list, 0.0f, theme.spacing);
 
     sectionHeader(ui, column.row(kSectionHeight), "Standing");
@@ -510,14 +518,15 @@ void buildFactionsTab(UiContext& ui, StationPanel& panel, StationScreenState& st
         const Rect meterCell = cursor.cellFromRight(160.0f);
         const Rect nameCell = cursor.remaining();
 
-        const Color color = faction.standing < -30.0f ? theme.negative
+        const Color color = faction.standing < -30.0f  ? theme.negative
                             : faction.standing > 30.0f ? theme.positive
                                                        : theme.textDim;
         clipped(ui, nameCell, faction.name, theme.textPrimary, theme.strongStyle);
         // -100..100 mapped onto the bar, so the midpoint is "no history".
         ui.meter({{meterCell.min.x, row.min.y + (row.height() - 10.0f) * 0.5f},
                   {meterCell.max.x, row.min.y + (row.height() + 10.0f) * 0.5f}},
-                 (faction.standing + 100.0f) / 200.0f, color);
+                 (faction.standing + 100.0f) / 200.0f,
+                 color);
         std::snprintf(buffer, sizeof(buffer), "%+.0f", static_cast<double>(faction.standing));
         clipped(ui, valueCell, buffer, color, theme.bodyStyle, TextAlign::Right);
         std::snprintf(buffer, sizeof(buffer), "%s, %s", faction.attitude, faction.detail);
@@ -533,8 +542,7 @@ void buildFactionsTab(UiContext& ui, StationPanel& panel, StationScreenState& st
         std::string_view notes(panel.factionNotes);
         while (!notes.empty()) {
             const std::size_t breakAt = notes.find('\n');
-            clipped(ui, column.row(kRowHeight), notes.substr(0, breakAt), theme.textDim,
-                    theme.bodyStyle);
+            clipped(ui, column.row(kRowHeight), notes.substr(0, breakAt), theme.textDim, theme.bodyStyle);
             if (breakAt == std::string_view::npos) {
                 break;
             }
@@ -572,16 +580,13 @@ struct MissionCells
     return cells;
 }
 
-void buildMissionsTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
-                      const Rect& content)
+void buildMissionsTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
-    const float contentHeight =
-        (kSectionHeight + theme.spacing) * 2.0f +
-        listHeight(ui, std::max<std::size_t>(panel.missionOffers.size(), 1)) +
-        listHeight(ui, std::max<std::size_t>(panel.missionJournal.size(), 1));
-    const Rect list =
-        ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Missions]);
+    const float contentHeight = (kSectionHeight + theme.spacing) * 2.0f +
+                                listHeight(ui, std::max<std::size_t>(panel.missionOffers.size(), 1)) +
+                                listHeight(ui, std::max<std::size_t>(panel.missionJournal.size(), 1));
+    const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Missions]);
     Column column(list, 0.0f, theme.spacing);
 
     sectionHeader(ui, column.row(kSectionHeight), "Board");
@@ -597,8 +602,8 @@ void buildMissionsTab(UiContext& ui, StationPanel& panel, StationScreenState& st
         const MissionCells cells = missionCells(ui, row, true);
         ui.pushId(i);
 
-        clipped(ui, cells.title, offer.title, offer.campaign ? kCampaign : theme.textPrimary,
-                theme.strongStyle);
+        clipped(
+            ui, cells.title, offer.title, offer.campaign ? kCampaign : theme.textPrimary, theme.strongStyle);
         clipped(ui, cells.detail, offer.detail, theme.textDim);
         std::snprintf(buffer, sizeof(buffer), "%.0f cr", static_cast<double>(offer.reward));
         clipped(ui, cells.reward, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
@@ -625,8 +630,7 @@ void buildMissionsTab(UiContext& ui, StationPanel& panel, StationScreenState& st
         ui.pushId(i);
 
         std::snprintf(buffer, sizeof(buffer), "%s%s", mission.tracked ? "* " : "", mission.title);
-        clipped(ui, cells.title, buffer, mission.campaign ? kCampaign : theme.textPrimary,
-                theme.strongStyle);
+        clipped(ui, cells.title, buffer, mission.campaign ? kCampaign : theme.textPrimary, theme.strongStyle);
         clipped(ui, cells.detail, mission.detail, theme.textDim);
         if (ui.button(inset(cells.primary, 2.0f), "Track", !mission.tracked)) {
             panel.action = {.kind = StationAction::Kind::TrackMission, .index = i};
@@ -646,15 +650,13 @@ void buildMissionsTab(UiContext& ui, StationPanel& panel, StationScreenState& st
 
 // Survey data is an intangible: it costs no hold space and sells whole, so the
 // tab is a ledger with one button rather than a per-line market.
-void buildSurveyTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
-                    const Rect& content)
+void buildSurveyTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
     const float contentHeight = kSectionHeight + theme.spacing +
                                 listHeight(ui, std::max<std::size_t>(panel.surveyData.size(), 1)) +
                                 kRowHeight + theme.spacing;
-    const Rect list =
-        ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Survey]);
+    const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Survey]);
     Column column(list, 0.0f, theme.spacing);
 
     sectionHeader(ui, column.row(kSectionHeight), "Unsold survey data");
@@ -694,15 +696,12 @@ void buildSurveyTab(UiContext& ui, StationPanel& panel, StationScreenState& stat
 // Refining is a service, not a market: you hand over ore and come back for
 // metal. The tab is therefore two facts (what it takes, what it pays) and two
 // buttons — order, and collect what a previous order finished.
-void buildRefineryTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
-                      const Rect& content)
+void buildRefineryTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
     const sol::ui::RefinePanel& refinery = panel.refinery;
-    const float contentHeight = kSectionHeight + theme.spacing + kRowHeight * 5.0f
-                                + theme.spacing * 5.0f;
-    const Rect list =
-        ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Refinery]);
+    const float contentHeight = kSectionHeight + theme.spacing + kRowHeight * 5.0f + theme.spacing * 5.0f;
+    const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Refinery]);
     Column column(list, 0.0f, theme.spacing);
 
     if (!refinery.refines) {
@@ -724,8 +723,11 @@ void buildRefineryTab(UiContext& ui, StationPanel& panel, StationScreenState& st
         clipped(ui, valueCell, value, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
     };
 
-    std::snprintf(buffer, sizeof(buffer), "%.2f %s per unit, %.0f cr fee",
-                  static_cast<double>(refinery.ratio), refinery.outputName,
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%.2f %s per unit, %.0f cr fee",
+                  static_cast<double>(refinery.ratio),
+                  refinery.outputName,
                   static_cast<double>(refinery.feePerUnit));
     factRow("Rate", buffer);
     std::snprintf(buffer, sizeof(buffer), "%.0f units", static_cast<double>(refinery.inputHeld));
@@ -741,15 +743,12 @@ void buildRefineryTab(UiContext& ui, StationPanel& panel, StationScreenState& st
     // what is actually in the hold.
     const Rect orderRow = column.row(kRowHeight);
     Row order(orderRow, theme.spacing);
-    clipped(ui, order.cell(orderRow.width() * 0.4f), "Refine", theme.textPrimary,
-            theme.strongStyle);
+    clipped(ui, order.cell(orderRow.width() * 0.4f), "Refine", theme.textPrimary, theme.strongStyle);
     for (int i = 0; i < kTradeAmountCount; ++i) {
         const Rect cell = order.cell(kButtonWidth);
         ui.pushId(i);
         if (ui.button(inset(cell, 2.0f), kTradeAmountLabels[i], refinery.inputHeld > 0.0f)) {
-            panel.action = {.kind = StationAction::Kind::OrderRefine,
-                            .index = -1,
-                            .units = kTradeAmounts[i]};
+            panel.action = {.kind = StationAction::Kind::OrderRefine, .index = -1, .units = kTradeAmounts[i]};
         }
         ui.popId();
     }
@@ -757,11 +756,14 @@ void buildRefineryTab(UiContext& ui, StationPanel& panel, StationScreenState& st
     const Rect collectRow = column.row(kRowHeight);
     Row collect(collectRow, theme.spacing);
     const Rect collectCell = collect.cellFromRight(kButtonWidth + 40.0f);
-    std::snprintf(buffer, sizeof(buffer), "%.0f %s waiting", static_cast<double>(refinery.readyUnits),
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%.0f %s waiting",
+                  static_cast<double>(refinery.readyUnits),
                   refinery.outputName);
     clipped(ui, collect.remaining(), buffer, theme.accent, theme.strongStyle, TextAlign::Right);
-    if (ui.button(inset(collectCell, 2.0f), "Collect",
-                  refinery.readyUnits > 0.0f && refinery.cargoSpace > 0.0f)) {
+    if (ui.button(
+            inset(collectCell, 2.0f), "Collect", refinery.readyUnits > 0.0f && refinery.cargoSpace > 0.0f)) {
         panel.action = {.kind = StationAction::Kind::CollectRefined, .index = -1};
     }
 
@@ -792,12 +794,13 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
         Row cursor(headerRow, theme.spacing * 3.0f);
         const Rect cargoCell = cursor.cellFromRight(190.0f);
         const Rect creditCell = cursor.cellFromRight(190.0f);
-        clipped(ui, cursor.remaining(), panel.trade.stationName, theme.textPrimary,
-                theme.headingStyle);
+        clipped(ui, cursor.remaining(), panel.trade.stationName, theme.textPrimary, theme.headingStyle);
         char buffer[96] = {};
         std::snprintf(buffer, sizeof(buffer), "%.0f cr", panel.trade.credits);
         clipped(ui, creditCell, buffer, theme.accent, theme.strongStyle, TextAlign::Right);
-        std::snprintf(buffer, sizeof(buffer), "Cargo %.0f / %.0f",
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "Cargo %.0f / %.0f",
                       static_cast<double>(panel.trade.cargoUsed),
                       static_cast<double>(panel.trade.cargoCapacity));
         clipped(ui, cargoCell, buffer, theme.textDim, theme.bodyStyle, TextAlign::Right);

@@ -28,24 +28,30 @@ struct FontBytes
     std::vector<std::uint8_t> data;
 
     void u8(unsigned value) { data.push_back(static_cast<std::uint8_t>(value & 0xFFu)); }
+
     void u16(unsigned value)
     {
         u8(value >> 8);
         u8(value);
     }
+
     void s16(int value) { u16(static_cast<unsigned>(static_cast<std::uint16_t>(value))); }
+
     void u32(std::uint32_t value)
     {
         u16(value >> 16);
         u16(value & 0xFFFFu);
     }
+
     void tag(const char* text)
     {
         for (int i = 0; i < 4; ++i) {
             u8(static_cast<unsigned char>(text[i]));
         }
     }
+
     void append(const FontBytes& other) { data.insert(data.end(), other.data.begin(), other.data.end()); }
+
     void pad(std::size_t alignment)
     {
         while (data.size() % alignment != 0) {
@@ -262,10 +268,14 @@ inline std::vector<std::uint8_t> buildSyntheticFont()
         const char* tag;
         const FontBytes* bytes;
     };
+
     // Table records must be sorted by tag.
-    const std::array<Entry, 7> entries = {Entry{"cmap", &cmap}, Entry{"glyf", &glyf},
-                                          Entry{"head", &head}, Entry{"hhea", &hhea},
-                                          Entry{"hmtx", &hmtx}, Entry{"loca", &loca},
+    const std::array<Entry, 7> entries = {Entry{"cmap", &cmap},
+                                          Entry{"glyf", &glyf},
+                                          Entry{"head", &head},
+                                          Entry{"hhea", &hhea},
+                                          Entry{"hmtx", &hmtx},
+                                          Entry{"loca", &loca},
                                           Entry{"maxp", &maxp}};
 
     std::array<std::uint32_t, entries.size()> offsets = {};

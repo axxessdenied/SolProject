@@ -101,8 +101,7 @@ void collect(const std::string& directory,
 
 } // namespace
 
-std::vector<AssetEntry> listMeshes(const std::string& sourceDirectory,
-                                   const std::string& cookedDirectory)
+std::vector<AssetEntry> listMeshes(const std::string& sourceDirectory, const std::string& cookedDirectory)
 {
     std::vector<AssetEntry> entries;
     // `.forge` first: it is the only kind of source that can be EDITED here,
@@ -116,8 +115,7 @@ std::vector<AssetEntry> listMeshes(const std::string& sourceDirectory,
     return entries;
 }
 
-std::vector<AssetEntry> listTextures(const std::string& sourceDirectory,
-                                     const std::string& cookedDirectory)
+std::vector<AssetEntry> listTextures(const std::string& sourceDirectory, const std::string& cookedDirectory)
 {
     std::vector<AssetEntry> entries;
     collect(sourceDirectory, ".tex", "source", /*cooked=*/false, entries);
@@ -135,8 +133,8 @@ std::string forgePartIdFromName(const std::string& name)
     std::string id;
     id.reserve(name.size());
     for (const char c : name) {
-        const bool keep = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                          c == '_';
+        const bool keep =
+            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
         if (keep) {
             id.push_back(c);
         } else if (!id.empty() && id.back() != '_') {
@@ -149,7 +147,9 @@ std::string forgePartIdFromName(const std::string& name)
     return id.empty() ? std::string("part") : id;
 }
 
-bool importGltfIntoDoc(const std::string& gltfPath, assets::ForgeDoc& doc, ImportOutcome& outcome,
+bool importGltfIntoDoc(const std::string& gltfPath,
+                       assets::ForgeDoc& doc,
+                       ImportOutcome& outcome,
                        std::string* error)
 {
     outcome = {};
@@ -298,8 +298,11 @@ bool loadTexture(const AssetEntry& entry, assets::TextureData& out, std::string*
     }
     assets::TextureDoc doc;
     std::string parseError;
-    if (!assets::parseTexture(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
-                              entry.path.c_str(), doc, &parseError)) {
+    if (!assets::parseTexture(reinterpret_cast<const char*>(bytes.data()),
+                              bytes.size(),
+                              entry.path.c_str(),
+                              doc,
+                              &parseError)) {
         SOL_LOG_ERROR("forge: %s", parseError.c_str());
         if (error != nullptr) {
             *error = parseError;
@@ -338,8 +341,8 @@ bool loadMesh(const AssetEntry& entry, assets::MeshData& out)
         }
         assets::ForgeDoc doc;
         std::string error;
-        if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
-                                entry.path.c_str(), doc, &error)) {
+        if (!assets::parseForge(
+                reinterpret_cast<const char*>(bytes.data()), bytes.size(), entry.path.c_str(), doc, &error)) {
             SOL_LOG_ERROR("forge: %s", error.c_str());
             return false;
         }
@@ -456,8 +459,8 @@ std::vector<MissingModelRef> missingModelRefs(const assets::DefDatabase& defs)
     return missing;
 }
 
-std::vector<ModelMatch> matchModels(const assets::DefDatabase& defs, const AssetEntry& entry,
-                                    const MeshReport& report)
+std::vector<ModelMatch>
+matchModels(const assets::DefDatabase& defs, const AssetEntry& entry, const MeshReport& report)
 {
     std::vector<ModelMatch> matches;
     for (const assets::ModelDef& model : defs.models()) {
@@ -468,8 +471,7 @@ std::vector<ModelMatch> matchModels(const assets::DefDatabase& defs, const Asset
         match.id = model.id;
         match.texture = model.texture;
         match.authoredRadius = model.radius;
-        match.authoredAvoidRadius =
-            model.avoidRadius > 0.0f ? model.avoidRadius : model.radius;
+        match.authoredAvoidRadius = model.avoidRadius > 0.0f ? model.avoidRadius : model.radius;
         match.emissive = model.emissive;
         match.solid = model.solid;
         match.radiusDelta = report.boundingRadius - model.radius;
@@ -489,8 +491,7 @@ int texturePreviewScale(int textureWidth, float availableWidth)
     return fits < 1 ? 1 : fits;
 }
 
-bool texturePixelAt(core::Vec2 cursor, core::Vec2 origin, int scale, int width, int height, int& x,
-                    int& y)
+bool texturePixelAt(core::Vec2 cursor, core::Vec2 origin, int scale, int width, int height, int& x, int& y)
 {
     if (scale <= 0 || width <= 0 || height <= 0) {
         return false;
@@ -517,8 +518,7 @@ int textureDragOffset(float startCursor, float cursor, int scale)
     if (scale <= 0) {
         return 0;
     }
-    return static_cast<int>(
-        std::lround((cursor - startCursor) / static_cast<float>(scale)));
+    return static_cast<int>(std::lround((cursor - startCursor) / static_cast<float>(scale)));
 }
 
 } // namespace forge

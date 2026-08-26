@@ -50,8 +50,8 @@ struct GraphicsPipelineDesc
 };
 
 // Dynamic-rendering pipeline with dynamic viewport/scissor.
-[[nodiscard]] bool createGraphicsPipeline(VkDevice device, const GraphicsPipelineDesc& desc,
-                                          VkPipeline& outPipeline);
+[[nodiscard]] bool
+createGraphicsPipeline(VkDevice device, const GraphicsPipelineDesc& desc, VkPipeline& outPipeline);
 
 // Pipeline layout from optional descriptor set layouts and one optional
 // vertex+fragment push-constant range starting at offset 0.

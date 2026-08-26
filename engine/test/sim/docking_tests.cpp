@@ -1,8 +1,7 @@
-#include <sol/sim/docking.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cmath>
+
+#include <sol/sim/docking.hpp>
+#include <sol/test/test.hpp>
 
 using sol::core::DVec3;
 using sol::sim::berthPoint;
@@ -54,8 +53,7 @@ SOL_TEST(docking_berths_ring_the_station_evenly)
     const double firstGap = length(berthPoint(station, 1) - berthPoint(station, 0));
     SOL_CHECK(firstGap > 2.0 * kBerthCaptureRadius); // and they do not overlap
     for (std::uint32_t berth = 0; berth < kBerthCount; ++berth) {
-        const double gap =
-            length(berthPoint(station, berth + 1) - berthPoint(station, berth));
+        const double gap = length(berthPoint(station, berth + 1) - berthPoint(station, berth));
         SOL_CHECK(std::fabs(gap - firstGap) < 1.0e-6);
     }
 }
@@ -67,8 +65,7 @@ SOL_TEST(docking_berth_index_wraps_and_is_station_relative)
     for (std::uint32_t berth = 0; berth < kBerthCount; ++berth) {
         // Wrapping is what keeps a stale berth index from indexing off the
         // ring; berth N and berth N + count are the same port.
-        SOL_CHECK(length(berthPoint(origin, berth) - berthPoint(origin, berth + kBerthCount))
-                  < 1.0e-9);
+        SOL_CHECK(length(berthPoint(origin, berth) - berthPoint(origin, berth + kBerthCount)) < 1.0e-9);
         // The same berth of a station far from the origin is the same offset.
         const DVec3 near = berthPoint(origin, berth);
         const DVec3 far = berthPoint(elsewhere, berth);

@@ -1,5 +1,4 @@
 #include "sol/sim/flight.hpp"
-
 #include "sol/test/test.hpp"
 
 #include <cmath>

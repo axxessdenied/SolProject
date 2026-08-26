@@ -36,10 +36,7 @@ public:
 
     [[nodiscard]] std::uint64_t tickCount() const { return m_tickCount; }
 
-    [[nodiscard]] double simTimeSeconds() const
-    {
-        return static_cast<double>(m_tickCount) * m_tickDelta;
-    }
+    [[nodiscard]] double simTimeSeconds() const { return static_cast<double>(m_tickCount) * m_tickDelta; }
 
 private:
     double m_tickDelta = 1.0 / 60.0;

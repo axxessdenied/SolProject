@@ -55,8 +55,10 @@ struct HostOptions
 class ImGuiHost
 {
 public:
-    [[nodiscard]] bool initialize(platform::Window& window, rhi::Context& context,
-                                  VkFormat colorFormat, VkFormat depthFormat,
+    [[nodiscard]] bool initialize(platform::Window& window,
+                                  rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
                                   std::uint32_t swapchainImageCount,
                                   const HostOptions& options = {});
     void shutdown();
@@ -73,6 +75,7 @@ public:
     void discardFrame();
 
     [[nodiscard]] bool initialized() const { return m_initialized; }
+
     [[nodiscard]] bool frameOpen() const { return m_frameOpen; }
 
     // True while ImGui wants the input - a game action like the weapon trigger

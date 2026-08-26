@@ -17,6 +17,7 @@ struct Mat4
     }
 
     [[nodiscard]] constexpr float at(int row, int column) const { return m[column * 4 + row]; }
+
     constexpr void set(int row, int column, float value) { m[column * 4 + row] = value; }
 
     [[nodiscard]] constexpr Vec4 column(int c) const
@@ -184,9 +185,9 @@ struct Mat4
 // Right-handed view matrix: camera at eye, looking at target, -Z forward in view space.
 [[nodiscard]] inline Mat4 lookAt(Vec3 eye, Vec3 target, Vec3 up)
 {
-    const Vec3 f = normalize(target - eye);  // forward
-    const Vec3 r = normalize(cross(f, up));  // right
-    const Vec3 u = cross(r, f);              // corrected up
+    const Vec3 f = normalize(target - eye); // forward
+    const Vec3 r = normalize(cross(f, up)); // right
+    const Vec3 u = cross(r, f);             // corrected up
 
     Mat4 view = Mat4::identity();
     view.set(0, 0, r.x);

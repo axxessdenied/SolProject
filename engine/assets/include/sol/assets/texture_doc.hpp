@@ -153,8 +153,11 @@ struct TextureDoc
 };
 
 // Parses a `.tex` document. On failure returns false and sets `error`.
-[[nodiscard]] bool parseTexture(const char* text, std::size_t length, const char* sourceName,
-                                TextureDoc& out, std::string* error = nullptr);
+[[nodiscard]] bool parseTexture(const char* text,
+                                std::size_t length,
+                                const char* sourceName,
+                                TextureDoc& out,
+                                std::string* error = nullptr);
 
 // Serialises back to TOML. A file that came from `parseTexture` comes back BYTE
 // FOR BYTE, comments and blank lines included - the property stage G needs for
@@ -187,8 +190,7 @@ struct TextureImage
 // ⚑ Drawing is CLIPPED, not rejected: a panel hanging off the edge is a normal
 // thing for an author to want, and Phase 16's rule is that an invariant must
 // fail a BROKEN asset rather than a CHANGED one.
-[[nodiscard]] bool buildTexture(const TextureDoc& doc, TextureImage& out,
-                                std::string* error = nullptr);
+[[nodiscard]] bool buildTexture(const TextureDoc& doc, TextureImage& out, std::string* error = nullptr);
 
 // How many pixels a layer actually writes, given the document's size. Zero means
 // the op contributes nothing to the image - an empty row list, or geometry
@@ -217,6 +219,7 @@ struct TextureHit
     int row = -1;
 
     [[nodiscard]] bool valid() const { return layer >= 0; }
+
     // True when there is a row with a position to move, which is the question
     // a drag actually asks.
     [[nodiscard]] bool movable() const { return layer >= 0 && row >= 0; }

@@ -1,5 +1,4 @@
 #include "sol/core/version.hpp"
-
 #include "sol/test/test.hpp"
 
 #include <cstdio>

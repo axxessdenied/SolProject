@@ -84,7 +84,8 @@ struct PreyCandidate
 // hold is real state, but reading it here would make a raider omniscient
 // about a ship it has never been near, where which way it is pointed is
 // something anyone can see.
-[[nodiscard]] inline std::uint32_t choosePrey(const core::DVec3& hunter, double reach,
+[[nodiscard]] inline std::uint32_t choosePrey(const core::DVec3& hunter,
+                                              double reach,
                                               std::span<const PreyCandidate> candidates,
                                               std::span<const std::uint8_t> hostile)
 {
@@ -92,8 +93,7 @@ struct PreyCandidate
     double bestDistance = 0.0;
     bool bestInbound = false;
     for (const PreyCandidate& candidate : candidates) {
-        if (candidate.paced || candidate.faction >= hostile.size() ||
-            hostile[candidate.faction] == 0) {
+        if (candidate.paced || candidate.faction >= hostile.size() || hostile[candidate.faction] == 0) {
             continue;
         }
         const double distance = length(candidate.position - hunter);

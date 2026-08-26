@@ -34,7 +34,7 @@ struct StationScreenState
 // `panel.trade.action` - so no gameplay logic moves into the UI.
 //
 // Returns true on the frame the player asked to undock.
-[[nodiscard]] bool buildStationScreen(sol::ui::UiContext& ui, sol::ui::StationPanel& panel,
-                                      StationScreenState& state);
+[[nodiscard]] bool
+buildStationScreen(sol::ui::UiContext& ui, sol::ui::StationPanel& panel, StationScreenState& state);
 
 } // namespace game

@@ -142,9 +142,8 @@ inline void forgePartBounds(std::span<const sol::assets::ForgePoint> points,
 // look like a state change. `drawMarkers` has enforced this for the viewport
 // hover since stage N - this lifts the rule out of the draw so the list hover
 // cannot arrive without it.
-[[nodiscard]] inline constexpr std::size_t forgeHoverBox(std::size_t viewportHover,
-                                                         std::size_t listHover,
-                                                         std::size_t selected) noexcept
+[[nodiscard]] inline constexpr std::size_t
+forgeHoverBox(std::size_t viewportHover, std::size_t listHover, std::size_t selected) noexcept
 {
     const std::size_t hover = viewportHover != kNoPart ? viewportHover : listHover;
     return hover == selected ? kNoPart : hover;
@@ -168,8 +167,8 @@ inline void forgePartBounds(std::span<const sol::assets::ForgePoint> points,
 // during the tool's OWN drag, and `main.cpp` decides who owns a press only
 // AFTER this class has been offered it - that ordering is stage E1's
 // arbitration - so there is no "the camera is orbiting" flag to be told.
-[[nodiscard]] inline constexpr bool forgeCameraHoldsMouse(bool leftDown, bool leftPressed,
-                                                          bool middleDown) noexcept
+[[nodiscard]] inline constexpr bool
+forgeCameraHoldsMouse(bool leftDown, bool leftPressed, bool middleDown) noexcept
 {
     return (leftDown && !leftPressed) || middleDown;
 }

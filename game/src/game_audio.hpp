@@ -49,10 +49,14 @@ public:
     void reloadDefs(const sol::assets::DefDatabase& defs);
 
     [[nodiscard]] bool deviceOpen() const { return m_device.isOpen(); }
+
     [[nodiscard]] const CueSet& cues() const { return m_cues; }
+
     // Def id -> cue, for sol.play_sound and the console.
     [[nodiscard]] sol::audio::SoundId find(const char* defId) const;
+
     [[nodiscard]] std::size_t cueCount() const { return m_cueTable.size(); }
+
     [[nodiscard]] const std::string& cueName(sol::audio::SoundId sound) const;
 
     // A cue at a place in the world: attenuated and panned against the ear.
@@ -69,15 +73,22 @@ public:
 
     // Console readout (sol.audio).
     [[nodiscard]] std::uint32_t activeVoices() const { return m_mixer.activeVoices(); }
+
     [[nodiscard]] std::uint64_t underruns() const { return m_device.underrunCount(); }
+
     [[nodiscard]] std::uint64_t droppedCommands() const { return m_mixer.droppedCommands(); }
+
     [[nodiscard]] std::uint64_t stolenVoices() const { return m_mixer.stolenVoices(); }
+
     [[nodiscard]] sol::platform::AudioDeviceInfo deviceInfo() const { return m_device.info(); }
+
     [[nodiscard]] std::uint64_t playedCues() const { return m_played; }
+
     // The gains last posted to the mixer. Reading them back is what proves a
     // slider reached the audio system rather than only the settings file; that
     // the mixer then applies them is what gainsScaleTheMix asserts.
     [[nodiscard]] float masterVolume() const { return m_masterVolume; }
+
     [[nodiscard]] float effectsVolume() const { return m_effectsVolume; }
 
 private:

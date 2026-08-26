@@ -1,5 +1,4 @@
 #include "sol/core/math/math.hpp"
-
 #include "sol/test/test.hpp"
 
 using namespace sol::core;
@@ -128,8 +127,8 @@ SOL_TEST(mat4TransposeRoundTrips)
 
 SOL_TEST(mat4InverseRoundTripsForTRS)
 {
-    const Mat4 m = translation({4.0f, -2.0f, 9.0f}) * rotationZ(0.7f) * rotationX(-1.2f) *
-                   scale({2.0f, 3.0f, 0.5f});
+    const Mat4 m =
+        translation({4.0f, -2.0f, 9.0f}) * rotationZ(0.7f) * rotationX(-1.2f) * scale({2.0f, 3.0f, 0.5f});
     SOL_CHECK(nearlyEqual(m * inverse(m), Mat4::identity(), 1e-3f));
     SOL_CHECK(nearlyEqual(inverse(m) * m, Mat4::identity(), 1e-3f));
     SOL_CHECK(nearlyEqual(inverse(Mat4::identity()), Mat4::identity()));

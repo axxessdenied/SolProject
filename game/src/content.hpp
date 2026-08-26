@@ -22,8 +22,8 @@ class GameContent
 {
 public:
     // World must outlive this. Missing mods directory is fine.
-    [[nodiscard]] bool initialize(const std::string& dataDirectory,
-                                  const std::string& modsDirectory, SpaceWorld* world);
+    [[nodiscard]] bool
+    initialize(const std::string& dataDirectory, const std::string& modsDirectory, SpaceWorld* world);
 
     // Polls watched TOML/Lua sources (throttled); on a def change reloads the
     // database and re-applies it to the world, on a script change re-runs the
@@ -37,6 +37,7 @@ public:
     void executeConsole(const char* command);
 
     [[nodiscard]] const sol::assets::DefDatabase& defs() const { return m_defs; }
+
     [[nodiscard]] SpaceWorld& world() { return *m_world; }
 
     // The live control bindings (Phase 8k), so the console can read and change
@@ -44,24 +45,30 @@ public:
     // pixel-perfect clicking through a scrolling list. Owned by main.cpp's
     // Settings; null until it is handed over.
     void setBindings(sol::platform::BindingTable* bindings) { m_bindings = bindings; }
+
     [[nodiscard]] sol::platform::BindingTable* bindings() const { return m_bindings; }
 
     // Audio (Phase 8t), so sol.play_sound can fire a cue from a script and
     // sol.audio can read the device back. Owned by main.cpp; null is normal
     // (no output device), and the bindings say so rather than lying.
     void setAudio(GameAudio* audio) { m_audio = audio; }
+
     [[nodiscard]] GameAudio* audio() const { return m_audio; }
 
     // Mission-builder draft for the Lua board hook (sol.mission_* bindings
     // in content.cpp assemble it; sol.mission_post validates and clears it).
     [[nodiscard]] sol::sim::Mission& missionDraft() { return m_missionDraft; }
+
     [[nodiscard]] bool missionDraftOpen() const { return m_missionDraftOpen; }
+
     void setMissionDraftOpen(bool open) { m_missionDraftOpen = open; }
 
     // The site whose signal_loot hook is running right now, so sol.set_loot
     // can only ever write the loot it was called about (Phase 8e).
     [[nodiscard]] std::uint32_t lootSystem() const { return m_lootSystem; }
+
     [[nodiscard]] std::uint32_t lootSignal() const { return m_lootSignal; }
+
     // The wreck whose wreck_loot hook is running right now (Phase 8f); 0 when
     // none is. Wrecks and sites share sol.set_loot — it is the same loot.
     [[nodiscard]] std::uint32_t lootWreck() const { return m_lootWreck; }
@@ -70,6 +77,7 @@ public:
     // sol.grant_docking and sol.deny_docking can only ever answer the hail
     // they were called about. ~0u outside the hook.
     [[nodiscard]] std::uint32_t dockRequestStation() const { return m_dockRequestStation; }
+
     void noteDockAnswered() { m_dockAnswered = true; }
 
 private:
@@ -97,13 +105,13 @@ private:
     sol::platform::BindingTable* m_bindings = nullptr; // Phase 8k; main.cpp owns it
     GameAudio* m_audio = nullptr;                      // Phase 8t; main.cpp owns it
     std::vector<WatchedFile> m_watched;
-    std::vector<SpaceWorld::PilotThink> m_pilotThinks; // per-tick scratch
+    std::vector<SpaceWorld::PilotThink> m_pilotThinks;         // per-tick scratch
     std::vector<sol::sim::FactionDecision> m_factionDecisions; // per-tick scratch
     std::vector<sol::sim::HaulCandidate> m_haulCandidates;     // per-board scratch
     std::vector<sol::sim::BountyCandidate> m_bountyCandidates;
     std::vector<sol::sim::ContestCandidate> m_contestCandidates; // Phase 8u
     std::vector<sol::sim::EscortCandidate> m_escortCandidates;   // Phase 8x
-    std::vector<sol::sim::MissionEvent> m_missionEvents; // per-tick scratch
+    std::vector<sol::sim::MissionEvent> m_missionEvents;         // per-tick scratch
     sol::sim::Mission m_missionDraft;
     bool m_missionDraftOpen = false;
     double m_lastPollTime = -1.0;

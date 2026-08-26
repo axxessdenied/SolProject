@@ -12,8 +12,7 @@ namespace sol::core {
 inline constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
 inline constexpr std::uint64_t kFnvPrime = 1099511628211ull;
 
-[[nodiscard]] constexpr std::uint64_t fnv1a(std::string_view text,
-                                            std::uint64_t seed = kFnvOffsetBasis)
+[[nodiscard]] constexpr std::uint64_t fnv1a(std::string_view text, std::uint64_t seed = kFnvOffsetBasis)
 {
     std::uint64_t hash = seed;
     for (const char character : text) {

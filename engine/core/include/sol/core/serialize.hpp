@@ -44,6 +44,7 @@ public:
     }
 
     [[nodiscard]] std::size_t size() const { return m_data.size(); }
+
     [[nodiscard]] const std::vector<std::byte>& data() const { return m_data; }
 
     // Patch a previously written value in place (e.g. a chunk size written
@@ -66,10 +67,7 @@ private:
 class BinaryReader
 {
 public:
-    explicit BinaryReader(std::span<const std::byte> data)
-        : m_data(data)
-    {
-    }
+    explicit BinaryReader(std::span<const std::byte> data) : m_data(data) {}
 
     template <typename T>
     [[nodiscard]] bool read(T& out)
@@ -112,6 +110,7 @@ public:
     }
 
     [[nodiscard]] std::size_t remaining() const { return m_data.size() - m_offset; }
+
     [[nodiscard]] bool failed() const { return m_failed; }
 
 private:

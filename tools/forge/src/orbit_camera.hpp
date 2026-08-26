@@ -34,21 +34,17 @@ public:
         if (viewportHeight <= 0.0f) {
             return;
         }
-        const float worldPerPixel =
-            2.0f * m_distance * std::tan(verticalFov * 0.5f) / viewportHeight;
+        const float worldPerPixel = 2.0f * m_distance * std::tan(verticalFov * 0.5f) / viewportHeight;
         const sol::core::Vec3 forward = -direction();
-        const sol::core::Vec3 right =
-            sol::core::normalize(sol::core::cross(forward, {0.0f, 1.0f, 0.0f}));
+        const sol::core::Vec3 right = sol::core::normalize(sol::core::cross(forward, {0.0f, 1.0f, 0.0f}));
         const sol::core::Vec3 up = sol::core::cross(right, forward);
-        m_target = m_target - right * (rightPixels * worldPerPixel) +
-                   up * (upPixels * worldPerPixel);
+        m_target = m_target - right * (rightPixels * worldPerPixel) + up * (upPixels * worldPerPixel);
     }
 
     void dolly(float notches)
     {
         constexpr float kPerNotch = 1.12f;
-        m_distance = sol::core::clamp(m_distance * std::pow(kPerNotch, -notches), kMinDistance,
-                                      kMaxDistance);
+        m_distance = sol::core::clamp(m_distance * std::pow(kPerNotch, -notches), kMinDistance, kMaxDistance);
     }
 
     // Fits a bounding sphere in the vertical field of view, with a margin so
@@ -72,7 +68,9 @@ public:
     }
 
     [[nodiscard]] sol::core::Vec3 target() const { return m_target; }
+
     [[nodiscard]] float distance() const { return m_distance; }
+
     [[nodiscard]] sol::core::Vec3 eye() const { return m_target + direction() * m_distance; }
 
     [[nodiscard]] sol::core::Mat4 view() const

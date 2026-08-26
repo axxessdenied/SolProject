@@ -42,12 +42,12 @@ std::vector<std::uint8_t> encodeBc1(const ImageRgba& image)
             int g[16];
             int b[16];
             for (int i = 0; i < 16; ++i) {
-                const std::uint32_t px = std::min(bx * 4 + static_cast<std::uint32_t>(i % 4),
-                                                  image.width - 1);
-                const std::uint32_t py = std::min(by * 4 + static_cast<std::uint32_t>(i / 4),
-                                                  image.height - 1);
-                const std::uint8_t* pixel = image.pixels.data() +
-                                            (static_cast<std::size_t>(py) * image.width + px) * 4;
+                const std::uint32_t px =
+                    std::min(bx * 4 + static_cast<std::uint32_t>(i % 4), image.width - 1);
+                const std::uint32_t py =
+                    std::min(by * 4 + static_cast<std::uint32_t>(i / 4), image.height - 1);
+                const std::uint8_t* pixel =
+                    image.pixels.data() + (static_cast<std::size_t>(py) * image.width + px) * 4;
                 r[i] = pixel[0];
                 g[i] = pixel[1];
                 b[i] = pixel[2];
@@ -143,14 +143,12 @@ ImageRgba downsampleHalf(const ImageRgba& image)
             const std::uint32_t sx1 = std::min(sx + 1, image.width - 1);
             const std::uint32_t sy1 = std::min(sy + 1, image.height - 1);
 
-            std::uint8_t* dst = result.pixels.data() +
-                                (static_cast<std::size_t>(y) * result.width + x) * 4;
+            std::uint8_t* dst = result.pixels.data() + (static_cast<std::size_t>(y) * result.width + x) * 4;
             for (int c = 0; c < 4; ++c) {
-                const int sum =
-                    image.pixels[(static_cast<std::size_t>(sy) * image.width + sx) * 4 + c] +
-                    image.pixels[(static_cast<std::size_t>(sy) * image.width + sx1) * 4 + c] +
-                    image.pixels[(static_cast<std::size_t>(sy1) * image.width + sx) * 4 + c] +
-                    image.pixels[(static_cast<std::size_t>(sy1) * image.width + sx1) * 4 + c];
+                const int sum = image.pixels[(static_cast<std::size_t>(sy) * image.width + sx) * 4 + c] +
+                                image.pixels[(static_cast<std::size_t>(sy) * image.width + sx1) * 4 + c] +
+                                image.pixels[(static_cast<std::size_t>(sy1) * image.width + sx) * 4 + c] +
+                                image.pixels[(static_cast<std::size_t>(sy1) * image.width + sx1) * 4 + c];
                 dst[c] = static_cast<std::uint8_t>((sum + 2) / 4);
             }
         }

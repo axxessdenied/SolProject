@@ -248,8 +248,7 @@ void Mixer::applyPlay(const PlayParams& params)
         if (distance > 1e-6) {
             const core::DVec3 direction = offset * (1.0 / distance);
             const core::Vec3 rightAxis = core::rotate(m_listener.orientation, core::Vec3{1, 0, 0});
-            const auto pan = static_cast<float>(direction.x * rightAxis.x +
-                                                direction.y * rightAxis.y +
+            const auto pan = static_cast<float>(direction.x * rightAxis.x + direction.y * rightAxis.y +
                                                 direction.z * rightAxis.z);
             equalPowerPan(pan * panScaleAt(distance), left, right);
         }
@@ -267,8 +266,8 @@ void Mixer::applyPlay(const PlayParams& params)
     Voice& voice = m_voices[slot];
     voice.sound = params.sound;
     voice.cursor = 0.0;
-    voice.step = (static_cast<double>(clip->sampleRate) / m_outputSampleRate) *
-                 std::clamp(params.pitch, 0.25f, 4.0f);
+    voice.step =
+        (static_cast<double>(clip->sampleRate) / m_outputSampleRate) * std::clamp(params.pitch, 0.25f, 4.0f);
     voice.gainLeft = gain * left;
     voice.gainRight = gain * right;
     voice.priority = gain;

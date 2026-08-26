@@ -1,9 +1,8 @@
-#include <sol/sim/collision.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cmath>
 #include <vector>
+
+#include <sol/sim/collision.hpp>
+#include <sol/test/test.hpp>
 
 using sol::core::DVec3;
 using sol::sim::CollisionBody;
@@ -26,8 +25,7 @@ CollisionBody mover(DVec3 from, DVec3 to, double radius, double inverseMass, dou
 
 CollisionBody fixed(DVec3 at, double radius)
 {
-    return {.previousPosition = at, .position = at, .velocity = {}, .radius = radius,
-            .inverseMass = 0.0};
+    return {.previousPosition = at, .position = at, .velocity = {}, .radius = radius, .inverseMass = 0.0};
 }
 
 } // namespace
@@ -47,8 +45,8 @@ SOL_TEST(collision_fast_mover_does_not_tunnel)
     SOL_CHECK(contacts.size() == 1);
     const double altitude = length(bodies[0].position) - 6.371e6 - 8.0;
     SOL_CHECK(altitude >= 0.0);
-    SOL_CHECK(altitude < 1.0); // parked at the surface, not bounced into space...
-    SOL_CHECK(bodies[0].velocity.z >= 0.0); // ...and no longer moving inward
+    SOL_CHECK(altitude < 1.0);                // parked at the surface, not bounced into space...
+    SOL_CHECK(bodies[0].velocity.z >= 0.0);   // ...and no longer moving inward
     SOL_CHECK(bodies[1].position == DVec3{}); // immovable stayed put
 }
 
@@ -106,8 +104,11 @@ SOL_TEST(collision_restitution_bounces)
 SOL_TEST(collision_initial_overlap_depenetrates)
 {
     std::vector<CollisionBody> bodies = {
-        {.previousPosition = {1.0, 0.0, 0.0}, .position = {1.0, 0.0, 0.0}, .velocity = {},
-         .radius = 5.0, .inverseMass = 1.0},
+        {.previousPosition = {1.0, 0.0, 0.0},
+         .position = {1.0, 0.0, 0.0},
+         .velocity = {},
+         .radius = 5.0,
+         .inverseMass = 1.0},
         fixed({}, 5.0),
     };
     std::vector<Contact> contacts;

@@ -1,8 +1,7 @@
-#include <sol/ui/map_projection.hpp>
+#include <vector>
 
 #include <sol/test/test.hpp>
-
-#include <vector>
+#include <sol/ui/map_projection.hpp>
 
 using sol::core::Vec2;
 using sol::ui::fitGalaxyMap;
@@ -13,11 +12,11 @@ using sol::ui::MapMarkerRow;
 using sol::ui::MapProjection;
 using sol::ui::MapSystemRow;
 using sol::ui::markerVisible;
-using sol::ui::Rect;
 using sol::ui::orbitExtent;
 using sol::ui::orbitMapPoint;
 using sol::ui::playfieldPoint;
 using sol::ui::playfieldSpan;
+using sol::ui::Rect;
 using sol::ui::systemMapExtent;
 using sol::ui::systemMapPoint;
 using sol::ui::systemMapRadius;
@@ -182,9 +181,9 @@ SOL_TEST(map_system_view_compresses_range_but_keeps_order_and_bearing)
     SOL_CHECK(nearlyEqual(systemMapRadius(1.0e10) - systemMapRadius(1.0e9), 1.0f, 0.01f));
 
     std::vector<MapMarkerRow> markers(3);
-    markers[0].position = {0.0f, 0.0f};        // the hub itself
-    markers[1].position = {1.0e8f, 0.0f};      // a station, due +x
-    markers[2].position = {0.0f, -4.0e10f};    // the star, off the -y axis
+    markers[0].position = {0.0f, 0.0f};     // the hub itself
+    markers[1].position = {1.0e8f, 0.0f};   // a station, due +x
+    markers[2].position = {0.0f, -4.0e10f}; // the star, off the -y axis
     const float extent = systemMapExtent(markers);
     SOL_CHECK(extent > 0.0f);
 
@@ -271,8 +270,15 @@ SOL_TEST(marker_fog_rule_gates_contents_on_a_visit_and_never_the_star)
     using Kind = MapMarkerRow::Kind;
     // Every kind the system map can draw, so a new one cannot be added
     // without this test having an opinion about it.
-    const Kind kinds[] = {Kind::Star,  Kind::Planet, Kind::Station,  Kind::Gate,     Kind::Signal,
-                          Kind::Field, Kind::Wreck,  Kind::Bookmark, Kind::Objective};
+    const Kind kinds[] = {Kind::Star,
+                          Kind::Planet,
+                          Kind::Station,
+                          Kind::Gate,
+                          Kind::Signal,
+                          Kind::Field,
+                          Kind::Wreck,
+                          Kind::Bookmark,
+                          Kind::Objective};
 
     // Unknown: nothing at all, not even the player's own marks - a system you
     // have never heard of cannot hold a bookmark you made.

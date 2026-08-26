@@ -1,12 +1,11 @@
-#include <sol/scripting/vm.hpp>
-
-#include <sol/core/log.hpp>
-
 #include <lua.hpp>
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#include <sol/core/log.hpp>
+#include <sol/scripting/vm.hpp>
 
 namespace sol::scripting {
 
@@ -63,9 +62,12 @@ ScriptVm::ScriptVm()
     // Sandboxed library set: no io, os, package, or debug (the mod API stays
     // deterministic and filesystem access goes through the engine).
     const luaL_Reg libraries[] = {
-        {LUA_GNAME, luaopen_base},         {LUA_COLIBNAME, luaopen_coroutine},
-        {LUA_TABLIBNAME, luaopen_table},   {LUA_STRLIBNAME, luaopen_string},
-        {LUA_MATHLIBNAME, luaopen_math},   {LUA_UTF8LIBNAME, luaopen_utf8},
+        {LUA_GNAME, luaopen_base},
+        {LUA_COLIBNAME, luaopen_coroutine},
+        {LUA_TABLIBNAME, luaopen_table},
+        {LUA_STRLIBNAME, luaopen_string},
+        {LUA_MATHLIBNAME, luaopen_math},
+        {LUA_UTF8LIBNAME, luaopen_utf8},
     };
     for (const luaL_Reg& library : libraries) {
         luaL_requiref(m_state, library.name, library.func, 1);
@@ -128,8 +130,7 @@ void ScriptVm::pushBindingTable(const char* tableName)
     lua_remove(m_state, -2);
 }
 
-bool ScriptVm::run(const char* code, std::size_t length, const char* chunkName,
-                   std::string* outError)
+bool ScriptVm::run(const char* code, std::size_t length, const char* chunkName, std::string* outError)
 {
     lua_pushcfunction(m_state, &detail::messageHandler);
     const int handlerIndex = lua_gettop(m_state);

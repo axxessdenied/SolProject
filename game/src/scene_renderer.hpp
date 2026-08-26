@@ -2,6 +2,8 @@
 
 #include "lod_report.hpp"
 
+#include "sol/assets/data_defs.hpp"
+#include "sol/assets/font.hpp"
 #include "sol/core/math/math.hpp"
 #include "sol/renderer/debug_draw_renderer.hpp"
 #include "sol/renderer/impostor_renderer.hpp"
@@ -14,8 +16,6 @@
 #include "sol/rhi/gpu_profiler.hpp"
 #include "sol/rhi/resources.hpp"
 #include "sol/rhi/swapchain.hpp"
-#include "sol/assets/data_defs.hpp"
-#include "sol/assets/font.hpp"
 #include "sol/ui/draw_list.hpp"
 #include "sol/ui/imgui_host.hpp"
 
@@ -37,10 +37,7 @@ struct CameraFrame
     sol::core::DVec3 position;
     sol::core::Quat orientation = sol::core::Quat::identity();
 
-    [[nodiscard]] sol::core::Mat4 viewRotation() const
-    {
-        return transpose(toMat4(orientation));
-    }
+    [[nodiscard]] sol::core::Mat4 viewRotation() const { return transpose(toMat4(orientation)); }
 };
 
 // Index into the model catalog, which is `[[model]]` def order (Phase 9).
@@ -147,8 +144,10 @@ public:
         Failure,
     };
 
-    [[nodiscard]] bool initialize(sol::rhi::Context& context, sol::rhi::Swapchain& swapchain,
-                                  const char* shaderDirectory, const char* cookedDirectory);
+    [[nodiscard]] bool initialize(sol::rhi::Context& context,
+                                  sol::rhi::Swapchain& swapchain,
+                                  const char* shaderDirectory,
+                                  const char* cookedDirectory);
 
     // Uploads the catalog the `[[model]]` defs name (Phase 9). Separate from
     // initialize because the pipelines come up before the def database is
@@ -156,8 +155,7 @@ public:
     // reload the catalog without rebuilding the swapchain. Meshes and
     // textures are cached by cooked stem, so ten models sharing hull.stex
     // upload it once.
-    [[nodiscard]] bool loadModels(std::span<const sol::assets::ModelDef> models,
-                                  const char* cookedDirectory);
+    [[nodiscard]] bool loadModels(std::span<const sol::assets::ModelDef> models, const char* cookedDirectory);
     void unloadModels();
     void shutdown();
 
@@ -204,6 +202,7 @@ public:
     // The cooked UI font and the texture slot its atlas occupies, for callers
     // building draw lists.
     [[nodiscard]] const sol::assets::Font& uiFont() const { return m_uiFont; }
+
     [[nodiscard]] std::uint32_t uiFontTexture() const { return m_uiFontTexture; }
 
     // Add camera-relative debug lines each frame before drawFrame; the list
@@ -223,17 +222,20 @@ private:
 
     [[nodiscard]] bool createPerImageSemaphores();
     void destroyPerImageSemaphores();
-    void recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
-                        const CameraFrame& camera, std::span<const RenderInstance> instances,
-                        std::span<const ParticleInstance> particles, const SceneInfo& scene);
+    void recordCommands(VkCommandBuffer commandBuffer,
+                        std::uint32_t imageIndex,
+                        const CameraFrame& camera,
+                        std::span<const RenderInstance> instances,
+                        std::span<const ParticleInstance> particles,
+                        const SceneInfo& scene);
 
     // ⚑ ONE rule for both draw paths, which is why this is a function and not
     // two `if`s: the translucent pass already carries a comment about refusing
     // to become a second rule about which mesh to use, and a pin or a
     // hysteresis band honoured in one path and not the other would be a third.
     // Reads `m_lodLast`, writes `m_lodThis`.
-    [[nodiscard]] std::uint32_t chooseLevel(RenderInstanceKey key, float screenRadiusPixels,
-                                            std::uint32_t levelCount);
+    [[nodiscard]] std::uint32_t
+    chooseLevel(RenderInstanceKey key, float screenRadiusPixels, std::uint32_t levelCount);
 
     sol::rhi::Context* m_context = nullptr;
     sol::rhi::Swapchain* m_swapchain = nullptr;
@@ -245,6 +247,7 @@ private:
     sol::renderer::DebugDrawRenderer m_debugDraw;
     sol::renderer::ParticleRenderer m_particleRenderer;
     std::vector<sol::renderer::ParticleRenderer::Particle> m_particleScratch;
+
     // The model catalog (Phase 9), parallel to `[[model]]` def order. Meshes
     // and textures are owned by stem so a shared asset is uploaded once, and
     // a model row holds the indices into those two pools.
@@ -269,6 +272,7 @@ private:
         bool translucent = false;
         float alpha = 1.0f;
     };
+
     std::vector<CatalogEntry> m_models;
     // ⚑⚑ WHAT EACH INSTANCE DREW LAST FRAME (Phase 18), which is the only
     // state in this whole draw path. The RULE lives in `mesh_lod.hpp` and

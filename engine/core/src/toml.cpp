@@ -12,8 +12,7 @@ namespace {
 
 [[nodiscard]] bool isBareKeyChar(char c)
 {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-           c == '_' || c == '-';
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
 }
 
 [[nodiscard]] bool isDigit(char c)
@@ -59,11 +58,7 @@ void appendUtf8(std::string& out, std::uint32_t codepoint)
 class TomlParser
 {
 public:
-    TomlParser(const char* text, std::size_t length)
-        : m_cursor(text)
-        , m_end(text + length)
-    {
-    }
+    TomlParser(const char* text, std::size_t length) : m_cursor(text), m_end(text + length) {}
 
     std::string error;
 
@@ -92,7 +87,9 @@ private:
     // ---- character stream -------------------------------------------------
 
     [[nodiscard]] bool atEnd() const { return m_cursor >= m_end; }
+
     [[nodiscard]] char peek() const { return atEnd() ? '\0' : *m_cursor; }
+
     [[nodiscard]] char peekAt(std::size_t offset) const
     {
         return m_cursor + offset >= m_end ? '\0' : m_cursor[offset];
@@ -359,8 +356,7 @@ private:
     [[nodiscard]] bool matchKeyword(const char* word)
     {
         const std::size_t length = std::strlen(word);
-        if (static_cast<std::size_t>(m_end - m_cursor) < length ||
-            std::memcmp(m_cursor, word, length) != 0) {
+        if (static_cast<std::size_t>(m_end - m_cursor) < length || std::memcmp(m_cursor, word, length) != 0) {
             return false;
         }
         if (isBareKeyChar(peekAt(length))) {
@@ -395,13 +391,27 @@ private:
             const char escape = peek();
             advance();
             switch (escape) {
-            case 'b': out.push_back('\b'); break;
-            case 't': out.push_back('\t'); break;
-            case 'n': out.push_back('\n'); break;
-            case 'f': out.push_back('\f'); break;
-            case 'r': out.push_back('\r'); break;
-            case '"': out.push_back('"'); break;
-            case '\\': out.push_back('\\'); break;
+            case 'b':
+                out.push_back('\b');
+                break;
+            case 't':
+                out.push_back('\t');
+                break;
+            case 'n':
+                out.push_back('\n');
+                break;
+            case 'f':
+                out.push_back('\f');
+                break;
+            case 'r':
+                out.push_back('\r');
+                break;
+            case '"':
+                out.push_back('"');
+                break;
+            case '\\':
+                out.push_back('\\');
+                break;
             case 'u':
             case 'U': {
                 const int digits = escape == 'u' ? 4 : 8;
@@ -514,8 +524,8 @@ private:
         std::string token;
         while (!atEnd()) {
             const char c = peek();
-            if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' || c == ']' ||
-                c == '}' || c == '#') {
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' || c == ']' || c == '}' ||
+                c == '#') {
                 break;
             }
             token.push_back(c);
@@ -534,8 +544,8 @@ private:
 
         if (body == "inf") {
             out.m_type = TomlType::Float;
-            out.m_float = negative ? -std::numeric_limits<double>::infinity()
-                                   : std::numeric_limits<double>::infinity();
+            out.m_float =
+                negative ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
             return true;
         }
         if (body == "nan") {
@@ -546,9 +556,8 @@ private:
 
         // A ':' anywhere (times) or a dddd- prefix (dates) - careful not to
         // trip on the '-' of a negative float exponent like 2.5e-3.
-        if (body.find(':') != std::string::npos ||
-            (body.size() > 4 && isDigit(body[0]) && isDigit(body[1]) && isDigit(body[2]) &&
-             isDigit(body[3]) && body[4] == '-')) {
+        if (body.find(':') != std::string::npos || (body.size() > 4 && isDigit(body[0]) && isDigit(body[1]) &&
+                                                    isDigit(body[2]) && isDigit(body[3]) && body[4] == '-')) {
             return fail("dates/times are not supported");
         }
 
@@ -577,9 +586,9 @@ private:
             }
         }
         // 'e'/'E' only means an exponent in decimal; hex digits contain them.
-        const bool isFloat = base == 10 && (body.find('.') != std::string::npos ||
-                                            body.find('e') != std::string::npos ||
-                                            body.find('E') != std::string::npos);
+        const bool isFloat =
+            base == 10 && (body.find('.') != std::string::npos || body.find('e') != std::string::npos ||
+                           body.find('E') != std::string::npos);
 
         if (!isFloat) {
             std::uint64_t magnitude = 0;
@@ -621,8 +630,7 @@ private:
         if (body.find('_') == std::string::npos) {
             return true;
         }
-        if (body.front() == '_' || body.back() == '_' ||
-            body.find("__") != std::string::npos) {
+        if (body.front() == '_' || body.back() == '_' || body.find("__") != std::string::npos) {
             return false;
         }
         std::string stripped;

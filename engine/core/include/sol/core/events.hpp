@@ -55,9 +55,8 @@ public:
         const SubscriptionId id = m_nextSubscription++;
         m_channels[type].push_back(Handler{
             .id = id,
-            .fn = [handler = std::move(handler)](const void* event) {
-                handler(*static_cast<const T*>(event));
-            },
+            .fn = [handler =
+                       std::move(handler)](const void* event) { handler(*static_cast<const T*>(event)); },
         });
         return id;
     }
@@ -78,8 +77,7 @@ public:
     template <typename T>
     void publish(const T& event)
     {
-        static_assert(std::is_trivially_copyable_v<T>,
-                      "the event queue stores events by memcpy");
+        static_assert(std::is_trivially_copyable_v<T>, "the event queue stores events by memcpy");
         const std::size_t offset = alignUp(m_data.size(), alignof(T));
         m_data.resize(offset + sizeof(T));
         std::memcpy(m_data.data() + offset, &event, sizeof(T));

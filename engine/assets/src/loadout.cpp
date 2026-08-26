@@ -16,24 +16,42 @@ constexpr std::size_t statIndex(FitStat stat)
 float statValue(const ShipDef& def, FitStat stat)
 {
     switch (stat) {
-    case FitStat::ForwardAccel: return def.flight.forwardAccel;
-    case FitStat::ReverseAccel: return def.flight.reverseAccel;
-    case FitStat::LateralAccel: return def.flight.lateralAccel;
-    case FitStat::VerticalAccel: return def.flight.verticalAccel;
-    case FitStat::MaxSpeed: return def.flight.maxSpeed;
-    case FitStat::TurnRate: return 1.0f; // uniform scale; handled separately
-    case FitStat::CruiseSpeedScale: return def.flight.cruiseSpeedScale;
-    case FitStat::ShieldStrength: return def.defense.shieldStrength;
-    case FitStat::ShieldRegen: return def.defense.shieldRegen;
-    case FitStat::Armor: return def.defense.armor;
-    case FitStat::Hull: return def.defense.hull;
-    case FitStat::WeaponCapacitor: return def.power.weaponCapacitor;
-    case FitStat::WeaponRecharge: return def.power.weaponRecharge;
-    case FitStat::Cargo: return def.cargoCapacity;
-    case FitStat::ScanRange: return def.scanRange;
-    case FitStat::ScanSpeed: return def.scanSpeed;
-    case FitStat::CollectorRange: return def.collectorRange;
-    case FitStat::Count: break;
+    case FitStat::ForwardAccel:
+        return def.flight.forwardAccel;
+    case FitStat::ReverseAccel:
+        return def.flight.reverseAccel;
+    case FitStat::LateralAccel:
+        return def.flight.lateralAccel;
+    case FitStat::VerticalAccel:
+        return def.flight.verticalAccel;
+    case FitStat::MaxSpeed:
+        return def.flight.maxSpeed;
+    case FitStat::TurnRate:
+        return 1.0f; // uniform scale; handled separately
+    case FitStat::CruiseSpeedScale:
+        return def.flight.cruiseSpeedScale;
+    case FitStat::ShieldStrength:
+        return def.defense.shieldStrength;
+    case FitStat::ShieldRegen:
+        return def.defense.shieldRegen;
+    case FitStat::Armor:
+        return def.defense.armor;
+    case FitStat::Hull:
+        return def.defense.hull;
+    case FitStat::WeaponCapacitor:
+        return def.power.weaponCapacitor;
+    case FitStat::WeaponRecharge:
+        return def.power.weaponRecharge;
+    case FitStat::Cargo:
+        return def.cargoCapacity;
+    case FitStat::ScanRange:
+        return def.scanRange;
+    case FitStat::ScanSpeed:
+        return def.scanSpeed;
+    case FitStat::CollectorRange:
+        return def.collectorRange;
+    case FitStat::Count:
+        break;
     }
     return 0.0f;
 }
@@ -41,24 +59,58 @@ float statValue(const ShipDef& def, FitStat stat)
 void setStatValue(ShipDef& def, FitStat stat, float value)
 {
     switch (stat) {
-    case FitStat::ForwardAccel: def.flight.forwardAccel = value; return;
-    case FitStat::ReverseAccel: def.flight.reverseAccel = value; return;
-    case FitStat::LateralAccel: def.flight.lateralAccel = value; return;
-    case FitStat::VerticalAccel: def.flight.verticalAccel = value; return;
-    case FitStat::MaxSpeed: def.flight.maxSpeed = value; return;
-    case FitStat::TurnRate: return; // handled separately (three axes)
-    case FitStat::CruiseSpeedScale: def.flight.cruiseSpeedScale = value; return;
-    case FitStat::ShieldStrength: def.defense.shieldStrength = value; return;
-    case FitStat::ShieldRegen: def.defense.shieldRegen = value; return;
-    case FitStat::Armor: def.defense.armor = value; return;
-    case FitStat::Hull: def.defense.hull = value; return;
-    case FitStat::WeaponCapacitor: def.power.weaponCapacitor = value; return;
-    case FitStat::WeaponRecharge: def.power.weaponRecharge = value; return;
-    case FitStat::Cargo: def.cargoCapacity = value; return;
-    case FitStat::ScanRange: def.scanRange = value; return;
-    case FitStat::ScanSpeed: def.scanSpeed = value; return;
-    case FitStat::CollectorRange: def.collectorRange = value; return;
-    case FitStat::Count: break;
+    case FitStat::ForwardAccel:
+        def.flight.forwardAccel = value;
+        return;
+    case FitStat::ReverseAccel:
+        def.flight.reverseAccel = value;
+        return;
+    case FitStat::LateralAccel:
+        def.flight.lateralAccel = value;
+        return;
+    case FitStat::VerticalAccel:
+        def.flight.verticalAccel = value;
+        return;
+    case FitStat::MaxSpeed:
+        def.flight.maxSpeed = value;
+        return;
+    case FitStat::TurnRate:
+        return; // handled separately (three axes)
+    case FitStat::CruiseSpeedScale:
+        def.flight.cruiseSpeedScale = value;
+        return;
+    case FitStat::ShieldStrength:
+        def.defense.shieldStrength = value;
+        return;
+    case FitStat::ShieldRegen:
+        def.defense.shieldRegen = value;
+        return;
+    case FitStat::Armor:
+        def.defense.armor = value;
+        return;
+    case FitStat::Hull:
+        def.defense.hull = value;
+        return;
+    case FitStat::WeaponCapacitor:
+        def.power.weaponCapacitor = value;
+        return;
+    case FitStat::WeaponRecharge:
+        def.power.weaponRecharge = value;
+        return;
+    case FitStat::Cargo:
+        def.cargoCapacity = value;
+        return;
+    case FitStat::ScanRange:
+        def.scanRange = value;
+        return;
+    case FitStat::ScanSpeed:
+        def.scanSpeed = value;
+        return;
+    case FitStat::CollectorRange:
+        def.collectorRange = value;
+        return;
+    case FitStat::Count:
+        break;
     }
 }
 
@@ -79,8 +131,10 @@ void accumulate(Accumulated& acc, const StatModifiers& mods)
 
 } // namespace
 
-bool validateLoadout(const ShipDef& ship, std::span<const ModuleDef* const> modules,
-                     std::span<const CrewDef* const> crew, std::string* outError)
+bool validateLoadout(const ShipDef& ship,
+                     std::span<const ModuleDef* const> modules,
+                     std::span<const CrewDef* const> crew,
+                     std::string* outError)
 {
     std::array<std::uint32_t, kModuleSlotCount> used{};
     float powerDraw = 0.0f;
@@ -94,8 +148,7 @@ bool validateLoadout(const ShipDef& ship, std::span<const ModuleDef* const> modu
 
     const std::array<std::uint32_t, kModuleSlotCount> limits = {
         ship.slotsShield, ship.slotsEngine, ship.slotsCargo, ship.slotsUtility};
-    constexpr const char* kSlotNames[kModuleSlotCount] = {"shield", "engine", "cargo",
-                                                          "utility"};
+    constexpr const char* kSlotNames[kModuleSlotCount] = {"shield", "engine", "cargo", "utility"};
     for (std::size_t i = 0; i < kModuleSlotCount; ++i) {
         if (used[i] > limits[i]) {
             if (outError != nullptr) {
@@ -130,7 +183,8 @@ bool validateLoadout(const ShipDef& ship, std::span<const ModuleDef* const> modu
     return true;
 }
 
-ShipDef resolveLoadout(const ShipDef& base, std::span<const ModuleDef* const> modules,
+ShipDef resolveLoadout(const ShipDef& base,
+                       std::span<const ModuleDef* const> modules,
                        std::span<const CrewDef* const> crew)
 {
     Accumulated acc;
@@ -159,8 +213,7 @@ ShipDef resolveLoadout(const ShipDef& base, std::span<const ModuleDef* const> mo
     // mul scales each.
     const std::size_t turn = statIndex(FitStat::TurnRate);
     for (std::size_t axis = 0; axis < 3; ++axis) {
-        def.flight.maxTurnRate[axis] =
-            (base.flight.maxTurnRate[axis] + acc.add[turn]) * acc.mul[turn];
+        def.flight.maxTurnRate[axis] = (base.flight.maxTurnRate[axis] + acc.add[turn]) * acc.mul[turn];
     }
 
     // Mass penalty: module mass dilutes linear and angular acceleration.

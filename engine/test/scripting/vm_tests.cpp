@@ -1,8 +1,7 @@
-#include <sol/scripting/vm.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <string>
+
+#include <sol/scripting/vm.hpp>
+#include <sol/test/test.hpp>
 
 using sol::scripting::EntityHandle;
 using sol::scripting::ScriptVm;
@@ -96,8 +95,8 @@ SOL_TEST(scripting_registered_functions)
     vm.registerFunction<&greet>("sol", "greet");
 
     std::string error;
-    SOL_CHECK(vm.doString("sum = sol.add(2, 3) big = sol.scale(1.5) msg = sol.greet('pilot')",
-                          "test", &error));
+    SOL_CHECK(
+        vm.doString("sum = sol.add(2, 3) big = sol.scale(1.5) msg = sol.greet('pilot')", "test", &error));
 
     int sum = 0;
     double big = 0.0;

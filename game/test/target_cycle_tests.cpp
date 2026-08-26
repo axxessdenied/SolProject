@@ -1,14 +1,14 @@
 #include "input_actions.hpp"
 #include "space_world.hpp"
 
-#include <sol/assets/data_defs.hpp>
-#include <sol/platform/input_bindings.hpp>
-#include <sol/test/test.hpp>
-
 #include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include <sol/assets/data_defs.hpp>
+#include <sol/platform/input_bindings.hpp>
+#include <sol/test/test.hpp>
 
 using sol::assets::DefDatabase;
 
@@ -149,8 +149,7 @@ SOL_TEST(the_two_reverse_actions_have_unique_default_bindings)
     game::installDefaultBindings(table);
     SOL_REQUIRE(table.actionCount() == game::kActionCount);
 
-    for (const game::Action action :
-         {game::Action::CycleNavTargetBack, game::Action::CycleContactBack}) {
+    for (const game::Action action : {game::Action::CycleNavTargetBack, game::Action::CycleContactBack}) {
         const std::uint32_t index = static_cast<std::uint32_t>(action);
         const sol::platform::InputChord chord = table.chordFor(index);
         SOL_CHECK(chord.bound());
@@ -160,9 +159,6 @@ SOL_TEST(the_two_reverse_actions_have_unique_default_bindings)
     }
 
     // And the ids the settings file will carry, which are stable forever.
-    SOL_CHECK(std::strcmp(game::actionId(game::Action::CycleNavTargetBack),
-                          "cycle_nav_target_back")
-              == 0);
-    SOL_CHECK(std::strcmp(game::actionId(game::Action::CycleContactBack), "cycle_contact_back")
-              == 0);
+    SOL_CHECK(std::strcmp(game::actionId(game::Action::CycleNavTargetBack), "cycle_nav_target_back") == 0);
+    SOL_CHECK(std::strcmp(game::actionId(game::Action::CycleContactBack), "cycle_contact_back") == 0);
 }

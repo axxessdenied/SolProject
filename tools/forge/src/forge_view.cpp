@@ -9,13 +9,12 @@ using namespace sol;
 
 namespace {
 
-#define FORGE_VK_CHECK(expression)                                                                   \
-    do {                                                                                             \
-        const VkResult forgeVkResult_ = (expression);                                                \
-        if (forgeVkResult_ != VK_SUCCESS) {                                                          \
-            SOL_LOG_FATAL("Vulkan call failed (%d): %s", static_cast<int>(forgeVkResult_),           \
-                          #expression);                                                              \
-        }                                                                                            \
+#define FORGE_VK_CHECK(expression)                                                                           \
+    do {                                                                                                     \
+        const VkResult forgeVkResult_ = (expression);                                                        \
+        if (forgeVkResult_ != VK_SUCCESS) {                                                                  \
+            SOL_LOG_FATAL("Vulkan call failed (%d): %s", static_cast<int>(forgeVkResult_), #expression);     \
+        }                                                                                                    \
     } while (0)
 
 // Near-black rather than pure black: an unlit face against a pure black
@@ -27,17 +26,14 @@ constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
 } // namespace
 
-bool ForgeView::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
-                           const char* shaderDirectory)
+bool ForgeView::initialize(rhi::Context& context, rhi::Swapchain& swapchain, const char* shaderDirectory)
 {
     m_context = &context;
     m_swapchain = &swapchain;
 
     if (!m_meshRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
-        !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
-                                kFramesInFlight) ||
-        !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat,
-                                      shaderDirectory)) {
+        !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory, kFramesInFlight) ||
+        !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat, shaderDirectory)) {
         return false;
     }
 
@@ -61,8 +57,7 @@ bool ForgeView::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
 
         VkSemaphoreCreateInfo semaphoreCreateInfo = {};
         semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        FORGE_VK_CHECK(
-            vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &frame.imageAvailable));
+        FORGE_VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &frame.imageAvailable));
 
         VkFenceCreateInfo fenceCreateInfo = {};
         fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -79,8 +74,7 @@ bool ForgeView::createPerImageSemaphores()
     for (VkSemaphore& semaphore : m_renderFinished) {
         VkSemaphoreCreateInfo semaphoreCreateInfo = {};
         semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        FORGE_VK_CHECK(
-            vkCreateSemaphore(m_context->device(), &semaphoreCreateInfo, nullptr, &semaphore));
+        FORGE_VK_CHECK(vkCreateSemaphore(m_context->device(), &semaphoreCreateInfo, nullptr, &semaphore));
     }
     return true;
 }
@@ -128,7 +122,8 @@ void ForgeView::shutdown()
     m_swapchain = nullptr;
 }
 
-void ForgeView::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
+void ForgeView::recordCommands(VkCommandBuffer commandBuffer,
+                               std::uint32_t imageIndex,
                                const FrameDesc& frame)
 {
     VkCommandBufferBeginInfo beginInfo = {};
@@ -150,8 +145,8 @@ void ForgeView::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imag
         if (item.mesh == nullptr || item.texture == nullptr) {
             continue;
         }
-        m_meshRenderer.draw(commandBuffer, *item.mesh, *item.texture, viewProjection * item.model,
-                            item.model, item.emissive);
+        m_meshRenderer.draw(
+            commandBuffer, *item.mesh, *item.texture, viewProjection * item.model, item.model, item.emissive);
     }
 
     m_debugDraw.draw(commandBuffer, m_frameIndex, viewProjection);
@@ -215,8 +210,7 @@ ForgeView::DrawResult ForgeView::drawFrame(const FrameDesc& frame)
     submitInfo.signalSemaphoreInfoCount = 1;
     submitInfo.pSignalSemaphoreInfos = &signalSemaphoreInfo;
 
-    FORGE_VK_CHECK(
-        vkQueueSubmit2(m_context->graphicsQueue(), 1, &submitInfo, resources.inFlight));
+    FORGE_VK_CHECK(vkQueueSubmit2(m_context->graphicsQueue(), 1, &submitInfo, resources.inFlight));
 
     const rhi::Swapchain::PresentResult presentResult =
         m_swapchain->present(m_renderFinished[imageIndex], imageIndex);

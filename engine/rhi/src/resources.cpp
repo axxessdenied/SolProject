@@ -12,8 +12,7 @@ namespace sol::rhi {
 
 namespace {
 
-std::uint32_t findMemoryType(Context& context, std::uint32_t typeBits,
-                             VkMemoryPropertyFlags properties)
+std::uint32_t findMemoryType(Context& context, std::uint32_t typeBits, VkMemoryPropertyFlags properties)
 {
     VkPhysicalDeviceMemoryProperties memoryProperties = {};
     vkGetPhysicalDeviceMemoryProperties(context.physicalDevice(), &memoryProperties);
@@ -29,7 +28,9 @@ std::uint32_t findMemoryType(Context& context, std::uint32_t typeBits,
 
 } // namespace
 
-Buffer createBuffer(Context& context, VkDeviceSize size, VkBufferUsageFlags usage,
+Buffer createBuffer(Context& context,
+                    VkDeviceSize size,
+                    VkBufferUsageFlags usage,
                     VkMemoryPropertyFlags memoryProperties)
 {
     Buffer result;
@@ -48,26 +49,26 @@ Buffer createBuffer(Context& context, VkDeviceSize size, VkBufferUsageFlags usag
     VkMemoryAllocateInfo allocateInfo = {};
     allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex =
-        findMemoryType(context, requirements.memoryTypeBits, memoryProperties);
+    allocateInfo.memoryTypeIndex = findMemoryType(context, requirements.memoryTypeBits, memoryProperties);
     SOL_VK_CHECK(vkAllocateMemory(context.device(), &allocateInfo, nullptr, &result.memory));
     SOL_VK_CHECK(vkBindBufferMemory(context.device(), result.buffer, result.memory, 0));
     return result;
 }
 
-Buffer createDeviceLocalBuffer(Context& context, const void* data, VkDeviceSize size,
-                               VkBufferUsageFlags usage)
+Buffer
+createDeviceLocalBuffer(Context& context, const void* data, VkDeviceSize size, VkBufferUsageFlags usage)
 {
-    Buffer staging = createBuffer(context, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    Buffer staging = createBuffer(context,
+                                  size,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped = nullptr;
     SOL_VK_CHECK(vkMapMemory(context.device(), staging.memory, 0, size, 0, &mapped));
     std::memcpy(mapped, data, static_cast<std::size_t>(size));
     vkUnmapMemory(context.device(), staging.memory);
 
-    Buffer result = createBuffer(context, size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Buffer result = createBuffer(
+        context, size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     VkCommandBuffer commandBuffer = beginOneShotCommands(context);
     VkBufferCopy region = {0, 0, size};
@@ -169,8 +170,11 @@ Image createColorTarget(Context& context, VkExtent2D extent, VkFormat format)
     return result;
 }
 
-Image createSampledCubemap(Context& context, std::uint32_t faceSize, VkFormat format,
-                           const std::uint8_t* const faceData[6], std::uint32_t faceByteSize)
+Image createSampledCubemap(Context& context,
+                           std::uint32_t faceSize,
+                           VkFormat format,
+                           const std::uint8_t* const faceData[6],
+                           std::uint32_t faceByteSize)
 {
     Image result;
     result.extent = {faceSize, faceSize};
@@ -200,10 +204,10 @@ Image createSampledCubemap(Context& context, std::uint32_t faceSize, VkFormat fo
     SOL_VK_CHECK(vkAllocateMemory(context.device(), &allocateInfo, nullptr, &result.memory));
     SOL_VK_CHECK(vkBindImageMemory(context.device(), result.image, result.memory, 0));
 
-    Buffer staging = createBuffer(context, VkDeviceSize{faceByteSize} * 6,
+    Buffer staging = createBuffer(context,
+                                  VkDeviceSize{faceByteSize} * 6,
                                   VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     {
         void* mapped = nullptr;
         SOL_VK_CHECK(vkMapMemory(context.device(), staging.memory, 0, staging.size, 0, &mapped));
@@ -236,8 +240,8 @@ Image createSampledCubemap(Context& context, std::uint32_t faceSize, VkFormat fo
     VkBufferImageCopy region = {};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 6};
     region.imageExtent = {faceSize, faceSize, 1};
-    vkCmdCopyBufferToImage(commandBuffer, staging.buffer, result.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    vkCmdCopyBufferToImage(
+        commandBuffer, staging.buffer, result.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
     VkImageMemoryBarrier2 toSampled = toTransfer;
     toSampled.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
@@ -299,9 +303,10 @@ Image createSampledTexture(Context& context, const TextureUploadDesc& desc)
     for (std::uint32_t mip = 0; mip < desc.mipCount; ++mip) {
         totalSize += desc.mipSizes[mip];
     }
-    Buffer staging = createBuffer(context, totalSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    Buffer staging = createBuffer(context,
+                                  totalSize,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     {
         void* mapped = nullptr;
         SOL_VK_CHECK(vkMapMemory(context.device(), staging.memory, 0, totalSize, 0, &mapped));
@@ -337,8 +342,8 @@ Image createSampledTexture(Context& context, const TextureUploadDesc& desc)
         region.bufferOffset = bufferOffset;
         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 1};
         region.imageExtent = {std::max(desc.width >> mip, 1u), std::max(desc.height >> mip, 1u), 1};
-        vkCmdCopyBufferToImage(commandBuffer, staging.buffer, result.image,
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        vkCmdCopyBufferToImage(
+            commandBuffer, staging.buffer, result.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
         bufferOffset += desc.mipSizes[mip];
     }
 

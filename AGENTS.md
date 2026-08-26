@@ -29,6 +29,9 @@ SolProject is a single-player 3D space sandbox game — **The Stars Don't Wait**
 
 - **C++20.** Use concepts, `constexpr`, designated initializers, `std::span`, ranges where they clarify. No modules for now (tooling maturity). Assume an experienced C++ reader — no tutorial comments.
 - Formatting and naming are enforced by `.clang-format` and `.editorconfig`. Run clang-format on files you touch. Do not hand-format against it.
+- **The whole first-party tree is clang-format clean and must stay that way** (`engine/`, `game/`, `tools/` — every `.cpp`/`.hpp`; `third_party/` is excluded per §5). It drifted for many phases and was brought back in one pass; a `git diff` that reformats code your change never touched means someone skipped this step, not that the config is wrong.
+- **Formatted with clang-format 22.1.3** (the VS 18 toolchain: `.../Microsoft Visual Studio/18/Community/VC/Tools/Llvm/x64/bin/clang-format.exe`). Older versions differ — 19.1.5 disagrees on array-reference parameter spacing (`const float (&v)[3]`) — so **use the VS 18 binary, not whatever is first on `PATH`**, or you will re-churn a file per pass.
+- **`IncludeBlocks: Regroup` sorts across blank lines, so a blank line does NOT protect include order.** Where order is load-bearing — the three `win32/` files where `<windows.h>` must precede `<audioclient.h>`, `<vulkan/vulkan_win32.h>` or `<imgui_impl_win32.h>` — the block is wrapped in `// clang-format off` / `// clang-format on` with a comment saying why. **Getting this wrong fails inside an SDK header and names no file of ours**, which is why the guard is there rather than a convention.
 - Naming conventions (mirrors `.clang-format` expectations):
   - Types / concepts: `PascalCase`
   - Functions / methods: `camelCase`

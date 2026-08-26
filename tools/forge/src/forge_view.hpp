@@ -66,12 +66,13 @@ public:
         Failure,
     };
 
-    [[nodiscard]] bool initialize(sol::rhi::Context& context, sol::rhi::Swapchain& swapchain,
-                                  const char* shaderDirectory);
+    [[nodiscard]] bool
+    initialize(sol::rhi::Context& context, sol::rhi::Swapchain& swapchain, const char* shaderDirectory);
     void shutdown();
     [[nodiscard]] bool onSwapchainRecreated();
 
     [[nodiscard]] sol::renderer::MeshRenderer& meshes() { return m_meshRenderer; }
+
     // Accumulate this frame's grid and reference lines here; the list is drawn
     // inside the HDR pass and cleared afterwards.
     [[nodiscard]] sol::renderer::DebugDrawRenderer& debugDraw() { return m_debugDraw; }
@@ -93,8 +94,7 @@ private:
 
     [[nodiscard]] bool createPerImageSemaphores();
     void destroyPerImageSemaphores();
-    void recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
-                        const FrameDesc& frame);
+    void recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, const FrameDesc& frame);
 
     sol::rhi::Context* m_context = nullptr;
     sol::rhi::Swapchain* m_swapchain = nullptr;

@@ -1,12 +1,11 @@
-#include <sol/assets/data_defs.hpp>
-#include <sol/assets/loadout.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
+
+#include <sol/assets/data_defs.hpp>
+#include <sol/assets/loadout.hpp>
+#include <sol/test/test.hpp>
 
 using sol::assets::CrewDef;
 using sol::assets::DefDatabase;
@@ -194,10 +193,8 @@ SOL_TEST(loadout_validate_budgets)
     const ModuleDef* pod = db.findModule("sol.cargo_pod");
     const ModuleDef* sink = db.findModule("sol.hungry_reactor_sink");
     const CrewDef* kim = db.findCrew("sol.engineer_kim");
-    SOL_CHECK(ship != nullptr && shield != nullptr && pod != nullptr && sink != nullptr &&
-              kim != nullptr);
-    if (ship == nullptr || shield == nullptr || pod == nullptr || sink == nullptr ||
-        kim == nullptr) {
+    SOL_CHECK(ship != nullptr && shield != nullptr && pod != nullptr && sink != nullptr && kim != nullptr);
+    if (ship == nullptr || shield == nullptr || pod == nullptr || sink == nullptr || kim == nullptr) {
         return;
     }
 

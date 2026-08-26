@@ -41,10 +41,13 @@ void consoleLogSink(core::LogLevel level, const char* message, void* /*userData*
 ImVec4 levelColor(core::LogLevel level)
 {
     switch (level) {
-    case core::LogLevel::Warn: return {1.0f, 0.8f, 0.3f, 1.0f};
+    case core::LogLevel::Warn:
+        return {1.0f, 0.8f, 0.3f, 1.0f};
     case core::LogLevel::Error:
-    case core::LogLevel::Fatal: return {1.0f, 0.35f, 0.35f, 1.0f};
-    default: return {0.75f, 0.78f, 0.82f, 1.0f};
+    case core::LogLevel::Fatal:
+        return {1.0f, 0.35f, 0.35f, 1.0f};
+    default:
+        return {0.75f, 0.78f, 0.82f, 1.0f};
     }
 }
 
@@ -76,18 +79,20 @@ void DevUi::build(const OverlayStats& stats)
             // without giving up the number a glance is usually after.
             ImGui::Text("%.1f fps  (%.2f ms)", stats.fps, stats.frameMilliseconds);
             if (m_overlayMode == OverlayMode::Full) {
-                ImGui::Text("cam  %.2f  %.2f  %.2f", stats.cameraPosition.x, stats.cameraPosition.y,
+                ImGui::Text("cam  %.2f  %.2f  %.2f",
+                            stats.cameraPosition.x,
+                            stats.cameraPosition.y,
                             stats.cameraPosition.z);
                 ImGui::Text("speed %.1f m/s   draws %u", stats.cameraSpeed, stats.drawCalls);
                 if (stats.lodDrawn[1] != 0 || stats.lodDrawn[2] != 0) {
                     // Only once something is actually drawing below level 0:
                     // a row that reads "lod 19/0/0" every frame is a row
                     // nobody reads by the second day.
-                    ImGui::Text("lod  %u / %u / %u", stats.lodDrawn[0], stats.lodDrawn[1],
-                                stats.lodDrawn[2]);
+                    ImGui::Text("lod  %u / %u / %u", stats.lodDrawn[0], stats.lodDrawn[1], stats.lodDrawn[2]);
                 }
                 ImGui::Text("sim  tick %llu   entities %u   alpha %.2f",
-                            static_cast<unsigned long long>(stats.simTicks), stats.simEntities,
+                            static_cast<unsigned long long>(stats.simTicks),
+                            stats.simEntities,
                             stats.simAlpha);
                 // Gameplay controls are rebindable (Phase 8k), so this crib names the
                 // shipped layout rather than claiming to be the live one - the engine
@@ -104,8 +109,8 @@ void DevUi::build(const OverlayStats& stats)
                 // Zone tree (Phase 8n). Mean says where the frame goes; max says what
                 // the hitch was, and an fps counter averages exactly that away - which
                 // is why both columns are here and neither is enough alone.
-                if (stats.profiler != nullptr && stats.profiler->enabled()
-                    && stats.profiler->zoneCount() > 0) {
+                if (stats.profiler != nullptr && stats.profiler->enabled() &&
+                    stats.profiler->zoneCount() > 0) {
                     const core::Profiler& profiler = *stats.profiler;
                     ImGui::Separator();
                     ImGui::Text("%-22s %7s %7s %7s", "zone", "last", "mean", "max");
@@ -115,14 +120,16 @@ void DevUi::build(const OverlayStats& stats)
                         // Indent by nesting depth: a parent's time includes its
                         // children's, and the shape is what says so.
                         char label[64];
-                        std::snprintf(label, sizeof(label), "%*s%s",
-                                      static_cast<int>(zone.depth) * 2, "", zone.name);
-                        ImGui::Text("%-22s %6.2f  %6.2f  %6.2f", label, zone.lastMilliseconds,
-                                    zone.meanMilliseconds, zone.maxMilliseconds);
+                        std::snprintf(
+                            label, sizeof(label), "%*s%s", static_cast<int>(zone.depth) * 2, "", zone.name);
+                        ImGui::Text("%-22s %6.2f  %6.2f  %6.2f",
+                                    label,
+                                    zone.lastMilliseconds,
+                                    zone.meanMilliseconds,
+                                    zone.maxMilliseconds);
                         if (zone.counter > 0) {
                             ImGui::SameLine();
-                            ImGui::TextDisabled("  n=%llu",
-                                                static_cast<unsigned long long>(zone.counter));
+                            ImGui::TextDisabled("  n=%llu", static_cast<unsigned long long>(zone.counter));
                         }
                         if (zone.external) {
                             ImGui::SameLine();
@@ -147,17 +154,15 @@ void DevUi::build(const OverlayStats& stats)
         ImGui::SetNextWindowSize({560.0f, 220.0f}, ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos({12.0f, 120.0f}, ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Console", &m_showConsole)) {
-            const float inputHeight =
-                m_commandHandler != nullptr ? ImGui::GetFrameHeightWithSpacing() : 0.0f;
-            if (ImGui::BeginChild("##log", {0, -inputHeight}, ImGuiChildFlags_None,
-                                  ImGuiWindowFlags_HorizontalScrollbar)) {
+            const float inputHeight = m_commandHandler != nullptr ? ImGui::GetFrameHeightWithSpacing() : 0.0f;
+            if (ImGui::BeginChild(
+                    "##log", {0, -inputHeight}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar)) {
                 for (const auto& [level, text] : g_console.lines) {
                     ImGui::PushStyleColor(ImGuiCol_Text, levelColor(level));
                     ImGui::TextUnformatted(text.c_str());
                     ImGui::PopStyleColor();
                 }
-                if (g_console.scrollToBottom &&
-                    ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 24.0f) {
+                if (g_console.scrollToBottom && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 24.0f) {
                     ImGui::SetScrollHereY(1.0f);
                 }
                 g_console.scrollToBottom = false;
@@ -200,9 +205,8 @@ int DevUi::consoleTextCallback(ImGuiInputTextCallbackData* data)
     }
     const int count = static_cast<int>(ui->m_commandHistory.size());
     if (data->EventKey == ImGuiKey_UpArrow) {
-        ui->m_historyIndex = ui->m_historyIndex < 0 ? count - 1
-                                                    : (ui->m_historyIndex > 0 ? ui->m_historyIndex - 1
-                                                                              : 0);
+        ui->m_historyIndex =
+            ui->m_historyIndex < 0 ? count - 1 : (ui->m_historyIndex > 0 ? ui->m_historyIndex - 1 : 0);
     } else if (data->EventKey == ImGuiKey_DownArrow) {
         if (ui->m_historyIndex < 0) {
             return 0;
@@ -224,8 +228,8 @@ void DevUi::buildConsoleInput()
     ImGui::SetNextItemWidth(-1.0f);
     const ImGuiInputTextFlags flags =
         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory;
-    if (ImGui::InputText("##command", m_commandBuffer, sizeof m_commandBuffer, flags,
-                         &DevUi::consoleTextCallback, this)) {
+    if (ImGui::InputText(
+            "##command", m_commandBuffer, sizeof m_commandBuffer, flags, &DevUi::consoleTextCallback, this)) {
         if (m_commandBuffer[0] != '\0') {
             m_commandHistory.emplace_back(m_commandBuffer);
             m_commandHandler(m_commandBuffer, m_commandUserData);

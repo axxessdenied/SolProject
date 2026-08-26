@@ -11,8 +11,7 @@ namespace ui = sol::ui;
 
 namespace {
 
-constexpr const char* kSlotNames[sol::assets::kModuleSlotCount] = {"shield", "engine", "cargo",
-                                                                   "utility"};
+constexpr const char* kSlotNames[sol::assets::kModuleSlotCount] = {"shield", "engine", "cargo", "utility"};
 
 [[nodiscard]] const char* store(std::deque<std::string>& text, std::string value)
 {
@@ -47,8 +46,10 @@ constexpr const char* kSlotNames[sol::assets::kModuleSlotCount] = {"shield", "en
 
 } // namespace
 
-void fillShipInfoPanel(const SpaceWorld& world, const DefDatabase& defs,
-                       std::deque<std::string>& text, ui::ShipInfoPanel& panel,
+void fillShipInfoPanel(const SpaceWorld& world,
+                       const DefDatabase& defs,
+                       std::deque<std::string>& text,
+                       ui::ShipInfoPanel& panel,
                        std::vector<ui::InfoRow>& flightRows,
                        std::vector<ui::InfoRow>& defenceRows,
                        std::vector<ui::InfoRow>& utilityRows,
@@ -73,17 +74,16 @@ void fillShipInfoPanel(const SpaceWorld& world, const DefDatabase& defs,
     // There is no hull-class field on a ShipDef, so the subtitle carries what
     // the player actually wants to know about the hull: what it cost new and
     // how much the whole ship is worth as it stands.
-    panel.shipClass = store(text, base != nullptr
-                                      ? "hull " + number(base->price, 0) + " cr, ship value "
-                                            + number(world.shipValue(active), 0) + " cr"
-                                      : std::string("ship def missing"));
+    panel.shipClass = store(text,
+                            base != nullptr ? "hull " + number(base->price, 0) + " cr, ship value " +
+                                                  number(world.shipValue(active), 0) + " cr"
+                                            : std::string("ship def missing"));
     panel.hull = defense.tuning.hull > 0.0f ? defense.state.hull / defense.tuning.hull : 0.0f;
     panel.shieldFore = defense.tuning.shieldStrength > 0.0f
                            ? defense.state.shieldFore / defense.tuning.shieldStrength
                            : 0.0f;
-    panel.shieldAft = defense.tuning.shieldStrength > 0.0f
-                          ? defense.state.shieldAft / defense.tuning.shieldStrength
-                          : 0.0f;
+    panel.shieldAft =
+        defense.tuning.shieldStrength > 0.0f ? defense.state.shieldAft / defense.tuning.shieldStrength : 0.0f;
     panel.credits = world.playerCredits();
     panel.cargoUsed = world.playerCargoTotal();
     panel.cargoCapacity = world.playerCargoCapacity();
@@ -107,14 +107,13 @@ void fillShipInfoPanel(const SpaceWorld& world, const DefDatabase& defs,
     if (base != nullptr) {
         const std::uint32_t limits[sol::assets::kModuleSlotCount] = {
             base->slotsShield, base->slotsEngine, base->slotsCargo, base->slotsUtility};
-        std::string summary = "power " + number(powerUsed) + "/" + number(base->powerOutput)
-                              + " | slots";
+        std::string summary = "power " + number(powerUsed) + "/" + number(base->powerOutput) + " | slots";
         for (std::size_t i = 0; i < sol::assets::kModuleSlotCount; ++i) {
-            summary += std::string(" ") + kSlotNames[i][0] + ":" + std::to_string(slotsUsed[i])
-                       + "/" + std::to_string(limits[i]);
+            summary += std::string(" ") + kSlotNames[i][0] + ":" + std::to_string(slotsUsed[i]) + "/" +
+                       std::to_string(limits[i]);
         }
-        summary += " | berths " + std::to_string(active.crewIds.size()) + "/"
-                   + std::to_string(base->crewBerths);
+        summary +=
+            " | berths " + std::to_string(active.crewIds.size()) + "/" + std::to_string(base->crewBerths);
         panel.fitSummary = store(text, std::move(summary));
     } else {
         panel.fitSummary = store(text, "ship def '" + active.defId + "' missing");
@@ -122,73 +121,76 @@ void fillShipInfoPanel(const SpaceWorld& world, const DefDatabase& defs,
 
     // --- Flight. The pip note on the engine lines is the point of showing
     // these in flight at all: they are what ENG is currently doing.
-    const float engineScale = power.engineAtZero
-                              + (power.engineAtMax - power.engineAtZero)
-                                    * (power.maxPerSystem > 0
-                                           ? static_cast<float>(pips.pips.engines)
-                                                 / static_cast<float>(power.maxPerSystem)
-                                           : 0.0f);
-    flightRows.push_back({"Main drive", store(text, withUnit(tuning.forwardAccel, "m/s2")),
+    const float engineScale =
+        power.engineAtZero + (power.engineAtMax - power.engineAtZero) *
+                                 (power.maxPerSystem > 0 ? static_cast<float>(pips.pips.engines) /
+                                                               static_cast<float>(power.maxPerSystem)
+                                                         : 0.0f);
+    flightRows.push_back({"Main drive",
+                          store(text, withUnit(tuning.forwardAccel, "m/s2")),
                           store(text, "x" + number(engineScale, 2) + " from ENG pips")});
     flightRows.push_back({"Reverse", store(text, withUnit(tuning.reverseAccel, "m/s2"))});
     flightRows.push_back({"Lateral", store(text, withUnit(tuning.lateralAccel, "m/s2"))});
     flightRows.push_back({"Vertical", store(text, withUnit(tuning.verticalAccel, "m/s2"))});
-    flightRows.push_back({"Assist cap", store(text, withUnit(tuning.maxSpeed, "m/s", 0)),
+    flightRows.push_back({"Assist cap",
+                          store(text, withUnit(tuning.maxSpeed, "m/s", 0)),
                           store(text, "x" + number(engineScale, 2) + " from ENG pips")});
     flightRows.push_back({"Turn (P/Y/R)",
-                          store(text, number(tuning.maxTurnRate.x, 2) + " / "
-                                          + number(tuning.maxTurnRate.y, 2) + " / "
-                                          + number(tuning.maxTurnRate.z, 2)),
+                          store(text,
+                                number(tuning.maxTurnRate.x, 2) + " / " + number(tuning.maxTurnRate.y, 2) +
+                                    " / " + number(tuning.maxTurnRate.z, 2)),
                           "rad/s"});
     if (base != nullptr) {
-        flightRows.push_back({"Mass", store(text, withUnit(base->mass + moduleMass, "kg", 0)),
-                              store(text, "hull " + number(base->mass, 0) + " + fit "
-                                              + number(moduleMass, 0))});
+        flightRows.push_back(
+            {"Mass",
+             store(text, withUnit(base->mass + moduleMass, "kg", 0)),
+             store(text, "hull " + number(base->mass, 0) + " + fit " + number(moduleMass, 0))});
     }
 
     // --- Defence.
-    const float shieldScale = power.shieldRegenAtZero
-                              + (power.shieldRegenAtMax - power.shieldRegenAtZero)
-                                    * (power.maxPerSystem > 0
-                                           ? static_cast<float>(pips.pips.shields)
-                                                 / static_cast<float>(power.maxPerSystem)
-                                           : 0.0f);
+    const float shieldScale =
+        power.shieldRegenAtZero + (power.shieldRegenAtMax - power.shieldRegenAtZero) *
+                                      (power.maxPerSystem > 0 ? static_cast<float>(pips.pips.shields) /
+                                                                    static_cast<float>(power.maxPerSystem)
+                                                              : 0.0f);
     defenceRows.push_back({"Shield per facing",
-                           store(text, number(defense.state.shieldFore, 0) + " / "
-                                           + number(defense.tuning.shieldStrength, 0) + " fore"),
+                           store(text,
+                                 number(defense.state.shieldFore, 0) + " / " +
+                                     number(defense.tuning.shieldStrength, 0) + " fore"),
                            store(text, number(defense.state.shieldAft, 0) + " aft")});
-    defenceRows.push_back({"Shield regen", store(text, withUnit(defense.tuning.shieldRegenRate,
-                                                               "hp/s")),
-                           store(text, "x" + number(shieldScale, 2) + " from SYS pips, "
-                                           + number(defense.tuning.shieldRegenDelay, 1)
-                                           + " s delay")});
+    defenceRows.push_back({"Shield regen",
+                           store(text, withUnit(defense.tuning.shieldRegenRate, "hp/s")),
+                           store(text,
+                                 "x" + number(shieldScale, 2) + " from SYS pips, " +
+                                     number(defense.tuning.shieldRegenDelay, 1) + " s delay")});
     defenceRows.push_back({"Armor", store(text, number(defense.tuning.armor, 0)), "ablative"});
-    defenceRows.push_back({"Hull", store(text, number(defense.state.hull, 0) + " / "
-                                                   + number(defense.tuning.hull, 0))});
+    defenceRows.push_back(
+        {"Hull", store(text, number(defense.state.hull, 0) + " / " + number(defense.tuning.hull, 0))});
 
-    const float weaponScale = power.weaponRechargeAtZero
-                              + (power.weaponRechargeAtMax - power.weaponRechargeAtZero)
-                                    * (power.maxPerSystem > 0
-                                           ? static_cast<float>(pips.pips.weapons)
-                                                 / static_cast<float>(power.maxPerSystem)
-                                           : 0.0f);
-    defenceRows.push_back({"Capacitor",
-                           store(text, number(world.playerPower().weaponCharge, 0) + " / "
-                                           + number(power.weaponCapacitor, 0)),
-                           store(text, withUnit(power.weaponRechargeRate, "u/s") + ", x"
-                                           + number(weaponScale, 2) + " from WEP pips")});
+    const float weaponScale =
+        power.weaponRechargeAtZero + (power.weaponRechargeAtMax - power.weaponRechargeAtZero) *
+                                         (power.maxPerSystem > 0 ? static_cast<float>(pips.pips.weapons) /
+                                                                       static_cast<float>(power.maxPerSystem)
+                                                                 : 0.0f);
+    defenceRows.push_back(
+        {"Capacitor",
+         store(text, number(world.playerPower().weaponCharge, 0) + " / " + number(power.weaponCapacitor, 0)),
+         store(text,
+               withUnit(power.weaponRechargeRate, "u/s") + ", x" + number(weaponScale, 2) +
+                   " from WEP pips")});
 
     // --- Utility.
-    utilityRows.push_back({"Cargo hold",
-                           store(text, number(world.playerCargoTotal()) + " / "
-                                           + number(world.playerCargoCapacity()) + " units")});
+    utilityRows.push_back(
+        {"Cargo hold",
+         store(text,
+               number(world.playerCargoTotal()) + " / " + number(world.playerCargoCapacity()) + " units")});
     utilityRows.push_back({"Scanner range", store(text, range(world.scanRange()))});
     utilityRows.push_back({"Collector range", store(text, range(world.collectorRange()))});
 
     // --- Fit. Weapon first, because it is the one hardpoint.
     if (const sol::assets::WeaponDef* weapon = defs.findWeapon(active.weaponId.c_str())) {
-        std::string detail = weapon->kind + ", " + number(weapon->damage, 0) + " dmg @ "
-                             + number(weapon->rateOfFire, 1) + "/s, " + range(weapon->range);
+        std::string detail = weapon->kind + ", " + number(weapon->damage, 0) + " dmg @ " +
+                             number(weapon->rateOfFire, 1) + "/s, " + range(weapon->range);
         if (weapon->miningPower > 0.0f) {
             detail += ", mining " + number(weapon->miningPower, 1);
         }
@@ -201,8 +203,7 @@ void fillShipInfoPanel(const SpaceWorld& world, const DefDatabase& defs,
             fittedRows.push_back(
                 {store(text, std::string(kSlotNames[static_cast<std::size_t>(module->slot)])),
                  module->name.c_str(),
-                 store(text, number(module->powerDraw, 1) + " pwr, " + number(module->mass, 0)
-                                 + " kg")});
+                 store(text, number(module->powerDraw, 1) + " pwr, " + number(module->mass, 0) + " kg")});
         }
     }
     for (const std::string& id : active.crewIds) {
@@ -240,11 +241,9 @@ std::string shipInfoReport(const SpaceWorld& world, const DefDatabase& defs)
     std::vector<ui::InfoRow> utilityRows;
     std::vector<ui::InfoRow> fittedRows;
     std::vector<ui::InfoRow> cargoRows;
-    fillShipInfoPanel(world, defs, text, panel, flightRows, defenceRows, utilityRows, fittedRows,
-                      cargoRows);
+    fillShipInfoPanel(world, defs, text, panel, flightRows, defenceRows, utilityRows, fittedRows, cargoRows);
 
-    std::string out = std::string(panel.shipName) + " (" + panel.shipClass + ")\n"
-                      + panel.fitSummary + "\n";
+    std::string out = std::string(panel.shipName) + " (" + panel.shipClass + ")\n" + panel.fitSummary + "\n";
     const auto section = [&out](const char* title, const std::vector<ui::InfoRow>& rows) {
         out += std::string("-- ") + title + "\n";
         for (const ui::InfoRow& row : rows) {
@@ -261,8 +260,14 @@ std::string shipInfoReport(const SpaceWorld& world, const DefDatabase& defs)
     section("fit", fittedRows);
     section("cargo", cargoRows);
     char buffer[96];
-    std::snprintf(buffer, sizeof(buffer), "credits %.0f, pips %d/%d/%d of %d", panel.credits,
-                  panel.pipsWeapons, panel.pipsEngines, panel.pipsShields, panel.pipMax);
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "credits %.0f, pips %d/%d/%d of %d",
+                  panel.credits,
+                  panel.pipsWeapons,
+                  panel.pipsEngines,
+                  panel.pipsShields,
+                  panel.pipMax);
     out += buffer;
     return out;
 }

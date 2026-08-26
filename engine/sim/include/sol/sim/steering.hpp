@@ -57,20 +57,25 @@ inline constexpr double kPathClearance = 100.0;
 // over inside the tick that would have steered around it. The only thing that
 // answers a blocked path at that speed is not being at that speed, so this
 // reports a DISTANCE and the caller turns it into a speed limit.
-[[nodiscard]] double pathBlockedAt(const core::DVec3& from, const core::DVec3& to,
-                                   double clearance, std::span<const AvoidanceSphere> obstacles,
+[[nodiscard]] double pathBlockedAt(const core::DVec3& from,
+                                   const core::DVec3& to,
+                                   double clearance,
+                                   std::span<const AvoidanceSphere> obstacles,
                                    std::uint32_t ignore = kNoAvoidHandle);
 
 // Core primitive: point the nose at aimPoint while commanding the given
 // world-space velocity (clamped per body axis by the assist envelope).
-[[nodiscard]] FlightInput steerAimAndMove(const ShipState& state, const ShipTuning& tuning,
+[[nodiscard]] FlightInput steerAimAndMove(const ShipState& state,
+                                          const ShipTuning& tuning,
                                           const core::DVec3& aimPoint,
                                           const core::DVec3& desiredVelocity);
 
 // Chase a moving target, settling at desiredRange (meters).
-[[nodiscard]] FlightInput steerPursue(const ShipState& state, const ShipTuning& tuning,
+[[nodiscard]] FlightInput steerPursue(const ShipState& state,
+                                      const ShipTuning& tuning,
                                       const core::DVec3& targetPosition,
-                                      const core::DVec3& targetVelocity, double desiredRange);
+                                      const core::DVec3& targetVelocity,
+                                      double desiredRange);
 
 // Long-haul travel (player autopilot): fly to targetPosition and arrive
 // velocity-matched at arrivalRange meters from it. Commands the cruise drive
@@ -83,27 +88,34 @@ inline constexpr double kPathClearance = 100.0;
 // `selfHandle` is the caller's handle for the ship being flown, so the path
 // query below can skip its own body (Phase 8y). Leaving it unset is loud
 // rather than quiet: a ship that finds itself in the way parks immediately.
-[[nodiscard]] FlightInput steerTravel(const ShipState& state, const ShipTuning& tuning,
+[[nodiscard]] FlightInput steerTravel(const ShipState& state,
+                                      const ShipTuning& tuning,
                                       const core::DVec3& targetPosition,
-                                      const core::DVec3& targetVelocity, double arrivalRange,
+                                      const core::DVec3& targetVelocity,
+                                      double arrivalRange,
                                       std::span<const AvoidanceSphere> obstacles = {},
                                       std::uint32_t selfHandle = kNoAvoidHandle);
 
 // Run from a threat, weaving; weavePhase advances with sim time (rad).
 // Boosts while the threat is close.
-[[nodiscard]] FlightInput steerEvade(const ShipState& state, const ShipTuning& tuning,
-                                     const core::DVec3& threatPosition, double weavePhase);
+[[nodiscard]] FlightInput steerEvade(const ShipState& state,
+                                     const ShipTuning& tuning,
+                                     const core::DVec3& threatPosition,
+                                     double weavePhase);
 
 // Hold a world-space offset from a moving anchor, matching its velocity.
-[[nodiscard]] FlightInput steerFormation(const ShipState& state, const ShipTuning& tuning,
+[[nodiscard]] FlightInput steerFormation(const ShipState& state,
+                                         const ShipTuning& tuning,
                                          const core::DVec3& anchorPosition,
                                          const core::DVec3& anchorVelocity,
                                          const core::DVec3& worldOffset);
 
 // Deflects desiredVelocity away from any obstacle the current velocity would
 // carry the ship near within lookahead seconds. Apply before steerAimAndMove.
-void avoidObstacles(core::DVec3& desiredVelocity, const ShipState& state,
-                    std::span<const AvoidanceSphere> obstacles, double lookaheadSeconds);
+void avoidObstacles(core::DVec3& desiredVelocity,
+                    const ShipState& state,
+                    std::span<const AvoidanceSphere> obstacles,
+                    double lookaheadSeconds);
 
 // Angle (radians) between the nose and the direction to point; weapon gate.
 [[nodiscard]] double aimError(const ShipState& state, const core::DVec3& point);

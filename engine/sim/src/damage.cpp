@@ -21,8 +21,7 @@ void resetDefense(DefenseState& state, const DefenseTuning& tuning)
     state.hull = tuning.hull;
 }
 
-DamageResult applyDamage(DefenseState& state, const DefenseTuning& tuning, ShieldFacing facing,
-                         float amount)
+DamageResult applyDamage(DefenseState& state, const DefenseTuning& tuning, ShieldFacing facing, float amount)
 {
     DamageResult result;
     if (amount <= 0.0f || !state.alive()) {

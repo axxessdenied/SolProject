@@ -40,28 +40,40 @@ struct AccessorView
 
 int componentCountForType(const std::string& type)
 {
-    if (type == "SCALAR") return 1;
-    if (type == "VEC2") return 2;
-    if (type == "VEC3") return 3;
-    if (type == "VEC4") return 4;
-    if (type == "MAT4") return 16;
+    if (type == "SCALAR")
+        return 1;
+    if (type == "VEC2")
+        return 2;
+    if (type == "VEC3")
+        return 3;
+    if (type == "VEC4")
+        return 4;
+    if (type == "MAT4")
+        return 16;
     return 0;
 }
 
 std::size_t componentByteSize(int componentType)
 {
     switch (componentType) {
-    case kComponentU16: return 2;
+    case kComponentU16:
+        return 2;
     case kComponentU32:
-    case kComponentF32: return 4;
+    case kComponentF32:
+        return 4;
     case 5120:
-    case 5121: return 1; // i8/u8
-    case 5122: return 2; // i16
-    default: return 0;
+    case 5121:
+        return 1; // i8/u8
+    case 5122:
+        return 2; // i16
+    default:
+        return 0;
     }
 }
 
-bool resolveAccessor(const JsonValue& document, const BufferSet& buffers, std::size_t accessorIndex,
+bool resolveAccessor(const JsonValue& document,
+                     const BufferSet& buffers,
+                     std::size_t accessorIndex,
                      AccessorView& out)
 {
     const JsonValue* accessors = document.find("accessors");
@@ -93,13 +105,12 @@ bool resolveAccessor(const JsonValue& document, const BufferSet& buffers, std::s
     }
     const std::vector<std::uint8_t>& buffer = buffers.buffers[bufferIndex];
 
-    const std::size_t viewOffset =
-        view.find("byteOffset") != nullptr ? static_cast<std::size_t>(view.find("byteOffset")->asNumber())
+    const std::size_t viewOffset = view.find("byteOffset") != nullptr
+                                       ? static_cast<std::size_t>(view.find("byteOffset")->asNumber())
+                                       : 0;
+    const std::size_t accessorOffset = accessor.find("byteOffset") != nullptr
+                                           ? static_cast<std::size_t>(accessor.find("byteOffset")->asNumber())
                                            : 0;
-    const std::size_t accessorOffset =
-        accessor.find("byteOffset") != nullptr
-            ? static_cast<std::size_t>(accessor.find("byteOffset")->asNumber())
-            : 0;
 
     out.componentType = static_cast<int>(componentValue->asNumber());
     out.componentsPerElement = componentCountForType(typeValue->asString());
@@ -138,15 +149,19 @@ Mat4 nodeLocalTransform(const JsonValue& node)
     Vec3 scaleVec = {1.0f, 1.0f, 1.0f};
 
     if (const JsonValue* t = node.find("translation"); t != nullptr && t->size() == 3) {
-        translationVec = {static_cast<float>((*t)[0].asNumber()), static_cast<float>((*t)[1].asNumber()),
+        translationVec = {static_cast<float>((*t)[0].asNumber()),
+                          static_cast<float>((*t)[1].asNumber()),
                           static_cast<float>((*t)[2].asNumber())};
     }
     if (const JsonValue* r = node.find("rotation"); r != nullptr && r->size() == 4) {
-        rotation = {static_cast<float>((*r)[0].asNumber()), static_cast<float>((*r)[1].asNumber()),
-                    static_cast<float>((*r)[2].asNumber()), static_cast<float>((*r)[3].asNumber())};
+        rotation = {static_cast<float>((*r)[0].asNumber()),
+                    static_cast<float>((*r)[1].asNumber()),
+                    static_cast<float>((*r)[2].asNumber()),
+                    static_cast<float>((*r)[3].asNumber())};
     }
     if (const JsonValue* s = node.find("scale"); s != nullptr && s->size() == 3) {
-        scaleVec = {static_cast<float>((*s)[0].asNumber()), static_cast<float>((*s)[1].asNumber()),
+        scaleVec = {static_cast<float>((*s)[0].asNumber()),
+                    static_cast<float>((*s)[1].asNumber()),
                     static_cast<float>((*s)[2].asNumber())};
     }
     return core::translation(translationVec) * toMat4(rotation) * core::scale(scaleVec);
@@ -168,8 +183,12 @@ Mat4 nodeLocalTransform(const JsonValue& node)
     return core::transpose(core::inverse(transform));
 }
 
-bool appendPrimitive(const JsonValue& document, const BufferSet& buffers, const JsonValue& primitive,
-                     const Mat4& transform, const Mat4& normalMatrix, assets::MeshData& out)
+bool appendPrimitive(const JsonValue& document,
+                     const BufferSet& buffers,
+                     const JsonValue& primitive,
+                     const Mat4& transform,
+                     const Mat4& normalMatrix,
+                     assets::MeshData& out)
 {
     if (const JsonValue* mode = primitive.find("mode");
         mode != nullptr && static_cast<int>(mode->asNumber()) != 4) {
@@ -187,8 +206,7 @@ bool appendPrimitive(const JsonValue& document, const BufferSet& buffers, const 
     }
 
     AccessorView positions;
-    if (!resolveAccessor(document, buffers, static_cast<std::size_t>(positionIndex->asNumber()),
-                         positions) ||
+    if (!resolveAccessor(document, buffers, static_cast<std::size_t>(positionIndex->asNumber()), positions) ||
         positions.componentType != kComponentF32 || positions.componentsPerElement != 3) {
         return false;
     }
@@ -196,10 +214,10 @@ bool appendPrimitive(const JsonValue& document, const BufferSet& buffers, const 
     AccessorView normals = {};
     bool hasNormals = false;
     if (const JsonValue* normalIndex = attributes->find("NORMAL"); normalIndex != nullptr) {
-        hasNormals = resolveAccessor(document, buffers,
-                                     static_cast<std::size_t>(normalIndex->asNumber()), normals) &&
-                     normals.componentType == kComponentF32 && normals.componentsPerElement == 3 &&
-                     normals.count == positions.count;
+        hasNormals =
+            resolveAccessor(document, buffers, static_cast<std::size_t>(normalIndex->asNumber()), normals) &&
+            normals.componentType == kComponentF32 && normals.componentsPerElement == 3 &&
+            normals.count == positions.count;
     }
 
     AccessorView uvs = {};
@@ -242,8 +260,8 @@ bool appendPrimitive(const JsonValue& document, const BufferSet& buffers, const 
 
     if (const JsonValue* indicesIndex = primitive.find("indices"); indicesIndex != nullptr) {
         AccessorView indices;
-        if (!resolveAccessor(document, buffers, static_cast<std::size_t>(indicesIndex->asNumber()),
-                             indices) ||
+        if (!resolveAccessor(
+                document, buffers, static_cast<std::size_t>(indicesIndex->asNumber()), indices) ||
             indices.componentsPerElement != 1) {
             return false;
         }
@@ -308,8 +326,11 @@ std::string nodeOriginId(const JsonValue& node)
     return uid->asString();
 }
 
-bool traverseNode(const JsonValue& document, const BufferSet& buffers, std::size_t nodeIndex,
-                  const Mat4& parentTransform, std::vector<GltfPart>& out)
+bool traverseNode(const JsonValue& document,
+                  const BufferSet& buffers,
+                  std::size_t nodeIndex,
+                  const Mat4& parentTransform,
+                  std::vector<GltfPart>& out)
 {
     const JsonValue* nodes = document.find("nodes");
     if (nodes == nullptr || nodeIndex >= nodes->size()) {
@@ -337,8 +358,8 @@ bool traverseNode(const JsonValue& document, const BufferSet& buffers, std::size
             // over the primitive and the adjugate inverse is not cheap.
             const Mat4 normalMatrix = normalTransform(transform);
             for (std::size_t p = 0; p < primitives->size(); ++p) {
-                if (!appendPrimitive(document, buffers, (*primitives)[p], transform, normalMatrix,
-                                     part.mesh)) {
+                if (!appendPrimitive(
+                        document, buffers, (*primitives)[p], transform, normalMatrix, part.mesh)) {
                     return false;
                 }
             }
@@ -350,8 +371,8 @@ bool traverseNode(const JsonValue& document, const BufferSet& buffers, std::size
 
     if (const JsonValue* children = node.find("children"); children != nullptr) {
         for (std::size_t c = 0; c < children->size(); ++c) {
-            if (!traverseNode(document, buffers,
-                              static_cast<std::size_t>((*children)[c].asNumber()), transform, out)) {
+            if (!traverseNode(
+                    document, buffers, static_cast<std::size_t>((*children)[c].asNumber()), transform, out)) {
                 return false;
             }
         }
@@ -365,8 +386,10 @@ std::string directoryOf(const std::string& path)
     return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
 }
 
-bool loadBuffers(const JsonValue& document, const std::string& gltfDirectory,
-                 std::vector<std::uint8_t> glbBinary, BufferSet& out)
+bool loadBuffers(const JsonValue& document,
+                 const std::string& gltfDirectory,
+                 std::vector<std::uint8_t> glbBinary,
+                 BufferSet& out)
 {
     const JsonValue* buffers = document.find("buffers");
     if (buffers == nullptr) {
@@ -387,8 +410,7 @@ bool loadBuffers(const JsonValue& document, const std::string& gltfDirectory,
         constexpr const char* kDataPrefix = "data:";
         if (uriText.rfind(kDataPrefix, 0) == 0) {
             const std::size_t comma = uriText.find(',');
-            if (comma == std::string::npos ||
-                uriText.find(";base64", 0) == std::string::npos) {
+            if (comma == std::string::npos || uriText.find(";base64", 0) == std::string::npos) {
                 SOL_LOG_ERROR("gltf: unsupported data uri in buffer %zu", i);
                 return false;
             }
@@ -416,11 +438,16 @@ bool loadBuffers(const JsonValue& document, const std::string& gltfDirectory,
 bool decodeBase64(const char* text, std::size_t length, std::vector<std::uint8_t>& out)
 {
     auto decodeChar = [](char c) -> int {
-        if (c >= 'A' && c <= 'Z') return c - 'A';
-        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-        if (c >= '0' && c <= '9') return c - '0' + 52;
-        if (c == '+') return 62;
-        if (c == '/') return 63;
+        if (c >= 'A' && c <= 'Z')
+            return c - 'A';
+        if (c >= 'a' && c <= 'z')
+            return c - 'a' + 26;
+        if (c >= '0' && c <= '9')
+            return c - '0' + 52;
+        if (c == '+')
+            return 62;
+        if (c == '/')
+            return 63;
         return -1;
     };
 
@@ -519,8 +546,11 @@ bool importGltfParts(const char* path, std::vector<GltfPart>& out)
         return false;
     }
     for (std::size_t i = 0; i < rootNodes->size(); ++i) {
-        if (!traverseNode(document, buffers, static_cast<std::size_t>((*rootNodes)[i].asNumber()),
-                          Mat4::identity(), out)) {
+        if (!traverseNode(document,
+                          buffers,
+                          static_cast<std::size_t>((*rootNodes)[i].asNumber()),
+                          Mat4::identity(),
+                          out)) {
             SOL_LOG_ERROR("gltf: import failed for %s", path);
             return false;
         }
@@ -558,15 +588,14 @@ bool importGltf(const char* path, assets::MeshData& out)
 
 std::string encodeBase64(const std::uint8_t* data, std::size_t length)
 {
-    static const char kAlphabet[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static const char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
     out.reserve(((length + 2) / 3) * 4);
     std::size_t i = 0;
     for (; i + 3 <= length; i += 3) {
-        const std::uint32_t triple =
-            (static_cast<std::uint32_t>(data[i]) << 16) |
-            (static_cast<std::uint32_t>(data[i + 1]) << 8) | static_cast<std::uint32_t>(data[i + 2]);
+        const std::uint32_t triple = (static_cast<std::uint32_t>(data[i]) << 16) |
+                                     (static_cast<std::uint32_t>(data[i + 1]) << 8) |
+                                     static_cast<std::uint32_t>(data[i + 2]);
         out += kAlphabet[(triple >> 18) & 0x3F];
         out += kAlphabet[(triple >> 12) & 0x3F];
         out += kAlphabet[(triple >> 6) & 0x3F];
@@ -665,12 +694,11 @@ std::string exportGltf(const assets::MeshData& mesh, const char* name)
             ",\"byteLength\":" + std::to_string(normalBytes) + "},";
     json += "{\"buffer\":0,\"byteOffset\":" + std::to_string(positionBytes + normalBytes) +
             ",\"byteLength\":" + std::to_string(uvBytes) + "},";
-    json += "{\"buffer\":0,\"byteOffset\":" +
-            std::to_string(positionBytes + normalBytes + uvBytes) +
+    json += "{\"buffer\":0,\"byteOffset\":" + std::to_string(positionBytes + normalBytes + uvBytes) +
             ",\"byteLength\":" + std::to_string(indexBytes) + "}],";
     json += "\"buffers\":[{\"byteLength\":" + std::to_string(buffer.size()) +
-            ",\"uri\":\"data:application/octet-stream;base64," +
-            encodeBase64(buffer.data(), buffer.size()) + "\"}]}";
+            ",\"uri\":\"data:application/octet-stream;base64," + encodeBase64(buffer.data(), buffer.size()) +
+            "\"}]}";
     return json;
 }
 

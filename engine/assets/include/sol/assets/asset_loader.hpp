@@ -29,8 +29,7 @@ struct SoundData
 
     [[nodiscard]] std::uint32_t frameCount() const
     {
-        return channelCount == 0 ? 0
-                                 : static_cast<std::uint32_t>(samples.size()) / channelCount;
+        return channelCount == 0 ? 0 : static_cast<std::uint32_t>(samples.size()) / channelCount;
     }
 };
 

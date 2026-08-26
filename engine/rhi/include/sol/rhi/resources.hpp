@@ -28,12 +28,14 @@ struct Image
     std::uint32_t mipLevels = 1;
 };
 
-[[nodiscard]] Buffer createBuffer(Context& context, VkDeviceSize size, VkBufferUsageFlags usage,
+[[nodiscard]] Buffer createBuffer(Context& context,
+                                  VkDeviceSize size,
+                                  VkBufferUsageFlags usage,
                                   VkMemoryPropertyFlags memoryProperties);
 
 // Staging-uploads data into a new DEVICE_LOCAL buffer (usage gets TRANSFER_DST added).
-[[nodiscard]] Buffer createDeviceLocalBuffer(Context& context, const void* data, VkDeviceSize size,
-                                             VkBufferUsageFlags usage);
+[[nodiscard]] Buffer
+createDeviceLocalBuffer(Context& context, const void* data, VkDeviceSize size, VkBufferUsageFlags usage);
 
 void destroyBuffer(Context& context, Buffer& buffer);
 
@@ -57,8 +59,10 @@ struct TextureUploadDesc
     // View component mapping; identity by default. Lets a single-channel
     // coverage texture (a glyph atlas) read as white with the coverage in
     // alpha, so it shares a shader with ordinary color textures.
-    VkComponentMapping swizzle = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
-                                  VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    VkComponentMapping swizzle = {VK_COMPONENT_SWIZZLE_IDENTITY,
+                                  VK_COMPONENT_SWIZZLE_IDENTITY,
+                                  VK_COMPONENT_SWIZZLE_IDENTITY,
+                                  VK_COMPONENT_SWIZZLE_IDENTITY};
 };
 
 // Creates a sampled image, uploads all mips via staging, and leaves it in
@@ -67,7 +71,9 @@ struct TextureUploadDesc
 
 // Creates a cubemap from six equally-sized face payloads (+X,-X,+Y,-Y,+Z,-Z),
 // uploads via staging, and leaves it in SHADER_READ_ONLY_OPTIMAL. One mip.
-[[nodiscard]] Image createSampledCubemap(Context& context, std::uint32_t faceSize, VkFormat format,
+[[nodiscard]] Image createSampledCubemap(Context& context,
+                                         std::uint32_t faceSize,
+                                         VkFormat format,
                                          const std::uint8_t* const faceData[6],
                                          std::uint32_t faceByteSize);
 

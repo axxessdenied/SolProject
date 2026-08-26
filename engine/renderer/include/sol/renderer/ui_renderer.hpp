@@ -45,8 +45,11 @@ public:
     // `depthFormat` must match the pass this draws into even though the UI
     // neither tests nor writes depth: a pipeline that disagrees with its
     // render pass's attachments is invalid.
-    [[nodiscard]] bool initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
-                                  const char* shaderDirectory, std::uint32_t framesInFlight);
+    [[nodiscard]] bool initialize(rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
+                                  const char* shaderDirectory,
+                                  std::uint32_t framesInFlight);
     void shutdown();
     [[nodiscard]] bool reloadPipeline();
 
@@ -64,9 +67,13 @@ public:
     // sets the projection; `framebufferExtent` is the real target. They differ
     // when a UI scale is in effect, and clip rectangles are converted between
     // them - a scissor is always in real pixels.
-    void draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, core::Vec2 uiSize,
-              VkExtent2D framebufferExtent, std::span<const Vertex> vertices,
-              std::span<const std::uint16_t> indices, std::span<const Batch> batches);
+    void draw(VkCommandBuffer commandBuffer,
+              std::uint32_t frameIndex,
+              core::Vec2 uiSize,
+              VkExtent2D framebufferExtent,
+              std::span<const Vertex> vertices,
+              std::span<const std::uint16_t> indices,
+              std::span<const Batch> batches);
 
 private:
     rhi::Context* m_context = nullptr;

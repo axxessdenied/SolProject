@@ -32,8 +32,10 @@ VkShaderModule createShaderModuleFromFile(VkDevice device, const char* path)
     return shaderModule;
 }
 
-VkPipelineLayout createPipelineLayout(VkDevice device, const VkDescriptorSetLayout* setLayouts,
-                                      std::uint32_t setLayoutCount, std::uint32_t pushConstantSize)
+VkPipelineLayout createPipelineLayout(VkDevice device,
+                                      const VkDescriptorSetLayout* setLayouts,
+                                      std::uint32_t setLayoutCount,
+                                      std::uint32_t pushConstantSize)
 {
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -98,8 +100,8 @@ bool createGraphicsPipeline(VkDevice device, const GraphicsPipelineDesc& desc, V
     rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterization.polygonMode = VK_POLYGON_MODE_FILL;
     rasterization.cullMode = desc.cullBackFaces ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
-    rasterization.frontFace = desc.frontFaceCounterClockwise ? VK_FRONT_FACE_COUNTER_CLOCKWISE
-                                                             : VK_FRONT_FACE_CLOCKWISE;
+    rasterization.frontFace =
+        desc.frontFaceCounterClockwise ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
     rasterization.lineWidth = 1.0f;
 
     VkPipelineMultisampleStateCreateInfo multisample = {};
@@ -118,9 +120,8 @@ bool createGraphicsPipeline(VkDevice device, const GraphicsPipelineDesc& desc, V
     if (desc.blendMode != BlendMode::Opaque) {
         blendAttachment.blendEnable = VK_TRUE;
         blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-        blendAttachment.dstColorBlendFactor = desc.blendMode == BlendMode::Alpha
-                                                  ? VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
-                                                  : VK_BLEND_FACTOR_ONE;
+        blendAttachment.dstColorBlendFactor =
+            desc.blendMode == BlendMode::Alpha ? VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : VK_BLEND_FACTOR_ONE;
         blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
         blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -154,8 +155,7 @@ bool createGraphicsPipeline(VkDevice device, const GraphicsPipelineDesc& desc, V
     pipelineCreateInfo.pViewportState = &viewportState;
     pipelineCreateInfo.pRasterizationState = &rasterization;
     pipelineCreateInfo.pMultisampleState = &multisample;
-    pipelineCreateInfo.pDepthStencilState = desc.depthFormat != VK_FORMAT_UNDEFINED ? &depthStencil
-                                                                                    : nullptr;
+    pipelineCreateInfo.pDepthStencilState = desc.depthFormat != VK_FORMAT_UNDEFINED ? &depthStencil : nullptr;
     pipelineCreateInfo.pColorBlendState = &colorBlend;
     pipelineCreateInfo.pDynamicState = &dynamicState;
     pipelineCreateInfo.layout = desc.layout;

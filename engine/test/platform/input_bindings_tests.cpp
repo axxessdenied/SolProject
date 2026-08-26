@@ -1,9 +1,8 @@
-#include <sol/platform/input_bindings.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cstring>
 #include <string>
+
+#include <sol/platform/input_bindings.hpp>
+#include <sol/test/test.hpp>
 
 using sol::platform::BindingTable;
 using sol::platform::chordAt;

@@ -65,8 +65,10 @@ namespace sol::cooker {
 // invisible precisely where nobody is looking closely.
 //
 // `levelsWritten` counts level 0, so it is never zero on success.
-[[nodiscard]] bool writeMeshLevels(const assets::MeshData& level0, const assets::LodChain& chain,
-                                   const std::string& outputPath, std::uint32_t& levelsWritten,
+[[nodiscard]] bool writeMeshLevels(const assets::MeshData& level0,
+                                   const assets::LodChain& chain,
+                                   const std::string& outputPath,
+                                   std::uint32_t& levelsWritten,
                                    std::string* error);
 
 // The highest level number `writeMeshLevels` will look for when clearing

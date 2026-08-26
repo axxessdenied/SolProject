@@ -24,11 +24,10 @@
 // contest lapses, which is the defender winning by attrition. A faction's
 // home system cannot be contested, so no faction is ever erased.
 
-#include "sol/sim/economy.hpp"
-#include "sol/sim/universe.hpp"
-
 #include "sol/core/random.hpp"
 #include "sol/core/serialize.hpp"
+#include "sol/sim/economy.hpp"
+#include "sol/sim/universe.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -48,27 +47,27 @@ struct FactionSimParams
     // agents.size()^2, symmetric, zero diagonal: the authored starting
     // relations, and the values drift pulls back toward.
     std::vector<float> baselineRelations;
-    std::vector<float> initialStandings; // player standing per agent
-    double decisionInterval = 60.0;      // seconds between decision rolls
-    double stepInterval = 1.0;           // drift/decay integration step
-    float warThreshold = -50.0f;   // at war when a relation falls to here...
-    float peaceThreshold = -25.0f; // ...until it recovers past here
-    float hostileThreshold = -30.0f;  // relations/standings below: hostile
-    float friendlyThreshold = 30.0f;  // player standing above: friendly
-    std::uint32_t raidReach = 2;      // jumps from own territory
-    float raidRelationHit = 4.0f;     // relation loss per raid, both ways
-    float raidStockFraction = 0.25f;  // of victim-system station stock
+    std::vector<float> initialStandings;  // player standing per agent
+    double decisionInterval = 60.0;       // seconds between decision rolls
+    double stepInterval = 1.0;            // drift/decay integration step
+    float warThreshold = -50.0f;          // at war when a relation falls to here...
+    float peaceThreshold = -25.0f;        // ...until it recovers past here
+    float hostileThreshold = -30.0f;      // relations/standings below: hostile
+    float friendlyThreshold = 30.0f;      // player standing above: friendly
+    std::uint32_t raidReach = 2;          // jumps from own territory
+    float raidRelationHit = 4.0f;         // relation loss per raid, both ways
+    float raidStockFraction = 0.25f;      // of victim-system station stock
     double raidIntensityHalfLife = 600.0; // seconds
-    float driftPerSecond = 0.02f;     // points/s toward baseline, x pair mean forgiveness
-    float killPenalty = 10.0f;        // standing lost with a victim's owner
-    float killWebScale = 0.5f;        // x relation depth: enemies' gratitude
-    float commerceRate = 0.001f;      // standing per credit traded
+    float driftPerSecond = 0.02f;         // points/s toward baseline, x pair mean forgiveness
+    float killPenalty = 10.0f;            // standing lost with a victim's owner
+    float killWebScale = 0.5f;            // x relation depth: enemies' gratitude
+    float commerceRate = 0.001f;          // standing per credit traded
     // --- Territory (Phase 8u) ---
-    float contestPerRaid = 0.2f;      // pressure a committed raid adds
-    float contestPerKill = 0.05f;     // pressure the player's kill removes
-    float contestThreshold = 0.25f;   // at or above: publicly contested
-    float contestFloor = 0.05f;       // below: the contest has lapsed
-    double contestHalfLife = 900.0;   // seconds, pressure decay
+    float contestPerRaid = 0.2f;    // pressure a committed raid adds
+    float contestPerKill = 0.05f;   // pressure the player's kill removes
+    float contestThreshold = 0.25f; // at or above: publicly contested
+    float contestFloor = 0.05f;     // below: the contest has lapsed
+    double contestHalfLife = 900.0; // seconds, pressure decay
     // --- Attrition (Phase 8x) ---
     // What a system's danger is made of, and both halves already existed.
     // Raid intensity is "recent raids" (+1 each, decaying over
@@ -109,6 +108,7 @@ struct SystemContest
 {
     std::uint32_t attacker = kNoFaction;
     float pressure = 0.0f; // 0..1; 1 flips the system
+
     [[nodiscard]] bool live() const { return attacker != kNoFaction; }
 };
 
@@ -148,8 +148,7 @@ public:
     // player is standing, and nothing is lost there: losses happen where the
     // player is NOT, so in their own system a hauler dies by being shot, in
     // the open, leaving a wreck.
-    void tick(double dt, Economy* economy = nullptr,
-              std::uint32_t shelteredSystem = kNoSystem);
+    void tick(double dt, Economy* economy = nullptr, std::uint32_t shelteredSystem = kNoSystem);
 
     // Moves the decisions queued since the last call into out (append).
     void takeDueDecisions(std::vector<FactionDecision>& out);
@@ -157,20 +156,19 @@ public:
     // Raidable systems for a faction, in system-index order: held by a
     // faction it is at war with (or, for standing < hostileThreshold pairs,
     // deeply hostile to) within raidReach jumps of its own territory.
-    void raidCandidates(const Galaxy& galaxy, std::uint32_t faction,
-                        std::vector<RaidCandidate>& out) const;
+    void raidCandidates(const Galaxy& galaxy, std::uint32_t faction, std::vector<RaidCandidate>& out) const;
 
     // The scriptless policy for one due decision: raid the worst-relation
     // candidate when the roll clears the faction's aggression.
-    void applyDefaultDecision(const Galaxy& galaxy, Economy* economy,
-                              const FactionDecision& decision);
+    void applyDefaultDecision(const Galaxy& galaxy, Economy* economy, const FactionDecision& decision);
 
     // Commits a raid chosen by Lua (or the default policy). Validates the
     // target against raidCandidates; economy may be null (tests).
-    bool commitRaid(const Galaxy& galaxy, Economy* economy, std::uint32_t faction,
-                    std::uint32_t targetSystem);
+    bool
+    commitRaid(const Galaxy& galaxy, Economy* economy, std::uint32_t faction, std::uint32_t targetSystem);
 
     [[nodiscard]] std::uint32_t factionCount() const { return m_count; }
+
     [[nodiscard]] const FactionSimParams& params() const { return m_params; }
 
     [[nodiscard]] float relation(std::uint32_t a, std::uint32_t b) const;
@@ -180,14 +178,17 @@ public:
 
     // --- Player reputation ---
     [[nodiscard]] float standing(std::uint32_t faction) const;
+
     [[nodiscard]] bool playerHostile(std::uint32_t faction) const
     {
         return standing(faction) < m_params.hostileThreshold;
     }
+
     [[nodiscard]] bool playerFriendly(std::uint32_t faction) const
     {
         return standing(faction) > m_params.friendlyThreshold;
     }
+
     void setStanding(std::uint32_t faction, float value); // dev cheat
     // Clamped relative change (mission rewards/penalties, Phase 8c).
     void addStanding(std::uint32_t faction, float delta);
@@ -264,6 +265,7 @@ private:
     // Applies the decisive outcome for a system whose pressure has reached
     // 1 (flip) or fallen through contestFloor (lapse), and queues it.
     void resolveContest(std::uint32_t system, bool flipped);
+
     [[nodiscard]] std::size_t pairIndex(std::uint32_t a, std::uint32_t b) const
     {
         return static_cast<std::size_t>(a) * m_count + b;
@@ -272,10 +274,10 @@ private:
     FactionSimParams m_params;
     std::uint32_t m_count = 0;
     std::uint32_t m_systemCount = 0;
-    std::vector<float> m_relations;      // count^2, kept symmetric
-    std::vector<std::uint8_t> m_atWar;   // count^2, hysteresis state
-    std::vector<float> m_standings;      // player, per faction
-    std::vector<float> m_raidIntensity;  // per system, decaying
+    std::vector<float> m_relations;          // count^2, kept symmetric
+    std::vector<std::uint8_t> m_atWar;       // count^2, hysteresis state
+    std::vector<float> m_standings;          // player, per faction
+    std::vector<float> m_raidIntensity;      // per system, decaying
     std::vector<std::uint32_t> m_lastRaider; // per system, kNoFaction = none
     // Territory (Phase 8u). m_foundingClaim mirrors the generated plan and
     // never moves; m_systemOwner is who holds it now. m_homeSystem is

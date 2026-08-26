@@ -1,10 +1,9 @@
-#include <sol/sim/steering.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <algorithm>
 #include <cmath>
 #include <vector>
+
+#include <sol/sim/steering.hpp>
+#include <sol/test/test.hpp>
 
 using sol::core::DVec3;
 using sol::core::Quat;
@@ -72,8 +71,8 @@ SOL_TEST(steering_pursue_settles_at_range)
 
     const double distance = length(target - state.position);
     SOL_CHECK(std::abs(distance - 300.0) < 60.0); // settled near desired range
-    SOL_CHECK(aimError(state, target) < 0.1);      // nose on target
-    SOL_CHECK(length(state.velocity) < 20.0);      // hovering, not orbiting wildly
+    SOL_CHECK(aimError(state, target) < 0.1);     // nose on target
+    SOL_CHECK(length(state.velocity) < 20.0);     // hovering, not orbiting wildly
 }
 
 SOL_TEST(steering_pursue_offset_target_gets_aimed_at)
@@ -166,13 +165,13 @@ SOL_TEST(steering_travel_arrives_from_cruise_range)
         return input;
     });
 
-    SOL_CHECK(cruised);                                   // the leg used the cruise drive
-    SOL_CHECK(topSpeed > tuning.maxSpeed * 10.0);         // genuinely superluminal-ish leg
+    SOL_CHECK(cruised);                           // the leg used the cruise drive
+    SOL_CHECK(topSpeed > tuning.maxSpeed * 10.0); // genuinely superluminal-ish leg
     const double distance = length(target - state.position);
-    SOL_CHECK(distance < arrivalRange * 1.25);            // stopped at the doorstep
-    SOL_CHECK(distance > 100.0);                          // not inside the target
-    SOL_CHECK(length(state.velocity) < 20.0);             // and actually stopped
-    SOL_CHECK(aimError(state, target) < 0.15);            // nose on the target
+    SOL_CHECK(distance < arrivalRange * 1.25); // stopped at the doorstep
+    SOL_CHECK(distance > 100.0);               // not inside the target
+    SOL_CHECK(length(state.velocity) < 20.0);  // and actually stopped
+    SOL_CHECK(aimError(state, target) < 0.15); // nose on the target
 }
 
 SOL_TEST(steering_avoidance_deflects_collision_course)
@@ -264,15 +263,15 @@ SOL_TEST(steering_travel_does_not_fly_through_what_is_in_its_lane)
     // kilometres, so a ship jumps clean over a 130 m station between two
     // samples and a per-tick proximity check sees nothing at all. The
     // collision pass sweeps for exactly this reason.
-    const auto flyClosest = [&](std::span<const AvoidanceSphere> spheres, std::uint32_t self,
+    const auto flyClosest = [&](std::span<const AvoidanceSphere> spheres,
+                                std::uint32_t self,
                                 ShipState& out) {
         ShipState state;
         double closest = 1.0e30;
         const int ticks = static_cast<int>(40.0 / kDt);
         for (int i = 0; i < ticks; ++i) {
             const DVec3 before = state.position;
-            stepShipFlight(state, tuning,
-                           steerTravel(state, tuning, target, {}, 250.0, spheres, self), kDt);
+            stepShipFlight(state, tuning, steerTravel(state, tuning, target, {}, 250.0, spheres, self), kDt);
             const DVec3 lane = state.position - before;
             const double laneLength = length(lane);
             double t = 0.0;

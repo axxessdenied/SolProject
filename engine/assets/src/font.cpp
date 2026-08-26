@@ -26,9 +26,7 @@ char32_t nextCodepoint(std::string_view text, std::size_t& cursor)
         return 0;
     }
 
-    const auto byteAt = [&](std::size_t index) {
-        return static_cast<unsigned char>(text[index]);
-    };
+    const auto byteAt = [&](std::size_t index) { return static_cast<unsigned char>(text[index]); };
 
     const unsigned char lead = byteAt(cursor);
     if (lead < 0x80u) {

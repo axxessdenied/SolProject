@@ -1,9 +1,8 @@
-#include <sol/sim/predation.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cstdint>
 #include <vector>
+
+#include <sol/sim/predation.hpp>
+#include <sol/test/test.hpp>
 
 using sol::core::DVec3;
 using sol::sim::choosePrey;
@@ -21,14 +20,11 @@ std::vector<std::uint8_t> hostileToOne()
     return {0, 1, 0};
 }
 
-PreyCandidate hauler(std::uint32_t index, double x, std::uint32_t faction, bool paced = false,
-                     bool inbound = false)
+PreyCandidate
+hauler(std::uint32_t index, double x, std::uint32_t faction, bool paced = false, bool inbound = false)
 {
-    return {.index = index,
-            .position = {x, 0.0, 0.0},
-            .faction = faction,
-            .paced = paced,
-            .inbound = inbound};
+    return {
+        .index = index, .position = {x, 0.0, 0.0}, .faction = faction, .paced = paced, .inbound = inbound};
 }
 
 } // namespace

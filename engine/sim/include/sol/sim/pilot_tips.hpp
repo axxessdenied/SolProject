@@ -15,11 +15,10 @@
 // bookmark interstellar space, and the player would have no way to tell a bug
 // from a lying pilot.
 
+#include "sol/core/math/math.hpp"
 #include "sol/sim/economy.hpp"
 #include "sol/sim/survey.hpp"
 #include "sol/sim/universe.hpp"
-
-#include "sol/core/math/math.hpp"
 
 #include <cstdint>
 #include <span>
@@ -69,8 +68,10 @@ struct TipSite
 // than recomputed here against a second definition of "nearby".
 [[nodiscard]] inline bool chooseMarketTip(std::span<const StationMarket> markets,
                                           std::span<const std::uint8_t> hops,
-                                          std::uint32_t maxHops, const SurveySim& survey,
-                                          double now, std::uint32_t* outMarket)
+                                          std::uint32_t maxHops,
+                                          const SurveySim& survey,
+                                          double now,
+                                          std::uint32_t* outMarket)
 {
     bool found = false;
     bool bestUnknown = false;
@@ -120,12 +121,11 @@ struct TipSite
 
 // Whether anything the player already knows about sits on top of `position`:
 // a bookmark they dropped themselves, or one an earlier pilot's tip left.
-[[nodiscard]] inline bool siteAlreadyMarked(const SurveySim& survey, std::uint32_t system,
-                                            const core::DVec3& position)
+[[nodiscard]] inline bool
+siteAlreadyMarked(const SurveySim& survey, std::uint32_t system, const core::DVec3& position)
 {
     for (const Bookmark& bookmark : survey.bookmarks()) {
-        if (bookmark.system == system
-            && length(bookmark.position - position) <= kTipDuplicateRange) {
+        if (bookmark.system == system && length(bookmark.position - position) <= kTipDuplicateRange) {
             return true;
         }
     }
@@ -143,16 +143,17 @@ struct TipSite
 //
 // `scratch` is the caller's signal buffer, reused across systems the way every
 // other signalsFor() caller does rather than allocating per candidate.
-[[nodiscard]] inline bool choosePlaceTip(const Galaxy& galaxy, const SurveySim& survey,
+[[nodiscard]] inline bool choosePlaceTip(const Galaxy& galaxy,
+                                         const SurveySim& survey,
                                          std::span<const std::uint8_t> hops,
-                                         std::uint32_t maxHops, std::vector<SignalSpec>& scratch,
+                                         std::uint32_t maxHops,
+                                         std::vector<SignalSpec>& scratch,
                                          TipSite* out)
 {
     bool found = false;
     std::uint32_t bestHops = 0;
     TipSite best;
-    for (std::uint32_t system = 0; system < galaxy.systems.size() && system < hops.size();
-         ++system) {
+    for (std::uint32_t system = 0; system < galaxy.systems.size() && system < hops.size(); ++system) {
         const std::uint32_t distance = hops[system];
         if (distance > maxHops || (found && distance > bestHops)) {
             continue;
@@ -162,15 +163,14 @@ struct TipSite
         }
         survey.signalsFor(galaxy, system, scratch);
         for (std::uint32_t signal = 0; signal < scratch.size(); ++signal) {
-            if (survey.signalDiscovered(system, signal) || survey.signalResolved(system, signal)
-                || siteAlreadyMarked(survey, system, scratch[signal].position)) {
+            if (survey.signalDiscovered(system, signal) || survey.signalResolved(system, signal) ||
+                siteAlreadyMarked(survey, system, scratch[signal].position)) {
                 continue;
             }
             if (!found || distance < bestHops) {
                 found = true;
                 bestHops = distance;
-                best = TipSite{
-                    .system = system, .signal = signal, .position = scratch[signal].position};
+                best = TipSite{.system = system, .signal = signal, .position = scratch[signal].position};
             }
             break; // one candidate per system is enough; nearer systems win
         }

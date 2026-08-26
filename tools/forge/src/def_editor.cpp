@@ -33,8 +33,7 @@ constexpr int kUnitDecimals = 3;
 {
     std::vector<std::uint8_t> bytes;
     ok = platform::readFileBytes(path.c_str(), bytes);
-    return ok ? std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size())
-              : std::string{};
+    return ok ? std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()) : std::string{};
 }
 
 // The schema default for a key the row does not carry. ⚑ Shown rather than
@@ -64,12 +63,9 @@ constexpr int kUnitDecimals = 3;
 
 // An id not already taken in this document, derived from `base` - the same
 // shape as `ForgeDoc::uniqueId`, one format over.
-[[nodiscard]] std::string uniqueId(const DefDoc& doc, const std::string& type,
-                                   const std::string& base)
+[[nodiscard]] std::string uniqueId(const DefDoc& doc, const std::string& type, const std::string& base)
 {
-    const auto taken = [&](const std::string& candidate) {
-        return doc.find(type, candidate) != nullptr;
-    };
+    const auto taken = [&](const std::string& candidate) { return doc.find(type, candidate) != nullptr; };
     if (!taken(base)) {
         return base;
     }
@@ -257,7 +253,8 @@ bool DefEditor::save(std::string& status)
     return true;
 }
 
-bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
+bool DefEditor::drawModelRows(const AssetEntry& entry,
+                              const MeshReport& report,
                               const std::vector<std::string>& textureStems)
 {
     m_openModels.clear();
@@ -313,8 +310,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
         match.authoredRadius = radius;
         match.radiusDelta = report.boundingRadius - radius;
         if (match.radiusAgrees()) {
-            ImGui::TextDisabled("  matches the mesh (%.4f m)",
-                                static_cast<double>(report.boundingRadius));
+            ImGui::TextDisabled("  matches the mesh (%.4f m)", static_cast<double>(report.boundingRadius));
         } else {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
@@ -332,8 +328,8 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
             ImGui::PopStyleColor();
             ImGui::PopTextWrapPos();
             char label[64];
-            std::snprintf(label, sizeof(label), "use measured %.4f m",
-                          static_cast<double>(report.boundingRadius));
+            std::snprintf(
+                label, sizeof(label), "use measured %.4f m", static_cast<double>(report.boundingRadius));
             if (ImGui::Button(label)) {
                 beginEdit(kModels, "use measured radius");
                 row.set("radius", assets::defNumber(report.boundingRadius, kMetreDecimals));
@@ -409,8 +405,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
             // author is looking at.
             row.set("id", assets::defString(uniqueId(m_docs[kModels].doc, "model", entry.stem)));
             row.set("mesh", assets::defString(entry.stem));
-            row.set("texture",
-                    assets::defString(textureStems.empty() ? "hull" : textureStems.front()));
+            row.set("texture", assets::defString(textureStems.empty() ? "hull" : textureStems.front()));
             row.set("radius", assets::defNumber(report.boundingRadius, kMetreDecimals));
             changed = true;
         }
@@ -428,8 +423,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry, const MeshReport& report,
     return changed;
 }
 
-bool DefEditor::drawContentRow(std::size_t document, DefRow& row,
-                               const std::vector<std::string>& models)
+bool DefEditor::drawContentRow(std::size_t document, DefRow& row, const std::vector<std::string>& models)
 {
     bool changed = false;
     const std::string id(row.id());
@@ -505,8 +499,7 @@ bool DefEditor::drawContentRows()
 
     const std::vector<std::string> models = modelIds();
     const auto usesOpenModel = [&](const DefRow& row) {
-        const std::string model =
-            stringOr(row, "model", row.type == "station" ? "station" : "ship");
+        const std::string model = stringOr(row, "model", row.type == "station" ? "station" : "ship");
         return std::find(m_openModels.begin(), m_openModels.end(), model) != m_openModels.end();
     };
 

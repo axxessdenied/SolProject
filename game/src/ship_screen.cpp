@@ -38,8 +38,7 @@ void sectionTitle(UiContext& ui, Column& column, const char* title)
     ui.label(row, title, ui.theme().accent, ui.theme().smallStyle);
     // A hairline under the heading, so the groups read as groups without
     // spending vertical space on padding.
-    ui.drawList().addRect({{row.min.x, row.max.y - 1.0f}, {row.max.x, row.max.y}},
-                          ui.theme().panelEdge);
+    ui.drawList().addRect({{row.min.x, row.max.y - 1.0f}, {row.max.x, row.max.y}}, ui.theme().panelEdge);
 }
 
 // "label ............ value   detail". The value is right-aligned against the
@@ -59,32 +58,38 @@ void infoLine(UiContext& ui, Column& column, const InfoRow& info)
     const Rect labelCell = {row.min, {row.max.x - detailWidth, row.max.y}};
     ui.drawList().pushClip(row);
     ui.label(labelCell, info.label, ui.theme().textDim, ui.theme().smallStyle);
-    ui.label({{labelCell.min.x, row.min.y}, {labelCell.max.x - 8.0f, row.max.y}}, info.value,
-             ui.theme().textPrimary, ui.theme().smallStyle, TextAlign::Right);
+    ui.label({{labelCell.min.x, row.min.y}, {labelCell.max.x - 8.0f, row.max.y}},
+             info.value,
+             ui.theme().textPrimary,
+             ui.theme().smallStyle,
+             TextAlign::Right);
     if (hasDetail) {
-        ui.label({{row.max.x - detailWidth + 4.0f, row.min.y}, row.max}, info.detail,
-                 ui.theme().textDisabled, ui.theme().smallStyle);
+        ui.label({{row.max.x - detailWidth + 4.0f, row.min.y}, row.max},
+                 info.detail,
+                 ui.theme().textDisabled,
+                 ui.theme().smallStyle);
     }
     ui.drawList().popClip();
 }
 
-void meterLine(UiContext& ui, Column& column, const char* label, float fraction,
-               const Color& fill)
+void meterLine(UiContext& ui, Column& column, const char* label, float fraction, const Color& fill)
 {
     const Rect row = column.row(kRowHeight);
     constexpr float kLabelWidth = 84.0f;
     constexpr float kValueWidth = 52.0f;
-    ui.label({row.min, {row.min.x + kLabelWidth, row.max.y}}, label, ui.theme().textDim,
-             ui.theme().smallStyle);
+    ui.label(
+        {row.min, {row.min.x + kLabelWidth, row.max.y}}, label, ui.theme().textDim, ui.theme().smallStyle);
     const float y = row.min.y + (row.height() - kMeterHeight) * 0.5f;
-    const Rect box = {{row.min.x + kLabelWidth, y},
-                      {row.max.x - kValueWidth, y + kMeterHeight}};
+    const Rect box = {{row.min.x + kLabelWidth, y}, {row.max.x - kValueWidth, y + kMeterHeight}};
     ui.meter(box, fraction, fill);
     char buffer[32] = {};
-    std::snprintf(buffer, sizeof(buffer), "%.0f%%",
-                  static_cast<double>(std::clamp(fraction, 0.0f, 1.0f) * 100.0f));
-    ui.label({{row.max.x - kValueWidth + 6.0f, row.min.y}, row.max}, buffer, ui.theme().textDim,
-             ui.theme().smallStyle, TextAlign::Right);
+    std::snprintf(
+        buffer, sizeof(buffer), "%.0f%%", static_cast<double>(std::clamp(fraction, 0.0f, 1.0f) * 100.0f));
+    ui.label({{row.max.x - kValueWidth + 6.0f, row.min.y}, row.max},
+             buffer,
+             ui.theme().textDim,
+             ui.theme().smallStyle,
+             TextAlign::Right);
 }
 
 // Total height a section will need, so the two columns can be measured against
@@ -94,13 +99,15 @@ void meterLine(UiContext& ui, Column& column, const char* label, float fraction,
     return kSectionHeader + static_cast<float>(rows) * kRowHeight + 6.0f;
 }
 
-void drawSection(UiContext& ui, Column& column, const char* title,
-                 std::span<const InfoRow> rows, const char* emptyNote = nullptr)
+void drawSection(UiContext& ui,
+                 Column& column,
+                 const char* title,
+                 std::span<const InfoRow> rows,
+                 const char* emptyNote = nullptr)
 {
     sectionTitle(ui, column, title);
     if (rows.empty() && emptyNote != nullptr) {
-        ui.label(column.row(kRowHeight), emptyNote, ui.theme().textDisabled,
-                 ui.theme().smallStyle);
+        ui.label(column.row(kRowHeight), emptyNote, ui.theme().textDisabled, ui.theme().smallStyle);
     }
     for (const InfoRow& row : rows) {
         infoLine(ui, column, row);
@@ -144,12 +151,9 @@ bool buildShipScreen(UiContext& ui, const sol::ui::ShipInfoPanel& panel, ShipScr
     meterLine(ui, left, "SHIELD-A", panel.shieldAft, kShield);
     Column right(conditionSplit.remaining(), 0.0f, 0.0f);
     const float pipMax = panel.pipMax > 0 ? static_cast<float>(panel.pipMax) : 1.0f;
-    meterLine(ui, right, "WEP", static_cast<float>(panel.pipsWeapons) / pipMax,
-              rgba(0xFF9973FFu));
-    meterLine(ui, right, "ENG", static_cast<float>(panel.pipsEngines) / pipMax,
-              rgba(0x8CDCA0FFu));
-    meterLine(ui, right, "SYS", static_cast<float>(panel.pipsShields) / pipMax,
-              rgba(0x80BFFFFFu));
+    meterLine(ui, right, "WEP", static_cast<float>(panel.pipsWeapons) / pipMax, rgba(0xFF9973FFu));
+    meterLine(ui, right, "ENG", static_cast<float>(panel.pipsEngines) / pipMax, rgba(0x8CDCA0FFu));
+    meterLine(ui, right, "SYS", static_cast<float>(panel.pipsShields) / pipMax, rgba(0x80BFFFFFu));
     outer.skip(6.0f);
 
     const Rect bodyAll = outer.remaining();
@@ -159,8 +163,8 @@ bool buildShipScreen(UiContext& ui, const sol::ui::ShipInfoPanel& panel, ShipScr
     // Two columns, scrolled together: the left is the numbers, the right is
     // what produces them plus what is in the hold.
     const float contentHeight =
-        std::max(sectionHeight(panel.flight.size()) + sectionHeight(panel.defence.size())
-                     + sectionHeight(panel.utility.size()),
+        std::max(sectionHeight(panel.flight.size()) + sectionHeight(panel.defence.size()) +
+                     sectionHeight(panel.utility.size()),
                  sectionHeight(panel.fitted.size()) + sectionHeight(panel.cargo.size()));
     const Rect view = ui.beginScroll(body, contentHeight, state.scroll);
     Row split(view, kGutter);
@@ -177,8 +181,11 @@ bool buildShipScreen(UiContext& ui, const sol::ui::ShipInfoPanel& panel, ShipScr
     Row buttons(footer, ui.theme().spacing);
     const Rect closeCell = buttons.cellFromRight(kButtonWidth);
     char hold[64] = {};
-    std::snprintf(hold, sizeof(hold), "Hold %.1f / %.1f units",
-                  static_cast<double>(panel.cargoUsed), static_cast<double>(panel.cargoCapacity));
+    std::snprintf(hold,
+                  sizeof(hold),
+                  "Hold %.1f / %.1f units",
+                  static_cast<double>(panel.cargoUsed),
+                  static_cast<double>(panel.cargoCapacity));
     ui.label(buttons.remaining(), hold, ui.theme().textDim, ui.theme().smallStyle);
     bool closed = ui.button(closeCell, "Close");
 

@@ -28,12 +28,18 @@ struct PushConstants
 core::Vec3 faceDirection(int face, float u, float v)
 {
     switch (face) {
-    case 0: return {1.0f, -v, -u};
-    case 1: return {-1.0f, -v, u};
-    case 2: return {u, 1.0f, v};
-    case 3: return {u, -1.0f, -v};
-    case 4: return {u, -v, 1.0f};
-    default: return {-u, -v, -1.0f};
+    case 0:
+        return {1.0f, -v, -u};
+    case 1:
+        return {-1.0f, -v, u};
+    case 2:
+        return {u, 1.0f, v};
+    case 3:
+        return {u, -1.0f, -v};
+    case 4:
+        return {u, -v, 1.0f};
+    default:
+        return {-u, -v, -1.0f};
     }
 }
 
@@ -45,21 +51,33 @@ void directionToFace(core::Vec3 d, int& face, float& u, float& v)
     const float az = std::abs(d.z);
     if (ax >= ay && ax >= az) {
         if (d.x > 0.0f) {
-            face = 0; u = -d.z / ax; v = -d.y / ax;
+            face = 0;
+            u = -d.z / ax;
+            v = -d.y / ax;
         } else {
-            face = 1; u = d.z / ax; v = -d.y / ax;
+            face = 1;
+            u = d.z / ax;
+            v = -d.y / ax;
         }
     } else if (ay >= az) {
         if (d.y > 0.0f) {
-            face = 2; u = d.x / ay; v = d.z / ay;
+            face = 2;
+            u = d.x / ay;
+            v = d.z / ay;
         } else {
-            face = 3; u = d.x / ay; v = -d.z / ay;
+            face = 3;
+            u = d.x / ay;
+            v = -d.z / ay;
         }
     } else {
         if (d.z > 0.0f) {
-            face = 4; u = d.x / az; v = -d.y / az;
+            face = 4;
+            u = d.x / az;
+            v = -d.y / az;
         } else {
-            face = 5; u = -d.x / az; v = -d.y / az;
+            face = 5;
+            u = -d.x / az;
+            v = -d.y / az;
         }
     }
 }
@@ -116,8 +134,7 @@ void splatStar(FaceBuffer faces[6], core::Vec3 direction, core::Vec3 color)
         for (int dx = 0; dx <= 1; ++dx) {
             const int tx = ix + dx;
             const int ty = iy + dy;
-            if (tx < 0 || ty < 0 || tx >= static_cast<int>(kFaceSize) ||
-                ty >= static_cast<int>(kFaceSize)) {
+            if (tx < 0 || ty < 0 || tx >= static_cast<int>(kFaceSize) || ty >= static_cast<int>(kFaceSize)) {
                 continue;
             }
             const float w = (1.0f - std::abs(px - static_cast<float>(tx))) *
@@ -141,8 +158,11 @@ void splatStar(FaceBuffer faces[6], core::Vec3 direction, core::Vec3 color)
 
 } // namespace
 
-bool SkyRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
-                             const char* shaderDirectory, std::uint64_t seed)
+bool SkyRenderer::initialize(rhi::Context& context,
+                             VkFormat colorFormat,
+                             VkFormat depthFormat,
+                             const char* shaderDirectory,
+                             std::uint64_t seed)
 {
     m_context = &context;
     m_colorFormat = colorFormat;
@@ -169,8 +189,8 @@ bool SkyRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkForm
                 if (band < 0.02f) {
                     continue;
                 }
-                const float patchy = 0.3f + 0.7f * valueNoise(dir * 9.0f, seed) *
-                                                valueNoise(dir * 23.0f, seed ^ 0x5555u);
+                const float patchy =
+                    0.3f + 0.7f * valueNoise(dir * 9.0f, seed) * valueNoise(dir * 23.0f, seed ^ 0x5555u);
                 const float glow = band * patchy * 0.028f;
 
                 float* texel = &faces[face][(static_cast<std::size_t>(y) * kFaceSize + x) * 3];
@@ -222,17 +242,18 @@ bool SkyRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkForm
         packedPointers[face] = packed[face].data();
     }
 
-    m_cubemap = rhi::createSampledCubemap(context, kFaceSize, VK_FORMAT_R8G8B8A8_UNORM,
-                                          packedPointers, kFaceSize * kFaceSize * 4);
+    m_cubemap = rhi::createSampledCubemap(
+        context, kFaceSize, VK_FORMAT_R8G8B8A8_UNORM, packedPointers, kFaceSize * kFaceSize * 4);
     m_sampler = rhi::createClampSampler(context);
     m_setLayout = rhi::createTextureSetLayout(context.device());
     m_descriptorPool = rhi::createTextureDescriptorPool(context.device(), 1);
     m_descriptorSet = rhi::allocateDescriptorSet(context.device(), m_descriptorPool, m_setLayout);
     rhi::writeTextureDescriptor(context.device(), m_descriptorSet, m_cubemap.view, m_sampler);
-    m_pipelineLayout =
-        rhi::createPipelineLayout(context.device(), &m_setLayout, 1, sizeof(PushConstants));
+    m_pipelineLayout = rhi::createPipelineLayout(context.device(), &m_setLayout, 1, sizeof(PushConstants));
 
-    SOL_LOG_INFO("Starfield cubemap generated (%ux%u x6, seed %llu)", kFaceSize, kFaceSize,
+    SOL_LOG_INFO("Starfield cubemap generated (%ux%u x6, seed %llu)",
+                 kFaceSize,
+                 kFaceSize,
                  static_cast<unsigned long long>(seed));
     return reloadPipeline();
 }
@@ -272,9 +293,14 @@ bool SkyRenderer::reloadPipeline()
     return true;
 }
 
-void SkyRenderer::draw(VkCommandBuffer commandBuffer, VkExtent2D extent,
-                       const core::Quat& cameraOrientation, float verticalFovRadians, float aspect,
-                       float intensity, const core::Vec3& warpAxis, float warp) const
+void SkyRenderer::draw(VkCommandBuffer commandBuffer,
+                       VkExtent2D extent,
+                       const core::Quat& cameraOrientation,
+                       float verticalFovRadians,
+                       float aspect,
+                       float intensity,
+                       const core::Vec3& warpAxis,
+                       float warp) const
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
@@ -288,11 +314,14 @@ void SkyRenderer::draw(VkCommandBuffer commandBuffer, VkExtent2D extent,
     push.up = {up.x, up.y, up.z, 0.0f};
     push.forward = {forward.x, forward.y, forward.z, intensity};
     push.warp = {warpAxis.x, warpAxis.y, warpAxis.z, warp};
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
+    vkCmdPushConstants(commandBuffer,
+                       m_pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0,
+                       sizeof(push),
                        &push);
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1,
-                            &m_descriptorSet, 0, nullptr);
+    vkCmdBindDescriptorSets(
+        commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
 
     // Viewport/scissor inherited from the mesh pass (same dynamic state).
     (void)extent;

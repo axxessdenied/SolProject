@@ -23,13 +23,16 @@ struct PushConstants
     core::Vec4 modelColumn2; // .w = sun intensity
     core::Vec4 sunDirection; // .xyz = surface-to-sun, world space
 };
+
 static_assert(sizeof(PushConstants) == 128, "must fit the guaranteed push constant minimum");
 
 constexpr std::uint32_t kMaxTextures = 256;
 
 } // namespace
 
-bool MeshRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
+bool MeshRenderer::initialize(rhi::Context& context,
+                              VkFormat colorFormat,
+                              VkFormat depthFormat,
                               const char* shaderDirectory)
 {
     m_context = &context;
@@ -39,8 +42,8 @@ bool MeshRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkFor
 
     m_textureSetLayout = rhi::createTextureSetLayout(context.device());
     m_descriptorPool = rhi::createTextureDescriptorPool(context.device(), kMaxTextures);
-    m_pipelineLayout = rhi::createPipelineLayout(context.device(), &m_textureSetLayout, 1,
-                                                 sizeof(PushConstants));
+    m_pipelineLayout =
+        rhi::createPipelineLayout(context.device(), &m_textureSetLayout, 1, sizeof(PushConstants));
     return createPipeline();
 }
 
@@ -140,10 +143,12 @@ void MeshRenderer::shutdown()
 GpuMesh MeshRenderer::createMesh(const assets::MeshData& data)
 {
     GpuMesh mesh;
-    mesh.vertexBuffer = rhi::createDeviceLocalBuffer(
-        *m_context, data.vertices.data(), data.vertices.size() * sizeof(assets::MeshVertex),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    mesh.indexBuffer = rhi::createDeviceLocalBuffer(*m_context, data.indices.data(),
+    mesh.vertexBuffer = rhi::createDeviceLocalBuffer(*m_context,
+                                                     data.vertices.data(),
+                                                     data.vertices.size() * sizeof(assets::MeshVertex),
+                                                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    mesh.indexBuffer = rhi::createDeviceLocalBuffer(*m_context,
+                                                    data.indices.data(),
                                                     data.indices.size() * sizeof(std::uint32_t),
                                                     VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     mesh.indexCount = static_cast<std::uint32_t>(data.indices.size());
@@ -179,8 +184,8 @@ GpuTexture MeshRenderer::createTexture(const assets::TextureData& data)
     texture.sampler = rhi::createSampler(*m_context, uploadDesc.mipCount);
     texture.descriptorSet =
         rhi::allocateDescriptorSet(m_context->device(), m_descriptorPool, m_textureSetLayout);
-    rhi::writeTextureDescriptor(m_context->device(), texture.descriptorSet, texture.image.view,
-                                texture.sampler);
+    rhi::writeTextureDescriptor(
+        m_context->device(), texture.descriptorSet, texture.image.view, texture.sampler);
     return texture;
 }
 
@@ -204,8 +209,7 @@ void MeshRenderer::bindTranslucent(VkCommandBuffer commandBuffer, VkExtent2D ext
     bindPipeline(commandBuffer, extent, m_translucentPipeline);
 }
 
-void MeshRenderer::bindPipeline(VkCommandBuffer commandBuffer, VkExtent2D extent,
-                                VkPipeline pipeline) const
+void MeshRenderer::bindPipeline(VkCommandBuffer commandBuffer, VkExtent2D extent, VkPipeline pipeline) const
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
@@ -222,8 +226,12 @@ void MeshRenderer::bindPipeline(VkCommandBuffer commandBuffer, VkExtent2D extent
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 }
 
-void MeshRenderer::draw(VkCommandBuffer commandBuffer, const GpuMesh& mesh, const GpuTexture& texture,
-                        const core::Mat4& mvp, const core::Mat4& model, float emissive,
+void MeshRenderer::draw(VkCommandBuffer commandBuffer,
+                        const GpuMesh& mesh,
+                        const GpuTexture& texture,
+                        const core::Mat4& mvp,
+                        const core::Mat4& model,
+                        float emissive,
                         float alpha) const
 {
     PushConstants push = {};
@@ -237,11 +245,20 @@ void MeshRenderer::draw(VkCommandBuffer commandBuffer, const GpuMesh& mesh, cons
     // .w was a dead lane until Phase 12; it is the alpha the shader
     // premultiplies by, and 1.0 reproduces the pre-Phase-12 output exactly.
     push.sunDirection = {m_sunDirection.x, m_sunDirection.y, m_sunDirection.z, alpha};
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
+    vkCmdPushConstants(commandBuffer,
+                       m_pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0,
+                       sizeof(push),
                        &push);
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1,
-                            &texture.descriptorSet, 0, nullptr);
+    vkCmdBindDescriptorSets(commandBuffer,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            m_pipelineLayout,
+                            0,
+                            1,
+                            &texture.descriptorSet,
+                            0,
+                            nullptr);
 
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &mesh.vertexBuffer.buffer, &offset);

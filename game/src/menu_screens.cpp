@@ -67,8 +67,8 @@ bool Settings::load(const char* path)
 
     sol::core::TomlValue root;
     std::string error;
-    if (!sol::core::TomlValue::parse(reinterpret_cast<const char*>(bytes.data()), bytes.size(), root,
-                                     &error)) {
+    if (!sol::core::TomlValue::parse(
+            reinterpret_cast<const char*>(bytes.data()), bytes.size(), root, &error)) {
         SOL_LOG_WARN("settings: %s (%s) - using defaults", error.c_str(), path);
         return false;
     }
@@ -100,12 +100,10 @@ bool Settings::load(const char* path)
     // so an absent [bindings] table, an absent action within it, or a line
     // this build does not understand all leave the shipped layout in place -
     // a settings file must never be the reason the game cannot be flown.
-    if (const sol::core::TomlValue* table = root.find("bindings");
-        table != nullptr && table->isTable()) {
+    if (const sol::core::TomlValue* table = root.find("bindings"); table != nullptr && table->isTable()) {
         for (const auto& [key, value] : table->members()) {
             if (!value.isString()) {
-                SOL_LOG_WARN("settings: binding '%s' is not a string - keeping the default",
-                             key.c_str());
+                SOL_LOG_WARN("settings: binding '%s' is not a string - keeping the default", key.c_str());
                 continue;
             }
             bool known = false;
@@ -120,7 +118,8 @@ bool Settings::load(const char* path)
             const sol::platform::InputChord chord = sol::platform::chordFromName(name);
             if (!chord.bound() && !name.empty()) {
                 SOL_LOG_WARN("settings: '%s' is not a key or button ('%s') - keeping the default",
-                             name.c_str(), key.c_str());
+                             name.c_str(),
+                             key.c_str());
                 continue;
             }
             // bind() rather than assign(): the file is read as written, and a
@@ -138,7 +137,8 @@ bool Settings::save(const char* path) const
     // A std::string builder rather than the fixed char[512] this used to be:
     // 34 bindings overflow that buffer several times over.
     char scalars[256] = {};
-    const int written = std::snprintf(scalars, sizeof(scalars),
+    const int written = std::snprintf(scalars,
+                                      sizeof(scalars),
                                       "# The Stars Don't Wait - player settings\n"
                                       "ui_scale = %.3f\n"
                                       "mouse_sensitivity = %.3f\n"
@@ -148,7 +148,8 @@ bool Settings::save(const char* path) const
                                       "effects_volume = %.3f\n",
                                       static_cast<double>(uiScale),
                                       static_cast<double>(mouseSensitivity),
-                                      invertPitch ? "true" : "false", vsync ? "true" : "false",
+                                      invertPitch ? "true" : "false",
+                                      vsync ? "true" : "false",
                                       static_cast<double>(masterVolume),
                                       static_cast<double>(effectsVolume));
     if (written <= 0) {
@@ -182,10 +183,16 @@ MenuAction buildMainMenu(UiContext& ui, MainMenuState& state)
     ui.panel(panel);
 
     Column column(panel, ui.theme().padding, ui.theme().spacing);
-    ui.label(column.row(kTitleHeight), "The Stars Don't Wait", ui.theme().textPrimary,
-             ui.theme().headingStyle, TextAlign::Center);
-    ui.label(column.row(28.0f), "Carve out a life in a galaxy already in motion.", ui.theme().textDim,
-             ui.theme().smallStyle, TextAlign::Center);
+    ui.label(column.row(kTitleHeight),
+             "The Stars Don't Wait",
+             ui.theme().textPrimary,
+             ui.theme().headingStyle,
+             TextAlign::Center);
+    ui.label(column.row(28.0f),
+             "Carve out a life in a galaxy already in motion.",
+             ui.theme().textDim,
+             ui.theme().smallStyle,
+             TextAlign::Center);
     column.skip(12.0f);
 
     MenuAction action = MenuAction::None;
@@ -218,13 +225,15 @@ MenuAction buildPauseMenu(UiContext& ui, bool hardcore)
 
     const int buttonCount = hardcore ? 4 : 5;
     const float height = kTitleHeight + kButtonHeight * static_cast<float>(buttonCount) +
-                         ui.theme().spacing * static_cast<float>(buttonCount) +
-                         ui.theme().padding * 2.0f;
+                         ui.theme().spacing * static_cast<float>(buttonCount) + ui.theme().padding * 2.0f;
     const Rect panel = centeredPanel(ui, kMenuWidth, height);
     ui.panel(panel);
 
     Column column(panel, ui.theme().padding, ui.theme().spacing);
-    ui.label(column.row(kTitleHeight), "Paused", ui.theme().textPrimary, ui.theme().headingStyle,
+    ui.label(column.row(kTitleHeight),
+             "Paused",
+             ui.theme().textPrimary,
+             ui.theme().headingStyle,
              TextAlign::Center);
 
     MenuAction action = MenuAction::None;
@@ -267,13 +276,16 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
     // Six rows since Phase 8t added the two volume sliders, and one spacing
     // per item: the panel is sized from its contents, so adding a row without
     // moving these two numbers pushes the buttons out through the bottom.
-    const float height = kTitleHeight + rowHeight * 6.0f + kButtonHeight * 2.0f +
-                         ui.theme().spacing * 9.0f + ui.theme().padding * 2.0f;
+    const float height = kTitleHeight + rowHeight * 6.0f + kButtonHeight * 2.0f + ui.theme().spacing * 9.0f +
+                         ui.theme().padding * 2.0f;
     const Rect panel = centeredPanel(ui, 540.0f, height);
     ui.panel(panel);
 
     Column column(panel, ui.theme().padding, ui.theme().spacing);
-    ui.label(column.row(kTitleHeight), "Settings", ui.theme().textPrimary, ui.theme().headingStyle,
+    ui.label(column.row(kTitleHeight),
+             "Settings",
+             ui.theme().textPrimary,
+             ui.theme().headingStyle,
              TextAlign::Center);
 
     char buffer[64] = {};
@@ -308,8 +320,11 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
     return action;
 }
 
-MenuAction buildControlsScreen(UiContext& ui, Settings& settings, ControlsScreenState& state,
-                               sol::platform::InputChord captured, bool cancel)
+MenuAction buildControlsScreen(UiContext& ui,
+                               Settings& settings,
+                               ControlsScreenState& state,
+                               sol::platform::InputChord captured,
+                               bool cancel)
 {
     using sol::platform::BindingTable;
     using sol::platform::InputChord;
@@ -343,8 +358,8 @@ MenuAction buildControlsScreen(UiContext& ui, Settings& settings, ControlsScreen
         } else {
             const std::uint32_t stolen = settings.bindings.assign(state.capturing, captured);
             if (stolen == BindingTable::kNoAction) {
-                state.notice = std::string(actionLabel(target)) + " is now " +
-                               sol::platform::chordName(captured) + ".";
+                state.notice =
+                    std::string(actionLabel(target)) + " is now " + sol::platform::chordName(captured) + ".";
                 if (state.stolenFrom == state.capturing) {
                     state.stolenFrom = kActionCount; // this row has a key again
                 }
@@ -359,18 +374,20 @@ MenuAction buildControlsScreen(UiContext& ui, Settings& settings, ControlsScreen
     }
 
     // Height: one row per action, plus a header per group.
-    const float contentHeight =
-        static_cast<float>(kActionCount) * (kRowHeight + 4.0f) +
-        static_cast<float>(ActionGroup::Count) * (kGroupHeight + 4.0f) + 4.0f;
+    const float contentHeight = static_cast<float>(kActionCount) * (kRowHeight + 4.0f) +
+                                static_cast<float>(ActionGroup::Count) * (kGroupHeight + 4.0f) + 4.0f;
 
     const float listHeight = 400.0f;
-    const float panelHeight = kTitleHeight + listHeight + 26.0f + kButtonHeight * 2.0f +
-                              spacing * 5.0f + padding * 2.0f;
+    const float panelHeight =
+        kTitleHeight + listHeight + 26.0f + kButtonHeight * 2.0f + spacing * 5.0f + padding * 2.0f;
     const Rect panel = centeredPanel(ui, kPanelWidth, panelHeight);
     ui.panel(panel);
 
     Column column(panel, padding, spacing);
-    ui.label(column.row(kTitleHeight), "Controls", ui.theme().textPrimary, ui.theme().headingStyle,
+    ui.label(column.row(kTitleHeight),
+             "Controls",
+             ui.theme().textPrimary,
+             ui.theme().headingStyle,
              TextAlign::Center);
 
     const Rect listBounds = column.row(listHeight);
@@ -383,13 +400,12 @@ MenuAction buildControlsScreen(UiContext& ui, Settings& settings, ControlsScreen
         const ActionGroup group = actionGroup(action);
         if (group != drawn) {
             drawn = group;
-            ui.label(rows.row(kGroupHeight), actionGroupLabel(group), ui.theme().textDim,
-                     ui.theme().smallStyle);
+            ui.label(
+                rows.row(kGroupHeight), actionGroupLabel(group), ui.theme().textDim, ui.theme().smallStyle);
         }
 
         Row row(rows.row(kRowHeight), spacing);
-        ui.label(row.cell(210.0f), actionLabel(action), ui.theme().textPrimary,
-                 ui.theme().bodyStyle);
+        ui.label(row.cell(210.0f), actionLabel(action), ui.theme().textPrimary, ui.theme().bodyStyle);
 
         const InputChord chord = settings.bindings.chordFor(i);
         const bool capturing = state.capturing == i;
@@ -402,8 +418,8 @@ MenuAction buildControlsScreen(UiContext& ui, Settings& settings, ControlsScreen
                             : chord.bound()         ? sol::platform::chordName(chord)
                             : state.stolenFrom == i ? "needs a key"
                                                     : "--";
-        const sol::ui::Color valueColor = capturing || !chord.bound() ? ui.theme().accent
-                                                                     : ui.theme().textPrimary;
+        const sol::ui::Color valueColor =
+            capturing || !chord.bound() ? ui.theme().accent : ui.theme().textPrimary;
         ui.label(row.cell(260.0f), value, valueColor, ui.theme().bodyStyle);
 
         ui.pushId(static_cast<int>(i));
@@ -458,13 +474,17 @@ void buildBookmarkPrompt(UiContext& ui, sol::ui::BookmarkPrompt& prompt)
     ui.pushId("bookmark_prompt");
 
     Column column(frame, ui.theme().padding, ui.theme().spacing);
-    ui.label(column.row(30.0f), prompt.full ? "Too many bookmarks here" : "Bookmark this place",
-             ui.theme().textPrimary, ui.theme().headingStyle);
+    ui.label(column.row(30.0f),
+             prompt.full ? "Too many bookmarks here" : "Bookmark this place",
+             ui.theme().textPrimary,
+             ui.theme().headingStyle);
     ui.label(column.row(20.0f), prompt.whereSummary, ui.theme().textDim, ui.theme().smallStyle);
     column.skip(4.0f);
 
     if (prompt.full) {
-        ui.label(column.row(20.0f), "Delete one from the system map first.", ui.theme().textDim,
+        ui.label(column.row(20.0f),
+                 "Delete one from the system map first.",
+                 ui.theme().textDim,
                  ui.theme().smallStyle);
         column.skip(4.0f);
         Row buttons(column.row(kButtonHeight), ui.theme().spacing);
@@ -488,8 +508,7 @@ void buildBookmarkPrompt(UiContext& ui, sol::ui::BookmarkPrompt& prompt)
     // a prefilled field is not actively in the way. Gated on the field
     // actually holding focus - otherwise a stray character with focus
     // elsewhere wipes the suggested name and puts nothing in its place.
-    if (prompt.nameIsSuggestion && !ui.input().text.empty()
-        && ui.isFocused(ui.idFor("name"))) {
+    if (prompt.nameIsSuggestion && !ui.input().text.empty() && ui.isFocused(ui.idFor("name"))) {
         prompt.name.clear();
         ui.setCaret(0);
         prompt.nameIsSuggestion = false;

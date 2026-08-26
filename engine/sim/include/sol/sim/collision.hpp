@@ -36,7 +36,8 @@ struct Contact
 // configuration, and applies a normal impulse with the given restitution.
 // Appends one Contact per resolved impact. O(n^2) pairs - fine at encounter
 // scale (1-20 ships + a handful of statics).
-void resolveCollisions(std::span<CollisionBody> bodies, double restitution,
+void resolveCollisions(std::span<CollisionBody> bodies,
+                       double restitution,
                        std::vector<Contact>& outContacts);
 
 } // namespace sol::sim

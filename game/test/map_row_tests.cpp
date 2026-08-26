@@ -1,14 +1,14 @@
 #include "map_ui.hpp"
 #include "space_world.hpp"
 
-#include <sol/assets/data_defs.hpp>
-#include <sol/sim/survey.hpp>
-#include <sol/test/test.hpp>
-
 #include <cstring>
 #include <deque>
 #include <string>
 #include <vector>
+
+#include <sol/assets/data_defs.hpp>
+#include <sol/sim/survey.hpp>
+#include <sol/test/test.hpp>
 
 using sol::assets::DefDatabase;
 using sol::ui::kNoNavTarget;
@@ -140,9 +140,8 @@ SOL_TEST(the_fog_really_does_shift_a_row_off_its_slot)
             // The old code would have passed `row` here. Prove that names a
             // different target than the one on screen - either a wrong one or
             // a hidden one, which selectTarget refuses without saying so.
-            const bool wouldBeWrong =
-                row >= targets.size() || !fixture.world.navTargetVisible(row)
-                || std::strcmp(markers[row].name, targets[row].name.c_str()) != 0;
+            const bool wouldBeWrong = row >= targets.size() || !fixture.world.navTargetVisible(row) ||
+                                      std::strcmp(markers[row].name, targets[row].name.c_str()) != 0;
             SOL_CHECK(wouldBeWrong);
         }
     }
@@ -165,8 +164,7 @@ SOL_TEST(remote_marker_rows_name_no_nav_slot)
     // rather than failing. So chart a neighbour first.
     const std::uint32_t current = fixture.world.currentSystemIndex();
     const std::uint32_t remote = current == 0 ? 1u : 0u;
-    fixture.world.survey().setKnowledge(fixture.world.galaxy(), remote,
-                                        sol::sim::KnowledgeState::Charted);
+    fixture.world.survey().setKnowledge(fixture.world.galaxy(), remote, sol::sim::KnowledgeState::Charted);
     panel.viewSystem = static_cast<int>(remote);
     fixture.fill(panel, markers);
 

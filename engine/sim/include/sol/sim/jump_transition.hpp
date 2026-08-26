@@ -54,8 +54,10 @@ inline constexpr double kJumpSkyPeak = 3.0;
 // places every gate at hub + bearing * gateDistance, so the axis is
 // normalize(gate - hub), the lane the gate serves. A gate works in BOTH
 // directions, because nothing here cares about the sign of the crossing.
-[[nodiscard]] inline bool crossedAperture(const core::DVec3& from, const core::DVec3& to,
-                                          const core::DVec3& gate, const core::DVec3& axis,
+[[nodiscard]] inline bool crossedAperture(const core::DVec3& from,
+                                          const core::DVec3& to,
+                                          const core::DVec3& gate,
+                                          const core::DVec3& axis,
                                           double frameRadius)
 {
     const double before = dot(from - gate, axis);
@@ -96,6 +98,7 @@ class JumpTransition
 {
 public:
     JumpTransition() = default;
+
     explicit JumpTransition(const JumpTransitionParams& params) : m_params(params) {}
 
     // Starts a jump to `destination`. Refuses while one is already running --
@@ -130,8 +133,7 @@ public:
         // One long frame can step clean over the tunnel AND the arrival, and
         // finishing here would leave the player in the system they jumped out
         // of, with nothing on screen to say so.
-        if (m_phase == JumpPhase::Arrive && !m_swapPending
-            && m_elapsed >= m_params.arriveSeconds) {
+        if (m_phase == JumpPhase::Arrive && !m_swapPending && m_elapsed >= m_params.arriveSeconds) {
             clear();
         }
     }
@@ -153,8 +155,11 @@ public:
     }
 
     [[nodiscard]] JumpPhase phase() const { return m_phase; }
+
     [[nodiscard]] bool active() const { return m_phase != JumpPhase::Idle; }
+
     [[nodiscard]] std::uint32_t destination() const { return m_destination; }
+
     [[nodiscard]] double elapsed() const { return m_elapsed; }
 
     // 0 at rest, 1 at the swap. Accelerating into the lane and decelerating out
@@ -162,7 +167,8 @@ public:
     [[nodiscard]] double warp() const
     {
         switch (m_phase) {
-        case JumpPhase::Idle: break;
+        case JumpPhase::Idle:
+            break;
         case JumpPhase::Tunnel: {
             const double t = progress(m_params.tunnelSeconds);
             return t * t;

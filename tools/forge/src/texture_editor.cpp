@@ -11,8 +11,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <utility>
 #include <vector>
 
@@ -23,9 +23,9 @@ using assets::TextureColor;
 using assets::TextureDoc;
 using assets::TextureLayer;
 using assets::TextureOp;
+using assets::TexturePanel;
 using assets::TextureParamKind;
 using assets::TextureParamSpec;
-using assets::TexturePanel;
 using assets::TextureRect;
 using assets::TextureValue;
 
@@ -53,7 +53,8 @@ namespace {
 // for every 8-bit value, which is what makes that safe.
 [[nodiscard]] bool colorEdit(const char* label, TextureColor& color)
 {
-    float shown[3] = {static_cast<float>(color.r) / 255.0f, static_cast<float>(color.g) / 255.0f,
+    float shown[3] = {static_cast<float>(color.r) / 255.0f,
+                      static_cast<float>(color.g) / 255.0f,
                       static_cast<float>(color.b) / 255.0f};
     if (!ImGui::ColorEdit3(label, shown, ImGuiColorEditFlags_Uint8)) {
         return false;
@@ -118,8 +119,8 @@ bool TextureEditor::openFile(const std::string& path, std::string& status)
     }
     TextureDoc doc;
     std::string error;
-    if (!assets::parseTexture(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
-                              path.c_str(), doc, &error)) {
+    if (!assets::parseTexture(
+            reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(), doc, &error)) {
         status = error;
         SOL_LOG_ERROR("forge: %s", error.c_str());
         return false;
@@ -297,8 +298,7 @@ bool TextureEditor::drawPreview(void* image, float availableWidth)
 
     const int scale = texturePreviewScale(m_doc.width, availableWidth);
     const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const ImVec2 size{static_cast<float>(m_doc.width * scale),
-                      static_cast<float>(m_doc.height * scale)};
+    const ImVec2 size{static_cast<float>(m_doc.width * scale), static_cast<float>(m_doc.height * scale)};
 
     // ⚑ The button is submitted FIRST and the image drawn into the window's own
     // list behind it. Submitting an Image and then an InvisibleButton over it
@@ -307,8 +307,8 @@ bool TextureEditor::drawPreview(void* image, float availableWidth)
     ImGui::InvisibleButton("##preview", size);
     const bool hovered = ImGui::IsItemHovered();
     const bool active = ImGui::IsItemActive();
-    ImGui::GetWindowDrawList()->AddImage(reinterpret_cast<ImTextureID>(image), origin,
-                                         {origin.x + size.x, origin.y + size.y});
+    ImGui::GetWindowDrawList()->AddImage(
+        reinterpret_cast<ImTextureID>(image), origin, {origin.x + size.x, origin.y + size.y});
 
     bool changed = false;
     const ImVec2 mouse = ImGui::GetIO().MousePos;
@@ -318,13 +318,12 @@ bool TextureEditor::drawPreview(void* image, float availableWidth)
         m_dragMoved = false;
         int px = 0;
         int py = 0;
-        if (texturePixelAt({mouse.x, mouse.y}, {origin.x, origin.y}, scale, m_doc.width,
-                           m_doc.height, px, py)) {
+        if (texturePixelAt(
+                {mouse.x, mouse.y}, {origin.x, origin.y}, scale, m_doc.width, m_doc.height, px, py)) {
             refreshHitMap();
             const std::size_t index =
                 static_cast<std::size_t>(py) * m_doc.width + static_cast<std::size_t>(px);
-            const assets::TextureHit hit =
-                index < m_hitMap.size() ? m_hitMap[index] : assets::TextureHit{};
+            const assets::TextureHit hit = index < m_hitMap.size() ? m_hitMap[index] : assets::TextureHit{};
             if (hit.valid()) {
                 // Selection follows the pick ACROSS ops, because two lists that
                 // disagreed about what is selected would be two answers to
@@ -333,8 +332,8 @@ bool TextureEditor::drawPreview(void* image, float availableWidth)
                 m_selectedRow = hit.row;
                 m_scrollToSelectedRow = hit.row >= 0;
             }
-            if (hit.movable() && assets::textureRowPosition(m_doc, hit, m_dragStartPosition[0],
-                                                            m_dragStartPosition[1])) {
+            if (hit.movable() &&
+                assets::textureRowPosition(m_doc, hit, m_dragStartPosition[0], m_dragStartPosition[1])) {
                 m_dragHit = hit;
                 m_dragging = true;
                 m_dragStartCursor[0] = mouse.x;
@@ -356,8 +355,8 @@ bool TextureEditor::drawPreview(void* image, float availableWidth)
                 beginEdit("move shape");
                 m_dragMoved = true;
             }
-            if (assets::textureSetRowPosition(m_doc, m_dragHit, m_dragStartPosition[0] + dx,
-                                              m_dragStartPosition[1] + dy)) {
+            if (assets::textureSetRowPosition(
+                    m_doc, m_dragHit, m_dragStartPosition[0] + dx, m_dragStartPosition[1] + dy)) {
                 m_dirty = true;
                 m_hitMapDirty = true;
                 changed = true;
@@ -400,8 +399,7 @@ bool TextureEditor::drawOpList()
         for (std::size_t i = 0; i < m_doc.layers.size(); ++i) {
             ImGui::PushID(static_cast<int>(i));
             char label[96];
-            std::snprintf(label, sizeof(label), "%zu  %s", i,
-                          assets::textureOpName(m_doc.layers[i].op));
+            std::snprintf(label, sizeof(label), "%zu  %s", i, assets::textureOpName(m_doc.layers[i].op));
             if (ImGui::Selectable(label, static_cast<int>(i) == m_selected)) {
                 m_selected = static_cast<int>(i);
                 // Picking an op from the list is not picking a row inside it,
@@ -434,7 +432,8 @@ bool TextureEditor::drawOpList()
     if (ImGui::Button("delete") && hasSelection) {
         beginEdit("delete op");
         m_doc.layers.erase(m_doc.layers.begin() + static_cast<std::ptrdiff_t>(selected));
-        m_selected = m_doc.layers.empty() ? -1 : std::min(m_selected, static_cast<int>(m_doc.layers.size()) - 1);
+        m_selected =
+            m_doc.layers.empty() ? -1 : std::min(m_selected, static_cast<int>(m_doc.layers.size()) - 1);
         m_dirty = true;
         changed = true;
     }
@@ -502,12 +501,10 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                 for (std::size_t i = 0; i < value.rects.size(); ++i) {
                     ImGui::PushID(static_cast<int>(i));
                     const bool picked = beginPickedRow(rowBase + i);
-                    int row[4] = {value.rects[i].x, value.rects[i].y, value.rects[i].w,
-                                  value.rects[i].h};
+                    int row[4] = {value.rects[i].x, value.rects[i].y, value.rects[i].w, value.rects[i].h};
                     ImGui::SetNextItemWidth(-40.0f);
                     if (ImGui::DragInt4("##r", row, 0.5f, -4096, 4096)) {
-                        value.rects[i] = {row[0], row[1], std::max(0, row[2]),
-                                          std::max(0, row[3])};
+                        value.rects[i] = {row[0], row[1], std::max(0, row[2]), std::max(0, row[3])};
                         edited = true;
                     }
                     noteActivation("edit rect");
@@ -528,8 +525,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
             rowBase += value.rects.size();
             if (ImGui::SmallButton("add rect")) {
                 beginEdit("add rect");
-                value.rects.push_back(value.rects.empty() ? TextureRect{0, 0, 16, 16}
-                                                          : value.rects.back());
+                value.rects.push_back(value.rects.empty() ? TextureRect{0, 0, 16, 16} : value.rects.back());
                 edited = true;
             }
             break;
@@ -545,12 +541,18 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                 for (std::size_t i = 0; i < value.panels.size(); ++i) {
                     ImGui::PushID(static_cast<int>(i));
                     const bool picked = beginPickedRow(rowBase + i);
-                    int row[5] = {value.panels[i].x, value.panels[i].y, value.panels[i].w,
-                                  value.panels[i].h, value.panels[i].shade};
+                    int row[5] = {value.panels[i].x,
+                                  value.panels[i].y,
+                                  value.panels[i].w,
+                                  value.panels[i].h,
+                                  value.panels[i].shade};
                     ImGui::SetNextItemWidth(-40.0f);
                     if (ImGui::DragScalarN("##p", ImGuiDataType_S32, row, 5, 0.5f)) {
-                        value.panels[i] = {row[0], row[1], std::max(0, row[2]),
-                                           std::max(0, row[3]), std::clamp(row[4], 0, 255)};
+                        value.panels[i] = {row[0],
+                                           row[1],
+                                           std::max(0, row[2]),
+                                           std::max(0, row[3]),
+                                           std::clamp(row[4], 0, 255)};
                         edited = true;
                     }
                     noteActivation("edit panel");
@@ -592,8 +594,7 @@ bool TextureEditor::drawParams(TextureLayer& layer)
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) {
                     beginEdit("remove line");
-                    value.integers.erase(value.integers.begin() +
-                                         static_cast<std::ptrdiff_t>(i));
+                    value.integers.erase(value.integers.begin() + static_cast<std::ptrdiff_t>(i));
                     edited = true;
                     endPickedRow(picked);
                     ImGui::PopID();

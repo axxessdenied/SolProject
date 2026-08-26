@@ -61,8 +61,8 @@ struct BuildTransform
     // so the composed linear part is Rz * Ry * Rx * S. Radians, per the
     // engine's convention; a `.forge` file writes degrees and converts on the
     // way in, because that is an authoring surface and this is not.
-    [[nodiscard]] static BuildTransform fromTrs(BuildPoint translation, BuildPoint rotationRadians,
-                                                BuildPoint scale);
+    [[nodiscard]] static BuildTransform
+    fromTrs(BuildPoint translation, BuildPoint rotationRadians, BuildPoint scale);
 
     [[nodiscard]] BuildPoint transformPoint(BuildPoint p) const;
     [[nodiscard]] BuildPoint transformDirection(BuildPoint v) const;
@@ -89,14 +89,13 @@ struct BuildTransform
 class MeshBuilder
 {
 public:
-    [[nodiscard]] std::uint32_t vertexCount() const
-    {
-        return static_cast<std::uint32_t>(m_vertices.size());
-    }
+    [[nodiscard]] std::uint32_t vertexCount() const { return static_cast<std::uint32_t>(m_vertices.size()); }
+
     [[nodiscard]] std::uint32_t triangleCount() const
     {
         return static_cast<std::uint32_t>(m_indices.size() / 3);
     }
+
     void clear();
 
     // Placement applied to every vertex emitted from here on. Identity by
@@ -109,6 +108,7 @@ public:
     // inverse transpose, which is the only thing that survives a non-uniform
     // scale.
     void setTransform(const BuildTransform& transform);
+
     [[nodiscard]] const BuildTransform& transform() const { return m_transform; }
 
     std::uint32_t addVertex(BuildPoint position, BuildPoint normal, BuildUv uv);
@@ -126,25 +126,29 @@ public:
     void addBeam(BuildPoint from, BuildPoint to, double width, double height, double tile = 0.0);
 
     // Torus in the XZ plane about the origin, smooth in both directions.
-    void addTorus(double majorRadius, double tubeRadius, std::uint32_t segU, std::uint32_t segV,
-                  double uTiles);
+    void
+    addTorus(double majorRadius, double tubeRadius, std::uint32_t segU, std::uint32_t segV, double uTiles);
 
     // Triangle carrying one computed normal - the faceted-hull primitive.
-    void addFlatTriangle(BuildPoint p0, BuildPoint p1, BuildPoint p2, BuildUv uv0, BuildUv uv1,
-                         BuildUv uv2);
+    void addFlatTriangle(BuildPoint p0, BuildPoint p1, BuildPoint p2, BuildUv uv0, BuildUv uv1, BuildUv uv2);
 
     // Sweeps a profile about the +Y axis. Profile points are (radius, height),
     // ordered from one end of the surface to the other; the surface is smooth
     // both around the sweep and along the profile. `capEnds` closes an end
     // whose radius is non-zero with a fan on the axis.
-    void addRevolve(std::span<const BuildProfilePoint> profile, std::uint32_t segments, double uTiles,
+    void addRevolve(std::span<const BuildProfilePoint> profile,
+                    std::uint32_t segments,
+                    double uTiles,
                     bool capEnds = false);
 
     // Extrudes a closed 2D outline along `from` -> `to`. The outline lies in
     // the plane normal to the run, wound CCW seen from `to` looking back.
     // Sides are faceted per outline edge; `capEnds` closes both ends with fans.
-    void addExtrude(std::span<const BuildProfilePoint> outline, BuildPoint from, BuildPoint to,
-                    double tile = 0.0, bool capEnds = true);
+    void addExtrude(std::span<const BuildProfilePoint> outline,
+                    BuildPoint from,
+                    BuildPoint to,
+                    double tile = 0.0,
+                    bool capEnds = true);
 
     // Rounds to float and hands back what the pipeline and the cooker want.
     [[nodiscard]] MeshData build() const;

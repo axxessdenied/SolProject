@@ -72,8 +72,7 @@ namespace {
 
 [[nodiscard]] bool dragDoubleN(const char* label, double* values, int count, double speed)
 {
-    return ImGui::DragScalarN(label, ImGuiDataType_Double, values, count,
-                              static_cast<float>(speed));
+    return ImGui::DragScalarN(label, ImGuiDataType_Double, values, count, static_cast<float>(speed));
 }
 
 } // namespace
@@ -115,8 +114,8 @@ bool PartEditor::openFile(const std::string& path, std::string& status)
     }
     ForgeDoc doc;
     std::string error;
-    if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
-                            path.c_str(), doc, &error)) {
+    if (!assets::parseForge(
+            reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(), doc, &error)) {
         status = error;
         SOL_LOG_ERROR("forge: %s", error.c_str());
         return false;
@@ -260,8 +259,7 @@ void PartEditor::afterStep()
     m_buildError.clear();
 }
 
-bool PartEditor::movePoint(const assets::ForgePoint& point, assets::BuildPoint delta,
-                           std::string& error)
+bool PartEditor::movePoint(const assets::ForgePoint& point, assets::BuildPoint delta, std::string& error)
 {
     if (!m_open) {
         return false;
@@ -273,8 +271,10 @@ bool PartEditor::movePoint(const assets::ForgePoint& point, assets::BuildPoint d
     return true;
 }
 
-bool PartEditor::movePoints(std::span<const assets::ForgePoint> points, assets::BuildPoint delta,
-                            bool& dropped, std::string& error)
+bool PartEditor::movePoints(std::span<const assets::ForgePoint> points,
+                            assets::BuildPoint delta,
+                            bool& dropped,
+                            std::string& error)
 {
     if (!m_open) {
         return false;
@@ -292,8 +292,10 @@ bool PartEditor::movePoints(std::span<const assets::ForgePoint> points, assets::
 // through, and `undo()` marks the document dirty, so a refused button would
 // claim unsaved work.
 bool PartEditor::splitEdge(std::span<const assets::ForgePoint> points,
-                           std::span<const assets::ForgeFace> faces, std::uint32_t a,
-                           std::uint32_t b, std::string& error)
+                           std::span<const assets::ForgeFace> faces,
+                           std::uint32_t a,
+                           std::uint32_t b,
+                           std::string& error)
 {
     if (!m_open) {
         return false;
@@ -309,7 +311,8 @@ bool PartEditor::splitEdge(std::span<const assets::ForgePoint> points,
 }
 
 bool PartEditor::extrudeFaces(std::span<const assets::ForgeFace> faces,
-                              std::span<const std::uint32_t> group, double& offset,
+                              std::span<const std::uint32_t> group,
+                              double& offset,
                               std::string& error)
 {
     if (!m_open) {
@@ -384,8 +387,7 @@ bool PartEditor::drawPartList()
     const bool offerFilter = m_doc.parts.size() >= kFilterFromRows;
     if (offerFilter) {
         ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputTextWithHint("##partfilter", "filter parts", m_partFilter,
-                                 sizeof(m_partFilter));
+        ImGui::InputTextWithHint("##partfilter", "filter parts", m_partFilter, sizeof(m_partFilter));
     } else {
         // A short document cannot leave a stale filter hiding its own parts.
         m_partFilter[0] = '\0';
@@ -411,12 +413,11 @@ bool PartEditor::drawPartList()
     // filter the author was part-way through typing, and it also covers the
     // reverse order - select a row, then type a filter that excludes it.
     const auto rowVisible = [&](std::size_t index) {
-        return listMatchesFilter(m_doc.parts[index].id, needle) ||
-               static_cast<int>(index) == m_selected;
+        return listMatchesFilter(m_doc.parts[index].id, needle) || static_cast<int>(index) == m_selected;
     };
 
-    std::size_t matches = 0;      // rows the list will draw, for its height
-    std::size_t needleHits = 0;   // rows the FILTER matched, for the message
+    std::size_t matches = 0;    // rows the list will draw, for its height
+    std::size_t needleHits = 0; // rows the FILTER matched, for the message
     for (std::size_t i = 0; i < m_doc.parts.size(); ++i) {
         needleHits += listMatchesFilter(m_doc.parts[i].id, needle) ? 1u : 0u;
         matches += rowVisible(i) ? 1u : 0u;
@@ -426,8 +427,7 @@ bool PartEditor::drawPartList()
     // being edited is what this window is FOR, so it gets the larger of the two
     // shares here; the mesh list above it is navigation.
     const float outerHeight = ImGui::GetWindowHeight();
-    const float partsHeight =
-        listHeight(textRowMetrics(), matches, kMinListRows, 0.45f, outerHeight);
+    const float partsHeight = listHeight(textRowMetrics(), matches, kMinListRows, 0.45f, outerHeight);
     if (ImGui::BeginChild("##parts", {0.0f, partsHeight}, ImGuiChildFlags_Borders)) {
         for (int i = 0; i < static_cast<int>(m_doc.parts.size()); ++i) {
             const ForgePart& part = m_doc.parts[static_cast<std::size_t>(i)];
@@ -437,7 +437,12 @@ bool PartEditor::drawPartList()
             ImGui::PushID(i);
             const int depth = depthOf(m_doc, static_cast<std::size_t>(i));
             char label[192];
-            std::snprintf(label, sizeof(label), "%*s%s  (%s)", depth * 2, "", part.id.c_str(),
+            std::snprintf(label,
+                          sizeof(label),
+                          "%*s%s  (%s)",
+                          depth * 2,
+                          "",
+                          part.id.c_str(),
                           assets::forgePrimitiveName(part.primitive));
             if (ImGui::Selectable(label, i == m_selected)) {
                 m_selected = i;
@@ -567,8 +572,7 @@ bool PartEditor::drawPartList()
     // whose triangles come from two parts and tells the author to merge them,
     // and a refusal that names something unbuilt is a lie.
     const bool mergeable =
-        hasSelection && m_doc.parts[static_cast<std::size_t>(m_selected)].primitive !=
-                            ForgePrimitive::Group;
+        hasSelection && m_doc.parts[static_cast<std::size_t>(m_selected)].primitive != ForgePrimitive::Group;
     ImGui::BeginDisabled(!mergeable);
     if (ImGui::BeginCombo("##merge", "merge with...")) {
         for (std::size_t i = 0; i < m_doc.parts.size(); ++i) {
@@ -586,8 +590,7 @@ bool PartEditor::drawPartList()
                 // and the undo history exactly as it found them.
                 ForgeDoc next = m_doc;
                 std::string error;
-                if (assets::forgeMergeParts(next, static_cast<std::size_t>(m_selected), i,
-                                            &error)) {
+                if (assets::forgeMergeParts(next, static_cast<std::size_t>(m_selected), i, &error)) {
                     beginEdit("merge parts");
                     m_doc = std::move(next);
                     // The EARLIER part survives, so that is what stays selected.
@@ -692,8 +695,7 @@ bool PartEditor::drawParams(ForgePart& part)
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) {
                     beginEdit("remove profile point");
-                    value.profile.erase(value.profile.begin() +
-                                        static_cast<std::ptrdiff_t>(i));
+                    value.profile.erase(value.profile.begin() + static_cast<std::ptrdiff_t>(i));
                     edited = true;
                     ImGui::PopID();
                     break;
@@ -702,9 +704,8 @@ bool PartEditor::drawParams(ForgePart& part)
             }
             if (ImGui::SmallButton("add point")) {
                 beginEdit("add profile point");
-                value.profile.push_back(value.profile.empty()
-                                            ? assets::BuildProfilePoint{1.0, 0.0}
-                                            : value.profile.back());
+                value.profile.push_back(value.profile.empty() ? assets::BuildProfilePoint{1.0, 0.0}
+                                                              : value.profile.back());
                 edited = true;
             }
             break;
@@ -770,8 +771,7 @@ bool PartEditor::drawSelectedPart()
 
     if (ImGui::BeginCombo("type", assets::forgePrimitiveName(part.primitive))) {
         for (const ForgePrimitive primitive : assets::forgePrimitives()) {
-            if (ImGui::Selectable(assets::forgePrimitiveName(primitive),
-                                  primitive == part.primitive)) {
+            if (ImGui::Selectable(assets::forgePrimitiveName(primitive), primitive == part.primitive)) {
                 // Parameters are kept across a type change: the schema decides
                 // which ones are read, so a box turned into a beam and back
                 // still has the size it started with.

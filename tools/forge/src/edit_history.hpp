@@ -147,13 +147,16 @@ public:
     // one of them named `undo drag` to admit it. Consume-once, read in the
     // same place as the keyboard.
     void requestUndo() { m_undoRequested = true; }
+
     void requestRedo() { m_redoRequested = true; }
+
     [[nodiscard]] bool takeUndoRequest()
     {
         const bool requested = m_undoRequested;
         m_undoRequested = false;
         return requested;
     }
+
     [[nodiscard]] bool takeRedoRequest()
     {
         const bool requested = m_redoRequested;
@@ -162,18 +165,23 @@ public:
     }
 
     [[nodiscard]] bool canUndo() const { return !m_undo.empty(); }
+
     [[nodiscard]] bool canRedo() const { return !m_redo.empty(); }
+
     // What the next `Ctrl+Z` would take back, for a button's tooltip or a
     // disabled state. Empty when there is nothing.
     [[nodiscard]] const std::string& undoLabel() const
     {
         return m_undo.empty() ? emptyLabel() : m_undo.back().label;
     }
+
     [[nodiscard]] const std::string& redoLabel() const
     {
         return m_redo.empty() ? emptyLabel() : m_redo.back().label;
     }
+
     [[nodiscard]] std::size_t undoDepth() const { return m_undo.size(); }
+
     [[nodiscard]] std::size_t redoDepth() const { return m_redo.size(); }
 
 private:
@@ -191,8 +199,8 @@ private:
     }
 
     template <typename Apply>
-    [[nodiscard]] static bool step(std::deque<Entry>& from, std::deque<Entry>& to, Apply&& apply,
-                                   std::string* label)
+    [[nodiscard]] static bool
+    step(std::deque<Entry>& from, std::deque<Entry>& to, Apply&& apply, std::string* label)
     {
         if (from.empty()) {
             return false;

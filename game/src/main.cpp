@@ -20,10 +20,6 @@
 #include "sol/core/log.hpp"
 #include "sol/core/profiler.hpp"
 #include "sol/core/version.hpp"
-#include "sol/sim/fixed_loop.hpp"
-#include "sol/sim/flight.hpp"
-#include "sol/sim/power.hpp"
-#include "sol/sim/weapons.hpp"
 #include "sol/platform/file_io.hpp"
 #include "sol/platform/input_bindings.hpp"
 #include "sol/platform/platform.hpp"
@@ -31,6 +27,10 @@
 #include "sol/platform/window.hpp"
 #include "sol/rhi/context.hpp"
 #include "sol/rhi/swapchain.hpp"
+#include "sol/sim/fixed_loop.hpp"
+#include "sol/sim/flight.hpp"
+#include "sol/sim/power.hpp"
+#include "sol/sim/weapons.hpp"
 #include "sol/ui/cockpit_frame.hpp"
 #include "sol/ui/dev_ui.hpp"
 #include "sol/ui/imgui_host.hpp"
@@ -67,6 +67,7 @@ std::uint64_t parseMaxFrames(int argc, char** argv)
 
 // --seed N: universe seed (same seed => same galaxy).
 constexpr std::uint64_t kDefaultUniverseSeed = 1701;
+
 std::uint64_t parseUniverseSeed(int argc, char** argv)
 {
     for (int i = 1; i + 1 < argc; ++i) {
@@ -103,9 +104,11 @@ constexpr double kDockRange = 2'000.0;
 class ShipInputMapper
 {
 public:
-    [[nodiscard]] sol::sim::FlightInput update(sol::platform::Window& window, float deltaSeconds,
+    [[nodiscard]] sol::sim::FlightInput update(sol::platform::Window& window,
+                                               float deltaSeconds,
                                                const sol::platform::BindingTable& bindings,
-                                               float mouseSensitivity, bool invertPitch)
+                                               float mouseSensitivity,
+                                               bool invertPitch)
     {
         // Free-look owns the mouse while it is held (Phase 8m): the player is
         // turning their head, not the ship. Both modes want the cursor locked,
@@ -122,7 +125,7 @@ public:
             // swaps two bindings.
             const float scale = kStickSensitivity * mouseSensitivity;
             const float pitch = invertPitch ? -delta.y : delta.y;
-            m_stick.x -= pitch * scale; // mouse up = nose up
+            m_stick.x -= pitch * scale;   // mouse up = nose up
             m_stick.y -= delta.x * scale; // mouse left = yaw left
         }
         // Self-centering, Elite-style relative mouse.
@@ -232,8 +235,8 @@ int main(int argc, char** argv)
     // ImGui comes up once for the process; the dev overlay is one of its
     // clients (Phase 9 stage C), and the present pass records the host.
     sol::ui::ImGuiHost imguiHost;
-    if (!imguiHost.initialize(window, context, swapchain.imageFormat(), VK_FORMAT_D32_SFLOAT,
-                              swapchain.imageCount())) {
+    if (!imguiHost.initialize(
+            window, context, swapchain.imageFormat(), VK_FORMAT_D32_SFLOAT, swapchain.imageCount())) {
         return EXIT_FAILURE;
     }
     sol::ui::DevUi devUi;
@@ -260,10 +263,10 @@ int main(int argc, char** argv)
     mainMenuState.hasSave = sol::platform::fileModificationTime(savePath.c_str()) != 0;
 
 #if !defined(SOL_SHADER_SOURCE_DIR)
-    #define SOL_SHADER_SOURCE_DIR ""
+#define SOL_SHADER_SOURCE_DIR ""
 #endif
 #if !defined(SOL_GLSLC_PATH)
-    #define SOL_GLSLC_PATH ""
+#define SOL_GLSLC_PATH ""
 #endif
     game::ShaderWatcher shaderWatcher(SOL_SHADER_SOURCE_DIR, SOL_GLSLC_PATH, shaderDirectory);
 
@@ -280,10 +283,10 @@ int main(int argc, char** argv)
     // Phase 5 data-driven content: defs + Lua from the source tree in dev
     // builds (hot-reloadable), from the install layout otherwise.
 #if !defined(SOL_DATA_SOURCE_DIR)
-    #define SOL_DATA_SOURCE_DIR ""
+#define SOL_DATA_SOURCE_DIR ""
 #endif
 #if !defined(SOL_MODS_SOURCE_DIR)
-    #define SOL_MODS_SOURCE_DIR ""
+#define SOL_MODS_SOURCE_DIR ""
 #endif
     const std::string dataDirectory =
         std::strlen(SOL_DATA_SOURCE_DIR) > 0 ? SOL_DATA_SOURCE_DIR : executableDir + "data";
@@ -340,7 +343,7 @@ int main(int argc, char** argv)
     std::vector<sol::ui::MapMarkerRow> mapMarkerRows;
     std::string missionHudObjective;
     std::string routeHopName;
-    game::ProspectInfo prospect; // backs the HUD's mining readout per frame
+    game::ProspectInfo prospect;         // backs the HUD's mining readout per frame
     std::deque<std::string> stationText; // backs generated row text per frame
     // Trade rows get their own buffer: fillStationOutfitting clears
     // stationText, and it runs after the trade rows are built.
@@ -352,15 +355,17 @@ int main(int argc, char** argv)
         const sol::assets::CommodityDef* def = content.defs().findCommodity(id.c_str());
         commodityNames.push_back(def != nullptr ? def->name.c_str() : id.c_str());
     }
-    std::deque<std::string> mapText;     // same, for the map screen
-    std::deque<std::string> shipText;    // same, for the ship readout
+    std::deque<std::string> mapText;  // same, for the map screen
+    std::deque<std::string> shipText; // same, for the ship readout
     std::vector<sol::ui::InfoRow> shipFlightRows;
     std::vector<sol::ui::InfoRow> shipDefenceRows;
     std::vector<sol::ui::InfoRow> shipUtilityRows;
     std::vector<sol::ui::InfoRow> shipFittedRows;
     std::vector<sol::ui::InfoRow> shipCargoRows;
-    SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).", world.entityCount(),
-                 world.currentSystemName(), world.galaxy().systems.size());
+    SOL_LOG_INFO("Space world: %u entities in '%s' (%zu-system galaxy).",
+                 world.entityCount(),
+                 world.currentSystemName(),
+                 world.galaxy().systems.size());
 
     float smoothedFps = 0.0f;
     // Dev tooling keeps its own latches: F3/F5/F9/F10 are reserved chords that
@@ -404,7 +409,8 @@ int main(int argc, char** argv)
     SOL_LOG_INFO("Entering frame loop (%ux%u). Controls are rebindable in Settings; the shipped "
                  "layout is RMB+mouse steer, MMB fire, LMB select, WASD/QE/Space/Ctrl thrust, "
                  "Shift boost, Tab cruise, X assist, F autopilot, V camera, T target, ESC quits.",
-                 window.width(), window.height());
+                 window.width(),
+                 window.height());
 
     double lastFrameTime = sol::platform::timeSeconds();
     std::uint64_t frameCount = 0;
@@ -466,8 +472,8 @@ int main(int argc, char** argv)
         // not thrust and target commands. Without this "Rich Rock" flies the
         // ship, and Enter and Backspace never reach the field at all.
         const bool typing = bookmarkPrompt.open;
-        const bool uiHasKeys = !inFlight || typing;       // menus, station, map
-        const bool inMenuScreen = uiHasKeys && !docked;   // where Esc means "back out"
+        const bool uiHasKeys = !inFlight || typing;     // menus, station, map
+        const bool inMenuScreen = uiHasKeys && !docked; // where Esc means "back out"
 
         // Bindings (Phase 8k). Sampled once, here, so every action this frame
         // reads one consistent picture of the keyboard and mouse - and so the
@@ -533,9 +539,8 @@ int main(int argc, char** argv)
         if (bReleased && !bookmarkPrompt.open) {
             bookmarkPosition = world.shipState().position;
             bookmarkPrompt.open = true;
-            bookmarkPrompt.full =
-                world.survey().bookmarkCountIn(world.currentSystemIndex())
-                >= world.survey().params().maxBookmarksPerSystem;
+            bookmarkPrompt.full = world.survey().bookmarkCountIn(world.currentSystemIndex()) >=
+                                  world.survey().params().maxBookmarksPerSystem;
             bookmarkPrompt.name = world.suggestBookmarkName(bookmarkPosition);
             bookmarkWhere = std::string(world.currentSystemName()) + ", " + bookmarkPrompt.name;
             bookmarkPrompt.whereSummary = bookmarkWhere.c_str();
@@ -549,22 +554,23 @@ int main(int argc, char** argv)
         // two questions, two bindings, one selection.
         // Phase 15: each cycle has a reverse, and both directions run the same
         // call and share the same readout so they cannot report differently.
-        const int navStep = gameplayPressed(game::Action::CycleNavTarget) ? 1
+        const int navStep = gameplayPressed(game::Action::CycleNavTarget)       ? 1
                             : gameplayPressed(game::Action::CycleNavTargetBack) ? -1
-                                                                               : 0;
+                                                                                : 0;
         if (navStep != 0) {
             world.cycleNavTarget(navStep);
             SOL_LOG_INFO("Target: %s", world.currentTargetInfo().nav.name.c_str());
         }
 
-        const int contactStep = gameplayPressed(game::Action::CycleContact) ? 1
+        const int contactStep = gameplayPressed(game::Action::CycleContact)       ? 1
                                 : gameplayPressed(game::Action::CycleContactBack) ? -1
-                                                                                 : 0;
+                                                                                  : 0;
         if (contactStep != 0) {
             world.cycleContact(contactStep);
             const game::TargetInfo contact = world.currentTargetInfo();
             if (contact.isShip) {
-                SOL_LOG_INFO("Contact: %s [%s]", contact.nav.name.c_str(),
+                SOL_LOG_INFO("Contact: %s [%s]",
+                             contact.nav.name.c_str(),
                              contact.attitude[0] != '\0' ? contact.attitude : "unaffiliated");
             } else {
                 SOL_LOG_INFO("No contacts in this system");
@@ -583,7 +589,8 @@ int main(int argc, char** argv)
                 // Honest about which of the two "no" answers this is: nothing
                 // tracked at all, or tracked but not a place in this system.
                 SOL_LOG_INFO("No objective marker here%s%s",
-                             where.empty() ? "" : " - objective is at ", where.c_str());
+                             where.empty() ? "" : " - objective is at ",
+                             where.c_str());
             }
         }
 
@@ -593,7 +600,8 @@ int main(int argc, char** argv)
         if (gameplayPressed(game::Action::NearestHostile)) {
             if (world.selectNearestHostile()) {
                 const game::TargetInfo hostile = world.currentTargetInfo();
-                SOL_LOG_INFO("Nearest hostile: %s [%s]", hostile.nav.name.c_str(),
+                SOL_LOG_INFO("Nearest hostile: %s [%s]",
+                             hostile.nav.name.c_str(),
                              hostile.attitude[0] != '\0' ? hostile.attitude : "unaffiliated");
             } else {
                 SOL_LOG_INFO("Nothing hostile in this system");
@@ -633,8 +641,8 @@ int main(int argc, char** argv)
                 // thing a cleared pilot cannot otherwise do is change their
                 // mind, and a clearance holds a berth for three minutes.
                 world.clearClearance("Approach cancelled.");
-            } else if (world.nearestStationDistance() >= 0.0
-                       && world.nearestStationDistance() <= kDockRange) {
+            } else if (world.nearestStationDistance() >= 0.0 &&
+                       world.nearestStationDistance() <= kDockRange) {
                 (void)world.requestDocking();
             } else if (!world.trySalvageNearest(game::SpaceWorld::kSalvageRange)) {
                 if (!world.requestDocking()) {
@@ -661,8 +669,8 @@ int main(int argc, char** argv)
         }
 
         // The map opens from flight or from a station and closes from itself.
-        if ((inFlight || docked || onMap) && !typing && !imguiHost.wantsMouseCapture()
-            && game::pressed(binds, game::Action::OpenMap)) {
+        if ((inFlight || docked || onMap) && !typing && !imguiHost.wantsMouseCapture() &&
+            game::pressed(binds, game::Action::OpenMap)) {
             if (onMap) {
                 state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
             } else {
@@ -675,8 +683,8 @@ int main(int argc, char** argv)
         // from a station, closes from itself, and does not stop the clock.
         // Suppressed while a text field is open, or "i" in a bookmark name
         // would leave the cockpit.
-        if ((inFlight || docked || onShipInfo) && !typing && !imguiHost.wantsMouseCapture()
-            && game::pressed(binds, game::Action::OpenShipInfo)) {
+        if ((inFlight || docked || onShipInfo) && !typing && !imguiHost.wantsMouseCapture() &&
+            game::pressed(binds, game::Action::OpenShipInfo)) {
             if (onShipInfo) {
                 state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
             } else {
@@ -755,8 +763,8 @@ int main(int argc, char** argv)
         // so this runs every frame rather than only while the key is down.
         const bool freeLook = gameplayLive && cameraMode == game::CameraMode::Cockpit &&
                               game::held(binds, game::Action::FreeLook);
-        shipCamera.updateLook(window.mouseDelta(), freeLook, deltaSeconds,
-                              settings.mouseSensitivity, settings.invertPitch);
+        shipCamera.updateLook(
+            window.mouseDelta(), freeLook, deltaSeconds, settings.mouseSensitivity, settings.invertPitch);
 
         game::CameraFrame camera;
         switch (cameraMode) {
@@ -783,19 +791,16 @@ int main(int argc, char** argv)
         sol::core::Vec3 boresightCamera = {0.0f, 0.0f, -1.0f};
         {
             const float hudScale = settings.uiScale > 0.0f ? settings.uiScale : 1.0f;
-            const sol::core::Vec2 hudScreen = {
-                static_cast<float>(swapchain.extent().width) / hudScale,
-                static_cast<float>(swapchain.extent().height) / hudScale};
+            const sol::core::Vec2 hudScreen = {static_cast<float>(swapchain.extent().width) / hudScale,
+                                               static_cast<float>(swapchain.extent().height) / hudScale};
             const float tanHalfFov = std::tan(game::kCameraVerticalFov * 0.5f);
-            hudFrame = inCockpit
-                           ? sol::ui::cockpitFrame(shipCamera.headOffset(), hudScreen, tanHalfFov)
-                           : sol::ui::screenFrame(
-                                 hudScreen, game::kHudMargin,
-                                 sol::ui::radarCenter(hudScreen, game::kHudMargin));
+            hudFrame = inCockpit ? sol::ui::cockpitFrame(shipCamera.headOffset(), hudScreen, tanHalfFov)
+                                 : sol::ui::screenFrame(hudScreen,
+                                                        game::kHudMargin,
+                                                        sol::ui::radarCenter(hudScreen, game::kHudMargin));
             // The nose, in camera space. An identity head offset makes this
             // exactly (0,0,-1), which is what it was before free-look existed.
-            boresightCamera =
-                rotate(conjugate(shipCamera.headOffset()), sol::core::Vec3{0.0f, 0.0f, -1.0f});
+            boresightCamera = rotate(conjugate(shipCamera.headOffset()), sol::core::Vec3{0.0f, 0.0f, -1.0f});
         }
 
         // Click-to-select (Phase 8j). The view frame is published as soon as
@@ -820,8 +825,8 @@ int main(int argc, char** argv)
             // about a different game than the one on screen.
             audio.setListener(camera.position, camera.orientation);
 
-            if (gameplayLive && !imguiHost.wantsMouseCapture()
-                && game::pressed(binds, game::Action::Select)) {
+            if (gameplayLive && !imguiHost.wantsMouseCapture() &&
+                game::pressed(binds, game::Action::Select)) {
                 // While the cursor is captured for mouse-look its position is
                 // meaningless by contract, so the click asks the same question
                 // at the boresight: target what the ship is pointing at.
@@ -862,9 +867,9 @@ int main(int argc, char** argv)
         sceneInfo.planets.clear();
         for (std::size_t i = 0; i < world.planets().size(); ++i) {
             const game::CelestialBody& planet = world.planets()[i];
-            sceneInfo.planets.push_back({planet.position, planet.radius,
-                                         world.currentSystemIndex() * 7u +
-                                             static_cast<std::uint32_t>(i)});
+            sceneInfo.planets.push_back({planet.position,
+                                         planet.radius,
+                                         world.currentSystemIndex() * 7u + static_cast<std::uint32_t>(i)});
         }
 
         // The jump tunnel (Phase 8v). The streaks converge on the SHIP's nose
@@ -874,8 +879,7 @@ int main(int argc, char** argv)
             const sol::sim::JumpTransition& jump = world.jumpTransition();
             sceneInfo.skyWarp = static_cast<float>(jump.warp());
             sceneInfo.skyScale = static_cast<float>(jump.skyScale());
-            sceneInfo.travelDirection =
-                rotate(shipTransform.orientation, sol::core::Vec3{0.0f, 0.0f, -1.0f});
+            sceneInfo.travelDirection = rotate(shipTransform.orientation, sol::core::Vec3{0.0f, 0.0f, -1.0f});
         }
 
         // Debug draw (F3): ship axes, velocity arrow, target ray.
@@ -894,17 +898,16 @@ int main(int argc, char** argv)
 
         if (showDebugDraw) {
             sol::renderer::DebugDrawRenderer& debugDraw = renderer.debugDraw();
-            const sol::core::Vec3 shipRelative =
-                (shipTransform.position - camera.position).toVec3();
+            const sol::core::Vec3 shipRelative = (shipTransform.position - camera.position).toVec3();
             debugDraw.axes(shipRelative, shipTransform.orientation, 12.0f);
             const double speed = length(shipState.velocity);
             if (speed > 0.5) {
                 const sol::core::Vec3 velocityDirection = toVec3(normalize(shipState.velocity));
-                debugDraw.arrow(shipRelative, shipRelative + velocityDirection * 25.0f,
-                                {0.3f, 1.0f, 0.4f, 1.0f});
+                debugDraw.arrow(
+                    shipRelative, shipRelative + velocityDirection * 25.0f, {0.3f, 1.0f, 0.4f, 1.0f});
             }
-            debugDraw.line(shipRelative, shipRelative + toVec3(targetDirection) * 60.0f,
-                           {1.0f, 0.8f, 0.3f, 1.0f});
+            debugDraw.line(
+                shipRelative, shipRelative + toVec3(targetDirection) * 60.0f, {1.0f, 0.8f, 0.3f, 1.0f});
         }
 
         // Hardcore death (decisions/007): the save goes with the run.
@@ -919,15 +922,13 @@ int main(int argc, char** argv)
         // World save/load round trip: F9 saves, F10 loads (edge-triggered).
         const bool f9Down = window.isKeyDown(sol::platform::Key::F9);
         if (f9Down && !previousF9) {
-            SOL_LOG_INFO(world.saveTo(savePath.c_str()) ? "world saved to %s"
-                                                        : "world save FAILED (%s)",
+            SOL_LOG_INFO(world.saveTo(savePath.c_str()) ? "world saved to %s" : "world save FAILED (%s)",
                          savePath.c_str());
         }
         previousF9 = f9Down;
         const bool f10Down = window.isKeyDown(sol::platform::Key::F10);
         if (f10Down && !previousF10) {
-            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s"
-                                                          : "world load FAILED (%s)",
+            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s" : "world load FAILED (%s)",
                          savePath.c_str());
         }
         previousF10 = f10Down;
@@ -948,8 +949,7 @@ int main(int argc, char** argv)
 
         if (deltaSeconds > 0.0f) {
             const float instantFps = 1.0f / deltaSeconds;
-            smoothedFps = smoothedFps == 0.0f ? instantFps
-                                              : sol::core::lerp(smoothedFps, instantFps, 0.05f);
+            smoothedFps = smoothedFps == 0.0f ? instantFps : sol::core::lerp(smoothedFps, instantFps, 0.05f);
         }
         sol::ui::OverlayStats stats;
         stats.fps = smoothedFps;
@@ -973,9 +973,15 @@ int main(int argc, char** argv)
         hud.cruise = world.shipInput().cruise;
         hud.autopilot = world.autopilotActive();
         switch (cameraMode) {
-        case game::CameraMode::Cockpit: hud.cameraMode = "COCKPIT"; break;
-        case game::CameraMode::ThirdPerson: hud.cameraMode = "CHASE"; break;
-        case game::CameraMode::Free: hud.cameraMode = "FREECAM"; break;
+        case game::CameraMode::Cockpit:
+            hud.cameraMode = "COCKPIT";
+            break;
+        case game::CameraMode::ThirdPerson:
+            hud.cameraMode = "CHASE";
+            break;
+        case game::CameraMode::Free:
+            hud.cameraMode = "FREECAM";
+            break;
         }
         // The surface the HUD hangs off, and where the nose is on it (Phase 8m).
         // Both were settled above, before the pick, so the panels the player
@@ -992,8 +998,7 @@ int main(int argc, char** argv)
         // hauler; the isShip guard is its idiom (`space_world.cpp`), and it is
         // kept even though DVec3 zero-initialises, because `velocity` is
         // documented "ships only" and this is where that has to be visible.
-        const sol::core::DVec3 targetVelocity =
-            target.isShip ? target.velocity : sol::core::DVec3{};
+        const sol::core::DVec3 targetVelocity = target.isShip ? target.velocity : sol::core::DVec3{};
         const double closingSpeed = dot(shipState.velocity - targetVelocity, targetDirection);
         hud.closingSpeedMetersPerSecond = static_cast<float>(closingSpeed);
         // ETA at the current rate, over the SAME surface distance the panel
@@ -1003,8 +1008,7 @@ int main(int argc, char** argv)
         // cannot see and would read as a bug beside the distance they can.
         // A zero or opening rate has no answer, and says so.
         hud.etaSeconds = closingSpeed > 0.0 ? targetDistance / closingSpeed : -1.0;
-        hud.targetDirectionCamera =
-            rotate(conjugate(camera.orientation), toVec3(targetDirection));
+        hud.targetDirectionCamera = rotate(conjugate(camera.orientation), toVec3(targetDirection));
         hud.tanHalfFovY = std::tan(game::kCameraVerticalFov * 0.5f);
         const sol::sim::PowerState& power = world.playerPower();
         hud.pipsWeapons = power.pips.weapons;
@@ -1037,17 +1041,15 @@ int main(int argc, char** argv)
         hud.docked = world.isDocked();
         hud.dockedStationName = world.dockedStationName();
         const double stationDistance = world.nearestStationDistance();
-        hud.dockInRange =
-            !hud.docked && stationDistance >= 0.0 && stationDistance <= kDockRange;
+        hud.dockInRange = !hud.docked && stationDistance >= 0.0 && stationDistance <= kDockRange;
         // Docking clearance (Phase 8r): what the station said, and where it
         // told you to park.
-        hud.stationInHailRange = !hud.docked && stationDistance >= 0.0
-                                 && stationDistance <= game::SpaceWorld::kDockRequestRange;
+        hud.stationInHailRange =
+            !hud.docked && stationDistance >= 0.0 && stationDistance <= game::SpaceWorld::kDockRequestRange;
         hud.cleared = world.hasClearance();
         if (hud.cleared) {
             hud.clearedBerth = static_cast<int>(world.clearance().berth) + 1;
-            hud.clearedBerthDistanceMeters =
-                length(world.clearedBerthPoint() - world.shipState().position);
+            hud.clearedBerthDistanceMeters = length(world.clearedBerthPoint() - world.shipState().position);
         }
         commsLines.clear();
         for (const game::SpaceWorld::CommsMessage& message : world.comms()) {
@@ -1087,8 +1089,7 @@ int main(int argc, char** argv)
             }
         }
         const double salvageDistance = world.nearestSalvageDistance();
-        hud.salvageInRange =
-            salvageDistance >= 0.0 && salvageDistance <= game::SpaceWorld::kSalvageRange;
+        hud.salvageInRange = salvageDistance >= 0.0 && salvageDistance <= game::SpaceWorld::kSalvageRange;
         // Prompt keys (Phase 8k). These used to be string literals in the HUD,
         // which a rebind turned into a confident lie.
         hud.interactKey = game::boundChordName(binds, game::Action::DockSalvage);
@@ -1100,9 +1101,8 @@ int main(int argc, char** argv)
         if (world.targetIsContact()) {
             const game::TargetInfo contact = world.currentTargetInfo();
             hud.shipInHailRange =
-                contact.isShip
-                && length(contact.nav.position - world.shipState().position)
-                       <= game::SpaceWorld::kHailRange;
+                contact.isShip &&
+                length(contact.nav.position - world.shipState().position) <= game::SpaceWorld::kHailRange;
         }
         const std::uint32_t nextHop = world.survey().nextHop();
         if (nextHop < world.galaxy().systems.size()) {
@@ -1125,20 +1125,18 @@ int main(int argc, char** argv)
         const sol::sim::MissionSim& missions = world.missionSim();
         if (missions.tracked() < missions.active().size()) {
             const sol::sim::Mission& tracked = missions.active()[missions.tracked()];
-            const sol::sim::MissionObjective& objective =
-                tracked.objectives[tracked.currentObjective];
+            const sol::sim::MissionObjective& objective = tracked.objectives[tracked.currentObjective];
             missionHudObjective = objective.text;
             if (objective.kind == sol::sim::ObjectiveKind::Kill) {
                 missionHudObjective += " (" + std::to_string(objective.kills) + " left)";
             } else if (objective.kind == sol::sim::ObjectiveKind::Deliver) {
-                missionHudObjective +=
-                    " (" + std::to_string(static_cast<int>(objective.units)) + " units)";
+                missionHudObjective += " (" + std::to_string(static_cast<int>(objective.units)) + " units)";
             } else if (objective.kind == sol::sim::ObjectiveKind::Hold) {
                 // The contest meter is the progress bar this objective has
                 // (Phase 8u), and it lives in the sim rather than on the
                 // objective - so it is read here, where the world is.
-                const int percent = static_cast<int>(
-                    world.factionSim().contestOf(objective.system).pressure * 100.0f + 0.5f);
+                const int percent =
+                    static_cast<int>(world.factionSim().contestOf(objective.system).pressure * 100.0f + 0.5f);
                 missionHudObjective += " (pressure " + std::to_string(percent) + "%)";
             }
             // ...and where that actually is (Phase 8i). The mission's prose
@@ -1157,11 +1155,13 @@ int main(int argc, char** argv)
         if (target.isShip && playerWeapon.kind == game::WeaponKind::Projectile &&
             playerWeapon.projectileSpeed > 1.0f) {
             sol::core::DVec3 leadDirection;
-            (void)sol::sim::computeInterceptDirection(
-                shipState.position, shipState.velocity, target.nav.position, target.velocity,
-                static_cast<double>(playerWeapon.projectileSpeed), leadDirection);
-            hud.leadDirectionCamera =
-                rotate(conjugate(camera.orientation), toVec3(leadDirection));
+            (void)sol::sim::computeInterceptDirection(shipState.position,
+                                                      shipState.velocity,
+                                                      target.nav.position,
+                                                      target.velocity,
+                                                      static_cast<double>(playerWeapon.projectileSpeed),
+                                                      leadDirection);
+            hud.leadDirectionCamera = rotate(conjugate(camera.orientation), toVec3(leadDirection));
             hud.hasLead = true;
         }
         // Provisional docked-station screen: Trade + Phase 8a Outfitting /
@@ -1172,13 +1172,11 @@ int main(int argc, char** argv)
             const std::uint32_t market = world.dockedMarket();
             tradeRows.clear();
             tradeText.clear();
-            for (std::uint32_t i = 0;
-                 i < static_cast<std::uint32_t>(world.commodityIds().size()); ++i) {
+            for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(world.commodityIds().size()); ++i) {
                 const sol::assets::CommodityDef* def =
                     content.defs().findCommodity(world.commodityIds()[i].c_str());
                 sol::ui::TradeRow row{
-                    .name = def != nullptr ? def->name.c_str()
-                                           : world.commodityIds()[i].c_str(),
+                    .name = def != nullptr ? def->name.c_str() : world.commodityIds()[i].c_str(),
                     .price = world.economy().price(market, i),
                     .stock = world.economy().stock(market, i),
                     .cargo = world.playerCargo(i),
@@ -1204,12 +1202,23 @@ int main(int argc, char** argv)
             stationPanel.trade.rows = tradeRows;
             stationPanel.trade.intelMarkets = world.intelMarketCount();
             stationPanel.trade.intelPrice = world.intelPrice();
-            stationPanel.trade.canBuyIntel = stationPanel.trade.intelMarkets > 0 &&
-                                             world.playerCredits() >= stationPanel.trade.intelPrice;
-            game::fillStationOutfitting(world, content.defs(), stationText, stationPanel,
-                                        moduleRows, weaponRows, crewCatalogRows, crewAboardRows,
-                                        shipRows, fleetRows, factionRows);
-            game::fillStationMissions(world, stationText, stationPanel, missionOfferRows,
+            stationPanel.trade.canBuyIntel =
+                stationPanel.trade.intelMarkets > 0 && world.playerCredits() >= stationPanel.trade.intelPrice;
+            game::fillStationOutfitting(world,
+                                        content.defs(),
+                                        stationText,
+                                        stationPanel,
+                                        moduleRows,
+                                        weaponRows,
+                                        crewCatalogRows,
+                                        crewAboardRows,
+                                        shipRows,
+                                        fleetRows,
+                                        factionRows);
+            game::fillStationMissions(world,
+                                      stationText,
+                                      stationPanel,
+                                      missionOfferRows,
                                       missionJournalRows); // after: shares stationText
             // Survey ledger (Phase 8e): sellable at any station, whole.
             surveyRows.clear();
@@ -1226,10 +1235,9 @@ int main(int argc, char** argv)
                     detail += ", uncharted space";
                 }
                 stationText.push_back(std::move(detail));
-                surveyRows.push_back(
-                    {.system = world.galaxy().systems[entry.system].name.c_str(),
-                     .detail = stationText.back().c_str(),
-                     .value = static_cast<float>(entry.value)});
+                surveyRows.push_back({.system = world.galaxy().systems[entry.system].name.c_str(),
+                                      .detail = stationText.back().c_str(),
+                                      .value = static_cast<float>(entry.value)});
             }
             stationPanel.surveyData = surveyRows;
             stationPanel.surveyValue = world.survey().ledgerValue();
@@ -1270,13 +1278,18 @@ int main(int argc, char** argv)
             // looking inside it on the other is one gesture rather than two
             // selections that can disagree.
             mapPanel.viewSystem = mapScreen.selectedSystem;
-            game::fillMapPanel(world, mapText, mapPanel, mapSystemRows, mapLaneRows,
-                               mapMarkerRows);
+            game::fillMapPanel(world, mapText, mapPanel, mapSystemRows, mapLaneRows, mapMarkerRows);
         }
         sol::ui::ShipInfoPanel shipPanel;
         if (state == game::GameState::ShipInfo) {
-            game::fillShipInfoPanel(world, content.defs(), shipText, shipPanel, shipFlightRows,
-                                    shipDefenceRows, shipUtilityRows, shipFittedRows,
+            game::fillShipInfoPanel(world,
+                                    content.defs(),
+                                    shipText,
+                                    shipPanel,
+                                    shipFlightRows,
+                                    shipDefenceRows,
+                                    shipUtilityRows,
+                                    shipFittedRows,
                                     shipCargoRows);
         }
         // --- Custom game UI (Phase 8d), rebuilt every frame ---
@@ -1291,8 +1304,8 @@ int main(int argc, char** argv)
         sol::ui::InputState uiInput;
         const sol::core::Vec2 cursor = window.mousePosition();
         uiInput.mousePosition = {cursor.x / uiScale, cursor.y / uiScale};
-        uiInput.mouseDown = window.isMouseButtonDown(sol::platform::MouseButton::Left) &&
-                            !imguiHost.wantsMouseCapture();
+        uiInput.mouseDown =
+            window.isMouseButtonDown(sol::platform::MouseButton::Left) && !imguiHost.wantsMouseCapture();
         uiInput.mousePressed = uiInput.mouseDown && !previousMouseDown;
         uiInput.mouseReleased = !uiInput.mouseDown && previousMouseDown;
         previousMouseDown = uiInput.mouseDown;
@@ -1341,50 +1354,50 @@ int main(int argc, char** argv)
         bool undockRequested = false;
         bool mapClosed = false;
         {
-        SOL_PROFILE_ZONE("ui.build");
-        ui.beginFrame(uiInput, uiSize, deltaSeconds);
-        switch (state) {
-        case game::GameState::MainMenu:
-            menuAction = game::buildMainMenu(ui, mainMenuState);
-            break;
-        case game::GameState::Paused:
-            menuAction = game::buildPauseMenu(ui, world.hardcore());
-            break;
-        case game::GameState::Settings:
-            menuAction = game::buildSettingsScreen(ui, settings);
-            break;
-        case game::GameState::Controls:
-            // The capture reads the raw chord edge rather than any binding, so
-            // a key can be assigned to an action whatever else already holds
-            // it - the steal is the screen's business, not the table's caller.
-            menuAction = game::buildControlsScreen(ui, settings, controlsScreen,
-                                                   settings.bindings.captured(), escapeEdge);
-            break;
-        case game::GameState::Flying:
-            // The dev HUD stays up beside this one during the changeover.
-            game::buildFlightUi(ui.drawList(), renderer.uiFont(), ui.screenSize(), hud);
-            // The bookmark prompt sits over the HUD rather than replacing it:
-            // the galaxy keeps running, and writing down a waypoint should not
-            // feel like leaving the cockpit.
-            game::buildBookmarkPrompt(ui, bookmarkPrompt);
-            break;
-        case game::GameState::Docked:
-            // Docked, the station screen owns the view; the flight readout has
-            // nothing to say about a parked ship.
-            undockRequested = game::buildStationScreen(ui, stationPanel, stationScreen);
-            break;
-        case game::GameState::Map:
-            // The map owns the view (it dims what is behind it), but the ship
-            // is still flying under it - this state does not stop the clock.
-            mapClosed = game::buildMapScreen(ui, mapPanel, mapScreen);
-            break;
-        case game::GameState::ShipInfo:
-            if (game::buildShipScreen(ui, shipPanel, shipScreen)) {
-                state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
+            SOL_PROFILE_ZONE("ui.build");
+            ui.beginFrame(uiInput, uiSize, deltaSeconds);
+            switch (state) {
+            case game::GameState::MainMenu:
+                menuAction = game::buildMainMenu(ui, mainMenuState);
+                break;
+            case game::GameState::Paused:
+                menuAction = game::buildPauseMenu(ui, world.hardcore());
+                break;
+            case game::GameState::Settings:
+                menuAction = game::buildSettingsScreen(ui, settings);
+                break;
+            case game::GameState::Controls:
+                // The capture reads the raw chord edge rather than any binding, so
+                // a key can be assigned to an action whatever else already holds
+                // it - the steal is the screen's business, not the table's caller.
+                menuAction = game::buildControlsScreen(
+                    ui, settings, controlsScreen, settings.bindings.captured(), escapeEdge);
+                break;
+            case game::GameState::Flying:
+                // The dev HUD stays up beside this one during the changeover.
+                game::buildFlightUi(ui.drawList(), renderer.uiFont(), ui.screenSize(), hud);
+                // The bookmark prompt sits over the HUD rather than replacing it:
+                // the galaxy keeps running, and writing down a waypoint should not
+                // feel like leaving the cockpit.
+                game::buildBookmarkPrompt(ui, bookmarkPrompt);
+                break;
+            case game::GameState::Docked:
+                // Docked, the station screen owns the view; the flight readout has
+                // nothing to say about a parked ship.
+                undockRequested = game::buildStationScreen(ui, stationPanel, stationScreen);
+                break;
+            case game::GameState::Map:
+                // The map owns the view (it dims what is behind it), but the ship
+                // is still flying under it - this state does not stop the clock.
+                mapClosed = game::buildMapScreen(ui, mapPanel, mapScreen);
+                break;
+            case game::GameState::ShipInfo:
+                if (game::buildShipScreen(ui, shipPanel, shipScreen)) {
+                    state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
+                }
+                break;
             }
-            break;
-        }
-        ui.endFrame();
+            ui.endFrame();
         }
         // One cue per frame however many widgets fired: two controls cannot
         // meaningfully be pressed in the same frame, and stacking clicks turns
@@ -1421,8 +1434,7 @@ int main(int argc, char** argv)
             state = game::GameState::Flying;
             break;
         case game::MenuAction::ContinueGame:
-            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s"
-                                                          : "world load FAILED (%s)",
+            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s" : "world load FAILED (%s)",
                          savePath.c_str());
             state = game::GameState::Flying;
             break;
@@ -1430,15 +1442,13 @@ int main(int argc, char** argv)
             state = game::GameState::Flying;
             break;
         case game::MenuAction::SaveGame:
-            SOL_LOG_INFO(world.saveTo(savePath.c_str()) ? "world saved to %s"
-                                                        : "world save FAILED (%s)",
+            SOL_LOG_INFO(world.saveTo(savePath.c_str()) ? "world saved to %s" : "world save FAILED (%s)",
                          savePath.c_str());
             mainMenuState.hasSave = true;
             state = game::GameState::Flying;
             break;
         case game::MenuAction::LoadGame:
-            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s"
-                                                          : "world load FAILED (%s)",
+            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s" : "world load FAILED (%s)",
                          savePath.c_str());
             state = game::GameState::Flying;
             break;
@@ -1506,8 +1516,7 @@ int main(int argc, char** argv)
             devUi.build(stats);
         }
         if (showStation && stationPanel.trade.action.row >= 0) {
-            const std::uint32_t commodity =
-                static_cast<std::uint32_t>(stationPanel.trade.action.row);
+            const std::uint32_t commodity = static_cast<std::uint32_t>(stationPanel.trade.action.row);
             if (stationPanel.trade.action.isBuy) {
                 (void)world.playerBuy(commodity, stationPanel.trade.action.units);
             } else {

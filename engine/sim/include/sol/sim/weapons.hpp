@@ -16,11 +16,12 @@ namespace sol::sim {
                                              const core::DVec3& shooterVelocity,
                                              const core::DVec3& targetPosition,
                                              const core::DVec3& targetVelocity,
-                                             double projectileSpeed, core::DVec3& outDirection);
+                                             double projectileSpeed,
+                                             core::DVec3& outDirection);
 
 // Earliest t in [0,1] where the segment from->to enters the sphere; false on
 // a miss. A segment starting inside reports t = 0.
-[[nodiscard]] bool segmentHitsSphere(const core::DVec3& from, const core::DVec3& to,
-                                     const core::DVec3& center, double radius, double& outT);
+[[nodiscard]] bool segmentHitsSphere(
+    const core::DVec3& from, const core::DVec3& to, const core::DVec3& center, double radius, double& outT);
 
 } // namespace sol::sim

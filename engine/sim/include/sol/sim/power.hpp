@@ -27,7 +27,7 @@ struct PowerPips
 
 struct PowerTuning
 {
-    int pipCapacity = 6;  // total distributed pips (invariant: sum == capacity)
+    int pipCapacity = 6; // total distributed pips (invariant: sum == capacity)
     int maxPerSystem = 4;
 
     // Linear response between the 0-pip and max-pip scale factors.
@@ -38,8 +38,8 @@ struct PowerTuning
     float shieldRegenAtZero = 0.25f;
     float shieldRegenAtMax = 1.5f;
 
-    float weaponCapacitor = 100.0f;       // energy units
-    float weaponRechargeRate = 15.0f;     // units/s at scale 1
+    float weaponCapacitor = 100.0f;   // energy units
+    float weaponRechargeRate = 15.0f; // units/s at scale 1
 };
 
 struct PowerState
@@ -62,8 +62,8 @@ void balancePips(PowerPips& pips, const PowerTuning& tuning);
 
 // Returns tuning with linear acceleration and the assist cap scaled by the
 // current ENG allocation; turn rates are deliberately unaffected.
-[[nodiscard]] ShipTuning applyEnginePips(const ShipTuning& tuning, const PowerPips& pips,
-                                         const PowerTuning& power);
+[[nodiscard]] ShipTuning
+applyEnginePips(const ShipTuning& tuning, const PowerPips& pips, const PowerTuning& power);
 
 // Recharges the weapon capacitor by WEP allocation.
 void stepPower(PowerState& state, const PowerTuning& tuning, double dt);

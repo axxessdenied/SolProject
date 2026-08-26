@@ -1,9 +1,8 @@
-#include <sol/assets/data_defs.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cstring>
 #include <string>
+
+#include <sol/assets/data_defs.hpp>
+#include <sol/test/test.hpp>
 
 using sol::assets::DefDatabase;
 using sol::assets::ShipDef;
@@ -174,27 +173,23 @@ shield_strength_add = 50.0
     SOL_CHECK(db.validateFactions(&error));
 
     // Bad kind, out-of-range weights, malformed relations: schema errors.
-    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\nkind = \"guild\"\n", "bad.toml",
-                     &error));
+    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\nkind = \"guild\"\n", "bad.toml", &error));
     SOL_CHECK(error.find("kind") != std::string::npos);
-    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\naggression = 1.5\n", "bad.toml",
-                     &error));
-    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\nrelations = [\"sol.navy\"]\n",
-                     "bad.toml", &error));
+    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\naggression = 1.5\n", "bad.toml", &error));
+    SOL_CHECK(!merge(
+        db, "[[faction]]\nid = \"f\"\nname = \"F\"\nrelations = [\"sol.navy\"]\n", "bad.toml", &error));
     SOL_CHECK(error.find("id:standing") != std::string::npos);
     // Malformed and negative station_bias entries are schema errors; an unknown
     // station id is NOT (a mod may remove an archetype, so it warns downstream).
-    SOL_CHECK(!merge(db, "[[faction]]\nid = \"f\"\nname = \"F\"\nstation_bias = [\"sol.st\"]\n",
-                     "bad.toml", &error));
+    SOL_CHECK(!merge(
+        db, "[[faction]]\nid = \"f\"\nname = \"F\"\nstation_bias = [\"sol.st\"]\n", "bad.toml", &error));
     SOL_CHECK(error.find("id:weight") != std::string::npos);
-    SOL_CHECK(!merge(db,
-                     "[[faction]]\nid = \"f\"\nname = \"F\"\nstation_bias = [\"sol.st:-1\"]\n",
-                     "bad.toml", &error));
-    SOL_CHECK(merge(db,
-                    "[[faction]]\nid = \"f2\"\nname = \"F2\"\nstation_bias = [\"sol.nope:2\"]\n",
-                    "ok.toml", &error));
-    SOL_CHECK(!merge(db, "[[module]]\nid = \"m\"\nname = \"M\"\nslot = \"cargo\"\nmin_rep = 150\n",
-                     "bad.toml", &error));
+    SOL_CHECK(!merge(
+        db, "[[faction]]\nid = \"f\"\nname = \"F\"\nstation_bias = [\"sol.st:-1\"]\n", "bad.toml", &error));
+    SOL_CHECK(merge(
+        db, "[[faction]]\nid = \"f2\"\nname = \"F2\"\nstation_bias = [\"sol.nope:2\"]\n", "ok.toml", &error));
+    SOL_CHECK(!merge(
+        db, "[[module]]\nid = \"m\"\nname = \"M\"\nslot = \"cargo\"\nmin_rep = 150\n", "bad.toml", &error));
     SOL_CHECK(error.find("min_rep") != std::string::npos);
 }
 
@@ -218,8 +213,10 @@ relations = ["sol.a:-10"]
     SOL_CHECK(error.find("mismatched") != std::string::npos);
     // One-sided declarations and unknown ids are fine.
     DefDatabase oneSided;
-    SOL_CHECK(merge(oneSided, "[[faction]]\nid = \"sol.a\"\nname = \"A\"\nrelations = [\"sol.gone:-40\"]\n",
-                    "factions.toml", &error));
+    SOL_CHECK(merge(oneSided,
+                    "[[faction]]\nid = \"sol.a\"\nname = \"A\"\nrelations = [\"sol.gone:-40\"]\n",
+                    "factions.toml",
+                    &error));
     SOL_CHECK(oneSided.validateFactions(&error));
 }
 
@@ -246,14 +243,12 @@ maxspeed = 100.0
 
     // Wrong type.
     error.clear();
-    SOL_CHECK(!merge(db, "[[ship]]\nid = \"s\"\nname = \"S\"\nmax_speed = \"fast\"\n", "bad.toml",
-                     &error));
+    SOL_CHECK(!merge(db, "[[ship]]\nid = \"s\"\nname = \"S\"\nmax_speed = \"fast\"\n", "bad.toml", &error));
     SOL_CHECK(error.find("must be a number") != std::string::npos);
 
     // Bad weapon kind.
     error.clear();
-    SOL_CHECK(!merge(db, "[[weapon]]\nid = \"w\"\nname = \"W\"\nkind = \"beam\"\n", "bad.toml",
-                     &error));
+    SOL_CHECK(!merge(db, "[[weapon]]\nid = \"w\"\nname = \"W\"\nkind = \"beam\"\n", "bad.toml", &error));
     SOL_CHECK(error.find("kind") != std::string::npos);
 
     // Unknown top-level array.
@@ -313,51 +308,60 @@ stock_capacity = 1200.0
     SOL_CHECK(agri->model == "station");
 
     // Malformed rate strings are load errors and leave the db untouched.
-    SOL_CHECK(!merge(db, R"(
+    SOL_CHECK(!merge(db,
+                     R"(
 [[station]]
 id = "sol.bad"
 name = "Bad"
 produces = ["sol.food"]
 )",
-                     "bad.toml", &error));
+                     "bad.toml",
+                     &error));
     SOL_CHECK(error.find("id:rate") != std::string::npos);
     SOL_CHECK(db.findStation("sol.bad") == nullptr);
 
     // A station naming its own model, which is the whole point of the key.
-    SOL_CHECK(merge(db, R"(
+    SOL_CHECK(merge(db,
+                    R"(
 [[station]]
 id = "sol.station_relay"
 name = "Relay"
 model = "gate"
 )",
-                    "relay.toml", &error));
+                    "relay.toml",
+                    &error));
     const sol::assets::StationDef* relay = db.findStation("sol.station_relay");
     SOL_CHECK(relay != nullptr);
     SOL_CHECK(relay->model == "gate");
     // An empty one is refused rather than silently meaning "no model at all",
     // which would draw nothing and read as a missing station.
-    SOL_CHECK(!merge(db, R"(
+    SOL_CHECK(!merge(db,
+                     R"(
 [[station]]
 id = "sol.station_void"
 name = "Void"
 model = ""
 )",
-                     "void.toml", &error));
+                     "void.toml",
+                     &error));
     SOL_CHECK(error.find("model") != std::string::npos);
-    SOL_CHECK(!merge(db, R"(
+    SOL_CHECK(!merge(db,
+                     R"(
 [[station]]
 id = "sol.bad2"
 name = "Bad"
 produces = ["sol.food:-1"]
 )",
-                     "bad2.toml", &error));
+                     "bad2.toml",
+                     &error));
 }
 
 SOL_TEST(data_defs_parse_sounds)
 {
     DefDatabase db;
     std::string error;
-    SOL_CHECK(merge(db, R"(
+    SOL_CHECK(merge(db,
+                    R"(
 [[sound]]
 id = "sol.weapon_fire"
 asset = "weapon_fire"
@@ -369,7 +373,8 @@ max_instances = 4
 id = "sol.engine_loop"
 asset = "engine_loop"
 )",
-                    "sounds.toml", &error));
+                    "sounds.toml",
+                    &error));
 
     SOL_CHECK(db.sounds().size() == 2);
     const auto* fire = db.findSound("sol.weapon_fire");
@@ -400,8 +405,7 @@ SOL_TEST(data_defs_sound_validation_errors)
     SOL_CHECK(error.find("asset") != std::string::npos);
 
     SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\ngain = -1.0\n", "s.toml", &error));
-    SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\npitch_jitter = 0.9\n", "s.toml",
-                     &error));
+    SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\npitch_jitter = 0.9\n", "s.toml", &error));
     SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\nrolloff = 0.0\n", "s.toml", &error));
     // Strict schema: a typo dies at load, not at play time.
     SOL_CHECK(!merge(db, "[[sound]]\nid = \"a\"\nasset = \"x\"\nvolume = 1.0\n", "s.toml", &error));
@@ -421,7 +425,8 @@ SOL_TEST(data_defs_parse_models)
 {
     DefDatabase db;
     std::string error;
-    SOL_CHECK(merge(db, R"(
+    SOL_CHECK(merge(db,
+                    R"(
 [[model]]
 id = "cube"
 mesh = "cube"
@@ -441,7 +446,8 @@ mesh = "cube"
 texture = "checker"
 solid = false
 )",
-                    "models.toml", &error));
+                    "models.toml",
+                    &error));
 
     SOL_CHECK(db.models().size() == 3);
     // Def order IS the runtime model index, which is what lets the renderer
@@ -491,7 +497,8 @@ SOL_TEST(data_defs_model_translucency)
 {
     DefDatabase db;
     std::string error;
-    SOL_CHECK(merge(db, R"(
+    SOL_CHECK(merge(db,
+                    R"(
 [[model]]
 id = "membrane"
 mesh = "gate_membrane"
@@ -502,7 +509,8 @@ alpha = 0.30
 emissive = 0.35
 solid = false
 )",
-                    "models.toml", &error));
+                    "models.toml",
+                    &error));
 
     const auto* membrane = db.findModel("membrane");
     SOL_REQUIRE(membrane != nullptr);
@@ -514,13 +522,13 @@ solid = false
     // Coverage outside 0..1 is meaningless under premultiplied blending and
     // would read as a wrongly-lit model rather than as a bad number, so it dies
     // at load while the file name is still in hand.
-    SOL_CHECK(!merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\nalpha = 1.5\n",
-                     "m.toml", &error));
-    SOL_CHECK(!merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\nalpha = -0.1\n",
-                     "m.toml", &error));
+    SOL_CHECK(
+        !merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\nalpha = 1.5\n", "m.toml", &error));
+    SOL_CHECK(
+        !merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\nalpha = -0.1\n", "m.toml", &error));
     // translucent takes a bool, for the same reason solid does.
-    SOL_CHECK(!merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\ntranslucent = 1\n",
-                     "m.toml", &error));
+    SOL_CHECK(!merge(
+        db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\ntranslucent = 1\n", "m.toml", &error));
 }
 
 // Phase 19. A `[[role]]` row says which model fills a slot the engine draws
@@ -553,7 +561,8 @@ SOL_TEST(data_defs_parse_roles)
     DefDatabase db;
     std::string error;
     SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
-    SOL_REQUIRE(merge(db, R"(
+    SOL_REQUIRE(merge(db,
+                      R"(
 [[role]]
 id = "gate"
 model = "gate"
@@ -562,7 +571,8 @@ model = "gate"
 id = "rock"
 model = "asteroid"
 )",
-                      "models.toml", &error));
+                      "models.toml",
+                      &error));
 
     SOL_CHECK(db.roles().size() == 2);
     SOL_REQUIRE(db.findRole("gate") != nullptr);
@@ -578,8 +588,7 @@ model = "asteroid"
 
     // Two keys and no more: a strict schema is what makes a typo die at load
     // rather than silently draw nothing at play time.
-    SOL_CHECK(!merge(db, "[[role]]\nid = \"gate\"\nmodel = \"gate\"\nscale = 2.0\n", "m.toml",
-                     &error));
+    SOL_CHECK(!merge(db, "[[role]]\nid = \"gate\"\nmodel = \"gate\"\nscale = 2.0\n", "m.toml", &error));
     SOL_CHECK(!merge(db, "[[role]]\nid = \"gate\"\n", "m.toml", &error));
     SOL_CHECK(!merge(db, "[[role]]\nmodel = \"gate\"\n", "m.toml", &error));
     // A singleton `[role]` is not a schema this loader has: every def kind is
@@ -595,8 +604,7 @@ SOL_TEST(data_defs_role_overridden_by_a_later_layer)
     DefDatabase db;
     std::string error;
     SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
-    SOL_REQUIRE(
-        merge(db, "[[role]]\nid = \"rock\"\nmodel = \"asteroid\"\n", "models.toml", &error));
+    SOL_REQUIRE(merge(db, "[[role]]\nid = \"rock\"\nmodel = \"asteroid\"\n", "models.toml", &error));
     SOL_REQUIRE(merge(db, "[[role]]\nid = \"rock\"\nmodel = \"gate\"\n", "mod.toml", &error));
 
     // Replaced in place, not appended: one row per slot, and the last layer
@@ -618,7 +626,8 @@ SOL_TEST(data_defs_role_validation_refuses_rather_than_warns)
         DefDatabase db;
         std::string error;
         SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
-        SOL_REQUIRE(merge(db, R"(
+        SOL_REQUIRE(merge(db,
+                          R"(
 [[role]]
 id = "gate"
 model = "gate"
@@ -627,7 +636,8 @@ model = "gate"
 id = "rock"
 model = "not_a_model"
 )",
-                          "models.toml", &error));
+                          "models.toml",
+                          &error));
         SOL_CHECK(!db.validateRoles(kTestRoles, &error));
         // The message has to name the file, because that is the whole
         // advantage a refusal has over a warning at play time.
@@ -639,8 +649,7 @@ model = "not_a_model"
         DefDatabase db;
         std::string error;
         SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
-        SOL_REQUIRE(merge(db, "[[role]]\nid = \"gate\"\nmodel = \"gate\"\n", "models.toml",
-                          &error));
+        SOL_REQUIRE(merge(db, "[[role]]\nid = \"gate\"\nmodel = \"gate\"\n", "models.toml", &error));
         SOL_CHECK(!db.validateRoles(kTestRoles, &error));
         SOL_CHECK(error.find("rock") != std::string::npos);
     }
@@ -651,7 +660,8 @@ model = "not_a_model"
         DefDatabase db;
         std::string error;
         SOL_REQUIRE(merge(db, kRoleModels, "models.toml", &error));
-        SOL_REQUIRE(merge(db, R"(
+        SOL_REQUIRE(merge(db,
+                          R"(
 [[role]]
 id = "gate"
 model = "gate"
@@ -664,7 +674,8 @@ model = "asteroid"
 id = "cockpti"
 model = "gate"
 )",
-                          "models.toml", &error));
+                          "models.toml",
+                          &error));
         SOL_CHECK(!db.validateRoles(kTestRoles, &error));
         SOL_CHECK(error.find("cockpti") != std::string::npos);
     }
@@ -686,7 +697,8 @@ SOL_TEST(data_defs_parse_drawable_overrides)
 {
     DefDatabase db;
     std::string error;
-    SOL_REQUIRE(merge(db, R"(
+    SOL_REQUIRE(merge(db,
+                      R"(
 [[weapon]]
 id = "w.plain"
 name = "Plain"
@@ -708,7 +720,8 @@ name = "Ice"
 model = "ice_rock"
 chunk_model = "ice_shard"
 )",
-                      "defs.toml", &error));
+                      "defs.toml",
+                      &error));
 
     // Absent is EMPTY, not a name - the fallback is a decision the game makes
     // at resolve time, so the parser must not invent one here.
@@ -725,11 +738,12 @@ chunk_model = "ice_shard"
 
     // Still a strict schema: a plausible near-miss is an error, not a silent
     // no-op, which is the whole reason these are typed keys and not free text.
-    SOL_CHECK(!merge(db, "[[commodity]]\nid = \"c\"\nname = \"C\"\nchunk = \"x\"\n", "d.toml",
+    SOL_CHECK(!merge(db, "[[commodity]]\nid = \"c\"\nname = \"C\"\nchunk = \"x\"\n", "d.toml", &error));
+    SOL_CHECK(!merge(db,
+                     "[[weapon]]\nid = \"w\"\nname = \"W\"\nkind = \"projectile\"\n"
+                     "bolt_model = \"x\"\n",
+                     "d.toml",
                      &error));
-    SOL_CHECK(!merge(db, "[[weapon]]\nid = \"w\"\nname = \"W\"\nkind = \"projectile\"\n"
-                         "bolt_model = \"x\"\n",
-                     "d.toml", &error));
 }
 
 SOL_TEST(data_defs_model_validation_errors)
@@ -744,34 +758,32 @@ SOL_TEST(data_defs_model_validation_errors)
     SOL_CHECK(!merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\n", "m.toml", &error));
     SOL_CHECK(error.find("texture") != std::string::npos);
 
-    SOL_CHECK(!merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nradius = 0.0\n",
-                     "m.toml", &error));
+    SOL_CHECK(
+        !merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nradius = 0.0\n", "m.toml", &error));
     // An avoidance sphere inside the collision sphere is steering that clears
     // the obstacle it is about to hit, so it is rejected rather than clamped.
     SOL_CHECK(!merge(db,
                      "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nradius = "
                      "10.0\navoid_radius = 5.0\n",
-                     "m.toml", &error));
-    SOL_CHECK(!merge(db,
-                     "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nemissive = -0.5\n",
-                     "m.toml", &error));
+                     "m.toml",
+                     &error));
+    SOL_CHECK(!merge(
+        db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nemissive = -0.5\n", "m.toml", &error));
     // solid takes a bool, not the 0/1 a TOML author might reach for.
-    SOL_CHECK(!merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nsolid = 0\n",
-                     "m.toml", &error));
+    SOL_CHECK(
+        !merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nsolid = 0\n", "m.toml", &error));
     // Strict schema: a typo dies at load, not as a mis-sized collision sphere.
-    SOL_CHECK(!merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nscale = 2.0\n",
-                     "m.toml", &error));
+    SOL_CHECK(
+        !merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\nscale = 2.0\n", "m.toml", &error));
 
     SOL_CHECK(db.models().empty());
 
     // A mod layer replaces a model in place, so the index a spawned entity is
     // holding still names the same thing after a reload.
-    SOL_CHECK(merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\n", "base.toml",
-                    &error));
-    SOL_CHECK(merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\n", "base.toml",
-                    &error));
-    SOL_CHECK(merge(db, "[[model]]\nid = \"a\"\nmesh = \"m2\"\ntexture = \"t\"\nradius = 4.0\n",
-                    "mod.toml", &error));
+    SOL_CHECK(merge(db, "[[model]]\nid = \"a\"\nmesh = \"m\"\ntexture = \"t\"\n", "base.toml", &error));
+    SOL_CHECK(merge(db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\n", "base.toml", &error));
+    SOL_CHECK(merge(
+        db, "[[model]]\nid = \"a\"\nmesh = \"m2\"\ntexture = \"t\"\nradius = 4.0\n", "mod.toml", &error));
     SOL_CHECK(db.models().size() == 2);
     SOL_CHECK(db.modelIndex("a") == 0);
     SOL_CHECK(db.modelIndex("b") == 1);
@@ -834,33 +846,39 @@ mining_power = 4.0
     SOL_CHECK(laser->miningPower == 4.0f);
 
     // An ordinary gun mines nothing unless its def says so.
-    SOL_REQUIRE(merge(db, R"(
+    SOL_REQUIRE(merge(db,
+                      R"(
 [[weapon]]
 id = "sol.pulse_cannon"
 name = "Pulse Cannon"
 kind = "projectile"
 damage = 12.0
 )",
-                      "guns.toml", &error));
+                      "guns.toml",
+                      &error));
     SOL_CHECK(db.findWeapon("sol.pulse_cannon")->miningPower == 0.0f);
 
     // Half a refinery is a schema error: the service needs both ends.
-    SOL_CHECK(!merge(db, R"(
+    SOL_CHECK(!merge(db,
+                     R"(
 [[station]]
 id = "sol.half_refinery"
 name = "Half Refinery"
 refine_input = "sol.ore"
 )",
-                     "half.toml", &error));
+                     "half.toml",
+                     &error));
     SOL_CHECK(error.find("refine_input") != std::string::npos);
     SOL_CHECK(db.findStation("sol.half_refinery") == nullptr);
 
     // Negative ore weights are a schema error, not a silent zero.
-    SOL_CHECK(!merge(db, R"(
+    SOL_CHECK(!merge(db,
+                     R"(
 [[commodity]]
 id = "sol.bad_ore"
 name = "Bad Ore"
 ore_weight_core = -1.0
 )",
-                     "bad_ore.toml", &error));
+                     "bad_ore.toml",
+                     &error));
 }

@@ -36,7 +36,9 @@ using core::Vec3;
 
 } // namespace
 
-Vec3 shipLinearAccelBody(const ShipState& state, const ShipTuning& tuning, const FlightInput& input,
+Vec3 shipLinearAccelBody(const ShipState& state,
+                         const ShipTuning& tuning,
+                         const FlightInput& input,
                          double dt)
 {
     const float dtf = static_cast<float>(dt);

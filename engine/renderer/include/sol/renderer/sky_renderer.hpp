@@ -16,8 +16,11 @@ namespace sol::renderer {
 class SkyRenderer
 {
 public:
-    [[nodiscard]] bool initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
-                                  const char* shaderDirectory, std::uint64_t seed);
+    [[nodiscard]] bool initialize(rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
+                                  const char* shaderDirectory,
+                                  std::uint64_t seed);
     void shutdown();
     [[nodiscard]] bool reloadPipeline();
 
@@ -25,9 +28,14 @@ public:
     // HDR units.
     // `warpAxis` is the world-space direction the jump tunnel's streaks
     // converge on and `warp` their strength (0 at rest); see shaders/sky.frag.
-    void draw(VkCommandBuffer commandBuffer, VkExtent2D extent, const core::Quat& cameraOrientation,
-              float verticalFovRadians, float aspect, float intensity,
-              const core::Vec3& warpAxis = {0.0f, 0.0f, -1.0f}, float warp = 0.0f) const;
+    void draw(VkCommandBuffer commandBuffer,
+              VkExtent2D extent,
+              const core::Quat& cameraOrientation,
+              float verticalFovRadians,
+              float aspect,
+              float intensity,
+              const core::Vec3& warpAxis = {0.0f, 0.0f, -1.0f},
+              float warp = 0.0f) const;
 
 private:
     rhi::Context* m_context = nullptr;

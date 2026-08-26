@@ -18,10 +18,23 @@ namespace {
 // TOML key stems for the FitStat enum, in enum order (Phase 8a modifiers:
 // "<stem>_add" / "<stem>_mul" on modules and crew).
 constexpr const char* kFitStatKeys[kFitStatCount] = {
-    "forward_accel",  "reverse_accel", "lateral_accel",   "vertical_accel", "max_speed",
-    "turn_rate",      "cruise_speed_scale", "shield_strength", "shield_regen", "armor",
-    "hull",           "weapon_capacitor", "weapon_recharge", "cargo",
-    "scan_range",     "scan_speed",  "collector_range",
+    "forward_accel",
+    "reverse_accel",
+    "lateral_accel",
+    "vertical_accel",
+    "max_speed",
+    "turn_rate",
+    "cruise_speed_scale",
+    "shield_strength",
+    "shield_regen",
+    "armor",
+    "hull",
+    "weapon_capacitor",
+    "weapon_recharge",
+    "cargo",
+    "scan_range",
+    "scan_speed",
+    "collector_range",
 };
 
 // Accumulates the first error and short-circuits later reads.
@@ -128,8 +141,7 @@ struct FieldReader
             rate.commodityId = text.substr(0, colon);
             rate.rate = std::strtof(text.c_str() + colon + 1, &end);
             if (end != text.c_str() + text.size() || rate.rate < 0.0f) {
-                fail(std::string("'") + key + "' entry '" + text +
-                     "' needs a non-negative numeric rate");
+                fail(std::string("'") + key + "' entry '" + text + "' needs a non-negative numeric rate");
                 return;
             }
             out.push_back(std::move(rate));
@@ -186,8 +198,7 @@ struct FieldReader
             char* end = nullptr;
             bias.weight = std::strtof(text.c_str() + colon + 1, &end);
             if (end != text.c_str() + text.size() || bias.weight < 0.0f) {
-                fail(std::string("'") + key + "' entry '" + text +
-                     "' needs a non-negative numeric weight");
+                fail(std::string("'") + key + "' entry '" + text + "' needs a non-negative numeric weight");
                 return;
             }
             out.push_back(std::move(bias));
@@ -281,12 +292,10 @@ struct FieldReader
 
     // Strict schema: any key outside the allowed set is an error.
     // allowModifiers additionally accepts the stat modifier vocabulary.
-    void rejectUnknownKeys(std::initializer_list<const char*> allowed,
-                           bool allowModifiers = false)
+    void rejectUnknownKeys(std::initializer_list<const char*> allowed, bool allowModifiers = false)
     {
         for (const auto& [key, value] : table.members()) {
-            bool known = std::any_of(allowed.begin(), allowed.end(),
-                                     [&](const char* k) { return key == k; });
+            bool known = std::any_of(allowed.begin(), allowed.end(), [&](const char* k) { return key == k; });
             if (!known && allowModifiers) {
                 for (std::size_t i = 0; i < kFitStatCount && !known; ++i) {
                     known = key == std::string(kFitStatKeys[i]) + "_add" ||
@@ -304,8 +313,8 @@ struct FieldReader
 template <typename DefT>
 void mergeDef(std::vector<DefT>& defs, DefT&& def)
 {
-    const auto existing = std::find_if(defs.begin(), defs.end(),
-                                       [&](const DefT& d) { return d.id == def.id; });
+    const auto existing =
+        std::find_if(defs.begin(), defs.end(), [&](const DefT& d) { return d.id == def.id; });
     if (existing != defs.end()) {
         *existing = std::move(def); // later layer replaces wholesale, in place
     } else {
@@ -313,7 +322,9 @@ void mergeDef(std::vector<DefT>& defs, DefT&& def)
     }
 }
 
-bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipDef>& out,
+bool parseShip(const TomlValue& table,
+               const char* sourceName,
+               std::vector<ShipDef>& out,
                std::string* outError)
 {
     ShipDef def;
@@ -368,16 +379,43 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     reader.optionalUint("crew_berths", def.crewBerths);
     reader.optionalGate(def.gate);
 
-    reader.rejectUnknownKeys({"id", "name", "model", "cockpit", "scale", "forward_accel",
+    reader.rejectUnknownKeys({"id",
+                              "name",
+                              "model",
+                              "cockpit",
+                              "scale",
+                              "forward_accel",
                               "reverse_accel",
-                              "lateral_accel", "vertical_accel", "max_speed", "max_turn_rate",
-                              "angular_accel", "boost_accel_scale", "boost_speed_scale",
-                              "cruise_speed_scale", "cruise_accel_scale", "shield_strength",
-                              "shield_regen", "shield_regen_delay", "armor", "hull",
-                              "weapon_capacitor", "weapon_recharge", "weapon", "cargo",
-                              "scan_range", "scan_speed", "collector_range", "price",
-                              "mass", "power_output", "slots_shield", "slots_engine",
-                              "slots_cargo", "slots_utility", "crew_berths", "factions",
+                              "lateral_accel",
+                              "vertical_accel",
+                              "max_speed",
+                              "max_turn_rate",
+                              "angular_accel",
+                              "boost_accel_scale",
+                              "boost_speed_scale",
+                              "cruise_speed_scale",
+                              "cruise_accel_scale",
+                              "shield_strength",
+                              "shield_regen",
+                              "shield_regen_delay",
+                              "armor",
+                              "hull",
+                              "weapon_capacitor",
+                              "weapon_recharge",
+                              "weapon",
+                              "cargo",
+                              "scan_range",
+                              "scan_speed",
+                              "collector_range",
+                              "price",
+                              "mass",
+                              "power_output",
+                              "slots_shield",
+                              "slots_engine",
+                              "slots_cargo",
+                              "slots_utility",
+                              "crew_berths",
+                              "factions",
                               "min_rep"});
     if (!reader.failed && def.scale <= 0.0f) {
         reader.fail("'scale' must be > 0");
@@ -392,7 +430,9 @@ bool parseShip(const TomlValue& table, const char* sourceName, std::vector<ShipD
     return true;
 }
 
-bool parseWeapon(const TomlValue& table, const char* sourceName, std::vector<WeaponDef>& out,
+bool parseWeapon(const TomlValue& table,
+                 const char* sourceName,
+                 std::vector<WeaponDef>& out,
                  std::string* outError)
 {
     WeaponDef def;
@@ -415,9 +455,19 @@ bool parseWeapon(const TomlValue& table, const char* sourceName, std::vector<Wea
     reader.optionalString("model", def.model);
     reader.optionalGate(def.gate);
 
-    reader.rejectUnknownKeys({"id", "name", "kind", "damage", "rate_of_fire", "range",
-                              "projectile_speed", "energy_cost", "mining_power", "price",
-                              "model", "factions", "min_rep"});
+    reader.rejectUnknownKeys({"id",
+                              "name",
+                              "kind",
+                              "damage",
+                              "rate_of_fire",
+                              "range",
+                              "projectile_speed",
+                              "energy_cost",
+                              "mining_power",
+                              "price",
+                              "model",
+                              "factions",
+                              "min_rep"});
     if (!reader.failed && def.kind != "projectile" && def.kind != "hitscan") {
         reader.fail("'kind' must be \"projectile\" or \"hitscan\"");
     }
@@ -428,7 +478,9 @@ bool parseWeapon(const TomlValue& table, const char* sourceName, std::vector<Wea
     return true;
 }
 
-bool parseFaction(const TomlValue& table, const char* sourceName, std::vector<FactionDef>& out,
+bool parseFaction(const TomlValue& table,
+                  const char* sourceName,
+                  std::vector<FactionDef>& out,
                   std::string* outError)
 {
     FactionDef def;
@@ -452,9 +504,18 @@ bool parseFaction(const TomlValue& table, const char* sourceName, std::vector<Fa
     reader.optionalStringList("ships_trader", def.shipsTrader);
     reader.optionalBiasList("station_bias", def.stationBias);
 
-    reader.rejectUnknownKeys({"id", "name", "description", "color", "kind", "aggression",
-                              "forgiveness", "relations", "ships_patrol", "ships_raider",
-                              "ships_trader", "station_bias"});
+    reader.rejectUnknownKeys({"id",
+                              "name",
+                              "description",
+                              "color",
+                              "kind",
+                              "aggression",
+                              "forgiveness",
+                              "relations",
+                              "ships_patrol",
+                              "ships_raider",
+                              "ships_trader",
+                              "station_bias"});
     if (!reader.failed) {
         if (kind == "major") {
             def.kind = FactionKind::Major;
@@ -464,8 +525,8 @@ bool parseFaction(const TomlValue& table, const char* sourceName, std::vector<Fa
             reader.fail("'kind' must be \"major\" or \"pirate\"");
         }
     }
-    if (!reader.failed && (def.aggression < 0.0f || def.aggression > 1.0f ||
-                           def.forgiveness < 0.0f || def.forgiveness > 1.0f)) {
+    if (!reader.failed && (def.aggression < 0.0f || def.aggression > 1.0f || def.forgiveness < 0.0f ||
+                           def.forgiveness > 1.0f)) {
         reader.fail("'aggression' and 'forgiveness' must be in [0, 1]");
     }
     if (reader.failed) {
@@ -475,8 +536,10 @@ bool parseFaction(const TomlValue& table, const char* sourceName, std::vector<Fa
     return true;
 }
 
-bool parseCommodity(const TomlValue& table, const char* sourceName,
-                    std::vector<CommodityDef>& out, std::string* outError)
+bool parseCommodity(const TomlValue& table,
+                    const char* sourceName,
+                    std::vector<CommodityDef>& out,
+                    std::string* outError)
 {
     CommodityDef def;
     def.source = sourceName;
@@ -494,14 +557,19 @@ bool parseCommodity(const TomlValue& table, const char* sourceName,
     reader.optionalString("model", def.model);
     reader.optionalString("chunk_model", def.chunkModel);
 
-    reader.rejectUnknownKeys({"id", "name", "base_price", "ore_weight_core", "ore_weight_frontier",
-                              "ore_weight_fringe", "model", "chunk_model"});
+    reader.rejectUnknownKeys({"id",
+                              "name",
+                              "base_price",
+                              "ore_weight_core",
+                              "ore_weight_frontier",
+                              "ore_weight_fringe",
+                              "model",
+                              "chunk_model"});
     if (!reader.failed && def.basePrice <= 0.0f) {
         reader.fail("'base_price' must be > 0");
     }
-    if (!reader.failed
-        && (def.oreWeightCore < 0.0f || def.oreWeightFrontier < 0.0f
-            || def.oreWeightFringe < 0.0f)) {
+    if (!reader.failed &&
+        (def.oreWeightCore < 0.0f || def.oreWeightFrontier < 0.0f || def.oreWeightFringe < 0.0f)) {
         reader.fail("'ore_weight_*' must be >= 0");
     }
     if (reader.failed) {
@@ -511,7 +579,9 @@ bool parseCommodity(const TomlValue& table, const char* sourceName,
     return true;
 }
 
-bool parseSound(const TomlValue& table, const char* sourceName, std::vector<SoundDef>& out,
+bool parseSound(const TomlValue& table,
+                const char* sourceName,
+                std::vector<SoundDef>& out,
                 std::string* outError)
 {
     SoundDef def;
@@ -547,7 +617,9 @@ bool parseSound(const TomlValue& table, const char* sourceName, std::vector<Soun
     return true;
 }
 
-bool parseModel(const TomlValue& table, const char* sourceName, std::vector<ModelDef>& out,
+bool parseModel(const TomlValue& table,
+                const char* sourceName,
+                std::vector<ModelDef>& out,
                 std::string* outError)
 {
     ModelDef def;
@@ -567,8 +639,8 @@ bool parseModel(const TomlValue& table, const char* sourceName, std::vector<Mode
     reader.optionalBool("translucent", def.translucent);
     reader.optionalFloat("alpha", def.alpha);
 
-    reader.rejectUnknownKeys({"id", "mesh", "texture", "radius", "avoid_radius", "emissive",
-                              "solid", "translucent", "alpha"});
+    reader.rejectUnknownKeys(
+        {"id", "mesh", "texture", "radius", "avoid_radius", "emissive", "solid", "translucent", "alpha"});
     if (!reader.failed && def.radius <= 0.0f) {
         reader.fail("'radius' must be > 0");
     }
@@ -603,7 +675,9 @@ bool parseModel(const TomlValue& table, const char* sourceName, std::vector<Mode
 // legitimately be defined in an earlier layer than the model that fills it.
 // `validateRoles` is where those are answered, which is the same split
 // `validateFactions` already draws.
-bool parseRole(const TomlValue& table, const char* sourceName, std::vector<RoleDef>& out,
+bool parseRole(const TomlValue& table,
+               const char* sourceName,
+               std::vector<RoleDef>& out,
                std::string* outError)
 {
     RoleDef def;
@@ -623,7 +697,9 @@ bool parseRole(const TomlValue& table, const char* sourceName, std::vector<RoleD
     return true;
 }
 
-bool parseStation(const TomlValue& table, const char* sourceName, std::vector<StationDef>& out,
+bool parseStation(const TomlValue& table,
+                  const char* sourceName,
+                  std::vector<StationDef>& out,
                   std::string* outError)
 {
     StationDef def;
@@ -647,9 +723,18 @@ bool parseStation(const TomlValue& table, const char* sourceName, std::vector<St
     reader.optionalString("refine_input", def.refineInput);
     reader.optionalString("refine_output", def.refineOutput);
 
-    reader.rejectUnknownKeys({"id", "name", "model", "weight_core", "weight_frontier",
-                              "weight_fringe", "produces", "consumes", "feedstock",
-                              "produces_from", "stock_capacity", "refine_input",
+    reader.rejectUnknownKeys({"id",
+                              "name",
+                              "model",
+                              "weight_core",
+                              "weight_frontier",
+                              "weight_fringe",
+                              "produces",
+                              "consumes",
+                              "feedstock",
+                              "produces_from",
+                              "stock_capacity",
+                              "refine_input",
                               "refine_output"});
     if (!reader.failed && def.model.empty()) {
         reader.fail("'model' must name a [[model]] row when given");
@@ -670,7 +755,9 @@ bool parseStation(const TomlValue& table, const char* sourceName, std::vector<St
     return true;
 }
 
-bool parseModule(const TomlValue& table, const char* sourceName, std::vector<ModuleDef>& out,
+bool parseModule(const TomlValue& table,
+                 const char* sourceName,
+                 std::vector<ModuleDef>& out,
                  std::string* outError)
 {
     ModuleDef def;
@@ -690,8 +777,7 @@ bool parseModule(const TomlValue& table, const char* sourceName, std::vector<Mod
     reader.optionalModifiers(def.modifiers);
     reader.optionalGate(def.gate);
 
-    reader.rejectUnknownKeys({"id", "name", "slot", "price", "mass", "power_draw", "factions",
-                              "min_rep"},
+    reader.rejectUnknownKeys({"id", "name", "slot", "price", "mass", "power_draw", "factions", "min_rep"},
                              /*allowModifiers=*/true);
     if (!reader.failed) {
         if (slot == "shield") {
@@ -716,7 +802,9 @@ bool parseModule(const TomlValue& table, const char* sourceName, std::vector<Mod
     return true;
 }
 
-bool parseCrew(const TomlValue& table, const char* sourceName, std::vector<CrewDef>& out,
+bool parseCrew(const TomlValue& table,
+               const char* sourceName,
+               std::vector<CrewDef>& out,
                std::string* outError)
 {
     CrewDef def;
@@ -758,7 +846,9 @@ void DefDatabase::clear()
     m_roles.clear();
 }
 
-bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* sourceName,
+bool DefDatabase::mergeToml(const char* text,
+                            std::size_t length,
+                            const char* sourceName,
                             std::string* outError)
 {
     TomlValue root;
@@ -846,8 +936,8 @@ bool DefDatabase::mergeToml(const char* text, std::size_t length, const char* so
 
         if (!value.isArray()) {
             if (outError != nullptr) {
-                *outError = std::string(sourceName) + ": '" + key +
-                            "' must be an array of tables ([[" + key + "]])";
+                *outError =
+                    std::string(sourceName) + ": '" + key + "' must be an array of tables ([[" + key + "]])";
             }
             return false;
         }
@@ -886,8 +976,7 @@ bool DefDatabase::mergeDirectory(const char* directory, std::string* outError)
             }
             return false;
         }
-        if (!mergeToml(reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(),
-                       outError)) {
+        if (!mergeToml(reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(), outError)) {
             return false;
         }
     }
@@ -903,13 +992,11 @@ bool DefDatabase::validateFactions(std::string* outError) const
                 continue; // unknown ids are downstream warnings, not errors
             }
             for (const FactionRelation& mirrored : other->relations) {
-                if (mirrored.otherId == faction.id &&
-                    mirrored.standing != relation.standing) {
+                if (mirrored.otherId == faction.id && mirrored.standing != relation.standing) {
                     if (outError != nullptr) {
                         *outError = "factions '" + faction.id + "' and '" + other->id +
-                                    "' declare mismatched relations (" +
-                                    std::to_string(relation.standing) + " vs " +
-                                    std::to_string(mirrored.standing) + ")";
+                                    "' declare mismatched relations (" + std::to_string(relation.standing) +
+                                    " vs " + std::to_string(mirrored.standing) + ")";
                     }
                     return false;
                 }
@@ -921,22 +1008,22 @@ bool DefDatabase::validateFactions(std::string* outError) const
 
 const ShipDef* DefDatabase::findShip(const char* id) const
 {
-    const auto it = std::find_if(m_ships.begin(), m_ships.end(),
-                                 [&](const ShipDef& d) { return d.id == id; });
+    const auto it =
+        std::find_if(m_ships.begin(), m_ships.end(), [&](const ShipDef& d) { return d.id == id; });
     return it != m_ships.end() ? &*it : nullptr;
 }
 
 const WeaponDef* DefDatabase::findWeapon(const char* id) const
 {
-    const auto it = std::find_if(m_weapons.begin(), m_weapons.end(),
-                                 [&](const WeaponDef& d) { return d.id == id; });
+    const auto it =
+        std::find_if(m_weapons.begin(), m_weapons.end(), [&](const WeaponDef& d) { return d.id == id; });
     return it != m_weapons.end() ? &*it : nullptr;
 }
 
 const FactionDef* DefDatabase::findFaction(const char* id) const
 {
-    const auto it = std::find_if(m_factions.begin(), m_factions.end(),
-                                 [&](const FactionDef& d) { return d.id == id; });
+    const auto it =
+        std::find_if(m_factions.begin(), m_factions.end(), [&](const FactionDef& d) { return d.id == id; });
     return it != m_factions.end() ? &*it : nullptr;
 }
 
@@ -976,8 +1063,7 @@ std::uint32_t DefDatabase::roleModelIndex(const char* id) const
     return role == nullptr ? kNoModel : modelIndex(role->model.c_str());
 }
 
-bool DefDatabase::validateRoles(std::span<const char* const> required,
-                                std::string* outError) const
+bool DefDatabase::validateRoles(std::span<const char* const> required, std::string* outError) const
 {
     // Every role the caller asks for must be filled, and filled by a model
     // that exists. Both are refusals rather than warnings - see the header.
@@ -992,8 +1078,8 @@ bool DefDatabase::validateRoles(std::span<const char* const> required,
         }
         if (modelIndex(role->model.c_str()) == kNoModel) {
             if (outError != nullptr) {
-                *outError = role->source + ": role '" + role->id + "' names model '" +
-                            role->model + "', which no [[model]] row defines";
+                *outError = role->source + ": role '" + role->id + "' names model '" + role->model +
+                            "', which no [[model]] row defines";
             }
             return false;
         }
@@ -1002,12 +1088,11 @@ bool DefDatabase::validateRoles(std::span<const char* const> required,
     // nothing at all, quietly, forever - the failure mode a strict schema
     // exists to prevent, so it is rejected the same way an unknown key is.
     for (const RoleDef& role : m_roles) {
-        const bool known = std::any_of(required.begin(), required.end(),
-                                       [&](const char* id) { return role.id == id; });
+        const bool known =
+            std::any_of(required.begin(), required.end(), [&](const char* id) { return role.id == id; });
         if (!known) {
             if (outError != nullptr) {
-                *outError = role.source + ": unknown role '" + role.id +
-                            "'; the engine draws no such thing";
+                *outError = role.source + ": unknown role '" + role.id + "'; the engine draws no such thing";
             }
             return false;
         }
@@ -1017,29 +1102,28 @@ bool DefDatabase::validateRoles(std::span<const char* const> required,
 
 const CommodityDef* DefDatabase::findCommodity(const char* id) const
 {
-    const auto it = std::find_if(m_commodities.begin(), m_commodities.end(),
-                                 [&](const CommodityDef& d) { return d.id == id; });
+    const auto it = std::find_if(
+        m_commodities.begin(), m_commodities.end(), [&](const CommodityDef& d) { return d.id == id; });
     return it != m_commodities.end() ? &*it : nullptr;
 }
 
 const StationDef* DefDatabase::findStation(const char* id) const
 {
-    const auto it = std::find_if(m_stations.begin(), m_stations.end(),
-                                 [&](const StationDef& d) { return d.id == id; });
+    const auto it =
+        std::find_if(m_stations.begin(), m_stations.end(), [&](const StationDef& d) { return d.id == id; });
     return it != m_stations.end() ? &*it : nullptr;
 }
 
 const ModuleDef* DefDatabase::findModule(const char* id) const
 {
-    const auto it = std::find_if(m_modules.begin(), m_modules.end(),
-                                 [&](const ModuleDef& d) { return d.id == id; });
+    const auto it =
+        std::find_if(m_modules.begin(), m_modules.end(), [&](const ModuleDef& d) { return d.id == id; });
     return it != m_modules.end() ? &*it : nullptr;
 }
 
 const CrewDef* DefDatabase::findCrew(const char* id) const
 {
-    const auto it = std::find_if(m_crew.begin(), m_crew.end(),
-                                 [&](const CrewDef& d) { return d.id == id; });
+    const auto it = std::find_if(m_crew.begin(), m_crew.end(), [&](const CrewDef& d) { return d.id == id; });
     return it != m_crew.end() ? &*it : nullptr;
 }
 

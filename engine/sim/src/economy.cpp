@@ -30,8 +30,7 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
     m_accumulator = 0.0;
     m_systemCount = static_cast<std::uint32_t>(galaxy.systems.size());
 
-    const std::uint32_t commodityCount =
-        static_cast<std::uint32_t>(m_params.commodities.size());
+    const std::uint32_t commodityCount = static_cast<std::uint32_t>(m_params.commodities.size());
     m_commodityCount = commodityCount;
     m_markets.clear();
     m_marketOffset.assign(m_systemCount, 0);
@@ -47,10 +46,9 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
             market.archetype = system.stations[i].archetype;
             // Start at half capacity: prices open neutral and drift from
             // production/consumption immediately.
-            const float capacity =
-                market.archetype < m_params.archetypes.size()
-                    ? m_params.archetypes[market.archetype].stockCapacity
-                    : 0.0f;
+            const float capacity = market.archetype < m_params.archetypes.size()
+                                       ? m_params.archetypes[market.archetype].stockCapacity
+                                       : 0.0f;
             market.stock.assign(commodityCount, capacity * 0.5f);
             m_markets.push_back(std::move(market));
         }
@@ -65,8 +63,7 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
         std::uint8_t* row = m_hops.data() + static_cast<std::size_t>(from) * m_systemCount;
         row[from] = 0;
         frontier.assign(1, from);
-        for (std::uint8_t depth = 1;
-             depth <= m_params.maxTradeJumps && !frontier.empty(); ++depth) {
+        for (std::uint8_t depth = 1; depth <= m_params.maxTradeJumps && !frontier.empty(); ++depth) {
             next.clear();
             for (const std::uint32_t index : frontier) {
                 for (const GateSpec& gate : galaxy.systems[index].gates) {
@@ -104,14 +101,13 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
                 if (destination == trader.market) {
                     continue;
                 }
-                const std::uint8_t hops = hopCount(m_markets[trader.market].systemIndex,
-                                                   m_markets[destination].systemIndex);
+                const std::uint8_t hops =
+                    hopCount(m_markets[trader.market].systemIndex, m_markets[destination].systemIndex);
                 if (hops == kUnreachable) {
                     continue; // no route a trader would plan: leave it parked
                 }
                 beginTransit(trader, destination, hops);
-                trader.travelRemaining = static_cast<double>(m_rng.nextFloat01()) *
-                                         trader.legTotal;
+                trader.travelRemaining = static_cast<double>(m_rng.nextFloat01()) * trader.legTotal;
                 break;
             }
             m_traders.push_back(trader);
@@ -196,8 +192,7 @@ TraderRoute Economy::route(std::uint32_t traderIndex) const
     return out;
 }
 
-float Economy::priceAtStock(std::uint32_t market, std::uint32_t commodity,
-                            float stockUnits) const
+float Economy::priceAtStock(std::uint32_t market, std::uint32_t commodity, float stockUnits) const
 {
     if (market >= m_markets.size() || commodity >= m_params.commodities.size()) {
         return 0.0f;
@@ -207,8 +202,7 @@ float Economy::priceAtStock(std::uint32_t market, std::uint32_t commodity,
                                ? m_params.archetypes[station.archetype].stockCapacity
                                : 0.0f;
     const float fraction = capacity > 0.0f ? core::clamp(stockUnits / capacity, 0.0f, 1.0f) : 1.0f;
-    const float scale =
-        core::lerp(m_params.maxPriceScale, m_params.minPriceScale, fraction);
+    const float scale = core::lerp(m_params.maxPriceScale, m_params.minPriceScale, fraction);
     return m_params.commodities[commodity].basePrice * scale;
 }
 
@@ -244,9 +238,7 @@ float Economy::capacityOf(std::uint32_t market) const
         return 0.0f;
     }
     const std::uint32_t archetype = m_markets[market].archetype;
-    return archetype < m_params.archetypes.size()
-               ? m_params.archetypes[archetype].stockCapacity
-               : 0.0f;
+    return archetype < m_params.archetypes.size() ? m_params.archetypes[archetype].stockCapacity : 0.0f;
 }
 
 float Economy::satisfaction(std::uint32_t market) const
@@ -282,8 +274,8 @@ void Economy::refreshInbound()
     std::fill(m_inbound.begin(), m_inbound.end(), 0.0f);
     for (const EconomyTrader& trader : m_traders) {
         if (trader.phase == TraderPhase::InTransit && trader.cargo > 0.0f) {
-            m_inbound[static_cast<std::size_t>(trader.market) * m_commodityCount
-                      + trader.commodity] += trader.cargo;
+            m_inbound[static_cast<std::size_t>(trader.market) * m_commodityCount + trader.commodity] +=
+                trader.cargo;
         }
     }
 }
@@ -298,8 +290,7 @@ void Economy::refreshTickPrices()
 TradeResult Economy::buy(std::uint32_t market, std::uint32_t commodity, float units)
 {
     TradeResult result;
-    if (market >= m_markets.size() || commodity >= m_params.commodities.size() ||
-        units <= 0.0f) {
+    if (market >= m_markets.size() || commodity >= m_params.commodities.size() || units <= 0.0f) {
         return result;
     }
     StationMarket& station = m_markets[market];
@@ -309,10 +300,9 @@ TradeResult Economy::buy(std::uint32_t market, std::uint32_t commodity, float un
     // midpoint *is* the exact average — and without it a big block clears at
     // a price that only moves afterwards, which let a buy-and-sell-back at
     // one station turn a profit that no spread was ever going to cover.
-    result.credits =
-        result.units * priceAtStock(market, commodity,
-                                    station.stock[commodity] - result.units * 0.5f)
-        * (1.0f + m_params.priceSpread);
+    result.credits = result.units *
+                     priceAtStock(market, commodity, station.stock[commodity] - result.units * 0.5f) *
+                     (1.0f + m_params.priceSpread);
     station.stock[commodity] -= result.units;
     return result;
 }
@@ -320,8 +310,7 @@ TradeResult Economy::buy(std::uint32_t market, std::uint32_t commodity, float un
 TradeResult Economy::sell(std::uint32_t market, std::uint32_t commodity, float units)
 {
     TradeResult result;
-    if (market >= m_markets.size() || commodity >= m_params.commodities.size() ||
-        units <= 0.0f) {
+    if (market >= m_markets.size() || commodity >= m_params.commodities.size() || units <= 0.0f) {
         return result;
     }
     StationMarket& station = m_markets[market];
@@ -329,18 +318,16 @@ TradeResult Economy::sell(std::uint32_t market, std::uint32_t commodity, float u
                                ? m_params.archetypes[station.archetype].stockCapacity
                                : 0.0f;
     result.units = std::min(units, std::max(0.0f, capacity - station.stock[commodity]));
-    result.credits =
-        result.units * priceAtStock(market, commodity,
-                                    station.stock[commodity] + result.units * 0.5f)
-        * (1.0f - m_params.priceSpread);
+    result.credits = result.units *
+                     priceAtStock(market, commodity, station.stock[commodity] + result.units * 0.5f) *
+                     (1.0f - m_params.priceSpread);
     station.stock[commodity] += result.units;
     return result;
 }
 
 void Economy::deliver(std::uint32_t market, std::uint32_t commodity, float units)
 {
-    if (market >= m_markets.size() || commodity >= m_params.commodities.size() ||
-        units <= 0.0f) {
+    if (market >= m_markets.size() || commodity >= m_params.commodities.size() || units <= 0.0f) {
         return;
     }
     StationMarket& station = m_markets[market];
@@ -362,8 +349,7 @@ void Economy::raidSystem(std::uint32_t systemIndex, float stockFraction)
         }
     }
     for (EconomyTrader& trader : m_traders) {
-        if (trader.phase == TraderPhase::InTransit &&
-            m_markets[trader.market].systemIndex == systemIndex) {
+        if (trader.phase == TraderPhase::InTransit && m_markets[trader.market].systemIndex == systemIndex) {
             trader.cargo = 0.0f;
         }
     }
@@ -460,14 +446,12 @@ void Economy::produce(double dt, FeedstockSource* source)
             }
             const float makes = rateAt(archetype.production, c) * step;
             if (makes > 0.0f) {
-                const float headroom =
-                    std::max(0.0f, archetype.stockCapacity - market.stock[c]);
+                const float headroom = std::max(0.0f, archetype.stockCapacity - market.stock[c]);
                 // Ease off across the top of the warehouse rather than
                 // slamming shut when it is exactly full.
                 const float band = archetype.stockCapacity * m_params.outputTaperFraction;
                 const float room =
-                    band > 0.0f ? core::clamp(headroom / band, 0.0f, 1.0f)
-                                : std::min(1.0f, headroom / makes);
+                    band > 0.0f ? core::clamp(headroom / band, 0.0f, 1.0f) : std::min(1.0f, headroom / makes);
                 if (room < ratio) {
                     ratio = room;
                     limiting = c;
@@ -504,8 +488,7 @@ void Economy::produce(double dt, FeedstockSource* source)
             // runs out when it runs out (the clamp below).
             delta -= rateAt(archetype.consumption, c) * step;
 
-            market.stock[c] =
-                core::clamp(market.stock[c] + delta, 0.0f, archetype.stockCapacity);
+            market.stock[c] = core::clamp(market.stock[c] + delta, 0.0f, archetype.stockCapacity);
         }
 
         m_satisfaction[m] = ratio;
@@ -564,9 +547,8 @@ void Economy::step(const Galaxy& galaxy, double dt, FeedstockSource* source)
                 // It got there. The one thing an escort contract is waiting to
                 // hear, reported from the one place a haul can end well —
                 // loseTrader() is the other end and reports the other answer.
-                m_arrivals.push_back(
-                    {.system = m_markets[trader.market].systemIndex,
-                     .trader = static_cast<std::uint32_t>(index)});
+                m_arrivals.push_back({.system = m_markets[trader.market].systemIndex,
+                                      .trader = static_cast<std::uint32_t>(index)});
             }
             break;
         }
@@ -577,8 +559,7 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
 {
     (void)galaxy;
     const StationMarket& here = m_markets[trader.market];
-    const std::uint8_t* hopRow =
-        m_hops.data() + static_cast<std::size_t>(here.systemIndex) * m_systemCount;
+    const std::uint8_t* hopRow = m_hops.data() + static_cast<std::size_t>(here.systemIndex) * m_systemCount;
 
     // Still holding something the last stop could not take: shift it before
     // thinking about anything else. Room may have opened here since arrival;
@@ -603,8 +584,7 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
                 }
             }
             if (bestDestination != kInvalid) {
-                beginTransit(trader, bestDestination,
-                             hopRow[m_markets[bestDestination].systemIndex]);
+                beginTransit(trader, bestDestination, hopRow[m_markets[bestDestination].systemIndex]);
             }
             return; // laden either way: no room aboard for a new haul
         }
@@ -627,8 +607,7 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
             continue;
         }
         const double travelSeconds =
-            m_params.traderLegSeconds * 2.0 +
-            static_cast<double>(hops) * m_params.jumpSeconds;
+            m_params.traderLegSeconds * 2.0 + static_cast<double>(hops) * m_params.jumpSeconds;
         const float destinationCapacity = capacityOf(m);
         for (std::uint32_t c = 0; c < m_params.commodities.size(); ++c) {
             const float available = std::min(m_params.traderCargo, here.stock[c]);
@@ -639,8 +618,7 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
             // landed. Without this the whole fleet answers the same shortage
             // at once and most of them arrive to a warehouse that filled up
             // while they were in the air.
-            const float room =
-                destinationCapacity - m_markets[m].stock[c] - inbound(m, c);
+            const float room = destinationCapacity - m_markets[m].stock[c] - inbound(m, c);
             if (room < available) {
                 continue;
             }
@@ -648,9 +626,8 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
             if (!(cost > 0.0f)) {
                 continue;
             }
-            const float profit = (tickPrice(m, c) * sellScale -
-                                  tickPrice(trader.market, c) * buyScale) *
-                                 available;
+            const float profit =
+                (tickPrice(m, c) * sellScale - tickPrice(trader.market, c) * buyScale) * available;
             // Return on capital per second, not credits per second. A hauler
             // has to *buy* what it carries, so a hold of machinery ties up
             // roughly ten times the money a hold of ore does — ranking by
@@ -678,9 +655,8 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
                 if (m_markets[m].stock[c] <= m_params.traderCargo) {
                     continue;
                 }
-                const float ratio = tickPrice(trader.market, c) > 0.0f
-                                        ? tickPrice(m, c) / tickPrice(trader.market, c)
-                                        : 1.0f;
+                const float ratio =
+                    tickPrice(trader.market, c) > 0.0f ? tickPrice(m, c) / tickPrice(trader.market, c) : 1.0f;
                 if (bestMarket == kInvalid || ratio < cheapest) {
                     cheapest = ratio;
                     bestMarket = m;
@@ -695,8 +671,7 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
         return;
     }
 
-    const TradeResult bought =
-        buy(trader.market, bestCommodity, m_params.traderCargo);
+    const TradeResult bought = buy(trader.market, bestCommodity, m_params.traderCargo);
     // The next trader to think this tick has to see what this one just did,
     // or the whole fleet reads one stale snapshot and piles onto a single
     // route together — two hundred traders behaving like one. Refreshing the
@@ -709,8 +684,7 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
     trader.commodity = bestCommodity;
     trader.cargo = bought.units;
     // Visible to every trader that thinks after this one, this same tick.
-    m_inbound[static_cast<std::size_t>(bestMarket) * m_commodityCount + bestCommodity] +=
-        bought.units;
+    m_inbound[static_cast<std::size_t>(bestMarket) * m_commodityCount + bestCommodity] += bought.units;
     beginTransit(trader, bestMarket, hopRow[m_markets[bestMarket].systemIndex]);
 }
 
@@ -720,8 +694,7 @@ void Economy::beginTransit(EconomyTrader& trader, std::uint32_t destination, std
     trader.market = destination;
     trader.phase = TraderPhase::InTransit;
     // The quote a leg is flown against, and the number route() decomposes.
-    trader.legTotal = m_params.traderLegSeconds * 2.0 +
-                      static_cast<double>(hops) * m_params.jumpSeconds;
+    trader.legTotal = m_params.traderLegSeconds * 2.0 + static_cast<double>(hops) * m_params.jumpSeconds;
     trader.travelRemaining = trader.legTotal;
 }
 
@@ -736,7 +709,7 @@ void Economy::save(core::BinaryWriter& writer) const
     writer.write(static_cast<std::uint32_t>(m_traders.size()));
     for (const EconomyTrader& trader : m_traders) {
         writer.write(trader.market);
-        writer.write(trader.origin);   // v12: the route half of a trader
+        writer.write(trader.origin); // v12: the route half of a trader
         writer.write(static_cast<std::uint8_t>(trader.phase));
         writer.write(trader.travelRemaining);
         writer.write(trader.legTotal); // v12
@@ -769,10 +742,10 @@ bool Economy::load(core::BinaryReader& reader)
     }
     for (EconomyTrader& trader : m_traders) {
         std::uint8_t phase = 0;
-        if (!reader.read(trader.market) || !reader.read(trader.origin) ||
-            !reader.read(phase) || !reader.read(trader.travelRemaining) ||
-            !reader.read(trader.legTotal) || !reader.read(trader.commodity) ||
-            !reader.read(trader.cargo) || trader.market >= m_markets.size() ||
+        if (!reader.read(trader.market) || !reader.read(trader.origin) || !reader.read(phase) ||
+            !reader.read(trader.travelRemaining) || !reader.read(trader.legTotal) ||
+            !reader.read(trader.commodity) || !reader.read(trader.cargo) ||
+            trader.market >= m_markets.size() ||
             // A route with an origin off the end of the market list would be a
             // body drawn at a station that does not exist, so it is checked
             // exactly as hard as the destination always has been.
@@ -783,8 +756,7 @@ bool Economy::load(core::BinaryReader& reader)
         trader.phase = static_cast<TraderPhase>(phase);
     }
     core::Rng::RawState rngState;
-    if (!reader.read(m_accumulator) || !reader.read(rngState.state) ||
-        !reader.read(rngState.inc)) {
+    if (!reader.read(m_accumulator) || !reader.read(rngState.state) || !reader.read(rngState.inc)) {
         return false;
     }
     m_rng.setRawState(rngState);

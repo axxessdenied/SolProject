@@ -26,8 +26,10 @@ struct BakedFont
 // order, glyphs in codepoint order, and the shelf packer never consults
 // anything but the glyph sizes it is handed. Cooked output is therefore
 // byte-identical across runs and machines.
-[[nodiscard]] bool bakeFont(const char* manifestText, std::size_t manifestLength,
-                            const std::string& sourceDirectory, BakedFont& out,
+[[nodiscard]] bool bakeFont(const char* manifestText,
+                            std::size_t manifestLength,
+                            const std::string& sourceDirectory,
+                            BakedFont& out,
                             std::string* outError = nullptr);
 
 // Serializes a baked font into .sfont bytes.

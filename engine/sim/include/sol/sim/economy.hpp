@@ -11,10 +11,9 @@
 // The game layers player trading on top through buy()/sell(), which move
 // the same stock the agents see — prices react to both.
 
-#include "sol/sim/universe.hpp"
-
 #include "sol/core/random.hpp"
 #include "sol/core/serialize.hpp"
+#include "sol/sim/universe.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -92,7 +91,7 @@ struct EconomyParams
     // core, so at three jumps a great deal of ore had no reachable buyer at
     // all and simply piled up where it was dug.
     std::uint32_t maxTradeJumps = 5;
-    double tickInterval = 1.0;      // coarse tick, seconds
+    double tickInterval = 1.0; // coarse tick, seconds
     // Price scale at empty (max) and full (min) stock; linear in between.
     float maxPriceScale = 2.0f;
     float minPriceScale = 0.5f;
@@ -201,7 +200,9 @@ public:
     void tick(const Galaxy& galaxy, double dt, FeedstockSource* source = nullptr);
 
     [[nodiscard]] const std::vector<StationMarket>& markets() const { return m_markets; }
+
     [[nodiscard]] const std::vector<EconomyTrader>& traders() const { return m_traders; }
+
     [[nodiscard]] const EconomyParams& params() const { return m_params; }
 
     // Hauls that ended during the most recent tick() (Phase 8x stage 5), which
@@ -212,8 +213,7 @@ public:
     [[nodiscard]] const std::vector<TraderArrival>& arrivals() const { return m_arrivals; }
 
     // Market index for a station, or kNoMarket on bad input.
-    [[nodiscard]] std::uint32_t marketFor(std::uint32_t systemIndex,
-                                          std::uint32_t stationIndex) const;
+    [[nodiscard]] std::uint32_t marketFor(std::uint32_t systemIndex, std::uint32_t stationIndex) const;
 
     // Where a coarse trader is along its haul (Phase 8x). Derived from the
     // trader's own clock, so it costs nothing to ask and cannot disagree with
@@ -232,8 +232,7 @@ public:
     // The same curve evaluated at an arbitrary stock level. buy()/sell() use
     // it at the midpoint of what they move, which is the exact average price
     // of the block because the curve is linear in stock.
-    [[nodiscard]] float priceAtStock(std::uint32_t market, std::uint32_t commodity,
-                                     float stockUnits) const;
+    [[nodiscard]] float priceAtStock(std::uint32_t market, std::uint32_t commodity, float stockUnits) const;
     // What it actually costs to take a unit out (above mid) and what a unit
     // handed over actually pays (below mid).
     [[nodiscard]] float buyPrice(std::uint32_t market, std::uint32_t commodity) const;

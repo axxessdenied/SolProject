@@ -39,14 +39,14 @@ using sol::assets::MeshBuilder;
 {
     MeshBuilder builder;
     builder.addTorus(90, 12, 40, 12, 8);
-    builder.addBox({0, 0, 0}, {44, 60, 44});     // hub
-    builder.addBox({47, 0, 0}, {86, 6, 6});      // spokes
+    builder.addBox({0, 0, 0}, {44, 60, 44}); // hub
+    builder.addBox({47, 0, 0}, {86, 6, 6});  // spokes
     builder.addBox({-47, 0, 0}, {86, 6, 6});
     builder.addBox({0, 0, 47}, {6, 6, 86});
     builder.addBox({0, 0, -47}, {6, 6, 86});
-    builder.addBox({0, 44, 0}, {3, 28, 3});      // panel masts
+    builder.addBox({0, 44, 0}, {3, 28, 3}); // panel masts
     builder.addBox({0, -44, 0}, {3, 28, 3});
-    builder.addBox({0, 62, 0}, {76, 1.5, 26});   // solar panels
+    builder.addBox({0, 62, 0}, {76, 1.5, 26}); // solar panels
     builder.addBox({0, -62, 0}, {76, 1.5, 26});
     return builder.build();
 }
@@ -119,8 +119,7 @@ public:
             hash = powershellHashStep(hash, *c);
         }
         const double jitter = static_cast<double>(hash % 10000) / 10000.0;
-        const double lump = (0.13 * std::sin((3.1 * dir.x) + 1.7)) +
-                            (0.11 * std::sin((2.6 * dir.y) + 0.4)) +
+        const double lump = (0.13 * std::sin((3.1 * dir.x) + 1.7)) + (0.11 * std::sin((2.6 * dir.y) + 0.4)) +
                             (0.09 * std::sin((3.7 * dir.z) + 2.3));
         const double radius = 0.80 + (0.17 * jitter) + lump;
         m_cache.emplace(key, radius);
@@ -134,13 +133,22 @@ private:
 [[nodiscard]] inline sol::assets::MeshData buildAsteroid()
 {
     const double phi = (1 + std::sqrt(5.0)) / 2;
-    const BuildPoint icoVerts[12] = {{-1, phi, 0}, {1, phi, 0},  {-1, -phi, 0}, {1, -phi, 0},
-                                     {0, -1, phi}, {0, 1, phi},  {0, -1, -phi}, {0, 1, -phi},
-                                     {phi, 0, -1}, {phi, 0, 1},  {-phi, 0, -1}, {-phi, 0, 1}};
-    const int icoFaces[20][3] = {{0, 11, 5}, {0, 5, 1},  {0, 1, 7},  {0, 7, 10}, {0, 10, 11},
+    const BuildPoint icoVerts[12] = {{-1, phi, 0},
+                                     {1, phi, 0},
+                                     {-1, -phi, 0},
+                                     {1, -phi, 0},
+                                     {0, -1, phi},
+                                     {0, 1, phi},
+                                     {0, -1, -phi},
+                                     {0, 1, -phi},
+                                     {phi, 0, -1},
+                                     {phi, 0, 1},
+                                     {-phi, 0, -1},
+                                     {-phi, 0, 1}};
+    const int icoFaces[20][3] = {{0, 11, 5}, {0, 5, 1},  {0, 1, 7},   {0, 7, 10}, {0, 10, 11},
                                  {1, 5, 9},  {5, 11, 4}, {11, 10, 2}, {10, 7, 6}, {7, 1, 8},
-                                 {3, 9, 4},  {3, 4, 2},  {3, 2, 6},  {3, 6, 8},  {3, 8, 9},
-                                 {4, 9, 5},  {2, 4, 11}, {6, 2, 10}, {8, 6, 7},  {9, 8, 1}};
+                                 {3, 9, 4},  {3, 4, 2},  {3, 2, 6},   {3, 6, 8},  {3, 8, 9},
+                                 {4, 9, 5},  {2, 4, 11}, {6, 2, 10},  {8, 6, 7},  {9, 8, 1}};
 
     struct Tri
     {
@@ -148,21 +156,23 @@ private:
         BuildPoint b;
         BuildPoint c;
     };
+
     std::vector<Tri> tris;
     for (const auto& face : icoFaces) {
-        tris.push_back({normalizePoint(icoVerts[face[0]]), normalizePoint(icoVerts[face[1]]),
+        tris.push_back({normalizePoint(icoVerts[face[0]]),
+                        normalizePoint(icoVerts[face[1]]),
                         normalizePoint(icoVerts[face[2]])});
     }
     for (int step = 0; step < 2; ++step) {
         std::vector<Tri> next;
         next.reserve(tris.size() * 4);
         for (const Tri& tri : tris) {
-            const BuildPoint ab = normalizePoint(
-                {(tri.a.x + tri.b.x) / 2, (tri.a.y + tri.b.y) / 2, (tri.a.z + tri.b.z) / 2});
-            const BuildPoint bc = normalizePoint(
-                {(tri.b.x + tri.c.x) / 2, (tri.b.y + tri.c.y) / 2, (tri.b.z + tri.c.z) / 2});
-            const BuildPoint ca = normalizePoint(
-                {(tri.c.x + tri.a.x) / 2, (tri.c.y + tri.a.y) / 2, (tri.c.z + tri.a.z) / 2});
+            const BuildPoint ab =
+                normalizePoint({(tri.a.x + tri.b.x) / 2, (tri.a.y + tri.b.y) / 2, (tri.a.z + tri.b.z) / 2});
+            const BuildPoint bc =
+                normalizePoint({(tri.b.x + tri.c.x) / 2, (tri.b.y + tri.c.y) / 2, (tri.b.z + tri.c.z) / 2});
+            const BuildPoint ca =
+                normalizePoint({(tri.c.x + tri.a.x) / 2, (tri.c.y + tri.a.y) / 2, (tri.c.z + tri.a.z) / 2});
             next.push_back({tri.a, ab, ca});
             next.push_back({ab, tri.b, bc});
             next.push_back({ca, bc, tri.c});

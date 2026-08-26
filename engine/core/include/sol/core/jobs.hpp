@@ -40,10 +40,7 @@ public:
     JobSystem& operator=(const JobSystem&) = delete;
     ~JobSystem();
 
-    [[nodiscard]] std::uint32_t workerCount() const
-    {
-        return static_cast<std::uint32_t>(m_workers.size());
-    }
+    [[nodiscard]] std::uint32_t workerCount() const { return static_cast<std::uint32_t>(m_workers.size()); }
 
     // Enqueue fn(user). Everything user points at must stay valid until a
     // wait on the counter returns.
@@ -74,13 +71,13 @@ public:
             std::uint32_t chunkSize = 0;
             std::atomic<std::uint32_t> next{0};
         };
+
         Context context{.fn = &fn, .count = count, .chunkSize = chunkSize};
 
         const auto run = [](void* user) {
             Context* ctx = static_cast<Context*>(user);
             for (;;) {
-                const std::uint32_t begin =
-                    ctx->next.fetch_add(ctx->chunkSize, std::memory_order_relaxed);
+                const std::uint32_t begin = ctx->next.fetch_add(ctx->chunkSize, std::memory_order_relaxed);
                 if (begin >= ctx->count) {
                     break;
                 }

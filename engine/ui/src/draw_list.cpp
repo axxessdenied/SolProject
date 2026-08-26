@@ -13,8 +13,7 @@ std::uint32_t packColor(const Color& color)
     const auto channel = [](float value) {
         return static_cast<std::uint32_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
     };
-    return channel(color.r) | (channel(color.g) << 8) | (channel(color.b) << 16) |
-           (channel(color.a) << 24);
+    return channel(color.r) | (channel(color.g) << 8) | (channel(color.b) << 16) | (channel(color.a) << 24);
 }
 
 // A 1x1 white texture samples the same everywhere; the middle avoids any
@@ -93,8 +92,7 @@ bool DrawList::reserve(std::size_t vertexCount, std::size_t indexCount)
 {
     // Vertex indices are 16-bit, so the cap is a hard correctness limit rather
     // than a tuning knob: overflowing would silently draw garbage.
-    if (m_vertices.size() + vertexCount > kMaxVertices ||
-        m_indices.size() + indexCount > kMaxIndices) {
+    if (m_vertices.size() + vertexCount > kMaxVertices || m_indices.size() + indexCount > kMaxIndices) {
         m_overflowed = true;
         return false;
     }
@@ -110,11 +108,14 @@ bool DrawList::clipIsEmpty() const
     return clip.max.x <= clip.min.x || clip.max.y <= clip.min.y;
 }
 
-void DrawList::addQuad(core::Vec2 topLeft, core::Vec2 bottomRight, core::Vec2 uvMin, core::Vec2 uvMax,
-                       const Color& color, std::uint32_t texture)
+void DrawList::addQuad(core::Vec2 topLeft,
+                       core::Vec2 bottomRight,
+                       core::Vec2 uvMin,
+                       core::Vec2 uvMax,
+                       const Color& color,
+                       std::uint32_t texture)
 {
-    if (color.a <= 0.0f || bottomRight.x <= topLeft.x || bottomRight.y <= topLeft.y ||
-        clipIsEmpty()) {
+    if (color.a <= 0.0f || bottomRight.x <= topLeft.x || bottomRight.y <= topLeft.y || clipIsEmpty()) {
         return;
     }
     if (!reserve(4, 6)) {
@@ -202,8 +203,13 @@ void DrawList::addLine(core::Vec2 from, core::Vec2 to, const Color& color, float
     m_batches.back().indexCount += 6;
 }
 
-void DrawList::addArc(core::Vec2 center, float radius, float startAngle, float endAngle,
-                      const Color& color, float thickness, int segments)
+void DrawList::addArc(core::Vec2 center,
+                      float radius,
+                      float startAngle,
+                      float endAngle,
+                      const Color& color,
+                      float thickness,
+                      int segments)
 {
     const float sweep = endAngle - startAngle;
     if (radius <= 0.0f || thickness <= 0.0f || color.a <= 0.0f || sweep == 0.0f || clipIsEmpty()) {
@@ -226,14 +232,11 @@ void DrawList::addArc(core::Vec2 center, float radius, float startAngle, float e
     const std::uint16_t base = static_cast<std::uint16_t>(m_vertices.size());
     const std::uint32_t packed = packColor(color);
     for (int step = 0; step <= steps; ++step) {
-        const float angle =
-            startAngle + sweep * (static_cast<float>(step) / static_cast<float>(steps));
+        const float angle = startAngle + sweep * (static_cast<float>(step) / static_cast<float>(steps));
         const float cosAngle = std::cos(angle);
         const float sinAngle = std::sin(angle);
-        m_vertices.push_back(
-            {{center.x + cosAngle * inner, center.y + sinAngle * inner}, kWhiteUv, packed});
-        m_vertices.push_back(
-            {{center.x + cosAngle * outer, center.y + sinAngle * outer}, kWhiteUv, packed});
+        m_vertices.push_back({{center.x + cosAngle * inner, center.y + sinAngle * inner}, kWhiteUv, packed});
+        m_vertices.push_back({{center.x + cosAngle * outer, center.y + sinAngle * outer}, kWhiteUv, packed});
     }
     for (int step = 0; step < steps; ++step) {
         const std::uint16_t pair = static_cast<std::uint16_t>(base + step * 2);
@@ -245,8 +248,7 @@ void DrawList::addArc(core::Vec2 center, float radius, float startAngle, float e
     m_batches.back().indexCount += static_cast<std::uint32_t>(indexCount);
 }
 
-void DrawList::addCircle(core::Vec2 center, float radius, const Color& color, float thickness,
-                         int segments)
+void DrawList::addCircle(core::Vec2 center, float radius, const Color& color, float thickness, int segments)
 {
     addArc(center, radius, 0.0f, 6.28318531f, color, thickness, segments);
 }
@@ -277,8 +279,8 @@ void DrawList::addRoundedRect(const Rect& rect, float radius, const Color& color
         for (int step = 0; step <= segments; ++step) {
             const float angle =
                 startAngles[corner] + 1.57079633f * static_cast<float>(step) / static_cast<float>(segments);
-            perimeter.push_back({centers[corner].x + std::cos(angle) * r,
-                                 centers[corner].y + std::sin(angle) * r});
+            perimeter.push_back(
+                {centers[corner].x + std::cos(angle) * r, centers[corner].y + std::sin(angle) * r});
         }
     }
 
@@ -291,8 +293,8 @@ void DrawList::addRoundedRect(const Rect& rect, float radius, const Color& color
 
     const std::uint16_t base = static_cast<std::uint16_t>(m_vertices.size());
     const std::uint32_t packed = packColor(color);
-    m_vertices.push_back({{(rect.min.x + rect.max.x) * 0.5f, (rect.min.y + rect.max.y) * 0.5f}, kWhiteUv,
-                          packed});
+    m_vertices.push_back(
+        {{(rect.min.x + rect.max.x) * 0.5f, (rect.min.y + rect.max.y) * 0.5f}, kWhiteUv, packed});
     for (const core::Vec2& point : perimeter) {
         m_vertices.push_back({point, kWhiteUv, packed});
     }
@@ -305,7 +307,9 @@ void DrawList::addRoundedRect(const Rect& rect, float radius, const Color& color
     m_batches.back().indexCount += static_cast<std::uint32_t>(fanIndices);
 }
 
-float DrawList::addText(const assets::FontStyleRecord& style, core::Vec2 position, std::string_view text,
+float DrawList::addText(const assets::FontStyleRecord& style,
+                        core::Vec2 position,
+                        std::string_view text,
                         const Color& color)
 {
     if (m_font == nullptr || !m_font->valid() || text.empty() || color.a <= 0.0f) {
@@ -343,8 +347,11 @@ float DrawList::addText(const assets::FontStyleRecord& style, core::Vec2 positio
     return pen - position.x;
 }
 
-float DrawList::addTextInBox(const assets::FontStyleRecord& style, const Rect& box,
-                             std::string_view text, const Color& color, TextAlign align)
+float DrawList::addTextInBox(const assets::FontStyleRecord& style,
+                             const Rect& box,
+                             std::string_view text,
+                             const Color& color,
+                             TextAlign align)
 {
     if (m_font == nullptr || !m_font->valid()) {
         return 0.0f;

@@ -35,8 +35,7 @@ namespace {
 [[nodiscard]] bool isCookedOutput(const std::string& name)
 {
     const std::string extension = lowerExtension(name);
-    return extension == ".smesh" || extension == ".stex" || extension == ".saud" ||
-           extension == ".sfont";
+    return extension == ".smesh" || extension == ".stex" || extension == ".saud" || extension == ".sfont";
 }
 
 } // namespace

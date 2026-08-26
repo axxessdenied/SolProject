@@ -19,12 +19,17 @@ namespace {
 
 using core::TomlValue;
 
-constexpr const char* kPrimitiveNames[] = {"group",         "box",     "beam",    "torus",
-                                           "flat_triangle", "revolve", "extrude", "mesh"};
+constexpr const char* kPrimitiveNames[] = {
+    "group", "box", "beam", "torus", "flat_triangle", "revolve", "extrude", "mesh"};
 constexpr ForgePrimitive kPrimitives[] = {
-    ForgePrimitive::Group,        ForgePrimitive::Box,     ForgePrimitive::Beam,
-    ForgePrimitive::Torus,        ForgePrimitive::FlatTriangle, ForgePrimitive::Revolve,
-    ForgePrimitive::Extrude,      ForgePrimitive::Mesh,
+    ForgePrimitive::Group,
+    ForgePrimitive::Box,
+    ForgePrimitive::Beam,
+    ForgePrimitive::Torus,
+    ForgePrimitive::FlatTriangle,
+    ForgePrimitive::Revolve,
+    ForgePrimitive::Extrude,
+    ForgePrimitive::Mesh,
 };
 
 // ⚑ Where every comment and blank line in the source sat, so the writer can put
@@ -352,8 +357,7 @@ struct Reader
             out.profile.clear();
             for (std::size_t i = 0; i < value.size(); ++i) {
                 const TomlValue& pair = value[i];
-                if (!pair.isArray() || pair.size() != 2 ||
-                    (!pair[0].isFloat() && !pair[0].isInteger()) ||
+                if (!pair.isArray() || pair.size() != 2 || (!pair[0].isFloat() && !pair[0].isInteger()) ||
                     (!pair[1].isFloat() && !pair[1].isInteger())) {
                     fail(std::string("'") + spec.name + "' must be an array of [x, y] pairs");
                     return false;
@@ -386,9 +390,8 @@ struct Reader
                     }
                     parts[c] = row[c].asFloat();
                 }
-                out.vertices.push_back({{parts[0], parts[1], parts[2]},
-                                        {parts[3], parts[4], parts[5]},
-                                        {parts[6], parts[7]}});
+                out.vertices.push_back(
+                    {{parts[0], parts[1], parts[2]}, {parts[3], parts[4], parts[5]}, {parts[6], parts[7]}});
             }
             return true;
         }
@@ -402,8 +405,7 @@ struct Reader
             for (std::size_t i = 0; i < value.size(); ++i) {
                 const TomlValue& element = value[i];
                 if (!element.isInteger() || element.asInteger() < 0) {
-                    fail(std::string("'") + spec.name +
-                         "' must be an array of whole numbers, none negative");
+                    fail(std::string("'") + spec.name + "' must be an array of whole numbers, none negative");
                     return false;
                 }
                 out.indices.push_back(static_cast<std::uint32_t>(element.asInteger()));
@@ -435,11 +437,9 @@ struct Reader
         // Deepest ancestor first, so each step composes onto a resolved parent.
         for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
             const ForgePart& part = doc.parts[*it];
-            const std::size_t parent = part.parent.empty() ? std::string::npos
-                                                           : doc.indexOf(part.parent);
-            world[*it] = parent == std::string::npos
-                             ? part.localTransform()
-                             : world[parent] * part.localTransform();
+            const std::size_t parent = part.parent.empty() ? std::string::npos : doc.indexOf(part.parent);
+            world[*it] =
+                parent == std::string::npos ? part.localTransform() : world[parent] * part.localTransform();
             resolved[*it] = true;
         }
     }
@@ -617,8 +617,8 @@ std::string ForgeDoc::uniqueId(const std::string& base) const
     return base;
 }
 
-bool parseForge(const char* text, std::size_t length, const char* sourceName, ForgeDoc& out,
-                std::string* error)
+bool parseForge(
+    const char* text, std::size_t length, const char* sourceName, ForgeDoc& out, std::string* error)
 {
     TomlValue root;
     std::string tomlError;
@@ -747,8 +747,8 @@ bool parseForge(const char* text, std::size_t length, const char* sourceName, Fo
             // author staring at a torus that ignored the number they typed.
             const std::span<const ForgeParamSpec> schema = forgeParams(part.primitive);
             for (const auto& [key, value] : table.members()) {
-                if (key == "id" || key == "type" || key == "parent" || key == "origin" ||
-                    key == "position" || key == "rotation" || key == "scale") {
+                if (key == "id" || key == "type" || key == "parent" || key == "origin" || key == "position" ||
+                    key == "rotation" || key == "scale") {
                     continue;
                 }
                 const ForgeParamSpec* spec = nullptr;
@@ -759,8 +759,7 @@ bool parseForge(const char* text, std::size_t length, const char* sourceName, Fo
                     }
                 }
                 if (spec == nullptr) {
-                    reader.fail("'" + key + "' is not a parameter of " +
-                                forgePrimitiveName(part.primitive));
+                    reader.fail("'" + key + "' is not a parameter of " + forgePrimitiveName(part.primitive));
                     return false;
                 }
                 ForgeValue parsed;
@@ -871,8 +870,7 @@ std::string writeForge(const ForgeDoc& doc)
             appendVec(out, part.position);
             out += "\n";
         }
-        if (part.rotationDegrees.x != 0.0 || part.rotationDegrees.y != 0.0 ||
-            part.rotationDegrees.z != 0.0) {
+        if (part.rotationDegrees.x != 0.0 || part.rotationDegrees.y != 0.0 || part.rotationDegrees.z != 0.0) {
             out += "rotation = ";
             appendVec(out, part.rotationDegrees);
             out += "\n";
@@ -945,10 +943,14 @@ std::string writeForge(const ForgeDoc& doc)
                 out += "[\n";
                 for (const ForgeVertex& vertex : authored->vertices) {
                     out += "  [";
-                    const double numbers[8] = {vertex.position.x, vertex.position.y,
-                                               vertex.position.z, vertex.normal.x,
-                                               vertex.normal.y,   vertex.normal.z,
-                                               vertex.uv.u,       vertex.uv.v};
+                    const double numbers[8] = {vertex.position.x,
+                                               vertex.position.y,
+                                               vertex.position.z,
+                                               vertex.normal.x,
+                                               vertex.normal.y,
+                                               vertex.normal.z,
+                                               vertex.uv.u,
+                                               vertex.uv.v};
                     for (std::size_t i = 0; i < std::size(numbers); ++i) {
                         if (i != 0) {
                             out += ", ";
@@ -999,10 +1001,9 @@ ForgePart forgeBakePart(const std::string& id, const MeshData& mesh)
     ForgeValue vertices;
     vertices.vertices.reserve(mesh.vertices.size());
     for (const MeshVertex& vertex : mesh.vertices) {
-        vertices.vertices.push_back(
-            {{vertex.position[0], vertex.position[1], vertex.position[2]},
-             {vertex.normal[0], vertex.normal[1], vertex.normal[2]},
-             {vertex.uv[0], vertex.uv[1]}});
+        vertices.vertices.push_back({{vertex.position[0], vertex.position[1], vertex.position[2]},
+                                     {vertex.normal[0], vertex.normal[1], vertex.normal[2]},
+                                     {vertex.uv[0], vertex.uv[1]}});
     }
     part.set("vertices", vertices);
 
@@ -1025,12 +1026,14 @@ namespace {
     case ForgePrimitive::Group:
         break;
     case ForgePrimitive::Box:
-        builder.addBox(part.value("center").vec, part.value("size").vec,
-                       part.value("tile").scalar);
+        builder.addBox(part.value("center").vec, part.value("size").vec, part.value("tile").scalar);
         break;
     case ForgePrimitive::Beam:
-        builder.addBeam(part.value("from").vec, part.value("to").vec, part.value("width").scalar,
-                        part.value("height").scalar, part.value("tile").scalar);
+        builder.addBeam(part.value("from").vec,
+                        part.value("to").vec,
+                        part.value("width").scalar,
+                        part.value("height").scalar,
+                        part.value("tile").scalar);
         break;
     case ForgePrimitive::Torus: {
         const auto segU = static_cast<std::uint32_t>(part.value("segments_u").scalar);
@@ -1041,26 +1044,32 @@ namespace {
             }
             return false;
         }
-        builder.addTorus(part.value("major_radius").scalar, part.value("tube_radius").scalar, segU,
-                         segV, part.value("u_tiles").scalar);
+        builder.addTorus(part.value("major_radius").scalar,
+                         part.value("tube_radius").scalar,
+                         segU,
+                         segV,
+                         part.value("u_tiles").scalar);
         break;
     }
     case ForgePrimitive::FlatTriangle:
-        builder.addFlatTriangle(part.value("p0").vec, part.value("p1").vec, part.value("p2").vec,
-                                part.value("uv0").uv, part.value("uv1").uv, part.value("uv2").uv);
+        builder.addFlatTriangle(part.value("p0").vec,
+                                part.value("p1").vec,
+                                part.value("p2").vec,
+                                part.value("uv0").uv,
+                                part.value("uv1").uv,
+                                part.value("uv2").uv);
         break;
     case ForgePrimitive::Revolve: {
         const ForgeValue profile = part.value("profile");
         const auto segments = static_cast<std::uint32_t>(part.value("segments").scalar);
         if (profile.profile.size() < 2 || segments < 3) {
             if (error != nullptr) {
-                *error = "part '" + part.id +
-                         "': a revolve needs at least 2 profile points and 3 segments";
+                *error = "part '" + part.id + "': a revolve needs at least 2 profile points and 3 segments";
             }
             return false;
         }
-        builder.addRevolve(profile.profile, segments, part.value("u_tiles").scalar,
-                           part.value("cap_ends").scalar != 0.0);
+        builder.addRevolve(
+            profile.profile, segments, part.value("u_tiles").scalar, part.value("cap_ends").scalar != 0.0);
         break;
     }
     case ForgePrimitive::Extrude: {
@@ -1071,8 +1080,11 @@ namespace {
             }
             return false;
         }
-        builder.addExtrude(outline.profile, part.value("from").vec, part.value("to").vec,
-                           part.value("tile").scalar, part.value("cap_ends").scalar != 0.0);
+        builder.addExtrude(outline.profile,
+                           part.value("from").vec,
+                           part.value("to").vec,
+                           part.value("tile").scalar,
+                           part.value("cap_ends").scalar != 0.0);
         break;
     }
     case ForgePrimitive::Mesh: {
@@ -1111,8 +1123,8 @@ namespace {
             builder.addVertex(vertex.position, vertex.normal, vertex.uv);
         }
         for (std::size_t t = 0; t + 2 < indices->indices.size(); t += 3) {
-            builder.addTriangle(base + indices->indices[t], base + indices->indices[t + 1],
-                                base + indices->indices[t + 2]);
+            builder.addTriangle(
+                base + indices->indices[t], base + indices->indices[t + 1], base + indices->indices[t + 2]);
         }
         break;
     }
@@ -1167,8 +1179,7 @@ bool forgeBakeDocumentPart(ForgeDoc& doc, std::size_t partIndex, std::string* er
     return true;
 }
 
-bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error,
-                std::vector<ForgePartRange>* ranges)
+bool buildForge(const ForgeDoc& doc, MeshData& out, std::string* error, std::vector<ForgePartRange>* ranges)
 {
     const std::vector<BuildTransform> world = worldTransforms(doc);
     if (ranges != nullptr) {
@@ -1302,7 +1313,8 @@ constexpr double kCentreStepsPerMetre = 20000.0; // 0.05 mm
 
 [[nodiscard]] BuildPoint quantizeCentre(BuildPoint p)
 {
-    return {quantizeTo(p.x, kCentreStepsPerMetre), quantizeTo(p.y, kCentreStepsPerMetre),
+    return {quantizeTo(p.x, kCentreStepsPerMetre),
+            quantizeTo(p.y, kCentreStepsPerMetre),
             quantizeTo(p.z, kCentreStepsPerMetre)};
 }
 
@@ -1356,9 +1368,13 @@ namespace {
 // `forgeTopology` run. It also reports which point each built vertex landed on,
 // which is what lets the edges be expressed in the SAME numbering as the points
 // rather than in `MeshAdjacency`'s - see `ForgeEdge` for why that matters.
-bool collectPoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, MeshData& mesh,
-                   std::vector<std::uint32_t>& pointOf, std::vector<std::size_t>& ownerOf,
-                   std::string* error, double tolerance)
+bool collectPoints(const ForgeDoc& doc,
+                   std::vector<ForgePoint>& out,
+                   MeshData& mesh,
+                   std::vector<std::uint32_t>& pointOf,
+                   std::vector<std::size_t>& ownerOf,
+                   std::string* error,
+                   double tolerance)
 {
     out.clear();
     pointOf.clear();
@@ -1462,8 +1478,8 @@ bool collectPoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, MeshData& 
             // thinner than the distance that makes two corners ONE POINT has
             // already collapsed as far as this function is concerned.
             const BuildPoint size = part.value("size").vec;
-            const bool solid = std::abs(size.x) > tolerance && std::abs(size.y) > tolerance &&
-                               std::abs(size.z) > tolerance;
+            const bool solid =
+                std::abs(size.x) > tolerance && std::abs(size.y) > tolerance && std::abs(size.z) > tolerance;
             if (solid && local < 24) {
                 write = {owner, ForgeWriteKind::BoxCorner, "center+size", kBoxCornerCode[local]};
                 answered = true;
@@ -1512,8 +1528,7 @@ bool collectPoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, MeshData& 
 
 } // namespace
 
-bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string* error,
-                 double tolerance)
+bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string* error, double tolerance)
 {
     MeshData mesh;
     std::vector<std::uint32_t> pointOf;
@@ -1521,9 +1536,12 @@ bool forgePoints(const ForgeDoc& doc, std::vector<ForgePoint>& out, std::string*
     return collectPoints(doc, out, mesh, pointOf, ownerOf, error, tolerance);
 }
 
-bool forgeTopology(const ForgeDoc& doc, std::vector<ForgePoint>& points,
-                   std::vector<ForgeEdge>& edges, std::vector<ForgeFace>& faces,
-                   std::string* error, double tolerance)
+bool forgeTopology(const ForgeDoc& doc,
+                   std::vector<ForgePoint>& points,
+                   std::vector<ForgeEdge>& edges,
+                   std::vector<ForgeFace>& faces,
+                   std::string* error,
+                   double tolerance)
 {
     edges.clear();
     faces.clear();
@@ -1620,8 +1638,12 @@ namespace {
 
 } // namespace
 
-bool forgePickFace(std::span<const ForgePoint> points, std::span<const ForgeFace> faces,
-                   BuildPoint origin, BuildPoint direction, std::size_t& face, double& distance)
+bool forgePickFace(std::span<const ForgePoint> points,
+                   std::span<const ForgeFace> faces,
+                   BuildPoint origin,
+                   BuildPoint direction,
+                   std::size_t& face,
+                   double& distance)
 {
     // ⚑ Möller-Trumbore, and the thing worth knowing about it is that it never
     // builds the plane: it solves the ray against the triangle's own barycentric
@@ -1638,8 +1660,7 @@ bool forgePickFace(std::span<const ForgePoint> points, std::span<const ForgeFace
 
     for (std::size_t i = 0; i < faces.size(); ++i) {
         const ForgeFace& candidate = faces[i];
-        if (candidate.a >= points.size() || candidate.b >= points.size() ||
-            candidate.c >= points.size()) {
+        if (candidate.a >= points.size() || candidate.b >= points.size() || candidate.c >= points.size()) {
             continue;
         }
         const BuildPoint& a = points[candidate.a].position;
@@ -1683,8 +1704,10 @@ bool forgePickFace(std::span<const ForgePoint> points, std::span<const ForgeFace
     return hit;
 }
 
-void forgeFaceGroup(std::span<const ForgePoint> points, std::span<const ForgeFace> faces,
-                    std::size_t seed, std::vector<std::uint32_t>& out)
+void forgeFaceGroup(std::span<const ForgePoint> points,
+                    std::span<const ForgeFace> faces,
+                    std::size_t seed,
+                    std::vector<std::uint32_t>& out)
 {
     out.clear();
     if (seed >= faces.size()) {
@@ -1757,8 +1780,11 @@ namespace {
 // singular world transform has to abort the whole move, not half of it: a hull
 // with three of its five corners updated is a seam, which is the exact defect
 // this function exists to prevent.
-bool localDeltasFor(const ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
-                    BuildPoint delta, std::vector<BuildPoint>& out, std::string* error)
+bool localDeltasFor(const ForgeDoc& doc,
+                    const std::vector<ForgePointWrite>& writes,
+                    BuildPoint delta,
+                    std::vector<BuildPoint>& out,
+                    std::string* error)
 {
     const std::vector<BuildTransform> world = worldTransforms(doc);
     out.assign(writes.size(), BuildPoint{0, 0, 0});
@@ -1791,8 +1817,10 @@ bool localDeltasFor(const ForgeDoc& doc, const std::vector<ForgePointWrite>& wri
 // point and moving a SET of them are one implementation of what a write means -
 // the trap this programme has already paid for twice, most recently when the
 // bake and the build were two answers to what a `box` is.
-bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
-                 const std::vector<BuildPoint>& localDelta, std::string* error);
+bool applyWrites(ForgeDoc& doc,
+                 const std::vector<ForgePointWrite>& writes,
+                 const std::vector<BuildPoint>& localDelta,
+                 std::string* error);
 
 } // namespace
 
@@ -1801,7 +1829,7 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
     if (!point.movable()) {
         if (error != nullptr) {
             *error = "this point has a corner with no parametric answer - bake its part first, "
-                 "which makes its vertices authored numbers without changing what is drawn";
+                     "which makes its vertices authored numbers without changing what is drawn";
         }
         return false;
     }
@@ -1815,10 +1843,11 @@ bool forgeMovePoint(ForgeDoc& doc, const ForgePoint& point, BuildPoint delta, st
 
 namespace {
 
-bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
-                 const std::vector<BuildPoint>& localDelta, std::string* error)
+bool applyWrites(ForgeDoc& doc,
+                 const std::vector<ForgePointWrite>& writes,
+                 const std::vector<BuildPoint>& localDelta,
+                 std::string* error)
 {
-
     // ⚑ The second half of the same all-or-nothing rule, and both guards below
     // are for states the PRIMITIVE answers in silence rather than for arithmetic
     // that could go wrong. A box whose `size` crosses zero turns inside out -
@@ -1842,8 +1871,7 @@ bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
             // refuses and the box that drag would have produced are one box.
             const BuildPoint grown =
                 quantizePoint(boxSizeAfter(size, write.element, quantizePoint(localDelta[i])));
-            if ((size.x * grown.x) <= 0.0 || (size.y * grown.y) <= 0.0 ||
-                (size.z * grown.z) <= 0.0) {
+            if ((size.x * grown.x) <= 0.0 || (size.y * grown.y) <= 0.0 || (size.z * grown.z) <= 0.0) {
                 if (error != nullptr) {
                     *error = "this drag pushes box '" + part.id +
                              "' through its own opposite corner, which turns it inside out";
@@ -1858,8 +1886,7 @@ bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
             BuildPoint& end = write.element == 0 ? from : to;
             // Quantized here as well as at the write, so the run this refuses
             // on and the run the beam ends up with are the same number.
-            end = quantizePoint(
-                {end.x + localDelta[i].x, end.y + localDelta[i].y, end.z + localDelta[i].z});
+            end = quantizePoint({end.x + localDelta[i].x, end.y + localDelta[i].y, end.z + localDelta[i].z});
             const double dx = to.x - from.x;
             const double dy = to.y - from.y;
             const double dz = to.z - from.z;
@@ -1913,8 +1940,8 @@ bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
             // to, so an unmoved point writes back the author's own number
             // rather than a float round trip of it.
             ForgeValue value = part.value(write.param.c_str());
-            const BuildPoint moved = quantizePoint(
-                {value.vec.x + local.x, value.vec.y + local.y, value.vec.z + local.z});
+            const BuildPoint moved =
+                quantizePoint({value.vec.x + local.x, value.vec.y + local.y, value.vec.z + local.z});
             if (samePoint(moved, value.vec)) {
                 continue;
             }
@@ -1925,8 +1952,8 @@ bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
         case ForgeWriteKind::BakedVertex: {
             ForgeValue vertices = part.value("vertices");
             BuildPoint& position = vertices.vertices[write.element].position;
-            const BuildPoint moved = quantizePoint(
-                {position.x + local.x, position.y + local.y, position.z + local.z});
+            const BuildPoint moved =
+                quantizePoint({position.x + local.x, position.y + local.y, position.z + local.z});
             if (samePoint(moved, position)) {
                 continue;
             }
@@ -1959,8 +1986,8 @@ bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
             // Two clean decimals do not add to a clean decimal in binary. Both
             // roundings here are exact no-ops on the VALUE - they only strip
             // noise - so the far corner still cancels as it always did.
-            center.vec = quantizeCentre({center.vec.x + (step.x / 2), center.vec.y + (step.y / 2),
-                                         center.vec.z + (step.z / 2)});
+            center.vec = quantizeCentre(
+                {center.vec.x + (step.x / 2), center.vec.y + (step.y / 2), center.vec.z + (step.z / 2)});
             size.vec = quantizePoint(boxSizeAfter(size.vec, write.element, step));
             part.set("center", center);
             part.set("size", size);
@@ -1969,8 +1996,8 @@ bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
         case ForgeWriteKind::BeamEnd: {
             const char* const name = write.element == 0 ? "from" : "to";
             ForgeValue end = part.value(name);
-            const BuildPoint moved = quantizePoint(
-                {end.vec.x + local.x, end.vec.y + local.y, end.vec.z + local.z});
+            const BuildPoint moved =
+                quantizePoint({end.vec.x + local.x, end.vec.y + local.y, end.vec.z + local.z});
             if (samePoint(moved, end.vec)) {
                 continue;
             }
@@ -1985,8 +2012,8 @@ bool applyWrites(ForgeDoc& doc, const std::vector<ForgePointWrite>& writes,
 
 } // namespace
 
-bool forgeMovePoints(ForgeDoc& doc, std::span<const ForgePoint> points, BuildPoint delta,
-                     bool* dropped, std::string* error)
+bool forgeMovePoints(
+    ForgeDoc& doc, std::span<const ForgePoint> points, BuildPoint delta, bool* dropped, std::string* error)
 {
     if (dropped != nullptr) {
         *dropped = false;
@@ -2031,11 +2058,10 @@ bool forgeMovePoints(ForgeDoc& doc, std::span<const ForgePoint> points, BuildPoi
             // per part, so this only ever removes a genuine duplicate.
             std::size_t existing = collapsed.size();
             for (std::size_t i = 0; i < collapsed.size(); ++i) {
-                const bool same = collapsed[i].part == write.part &&
-                                  collapsed[i].kind == write.kind &&
-                                  (write.kind == ForgeWriteKind::BoxCorner ||
-                                   (collapsed[i].element == write.element &&
-                                    collapsed[i].param == write.param));
+                const bool same =
+                    collapsed[i].part == write.part && collapsed[i].kind == write.kind &&
+                    (write.kind == ForgeWriteKind::BoxCorner ||
+                     (collapsed[i].element == write.element && collapsed[i].param == write.param));
                 if (same) {
                     existing = i;
                     break;
@@ -2176,6 +2202,7 @@ struct BakedLists
 {
     ForgeValue* vertices = nullptr;
     ForgeValue* indices = nullptr;
+
     [[nodiscard]] bool valid() const { return vertices != nullptr && indices != nullptr; }
 };
 
@@ -2237,8 +2264,7 @@ bool forgeMergeParts(ForgeDoc& doc, std::size_t partA, std::size_t partB, std::s
     for (const std::size_t index : {keep, consume}) {
         if (doc.parts[index].primitive == ForgePrimitive::Group) {
             if (error != nullptr) {
-                *error = "part '" + doc.parts[index].id +
-                         "' is a group: it carries no geometry to merge";
+                *error = "part '" + doc.parts[index].id + "' is a group: it carries no geometry to merge";
             }
             return false;
         }
@@ -2280,16 +2306,14 @@ bool forgeMergeParts(ForgeDoc& doc, std::size_t partA, std::size_t partB, std::s
     ForgeValue* const targetIndices = findMutable(working.parts[keep], "indices");
     const ForgeValue* const source = findMutable(working.parts[consume], "vertices");
     const ForgeValue* const sourceIndices = findMutable(working.parts[consume], "indices");
-    if (target == nullptr || targetIndices == nullptr || source == nullptr ||
-        sourceIndices == nullptr) {
+    if (target == nullptr || targetIndices == nullptr || source == nullptr || sourceIndices == nullptr) {
         if (error != nullptr) {
             *error = "a merged part lost its lists";
         }
         return false;
     }
     const auto base = static_cast<std::uint32_t>(target->vertices.size());
-    target->vertices.insert(target->vertices.end(), source->vertices.begin(),
-                            source->vertices.end());
+    target->vertices.insert(target->vertices.end(), source->vertices.begin(), source->vertices.end());
     targetIndices->indices.reserve(targetIndices->indices.size() + sourceIndices->indices.size());
     for (const std::uint32_t index : sourceIndices->indices) {
         targetIndices->indices.push_back(base + index);
@@ -2299,8 +2323,11 @@ bool forgeMergeParts(ForgeDoc& doc, std::size_t partA, std::size_t partB, std::s
     return true;
 }
 
-bool forgeSplitEdge(ForgeDoc& doc, std::span<const ForgePoint> points,
-                    std::span<const ForgeFace> faces, std::uint32_t a, std::uint32_t b,
+bool forgeSplitEdge(ForgeDoc& doc,
+                    std::span<const ForgePoint> points,
+                    std::span<const ForgeFace> faces,
+                    std::uint32_t a,
+                    std::uint32_t b,
                     std::string* error)
 {
     if (a == b || a >= points.size() || b >= points.size()) {
@@ -2409,9 +2436,8 @@ bool forgeSplitEdge(ForgeDoc& doc, std::span<const ForgePoint> points,
                 made.position = {(one.position.x + two.position.x) * 0.5,
                                  (one.position.y + two.position.y) * 0.5,
                                  (one.position.z + two.position.z) * 0.5};
-                made.normal = core::normalize(BuildPoint{one.normal.x + two.normal.x,
-                                                         one.normal.y + two.normal.y,
-                                                         one.normal.z + two.normal.z});
+                made.normal = core::normalize(BuildPoint{
+                    one.normal.x + two.normal.x, one.normal.y + two.normal.y, one.normal.z + two.normal.z});
                 if (made.normal.x == 0.0 && made.normal.y == 0.0 && made.normal.z == 0.0) {
                     made.normal = one.normal; // two normals that cancel: keep one
                 }
@@ -2433,8 +2459,11 @@ bool forgeSplitEdge(ForgeDoc& doc, std::span<const ForgePoint> points,
     return true;
 }
 
-bool forgeExtrudeFaces(ForgeDoc& doc, std::span<const ForgeFace> faces,
-                       std::span<const std::uint32_t> group, double* offset, std::string* error)
+bool forgeExtrudeFaces(ForgeDoc& doc,
+                       std::span<const ForgeFace> faces,
+                       std::span<const std::uint32_t> group,
+                       double* offset,
+                       std::string* error)
 {
     if (offset != nullptr) {
         *offset = 0.0;
@@ -2462,8 +2491,8 @@ bool forgeExtrudeFaces(ForgeDoc& doc, std::span<const ForgeFace> faces,
     for (const std::uint32_t index : group) {
         if (faces[index].part != part) {
             if (error != nullptr) {
-                *error = "this face is made of triangles from part '" + doc.parts[part].id +
-                         "' and part '" + doc.parts[faces[index].part].id +
+                *error = "this face is made of triangles from part '" + doc.parts[part].id + "' and part '" +
+                         doc.parts[faces[index].part].id +
                          "' - merge them into one part first, and the extrude will have somewhere "
                          "to put the walls it raises";
             }
@@ -2564,14 +2593,13 @@ bool forgeExtrudeFaces(ForgeDoc& doc, std::span<const ForgeFace> faces,
     sides.reserve(triangles.size() * 3);
     for (std::size_t t = 0; t < triangles.size(); ++t) {
         for (std::size_t corner = 0; corner < 3; ++corner) {
-            sides.emplace_back(localOfCorner[(t * 3) + corner],
-                               localOfCorner[(t * 3) + ((corner + 1) % 3)]);
+            sides.emplace_back(localOfCorner[(t * 3) + corner], localOfCorner[(t * 3) + ((corner + 1) % 3)]);
         }
     }
     std::vector<std::pair<std::uint32_t, std::uint32_t>> border;
     for (const std::pair<std::uint32_t, std::uint32_t>& side : sides) {
-        const bool paired = std::find(sides.begin(), sides.end(),
-                                      std::pair{side.second, side.first}) != sides.end();
+        const bool paired =
+            std::find(sides.begin(), sides.end(), std::pair{side.second, side.first}) != sides.end();
         if (!paired) {
             border.push_back(side);
         }

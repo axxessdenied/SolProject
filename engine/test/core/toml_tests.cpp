@@ -1,5 +1,4 @@
 #include "sol/core/toml.hpp"
-
 #include "sol/test/test.hpp"
 
 #include <cmath>
@@ -102,8 +101,8 @@ SOL_TEST(toml_arraysIncludingMultiline)
     const TomlValue& sizes = *root.find("sizes");
     SOL_CHECK(sizes.size() == 3 && sizes[2].asInteger() == 3);
     const TomlValue& mixed = *root.find("mixed");
-    SOL_CHECK(mixed[0].asString() == "a" && mixed[1].asInteger() == 5 &&
-              mixed[2].asFloat() == 1.5 && mixed[3].asBool());
+    SOL_CHECK(mixed[0].asString() == "a" && mixed[1].asInteger() == 5 && mixed[2].asFloat() == 1.5 &&
+              mixed[3].asBool());
     SOL_CHECK((*root.find("nested"))[0].size() == 2);
     const TomlValue& spread = *root.find("spread");
     SOL_CHECK(spread.size() == 3 && spread[1].asInteger() == 20);

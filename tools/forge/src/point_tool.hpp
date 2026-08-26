@@ -129,6 +129,7 @@ public:
     // highlight alive in the mode you cannot see is how "I clicked and nothing
     // happened" gets written down as a defect.
     void setMode(Mode mode);
+
     [[nodiscard]] Mode mode() const { return m_mode; }
 
     // Hover, pick and drag. Returns true when the document changed and the
@@ -153,8 +154,10 @@ public:
     // value by construction (`main.cpp` draws the lines before it submits the
     // panel) and the caller must take it EVERY frame; see
     // `PartEditor::takeHoveredPart`.
-    void drawMarkers(sol::renderer::DebugDrawRenderer& lines, const Viewport& viewport,
-                     std::size_t selectedPart, std::size_t listHoverPart) const;
+    void drawMarkers(sol::renderer::DebugDrawRenderer& lines,
+                     const Viewport& viewport,
+                     std::size_t selectedPart,
+                     std::size_t listHoverPart) const;
     // The panel section. Returns true when the document changed and the caller
     // must rebuild.
     //
@@ -198,8 +201,7 @@ private:
     // The face the cursor's ray enters first, WIDENED to its coplanar group -
     // see forgeFaceGroup for why the widening cannot wait until the write.
     // Fills m_group; returns the seed face or kNone.
-    [[nodiscard]] std::size_t pickFaceAt(const Viewport& viewport,
-                                         std::vector<std::uint32_t>& group) const;
+    [[nodiscard]] std::size_t pickFaceAt(const Viewport& viewport, std::vector<std::uint32_t>& group) const;
     // The part the cursor's ray lands in, or kNoPart. Guards the document's
     // no-owner sentinel through forgePartOfFace.
     [[nodiscard]] std::size_t pickPartAt(const Viewport& viewport) const;

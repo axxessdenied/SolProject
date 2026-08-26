@@ -63,8 +63,8 @@ void UiContext::endFrame()
     if (!m_navItems.empty() && (m_input.navNext || m_input.navPrevious)) {
         const auto found = std::find(m_navItems.begin(), m_navItems.end(), m_focusId);
         const std::size_t count = m_navItems.size();
-        std::size_t index = found == m_navItems.end() ? count : static_cast<std::size_t>(
-                                                                    found - m_navItems.begin());
+        std::size_t index =
+            found == m_navItems.end() ? count : static_cast<std::size_t>(found - m_navItems.begin());
         if (index == count) {
             // Nothing focused yet: enter the screen at either end.
             index = m_input.navNext ? 0 : count - 1;
@@ -196,22 +196,22 @@ void UiContext::label(const Rect& bounds, std::string_view text, TextAlign align
     label(bounds, text, m_theme.textPrimary, nullptr, align);
 }
 
-void UiContext::label(const Rect& bounds, std::string_view text, const Color& color,
-                      const char* styleName, TextAlign align)
+void UiContext::label(
+    const Rect& bounds, std::string_view text, const Color& color, const char* styleName, TextAlign align)
 {
-    const assets::FontStyleRecord* record =
-        style(styleName != nullptr ? styleName : m_theme.bodyStyle);
+    const assets::FontStyleRecord* record = style(styleName != nullptr ? styleName : m_theme.bodyStyle);
     if (record == nullptr) {
         return;
     }
     m_drawList.addTextInBox(*record, bounds, text, color, align);
 }
 
-bool UiContext::labelElided(const Rect& bounds, std::string_view text, const Color& color,
+bool UiContext::labelElided(const Rect& bounds,
+                            std::string_view text,
+                            const Color& color,
                             const char* styleName)
 {
-    const assets::FontStyleRecord* record =
-        style(styleName != nullptr ? styleName : m_theme.bodyStyle);
+    const assets::FontStyleRecord* record = style(styleName != nullptr ? styleName : m_theme.bodyStyle);
     if (record == nullptr || m_font == nullptr) {
         return false;
     }
@@ -283,8 +283,10 @@ void UiContext::drawTooltip()
     m_drawList.addRoundedRect(box, m_theme.radius, m_theme.control);
     m_drawList.addRectOutline(box, m_theme.panelEdge);
     const float inset = m_theme.padding * 0.5f;
-    m_drawList.addTextInBox(*record, {{box.min.x + inset, box.min.y}, {box.max.x - inset, box.max.y}},
-                            m_tooltip, m_theme.textPrimary);
+    m_drawList.addTextInBox(*record,
+                            {{box.min.x + inset, box.min.y}, {box.max.x - inset, box.max.y}},
+                            m_tooltip,
+                            m_theme.textPrimary);
     m_tooltip.clear();
 }
 
@@ -298,9 +300,9 @@ void UiContext::panel(const Rect& bounds, std::string_view title)
     if (record == nullptr) {
         return;
     }
-    const Rect titleBox = {{bounds.min.x + m_theme.padding, bounds.min.y + m_theme.padding * 0.5f},
-                           {bounds.max.x - m_theme.padding,
-                            bounds.min.y + m_theme.padding * 0.5f + record->lineHeight}};
+    const Rect titleBox = {
+        {bounds.min.x + m_theme.padding, bounds.min.y + m_theme.padding * 0.5f},
+        {bounds.max.x - m_theme.padding, bounds.min.y + m_theme.padding * 0.5f + record->lineHeight}};
     m_drawList.addTextInBox(*record, titleBox, title, m_theme.textPrimary);
 }
 
@@ -309,8 +311,7 @@ bool UiContext::button(const Rect& bounds, std::string_view text, bool enabled)
     const Interaction interaction = interact(text, bounds, enabled);
     m_drawList.addRoundedRect(bounds, m_theme.radius, controlColor(interaction, enabled));
     drawFocusRing(bounds, interaction);
-    label(bounds, text, enabled ? m_theme.textPrimary : m_theme.textDisabled, nullptr,
-          TextAlign::Center);
+    label(bounds, text, enabled ? m_theme.textPrimary : m_theme.textDisabled, nullptr, TextAlign::Center);
     return interaction.activated;
 }
 
@@ -349,8 +350,7 @@ namespace {
 
 } // namespace
 
-bool UiContext::textField(const Rect& bounds, std::string_view id, std::string& value,
-                          std::size_t maxLength)
+bool UiContext::textField(const Rect& bounds, std::string_view id, std::string& value, std::size_t maxLength)
 {
     const Interaction interaction = interact(id, bounds, true);
     // A missing style stops the field being DRAWN, further down; it must not
@@ -374,15 +374,12 @@ bool UiContext::textField(const Rect& bounds, std::string_view id, std::string& 
         m_textFieldFocused = true;
         // Click inside places the caret at the nearest boundary to the
         // cursor, walking the string once and measuring each prefix.
-        if (interaction.hovered && m_input.mousePressed && m_font != nullptr
-            && record != nullptr) {
+        if (interaction.hovered && m_input.mousePressed && m_font != nullptr && record != nullptr) {
             const float target = m_input.mousePosition.x - (bounds.min.x + m_theme.padding * 0.5f);
             std::size_t best = 0;
             float bestDistance = std::abs(target);
-            for (std::size_t at = nextBoundary(value, 0); at <= value.size();
-                 at = nextBoundary(value, at)) {
-                const float width =
-                    m_font->measureWidth(*record, std::string_view(value).substr(0, at));
+            for (std::size_t at = nextBoundary(value, 0); at <= value.size(); at = nextBoundary(value, at)) {
+                const float width = m_font->measureWidth(*record, std::string_view(value).substr(0, at));
                 const float distance = std::abs(target - width);
                 if (distance < bestDistance) {
                     bestDistance = distance;
@@ -444,16 +441,14 @@ bool UiContext::textField(const Rect& bounds, std::string_view id, std::string& 
     }
 
     // A field reads as editable: a sunken well rather than a raised control.
-    m_drawList.addRoundedRect(bounds, m_theme.radius,
-                              editing ? m_theme.controlActive : m_theme.control);
+    m_drawList.addRoundedRect(bounds, m_theme.radius, editing ? m_theme.controlActive : m_theme.control);
     drawFocusRing(bounds, interaction);
     if (record == nullptr) {
         return changed;
     }
 
     const float inset = m_theme.padding * 0.5f;
-    const Rect inner = {{bounds.min.x + inset, bounds.min.y},
-                        {bounds.max.x - inset, bounds.max.y}};
+    const Rect inner = {{bounds.min.x + inset, bounds.min.y}, {bounds.max.x - inset, bounds.max.y}};
     // Scroll the text so the caret stays visible once the value outruns the
     // box; without this a long name types itself off the right edge.
     float caretX = 0.0f;
@@ -468,8 +463,8 @@ bool UiContext::textField(const Rect& bounds, std::string_view id, std::string& 
     }
 
     m_drawList.pushClip(inner);
-    m_drawList.addTextInBox(*record, {{inner.min.x - offset, inner.min.y}, inner.max}, value,
-                            m_theme.textPrimary);
+    m_drawList.addTextInBox(
+        *record, {{inner.min.x - offset, inner.min.y}, inner.max}, value, m_theme.textPrimary);
     if (editing) {
         // Half a second on, half off; a solid caret when dt is not supplied.
         const bool visible = m_caretBlink <= 0.0f || std::fmod(m_caretBlink, 1.0f) < 0.5f;
@@ -505,8 +500,7 @@ bool UiContext::checkbox(const Rect& bounds, std::string_view text, bool& value)
     return interaction.activated;
 }
 
-bool UiContext::slider(const Rect& bounds, std::string_view text, float& value, float minimum,
-                       float maximum)
+bool UiContext::slider(const Rect& bounds, std::string_view text, float& value, float minimum, float maximum)
 {
     const Interaction interaction = interact(text, bounds, true);
     const float range = maximum - minimum;
@@ -535,7 +529,8 @@ bool UiContext::slider(const Rect& bounds, std::string_view text, float& value, 
                         {bounds.max.x, bounds.min.y + (bounds.height() + trackHeight) * 0.5f}};
     m_drawList.addRoundedRect(track, trackHeight * 0.5f, m_theme.meterTrack);
     m_drawList.addRoundedRect({track.min, {track.min.x + track.width() * fraction, track.max.y}},
-                              trackHeight * 0.5f, m_theme.accent);
+                              trackHeight * 0.5f,
+                              m_theme.accent);
 
     const float knobRadius = 7.0f;
     const float knobX = track.min.x + track.width() * fraction;
@@ -557,8 +552,7 @@ bool UiContext::selectable(const Rect& bounds, std::string_view text, bool selec
     }
     drawFocusRing(bounds, interaction);
 
-    const Color color = !enabled ? m_theme.textDisabled
-                                 : (selected ? m_theme.textPrimary : m_theme.textDim);
+    const Color color = !enabled ? m_theme.textDisabled : (selected ? m_theme.textPrimary : m_theme.textDim);
     const Rect textBox = {{bounds.min.x + m_theme.spacing, bounds.min.y},
                           {bounds.max.x - m_theme.spacing, bounds.max.y}};
     // A row that had to hide part of a name owes the player the whole of it
@@ -579,8 +573,8 @@ bool UiContext::tabs(const Rect& bounds, std::span<const char* const> labels, in
     selected = std::clamp(selected, 0, count - 1);
     const int previous = selected;
 
-    const float each = (bounds.width() - m_theme.spacing * static_cast<float>(count - 1)) /
-                       static_cast<float>(count);
+    const float each =
+        (bounds.width() - m_theme.spacing * static_cast<float>(count - 1)) / static_cast<float>(count);
     for (int i = 0; i < count; ++i) {
         const char* text = labels[static_cast<std::size_t>(i)];
         const float left = bounds.min.x + (each + m_theme.spacing) * static_cast<float>(i);
@@ -596,8 +590,7 @@ bool UiContext::tabs(const Rect& bounds, std::span<const char* const> labels, in
         // only: holding the key must not run the whole strip in one frame.
         // Not while a text field is being typed into - there the arrows are
         // the caret's.
-        if (interaction.focused && !m_textFieldFocusedLastFrame
-            && (m_navLeftEdge || m_navRightEdge)) {
+        if (interaction.focused && !m_textFieldFocusedLastFrame && (m_navLeftEdge || m_navRightEdge)) {
             const int step = m_navRightEdge ? 1 : -1;
             selected = (previous + step + count) % count;
             // Focus rides along, or a second press would step from the old tab
@@ -605,14 +598,14 @@ bool UiContext::tabs(const Rect& bounds, std::span<const char* const> labels, in
             setFocus(idFor(labels[static_cast<std::size_t>(selected)]));
         }
 
-        m_drawList.addRoundedRect(tab, m_theme.radius,
-                                  active ? m_theme.controlActive : controlColor(interaction, true));
+        m_drawList.addRoundedRect(
+            tab, m_theme.radius, active ? m_theme.controlActive : controlColor(interaction, true));
         if (active) {
             // An underline keeps the current tab readable even where the
             // active and hovered fills are close in value.
-            m_drawList.addRect({{tab.min.x + m_theme.radius, tab.max.y - 2.0f},
-                                {tab.max.x - m_theme.radius, tab.max.y}},
-                               m_theme.accent);
+            m_drawList.addRect(
+                {{tab.min.x + m_theme.radius, tab.max.y - 2.0f}, {tab.max.x - m_theme.radius, tab.max.y}},
+                m_theme.accent);
         }
         drawFocusRing(tab, interaction);
         label(tab, text, active ? m_theme.textPrimary : m_theme.textDim, nullptr, TextAlign::Center);
@@ -673,13 +666,13 @@ void UiContext::endScroll()
                         {region.bounds.max.x, region.bounds.max.y}};
     m_drawList.addRoundedRect(track, m_theme.scrollbarWidth * 0.5f, m_theme.meterTrack);
 
-    const float viewFraction =
-        region.bounds.height() / (region.bounds.height() + region.maxOffset);
+    const float viewFraction = region.bounds.height() / (region.bounds.height() + region.maxOffset);
     const float thumbHeight = std::max(track.height() * viewFraction, m_theme.scrollbarWidth * 2.0f);
     const float travel = track.height() - thumbHeight;
     const float thumbTop = track.min.y + travel * (offset / region.maxOffset);
     m_drawList.addRoundedRect({{track.min.x, thumbTop}, {track.max.x, thumbTop + thumbHeight}},
-                              m_theme.scrollbarWidth * 0.5f, m_theme.controlHovered);
+                              m_theme.scrollbarWidth * 0.5f,
+                              m_theme.controlHovered);
 }
 
 void UiContext::meter(const Rect& bounds, float fraction, const Color& fill)

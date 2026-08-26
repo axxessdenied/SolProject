@@ -51,8 +51,7 @@ namespace {
 [[nodiscard]] bool hasExtension(const std::string& path, const char* extension)
 {
     const std::size_t length = std::char_traits<char>::length(extension);
-    return path.size() >= length &&
-           path.compare(path.size() - length, length, extension) == 0;
+    return path.size() >= length && path.compare(path.size() - length, length, extension) == 0;
 }
 
 // The Lua-visible API ("sol" table). Deliberately small and explicit — this
@@ -70,8 +69,7 @@ scripting::EntityHandle spawnShip(GameContent& content, const std::string& id)
     return scripting::toHandle(entity);
 }
 
-scripting::EntityHandle spawnPilot(GameContent& content, const std::string& id,
-                                   const std::string& role)
+scripting::EntityHandle spawnPilot(GameContent& content, const std::string& id, const std::string& role)
 {
     const assets::ShipDef* def = content.defs().findShip(id.c_str());
     if (def == nullptr) {
@@ -84,19 +82,17 @@ scripting::EntityHandle spawnPilot(GameContent& content, const std::string& id,
     } else if (role == "patrol") {
         pilotRole = PilotRole::Patrol;
     } else if (role != "fighter") {
-        SOL_LOG_WARN("spawn_pilot: unknown role '%s' (fighter/trader/patrol); using fighter",
-                     role.c_str());
+        SOL_LOG_WARN("spawn_pilot: unknown role '%s' (fighter/trader/patrol); using fighter", role.c_str());
     }
-    const ecs::Entity entity =
-        content.world().spawnPilotFromDef(*def, content.defs(), pilotRole);
+    const ecs::Entity entity = content.world().spawnPilotFromDef(*def, content.defs(), pilotRole);
     SOL_LOG_INFO("spawned %s pilot '%s' (%s)", role.c_str(), def->name.c_str(), def->id.c_str());
     return scripting::toHandle(entity);
 }
 
 // As spawn_pilot, with an allegiance: factionIndex is 1-based into
 // sol.factions (the runtime table: majors then clans).
-scripting::EntityHandle spawnPilotFaction(GameContent& content, const std::string& id,
-                                          const std::string& role, double factionIndex)
+scripting::EntityHandle
+spawnPilotFaction(GameContent& content, const std::string& id, const std::string& role, double factionIndex)
 {
     const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
     if (faction >= content.world().factions().size()) {
@@ -114,7 +110,9 @@ scripting::EntityHandle spawnPilotFaction(GameContent& content, const std::strin
                                              : PilotRole::Fighter;
     const ecs::Entity entity = content.world().spawnPilotFromDef(
         *def, content.defs(), pilotRole, static_cast<std::uint32_t>(faction));
-    SOL_LOG_INFO("spawned %s pilot '%s' for %s", role.c_str(), def->name.c_str(),
+    SOL_LOG_INFO("spawned %s pilot '%s' for %s",
+                 role.c_str(),
+                 def->name.c_str(),
                  content.world().factions()[faction].name.c_str());
     return scripting::toHandle(entity);
 }
@@ -159,8 +157,7 @@ bool pilotIdle(GameContent& content, scripting::EntityHandle ship)
 
 // Waypoint given relative to the station (Lua has no absolute-coordinate
 // source, and everything interesting orbits the station anyway).
-bool pilotPatrolOffset(GameContent& content, scripting::EntityHandle ship, double dx, double dy,
-                       double dz)
+bool pilotPatrolOffset(GameContent& content, scripting::EntityHandle ship, double dx, double dy, double dz)
 {
     const core::DVec3 waypoint = content.world().stationPosition() + core::DVec3{dx, dy, dz};
     return content.world().pilotPatrolTo(scripting::toEntity(ship), waypoint);
@@ -191,10 +188,18 @@ std::string listModels(GameContent& content)
             std::snprintf(film, sizeof(film), " [film a%.2f]", static_cast<double>(def.alpha));
         }
         char line[192] = {};
-        std::snprintf(line, sizeof(line), "%s#%zu %s: %s/%s r%.0f a%.0f%s%s%s", i == 0 ? "" : "\n",
-                      i, def.id.c_str(), def.mesh.c_str(), def.texture.c_str(),
-                      static_cast<double>(def.radius), static_cast<double>(def.avoidRadius),
-                      def.solid ? "" : " [pass-through]", def.emissive > 0.0f ? " [lit]" : "",
+        std::snprintf(line,
+                      sizeof(line),
+                      "%s#%zu %s: %s/%s r%.0f a%.0f%s%s%s",
+                      i == 0 ? "" : "\n",
+                      i,
+                      def.id.c_str(),
+                      def.mesh.c_str(),
+                      def.texture.c_str(),
+                      static_cast<double>(def.radius),
+                      static_cast<double>(def.avoidRadius),
+                      def.solid ? "" : " [pass-through]",
+                      def.emissive > 0.0f ? " [lit]" : "",
                       film);
         out += line;
     }
@@ -243,11 +248,14 @@ std::string audioReport(GameContent& content)
     }
     const platform::AudioDeviceInfo info = gameAudio->deviceInfo();
     char buffer[224] = {};
-    (void)std::snprintf(buffer, sizeof(buffer),
+    (void)std::snprintf(buffer,
+                        sizeof(buffer),
                         "audio: %u Hz, %u frame buffer, %zu cue(s), vol %.2f/%.2f, "
                         "%u voice(s) active, "
                         "%llu played, %llu stolen, %llu dropped, %llu underrun(s)",
-                        info.sampleRate, info.bufferFrames, gameAudio->cueCount(),
+                        info.sampleRate,
+                        info.bufferFrames,
+                        gameAudio->cueCount(),
                         static_cast<double>(gameAudio->masterVolume()),
                         static_cast<double>(gameAudio->effectsVolume()),
                         gameAudio->activeVoices(),
@@ -354,9 +362,15 @@ std::string jumpState(GameContent& content)
     const sol::sim::JumpTransition& jump = world.jumpTransition();
     const char* phase = "idle";
     switch (jump.phase()) {
-    case sol::sim::JumpPhase::Idle: phase = "idle"; break;
-    case sol::sim::JumpPhase::Tunnel: phase = "tunnel"; break;
-    case sol::sim::JumpPhase::Arrive: phase = "arrive"; break;
+    case sol::sim::JumpPhase::Idle:
+        phase = "idle";
+        break;
+    case sol::sim::JumpPhase::Tunnel:
+        phase = "tunnel";
+        break;
+    case sol::sim::JumpPhase::Arrive:
+        phase = "arrive";
+        break;
     }
     char buffer[192];
     if (!jump.active()) {
@@ -364,11 +378,16 @@ std::string jumpState(GameContent& content)
         return buffer;
     }
     const std::uint32_t destination = jump.destination();
-    const char* destinationName = destination < world.galaxy().systems.size()
-                                      ? world.galaxy().systems[destination].name.c_str()
-                                      : "?";
-    std::snprintf(buffer, sizeof(buffer), "%s t=%.2f warp=%.2f sky=%.2f -> %s", phase,
-                  jump.elapsed(), jump.warp(), jump.skyScale(), destinationName);
+    const char* destinationName =
+        destination < world.galaxy().systems.size() ? world.galaxy().systems[destination].name.c_str() : "?";
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s t=%.2f warp=%.2f sky=%.2f -> %s",
+                  phase,
+                  jump.elapsed(),
+                  jump.warp(),
+                  jump.skyScale(),
+                  destinationName);
     return buffer;
 }
 
@@ -407,8 +426,11 @@ std::string describeClearance(GameContent& content)
     const SpaceWorld::DockClearance& clearance = world.clearance();
     const sol::sim::SystemSpec& spec = world.galaxy().systems[world.currentSystemIndex()];
     char buffer[192] = {};
-    std::snprintf(buffer, sizeof(buffer), "%s berth %u - %.0f m away, %.0f s left",
-                  spec.stations[clearance.station].name.c_str(), clearance.berth + 1,
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s berth %u - %.0f m away, %.0f s left",
+                  spec.stations[clearance.station].name.c_str(),
+                  clearance.berth + 1,
                   length(world.clearedBerthPoint() - world.shipState().position),
                   clearance.secondsLeft);
     return buffer;
@@ -427,12 +449,14 @@ std::string listBerths(GameContent& content, double stationIndex)
     std::string out = spec.stations[station].name + ":\n";
     const sol::core::DVec3 ship = world.shipState().position;
     for (std::uint32_t berth = 0; berth < sol::sim::kBerthCount; ++berth) {
-        const sol::core::DVec3 point =
-            sol::sim::berthPoint(spec.stations[station].position, berth);
+        const sol::core::DVec3 point = sol::sim::berthPoint(spec.stations[station].position, berth);
         char buffer[160] = {};
-        std::snprintf(buffer, sizeof(buffer),
-                      "  berth %u - %.0f m off the hub, %.0f m from the ship\n", berth + 1,
-                      length(point - spec.stations[station].position), length(point - ship));
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "  berth %u - %.0f m off the hub, %.0f m from the ship\n",
+                      berth + 1,
+                      length(point - spec.stations[station].position),
+                      length(point - ship));
         out += buffer;
     }
     return out;
@@ -448,9 +472,9 @@ bool grantDocking(GameContent& content, double berth, const char* message)
         return false;
     }
     content.noteDockAnswered();
-    return content.world().grantDocking(
-        station, static_cast<std::uint32_t>(berth < 1.0 ? 0.0 : berth - 1.0),
-        message != nullptr ? message : "Cleared to dock.");
+    return content.world().grantDocking(station,
+                                        static_cast<std::uint32_t>(berth < 1.0 ? 0.0 : berth - 1.0),
+                                        message != nullptr ? message : "Cleared to dock.");
 }
 
 bool denyDocking(GameContent& content, const char* message)
@@ -461,8 +485,7 @@ bool denyDocking(GameContent& content, const char* message)
         return false;
     }
     content.noteDockAnswered();
-    content.world().denyDocking(station,
-                                message != nullptr ? message : "Clearance denied.");
+    content.world().denyDocking(station, message != nullptr ? message : "Clearance denied.");
     return true;
 }
 
@@ -497,8 +520,7 @@ bool hailTipPlace(GameContent& content, const char* message)
         SOL_LOG_WARN("hail_tip_place: only valid inside pilot_hail");
         return false;
     }
-    return content.world().tipPlace(message != nullptr ? message
-                                                       : "Saw something unclaimed out in");
+    return content.world().tipPlace(message != nullptr ? message : "Saw something unclaimed out in");
 }
 
 bool undock(GameContent& content)
@@ -598,7 +620,9 @@ std::string traderRoutes(GameContent& content)
         // carrying a cargo it does not have.
         char hold[48];
         if (trader.cargo > 0.0f && trader.commodity < world.commodityIds().size()) {
-            std::snprintf(hold, sizeof(hold), "%s %.0fu",
+            std::snprintf(hold,
+                          sizeof(hold),
+                          "%s %.0fu",
                           world.commodityIds()[trader.commodity].c_str(),
                           static_cast<double>(trader.cargo));
         } else {
@@ -606,13 +630,20 @@ std::string traderRoutes(GameContent& content)
         }
         const char* body = world.traderHasBody(t) ? " *" : "";
         if (route.leg == sol::sim::TraderLeg::None) {
-            std::snprintf(buffer, sizeof(buffer), "#%u idle at %s (%s)%s", t,
-                          stationName(route.toMarket), hold, body);
+            std::snprintf(
+                buffer, sizeof(buffer), "#%u idle at %s (%s)%s", t, stationName(route.toMarket), hold, body);
         } else {
-            std::snprintf(buffer, sizeof(buffer), "#%u %s  %s -> %s  %s %.0f%% (%u hop)%s", t,
-                          hold, stationName(route.fromMarket), stationName(route.toMarket),
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "#%u %s  %s -> %s  %s %.0f%% (%u hop)%s",
+                          t,
+                          hold,
+                          stationName(route.fromMarket),
+                          stationName(route.toMarket),
                           route.leg == sol::sim::TraderLeg::Depart ? "departing" : "arriving",
-                          static_cast<double>(route.progress) * 100.0, route.hops, body);
+                          static_cast<double>(route.progress) * 100.0,
+                          route.hops,
+                          body);
         }
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
@@ -620,10 +651,16 @@ std::string traderRoutes(GameContent& content)
     for (std::uint32_t t = 0; t < economy.traders().size(); ++t) {
         drawn += world.traderHasBody(t) ? 1u : 0u;
     }
-    std::snprintf(buffer, sizeof(buffer),
+    std::snprintf(buffer,
+                  sizeof(buffer),
                   "%zu traders: %u idle, %u departing, %u jumping, %u arriving; %u drawn "
                   "here; %u lost this session",
-                  economy.traders().size(), byLeg[0], byLeg[1], byLeg[2], byLeg[3], drawn,
+                  economy.traders().size(),
+                  byLeg[0],
+                  byLeg[1],
+                  byLeg[2],
+                  byLeg[3],
+                  drawn,
                   world.traderLossCount());
     return (lines.empty() ? std::string("(none in this system)") : lines) + "\n" + buffer;
 }
@@ -640,14 +677,14 @@ std::string systemDanger(GameContent& content, double systemIndex)
     const sol::sim::FactionSim& factions = world.factionSim();
     const sol::sim::SystemContest contest = factions.contestOf(system);
     char buffer[192];
-    std::snprintf(buffer, sizeof(buffer),
+    std::snprintf(buffer,
+                  sizeof(buffer),
                   "%s: danger %.3f (raids %.2f, contest %.2f)%s",
                   world.galaxy().systems[system].name.c_str(),
                   static_cast<double>(factions.danger(system)),
                   static_cast<double>(factions.raidIntensity(system)),
                   static_cast<double>(contest.live() ? contest.pressure : 0.0f),
-                  system == world.currentSystemIndex() ? " [HERE: sheltered from attrition]"
-                                                       : "");
+                  system == world.currentSystemIndex() ? " [HERE: sheltered from attrition]" : "");
     return buffer;
 }
 
@@ -659,24 +696,29 @@ std::string escortCandidates(GameContent& content)
 {
     SpaceWorld& world = content.world();
     std::vector<sol::sim::EscortCandidate> candidates;
-    world.missionSim().escortCandidates(world.galaxy(), world.economy(), world.factionSim(),
-                                        world.currentSystemIndex(), candidates);
+    world.missionSim().escortCandidates(
+        world.galaxy(), world.economy(), world.factionSim(), world.currentSystemIndex(), candidates);
     std::string lines;
     char buffer[256];
     for (const sol::sim::EscortCandidate& c : candidates) {
-        std::snprintf(buffer, sizeof(buffer), "#%u -> %s  %s %.0fu, %u hop(s), danger %.2f%s",
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "#%u -> %s  %s %.0fu, %u hop(s), danger %.2f%s",
                       c.trader,
-                      c.system < world.galaxy().systems.size()
-                          ? world.galaxy().systems[c.system].name.c_str()
-                          : "?",
+                      c.system < world.galaxy().systems.size() ? world.galaxy().systems[c.system].name.c_str()
+                                                               : "?",
                       c.cargo > 0.0f && c.commodity < world.commodityIds().size()
                           ? world.commodityIds()[c.commodity].c_str()
                           : "empty",
-                      static_cast<double>(c.cargo), c.jumps, static_cast<double>(c.danger),
+                      static_cast<double>(c.cargo),
+                      c.jumps,
+                      static_cast<double>(c.danger),
                       world.traderHasBody(c.trader) ? " *" : "");
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
-    std::snprintf(buffer, sizeof(buffer), "%zu escortable hauler(s) leaving %s",
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%zu escortable hauler(s) leaving %s",
                   candidates.size(),
                   world.galaxy().systems[world.currentSystemIndex()].name.c_str());
     return (lines.empty() ? std::string("(none)") : lines) + "\n" + buffer;
@@ -709,12 +751,20 @@ std::string traderPuppets(GameContent& content)
     std::string lines;
     char buffer[256];
     for (const game::TraderPuppetInfo& puppet : puppets) {
-        std::snprintf(buffer, sizeof(buffer), "#%u %s  %.0f km out, %.0f m/s, %s",
-                      puppet.traderIndex, puppet.name.c_str(), puppet.distance / 1000.0,
-                      puppet.speed, puppet.state);
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "#%u %s  %.0f km out, %.0f m/s, %s",
+                      puppet.traderIndex,
+                      puppet.name.c_str(),
+                      puppet.distance / 1000.0,
+                      puppet.speed,
+                      puppet.state);
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
-    std::snprintf(buffer, sizeof(buffer), "%zu trader bod%s in %s", puppets.size(),
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%zu trader bod%s in %s",
+                  puppets.size(),
                   puppets.size() == 1 ? "y" : "ies",
                   world.galaxy().systems[world.currentSystemIndex()].name.c_str());
     return (lines.empty() ? std::string("(none)") : lines) + "\n" + buffer;
@@ -733,13 +783,21 @@ std::string minerPuppets(GameContent& content)
     std::string lines;
     char buffer[256];
     for (const game::MinerPuppetInfo& miner : miners) {
-        std::snprintf(buffer, sizeof(buffer), "m%u %s (%s)  %.0f km out, %s", miner.market,
-                      miner.name.c_str(), miner.station.c_str(), miner.distance / 1000.0,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "m%u %s (%s)  %.0f km out, %s",
+                      miner.market,
+                      miner.name.c_str(),
+                      miner.station.c_str(),
+                      miner.distance / 1000.0,
                       miner.working ? "working" : "no rock");
         if (miner.working) {
             const std::size_t used = std::strlen(buffer);
-            std::snprintf(buffer + used, sizeof(buffer) - used, " a rock %.0f m off at %.0f m/s",
-                          miner.rockDistance, miner.speed);
+            std::snprintf(buffer + used,
+                          sizeof(buffer) - used,
+                          " a rock %.0f m off at %.0f m/s",
+                          miner.rockDistance,
+                          miner.speed);
         }
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
@@ -753,15 +811,21 @@ std::string minerPuppets(GameContent& content)
             continue;
         }
         ++extractors;
-        std::snprintf(buffer, sizeof(buffer), "  m%u %s: output %.0f%%%s", m,
-                      world.galaxy().systems[row.systemIndex].stations[row.stationIndex]
-                          .name.c_str(),
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "  m%u %s: output %.0f%%%s",
+                      m,
+                      world.galaxy().systems[row.systemIndex].stations[row.stationIndex].name.c_str(),
                       static_cast<double>(economy.satisfaction(m)) * 100.0,
                       world.minerHold(m) > 0.0 ? " [no miner]" : "");
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
-    std::snprintf(buffer, sizeof(buffer), "%zu miner(s) for %zu outpost(s) in %s", miners.size(),
-                  extractors, world.galaxy().systems[world.currentSystemIndex()].name.c_str());
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%zu miner(s) for %zu outpost(s) in %s",
+                  miners.size(),
+                  extractors,
+                  world.galaxy().systems[world.currentSystemIndex()].name.c_str());
     return (lines.empty() ? std::string("(none)") : lines) + "\n" + buffer;
 }
 
@@ -780,18 +844,29 @@ std::string traderHunters(GameContent& content)
     for (const game::HunterInfo& hunter : hunters) {
         hunting += hunter.hunting ? 1u : 0u;
         if (hunter.hunting) {
-            std::snprintf(buffer, sizeof(buffer), "%s [%s] -> #%u %s  %.0f km",
-                          hunter.name.c_str(), hunter.state, hunter.traderIndex,
-                          hunter.prey.c_str(), hunter.distance / 1000.0);
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%s [%s] -> #%u %s  %.0f km",
+                          hunter.name.c_str(),
+                          hunter.state,
+                          hunter.traderIndex,
+                          hunter.prey.c_str(),
+                          hunter.distance / 1000.0);
         } else {
-            std::snprintf(buffer, sizeof(buffer), "%s [%s] -> %s", hunter.name.c_str(),
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%s [%s] -> %s",
+                          hunter.name.c_str(),
                           hunter.state,
                           hunter.prey.empty() ? "nothing" : hunter.prey.c_str());
         }
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
-    std::snprintf(buffer, sizeof(buffer), "%zu fighter(s) here, %zu hunting a hauler in %s",
-                  hunters.size(), hunting,
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%zu fighter(s) here, %zu hunting a hauler in %s",
+                  hunters.size(),
+                  hunting,
                   world.galaxy().systems[world.currentSystemIndex()].name.c_str());
     return (lines.empty() ? std::string("(no fighters)") : lines) + "\n" + buffer;
 }
@@ -872,8 +947,7 @@ std::string listCrewDefs(GameContent& content)
         if (!lines.empty()) {
             lines += "\n";
         }
-        lines += def.id + " (" + def.role + ", " +
-                 std::to_string(static_cast<int>(def.price)) + " cr)";
+        lines += def.id + " (" + def.role + ", " + std::to_string(static_cast<int>(def.price)) + " cr)";
     }
     return lines;
 }
@@ -898,9 +972,8 @@ std::string fitInfo(GameContent& content)
     for (const std::string& id : ship.crewIds) {
         info += " " + id;
     }
-    info += " | value " + std::to_string(static_cast<int>(world.shipValue(ship))) +
-            " cr, deductible " + std::to_string(static_cast<int>(world.insuranceDeductible())) +
-            " cr";
+    info += " | value " + std::to_string(static_cast<int>(world.shipValue(ship))) + " cr, deductible " +
+            std::to_string(static_cast<int>(world.insuranceDeductible())) + " cr";
     return info;
 }
 
@@ -919,9 +992,8 @@ std::string listFleet(GameContent& content)
             lines += " (active)";
         } else {
             const auto& systems = world.galaxy().systems;
-            lines += ship.storedSystem < systems.size()
-                         ? " (stored: " + systems[ship.storedSystem].name + ")"
-                         : " (stored)";
+            lines += ship.storedSystem < systems.size() ? " (stored: " + systems[ship.storedSystem].name + ")"
+                                                        : " (stored)";
         }
     }
     return lines;
@@ -975,8 +1047,7 @@ double insuranceQuote(GameContent& content)
 // Dev cheat: teleport to a station-relative offset (mission/combat tests).
 bool warpOffset(GameContent& content, double station, double dx, double dy, double dz)
 {
-    return content.world().warpToStationOffset(static_cast<std::uint32_t>(station),
-                                               {dx, dy, dz});
+    return content.world().warpToStationOffset(static_cast<std::uint32_t>(station), {dx, dy, dz});
 }
 
 // Dev cheat, same spirit as spawn_ship: outfitting tests need capital.
@@ -1012,10 +1083,10 @@ std::string listStandings(GameContent& content)
         }
         const std::uint32_t faction = static_cast<std::uint32_t>(i);
         char buffer[64];
-        std::snprintf(buffer, sizeof(buffer), "%+.1f",
-                      static_cast<double>(world.factionSim().standing(faction)));
-        lines += std::to_string(i + 1) + ": " + world.factions()[i].name + " " + buffer +
-                 " (" + world.playerAttitudeName(faction) + ")";
+        std::snprintf(
+            buffer, sizeof(buffer), "%+.1f", static_cast<double>(world.factionSim().standing(faction)));
+        lines += std::to_string(i + 1) + ": " + world.factions()[i].name + " " + buffer + " (" +
+                 world.playerAttitudeName(faction) + ")";
         if (faction == world.systemOwnerFaction(world.currentSystemIndex())) {
             lines += " [local]"; // owns the system the player is in
         }
@@ -1040,8 +1111,8 @@ std::string listRelations(GameContent& content)
             }
             char buffer[64];
             std::snprintf(buffer, sizeof(buffer), "%+.1f", static_cast<double>(value));
-            lines += world.factions()[a].name + " vs " + world.factions()[b].name + ": " +
-                     buffer + (world.factionSim().atWar(a, b) ? " (WAR)" : "");
+            lines += world.factions()[a].name + " vs " + world.factions()[b].name + ": " + buffer +
+                     (world.factionSim().atWar(a, b) ? " (WAR)" : "");
         }
     }
     return lines.empty() ? "(all neutral)" : lines;
@@ -1079,8 +1150,7 @@ double setStanding(GameContent& content, double factionIndex, double value)
         SOL_LOG_WARN("set_rep: faction %d out of range", static_cast<int>(factionIndex));
         return 0.0;
     }
-    world.factionSim().setStanding(static_cast<std::uint32_t>(faction),
-                                   static_cast<float>(value));
+    world.factionSim().setStanding(static_cast<std::uint32_t>(faction), static_cast<float>(value));
     return world.factionSim().standing(static_cast<std::uint32_t>(faction));
 }
 
@@ -1134,8 +1204,8 @@ std::string listKnowledge(GameContent& content)
         }
     }
     return lines.empty() ? "(nothing known)"
-                         : lines + "\n" + std::to_string(known) + " of "
-                               + std::to_string(world.galaxy().systems.size()) + " systems";
+                         : lines + "\n" + std::to_string(known) + " of " +
+                               std::to_string(world.galaxy().systems.size()) + " systems";
 }
 
 // Every site in this system the player has found, with its state and range.
@@ -1153,7 +1223,10 @@ std::string listSignals(GameContent& content)
             lines += "\n";
         }
         char buffer[96];
-        std::snprintf(buffer, sizeof(buffer), "%u: %s, %.0f km", signal.index + 1,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%u: %s, %.0f km",
+                      signal.index + 1,
                       world.survey().signalResolved(system, signal.index)
                           ? sol::sim::signalKindName(signal.kind)
                           : "unidentified contact",
@@ -1164,11 +1237,13 @@ std::string listSignals(GameContent& content)
         }
     }
     char summary[96];
-    std::snprintf(summary, sizeof(summary), "%zu site(s) in %s, %u found",
-                  world.signals().size(), world.currentSystemName(),
+    std::snprintf(summary,
+                  sizeof(summary),
+                  "%zu site(s) in %s, %u found",
+                  world.signals().size(),
+                  world.currentSystemName(),
                   static_cast<std::uint32_t>(std::count_if(
-                      world.signals().begin(), world.signals().end(),
-                      [&](const SignalInstance& s) {
+                      world.signals().begin(), world.signals().end(), [&](const SignalInstance& s) {
                           return world.survey().signalDiscovered(system, s.index);
                       })));
     return lines.empty() ? std::string(summary) : lines + "\n" + summary;
@@ -1198,14 +1273,18 @@ std::string surveyLedger(GameContent& content)
         if (!lines.empty()) {
             lines += "\n";
         }
-        const char* kind = entry.kind == sol::sim::SurveyKind::System   ? "system"
-                           : entry.kind == sol::sim::SurveyKind::Body   ? "body"
-                           : entry.kind == sol::sim::SurveyKind::Site   ? "site"
-                                                                        : "completion";
+        const char* kind = entry.kind == sol::sim::SurveyKind::System ? "system"
+                           : entry.kind == sol::sim::SurveyKind::Body ? "body"
+                           : entry.kind == sol::sim::SurveyKind::Site ? "site"
+                                                                      : "completion";
         char buffer[128];
-        std::snprintf(buffer, sizeof(buffer), "%s: %s (%s%s) %.0f cr",
-                      world.galaxy().systems[entry.system].name.c_str(), kind,
-                      regionWord(entry.region), entry.firstDiscovery ? ", uncharted" : "",
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%s: %s (%s%s) %.0f cr",
+                      world.galaxy().systems[entry.system].name.c_str(),
+                      kind,
+                      regionWord(entry.region),
+                      entry.firstDiscovery ? ", uncharted" : "",
                       entry.value);
         lines += buffer;
     }
@@ -1234,15 +1313,17 @@ std::string listContacts(GameContent& content)
     for (std::size_t i = 0; i < order.size(); ++i) {
         const TargetInfo contact = world.contactInfo(order[i]);
         char buffer[192];
-        std::snprintf(buffer, sizeof(buffer), "%zu: %s [%s] %.0f km", i + 1,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%zu: %s [%s] %.0f km",
+                      i + 1,
                       contact.nav.name.c_str(),
                       contact.attitude[0] != '\0' ? contact.attitude : "unaffiliated",
                       sol::core::length(contact.nav.position - ship) / 1000.0);
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
     char summary[96];
-    std::snprintf(summary, sizeof(summary), "%zu contact(s) in %s", order.size(),
-                  world.currentSystemName());
+    std::snprintf(summary, sizeof(summary), "%zu contact(s) in %s", order.size(), world.currentSystemName());
     return lines.empty() ? std::string(summary) : lines + "\n" + summary;
 }
 
@@ -1274,13 +1355,16 @@ std::string describeObjective(GameContent& content)
         // and it keeps answering while the hauler is in the gate network.
         const sol::sim::TraderRoute route = world.economy().route(objective->trader);
         char haul[128];
-        std::snprintf(haul, sizeof(haul), "\ntrader #%u: leg %s %.0f%%, %u hop(s)%s",
+        std::snprintf(haul,
+                      sizeof(haul),
+                      "\ntrader #%u: leg %s %.0f%%, %u hop(s)%s",
                       objective->trader,
-                      route.leg == sol::sim::TraderLeg::None       ? "none"
-                      : route.leg == sol::sim::TraderLeg::Depart   ? "depart"
-                      : route.leg == sol::sim::TraderLeg::Jump     ? "jump"
-                                                                   : "arrive",
-                      static_cast<double>(route.progress) * 100.0, route.hops,
+                      route.leg == sol::sim::TraderLeg::None     ? "none"
+                      : route.leg == sol::sim::TraderLeg::Depart ? "depart"
+                      : route.leg == sol::sim::TraderLeg::Jump   ? "jump"
+                                                                 : "arrive",
+                      static_cast<double>(route.progress) * 100.0,
+                      route.hops,
                       world.traderHasBody(objective->trader) ? ", body here" : "");
         line += haul;
     }
@@ -1289,11 +1373,12 @@ std::string describeObjective(GameContent& content)
         return line + "\nno nav slot (nothing of this objective is in this system)";
     }
     char buffer[160];
-    std::snprintf(buffer, sizeof(buffer), "nav slot %zu: %s, %.1f km away, radius %.1f km", slot,
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "nav slot %zu: %s, %.1f km away, radius %.1f km",
+                  slot,
                   world.navTargets()[slot].name.c_str(),
-                  sol::core::length(world.navTargets()[slot].position -
-                                    world.shipState().position) /
-                      1000.0,
+                  sol::core::length(world.navTargets()[slot].position - world.shipState().position) / 1000.0,
                   objective->radius / 1000.0);
     return line + "\n" + buffer;
 }
@@ -1307,8 +1392,8 @@ std::string targetNearestHostile(GameContent& content)
         return "nothing hostile in this system";
     }
     const TargetInfo hostile = world.currentTargetInfo();
-    return "targeting " + hostile.nav.name + " ["
-           + (hostile.attitude[0] != '\0' ? hostile.attitude : "unaffiliated") + "]";
+    return "targeting " + hostile.nav.name + " [" +
+           (hostile.attitude[0] != '\0' ? hostile.attitude : "unaffiliated") + "]";
 }
 
 // The left-click's path (Phase 8j), at virtual-screen coordinates. This is the
@@ -1321,17 +1406,20 @@ std::string pickAt(GameContent& content, double x, double y)
     if (!view.valid) {
         return "no view frame yet (not in flight?)";
     }
-    const PickResult pick =
-        pickTarget(world, {static_cast<float>(x), static_cast<float>(y)});
+    const PickResult pick = pickTarget(world, {static_cast<float>(x), static_cast<float>(y)});
     if (!selectPicked(world, pick)) {
         char buffer[128];
-        std::snprintf(buffer, sizeof(buffer), "nothing at (%.0f, %.0f) of %.0fx%.0f", x, y,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "nothing at (%.0f, %.0f) of %.0fx%.0f",
+                      x,
+                      y,
                       static_cast<double>(view.screenSize.x),
                       static_cast<double>(view.screenSize.y));
         return buffer;
     }
-    return std::string(pick.route == PickRoute::Radar ? "radar: " : "space: ")
-           + world.currentTargetInfo().nav.name;
+    return std::string(pick.route == PickRoute::Radar ? "radar: " : "space: ") +
+           world.currentTargetInfo().nav.name;
 }
 
 // What a click takes while the cursor is captured for mouse-look: whatever is
@@ -1370,18 +1458,26 @@ std::string listBookmarks(GameContent& content)
         const bool here = bookmark.system == world.currentSystemIndex();
         char buffer[224];
         if (here) {
-            std::snprintf(buffer, sizeof(buffer), "%u: %s - %.0f km away", bookmark.id,
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%u: %s - %.0f km away",
+                          bookmark.id,
                           bookmark.name.c_str(),
                           sol::core::length(bookmark.position - ship) / 1000.0);
         } else {
-            std::snprintf(buffer, sizeof(buffer), "%u: %s - in %s", bookmark.id,
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%u: %s - in %s",
+                          bookmark.id,
                           bookmark.name.c_str(),
                           world.galaxy().systems[bookmark.system].name.c_str());
         }
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
     char summary[96];
-    std::snprintf(summary, sizeof(summary), "%zu bookmark(s), %u in %s",
+    std::snprintf(summary,
+                  sizeof(summary),
+                  "%zu bookmark(s), %u in %s",
                   world.survey().bookmarks().size(),
                   world.survey().bookmarkCountIn(world.currentSystemIndex()),
                   world.currentSystemName());
@@ -1404,8 +1500,7 @@ std::string systemMap(GameContent& content, double index)
     // the list in the first place. A probe must not do that quietly: asked
     // about system 42, answering about system 3 would look like a fog-rule bug
     // in whichever direction the reader was already suspicious of.
-    if (world.survey().knowledge(static_cast<std::uint32_t>(index))
-        == sol::sim::KnowledgeState::Unknown) {
+    if (world.survey().knowledge(static_cast<std::uint32_t>(index)) == sol::sim::KnowledgeState::Unknown) {
         return "unknown system - nothing charted, the System tab cannot reach it";
     }
     std::deque<std::string> text;
@@ -1419,8 +1514,8 @@ std::string systemMap(GameContent& content, double index)
     std::string lines = panel.viewSummary;
     for (const sol::ui::MapMarkerRow& marker : panel.markers) {
         char buffer[224];
-        std::snprintf(buffer, sizeof(buffer), "%-9s %s - %s", markerKindName(marker.kind),
-                      marker.name, marker.detail);
+        std::snprintf(
+            buffer, sizeof(buffer), "%-9s %s - %s", markerKindName(marker.kind), marker.name, marker.detail);
         lines += "\n" + std::string(buffer);
     }
     char summary[64];
@@ -1430,8 +1525,7 @@ std::string systemMap(GameContent& content, double index)
 
 std::string deleteBookmark(GameContent& content, double id)
 {
-    return content.world().removeBookmark(static_cast<std::uint32_t>(id)) ? "deleted"
-                                                                         : "no such bookmark";
+    return content.world().removeBookmark(static_cast<std::uint32_t>(id)) ? "deleted" : "no such bookmark";
 }
 
 // Dev teleport to a bookmark, the shape sol.warp_rock established in 8f.
@@ -1478,11 +1572,16 @@ std::string lodReportCommand(GameContent& content)
     (void)content;
     const LodReport& report = lodReport();
     char line[256];
-    std::snprintf(line, sizeof(line),
+    std::snprintf(line,
+                  sizeof(line),
                   "levels loaded %u over %u model(s); drawn lod0 %u, lod1 %u, lod2 %u; biggest "
                   "with a chain %.1f px -> lod%u (switches at %.0f / %.0f, viewport %.0f px)",
-                  report.levelsLoaded, report.modelsWithLevels, report.drawn[0], report.drawn[1],
-                  report.drawn[2], static_cast<double>(report.largestChainedRadius),
+                  report.levelsLoaded,
+                  report.modelsWithLevels,
+                  report.drawn[0],
+                  report.drawn[1],
+                  report.drawn[2],
+                  static_cast<double>(report.largestChainedRadius),
                   report.largestChainedLevel,
                   static_cast<double>(sol::assets::kLevelSwitchPixels[0]),
                   static_cast<double>(sol::assets::kLevelSwitchPixels[1]),
@@ -1503,8 +1602,13 @@ std::string rolesReport(GameContent& content)
     for (const sol::assets::RoleDef& role : defs.roles()) {
         const std::uint32_t index = defs.modelIndex(role.model.c_str());
         char line[160];
-        std::snprintf(line, sizeof(line), "%s%s -> %s (model %u)", out.empty() ? "" : ", ",
-                      role.id.c_str(), role.model.c_str(), index);
+        std::snprintf(line,
+                      sizeof(line),
+                      "%s%s -> %s (model %u)",
+                      out.empty() ? "" : ", ",
+                      role.id.c_str(),
+                      role.model.c_str(),
+                      index);
         out += line;
     }
     return out.empty() ? "no [[role]] rows loaded" : out;
@@ -1523,7 +1627,8 @@ std::string lodPinCommand(GameContent& content, double level)
         return "lod pin off - levels are chosen by projected size again";
     }
     char line[128];
-    std::snprintf(line, sizeof(line),
+    std::snprintf(line,
+                  sizeof(line),
                   "lod pinned to level %d - every chained model draws it, clamped to the levels "
                   "it has",
                   static_cast<int>(lodPin()));
@@ -1545,15 +1650,20 @@ std::string perfReport(GameContent& content)
     for (std::uint32_t i = 0; i < profiler.zoneCount(); ++i) {
         const sol::core::ZoneReport zone = profiler.report(i);
         char row[192];
-        std::snprintf(row, sizeof(row), "\n%*s%-*s %6.2f  %6.2f  %6.2f",
-                      static_cast<int>(zone.depth) * 2, "",
-                      24 - static_cast<int>(zone.depth) * 2, zone.name, zone.lastMilliseconds,
-                      zone.meanMilliseconds, zone.maxMilliseconds);
+        std::snprintf(row,
+                      sizeof(row),
+                      "\n%*s%-*s %6.2f  %6.2f  %6.2f",
+                      static_cast<int>(zone.depth) * 2,
+                      "",
+                      24 - static_cast<int>(zone.depth) * 2,
+                      zone.name,
+                      zone.lastMilliseconds,
+                      zone.meanMilliseconds,
+                      zone.maxMilliseconds);
         lines += row;
         if (zone.counter > 0) {
             char tail[48];
-            std::snprintf(tail, sizeof(tail), "  n=%llu",
-                          static_cast<unsigned long long>(zone.counter));
+            std::snprintf(tail, sizeof(tail), "  n=%llu", static_cast<unsigned long long>(zone.counter));
             lines += tail;
         }
         if (zone.external) {
@@ -1599,9 +1709,7 @@ double perfZoneCount(GameContent& content, const std::string& name)
     (void)content;
     const sol::core::Profiler& profiler = sol::core::frameProfiler();
     const std::uint32_t index = profiler.findZone(name.c_str());
-    return index == sol::core::kInvalidZone
-               ? -1.0
-               : static_cast<double>(profiler.report(index).counter);
+    return index == sol::core::kInvalidZone ? -1.0 : static_cast<double>(profiler.report(index).counter);
 }
 
 // Clears the history so a measurement can start from a known state rather
@@ -1661,8 +1769,7 @@ std::string bindAction(GameContent& content, const char* actionName, const char*
     std::string result = std::string(actionLabel(action)) + " = " +
                          (chord.bound() ? sol::platform::chordName(chord) : "(unbound)");
     if (stolen != sol::platform::BindingTable::kNoAction) {
-        result += ", taken from " + std::string(actionLabel(static_cast<Action>(stolen))) +
-                  " (now unbound)";
+        result += ", taken from " + std::string(actionLabel(static_cast<Action>(stolen))) + " (now unbound)";
     }
     return result;
 }
@@ -1738,8 +1845,8 @@ std::string worldgenReport(GameContent& content)
         const bool rockless = sol::sim::fieldCountFor(unguarded.systems[i], mining) == 0;
         for (const sol::sim::StationSpec& station : unguarded.systems[i].stations) {
             ++stationsBefore;
-            if (rockless && station.archetype < archetypes
-                && params.stationRules[station.archetype].requiresField) {
+            if (rockless && station.archetype < archetypes &&
+                params.stationRules[station.archetype].requiresField) {
                 ++extractorsBefore;
             }
         }
@@ -1747,22 +1854,29 @@ std::string worldgenReport(GameContent& content)
 
     char buffer[256];
     std::string out;
-    std::snprintf(buffer, sizeof(buffer),
+    std::snprintf(buffer,
+                  sizeof(buffer),
                   "%zu systems, %u with no rock; %u stations; %u extractor(s) sited without rock"
                   " (rule off: %u of %u)",
-                  galaxy.systems.size(), rocklessSystems, stations, extractorsWithoutRock,
-                  extractorsBefore, stationsBefore);
+                  galaxy.systems.size(),
+                  rocklessSystems,
+                  stations,
+                  extractorsWithoutRock,
+                  extractorsBefore,
+                  stationsBefore);
     out += buffer;
     for (std::size_t b = 0; b < buckets; ++b) {
         if (perFaction[b] == 0) {
             continue;
         }
-        std::snprintf(buffer, sizeof(buffer), "\n%-22s %3u:",
-                      b < factions.size() ? factions[b].name.c_str() : "(lawless)", perFaction[b]);
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "\n%-22s %3u:",
+                      b < factions.size() ? factions[b].name.c_str() : "(lawless)",
+                      perFaction[b]);
         out += buffer;
         for (std::size_t a = 0; a < archetypes; ++a) {
-            std::snprintf(buffer, sizeof(buffer), " %.0f%%",
-                          100.0 * mix[b * archetypes + a] / perFaction[b]);
+            std::snprintf(buffer, sizeof(buffer), " %.0f%%", 100.0 * mix[b * archetypes + a] / perFaction[b]);
             out += buffer;
         }
     }
@@ -1780,14 +1894,17 @@ std::string listFields(GameContent& content)
     std::string lines;
     for (std::size_t i = 0; i < fields.size(); ++i) {
         char buffer[128];
-        std::snprintf(buffer, sizeof(buffer), "%zu: %u rocks, r %.0f km, %.0f km away", i + 1,
-                      fields[i].rockCount, fields[i].radius / 1000.0,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%zu: %u rocks, r %.0f km, %.0f km away",
+                      i + 1,
+                      fields[i].rockCount,
+                      fields[i].radius / 1000.0,
                       sol::core::length(fields[i].center - ship) / 1000.0);
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
     char summary[96];
-    std::snprintf(summary, sizeof(summary), "%zu field(s) in %s", fields.size(),
-                  world.currentSystemName());
+    std::snprintf(summary, sizeof(summary), "%zu field(s) in %s", fields.size(), world.currentSystemName());
     return lines.empty() ? std::string(summary) : lines + "\n" + summary;
 }
 
@@ -1796,8 +1913,7 @@ std::string listFields(GameContent& content)
 std::string listRocks(GameContent& content, double fieldNumber)
 {
     SpaceWorld& world = content.world();
-    const std::uint32_t field = fieldNumber >= 1.0 ? static_cast<std::uint32_t>(fieldNumber) - 1
-                                                   : 0;
+    const std::uint32_t field = fieldNumber >= 1.0 ? static_cast<std::uint32_t>(fieldNumber) - 1 : 0;
     std::vector<sol::sim::RockSpec> rocks;
     world.mining().rocksFor(world.galaxy(), world.currentSystemIndex(), field, rocks);
     if (rocks.empty()) {
@@ -1808,27 +1924,34 @@ std::string listRocks(GameContent& content, double fieldNumber)
     float left = 0.0f;
     float total = 0.0f;
     for (std::size_t i = 0; i < rocks.size(); ++i) {
-        const float remaining = world.mining().unitsLeft(world.currentSystemIndex(), field,
-                                                         static_cast<std::uint32_t>(i),
-                                                         rocks[i].yieldUnits);
+        const float remaining = world.mining().unitsLeft(
+            world.currentSystemIndex(), field, static_cast<std::uint32_t>(i), rocks[i].yieldUnits);
         left += remaining;
         total += rocks[i].yieldUnits;
         if (remaining <= 0.0f) {
             continue; // spent rocks are gone; listing them is noise
         }
         char buffer[160];
-        std::snprintf(buffer, sizeof(buffer), "%zu: %s %.1f/%.1f, r %.0f m, %.0f km", i + 1,
-                      world.commodityIds()[rocks[i].commodity < world.commodityIds().size()
-                                               ? rocks[i].commodity
-                                               : 0]
-                          .c_str(),
-                      static_cast<double>(remaining), static_cast<double>(rocks[i].yieldUnits),
-                      rocks[i].radius, sol::core::length(rocks[i].position - ship) / 1000.0);
+        std::snprintf(
+            buffer,
+            sizeof(buffer),
+            "%zu: %s %.1f/%.1f, r %.0f m, %.0f km",
+            i + 1,
+            world.commodityIds()[rocks[i].commodity < world.commodityIds().size() ? rocks[i].commodity : 0]
+                .c_str(),
+            static_cast<double>(remaining),
+            static_cast<double>(rocks[i].yieldUnits),
+            rocks[i].radius,
+            sol::core::length(rocks[i].position - ship) / 1000.0);
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
     char summary[96];
-    std::snprintf(summary, sizeof(summary), "field %u: %.0f of %.0f units left",
-                  field + 1, static_cast<double>(left), static_cast<double>(total));
+    std::snprintf(summary,
+                  sizeof(summary),
+                  "field %u: %.0f of %.0f units left",
+                  field + 1,
+                  static_cast<double>(left),
+                  static_cast<double>(total));
     return lines.empty() ? std::string(summary) : lines + "\n" + summary;
 }
 
@@ -1842,12 +1965,16 @@ std::string listWrecks(GameContent& content)
             cargo += stack.units;
         }
         char buffer[192];
-        std::snprintf(buffer, sizeof(buffer), "#%u %s in %s: %.0f units, %.0f cr%s, %.0f s left",
-                      wreck.id, wreck.name.c_str(),
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "#%u %s in %s: %.0f units, %.0f cr%s, %.0f s left",
+                      wreck.id,
+                      wreck.name.c_str(),
                       wreck.system < world.galaxy().systems.size()
                           ? world.galaxy().systems[wreck.system].name.c_str()
                           : "?",
-                      static_cast<double>(cargo), wreck.contents.credits,
+                      static_cast<double>(cargo),
+                      wreck.contents.credits,
                       wreck.contents.moduleId.empty() ? "" : ", module",
                       wreck.decayRemaining);
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
@@ -1929,7 +2056,10 @@ std::string listTips(GameContent& content)
         }
         ++rumours;
         char buffer[224];
-        std::snprintf(buffer, sizeof(buffer), "place %u: %s in %s", bookmark.id,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "place %u: %s in %s",
+                      bookmark.id,
                       bookmark.name.c_str(),
                       world.galaxy().systems[bookmark.system].name.c_str());
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
@@ -1938,17 +2068,25 @@ std::string listTips(GameContent& content)
         const sol::sim::StationMarket& record = world.economy().markets()[memory.market];
         const sol::sim::SystemSpec& spec = world.galaxy().systems[record.systemIndex];
         char buffer[224];
-        std::snprintf(buffer, sizeof(buffer), "price %u: %s, %s - %.0f s old%s", memory.market,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "price %u: %s, %s - %.0f s old%s",
+                      memory.market,
                       record.stationIndex < spec.stations.size()
                           ? spec.stations[record.stationIndex].name.c_str()
                           : "?",
-                      spec.name.c_str(), world.worldSeconds() - memory.takenAt,
+                      spec.name.c_str(),
+                      world.worldSeconds() - memory.takenAt,
                       survey.isStale(memory, world.worldSeconds()) ? " (stale)" : "");
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
     char summary[128];
-    std::snprintf(summary, sizeof(summary), "%u rumour(s), %zu market(s) remembered, %zu pilot(s) hailed here",
-                  rumours, survey.marketMemory().size(), world.hailCount());
+    std::snprintf(summary,
+                  sizeof(summary),
+                  "%u rumour(s), %zu market(s) remembered, %zu pilot(s) hailed here",
+                  rumours,
+                  survey.marketMemory().size(),
+                  world.hailCount());
     return lines.empty() ? std::string(summary) : lines + "\n" + summary;
 }
 
@@ -1973,7 +2111,10 @@ std::string listRefineJobs(GameContent& content)
     std::string lines;
     for (const sol::sim::RefineJob& job : world.mining().refineJobs()) {
         char buffer[160];
-        std::snprintf(buffer, sizeof(buffer), "market %u: %.0f %s -> %.0f %s, %s", job.market,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "market %u: %.0f %s -> %.0f %s, %s",
+                      job.market,
                       static_cast<double>(job.inputUnits),
                       job.inputCommodity < world.commodityIds().size()
                           ? world.commodityIds()[job.inputCommodity].c_str()
@@ -2022,10 +2163,9 @@ std::string economyReport(GameContent& content)
         if (economy.satisfaction(m) < 0.99f) {
             ++throttled;
         }
-        const sol::sim::EconomyArchetype* archetype =
-            market.archetype < economy.params().archetypes.size()
-                ? &economy.params().archetypes[market.archetype]
-                : nullptr;
+        const sol::sim::EconomyArchetype* archetype = market.archetype < economy.params().archetypes.size()
+                                                          ? &economy.params().archetypes[market.archetype]
+                                                          : nullptr;
         for (std::uint32_t c = 0; c < commodities; ++c) {
             const float units = economy.stock(m, c);
             stock[c] += units;
@@ -2056,15 +2196,25 @@ std::string economyReport(GameContent& content)
     char buffer[256];
     for (std::uint32_t c = 0; c < commodities; ++c) {
         const double fill = capacity[c] > 0.0 ? 100.0 * stock[c] / capacity[c] : 0.0;
-        std::snprintf(buffer, sizeof(buffer),
+        std::snprintf(buffer,
+                      sizeof(buffer),
                       "%-14s %5.1f%% full  prod %6.2f  use %6.2f  (%u empty, %u full, "
                       "%u starved on it)",
-                      world.commodityIds()[c].c_str(), fill, production[c], consumption[c],
-                      empty[c], full[c], starved[c]);
+                      world.commodityIds()[c].c_str(),
+                      fill,
+                      production[c],
+                      consumption[c],
+                      empty[c],
+                      full[c],
+                      starved[c]);
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
-    std::snprintf(buffer, sizeof(buffer), "%zu markets, %u throttled by feedstock, %.0f s elapsed",
-                  economy.markets().size(), throttled, world.worldSeconds());
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%zu markets, %u throttled by feedstock, %.0f s elapsed",
+                  economy.markets().size(),
+                  throttled,
+                  world.worldSeconds());
     return lines + "\n" + buffer;
 }
 
@@ -2079,10 +2229,13 @@ std::string feedstockReport(GameContent& content)
     const std::uint32_t market = world.dockedMarket();
     const char* limiting = world.marketLimiting(market);
     char buffer[192];
-    std::snprintf(buffer, sizeof(buffer), "%s: running at %.0f%% of nominal%s%s",
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s: running at %.0f%% of nominal%s%s",
                   world.dockedStationName(),
                   static_cast<double>(world.marketSatisfaction(market)) * 100.0,
-                  limiting[0] == '\0' ? "" : ", short of ", limiting);
+                  limiting[0] == '\0' ? "" : ", short of ",
+                  limiting);
     return buffer;
 }
 
@@ -2091,9 +2244,8 @@ std::string feedstockReport(GameContent& content)
 std::string fieldStock(GameContent& content, int systemIndex)
 {
     SpaceWorld& world = content.world();
-    const auto system = systemIndex < 0
-                            ? world.currentSystemIndex()
-                            : static_cast<std::uint32_t>(systemIndex);
+    const auto system =
+        systemIndex < 0 ? world.currentSystemIndex() : static_cast<std::uint32_t>(systemIndex);
     if (system >= world.galaxy().systems.size()) {
         return "(no such system)";
     }
@@ -2104,13 +2256,19 @@ std::string fieldStock(GameContent& content, int systemIndex)
         if (units <= 0.0f) {
             continue;
         }
-        std::snprintf(buffer, sizeof(buffer), "%s: %.0f units in the ground",
-                      world.commodityIds()[c].c_str(), static_cast<double>(units));
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%s: %.0f units in the ground",
+                      world.commodityIds()[c].c_str(),
+                      static_cast<double>(units));
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
-    std::snprintf(buffer, sizeof(buffer), "%s: %u field(s), %zu rock(s) being worked",
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s: %u field(s), %zu rock(s) being worked",
                   world.galaxy().systems[system].name.c_str(),
-                  world.mining().fieldCount(system), world.mining().depletionRecordCount());
+                  world.mining().fieldCount(system),
+                  world.mining().depletionRecordCount());
     return (lines.empty() ? std::string("(no rock here)") : lines) + "\n" + buffer;
 }
 
@@ -2126,13 +2284,19 @@ std::string marketMemory(GameContent& content)
         const std::uint32_t system = world.economy().markets()[memory.market].systemIndex;
         std::string prices;
         for (std::uint32_t c = 0; c < memory.prices.size(); ++c) {
-            std::snprintf(buffer, sizeof(buffer), "%s%s %.2f", prices.empty() ? "" : ", ",
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%s%s %.2f",
+                          prices.empty() ? "" : ", ",
                           world.commodityIds()[c].c_str(),
                           static_cast<double>(memory.prices[c]));
             prices += buffer;
         }
-        std::snprintf(buffer, sizeof(buffer), "%s (market %u), %.0f s ago: ",
-                      world.galaxy().systems[system].name.c_str(), memory.market,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%s (market %u), %.0f s ago: ",
+                      world.galaxy().systems[system].name.c_str(),
+                      memory.market,
                       world.worldSeconds() - memory.takenAt);
         lines += (lines.empty() ? "" : "\n") + std::string(buffer) + prices;
     }
@@ -2159,9 +2323,13 @@ std::string bestPrice(GameContent& content, const char* commodityId)
             return "(never seen it anywhere)";
         }
         char buffer[192];
-        std::snprintf(buffer, sizeof(buffer), "%s: %.2f at %s, %.0f s ago%s", commodityId,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%s: %.2f at %s, %.0f s ago%s",
+                      commodityId,
                       static_cast<double>(price),
-                      world.galaxy().systems[system].name.c_str(), age,
+                      world.galaxy().systems[system].name.c_str(),
+                      age,
                       stale ? " (stale)" : "");
         return buffer;
     }
@@ -2211,10 +2379,12 @@ std::string listStructures(GameContent& content)
     std::uint32_t known = 0;
     for (std::uint32_t i = 0; i < spec.stations.size(); ++i) {
         char buffer[160];
-        std::snprintf(buffer, sizeof(buffer), "station %u '%s': %s, %.0f km", i,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "station %u '%s': %s, %.0f km",
+                      i,
                       spec.stations[i].name.c_str(),
-                      state(survey.stationDiscovered(system, i),
-                            survey.stationIdentified(system, i)),
+                      state(survey.stationDiscovered(system, i), survey.stationIdentified(system, i)),
                       length(spec.stations[i].position - position) / 1000.0);
         lines += lines.empty() ? "" : "\n";
         lines += buffer;
@@ -2222,7 +2392,10 @@ std::string listStructures(GameContent& content)
     }
     for (std::uint32_t i = 0; i < spec.gates.size(); ++i) {
         char buffer[160];
-        std::snprintf(buffer, sizeof(buffer), "gate %u -> %s: %s, %.0f km", i,
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "gate %u -> %s: %s, %.0f km",
+                      i,
                       world.galaxy().systems[spec.gates[i].toSystem].name.c_str(),
                       state(survey.gateDiscovered(system, i), survey.gateIdentified(system, i)),
                       length(spec.gates[i].position - position) / 1000.0);
@@ -2231,8 +2404,12 @@ std::string listStructures(GameContent& content)
         known += survey.gateDiscovered(system, i) ? 1u : 0u;
     }
     char summary[128];
-    std::snprintf(summary, sizeof(summary), "\n%zu structure(s) in %s, %u found; pulse %.0f km",
-                  spec.stations.size() + spec.gates.size(), world.currentSystemName(), known,
+    std::snprintf(summary,
+                  sizeof(summary),
+                  "\n%zu structure(s) in %s, %u found; pulse %.0f km",
+                  spec.stations.size() + spec.gates.size(),
+                  world.currentSystemName(),
+                  known,
                   static_cast<double>(world.scanRange()) / 1000.0);
     lines += summary;
     return lines;
@@ -2254,8 +2431,7 @@ bool chartSystem(GameContent& content, const char* systemName)
 // The signal_loot hook's builder: "commodityId:units,commodityId:units" plus
 // credits and an optional module id. Validated here against the defs and the
 // sim's caps - a script cannot invent a commodity or overfill a wreck.
-bool setSignalLoot(GameContent& content, const char* cargoSpec, double credits,
-                   const char* moduleId)
+bool setSignalLoot(GameContent& content, const char* cargoSpec, double credits, const char* moduleId)
 {
     if (content.lootSignal() == 0xffff'ffffu && content.lootWreck() == 0) {
         SOL_LOG_WARN("set_loot: only valid inside signal_loot or wreck_loot");
@@ -2270,8 +2446,7 @@ bool setSignalLoot(GameContent& content, const char* cargoSpec, double credits,
         const std::string_view entry = spec.substr(0, comma);
         const std::size_t colon = entry.find(':');
         if (colon == std::string_view::npos) {
-            SOL_LOG_WARN("set_loot: bad cargo entry '%.*s'", static_cast<int>(entry.size()),
-                         entry.data());
+            SOL_LOG_WARN("set_loot: bad cargo entry '%.*s'", static_cast<int>(entry.size()), entry.data());
             return false;
         }
         const std::string id(entry.substr(0, colon));
@@ -2311,8 +2486,7 @@ std::string factionCandidates(GameContent& content, double factionIndex)
         return "";
     }
     std::vector<sol::sim::RaidCandidate> candidates;
-    world.factionSim().raidCandidates(world.galaxy(), static_cast<std::uint32_t>(faction),
-                                      candidates);
+    world.factionSim().raidCandidates(world.galaxy(), static_cast<std::uint32_t>(faction), candidates);
     std::string joined;
     for (const sol::sim::RaidCandidate& candidate : candidates) {
         if (!joined.empty()) {
@@ -2320,12 +2494,11 @@ std::string factionCandidates(GameContent& content, double factionIndex)
         }
         char buffer[64];
         std::snprintf(buffer, sizeof(buffer), "%.1f", static_cast<double>(candidate.relation));
-        joined += std::to_string(candidate.system) + ":" +
-                  world.galaxy().systems[candidate.system].name + ":" + buffer + ":" +
-                  (candidate.owner < world.factions().size() &&
-                           world.factions()[candidate.owner].pirate
-                       ? "p"
-                       : "m");
+        joined +=
+            std::to_string(candidate.system) + ":" + world.galaxy().systems[candidate.system].name + ":" +
+            buffer + ":" +
+            (candidate.owner < world.factions().size() && world.factions()[candidate.owner].pirate ? "p"
+                                                                                                   : "m");
     }
     return joined;
 }
@@ -2444,8 +2617,7 @@ bool factionRaid(GameContent& content, double factionIndex, double systemIndex)
 // Human summary of a mission's current objective, for board/journal listings.
 std::string missionObjectiveLine(const sol::sim::Mission& mission)
 {
-    const sol::sim::MissionObjective& objective =
-        mission.objectives[mission.currentObjective];
+    const sol::sim::MissionObjective& objective = mission.objectives[mission.currentObjective];
     std::string line = objective.text;
     if (objective.kind == sol::sim::ObjectiveKind::Kill) {
         line += " (" + std::to_string(objective.kills) + " left)";
@@ -2466,9 +2638,8 @@ std::string listMissionBoard(GameContent& content)
         }
         const sol::sim::Mission& offer = offers[i];
         lines += std::to_string(i + 1) + ": " + offer.title + " (" +
-                 (offer.poster < world.factions().size()
-                      ? world.factions()[offer.poster].name
-                      : std::string("?")) +
+                 (offer.poster < world.factions().size() ? world.factions()[offer.poster].name
+                                                         : std::string("?")) +
                  ", " + std::to_string(static_cast<int>(offer.rewardCredits)) + " cr";
         if (offer.minRep > -100.0f) {
             lines += ", rep " + std::to_string(static_cast<int>(offer.minRep)) + "+";
@@ -2493,8 +2664,7 @@ std::string listMissions(GameContent& content)
         const sol::sim::Mission& mission = active[i];
         lines += std::to_string(i + 1) + ": " + mission.title + " [" +
                  std::to_string(mission.currentObjective + 1) + "/" +
-                 std::to_string(mission.objectives.size()) + "] " +
-                 missionObjectiveLine(mission);
+                 std::to_string(mission.objectives.size()) + "] " + missionObjectiveLine(mission);
         if (mission.deadline > 0.0) {
             lines += " (" + std::to_string(static_cast<int>(mission.deadline)) + "s left)";
         }
@@ -2533,8 +2703,7 @@ double campaignStage(GameContent& content)
 
 double setCampaignStage(GameContent& content, double stage)
 {
-    content.world().missionSim().setCampaignStage(
-        stage >= 0.0 ? static_cast<std::uint32_t>(stage) : 0u);
+    content.world().missionSim().setCampaignStage(stage >= 0.0 ? static_cast<std::uint32_t>(stage) : 0u);
     return content.world().missionSim().campaignStage();
 }
 
@@ -2547,34 +2716,39 @@ std::string missionCandidatesInfo(GameContent& content)
     }
     std::string lines;
     std::vector<sol::sim::HaulCandidate> hauls;
-    world.missionSim().haulCandidates(world.galaxy(), world.economy(),
-                                      world.currentSystemIndex(),
-                                      world.dockedStationIndex(), hauls);
+    world.missionSim().haulCandidates(
+        world.galaxy(), world.economy(), world.currentSystemIndex(), world.dockedStationIndex(), hauls);
     for (const sol::sim::HaulCandidate& c : hauls) {
         if (!lines.empty()) {
             lines += "\n";
         }
         char buffer[160];
-        std::snprintf(buffer, sizeof(buffer), "haul: %s @ %s needs %.0f %s (%.0f%%, %u jumps)",
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "haul: %s @ %s needs %.0f %s (%.0f%%, %u jumps)",
                       world.galaxy().systems[c.system].stations[c.station].name.c_str(),
                       world.galaxy().systems[c.system].name.c_str(),
-                      static_cast<double>(c.units), world.commodityIds()[c.commodity].c_str(),
-                      static_cast<double>(c.severity) * 100.0, c.jumps);
+                      static_cast<double>(c.units),
+                      world.commodityIds()[c.commodity].c_str(),
+                      static_cast<double>(c.severity) * 100.0,
+                      c.jumps);
         lines += buffer;
     }
     std::vector<sol::sim::BountyCandidate> bounties;
-    world.missionSim().bountyCandidates(world.galaxy(), world.factionSim(),
-                                        world.currentSystemIndex(), bounties);
+    world.missionSim().bountyCandidates(
+        world.galaxy(), world.factionSim(), world.currentSystemIndex(), bounties);
     for (const sol::sim::BountyCandidate& c : bounties) {
         if (!lines.empty()) {
             lines += "\n";
         }
         char buffer[160];
-        std::snprintf(buffer, sizeof(buffer), "bounty: %s raided by %s (%.2f, %u jumps)",
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "bounty: %s raided by %s (%.2f, %u jumps)",
                       world.galaxy().systems[c.system].name.c_str(),
-                      c.clan < world.factions().size() ? world.factions()[c.clan].name.c_str()
-                                                       : "?",
-                      static_cast<double>(c.intensity), c.jumps);
+                      c.clan < world.factions().size() ? world.factions()[c.clan].name.c_str() : "?",
+                      static_cast<double>(c.intensity),
+                      c.jumps);
         lines += buffer;
     }
     return lines.empty() ? "(no candidates)" : lines;
@@ -2592,8 +2766,7 @@ double stationCount(GameContent& content, double systemIndex)
 {
     const auto& systems = content.world().galaxy().systems;
     const std::size_t system = static_cast<std::size_t>(systemIndex);
-    return system < systems.size() ? static_cast<double>(systems[system].stations.size())
-                                   : 0.0;
+    return system < systems.size() ? static_cast<double>(systems[system].stations.size()) : 0.0;
 }
 
 double currentSystemIndex(GameContent& content)
@@ -2610,8 +2783,12 @@ double dockedStationIndex(GameContent& content)
 
 // --- The mission builder (Lua board hook assembles a draft, then posts) ---
 
-bool missionBegin(GameContent& content, const std::string& title, double posterIndex,
-                  double rewardCredits, double repReward, double repPenalty,
+bool missionBegin(GameContent& content,
+                  const std::string& title,
+                  double posterIndex,
+                  double rewardCredits,
+                  double repReward,
+                  double repPenalty,
                   const std::string& campaignId)
 {
     const std::size_t poster = static_cast<std::size_t>(posterIndex) - 1;
@@ -2649,22 +2826,24 @@ bool missionMinRep(GameContent& content, double value)
     return true;
 }
 
-bool missionObjDock(GameContent& content, double system, double station,
-                    const std::string& text)
+bool missionObjDock(GameContent& content, double system, double station, const std::string& text)
 {
     if (!content.missionDraftOpen()) {
         return false;
     }
-    content.missionDraft().objectives.push_back(
-        {.kind = sol::sim::ObjectiveKind::Dock,
-         .system = static_cast<std::uint32_t>(system),
-         .station = static_cast<std::uint32_t>(station),
-         .text = text});
+    content.missionDraft().objectives.push_back({.kind = sol::sim::ObjectiveKind::Dock,
+                                                 .system = static_cast<std::uint32_t>(system),
+                                                 .station = static_cast<std::uint32_t>(station),
+                                                 .text = text});
     return true;
 }
 
-bool missionObjDeliver(GameContent& content, double system, double station,
-                       const std::string& commodityId, double units, const std::string& text)
+bool missionObjDeliver(GameContent& content,
+                       double system,
+                       double station,
+                       const std::string& commodityId,
+                       double units,
+                       const std::string& text)
 {
     if (!content.missionDraftOpen()) {
         return false;
@@ -2674,27 +2853,25 @@ bool missionObjDeliver(GameContent& content, double system, double station,
         SOL_LOG_WARN("mission_obj_deliver: unknown commodity '%s'", commodityId.c_str());
         return false;
     }
-    content.missionDraft().objectives.push_back(
-        {.kind = sol::sim::ObjectiveKind::Deliver,
-         .system = static_cast<std::uint32_t>(system),
-         .station = static_cast<std::uint32_t>(station),
-         .commodity = commodity,
-         .units = static_cast<float>(units),
-         .text = text});
+    content.missionDraft().objectives.push_back({.kind = sol::sim::ObjectiveKind::Deliver,
+                                                 .system = static_cast<std::uint32_t>(system),
+                                                 .station = static_cast<std::uint32_t>(station),
+                                                 .commodity = commodity,
+                                                 .units = static_cast<float>(units),
+                                                 .text = text});
     return true;
 }
 
 // count ships of a faction (1-based); system < 0 means anywhere.
-bool missionObjKill(GameContent& content, double factionIndex, double count, double system,
-                    const std::string& text)
+bool missionObjKill(
+    GameContent& content, double factionIndex, double count, double system, const std::string& text)
 {
     if (!content.missionDraftOpen()) {
         return false;
     }
     const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
     if (faction >= content.world().factions().size()) {
-        SOL_LOG_WARN("mission_obj_kill: faction %d out of range",
-                     static_cast<int>(factionIndex));
+        SOL_LOG_WARN("mission_obj_kill: faction %d out of range", static_cast<int>(factionIndex));
         return false;
     }
     content.missionDraft().objectives.push_back(
@@ -2711,28 +2888,24 @@ bool missionObjKill(GameContent& content, double factionIndex, double count, dou
 // Hold (Phase 8u): `faction` still holds `system` when its contest resolves.
 // One builder covers both directions - name the owner for a defence, the
 // attacker for an assault contract.
-bool missionObjHold(GameContent& content, double system, double factionIndex,
-                    const std::string& text)
+bool missionObjHold(GameContent& content, double system, double factionIndex, const std::string& text)
 {
     if (!content.missionDraftOpen()) {
         return false;
     }
     const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
     if (faction >= content.world().factions().size()) {
-        SOL_LOG_WARN("mission_obj_hold: faction %d out of range",
-                     static_cast<int>(factionIndex));
+        SOL_LOG_WARN("mission_obj_hold: faction %d out of range", static_cast<int>(factionIndex));
         return false;
     }
-    if (system < 0.0 ||
-        static_cast<std::size_t>(system) >= content.world().galaxy().systems.size()) {
+    if (system < 0.0 || static_cast<std::size_t>(system) >= content.world().galaxy().systems.size()) {
         SOL_LOG_WARN("mission_obj_hold: system %d out of range", static_cast<int>(system));
         return false;
     }
-    content.missionDraft().objectives.push_back(
-        {.kind = sol::sim::ObjectiveKind::Hold,
-         .system = static_cast<std::uint32_t>(system),
-         .faction = static_cast<std::uint32_t>(faction),
-         .text = text});
+    content.missionDraft().objectives.push_back({.kind = sol::sim::ObjectiveKind::Hold,
+                                                 .system = static_cast<std::uint32_t>(system),
+                                                 .faction = static_cast<std::uint32_t>(faction),
+                                                 .text = text});
     return true;
 }
 
@@ -2741,32 +2914,33 @@ bool missionObjHold(GameContent& content, double system, double factionIndex,
 // it is not a def table Lua ever names - it is the same number sol.traders()
 // and the escort candidate string print, and translating it would make three
 // surfaces disagree about one hauler.
-bool missionObjEscort(GameContent& content, double trader, double system,
-                      const std::string& text)
+bool missionObjEscort(GameContent& content, double trader, double system, const std::string& text)
 {
     if (!content.missionDraftOpen()) {
         return false;
     }
-    if (trader < 0.0 ||
-        static_cast<std::size_t>(trader) >= content.world().economy().traders().size()) {
+    if (trader < 0.0 || static_cast<std::size_t>(trader) >= content.world().economy().traders().size()) {
         SOL_LOG_WARN("mission_obj_escort: trader %d out of range", static_cast<int>(trader));
         return false;
     }
-    if (system < 0.0 ||
-        static_cast<std::size_t>(system) >= content.world().galaxy().systems.size()) {
+    if (system < 0.0 || static_cast<std::size_t>(system) >= content.world().galaxy().systems.size()) {
         SOL_LOG_WARN("mission_obj_escort: system %d out of range", static_cast<int>(system));
         return false;
     }
-    content.missionDraft().objectives.push_back(
-        {.kind = sol::sim::ObjectiveKind::Escort,
-         .system = static_cast<std::uint32_t>(system),
-         .trader = static_cast<std::uint32_t>(trader),
-         .text = text});
+    content.missionDraft().objectives.push_back({.kind = sol::sim::ObjectiveKind::Escort,
+                                                 .system = static_cast<std::uint32_t>(system),
+                                                 .trader = static_cast<std::uint32_t>(trader),
+                                                 .text = text});
     return true;
 }
 
-bool missionObjFlyTo(GameContent& content, double system, double dx, double dy, double dz,
-                     double radius, const std::string& text)
+bool missionObjFlyTo(GameContent& content,
+                     double system,
+                     double dx,
+                     double dy,
+                     double dz,
+                     double radius,
+                     const std::string& text)
 {
     if (!content.missionDraftOpen()) {
         return false;
@@ -2778,15 +2952,13 @@ bool missionObjFlyTo(GameContent& content, double system, double dx, double dy, 
         return false;
     }
     const sol::sim::SystemSpec& spec = systems[systemIndex];
-    const core::DVec3 anchor = !spec.stations.empty()
-                                   ? spec.stations[0].position
-                                   : spec.planets[spec.primaryPlanet].position;
-    content.missionDraft().objectives.push_back(
-        {.kind = sol::sim::ObjectiveKind::FlyTo,
-         .system = static_cast<std::uint32_t>(systemIndex),
-         .position = anchor + core::DVec3{dx, dy, dz},
-         .radius = radius,
-         .text = text});
+    const core::DVec3 anchor =
+        !spec.stations.empty() ? spec.stations[0].position : spec.planets[spec.primaryPlanet].position;
+    content.missionDraft().objectives.push_back({.kind = sol::sim::ObjectiveKind::FlyTo,
+                                                 .system = static_cast<std::uint32_t>(systemIndex),
+                                                 .position = anchor + core::DVec3{dx, dy, dz},
+                                                 .radius = radius,
+                                                 .text = text});
     return true;
 }
 
@@ -2799,10 +2971,9 @@ bool missionPost(GameContent& content)
     content.setMissionDraftOpen(false);
     SpaceWorld& world = content.world();
     std::string error;
-    if (!world.missionSim().postOffer(world.galaxy(), world.economy(), world.factionSim(),
-                                      content.missionDraft(), &error)) {
-        SOL_LOG_WARN("mission_post: '%s' refused: %s", content.missionDraft().title.c_str(),
-                     error.c_str());
+    if (!world.missionSim().postOffer(
+            world.galaxy(), world.economy(), world.factionSim(), content.missionDraft(), &error)) {
+        SOL_LOG_WARN("mission_post: '%s' refused: %s", content.missionDraft().title.c_str(), error.c_str());
         return false;
     }
     return true;
@@ -2810,7 +2981,8 @@ bool missionPost(GameContent& content)
 
 } // namespace
 
-bool GameContent::initialize(const std::string& dataDirectory, const std::string& modsDirectory,
+bool GameContent::initialize(const std::string& dataDirectory,
+                             const std::string& modsDirectory,
                              SpaceWorld* world)
 {
     m_world = world;
@@ -2845,7 +3017,9 @@ bool GameContent::initialize(const std::string& dataDirectory, const std::string
     runBootScripts();
     rebuildWatchList();
     SOL_LOG_INFO("content: %zu layer(s), %zu ship / %zu weapon / %zu faction def(s)",
-                 m_layerDirectories.size(), m_defs.ships().size(), m_defs.weapons().size(),
+                 m_layerDirectories.size(),
+                 m_defs.ships().size(),
+                 m_defs.weapons().size(),
                  m_defs.factions().size());
     return true;
 }
@@ -3170,19 +3344,17 @@ void GameContent::poll(double nowSeconds)
 
     bool defsChanged = false;
     bool scriptsChanged = false;
-    auto noteChange = [&](const WatchedFile& file) {
-        (file.isScript ? scriptsChanged : defsChanged) = true;
-    };
+    auto noteChange = [&](const WatchedFile& file) { (file.isScript ? scriptsChanged : defsChanged) = true; };
     for (const WatchedFile& file : m_watched) {
-        const auto old = std::find_if(previous.begin(), previous.end(),
-                                      [&](const WatchedFile& f) { return f.path == file.path; });
+        const auto old = std::find_if(
+            previous.begin(), previous.end(), [&](const WatchedFile& f) { return f.path == file.path; });
         if (old == previous.end() || old->modificationTime != file.modificationTime) {
             noteChange(file);
         }
     }
     for (const WatchedFile& file : previous) { // deletions
-        const auto current = std::find_if(m_watched.begin(), m_watched.end(),
-                                          [&](const WatchedFile& f) { return f.path == file.path; });
+        const auto current = std::find_if(
+            m_watched.begin(), m_watched.end(), [&](const WatchedFile& f) { return f.path == file.path; });
         if (current == m_watched.end()) {
             noteChange(file);
         }
@@ -3224,8 +3396,13 @@ void GameContent::tick(double dt)
         SOL_PROFILE_COUNT(pilotZone, m_pilotThinks.size());
         for (const SpaceWorld::PilotThink& think : m_pilotThinks) {
             std::string error;
-            if (!m_vm.callGlobal("pilot_think", &error, scripting::toHandle(think.entity),
-                                 think.role, think.state, think.attitude, think.pirate)) {
+            if (!m_vm.callGlobal("pilot_think",
+                                 &error,
+                                 scripting::toHandle(think.entity),
+                                 think.role,
+                                 think.state,
+                                 think.attitude,
+                                 think.pirate)) {
                 SOL_LOG_ERROR("pilot_think disabled until scripts reload: %s", error.c_str());
                 m_pilotHookFailed = true;
                 break;
@@ -3238,27 +3415,29 @@ void GameContent::tick(double dt)
     // sol.faction_candidates and commit sol.faction_raid), with the C++
     // default policy standing in when no hook is defined.
     {
-    SOL_PROFILE_ZONE_NAMED(factionZone, "lua.faction_think");
-    m_factionDecisions.clear();
-    m_world->factionSim().takeDueDecisions(m_factionDecisions);
-    SOL_PROFILE_COUNT(factionZone, m_factionDecisions.size());
-    for (const sol::sim::FactionDecision& decision : m_factionDecisions) {
-        if (m_hasFactionHook && !m_factionHookFailed) {
-            const game::GameFaction& faction = m_world->factions()[decision.faction];
-            std::string error;
-            if (m_vm.callGlobal("faction_think", &error,
-                                static_cast<double>(decision.faction + 1),
-                                faction.name.c_str(), faction.pirate,
-                                static_cast<double>(faction.aggression),
-                                static_cast<double>(faction.forgiveness),
-                                static_cast<double>(decision.roll))) {
-                continue;
+        SOL_PROFILE_ZONE_NAMED(factionZone, "lua.faction_think");
+        m_factionDecisions.clear();
+        m_world->factionSim().takeDueDecisions(m_factionDecisions);
+        SOL_PROFILE_COUNT(factionZone, m_factionDecisions.size());
+        for (const sol::sim::FactionDecision& decision : m_factionDecisions) {
+            if (m_hasFactionHook && !m_factionHookFailed) {
+                const game::GameFaction& faction = m_world->factions()[decision.faction];
+                std::string error;
+                if (m_vm.callGlobal("faction_think",
+                                    &error,
+                                    static_cast<double>(decision.faction + 1),
+                                    faction.name.c_str(),
+                                    faction.pirate,
+                                    static_cast<double>(faction.aggression),
+                                    static_cast<double>(faction.forgiveness),
+                                    static_cast<double>(decision.roll))) {
+                    continue;
+                }
+                SOL_LOG_ERROR("faction_think disabled until scripts reload: %s", error.c_str());
+                m_factionHookFailed = true;
             }
-            SOL_LOG_ERROR("faction_think disabled until scripts reload: %s", error.c_str());
-            m_factionHookFailed = true;
+            m_world->applyDefaultFactionDecision(decision);
         }
-        m_world->applyDefaultFactionDecision(decision);
-    }
     }
 
     // Campaign flavor: the world already applied payouts/penalties; authored
@@ -3308,10 +3487,12 @@ void GameContent::tick(double dt)
                 break;
             }
             std::string error;
-            if (!m_vm.callGlobal("mission_event", &error, event.mission.campaignId.c_str(),
-                                 kind, static_cast<double>(event.objective + 1))) {
-                SOL_LOG_ERROR("mission_event disabled until scripts reload: %s",
-                              error.c_str());
+            if (!m_vm.callGlobal("mission_event",
+                                 &error,
+                                 event.mission.campaignId.c_str(),
+                                 kind,
+                                 static_cast<double>(event.objective + 1))) {
+                SOL_LOG_ERROR("mission_event disabled until scripts reload: %s", error.c_str());
                 m_missionEventHookFailed = true;
                 break;
             }
@@ -3327,8 +3508,7 @@ void GameContent::tick(double dt)
     // undock/redock the only way to continue a chain. openBoard resets the
     // refresh accumulator, so a re-compose here re-arms the backstop too.
     const bool dockEvent = m_world->consumeDockEvent();
-    if (m_world->isDocked() &&
-        (dockEvent || boardDirty || m_world->missionSim().tickBoard(dt))) {
+    if (m_world->isDocked() && (dockEvent || boardDirty || m_world->missionSim().tickBoard(dt))) {
         runMissionBoard();
     }
 
@@ -3340,21 +3520,24 @@ void GameContent::tick(double dt)
     std::uint32_t dockStation = 0;
     double dockRoll = 0.0;
     if (m_world->takeDockRequest(dockStation, dockRoll)) {
-        const sol::sim::SystemSpec& spec =
-            m_world->galaxy().systems[m_world->currentSystemIndex()];
+        const sol::sim::SystemSpec& spec = m_world->galaxy().systems[m_world->currentSystemIndex()];
         const std::uint32_t owner = m_world->systemOwnerFaction(m_world->currentSystemIndex());
         const bool owned = owner < m_world->factions().size();
         const bool hostile = owned && m_world->factionSim().playerHostile(owner);
         const char* ownerName = owned ? m_world->factions()[owner].name.c_str() : "Independent";
-        const double standing =
-            owned ? static_cast<double>(m_world->factionSim().standing(owner)) : 0.0;
+        const double standing = owned ? static_cast<double>(m_world->factionSim().standing(owner)) : 0.0;
         m_dockAnswered = false;
         if (m_hasDockRequestHook && !m_dockRequestHookFailed) {
             m_dockRequestStation = dockStation;
             std::string error;
-            if (!m_vm.callGlobal("dock_request", &error, spec.stations[dockStation].name.c_str(),
-                                 ownerName, standing,
-                                 static_cast<double>(sol::sim::kBerthCount), hostile, dockRoll)) {
+            if (!m_vm.callGlobal("dock_request",
+                                 &error,
+                                 spec.stations[dockStation].name.c_str(),
+                                 ownerName,
+                                 standing,
+                                 static_cast<double>(sol::sim::kBerthCount),
+                                 hostile,
+                                 dockRoll)) {
                 SOL_LOG_ERROR("dock_request disabled until scripts reload: %s", error.c_str());
                 m_dockRequestHookFailed = true;
             }
@@ -3365,15 +3548,15 @@ void GameContent::tick(double dt)
             // all. The refusal is the one Phase 8b already wrote — it just
             // reaches the player now instead of the log nobody reads.
             if (hostile) {
-                m_world->denyDocking(dockStation, std::string("Clearance denied. ") + ownerName
-                                                      + " wants you gone.");
+                m_world->denyDocking(dockStation,
+                                     std::string("Clearance denied. ") + ownerName + " wants you gone.");
             } else {
                 const std::uint32_t berth =
-                    static_cast<std::uint32_t>(dockRoll * sol::sim::kBerthCount)
-                    % sol::sim::kBerthCount;
-                (void)m_world->grantDocking(dockStation, berth,
-                                            "Cleared for berth " + std::to_string(berth + 1)
-                                                + ". Mind your approach.");
+                    static_cast<std::uint32_t>(dockRoll * sol::sim::kBerthCount) % sol::sim::kBerthCount;
+                (void)m_world->grantDocking(dockStation,
+                                            berth,
+                                            "Cleared for berth " + std::to_string(berth + 1) +
+                                                ". Mind your approach.");
             }
         }
     }
@@ -3387,9 +3570,17 @@ void GameContent::tick(double dt)
     if (m_world->takeHailRequest(hail)) {
         if (m_hasPilotHailHook && !m_pilotHailHookFailed) {
             std::string error;
-            if (!m_vm.callGlobal("pilot_hail", &error, hail.name.c_str(), hail.role,
-                                 hail.factionName.c_str(), hail.attitude, hail.standing,
-                                 hail.hostile, hail.canTipMarket, hail.canTipPlace, hail.roll)) {
+            if (!m_vm.callGlobal("pilot_hail",
+                                 &error,
+                                 hail.name.c_str(),
+                                 hail.role,
+                                 hail.factionName.c_str(),
+                                 hail.attitude,
+                                 hail.standing,
+                                 hail.hostile,
+                                 hail.canTipMarket,
+                                 hail.canTipPlace,
+                                 hail.roll)) {
                 SOL_LOG_ERROR("pilot_hail disabled until scripts reload: %s", error.c_str());
                 m_pilotHailHookFailed = true;
             }
@@ -3424,28 +3615,27 @@ void GameContent::tick(double dt)
         if (event.kind == SurveyEvent::Kind::SignalDiscovered) {
             if (m_hasSignalFoundHook && !m_signalFoundHookFailed) {
                 std::string error;
-                if (!m_vm.callGlobal("signal_found", &error,
-                                     sol::sim::signalKindName(event.signalKind), systemName)) {
-                    SOL_LOG_ERROR("signal_found disabled until scripts reload: %s",
-                                  error.c_str());
+                if (!m_vm.callGlobal(
+                        "signal_found", &error, sol::sim::signalKindName(event.signalKind), systemName)) {
+                    SOL_LOG_ERROR("signal_found disabled until scripts reload: %s", error.c_str());
                     m_signalFoundHookFailed = true;
                 }
             }
             continue;
         }
-        if (event.kind != SurveyEvent::Kind::SignalResolved || !m_hasLootHook
-            || m_lootHookFailed) {
+        if (event.kind != SurveyEvent::Kind::SignalResolved || !m_hasLootHook || m_lootHookFailed) {
             continue;
         }
-        const sol::sim::Region region =
-            event.system < m_world->galaxy().systems.size()
-                ? m_world->galaxy().systems[event.system].region
-                : sol::sim::Region::Core;
+        const sol::sim::Region region = event.system < m_world->galaxy().systems.size()
+                                            ? m_world->galaxy().systems[event.system].region
+                                            : sol::sim::Region::Core;
         m_lootSystem = event.system;
         m_lootSignal = event.index;
         std::string error;
-        if (!m_vm.callGlobal("signal_loot", &error,
-                             sol::sim::signalKindName(event.signalKind), systemName,
+        if (!m_vm.callGlobal("signal_loot",
+                             &error,
+                             sol::sim::signalKindName(event.signalKind),
+                             systemName,
                              regionWord(region),
                              static_cast<double>(event.seed >> 11) * 0x1.0p-53)) {
             SOL_LOG_ERROR("signal_loot disabled until scripts reload: %s", error.c_str());
@@ -3469,7 +3659,10 @@ void GameContent::tick(double dt)
                                      : "";
         m_lootWreck = event.id;
         std::string error;
-        if (!m_vm.callGlobal("wreck_loot", &error, event.defId.c_str(), systemName,
+        if (!m_vm.callGlobal("wreck_loot",
+                             &error,
+                             event.defId.c_str(),
+                             systemName,
                              event.factionName.c_str(),
                              static_cast<double>(event.seed >> 11) * 0x1.0p-53)) {
             SOL_LOG_ERROR("wreck_loot disabled until scripts reload: %s", error.c_str());
@@ -3488,7 +3681,8 @@ void GameContent::tick(double dt)
         }
         const std::vector<std::string>& ids = m_world->commodityIds();
         std::string error;
-        if (!m_vm.callGlobal("rock_mined", &error,
+        if (!m_vm.callGlobal("rock_mined",
+                             &error,
                              event.commodity < ids.size() ? ids[event.commodity].c_str() : "",
                              static_cast<double>(event.units))) {
             SOL_LOG_ERROR("rock_mined disabled until scripts reload: %s", error.c_str());
@@ -3513,16 +3707,23 @@ void GameContent::runMissionBoard()
     // Candidate strings, faction_candidates-style. Hauls:
     // "system:station:commodityId:units:severity:jumps:systemName:stationName"
     m_haulCandidates.clear();
-    missions.haulCandidates(world.galaxy(), world.economy(), world.currentSystemIndex(),
-                            world.dockedStationIndex(), m_haulCandidates);
+    missions.haulCandidates(world.galaxy(),
+                            world.economy(),
+                            world.currentSystemIndex(),
+                            world.dockedStationIndex(),
+                            m_haulCandidates);
     std::string hauls;
     for (const sol::sim::HaulCandidate& c : m_haulCandidates) {
         if (!hauls.empty()) {
             hauls += ";";
         }
         char buffer[64];
-        std::snprintf(buffer, sizeof(buffer), "%.0f:%.2f:%u", static_cast<double>(c.units),
-                      static_cast<double>(c.severity), c.jumps);
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%.0f:%.2f:%u",
+                      static_cast<double>(c.units),
+                      static_cast<double>(c.severity),
+                      c.jumps);
         const sol::sim::SystemSpec& spec = world.galaxy().systems[c.system];
         hauls += std::to_string(c.system) + ":" + std::to_string(c.station) + ":" +
                  world.commodityIds()[c.commodity] + ":" + buffer + ":" + spec.name + ":" +
@@ -3530,8 +3731,8 @@ void GameContent::runMissionBoard()
     }
     // Bounties: "system:clanIndex1based:intensity:jumps:systemName:clanName".
     m_bountyCandidates.clear();
-    missions.bountyCandidates(world.galaxy(), world.factionSim(),
-                              world.currentSystemIndex(), m_bountyCandidates);
+    missions.bountyCandidates(
+        world.galaxy(), world.factionSim(), world.currentSystemIndex(), m_bountyCandidates);
     std::string bounties;
     for (const sol::sim::BountyCandidate& c : m_bountyCandidates) {
         if (c.clan >= world.factions().size()) {
@@ -3541,18 +3742,16 @@ void GameContent::runMissionBoard()
             bounties += ";";
         }
         char buffer[64];
-        std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.intensity),
-                      c.jumps);
-        bounties += std::to_string(c.system) + ":" + std::to_string(c.clan + 1) + ":" +
-                    buffer + ":" + world.galaxy().systems[c.system].name + ":" +
-                    world.factions()[c.clan].name;
+        std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.intensity), c.jumps);
+        bounties += std::to_string(c.system) + ":" + std::to_string(c.clan + 1) + ":" + buffer + ":" +
+                    world.galaxy().systems[c.system].name + ":" + world.factions()[c.clan].name;
     }
 
     // Contests (Phase 8u):
     // "system:owner1based:attacker1based:pressure:jumps:sysName:ownerName:attackerName".
     m_contestCandidates.clear();
-    missions.contestCandidates(world.galaxy(), world.factionSim(), world.currentSystemIndex(),
-                               owner, m_contestCandidates);
+    missions.contestCandidates(
+        world.galaxy(), world.factionSim(), world.currentSystemIndex(), owner, m_contestCandidates);
     std::string contests;
     for (const sol::sim::ContestCandidate& c : m_contestCandidates) {
         if (c.owner >= world.factions().size() || c.attacker >= world.factions().size()) {
@@ -3562,12 +3761,11 @@ void GameContent::runMissionBoard()
             contests += ";";
         }
         char buffer[64];
-        std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.pressure),
-                      c.jumps);
+        std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.pressure), c.jumps);
         contests += std::to_string(c.system) + ":" + std::to_string(c.owner + 1) + ":" +
                     std::to_string(c.attacker + 1) + ":" + buffer + ":" +
-                    world.galaxy().systems[c.system].name + ":" +
-                    world.factions()[c.owner].name + ":" + world.factions()[c.attacker].name;
+                    world.galaxy().systems[c.system].name + ":" + world.factions()[c.owner].name + ":" +
+                    world.factions()[c.attacker].name;
     }
 
     // Escorts (Phase 8x §E):
@@ -3576,8 +3774,8 @@ void GameContent::runMissionBoard()
     // body it may or may not have right now is a view, and the contract has to
     // outlive it.
     m_escortCandidates.clear();
-    missions.escortCandidates(world.galaxy(), world.economy(), world.factionSim(),
-                              world.currentSystemIndex(), m_escortCandidates);
+    missions.escortCandidates(
+        world.galaxy(), world.economy(), world.factionSim(), world.currentSystemIndex(), m_escortCandidates);
     std::string escorts;
     for (const sol::sim::EscortCandidate& c : m_escortCandidates) {
         if (c.system >= world.galaxy().systems.size()) {
@@ -3591,24 +3789,33 @@ void GameContent::runMissionBoard()
             escorts += ";";
         }
         char buffer[64];
-        std::snprintf(buffer, sizeof(buffer), "%.0f:%.2f:%u", static_cast<double>(c.cargo),
-                      static_cast<double>(c.danger), c.jumps);
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%.0f:%.2f:%u",
+                      static_cast<double>(c.cargo),
+                      static_cast<double>(c.danger),
+                      c.jumps);
         // A deadheading hauler has no commodity worth naming, and `commodity`
         // stays set from its last run - the same trap sol.traders() fell into.
         const char* hauling = c.cargo > 0.0f && c.commodity < world.commodityIds().size()
                                   ? world.commodityIds()[c.commodity].c_str()
                                   : "-";
         escorts += std::to_string(c.trader) + ":" + std::to_string(c.system) + ":" +
-                   std::to_string(c.station) + ":" + hauling + ":" + buffer + ":" +
-                   spec.name + ":" + spec.stations[c.station].name;
+                   std::to_string(c.station) + ":" + hauling + ":" + buffer + ":" + spec.name + ":" +
+                   spec.stations[c.station].name;
     }
 
     std::string error;
-    if (!m_vm.callGlobal("mission_board", &error, world.dockedStationName(),
+    if (!m_vm.callGlobal("mission_board",
+                         &error,
+                         world.dockedStationName(),
                          static_cast<double>(owner + 1),
                          world.factions()[owner].name.c_str(),
-                         world.factions()[owner].pirate, hauls.c_str(),
-                         bounties.c_str(), contests.c_str(), escorts.c_str(),
+                         world.factions()[owner].pirate,
+                         hauls.c_str(),
+                         bounties.c_str(),
+                         contests.c_str(),
+                         escorts.c_str(),
                          static_cast<double>(missions.boardRoll()))) {
         SOL_LOG_ERROR("mission_board disabled until scripts reload: %s", error.c_str());
         m_boardHookFailed = true;

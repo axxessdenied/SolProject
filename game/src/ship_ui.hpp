@@ -17,8 +17,10 @@ namespace game {
 //
 // `text` backs every prebuilt string the panel points at and must outlive the
 // draw; the row vectors likewise back the panel's spans.
-void fillShipInfoPanel(const SpaceWorld& world, const sol::assets::DefDatabase& defs,
-                       std::deque<std::string>& text, sol::ui::ShipInfoPanel& panel,
+void fillShipInfoPanel(const SpaceWorld& world,
+                       const sol::assets::DefDatabase& defs,
+                       std::deque<std::string>& text,
+                       sol::ui::ShipInfoPanel& panel,
                        std::vector<sol::ui::InfoRow>& flightRows,
                        std::vector<sol::ui::InfoRow>& defenceRows,
                        std::vector<sol::ui::InfoRow>& utilityRows,
@@ -27,7 +29,6 @@ void fillShipInfoPanel(const SpaceWorld& world, const sol::assets::DefDatabase& 
 
 // The same numbers as one block of text, for `sol.ship_info` - which is how
 // the screen gets verified without reading pixels.
-[[nodiscard]] std::string shipInfoReport(const SpaceWorld& world,
-                                        const sol::assets::DefDatabase& defs);
+[[nodiscard]] std::string shipInfoReport(const SpaceWorld& world, const sol::assets::DefDatabase& defs);
 
 } // namespace game

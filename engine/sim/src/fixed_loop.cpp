@@ -7,8 +7,7 @@
 namespace sol::sim {
 
 FixedLoop::FixedLoop(double ticksPerSecond, std::uint32_t maxTicksPerFrame)
-    : m_tickDelta(1.0 / ticksPerSecond)
-    , m_maxTicksPerFrame(maxTicksPerFrame)
+    : m_tickDelta(1.0 / ticksPerSecond), m_maxTicksPerFrame(maxTicksPerFrame)
 {
     SOL_ASSERT(ticksPerSecond > 0.0);
     SOL_ASSERT(maxTicksPerFrame > 0);

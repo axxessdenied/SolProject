@@ -148,8 +148,16 @@ int runProcess(const char* commandLine)
     startupInfo.cb = sizeof(startupInfo);
     PROCESS_INFORMATION processInfo = {};
 
-    if (CreateProcessW(nullptr, wideCommand.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-                       nullptr, &startupInfo, &processInfo) == 0) {
+    if (CreateProcessW(nullptr,
+                       wideCommand.data(),
+                       nullptr,
+                       nullptr,
+                       FALSE,
+                       CREATE_NO_WINDOW,
+                       nullptr,
+                       nullptr,
+                       &startupInfo,
+                       &processInfo) == 0) {
         return -1;
     }
 
@@ -173,8 +181,14 @@ std::string executableDirectory()
     }
 
     char utf8Path[MAX_PATH * 4] = {};
-    const int utf8Length = WideCharToMultiByte(
-        CP_UTF8, 0, widePath, static_cast<int>(directoryLength), utf8Path, sizeof(utf8Path) - 1, nullptr, nullptr);
+    const int utf8Length = WideCharToMultiByte(CP_UTF8,
+                                               0,
+                                               widePath,
+                                               static_cast<int>(directoryLength),
+                                               utf8Path,
+                                               sizeof(utf8Path) - 1,
+                                               nullptr,
+                                               nullptr);
 
     return std::string(utf8Path, static_cast<std::size_t>(utf8Length));
 }

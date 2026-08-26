@@ -11,15 +11,15 @@
 #include "model_roles.hpp"
 #include "space_world.hpp"
 
-#include <sol/assets/data_defs.hpp>
-#include <sol/core/log.hpp>
-#include <sol/test/test.hpp>
-
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
+
+#include <sol/assets/data_defs.hpp>
+#include <sol/core/log.hpp>
+#include <sol/test/test.hpp>
 
 using sol::assets::DefDatabase;
 
@@ -44,8 +44,8 @@ namespace {
 // assert something about the files that actually ship.
 [[nodiscard]] bool loadCommittedDefs(DefDatabase& db, std::string& error)
 {
-    for (const char* stem : {"commodities", "crew", "factions", "models", "modules", "ships",
-                             "sounds", "stations", "weapons"}) {
+    for (const char* stem :
+         {"commodities", "crew", "factions", "models", "modules", "ships", "sounds", "stations", "weapons"}) {
         const std::string path = std::string(SOL_DEF_DATA_DIR) + "/" + stem + ".toml";
         const std::string text = readWholeFile(path);
         if (text.empty()) {
@@ -98,8 +98,10 @@ SOL_TEST(unit_radius_roles_name_a_model_authored_at_radius_one)
         const sol::assets::ModelDef* model = db.findModel(row->model.c_str());
         SOL_REQUIRE(model != nullptr);
         if (model->radius != 1.0f) {
-            std::printf("  role '%s' -> model '%s' has radius %f, expected 1.0\n", role,
-                        row->model.c_str(), static_cast<double>(model->radius));
+            std::printf("  role '%s' -> model '%s' has radius %f, expected 1.0\n",
+                        role,
+                        row->model.c_str(),
+                        static_cast<double>(model->radius));
         }
         SOL_CHECK(model->radius == 1.0f);
     }
@@ -138,8 +140,7 @@ SOL_TEST(an_unset_model_override_resolves_to_its_role)
     std::string error;
     SOL_REQUIRE(loadCommittedDefs(db, error));
 
-    const game::ModelId rock =
-        game::modelOverrideOr(db, "", "test", game::kRoleRock, true);
+    const game::ModelId rock = game::modelOverrideOr(db, "", "test", game::kRoleRock, true);
     SOL_CHECK(game::modelIndex(rock) == db.roleModelIndex(game::kRoleRock));
 
     // Every weapon and commodity the base game ships leaves these unset, which
@@ -363,15 +364,13 @@ SOL_TEST(a_set_model_override_wins_and_a_broken_one_falls_back)
     SOL_REQUIRE(loadCommittedDefs(db, error));
 
     // A name that exists is taken literally - that IS the feature.
-    const game::ModelId named =
-        game::modelOverrideOr(db, "station", "test", game::kRoleRock, false);
+    const game::ModelId named = game::modelOverrideOr(db, "station", "test", game::kRoleRock, false);
     SOL_CHECK(game::modelIndex(named) == db.modelIndex("station"));
 
     // A name nothing defines warns and lands on the role, rather than
     // refusing the way an unfilled ROLE does. The asymmetry is deliberate:
     // one broken override is one broken ore in somebody's mod, while an
     // unfilled role is the game having no answer at all.
-    const game::ModelId broken =
-        game::modelOverrideOr(db, "no_such_model", "test", game::kRoleRock, true);
+    const game::ModelId broken = game::modelOverrideOr(db, "no_such_model", "test", game::kRoleRock, true);
     SOL_CHECK(game::modelIndex(broken) == db.roleModelIndex(game::kRoleRock));
 }

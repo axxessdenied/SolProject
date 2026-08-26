@@ -14,15 +14,13 @@ std::vector<std::uint8_t> encodeMesh(const assets::MeshData& mesh)
     header.vertexCount = static_cast<std::uint32_t>(mesh.vertices.size());
     header.indexCount = static_cast<std::uint32_t>(mesh.indices.size());
 
-    std::vector<std::uint8_t> bytes(sizeof(header) +
-                                    mesh.vertices.size() * sizeof(assets::MeshVertex) +
+    std::vector<std::uint8_t> bytes(sizeof(header) + mesh.vertices.size() * sizeof(assets::MeshVertex) +
                                     mesh.indices.size() * sizeof(std::uint32_t));
     std::uint8_t* cursor = bytes.data();
     std::memcpy(cursor, &header, sizeof(header));
     cursor += sizeof(header);
     if (!mesh.vertices.empty()) {
-        std::memcpy(cursor, mesh.vertices.data(),
-                    mesh.vertices.size() * sizeof(assets::MeshVertex));
+        std::memcpy(cursor, mesh.vertices.data(), mesh.vertices.size() * sizeof(assets::MeshVertex));
         cursor += mesh.vertices.size() * sizeof(assets::MeshVertex);
     }
     if (!mesh.indices.empty()) {
@@ -42,8 +40,8 @@ bool importForgeMesh(const char* path, assets::MeshData& out, std::string* error
     }
 
     assets::ForgeDoc doc;
-    if (!assets::parseForge(reinterpret_cast<const char*>(sourceBytes.data()), sourceBytes.size(),
-                            path, doc, error)) {
+    if (!assets::parseForge(
+            reinterpret_cast<const char*>(sourceBytes.data()), sourceBytes.size(), path, doc, error)) {
         return false;
     }
     if (!assets::buildForge(doc, out, error)) {
@@ -69,8 +67,10 @@ std::string meshLevelPath(const std::string& outputPath, std::uint32_t level)
     return stem + ".lod" + std::to_string(level) + extension;
 }
 
-bool writeMeshLevels(const assets::MeshData& level0, const assets::LodChain& chain,
-                     const std::string& outputPath, std::uint32_t& levelsWritten,
+bool writeMeshLevels(const assets::MeshData& level0,
+                     const assets::LodChain& chain,
+                     const std::string& outputPath,
+                     std::uint32_t& levelsWritten,
                      std::string* error)
 {
     levelsWritten = 0;

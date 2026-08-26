@@ -10,8 +10,7 @@ namespace {
 
 // A clip of one constant value, so every assertion about gain is arithmetic
 // rather than a guess about a waveform.
-audio::SoundClip constantClip(std::int16_t value, std::uint32_t frames,
-                              std::uint32_t sampleRate = 48000)
+audio::SoundClip constantClip(std::int16_t value, std::uint32_t frames, std::uint32_t sampleRate = 48000)
 {
     audio::SoundClip clip;
     clip.sampleRate = sampleRate;

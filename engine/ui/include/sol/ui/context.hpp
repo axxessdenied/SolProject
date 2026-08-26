@@ -96,7 +96,9 @@ class UiContext
 {
 public:
     void setFont(const assets::Font* font, std::uint32_t fontTexture);
+
     void setTheme(const Theme& theme) { m_theme = theme; }
+
     [[nodiscard]] const Theme& theme() const { return m_theme; }
 
     // `deltaSeconds` drives only the caret blink; zero (the default) leaves
@@ -105,8 +107,11 @@ public:
     void endFrame();
 
     [[nodiscard]] DrawList& drawList() { return m_drawList; }
+
     [[nodiscard]] const DrawList& drawList() const { return m_drawList; }
+
     [[nodiscard]] const InputState& input() const { return m_input; }
+
     [[nodiscard]] core::Vec2 screenSize() const { return m_screenSize; }
 
     // Identity scoping. Push a panel name (or a row index) before building
@@ -117,12 +122,15 @@ public:
     [[nodiscard]] WidgetId idFor(std::string_view label) const;
 
     [[nodiscard]] WidgetId focused() const { return m_focusId; }
+
     void setFocus(WidgetId id) { m_focusId = id; }
+
     [[nodiscard]] bool isFocused(WidgetId id) const { return id != kNoWidget && id == m_focusId; }
 
     // True on the frame the player dismissed the current screen (Esc, or the
     // cancel button on a pad).
     [[nodiscard]] bool cancelRequested() const { return m_input.navCancel; }
+
     // Enter alone; safe to use as "confirm" on a screen that also has a text
     // field, where Space has to stay a character.
     [[nodiscard]] bool submitRequested() const { return m_input.editSubmit; }
@@ -130,8 +138,11 @@ public:
     // --- Widgets. Each returns whether the player acted on it this frame. ---
 
     void label(const Rect& bounds, std::string_view text, TextAlign align = TextAlign::Left);
-    void label(const Rect& bounds, std::string_view text, const Color& color,
-               const char* styleName = nullptr, TextAlign align = TextAlign::Left);
+    void label(const Rect& bounds,
+               std::string_view text,
+               const Color& color,
+               const char* styleName = nullptr,
+               TextAlign align = TextAlign::Left);
 
     // A label cut to fit its box, with a trailing ellipsis when it had to be
     // (Phase 10). Returns whether it cut, so the caller can offer the whole
@@ -142,7 +153,9 @@ public:
     // addTextInBox, which draws past the box, which is how a long name has
     // overrun its cell five times in this project. Clipping alone would only
     // make the loss silent, so this truncates visibly instead.
-    [[nodiscard]] bool labelElided(const Rect& bounds, std::string_view text, const Color& color,
+    [[nodiscard]] bool labelElided(const Rect& bounds,
+                                   std::string_view text,
+                                   const Color& color,
                                    const char* styleName = nullptr);
 
     // Queues a tooltip for the end of the frame. The DrawList has no z-order -
@@ -155,8 +168,8 @@ public:
 
     [[nodiscard]] bool button(const Rect& bounds, std::string_view label, bool enabled = true);
     [[nodiscard]] bool checkbox(const Rect& bounds, std::string_view label, bool& value);
-    [[nodiscard]] bool slider(const Rect& bounds, std::string_view label, float& value, float minimum,
-                              float maximum);
+    [[nodiscard]] bool
+    slider(const Rect& bounds, std::string_view label, float& value, float minimum, float maximum);
     // A selectable row (list entries, tabs when drawn as a strip).
     //
     // Since Phase 10 the label is elided to its box, and a label that had to
@@ -164,8 +177,8 @@ public:
     // is not a caller's decision to make: a row whose text runs out through
     // its own edge is always a defect, and one whose text was hidden always
     // owes the player a way to read it.
-    [[nodiscard]] bool selectable(const Rect& bounds, std::string_view label, bool selected,
-                                  bool enabled = true);
+    [[nodiscard]] bool
+    selectable(const Rect& bounds, std::string_view label, bool selected, bool enabled = true);
 
     // An editable single-line field (Phase 8h). `id` names the widget - the
     // value is what the player is typing, so it cannot double as the label
@@ -175,11 +188,13 @@ public:
     //
     // While focused it swallows the nav keys it uses, so typing "s" into a
     // field does not also step the list behind it.
-    [[nodiscard]] bool textField(const Rect& bounds, std::string_view id, std::string& value,
-                                 std::size_t maxLength = 48);
+    [[nodiscard]] bool
+    textField(const Rect& bounds, std::string_view id, std::string& value, std::size_t maxLength = 48);
+
     // Where the caret sits in the focused field, in bytes. Screens that open a
     // field prefilled want it at the end rather than at the start.
     void setCaret(std::size_t bytes) { m_caret = bytes; }
+
     // True while a text field holds keyboard focus. Screens use it to keep
     // their own key handling (Esc, Enter, single-letter shortcuts) out of the
     // way of typing.

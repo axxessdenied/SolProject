@@ -20,14 +20,12 @@ constexpr std::uint64_t kFactionStream = 202;
 
 } // namespace
 
-void FactionSim::initialize(const Galaxy& galaxy, const FactionSimParams& params,
-                            std::uint64_t seed)
+void FactionSim::initialize(const Galaxy& galaxy, const FactionSimParams& params, std::uint64_t seed)
 {
     m_params = params;
     m_count = static_cast<std::uint32_t>(params.agents.size());
     m_systemCount = static_cast<std::uint32_t>(galaxy.systems.size());
-    SOL_ASSERT(params.baselineRelations.size() ==
-               static_cast<std::size_t>(m_count) * m_count);
+    SOL_ASSERT(params.baselineRelations.size() == static_cast<std::size_t>(m_count) * m_count);
     SOL_ASSERT(params.initialStandings.size() == m_count);
 
     m_relations = params.baselineRelations;
@@ -94,21 +92,19 @@ void FactionSim::step(double dt, Economy* economy, std::uint32_t shelteredSystem
         for (std::uint32_t b = a + 1; b < m_count; ++b) {
             const float baseline = m_params.baselineRelations[pairIndex(a, b)];
             float& value = m_relations[pairIndex(a, b)];
-            const float forgiveness = 0.5f * (m_params.agents[a].forgiveness +
-                                              m_params.agents[b].forgiveness);
-            const float rate = m_params.driftPerSecond * forgiveness *
-                               static_cast<float>(dt); // points per step
+            const float forgiveness =
+                0.5f * (m_params.agents[a].forgiveness + m_params.agents[b].forgiveness);
+            const float rate =
+                m_params.driftPerSecond * forgiveness * static_cast<float>(dt); // points per step
             const float delta = baseline - value;
-            const float stepValue = delta > 0.0f ? std::min(delta, rate)
-                                                 : std::max(delta, -rate);
+            const float stepValue = delta > 0.0f ? std::min(delta, rate) : std::max(delta, -rate);
             value = clampScore(value + stepValue);
             m_relations[pairIndex(b, a)] = value;
             refreshWar(a, b);
         }
     }
     if (m_params.raidIntensityHalfLife > 0.0) {
-        const float decay = static_cast<float>(
-            std::exp2(-dt / m_params.raidIntensityHalfLife));
+        const float decay = static_cast<float>(std::exp2(-dt / m_params.raidIntensityHalfLife));
         for (float& intensity : m_raidIntensity) {
             intensity *= decay;
         }
@@ -157,8 +153,7 @@ void FactionSim::attrition(Economy& economy, double dt, std::uint32_t shelteredS
         if (route.system >= m_systemCount || route.system == shelteredSystem) {
             continue;
         }
-        const float risk =
-            danger(route.system) * m_params.traderLossPerSecond * static_cast<float>(dt);
+        const float risk = danger(route.system) * m_params.traderLossPerSecond * static_cast<float>(dt);
         if (risk <= 0.0f) {
             continue; // quiet system: no roll at all, so peace costs no entropy
         }
@@ -177,7 +172,8 @@ void FactionSim::takeDueDecisions(std::vector<FactionDecision>& out)
     m_dueDecisions.clear();
 }
 
-void FactionSim::raidCandidates(const Galaxy& galaxy, std::uint32_t faction,
+void FactionSim::raidCandidates(const Galaxy& galaxy,
+                                std::uint32_t faction,
                                 std::vector<RaidCandidate>& out) const
 {
     out.clear();
@@ -211,8 +207,7 @@ void FactionSim::raidCandidates(const Galaxy& galaxy, std::uint32_t faction,
     }
     for (std::uint32_t s = 0; s < m_systemCount; ++s) {
         const std::uint32_t owner = m_systemOwner[s];
-        if (depth[s] == kUnvisited || owner == kNoFaction || owner == faction ||
-            owner >= m_count) {
+        if (depth[s] == kUnvisited || owner == kNoFaction || owner == faction || owner >= m_count) {
             continue;
         }
         const float pairRelation = relation(faction, owner);
@@ -222,11 +217,9 @@ void FactionSim::raidCandidates(const Galaxy& galaxy, std::uint32_t faction,
     }
 }
 
-void FactionSim::applyDefaultDecision(const Galaxy& galaxy, Economy* economy,
-                                      const FactionDecision& decision)
+void FactionSim::applyDefaultDecision(const Galaxy& galaxy, Economy* economy, const FactionDecision& decision)
 {
-    if (decision.faction >= m_count ||
-        decision.roll >= m_params.agents[decision.faction].aggression) {
+    if (decision.faction >= m_count || decision.roll >= m_params.agents[decision.faction].aggression) {
         return;
     }
     std::vector<RaidCandidate> candidates;
@@ -242,13 +235,16 @@ void FactionSim::applyDefaultDecision(const Galaxy& galaxy, Economy* economy,
     }
 }
 
-bool FactionSim::commitRaid(const Galaxy& galaxy, Economy* economy, std::uint32_t faction,
+bool FactionSim::commitRaid(const Galaxy& galaxy,
+                            Economy* economy,
+                            std::uint32_t faction,
                             std::uint32_t targetSystem)
 {
     std::vector<RaidCandidate> candidates;
     raidCandidates(galaxy, faction, candidates);
-    const auto it = std::find_if(candidates.begin(), candidates.end(),
-                                 [&](const RaidCandidate& c) { return c.system == targetSystem; });
+    const auto it = std::find_if(candidates.begin(), candidates.end(), [&](const RaidCandidate& c) {
+        return c.system == targetSystem;
+    });
     if (it == candidates.end()) {
         return false;
     }
@@ -330,8 +326,7 @@ void FactionSim::recordShipKill(std::uint32_t victimFaction)
     if (victimFaction >= m_count) {
         return;
     }
-    m_standings[victimFaction] =
-        clampScore(m_standings[victimFaction] - m_params.killPenalty);
+    m_standings[victimFaction] = clampScore(m_standings[victimFaction] - m_params.killPenalty);
     for (std::uint32_t f = 0; f < m_count; ++f) {
         if (f == victimFaction) {
             continue;
@@ -341,8 +336,7 @@ void FactionSim::recordShipKill(std::uint32_t victimFaction)
             continue; // no enmity, no gratitude
         }
         const float depth = core::clamp(-pairRelation / 100.0f, 0.0f, 1.0f);
-        m_standings[f] = clampScore(m_standings[f] +
-                                    m_params.killPenalty * m_params.killWebScale * depth);
+        m_standings[f] = clampScore(m_standings[f] + m_params.killPenalty * m_params.killWebScale * depth);
     }
 }
 
@@ -351,8 +345,8 @@ void FactionSim::recordTrade(std::uint32_t faction, double credits)
     if (faction >= m_count || credits <= 0.0) {
         return;
     }
-    m_standings[faction] = clampScore(
-        m_standings[faction] + static_cast<float>(credits) * m_params.commerceRate);
+    m_standings[faction] =
+        clampScore(m_standings[faction] + static_cast<float>(credits) * m_params.commerceRate);
 }
 
 float FactionSim::raidIntensity(std::uint32_t system) const
@@ -374,11 +368,9 @@ float FactionSim::danger(std::uint32_t system) const
     // before it is weighted: the tenth raid in an hour does not make a system
     // ten times deadlier than the first.
     const float raids = core::clamp(m_raidIntensity[system], 0.0f, 1.0f);
-    const float pressure = m_contestAttacker[system] != kNoFaction
-                               ? core::clamp(m_contestPressure[system], 0.0f, 1.0f)
-                               : 0.0f;
-    return core::clamp(raids * m_params.dangerPerRaid + pressure * m_params.dangerPerContest,
-                       0.0f, 1.0f);
+    const float pressure =
+        m_contestAttacker[system] != kNoFaction ? core::clamp(m_contestPressure[system], 0.0f, 1.0f) : 0.0f;
+    return core::clamp(raids * m_params.dangerPerRaid + pressure * m_params.dangerPerContest, 0.0f, 1.0f);
 }
 
 void FactionSim::recordTraderLoss(std::uint32_t system, std::uint32_t trader)
@@ -493,8 +485,7 @@ void FactionSim::recordContestKill(std::uint32_t system, std::uint32_t victimFac
         victimFaction == kNoFaction) {
         return; // not the faction pressing this system's claim
     }
-    m_contestPressure[system] =
-        core::clamp(m_contestPressure[system] - m_params.contestPerKill, 0.0f, 1.0f);
+    m_contestPressure[system] = core::clamp(m_contestPressure[system] - m_params.contestPerKill, 0.0f, 1.0f);
     if (m_contestPressure[system] < m_params.contestFloor) {
         resolveContest(system, false);
     }

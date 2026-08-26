@@ -109,16 +109,23 @@ void addCross(renderer::DebugDrawRenderer& lines, core::Vec3 at, float half, cor
 // already is. A box that straddles the camera is left alone: it has a corner at
 // or behind the eye, there is no scale that fixes that, and the projection
 // mirrors such a point rather than clipping it.
-void addBox(renderer::DebugDrawRenderer& lines, const PartBounds& bounds,
-            const PointTool::Viewport& viewport, core::Vec4 color)
+void addBox(renderer::DebugDrawRenderer& lines,
+            const PartBounds& bounds,
+            const PointTool::Viewport& viewport,
+            core::Vec4 color)
 {
     constexpr float kFrontDepth = 0.12f; // metres, against a 0.05 m near plane
 
     const core::Vec3 lo = asVec3(bounds.min);
     const core::Vec3 hi = asVec3(bounds.max);
-    core::Vec3 corner[8] = {{lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z},
-                            {lo.x, hi.y, lo.z}, {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z},
-                            {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z}};
+    core::Vec3 corner[8] = {{lo.x, lo.y, lo.z},
+                            {hi.x, lo.y, lo.z},
+                            {hi.x, hi.y, lo.z},
+                            {lo.x, hi.y, lo.z},
+                            {lo.x, lo.y, hi.z},
+                            {hi.x, lo.y, hi.z},
+                            {hi.x, hi.y, hi.z},
+                            {lo.x, hi.y, hi.z}};
 
     float nearest = 0.0f;
     bool behind = false;
@@ -134,8 +141,7 @@ void addBox(renderer::DebugDrawRenderer& lines, const PartBounds& bounds,
         const core::Vec3 eye = cameraEye(viewport.view);
         const float k = kFrontDepth / nearest;
         for (core::Vec3& p : corner) {
-            p = {eye.x + (p.x - eye.x) * k, eye.y + (p.y - eye.y) * k,
-                 eye.z + (p.z - eye.z) * k};
+            p = {eye.x + (p.x - eye.x) * k, eye.y + (p.y - eye.y) * k, eye.z + (p.z - eye.z) * k};
         }
     }
 
@@ -276,14 +282,11 @@ void PointTool::refresh(const ForgeDoc& doc)
                 continue;
             }
             const assets::BuildPoint centre{
-                (m_points[face.a].position.x + m_points[face.b].position.x +
-                 m_points[face.c].position.x) /
+                (m_points[face.a].position.x + m_points[face.b].position.x + m_points[face.c].position.x) /
                     3.0,
-                (m_points[face.a].position.y + m_points[face.b].position.y +
-                 m_points[face.c].position.y) /
+                (m_points[face.a].position.y + m_points[face.b].position.y + m_points[face.c].position.y) /
                     3.0,
-                (m_points[face.a].position.z + m_points[face.b].position.z +
-                 m_points[face.c].position.z) /
+                (m_points[face.a].position.z + m_points[face.b].position.z + m_points[face.c].position.z) /
                     3.0};
             const assets::BuildPoint gap = centre - m_reselectCentre;
             const double distance = core::dot(gap, gap);
@@ -359,8 +362,7 @@ std::size_t PointTool::pickAt(const Viewport& viewport) const
         if (!m_points[i].movable()) {
             continue; // an unmovable point cannot be the answer to a click
         }
-        const core::Vec3 cameraSpace =
-            core::transformPoint(viewport.view, asVec3(m_points[i].position));
+        const core::Vec3 cameraSpace = core::transformPoint(viewport.view, asVec3(m_points[i].position));
         const ui::ScreenPoint projected = ui::screenPoint(cameraSpace, viewport.center, viewport.focal);
         if (!projected.inFront) {
             continue;
@@ -393,12 +395,14 @@ std::size_t PointTool::pickEdgeAt(const Viewport& viewport) const
         if (!m_points[edge.a].movable() || !m_points[edge.b].movable()) {
             continue;
         }
-        const ui::ScreenPoint a = ui::screenPoint(
-            core::transformPoint(viewport.view, asVec3(m_points[edge.a].position)), viewport.center,
-            viewport.focal);
-        const ui::ScreenPoint b = ui::screenPoint(
-            core::transformPoint(viewport.view, asVec3(m_points[edge.b].position)), viewport.center,
-            viewport.focal);
+        const ui::ScreenPoint a =
+            ui::screenPoint(core::transformPoint(viewport.view, asVec3(m_points[edge.a].position)),
+                            viewport.center,
+                            viewport.focal);
+        const ui::ScreenPoint b =
+            ui::screenPoint(core::transformPoint(viewport.view, asVec3(m_points[edge.b].position)),
+                            viewport.center,
+                            viewport.focal);
         if (!a.inFront || !b.inFront) {
             continue;
         }
@@ -421,8 +425,7 @@ std::size_t PointTool::pickRawFaceAt(const Viewport& viewport) const
     // pixel names a DIRECTION exactly; what `pick.hpp` forbids is inverting to
     // recover a position, which would need a depth nobody has. `ui.unit` pins
     // the round trip against `screenPoint` so neither sign is trusted alone.
-    const core::Vec3 local =
-        ui::rayDirectionCamera(viewport.cursor, viewport.center, viewport.focal);
+    const core::Vec3 local = ui::rayDirectionCamera(viewport.cursor, viewport.center, viewport.focal);
     const core::Vec3 right = cameraRight(viewport.view);
     const core::Vec3 up = cameraUp(viewport.view);
     const core::Vec3 backward = cameraBackward(viewport.view);
@@ -434,8 +437,12 @@ std::size_t PointTool::pickRawFaceAt(const Viewport& viewport) const
 
     std::size_t face = 0;
     double distance = 0.0;
-    if (!assets::forgePickFace(m_points, m_faces, {eye.x, eye.y, eye.z},
-                               {direction.x, direction.y, direction.z}, face, distance)) {
+    if (!assets::forgePickFace(m_points,
+                               m_faces,
+                               {eye.x, eye.y, eye.z},
+                               {direction.x, direction.y, direction.z},
+                               face,
+                               distance)) {
         return kNone;
     }
     return face;
@@ -631,8 +638,7 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
                     sum.y += static_cast<float>(point.position.y);
                     sum.z += static_cast<float>(point.position.z);
                 }
-                const float count = m_dragSet.empty() ? 1.0f
-                                                      : static_cast<float>(m_dragSet.size());
+                const float count = m_dragSet.empty() ? 1.0f : static_cast<float>(m_dragSet.size());
                 grabbed = {sum.x / count, sum.y / count, sum.z / count};
                 grabbedAnything = !m_dragSet.empty();
             }
@@ -675,8 +681,7 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
     // under the cursor. Same expression as OrbitCamera::pan, at a different
     // depth - the camera pans at its target's, a drag moves at the point's.
     const float depth = m_dragDepth > 0.001f ? m_dragDepth : 0.001f;
-    const float metresPerPixel =
-        2.0f * depth * std::tan(viewport.verticalFov * 0.5f) / viewport.height;
+    const float metresPerPixel = 2.0f * depth * std::tan(viewport.verticalFov * 0.5f) / viewport.height;
     const core::Vec3 right = cameraRight(viewport.view);
     const core::Vec3 up = cameraUp(viewport.view);
     // Screen Y grows downward and world up is up, hence the sign on the second.
@@ -686,10 +691,9 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
     if (viewport.axisLock >= 0 && viewport.axisLock <= 2) {
         // Project onto the locked world axis: the hand still moves in the view
         // plane and the point moves only along the axis it was told to.
-        const float along = viewport.axisLock == 0 ? delta.x
-                            : viewport.axisLock == 1 ? delta.y
-                                                     : delta.z;
-        delta = {viewport.axisLock == 0 ? along : 0.0f, viewport.axisLock == 1 ? along : 0.0f,
+        const float along = viewport.axisLock == 0 ? delta.x : viewport.axisLock == 1 ? delta.y : delta.z;
+        delta = {viewport.axisLock == 0 ? along : 0.0f,
+                 viewport.axisLock == 1 ? along : 0.0f,
                  viewport.axisLock == 2 ? along : 0.0f};
     }
 
@@ -710,8 +714,10 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
     return true;
 }
 
-void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& viewport,
-                            std::size_t selectedPart, std::size_t listHoverPart) const
+void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines,
+                            const Viewport& viewport,
+                            std::size_t selectedPart,
+                            std::size_t listHoverPart) const
 {
     if (m_points.empty()) {
         return;
@@ -799,12 +805,9 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
                     continue;
                 }
                 const ForgeFace& face = m_faces[index];
-                addEdge({face.a < face.b ? face.a : face.b, face.a < face.b ? face.b : face.a, 0},
-                        color);
-                addEdge({face.b < face.c ? face.b : face.c, face.b < face.c ? face.c : face.b, 0},
-                        color);
-                addEdge({face.a < face.c ? face.a : face.c, face.a < face.c ? face.c : face.a, 0},
-                        color);
+                addEdge({face.a < face.b ? face.a : face.b, face.a < face.b ? face.b : face.a, 0}, color);
+                addEdge({face.b < face.c ? face.b : face.c, face.b < face.c ? face.c : face.b, 0}, color);
+                addEdge({face.a < face.c ? face.a : face.c, face.a < face.c ? face.c : face.a, 0}, color);
             }
         };
 
@@ -834,8 +837,7 @@ void PointTool::drawMarkers(renderer::DebugDrawRenderer& lines, const Viewport& 
             }
             return;
         }
-        if (m_hoverEdge != kNone && m_hoverEdge < m_edges.size() &&
-            m_hoverEdge != m_selectedEdge) {
+        if (m_hoverEdge != kNone && m_hoverEdge < m_edges.size() && m_hoverEdge != m_selectedEdge) {
             addEdge(m_edges[m_hoverEdge], kHover);
         }
         if (m_selectedEdge != kNone && m_selectedEdge < m_edges.size()) {
@@ -972,8 +974,7 @@ bool PointTool::drawPanel(PartEditor& editor, std::size_t listHoverPart)
             ImGui::Text("movable        %zu", drawable);
         }
         if (drawable > kEdgeBudget) {
-            ImGui::TextDisabled("over %zu edges: only the hovered and selected are drawn",
-                                kEdgeBudget);
+            ImGui::TextDisabled("over %zu edges: only the hovered and selected are drawn", kEdgeBudget);
         }
     }
 
@@ -995,8 +996,7 @@ bool PointTool::drawPanel(PartEditor& editor, std::size_t listHoverPart)
         ImGui::TextDisabled("%zu point(s) need their part baked first", m_points.size() - movable);
     }
     if (movable > kMarkerBudget) {
-        ImGui::TextDisabled("over %zu points: only the hovered and selected are marked",
-                            kMarkerBudget);
+        ImGui::TextDisabled("over %zu points: only the hovered and selected are marked", kMarkerBudget);
     }
 
     // ⚑⚑ THE TWO TOPOLOGY EDITS (E5c and E5d), EACH ON THE SELECTION ITS MODE
@@ -1026,9 +1026,9 @@ bool PointTool::drawPanel(PartEditor& editor, std::size_t listHoverPart)
             // Where the raised face should end up, recorded BEFORE the edit so
             // the rebuild can be matched against it - see m_reselect.
             const ForgeFace& seed = m_faces[m_selectedFace];
-            const assets::BuildPoint normal = core::normalize(
-                core::cross(m_points[seed.b].position - m_points[seed.a].position,
-                            m_points[seed.c].position - m_points[seed.a].position));
+            const assets::BuildPoint normal =
+                core::normalize(core::cross(m_points[seed.b].position - m_points[seed.a].position,
+                                            m_points[seed.c].position - m_points[seed.a].position));
             assets::BuildPoint centre{0.0, 0.0, 0.0};
             std::size_t corners = 0;
             for (const std::uint32_t index : m_group) {
@@ -1047,16 +1047,17 @@ bool PointTool::drawPanel(PartEditor& editor, std::size_t listHoverPart)
             if (editor.extrudeFaces(m_faces, m_group, offset, error)) {
                 m_error.clear();
                 char note[192];
-                std::snprintf(note, sizeof(note),
+                std::snprintf(note,
+                              sizeof(note),
                               "extruded %zu triangle(s) by %.4f m along the face's own normal - "
                               "drag it to place it.",
-                              m_group.size(), offset);
+                              m_group.size(),
+                              offset);
                 m_note = note;
                 m_reselect = true;
                 m_reselectNormal = normal;
-                m_reselectCentre = centre + assets::BuildPoint{normal.x * offset,
-                                                              normal.y * offset,
-                                                              normal.z * offset};
+                m_reselectCentre =
+                    centre + assets::BuildPoint{normal.x * offset, normal.y * offset, normal.z * offset};
                 changed = true;
             } else {
                 m_error = error;
@@ -1116,7 +1117,8 @@ bool PointTool::drawPanel(PartEditor& editor, std::size_t listHoverPart)
                 // ⚑ The corner is named as its three signs, because that is
                 // what tells an author which corner is about to be PINNED - the
                 // opposite one, and there is nowhere else to read that off.
-                ImGui::TextDisabled("  %s.center+size   %cx%cy%cz", id,
+                ImGui::TextDisabled("  %s.center+size   %cx%cy%cz",
+                                    id,
                                     (write.element & 1u) != 0 ? '+' : '-',
                                     (write.element & 2u) != 0 ? '+' : '-',
                                     (write.element & 4u) != 0 ? '+' : '-');
@@ -1161,8 +1163,7 @@ bool PointTool::drawPanel(PartEditor& editor, std::size_t listHoverPart)
             for (const std::uint32_t corner : corners) {
                 const ForgePoint& point = m_points[corner];
                 anyUnmovable = anyUnmovable || !point.movable();
-                ImGui::Text("at   %8.4f %8.4f %8.4f", point.position.x, point.position.y,
-                            point.position.z);
+                ImGui::Text("at   %8.4f %8.4f %8.4f", point.position.x, point.position.y, point.position.z);
                 listWrites(point, resizes, reAims);
             }
 

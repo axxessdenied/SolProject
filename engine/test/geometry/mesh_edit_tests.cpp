@@ -32,13 +32,22 @@ namespace {
 [[nodiscard]] EditMesh buildIcosphere(int subdivisions)
 {
     const double phi = (1 + std::sqrt(5.0)) / 2;
-    const assets::BuildPoint verts[12] = {{-1, phi, 0}, {1, phi, 0}, {-1, -phi, 0}, {1, -phi, 0},
-                                          {0, -1, phi}, {0, 1, phi}, {0, -1, -phi}, {0, 1, -phi},
-                                          {phi, 0, -1}, {phi, 0, 1}, {-phi, 0, -1}, {-phi, 0, 1}};
+    const assets::BuildPoint verts[12] = {{-1, phi, 0},
+                                          {1, phi, 0},
+                                          {-1, -phi, 0},
+                                          {1, -phi, 0},
+                                          {0, -1, phi},
+                                          {0, 1, phi},
+                                          {0, -1, -phi},
+                                          {0, 1, -phi},
+                                          {phi, 0, -1},
+                                          {phi, 0, 1},
+                                          {-phi, 0, -1},
+                                          {-phi, 0, 1}};
     const int indices[20][3] = {{0, 11, 5}, {0, 5, 1},  {0, 1, 7},   {0, 7, 10}, {0, 10, 11},
-                               {1, 5, 9},  {5, 11, 4}, {11, 10, 2}, {10, 7, 6}, {7, 1, 8},
-                               {3, 9, 4},  {3, 4, 2},  {3, 2, 6},   {3, 6, 8},  {3, 8, 9},
-                               {4, 9, 5},  {2, 4, 11}, {6, 2, 10},  {8, 6, 7},  {9, 8, 1}};
+                                {1, 5, 9},  {5, 11, 4}, {11, 10, 2}, {10, 7, 6}, {7, 1, 8},
+                                {3, 9, 4},  {3, 4, 2},  {3, 2, 6},   {3, 6, 8},  {3, 8, 9},
+                                {4, 9, 5},  {2, 4, 11}, {6, 2, 10},  {8, 6, 7},  {9, 8, 1}};
 
     struct Tri
     {
@@ -46,6 +55,7 @@ namespace {
         assets::BuildPoint b;
         assets::BuildPoint c;
     };
+
     std::vector<Tri> tris;
     for (const auto& face : indices) {
         tris.push_back({normalized(verts[face[0]]), normalized(verts[face[1]]), normalized(verts[face[2]])});
@@ -93,8 +103,8 @@ namespace {
     std::vector<std::array<std::uint32_t, 3>> faces;
     faces.reserve(mesh.triangleCount());
     for (std::uint32_t face = 0; face < mesh.triangleCount(); ++face) {
-        std::array<std::uint32_t, 3> triple{mesh.facePosition(face, 0), mesh.facePosition(face, 1),
-                                            mesh.facePosition(face, 2)};
+        std::array<std::uint32_t, 3> triple{
+            mesh.facePosition(face, 0), mesh.facePosition(face, 1), mesh.facePosition(face, 2)};
         std::sort(triple.begin(), triple.end());
         faces.push_back(triple);
     }
@@ -269,8 +279,7 @@ SOL_TEST(normalsAreFlatOrSmoothAccordingToTheAngleAsked)
     EditMesh creased = box({0, 0, 0}, {2, 2, 2});
     assets::recomputeNormals(creased, 45.0f); // a box corner is 90 degrees
     for (const assets::EditVertex& vertex : creased.vertices) {
-        const float sum =
-            std::abs(vertex.normal.x) + std::abs(vertex.normal.y) + std::abs(vertex.normal.z);
+        const float sum = std::abs(vertex.normal.x) + std::abs(vertex.normal.y) + std::abs(vertex.normal.z);
         SOL_CHECK(near(sum, 1.0, 1e-5));
     }
 
@@ -310,7 +319,8 @@ SOL_TEST(indexOptimisationImprovesTheCacheAndMovesNothingElse)
     assets::optimizeIndices(mesh);
     const float after = assets::averageCacheMissRatio(mesh);
     if (after > before) {
-        std::printf("  cache miss ratio got worse: %.3f -> %.3f\n", static_cast<double>(before),
+        std::printf("  cache miss ratio got worse: %.3f -> %.3f\n",
+                    static_cast<double>(before),
                     static_cast<double>(after));
     }
     SOL_CHECK(after <= before);
@@ -369,8 +379,10 @@ SOL_TEST(decimationKeepsTheGrossShapeItStartedWith)
     const float radiusRatio = assets::boundingRadius(mesh) / assets::boundingRadius(source);
     const double volumeRatio = assets::signedVolume(mesh) / assets::signedVolume(source);
     if (radiusRatio >= 1.3f || volumeRatio <= 0.8 || volumeRatio >= 1.05) {
-        std::printf("  1280 -> %u triangles: radius %.4fx, volume %.4fx\n", mesh.triangleCount(),
-                    static_cast<double>(radiusRatio), volumeRatio);
+        std::printf("  1280 -> %u triangles: radius %.4fx, volume %.4fx\n",
+                    mesh.triangleCount(),
+                    static_cast<double>(radiusRatio),
+                    volumeRatio);
     }
     // ⚑ Measured at 16:1 on a unit sphere: volume 0.873x and radius 1.214x.
     // The volume is the LOD holding its shape; the RADIUS GROWING is the part
@@ -397,8 +409,8 @@ SOL_TEST(decimationStopsWhenTopologyRefusesRatherThanTearing)
     SOL_CHECK(reached == mesh.triangleCount());
     const MeshAdjacency adjacency = assets::buildAdjacency(mesh);
     SOL_CHECK(adjacency.isClosed());
-    SOL_CHECK(static_cast<long long>(mesh.positions.size()) -
-                  static_cast<long long>(adjacency.edges.size()) + reached ==
+    SOL_CHECK(static_cast<long long>(mesh.positions.size()) - static_cast<long long>(adjacency.edges.size()) +
+                  reached ==
               2);
 }
 

@@ -4,7 +4,7 @@
 #include <cstdlib>
 
 #if defined(_MSC_VER)
-    #include <crtdbg.h>
+#include <crtdbg.h>
 #endif
 
 namespace sol::test {

@@ -21,17 +21,20 @@ public:
     // `vsync` picks the present mode: FIFO when on (always available), and the
     // best available of MAILBOX then IMMEDIATE when off, falling back to FIFO
     // if the surface offers neither.
-    [[nodiscard]] bool create(Context& context, std::uint32_t width, std::uint32_t height,
-                              bool vsync = true);
+    [[nodiscard]] bool create(Context& context, std::uint32_t width, std::uint32_t height, bool vsync = true);
     void destroy();
 
     // Caller must ensure the device is idle first.
     [[nodiscard]] bool recreate(std::uint32_t width, std::uint32_t height, bool vsync = true);
 
     [[nodiscard]] VkFormat imageFormat() const { return m_imageFormat; }
+
     [[nodiscard]] VkExtent2D extent() const { return m_extent; }
+
     [[nodiscard]] std::uint32_t imageCount() const { return static_cast<std::uint32_t>(m_images.size()); }
+
     [[nodiscard]] VkImage image(std::uint32_t index) const { return m_images[index]; }
+
     [[nodiscard]] VkImageView imageView(std::uint32_t index) const { return m_imageViews[index]; }
 
     enum class PresentResult

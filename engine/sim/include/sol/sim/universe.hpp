@@ -66,8 +66,8 @@ struct GalaxyParams
     // Region thresholds as fractions of galaxyRadius.
     float coreRadiusFraction = 0.35f;
     float frontierRadiusFraction = 0.70f;
-    std::uint32_t factionCount = 0;    // territory claimants (capitals in the core)
-    float fringeLawlessChance = 0.6f;  // fringe systems that stay unclaimed
+    std::uint32_t factionCount = 0;   // territory claimants (capitals in the core)
+    float fringeLawlessChance = 0.6f; // fringe systems that stay unclaimed
     // Pirate clan templates available (Phase 8b): > 0 turns each connected
     // neighborhood of lawless systems into a generated clan whose faction
     // index continues past the majors (factionCount + clan index). 0 keeps
@@ -121,8 +121,8 @@ struct SystemSpec
     core::Vec3 mapPosition; // light-years, galaxy map space (not sim space)
     Region region = Region::Fringe;
     std::uint32_t factionIndex = kNoFaction;
-    std::uint64_t seed = 0;    // per-system stream, for later instantiation needs
-    double starRadius = 0.0;   // meters
+    std::uint64_t seed = 0;          // per-system stream, for later instantiation needs
+    double starRadius = 0.0;         // meters
     std::uint32_t primaryPlanet = 0; // index into planets; hub of the playfield
     std::vector<PlanetSpec> planets;
     std::vector<StationSpec> stations;
@@ -173,12 +173,11 @@ struct Galaxy
 // whose output comes out of the ground where there is none. Null keeps the
 // pre-Phase-13 behaviour exactly, which is why every caller that does not care
 // about rock — and every test written before this rule existed — is unchanged.
-[[nodiscard]] Galaxy generateGalaxy(const GalaxyParams& params,
-                                    const MiningParams* mining = nullptr);
+[[nodiscard]] Galaxy generateGalaxy(const GalaxyParams& params, const MiningParams* mining = nullptr);
 
 // Fewest-jumps route through the gate graph, inclusive of endpoints; empty
 // if unreachable (cannot happen for generateGalaxy output) or on bad input.
-[[nodiscard]] std::vector<std::uint32_t> routeBetween(const Galaxy& galaxy, std::uint32_t from,
-                                                      std::uint32_t to);
+[[nodiscard]] std::vector<std::uint32_t>
+routeBetween(const Galaxy& galaxy, std::uint32_t from, std::uint32_t to);
 
 } // namespace sol::sim

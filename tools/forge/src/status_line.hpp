@@ -70,8 +70,11 @@ public:
     }
 
     [[nodiscard]] bool empty() const { return m_text.empty(); }
+
     [[nodiscard]] const std::string& text() const { return m_text; }
+
     [[nodiscard]] int repeat() const { return m_repeat; }
+
     // Moves on every write. The caller stamps its clock when this changes.
     [[nodiscard]] unsigned long long serial() const { return m_serial; }
 

@@ -28,6 +28,7 @@ struct MeshVertex
     float normal[3];
     float uv[2];
 };
+
 static_assert(sizeof(MeshVertex) == 32);
 
 enum class TextureFormat : std::uint32_t
@@ -78,6 +79,7 @@ struct FontStyleRecord
     std::uint32_t firstGlyph = 0; // index into the glyph array
     std::uint32_t glyphCount = 0;
 };
+
 static_assert(sizeof(FontStyleRecord) == 56);
 
 struct FontGlyphRecord
@@ -91,6 +93,7 @@ struct FontGlyphRecord
     std::int16_t bearingY = 0; // top edge relative to the baseline; negative is above
     float advance = 0.0f;      // pen movement, pixels
 };
+
 static_assert(sizeof(FontGlyphRecord) == 20);
 
 enum class SoundCodec : std::uint32_t

@@ -53,7 +53,6 @@ struct MapScreenState
 // `panel.action` - the same fill-then-execute seam the station screen uses.
 //
 // Returns true on the frame the player asked to close the map.
-[[nodiscard]] bool buildMapScreen(sol::ui::UiContext& ui, sol::ui::MapPanel& panel,
-                                  MapScreenState& state);
+[[nodiscard]] bool buildMapScreen(sol::ui::UiContext& ui, sol::ui::MapPanel& panel, MapScreenState& state);
 
 } // namespace game

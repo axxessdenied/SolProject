@@ -328,11 +328,11 @@ struct FactionRow
 struct MissionRow
 {
     const char* title = "";
-    const char* detail = "";  // poster, objective/progress, deadline
-    float reward = 0.0f;      // credits on completion
-    bool acceptable = true;   // offers: standing clears the min_rep tier
+    const char* detail = ""; // poster, objective/progress, deadline
+    float reward = 0.0f;     // credits on completion
+    bool acceptable = true;  // offers: standing clears the min_rep tier
     bool campaign = false;
-    bool tracked = false;     // journal: shown on the HUD
+    bool tracked = false; // journal: shown on the HUD
 };
 
 // One line of unsold survey data on the station's Survey tab (Phase 8e).
@@ -526,7 +526,7 @@ struct MapAction
     enum class Kind : std::uint32_t
     {
         None = 0,
-        PlotRoute,    // index = system row
+        PlotRoute, // index = system row
         ClearRoute,
         SelectMarker, // Phase 15: index = NAV-TARGET SLOT, not the marker row
         Autopilot,    // Phase 15: index = nav-target slot: target it and engage
@@ -617,7 +617,7 @@ struct RefinePanel
     float inputHeld = 0.0f;      // units of input in the hold
     float ratio = 0.0f;          // output units per input unit
     float feePerUnit = 0.0f;
-    float readyUnits = 0.0f;  // finished output waiting here
+    float readyUnits = 0.0f;   // finished output waiting here
     double waitSeconds = -1.0; // on the soonest unfinished order; < 0 = none
     float cargoSpace = 0.0f;   // room left in the hold
 };
@@ -627,22 +627,22 @@ struct RefinePanel
 struct StationPanel
 {
     TradePanel trade;
-    const char* fitSummary = "";  // active ship fit + budgets, prebuilt
-    double deductible = 0.0;      // current insurance quote
+    const char* fitSummary = "";        // active ship fit + budgets, prebuilt
+    double deductible = 0.0;            // current insurance quote
     std::span<const OutfitRow> modules; // catalog
     std::span<const OutfitRow> weapons; // catalog ("fitted" flags the mount)
     std::span<const OutfitRow> crewCatalog;
     std::span<const OutfitRow> crewAboard;
     std::span<const OutfitRow> shipCatalog;
     std::span<const FleetRow> fleet;
-    std::span<const FactionRow> factions; // standings (Phase 8b)
-    const char* factionNotes = "";        // recent raids summary, prebuilt
+    std::span<const FactionRow> factions;       // standings (Phase 8b)
+    const char* factionNotes = "";              // recent raids summary, prebuilt
     std::span<const MissionRow> missionOffers;  // the board (Phase 8c)
     std::span<const MissionRow> missionJournal; // active missions
     std::span<const SurveyRow> surveyData;      // unsold ledger (Phase 8e)
     double surveyValue = 0.0;                   // what the ledger pays today
     RefinePanel refinery;                       // refining service (Phase 8f)
-    StationAction action; // out
+    StationAction action;                       // out
 };
 
 } // namespace sol::ui

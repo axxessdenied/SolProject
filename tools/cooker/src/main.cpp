@@ -106,8 +106,7 @@ bool isFontUpToDate(const std::string& manifest, const std::string& output)
 // what happens to it afterwards is one implementation, which is the property
 // that let stage G change the source format without touching what the game
 // loads.
-bool writeTextureImage(const cooker::ImageRgba& image, const std::string& source,
-                       const std::string& output)
+bool writeTextureImage(const cooker::ImageRgba& image, const std::string& source, const std::string& output)
 {
     const assets::TextureData data = cooker::encodeTexture(image);
     const std::vector<std::uint8_t> fileBytes = cooker::serializeTexture(data);
@@ -116,8 +115,12 @@ bool writeTextureImage(const cooker::ImageRgba& image, const std::string& source
         SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
         return false;
     }
-    SOL_LOG_INFO("cooked %s -> %s (%ux%u, %zu mips)", source.c_str(), output.c_str(), data.width,
-                 data.height, data.mips.size());
+    SOL_LOG_INFO("cooked %s -> %s (%ux%u, %zu mips)",
+                 source.c_str(),
+                 output.c_str(),
+                 data.width,
+                 data.height,
+                 data.mips.size());
     return true;
 }
 
@@ -149,8 +152,8 @@ bool cookTextureDoc(const std::string& source, const std::string& output)
     }
     assets::TextureDoc doc;
     std::string error;
-    if (!assets::parseTexture(reinterpret_cast<const char*>(bytes.data()), bytes.size(),
-                              source.c_str(), doc, &error)) {
+    if (!assets::parseTexture(
+            reinterpret_cast<const char*>(bytes.data()), bytes.size(), source.c_str(), doc, &error)) {
         SOL_LOG_ERROR("cooker: %s", error.c_str());
         return false;
     }
@@ -181,8 +184,11 @@ bool writeMesh(const assets::MeshData& mesh, const std::string& source, const st
         SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
         return false;
     }
-    SOL_LOG_INFO("cooked %s -> %s (%zu vertices, %zu indices)", source.c_str(), output.c_str(),
-                 mesh.vertices.size(), mesh.indices.size());
+    SOL_LOG_INFO("cooked %s -> %s (%zu vertices, %zu indices)",
+                 source.c_str(),
+                 output.c_str(),
+                 mesh.vertices.size(),
+                 mesh.indices.size());
     return true;
 }
 
@@ -217,8 +223,12 @@ bool cookForge(const std::string& source, const std::string& output)
         SOL_LOG_ERROR("cooker: %s", error.c_str());
         return false;
     }
-    SOL_LOG_INFO("cooked %s -> %s (%zu vertices, %zu indices, %u level(s): %s)", source.c_str(),
-                 output.c_str(), mesh.vertices.size(), mesh.indices.size(), levels,
+    SOL_LOG_INFO("cooked %s -> %s (%zu vertices, %zu indices, %u level(s): %s)",
+                 source.c_str(),
+                 output.c_str(),
+                 mesh.vertices.size(),
+                 mesh.indices.size(),
+                 levels,
                  chain.stopReason.c_str());
     return true;
 }
@@ -233,8 +243,11 @@ bool cookFont(const std::string& source, const std::string& output)
 
     cooker::BakedFont font;
     std::string error;
-    if (!cooker::bakeFont(reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size(),
-                          directoryOf(source), font, &error)) {
+    if (!cooker::bakeFont(reinterpret_cast<const char*>(manifestBytes.data()),
+                          manifestBytes.size(),
+                          directoryOf(source),
+                          font,
+                          &error)) {
         SOL_LOG_ERROR("cooker: %s: %s", source.c_str(), error.c_str());
         return false;
     }
@@ -244,8 +257,13 @@ bool cookFont(const std::string& source, const std::string& output)
         SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
         return false;
     }
-    SOL_LOG_INFO("cooked %s -> %s (%zu styles, %zu glyphs, %ux%u atlas)", source.c_str(), output.c_str(),
-                 font.styles.size(), font.glyphs.size(), font.atlasWidth, font.atlasHeight);
+    SOL_LOG_INFO("cooked %s -> %s (%zu styles, %zu glyphs, %ux%u atlas)",
+                 source.c_str(),
+                 output.c_str(),
+                 font.styles.size(),
+                 font.glyphs.size(),
+                 font.atlasWidth,
+                 font.atlasHeight);
     return true;
 }
 
@@ -271,8 +289,12 @@ bool cookSound(const std::string& source, const std::string& output)
         SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
         return false;
     }
-    SOL_LOG_INFO("cooked %s -> %s (%u frames, %u ch, %u Hz)", source.c_str(), output.c_str(),
-                 sound.frameCount(), sound.channelCount, sound.sampleRate);
+    SOL_LOG_INFO("cooked %s -> %s (%u frames, %u ch, %u Hz)",
+                 source.c_str(),
+                 output.c_str(),
+                 sound.frameCount(),
+                 sound.channelCount,
+                 sound.sampleRate);
     return true;
 }
 
@@ -342,8 +364,10 @@ int main(int argc, char** argv)
     for (std::size_t i = 0; i < jobs.size(); ++i) {
         for (std::size_t j = i + 1; j < jobs.size(); ++j) {
             if (jobs[i].output == jobs[j].output) {
-                SOL_LOG_ERROR("cooker: %s and %s both cook to %s", jobs[i].source.c_str(),
-                              jobs[j].source.c_str(), jobs[i].output.c_str());
+                SOL_LOG_ERROR("cooker: %s and %s both cook to %s",
+                              jobs[i].source.c_str(),
+                              jobs[j].source.c_str(),
+                              jobs[i].output.c_str());
                 ++failed;
             }
         }
@@ -390,8 +414,7 @@ int main(int argc, char** argv)
         // path looks like from in here - `listFiles` on a directory that does
         // not exist returns nothing and reports nothing wrong.
         if (jobOutputs.empty()) {
-            SOL_LOG_WARN("cooker: no sources under %s - skipping the stray sweep",
-                         sourceDirectory.c_str());
+            SOL_LOG_WARN("cooker: no sources under %s - skipping the stray sweep", sourceDirectory.c_str());
         } else {
             const std::vector<std::string> expected = cooker::expectedOutputNames(jobOutputs);
             // Only files sitting directly in the output directory: `listFiles`

@@ -21,8 +21,10 @@ constexpr float kTurnGain = 3.0f; // commanded rate per unit of aim offset
 
 } // namespace
 
-FlightInput steerAimAndMove(const ShipState& state, const ShipTuning& tuning,
-                            const DVec3& aimPoint, const DVec3& desiredVelocity)
+FlightInput steerAimAndMove(const ShipState& state,
+                            const ShipTuning& tuning,
+                            const DVec3& aimPoint,
+                            const DVec3& desiredVelocity)
 {
     FlightInput input;
 
@@ -42,8 +44,8 @@ FlightInput steerAimAndMove(const ShipState& state, const ShipTuning& tuning,
 
     // Assist semantics: linear input commands a body-frame velocity fraction.
     const Vec3 velocityBody =
-        rotate(conjugate(state.orientation), toVec3(clampLength(desiredVelocity,
-                                                                static_cast<double>(tuning.maxSpeed))));
+        rotate(conjugate(state.orientation),
+               toVec3(clampLength(desiredVelocity, static_cast<double>(tuning.maxSpeed))));
     if (tuning.maxSpeed > 0.0f) {
         input.linear = {
             core::clamp(velocityBody.x / tuning.maxSpeed, -1.0f, 1.0f),
@@ -54,8 +56,10 @@ FlightInput steerAimAndMove(const ShipState& state, const ShipTuning& tuning,
     return input;
 }
 
-FlightInput steerPursue(const ShipState& state, const ShipTuning& tuning,
-                        const DVec3& targetPosition, const DVec3& targetVelocity,
+FlightInput steerPursue(const ShipState& state,
+                        const ShipTuning& tuning,
+                        const DVec3& targetPosition,
+                        const DVec3& targetVelocity,
                         double desiredRange)
 {
     const DVec3 toTarget = targetPosition - state.position;
@@ -88,12 +92,14 @@ double brakingSpeedLimit(const ShipTuning& tuning, double distance)
     if (distance <= envelopeDistance) {
         return std::sqrt(2.0 * normalBrake * distance);
     }
-    return std::sqrt(envelopeSpeed * envelopeSpeed
-                     + 2.0 * cruiseBrake * (distance - envelopeDistance));
+    return std::sqrt(envelopeSpeed * envelopeSpeed + 2.0 * cruiseBrake * (distance - envelopeDistance));
 }
 
-double pathBlockedAt(const DVec3& from, const DVec3& to, double clearance,
-                     std::span<const AvoidanceSphere> obstacles, std::uint32_t ignore)
+double pathBlockedAt(const DVec3& from,
+                     const DVec3& to,
+                     double clearance,
+                     std::span<const AvoidanceSphere> obstacles,
+                     std::uint32_t ignore)
 {
     const DVec3 lane = to - from;
     const double laneLength = core::length(lane);
@@ -106,8 +112,8 @@ double pathBlockedAt(const DVec3& from, const DVec3& to, double clearance,
             continue;
         }
         double t = 0.0;
-        if (!segmentHitsSphere(from, to, obstacle.position,
-                               obstacle.radius + (clearance > 0.0 ? clearance : 0.0), t)) {
+        if (!segmentHitsSphere(
+                from, to, obstacle.position, obstacle.radius + (clearance > 0.0 ? clearance : 0.0), t)) {
             continue;
         }
         const double distance = t * laneLength;
@@ -118,9 +124,12 @@ double pathBlockedAt(const DVec3& from, const DVec3& to, double clearance,
     return nearest;
 }
 
-FlightInput steerTravel(const ShipState& state, const ShipTuning& tuning,
-                        const DVec3& targetPosition, const DVec3& targetVelocity,
-                        double arrivalRange, std::span<const AvoidanceSphere> obstacles,
+FlightInput steerTravel(const ShipState& state,
+                        const ShipTuning& tuning,
+                        const DVec3& targetPosition,
+                        const DVec3& targetVelocity,
+                        double arrivalRange,
+                        std::span<const AvoidanceSphere> obstacles,
                         std::uint32_t selfHandle)
 {
     const DVec3 toTarget = targetPosition - state.position;
@@ -170,8 +179,8 @@ FlightInput steerTravel(const ShipState& state, const ShipTuning& tuning,
     if (cruise) {
         // Re-derive the velocity command against the cruise envelope;
         // steerAimAndMove clamps to the normal one.
-        const Vec3 velocityBody = rotate(conjugate(state.orientation),
-                                         toVec3(clampLength(desiredVelocity, cruiseMaxSpeed)));
+        const Vec3 velocityBody =
+            rotate(conjugate(state.orientation), toVec3(clampLength(desiredVelocity, cruiseMaxSpeed)));
         const float scale = tuning.maxSpeed * tuning.cruiseSpeedScale;
         input.linear = {
             core::clamp(velocityBody.x / scale, -1.0f, 1.0f),
@@ -183,13 +192,12 @@ FlightInput steerTravel(const ShipState& state, const ShipTuning& tuning,
     return input;
 }
 
-FlightInput steerEvade(const ShipState& state, const ShipTuning& tuning,
-                       const DVec3& threatPosition, double weavePhase)
+FlightInput
+steerEvade(const ShipState& state, const ShipTuning& tuning, const DVec3& threatPosition, double weavePhase)
 {
     const DVec3 fromThreat = state.position - threatPosition;
     const double distance = length(fromThreat);
-    const Vec3 away = distance > 1.0e-6 ? toVec3(fromThreat * (1.0 / distance))
-                                        : Vec3{0.0f, 0.0f, -1.0f};
+    const Vec3 away = distance > 1.0e-6 ? toVec3(fromThreat * (1.0 / distance)) : Vec3{0.0f, 0.0f, -1.0f};
 
     // Weave on an axis perpendicular to the escape line.
     Vec3 perpendicular = cross(away, Vec3{0.0f, 1.0f, 0.0f});
@@ -198,19 +206,19 @@ FlightInput steerEvade(const ShipState& state, const ShipTuning& tuning,
     }
     perpendicular = normalize(perpendicular);
 
-    const Vec3 escape = normalize(away + perpendicular * (0.6f * static_cast<float>(
-                                                                     std::sin(weavePhase))));
+    const Vec3 escape = normalize(away + perpendicular * (0.6f * static_cast<float>(std::sin(weavePhase))));
     const DVec3 escapeD = core::toDVec3(escape);
     const DVec3 desiredVelocity = escapeD * static_cast<double>(tuning.maxSpeed);
 
-    FlightInput input =
-        steerAimAndMove(state, tuning, state.position + escapeD * 2'000.0, desiredVelocity);
+    FlightInput input = steerAimAndMove(state, tuning, state.position + escapeD * 2'000.0, desiredVelocity);
     input.boost = distance < 600.0;
     return input;
 }
 
-FlightInput steerFormation(const ShipState& state, const ShipTuning& tuning,
-                           const DVec3& anchorPosition, const DVec3& anchorVelocity,
+FlightInput steerFormation(const ShipState& state,
+                           const ShipTuning& tuning,
+                           const DVec3& anchorPosition,
+                           const DVec3& anchorVelocity,
                            const DVec3& worldOffset)
 {
     const DVec3 slot = anchorPosition + worldOffset;
@@ -220,8 +228,10 @@ FlightInput steerFormation(const ShipState& state, const ShipTuning& tuning,
     return steerAimAndMove(state, tuning, aimPoint, desiredVelocity);
 }
 
-void avoidObstacles(DVec3& desiredVelocity, const ShipState& state,
-                    std::span<const AvoidanceSphere> obstacles, double lookaheadSeconds)
+void avoidObstacles(DVec3& desiredVelocity,
+                    const ShipState& state,
+                    std::span<const AvoidanceSphere> obstacles,
+                    double lookaheadSeconds)
 {
     const DVec3 velocity = state.velocity;
     const double speedSquared = dot(velocity, velocity);
@@ -234,8 +244,7 @@ void avoidObstacles(DVec3& desiredVelocity, const ShipState& state,
         const DVec3 toObstacle = obstacle.position - state.position;
         double closestTime = 0.0;
         if (speedSquared > 1.0e-9) {
-            closestTime = core::clamp(dot(toObstacle, velocity) / speedSquared, 0.0,
-                                      lookaheadSeconds);
+            closestTime = core::clamp(dot(toObstacle, velocity) / speedSquared, 0.0, lookaheadSeconds);
         }
         const DVec3 closestPoint = velocity * closestTime - toObstacle; // from center to path
         const double clearance = length(closestPoint);
@@ -243,9 +252,8 @@ void avoidObstacles(DVec3& desiredVelocity, const ShipState& state,
         if (clearance >= dangerRadius || length(toObstacle) <= obstacle.radius) {
             continue;
         }
-        const DVec3 pushDirection =
-            clearance > 1.0e-6 ? closestPoint * (1.0 / clearance)
-                               : DVec3{0.0, 1.0, 0.0}; // dead-center: pick a side
+        const DVec3 pushDirection = clearance > 1.0e-6 ? closestPoint * (1.0 / clearance)
+                                                       : DVec3{0.0, 1.0, 0.0}; // dead-center: pick a side
         const double urgency = 1.0 - clearance / dangerRadius;
         desiredVelocity += pushDirection * (strength * urgency * 1.5);
     }

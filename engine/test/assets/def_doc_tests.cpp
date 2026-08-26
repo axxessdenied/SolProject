@@ -47,8 +47,7 @@ namespace {
     return contents.str();
 }
 
-void reportFirstDifferingLine(const char* name, const std::string& expected,
-                              const std::string& actual)
+void reportFirstDifferingLine(const char* name, const std::string& expected, const std::string& actual)
 {
     std::size_t line = 1;
     std::size_t start = 0;
@@ -57,7 +56,9 @@ void reportFirstDifferingLine(const char* name, const std::string& expected,
         if (expected[i] != actual[i]) {
             const std::size_t expectedEnd = expected.find('\n', start);
             const std::size_t actualEnd = actual.find('\n', start);
-            std::printf("  %s line %zu\n    source: %s\n    writer: %s\n", name, line,
+            std::printf("  %s line %zu\n    source: %s\n    writer: %s\n",
+                        name,
+                        line,
                         expected.substr(start, expectedEnd - start).c_str(),
                         actual.substr(start, actualEnd - start).c_str());
             return;
@@ -67,16 +68,18 @@ void reportFirstDifferingLine(const char* name, const std::string& expected,
             start = i + 1;
         }
     }
-    std::printf("  %s: identical for %zu bytes, then source has %zu and writer %zu\n", name,
-                shortest, expected.size(), actual.size());
+    std::printf("  %s: identical for %zu bytes, then source has %zu and writer %zu\n",
+                name,
+                shortest,
+                expected.size(),
+                actual.size());
 }
 
 // Every def file the base game ships. The list is spelled out rather than
 // globbed so that a file DISAPPEARING is a failure rather than a shorter loop.
 [[nodiscard]] std::vector<std::string> committedDefs()
 {
-    return {"commodities", "crew",   "factions", "models",  "modules",
-            "ships",       "sounds", "stations", "weapons"};
+    return {"commodities", "crew", "factions", "models", "modules", "ships", "sounds", "stations", "weapons"};
 }
 
 [[nodiscard]] std::string defPath(const std::string& stem)
@@ -246,8 +249,7 @@ SOL_TEST(defDocumentEditKeepsATrailingCommentOnTheSameLine)
     const assets::DefKey* id = shuttle->find("id");
     SOL_REQUIRE(id != nullptr);
     SOL_CHECK(id->text.find("# the player's ship") != std::string::npos);
-    SOL_CHECK(assets::writeDefs(doc).find("scan_speed = 1.25     # target-scan") !=
-              std::string::npos);
+    SOL_CHECK(assets::writeDefs(doc).find("scan_speed = 1.25     # target-scan") != std::string::npos);
 }
 
 SOL_TEST(defDocumentEditChangesOnlyTheLineItTouched)

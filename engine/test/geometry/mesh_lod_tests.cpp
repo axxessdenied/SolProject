@@ -29,8 +29,7 @@ namespace {
 // Every committed source. `gate_membrane` is the only open surface in the repo
 // and is deliberately in the list: it is the one that proves the floor refuses
 // rather than the one that proves a chain generates.
-constexpr const char* kAssets[] = {"asteroid", "cockpit", "cube",   "gate",
-                                   "gate_membrane", "ship", "station"};
+constexpr const char* kAssets[] = {"asteroid", "cockpit", "cube", "gate", "gate_membrane", "ship", "station"};
 
 [[nodiscard]] bool buildAsset(const char* name, MeshData& out)
 {
@@ -101,8 +100,10 @@ SOL_TEST(everyGeneratedLevelIsSmallerInCookedBytesThanTheOneAboveIt)
         std::size_t previous = assets::cookedMeshBytes(source);
         for (const assets::MeshLevel& level : chain.levels) {
             if (level.cookedBytes >= previous) {
-                std::printf("  %s: a level cooks to %zu bytes against %zu above it\n", name,
-                            level.cookedBytes, previous);
+                std::printf("  %s: a level cooks to %zu bytes against %zu above it\n",
+                            name,
+                            level.cookedBytes,
+                            previous);
             }
             SOL_CHECK(level.cookedBytes < previous);
             SOL_CHECK(level.triangles > 0);
@@ -144,8 +145,7 @@ SOL_TEST(everyLevelOfAClosedSourceStaysASolidWithinTheVolumeBand)
             // Wound outwards, which a reversed level would fail and the three
             // checks above would not.
             SOL_CHECK(assets::signedVolume(mesh) > 0.0);
-            const double drift =
-                std::abs(assets::signedVolume(mesh) - sourceVolume) / std::abs(sourceVolume);
+            const double drift = std::abs(assets::signedVolume(mesh) - sourceVolume) / std::abs(sourceVolume);
             if (drift > options.maxVolumeDrift) {
                 std::printf("  %s: a level moved %.2f%% of the volume\n", name, drift * 100.0);
             }
@@ -172,12 +172,13 @@ SOL_TEST(noLevelsSilhouetteLeavesTheRadiusBand)
         const float sourceRadius = assets::boundingRadius(assets::toEditMesh(source));
         const LodChain chain = assets::buildLodChain(source, options);
         for (const assets::MeshLevel& level : chain.levels) {
-            const double drift =
-                std::abs(static_cast<double>(level.boundingRadius - sourceRadius)) /
-                static_cast<double>(sourceRadius);
+            const double drift = std::abs(static_cast<double>(level.boundingRadius - sourceRadius)) /
+                                 static_cast<double>(sourceRadius);
             if (drift > options.maxRadiusDrift) {
-                std::printf("  %s: a level moved the radius %.2f%% (%.4f -> %.4f)\n", name,
-                            drift * 100.0, static_cast<double>(sourceRadius),
+                std::printf("  %s: a level moved the radius %.2f%% (%.4f -> %.4f)\n",
+                            name,
+                            drift * 100.0,
+                            static_cast<double>(sourceRadius),
                             static_cast<double>(level.boundingRadius));
             }
             SOL_CHECK(drift <= options.maxRadiusDrift);
@@ -207,8 +208,10 @@ SOL_TEST(indexOptimisationNeverRaisesTheCacheMissRatioOnACommittedAsset)
         assets::optimizeIndices(mesh);
         const float after = assets::averageCacheMissRatio(mesh);
         if (after > before) {
-            std::printf("  %s: cache miss ratio got worse, %.3f -> %.3f\n", name,
-                        static_cast<double>(before), static_cast<double>(after));
+            std::printf("  %s: cache miss ratio got worse, %.3f -> %.3f\n",
+                        name,
+                        static_cast<double>(before),
+                        static_cast<double>(after));
         }
         SOL_CHECK(after <= before);
         // Reordering is not remodelling, asserted on the real assets too.
@@ -270,7 +273,8 @@ SOL_TEST(reshadingFlatCostsMoreBytesThanSmoothWhichIsWhyLevelsAreSmoothShaded)
     // Same geometry either way - the shading choice must not move a triangle.
     SOL_CHECK(smoothChain.levels[0].triangles == flatChain.levels[0].triangles);
     if (flatChain.levels[0].cookedBytes <= smoothChain.levels[0].cookedBytes) {
-        std::printf("  flat %zu bytes vs smooth %zu\n", flatChain.levels[0].cookedBytes,
+        std::printf("  flat %zu bytes vs smooth %zu\n",
+                    flatChain.levels[0].cookedBytes,
                     smoothChain.levels[0].cookedBytes);
     }
     SOL_CHECK(flatChain.levels[0].cookedBytes > smoothChain.levels[0].cookedBytes);
@@ -447,8 +451,8 @@ SOL_TEST(withNoHistorySelectionIsExactlyTheStatelessRule)
 {
     for (std::uint32_t levels = 0; levels <= 4; ++levels) {
         for (float r = 0.0f; r < 120.0f; r += 0.37f) {
-            SOL_CHECK(assets::selectMeshLevel(r, levels, assets::kNoPreviousLevel)
-                      == assets::selectMeshLevel(r, levels));
+            SOL_CHECK(assets::selectMeshLevel(r, levels, assets::kNoPreviousLevel) ==
+                      assets::selectMeshLevel(r, levels));
         }
     }
     // ⚑ And a previous level this chain cannot honour is ignored rather than
@@ -475,7 +479,7 @@ SOL_TEST(theSwitchThresholdsDescendSoEveryLevelIsReachable)
     // just under each one lands on its own level rather than skipping past it.
     for (std::size_t i = 0; i < kCount; ++i) {
         const std::uint32_t levels = static_cast<std::uint32_t>(kCount) + 1;
-        SOL_CHECK(assets::selectMeshLevel(assets::kLevelSwitchPixels[i] - 0.01f, levels)
-                  == static_cast<std::uint32_t>(i) + 1);
+        SOL_CHECK(assets::selectMeshLevel(assets::kLevelSwitchPixels[i] - 0.01f, levels) ==
+                  static_cast<std::uint32_t>(i) + 1);
     }
 }

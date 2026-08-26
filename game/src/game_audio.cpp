@@ -109,8 +109,8 @@ const std::string& GameAudio::cueName(audio::SoundId sound) const
 
 const GameAudio::Cue* GameAudio::cueFor(audio::SoundId sound) const
 {
-    const auto it = std::find_if(m_cueTable.begin(), m_cueTable.end(),
-                                 [&](const Cue& cue) { return cue.sound == sound; });
+    const auto it = std::find_if(
+        m_cueTable.begin(), m_cueTable.end(), [&](const Cue& cue) { return cue.sound == sound; });
     return it == m_cueTable.end() ? nullptr : &*it;
 }
 

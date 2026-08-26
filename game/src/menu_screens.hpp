@@ -78,8 +78,8 @@ enum class MenuAction : std::uint32_t
 
 struct MainMenuState
 {
-    bool hasSave = false;   // enables Continue
-    bool hardcore = false;  // new-run flag, was --hardcore only
+    bool hasSave = false;  // enables Continue
+    bool hardcore = false; // new-run flag, was --hardcore only
 };
 
 // Scroll position, which row is capturing, and what the last assignment did.
@@ -103,9 +103,11 @@ struct ControlsScreenState
 // The rebind list. `captured` is the chord that went down this frame (from
 // BindingTable::captured()), consumed only while a row is armed; `cancel` is
 // Escape, which abandons a capture rather than backing out of the screen.
-[[nodiscard]] MenuAction buildControlsScreen(sol::ui::UiContext& ui, Settings& settings,
+[[nodiscard]] MenuAction buildControlsScreen(sol::ui::UiContext& ui,
+                                             Settings& settings,
                                              ControlsScreenState& state,
-                                             sol::platform::InputChord captured, bool cancel);
+                                             sol::platform::InputChord captured,
+                                             bool cancel);
 
 // The bookmark naming prompt (Phase 8h). Drawn over the flight view rather
 // than as its own GameState: the galaxy keeps running, and dropping a

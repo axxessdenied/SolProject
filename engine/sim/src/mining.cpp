@@ -33,8 +33,7 @@ constexpr std::uint32_t kMaxRocksPerField = 1024;
 // which then keeps drawing the fields themselves, and fieldCountFor, which
 // wants the number alone. Takes the rng rather than the seed so the caller
 // that continues gets a stream advanced exactly as far as the other's was.
-[[nodiscard]] std::uint32_t drawFieldCount(core::Rng& rng, const SystemSpec& spec,
-                                           const MiningParams& params)
+[[nodiscard]] std::uint32_t drawFieldCount(core::Rng& rng, const SystemSpec& spec, const MiningParams& params)
 {
     const std::size_t tier = static_cast<std::size_t>(spec.region);
     return countInRange(rng, params.fieldCount[tier][0], params.fieldCount[tier][1]);
@@ -48,14 +47,14 @@ constexpr std::uint32_t kMaxRocksPerField = 1024;
     const double z = rng.nextDouble01() * 2.0 - 1.0;
     const double theta = kTau * rng.nextDouble01();
     const double r = std::sqrt(std::max(0.0, 1.0 - z * z));
-    return {static_cast<float>(r * std::cos(theta)), static_cast<float>(r * std::sin(theta)),
+    return {static_cast<float>(r * std::cos(theta)),
+            static_cast<float>(r * std::sin(theta)),
             static_cast<float>(z)};
 }
 
 // Picks an ore by region-tier weight. Falls back to the first entry when the
 // weights are all zero, so a badly tuned table still yields something.
-[[nodiscard]] std::uint32_t pickOre(core::Rng& rng, const std::vector<OreEntry>& ores,
-                                    std::size_t tier)
+[[nodiscard]] std::uint32_t pickOre(core::Rng& rng, const std::vector<OreEntry>& ores, std::size_t tier)
 {
     float total = 0.0f;
     for (const OreEntry& ore : ores) {
@@ -77,8 +76,10 @@ constexpr std::uint32_t kMaxRocksPerField = 1024;
 
 } // namespace
 
-void MiningSim::initialize(const Galaxy& galaxy, const MiningParams& params,
-                           std::uint32_t commodityCount, std::uint64_t seed)
+void MiningSim::initialize(const Galaxy& galaxy,
+                           const MiningParams& params,
+                           std::uint32_t commodityCount,
+                           std::uint64_t seed)
 {
     m_params = params;
     m_systemCount = static_cast<std::uint32_t>(galaxy.systems.size());
@@ -110,7 +111,8 @@ std::uint32_t fieldCountFor(const SystemSpec& spec, const MiningParams& params)
     return drawFieldCount(rng, spec, params);
 }
 
-void MiningSim::fieldsFor(const Galaxy& galaxy, std::uint32_t system,
+void MiningSim::fieldsFor(const Galaxy& galaxy,
+                          std::uint32_t system,
                           std::vector<AsteroidFieldSpec>& out) const
 {
     out.clear();
@@ -131,15 +133,14 @@ void MiningSim::fieldsFor(const Galaxy& galaxy, std::uint32_t system,
             lerp(m_params.fieldMinDistance, m_params.fieldMaxDistance, rng.nextDouble01());
         field.center = hub + randomPlayfieldDirection(rng) * distance;
         field.radius = lerp(m_params.fieldRadiusMin, m_params.fieldRadiusMax, rng.nextDouble01());
-        field.rockCount =
-            countInRange(rng, m_params.rockCount[tier][0], m_params.rockCount[tier][1]);
+        field.rockCount = countInRange(rng, m_params.rockCount[tier][0], m_params.rockCount[tier][1]);
         field.seed = rng.nextU64();
         out.push_back(field);
     }
 }
 
-const std::vector<RockSpec>& MiningSim::cachedRocks(const Galaxy& galaxy, std::uint32_t system,
-                                                    std::uint32_t field) const
+const std::vector<RockSpec>&
+MiningSim::cachedRocks(const Galaxy& galaxy, std::uint32_t system, std::uint32_t field) const
 {
     const std::uint64_t key = rockKey(system, field, 0);
     const auto it = m_rockCache.find(key);
@@ -151,13 +152,17 @@ const std::vector<RockSpec>& MiningSim::cachedRocks(const Galaxy& galaxy, std::u
     return m_rockCache.emplace(key, std::move(rocks)).first->second;
 }
 
-void MiningSim::rocksFor(const Galaxy& galaxy, std::uint32_t system, std::uint32_t field,
+void MiningSim::rocksFor(const Galaxy& galaxy,
+                         std::uint32_t system,
+                         std::uint32_t field,
                          std::vector<RockSpec>& out) const
 {
     out = cachedRocks(galaxy, system, field);
 }
 
-void MiningSim::generateRocks(const Galaxy& galaxy, std::uint32_t system, std::uint32_t field,
+void MiningSim::generateRocks(const Galaxy& galaxy,
+                              std::uint32_t system,
+                              std::uint32_t field,
                               std::vector<RockSpec>& out) const
 {
     out.clear();
@@ -186,8 +191,7 @@ void MiningSim::generateRocks(const Galaxy& galaxy, std::uint32_t system, std::u
         // a little jitter and the region's richness on top.
         const double base = lerp(m_params.yieldMin, m_params.yieldMax, sizeFraction);
         const double jitter = lerp(0.85, 1.15, rng.nextDouble01());
-        rock.yieldUnits = static_cast<float>(base * jitter
-                                             * m_params.regionYieldMultiplier[tier]);
+        rock.yieldUnits = static_cast<float>(base * jitter * m_params.regionYieldMultiplier[tier]);
         rock.seed = rng.nextU64();
         out.push_back(rock);
     }
@@ -200,15 +204,15 @@ std::uint32_t MiningSim::fieldCount(std::uint32_t system) const
 
 std::uint64_t MiningSim::rockKey(std::uint32_t system, std::uint32_t field, std::uint32_t rock)
 {
-    return (static_cast<std::uint64_t>(system) << 32) | (static_cast<std::uint64_t>(field) << 16)
-           | rock;
+    return (static_cast<std::uint64_t>(system) << 32) | (static_cast<std::uint64_t>(field) << 16) | rock;
 }
 
 std::size_t MiningSim::findDepletion(std::uint64_t key) const
 {
     const auto it = std::lower_bound(
-        m_depletion.begin(), m_depletion.end(), key,
-        [](const RockDepletion& record, std::uint64_t value) { return record.key < value; });
+        m_depletion.begin(), m_depletion.end(), key, [](const RockDepletion& record, std::uint64_t value) {
+            return record.key < value;
+        });
     if (it == m_depletion.end() || it->key != key) {
         return m_depletion.size();
     }
@@ -221,18 +225,20 @@ float MiningSim::unitsTaken(std::uint32_t system, std::uint32_t field, std::uint
     return index < m_depletion.size() ? m_depletion[index].unitsTaken : 0.0f;
 }
 
-float MiningSim::unitsLeft(std::uint32_t system, std::uint32_t field, std::uint32_t rock,
+float MiningSim::unitsLeft(std::uint32_t system,
+                           std::uint32_t field,
+                           std::uint32_t rock,
                            float totalUnits) const
 {
     const float left = totalUnits - unitsTaken(system, field, rock);
     return left > 0.0f ? left : 0.0f;
 }
 
-float MiningSim::mineRock(std::uint32_t system, std::uint32_t field, std::uint32_t rock,
-                          float totalUnits, float units)
+float MiningSim::mineRock(
+    std::uint32_t system, std::uint32_t field, std::uint32_t rock, float totalUnits, float units)
 {
-    if (system >= m_systemCount || field >= fieldCount(system) || rock >= kMaxRocksPerField
-        || !(units > 0.0f) || !(totalUnits > 0.0f)) {
+    if (system >= m_systemCount || field >= fieldCount(system) || rock >= kMaxRocksPerField ||
+        !(units > 0.0f) || !(totalUnits > 0.0f)) {
         return 0.0f;
     }
     const std::uint64_t key = rockKey(system, field, rock);
@@ -249,15 +255,19 @@ float MiningSim::mineRock(std::uint32_t system, std::uint32_t field, std::uint32
         // Insert in key order: the vector stays sorted for the binary search
         // and the save order stays stable.
         const auto at = std::lower_bound(
-            m_depletion.begin(), m_depletion.end(), key,
+            m_depletion.begin(),
+            m_depletion.end(),
+            key,
             [](const RockDepletion& record, std::uint64_t value) { return record.key < value; });
         m_depletion.insert(at, RockDepletion{.key = key, .unitsTaken = taken});
     }
     return taken;
 }
 
-float MiningSim::drawFromSystem(const Galaxy& galaxy, std::uint32_t system,
-                                std::uint32_t commodity, float units)
+float MiningSim::drawFromSystem(const Galaxy& galaxy,
+                                std::uint32_t system,
+                                std::uint32_t commodity,
+                                float units)
 {
     if (system >= m_systemCount || !(units > 0.0f)) {
         return 0.0f;
@@ -358,8 +368,7 @@ void MiningSim::mergeDepletion(const std::vector<RockDepletion>& takes)
     m_depletion.swap(m_depletionScratch);
 }
 
-float MiningSim::systemStock(const Galaxy& galaxy, std::uint32_t system,
-                             std::uint32_t commodity) const
+float MiningSim::systemStock(const Galaxy& galaxy, std::uint32_t system, std::uint32_t commodity) const
 {
     if (system >= m_systemCount) {
         return 0.0f;
@@ -377,8 +386,11 @@ float MiningSim::systemStock(const Galaxy& galaxy, std::uint32_t system,
     return total;
 }
 
-std::uint32_t MiningSim::addWreck(std::uint32_t system, const core::DVec3& position,
-                                  std::string defId, std::string name, std::uint64_t seed)
+std::uint32_t MiningSim::addWreck(std::uint32_t system,
+                                  const core::DVec3& position,
+                                  std::string defId,
+                                  std::string name,
+                                  std::uint64_t seed)
 {
     if (system >= m_systemCount) {
         return 0;
@@ -489,8 +501,8 @@ double MiningSim::refineFee(float units) const
 
 double MiningSim::refineDuration(float units) const
 {
-    return m_params.refineSecondsBase
-           + m_params.refineSecondsPerUnit * static_cast<double>(units > 0.0f ? units : 0.0f);
+    return m_params.refineSecondsBase +
+           m_params.refineSecondsPerUnit * static_cast<double>(units > 0.0f ? units : 0.0f);
 }
 
 float MiningSim::refineOutput(float units) const
@@ -498,12 +510,13 @@ float MiningSim::refineOutput(float units) const
     return units > 0.0f ? units * m_params.refineRatio : 0.0f;
 }
 
-bool MiningSim::startRefineJob(std::uint32_t market, std::uint32_t inputCommodity, float units,
+bool MiningSim::startRefineJob(std::uint32_t market,
+                               std::uint32_t inputCommodity,
+                               float units,
                                std::uint32_t outputCommodity)
 {
-    if (!(units > 0.0f) || inputCommodity >= m_commodityCount
-        || outputCommodity >= m_commodityCount
-        || m_refineJobs.size() >= m_params.maxRefineJobs) {
+    if (!(units > 0.0f) || inputCommodity >= m_commodityCount || outputCommodity >= m_commodityCount ||
+        m_refineJobs.size() >= m_params.maxRefineJobs) {
         return false;
     }
     m_refineJobs.push_back({.market = market,
@@ -519,8 +532,7 @@ float MiningSim::readyAt(std::uint32_t market, std::uint32_t commodity) const
 {
     float ready = 0.0f;
     for (const RefineJob& job : m_refineJobs) {
-        if (job.market == market && job.outputCommodity == commodity
-            && job.secondsRemaining <= 0.0) {
+        if (job.market == market && job.outputCommodity == commodity && job.secondsRemaining <= 0.0) {
             ready += job.outputUnits;
         }
     }
@@ -549,8 +561,7 @@ float MiningSim::collectAt(std::uint32_t market, std::uint32_t commodity, float 
     float taken = 0.0f;
     for (std::size_t i = 0; i < m_refineJobs.size();) {
         RefineJob& job = m_refineJobs[i];
-        if (job.market != market || job.outputCommodity != commodity
-            || job.secondsRemaining > 0.0) {
+        if (job.market != market || job.outputCommodity != commodity || job.secondsRemaining > 0.0) {
             ++i;
             continue;
         }
@@ -651,8 +662,8 @@ bool MiningSim::load(core::BinaryReader& reader)
 {
     std::uint32_t systemCount = 0;
     std::uint32_t commodityCount = 0;
-    if (!reader.read(systemCount) || systemCount != m_systemCount || !reader.read(commodityCount)
-        || commodityCount != m_commodityCount || !reader.read(m_nextWreckId)) {
+    if (!reader.read(systemCount) || systemCount != m_systemCount || !reader.read(commodityCount) ||
+        commodityCount != m_commodityCount || !reader.read(m_nextWreckId)) {
         return false; // galaxy/defs mismatch: initialize() first
     }
     std::uint32_t depletionCount = 0;
@@ -663,8 +674,7 @@ bool MiningSim::load(core::BinaryReader& reader)
     std::uint64_t previousKey = 0;
     for (std::size_t i = 0; i < m_depletion.size(); ++i) {
         RockDepletion& record = m_depletion[i];
-        if (!reader.read(record.key) || !reader.read(record.unitsTaken)
-            || record.unitsTaken < 0.0f) {
+        if (!reader.read(record.key) || !reader.read(record.unitsTaken) || record.unitsTaken < 0.0f) {
             return false;
         }
         if (i > 0 && record.key <= previousKey) {
@@ -681,26 +691,24 @@ bool MiningSim::load(core::BinaryReader& reader)
         std::uint8_t contentsSet = 0;
         std::uint8_t opened = 0;
         std::uint32_t cargoCount = 0;
-        if (!reader.read(record.id) || !reader.read(record.system)
-            || record.system >= m_systemCount || !reader.read(record.position.x)
-            || !reader.read(record.position.y) || !reader.read(record.position.z)
-            || !reader.readString(record.defId) || !reader.readString(record.name)
-            || !reader.read(record.seed) || !reader.read(record.decayRemaining)
-            || !reader.read(contentsSet) || !reader.read(opened) || !reader.read(cargoCount)
-            || cargoCount > m_params.maxCargoStacks) {
+        if (!reader.read(record.id) || !reader.read(record.system) || record.system >= m_systemCount ||
+            !reader.read(record.position.x) || !reader.read(record.position.y) ||
+            !reader.read(record.position.z) || !reader.readString(record.defId) ||
+            !reader.readString(record.name) || !reader.read(record.seed) ||
+            !reader.read(record.decayRemaining) || !reader.read(contentsSet) || !reader.read(opened) ||
+            !reader.read(cargoCount) || cargoCount > m_params.maxCargoStacks) {
             return false;
         }
         record.contentsSet = contentsSet != 0;
         record.opened = opened != 0;
         record.contents.cargo.resize(cargoCount);
         for (SignalCargo& cargo : record.contents.cargo) {
-            if (!reader.read(cargo.commodity) || cargo.commodity >= m_commodityCount
-                || !reader.read(cargo.units)) {
+            if (!reader.read(cargo.commodity) || cargo.commodity >= m_commodityCount ||
+                !reader.read(cargo.units)) {
                 return false;
             }
         }
-        if (!reader.read(record.contents.credits)
-            || !reader.readString(record.contents.moduleId)) {
+        if (!reader.read(record.contents.credits) || !reader.readString(record.contents.moduleId)) {
             return false;
         }
     }
@@ -710,10 +718,10 @@ bool MiningSim::load(core::BinaryReader& reader)
     }
     m_refineJobs.resize(jobCount);
     for (RefineJob& job : m_refineJobs) {
-        if (!reader.read(job.market) || !reader.read(job.inputCommodity)
-            || job.inputCommodity >= m_commodityCount || !reader.read(job.outputCommodity)
-            || job.outputCommodity >= m_commodityCount || !reader.read(job.inputUnits)
-            || !reader.read(job.outputUnits) || !reader.read(job.secondsRemaining)) {
+        if (!reader.read(job.market) || !reader.read(job.inputCommodity) ||
+            job.inputCommodity >= m_commodityCount || !reader.read(job.outputCommodity) ||
+            job.outputCommodity >= m_commodityCount || !reader.read(job.inputUnits) ||
+            !reader.read(job.outputUnits) || !reader.read(job.secondsRemaining)) {
             return false;
         }
     }

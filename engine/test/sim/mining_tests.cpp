@@ -1,13 +1,12 @@
-#include <sol/sim/mining.hpp>
-#include <sol/sim/universe.hpp>
-
-#include <sol/core/serialize.hpp>
-#include <sol/test/test.hpp>
-
 #include <cmath>
 #include <cstdint>
 #include <span>
 #include <vector>
+
+#include <sol/core/serialize.hpp>
+#include <sol/sim/mining.hpp>
+#include <sol/sim/universe.hpp>
+#include <sol/test/test.hpp>
 
 using sol::sim::AsteroidFieldSpec;
 using sol::sim::fieldCountFor;
@@ -187,8 +186,7 @@ SOL_TEST(mining_fields_and_rocks_are_deterministic_per_seed)
     // A field sits in the playfield band around the primary planet, like
     // every other visitable thing in a system.
     const MiningParams params = lineParams();
-    const double distance =
-        sol::core::length(first[0].center - galaxy.systems[2].planets[1].position);
+    const double distance = sol::core::length(first[0].center - galaxy.systems[2].planets[1].position);
     SOL_CHECK(distance >= params.fieldMinDistance * 0.999);
     SOL_CHECK(distance <= params.fieldMaxDistance * 1.001);
 
@@ -253,16 +251,16 @@ SOL_TEST(mining_ore_and_yield_follow_the_region_gradient)
     // so compare yield against what the size alone would give.
     double coreRatio = 0.0;
     for (const RockSpec& rock : core) {
-        const double sizeFraction = (rock.radius - params.rockRadiusMin)
-                                    / (params.rockRadiusMax - params.rockRadiusMin);
+        const double sizeFraction =
+            (rock.radius - params.rockRadiusMin) / (params.rockRadiusMax - params.rockRadiusMin);
         const double base = params.yieldMin + (params.yieldMax - params.yieldMin) * sizeFraction;
         coreRatio += rock.yieldUnits / base;
     }
     coreRatio /= static_cast<double>(core.size());
     double fringeRatio = 0.0;
     for (const RockSpec& rock : fringe) {
-        const double sizeFraction = (rock.radius - params.rockRadiusMin)
-                                    / (params.rockRadiusMax - params.rockRadiusMin);
+        const double sizeFraction =
+            (rock.radius - params.rockRadiusMin) / (params.rockRadiusMax - params.rockRadiusMin);
         const double base = params.yieldMin + (params.yieldMax - params.yieldMin) * sizeFraction;
         fringeRatio += rock.yieldUnits / base;
     }
@@ -410,8 +408,7 @@ SOL_TEST(mining_refine_jobs_finish_on_the_coarse_clock)
     const float units = 20.0f;
     SOL_CHECK(mining.refineFee(units) == units * params.refineFeePerUnit);
     const double duration = mining.refineDuration(units);
-    SOL_CHECK(duration
-              == params.refineSecondsBase + params.refineSecondsPerUnit * units);
+    SOL_CHECK(duration == params.refineSecondsBase + params.refineSecondsPerUnit * units);
 
     SOL_REQUIRE(mining.startRefineJob(4, 1, units, 2));
     SOL_CHECK(mining.refineJobs().size() == 1);
@@ -494,8 +491,7 @@ SOL_TEST(mining_save_load_restores_depletion_wrecks_and_jobs)
     SOL_CHECK(restored.wreck(id)->contents.cargo[0].units == 6.0f);
     SOL_CHECK(restored.wreck(id)->contents.moduleId == "sol.shield_mk1");
     SOL_REQUIRE(restored.refineJobs().size() == 1);
-    SOL_CHECK(restored.refineJobs()[0].secondsRemaining
-              == mining.refineJobs()[0].secondsRemaining);
+    SOL_CHECK(restored.refineJobs()[0].secondsRemaining == mining.refineJobs()[0].secondsRemaining);
     SOL_CHECK(restored.refineJobs()[0].outputUnits == mining.refineJobs()[0].outputUnits);
 
     // A new wreck after a load never reuses a live id.
@@ -505,8 +501,7 @@ SOL_TEST(mining_save_load_restores_depletion_wrecks_and_jobs)
     // Both sides then run tick-for-tick: the restored sim is the same sim.
     mining.tick(10.0);
     restored.tick(10.0);
-    SOL_CHECK(restored.refineJobs()[0].secondsRemaining
-              == mining.refineJobs()[0].secondsRemaining);
+    SOL_CHECK(restored.refineJobs()[0].secondsRemaining == mining.refineJobs()[0].secondsRemaining);
 
     // A save from a different galaxy is rejected, not half-applied.
     GalaxyParams biggerParams;
@@ -626,7 +621,7 @@ SOL_TEST(mining_a_miner_only_crosses_to_a_rock_it_can_reach)
 
     // Nearest wins among clear paths, and the one being left is never picked.
     const std::vector<MiningRock> field = {
-        {.position = {0.0, 900.0, 0.0}, .radius = 100.0},   // nearest
+        {.position = {0.0, 900.0, 0.0}, .radius = 100.0}, // nearest
         {.position = {0.0, -1'400.0, 0.0}, .radius = 100.0},
         {.position = {2'500.0, 0.0, 0.0}, .radius = 100.0},
     };

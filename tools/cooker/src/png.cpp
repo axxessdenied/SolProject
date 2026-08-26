@@ -93,12 +93,24 @@ bool decodePng(const std::uint8_t* data, std::size_t size, ImageRgba& out)
 
     int channels = 0;
     switch (colorType) {
-    case 0: channels = 1; break; // gray
-    case 2: channels = 3; break; // RGB
-    case 3: channels = 1; break; // palette index
-    case 4: channels = 2; break; // gray + alpha
-    case 6: channels = 4; break; // RGBA
-    default: SOL_LOG_ERROR("png: unsupported color type %u", colorType); return false;
+    case 0:
+        channels = 1;
+        break; // gray
+    case 2:
+        channels = 3;
+        break; // RGB
+    case 3:
+        channels = 1;
+        break; // palette index
+    case 4:
+        channels = 2;
+        break; // gray + alpha
+    case 6:
+        channels = 4;
+        break; // RGBA
+    default:
+        SOL_LOG_ERROR("png: unsupported color type %u", colorType);
+        return false;
     }
     if (colorType == 3 && palette.empty()) {
         SOL_LOG_ERROR("png: palette image without PLTE");
@@ -133,12 +145,23 @@ bool decodePng(const std::uint8_t* data, std::size_t size, ImageRgba& out)
 
             int value = src[x];
             switch (filter) {
-            case 0: break;
-            case 1: value += a; break;
-            case 2: value += b; break;
-            case 3: value += (a + b) / 2; break;
-            case 4: value += paethPredictor(a, b, c); break;
-            default: SOL_LOG_ERROR("png: bad filter %u", filter); return false;
+            case 0:
+                break;
+            case 1:
+                value += a;
+                break;
+            case 2:
+                value += b;
+                break;
+            case 3:
+                value += (a + b) / 2;
+                break;
+            case 4:
+                value += paethPredictor(a, b, c);
+                break;
+            default:
+                SOL_LOG_ERROR("png: bad filter %u", filter);
+                return false;
             }
             dst[x] = static_cast<std::uint8_t>(value & 0xFF);
         }
@@ -152,8 +175,16 @@ bool decodePng(const std::uint8_t* data, std::size_t size, ImageRgba& out)
         const std::uint8_t* src = image.data() + i * channels;
         std::uint8_t* dst = out.pixels.data() + i * 4;
         switch (colorType) {
-        case 0: dst[0] = dst[1] = dst[2] = src[0]; dst[3] = 255; break;
-        case 2: dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = 255; break;
+        case 0:
+            dst[0] = dst[1] = dst[2] = src[0];
+            dst[3] = 255;
+            break;
+        case 2:
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = 255;
+            break;
         case 3: {
             const std::size_t p = static_cast<std::size_t>(src[0]) * 3;
             if (p + 2 >= palette.size()) {
@@ -166,9 +197,18 @@ bool decodePng(const std::uint8_t* data, std::size_t size, ImageRgba& out)
             dst[3] = 255;
             break;
         }
-        case 4: dst[0] = dst[1] = dst[2] = src[0]; dst[3] = src[1]; break;
-        case 6: dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3]; break;
-        default: return false;
+        case 4:
+            dst[0] = dst[1] = dst[2] = src[0];
+            dst[3] = src[1];
+            break;
+        case 6:
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = src[3];
+            break;
+        default:
+            return false;
         }
     }
     return true;

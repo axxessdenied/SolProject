@@ -1,9 +1,8 @@
-#include <sol/sim/pilot_tips.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cstdint>
 #include <vector>
+
+#include <sol/sim/pilot_tips.hpp>
+#include <sol/test/test.hpp>
 
 using sol::core::DVec3;
 using sol::sim::chooseMarketTip;

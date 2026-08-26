@@ -18,7 +18,9 @@ namespace {
 platform::Window* g_hookedWindow = nullptr;
 bool g_hostLive = false;
 
-bool messageHookTrampoline(void* windowHandle, std::uint32_t message, std::uint64_t wParam,
+bool messageHookTrampoline(void* windowHandle,
+                           std::uint32_t message,
+                           std::uint64_t wParam,
                            std::int64_t lParam)
 {
     return devUiPlatformMessageHook(windowHandle, message, wParam, lParam);
@@ -33,8 +35,11 @@ void checkVkResult(VkResult result)
 
 } // namespace
 
-bool ImGuiHost::initialize(platform::Window& window, rhi::Context& context, VkFormat colorFormat,
-                           VkFormat depthFormat, std::uint32_t swapchainImageCount,
+bool ImGuiHost::initialize(platform::Window& window,
+                           rhi::Context& context,
+                           VkFormat colorFormat,
+                           VkFormat depthFormat,
+                           std::uint32_t swapchainImageCount,
                            const HostOptions& options)
 {
     if (g_hostLive) {

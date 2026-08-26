@@ -26,19 +26,23 @@ public:
         core::Vec3 sunDirection;   // toward the sun (planet shading)
     };
 
-    [[nodiscard]] bool initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
+    [[nodiscard]] bool initialize(rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
                                   const char* shaderDirectory);
     void shutdown();
     [[nodiscard]] bool reloadPipeline();
 
-    void drawPlanet(VkCommandBuffer commandBuffer, const core::Mat4& viewProjection,
-                    const Body& body) const;
-    void drawStar(VkCommandBuffer commandBuffer, const core::Mat4& viewProjection,
-                  const Body& body) const;
+    void drawPlanet(VkCommandBuffer commandBuffer, const core::Mat4& viewProjection, const Body& body) const;
+    void drawStar(VkCommandBuffer commandBuffer, const core::Mat4& viewProjection, const Body& body) const;
 
 private:
-    void draw(VkCommandBuffer commandBuffer, VkPipeline pipeline, const core::Mat4& viewProjection,
-              const Body& body, float mode, float quadScale) const;
+    void draw(VkCommandBuffer commandBuffer,
+              VkPipeline pipeline,
+              const core::Mat4& viewProjection,
+              const Body& body,
+              float mode,
+              float quadScale) const;
 
     rhi::Context* m_context = nullptr;
     VkFormat m_colorFormat = VK_FORMAT_UNDEFINED;

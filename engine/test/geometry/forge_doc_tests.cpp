@@ -1,8 +1,8 @@
+#include "shipped_meshes.hpp"
+
 #include "sol/assets/forge_doc.hpp"
 #include "sol/assets/mesh_edit.hpp"
 #include "sol/test/test.hpp"
-
-#include "shipped_meshes.hpp"
 
 #include <algorithm>
 #include <array>
@@ -53,8 +53,7 @@ namespace {
 
 // "the file differs" is a poor thing to learn about a 1300-line asset, so say
 // which line and show both.
-void reportFirstDifferingLine(const char* name, const std::string& expected,
-                              const std::string& actual)
+void reportFirstDifferingLine(const char* name, const std::string& expected, const std::string& actual)
 {
     std::size_t line = 1;
     std::size_t lineStart = 0;
@@ -63,7 +62,9 @@ void reportFirstDifferingLine(const char* name, const std::string& expected,
         if (expected[i] != actual[i]) {
             const std::size_t expectedEnd = expected.find('\n', lineStart);
             const std::size_t actualEnd = actual.find('\n', lineStart);
-            std::printf("  %s.forge line %zu\n    want: %s\n    got:  %s\n", name, line,
+            std::printf("  %s.forge line %zu\n    want: %s\n    got:  %s\n",
+                        name,
+                        line,
                         expected.substr(lineStart, expectedEnd - lineStart).c_str(),
                         actual.substr(lineStart, actualEnd - lineStart).c_str());
             return;
@@ -73,8 +74,11 @@ void reportFirstDifferingLine(const char* name, const std::string& expected,
             lineStart = i + 1;
         }
     }
-    std::printf("  %s.forge: same for %zu bytes, then lengths differ (%zu vs %zu)\n", name, shared,
-                expected.size(), actual.size());
+    std::printf("  %s.forge: same for %zu bytes, then lengths differ (%zu vs %zu)\n",
+                name,
+                shared,
+                expected.size(),
+                actual.size());
 }
 
 [[nodiscard]] bool near(double a, double b, double tolerance)
@@ -90,8 +94,8 @@ void reportFirstDifferingLine(const char* name, const std::string& expected,
         return false;
     }
     if (!a.vertices.empty() &&
-        std::memcmp(a.vertices.data(), b.vertices.data(),
-                    a.vertices.size() * sizeof(assets::MeshVertex)) != 0) {
+        std::memcmp(a.vertices.data(), b.vertices.data(), a.vertices.size() * sizeof(assets::MeshVertex)) !=
+            0) {
         return false;
     }
     return a.indices == b.indices;
@@ -600,8 +604,8 @@ size = [2.0, 2.0, 2.0]
     for (const assets::EditVertex& vertex : mesh.vertices) {
         const core::Vec3 point = mesh.positions[vertex.position];
         const core::Vec3 outward{point.x - 4.0f, point.y, point.z};
-        const float alignment = (outward.x * vertex.normal.x) + (outward.y * vertex.normal.y) +
-                                (outward.z * vertex.normal.z);
+        const float alignment =
+            (outward.x * vertex.normal.x) + (outward.y * vertex.normal.y) + (outward.z * vertex.normal.z);
         SOL_CHECK(alignment > 0.0f);
     }
 }
@@ -644,8 +648,7 @@ size = [1.0, 1.0, 1.0]
     SOL_CHECK(near(assets::signedVolume(assets::toEditMesh(rounded)), 1.0, 1e-6));
 
     // Faceted: one axis carries the whole normal.
-    const double faceted = std::abs(soup.vertices[0].normal[0]) +
-                           std::abs(soup.vertices[0].normal[1]) +
+    const double faceted = std::abs(soup.vertices[0].normal[0]) + std::abs(soup.vertices[0].normal[1]) +
                            std::abs(soup.vertices[0].normal[2]);
     SOL_CHECK(near(faceted, 1.0, 1e-5));
 
@@ -658,12 +661,12 @@ size = [1.0, 1.0, 1.0]
     // means a smoothed box is subtly asymmetric - which is a reason to smooth
     // sweeps and leave boxes faceted, not a defect.
     for (const assets::MeshVertex& vertex : rounded.vertices) {
-        const double length = std::sqrt((vertex.normal[0] * vertex.normal[0]) +
-                                        (vertex.normal[1] * vertex.normal[1]) +
-                                        (vertex.normal[2] * vertex.normal[2]));
+        const double length =
+            std::sqrt((vertex.normal[0] * vertex.normal[0]) + (vertex.normal[1] * vertex.normal[1]) +
+                      (vertex.normal[2] * vertex.normal[2]));
         SOL_CHECK(near(length, 1.0, 1e-5));
-        const double dominant = std::max({std::abs(vertex.normal[0]), std::abs(vertex.normal[1]),
-                                          std::abs(vertex.normal[2])});
+        const double dominant =
+            std::max({std::abs(vertex.normal[0]), std::abs(vertex.normal[1]), std::abs(vertex.normal[2])});
         SOL_CHECK(dominant < 0.99); // nothing is a face normal any more
     }
 
@@ -701,8 +704,7 @@ segments_u = 2
 // first time somebody nudged a vertex and bury the one line that changed.
 SOL_TEST(everyCommittedForgeSourceRoundTripsByteForByte)
 {
-    const char* const names[] = {"cube",    "gate",     "ship",         "station",
-                                 "cockpit", "asteroid", "gate_membrane"};
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -778,8 +780,7 @@ SOL_TEST(forgeKeepsTheBlankLineBetweenACommentAndItsPart)
 SOL_TEST(forgeSeparatesAnAuthoredPartFromOneTheToolAdded)
 {
     ForgeDoc doc;
-    SOL_REQUIRE(parses("name = \"demo\"\n\n# the first\n[[part]]\nid = \"a\"\ntype = \"box\"\n",
-                       doc));
+    SOL_REQUIRE(parses("name = \"demo\"\n\n# the first\n[[part]]\nid = \"a\"\ntype = \"box\"\n", doc));
     assets::ForgePart added;
     added.id = "b";
     added.primitive = ForgePrimitive::Box;
@@ -831,8 +832,7 @@ SOL_TEST(forgeFlagsACommentItCannotPlace)
     SOL_CHECK(inArray.hasUnplaceableComments);
 
     ForgeDoc clean;
-    SOL_REQUIRE(parses("# a header\nname = \"demo\"\n\n[[part]]\nid = \"a\"\ntype = \"box\"\n",
-                       clean));
+    SOL_REQUIRE(parses("# a header\nname = \"demo\"\n\n[[part]]\nid = \"a\"\ntype = \"box\"\n", clean));
     SOL_CHECK(!clean.hasUnplaceableComments);
 }
 
@@ -866,8 +866,8 @@ namespace {
 // -2.5999999046325684 - about 9.5e-8 away. A double-scale tolerance finds
 // nothing, which is how these tests first found that a move must be a delta
 // rather than a destination.
-[[nodiscard]] std::size_t pointAt(const std::vector<assets::ForgePoint>& points,
-                                  assets::BuildPoint p, double tolerance = 1e-6)
+[[nodiscard]] std::size_t
+pointAt(const std::vector<assets::ForgePoint>& points, assets::BuildPoint p, double tolerance = 1e-6)
 {
     for (std::size_t i = 0; i < points.size(); ++i) {
         if (std::abs(points[i].position.x - p.x) < tolerance &&
@@ -887,8 +887,7 @@ namespace {
 // two-implementations trap this programme has already paid for twice.
 SOL_TEST(forgePartRangesPartitionTheBuiltMeshExactly)
 {
-    const char* const names[] = {"cube",    "gate",     "ship",         "station",
-                                 "cockpit", "asteroid", "gate_membrane"};
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -1062,8 +1061,7 @@ SOL_TEST(movingOnePointWritesEveryPartStandingAtItAndMovesNothingElse)
 // file on a click-and-release, so a write of no distance is not performed.
 SOL_TEST(aMoveOfZeroDistanceLeavesTheFileByteForByteIdentical)
 {
-    const char* const names[] = {"cube",    "gate",     "ship",         "station",
-                                 "cockpit", "asteroid", "gate_membrane"};
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -1222,8 +1220,7 @@ SOL_TEST(aBakedPartIsFullyMovableBecauseItsVerticesAreItsParameters)
     // near a grid line. Landing on the grid is the point of that phase, so the
     // cursor and the corner agree only to the grid step.
     SOL_REQUIRE(assets::forgePoints(doc, after));
-    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}, 1e-4) <
-              after.size());
+    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}, 1e-4) < after.size());
 }
 
 // ⚑ A part under a rotated, scaled parent must receive the number it would have
@@ -1280,8 +1277,7 @@ SOL_TEST(aPointUnderATransformedParentIsWrittenBackInThePartsOwnFrame)
     // the part's frame, and the parent scales that by at most 2, so no world
     // component can be off by more than ~1.03e-4. Measured here: 4.4e-5.
     SOL_REQUIRE(assets::forgePoints(doc, after));
-    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}, 2e-4) <
-              after.size());
+    SOL_CHECK(pointAt(after, {start.x + delta.x, start.y + delta.y, start.z + delta.z}, 2e-4) < after.size());
 }
 
 // The whole stage rides on the writer staying a fixed point: a modeller saves
@@ -1460,8 +1456,7 @@ SOL_TEST(aDraggedVertexLandsOnTheGridAndWritesANumberAPersonCanRead)
     SOL_REQUIRE(apex < points.size());
 
     // Exactly the displacement the playtest's saved file implies.
-    const assets::BuildPoint delta{0.009169150493107736, 0.0469186387490481,
-                                   -0.167375393866678};
+    const assets::BuildPoint delta{0.009169150493107736, 0.0469186387490481, -0.167375393866678};
     SOL_REQUIRE(assets::forgeMovePoint(doc, points[apex], delta));
 
     const assets::BuildPoint written = doc.parts[0].value("p2").vec;
@@ -1496,8 +1491,7 @@ SOL_TEST(aQuantizedBoxCornerDragStillLeavesTheOppositeCornerExactlyWhereItWas)
     SOL_REQUIRE(corner < before.size());
 
     // An awkward drag of the kind a hand on a mouse actually produces.
-    const assets::BuildPoint delta{0.318309886183791, -0.271828182845905,
-                                   0.141421356237309};
+    const assets::BuildPoint delta{0.318309886183791, -0.271828182845905, 0.141421356237309};
     SOL_REQUIRE(assets::forgeMovePoint(doc, before[corner], delta));
 
     // The dragged corner is on the grid...
@@ -1557,9 +1551,8 @@ SOL_TEST(aBoxDragWritesCleanDecimalsEvenWhereTheAdditionIsNot)
     SOL_REQUIRE(corner < points.size());
 
     // The drag the drive performed, to the digit.
-    SOL_REQUIRE(assets::forgeMovePoint(doc, points[corner],
-                                       {0.15680000000000005, -0.11239999999999994,
-                                        -0.07820000000000004}));
+    SOL_REQUIRE(assets::forgeMovePoint(
+        doc, points[corner], {0.15680000000000005, -0.11239999999999994, -0.07820000000000004}));
 
     const std::string text = assets::writeForge(doc);
     SOL_CHECK(text.find("center = [0.0784, -0.0562, -0.0391]") != std::string::npos);
@@ -1621,8 +1614,7 @@ SOL_TEST(aDraggedBeamEndAndABakedVertexBothLandOnTheGrid)
         }
     }
     SOL_REQUIRE(corner < points.size());
-    SOL_REQUIRE(assets::forgeMovePoint(doc, points[corner],
-                                       {0.123456789, 0.0, 0.098765432}));
+    SOL_REQUIRE(assets::forgeMovePoint(doc, points[corner], {0.123456789, 0.0, 0.098765432}));
 
     const assets::BuildPoint end = doc.parts[0].value("to").vec;
     SOL_CHECK(std::abs(end.x - 0.1235) < 1e-12);
@@ -1808,13 +1800,14 @@ SOL_TEST(everyCommittedAssetButTheTwoTorusesIsNowFullyMovable)
         std::size_t points;
         std::size_t movable;
     };
+
     const Expected expected[] = {
-        {"cube", 8, 8},           // one box at its defaults
-        {"gate", 320, 64},        // a 32x8 ring plus eight boxes
-        {"ship", 12, 12},         // sixteen flat triangles: class (1), from E1
-        {"station", 552, 72},     // a 40x12 ring plus nine boxes
-        {"cockpit", 141, 141},    // ten beams, seven boxes, six triangles
-        {"asteroid", 162, 162},   // baked: its vertices ARE its parameters
+        {"cube", 8, 8},         // one box at its defaults
+        {"gate", 320, 64},      // a 32x8 ring plus eight boxes
+        {"ship", 12, 12},       // sixteen flat triangles: class (1), from E1
+        {"station", 552, 72},   // a 40x12 ring plus nine boxes
+        {"cockpit", 141, 141},  // ten beams, seven boxes, six triangles
+        {"asteroid", 162, 162}, // baked: its vertices ARE its parameters
     };
     for (const Expected& want : expected) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + want.name + ".forge";
@@ -1856,8 +1849,7 @@ SOL_TEST(everyCommittedAssetButTheTwoTorusesIsNowFullyMovable)
 // time anyone touches a vertex on it.
 SOL_TEST(bakingAnyPartOfAnyCommittedAssetLeavesTheBuiltMeshUnchanged)
 {
-    const char* const names[] = {"cube",    "gate",     "ship",         "station",
-                                 "cockpit", "asteroid", "gate_membrane"};
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -1886,9 +1878,11 @@ SOL_TEST(bakingAnyPartOfAnyCommittedAssetLeavesTheBuiltMeshUnchanged)
             SOL_REQUIRE(after.vertices.size() == before.vertices.size());
             SOL_REQUIRE(after.indices.size() == before.indices.size());
             // Byte for byte, not nearly: positions, normals and uvs all.
-            SOL_CHECK(std::memcmp(after.vertices.data(), before.vertices.data(),
+            SOL_CHECK(std::memcmp(after.vertices.data(),
+                                  before.vertices.data(),
                                   before.vertices.size() * sizeof(assets::MeshVertex)) == 0);
-            SOL_CHECK(std::memcmp(after.indices.data(), before.indices.data(),
+            SOL_CHECK(std::memcmp(after.indices.data(),
+                                  before.indices.data(),
                                   before.indices.size() * sizeof(std::uint32_t)) == 0);
         }
     }
@@ -1910,8 +1904,7 @@ SOL_TEST(theGateIsTheOnlyAssetWhosePlacementsCouldTellTheBakeFramesApart)
     std::size_t turned = 0;
     std::size_t groups = 0;
     for (const assets::ForgePart& part : doc.parts) {
-        if (part.rotationDegrees.x != 0.0 || part.rotationDegrees.y != 0.0 ||
-            part.rotationDegrees.z != 0.0) {
+        if (part.rotationDegrees.x != 0.0 || part.rotationDegrees.y != 0.0 || part.rotationDegrees.z != 0.0) {
             ++turned;
         }
         if (part.primitive == ForgePrimitive::Group) {
@@ -2023,8 +2016,8 @@ SOL_TEST(bakingTheTorusIsWhatMakesTheRestOfTheStationMovable)
     SOL_REQUIRE(assets::forgeMovePoint(doc, after[ring], {1.0, 0.0, 0.0}, &error));
     std::vector<assets::ForgePoint> moved;
     SOL_REQUIRE(assets::forgePoints(doc, moved));
-    SOL_CHECK(pointAt(moved, {before[0].position.x + 1.0, before[0].position.y,
-                              before[0].position.z}) < moved.size());
+    SOL_CHECK(pointAt(moved, {before[0].position.x + 1.0, before[0].position.y, before[0].position.z}) <
+              moved.size());
 }
 
 // Baking twice is baking once: a `mesh` part is already literal, and a round
@@ -2080,8 +2073,7 @@ SOL_TEST(bakingRefusesAGroupAndAPartThatIsNotThere)
 // index spaces are the same integers.
 SOL_TEST(everyCommittedAssetsEdgesAgreeWithAdjacencyAboutTheTopology)
 {
-    const char* const names[] = {"cube",    "gate",     "ship",         "station",
-                                 "cockpit", "asteroid", "gate_membrane"};
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -2232,8 +2224,7 @@ namespace {
 
 ForgeDoc openTopologyAsset(const char* name)
 {
-    const std::string source =
-        readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge");
+    const std::string source = readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge");
     ForgeDoc doc;
     if (source.empty() || !parses(source, doc)) {
         return {};
@@ -2336,8 +2327,8 @@ SOL_TEST(aRayIntoTheCubeEntersTheFaceItPointsAt)
     // The cube is the unit box at the origin, so a ray from 3 m out along an
     // axis enters at 2.5 m - and that number is what proves it took the NEAR
     // face rather than the far one, which a plane test with no ordering would.
-    const assets::BuildPoint origins[] = {{3, 0, 0},  {-3, 0, 0}, {0, 3, 0},
-                                          {0, -3, 0}, {0, 0, 3},  {0, 0, -3}};
+    const assets::BuildPoint origins[] = {
+        {3, 0, 0}, {-3, 0, 0}, {0, 3, 0}, {0, -3, 0}, {0, 0, 3}, {0, 0, -3}};
     for (const assets::BuildPoint& origin : origins) {
         const assets::BuildPoint direction{-origin.x / 3.0, -origin.y / 3.0, -origin.z / 3.0};
         std::size_t face = 0;
@@ -2407,8 +2398,7 @@ namespace {
 // The unit normal of a face, in the test's own arithmetic rather than the
 // implementation's - a group's contract has to be checkable without borrowing
 // the expression it is a contract on.
-assets::BuildPoint normalOf(const std::vector<assets::ForgePoint>& points,
-                            const assets::ForgeFace& face)
+assets::BuildPoint normalOf(const std::vector<assets::ForgePoint>& points, const assets::ForgeFace& face)
 {
     const assets::BuildPoint u = points[face.b].position - points[face.a].position;
     const assets::BuildPoint v = points[face.c].position - points[face.a].position;
@@ -2598,8 +2588,8 @@ SOL_TEST(aWidenedBoxFaceMovesByTheDeltaAndPinsTheFaceOpposite)
         maxX = point.position.x > maxX ? point.position.x : maxX;
         minX = point.position.x < minX ? point.position.x : minX;
     }
-    SOL_CHECK(std::abs(maxX - 0.7) < 1e-4);  // moved by exactly the delta
-    SOL_CHECK(std::abs(minX + 0.5) < 1e-4);  // and the far face did not move
+    SOL_CHECK(std::abs(maxX - 0.7) < 1e-4); // moved by exactly the delta
+    SOL_CHECK(std::abs(minX + 0.5) < 1e-4); // and the far face did not move
 }
 
 // ⚑ Off the normal there is no answer, and the flag says so. On an axis a face's
@@ -2647,8 +2637,7 @@ SOL_TEST(aBoxFacePulledOffItsNormalDropsThatComponentAndSaysSo)
 // rule that caught `cube.forge` materialising `center` and `size` on a click.
 SOL_TEST(aZeroDistanceFaceDragLeavesEveryCommittedFileByteIdentical)
 {
-    const char* const names[] = {"cube",    "gate",     "ship",         "station",
-                                 "cockpit", "asteroid", "gate_membrane"};
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
     for (const char* const name : names) {
         ForgeDoc doc = openTopologyAsset(name);
         SOL_REQUIRE(!doc.parts.empty());
@@ -2687,8 +2676,7 @@ namespace {
 
 ForgeDoc openAsset(const char* name)
 {
-    const std::string source =
-        readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge");
+    const std::string source = readWholeFile(std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge");
     ForgeDoc doc;
     if (!source.empty()) {
         (void)parses(source, doc);
@@ -2799,8 +2787,8 @@ SOL_TEST(draggingABoxEdgeIsRefusedAndTheMessageNamesTheBake)
     const std::vector<assets::ForgePoint> selection{points[lo], points[hi]};
 
     // Refused whichever way it is pulled: across its run, and along it.
-    for (const assets::BuildPoint drag : {assets::BuildPoint{0.2, 0.0, 0.0},
-                                          assets::BuildPoint{0.0, 0.0, 0.3}}) {
+    for (const assets::BuildPoint drag :
+         {assets::BuildPoint{0.2, 0.0, 0.0}, assets::BuildPoint{0.0, 0.0, 0.3}}) {
         std::string error;
         SOL_CHECK(!assets::forgeMovePoints(doc, selection, drag, nullptr, &error));
         SOL_CHECK(error.find("bake") != std::string::npos);
@@ -2897,8 +2885,7 @@ SOL_TEST(movingTwoCornersOfABeamsCapMovesThatEndOnlyOnce)
     std::vector<assets::ForgePoint> capped;
     for (const assets::ForgePoint& point : points) {
         for (const assets::ForgePointWrite& write : point.writes) {
-            if (write.part == beam && write.kind == assets::ForgeWriteKind::BeamEnd &&
-                write.element == 0) {
+            if (write.part == beam && write.kind == assets::ForgeWriteKind::BeamEnd && write.element == 0) {
                 capped.push_back(point);
                 break;
             }
@@ -2920,8 +2907,7 @@ SOL_TEST(movingTwoCornersOfABeamsCapMovesThatEndOnlyOnce)
 // releases it must leave the file exactly as it found it.
 SOL_TEST(aZeroDistanceSetMoveLeavesEveryCommittedFileByteIdentical)
 {
-    const char* const names[] = {"cube",    "gate",     "ship",         "station",
-                                 "cockpit", "asteroid", "gate_membrane"};
+    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
     for (const char* name : names) {
         ForgeDoc doc = openAsset(name);
         SOL_REQUIRE(!doc.parts.empty());
@@ -2959,8 +2945,7 @@ SOL_TEST(aZeroDistanceSetMoveLeavesEveryCommittedFileByteIdentical)
 
 namespace {
 
-const char* const kAllAssets[] = {"asteroid", "cockpit", "cube",   "gate",
-                                  "gate_membrane", "ship", "station"};
+const char* const kAllAssets[] = {"asteroid", "cockpit", "cube", "gate", "gate_membrane", "ship", "station"};
 
 struct Solid
 {
@@ -3001,9 +2986,10 @@ struct Solid
 // The group of the first face whose three corners all sit at `value` on `axis` -
 // which on a box is one of its six faces, addressed by where it is rather than
 // by a triangle number nobody can read.
-[[nodiscard]] std::vector<std::uint32_t> faceGroupAt(
-    const std::vector<assets::ForgePoint>& points, const std::vector<assets::ForgeFace>& faces,
-    int axis, double value)
+[[nodiscard]] std::vector<std::uint32_t> faceGroupAt(const std::vector<assets::ForgePoint>& points,
+                                                     const std::vector<assets::ForgeFace>& faces,
+                                                     int axis,
+                                                     double value)
 {
     for (std::size_t seed = 0; seed < faces.size(); ++seed) {
         const std::uint32_t three[3] = {faces[seed].a, faces[seed].b, faces[seed].c};
@@ -3075,8 +3061,8 @@ SOL_TEST(aFilmsAxisEdgesCountTwoRealFacesRatherThanFourWithTheDegenerateOnes)
         interior += static_cast<std::size_t>(edge.faceCount == 2);
         overcounted += static_cast<std::size_t>(edge.faceCount > 2);
     }
-    SOL_CHECK(border == 32);      // the rim, correctly open
-    SOL_CHECK(interior == 32);    // the axis, which used to read four
+    SOL_CHECK(border == 32);   // the rim, correctly open
+    SOL_CHECK(interior == 32); // the axis, which used to read four
     SOL_CHECK(overcounted == 0);
 }
 
@@ -3091,10 +3077,15 @@ SOL_TEST(theEdgeCountsOfEveryCommittedAssetAreUnchangedByTheDegenerateFix)
         std::size_t edges;
         std::size_t faces;
     };
+
     constexpr Expected kExpected[] = {
-        {"asteroid", 162, 480, 320},   {"cockpit", 141, 315, 210}, {"cube", 8, 18, 12},
-        {"gate", 320, 912, 608},       {"gate_membrane", 33, 64, 32},
-        {"ship", 12, 24, 16},          {"station", 552, 1602, 1068},
+        {"asteroid", 162, 480, 320},
+        {"cockpit", 141, 315, 210},
+        {"cube", 8, 18, 12},
+        {"gate", 320, 912, 608},
+        {"gate_membrane", 33, 64, 32},
+        {"ship", 12, 24, 16},
+        {"station", 552, 1602, 1068},
     };
     for (const Expected& want : kExpected) {
         ForgeDoc doc = openAsset(want.name);
@@ -3188,12 +3179,9 @@ SOL_TEST(theShipsHullQuadsAreEachTwoPartsAndAllItsEdgesAreCrossPart)
         std::vector<std::size_t> parts;
         for (const assets::ForgeFace& face : faces) {
             const std::uint32_t three[3] = {face.a, face.b, face.c};
-            const bool hasA = std::find(std::begin(three), std::end(three), edge.a) !=
-                              std::end(three);
-            const bool hasB = std::find(std::begin(three), std::end(three), edge.b) !=
-                              std::end(three);
-            if (hasA && hasB &&
-                std::find(parts.begin(), parts.end(), face.part) == parts.end()) {
+            const bool hasA = std::find(std::begin(three), std::end(three), edge.a) != std::end(three);
+            const bool hasB = std::find(std::begin(three), std::end(three), edge.b) != std::end(three);
+            if (hasA && hasB && std::find(parts.begin(), parts.end(), face.part) == parts.end()) {
                 parts.push_back(face.part);
             }
         }
@@ -3222,7 +3210,7 @@ SOL_TEST(mergingTwoAdjacentPartsLeavesTheBuiltMeshIdentical)
     std::string error;
     SOL_REQUIRE(assets::forgeMergeParts(doc, b, a, &error)); // either order
     SOL_CHECK(doc.parts.size() == 15);
-    SOL_CHECK(doc.indexOf("hull_0a") == a);        // the earlier id survives
+    SOL_CHECK(doc.indexOf("hull_0a") == a); // the earlier id survives
     SOL_CHECK(doc.indexOf("hull_0b") == std::string::npos);
     SOL_CHECK(doc.parts[a].primitive == ForgePrimitive::Mesh);
 
@@ -3230,9 +3218,11 @@ SOL_TEST(mergingTwoAdjacentPartsLeavesTheBuiltMeshIdentical)
     SOL_REQUIRE(assets::buildForge(doc, after));
     SOL_REQUIRE(before.vertices.size() == after.vertices.size());
     SOL_REQUIRE(before.indices.size() == after.indices.size());
-    SOL_CHECK(std::memcmp(before.vertices.data(), after.vertices.data(),
+    SOL_CHECK(std::memcmp(before.vertices.data(),
+                          after.vertices.data(),
                           before.vertices.size() * sizeof(assets::MeshVertex)) == 0);
-    SOL_CHECK(std::memcmp(before.indices.data(), after.indices.data(),
+    SOL_CHECK(std::memcmp(before.indices.data(),
+                          after.indices.data(),
                           before.indices.size() * sizeof(std::uint32_t)) == 0);
 }
 
@@ -3312,9 +3302,8 @@ SOL_TEST(splittingAShipEdgeSplitsBothPartsStandingOnIt)
     SOL_REQUIRE(before.built);
 
     std::string error;
-    SOL_REQUIRE(assets::forgeSplitEdge(doc, points, faces,
-                                       static_cast<std::uint32_t>(lo),
-                                       static_cast<std::uint32_t>(hi), &error));
+    SOL_REQUIRE(assets::forgeSplitEdge(
+        doc, points, faces, static_cast<std::uint32_t>(lo), static_cast<std::uint32_t>(hi), &error));
 
     // Both parts baked, and only those two.
     SOL_CHECK(doc.parts[doc.indexOf("hull_0a")].primitive == ForgePrimitive::Mesh);
@@ -3421,8 +3410,8 @@ SOL_TEST(anExtrudedCubeFaceIsStillAClosedSolidWoundOutwards)
     // V - E + F = 2, still one closed surface of genus zero.
     SOL_CHECK((static_cast<int>(afterPoints.size()) - static_cast<int>(afterEdges.size()) +
                static_cast<int>(afterFaces.size())) == 2);
-    SOL_CHECK(pointAt(afterPoints, {0.5, 0.5, 0.6}) < afterPoints.size());  // raised
-    SOL_CHECK(pointAt(afterPoints, {0.5, 0.5, 0.5}) < afterPoints.size());  // and the rim stayed
+    SOL_CHECK(pointAt(afterPoints, {0.5, 0.5, 0.6}) < afterPoints.size()); // raised
+    SOL_CHECK(pointAt(afterPoints, {0.5, 0.5, 0.5}) < afterPoints.size()); // and the rim stayed
 }
 
 // ⚑⚑ THE REFUSAL THAT SET THE SLICE ORDER, AND ITS PAYOFF IN THE SAME TEST. A

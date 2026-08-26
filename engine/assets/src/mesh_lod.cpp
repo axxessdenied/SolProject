@@ -46,10 +46,10 @@ LodChain buildLodChain(const MeshData& source, const LodOptions& options)
     const EditMesh base = toEditMesh(source, options.weld);
     const std::uint32_t sourceTriangles = base.triangleCount();
     if (sourceTriangles < options.minimumSourceTriangles) {
-        chain.stopReason =
-            say("%u triangles is under the %u-triangle floor - a mesh this small has no "
-                "redundancy to give up, and decimating it would cost shape rather than detail",
-                sourceTriangles, options.minimumSourceTriangles);
+        chain.stopReason = say("%u triangles is under the %u-triangle floor - a mesh this small has no "
+                               "redundancy to give up, and decimating it would cost shape rather than detail",
+                               sourceTriangles,
+                               options.minimumSourceTriangles);
         return chain;
     }
 
@@ -66,9 +66,8 @@ LodChain buildLodChain(const MeshData& source, const LodOptions& options)
     std::size_t previousBytes = sourceBytes;
 
     for (std::uint32_t level = 1; level <= options.maxLevels; ++level) {
-        const auto target =
-            static_cast<std::uint32_t>(static_cast<float>(sourceTriangles) *
-                                       std::pow(options.ratio, static_cast<float>(level)));
+        const auto target = static_cast<std::uint32_t>(static_cast<float>(sourceTriangles) *
+                                                       std::pow(options.ratio, static_cast<float>(level)));
         if (target == 0) {
             chain.stopReason = say("level %u would target no triangles at all", level);
             break;
@@ -83,7 +82,8 @@ LodChain buildLodChain(const MeshData& source, const LodOptions& options)
             chain.stopReason =
                 say("the topology refused to collapse below %u triangles, so level %u would be "
                     "no cheaper than the one above it",
-                    reached, level);
+                    reached,
+                    level);
             break;
         }
 
@@ -96,14 +96,18 @@ LodChain buildLodChain(const MeshData& source, const LodOptions& options)
             chain.stopReason =
                 say("level %u moved %.2f%% of the volume, past the %.2f%% band - at %u triangles "
                     "this is no longer the same shape",
-                    level, volumeDrift * 100.0, options.maxVolumeDrift * 100.0, reached);
+                    level,
+                    volumeDrift * 100.0,
+                    options.maxVolumeDrift * 100.0,
+                    reached);
             break;
         }
         if (std::abs(radiusDrift) > options.maxRadiusDrift) {
-            chain.stopReason =
-                say("level %u moved the bounding radius %.2f%%, past the %.2f%% band - the "
-                    "silhouette would no longer agree with the collision sphere",
-                    level, radiusDrift * 100.0, options.maxRadiusDrift * 100.0);
+            chain.stopReason = say("level %u moved the bounding radius %.2f%%, past the %.2f%% band - the "
+                                   "silhouette would no longer agree with the collision sphere",
+                                   level,
+                                   radiusDrift * 100.0,
+                                   options.maxRadiusDrift * 100.0);
             break;
         }
 
@@ -128,7 +132,9 @@ LodChain buildLodChain(const MeshData& source, const LodOptions& options)
             chain.stopReason =
                 say("level %u cooks to %zu bytes against the %zu above it - a level that is not "
                     "smaller than its source is not a level",
-                    level, out.cookedBytes, previousBytes);
+                    level,
+                    out.cookedBytes,
+                    previousBytes);
             break;
         }
 
@@ -143,14 +149,12 @@ LodChain buildLodChain(const MeshData& source, const LodOptions& options)
     return chain;
 }
 
-std::uint32_t selectMeshLevel(float screenRadiusPixels, std::uint32_t levelCount,
-                              std::uint32_t previousLevel)
+std::uint32_t selectMeshLevel(float screenRadiusPixels, std::uint32_t levelCount, std::uint32_t previousLevel)
 {
     if (levelCount <= 1) {
         return 0;
     }
-    constexpr std::uint32_t kThresholdCount =
-        static_cast<std::uint32_t>(std::size(kLevelSwitchPixels));
+    constexpr std::uint32_t kThresholdCount = static_cast<std::uint32_t>(std::size(kLevelSwitchPixels));
     std::uint32_t level = 0;
     // A NaN radius must not walk the chain: every comparison against it is
     // false, which leaves the level at 0 - the most detailed, never the
@@ -178,9 +182,8 @@ std::uint32_t selectMeshLevel(float screenRadiusPixels, std::uint32_t levelCount
         // are holding must be cleared with the margin, not just the nearest -
         // a single frame can span two bands if the camera cuts.
         std::uint32_t held = previousLevel;
-        while (held > level
-               && screenRadiusPixels
-                      >= kLevelSwitchPixels[held - 1] * (1.0f + kLevelSwitchHysteresis)) {
+        while (held > level &&
+               screenRadiusPixels >= kLevelSwitchPixels[held - 1] * (1.0f + kLevelSwitchHysteresis)) {
             --held;
         }
         return held;

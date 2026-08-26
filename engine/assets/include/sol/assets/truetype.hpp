@@ -69,7 +69,9 @@ public:
     [[nodiscard]] bool parse(std::span<const std::uint8_t> data);
 
     [[nodiscard]] bool valid() const { return m_valid; }
+
     [[nodiscard]] std::uint16_t glyphCount() const { return m_glyphCount; }
+
     [[nodiscard]] std::uint16_t unitsPerEm() const { return m_unitsPerEm; }
 
     // Glyph index for a Unicode codepoint; 0 (.notdef) when unmapped.
@@ -102,8 +104,15 @@ private:
 
     [[nodiscard]] Table findTable(const char tag[4]) const;
     [[nodiscard]] bool glyphRange(std::uint16_t glyph, std::uint32_t& begin, std::uint32_t& end) const;
-    [[nodiscard]] bool appendGlyph(std::uint16_t glyph, int depth, float offsetX, float offsetY,
-                                   float xx, float xy, float yx, float yy, GlyphOutline& out) const;
+    [[nodiscard]] bool appendGlyph(std::uint16_t glyph,
+                                   int depth,
+                                   float offsetX,
+                                   float offsetY,
+                                   float xx,
+                                   float xy,
+                                   float yx,
+                                   float yy,
+                                   GlyphOutline& out) const;
     [[nodiscard]] bool selectCmapSubtable();
 
     std::span<const std::uint8_t> m_data;

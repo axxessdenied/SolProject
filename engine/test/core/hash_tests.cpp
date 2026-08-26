@@ -1,9 +1,8 @@
-#include <sol/core/hash.hpp>
-
-#include <sol/test/test.hpp>
-
 #include <cstdint>
 #include <string>
+
+#include <sol/core/hash.hpp>
+#include <sol/test/test.hpp>
 
 using sol::core::fnv1a;
 using sol::core::hashCombine;

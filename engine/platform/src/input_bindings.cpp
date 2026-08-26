@@ -7,69 +7,132 @@ namespace {
 const char* keyName(Key key)
 {
     switch (key) {
-    case Key::A: return "A";
-    case Key::B: return "B";
-    case Key::C: return "C";
-    case Key::D: return "D";
-    case Key::E: return "E";
-    case Key::F: return "F";
-    case Key::G: return "G";
-    case Key::H: return "H";
-    case Key::I: return "I";
-    case Key::J: return "J";
-    case Key::K: return "K";
-    case Key::L: return "L";
-    case Key::M: return "M";
-    case Key::N: return "N";
-    case Key::O: return "O";
-    case Key::P: return "P";
-    case Key::Q: return "Q";
-    case Key::R: return "R";
-    case Key::S: return "S";
-    case Key::T: return "T";
-    case Key::U: return "U";
-    case Key::V: return "V";
-    case Key::W: return "W";
-    case Key::X: return "X";
-    case Key::Y: return "Y";
-    case Key::Z: return "Z";
-    case Key::Num0: return "0";
-    case Key::Num1: return "1";
-    case Key::Num2: return "2";
-    case Key::Num3: return "3";
-    case Key::Num4: return "4";
-    case Key::Num5: return "5";
-    case Key::Num6: return "6";
-    case Key::Num7: return "7";
-    case Key::Num8: return "8";
-    case Key::Num9: return "9";
-    case Key::Escape: return "Escape";
-    case Key::Space: return "Space";
-    case Key::Enter: return "Enter";
-    case Key::Tab: return "Tab";
-    case Key::LeftShift: return "Left Shift";
-    case Key::LeftControl: return "Left Ctrl";
-    case Key::LeftAlt: return "Left Alt";
-    case Key::Up: return "Up";
-    case Key::Down: return "Down";
-    case Key::Left: return "Left";
-    case Key::Right: return "Right";
-    case Key::Backspace: return "Backspace";
-    case Key::Delete: return "Delete";
-    case Key::Home: return "Home";
-    case Key::End: return "End";
-    case Key::F1: return "F1";
-    case Key::F2: return "F2";
-    case Key::F3: return "F3";
-    case Key::F4: return "F4";
-    case Key::F5: return "F5";
-    case Key::F6: return "F6";
-    case Key::F7: return "F7";
-    case Key::F8: return "F8";
-    case Key::F9: return "F9";
-    case Key::F10: return "F10";
-    case Key::F11: return "F11";
-    case Key::F12: return "F12";
+    case Key::A:
+        return "A";
+    case Key::B:
+        return "B";
+    case Key::C:
+        return "C";
+    case Key::D:
+        return "D";
+    case Key::E:
+        return "E";
+    case Key::F:
+        return "F";
+    case Key::G:
+        return "G";
+    case Key::H:
+        return "H";
+    case Key::I:
+        return "I";
+    case Key::J:
+        return "J";
+    case Key::K:
+        return "K";
+    case Key::L:
+        return "L";
+    case Key::M:
+        return "M";
+    case Key::N:
+        return "N";
+    case Key::O:
+        return "O";
+    case Key::P:
+        return "P";
+    case Key::Q:
+        return "Q";
+    case Key::R:
+        return "R";
+    case Key::S:
+        return "S";
+    case Key::T:
+        return "T";
+    case Key::U:
+        return "U";
+    case Key::V:
+        return "V";
+    case Key::W:
+        return "W";
+    case Key::X:
+        return "X";
+    case Key::Y:
+        return "Y";
+    case Key::Z:
+        return "Z";
+    case Key::Num0:
+        return "0";
+    case Key::Num1:
+        return "1";
+    case Key::Num2:
+        return "2";
+    case Key::Num3:
+        return "3";
+    case Key::Num4:
+        return "4";
+    case Key::Num5:
+        return "5";
+    case Key::Num6:
+        return "6";
+    case Key::Num7:
+        return "7";
+    case Key::Num8:
+        return "8";
+    case Key::Num9:
+        return "9";
+    case Key::Escape:
+        return "Escape";
+    case Key::Space:
+        return "Space";
+    case Key::Enter:
+        return "Enter";
+    case Key::Tab:
+        return "Tab";
+    case Key::LeftShift:
+        return "Left Shift";
+    case Key::LeftControl:
+        return "Left Ctrl";
+    case Key::LeftAlt:
+        return "Left Alt";
+    case Key::Up:
+        return "Up";
+    case Key::Down:
+        return "Down";
+    case Key::Left:
+        return "Left";
+    case Key::Right:
+        return "Right";
+    case Key::Backspace:
+        return "Backspace";
+    case Key::Delete:
+        return "Delete";
+    case Key::Home:
+        return "Home";
+    case Key::End:
+        return "End";
+    case Key::F1:
+        return "F1";
+    case Key::F2:
+        return "F2";
+    case Key::F3:
+        return "F3";
+    case Key::F4:
+        return "F4";
+    case Key::F5:
+        return "F5";
+    case Key::F6:
+        return "F6";
+    case Key::F7:
+        return "F7";
+    case Key::F8:
+        return "F8";
+    case Key::F9:
+        return "F9";
+    case Key::F10:
+        return "F10";
+    case Key::F11:
+        return "F11";
+    case Key::F12:
+        return "F12";
     case Key::Unknown:
     case Key::Count:
         break;
@@ -80,10 +143,14 @@ const char* keyName(Key key)
 const char* mouseName(MouseButton button)
 {
     switch (button) {
-    case MouseButton::Left: return "Left Mouse";
-    case MouseButton::Right: return "Right Mouse";
-    case MouseButton::Middle: return "Middle Mouse";
-    case MouseButton::Count: break;
+    case MouseButton::Left:
+        return "Left Mouse";
+    case MouseButton::Right:
+        return "Right Mouse";
+    case MouseButton::Middle:
+        return "Middle Mouse";
+    case MouseButton::Count:
+        break;
     }
     return "None";
 }
@@ -98,9 +165,12 @@ constexpr std::size_t kMouseCount = static_cast<std::size_t>(MouseButton::Count)
 const char* chordName(InputChord chord)
 {
     switch (chord.kind) {
-    case ChordKind::Key: return keyName(chord.asKey());
-    case ChordKind::Mouse: return mouseName(chord.asMouse());
-    case ChordKind::None: break;
+    case ChordKind::Key:
+        return keyName(chord.asKey());
+    case ChordKind::Mouse:
+        return mouseName(chord.asMouse());
+    case ChordKind::None:
+        break;
     }
     return "None";
 }

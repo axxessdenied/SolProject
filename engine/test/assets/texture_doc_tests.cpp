@@ -48,8 +48,7 @@ namespace {
 
 // "the file differs" is a poor thing to learn about a 100-row asset, so say
 // which line and show both.
-void reportFirstDifferingLine(const char* name, const std::string& expected,
-                              const std::string& actual)
+void reportFirstDifferingLine(const char* name, const std::string& expected, const std::string& actual)
 {
     std::size_t line = 1;
     std::size_t start = 0;
@@ -58,7 +57,9 @@ void reportFirstDifferingLine(const char* name, const std::string& expected,
         if (expected[i] != actual[i]) {
             const std::size_t expectedEnd = expected.find('\n', start);
             const std::size_t actualEnd = actual.find('\n', start);
-            std::printf("  %s line %zu\n    source: %s\n    writer: %s\n", name, line,
+            std::printf("  %s line %zu\n    source: %s\n    writer: %s\n",
+                        name,
+                        line,
                         expected.substr(start, expectedEnd - start).c_str(),
                         actual.substr(start, actualEnd - start).c_str());
             return;
@@ -68,8 +69,11 @@ void reportFirstDifferingLine(const char* name, const std::string& expected,
             start = i + 1;
         }
     }
-    std::printf("  %s: identical for %zu bytes, then source has %zu and writer %zu\n", name,
-                shortest, expected.size(), actual.size());
+    std::printf("  %s: identical for %zu bytes, then source has %zu and writer %zu\n",
+                name,
+                shortest,
+                expected.size(),
+                actual.size());
 }
 
 // The three committed sources, by stem.
@@ -153,20 +157,18 @@ horizontal = [1, 2]
 SOL_TEST(textureRejectsMalformedDocuments)
 {
     const std::string prefix = "size = [4, 4]\n\n[[op]]\n";
-    SOL_CHECK(!rejects("[[op]]\nkind = \"fill\"\n").empty());                    // no size
-    SOL_CHECK(!rejects("size = [0, 4]\n").empty());                              // zero dimension
-    SOL_CHECK(!rejects("size = [4]\n").empty());                                 // one dimension
-    SOL_CHECK(!rejects(prefix + "kind = \"splatter\"\n").empty());               // unknown op
-    SOL_CHECK(!rejects(prefix + "color = [1, 2, 3]\n").empty());                 // no kind
-    SOL_CHECK(!rejects(prefix + "kind = \"fill\"\nwidth = 2\n").empty());        // wrong parameter
-    SOL_CHECK(!rejects(prefix + "kind = \"fill\"\ncolor = [1, 2]\n").empty());   // short colour
-    SOL_CHECK(!rejects(prefix + "kind = \"fill\"\ncolor = [1, 2, 300]\n").empty()); // out of range
-    SOL_CHECK(
-        !rejects(prefix + "kind = \"rects\"\nrects = [[1, 2, 3]]\n").empty()); // 3 of 4 numbers
+    SOL_CHECK(!rejects("[[op]]\nkind = \"fill\"\n").empty());                        // no size
+    SOL_CHECK(!rejects("size = [0, 4]\n").empty());                                  // zero dimension
+    SOL_CHECK(!rejects("size = [4]\n").empty());                                     // one dimension
+    SOL_CHECK(!rejects(prefix + "kind = \"splatter\"\n").empty());                   // unknown op
+    SOL_CHECK(!rejects(prefix + "color = [1, 2, 3]\n").empty());                     // no kind
+    SOL_CHECK(!rejects(prefix + "kind = \"fill\"\nwidth = 2\n").empty());            // wrong parameter
+    SOL_CHECK(!rejects(prefix + "kind = \"fill\"\ncolor = [1, 2]\n").empty());       // short colour
+    SOL_CHECK(!rejects(prefix + "kind = \"fill\"\ncolor = [1, 2, 300]\n").empty());  // out of range
+    SOL_CHECK(!rejects(prefix + "kind = \"rects\"\nrects = [[1, 2, 3]]\n").empty()); // 3 of 4 numbers
     SOL_CHECK(!rejects(prefix + "kind = \"panels\"\npanels = [[1, 2, 3, 4]]\n")
                    .empty()); // a rect row in a panel list
-    SOL_CHECK(!rejects(prefix + "kind = \"rects\"\nrects = [[1, 2, -3, 4]]\n")
-                   .empty()); // negative size
+    SOL_CHECK(!rejects(prefix + "kind = \"rects\"\nrects = [[1, 2, -3, 4]]\n").empty()); // negative size
     // ⚑ A tint may be negative - that is the point of an offset - so the same
     // check must NOT fire here, or "make the panels cooler" is unexpressible.
     SOL_CHECK(rejects(prefix + "kind = \"panels\"\ntint = [-4, 0, 8]\n").empty());
@@ -243,8 +245,7 @@ SOL_TEST(everyCommittedTextureBuildsOpaqueAtItsDeclaredSize)
         SOL_REQUIRE(assets::buildTexture(doc, image, nullptr));
         SOL_CHECK(image.width == static_cast<std::uint32_t>(doc.width));
         SOL_CHECK(image.height == static_cast<std::uint32_t>(doc.height));
-        SOL_REQUIRE(image.pixels.size() ==
-                    static_cast<std::size_t>(doc.width) * doc.height * 4);
+        SOL_REQUIRE(image.pixels.size() == static_cast<std::size_t>(doc.width) * doc.height * 4);
         bool opaque = true;
         for (std::size_t i = 3; i < image.pixels.size(); i += 4) {
             opaque = opaque && image.pixels[i] == 255;
@@ -266,7 +267,9 @@ SOL_TEST(everyCommittedTextureLayerDrawsSomething)
         for (std::size_t i = 0; i < doc.layers.size(); ++i) {
             const std::size_t covered = assets::textureLayerCoverage(doc, i);
             if (covered == 0) {
-                std::printf("  %s.tex op %zu (%s) draws nothing\n", stem.c_str(), i,
+                std::printf("  %s.tex op %zu (%s) draws nothing\n",
+                            stem.c_str(),
+                            i,
                             assets::textureOpName(doc.layers[i].op));
             }
             SOL_CHECK(covered > 0);
@@ -500,8 +503,17 @@ SOL_TEST(everyPixelIsClaimedByTheRowWhoseColourItWears)
                     if (mismatches == 0) {
                         std::printf("  %s.tex (%d, %d): op %d row %d paints (%d, %d, %d) but the "
                                     "image is (%d, %d, %d)\n",
-                                    stem.c_str(), x, y, hit.layer, hit.row, expected.r, expected.g,
-                                    expected.b, actual.r, actual.g, actual.b);
+                                    stem.c_str(),
+                                    x,
+                                    y,
+                                    hit.layer,
+                                    hit.row,
+                                    expected.r,
+                                    expected.g,
+                                    expected.b,
+                                    actual.r,
+                                    actual.g,
+                                    actual.b);
                     }
                     ++mismatches;
                 }

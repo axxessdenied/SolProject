@@ -61,7 +61,7 @@ constexpr bool kEnableValidation = true;
 #endif
 
 #if !defined(SOL_ASSETS_SOURCE_DIR)
-    #define SOL_ASSETS_SOURCE_DIR ""
+#define SOL_ASSETS_SOURCE_DIR ""
 #endif
 
 // --frames N: render N frames, then exit (for automated runs), exactly as the
@@ -231,15 +231,17 @@ void panelsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffe
 // 17. Sizing ten mixed rows as ten uniform ones came out 12 px short and left
 // the list still scrolling. So the state is a HEIGHT, accumulated per row from
 // that row's own pitch, not a count.
-[[nodiscard]] int drawAssetList(const char* id, const std::vector<forge::AssetEntry>& entries,
-                                int selected, float share, float& visibleContent)
+[[nodiscard]] int drawAssetList(const char* id,
+                                const std::vector<forge::AssetEntry>& entries,
+                                int selected,
+                                float share,
+                                float& visibleContent)
 {
     int clicked = -1;
     const forge::ListMetrics rowMetrics = forge::textRowMetrics();
     const float headerPitch = forge::frameRowMetrics().rowPitch;
-    const float height = forge::listHeightForContent(rowMetrics, visibleContent,
-                                                     forge::kMinListRows, share,
-                                                     ImGui::GetWindowHeight());
+    const float height = forge::listHeightForContent(
+        rowMetrics, visibleContent, forge::kMinListRows, share, ImGui::GetWindowHeight());
     float submitted = 0.0f;
     if (ImGui::BeginChild(id, {0.0f, height}, ImGuiChildFlags_Borders)) {
         std::size_t first = 0;
@@ -249,18 +251,19 @@ void panelsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffe
                 ++end;
             }
             char header[96];
-            std::snprintf(header, sizeof(header), "%s (%zu)###%s", entries[first].group.c_str(),
-                          end - first, entries[first].group.c_str());
+            std::snprintf(header,
+                          sizeof(header),
+                          "%s (%zu)###%s",
+                          entries[first].group.c_str(),
+                          end - first,
+                          entries[first].group.c_str());
             submitted += headerPitch; // the header is a row of the list too, and a taller one
             // Build output arrives closed: it is the majority of the list and
             // the minority of the interest, and it is the half that grows on
             // its own. Everything an author can actually edit arrives open.
-            if (ImGui::CollapsingHeader(header,
-                                        entries[first].cooked ? 0
-                                                              : ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(header, entries[first].cooked ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
                 for (std::size_t row = first; row < end; ++row) {
-                    if (ImGui::Selectable(entries[row].label.c_str(),
-                                          static_cast<int>(row) == selected)) {
+                    if (ImGui::Selectable(entries[row].label.c_str(), static_cast<int>(row) == selected)) {
                         clicked = static_cast<int>(row);
                     }
                     submitted += rowMetrics.rowPitch;
@@ -274,15 +277,20 @@ void panelsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffe
     return clicked;
 }
 
-void addWireBox(renderer::DebugDrawRenderer& lines, core::Vec3 min, core::Vec3 max,
-                core::Vec4 color)
+void addWireBox(renderer::DebugDrawRenderer& lines, core::Vec3 min, core::Vec3 max, core::Vec4 color)
 {
     const core::Vec3 corner[8] = {
-        {min.x, min.y, min.z}, {max.x, min.y, min.z}, {max.x, min.y, max.z}, {min.x, min.y, max.z},
-        {min.x, max.y, min.z}, {max.x, max.y, min.z}, {max.x, max.y, max.z}, {min.x, max.y, max.z},
+        {min.x, min.y, min.z},
+        {max.x, min.y, min.z},
+        {max.x, min.y, max.z},
+        {min.x, min.y, max.z},
+        {min.x, max.y, min.z},
+        {max.x, max.y, min.z},
+        {max.x, max.y, max.z},
+        {min.x, max.y, max.z},
     };
-    static constexpr int kEdges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
-                                          {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+    static constexpr int kEdges[12][2] = {
+        {0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
     for (const auto& edge : kEdges) {
         lines.line(corner[edge[0]], corner[edge[1]], color);
     }
@@ -296,8 +304,7 @@ float addGrid(renderer::DebugDrawRenderer& lines, float cameraDistance)
 {
     // ~20 cells across the view; the exponent is what keeps it metric.
     const float raw = cameraDistance > 0.0f ? cameraDistance / 10.0f : 1.0f;
-    const float cell =
-        core::clamp(std::pow(10.0f, std::round(std::log10(raw))), 0.01f, 1000.0f);
+    const float cell = core::clamp(std::pow(10.0f, std::round(std::log10(raw))), 0.01f, 1000.0f);
 
     constexpr int kHalfCells = 20;
     const float extent = cell * static_cast<float>(kHalfCells);
@@ -314,8 +321,7 @@ float addGrid(renderer::DebugDrawRenderer& lines, float cameraDistance)
     // The axes last so they draw over the grid they cross.
     lines.line({-extent, 0.0f, 0.0f}, {extent, 0.0f, 0.0f}, {0.65f, 0.22f, 0.22f, 1.0f});
     lines.line({0.0f, 0.0f, -extent}, {0.0f, 0.0f, extent}, {0.25f, 0.35f, 0.75f, 1.0f});
-    lines.line({0.0f, -extent * 0.25f, 0.0f}, {0.0f, extent * 0.25f, 0.0f},
-               {0.25f, 0.60f, 0.30f, 1.0f});
+    lines.line({0.0f, -extent * 0.25f, 0.0f}, {0.0f, extent * 0.25f, 0.0f}, {0.25f, 0.60f, 0.30f, 1.0f});
     return cell;
 }
 
@@ -397,9 +403,8 @@ int main(int argc, char** argv)
     // Authored sources come from the tree in a dev build, the same way the
     // game reads its defs; an installed tool falls back to a directory beside
     // the executable.
-    const std::string assetsDirectory = std::strlen(SOL_ASSETS_SOURCE_DIR) > 0
-                                            ? SOL_ASSETS_SOURCE_DIR
-                                            : executableDir + "assets";
+    const std::string assetsDirectory =
+        std::strlen(SOL_ASSETS_SOURCE_DIR) > 0 ? SOL_ASSETS_SOURCE_DIR : executableDir + "assets";
     // ⚑⚑ WHERE BLENDER DROPS, AND IT IS NOT UNDER `assets/` (stage L). The
     // cooker scans the source tree RECURSIVELY into one flat output directory
     // keyed on the file STEM, so a `ship.gltf` anywhere beneath it collides with
@@ -432,18 +437,23 @@ int main(int argc, char** argv)
     sol::ui::HostOptions hostOptions;
     hostOptions.docking = true;
     hostOptions.iniPath = executableDir + "forge.ini";
-    if (!imguiHost.initialize(window, context, swapchain.imageFormat(), VK_FORMAT_D32_SFLOAT,
-                              swapchain.imageCount(), hostOptions)) {
+    if (!imguiHost.initialize(window,
+                              context,
+                              swapchain.imageFormat(),
+                              VK_FORMAT_D32_SFLOAT,
+                              swapchain.imageCount(),
+                              hostOptions)) {
         return EXIT_FAILURE;
     }
     view.setImGuiHost(&imguiHost);
 
-    std::vector<forge::AssetEntry> meshEntries =
-        forge::listMeshes(assetsDirectory, cookedDirectory);
-    std::vector<forge::AssetEntry> textureEntries =
-        forge::listTextures(assetsDirectory, cookedDirectory);
-    SOL_LOG_INFO("forge: %zu mesh(es) and %zu texture(s) under %s and %s", meshEntries.size(),
-                 textureEntries.size(), assetsDirectory.c_str(), cookedDirectory.c_str());
+    std::vector<forge::AssetEntry> meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
+    std::vector<forge::AssetEntry> textureEntries = forge::listTextures(assetsDirectory, cookedDirectory);
+    SOL_LOG_INFO("forge: %zu mesh(es) and %zu texture(s) under %s and %s",
+                 meshEntries.size(),
+                 textureEntries.size(),
+                 assetsDirectory.c_str(),
+                 cookedDirectory.c_str());
 
     // Every texture is uploaded once at startup - there are a handful, they are
     // BC1, and it means switching one costs no device idle in the middle of a
@@ -464,7 +474,8 @@ int main(int argc, char** argv)
     }
     if (textures.empty()) {
         SOL_LOG_ERROR("forge: no textures under %s or %s - build the cooker target first",
-                      assetsDirectory.c_str(), cookedDirectory.c_str());
+                      assetsDirectory.c_str(),
+                      cookedDirectory.c_str());
         return EXIT_FAILURE;
     }
 
@@ -481,8 +492,7 @@ int main(int argc, char** argv)
         if (!forge::loadModelCatalog(dataDirectory, defs, &defError)) {
             SOL_LOG_WARN("forge: cannot read model defs: %s", defError.c_str());
         }
-        SOL_LOG_INFO("forge: %zu [[model]] row(s) from %s", defs.models().size(),
-                     dataDirectory.c_str());
+        SOL_LOG_INFO("forge: %zu [[model]] row(s) from %s", defs.models().size(), dataDirectory.c_str());
     }
 
     // Stage H: the same rows as a DOCUMENT, so they can be written as well as
@@ -497,8 +507,7 @@ int main(int argc, char** argv)
     // open rather than whatever a text field might be made to say.
     std::vector<std::string> textureStems;
     for (const forge::AssetEntry& textureEntry : loadedTextureEntries) {
-        if (std::find(textureStems.begin(), textureStems.end(), textureEntry.stem) ==
-            textureStems.end()) {
+        if (std::find(textureStems.begin(), textureStems.end(), textureEntry.stem) == textureStems.end()) {
             textureStems.push_back(textureEntry.stem);
         }
     }
@@ -588,10 +597,8 @@ int main(int argc, char** argv)
 
     // ⚑ Registered here rather than inside the host, because WHICH panels exist
     // is the Forge's business and the host is shared with the game.
-    PanelToggles panelToggles = {{{"Mesh", &showMesh},
-                                  {"Report", &showReport},
-                                  {"Texture", &showTexture},
-                                  {"View", &showView}}};
+    PanelToggles panelToggles = {
+        {{"Mesh", &showMesh}, {"Report", &showReport}, {"Texture", &showTexture}, {"View", &showView}}};
     // ⚑ ImGui only rewrites the ini when something MARKS it dirty, and it has no
     // idea these bools exist - so a toggle would be forgotten unless the change
     // is reported. Compared per frame rather than at each of the several places
@@ -659,8 +666,7 @@ int main(int argc, char** argv)
         // the measured radius, so a check that ran once would go stale the
         // moment the tool was used for what it is for.
         if (openIndex >= 0) {
-            modelMatches = forge::matchModels(defs, meshEntries[static_cast<std::size_t>(openIndex)],
-                                              report);
+            modelMatches = forge::matchModels(defs, meshEntries[static_cast<std::size_t>(openIndex)], report);
         }
 
         // ⚑ Rebuilt on every upload for the same reason the model match is: an
@@ -715,8 +721,8 @@ int main(int argc, char** argv)
             return;
         }
         const renderer::GpuTexture& texture = textures[static_cast<std::size_t>(textureIndex)];
-        texturePreview = ImGui_ImplVulkan_AddTexture(texture.sampler, texture.image.view,
-                                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        texturePreview = ImGui_ImplVulkan_AddTexture(
+            texture.sampler, texture.image.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     };
 
     // Stage G. The image is rebuilt and re-uploaded on every accepted edit, for
@@ -731,8 +737,7 @@ int main(int argc, char** argv)
             return;
         }
         textureEditor.setBuildError({});
-        if (editingTextureIndex < 0 ||
-            editingTextureIndex >= static_cast<int>(textures.size())) {
+        if (editingTextureIndex < 0 || editingTextureIndex >= static_cast<int>(textures.size())) {
             return;
         }
         // The texture being replaced may still be referenced by a frame the GPU
@@ -760,8 +765,8 @@ int main(int argc, char** argv)
             return;
         }
         std::string textureStatus;
-        if (!textureEditor.openFile(
-                loadedTextureEntries[static_cast<std::size_t>(index)].path, textureStatus)) {
+        if (!textureEditor.openFile(loadedTextureEntries[static_cast<std::size_t>(index)].path,
+                                    textureStatus)) {
             status = textureStatus;
             editingTextureIndex = -1;
             return;
@@ -799,24 +804,30 @@ int main(int argc, char** argv)
             }
         }
         SOL_LOG_INFO("forge: %s - %u tris, %u verts (%u points), radius %.3f m",
-                     meshEntries[index].label.c_str(), report.triangles, report.renderVertices,
-                     report.positions, static_cast<double>(report.boundingRadius));
+                     meshEntries[index].label.c_str(),
+                     report.triangles,
+                     report.renderVertices,
+                     report.positions,
+                     static_cast<double>(report.boundingRadius));
         // Logged as well as drawn, because `--frames N` with stdout redirected
         // is how this tool gets read by anything that is not a person.
         for (const forge::ModelMatch& match : modelMatches) {
             if (match.radiusAgrees()) {
                 SOL_LOG_INFO("forge: [[model]] %s radius %.4f m agrees with the mesh",
-                             match.id.c_str(), static_cast<double>(match.authoredRadius));
+                             match.id.c_str(),
+                             static_cast<double>(match.authoredRadius));
             } else {
                 SOL_LOG_WARN("forge: [[model]] %s authors radius %.4f m, the mesh measures %.4f m "
                              "(%+.4f, %+.1f%%)",
-                             match.id.c_str(), static_cast<double>(match.authoredRadius),
+                             match.id.c_str(),
+                             static_cast<double>(match.authoredRadius),
                              static_cast<double>(report.boundingRadius),
                              static_cast<double>(match.radiusDelta),
                              static_cast<double>(match.radiusDeltaPercent()));
             }
         }
     };
+
     // --- the Blender bridge (stage L) ---------------------------------------
     //
     // ⚑ A POLL RATHER THAN A WATCH, AND RATHER THAN AN IPC. `fileModificationTime`
@@ -1164,8 +1175,7 @@ int main(int argc, char** argv)
                            static_cast<float>(window.height()) * 0.5f};
         viewport.height = static_cast<float>(window.height());
         viewport.verticalFov = forge::kCameraVerticalFov;
-        viewport.focal = ui::focalLength(viewport.height,
-                                         std::tan(forge::kCameraVerticalFov * 0.5f));
+        viewport.focal = ui::focalLength(viewport.height, std::tan(forge::kCameraVerticalFov * 0.5f));
         viewport.cameraDistance = camera.distance();
         viewport.view = camera.view();
         // ⚑ And the press is withheld entirely while a level is previewed, for
@@ -1219,15 +1229,14 @@ int main(int argc, char** argv)
         // owning the keys while a text field is active, NOT about which panel
         // is focused - focus is not usable here, because clicking the 3D
         // viewport drops it entirely. See `edit_history.hpp`.
-        const bool controlDown = window.isKeyDown(platform::Key::LeftControl) &&
-                                 !imguiHost.wantsKeyboardCapture();
+        const bool controlDown =
+            window.isKeyDown(platform::Key::LeftControl) && !imguiHost.wantsKeyboardCapture();
         const bool undoDown = controlDown && window.isKeyDown(platform::Key::Z);
         // ⚑ `Ctrl+Y` as well as `Ctrl+Shift+Z`, because both are muscle memory
         // and neither costs anything - and `Shift` is otherwise the pan
         // modifier here, which is a mouse gesture and cannot collide.
-        const bool redoDown =
-            controlDown && (window.isKeyDown(platform::Key::Y) ||
-                            (window.isKeyDown(platform::Key::Z) && shiftDown));
+        const bool redoDown = controlDown && (window.isKeyDown(platform::Key::Y) ||
+                                              (window.isKeyDown(platform::Key::Z) && shiftDown));
 
         // ⚑ TAKEN UNCONDITIONALLY AND BEFORE THE `||`, not inside it: these are
         // consume-once reads, and short-circuiting past one leaves a button
@@ -1328,8 +1337,8 @@ int main(int argc, char** argv)
         if (dragOrbit) {
             camera.orbit(-mouseDelta.x * 0.008f, mouseDelta.y * 0.008f);
         } else if (dragPan) {
-            camera.pan(mouseDelta.x, mouseDelta.y, static_cast<float>(window.height()),
-                       forge::kCameraVerticalFov);
+            camera.pan(
+                mouseDelta.x, mouseDelta.y, static_cast<float>(window.height()), forge::kCameraVerticalFov);
         }
         if (!imguiHost.wantsMouseCapture()) {
             const float wheel = window.wheelDelta();
@@ -1337,8 +1346,7 @@ int main(int argc, char** argv)
                 camera.dolly(wheel);
             }
         }
-        const bool frameDown =
-            window.isKeyDown(platform::Key::F) && !imguiHost.wantsKeyboardCapture();
+        const bool frameDown = window.isKeyDown(platform::Key::F) && !imguiHost.wantsKeyboardCapture();
         if (frameDown && !framePressed && (openIndex >= 0 || editor.isOpen())) {
             frameOpenMesh();
         }
@@ -1353,12 +1361,10 @@ int main(int argc, char** argv)
                 continue;
             }
             const float half = reference.size * 0.5f;
-            addWireBox(view.debugDraw(), {-half, -half, -half}, {half, half, half},
-                       reference.color);
+            addWireBox(view.debugDraw(), {-half, -half, -half}, {half, half, half}, reference.color);
         }
         if (showBounds && (openIndex >= 0 || editor.isOpen())) {
-            addWireBox(view.debugDraw(), report.boundsMin, report.boundsMax,
-                       {0.30f, 0.75f, 0.35f, 1.0f});
+            addWireBox(view.debugDraw(), report.boundsMin, report.boundsMax, {0.30f, 0.75f, 0.35f, 1.0f});
         }
         // ⚑ Throttled to about twice a second rather than run every frame: it
         // is a directory listing plus a stat per drop, and the thing it is
@@ -1465,12 +1471,10 @@ int main(int argc, char** argv)
         // ⚑ Both bars are submitted BEFORE the dockspace, because a side bar
         // reports its size into the viewport's work area and the dockspace is
         // sized from what is left.
-        const ImGuiWindowFlags kBarFlags =
-            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-        const float toolbarHeight =
-            ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
-        if (ImGui::BeginViewportSideBar("##toolbar", ImGui::GetMainViewport(), ImGuiDir_Up,
-                                        toolbarHeight, kBarFlags)) {
+        const ImGuiWindowFlags kBarFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+        const float toolbarHeight = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+        if (ImGui::BeginViewportSideBar(
+                "##toolbar", ImGui::GetMainViewport(), ImGuiDir_Up, toolbarHeight, kBarFlags)) {
             ImGui::TextDisabled("add");
             // ⚑ Disabled rather than hidden when nothing is open: a toolbar whose
             // buttons come and go is a toolbar whose positions move, which is the
@@ -1541,17 +1545,18 @@ int main(int argc, char** argv)
         const forge::StatusAppearance statusLook =
             forge::statusAppearance(static_cast<float>(ImGui::GetTime() - statusStampedAt));
 
-        const float statusHeight =
-            ImGui::GetTextLineHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
-        if (ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down,
-                                        statusHeight, kBarFlags)) {
+        const float statusHeight = ImGui::GetTextLineHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+        if (ImGui::BeginViewportSideBar(
+                "##status", ImGui::GetMainViewport(), ImGuiDir_Down, statusHeight, kBarFlags)) {
             if (openIndex >= 0 || editor.isOpen()) {
                 ImGui::TextDisabled("%u tri   vol %.4g m3   %s   %u border edge%s",
-                                    report.triangles, report.signedVolume,
+                                    report.triangles,
+                                    report.signedVolume,
                                     !report.manifold ? "not manifold"
                                     : report.closed  ? "closed"
                                                      : "open",
-                                    report.borderEdges, report.borderEdges == 1 ? "" : "s");
+                                    report.borderEdges,
+                                    report.borderEdges == 1 ? "" : "s");
             } else {
                 ImGui::TextDisabled("no mesh open");
             }
@@ -1559,9 +1564,12 @@ int main(int argc, char** argv)
             // Right-aligned, because it is the one reading here that is about the
             // TOOL rather than about the mesh.
             char frameText[96];
-            std::snprintf(frameText, sizeof(frameText), "%.1f fps  (%.2f ms)   grid %.2g m",
+            std::snprintf(frameText,
+                          sizeof(frameText),
+                          "%.1f fps  (%.2f ms)   grid %.2g m",
                           frameMilliseconds > 0.0f ? 1000.0f / frameMilliseconds : 0.0f,
-                          frameMilliseconds, static_cast<double>(gridCell));
+                          frameMilliseconds,
+                          static_cast<double>(gridCell));
             const float frameWidth = ImGui::CalcTextSize(frameText).x;
             // Measured BEFORE the message is drawn, because it is what bounds it.
             const float frameStart = ImGui::GetWindowWidth() - frameWidth - 16.0f;
@@ -1607,8 +1615,7 @@ int main(int argc, char** argv)
                                         settled.w + (fresh.w - settled.w) * t);
                     // `display()` carries the `(xN)` count, which is the half of
                     // the repeat fix that survives you looking away.
-                    ImGui::TextColored(colour, "%s",
-                                       elideToWidth(status.display(), available).c_str());
+                    ImGui::TextColored(colour, "%s", elideToWidth(status.display(), available).c_str());
                 }
             }
 
@@ -1629,8 +1636,8 @@ int main(int argc, char** argv)
         // and every frame, because a dockspace that stops being submitted
         // undocks everything living in it.
         const ImGuiID dockspaceId = ImHashStr("ForgeDockspace");
-        ImGui::DockSpaceOverViewport(dockspaceId, ImGui::GetMainViewport(),
-                                     ImGuiDockNodeFlags_PassthruCentralNode);
+        ImGui::DockSpaceOverViewport(
+            dockspaceId, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
 
         // ⚑⚑ ASKED *AFTER* `DockSpaceOverViewport`, AND ASKED AS "IS IT SPLIT",
         // BOTH OF WHICH COST A RUN TO GET RIGHT. Two traps sit here:
@@ -1692,10 +1699,8 @@ int main(int argc, char** argv)
             ImGuiID leftId = 0;
             ImGuiID centreId = 0;
             ImGuiID rightId = 0;
-            leftId = ImGui::DockBuilderSplitNode(dockspaceId, ImGuiDir_Left, 0.24f, nullptr,
-                                                 &centreId);
-            rightId = ImGui::DockBuilderSplitNode(centreId, ImGuiDir_Right, 0.32f, nullptr,
-                                                  &centreId);
+            leftId = ImGui::DockBuilderSplitNode(dockspaceId, ImGuiDir_Left, 0.24f, nullptr, &centreId);
+            rightId = ImGui::DockBuilderSplitNode(centreId, ImGuiDir_Right, 0.32f, nullptr, &centreId);
             ImGui::DockBuilderDockWindow("Mesh", leftId);
             ImGui::DockBuilderDockWindow("Texture", leftId);
             ImGui::DockBuilderDockWindow("View", leftId);
@@ -1800,8 +1805,8 @@ int main(int argc, char** argv)
                 // Stages E1, E2 and E4b. Below Parts because a point is a
                 // consequence of the parts above it, and above the Report for the
                 // same reason Parts is.
-                if (editor.isOpen() && ImGui::CollapsingHeader("Points, edges & faces",
-                                                               ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (editor.isOpen() &&
+                    ImGui::CollapsingHeader("Points, edges & faces", ImGuiTreeNodeFlags_DefaultOpen)) {
                     // ⚑ It can change the document since E5: a split and an extrude
                     // are presses rather than drags, so this panel is a third place
                     // an edit can come from and it needs the same rebuild.
@@ -1838,8 +1843,10 @@ int main(int argc, char** argv)
                                 static_cast<double>(report.boundsMax.x),
                                 static_cast<double>(report.boundsMax.y),
                                 static_cast<double>(report.boundsMax.z));
-                    ImGui::Text("size (m)       %8.3f %8.3f %8.3f", static_cast<double>(size.x),
-                                static_cast<double>(size.y), static_cast<double>(size.z));
+                    ImGui::Text("size (m)       %8.3f %8.3f %8.3f",
+                                static_cast<double>(size.x),
+                                static_cast<double>(size.y),
+                                static_cast<double>(size.z));
                     ImGui::Separator();
                     ImGui::Text("radius         %.4f m", static_cast<double>(report.boundingRadius));
                     ImGui::TextDisabled("  the `radius` a [[model]] row would carry");
@@ -1852,7 +1859,6 @@ int main(int argc, char** argv)
                     ImGui::Text("manifold       %s", report.manifold ? "yes" : "NO");
                     ImGui::Text("closed         %s", report.closed ? "yes" : "no");
                     ImGui::Text("border edges   %u", report.borderEdges);
-
                 }
 
                 // ⚑ Stage H, and it is deliberately its own section rather than a
@@ -1861,12 +1867,11 @@ int main(int argc, char** argv)
                 // print them and not change one - which is how the four radius
                 // mismatches in this game came to be reported for five stages by a
                 // warning whose only remedy was a text editor.
-                if (openIndex >= 0 &&
-                    ImGui::CollapsingHeader("Def rows", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (openIndex >= 0 && ImGui::CollapsingHeader("Def rows", ImGuiTreeNodeFlags_DefaultOpen)) {
                     // The panel measures against the editor's own validated reading
                     // of the text, so neither call needs the boot-time catalog.
-                    (void)defEditor.drawModelRows(meshEntries[static_cast<std::size_t>(openIndex)],
-                                                  report, textureStems);
+                    (void)defEditor.drawModelRows(
+                        meshEntries[static_cast<std::size_t>(openIndex)], report, textureStems);
                     // Stage H3: the content that names those models. Below them
                     // because a ship row is a consequence of the model row above it,
                     // exactly as Points sits below Parts.
@@ -1918,10 +1923,10 @@ int main(int argc, char** argv)
                             // where the projected radius crosses its threshold.
                             // Seeing a decimated hull filling the screen proves
                             // nothing, because that is not where it is ever drawn.
-                            const float switchPixels = assets::kLevelSwitchPixels
-                                [i < std::size(assets::kLevelSwitchPixels)
-                                     ? i
-                                     : std::size(assets::kLevelSwitchPixels) - 1];
+                            const float switchPixels =
+                                assets::kLevelSwitchPixels[i < std::size(assets::kLevelSwitchPixels)
+                                                               ? i
+                                                               : std::size(assets::kLevelSwitchPixels) - 1];
                             const core::Vec3 center = (report.boundsMin + report.boundsMax) * 0.5f;
                             camera.placeAt(center, report.boundingRadius * focal / switchPixels);
                         }
@@ -1934,7 +1939,8 @@ int main(int argc, char** argv)
                             assets::kLevelSwitchPixels[i < std::size(assets::kLevelSwitchPixels)
                                                            ? i
                                                            : std::size(assets::kLevelSwitchPixels) - 1];
-                        ImGui::Text("lod%d  %u tri (%.0f%%)  %zu B", static_cast<int>(i) + 1,
+                        ImGui::Text("lod%d  %u tri (%.0f%%)  %zu B",
+                                    static_cast<int>(i) + 1,
                                     level.triangles,
                                     report.triangles > 0
                                         ? 100.0 * level.triangles / static_cast<double>(report.triangles)
@@ -1943,10 +1949,11 @@ int main(int argc, char** argv)
                         // Signed, both of them: a level that GREW its volume is as
                         // wrong as one that shrank, and the radius growing outward
                         // is the one that pushes the hull past its collision sphere.
-                        ImGui::TextDisabled("      volume %+.2f%%   radius %+.2f%%   from %.0f m",
-                                            level.volumeDrift * 100.0, level.radiusDrift * 100.0,
-                                            static_cast<double>(report.boundingRadius * focal /
-                                                                switchPixels));
+                        ImGui::TextDisabled(
+                            "      volume %+.2f%%   radius %+.2f%%   from %.0f m",
+                            level.volumeDrift * 100.0,
+                            level.radiusDrift * 100.0,
+                            static_cast<double>(report.boundingRadius * focal / switchPixels));
                     }
 
                     // ⚑ Always shown, whether or not anything was generated. A
@@ -1984,11 +1991,9 @@ int main(int argc, char** argv)
                     // `.stex` siblings as well as the sources, so the shipped
                     // 90 px was already 24 px short of its own content.
                     const float texOuter = ImGui::GetWindowHeight();
-                    const float texHeight = forge::listHeight(forge::textRowMetrics(),
-                                                              textureLabels.size(),
-                                                              forge::kMinListRows, 0.20f, texOuter);
-                    if (ImGui::BeginChild("##textures", {0.0f, texHeight},
-                                          ImGuiChildFlags_Borders)) {
+                    const float texHeight = forge::listHeight(
+                        forge::textRowMetrics(), textureLabels.size(), forge::kMinListRows, 0.20f, texOuter);
+                    if (ImGui::BeginChild("##textures", {0.0f, texHeight}, ImGuiChildFlags_Borders)) {
                         for (int i = 0; i < static_cast<int>(textureLabels.size()); ++i) {
                             if (ImGui::Selectable(textureLabels[static_cast<std::size_t>(i)].c_str(),
                                                   i == textureIndex)) {
@@ -2006,8 +2011,7 @@ int main(int argc, char** argv)
                         // one missing is 2. Every value in this document is an exact
                         // integer, and a fractional preview is what made that untrue.
                         if (textureEditor.isOpen()) {
-                            if (textureEditor.drawPreview(texturePreview,
-                                                          ImGui::GetContentRegionAvail().x)) {
+                            if (textureEditor.drawPreview(texturePreview, ImGui::GetContentRegionAvail().x)) {
                                 // ⚑ RAISED, NOT PERFORMED. `drawPreview` has
                                 // already recorded `texturePreview` into this
                                 // frame's draw list, so freeing it here is a
@@ -2019,8 +2023,7 @@ int main(int argc, char** argv)
                         } else {
                             // A cooked texture has no document behind it, so there is
                             // nothing to pick: it stays the picture it always was.
-                            ImGui::Image(reinterpret_cast<ImTextureID>(texturePreview),
-                                         {200.0f, 200.0f});
+                            ImGui::Image(reinterpret_cast<ImTextureID>(texturePreview), {200.0f, 200.0f});
                             ImGui::SameLine();
                             ImGui::TextDisabled("as cooked\n(BC1)");
                         }
@@ -2031,9 +2034,9 @@ int main(int argc, char** argv)
                         textureRebuildPending = true;
                     }
                     ImGui::SameLine();
-                    ImGui::TextDisabled("%s", textureEditor.isOpen()
-                                                  ? "editing the selected source"
-                                                  : "cooked textures are read-only");
+                    ImGui::TextDisabled("%s",
+                                        textureEditor.isOpen() ? "editing the selected source"
+                                                               : "cooked textures are read-only");
                     ImGui::Separator();
                     if (textureEditor.draw()) {
                         textureRebuildPending = true;
@@ -2167,8 +2170,8 @@ int main(int argc, char** argv)
         forge::FrameDesc frame;
         frame.view = camera.view();
         const float cosElevation = std::cos(sunElevation);
-        frame.sunDirection = {cosElevation * std::sin(sunAzimuth), std::sin(sunElevation),
-                              cosElevation * std::cos(sunAzimuth)};
+        frame.sunDirection = {
+            cosElevation * std::sin(sunAzimuth), std::sin(sunElevation), cosElevation * std::cos(sunAzimuth)};
         frame.exposure = exposure;
         // Stage F: the preview draws a generated level in the authored mesh's
         // place. One item either way - the level is a mesh like any other, and
@@ -2178,8 +2181,8 @@ int main(int argc, char** argv)
             drawn = &levelMeshes[static_cast<std::size_t>(previewLevel) - 1];
         }
         if (drawn->indexCount > 0) {
-            frame.items.push_back({drawn, &textures[static_cast<std::size_t>(textureIndex)],
-                                   core::Mat4::identity(), emissive});
+            frame.items.push_back(
+                {drawn, &textures[static_cast<std::size_t>(textureIndex)], core::Mat4::identity(), emissive});
         }
 
         bool needRecreate = window.consumeResize();

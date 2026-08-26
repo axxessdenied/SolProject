@@ -15,8 +15,10 @@ namespace game {
 class ThrusterParticles
 {
 public:
-    void tick(const sol::sim::ShipState& ship, const sol::sim::ShipTuning& tuning,
-              const sol::sim::FlightInput& input, double dt);
+    void tick(const sol::sim::ShipState& ship,
+              const sol::sim::ShipTuning& tuning,
+              const sol::sim::FlightInput& input,
+              double dt);
 
     void buildInstances(float alpha, std::vector<ParticleInstance>& out) const;
 
@@ -35,8 +37,12 @@ private:
         float size = 0.5f;
     };
 
-    void emit(const sol::sim::ShipState& ship, sol::core::Vec3 nozzleBody,
-              sol::core::Vec3 exhaustBody, sol::core::Vec3 color, float size, float lifetime);
+    void emit(const sol::sim::ShipState& ship,
+              sol::core::Vec3 nozzleBody,
+              sol::core::Vec3 exhaustBody,
+              sol::core::Vec3 color,
+              float size,
+              float lifetime);
 
     static constexpr std::size_t kMaxParticles = 1500;
 

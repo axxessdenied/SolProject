@@ -1,7 +1,6 @@
-#include "sol/platform/window.hpp"
-
 #include "sol/core/assert.hpp"
 #include "sol/core/log.hpp"
+#include "sol/platform/window.hpp"
 
 #include <string>
 
@@ -28,22 +27,38 @@ Key translateVirtualKey(WPARAM virtualKey)
     }
 
     switch (virtualKey) {
-    case VK_ESCAPE: return Key::Escape;
-    case VK_SPACE: return Key::Space;
-    case VK_RETURN: return Key::Enter;
-    case VK_TAB: return Key::Tab;
-    case VK_SHIFT: return Key::LeftShift;
-    case VK_CONTROL: return Key::LeftControl;
-    case VK_MENU: return Key::LeftAlt;
-    case VK_UP: return Key::Up;
-    case VK_DOWN: return Key::Down;
-    case VK_LEFT: return Key::Left;
-    case VK_RIGHT: return Key::Right;
-    case VK_BACK: return Key::Backspace;
-    case VK_DELETE: return Key::Delete;
-    case VK_HOME: return Key::Home;
-    case VK_END: return Key::End;
-    default: return Key::Unknown;
+    case VK_ESCAPE:
+        return Key::Escape;
+    case VK_SPACE:
+        return Key::Space;
+    case VK_RETURN:
+        return Key::Enter;
+    case VK_TAB:
+        return Key::Tab;
+    case VK_SHIFT:
+        return Key::LeftShift;
+    case VK_CONTROL:
+        return Key::LeftControl;
+    case VK_MENU:
+        return Key::LeftAlt;
+    case VK_UP:
+        return Key::Up;
+    case VK_DOWN:
+        return Key::Down;
+    case VK_LEFT:
+        return Key::Left;
+    case VK_RIGHT:
+        return Key::Right;
+    case VK_BACK:
+        return Key::Backspace;
+    case VK_DELETE:
+        return Key::Delete;
+    case VK_HOME:
+        return Key::Home;
+    case VK_END:
+        return Key::End;
+    default:
+        return Key::Unknown;
     }
 }
 
@@ -164,8 +179,8 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
     }
 
     if (impl->messageHook != nullptr &&
-        impl->messageHook(hwnd, message, static_cast<std::uint64_t>(wParam),
-                          static_cast<std::int64_t>(lParam))) {
+        impl->messageHook(
+            hwnd, message, static_cast<std::uint64_t>(wParam), static_cast<std::int64_t>(lParam))) {
         return 0;
     }
 
@@ -190,10 +205,10 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
     case WM_INPUT: {
         RAWINPUT raw = {};
         UINT size = sizeof(raw);
-        if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, &raw, &size,
-                            sizeof(RAWINPUTHEADER)) != static_cast<UINT>(-1) &&
-            raw.header.dwType == RIM_TYPEMOUSE &&
-            (raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
+        if (GetRawInputData(
+                reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) !=
+                static_cast<UINT>(-1) &&
+            raw.header.dwType == RIM_TYPEMOUSE && (raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
             impl->mouseDeltaX += static_cast<float>(raw.data.mouse.lLastX);
             impl->mouseDeltaY += static_cast<float>(raw.data.mouse.lLastY);
         }
@@ -252,8 +267,7 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
             if (impl->pendingSurrogate == 0) {
                 return 0; // orphaned low half
             }
-            codePoint = 0x10000u + ((impl->pendingSurrogate - 0xD800u) << 10)
-                        + (unit - 0xDC00u);
+            codePoint = 0x10000u + ((impl->pendingSurrogate - 0xD800u) << 10) + (unit - 0xDC00u);
         }
         impl->pendingSurrogate = 0;
         // Control codes arrive here too (Backspace is 0x08, Enter 0x0D);
@@ -287,7 +301,9 @@ LRESULT CALLBACK Window::Impl::windowProc(HWND hwnd, UINT message, WPARAM wParam
     return DefWindowProcW(hwnd, message, wParam, lParam);
 }
 
-Window::Window() : m_impl(std::make_unique<Impl>()) {}
+Window::Window() : m_impl(std::make_unique<Impl>())
+{
+}
 
 Window::~Window()
 {
@@ -345,8 +361,7 @@ bool Window::create(const WindowDesc& desc)
     rawMouse.usUsage = 0x02;     // mouse
     rawMouse.hwndTarget = m_impl->hwnd;
     if (RegisterRawInputDevices(&rawMouse, 1, sizeof(rawMouse)) == FALSE) {
-        SOL_LOG_WARN("RegisterRawInputDevices failed (error %lu); mouse look unavailable",
-                     GetLastError());
+        SOL_LOG_WARN("RegisterRawInputDevices failed (error %lu); mouse look unavailable", GetLastError());
     }
 
     RECT clientRect = {};

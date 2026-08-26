@@ -1,5 +1,4 @@
 #include "sol/core/random.hpp"
-
 #include "sol/test/test.hpp"
 
 #include <cstdint>

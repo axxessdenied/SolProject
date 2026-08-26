@@ -46,8 +46,8 @@ VkDebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo()
 {
     VkDebugUtilsMessengerCreateInfoEXT createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-    createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    createInfo.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
                              VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                              VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
@@ -261,7 +261,8 @@ bool Context::initialize(const ContextDesc& desc, const platform::NativeWindowHa
         }
     }
     if (m_timestampValidBits > 0) {
-        SOL_LOG_INFO("GPU timestamps: %u valid bits, %.3f ns/tick", m_timestampValidBits,
+        SOL_LOG_INFO("GPU timestamps: %u valid bits, %.3f ns/tick",
+                     m_timestampValidBits,
                      static_cast<double>(m_timestampPeriod));
     } else {
         SOL_LOG_INFO("GPU timestamps: unsupported on queue family %u", m_graphicsQueueFamily);

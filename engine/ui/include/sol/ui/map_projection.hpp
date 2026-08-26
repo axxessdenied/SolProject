@@ -32,14 +32,15 @@ struct MapView
         return {origin.x + (point.x - origin.x) * zoom + pan.x,
                 origin.y + (point.y - origin.y) * zoom + pan.y};
     }
+
     [[nodiscard]] float scaled(float length) const { return length * zoom; }
 };
 
 // The pan that keeps whatever sits under `anchor` under `anchor` across a
 // zoom change. Without it the map slides away from the very thing the player
 // put the cursor on to look at.
-[[nodiscard]] inline core::Vec2 panHoldingAnchor(core::Vec2 pan, core::Vec2 origin,
-                                                 core::Vec2 anchor, float fromZoom, float toZoom)
+[[nodiscard]] inline core::Vec2
+panHoldingAnchor(core::Vec2 pan, core::Vec2 origin, core::Vec2 anchor, float fromZoom, float toZoom)
 {
     if (!(fromZoom > 0.0f)) {
         return pan;
@@ -68,8 +69,7 @@ struct MapProjection
 
     [[nodiscard]] core::Vec2 operator()(core::Vec2 mapPosition) const
     {
-        return {center.x + (mapPosition.x - origin.x) * scale,
-                center.y + (mapPosition.y - origin.y) * scale};
+        return {center.x + (mapPosition.x - origin.x) * scale, center.y + (mapPosition.y - origin.y) * scale};
     }
 };
 
@@ -121,22 +121,21 @@ struct MapProjection
 
 // A lane needs both ends known - otherwise it would point at a system the
 // player has not heard of.
-[[nodiscard]] inline bool laneVisible(std::span<const MapSystemRow> systems,
-                                      const MapLaneRow& lane)
+[[nodiscard]] inline bool laneVisible(std::span<const MapSystemRow> systems, const MapLaneRow& lane)
 {
-    if (lane.from < 0 || lane.to < 0 || lane.from >= static_cast<int>(systems.size())
-        || lane.to >= static_cast<int>(systems.size())) {
+    if (lane.from < 0 || lane.to < 0 || lane.from >= static_cast<int>(systems.size()) ||
+        lane.to >= static_cast<int>(systems.size())) {
         return false;
     }
-    return systemVisible(systems[static_cast<std::size_t>(lane.from)])
-           && systemVisible(systems[static_cast<std::size_t>(lane.to)]);
+    return systemVisible(systems[static_cast<std::size_t>(lane.from)]) &&
+           systemVisible(systems[static_cast<std::size_t>(lane.to)]);
 }
 
 // Fits every visible system inside `view`, inset by `margin`. With nothing
 // visible (or a degenerate view) the projection is the identity about the
 // view's center, which draws nothing rather than dividing by zero.
-[[nodiscard]] inline MapProjection fitGalaxyMap(std::span<const MapSystemRow> systems,
-                                                const Rect& view, float margin = 34.0f)
+[[nodiscard]] inline MapProjection
+fitGalaxyMap(std::span<const MapSystemRow> systems, const Rect& view, float margin = 34.0f)
 {
     MapProjection projection;
     projection.center = {(view.min.x + view.max.x) * 0.5f, (view.min.y + view.max.y) * 0.5f};
@@ -203,14 +202,12 @@ struct MapProjection
 // The same, restricted to one tier: the orbital extent is measured on the
 // orbit curve over the bodies, the playfield extent on the playfield curve
 // over everything else.
-[[nodiscard]] inline float orbitExtent(std::span<const MapMarkerRow> markers,
-                                       core::Vec2 hubPosition)
+[[nodiscard]] inline float orbitExtent(std::span<const MapMarkerRow> markers, core::Vec2 hubPosition)
 {
     // The hub itself has to fit, even in a system whose only body is the one
     // the playfield hangs off.
-    float extent = orbitMapRadius(
-        std::sqrt(static_cast<double>(hubPosition.x) * hubPosition.x
-                  + static_cast<double>(hubPosition.y) * hubPosition.y));
+    float extent = orbitMapRadius(std::sqrt(static_cast<double>(hubPosition.x) * hubPosition.x +
+                                            static_cast<double>(hubPosition.y) * hubPosition.y));
     for (const MapMarkerRow& marker : markers) {
         if (marker.inPlayfield) {
             continue;
@@ -243,8 +240,8 @@ struct MapProjection
     return span > 0.0f ? span : 1.0f;
 }
 
-[[nodiscard]] inline core::Vec2 playfieldPoint(core::Vec2 offsetMeters, core::Vec2 center,
-                                               float discRadius, float spanMeters)
+[[nodiscard]] inline core::Vec2
+playfieldPoint(core::Vec2 offsetMeters, core::Vec2 center, float discRadius, float spanMeters)
 {
     if (!(spanMeters > 0.0f)) {
         return center;
@@ -255,8 +252,8 @@ struct MapProjection
 
 // Where an orbital body lands on the disc: the star is the middle, and
 // bearing is exact so the shape of the system is real.
-[[nodiscard]] inline core::Vec2 orbitMapPoint(core::Vec2 offsetMeters, core::Vec2 center,
-                                              float discRadius, float extent)
+[[nodiscard]] inline core::Vec2
+orbitMapPoint(core::Vec2 offsetMeters, core::Vec2 center, float discRadius, float extent)
 {
     const double x = offsetMeters.x;
     const double y = offsetMeters.y;
@@ -270,8 +267,8 @@ struct MapProjection
 }
 
 // Where a marker lands on the disc of radius `discRadius` around `center`.
-[[nodiscard]] inline core::Vec2 systemMapPoint(core::Vec2 offsetMeters, core::Vec2 center,
-                                               float discRadius, float extent)
+[[nodiscard]] inline core::Vec2
+systemMapPoint(core::Vec2 offsetMeters, core::Vec2 center, float discRadius, float extent)
 {
     const double x = offsetMeters.x;
     const double y = offsetMeters.y;

@@ -16,8 +16,11 @@ struct PushConstants
 
 } // namespace
 
-bool DebugDrawRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
-                                   const char* shaderDirectory, std::uint32_t framesInFlight)
+bool DebugDrawRenderer::initialize(rhi::Context& context,
+                                   VkFormat colorFormat,
+                                   VkFormat depthFormat,
+                                   const char* shaderDirectory,
+                                   std::uint32_t framesInFlight)
 {
     m_context = &context;
     m_colorFormat = colorFormat;
@@ -27,12 +30,14 @@ bool DebugDrawRenderer::initialize(rhi::Context& context, VkFormat colorFormat, 
     m_vertexBuffers.resize(framesInFlight);
     m_mappedPointers.resize(framesInFlight);
     for (std::uint32_t i = 0; i < framesInFlight; ++i) {
-        m_vertexBuffers[i] = rhi::createBuffer(context, kMaxVertices * sizeof(Vertex),
-                                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        if (vkMapMemory(context.device(), m_vertexBuffers[i].memory, 0, VK_WHOLE_SIZE, 0,
-                        &m_mappedPointers[i]) != VK_SUCCESS) {
+        m_vertexBuffers[i] =
+            rhi::createBuffer(context,
+                              kMaxVertices * sizeof(Vertex),
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (vkMapMemory(
+                context.device(), m_vertexBuffers[i].memory, 0, VK_WHOLE_SIZE, 0, &m_mappedPointers[i]) !=
+            VK_SUCCESS) {
             return false;
         }
     }
@@ -124,19 +129,22 @@ void DebugDrawRenderer::axes(core::Vec3 origin, const core::Quat& orientation, f
     line(origin, origin + rotate(orientation, {0.0f, 0.0f, -axisLength}), {0.3f, 0.5f, 1.0f, 1.0f});
 }
 
-void DebugDrawRenderer::draw(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
+void DebugDrawRenderer::draw(VkCommandBuffer commandBuffer,
+                             std::uint32_t frameIndex,
                              const core::Mat4& viewProjection)
 {
     if (m_vertices.empty()) {
         return;
     }
-    std::memcpy(m_mappedPointers[frameIndex], m_vertices.data(),
-                m_vertices.size() * sizeof(Vertex));
+    std::memcpy(m_mappedPointers[frameIndex], m_vertices.data(), m_vertices.size() * sizeof(Vertex));
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
     const PushConstants push = {viewProjection};
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
+    vkCmdPushConstants(commandBuffer,
+                       m_pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0,
+                       sizeof(push),
                        &push);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[frameIndex].buffer, &offset);

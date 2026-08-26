@@ -29,10 +29,15 @@ public:
     void shutdown();
 
     [[nodiscard]] VkInstance instance() const { return m_instance; }
+
     [[nodiscard]] VkSurfaceKHR surface() const { return m_surface; }
+
     [[nodiscard]] VkPhysicalDevice physicalDevice() const { return m_physicalDevice; }
+
     [[nodiscard]] VkDevice device() const { return m_device; }
+
     [[nodiscard]] std::uint32_t graphicsQueueFamily() const { return m_graphicsQueueFamily; }
+
     [[nodiscard]] VkQueue graphicsQueue() const { return m_graphicsQueue; }
 
     // Pool for short-lived one-shot command buffers (uploads).
@@ -44,7 +49,9 @@ public:
     // timestamp at all - a real case, not a theoretical one - and callers
     // must degrade rather than divide by a period they never got.
     [[nodiscard]] float timestampPeriod() const { return m_timestampPeriod; }
+
     [[nodiscard]] std::uint32_t timestampValidBits() const { return m_timestampValidBits; }
+
     [[nodiscard]] bool supportsTimestamps() const { return m_timestampValidBits > 0; }
 
     void waitIdle() const;

@@ -124,9 +124,13 @@ public:
     }
 
     [[nodiscard]] std::size_t size() const { return m_entities.size(); }
+
     [[nodiscard]] const std::vector<std::uint32_t>& entities() const { return m_entities; }
+
     [[nodiscard]] std::vector<T>& values() { return m_values; }
+
     [[nodiscard]] const std::uint32_t* sparseData() const { return m_sparse.data(); }
+
     [[nodiscard]] T* valuesData() { return m_values.data(); }
 
 private:
@@ -178,17 +182,14 @@ public:
     }
 
     void addShield(std::uint32_t entity, const Shield& s) { m_shields.add(entity, s); }
-    void removeShield(std::uint32_t entity) { m_shields.remove(entity); }
-    [[nodiscard]] bool hasShield(std::uint32_t entity) const { return m_shields.has(entity); }
-    [[nodiscard]] std::uint32_t shieldCount() const
-    {
-        return static_cast<std::uint32_t>(m_shields.size());
-    }
 
-    [[nodiscard]] const Position& position(std::uint32_t entity) const
-    {
-        return *m_positions.tryGet(entity);
-    }
+    void removeShield(std::uint32_t entity) { m_shields.remove(entity); }
+
+    [[nodiscard]] bool hasShield(std::uint32_t entity) const { return m_shields.has(entity); }
+
+    [[nodiscard]] std::uint32_t shieldCount() const { return static_cast<std::uint32_t>(m_shields.size()); }
+
+    [[nodiscard]] const Position& position(std::uint32_t entity) const { return *m_positions.tryGet(entity); }
 
     // Queries lead with the set that is smallest for the query in question
     // and probe the rest through the sparse table, as a real sparse-set ECS
@@ -280,10 +281,7 @@ struct Archetype
     std::vector<Shield> shields;
     std::vector<Lifetime> lifetimes;
 
-    [[nodiscard]] std::uint32_t rowCount() const
-    {
-        return static_cast<std::uint32_t>(entities.size());
-    }
+    [[nodiscard]] std::uint32_t rowCount() const { return static_cast<std::uint32_t>(entities.size()); }
 };
 
 struct EntityLocation
@@ -337,15 +335,9 @@ public:
         m_freeList.push_back(entity);
     }
 
-    void addShield(std::uint32_t entity, const Shield& s)
-    {
-        moveEntity(entity, m_locations[entity], s);
-    }
+    void addShield(std::uint32_t entity, const Shield& s) { moveEntity(entity, m_locations[entity], s); }
 
-    void removeShield(std::uint32_t entity)
-    {
-        moveEntity(entity, m_locations[entity], {});
-    }
+    void removeShield(std::uint32_t entity) { moveEntity(entity, m_locations[entity], {}); }
 
     [[nodiscard]] bool hasShield(std::uint32_t entity) const
     {
@@ -576,8 +568,7 @@ Samples benchTicks(int warmup, int measured, TickFn&& tick)
         const auto start = std::chrono::steady_clock::now();
         tick();
         const auto stop = std::chrono::steady_clock::now();
-        samples.microseconds.push_back(
-            std::chrono::duration<double, std::micro>(stop - start).count());
+        samples.microseconds.push_back(std::chrono::duration<double, std::micro>(stop - start).count());
     }
     return samples;
 }
@@ -601,8 +592,7 @@ void populate(World& world, std::vector<std::uint32_t>& ships)
     for (std::uint32_t i = 0; i < kShipCount; ++i) {
         if (i % 5 == 0) {
             ships.push_back(world.createShipShielded(
-                spawnPosition(i), spawnVelocity(i),
-                Shield{.strength = 50.0f, .regen = 1.5f}));
+                spawnPosition(i), spawnVelocity(i), Shield{.strength = 50.0f, .regen = 1.5f}));
         } else {
             ships.push_back(world.createShip(spawnPosition(i), spawnVelocity(i)));
         }
@@ -610,7 +600,8 @@ void populate(World& world, std::vector<std::uint32_t>& ships)
     for (std::uint32_t i = 0; i < kProjectileCount; ++i) {
         // Stagger initial lifetimes across four ticks so ~500 expire per tick
         // from the first measured tick onward.
-        world.createProjectile(spawnPosition(kShipCount + i), spawnVelocity(kShipCount + i),
+        world.createProjectile(spawnPosition(kShipCount + i),
+                               spawnVelocity(kShipCount + i),
                                Lifetime{.remaining = kDtF * static_cast<float>(1 + i % 4)});
     }
 }
@@ -659,8 +650,8 @@ std::uint32_t runWorkloads(Samples (&results)[kWorkloadCount])
             world.destroy(e);
         }
         for (std::size_t i = 0; i < expired.size(); ++i) {
-            world.createProjectile(spawnPosition(spawnCounter), spawnVelocity(spawnCounter),
-                                   Lifetime{.remaining = kDtF * 4.0f});
+            world.createProjectile(
+                spawnPosition(spawnCounter), spawnVelocity(spawnCounter), Lifetime{.remaining = kDtF * 4.0f});
             ++spawnCounter;
         }
         g_sink += static_cast<double>(expired.size());
@@ -708,17 +699,27 @@ int main()
     const std::uint32_t archetypeShields = runWorkloads<ArchetypeWorld>(archetype);
 
     std::printf("ECS storage spike - %u ships (%u shielded), %u projectiles, dt %.4fs\n",
-                kShipCount, kShipCount / 5, kProjectileCount, kDt);
+                kShipCount,
+                kShipCount / 5,
+                kProjectileCount,
+                kDt);
     std::printf("median (mean) microseconds per tick, %d measured ticks\n\n", kMeasuredTicks);
     std::printf("%-34s %20s %20s %8s\n", "workload", "sparse-set", "archetype", "ratio");
     for (std::size_t i = 0; i < kWorkloadCount; ++i) {
         const double sMed = sparse[i].median();
         const double aMed = archetype[i].median();
-        std::printf("%-34s %10.1f (%6.1f) %10.1f (%6.1f) %7.2fx\n", kWorkloadNames[i], sMed,
-                    sparse[i].mean(), aMed, archetype[i].mean(), sMed / aMed);
+        std::printf("%-34s %10.1f (%6.1f) %10.1f (%6.1f) %7.2fx\n",
+                    kWorkloadNames[i],
+                    sMed,
+                    sparse[i].mean(),
+                    aMed,
+                    archetype[i].mean(),
+                    sMed / aMed);
     }
     std::printf("\nratio > 1 means archetype is faster. shields after churn: %u / %u. "
                 "checksum %.3e\n",
-                sparseShields, archetypeShields, g_sink);
+                sparseShields,
+                archetypeShields,
+                g_sink);
     return 0;
 }

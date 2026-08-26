@@ -47,8 +47,8 @@ namespace {
         return false;
     }
     assets::ForgeDoc doc;
-    if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(),
-                            doc, nullptr)) {
+    if (!assets::parseForge(
+            reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(), doc, nullptr)) {
         return false;
     }
     return assets::buildForge(doc, out, nullptr);
@@ -56,7 +56,8 @@ namespace {
 
 // Stage N. The document AND its topology, because a part box is a fact about
 // the triangles a part emitted and the face list is where that is recorded.
-[[nodiscard]] bool loadCommittedTopology(const char* name, assets::ForgeDoc& doc,
+[[nodiscard]] bool loadCommittedTopology(const char* name,
+                                         assets::ForgeDoc& doc,
                                          std::vector<assets::ForgePoint>& points,
                                          std::vector<assets::ForgeFace>& faces)
 {
@@ -65,8 +66,8 @@ namespace {
     if (!platform::readFileBytes(path.c_str(), bytes)) {
         return false;
     }
-    if (!assets::parseForge(reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(),
-                            doc, nullptr)) {
+    if (!assets::parseForge(
+            reinterpret_cast<const char*>(bytes.data()), bytes.size(), path.c_str(), doc, nullptr)) {
         return false;
     }
     std::vector<assets::ForgeEdge> edges;
@@ -76,9 +77,8 @@ namespace {
 // ⚑ Every hand-authored source in the repo, so the assertions below run against
 // the real spread rather than against the two that are convenient: 28 parts down
 // to 1, a flat disc, a baked 99 KB blob and a torus with no parametric points.
-constexpr const char* kCommittedParts[] = {"freighter_cockpit", "cockpit",  "ship",
-                                           "station",           "gate",     "asteroid",
-                                           "cube",              "gate_membrane"};
+constexpr const char* kCommittedParts[] = {
+    "freighter_cockpit", "cockpit", "ship", "station", "gate", "asteroid", "cube", "gate_membrane"};
 
 } // namespace
 
@@ -100,10 +100,10 @@ SOL_TEST(theRadiusToleranceSeparatesARoundingFromTheFourRealMismatches)
     // SMALLER than the hull, so ships pass through the picture; negative means
     // it is LARGER, so you stop short of a thing you can still see space around.
     // Two of each, and they are opposite defects.
-    SOL_CHECK(!match(100.0f, 102.0f).radiusAgrees());  // station, +2.00%
-    SOL_CHECK(!match(1.0f, 1.1584f).radiusAgrees());   // asteroid, +15.84%
-    SOL_CHECK(!match(8.0f, 7.0064f).radiusAgrees());   // ship, -12.42%
-    SOL_CHECK(!match(1.0f, 0.8660f).radiusAgrees());   // cube, -13.40%
+    SOL_CHECK(!match(100.0f, 102.0f).radiusAgrees()); // station, +2.00%
+    SOL_CHECK(!match(1.0f, 1.1584f).radiusAgrees());  // asteroid, +15.84%
+    SOL_CHECK(!match(8.0f, 7.0064f).radiusAgrees());  // ship, -12.42%
+    SOL_CHECK(!match(1.0f, 0.8660f).radiusAgrees());  // cube, -13.40%
 
     // The boundary itself, from both sides: one tenth of one percent.
     SOL_CHECK(match(100.0f, 100.09f).radiusAgrees());
@@ -211,11 +211,15 @@ SOL_TEST(theCommittedMeshesAndTheirModelRowsStillDisagreeExactlyWhereTheyDid)
         const char* stem;
         bool agrees;
     };
+
     // The gate is the one that matches; the other four are stage C's findings,
     // recorded in the assets' own headers rather than quietly corrected.
     const Expected expected[] = {
-        {"gate", true},   {"station", false}, {"asteroid", false},
-        {"ship", false},  {"cube", false},
+        {"gate", true},
+        {"station", false},
+        {"asteroid", false},
+        {"ship", false},
+        {"cube", false},
     };
 
     for (const Expected& want : expected) {
@@ -297,8 +301,10 @@ SOL_TEST(noShippedDefNamesAModelThatDoesNotExist)
 
     const std::vector<forge::MissingModelRef> missing = forge::missingModelRefs(defs);
     for (const forge::MissingModelRef& ref : missing) {
-        std::printf("  [[%s]] %s names model '%s', which does not exist\n", ref.defType.c_str(),
-                    ref.defId.c_str(), ref.model.c_str());
+        std::printf("  [[%s]] %s names model '%s', which does not exist\n",
+                    ref.defType.c_str(),
+                    ref.defId.c_str(),
+                    ref.model.c_str());
     }
     SOL_CHECK(missing.empty());
 }
@@ -1236,7 +1242,8 @@ SOL_TEST(theSelectedPartNeverGetsASecondBox)
 SOL_TEST(theHoverHoldsItsAnswerWhileTheCameraIsBeingDragged)
 {
     // Held from an earlier frame: a drag. Both buttons that move the camera.
-    SOL_CHECK(forge::forgeCameraHoldsMouse(/*leftDown=*/true, /*leftPressed=*/false,
+    SOL_CHECK(forge::forgeCameraHoldsMouse(/*leftDown=*/true,
+                                           /*leftPressed=*/false,
                                            /*middleDown=*/false));
     SOL_CHECK(forge::forgeCameraHoldsMouse(false, false, true));
     SOL_CHECK(forge::forgeCameraHoldsMouse(true, false, true));
@@ -1245,7 +1252,8 @@ SOL_TEST(theHoverHoldsItsAnswerWhileTheCameraIsBeingDragged)
     // a click, not a drag. Freezing it would mean the pick never runs on the one
     // frame that matters and NO PART COULD EVER BE SELECTED BY CLICKING - a
     // total loss of stage N, from a rule meant only to steady a highlight.
-    SOL_CHECK(!forge::forgeCameraHoldsMouse(/*leftDown=*/true, /*leftPressed=*/true,
+    SOL_CHECK(!forge::forgeCameraHoldsMouse(/*leftDown=*/true,
+                                            /*leftPressed=*/true,
                                             /*middleDown=*/false));
 
     // Nothing held: the ordinary case, every frame the cursor is just moving.
@@ -1703,15 +1711,13 @@ SOL_TEST(aFreshMessageArrivesLitAndSettlesIntoChrome)
     SOL_CHECK(atArrival.highlight == 1.0f);
 
     // Halfway through the flash it is halfway back to chrome.
-    const forge::StatusAppearance midway =
-        forge::statusAppearance(forge::kStatusFlashSeconds * 0.5f);
+    const forge::StatusAppearance midway = forge::statusAppearance(forge::kStatusFlashSeconds * 0.5f);
     SOL_CHECK(midway.visible);
     SOL_CHECK(std::fabs(midway.highlight - 0.5f) < 1e-5f);
 
     // Settled, but still worth reading - the two durations are separate
     // numbers because they answer separate questions.
-    const forge::StatusAppearance settled =
-        forge::statusAppearance(forge::kStatusFlashSeconds);
+    const forge::StatusAppearance settled = forge::statusAppearance(forge::kStatusFlashSeconds);
     SOL_CHECK(settled.visible);
     SOL_CHECK(settled.highlight == 0.0f);
     SOL_CHECK(forge::statusAppearance(forge::kStatusFlashSeconds + 5.0f).visible);

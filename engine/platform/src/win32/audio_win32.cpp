@@ -1,13 +1,19 @@
+#include "sol/core/log.hpp"
 #include "sol/platform/audio.hpp"
 
-#include "sol/core/log.hpp"
-
+// clang-format off
+// ⚑ THIS ORDER IS LOAD-BEARING AND THE GUARD IS THE ONLY THING HOLDING IT.
+// <audioclient.h> and <mmdeviceapi.h> both build on types <windows.h> declares,
+// so they do not compile ahead of it. `IncludeBlocks: Regroup` ignores the blank
+// line that used to separate them and sorts the three together, which puts
+// `windows.h` last on its own name.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 
 #include <audioclient.h>
 #include <mmdeviceapi.h>
+// clang-format on
 
 #include <atomic>
 #include <cstring>
@@ -73,7 +79,9 @@ struct AudioDevice::Impl
     std::vector<float> mixBuffer;
 
     void run();
-    bool startDevice(IAudioClient*& client, IAudioRenderClient*& render, HANDLE bufferEvent,
+    bool startDevice(IAudioClient*& client,
+                     IAudioRenderClient*& render,
+                     HANDLE bufferEvent,
                      std::uint32_t& channels);
 };
 
@@ -143,8 +151,8 @@ void AudioDevice::Impl::run()
         // the rest rather than a fold-out this item has no policy for.
         float* out = reinterpret_cast<float*>(buffer);
         if (channels == kAudioChannels) {
-            std::memcpy(out, mixBuffer.data(),
-                        static_cast<std::size_t>(available) * kAudioChannels * sizeof(float));
+            std::memcpy(
+                out, mixBuffer.data(), static_cast<std::size_t>(available) * kAudioChannels * sizeof(float));
         } else {
             std::memset(out, 0, static_cast<std::size_t>(available) * channels * sizeof(float));
             for (std::uint32_t frame = 0; frame < available; ++frame) {
@@ -168,16 +176,19 @@ void AudioDevice::Impl::run()
     }
 }
 
-bool AudioDevice::Impl::startDevice(IAudioClient*& client, IAudioRenderClient*& render,
-                                    HANDLE bufferEvent, std::uint32_t& channels)
+bool AudioDevice::Impl::startDevice(IAudioClient*& client,
+                                    IAudioRenderClient*& render,
+                                    HANDLE bufferEvent,
+                                    std::uint32_t& channels)
 {
     IMMDeviceEnumerator* enumerator = nullptr;
-    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator),
+                                  nullptr,
+                                  CLSCTX_ALL,
                                   __uuidof(IMMDeviceEnumerator),
                                   reinterpret_cast<void**>(&enumerator));
     if (FAILED(hr)) {
-        SOL_LOG_WARN("audio: no device enumerator (0x%08lx); running silent",
-                     static_cast<unsigned long>(hr));
+        SOL_LOG_WARN("audio: no device enumerator (0x%08lx); running silent", static_cast<unsigned long>(hr));
         return false;
     }
 
@@ -191,8 +202,7 @@ bool AudioDevice::Impl::startDevice(IAudioClient*& client, IAudioRenderClient*& 
         return false;
     }
 
-    hr = endpoint->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                            reinterpret_cast<void**>(&client));
+    hr = endpoint->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&client));
     release(endpoint);
     if (FAILED(hr)) {
         SOL_LOG_WARN("audio: cannot activate endpoint (0x%08lx); running silent",
@@ -207,7 +217,8 @@ bool AudioDevice::Impl::startDevice(IAudioClient*& client, IAudioRenderClient*& 
     const bool usable = isFloat32(*mixFormat) && mixFormat->nChannels >= kAudioChannels;
     if (!usable) {
         SOL_LOG_WARN("audio: endpoint mixes %u-bit x%u, not float32 stereo+; running silent",
-                     mixFormat->wBitsPerSample, mixFormat->nChannels);
+                     mixFormat->wBitsPerSample,
+                     mixFormat->nChannels);
         CoTaskMemFree(mixFormat);
         return false;
     }
@@ -216,12 +227,11 @@ bool AudioDevice::Impl::startDevice(IAudioClient*& client, IAudioRenderClient*& 
 
     // Zero duration asks for the engine's own period, which is what an
     // event-driven shared-mode client wants.
-    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0,
-                           mixFormat, nullptr);
+    hr = client->Initialize(
+        AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, mixFormat, nullptr);
     CoTaskMemFree(mixFormat);
     if (FAILED(hr)) {
-        SOL_LOG_WARN("audio: client init failed (0x%08lx); running silent",
-                     static_cast<unsigned long>(hr));
+        SOL_LOG_WARN("audio: client init failed (0x%08lx); running silent", static_cast<unsigned long>(hr));
         return false;
     }
 
@@ -233,8 +243,7 @@ bool AudioDevice::Impl::startDevice(IAudioClient*& client, IAudioRenderClient*& 
     bufferFrames.store(frames, std::memory_order_relaxed);
     mixBuffer.assign(static_cast<std::size_t>(frames) * kAudioChannels, 0.0f);
 
-    if (FAILED(client->GetService(__uuidof(IAudioRenderClient),
-                                  reinterpret_cast<void**>(&render)))) {
+    if (FAILED(client->GetService(__uuidof(IAudioRenderClient), reinterpret_cast<void**>(&render)))) {
         return false;
     }
 
@@ -251,7 +260,9 @@ bool AudioDevice::Impl::startDevice(IAudioClient*& client, IAudioRenderClient*& 
     }
 
     SOL_LOG_INFO("audio: WASAPI shared, %u Hz, %u channels, %u frame buffer (%.1f ms)",
-                 sampleRate.load(std::memory_order_relaxed), channels, frames,
+                 sampleRate.load(std::memory_order_relaxed),
+                 channels,
+                 frames,
                  1000.0 * frames / static_cast<double>(sampleRate.load(std::memory_order_relaxed)));
     return true;
 }

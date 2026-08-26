@@ -1,5 +1,4 @@
 #include "sol/core/jobs.hpp"
-
 #include "sol/test/test.hpp"
 
 #include <atomic>
@@ -17,12 +16,12 @@ SOL_TEST(jobs_parallelForCoversEveryIndexExactlyOnce)
 {
     JobSystem jobs;
     std::vector<std::atomic<std::uint32_t>> hits(100'000);
-    jobs.parallelFor(static_cast<std::uint32_t>(hits.size()), 1024,
-                     [&hits](std::uint32_t begin, std::uint32_t end) {
-                         for (std::uint32_t i = begin; i < end; ++i) {
-                             hits[i].fetch_add(1, std::memory_order_relaxed);
-                         }
-                     });
+    jobs.parallelFor(
+        static_cast<std::uint32_t>(hits.size()), 1024, [&hits](std::uint32_t begin, std::uint32_t end) {
+            for (std::uint32_t i = begin; i < end; ++i) {
+                hits[i].fetch_add(1, std::memory_order_relaxed);
+            }
+        });
     for (const std::atomic<std::uint32_t>& hit : hits) {
         SOL_CHECK(hit.load() == 1);
     }
@@ -50,13 +49,11 @@ SOL_TEST(jobs_parallelForHandlesSmallAndEmptyRanges)
 {
     JobSystem jobs(2);
     std::atomic<std::uint32_t> total{0};
-    jobs.parallelFor(0, 64, [&total](std::uint32_t begin, std::uint32_t end) {
-        total.fetch_add(end - begin);
-    });
+    jobs.parallelFor(
+        0, 64, [&total](std::uint32_t begin, std::uint32_t end) { total.fetch_add(end - begin); });
     SOL_CHECK(total.load() == 0);
-    jobs.parallelFor(5, 64, [&total](std::uint32_t begin, std::uint32_t end) {
-        total.fetch_add(end - begin);
-    });
+    jobs.parallelFor(
+        5, 64, [&total](std::uint32_t begin, std::uint32_t end) { total.fetch_add(end - begin); });
     SOL_CHECK(total.load() == 5);
 }
 
@@ -69,10 +66,10 @@ SOL_TEST(jobs_submitAndWaitRunsEveryJob)
     for (std::uint32_t i = 0; i < kJobCount; ++i) {
         jobs.submit(
             [](void* user) {
-                static_cast<std::atomic<std::uint32_t>*>(user)->fetch_add(
-                    1, std::memory_order_relaxed);
+                static_cast<std::atomic<std::uint32_t>*>(user)->fetch_add(1, std::memory_order_relaxed);
             },
-            &executed, counter);
+            &executed,
+            counter);
     }
     jobs.wait(counter);
     SOL_CHECK(counter.done());
@@ -82,11 +79,13 @@ SOL_TEST(jobs_submitAndWaitRunsEveryJob)
 SOL_TEST(jobs_workerCanForkAndJoinNestedWork)
 {
     JobSystem jobs;
+
     struct Nested
     {
         JobSystem* jobs = nullptr;
         std::atomic<std::uint32_t> inner{0};
     };
+
     Nested nested{.jobs = &jobs};
 
     JobCounter outer;
@@ -99,7 +98,8 @@ SOL_TEST(jobs_workerCanForkAndJoinNestedWork)
                 n->inner.fetch_add(end - begin, std::memory_order_relaxed);
             });
         },
-        &nested, outer);
+        &nested,
+        outer);
     jobs.wait(outer);
     SOL_CHECK(nested.inner.load() == 256);
 }

@@ -38,11 +38,16 @@ namespace {
 const char* presentModeName(VkPresentModeKHR mode)
 {
     switch (mode) {
-    case VK_PRESENT_MODE_FIFO_KHR: return "FIFO (vsync)";
-    case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "FIFO_RELAXED";
-    case VK_PRESENT_MODE_MAILBOX_KHR: return "MAILBOX";
-    case VK_PRESENT_MODE_IMMEDIATE_KHR: return "IMMEDIATE";
-    default: break;
+    case VK_PRESENT_MODE_FIFO_KHR:
+        return "FIFO (vsync)";
+    case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+        return "FIFO_RELAXED";
+    case VK_PRESENT_MODE_MAILBOX_KHR:
+        return "MAILBOX";
+    case VK_PRESENT_MODE_IMMEDIATE_KHR:
+        return "IMMEDIATE";
+    default:
+        break;
     }
     return "unknown";
 }
@@ -60,19 +65,18 @@ VkPresentModeKHR Swapchain::choosePresentMode(bool vsync) const
     }
 
     std::uint32_t modeCount = 0;
-    if (vkGetPhysicalDeviceSurfacePresentModesKHR(m_context->physicalDevice(), m_context->surface(),
-                                                  &modeCount, nullptr) != VK_SUCCESS ||
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR(
+            m_context->physicalDevice(), m_context->surface(), &modeCount, nullptr) != VK_SUCCESS ||
         modeCount == 0) {
         return VK_PRESENT_MODE_FIFO_KHR;
     }
     std::vector<VkPresentModeKHR> modes(modeCount);
-    if (vkGetPhysicalDeviceSurfacePresentModesKHR(m_context->physicalDevice(), m_context->surface(),
-                                                  &modeCount, modes.data()) != VK_SUCCESS) {
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR(
+            m_context->physicalDevice(), m_context->surface(), &modeCount, modes.data()) != VK_SUCCESS) {
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
-    for (const VkPresentModeKHR preferred : {VK_PRESENT_MODE_MAILBOX_KHR,
-                                             VK_PRESENT_MODE_IMMEDIATE_KHR}) {
+    for (const VkPresentModeKHR preferred : {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR}) {
         if (std::find(modes.begin(), modes.end(), preferred) != modes.end()) {
             return preferred;
         }
@@ -142,7 +146,9 @@ bool Swapchain::createInternal(std::uint32_t width, std::uint32_t height, bool v
 
     m_imageFormat = surfaceFormat.format;
     m_extent = extent;
-    SOL_LOG_INFO("Swapchain %ux%u, present mode %s", extent.width, extent.height,
+    SOL_LOG_INFO("Swapchain %ux%u, present mode %s",
+                 extent.width,
+                 extent.height,
                  presentModeName(createInfo.presentMode));
 
     std::uint32_t actualImageCount = 0;

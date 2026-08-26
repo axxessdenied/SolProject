@@ -23,8 +23,11 @@ public:
     }
 
     [[nodiscard]] bool ok() const { return m_ok; }
+
     [[nodiscard]] std::size_t at() const { return m_at; }
+
     void seek(std::size_t offset) { m_at = offset; }
+
     void skip(std::size_t count) { m_at += count; }
 
     std::uint8_t u8()
@@ -120,8 +123,10 @@ class CoverageAccumulator
 {
 public:
     CoverageAccumulator(std::uint32_t width, std::uint32_t height)
-        : m_stride(width + 2), m_width(width), m_height(height), m_cells(static_cast<std::size_t>(width + 2) *
-                                                                          height, 0.0f)
+        : m_stride(width + 2)
+        , m_width(width)
+        , m_height(height)
+        , m_cells(static_cast<std::size_t>(width + 2) * height, 0.0f)
     {
     }
 
@@ -230,7 +235,9 @@ void CoverageAccumulator::resolve(std::vector<std::uint8_t>& out) const
     }
 }
 
-void flattenQuadratic(const Vec2f& p0, const Vec2f& control, const Vec2f& p1,
+void flattenQuadratic(const Vec2f& p0,
+                      const Vec2f& control,
+                      const Vec2f& p1,
                       CoverageAccumulator& accumulator)
 {
     const float deviationX = p0.x - 2.0f * control.x + p1.x;
@@ -340,8 +347,7 @@ TrueTypeFont::Table TrueTypeFont::findTable(const char tag[4]) const
             Table table;
             table.offset = reader.u32();
             table.length = reader.u32();
-            if (!reader.ok() || table.offset > m_data.size() ||
-                table.length > m_data.size() - table.offset) {
+            if (!reader.ok() || table.offset > m_data.size() || table.length > m_data.size() - table.offset) {
                 return {};
             }
             return table;
@@ -603,8 +609,15 @@ bool TrueTypeFont::glyphRange(std::uint16_t glyph, std::uint32_t& begin, std::ui
     return end >= begin && end <= m_glyf.length;
 }
 
-bool TrueTypeFont::appendGlyph(std::uint16_t glyph, int depth, float offsetX, float offsetY, float xx,
-                               float xy, float yx, float yy, GlyphOutline& out) const
+bool TrueTypeFont::appendGlyph(std::uint16_t glyph,
+                               int depth,
+                               float offsetX,
+                               float offsetY,
+                               float xx,
+                               float xy,
+                               float yx,
+                               float yy,
+                               GlyphOutline& out) const
 {
     if (depth > kMaxCompositeDepth) {
         SOL_LOG_ERROR("truetype: composite glyph nesting too deep");
@@ -692,8 +705,8 @@ bool TrueTypeFont::appendGlyph(std::uint16_t glyph, int depth, float offsetX, fl
             const float childDx = xx * dx + yx * dy + offsetX;
             const float childDy = xy * dx + yy * dy + offsetY;
 
-            if (!appendGlyph(componentGlyph, depth + 1, childDx, childDy, childXX, childXY, childYX,
-                             childYY, out)) {
+            if (!appendGlyph(
+                    componentGlyph, depth + 1, childDx, childDy, childXX, childXY, childYX, childYY, out)) {
                 return false;
             }
         } while ((flags & kMoreComponents) != 0);
@@ -871,8 +884,8 @@ bool TrueTypeFont::rasterizeGlyph(std::uint16_t glyph, float scale, GlyphBitmap&
 
         Vec2f start;
         if (firstOnCurve == count) {
-            start = midpoint(toPixels(outline.points[contourEnd - 1]),
-                             toPixels(outline.points[contourStart]));
+            start =
+                midpoint(toPixels(outline.points[contourEnd - 1]), toPixels(outline.points[contourStart]));
             for (std::uint32_t i = 0; i < count; ++i) {
                 walk.push_back(toPixels(outline.points[contourStart + i]));
                 walkOnCurve.push_back(false);

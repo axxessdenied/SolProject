@@ -57,15 +57,14 @@ struct ScreenPoint
     bool inFront = false;
 };
 
-[[nodiscard]] inline ScreenPoint screenPoint(const core::Vec3& directionCamera, core::Vec2 center,
-                                             float focal)
+[[nodiscard]] inline ScreenPoint
+screenPoint(const core::Vec3& directionCamera, core::Vec2 center, float focal)
 {
     if (directionCamera.z >= -0.01f) { // camera looks down -Z
         return {};
     }
     const float depth = -directionCamera.z;
-    return {{center.x + (directionCamera.x / depth) * focal,
-             center.y - (directionCamera.y / depth) * focal},
+    return {{center.x + (directionCamera.x / depth) * focal, center.y - (directionCamera.y / depth) * focal},
             true};
 }
 
@@ -84,8 +83,7 @@ struct ScreenPoint
 //
 // The result is NOT normalised: `z` is exactly -1, so the caller can read the
 // depth of a hit straight off the parameter along it if it wants to.
-[[nodiscard]] inline core::Vec3 rayDirectionCamera(core::Vec2 screen, core::Vec2 center,
-                                                   float focal)
+[[nodiscard]] inline core::Vec3 rayDirectionCamera(core::Vec2 screen, core::Vec2 center, float focal)
 {
     const float safe = focal > 0.0001f ? focal : 1.0f;
     // The sign on y is `screenPoint`'s own, kept in one place rather than
@@ -117,7 +115,9 @@ inline constexpr std::size_t kNoPick = static_cast<std::size_t>(-1);
 // nearest the cursor and then to the nearer one in world, so a fighter
 // silhouetted against a planet is picked over the planet.
 [[nodiscard]] inline std::size_t pickNearest(std::span<const PickCandidate> candidates,
-                                             core::Vec2 cursor, core::Vec2 center, float focal,
+                                             core::Vec2 cursor,
+                                             core::Vec2 center,
+                                             float focal,
                                              float grabPixels = kPickGrabPixels)
 {
     std::size_t best = kNoPick;
@@ -153,9 +153,8 @@ inline constexpr std::size_t kNoPick = static_cast<std::size_t>(-1);
 // contacts nearest-first, so an exact tie resolves to the nearer contact.
 inline constexpr float kRadarGrabPixels = 11.0f;
 
-[[nodiscard]] inline std::size_t pickNearestPoint(std::span<const core::Vec2> points,
-                                                  core::Vec2 cursor,
-                                                  float grabPixels = kRadarGrabPixels)
+[[nodiscard]] inline std::size_t
+pickNearestPoint(std::span<const core::Vec2> points, core::Vec2 cursor, float grabPixels = kRadarGrabPixels)
 {
     std::size_t best = kNoPick;
     float bestDistanceSquared = grabPixels * grabPixels;
@@ -193,9 +192,7 @@ public:
     NearestPick() = default;
 
     NearestPick(core::Vec2 cursor, float grabPixels)
-        : m_cursor(cursor)
-        , m_bestDistanceSquared(grabPixels * grabPixels)
-        , m_active(true)
+        : m_cursor(cursor), m_bestDistanceSquared(grabPixels * grabPixels), m_active(true)
     {
     }
 

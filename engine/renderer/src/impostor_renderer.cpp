@@ -9,16 +9,19 @@ namespace {
 struct PushConstants
 {
     core::Mat4 viewProjection;
-    core::Vec4 center;       // .xyz camera-relative, .w radius
-    core::Vec4 colorA;       // .w = mode (0 planet, 1 star)
-    core::Vec4 colorB;       // .w = quad scale (star glow halo)
+    core::Vec4 center; // .xyz camera-relative, .w radius
+    core::Vec4 colorA; // .w = mode (0 planet, 1 star)
+    core::Vec4 colorB; // .w = quad scale (star glow halo)
     core::Vec4 sunDirection;
 };
+
 static_assert(sizeof(PushConstants) == 128);
 
 } // namespace
 
-bool ImpostorRenderer::initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
+bool ImpostorRenderer::initialize(rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
                                   const char* shaderDirectory)
 {
     m_context = &context;
@@ -80,8 +83,11 @@ bool ImpostorRenderer::reloadPipeline()
     return true;
 }
 
-void ImpostorRenderer::draw(VkCommandBuffer commandBuffer, VkPipeline pipeline,
-                            const core::Mat4& viewProjection, const Body& body, float mode,
+void ImpostorRenderer::draw(VkCommandBuffer commandBuffer,
+                            VkPipeline pipeline,
+                            const core::Mat4& viewProjection,
+                            const Body& body,
+                            float mode,
                             float quadScale) const
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
@@ -92,20 +98,25 @@ void ImpostorRenderer::draw(VkCommandBuffer commandBuffer, VkPipeline pipeline,
     push.colorA = {body.colorA.x, body.colorA.y, body.colorA.z, mode};
     push.colorB = {body.colorB.x, body.colorB.y, body.colorB.z, quadScale};
     push.sunDirection = {body.sunDirection.x, body.sunDirection.y, body.sunDirection.z, 0.0f};
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
+    vkCmdPushConstants(commandBuffer,
+                       m_pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0,
+                       sizeof(push),
                        &push);
     // Viewport/scissor inherited from the pass (same dynamic state).
     vkCmdDraw(commandBuffer, 6, 1, 0, 0);
 }
 
-void ImpostorRenderer::drawPlanet(VkCommandBuffer commandBuffer, const core::Mat4& viewProjection,
+void ImpostorRenderer::drawPlanet(VkCommandBuffer commandBuffer,
+                                  const core::Mat4& viewProjection,
                                   const Body& body) const
 {
     draw(commandBuffer, m_planetPipeline, viewProjection, body, 0.0f, 1.05f);
 }
 
-void ImpostorRenderer::drawStar(VkCommandBuffer commandBuffer, const core::Mat4& viewProjection,
+void ImpostorRenderer::drawStar(VkCommandBuffer commandBuffer,
+                                const core::Mat4& viewProjection,
                                 const Body& body) const
 {
     draw(commandBuffer, m_starPipeline, viewProjection, body, 1.0f, 8.0f);

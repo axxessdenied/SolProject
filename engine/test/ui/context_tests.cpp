@@ -1,11 +1,10 @@
-#include <sol/ui/context.hpp>
-
-#include <sol/test/synthetic_cooked_font.hpp>
-#include <sol/test/test.hpp>
-
 #include <cstdint>
 #include <span>
 #include <vector>
+
+#include <sol/test/synthetic_cooked_font.hpp>
+#include <sol/test/test.hpp>
+#include <sol/ui/context.hpp>
 
 using sol::assets::Font;
 using sol::ui::InputState;
@@ -528,9 +527,8 @@ SOL_TEST(ui_context_scrolled_rows_are_out_of_the_mouse_reach)
         visibleFired = ui.button({content.min, {content.max.x, content.min.y + 40.0f}}, "First");
         // Laid out below the fold: clipped away visually, and it must be out
         // of reach too, or the player clicks a row they cannot see.
-        hiddenFired = ui.button({{content.min.x, content.min.y + 300.0f},
-                                 {content.max.x, content.min.y + 340.0f}},
-                                "Deep");
+        hiddenFired = ui.button(
+            {{content.min.x, content.min.y + 300.0f}, {content.max.x, content.min.y + 340.0f}}, "Deep");
         ui.endScroll();
         ui.endFrame();
     };
@@ -686,7 +684,8 @@ SOL_TEST(ui_text_field_caret_moves_over_whole_code_points)
 
     // "aeb" with a two-byte middle character: stepping by bytes would split
     // it and leave the string invalid UTF-8.
-    std::string value = "a\xC3\xA9" "b";
+    std::string value = "a\xC3\xA9"
+                        "b";
     focusField(ui, value);
     ui.setCaret(value.size());
 
@@ -699,7 +698,8 @@ SOL_TEST(ui_text_field_caret_moves_over_whole_code_points)
     InputState back;
     back.editBackspace = true;
     SOL_CHECK(runField(ui, back, value));
-    SOL_CHECK(value == "\xC3\xA9" "b");
+    SOL_CHECK(value == "\xC3\xA9"
+                       "b");
 
     // Home and End reach both extremes.
     InputState home;

@@ -25,19 +25,29 @@ constexpr std::size_t kRadarMaxContacts = 32;
 sol::ui::RadarKind radarKindOf(SpaceWorld::NavKind kind)
 {
     switch (kind) {
-    case SpaceWorld::NavKind::Station: return sol::ui::RadarKind::Station;
-    case SpaceWorld::NavKind::Gate: return sol::ui::RadarKind::Gate;
-    case SpaceWorld::NavKind::Planet: return sol::ui::RadarKind::Planet;
-    case SpaceWorld::NavKind::Star: return sol::ui::RadarKind::Star;
-    case SpaceWorld::NavKind::Signal: return sol::ui::RadarKind::Signal;
-    case SpaceWorld::NavKind::Field: return sol::ui::RadarKind::Field;
-    case SpaceWorld::NavKind::Wreck: return sol::ui::RadarKind::Wreck;
-    case SpaceWorld::NavKind::Bookmark: return sol::ui::RadarKind::Bookmark;
-    case SpaceWorld::NavKind::Objective: return sol::ui::RadarKind::Objective;
+    case SpaceWorld::NavKind::Station:
+        return sol::ui::RadarKind::Station;
+    case SpaceWorld::NavKind::Gate:
+        return sol::ui::RadarKind::Gate;
+    case SpaceWorld::NavKind::Planet:
+        return sol::ui::RadarKind::Planet;
+    case SpaceWorld::NavKind::Star:
+        return sol::ui::RadarKind::Star;
+    case SpaceWorld::NavKind::Signal:
+        return sol::ui::RadarKind::Signal;
+    case SpaceWorld::NavKind::Field:
+        return sol::ui::RadarKind::Field;
+    case SpaceWorld::NavKind::Wreck:
+        return sol::ui::RadarKind::Wreck;
+    case SpaceWorld::NavKind::Bookmark:
+        return sol::ui::RadarKind::Bookmark;
+    case SpaceWorld::NavKind::Objective:
+        return sol::ui::RadarKind::Objective;
     // A berth is part of a station, and it draws as one (Phase 8r). No new
     // radar glyph: the disc already has nine and the blip is 200 m from the
     // station's own, so what tells them apart is the name, not the shape.
-    case SpaceWorld::NavKind::Berth: return sol::ui::RadarKind::Station;
+    case SpaceWorld::NavKind::Berth:
+        return sol::ui::RadarKind::Station;
     }
     return sol::ui::RadarKind::Signal;
 }
@@ -63,18 +73,23 @@ sol::ui::RadarAttitude attitudeOf(const char* attitude)
 [[nodiscard]] double pickRadiusOf(const SpaceWorld& world, std::size_t navIndex)
 {
     switch (world.navTargetKind(navIndex)) {
-    case SpaceWorld::NavKind::Station: return kStationRadiusMeters;
-    case SpaceWorld::NavKind::Gate: return kGateRadiusMeters;
+    case SpaceWorld::NavKind::Station:
+        return kStationRadiusMeters;
+    case SpaceWorld::NavKind::Gate:
+        return kGateRadiusMeters;
     case SpaceWorld::NavKind::Planet:
-    case SpaceWorld::NavKind::Star: return world.navTargets()[navIndex].surfaceRadius;
+    case SpaceWorld::NavKind::Star:
+        return world.navTargets()[navIndex].surfaceRadius;
     case SpaceWorld::NavKind::Signal:
     case SpaceWorld::NavKind::Field:
     case SpaceWorld::NavKind::Wreck:
     case SpaceWorld::NavKind::Bookmark:
-    case SpaceWorld::NavKind::Objective: break;
+    case SpaceWorld::NavKind::Objective:
+        break;
     // Clickable at the size it is actually captured at, so the box the player
     // aims for and the box the ship has to fly into are one number.
-    case SpaceWorld::NavKind::Berth: return sol::sim::kBerthCaptureRadius;
+    case SpaceWorld::NavKind::Berth:
+        return sol::sim::kBerthCaptureRadius;
     }
     return 0.0;
 }
@@ -82,7 +97,8 @@ sol::ui::RadarAttitude attitudeOf(const char* attitude)
 // Everything selectable, as camera-space directions. Same list and same order
 // as the radar fill's, because both are "what the player can point at" - the
 // difference is only which projection answers the question.
-void fillPickCandidates(const SpaceWorld& world, const ViewFrame& view,
+void fillPickCandidates(const SpaceWorld& world,
+                        const ViewFrame& view,
                         std::vector<sol::ui::PickCandidate>& out)
 {
     out.clear();
@@ -138,8 +154,10 @@ void fillRadarContacts(const SpaceWorld& world, std::vector<sol::ui::RadarContac
     const sol::core::Quat toLocal = conjugate(ship.orientation);
     const std::size_t selected = world.currentTargetIndex();
 
-    const auto push = [&](const DVec3& position, sol::ui::RadarKind kind,
-                          sol::ui::RadarAttitude attitude, std::size_t selection) {
+    const auto push = [&](const DVec3& position,
+                          sol::ui::RadarKind kind,
+                          sol::ui::RadarAttitude attitude,
+                          std::size_t selection) {
         const DVec3 offset = position - ship.position;
         out.push_back({.offset = rotate(toLocal, toVec3(offset)),
                        .kind = kind,
@@ -156,12 +174,16 @@ void fillRadarContacts(const SpaceWorld& world, std::vector<sol::ui::RadarContac
         if (!world.navTargetVisible(i)) {
             continue;
         }
-        push(navTargets[i].position, radarKindOf(world.navTargetDrawKind(i)),
-             sol::ui::RadarAttitude::Neutral, i);
+        push(navTargets[i].position,
+             radarKindOf(world.navTargetDrawKind(i)),
+             sol::ui::RadarAttitude::Neutral,
+             i);
     }
     for (std::size_t i = 0; i < world.contactCount(); ++i) {
         const TargetInfo contact = world.contactInfo(i);
-        push(contact.nav.position, sol::ui::RadarKind::Ship, attitudeOf(contact.attitude),
+        push(contact.nav.position,
+             sol::ui::RadarKind::Ship,
+             attitudeOf(contact.attitude),
              navTargets.size() + i);
     }
 
@@ -169,10 +191,9 @@ void fillRadarContacts(const SpaceWorld& world, std::vector<sol::ui::RadarContac
     // to the ship, not whichever happened to be generated first. Each contact
     // carries its own selection index, so the sort costs nothing (Phase 8j) -
     // before that, the sort was what made a blip un-clickable in principle.
-    std::sort(out.begin(), out.end(),
-              [](const sol::ui::RadarContact& a, const sol::ui::RadarContact& b) {
-                  return lengthSquared(a.offset) < lengthSquared(b.offset);
-              });
+    std::sort(out.begin(), out.end(), [](const sol::ui::RadarContact& a, const sol::ui::RadarContact& b) {
+        return lengthSquared(a.offset) < lengthSquared(b.offset);
+    });
     if (out.size() > kRadarMaxContacts) {
         out.resize(kRadarMaxContacts);
     }
@@ -192,17 +213,15 @@ PickResult pickTarget(const SpaceWorld& world, Vec2 cursor)
     // draw and the hit test have to read one number or they drift apart the
     // moment the head moves.
     const Vec2 discCenter = view.hud.centreConsole.position;
-    if (view.hud.centreConsole.visible &&
-        sol::ui::insideDisc(cursor, discCenter, sol::ui::kRadarRadius)) {
+    if (view.hud.centreConsole.visible && sol::ui::insideDisc(cursor, discCenter, sol::ui::kRadarRadius)) {
         std::vector<sol::ui::RadarContact> contacts;
         fillRadarContacts(world, contacts);
         const float range = sol::ui::radarRange(sol::ui::kRadarRangeMeters);
         std::vector<Vec2> dots;
         dots.reserve(contacts.size());
         for (const sol::ui::RadarContact& contact : contacts) {
-            dots.push_back(sol::ui::radarDot(contact.offset, discCenter,
-                                             sol::ui::kRadarPlotRadius, range,
-                                             sol::ui::kRadarStalkLimit));
+            dots.push_back(sol::ui::radarDot(
+                contact.offset, discCenter, sol::ui::kRadarPlotRadius, range, sol::ui::kRadarStalkLimit));
         }
         const std::size_t hit = sol::ui::pickNearestPoint(dots, cursor);
         if (hit == sol::ui::kNoPick) {
@@ -258,7 +277,8 @@ bool selectPicked(SpaceWorld& world, const PickResult& result)
     }
     const TargetInfo info = world.currentTargetInfo();
     if (info.isShip) {
-        SOL_LOG_INFO("Target: %s [%s]", info.nav.name.c_str(),
+        SOL_LOG_INFO("Target: %s [%s]",
+                     info.nav.name.c_str(),
                      info.attitude[0] != '\0' ? info.attitude : "unaffiliated");
     } else {
         SOL_LOG_INFO("Target: %s", info.nav.name.c_str());

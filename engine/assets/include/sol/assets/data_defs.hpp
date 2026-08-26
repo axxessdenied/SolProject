@@ -37,8 +37,8 @@ enum class FitStat : std::uint32_t
     WeaponCapacitor,
     WeaponRecharge,
     Cargo,
-    ScanRange, // Phase 8e: pulse/target-scan reach
-    ScanSpeed, // Phase 8e: target-scan progress rate
+    ScanRange,      // Phase 8e: pulse/target-scan reach
+    ScanSpeed,      // Phase 8e: target-scan progress rate
     CollectorRange, // Phase 8f: how far mined ore is drawn in from
     Count,
 };
@@ -123,8 +123,8 @@ struct ShipDef
     float cargoCapacity = 50.0f; // trade goods, units
     // Scanning (engine plan Phase 8e): how far a pulse reaches and how fast a
     // target scan resolves. Scanner modules move both like any other stat.
-    float scanRange = 2.5e8f;  // meters
-    float scanSpeed = 1.0f;    // target-scan progress multiplier
+    float scanRange = 2.5e8f; // meters
+    float scanSpeed = 1.0f;   // target-scan progress multiplier
     // Mining (engine plan Phase 8f): how far loose ore is drawn in from.
     // Deliberately far shorter than a mining beam reaches, so an unfitted ship
     // has to fly in and scoop what it cut; a collector rig is what buys the
@@ -189,15 +189,15 @@ struct WeaponDef
     std::string name;
     std::string kind; // "projectile" | "hitscan"
     float damage = 0.0f;
-    float rateOfFire = 1.0f;        // shots/s
-    float range = 1'000.0f;         // meters
-    float projectileSpeed = 0.0f;   // m/s; 0 for hitscan
-    float energyCost = 10.0f;       // capacitor draw per shot
+    float rateOfFire = 1.0f;      // shots/s
+    float range = 1'000.0f;       // meters
+    float projectileSpeed = 0.0f; // m/s; 0 for hitscan
+    float energyCost = 10.0f;     // capacitor draw per shot
     // Mining (engine plan Phase 8f): yield units cut out of a rock or wreck
     // per second of held beam. 0 leaves a weapon a weapon — a mining laser is
     // an ordinary hardpoint choice, not a mode.
     float miningPower = 0.0f;
-    float price = 500.0f;           // shipyard price (Phase 8a outfitting)
+    float price = 500.0f; // shipyard price (Phase 8a outfitting)
     // What its bolt is drawn as (Phase 19). Empty means the `bolt` role, so
     // adding this key changed nothing for the four shipped weapons. A hitscan
     // weapon spawns no projectile and ignores it.
@@ -383,7 +383,6 @@ struct StationRate
     float rate = 0.0f; // units/s
 };
 
-
 // A station archetype: how often the galaxy generator places it per region
 // tier, and what its market produces/consumes (Phase 7 economy).
 struct StationDef
@@ -437,8 +436,8 @@ public:
     // Merges one TOML document (any mix of [[ship]]/[[weapon]]/[[faction]]).
     // sourceName appears in errors and def provenance. On error the database
     // is left as it was before the call.
-    [[nodiscard]] bool mergeToml(const char* text, std::size_t length, const char* sourceName,
-                                 std::string* outError = nullptr);
+    [[nodiscard]] bool
+    mergeToml(const char* text, std::size_t length, const char* sourceName, std::string* outError = nullptr);
 
     // Reads and merges every *.toml directly inside directory, sorted by
     // path for determinism. A missing directory is fine (a mod without data).
@@ -488,14 +487,23 @@ public:
     // First-definition order; later layers replace elements in place, so
     // indices stay stable across a reload that only edits values.
     [[nodiscard]] const std::vector<ShipDef>& ships() const { return m_ships; }
+
     [[nodiscard]] const std::vector<WeaponDef>& weapons() const { return m_weapons; }
+
     [[nodiscard]] const std::vector<FactionDef>& factions() const { return m_factions; }
+
     [[nodiscard]] const std::vector<CommodityDef>& commodities() const { return m_commodities; }
+
     [[nodiscard]] const std::vector<StationDef>& stations() const { return m_stations; }
+
     [[nodiscard]] const std::vector<ModuleDef>& modules() const { return m_modules; }
+
     [[nodiscard]] const std::vector<CrewDef>& crew() const { return m_crew; }
+
     [[nodiscard]] const std::vector<SoundDef>& sounds() const { return m_sounds; }
+
     [[nodiscard]] const std::vector<ModelDef>& models() const { return m_models; }
+
     [[nodiscard]] const std::vector<RoleDef>& roles() const { return m_roles; }
 
 private:

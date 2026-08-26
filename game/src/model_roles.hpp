@@ -63,15 +63,20 @@ inline constexpr const char* kRoleWreck = "wreck";
 //
 // ⚑ A real static array rather than a returned `std::initializer_list`, whose
 // backing store would not outlive the return statement.
-inline constexpr std::array<const char* const, 9> kModelRoles = {
-    kRoleGate,    kRoleGateMembrane, kRoleRock, kRoleOreChunk, kRoleBolt,
-    kRoleCockpit, kRoleStation,      kRoleShip, kRoleWreck};
+inline constexpr std::array<const char* const, 9> kModelRoles = {kRoleGate,
+                                                                 kRoleGateMembrane,
+                                                                 kRoleRock,
+                                                                 kRoleOreChunk,
+                                                                 kRoleBolt,
+                                                                 kRoleCockpit,
+                                                                 kRoleStation,
+                                                                 kRoleShip,
+                                                                 kRoleWreck};
 
 // The roles above whose instance scale carries meaning, so the model filling
 // them must be authored at radius 1.0. Named here rather than in the test so
 // the contract sits beside the roles it constrains.
-inline constexpr std::array<const char* const, 3> kUnitRadiusRoles = {kRoleRock, kRoleOreChunk,
-                                                                     kRoleBolt};
+inline constexpr std::array<const char* const, 3> kUnitRadiusRoles = {kRoleRock, kRoleOreChunk, kRoleBolt};
 
 [[nodiscard]] inline std::span<const char* const> modelRoles()
 {

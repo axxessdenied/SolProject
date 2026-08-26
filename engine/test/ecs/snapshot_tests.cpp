@@ -1,7 +1,6 @@
-#include "sol/ecs/snapshot.hpp"
-
 #include "sol/core/serialize.hpp"
 #include "sol/ecs/ecs.hpp"
+#include "sol/ecs/snapshot.hpp"
 #include "sol/test/test.hpp"
 
 #include <cstdint>
@@ -75,7 +74,7 @@ SOL_TEST(snapshot_saveLoadRoundTripsWorldState)
     SOL_CHECK(loaded.isAlive(entities[0]));
     SOL_CHECK(!loaded.isAlive(entities[1])); // destroyed before save
     SOL_CHECK(!loaded.isAlive(entities[2])); // stale handle stays stale
-    SOL_CHECK(loaded.isAlive(entities[3])); // recycled slot, right generation
+    SOL_CHECK(loaded.isAlive(entities[3]));  // recycled slot, right generation
 
     SOL_CHECK(loaded.get<Pos>(entities[0]).x == 1.0);
     SOL_CHECK(loaded.get<Pos>(entities[0]).y == 2.0);

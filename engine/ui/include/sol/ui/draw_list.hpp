@@ -36,8 +36,11 @@ struct Rect
     core::Vec2 max;
 
     [[nodiscard]] constexpr float width() const { return max.x - min.x; }
+
     [[nodiscard]] constexpr float height() const { return max.y - min.y; }
+
     [[nodiscard]] constexpr bool empty() const { return max.x <= min.x || max.y <= min.y; }
+
     [[nodiscard]] constexpr bool contains(core::Vec2 point) const
     {
         return point.x >= min.x && point.x < max.x && point.y >= min.y && point.y < max.y;
@@ -69,6 +72,7 @@ public:
     // The font whose atlas backs text drawing, and the texture slot it was
     // registered in. Text is dropped (not crashed on) when unset.
     void setFont(const assets::Font* font, std::uint32_t fontTexture);
+
     [[nodiscard]] const assets::Font* font() const { return m_font; }
 
     // Clears the frame's geometry; call once per frame before building.
@@ -88,22 +92,34 @@ public:
     // way the screen runs, so -pi/2 is up. Drawn as one strip between an inner
     // and an outer radius rather than as joined line segments, which keeps a
     // thick arc free of gaps at the joints. `segments` covers the whole sweep.
-    void addArc(core::Vec2 center, float radius, float startAngle, float endAngle,
-                const Color& color, float thickness = 1.0f, int segments = 24);
-    void addCircle(core::Vec2 center, float radius, const Color& color, float thickness = 1.0f,
-                   int segments = 24);
+    void addArc(core::Vec2 center,
+                float radius,
+                float startAngle,
+                float endAngle,
+                const Color& color,
+                float thickness = 1.0f,
+                int segments = 24);
+    void
+    addCircle(core::Vec2 center, float radius, const Color& color, float thickness = 1.0f, int segments = 24);
 
     // Draws UTF-8 text with `position` at the left end of the baseline.
     // Returns the advance width consumed.
-    float addText(const assets::FontStyleRecord& style, core::Vec2 position, std::string_view text,
+    float addText(const assets::FontStyleRecord& style,
+                  core::Vec2 position,
+                  std::string_view text,
                   const Color& color);
 
     // Draws inside `box` using the style's ascent/descent to center vertically.
-    float addTextInBox(const assets::FontStyleRecord& style, const Rect& box, std::string_view text,
-                       const Color& color, TextAlign align = TextAlign::Left);
+    float addTextInBox(const assets::FontStyleRecord& style,
+                       const Rect& box,
+                       std::string_view text,
+                       const Color& color,
+                       TextAlign align = TextAlign::Left);
 
     [[nodiscard]] std::span<const Vertex> vertices() const { return m_vertices; }
+
     [[nodiscard]] std::span<const std::uint16_t> indices() const { return m_indices; }
+
     [[nodiscard]] std::span<const Batch> batches() const { return m_batches; }
 
     // True when a build overflowed the 16-bit index space and geometry was
@@ -118,8 +134,12 @@ private:
     // exactly like "no clip", and would be drawn over the whole screen.
     [[nodiscard]] bool clipIsEmpty() const;
     [[nodiscard]] bool reserve(std::size_t vertexCount, std::size_t indexCount);
-    void addQuad(core::Vec2 topLeft, core::Vec2 bottomRight, core::Vec2 uvMin, core::Vec2 uvMax,
-                 const Color& color, std::uint32_t texture);
+    void addQuad(core::Vec2 topLeft,
+                 core::Vec2 bottomRight,
+                 core::Vec2 uvMin,
+                 core::Vec2 uvMax,
+                 const Color& color,
+                 std::uint32_t texture);
 
     const assets::Font* m_font = nullptr;
     std::uint32_t m_fontTexture = 0;

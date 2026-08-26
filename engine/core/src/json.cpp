@@ -63,7 +63,10 @@ private:
     {
         if (m_error.empty()) {
             char buffer[128];
-            std::snprintf(buffer, sizeof(buffer), "%s (offset %zu)", message,
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%s (offset %zu)",
+                          message,
                           static_cast<std::size_t>(m_cursor - m_start));
             m_error = buffer;
         }
@@ -109,9 +112,13 @@ private:
         }
 
         switch (*m_cursor) {
-        case '{': return parseObject(out, depth);
-        case '[': return parseArray(out, depth);
-        case '"': out.m_type = JsonType::String; return parseString(out.m_string);
+        case '{':
+            return parseObject(out, depth);
+        case '[':
+            return parseArray(out, depth);
+        case '"':
+            out.m_type = JsonType::String;
+            return parseString(out.m_string);
         case 't':
             if (consumeLiteral("true")) {
                 out.m_type = JsonType::Bool;
@@ -135,7 +142,8 @@ private:
             }
             fail("invalid literal");
             return false;
-        default: return parseNumber(out);
+        default:
+            return parseNumber(out);
         }
     }
 
@@ -203,14 +211,30 @@ private:
             }
             const char escape = *m_cursor++;
             switch (escape) {
-            case '"': out.push_back('"'); break;
-            case '\\': out.push_back('\\'); break;
-            case '/': out.push_back('/'); break;
-            case 'b': out.push_back('\b'); break;
-            case 'f': out.push_back('\f'); break;
-            case 'n': out.push_back('\n'); break;
-            case 'r': out.push_back('\r'); break;
-            case 't': out.push_back('\t'); break;
+            case '"':
+                out.push_back('"');
+                break;
+            case '\\':
+                out.push_back('\\');
+                break;
+            case '/':
+                out.push_back('/');
+                break;
+            case 'b':
+                out.push_back('\b');
+                break;
+            case 'f':
+                out.push_back('\f');
+                break;
+            case 'n':
+                out.push_back('\n');
+                break;
+            case 'r':
+                out.push_back('\r');
+                break;
+            case 't':
+                out.push_back('\t');
+                break;
             case 'u': {
                 unsigned codepoint = 0;
                 if (!parseHex4(codepoint)) {
@@ -237,7 +261,9 @@ private:
                 appendUtf8(out, codepoint);
                 break;
             }
-            default: fail("invalid escape"); return false;
+            default:
+                fail("invalid escape");
+                return false;
             }
         }
     }

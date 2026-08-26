@@ -98,8 +98,7 @@ bool loadSound(const char* path, SoundData& out)
         return false;
     }
 
-    const std::size_t sampleCount =
-        static_cast<std::size_t>(header.frameCount) * header.channelCount;
+    const std::size_t sampleCount = static_cast<std::size_t>(header.frameCount) * header.channelCount;
     if (bytes.size() != sizeof(header) + sampleCount * sizeof(std::int16_t)) {
         SOL_LOG_ERROR("Sound size mismatch: %s", path);
         return false;
@@ -109,8 +108,7 @@ bool loadSound(const char* path, SoundData& out)
     out.channelCount = header.channelCount;
     out.samples.resize(sampleCount);
     if (sampleCount > 0) {
-        std::memcpy(out.samples.data(), bytes.data() + sizeof(header),
-                    sampleCount * sizeof(std::int16_t));
+        std::memcpy(out.samples.data(), bytes.data() + sizeof(header), sampleCount * sizeof(std::int16_t));
     }
     return true;
 }

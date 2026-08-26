@@ -21,8 +21,7 @@ class View
 
 public:
     View(const std::vector<std::uint32_t>& generations, Pool<Ts>&... pools)
-        : m_generations(&generations)
-        , m_pools(&pools...)
+        : m_generations(&generations), m_pools(&pools...)
     {
     }
 

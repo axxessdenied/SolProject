@@ -25,8 +25,11 @@ public:
     [[nodiscard]] bool loadFromMemory(std::span<const std::uint8_t> bytes);
 
     [[nodiscard]] bool valid() const { return m_valid; }
+
     [[nodiscard]] std::uint32_t atlasWidth() const { return m_atlasWidth; }
+
     [[nodiscard]] std::uint32_t atlasHeight() const { return m_atlasHeight; }
+
     [[nodiscard]] std::span<const std::uint8_t> atlas() const { return m_atlas; }
 
     [[nodiscard]] std::span<const FontStyleRecord> styles() const { return m_styles; }

@@ -24,12 +24,11 @@
 // stock anywhere, and the job ticks on the same coarse clock whether the
 // player is docked, flying, or three systems away (decisions/005).
 
+#include "sol/core/math/math.hpp"
+#include "sol/core/serialize.hpp"
 #include "sol/sim/survey.hpp"
 #include "sol/sim/universe.hpp"
 #include "sol/sim/weapons.hpp" // segmentHitsSphere: a miner's path through a field
-
-#include "sol/core/math/math.hpp"
-#include "sol/core/serialize.hpp"
 
 #include <cstdint>
 #include <span>
@@ -45,9 +44,9 @@ struct RockSpec
     core::DVec3 position; // system barycenter frame, meters
     double radius = 0.0;  // meters
     core::Vec3 tumbleAxis{0.0f, 1.0f, 0.0f};
-    float tumbleRate = 0.0f;       // rad/s
-    std::uint32_t commodity = 0;   // economy commodity index
-    float yieldUnits = 0.0f;       // total units in an untouched rock
+    float tumbleRate = 0.0f;     // rad/s
+    std::uint32_t commodity = 0; // economy commodity index
+    float yieldUnits = 0.0f;     // total units in an untouched rock
     std::uint64_t seed = 0;
 };
 
@@ -75,9 +74,9 @@ struct WreckRecord
 {
     std::uint32_t id = 0;
     std::uint32_t system = 0;
-    core::DVec3 position; // where it fell
-    std::string defId;    // the victim's ship def (name and hull size)
-    std::string name;     // display name at the time of death
+    core::DVec3 position;   // where it fell
+    std::string defId;      // the victim's ship def (name and hull size)
+    std::string name;       // display name at the time of death
     std::uint64_t seed = 0; // the loot roll handed to the Lua hook
     SignalLoot contents;
     double decayRemaining = 0.0;
@@ -139,8 +138,8 @@ struct MiningParams
     // big job is a real round trip rather than a pause at the counter.
     double refineSecondsBase = 60.0;
     double refineSecondsPerUnit = 2.0;
-    float refineRatio = 0.55f;      // output units per input unit
-    float refineFeePerUnit = 2.0f;  // credits
+    float refineRatio = 0.55f;     // output units per input unit
+    float refineFeePerUnit = 2.0f; // credits
     std::uint32_t maxRefineJobs = 16;
 
     std::uint32_t maxCargoStacks = 3; // wreck-loot validation (as SurveyParams)
@@ -186,7 +185,8 @@ inline constexpr std::uint32_t kNoRock = 0xffff'ffffu;
 // the ship actually stops a hold point short of it, and it counts the rock
 // being LEFT as an obstacle, because a new rock on the far side of the old
 // one is exactly the hop that would clip it.
-[[nodiscard]] inline std::uint32_t chooseWorkRock(const core::DVec3& from, std::uint32_t avoid,
+[[nodiscard]] inline std::uint32_t chooseWorkRock(const core::DVec3& from,
+                                                  std::uint32_t avoid,
                                                   std::span<const MiningRock> rocks,
                                                   double clearance)
 {
@@ -203,8 +203,9 @@ inline constexpr std::uint32_t kNoRock = 0xffff'ffffu;
         bool blocked = false;
         for (std::uint32_t j = 0; j < rocks.size() && !blocked; ++j) {
             double t = 0.0;
-            blocked = j != i && segmentHitsSphere(from, rocks[i].position, rocks[j].position,
-                                                  rocks[j].radius + clearance, t);
+            blocked =
+                j != i &&
+                segmentHitsSphere(from, rocks[i].position, rocks[j].position, rocks[j].radius + clearance, t);
         }
         if (!blocked) {
             best = i;
@@ -229,12 +230,11 @@ inline constexpr std::uint32_t kNoRock = 0xffff'ffffu;
 // station's side, so a miner is between the rock and the dock it feeds, which
 // is where anyone flying in from the station will see it). A degenerate
 // direction still has to answer with a point outside the rock.
-[[nodiscard]] inline core::DVec3 minerHoldPoint(const core::DVec3& rock, double rockRadius,
-                                                const core::DVec3& towards, double clearance)
+[[nodiscard]] inline core::DVec3
+minerHoldPoint(const core::DVec3& rock, double rockRadius, const core::DVec3& towards, double clearance)
 {
     const double distance = length(towards);
-    const core::DVec3 direction =
-        distance > 1.0e-6 ? towards * (1.0 / distance) : core::DVec3{0.0, 0.0, 1.0};
+    const core::DVec3 direction = distance > 1.0e-6 ? towards * (1.0 / distance) : core::DVec3{0.0, 0.0, 1.0};
     const double radius = rockRadius > 0.0 ? rockRadius : 0.0;
     return rock + direction * (radius + (clearance > 0.0 ? clearance : 0.0));
 }
@@ -244,44 +244,52 @@ class MiningSim
 public:
     // Sizes the per-system tables and precomputes field counts.
     // Deterministic for (galaxy, params, seed).
-    void initialize(const Galaxy& galaxy, const MiningParams& params,
-                    std::uint32_t commodityCount, std::uint64_t seed);
+    void initialize(const Galaxy& galaxy,
+                    const MiningParams& params,
+                    std::uint32_t commodityCount,
+                    std::uint64_t seed);
 
     // --- Content (pure functions of the system seed) ---
-    void fieldsFor(const Galaxy& galaxy, std::uint32_t system,
-                   std::vector<AsteroidFieldSpec>& out) const;
+    void fieldsFor(const Galaxy& galaxy, std::uint32_t system, std::vector<AsteroidFieldSpec>& out) const;
     // Expands one field into its rocks. Out is cleared even on bad input.
-    void rocksFor(const Galaxy& galaxy, std::uint32_t system, std::uint32_t field,
+    void rocksFor(const Galaxy& galaxy,
+                  std::uint32_t system,
+                  std::uint32_t field,
                   std::vector<RockSpec>& out) const;
     [[nodiscard]] std::uint32_t fieldCount(std::uint32_t system) const;
 
     // --- Depletion (sparse: only rocks that have been cut) ---
-    [[nodiscard]] float unitsTaken(std::uint32_t system, std::uint32_t field,
-                                   std::uint32_t rock) const;
-    [[nodiscard]] float unitsLeft(std::uint32_t system, std::uint32_t field, std::uint32_t rock,
-                                  float totalUnits) const;
+    [[nodiscard]] float unitsTaken(std::uint32_t system, std::uint32_t field, std::uint32_t rock) const;
+    [[nodiscard]] float
+    unitsLeft(std::uint32_t system, std::uint32_t field, std::uint32_t rock, float totalUnits) const;
     // Cuts up to `units` out of a rock holding `totalUnits` when untouched;
     // returns what actually came out (0 once the rock is empty).
-    float mineRock(std::uint32_t system, std::uint32_t field, std::uint32_t rock,
-                   float totalUnits, float units);
+    float
+    mineRock(std::uint32_t system, std::uint32_t field, std::uint32_t rock, float totalUnits, float units);
+
     [[nodiscard]] std::size_t depletionRecordCount() const { return m_depletion.size(); }
+
     // Takes up to `units` of one commodity out of a system's fields, working
     // rock by rock, and reports what was actually there. This is the path a
     // mining outpost's production runs through, so an NPC and the player's
     // beam deplete the same rock through the same accounting — the first
     // time the sandbox and the economy have touched one finite resource.
-    float drawFromSystem(const Galaxy& galaxy, std::uint32_t system, std::uint32_t commodity,
-                         float units);
+    float drawFromSystem(const Galaxy& galaxy, std::uint32_t system, std::uint32_t commodity, float units);
     // Units of a commodity still in the ground across a whole system.
-    [[nodiscard]] float systemStock(const Galaxy& galaxy, std::uint32_t system,
-                                    std::uint32_t commodity) const;
+    [[nodiscard]] float
+    systemStock(const Galaxy& galaxy, std::uint32_t system, std::uint32_t commodity) const;
 
     // --- Wrecks ---
     // Records a kill; returns the new wreck id, or 0 on bad input (ids start
     // at 1, so 0 is always "no wreck").
-    std::uint32_t addWreck(std::uint32_t system, const core::DVec3& position, std::string defId,
-                           std::string name, std::uint64_t seed);
+    std::uint32_t addWreck(std::uint32_t system,
+                           const core::DVec3& position,
+                           std::string defId,
+                           std::string name,
+                           std::uint64_t seed);
+
     [[nodiscard]] const std::vector<WreckRecord>& wrecks() const { return m_wrecks; }
+
     [[nodiscard]] const WreckRecord* wreck(std::uint32_t id) const;
     // Contents composed game-side (Lua or the built-in default), validated
     // exactly like signal loot. The default is written at death and the Lua
@@ -304,9 +312,13 @@ public:
     [[nodiscard]] float refineOutput(float units) const;
     // Queues an order. False when the queue is full or the input is invalid;
     // the caller has already taken the ore and the fee.
-    bool startRefineJob(std::uint32_t market, std::uint32_t inputCommodity, float units,
+    bool startRefineJob(std::uint32_t market,
+                        std::uint32_t inputCommodity,
+                        float units,
                         std::uint32_t outputCommodity);
+
     [[nodiscard]] const std::vector<RefineJob>& refineJobs() const { return m_refineJobs; }
+
     // Finished output waiting at a market (0 while jobs are still running).
     [[nodiscard]] float readyAt(std::uint32_t market, std::uint32_t commodity) const;
     // Time until the earliest unfinished job at a market completes, or a
@@ -334,8 +346,7 @@ private:
         float unitsTaken = 0.0f;
     };
 
-    [[nodiscard]] static std::uint64_t rockKey(std::uint32_t system, std::uint32_t field,
-                                               std::uint32_t rock);
+    [[nodiscard]] static std::uint64_t rockKey(std::uint32_t system, std::uint32_t field, std::uint32_t rock);
     [[nodiscard]] std::size_t findDepletion(std::uint64_t key) const;
 
     // Adds `takes` (ascending key order, unique) in one linear merge. An
@@ -351,11 +362,12 @@ private:
     // so regenerating them costs an RNG walk per rock for an answer that
     // cannot have changed. Memoized by (system, field); derived state, never
     // saved, dropped whenever the galaxy it came from is replaced.
-    [[nodiscard]] const std::vector<RockSpec>& cachedRocks(const Galaxy& galaxy,
-                                                           std::uint32_t system,
-                                                           std::uint32_t field) const;
+    [[nodiscard]] const std::vector<RockSpec>&
+    cachedRocks(const Galaxy& galaxy, std::uint32_t system, std::uint32_t field) const;
     // The generator behind the memo. Every caller goes through cachedRocks.
-    void generateRocks(const Galaxy& galaxy, std::uint32_t system, std::uint32_t field,
+    void generateRocks(const Galaxy& galaxy,
+                       std::uint32_t system,
+                       std::uint32_t field,
                        std::vector<RockSpec>& out) const;
 
     MiningParams m_params;

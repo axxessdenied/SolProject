@@ -32,19 +32,23 @@ struct InputChord
     {
         return {ChordKind::Key, static_cast<std::uint8_t>(key)};
     }
+
     [[nodiscard]] static InputChord ofMouse(MouseButton button)
     {
         return {ChordKind::Mouse, static_cast<std::uint8_t>(button)};
     }
 
     [[nodiscard]] bool bound() const { return kind != ChordKind::None; }
+
     [[nodiscard]] Key asKey() const { return static_cast<Key>(code); }
+
     [[nodiscard]] MouseButton asMouse() const { return static_cast<MouseButton>(code); }
 
     [[nodiscard]] bool operator==(const InputChord& other) const
     {
         return kind == other.kind && (kind == ChordKind::None || code == other.code);
     }
+
     [[nodiscard]] bool operator!=(const InputChord& other) const { return !(*this == other); }
 };
 
@@ -92,10 +96,8 @@ public:
     static constexpr std::uint32_t kNoAction = 0xFFFFFFFFu;
 
     void setActionCount(std::uint32_t count);
-    [[nodiscard]] std::uint32_t actionCount() const
-    {
-        return static_cast<std::uint32_t>(m_chords.size());
-    }
+
+    [[nodiscard]] std::uint32_t actionCount() const { return static_cast<std::uint32_t>(m_chords.size()); }
 
     // Sets a binding without conflict handling - for installing defaults,
     // where the caller is asserting the layout is already coherent.

@@ -28,7 +28,9 @@ struct GpuTexture
 class MeshRenderer
 {
 public:
-    [[nodiscard]] bool initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
+    [[nodiscard]] bool initialize(rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
                                   const char* shaderDirectory);
     void shutdown();
 
@@ -70,8 +72,12 @@ public:
     // alpha is coverage in 0..1 and reaches the shader in the push block's one
     // remaining dead lane. 1.0 is the opaque identity: the fragment shader
     // premultiplies by it, so an opaque draw emits exactly what it always did.
-    void draw(VkCommandBuffer commandBuffer, const GpuMesh& mesh, const GpuTexture& texture,
-              const core::Mat4& mvp, const core::Mat4& model, float emissive = 0.0f,
+    void draw(VkCommandBuffer commandBuffer,
+              const GpuMesh& mesh,
+              const GpuTexture& texture,
+              const core::Mat4& mvp,
+              const core::Mat4& model,
+              float emissive = 0.0f,
               float alpha = 1.0f) const;
 
 private:

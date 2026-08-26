@@ -53,8 +53,8 @@ namespace sol::core {
 // nearly a full counter period rather than as an error. There is no way to
 // tell the two apart from the values alone, and a wrap is the case that
 // actually happens.
-[[nodiscard]] constexpr std::uint64_t timestampDelta(std::uint64_t begin, std::uint64_t end,
-                                                     std::uint32_t validBits)
+[[nodiscard]] constexpr std::uint64_t
+timestampDelta(std::uint64_t begin, std::uint64_t end, std::uint32_t validBits)
 {
     const std::uint64_t mask = timestampMask(validBits);
     if (mask == 0) {
@@ -81,8 +81,10 @@ struct TimestampPair
 // "no measurement", which is a different thing from a measurement of zero,
 // and the caller has to keep them apart or it will publish a zero it never
 // measured.
-[[nodiscard]] inline bool resolveTimestampPair(const TimestampPair& pair, std::uint32_t validBits,
-                                               double periodNanoseconds, double& outMilliseconds)
+[[nodiscard]] inline bool resolveTimestampPair(const TimestampPair& pair,
+                                               std::uint32_t validBits,
+                                               double periodNanoseconds,
+                                               double& outMilliseconds)
 {
     if (validBits == 0 || !(periodNanoseconds > 0.0)) {
         return false;

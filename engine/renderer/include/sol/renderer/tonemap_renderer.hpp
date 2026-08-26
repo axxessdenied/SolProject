@@ -13,7 +13,9 @@ namespace sol::renderer {
 class TonemapRenderer
 {
 public:
-    [[nodiscard]] bool initialize(rhi::Context& context, VkFormat colorFormat, VkFormat depthFormat,
+    [[nodiscard]] bool initialize(rhi::Context& context,
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat,
                                   const char* shaderDirectory);
     void shutdown();
     [[nodiscard]] bool reloadPipeline();

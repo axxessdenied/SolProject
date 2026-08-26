@@ -180,8 +180,8 @@ void scanContentLine(std::string_view line, int& depth, bool& sawComment)
 
 // --- reading values ---------------------------------------------------------
 
-[[nodiscard]] bool readIntegerArray(const TomlValue& value, std::size_t expected,
-                                    std::array<std::int64_t, 5>& out)
+[[nodiscard]] bool
+readIntegerArray(const TomlValue& value, std::size_t expected, std::array<std::int64_t, 5>& out)
 {
     if (!value.isArray() || value.size() != expected) {
         return false;
@@ -229,8 +229,7 @@ struct PaintMask
 
 void plot(TextureImage& image, PaintMask* mask, int x, int y, TextureColor c)
 {
-    if (x < 0 || y < 0 || x >= static_cast<int>(image.width) ||
-        y >= static_cast<int>(image.height)) {
+    if (x < 0 || y < 0 || x >= static_cast<int>(image.width) || y >= static_cast<int>(image.height)) {
         return;
     }
     const std::size_t index = static_cast<std::size_t>(y) * image.width + static_cast<std::size_t>(x);
@@ -281,8 +280,7 @@ void setRow(PaintMask* mask, std::size_t row)
 // their own list; `lines` numbers its `vertical` entries and then its
 // `horizontal` ones, because that is the order they are painted; `fill` and
 // `checker` have no list and draw as a single row 0.
-void drawLayerInto(const TextureDoc& doc, const TextureLayer& layer, TextureImage& image,
-                   PaintMask* touched)
+void drawLayerInto(const TextureDoc& doc, const TextureLayer& layer, TextureImage& image, PaintMask* touched)
 {
     setRow(touched, 0);
     switch (layer.op) {
@@ -324,8 +322,8 @@ void drawLayerInto(const TextureDoc& doc, const TextureLayer& layer, TextureImag
         const std::vector<TexturePanel> panels = layer.value("panels").panels;
         for (std::size_t i = 0; i < panels.size(); ++i) {
             setRow(touched, i);
-            const TextureColor color{panels[i].shade + tint.r, panels[i].shade + tint.g,
-                                     panels[i].shade + tint.b};
+            const TextureColor color{
+                panels[i].shade + tint.r, panels[i].shade + tint.g, panels[i].shade + tint.b};
             fillRect(image, touched, panels[i].x, panels[i].y, panels[i].w, panels[i].h, color);
         }
         break;
@@ -340,13 +338,13 @@ void drawLayerInto(const TextureDoc& doc, const TextureLayer& layer, TextureImag
         const std::vector<std::int64_t> horizontal = layer.value("horizontal").integers;
         for (std::size_t i = 0; i < vertical.size(); ++i) {
             setRow(touched, i);
-            fillRect(image, touched, penStart(static_cast<int>(vertical[i]), width), 0, width,
-                     doc.height, color);
+            fillRect(
+                image, touched, penStart(static_cast<int>(vertical[i]), width), 0, width, doc.height, color);
         }
         for (std::size_t i = 0; i < horizontal.size(); ++i) {
             setRow(touched, vertical.size() + i);
-            fillRect(image, touched, 0, penStart(static_cast<int>(horizontal[i]), width), doc.width,
-                     width, color);
+            fillRect(
+                image, touched, 0, penStart(static_cast<int>(horizontal[i]), width), doc.width, width, color);
         }
         break;
     }
@@ -381,9 +379,8 @@ bool textureOpFromName(const char* name, TextureOp& out)
 
 std::span<const TextureOp> textureOps()
 {
-    static const std::array<TextureOp, 5> kAll = {TextureOp::Fill, TextureOp::Checker,
-                                                  TextureOp::Rects, TextureOp::Panels,
-                                                  TextureOp::Lines};
+    static const std::array<TextureOp, 5> kAll = {
+        TextureOp::Fill, TextureOp::Checker, TextureOp::Rects, TextureOp::Panels, TextureOp::Lines};
     return kAll;
 }
 
@@ -461,8 +458,8 @@ void TextureLayer::set(const char* name, const TextureValue& value)
     params.emplace_back(name, value);
 }
 
-bool parseTexture(const char* text, std::size_t length, const char* sourceName, TextureDoc& out,
-                  std::string* error)
+bool parseTexture(
+    const char* text, std::size_t length, const char* sourceName, TextureDoc& out, std::string* error)
 {
     TomlValue root;
     std::string tomlError;
@@ -541,8 +538,8 @@ bool parseTexture(const char* text, std::size_t length, const char* sourceName, 
                     }
                 }
                 if (spec == nullptr) {
-                    reader.fail("'" + std::string(textureOpName(layer.op)) +
-                                "' has no parameter '" + member.first + "'");
+                    reader.fail("'" + std::string(textureOpName(layer.op)) + "' has no parameter '" +
+                                member.first + "'");
                     return false;
                 }
 
@@ -563,16 +560,16 @@ bool parseTexture(const char* text, std::size_t length, const char* sourceName, 
                         reader.fail("'" + member.first + "' must be [r, g, b]");
                         return false;
                     }
-                    const std::int64_t low =
-                        spec->kind == TextureParamKind::ColorOffset ? -255 : 0;
+                    const std::int64_t low = spec->kind == TextureParamKind::ColorOffset ? -255 : 0;
                     for (std::size_t c = 0; c < 3; ++c) {
                         if (!inRange(channels[c], low, 255)) {
-                            reader.fail("'" + member.first + "' channels must be " +
-                                        std::to_string(low) + "..255");
+                            reader.fail("'" + member.first + "' channels must be " + std::to_string(low) +
+                                        "..255");
                             return false;
                         }
                     }
-                    parsed.color = {static_cast<int>(channels[0]), static_cast<int>(channels[1]),
+                    parsed.color = {static_cast<int>(channels[0]),
+                                    static_cast<int>(channels[1]),
                                     static_cast<int>(channels[2])};
                     break;
                 }
@@ -587,8 +584,8 @@ bool parseTexture(const char* text, std::size_t length, const char* sourceName, 
                     for (std::size_t row = 0; row < value.size(); ++row) {
                         std::array<std::int64_t, 5> numbers{};
                         if (!readIntegerArray(value[row], arity, numbers)) {
-                            reader.fail("'" + member.first + "' row " + std::to_string(row) +
-                                        " must be " + std::to_string(arity) + " integers");
+                            reader.fail("'" + member.first + "' row " + std::to_string(row) + " must be " +
+                                        std::to_string(arity) + " integers");
                             return false;
                         }
                         if (numbers[2] < 0 || numbers[3] < 0) {
@@ -608,9 +605,10 @@ bool parseTexture(const char* text, std::size_t length, const char* sourceName, 
                                                      static_cast<int>(numbers[3]),
                                                      static_cast<int>(numbers[4])});
                         } else {
-                            parsed.rects.push_back(
-                                {static_cast<int>(numbers[0]), static_cast<int>(numbers[1]),
-                                 static_cast<int>(numbers[2]), static_cast<int>(numbers[3])});
+                            parsed.rects.push_back({static_cast<int>(numbers[0]),
+                                                    static_cast<int>(numbers[1]),
+                                                    static_cast<int>(numbers[2]),
+                                                    static_cast<int>(numbers[3])});
                         }
                     }
                     break;
@@ -677,9 +675,8 @@ std::string writeTexture(const TextureDoc& doc)
                 break;
             case TextureParamKind::Color:
             case TextureParamKind::ColorOffset:
-                out += "[" + std::to_string(authored->color.r) + ", " +
-                       std::to_string(authored->color.g) + ", " +
-                       std::to_string(authored->color.b) + "]";
+                out += "[" + std::to_string(authored->color.r) + ", " + std::to_string(authored->color.g) +
+                       ", " + std::to_string(authored->color.b) + "]";
                 break;
             // ⚑ One row per line, which is the same argument the baked vertex
             // list makes: moving one panel must be one changed line, or the
@@ -695,9 +692,9 @@ std::string writeTexture(const TextureDoc& doc)
             case TextureParamKind::PanelList:
                 out += "[\n";
                 for (const TexturePanel& panel : authored->panels) {
-                    out += "  [" + std::to_string(panel.x) + ", " + std::to_string(panel.y) +
-                           ", " + std::to_string(panel.w) + ", " + std::to_string(panel.h) +
-                           ", " + std::to_string(panel.shade) + "],\n";
+                    out += "  [" + std::to_string(panel.x) + ", " + std::to_string(panel.y) + ", " +
+                           std::to_string(panel.w) + ", " + std::to_string(panel.h) + ", " +
+                           std::to_string(panel.shade) + "],\n";
                 }
                 out += "]";
                 break;
@@ -781,8 +778,7 @@ std::size_t textureRowCount(const TextureLayer& layer)
     case TextureOp::Panels:
         return layer.value("panels").panels.size();
     case TextureOp::Lines:
-        return layer.value("vertical").integers.size() +
-               layer.value("horizontal").integers.size();
+        return layer.value("vertical").integers.size() + layer.value("horizontal").integers.size();
     }
     return 0;
 }
@@ -846,8 +842,7 @@ namespace {
 
 // The named parameter and the index within it that a row ordinal refers to.
 // `vertical` runs first because that is the order `drawLayerInto` paints in.
-[[nodiscard]] bool resolveLineRow(const TextureLayer& layer, int row, const char*& param,
-                                  std::size_t& index)
+[[nodiscard]] bool resolveLineRow(const TextureLayer& layer, int row, const char*& param, std::size_t& index)
 {
     const std::size_t verticals = layer.value("vertical").integers.size();
     const auto ordinal = static_cast<std::size_t>(row);

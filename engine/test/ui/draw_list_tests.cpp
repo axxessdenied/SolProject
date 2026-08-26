@@ -1,11 +1,10 @@
-#include <sol/ui/draw_list.hpp>
-
-#include <sol/test/synthetic_cooked_font.hpp>
-#include <sol/test/test.hpp>
-
 #include <cmath>
 #include <cstdint>
 #include <vector>
+
+#include <sol/test/synthetic_cooked_font.hpp>
+#include <sol/test/test.hpp>
+#include <sol/ui/draw_list.hpp>
 
 using sol::assets::Font;
 using sol::assets::FontStyleRecord;
@@ -86,9 +85,9 @@ SOL_TEST(draw_list_reset_clears_everything)
 SOL_TEST(draw_list_skips_degenerate_geometry)
 {
     DrawList list;
-    list.addRect({{10.0f, 10.0f}, {10.0f, 50.0f}}, kWhite);           // zero width
-    list.addRect({{10.0f, 10.0f}, {50.0f, 10.0f}}, kWhite);           // zero height
-    list.addRect({{50.0f, 50.0f}, {10.0f, 10.0f}}, kWhite);           // inverted
+    list.addRect({{10.0f, 10.0f}, {10.0f, 50.0f}}, kWhite);            // zero width
+    list.addRect({{10.0f, 10.0f}, {50.0f, 10.0f}}, kWhite);            // zero height
+    list.addRect({{50.0f, 50.0f}, {10.0f, 10.0f}}, kWhite);            // inverted
     list.addRect({{0.0f, 0.0f}, {10.0f, 10.0f}}, kWhite.withAlpha(0)); // invisible
     list.addLine({5.0f, 5.0f}, {5.0f, 5.0f}, kWhite);                  // zero length
 
@@ -348,7 +347,7 @@ SOL_TEST(draw_list_arc_stays_inside_its_own_sweep)
 
     SOL_REQUIRE(list.vertices().size() == 14);
     for (const DrawList::Vertex& vertex : list.vertices()) {
-        SOL_REQUIRE(vertex.position.y < center.y);              // above the center
+        SOL_REQUIRE(vertex.position.y < center.y);                   // above the center
         SOL_REQUIRE(std::abs(vertex.position.x - center.x) < 10.0f); // narrow sweep
     }
 }
@@ -356,9 +355,9 @@ SOL_TEST(draw_list_arc_stays_inside_its_own_sweep)
 SOL_TEST(draw_list_arc_ignores_degenerate_input)
 {
     DrawList list;
-    list.addArc({50.0f, 50.0f}, 0.0f, 0.0f, 1.0f, kWhite, 2.0f, 8);   // no radius
-    list.addArc({50.0f, 50.0f}, 10.0f, 1.0f, 1.0f, kWhite, 2.0f, 8);  // no sweep
-    list.addArc({50.0f, 50.0f}, 10.0f, 0.0f, 1.0f, kWhite, 0.0f, 8);  // no width
+    list.addArc({50.0f, 50.0f}, 0.0f, 0.0f, 1.0f, kWhite, 2.0f, 8);  // no radius
+    list.addArc({50.0f, 50.0f}, 10.0f, 1.0f, 1.0f, kWhite, 2.0f, 8); // no sweep
+    list.addArc({50.0f, 50.0f}, 10.0f, 0.0f, 1.0f, kWhite, 0.0f, 8); // no width
     SOL_CHECK(list.vertices().empty());
     SOL_CHECK(list.indices().empty());
 

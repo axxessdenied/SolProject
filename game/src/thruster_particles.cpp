@@ -15,14 +15,18 @@ constexpr float kRcsRate = 90.0f;
 
 } // namespace
 
-void ThrusterParticles::emit(const sim::ShipState& ship, core::Vec3 nozzleBody,
-                             core::Vec3 exhaustBody, core::Vec3 color, float size, float lifetime)
+void ThrusterParticles::emit(const sim::ShipState& ship,
+                             core::Vec3 nozzleBody,
+                             core::Vec3 exhaustBody,
+                             core::Vec3 color,
+                             float size,
+                             float lifetime)
 {
     if (m_particles.size() >= kMaxParticles) {
         return;
     }
-    const core::Vec3 jitter = {m_rng.rangeFloat(-0.2f, 0.2f), m_rng.rangeFloat(-0.2f, 0.2f),
-                               m_rng.rangeFloat(-0.2f, 0.2f)};
+    const core::Vec3 jitter = {
+        m_rng.rangeFloat(-0.2f, 0.2f), m_rng.rangeFloat(-0.2f, 0.2f), m_rng.rangeFloat(-0.2f, 0.2f)};
     const core::Vec3 exhaustWorld = rotate(ship.orientation, exhaustBody + jitter * kExhaustSpeed);
 
     Particle particle;
@@ -35,8 +39,10 @@ void ThrusterParticles::emit(const sim::ShipState& ship, core::Vec3 nozzleBody,
     m_particles.push_back(particle);
 }
 
-void ThrusterParticles::tick(const sim::ShipState& ship, const sim::ShipTuning& tuning,
-                             const sim::FlightInput& input, double dt)
+void ThrusterParticles::tick(const sim::ShipState& ship,
+                             const sim::ShipTuning& tuning,
+                             const sim::FlightInput& input,
+                             double dt)
 {
     // Age and advect.
     const float dtf = static_cast<float>(dt);
@@ -58,7 +64,7 @@ void ThrusterParticles::tick(const sim::ShipState& ship, const sim::ShipTuning& 
 
     struct Channel
     {
-        float amount;    // fraction of nominal full thrust, may exceed 1 on boost
+        float amount; // fraction of nominal full thrust, may exceed 1 on boost
         float rate;
         core::Vec3 nozzleA;
         core::Vec3 nozzleB;
@@ -67,21 +73,44 @@ void ThrusterParticles::tick(const sim::ShipState& ship, const sim::ShipTuning& 
         float size;
         float lifetime;
     };
+
     const Channel channels[4] = {
         // Main drive (forward accel = -z): twin nozzles at the stern.
-        {std::max(-accel.z, 0.0f) / tuning.forwardAccel, kMainRate, {-1.6f, -0.1f, 5.1f},
-         {1.6f, -0.1f, 5.1f}, {0.0f, 0.0f, 1.0f}, {2.6f, 1.5f, 0.55f}, 0.35f, 0.7f},
+        {std::max(-accel.z, 0.0f) / tuning.forwardAccel,
+         kMainRate,
+         {-1.6f, -0.1f, 5.1f},
+         {1.6f, -0.1f, 5.1f},
+         {0.0f, 0.0f, 1.0f},
+         {2.6f, 1.5f, 0.55f},
+         0.35f,
+         0.7f},
         // Retro (reverse accel = +z): nose thrusters, exhaust forward.
-        {std::max(accel.z, 0.0f) / tuning.reverseAccel, kRcsRate, {-1.0f, 0.0f, -4.5f},
-         {1.0f, 0.0f, -4.5f}, {0.0f, 0.0f, -1.0f}, {1.1f, 1.2f, 1.5f}, 0.3f, 0.4f},
+        {std::max(accel.z, 0.0f) / tuning.reverseAccel,
+         kRcsRate,
+         {-1.0f, 0.0f, -4.5f},
+         {1.0f, 0.0f, -4.5f},
+         {0.0f, 0.0f, -1.0f},
+         {1.1f, 1.2f, 1.5f},
+         0.3f,
+         0.4f},
         // Lateral RCS: exhaust opposes the acceleration.
-        {std::abs(accel.x) / tuning.lateralAccel, kRcsRate,
-         {accel.x > 0.0f ? -2.8f : 2.8f, 0.0f, 1.0f}, {accel.x > 0.0f ? -2.8f : 2.8f, 0.0f, 3.0f},
-         {accel.x > 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f}, {1.1f, 1.2f, 1.5f}, 0.3f, 0.4f},
+        {std::abs(accel.x) / tuning.lateralAccel,
+         kRcsRate,
+         {accel.x > 0.0f ? -2.8f : 2.8f, 0.0f, 1.0f},
+         {accel.x > 0.0f ? -2.8f : 2.8f, 0.0f, 3.0f},
+         {accel.x > 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f},
+         {1.1f, 1.2f, 1.5f},
+         0.3f,
+         0.4f},
         // Vertical RCS.
-        {std::abs(accel.y) / tuning.verticalAccel, kRcsRate,
-         {-1.2f, accel.y > 0.0f ? -1.4f : 1.6f, 2.0f}, {1.2f, accel.y > 0.0f ? -1.4f : 1.6f, 2.0f},
-         {0.0f, accel.y > 0.0f ? -1.0f : 1.0f, 0.0f}, {1.1f, 1.2f, 1.5f}, 0.3f, 0.4f},
+        {std::abs(accel.y) / tuning.verticalAccel,
+         kRcsRate,
+         {-1.2f, accel.y > 0.0f ? -1.4f : 1.6f, 2.0f},
+         {1.2f, accel.y > 0.0f ? -1.4f : 1.6f, 2.0f},
+         {0.0f, accel.y > 0.0f ? -1.0f : 1.0f, 0.0f},
+         {1.1f, 1.2f, 1.5f},
+         0.3f,
+         0.4f},
     };
 
     for (int channel = 0; channel < 4; ++channel) {
@@ -109,8 +138,7 @@ void ThrusterParticles::buildInstances(float alpha, std::vector<ParticleInstance
         const float life = particle.age / particle.lifetime;
         const float fade = (1.0f - life) * (1.0f - life);
         out.push_back(ParticleInstance{
-            .position = particle.previousPosition +
-                        (particle.position - particle.previousPosition) * alphaD,
+            .position = particle.previousPosition + (particle.position - particle.previousPosition) * alphaD,
             .size = particle.size * (1.0f + life * 1.8f),
             .color = {particle.color.x, particle.color.y, particle.color.z, fade},
         });

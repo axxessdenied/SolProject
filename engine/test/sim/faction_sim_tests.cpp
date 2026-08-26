@@ -1,14 +1,13 @@
-#include <sol/sim/faction_sim.hpp>
-#include <sol/sim/universe.hpp>
-
-#include <sol/core/serialize.hpp>
-#include <sol/test/test.hpp>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <span>
 #include <vector>
+
+#include <sol/core/serialize.hpp>
+#include <sol/sim/faction_sim.hpp>
+#include <sol/sim/universe.hpp>
+#include <sol/test/test.hpp>
 
 using sol::sim::Economy;
 using sol::sim::EconomyArchetype;
@@ -56,12 +55,17 @@ FactionSimParams chainParams()
     FactionSimParams params;
     params.agents = {FactionAgentParams{.aggression = 1.0f, .forgiveness = 0.5f},
                      FactionAgentParams{.aggression = 0.0f, .forgiveness = 0.5f},
-                     FactionAgentParams{.aggression = 1.0f, .forgiveness = 0.1f,
-                                        .pirate = true}};
+                     FactionAgentParams{.aggression = 1.0f, .forgiveness = 0.1f, .pirate = true}};
     // Symmetric 3x3: A-B -35, A-C -60, B-C -60.
-    params.baselineRelations = {0.0f, -35.0f, -60.0f, //
-                                -35.0f, 0.0f, -60.0f, //
-                                -60.0f, -60.0f, 0.0f};
+    params.baselineRelations = {0.0f,
+                                -35.0f,
+                                -60.0f, //
+                                -35.0f,
+                                0.0f,
+                                -60.0f, //
+                                -60.0f,
+                                -60.0f,
+                                0.0f};
     params.initialStandings = {0.0f, 0.0f, -20.0f};
     params.decisionInterval = 60.0;
     return params;
@@ -112,17 +116,22 @@ Galaxy territoryGalaxy()
 FactionSimParams territoryParams()
 {
     FactionSimParams params = chainParams();
-    params.baselineRelations = {0.0f, -60.0f, -60.0f, //
-                                -60.0f, 0.0f, -60.0f, //
-                                -60.0f, -60.0f, 0.0f};
+    params.baselineRelations = {0.0f,
+                                -60.0f,
+                                -60.0f, //
+                                -60.0f,
+                                0.0f,
+                                -60.0f, //
+                                -60.0f,
+                                -60.0f,
+                                0.0f};
     params.raidReach = 1;
     return params;
 }
 
 // Raids a system until it changes hands, so a test asserts the outcome rather
 // than counting floating-point increments. Returns false if it never flips.
-bool raidUntilFlipped(FactionSim& sim, const Galaxy& galaxy, std::uint32_t attacker,
-                      std::uint32_t system)
+bool raidUntilFlipped(FactionSim& sim, const Galaxy& galaxy, std::uint32_t attacker, std::uint32_t system)
 {
     for (int i = 0; i < 32 && sim.systemOwner(system) != attacker; ++i) {
         if (!sim.commitRaid(galaxy, nullptr, attacker, system)) {
@@ -143,8 +152,8 @@ SOL_TEST(faction_sim_init_war_flags_and_candidates)
     SOL_CHECK(sim.factionCount() == 3);
     SOL_CHECK(sim.relation(0, 1) == -35.0f);
     SOL_CHECK(sim.relation(1, 0) == -35.0f);
-    SOL_CHECK(!sim.atWar(0, 1));    // -35 is hostile but above the war line
-    SOL_CHECK(sim.atWar(0, 2));     // -60 opens at war
+    SOL_CHECK(!sim.atWar(0, 1)); // -35 is hostile but above the war line
+    SOL_CHECK(sim.atWar(0, 2));  // -60 opens at war
     SOL_CHECK(sim.atWar(2, 1));
 
     // A reaches B's system (1 jump) and C's (2 jumps); both are raidable.
@@ -471,9 +480,7 @@ SOL_TEST(faction_sim_player_kills_push_a_contest_back)
     FactionSim sim;
     sim.initialize(galaxy, territoryParams(), 3);
 
-    const auto nearly = [](float value, float expected) {
-        return std::fabs(value - expected) < 1.0e-5f;
-    };
+    const auto nearly = [](float value, float expected) { return std::fabs(value - expected) < 1.0e-5f; };
     sim.setContest(1, 1, 0.3f);
     sim.recordContestKill(1, 1);
     SOL_CHECK(nearly(sim.contestOf(1).pressure, 0.25f));
@@ -525,8 +532,8 @@ SOL_TEST(faction_sim_raid_reach_follows_a_moved_border)
     std::vector<RaidCandidate> candidates;
     sim.raidCandidates(galaxy, 1, candidates);
     const auto holds = [&](std::uint32_t system) {
-        return std::any_of(candidates.begin(), candidates.end(),
-                           [&](const RaidCandidate& c) { return c.system == system; });
+        return std::any_of(
+            candidates.begin(), candidates.end(), [&](const RaidCandidate& c) { return c.system == system; });
     };
     SOL_CHECK(holds(1));  // one jump from system 2
     SOL_CHECK(holds(3));  // one jump the other way
@@ -588,8 +595,7 @@ SOL_TEST(economy_raid_empties_inbound_trader_cargo)
         economy.tick(galaxy, 1.0);
         const sol::sim::EconomyTrader& trader = economy.traders()[0];
         if (trader.phase == TraderPhase::InTransit && trader.cargo > 0.0f) {
-            const std::uint32_t destination =
-                economy.markets()[trader.market].systemIndex;
+            const std::uint32_t destination = economy.markets()[trader.market].systemIndex;
             economy.raidSystem(destination, 0.25f);
             SOL_CHECK(economy.traders()[0].cargo == 0.0f);
             caught = true;
@@ -605,9 +611,7 @@ SOL_TEST(faction_sim_danger_is_made_of_raids_and_contests)
     const Galaxy galaxy = territoryGalaxy();
     FactionSim sim;
     sim.initialize(galaxy, territoryParams(), 3);
-    const auto nearly = [](float value, float expected) {
-        return std::fabs(value - expected) < 1.0e-5f;
-    };
+    const auto nearly = [](float value, float expected) { return std::fabs(value - expected) < 1.0e-5f; };
 
     SOL_CHECK(sim.danger(1) == 0.0f); // a quiet system is not dangerous at all
     SOL_CHECK(sim.danger(99) == 0.0f);
@@ -668,8 +672,8 @@ SOL_TEST(faction_sim_attrition_takes_traders_only_where_one_could_be_watched)
             continue;
         }
         const sol::sim::TraderRoute route = economy.route(t);
-        const bool inSystemLeg = route.leg == sol::sim::TraderLeg::Depart ||
-                                 route.leg == sol::sim::TraderLeg::Arrive;
+        const bool inSystemLeg =
+            route.leg == sol::sim::TraderLeg::Depart || route.leg == sol::sim::TraderLeg::Arrive;
         if (inSystemLeg && route.system == 1) {
             exposed.push_back(t);
         } else {
@@ -726,9 +730,7 @@ SOL_TEST(faction_sim_a_lost_trader_sustains_a_contest_but_never_opens_one)
     const Galaxy galaxy = territoryGalaxy();
     FactionSim sim;
     sim.initialize(galaxy, territoryParams(), 3);
-    const auto nearly = [](float value, float expected) {
-        return std::fabs(value - expected) < 1.0e-5f;
-    };
+    const auto nearly = [](float value, float expected) { return std::fabs(value - expected) < 1.0e-5f; };
     std::vector<sol::sim::TraderLoss> losses;
 
     // No contest here: the loss is reported and presses nothing. Attrition

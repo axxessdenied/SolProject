@@ -4,14 +4,19 @@ namespace game {
 
 using namespace sol;
 
-void CombatEffects::burst(const core::DVec3& position, int count, float minSpeed, float maxSpeed,
-                          core::Vec3 color, float size, float lifetime)
+void CombatEffects::burst(const core::DVec3& position,
+                          int count,
+                          float minSpeed,
+                          float maxSpeed,
+                          core::Vec3 color,
+                          float size,
+                          float lifetime)
 {
     for (int i = 0; i < count && m_particles.size() < kMaxParticles; ++i) {
         // Uniform-ish direction from a cube sample; rejection would be
         // overkill for sparks.
-        core::Vec3 direction = {m_rng.rangeFloat(-1.0f, 1.0f), m_rng.rangeFloat(-1.0f, 1.0f),
-                                m_rng.rangeFloat(-1.0f, 1.0f)};
+        core::Vec3 direction = {
+            m_rng.rangeFloat(-1.0f, 1.0f), m_rng.rangeFloat(-1.0f, 1.0f), m_rng.rangeFloat(-1.0f, 1.0f)};
         if (lengthSquared(direction) < 1.0e-4f) {
             direction = {0.0f, 1.0f, 0.0f};
         }
@@ -20,8 +25,7 @@ void CombatEffects::burst(const core::DVec3& position, int count, float minSpeed
         Particle particle;
         particle.position = position;
         particle.previousPosition = position;
-        particle.velocity =
-            core::toDVec3(direction * m_rng.rangeFloat(minSpeed, maxSpeed));
+        particle.velocity = core::toDVec3(direction * m_rng.rangeFloat(minSpeed, maxSpeed));
         particle.color = color * m_rng.rangeFloat(0.7f, 1.3f);
         particle.lifetime = lifetime * m_rng.rangeFloat(0.6f, 1.4f);
         particle.size = size * m_rng.rangeFloat(0.7f, 1.4f);
@@ -32,8 +36,7 @@ void CombatEffects::burst(const core::DVec3& position, int count, float minSpeed
 // Sized to read at combat ranges (~250-800 m), not just up close.
 void CombatEffects::spawnImpact(const core::DVec3& position, bool shieldHit)
 {
-    const core::Vec3 color =
-        shieldHit ? core::Vec3{0.7f, 1.4f, 2.6f} : core::Vec3{2.6f, 1.1f, 0.35f};
+    const core::Vec3 color = shieldHit ? core::Vec3{0.7f, 1.4f, 2.6f} : core::Vec3{2.6f, 1.1f, 0.35f};
     burst(position, 14, 8.0f, 45.0f, color, 1.5f, 0.35f);
 }
 
@@ -69,8 +72,7 @@ void CombatEffects::appendInstances(float alpha, std::vector<ParticleInstance>& 
         const float life = particle.age / particle.lifetime;
         const float fade = (1.0f - life) * (1.0f - life);
         out.push_back(ParticleInstance{
-            .position = particle.previousPosition +
-                        (particle.position - particle.previousPosition) * alphaD,
+            .position = particle.previousPosition + (particle.position - particle.previousPosition) * alphaD,
             .size = particle.size * (1.0f + life * 2.2f),
             .color = {particle.color.x, particle.color.y, particle.color.z, fade},
         });

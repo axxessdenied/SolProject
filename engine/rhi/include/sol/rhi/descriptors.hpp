@@ -11,11 +11,11 @@ namespace sol::rhi {
 
 // Pool sized for maxSets combined-image-sampler sets. allowFree permits
 // individual vkFreeDescriptorSets (needed by consumers that recycle sets).
-[[nodiscard]] VkDescriptorPool createTextureDescriptorPool(VkDevice device, std::uint32_t maxSets,
-                                                           bool allowFree = false);
+[[nodiscard]] VkDescriptorPool
+createTextureDescriptorPool(VkDevice device, std::uint32_t maxSets, bool allowFree = false);
 
-[[nodiscard]] VkDescriptorSet allocateDescriptorSet(VkDevice device, VkDescriptorPool pool,
-                                                    VkDescriptorSetLayout layout);
+[[nodiscard]] VkDescriptorSet
+allocateDescriptorSet(VkDevice device, VkDescriptorPool pool, VkDescriptorSetLayout layout);
 
 void writeTextureDescriptor(VkDevice device, VkDescriptorSet set, VkImageView view, VkSampler sampler);
 

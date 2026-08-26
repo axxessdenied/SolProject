@@ -1,6 +1,5 @@
-#include <sol/ui/radar_projection.hpp>
-
 #include <sol/test/test.hpp>
+#include <sol/ui/radar_projection.hpp>
 
 using sol::core::Vec2;
 using sol::core::Vec3;

@@ -24,8 +24,7 @@ public:
             const sol::core::Vec2 delta = window.mouseDelta();
             m_yaw -= delta.x * kLookSensitivity;
             m_pitch -= delta.y * kLookSensitivity;
-            m_pitch = sol::core::clamp(m_pitch, -sol::core::kHalfPi + 0.01f,
-                                       sol::core::kHalfPi - 0.01f);
+            m_pitch = sol::core::clamp(m_pitch, -sol::core::kHalfPi + 0.01f, sol::core::kHalfPi - 0.01f);
         }
 
         const float wheel = window.wheelDelta();
@@ -34,12 +33,18 @@ public:
         }
 
         sol::core::Vec3 move = {};
-        if (window.isKeyDown(Key::W)) move.z -= 1.0f;
-        if (window.isKeyDown(Key::S)) move.z += 1.0f;
-        if (window.isKeyDown(Key::A)) move.x -= 1.0f;
-        if (window.isKeyDown(Key::D)) move.x += 1.0f;
-        if (window.isKeyDown(Key::Space)) move.y += 1.0f;
-        if (window.isKeyDown(Key::LeftControl)) move.y -= 1.0f;
+        if (window.isKeyDown(Key::W))
+            move.z -= 1.0f;
+        if (window.isKeyDown(Key::S))
+            move.z += 1.0f;
+        if (window.isKeyDown(Key::A))
+            move.x -= 1.0f;
+        if (window.isKeyDown(Key::D))
+            move.x += 1.0f;
+        if (window.isKeyDown(Key::Space))
+            move.y += 1.0f;
+        if (window.isKeyDown(Key::LeftControl))
+            move.y -= 1.0f;
 
         if (move != sol::core::Vec3{}) {
             const float boost = window.isKeyDown(Key::LeftShift) ? 5.0f : 1.0f;
@@ -50,16 +55,19 @@ public:
 
     [[nodiscard]] sol::core::Quat orientation() const
     {
-        return sol::core::fromAxisAngle({0.0f, 1.0f, 0.0f}, m_yaw) * sol::core::fromAxisAngle({1.0f, 0.0f, 0.0f}, m_pitch);
+        return sol::core::fromAxisAngle({0.0f, 1.0f, 0.0f}, m_yaw) *
+               sol::core::fromAxisAngle({1.0f, 0.0f, 0.0f}, m_pitch);
     }
 
     // Rotation-only view matrix; translation is handled camera-relatively.
     [[nodiscard]] sol::core::Mat4 viewRotation() const { return transpose(toMat4(orientation())); }
 
     [[nodiscard]] sol::core::DVec3 position() const { return m_position; }
+
     [[nodiscard]] float speed() const { return m_speed; }
 
     [[nodiscard]] CameraFrame frame() const { return {m_position, orientation()}; }
+
     void setPosition(sol::core::DVec3 position) { m_position = position; }
 
 private:

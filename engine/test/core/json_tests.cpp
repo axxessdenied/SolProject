@@ -1,5 +1,4 @@
 #include "sol/core/json.hpp"
-
 #include "sol/test/test.hpp"
 
 #include <cstring>

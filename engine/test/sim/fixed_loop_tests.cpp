@@ -1,5 +1,4 @@
 #include "sol/sim/fixed_loop.hpp"
-
 #include "sol/test/test.hpp"
 
 namespace {

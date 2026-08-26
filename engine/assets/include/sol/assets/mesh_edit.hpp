@@ -48,10 +48,12 @@ struct EditMesh
     {
         return static_cast<std::uint32_t>(indices.size() / 3);
     }
+
     [[nodiscard]] core::Vec3 pointOf(std::uint32_t vertex) const
     {
         return positions[vertices[vertex].position];
     }
+
     // The three positions of a face - the triple every topological operation
     // actually works on.
     [[nodiscard]] std::uint32_t facePosition(std::uint32_t face, std::uint32_t corner) const
@@ -159,6 +161,7 @@ struct MeshBounds
     core::Vec3 min{};
     core::Vec3 max{};
 };
+
 [[nodiscard]] MeshBounds bounds(const EditMesh& mesh);
 
 // The radius a model def would carry: the furthest point from the origin the

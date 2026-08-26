@@ -1,5 +1,4 @@
 #include "sol/core/serialize.hpp"
-
 #include "sol/test/test.hpp"
 
 #include <cstdint>

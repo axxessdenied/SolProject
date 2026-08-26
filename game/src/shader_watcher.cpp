@@ -23,7 +23,8 @@ bool hasShaderExtension(const std::string& path)
 
 } // namespace
 
-ShaderWatcher::ShaderWatcher(std::string sourceDirectory, std::string compilerPath,
+ShaderWatcher::ShaderWatcher(std::string sourceDirectory,
+                             std::string compilerPath,
                              std::string outputDirectory)
     : m_compilerPath(std::move(compilerPath))
 {
@@ -74,7 +75,8 @@ bool ShaderWatcher::poll(double nowSeconds, bool force)
             SOL_LOG_INFO("recompiled %s", fileName(shader.sourcePath).c_str());
             anyRecompiled = true;
         } else {
-            SOL_LOG_ERROR("shader compile failed (%d): %s - keeping previous pipeline", exitCode,
+            SOL_LOG_ERROR("shader compile failed (%d): %s - keeping previous pipeline",
+                          exitCode,
                           fileName(shader.sourcePath).c_str());
         }
     }

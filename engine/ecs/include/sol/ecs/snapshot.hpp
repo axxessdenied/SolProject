@@ -7,10 +7,9 @@
 // on load (forward compatibility); registered types absent from the blob
 // simply stay empty (backward compatibility).
 
+#include "sol/core/serialize.hpp"
 #include "sol/ecs/entity.hpp"
 #include "sol/ecs/registry.hpp"
-
-#include "sol/core/serialize.hpp"
 
 #include <cstdint>
 #include <type_traits>
@@ -51,8 +50,7 @@ public:
         writer.writeBytes(registry.m_generations.data(),
                           registry.m_generations.size() * sizeof(std::uint32_t));
         writer.write(static_cast<std::uint32_t>(registry.m_freeList.size()));
-        writer.writeBytes(registry.m_freeList.data(),
-                          registry.m_freeList.size() * sizeof(std::uint32_t));
+        writer.writeBytes(registry.m_freeList.data(), registry.m_freeList.size() * sizeof(std::uint32_t));
 
         writer.write(static_cast<std::uint32_t>(m_entries.size()));
         for (const Entry& entry : m_entries) {
@@ -69,8 +67,7 @@ public:
 
         std::uint32_t magic = 0;
         std::uint32_t version = 0;
-        if (!reader.read(magic) || !reader.read(version) || magic != kMagic ||
-            version != kVersion) {
+        if (!reader.read(magic) || !reader.read(version) || magic != kMagic || version != kVersion) {
             return false;
         }
 
@@ -79,8 +76,7 @@ public:
             return false;
         }
         registry.m_generations.resize(slotCount);
-        if (!reader.readBytes(registry.m_generations.data(),
-                              slotCount * sizeof(std::uint32_t))) {
+        if (!reader.readBytes(registry.m_generations.data(), slotCount * sizeof(std::uint32_t))) {
             return false;
         }
 
@@ -134,8 +130,7 @@ public:
 private:
     struct Entry;
     using SaveFn = void (*)(const Entry&, Registry&, core::BinaryWriter&);
-    using LoadFn = bool (*)(Registry&, core::BinaryReader&, std::uint32_t,
-                            const std::vector<bool>&);
+    using LoadFn = bool (*)(Registry&, core::BinaryReader&, std::uint32_t, const std::vector<bool>&);
 
     struct Entry
     {
@@ -168,8 +163,10 @@ private:
     }
 
     template <typename T>
-    static bool loadComponent(Registry& registry, core::BinaryReader& reader,
-                              std::uint32_t entityCount, const std::vector<bool>& alive)
+    static bool loadComponent(Registry& registry,
+                              core::BinaryReader& reader,
+                              std::uint32_t entityCount,
+                              const std::vector<bool>& alive)
     {
         std::vector<std::uint32_t> indices(entityCount);
         if (!reader.readBytes(indices.data(), entityCount * sizeof(std::uint32_t))) {

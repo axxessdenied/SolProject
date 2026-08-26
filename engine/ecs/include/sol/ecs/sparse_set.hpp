@@ -41,6 +41,7 @@ public:
     }
 
     [[nodiscard]] std::size_t size() const { return m_dense.size(); }
+
     [[nodiscard]] bool empty() const { return m_dense.empty(); }
 
     // Owning entity indices, parallel to the derived pool's value array.
@@ -91,10 +92,7 @@ public:
         return m_values.emplace_back(std::forward<Args>(args)...);
     }
 
-    [[nodiscard]] T& get(std::uint32_t entityIndex)
-    {
-        return m_values[denseIndexOf(entityIndex)];
-    }
+    [[nodiscard]] T& get(std::uint32_t entityIndex) { return m_values[denseIndexOf(entityIndex)]; }
 
     [[nodiscard]] const T& get(std::uint32_t entityIndex) const
     {
@@ -113,6 +111,7 @@ public:
 
     // Dense value array, parallel to entityIndices().
     [[nodiscard]] std::vector<T>& values() { return m_values; }
+
     [[nodiscard]] const std::vector<T>& values() const { return m_values; }
 
 private:

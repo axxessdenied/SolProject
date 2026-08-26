@@ -40,8 +40,8 @@ inline constexpr std::uint32_t kNoGate = 0xffff'ffffu;
 // Ties are broken by gate order, which is generation order, so the choice is
 // deterministic for a seed and two traders on the same route agree.
 template <typename HopFn>
-[[nodiscard]] std::uint32_t gateTowardSystem(std::span<const GateSpec> gates, std::uint32_t here,
-                                             std::uint32_t target, HopFn hops)
+[[nodiscard]] std::uint32_t
+gateTowardSystem(std::span<const GateSpec> gates, std::uint32_t here, std::uint32_t target, HopFn hops)
 {
     if (here == target) {
         return kNoGate; // already there: the haul never leaves this system
@@ -74,8 +74,7 @@ template <typename HopFn>
 }
 
 // The point `progress` of the way from `from` to `to`.
-[[nodiscard]] inline core::DVec3 legPoint(const core::DVec3& from, const core::DVec3& to,
-                                          float progress)
+[[nodiscard]] inline core::DVec3 legPoint(const core::DVec3& from, const core::DVec3& to, float progress)
 {
     const double t = static_cast<double>(progress);
     return from + (to - from) * t;
@@ -100,8 +99,10 @@ template <typename HopFn>
 // shipped freighter, hence 6 km), and `approachSeconds` is the time that
 // final approach actually takes. Inside either window this returns a distance
 // no caller should use: the ship owns its position there.
-[[nodiscard]] inline double scheduledLaneDistance(double remainingSeconds, double legSeconds,
-                                                  double legLength, double approachDistance,
+[[nodiscard]] inline double scheduledLaneDistance(double remainingSeconds,
+                                                  double legSeconds,
+                                                  double legLength,
+                                                  double approachDistance,
                                                   double approachSeconds)
 {
     if (legSeconds <= 0.0) {
@@ -135,8 +136,8 @@ template <typename HopFn>
 // uses both, and one hauler keeps its own answer for as long as its load does
 // — which is the whole leg, because cargo is bought at one end and sold at
 // the other.
-[[nodiscard]] inline std::uint32_t chooseTraderHull(std::span<const float> capacities, float cargo,
-                                                    std::uint32_t traderIndex)
+[[nodiscard]] inline std::uint32_t
+chooseTraderHull(std::span<const float> capacities, float cargo, std::uint32_t traderIndex)
 {
     if (capacities.empty()) {
         return 0;
@@ -192,8 +193,8 @@ template <typename HopFn>
 // trader gets a distinct place, the spacing stays near `spacing` however many
 // there are, and it is stable, so a hauler keeps its slot for a whole leg
 // instead of shuffling each time the set is reconciled.
-[[nodiscard]] inline core::DVec3 laneSlotOffset(std::uint32_t traderIndex,
-                                                const core::DVec3& laneDirection, double spacing)
+[[nodiscard]] inline core::DVec3
+laneSlotOffset(std::uint32_t traderIndex, const core::DVec3& laneDirection, double spacing)
 {
     const auto cross3 = [](const core::DVec3& a, const core::DVec3& b) {
         return core::DVec3{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
@@ -204,8 +205,8 @@ template <typename HopFn>
     // Any world axis that is not nearly parallel to the lane gives a stable
     // basis; picking by the smallest component is what keeps it well
     // conditioned for a lane pointing any direction at all.
-    const core::DVec3 axis = std::abs(forward.x) < 0.9 ? core::DVec3{1.0, 0.0, 0.0}
-                                                       : core::DVec3{0.0, 1.0, 0.0};
+    const core::DVec3 axis =
+        std::abs(forward.x) < 0.9 ? core::DVec3{1.0, 0.0, 0.0} : core::DVec3{0.0, 1.0, 0.0};
     const core::DVec3 u = normalize(cross3(forward, axis));
     const core::DVec3 v = cross3(forward, u);
     constexpr double kGoldenAngle = 2.399963229728653;

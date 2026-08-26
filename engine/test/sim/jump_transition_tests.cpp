@@ -1,5 +1,4 @@
 #include <sol/sim/jump_transition.hpp>
-
 #include <sol/test/test.hpp>
 
 using sol::core::DVec3;
@@ -100,8 +99,8 @@ SOL_TEST(jump_transition_offers_the_swap_exactly_once)
 {
     // At a range of frame rates, including ones that land a frame boundary
     // exactly on the swap point.
-    const double steps[] = {1.0 / 144.0, 1.0 / 60.0, 1.0 / 30.0, kJumpTunnelSeconds,
-                            kJumpTunnelSeconds / 2.0};
+    const double steps[] = {
+        1.0 / 144.0, 1.0 / 60.0, 1.0 / 30.0, kJumpTunnelSeconds, kJumpTunnelSeconds / 2.0};
     for (const double step : steps) {
         JumpTransition jump;
         SOL_CHECK(jump.begin(3));
@@ -211,19 +210,21 @@ SOL_TEST(jump_transition_aperture_takes_a_ship_that_goes_through_it)
     const DVec3 axis{0.0, 0.0, 1.0};
 
     // Straight through the middle.
-    SOL_CHECK(crossedAperture(gate - DVec3{0.0, 0.0, 50.0}, gate + DVec3{0.0, 0.0, 50.0}, gate,
-                              axis, kGateFrameRadius));
+    SOL_CHECK(crossedAperture(
+        gate - DVec3{0.0, 0.0, 50.0}, gate + DVec3{0.0, 0.0, 50.0}, gate, axis, kGateFrameRadius));
     // Through the opening but off-centre: still through the doorway.
     const DVec3 offset{40.0, 20.0, 0.0}; // 44.7 m from the centre, inside 70
     SOL_CHECK(crossedAperture(gate + offset - DVec3{0.0, 0.0, 50.0},
-                              gate + offset + DVec3{0.0, 0.0, 50.0}, gate, axis,
+                              gate + offset + DVec3{0.0, 0.0, 50.0},
+                              gate,
+                              axis,
                               kGateFrameRadius));
     // And the other way, because a gate is a doorway rather than a turnstile.
-    SOL_CHECK(crossedAperture(gate + DVec3{0.0, 0.0, 50.0}, gate - DVec3{0.0, 0.0, 50.0}, gate,
-                              axis, kGateFrameRadius));
+    SOL_CHECK(crossedAperture(
+        gate + DVec3{0.0, 0.0, 50.0}, gate - DVec3{0.0, 0.0, 50.0}, gate, axis, kGateFrameRadius));
     // One tick of a fast ship stepping clean over the plane still counts.
-    SOL_CHECK(crossedAperture(gate - DVec3{0.0, 0.0, 4000.0}, gate + DVec3{0.0, 0.0, 4000.0}, gate,
-                              axis, kGateFrameRadius));
+    SOL_CHECK(crossedAperture(
+        gate - DVec3{0.0, 0.0, 4000.0}, gate + DVec3{0.0, 0.0, 4000.0}, gate, axis, kGateFrameRadius));
 }
 
 SOL_TEST(jump_transition_aperture_refuses_everything_that_did_not_go_through)
@@ -234,26 +235,28 @@ SOL_TEST(jump_transition_aperture_refuses_everything_that_did_not_go_through)
     // ⚑ The accidental-jump case, stated as a test: flying PAST the gate,
     // parallel to its plane and well inside the frame radius. Phase 8v's
     // proximity sphere took this one; an aperture cannot.
-    SOL_CHECK(!crossedAperture(gate + DVec3{0.0, -500.0, 0.0}, gate + DVec3{0.0, 500.0, 0.0}, gate,
-                               axis, kGateFrameRadius));
+    SOL_CHECK(!crossedAperture(
+        gate + DVec3{0.0, -500.0, 0.0}, gate + DVec3{0.0, 500.0, 0.0}, gate, axis, kGateFrameRadius));
 
     // Crossing the plane but outside the frame: past the edge, not through it.
     const DVec3 wide{0.0, 200.0, 0.0}; // 200 m off axis, frame is 70
     SOL_CHECK(!crossedAperture(gate + wide - DVec3{50.0, 0.0, 0.0},
-                               gate + wide + DVec3{50.0, 0.0, 0.0}, gate, axis,
+                               gate + wide + DVec3{50.0, 0.0, 0.0},
+                               gate,
+                               axis,
                                kGateFrameRadius));
 
     // Approaching head-on and stopping short. Touching the threshold is not
     // passing through it, which is exactly the case autopilot has to beat.
-    SOL_CHECK(!crossedAperture(gate - DVec3{900.0, 0.0, 0.0}, gate - DVec3{20.0, 0.0, 0.0}, gate,
-                               axis, kGateFrameRadius));
+    SOL_CHECK(!crossedAperture(
+        gate - DVec3{900.0, 0.0, 0.0}, gate - DVec3{20.0, 0.0, 0.0}, gate, axis, kGateFrameRadius));
 
     // Sitting perfectly still at the gate's own position.
     SOL_CHECK(!crossedAperture(gate, gate, gate, axis, kGateFrameRadius));
 
     // Receding after having arrived on one side.
-    SOL_CHECK(!crossedAperture(gate - DVec3{30.0, 0.0, 0.0}, gate - DVec3{600.0, 0.0, 0.0}, gate,
-                               axis, kGateFrameRadius));
+    SOL_CHECK(!crossedAperture(
+        gate - DVec3{30.0, 0.0, 0.0}, gate - DVec3{600.0, 0.0, 0.0}, gate, axis, kGateFrameRadius));
 }
 
 SOL_TEST(jump_transition_aperture_is_a_real_doorway_the_ship_can_reach)
@@ -272,8 +275,7 @@ SOL_TEST(jump_transition_aperture_is_a_real_doorway_the_ship_can_reach)
     // becomes solid again.
     const DVec3 gate{};
     const DVec3 axis{0.0, 1.0, 0.0};
-    SOL_CHECK(crossedAperture(DVec3{0.0, -1.0, 0.0}, DVec3{0.0, 1.0, 0.0}, gate, axis,
-                              kGateFrameRadius));
+    SOL_CHECK(crossedAperture(DVec3{0.0, -1.0, 0.0}, DVec3{0.0, 1.0, 0.0}, gate, axis, kGateFrameRadius));
 }
 
 SOL_TEST(jump_transition_zero_length_params_swap_immediately_rather_than_divide)

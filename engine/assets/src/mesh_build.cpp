@@ -53,8 +53,7 @@ constexpr BuildUv kQuadUvs[4] = {{0.0, 1.0}, {1.0, 1.0}, {1.0, 0.0}, {0.0, 0.0}}
 
 } // namespace
 
-BuildTransform BuildTransform::fromTrs(BuildPoint translation, BuildPoint rotationRadians,
-                                       BuildPoint scale)
+BuildTransform BuildTransform::fromTrs(BuildPoint translation, BuildPoint rotationRadians, BuildPoint scale)
 {
     const double cx = std::cos(rotationRadians.x);
     const double sx = std::sin(rotationRadians.x);
@@ -85,7 +84,8 @@ BuildPoint BuildTransform::transformPoint(BuildPoint p) const
 
 BuildPoint BuildTransform::transformDirection(BuildPoint v) const
 {
-    return {(x.x * v.x) + (y.x * v.y) + (z.x * v.z), (x.y * v.x) + (y.y * v.y) + (z.y * v.z),
+    return {(x.x * v.x) + (y.x * v.y) + (z.x * v.z),
+            (x.y * v.x) + (y.y * v.y) + (z.y * v.z),
             (x.z * v.x) + (y.z * v.y) + (z.z * v.z)};
 }
 
@@ -96,9 +96,8 @@ double BuildTransform::determinant() const
 
 bool BuildTransform::isIdentity() const
 {
-    return x.x == 1.0 && x.y == 0.0 && x.z == 0.0 && y.x == 0.0 && y.y == 1.0 && y.z == 0.0 &&
-           z.x == 0.0 && z.y == 0.0 && z.z == 1.0 && translation.x == 0.0 &&
-           translation.y == 0.0 && translation.z == 0.0;
+    return x.x == 1.0 && x.y == 0.0 && x.z == 0.0 && y.x == 0.0 && y.y == 1.0 && y.z == 0.0 && z.x == 0.0 &&
+           z.y == 0.0 && z.z == 1.0 && translation.x == 0.0 && translation.y == 0.0 && translation.z == 0.0;
 }
 
 bool BuildTransform::inverse(BuildTransform& out) const
@@ -222,30 +221,12 @@ void MeshBuilder::addBox(BuildPoint center, BuildPoint size, double tile)
     // solve a dragged corner into `center` and `size` - and `geometry.unit`
     // asserts that table against the geometry this loop actually produces.
     const Face faces[6] = {
-        {{0, 0, 1},
-         {{-hx, -hy, hz}, {hx, -hy, hz}, {hx, hy, hz}, {-hx, hy, hz}},
-         size.x,
-         size.y},
-        {{0, 0, -1},
-         {{hx, -hy, -hz}, {-hx, -hy, -hz}, {-hx, hy, -hz}, {hx, hy, -hz}},
-         size.x,
-         size.y},
-        {{1, 0, 0},
-         {{hx, -hy, hz}, {hx, -hy, -hz}, {hx, hy, -hz}, {hx, hy, hz}},
-         size.z,
-         size.y},
-        {{-1, 0, 0},
-         {{-hx, -hy, -hz}, {-hx, -hy, hz}, {-hx, hy, hz}, {-hx, hy, -hz}},
-         size.z,
-         size.y},
-        {{0, 1, 0},
-         {{-hx, hy, hz}, {hx, hy, hz}, {hx, hy, -hz}, {-hx, hy, -hz}},
-         size.x,
-         size.z},
-        {{0, -1, 0},
-         {{-hx, -hy, -hz}, {hx, -hy, -hz}, {hx, -hy, hz}, {-hx, -hy, hz}},
-         size.x,
-         size.z},
+        {{0, 0, 1}, {{-hx, -hy, hz}, {hx, -hy, hz}, {hx, hy, hz}, {-hx, hy, hz}}, size.x, size.y},
+        {{0, 0, -1}, {{hx, -hy, -hz}, {-hx, -hy, -hz}, {-hx, hy, -hz}, {hx, hy, -hz}}, size.x, size.y},
+        {{1, 0, 0}, {{hx, -hy, hz}, {hx, -hy, -hz}, {hx, hy, -hz}, {hx, hy, hz}}, size.z, size.y},
+        {{-1, 0, 0}, {{-hx, -hy, -hz}, {-hx, -hy, hz}, {-hx, hy, hz}, {-hx, hy, -hz}}, size.z, size.y},
+        {{0, 1, 0}, {{-hx, hy, hz}, {hx, hy, hz}, {hx, hy, -hz}, {-hx, hy, -hz}}, size.x, size.z},
+        {{0, -1, 0}, {{-hx, -hy, -hz}, {hx, -hy, -hz}, {hx, -hy, hz}, {-hx, -hy, hz}}, size.x, size.z},
     };
 
     for (const Face& face : faces) {
@@ -254,7 +235,8 @@ void MeshBuilder::addBox(BuildPoint center, BuildPoint size, double tile)
         const auto base = static_cast<std::uint32_t>(m_vertices.size());
         for (int i = 0; i < 4; ++i) {
             const BuildPoint& p = face.corners[i];
-            addVertex({p.x + center.x, p.y + center.y, p.z + center.z}, face.normal,
+            addVertex({p.x + center.x, p.y + center.y, p.z + center.z},
+                      face.normal,
                       {kQuadUvs[i].u * spanU, kQuadUvs[i].v * spanV});
         }
         addQuad(base, base + 1, base + 2, base + 3);
@@ -323,15 +305,14 @@ void MeshBuilder::addBeam(BuildPoint from, BuildPoint to, double width, double h
         const double spanV = tile > 0 ? face.spanV * tile : 1.0;
         const auto base = static_cast<std::uint32_t>(m_vertices.size());
         for (int i = 0; i < 4; ++i) {
-            addVertex(corners[face.corner[i]], face.normal,
-                      {kQuadUvs[i].u * spanU, kQuadUvs[i].v * spanV});
+            addVertex(corners[face.corner[i]], face.normal, {kQuadUvs[i].u * spanU, kQuadUvs[i].v * spanV});
         }
         addQuad(base, base + 1, base + 2, base + 3);
     }
 }
 
-void MeshBuilder::addTorus(double majorRadius, double tubeRadius, std::uint32_t segU, std::uint32_t segV,
-                           double uTiles)
+void MeshBuilder::addTorus(
+    double majorRadius, double tubeRadius, std::uint32_t segU, std::uint32_t segV, double uTiles)
 {
     SOL_ASSERT(segU >= 3 && segV >= 3);
     const auto base = static_cast<std::uint32_t>(m_vertices.size());
@@ -343,7 +324,8 @@ void MeshBuilder::addTorus(double majorRadius, double tubeRadius, std::uint32_t 
             const double theta = (2 * kPi * static_cast<double>(j)) / static_cast<double>(segV);
             const double ct = std::cos(theta);
             const double st = std::sin(theta);
-            addVertex({(majorRadius + (tubeRadius * ct)) * cp, tubeRadius * st,
+            addVertex({(majorRadius + (tubeRadius * ct)) * cp,
+                       tubeRadius * st,
                        (majorRadius + (tubeRadius * ct)) * sp},
                       {ct * cp, st, ct * sp},
                       {(uTiles * static_cast<double>(i)) / static_cast<double>(segU),
@@ -363,8 +345,8 @@ void MeshBuilder::addTorus(double majorRadius, double tubeRadius, std::uint32_t 
     }
 }
 
-void MeshBuilder::addFlatTriangle(BuildPoint p0, BuildPoint p1, BuildPoint p2, BuildUv uv0, BuildUv uv1,
-                                  BuildUv uv2)
+void MeshBuilder::addFlatTriangle(
+    BuildPoint p0, BuildPoint p1, BuildPoint p2, BuildUv uv0, BuildUv uv1, BuildUv uv2)
 {
     const BuildPoint edge0{p1.x - p0.x, p1.y - p0.y, p1.z - p0.z};
     const BuildPoint edge1{p2.x - p0.x, p2.y - p0.y, p2.z - p0.z};
@@ -376,8 +358,10 @@ void MeshBuilder::addFlatTriangle(BuildPoint p0, BuildPoint p1, BuildPoint p2, B
     addTriangle(base, base + 1, base + 2);
 }
 
-void MeshBuilder::addRevolve(std::span<const BuildProfilePoint> profile, std::uint32_t segments,
-                             double uTiles, bool capEnds)
+void MeshBuilder::addRevolve(std::span<const BuildProfilePoint> profile,
+                             std::uint32_t segments,
+                             double uTiles,
+                             bool capEnds)
 {
     if (profile.size() < 2 || segments < 3) {
         return;
@@ -392,8 +376,8 @@ void MeshBuilder::addRevolve(std::span<const BuildProfilePoint> profile, std::ui
         const double dx = profile[k + 1].x - profile[k].x;
         const double dy = profile[k + 1].y - profile[k].y;
         const double length = std::sqrt((dx * dx) + (dy * dy));
-        segmentNormals[k] = length > 0.0 ? BuildProfilePoint{dy / length, flipped(dx / length)}
-                                         : BuildProfilePoint{1.0, 0.0};
+        segmentNormals[k] =
+            length > 0.0 ? BuildProfilePoint{dy / length, flipped(dx / length)} : BuildProfilePoint{1.0, 0.0};
         arc[k + 1] = arc[k] + length;
     }
     const double totalArc = arc.back();
@@ -414,8 +398,8 @@ void MeshBuilder::addRevolve(std::span<const BuildProfilePoint> profile, std::ui
         const double cp = std::cos(phi);
         const double sp = std::sin(phi);
         for (std::uint32_t k = 0; k < rings; ++k) {
-            const double v = totalArc > 0.0 ? arc[k] / totalArc
-                                            : static_cast<double>(k) / static_cast<double>(rings - 1);
+            const double v =
+                totalArc > 0.0 ? arc[k] / totalArc : static_cast<double>(k) / static_cast<double>(rings - 1);
             addVertex({profile[k].x * cp, profile[k].y, profile[k].x * sp},
                       normalize3({pointNormals[k].x * cp, pointNormals[k].y, pointNormals[k].x * sp}),
                       {(uTiles * static_cast<double>(i)) / static_cast<double>(segments), v});
@@ -432,6 +416,7 @@ void MeshBuilder::addRevolve(std::span<const BuildProfilePoint> profile, std::ui
     if (!capEnds) {
         return;
     }
+
     // A cap is its own fan on the axis rather than a reuse of the ring
     // vertices: the ring's normal points outward, and a cap's does not.
     const struct
@@ -439,6 +424,7 @@ void MeshBuilder::addRevolve(std::span<const BuildProfilePoint> profile, std::ui
         std::uint32_t ring;
         double normalY;
     } caps[2] = {{0, -1.0}, {rings - 1, 1.0}};
+
     for (const auto& cap : caps) {
         if (profile[cap.ring].x <= 0.0) {
             continue;
@@ -467,8 +453,8 @@ void MeshBuilder::addRevolve(std::span<const BuildProfilePoint> profile, std::ui
     }
 }
 
-void MeshBuilder::addExtrude(std::span<const BuildProfilePoint> outline, BuildPoint from, BuildPoint to,
-                             double tile, bool capEnds)
+void MeshBuilder::addExtrude(
+    std::span<const BuildProfilePoint> outline, BuildPoint from, BuildPoint to, double tile, bool capEnds)
 {
     if (outline.size() < 3) {
         return;
@@ -485,7 +471,8 @@ void MeshBuilder::addExtrude(std::span<const BuildProfilePoint> outline, BuildPo
     const BuildPoint up = cross3(side, dir);
 
     const auto pointAt = [&](BuildPoint end, BuildProfilePoint p) {
-        return BuildPoint{end.x + (side.x * p.x) + (up.x * p.y), end.y + (side.y * p.x) + (up.y * p.y),
+        return BuildPoint{end.x + (side.x * p.x) + (up.x * p.y),
+                          end.y + (side.y * p.x) + (up.y * p.y),
                           end.z + (side.z * p.x) + (up.z * p.y)};
     };
 
@@ -502,8 +489,8 @@ void MeshBuilder::addExtrude(std::span<const BuildProfilePoint> outline, BuildPo
         // Outward normal of a CCW outline edge, lifted into the run's frame.
         const double nx = dy / edgeLength;
         const double ny = flipped(dx / edgeLength);
-        const BuildPoint normal{(side.x * nx) + (up.x * ny), (side.y * nx) + (up.y * ny),
-                                (side.z * nx) + (up.z * ny)};
+        const BuildPoint normal{
+            (side.x * nx) + (up.x * ny), (side.y * nx) + (up.y * ny), (side.z * nx) + (up.z * ny)};
         const double spanU = tile > 0 ? runLength * tile : 1.0;
         const double spanV = tile > 0 ? edgeLength * tile : 1.0;
         const BuildPoint quad[4] = {pointAt(from, a), pointAt(to, a), pointAt(to, b), pointAt(from, b)};

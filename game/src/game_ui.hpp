@@ -20,7 +20,9 @@ inline constexpr float kHudMargin = 24.0f;
 //
 // Pure geometry building - no input, no game state mutation - so it can be
 // exercised headlessly.
-void buildFlightUi(sol::ui::DrawList& list, const sol::assets::Font& font,
-                   sol::core::Vec2 screenSize, const sol::ui::FlightHud& hud);
+void buildFlightUi(sol::ui::DrawList& list,
+                   const sol::assets::Font& font,
+                   sol::core::Vec2 screenSize,
+                   const sol::ui::FlightHud& hud);
 
 } // namespace game

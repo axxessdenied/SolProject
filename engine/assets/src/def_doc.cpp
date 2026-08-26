@@ -170,8 +170,7 @@ void DefRow::set(std::string_view name, std::string_view value)
 
 void DefRow::remove(std::string_view name)
 {
-    const auto it = std::find_if(keys.begin(), keys.end(),
-                                 [&](const DefKey& k) { return k.name == name; });
+    const auto it = std::find_if(keys.begin(), keys.end(), [&](const DefKey& k) { return k.name == name; });
     if (it == keys.end()) {
         return;
     }
@@ -227,14 +226,13 @@ DefRow& DefDoc::append(std::string_view type)
     return rows.back();
 }
 
-bool parseDefs(const char* text, std::size_t length, const char* sourceName, DefDoc& out,
-               std::string* error)
+bool parseDefs(const char* text, std::size_t length, const char* sourceName, DefDoc& out, std::string* error)
 {
     DefDoc doc;
     const auto fail = [&](const std::string& message, std::size_t line) {
         if (error != nullptr) {
-            *error = std::string(sourceName != nullptr ? sourceName : "<defs>") + ":" +
-                     std::to_string(line) + ": " + message;
+            *error = std::string(sourceName != nullptr ? sourceName : "<defs>") + ":" + std::to_string(line) +
+                     ": " + message;
         }
         return false;
     };
@@ -274,8 +272,7 @@ bool parseDefs(const char* text, std::size_t length, const char* sourceName, Def
                 // and which this model cannot place a key under. A hard refusal
                 // rather than a flag: parsing it would silently reassign its
                 // keys to the previous `[[table]]`.
-                return fail("unsupported table header '" + std::string(trimRight(body)) + "'",
-                            lineNumber);
+                return fail("unsupported table header '" + std::string(trimRight(body)) + "'", lineNumber);
             }
             const std::size_t close = body.find("]]");
             if (close == std::string_view::npos) {
@@ -324,9 +321,8 @@ bool parseDefs(const char* text, std::size_t length, const char* sourceName, Def
         }
         ScanState state;
         scanValueLine(std::string_view(raw).substr(valueStart), state);
-        std::size_t commentAt = state.commentAt == std::string_view::npos
-                                    ? std::string_view::npos
-                                    : valueStart + state.commentAt;
+        std::size_t commentAt =
+            state.commentAt == std::string_view::npos ? std::string_view::npos : valueStart + state.commentAt;
         while (state.depth > 0 || state.inString) {
             std::string_view continuation;
             if (!nextLine(continuation)) {
@@ -336,8 +332,8 @@ bool parseDefs(const char* text, std::size_t length, const char* sourceName, Def
             raw += '\n';
             raw += std::string(continuation);
             scanValueLine(continuation, state);
-            commentAt = state.commentAt == std::string_view::npos ? std::string_view::npos
-                                                                  : base + state.commentAt;
+            commentAt =
+                state.commentAt == std::string_view::npos ? std::string_view::npos : base + state.commentAt;
         }
 
         const std::size_t valueLimit = commentAt == std::string_view::npos ? raw.size() : commentAt;
@@ -346,8 +342,7 @@ bool parseDefs(const char* text, std::size_t length, const char* sourceName, Def
         if (valueText.empty()) {
             return fail("key '" + key.name + "' has no value", lineNumber);
         }
-        doc.hasUnplaceableComments =
-            doc.hasUnplaceableComments || state.commentInsideValue;
+        doc.hasUnplaceableComments = doc.hasUnplaceableComments || state.commentInsideValue;
         // ⚑ The line is kept exactly as read, trailing spaces and a CR included.
         // Trimming it would be a change to a file the author did not ask for,
         // and under CRLF it would strip every line ending in the document.

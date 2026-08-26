@@ -185,7 +185,8 @@ inline constexpr std::uint32_t kNoPreviousLevel = 0xFFFFFFFFu;
 // `previousLevel` that is out of range for this chain is ignored rather than
 // trusted - a model whose chain shrank under a re-cook must not be indexed
 // through a level it no longer has.
-[[nodiscard]] std::uint32_t selectMeshLevel(float screenRadiusPixels, std::uint32_t levelCount,
+[[nodiscard]] std::uint32_t selectMeshLevel(float screenRadiusPixels,
+                                            std::uint32_t levelCount,
                                             std::uint32_t previousLevel = kNoPreviousLevel);
 
 } // namespace sol::assets

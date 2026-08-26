@@ -43,8 +43,7 @@ class PositionWelder
 {
 public:
     explicit PositionWelder(float tolerance)
-        : m_tolerance(tolerance)
-        , m_cell(tolerance > 0.0f ? tolerance : 1e-6f)
+        : m_tolerance(tolerance), m_cell(tolerance > 0.0f ? tolerance : 1e-6f)
     {
     }
 
@@ -185,9 +184,8 @@ struct Quadric
         const double x = point.x;
         const double y = point.y;
         const double z = point.z;
-        return (m[0] * x * x) + (2 * m[1] * x * y) + (2 * m[2] * x * z) + (2 * m[3] * x) +
-               (m[4] * y * y) + (2 * m[5] * y * z) + (2 * m[6] * y) + (m[7] * z * z) + (2 * m[8] * z) +
-               m[9];
+        return (m[0] * x * x) + (2 * m[1] * x * y) + (2 * m[2] * x * z) + (2 * m[3] * x) + (m[4] * y * y) +
+               (2 * m[5] * y * z) + (2 * m[6] * y) + (m[7] * z * z) + (2 * m[8] * z) + m[9];
     }
 };
 
@@ -218,8 +216,7 @@ struct Quadric
         }
         solved[column] = determinant(m) / det;
     }
-    out = {static_cast<float>(solved[0]), static_cast<float>(solved[1]),
-           static_cast<float>(solved[2])};
+    out = {static_cast<float>(solved[0]), static_cast<float>(solved[1]), static_cast<float>(solved[2])};
     return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z);
 }
 
@@ -257,14 +254,12 @@ struct CollapseCandidate
 
 bool MeshAdjacency::isManifold() const
 {
-    return std::all_of(edges.begin(), edges.end(),
-                       [](const Edge& edge) { return edge.faceCount <= 2; });
+    return std::all_of(edges.begin(), edges.end(), [](const Edge& edge) { return edge.faceCount <= 2; });
 }
 
 bool MeshAdjacency::isClosed() const
 {
-    return std::all_of(edges.begin(), edges.end(),
-                       [](const Edge& edge) { return edge.faceCount == 2; });
+    return std::all_of(edges.begin(), edges.end(), [](const Edge& edge) { return edge.faceCount == 2; });
 }
 
 std::uint32_t MeshAdjacency::borderEdgeCount() const
@@ -279,10 +274,10 @@ const MeshAdjacency::Edge* MeshAdjacency::findEdge(std::uint32_t a, std::uint32_
         std::swap(a, b);
     }
     using Key = std::pair<std::uint32_t, std::uint32_t>;
-    const auto found = std::lower_bound(edges.begin(), edges.end(), Key{a, b},
-                                        [](const Edge& edge, const Key& key) {
-                                            return Key{edge.a, edge.b} < key;
-                                        });
+    const auto found =
+        std::lower_bound(edges.begin(), edges.end(), Key{a, b}, [](const Edge& edge, const Key& key) {
+            return Key{edge.a, edge.b} < key;
+        });
     if (found == edges.end() || found->a != a || found->b != b) {
         return nullptr;
     }
@@ -300,6 +295,7 @@ MeshAdjacency buildAdjacency(const EditMesh& mesh)
         std::uint32_t b = 0;
         std::uint32_t face = 0;
     };
+
     std::vector<EdgeRef> refs;
     refs.reserve(static_cast<std::size_t>(faceCount) * 3);
     for (std::uint32_t face = 0; face < faceCount; ++face) {
@@ -1027,22 +1023,22 @@ std::uint32_t decimate(EditMesh& mesh, const DecimateOptions& options)
     // sphere decimates by CONTRACTING, measured at 0.63 of its volume by 80
     // triangles against 0.87 with the solve. The quadric's own minimum is
     // where the surrounding planes meet, off the chord and outside it.
-    const auto solvedPlacement = [&](const Quadric& combined, std::uint32_t a, std::uint32_t b,
-                                     Placement& out) {
-        Vec3 solved;
-        if (!solveQuadric(combined, solved)) {
-            return false;
-        }
-        // A system that is merely ill-conditioned rather than singular solves
-        // to a point across the model; keep the answer only while it is local
-        // to the edge it replaces.
-        const Vec3 midpoint = (points[a] + points[b]) * 0.5f;
-        if (core::length(solved - midpoint) > 0.5f * core::length(points[b] - points[a])) {
-            return false;
-        }
-        out = {solved, std::max(combined.evaluate(solved), 0.0)};
-        return true;
-    };
+    const auto solvedPlacement =
+        [&](const Quadric& combined, std::uint32_t a, std::uint32_t b, Placement& out) {
+            Vec3 solved;
+            if (!solveQuadric(combined, solved)) {
+                return false;
+            }
+            // A system that is merely ill-conditioned rather than singular solves
+            // to a point across the model; keep the answer only while it is local
+            // to the edge it replaces.
+            const Vec3 midpoint = (points[a] + points[b]) * 0.5f;
+            if (core::length(solved - midpoint) > 0.5f * core::length(points[b] - points[a])) {
+                return false;
+            }
+            out = {solved, std::max(combined.evaluate(solved), 0.0)};
+            return true;
+        };
 
     const auto edgeCost = [&](std::uint32_t a, std::uint32_t b) {
         Quadric combined = quadrics[a];
@@ -1210,8 +1206,8 @@ double signedVolume(const EditMesh& mesh)
         const core::DVec3 p0 = core::toDVec3(mesh.positions[mesh.facePosition(face, 0)]);
         const core::DVec3 p1 = core::toDVec3(mesh.positions[mesh.facePosition(face, 1)]);
         const core::DVec3 p2 = core::toDVec3(mesh.positions[mesh.facePosition(face, 2)]);
-        const core::DVec3 crossed{(p1.y * p2.z) - (p1.z * p2.y), (p1.z * p2.x) - (p1.x * p2.z),
-                                  (p1.x * p2.y) - (p1.y * p2.x)};
+        const core::DVec3 crossed{
+            (p1.y * p2.z) - (p1.z * p2.y), (p1.z * p2.x) - (p1.x * p2.z), (p1.x * p2.y) - (p1.y * p2.x)};
         volume += ((p0.x * crossed.x) + (p0.y * crossed.y) + (p0.z * crossed.z)) / 6.0;
     }
     return volume;
@@ -1234,9 +1230,11 @@ MeshBounds bounds(const EditMesh& mesh)
     }
     MeshBounds result{mesh.positions.front(), mesh.positions.front()};
     for (const Vec3& point : mesh.positions) {
-        result.min = {std::min(result.min.x, point.x), std::min(result.min.y, point.y),
+        result.min = {std::min(result.min.x, point.x),
+                      std::min(result.min.y, point.y),
                       std::min(result.min.z, point.z)};
-        result.max = {std::max(result.max.x, point.x), std::max(result.max.y, point.y),
+        result.max = {std::max(result.max.x, point.x),
+                      std::max(result.max.y, point.y),
                       std::max(result.max.z, point.z)};
     }
     return result;

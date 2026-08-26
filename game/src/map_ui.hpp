@@ -15,8 +15,10 @@ namespace game {
 // row the screen refuses to draw, and ownership stays hidden until the player
 // has actually been there. `text` backs the generated detail strings — a deque
 // so growth never moves entries the rows already point at.
-void fillMapPanel(const SpaceWorld& world, std::deque<std::string>& text,
-                  sol::ui::MapPanel& panel, std::vector<sol::ui::MapSystemRow>& systemRows,
+void fillMapPanel(const SpaceWorld& world,
+                  std::deque<std::string>& text,
+                  sol::ui::MapPanel& panel,
+                  std::vector<sol::ui::MapSystemRow>& systemRows,
                   std::vector<sol::ui::MapLaneRow>& laneRows,
                   std::vector<sol::ui::MapMarkerRow>& markerRows);
 

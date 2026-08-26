@@ -3,10 +3,9 @@
 // Station placement asks whether a system has rock (Phase 13). The dependency
 // is one-way and lives here in the .cpp: mining.hpp includes universe.hpp, and
 // universe.hpp only forward-declares MiningParams, so there is no cycle.
-#include "sol/sim/mining.hpp"
-
 #include "sol/core/assert.hpp"
 #include "sol/core/random.hpp"
+#include "sol/sim/mining.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -32,21 +31,53 @@ enum Stream : std::uint64_t
 };
 
 constexpr const char* kNamePrefixes[] = {
-    "Al", "Be", "Ca", "Dra", "Er", "Fen", "Gal", "Hel", "Ith", "Ka",
+    "Al",  "Be",  "Ca",  "Dra", "Er",  "Fen", "Gal", "Hel", "Ith", "Ka",
     "Lyr", "Mar", "Nor", "Oph", "Pra", "Que", "Rig", "Sar", "Tau", "Vel",
 };
 constexpr const char* kNameMiddles[] = {
-    "an", "ar", "en", "es", "ia", "io", "or", "ub", "un", "yr",
+    "an",
+    "ar",
+    "en",
+    "es",
+    "ia",
+    "io",
+    "or",
+    "ub",
+    "un",
+    "yr",
 };
 constexpr const char* kNameSuffixes[] = {
-    "a", "ea", "ia", "is", "os", "ra", "th", "um", "us", "yx",
+    "a",
+    "ea",
+    "ia",
+    "is",
+    "os",
+    "ra",
+    "th",
+    "um",
+    "us",
+    "yx",
 };
 constexpr const char* kStationOrdinals[] = {
-    "Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta", "Theta",
+    "Alpha",
+    "Beta",
+    "Gamma",
+    "Delta",
+    "Epsilon",
+    "Zeta",
+    "Eta",
+    "Theta",
 };
 constexpr const char* kPlanetNumerals[] = {"I", "II", "III", "IV", "V", "VI"};
 constexpr const char* kClanSuffixes[] = {
-    "Raiders", "Corsairs", "Cartel", "Syndicate", "Reavers", "Wolves", "Marauders", "Talons",
+    "Raiders",
+    "Corsairs",
+    "Cartel",
+    "Syndicate",
+    "Reavers",
+    "Wolves",
+    "Marauders",
+    "Talons",
 };
 
 template <std::size_t N>
@@ -78,9 +109,8 @@ void scatterSystems(const GalaxyParams& params, core::Rng& rng, std::vector<Syst
         for (std::uint32_t tries = 0; tries < 64 && !placed; ++tries) {
             const float r = radius * std::sqrt(rng.nextFloat01());
             const float theta = kTau * rng.nextFloat01();
-            const core::Vec3 candidate{r * std::cos(theta), 0.08f * radius
-                                                                * (rng.nextFloat01() * 2.0f - 1.0f),
-                                       r * std::sin(theta)};
+            const core::Vec3 candidate{
+                r * std::cos(theta), 0.08f * radius * (rng.nextFloat01() * 2.0f - 1.0f), r * std::sin(theta)};
             bool clear = true;
             for (const SystemSpec& other : systems) {
                 if (core::length(candidate - other.mapPosition) < separation) {
@@ -109,7 +139,8 @@ void scatterSystems(const GalaxyParams& params, core::Rng& rng, std::vector<Syst
 // Minimum spanning tree (Prim, O(n^2) — fine at <=150 systems) guarantees
 // connectivity; then up to extraGatesPerSystem nearest-neighbor links per
 // system add loops so the graph isn't a tree.
-void buildGateGraph(const GalaxyParams& params, std::vector<SystemSpec>& systems,
+void buildGateGraph(const GalaxyParams& params,
+                    std::vector<SystemSpec>& systems,
                     std::vector<GateLink>& links)
 {
     const std::uint32_t count = static_cast<std::uint32_t>(systems.size());
@@ -160,8 +191,7 @@ void buildGateGraph(const GalaxyParams& params, std::vector<SystemSpec>& systems
 
     // Extra lanes: each system links to its nearest not-yet-linked neighbors,
     // capped by length so shortcuts stay local.
-    const float maxExtraLength =
-        params.galaxyRadius / std::sqrt(static_cast<float>(count)) * 3.0f;
+    const float maxExtraLength = params.galaxyRadius / std::sqrt(static_cast<float>(count)) * 3.0f;
     for (std::uint32_t i = 0; i < count; ++i) {
         for (std::uint32_t extra = 0; extra < params.extraGatesPerSystem; ++extra) {
             std::uint32_t nearest = kInvalidIndex;
@@ -194,7 +224,7 @@ void assignRegions(const GalaxyParams& params, std::vector<SystemSpec>& systems)
     const float frontierRadius = params.galaxyRadius * params.frontierRadiusFraction;
     for (SystemSpec& system : systems) {
         const float r = core::length(system.mapPosition);
-        system.region = r < coreRadius        ? Region::Core
+        system.region = r < coreRadius       ? Region::Core
                         : r < frontierRadius ? Region::Frontier
                                              : Region::Fringe;
     }
@@ -203,7 +233,9 @@ void assignRegions(const GalaxyParams& params, std::vector<SystemSpec>& systems)
 // Faction capitals spread greedily through the core (farthest-point), then
 // multi-source Dijkstra over the gate graph claims territory; fringe systems
 // roll to stay lawless.
-void claimTerritory(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSpec>& systems,
+void claimTerritory(const GalaxyParams& params,
+                    core::Rng& rng,
+                    std::vector<SystemSpec>& systems,
                     const std::vector<GateLink>& links)
 {
     if (params.factionCount == 0) {
@@ -230,8 +262,7 @@ void claimTerritory(const GalaxyParams& params, core::Rng& rng, std::vector<Syst
         for (const std::uint32_t candidate : candidates) {
             float nearestCapital = std::numeric_limits<float>::max();
             for (const std::uint32_t capital : capitals) {
-                nearestCapital =
-                    std::min(nearestCapital, mapDistance(systems[candidate], systems[capital]));
+                nearestCapital = std::min(nearestCapital, mapDistance(systems[candidate], systems[capital]));
             }
             if (nearestCapital > farthestCost) {
                 farthestCost = nearestCapital;
@@ -289,8 +320,11 @@ void claimTerritory(const GalaxyParams& params, core::Rng& rng, std::vector<Syst
 // past the majors, so downstream tables (relations, reputation, catalogs)
 // are just sized to factionCount + clans.size(). Component walk is in index
 // order and all draws come from one dedicated stream => deterministic.
-void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSpec>& systems,
-                const std::vector<GateLink>& links, std::vector<ClanSpec>& clans)
+void spawnClans(const GalaxyParams& params,
+                core::Rng& rng,
+                std::vector<SystemSpec>& systems,
+                const std::vector<GateLink>& links,
+                std::vector<ClanSpec>& clans)
 {
     if (params.factionCount == 0 || params.pirateTemplateCount == 0) {
         return;
@@ -305,8 +339,7 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
         if (systems[i].factionIndex != kNoFaction) {
             continue;
         }
-        const std::uint32_t clanFaction =
-            params.factionCount + static_cast<std::uint32_t>(clans.size());
+        const std::uint32_t clanFaction = params.factionCount + static_cast<std::uint32_t>(clans.size());
         std::vector<std::uint32_t> frontier{i};
         systems[i].factionIndex = clanFaction;
         while (!frontier.empty()) {
@@ -339,8 +372,7 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
 // (Phase 13). Anything unstated — no bias table, a faction with no character,
 // a lawless system, a row that does not reach this archetype — is 1.0, which
 // is the pre-Phase-13 galaxy exactly.
-[[nodiscard]] float factionBias(const GalaxyParams& params, std::uint32_t faction,
-                                std::uint32_t archetype)
+[[nodiscard]] float factionBias(const GalaxyParams& params, std::uint32_t faction, std::uint32_t archetype)
 {
     if (faction >= params.factionStationBias.size()) {
         return 1.0f;
@@ -351,9 +383,12 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
 
 // The weight one archetype carries in one system: its region tuning, tilted by
 // its owner's character, vetoed to zero when it needs rock the system lacks.
-[[nodiscard]] float archetypeWeight(const GalaxyParams& params, std::uint32_t archetype,
-                                    std::size_t tier, std::uint32_t faction,
-                                    std::uint32_t systemFieldCount, bool enforceFields)
+[[nodiscard]] float archetypeWeight(const GalaxyParams& params,
+                                    std::uint32_t archetype,
+                                    std::size_t tier,
+                                    std::uint32_t faction,
+                                    std::uint32_t systemFieldCount,
+                                    bool enforceFields)
 {
     const StationRule& rule = params.stationRules[archetype];
     if (enforceFields && rule.requiresField && systemFieldCount == 0) {
@@ -365,8 +400,11 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
     return rule.weight[tier] * factionBias(params, faction, archetype);
 }
 
-[[nodiscard]] std::uint32_t pickArchetype(const GalaxyParams& params, core::Rng& rng, Region region,
-                                          std::uint32_t faction, std::uint32_t systemFieldCount,
+[[nodiscard]] std::uint32_t pickArchetype(const GalaxyParams& params,
+                                          core::Rng& rng,
+                                          Region region,
+                                          std::uint32_t faction,
+                                          std::uint32_t systemFieldCount,
                                           bool enforceFields)
 {
     if (params.stationRules.empty()) {
@@ -399,8 +437,11 @@ void spawnClans(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSp
 
 // Star, planets (AU-scale scenery; primary planet hosts the playfield),
 // stations near the primary planet, gates toward each linked neighbor.
-void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec& system,
-                    const std::vector<SystemSpec>& systems, core::Rng& rng,
+void populateSystem(const GalaxyParams& params,
+                    std::uint32_t index,
+                    SystemSpec& system,
+                    const std::vector<SystemSpec>& systems,
+                    core::Rng& rng,
                     const MiningParams* mining)
 {
     // Asked once per system, before any station is placed. A field is a pure
@@ -416,8 +457,8 @@ void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec&
     double orbit = 4.0e10 * (1.0 + rng.nextDouble01()); // innermost 0.27-0.53 AU
     for (std::uint32_t p = 0; p < planetCount; ++p) {
         PlanetSpec planet;
-        planet.name = system.name + " " + kPlanetNumerals[std::min<std::size_t>(
-                                              p, std::size(kPlanetNumerals) - 1)];
+        planet.name =
+            system.name + " " + kPlanetNumerals[std::min<std::size_t>(p, std::size(kPlanetNumerals) - 1)];
         planet.radius = 2.5e6 + 4.5e7 * rng.nextDouble01();
         planet.position = randomPlayfieldDirection(rng) * orbit;
         orbit *= 1.6 + 0.8 * rng.nextDouble01();
@@ -434,14 +475,12 @@ void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec&
         minStations + (maxStations > minStations ? rng.range(maxStations - minStations + 1) : 0);
     for (std::uint32_t s = 0; s < stationCount; ++s) {
         StationSpec station;
-        station.archetype = pickArchetype(params, rng, system.region, system.factionIndex,
-                                          fieldCount, enforceFields);
-        station.name = system.name + " "
-                       + kStationOrdinals[std::min<std::size_t>(s, std::size(kStationOrdinals)
-                                                                       - 1)];
-        const double distance =
-            params.stationMinDistance
-            + (params.stationMaxDistance - params.stationMinDistance) * rng.nextDouble01();
+        station.archetype =
+            pickArchetype(params, rng, system.region, system.factionIndex, fieldCount, enforceFields);
+        station.name =
+            system.name + " " + kStationOrdinals[std::min<std::size_t>(s, std::size(kStationOrdinals) - 1)];
+        const double distance = params.stationMinDistance +
+                                (params.stationMaxDistance - params.stationMinDistance) * rng.nextDouble01();
         station.position = hub + randomPlayfieldDirection(rng) * distance;
         system.stations.push_back(std::move(station));
     }
@@ -449,8 +488,7 @@ void populateSystem(const GalaxyParams& params, std::uint32_t index, SystemSpec&
     // Gates sit at the playfield edge in the map-space direction of their
     // destination, so the system layout reads like the galaxy map.
     for (GateSpec& gate : system.gates) {
-        const core::Vec3 toNeighbor =
-            systems[gate.toSystem].mapPosition - systems[index].mapPosition;
+        const core::Vec3 toNeighbor = systems[gate.toSystem].mapPosition - systems[index].mapPosition;
         core::DVec3 direction{toNeighbor.x, toNeighbor.y, toNeighbor.z};
         const double len = core::length(direction);
         direction = len > 0.0 ? direction * (1.0 / len) : core::DVec3{1.0, 0.0, 0.0};

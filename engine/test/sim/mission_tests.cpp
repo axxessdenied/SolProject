@@ -1,16 +1,14 @@
-#include <sol/sim/missions.hpp>
-
-#include <sol/sim/economy.hpp>
-#include <sol/sim/faction_sim.hpp>
-#include <sol/sim/universe.hpp>
-
-#include <sol/core/serialize.hpp>
-#include <sol/test/test.hpp>
-
 #include <cstdint>
 #include <span>
 #include <string>
 #include <vector>
+
+#include <sol/core/serialize.hpp>
+#include <sol/sim/economy.hpp>
+#include <sol/sim/faction_sim.hpp>
+#include <sol/sim/missions.hpp>
+#include <sol/sim/universe.hpp>
+#include <sol/test/test.hpp>
 
 using sol::sim::BountyCandidate;
 using sol::sim::Economy;
@@ -68,11 +66,16 @@ FactionSimParams chainFactionParams()
     FactionSimParams params;
     params.agents = {FactionAgentParams{.aggression = 1.0f, .forgiveness = 0.5f},
                      FactionAgentParams{.aggression = 0.0f, .forgiveness = 0.5f},
-                     FactionAgentParams{.aggression = 1.0f, .forgiveness = 0.1f,
-                                        .pirate = true}};
-    params.baselineRelations = {0.0f, -35.0f, -60.0f, //
-                                -35.0f, 0.0f, -60.0f, //
-                                -60.0f, -60.0f, 0.0f};
+                     FactionAgentParams{.aggression = 1.0f, .forgiveness = 0.1f, .pirate = true}};
+    params.baselineRelations = {0.0f,
+                                -35.0f,
+                                -60.0f, //
+                                -35.0f,
+                                0.0f,
+                                -60.0f, //
+                                -60.0f,
+                                -60.0f,
+                                0.0f};
     params.initialStandings = {0.0f, 0.0f, -20.0f};
     return params;
 }
@@ -198,10 +201,8 @@ Mission holdOffer(std::uint32_t system, std::uint32_t faction, std::uint32_t pos
     mission.standingReward = 6.0f;
     mission.standingPenalty = 3.0f;
     mission.deadline = 900.0;
-    mission.objectives.push_back({.kind = ObjectiveKind::Hold,
-                                  .system = system,
-                                  .faction = faction,
-                                  .text = "Hold T1"});
+    mission.objectives.push_back(
+        {.kind = ObjectiveKind::Hold, .system = system, .faction = faction, .text = "Hold T1"});
     return mission;
 }
 
@@ -289,10 +290,8 @@ Mission escortOffer(std::uint32_t trader, std::uint32_t system, std::uint32_t po
     mission.rewardCredits = 900.0;
     mission.standingReward = 4.0f;
     mission.standingPenalty = 2.0f;
-    mission.objectives.push_back({.kind = ObjectiveKind::Escort,
-                                  .system = system,
-                                  .trader = trader,
-                                  .text = "Keep the hauler alive"});
+    mission.objectives.push_back(
+        {.kind = ObjectiveKind::Escort, .system = system, .trader = trader, .text = "Keep the hauler alive"});
     return mission;
 }
 
@@ -303,8 +302,8 @@ SOL_TEST(mission_escort_candidates_are_the_haulers_leaving_this_system)
     EscortWorld world;
     std::vector<sol::sim::EscortCandidate> candidates;
 
-    world.missions.escortCandidates(world.galaxy, world.economy, world.factions,
-                                    world.fromSystem, candidates);
+    world.missions.escortCandidates(
+        world.galaxy, world.economy, world.factions, world.fromSystem, candidates);
     SOL_REQUIRE(candidates.size() == 1);
     SOL_CHECK(candidates[0].trader == 0);
     SOL_CHECK(candidates[0].system == world.toSystem);
@@ -318,16 +317,15 @@ SOL_TEST(mission_escort_candidates_are_the_haulers_leaving_this_system)
         if (s == world.fromSystem) {
             continue;
         }
-        world.missions.escortCandidates(world.galaxy, world.economy, world.factions, s,
-                                        candidates);
+        world.missions.escortCandidates(world.galaxy, world.economy, world.factions, s, candidates);
         SOL_CHECK(candidates.empty());
     }
 
     // And the window closes on its own: once it reaches the gate there is
     // nothing here to escort, from this board or any other.
     world.flyOutOfTheSystem();
-    world.missions.escortCandidates(world.galaxy, world.economy, world.factions,
-                                    world.fromSystem, candidates);
+    world.missions.escortCandidates(
+        world.galaxy, world.economy, world.factions, world.fromSystem, candidates);
     SOL_CHECK(candidates.empty());
 }
 
@@ -339,8 +337,8 @@ SOL_TEST(mission_escort_candidates_carry_the_danger_of_the_destination)
     SOL_REQUIRE(world.factions.commitRaid(world.galaxy, &world.economy, 2, world.toSystem));
 
     std::vector<sol::sim::EscortCandidate> candidates;
-    world.missions.escortCandidates(world.galaxy, world.economy, world.factions,
-                                    world.fromSystem, candidates);
+    world.missions.escortCandidates(
+        world.galaxy, world.economy, world.factions, world.fromSystem, candidates);
     SOL_REQUIRE(candidates.size() == 1);
     SOL_CHECK(candidates[0].danger > 0.0f);
     SOL_CHECK(candidates[0].danger == world.factions.danger(world.toSystem));
@@ -351,33 +349,33 @@ SOL_TEST(mission_escort_offers_validate_against_a_departing_hauler)
     EscortWorld world;
     std::string error;
 
-    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                       escortOffer(0, world.toSystem, 0), &error));
+    SOL_CHECK(world.missions.postOffer(
+        world.galaxy, world.economy, world.factions, escortOffer(0, world.toSystem, 0), &error));
 
     // Right hauler, wrong destination: a contract that could only ever fail.
     const std::uint32_t elsewhere = world.toSystem == 0 ? 1u : 0u;
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                        escortOffer(0, elsewhere, 0), &error));
+    SOL_CHECK(!world.missions.postOffer(
+        world.galaxy, world.economy, world.factions, escortOffer(0, elsewhere, 0), &error));
     SOL_CHECK(error == "no such hauler");
 
     // A trader index off the end of the fleet never reaches the candidate
     // match: it is refused by the range check every objective goes through.
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                        escortOffer(1, world.toSystem, 0), &error));
+    SOL_CHECK(!world.missions.postOffer(
+        world.galaxy, world.economy, world.factions, escortOffer(1, world.toSystem, 0), &error));
     SOL_CHECK(error == "objective out of range");
 
     // And once the hauler has gone, the board cannot sell it any more.
     world.flyOutOfTheSystem();
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                        escortOffer(0, world.toSystem, 0), &error));
+    SOL_CHECK(!world.missions.postOffer(
+        world.galaxy, world.economy, world.factions, escortOffer(0, world.toSystem, 0), &error));
     SOL_CHECK(error == "no such hauler");
 }
 
 SOL_TEST(mission_escort_completes_on_the_arrival_it_named)
 {
     EscortWorld world;
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         escortOffer(0, world.toSystem, 0)));
+    SOL_REQUIRE(world.missions.postOffer(
+        world.galaxy, world.economy, world.factions, escortOffer(0, world.toSystem, 0)));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
 
     std::vector<MissionEvent> events;
@@ -408,8 +406,8 @@ SOL_TEST(mission_escort_lost_to_someone_else_costs_nothing_but_a_betrayal_does)
 
     // A raider got through. The pilot flew the job and lost it, which is 8u's
     // Lost kind: the game charges no standing on it.
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         escortOffer(0, world.toSystem, 0)));
+    SOL_REQUIRE(world.missions.postOffer(
+        world.galaxy, world.economy, world.factions, escortOffer(0, world.toSystem, 0)));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
     world.missions.takeEvents(events);
     events.clear();
@@ -425,8 +423,8 @@ SOL_TEST(mission_escort_lost_to_someone_else_costs_nothing_but_a_betrayal_does)
     // finish an escort would be to destroy the ship and keep the wreck: the
     // contract ends either way, and only one of the two endings is free.
     events.clear();
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         escortOffer(0, world.toSystem, 0)));
+    SOL_REQUIRE(world.missions.postOffer(
+        world.galaxy, world.economy, world.factions, escortOffer(0, world.toSystem, 0)));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
     world.missions.takeEvents(events);
     events.clear();
@@ -468,13 +466,9 @@ SOL_TEST(mission_save_round_trips_every_objective_kind)
          .radius = 1'200.0,
          .text = "fly to"},
         {.kind = ObjectiveKind::Hold, .system = 1, .faction = 0, .text = "hold"},
-        {.kind = ObjectiveKind::Escort,
-         .system = world.toSystem,
-         .trader = 0,
-         .text = "escort"},
+        {.kind = ObjectiveKind::Escort, .system = world.toSystem, .trader = 0, .text = "escort"},
     };
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         mission));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, mission));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
 
     sol::core::BinaryWriter writer;
@@ -484,8 +478,7 @@ SOL_TEST(mission_save_round_trips_every_objective_kind)
     SOL_REQUIRE(restored.missions.load(reader));
 
     SOL_REQUIRE(restored.missions.active().size() == 1);
-    const std::vector<MissionObjective>& objectives =
-        restored.missions.active()[0].objectives;
+    const std::vector<MissionObjective>& objectives = restored.missions.active()[0].objectives;
     SOL_REQUIRE(objectives.size() == 6);
     SOL_CHECK(objectives[2].kills == 3);
     SOL_CHECK(objectives[3].radius == 1'200.0);
@@ -540,27 +533,26 @@ SOL_TEST(mission_hold_offers_validate_against_a_live_contest)
     ContestWorld world;
     std::string error;
 
-    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                       holdOffer(1, 0, 0), &error));
+    SOL_CHECK(
+        world.missions.postOffer(world.galaxy, world.economy, world.factions, holdOffer(1, 0, 0), &error));
     // Either side of the fight can be named — a defence or an assault.
-    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                       holdOffer(1, 1, 1), &error));
+    SOL_CHECK(
+        world.missions.postOffer(world.galaxy, world.economy, world.factions, holdOffer(1, 1, 1), &error));
     // A bystander cannot be named as the holder, so the board cannot sell a
     // defence of a faction that is not in the fight.
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                        holdOffer(1, 2, 0), &error));
+    SOL_CHECK(
+        !world.missions.postOffer(world.galaxy, world.economy, world.factions, holdOffer(1, 2, 0), &error));
     SOL_CHECK(error == "no such contest");
     // Nor a system where nothing is happening.
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                        holdOffer(3, 2, 0), &error));
+    SOL_CHECK(
+        !world.missions.postOffer(world.galaxy, world.economy, world.factions, holdOffer(3, 2, 0), &error));
     SOL_CHECK(error == "no such contest");
 }
 
 SOL_TEST(mission_hold_completes_when_the_named_side_keeps_the_system)
 {
     ContestWorld world;
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         holdOffer(1, 0, 0)));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, holdOffer(1, 0, 0)));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
     std::vector<MissionEvent> events;
     world.missions.takeEvents(events);
@@ -584,8 +576,7 @@ SOL_TEST(mission_hold_completes_when_the_named_side_keeps_the_system)
 SOL_TEST(mission_hold_lost_is_its_own_event_kind_so_it_can_cost_nothing)
 {
     ContestWorld world;
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         holdOffer(1, 0, 0)));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, holdOffer(1, 0, 0)));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
     std::vector<MissionEvent> events;
     world.missions.takeEvents(events);
@@ -649,23 +640,23 @@ SOL_TEST(mission_offers_validate_against_candidates)
     world.missions.openBoard(0, 0);
 
     // A haul matching the shortage posts; over-sized or fictitious ones don't.
-    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                       haulOffer(400.0f)));
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
+    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions, haulOffer(400.0f)));
+    SOL_CHECK(!world.missions.postOffer(world.galaxy,
+                                        world.economy,
+                                        world.factions,
                                         haulOffer(800.0f))); // more than the gap
     Mission wrongTarget = haulOffer(100.0f);
     wrongTarget.objectives[0].system = 2; // no shortage there
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                        wrongTarget));
+    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions, wrongTarget));
 
     // A bounty on the actual raider posts; one on an innocent faction doesn't.
-    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                       bountyOffer(3)));
+    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions, bountyOffer(3)));
     Mission wrongClan = bountyOffer(3);
     wrongClan.objectives[0].faction = 0;
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                        wrongClan));
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
+    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions, wrongClan));
+    SOL_CHECK(!world.missions.postOffer(world.galaxy,
+                                        world.economy,
+                                        world.factions,
                                         bountyOffer(50))); // over the kill cap
 
     // Campaign offers skip candidate matching but not range checks, and
@@ -674,19 +665,22 @@ SOL_TEST(mission_offers_validate_against_candidates)
     campaign.title = "Opening move";
     campaign.campaignId = "act1.m1";
     campaign.poster = 0;
-    campaign.objectives.push_back({.kind = ObjectiveKind::Dock, .system = 2, .station = 0,
-                                   .text = "Dock at S2"});
-    campaign.objectives.push_back({.kind = ObjectiveKind::Kill, .system = kAnySystem,
-                                   .faction = 2, .kills = 1, .text = "Destroy a raider"});
-    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                       campaign));
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
+    campaign.objectives.push_back(
+        {.kind = ObjectiveKind::Dock, .system = 2, .station = 0, .text = "Dock at S2"});
+    campaign.objectives.push_back({.kind = ObjectiveKind::Kill,
+                                   .system = kAnySystem,
+                                   .faction = 2,
+                                   .kills = 1,
+                                   .text = "Destroy a raider"});
+    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions, campaign));
+    SOL_CHECK(!world.missions.postOffer(world.galaxy,
+                                        world.economy,
+                                        world.factions,
                                         campaign)); // duplicate id
     Mission badRange = campaign;
     badRange.campaignId = "act1.m2";
     badRange.objectives[0].station = 9;
-    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                        badRange));
+    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions, badRange));
     SOL_CHECK(world.missions.offers().size() == 3);
 
     // openBoard clears; posting needs an open board.
@@ -702,10 +696,8 @@ SOL_TEST(mission_accept_gates_and_journal_progression)
     world.missions.openBoard(0, 0);
     Mission gated = haulOffer(400.0f);
     gated.minRep = 10.0f;
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         gated));
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         bountyOffer(2)));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, gated));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, bountyOffer(2)));
 
     // The minRep gate holds until standing clears it.
     std::string error;
@@ -756,17 +748,17 @@ SOL_TEST(mission_campaign_steps_deadlines_and_abandon)
     campaign.title = "Shakedown";
     campaign.campaignId = "act1.m1";
     campaign.poster = 0;
-    campaign.objectives.push_back({.kind = ObjectiveKind::FlyTo, .system = 0,
-                                   .position = {1'000.0, 0.0, 0.0}, .radius = 500.0,
+    campaign.objectives.push_back({.kind = ObjectiveKind::FlyTo,
+                                   .system = 0,
+                                   .position = {1'000.0, 0.0, 0.0},
+                                   .radius = 500.0,
                                    .text = "Fly to the beacon"});
-    campaign.objectives.push_back({.kind = ObjectiveKind::Dock, .system = 0, .station = 0,
-                                   .text = "Return to the station"});
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         campaign));
+    campaign.objectives.push_back(
+        {.kind = ObjectiveKind::Dock, .system = 0, .station = 0, .text = "Return to the station"});
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, campaign));
     Mission timedHaul = haulOffer(100.0f);
     timedHaul.deadline = 10.0;
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         timedHaul));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, timedHaul));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
 
@@ -788,17 +780,13 @@ SOL_TEST(mission_campaign_steps_deadlines_and_abandon)
     std::vector<MissionEvent> events;
     world.missions.takeEvents(events);
     SOL_REQUIRE(events.size() == 6);
-    SOL_CHECK(events[3].kind == MissionEventKind::ObjectiveComplete &&
-              events[3].objective == 1);
-    SOL_CHECK(events[4].kind == MissionEventKind::Completed &&
-              events[4].mission.campaignId == "act1.m1");
-    SOL_CHECK(events[5].kind == MissionEventKind::Failed &&
-              events[5].mission.standingPenalty == 2.0f);
+    SOL_CHECK(events[3].kind == MissionEventKind::ObjectiveComplete && events[3].objective == 1);
+    SOL_CHECK(events[4].kind == MissionEventKind::Completed && events[4].mission.campaignId == "act1.m1");
+    SOL_CHECK(events[5].kind == MissionEventKind::Failed && events[5].mission.standingPenalty == 2.0f);
 
     // Abandon queues its own consequence.
     world.missions.openBoard(0, 0);
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         haulOffer(100.0f)));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, haulOffer(100.0f)));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
     SOL_CHECK(!world.missions.abandon(5));
     SOL_CHECK(world.missions.abandon(0));
@@ -821,8 +809,7 @@ SOL_TEST(mission_without_a_deadline_never_expires_and_expiry_frees_the_slot)
 {
     MissionWorld world;
     world.missions.openBoard(0, 0);
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         bountyOffer(2)));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, bountyOffer(2)));
     SOL_REQUIRE(world.missions.accept(0, 0.0f));
     SOL_REQUIRE(world.missions.active().size() == 1);
     SOL_CHECK(world.missions.active()[0].deadline == 0.0);
@@ -861,12 +848,10 @@ SOL_TEST(mission_save_load_round_trips_exactly)
 {
     MissionWorld world;
     world.missions.openBoard(0, 0);
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         haulOffer(400.0f)));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, haulOffer(400.0f)));
     Mission timedBounty = bountyOffer(3);
     timedBounty.deadline = 300.0;
-    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions,
-                                         timedBounty));
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, timedBounty));
     SOL_REQUIRE(world.missions.accept(1, 0.0f)); // the bounty
     world.missions.notifyKill(2, 1);             // progress: 2 kills left
     world.missions.setCampaignStage(2);
@@ -885,8 +870,7 @@ SOL_TEST(mission_save_load_round_trips_exactly)
     SOL_REQUIRE(restored.missions.active().size() == 1);
     SOL_CHECK(restored.missions.active()[0].objectives[0].kills == 2);
     SOL_CHECK(restored.missions.active()[0].deadline == 300.0);
-    SOL_CHECK(restored.missions.active()[0].objectives[0].text ==
-              "Destroy raiders in S1");
+    SOL_CHECK(restored.missions.active()[0].objectives[0].text == "Destroy raiders in S1");
     SOL_CHECK(restored.missions.campaignStage() == 2);
     SOL_CHECK(restored.missions.boardSystem() == 0);
     SOL_CHECK(restored.missions.boardStation() == 0);

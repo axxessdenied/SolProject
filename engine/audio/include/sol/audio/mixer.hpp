@@ -49,8 +49,7 @@ struct SoundClip
 
     [[nodiscard]] std::uint32_t frameCount() const
     {
-        return channelCount == 0 ? 0
-                                 : static_cast<std::uint32_t>(samples.size()) / channelCount;
+        return channelCount == 0 ? 0 : static_cast<std::uint32_t>(samples.size()) / channelCount;
     }
 };
 
@@ -66,7 +65,9 @@ public:
     // and the seam a generated cue would arrive through.
     [[nodiscard]] SoundId add(SoundClip clip);
     [[nodiscard]] const SoundClip* clip(SoundId id) const;
+
     [[nodiscard]] std::size_t size() const { return m_clips.size(); }
+
     void clear() { m_clips.clear(); }
 
 private:
@@ -85,9 +86,9 @@ struct PlayParams
     float gain = 1.0f;
     float pitch = 1.0f; // playback rate multiplier, after the rate conversion
     bool positional = false;
-    core::DVec3 position;              // sim space, meters; ignored when 2D
-    float rolloffDistance = 500.0f;    // meters at which gain has halved
-    std::uint32_t maxInstances = 0;    // 0 = unlimited
+    core::DVec3 position;           // sim space, meters; ignored when 2D
+    float rolloffDistance = 500.0f; // meters at which gain has halved
+    std::uint32_t maxInstances = 0; // 0 = unlimited
 };
 
 class Mixer final : public platform::AudioRenderer
@@ -158,8 +159,7 @@ private:
     void mixVoice(Voice& voice, float* out, std::uint32_t frameCount);
     // Slot for a new voice, stealing the quietest if every slot is busy.
     // Returns kMaxVoices when the incoming sound loses that comparison.
-    [[nodiscard]] std::size_t claimVoice(float priority, SoundId sound,
-                                         std::uint32_t maxInstances);
+    [[nodiscard]] std::size_t claimVoice(float priority, SoundId sound, std::uint32_t maxInstances);
 
     const SoundBank* m_bank = nullptr;
     std::uint32_t m_outputSampleRate = 48000;

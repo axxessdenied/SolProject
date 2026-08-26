@@ -22,23 +22,16 @@ namespace sol::ecs {
 class CommandBuffer
 {
 public:
-    explicit CommandBuffer(Registry& registry)
-        : m_registry(&registry)
-    {
-    }
+    explicit CommandBuffer(Registry& registry) : m_registry(&registry) {}
 
     [[nodiscard]] Entity create() { return m_registry->create(); }
 
-    void destroy(Entity entity)
-    {
-        m_ops.push_back(Op{.kind = OpKind::kDestroy, .entity = entity});
-    }
+    void destroy(Entity entity) { m_ops.push_back(Op{.kind = OpKind::kDestroy, .entity = entity}); }
 
     template <typename T>
     void add(Entity entity, const T& value)
     {
-        static_assert(std::is_trivially_copyable_v<T>,
-                      "command buffers store recorded components by memcpy");
+        static_assert(std::is_trivially_copyable_v<T>, "command buffers store recorded components by memcpy");
         const std::size_t offset = alignUp(m_data.size(), alignof(T));
         m_data.resize(offset + sizeof(T));
         std::memcpy(m_data.data() + offset, &value, sizeof(T));
@@ -46,10 +39,9 @@ public:
             .kind = OpKind::kAdd,
             .entity = entity,
             .dataOffset = static_cast<std::uint32_t>(offset),
-            .applyAdd =
-                [](Registry& registry, Entity target, const void* data) {
-                    registry.emplace<T>(target, *static_cast<const T*>(data));
-                },
+            .applyAdd = [](Registry& registry,
+                           Entity target,
+                           const void* data) { registry.emplace<T>(target, *static_cast<const T*>(data)); },
         });
     }
 
@@ -59,8 +51,7 @@ public:
         m_ops.push_back(Op{
             .kind = OpKind::kRemove,
             .entity = entity,
-            .applyRemove = [](Registry& registry,
-                              Entity target) { registry.remove<T>(target); },
+            .applyRemove = [](Registry& registry, Entity target) { registry.remove<T>(target); },
         });
     }
 

@@ -53,8 +53,8 @@ constexpr float kSkyIntensity = 1.0f;
 
 } // namespace
 
-std::uint32_t SceneRenderer::chooseLevel(RenderInstanceKey key, float screenRadiusPixels,
-                                         std::uint32_t levelCount)
+std::uint32_t
+SceneRenderer::chooseLevel(RenderInstanceKey key, float screenRadiusPixels, std::uint32_t levelCount)
 {
     const std::int32_t pin = lodPin();
     if (pin > kLodPinAutomatic) {
@@ -86,24 +86,22 @@ std::uint32_t SceneRenderer::chooseLevel(RenderInstanceKey key, float screenRadi
     return level;
 }
 
-bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
-                               const char* shaderDirectory, const char* cookedDirectory)
+bool SceneRenderer::initialize(rhi::Context& context,
+                               rhi::Swapchain& swapchain,
+                               const char* shaderDirectory,
+                               const char* cookedDirectory)
 {
     m_context = &context;
     m_swapchain = &swapchain;
 
     if (!m_meshRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
-        !m_skyRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
-                                  kStarfieldSeed) ||
+        !m_skyRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory, kStarfieldSeed) ||
         !m_impostorRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
-        !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat,
-                                      shaderDirectory) ||
-        !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
-                                kFramesInFlight) ||
-        !m_particleRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory,
-                                       kFramesInFlight) ||
-        !m_uiRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat, shaderDirectory,
-                                 kFramesInFlight)) {
+        !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat, shaderDirectory) ||
+        !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory, kFramesInFlight) ||
+        !m_particleRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory, kFramesInFlight) ||
+        !m_uiRenderer.initialize(
+            context, swapchain.imageFormat(), kDepthFormat, shaderDirectory, kFramesInFlight)) {
         return false;
     }
     m_hdrColor = rhi::createColorTarget(context, swapchain.extent(), kHdrFormat);
@@ -132,8 +130,10 @@ bool SceneRenderer::initialize(rhi::Context& context, rhi::Swapchain& swapchain,
         atlasDesc.mipCount = 1;
         atlasDesc.mipData = &atlasData;
         atlasDesc.mipSizes = &atlasSize;
-        atlasDesc.swizzle = {VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE,
-                             VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R};
+        atlasDesc.swizzle = {VK_COMPONENT_SWIZZLE_ONE,
+                             VK_COMPONENT_SWIZZLE_ONE,
+                             VK_COMPONENT_SWIZZLE_ONE,
+                             VK_COMPONENT_SWIZZLE_R};
         m_uiFontAtlas = rhi::createSampledTexture(context, atlasDesc);
         m_uiFontSampler = rhi::createClampSampler(context);
         m_uiFontTexture = m_uiRenderer.registerTexture(m_uiFontAtlas.view, m_uiFontSampler);
@@ -199,8 +199,7 @@ bool SceneRenderer::onSwapchainRecreated()
     return createPerImageSemaphores();
 }
 
-bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
-                               const char* cookedDirectory)
+bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models, const char* cookedDirectory)
 {
     unloadModels();
     const std::string cookedBase = cookedDirectory;
@@ -252,8 +251,10 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
                               .translucent = def.translucent,
                               .alpha = def.alpha};
         if (!meshIndex(def.mesh, entry.levels[0]) || !textureIndex(def.texture, entry.texture)) {
-            SOL_LOG_ERROR("model '%s': cannot load mesh '%s' / texture '%s'", def.id.c_str(),
-                          def.mesh.c_str(), def.texture.c_str());
+            SOL_LOG_ERROR("model '%s': cannot load mesh '%s' / texture '%s'",
+                          def.id.c_str(),
+                          def.mesh.c_str(),
+                          def.texture.c_str());
             unloadModels();
             return false;
         }
@@ -270,8 +271,7 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
                 break; // the chain ends where the files do
             }
             if (!meshIndex(stem, entry.levels[level])) {
-                SOL_LOG_ERROR("model '%s': level %u exists but will not load", def.id.c_str(),
-                              level);
+                SOL_LOG_ERROR("model '%s': level %u exists but will not load", def.id.c_str(), level);
                 unloadModels();
                 return false;
             }
@@ -284,7 +284,10 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
         m_models.push_back(entry);
     }
     SOL_LOG_INFO("models: %zu (%zu meshes, %zu textures, %u level(s) over %u model(s))",
-                 m_models.size(), m_meshes.size(), m_textures.size(), report.levelsLoaded,
+                 m_models.size(),
+                 m_meshes.size(),
+                 m_textures.size(),
+                 report.levelsLoaded,
                  report.modelsWithLevels);
     return true;
 }
@@ -339,7 +342,8 @@ void SceneRenderer::shutdown()
     m_swapchain = nullptr;
 }
 
-void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t imageIndex,
+void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
+                                   std::uint32_t imageIndex,
                                    const CameraFrame& camera,
                                    std::span<const RenderInstance> instances,
                                    std::span<const ParticleInstance> particles,
@@ -359,8 +363,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
 
     const VkExtent2D extent = m_swapchain->extent();
     const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
-    const core::Mat4 projection =
-        core::perspectiveInfiniteReversedZ(kCameraVerticalFov, aspect, 0.05f);
+    const core::Mat4 projection = core::perspectiveInfiniteReversedZ(kCameraVerticalFov, aspect, 0.05f);
     const core::Mat4 viewProjection = projection * camera.viewRotation();
 
     // The sun is far enough away to treat as a directional light.
@@ -426,12 +429,15 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         // large means erring towards detail, which is the safe direction: the
         // cost of being wrong is a few triangles, not a visible pop.
         const float widest = std::max({instance.scale.x, instance.scale.y, instance.scale.z});
-        const float screenRadius = ui::screenRadiusPixels(
-            static_cast<double>(entry.radius * widest), length(relative), lodFocal);
+        const float screenRadius =
+            ui::screenRadiusPixels(static_cast<double>(entry.radius * widest), length(relative), lodFocal);
         const std::uint32_t level = chooseLevel(instance.key, screenRadius, entry.levelCount);
 
-        m_meshRenderer.draw(commandBuffer, m_meshes[entry.levels[level]],
-                            m_textures[entry.texture], viewProjection * model, model,
+        m_meshRenderer.draw(commandBuffer,
+                            m_meshes[entry.levels[level]],
+                            m_textures[entry.texture],
+                            viewProjection * model,
+                            model,
                             entry.emissive);
         ++m_drawCallCount;
         ++report.drawn[level];
@@ -451,8 +457,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         {{0.16f, 0.17f, 0.20f}, {0.32f, 0.33f, 0.36f}}, // barren rock
         {{0.22f, 0.16f, 0.09f}, {0.38f, 0.33f, 0.24f}}, // gas banding
     };
-    constexpr std::uint32_t kPaletteCount =
-        static_cast<std::uint32_t>(std::size(kPlanetPalette));
+    constexpr std::uint32_t kPaletteCount = static_cast<std::uint32_t>(std::size(kPlanetPalette));
     const std::uint32_t gpuImpostorZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.impostors");
     for (const CelestialDraw& body : scene.planets) {
         renderer::ImpostorRenderer::Body planet = {};
@@ -469,8 +474,14 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     // Full-screen and ray-marched, which makes it the most plausible fill-rate
     // cost in the frame and the one zone worth naming in advance (Phase 8o).
     const std::uint32_t gpuSkyZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.sky");
-    m_skyRenderer.draw(commandBuffer, extent, camera.orientation, kCameraVerticalFov, aspect,
-                       kSkyIntensity * scene.skyScale, scene.travelDirection, scene.skyWarp);
+    m_skyRenderer.draw(commandBuffer,
+                       extent,
+                       camera.orientation,
+                       kCameraVerticalFov,
+                       aspect,
+                       kSkyIntensity * scene.skyScale,
+                       scene.travelDirection,
+                       scene.skyWarp);
     m_gpuProfiler.endZone(commandBuffer, gpuSkyZone);
 
     // The star reopens gpu.impostors rather than getting a zone of its own:
@@ -501,26 +512,28 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
     // meaningfully overlap on screen; sorting is the right answer the day a
     // second translucent KIND exists, and is machinery guarding nothing today.
     if (!m_translucentScratch.empty()) {
-        const std::uint32_t gpuTranslucentZone =
-            m_gpuProfiler.beginZone(commandBuffer, "gpu.translucent");
+        const std::uint32_t gpuTranslucentZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.translucent");
         m_meshRenderer.bindTranslucent(commandBuffer, extent);
         for (const RenderInstance* instance : m_translucentScratch) {
             const core::Vec3 relative = (instance->position - camera.position).toVec3();
-            const core::Mat4 model = core::translation(relative) * toMat4(instance->rotation) *
-                                     core::scale(instance->scale);
+            const core::Mat4 model =
+                core::translation(relative) * toMat4(instance->rotation) * core::scale(instance->scale);
             const CatalogEntry& entry = m_models[modelIndex(instance->model)];
             // Selected the same way as an opaque draw, so translucency does not
             // quietly become a second rule about which mesh to use. Nothing
             // translucent has a chain today, which is exactly why it must be
             // written the same rather than left as an assumption.
-            const float widest =
-                std::max({instance->scale.x, instance->scale.y, instance->scale.z});
+            const float widest = std::max({instance->scale.x, instance->scale.y, instance->scale.z});
             const float screenRadius = ui::screenRadiusPixels(
                 static_cast<double>(entry.radius * widest), length(relative), lodFocal);
             const std::uint32_t level = chooseLevel(instance->key, screenRadius, entry.levelCount);
-            m_meshRenderer.draw(commandBuffer, m_meshes[entry.levels[level]],
-                                m_textures[entry.texture], viewProjection * model, model,
-                                entry.emissive, entry.alpha);
+            m_meshRenderer.draw(commandBuffer,
+                                m_meshes[entry.levels[level]],
+                                m_textures[entry.texture],
+                                viewProjection * model,
+                                model,
+                                entry.emissive,
+                                entry.alpha);
             ++m_drawCallCount;
             ++report.drawn[level];
         }
@@ -536,8 +549,8 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
             .color = particle.color,
         });
     }
-    m_particleRenderer.draw(commandBuffer, m_frameIndex, viewProjection, camera.orientation,
-                            m_particleScratch);
+    m_particleRenderer.draw(
+        commandBuffer, m_frameIndex, viewProjection, camera.orientation, m_particleScratch);
 
     m_debugDraw.draw(commandBuffer, m_frameIndex, viewProjection);
     m_debugDraw.clear();
@@ -555,8 +568,13 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer, std::uint32_t 
         // what turns the scale setting into visibly larger widgets.
         const core::Vec2 uiSize = {static_cast<float>(extent.width) / m_uiScale,
                                    static_cast<float>(extent.height) / m_uiScale};
-        m_uiRenderer.draw(commandBuffer, m_frameIndex, uiSize, extent, m_uiDrawList->vertices(),
-                          m_uiDrawList->indices(), m_uiDrawList->batches());
+        m_uiRenderer.draw(commandBuffer,
+                          m_frameIndex,
+                          uiSize,
+                          extent,
+                          m_uiDrawList->vertices(),
+                          m_uiDrawList->indices(),
+                          m_uiDrawList->batches());
         ++m_drawCallCount;
     }
     if (m_imguiHost != nullptr) {

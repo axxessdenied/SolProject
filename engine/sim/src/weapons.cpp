@@ -7,7 +7,8 @@ namespace sol::sim {
 bool computeInterceptDirection(const core::DVec3& shooterPosition,
                                const core::DVec3& shooterVelocity,
                                const core::DVec3& targetPosition,
-                               const core::DVec3& targetVelocity, double projectileSpeed,
+                               const core::DVec3& targetVelocity,
+                               double projectileSpeed,
                                core::DVec3& outDirection)
 {
     const core::DVec3 relativePosition = targetPosition - shooterPosition;
@@ -44,8 +45,8 @@ bool computeInterceptDirection(const core::DVec3& shooterPosition,
     return true;
 }
 
-bool segmentHitsSphere(const core::DVec3& from, const core::DVec3& to, const core::DVec3& center,
-                       double radius, double& outT)
+bool segmentHitsSphere(
+    const core::DVec3& from, const core::DVec3& to, const core::DVec3& center, double radius, double& outT)
 {
     const core::DVec3 start = from - center;
     if (dot(start, start) <= radius * radius) {

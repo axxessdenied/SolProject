@@ -32,8 +32,8 @@ public:
     // the eye does not move, and neither does the ship - `headOffset` is a
     // camera-space rotation applied on top of the hull's orientation, so
     // flight input, weapons and autopilot never see it.
-    void updateLook(sol::core::Vec2 mouseDelta, bool looking, float deltaSeconds,
-                    float sensitivity, bool invertPitch)
+    void updateLook(
+        sol::core::Vec2 mouseDelta, bool looking, float deltaSeconds, float sensitivity, bool invertPitch)
     {
         if (looking) {
             const float scale = kLookSensitivity * sensitivity;
@@ -89,8 +89,7 @@ public:
         const sol::core::Vec3 offset = rotate(m_chaseOrientation, kChaseOffset);
         return {
             .position = ship.position + sol::core::toDVec3(offset),
-            .orientation = m_chaseOrientation *
-                           sol::core::fromAxisAngle({1.0f, 0.0f, 0.0f}, kChasePitch),
+            .orientation = m_chaseOrientation * sol::core::fromAxisAngle({1.0f, 0.0f, 0.0f}, kChasePitch),
         };
     }
 

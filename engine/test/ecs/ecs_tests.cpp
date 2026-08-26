@@ -1,5 +1,4 @@
 #include "sol/ecs/ecs.hpp"
-
 #include "sol/test/test.hpp"
 
 #include <vector>
@@ -195,7 +194,7 @@ SOL_TEST(ecs_commandBufferSkipsOpsOnDeadEntities)
 
     CommandBuffer commands(registry);
     commands.destroy(e);
-    commands.destroy(e);          // second destroy must be a no-op
+    commands.destroy(e);            // second destroy must be a no-op
     commands.add(e, Vel{.x = 1.0}); // recorded after destroy: skipped
     commands.flush();
 
