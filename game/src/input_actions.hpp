@@ -147,14 +147,29 @@ struct KeyboardRouting
     // keyboard, which is why they need their own answer rather than borrowing
     // one that also encodes *where* the player is.
     bool shortcuts = false;
+    // ⚑⚑ Phase 21. Typed CHARACTERS, which is a different question from every
+    // row above and belongs to a different layer on each platform. On Windows
+    // the dev UI's message hook swallows WM_CHAR before the window ever records
+    // it, so `Window::textInput()` is already empty when ImGui holds the
+    // keyboard and this field is a no-op that agrees. Wayland has no such hook
+    // - the platform layer does not know ImGui exists and Phase 21 decision 2
+    // forbids teaching it - so on Linux THIS FIELD IS THE ONLY THING standing
+    // between a focused dev console and the bookmark prompt underneath it.
+    //
+    // ⚑ It is deliberately not `menus`. Menus additionally asks *where the
+    // player is*, and folding that in would suppress text in flight for a
+    // reason that has nothing to do with who owns the keyboard - the same
+    // one-argument-too-many mistake `jumping` nearly made below.
+    bool text = false;
 };
 
 // The truth table this game needs, and the reason it is a function.
 //
 //   nothing owns the keyboard   -> gameplay in flight, menus outside it,
-//                                  shortcuts always
-//   the bookmark prompt owns it -> gameplay OFF, menus ON, shortcuts OFF
-//   ImGui owns it               -> ALL three off
+//                                  shortcuts always, text always
+//   the bookmark prompt owns it -> gameplay OFF, menus ON, shortcuts OFF,
+//                                  text ON (it is the field being typed into)
+//   ImGui owns it               -> ALL four off
 //
 // The middle row is why a single `typing` bool could not express this: the
 // bookmark prompt wants gameplay suppressed *and* the UI fed, because its own

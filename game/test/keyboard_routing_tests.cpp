@@ -21,6 +21,7 @@ SOL_TEST(imgui_capture_in_flight_stops_every_consumer)
     SOL_CHECK(!routing.gameplay);
     SOL_CHECK(!routing.menus);
     SOL_CHECK(!routing.shortcuts);
+    SOL_CHECK(!routing.text);
 }
 
 SOL_TEST(imgui_capture_outside_flight_stops_every_consumer)
@@ -92,6 +93,32 @@ SOL_TEST(the_three_answers_are_not_two_answers_wearing_a_disguise)
     // the only row in the table where those two part company.
     const game::KeyboardRouting naming = game::routeKeyboard(true, true, false);
     SOL_CHECK(naming.menus && !naming.shortcuts);
+}
+
+// ⚑⚑ Phase 21. Typed characters, which on Windows the message hook takes away
+// before the window records them and on Wayland nothing does. Deleting this
+// answer is a one-platform regression to exactly the defect Phase 20 fixed:
+// the dev console would type into the bookmark prompt underneath it, and no
+// Windows test - not one of the six above - would notice.
+SOL_TEST(imgui_capture_takes_the_typed_characters_too)
+{
+    SOL_CHECK(!game::routeKeyboard(true, false, true).text);
+    SOL_CHECK(!game::routeKeyboard(false, false, true).text);
+    SOL_CHECK(!game::routeKeyboard(true, true, true).text);
+}
+
+// And it is not a synonym for `menus`, which is the fold a later reader would
+// reach for. The bookmark prompt is the row where they agree; flight with no
+// prompt open is the row where they do not, and collapsing them there would
+// suppress text for a reason that has nothing to do with who is typing.
+SOL_TEST(text_survives_where_menus_do_not)
+{
+    const game::KeyboardRouting flying = game::routeKeyboard(true, false, false);
+    SOL_CHECK(flying.text && !flying.menus);
+    const game::KeyboardRouting naming = game::routeKeyboard(true, true, false);
+    SOL_CHECK(naming.text && naming.menus);
+    const game::KeyboardRouting docked = game::routeKeyboard(false, false, false);
+    SOL_CHECK(docked.text && docked.menus);
 }
 
 } // namespace

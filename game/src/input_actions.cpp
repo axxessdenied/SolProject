@@ -262,6 +262,12 @@ KeyboardRouting routeKeyboard(bool inFlight, bool bookmarkPromptOpen, bool imgui
     // in a bookmark name must not leave the cockpit, but Ship Readout opens
     // from flight and from a station alike, so it cannot borrow `gameplay`.
     routing.shortcuts = !bookmarkPromptOpen;
+    // ⚑ Unconditional here, because the only thing that ever takes text away
+    // is ImGui and that case returned above. It looks like a constant and it
+    // is not one: it is `!imguiWantsKeyboard`, written where a test can see it
+    // rather than inside main.cpp, which is the translation unit no suite can
+    // link. On Wayland this is the whole of Phase 20's text protection.
+    routing.text = true;
     return routing;
 }
 

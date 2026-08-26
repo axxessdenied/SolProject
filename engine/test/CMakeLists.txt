@@ -82,6 +82,14 @@ target_link_libraries(sol_platform_tests PRIVATE sol::test sol::platform)
 # rather than derived from the CWD, which differs under ctest and a debugger.
 target_compile_definitions(sol_platform_tests
     PRIVATE SOL_PLATFORM_TEST_SCRATCH_DIR="${CMAKE_CURRENT_BINARY_DIR}/scratch")
+# The xkb keysym table (Phase 21 stage B) is the one part of a keyboard backend
+# that can be wrong without anything failing: a mis-mapped key compiles, links,
+# runs, and waits for somebody to press it. It is pure data over a header of
+# constants, so it joins this suite on Linux rather than needing a compositor.
+if(LINUX)
+    target_sources(sol_platform_tests PRIVATE platform/xkb_keymap_tests.cpp)
+    target_link_libraries(sol_platform_tests PRIVATE PkgConfig::XKBCOMMON)
+endif()
 add_test(NAME platform.unit COMMAND sol_platform_tests)
 
 # The mixer is exercised headlessly by calling renderAudio directly - no

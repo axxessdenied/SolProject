@@ -1356,7 +1356,12 @@ int main(int argc, char** argv)
         // rather than from key states, so the keyboard layout is respected;
         // the editing keys are edges, because a caret that moved once per
         // frame while a key was held would be unusable.
-        uiInput.text = bookmarkKeyEcho ? std::string_view{} : window.textInput();
+        // ⚑ `keys.text`, added by Phase 21, is load-bearing on Linux and inert
+        // on Windows. The Win32 message hook empties textInput() before the
+        // window records it; Wayland has no hook, so without this gate a
+        // focused dev console would type into the bookmark prompt underneath -
+        // Phase 20's defect, on one platform only.
+        uiInput.text = (bookmarkKeyEcho || !keys.text) ? std::string_view{} : window.textInput();
         uiInput.editLeft = menuKeyEdge(sol::platform::Key::Left, previousEditLeft);
         uiInput.editRight = menuKeyEdge(sol::platform::Key::Right, previousEditRight);
         uiInput.editHome = menuKeyEdge(sol::platform::Key::Home, previousEditHome);
