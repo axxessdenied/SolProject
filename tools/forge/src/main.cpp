@@ -17,6 +17,7 @@
 #include "orbit_camera.hpp"
 #include "part_editor.hpp"
 #include "point_tool.hpp"
+#include "status_line.hpp"
 #include "texture_editor.hpp"
 
 #include "sol/assets/mesh_lod.hpp"
@@ -522,7 +523,11 @@ int main(int argc, char** argv)
     // count, because a collapsed group is one row and a group header is taller
     // than an entry. See drawAssetList.
     float meshListContent = 0.0f;
-    std::string status = "no mesh open";
+    forge::StatusLine status;
+    // Stage Q4: the bar stamps its own clock when the line's serial moves, so a
+    // message carries an age without StatusLine having to know what a clock is.
+    unsigned long long statusSerialSeen = 0;
+    double statusStampedAt = -1000.0;
 
     // Stage F: the level chain the cooker would produce for whatever is open,
     // and its meshes uploaded so a level can be LOOKED AT rather than only
@@ -784,7 +789,7 @@ int main(int argc, char** argv)
         assets::MeshData data;
         if (!forge::loadMesh(meshEntries[index], data)) {
             status = "failed to open " + meshEntries[index].label;
-            SOL_LOG_ERROR("forge: %s", status.c_str());
+            SOL_LOG_ERROR("forge: %s", status.text().c_str());
             return;
         }
         // Before the upload, not after: uploadMesh matches the open asset
@@ -1437,6 +1442,18 @@ int main(int argc, char** argv)
         // exclusion list, and a status line has no business carrying one. The
         // Report says `closed no / border edges 32` in the plain colour; so does
         // this.
+        // ⚑ The bar is submitted ABOVE the panels that write to it, so a
+        // message raised by a panel is stamped on the NEXT frame (16 ms,
+        // invisible, and the same trade every other cross-pass value in this
+        // loop already takes). What has to hold is that the stamp and the text
+        // move together, and they do, because both follow the serial.
+        if (status.serial() != statusSerialSeen) {
+            statusSerialSeen = status.serial();
+            statusStampedAt = ImGui::GetTime();
+        }
+        const forge::StatusAppearance statusLook =
+            forge::statusAppearance(static_cast<float>(ImGui::GetTime() - statusStampedAt));
+
         const float statusHeight =
             ImGui::GetTextLineHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
         if (ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down,
@@ -1480,11 +1497,31 @@ int main(int argc, char** argv)
             // and it is the same argument that carried the summary block here:
             // `BeginViewportSideBar` sets NoDocking, so this line cannot be
             // closed, docked, tabbed or dragged off.
-            if (!status.empty()) {
+            // ⚑⚑ STAGE Q4: THE MESSAGE IS DRAWN AS AN EVENT NOW - it arrives
+            // lit, settles into chrome over `kStatusFlashSeconds`, and is gone
+            // after `kStatusLifetimeSeconds`. The flash is what makes a REPEAT
+            // visible: two undos of two `cell` edits write the same string
+            // both times, so before this the bar was pixel-identical and the
+            // second press read as ignored. It re-fires on every write,
+            // identical text or not, because the serial moves on every write.
+            if (!status.empty() && statusLook.visible) {
                 ImGui::SameLine(0.0f, 32.0f);
                 const float available = frameStart - ImGui::GetCursorPosX() - 16.0f;
                 if (available > 0.0f) {
-                    ImGui::TextDisabled("%s", elideToWidth(status, available).c_str());
+                    // Lerped rather than switched: a hard cut back to grey is
+                    // itself a change of state, and it would draw the eye a
+                    // second time to say nothing.
+                    const ImVec4 settled = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+                    const ImVec4 fresh = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+                    const float t = statusLook.highlight;
+                    const ImVec4 colour(settled.x + (fresh.x - settled.x) * t,
+                                        settled.y + (fresh.y - settled.y) * t,
+                                        settled.z + (fresh.z - settled.z) * t,
+                                        settled.w + (fresh.w - settled.w) * t);
+                    // `display()` carries the `(xN)` count, which is the half of
+                    // the repeat fix that survives you looking away.
+                    ImGui::TextColored(colour, "%s",
+                                       elideToWidth(status.display(), available).c_str());
                 }
             }
 

@@ -14,6 +14,7 @@
 #include "list_layout.hpp"
 #include "mesh_library.hpp"
 #include "part_pick.hpp"
+#include "status_line.hpp"
 
 #include "sol/assets/forge_doc.hpp"
 #include "sol/platform/file_io.hpp"
@@ -1584,4 +1585,149 @@ SOL_TEST(aPanelButtonRequestIsDeliveredOnceAndOnlyOnce)
     history.requestRedo();
     SOL_CHECK(history.takeRedoRequest());
     SOL_CHECK(!history.takeRedoRequest());
+}
+
+// ---------------------------------------------------------------------------
+// Stage Q4: the status line as an event rather than a state.
+//
+// ⚑ These are here for the same reason the stage Q history tests are: the
+// defect is a UI one, but the LOGIC under it is arithmetic over a string and a
+// float, and that half does not need a window. What still cannot be tested
+// here is whether 1.2 s reads as a flash or as a flicker - that is a loudness
+// judgement and it wants a person, which is exactly why the numbers are named
+// constants in the header instead of literals at the draw site.
+// ---------------------------------------------------------------------------
+
+SOL_TEST(theSameMessageTwiceIsCountedRatherThanDrawnIdentically)
+{
+    forge::StatusLine status;
+    status = std::string("undo: cell");
+    SOL_CHECK(status.repeat() == 1);
+    // No suffix on the first arrival: the count is an admission that something
+    // repeated, and "(x1)" would be noise on every ordinary message.
+    SOL_CHECK(status.display() == "undo: cell");
+
+    status = std::string("undo: cell");
+    SOL_CHECK(status.repeat() == 2);
+    SOL_CHECK(status.display() == "undo: cell  (x2)");
+    SOL_CHECK(status.text() == "undo: cell");
+
+    status = std::string("undo: cell");
+    SOL_CHECK(status.repeat() == 3);
+    SOL_CHECK(status.display() == "undo: cell  (x3)");
+}
+
+// ⚑⚑ THE LOAD-BEARING ONE. The `(xN)` suffix is the half of the repeat fix you
+// can read after the fact; the serial is the half you SEE, because the draw
+// site restamps its clock and re-fires the flash whenever this moves. A serial
+// that ticked only on a CHANGE of text would leave the second identical undo
+// looking exactly as ignored as it did before the stage - the whole defect,
+// intact, behind a counter that happened to be right.
+SOL_TEST(theSerialMovesOnEveryWriteIncludingAnIdenticalOne)
+{
+    forge::StatusLine status;
+    const unsigned long long start = status.serial();
+
+    status = std::string("undo: cell");
+    const unsigned long long first = status.serial();
+    SOL_CHECK(first != start);
+
+    status = std::string("undo: cell");
+    SOL_CHECK(status.serial() != first);
+
+    const unsigned long long second = status.serial();
+    status = std::string("undo: move part");
+    SOL_CHECK(status.serial() != second);
+}
+
+SOL_TEST(aDifferentMessageStartsTheCountAgain)
+{
+    forge::StatusLine status;
+    status = std::string("undo: cell");
+    status = std::string("undo: cell");
+    SOL_CHECK(status.repeat() == 2);
+
+    status = std::string("undo: move part");
+    SOL_CHECK(status.repeat() == 1);
+    SOL_CHECK(status.display() == "undo: move part");
+
+    // ...and going back to the first message does not resume its old count.
+    status = std::string("undo: cell");
+    SOL_CHECK(status.repeat() == 1);
+    SOL_CHECK(status.display() == "undo: cell");
+}
+
+// An empty write is how a caller says "nothing to report", and it must not be
+// counted as a repeat of itself - otherwise a path that clears the line twice
+// would leave `(x2)` attached to a message with no text.
+SOL_TEST(clearingTheLineIsNotARepeatOfNothing)
+{
+    forge::StatusLine status;
+    SOL_CHECK(status.empty());
+    SOL_CHECK(status.repeat() == 0);
+
+    status = std::string();
+    status = std::string();
+    SOL_CHECK(status.empty());
+    SOL_CHECK(status.repeat() == 0);
+    SOL_CHECK(status.display().empty());
+
+    status = std::string("3 drop(s), none changed");
+    SOL_CHECK(status.repeat() == 1);
+    status = std::string();
+    SOL_CHECK(status.empty());
+    SOL_CHECK(status.repeat() == 0);
+}
+
+// ⚑ Defect 1: a message that never expires reads as freshly at four minutes as
+// at one second. The bar is cleaner empty than lying.
+SOL_TEST(aMessageStopsBeingDrawnOnceItIsPastItsLifetime)
+{
+    SOL_CHECK(forge::statusAppearance(0.0f).visible);
+    SOL_CHECK(forge::statusAppearance(forge::kStatusLifetimeSeconds - 0.1f).visible);
+    // The boundary itself is out, not in: `>=` rather than `>`.
+    SOL_CHECK(!forge::statusAppearance(forge::kStatusLifetimeSeconds).visible);
+    SOL_CHECK(!forge::statusAppearance(forge::kStatusLifetimeSeconds + 60.0f).visible);
+    SOL_CHECK(!forge::statusAppearance(4.0f * 60.0f).visible);
+
+    // An expired message is never also lit, which would be the worst of both.
+    SOL_CHECK(forge::statusAppearance(forge::kStatusLifetimeSeconds).highlight == 0.0f);
+}
+
+// ⚑ Defect 2's visible half: the message arrives lit and settles, so "it
+// happened again" is legible without reading the text at all.
+SOL_TEST(aFreshMessageArrivesLitAndSettlesIntoChrome)
+{
+    const forge::StatusAppearance atArrival = forge::statusAppearance(0.0f);
+    SOL_CHECK(atArrival.visible);
+    SOL_CHECK(atArrival.highlight == 1.0f);
+
+    // Halfway through the flash it is halfway back to chrome.
+    const forge::StatusAppearance midway =
+        forge::statusAppearance(forge::kStatusFlashSeconds * 0.5f);
+    SOL_CHECK(midway.visible);
+    SOL_CHECK(std::fabs(midway.highlight - 0.5f) < 1e-5f);
+
+    // Settled, but still worth reading - the two durations are separate
+    // numbers because they answer separate questions.
+    const forge::StatusAppearance settled =
+        forge::statusAppearance(forge::kStatusFlashSeconds);
+    SOL_CHECK(settled.visible);
+    SOL_CHECK(settled.highlight == 0.0f);
+    SOL_CHECK(forge::statusAppearance(forge::kStatusFlashSeconds + 5.0f).visible);
+    SOL_CHECK(forge::statusAppearance(forge::kStatusFlashSeconds + 5.0f).highlight == 0.0f);
+
+    // Never brightens as it ages, at any sample.
+    float previous = 2.0f;
+    for (int i = 0; i <= 24; ++i) {
+        const float age = static_cast<float>(i) * (forge::kStatusFlashSeconds / 24.0f);
+        const float highlight = forge::statusAppearance(age).highlight;
+        SOL_CHECK(highlight <= previous + 1e-6f);
+        SOL_CHECK(highlight >= 0.0f && highlight <= 1.0f);
+        previous = highlight;
+    }
+
+    // A clock that ran backwards must not produce a highlight above full.
+    SOL_CHECK(forge::statusAppearance(-1.0f).highlight == 1.0f);
+    SOL_CHECK(forge::statusAppearance(-1.0f).visible);
 }
