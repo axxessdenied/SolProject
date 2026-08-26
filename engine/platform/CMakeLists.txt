@@ -15,6 +15,14 @@ if(WIN32)
     )
     # WASAPI reaches the endpoint through COM (decisions/009 / Phase 8t).
     target_link_libraries(sol_platform PRIVATE ole32)
+elseif(LINUX)
+    # Phase 21. The directory is the OS and the file name is the backend, so an
+    # X11 window could sit beside the Wayland one without either being renamed.
+    target_sources(sol_platform PRIVATE
+        src/linux/audio_linux.cpp
+        src/linux/system_linux.cpp
+        src/linux/window_wayland.cpp
+    )
 else()
-    message(FATAL_ERROR "Sol has no platform backend for this OS yet (Windows only for now).")
+    message(FATAL_ERROR "Sol has no platform backend for this OS yet (Windows and Linux only).")
 endif()

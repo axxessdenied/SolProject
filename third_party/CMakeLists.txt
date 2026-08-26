@@ -49,8 +49,15 @@ add_library(imgui STATIC
     imgui/imgui_tables.cpp
     imgui/imgui_widgets.cpp
     imgui/backends/imgui_impl_vulkan.cpp
-    imgui/backends/imgui_impl_win32.cpp
 )
+# Phase 21. The RENDERER backend above is portable; the PLATFORM backend is not,
+# and ImGui ships no Wayland equivalent - so on Linux sol_ui hand-writes one and
+# there is nothing to add here. Building this unconditionally is what a
+# Windows-only tree looks like from the inside: it compiled for a year because
+# <windows.h> always happened to be there.
+if(WIN32)
+    target_sources(imgui PRIVATE imgui/backends/imgui_impl_win32.cpp)
+endif()
 target_include_directories(imgui PUBLIC imgui imgui/backends)
 target_link_libraries(imgui PUBLIC Vulkan::Vulkan)
 

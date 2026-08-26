@@ -41,6 +41,16 @@ if(MSVC)
 else()
     target_compile_options(sol_options INTERFACE
         -Wall -Wextra -Werror
+        # ⚑ Phase 21. -Wextra turns this on and it fires on a C++20 idiom this
+        # codebase uses everywhere on purpose: a designated initializer that
+        # names some members and lets the rest value-initialize, which is
+        # well-defined and is the whole point of writing `{.kind = X}` instead
+        # of listing every field. Twenty-one sites tripped it on the first
+        # Linux build and not one was a bug. Silencing the warning is the fix;
+        # adding `.position = {}` to each call site would churn working code
+        # into something less readable, forever, to satisfy a diagnostic that
+        # MSVC does not even raise.
+        -Wno-missing-field-initializers
         -fno-exceptions
         -fno-rtti
     )

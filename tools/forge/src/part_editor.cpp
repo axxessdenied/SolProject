@@ -710,6 +710,23 @@ bool PartEditor::drawParams(ForgePart& part)
             }
             break;
         }
+        // ⚑⚑ A BAKED PART'S GEOMETRY IS NOT AN EDITABLE PARAMETER, so these
+        // two draw nothing - there is no widget for "1,234 vertices" that an
+        // author could usefully drag. Written out rather than left to fall off
+        // the end of the switch: `forgeParams(Primitive::Mesh)` really does
+        // return both of these, so this is a reachable case and a reader
+        // deserves to know the blank panel is deliberate.
+        //
+        // ⚑ Phase 21 found this with GCC's -Wswitch, which MSVC's /W4 did not
+        // raise. The behaviour is UNCHANGED - a platform port is the wrong
+        // place to redesign a panel - but note that a baked part is what every
+        // Blender import is made of, so "select an imported part and the
+        // params list is empty with no explanation" is the common case, not an
+        // exotic one. Whether it should say so is a Forge question, recorded
+        // rather than answered here.
+        case ForgeParamKind::VertexList:
+        case ForgeParamKind::IndexList:
+            break;
         }
         ImGui::PopID();
         // ⚑ Written back only on an actual edit. Assigning every frame would

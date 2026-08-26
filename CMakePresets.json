@@ -15,11 +15,24 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    },
+    {
+      "name": "linux-dev",
+      "displayName": "Linux dev (Debug, Ninja, GCC)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-dev",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
     }
   ],
   "buildPresets": [
     { "name": "dev", "configurePreset": "dev" },
-    { "name": "release", "configurePreset": "release" }
+    { "name": "release", "configurePreset": "release" },
+    { "name": "linux-dev", "configurePreset": "linux-dev" }
   ],
   "testPresets": [
     {
@@ -39,6 +52,18 @@
       "configurePreset": "release",
       "output": { "outputOnFailure": true },
       "filter": { "exclude": { "label": "gpu" } }
+    },
+    {
+      "name": "linux-dev",
+      "configurePreset": "linux-dev",
+      "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "gpu" } }
+    },
+    {
+      "name": "linux-dev-gpu",
+      "configurePreset": "linux-dev",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "gpu" } }
     }
   ]
 }

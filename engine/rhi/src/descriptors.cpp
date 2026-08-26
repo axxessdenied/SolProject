@@ -30,7 +30,13 @@ VkDescriptorPool createTextureDescriptorPool(VkDevice device, std::uint32_t maxS
 
     VkDescriptorPoolCreateInfo createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    createInfo.flags = allowFree ? VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT : 0u;
+    // The cast is for GCC, not for correctness: the two arms of the conditional
+    // are an enumerator and an unsigned, which -Wextra rejects and /W4 does not
+    // (Phase 21). Same value either way.
+    createInfo.flags =
+        allowFree
+            ? static_cast<VkDescriptorPoolCreateFlags>(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)
+            : 0u;
     createInfo.maxSets = maxSets;
     createInfo.poolSizeCount = 1;
     createInfo.pPoolSizes = &poolSize;

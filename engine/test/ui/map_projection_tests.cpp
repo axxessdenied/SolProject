@@ -49,7 +49,6 @@ std::vector<MapSystemRow> squareGalaxy()
 
 SOL_TEST(map_view_zoom_holds_whatever_is_under_the_cursor)
 {
-    const Rect view = {{100.0f, 100.0f}, {500.0f, 400.0f}};
     const Vec2 origin = {300.0f, 250.0f};
     const Vec2 anchor = {420.0f, 160.0f}; // deliberately not the centre
 
