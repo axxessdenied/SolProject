@@ -346,6 +346,37 @@ float addGrid(renderer::DebugDrawRenderer& lines, float cameraDistance)
     return extension;
 }
 
+// Trims `text` with a trailing ellipsis until it fits `width` pixels, and
+// returns it unchanged when it already does.
+//
+// ⚑ Clipping is the only option open to the status bar: the bar reports its own
+// height into the viewport work area, so wrapping a long message would resize
+// the dockspace under the author's hands mid-edit. `saved <path>` and
+// `opened <name> (28 parts)` are both unbounded, so this is reachable and not
+// theoretical.
+//
+// ⚑ Binary search rather than a character walk - `CalcTextSize` shapes the run
+// each call, and this runs every frame the bar draws.
+std::string elideToWidth(const std::string& text, float width)
+{
+    if (ImGui::CalcTextSize(text.c_str()).x <= width) {
+        return text;
+    }
+    static const char* kEllipsis = "...";
+    std::size_t lo = 0;
+    std::size_t hi = text.size();
+    while (lo < hi) {
+        // `hi > lo` here, so `mid >= lo + 1 >= 1` and `mid - 1` cannot wrap.
+        const std::size_t mid = lo + (hi - lo + 1) / 2;
+        if (ImGui::CalcTextSize((text.substr(0, mid) + kEllipsis).c_str()).x <= width) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return text.substr(0, lo) + kEllipsis;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1381,7 +1412,36 @@ int main(int argc, char** argv)
                           frameMilliseconds > 0.0f ? 1000.0f / frameMilliseconds : 0.0f,
                           frameMilliseconds, static_cast<double>(gridCell));
             const float frameWidth = ImGui::CalcTextSize(frameText).x;
-            ImGui::SameLine(ImGui::GetWindowWidth() - frameWidth - 16.0f);
+            // Measured BEFORE the message is drawn, because it is what bounds it.
+            const float frameStart = ImGui::GetWindowWidth() - frameWidth - 16.0f;
+
+            // ⚑⚑⚑ THE MESSAGE LINE LIVES HERE NOW, AND MOVING IT IS A DEFECT FIX
+            // RATHER THAN A TIDY-UP. It had exactly one draw site in the whole
+            // tool - inside `Begin("Mesh")`, inside `CollapsingHeader("Meshes")`,
+            // below the mesh list and the Reload/New parts/Rescan buttons - so
+            // `undo: cell` was invisible whenever the Mesh panel was closed,
+            // tabbed behind another panel, or that one header was collapsed.
+            //
+            // ⚑⚑ WHICH IS EXACTLY THE CASE IT EXISTS FOR. A cross-document undo
+            // is BY DEFINITION one the author is not looking at - that is what
+            // makes it worth announcing - so the announcement was hidden
+            // precisely when it was the only evidence anything had happened.
+            // Stage Q stopped undo ACTING on a document you cannot see and left
+            // it REPORTING into one. Found by the user in about a minute.
+            //
+            // ⚑ The bar is the only surface with the property the message needs,
+            // and it is the same argument that carried the summary block here:
+            // `BeginViewportSideBar` sets NoDocking, so this line cannot be
+            // closed, docked, tabbed or dragged off.
+            if (!status.empty()) {
+                ImGui::SameLine(0.0f, 32.0f);
+                const float available = frameStart - ImGui::GetCursorPosX() - 16.0f;
+                if (available > 0.0f) {
+                    ImGui::TextDisabled("%s", elideToWidth(status, available).c_str());
+                }
+            }
+
+            ImGui::SameLine(frameStart);
             ImGui::TextDisabled("%s", frameText);
         }
         ImGui::End();
@@ -1550,7 +1610,12 @@ int main(int argc, char** argv)
                         openIndex = -1;
                         status = std::to_string(meshEntries.size()) + " assets";
                     }
-                    ImGui::TextDisabled("%s", status.c_str());
+                    // ⚑ `status` was printed here until the undo message needed
+                    // to be seen from outside this panel. MOVED, not copied: two
+                    // draw sites for one string is a line that reads differently
+                    // depending on which one you happen to be looking at, and
+                    // this was the site nobody was looking at. It is in the
+                    // bottom bar now, beside the summary block.
                 }
 
                 // The authoring half (stage D). It sits above the report on purpose:
