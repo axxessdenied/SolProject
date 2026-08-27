@@ -1,5 +1,6 @@
 add_library(sol_cooker_lib STATIC
     src/bc1.cpp
+    src/cook.cpp
     src/font.cpp
     src/gltf.cpp
     src/mesh.cpp

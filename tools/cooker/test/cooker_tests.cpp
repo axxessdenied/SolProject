@@ -1,4 +1,5 @@
 #include "bc1.hpp"
+#include "cook.hpp"
 #include "gltf.hpp"
 #include "mesh.hpp"
 #include "outputs.hpp"
@@ -943,4 +944,257 @@ SOL_TEST(textureRoundTripsThroughTheCookedFormat)
     SOL_CHECK(!assets::loadTexture(path.c_str(), shortLoad));
 
     std::remove(path.c_str());
+}
+
+// --- the cook itself (Phase 24 stage T) ---
+//
+// ⚑⚑ EVERY TEST BELOW IS ABOUT CODE THAT HAS BEEN UNTESTED SINCE PHASE 5, and
+// none of it was hard to test - it sat in `tools/cooker/src/main.cpp`, which
+// this suite does not link. The dispatch decides what every asset in the game
+// becomes, the collision guard can stop an entire build, and the stray sweep
+// DELETES. Stage T moved them into `cook.hpp` and this is what that bought.
+
+namespace {
+
+// One scratch root beneath the test binary, with a source and an output tree
+// under it, reused by every cook test.
+//
+// ⚑ `platform` deletes files and not directories, so the three empty
+// directories a run leaves behind are deliberate residue of the same kind
+// `platform.unit` already leaves - and the name is this suite's, never a real
+// cooked directory's, so a test run cannot collide with a real cook.
+std::string cookScratchRoot()
+{
+    return std::string(platform::executableDirectory()) + "cook_scratch/";
+}
+
+std::string cookSourceDirectory()
+{
+    return cookScratchRoot() + "src";
+}
+
+std::string cookOutputDirectory()
+{
+    return cookScratchRoot() + "out";
+}
+
+// ⚑ Returns a bool rather than asserting: SOL_REQUIRE returns from the function
+// it is written in, so a helper that used it would fail by carrying on.
+[[nodiscard]] bool resetCookScratch()
+{
+    if (!platform::createDirectories(cookSourceDirectory().c_str()) ||
+        !platform::createDirectories(cookOutputDirectory().c_str())) {
+        return false;
+    }
+    for (const std::string& directory : {cookSourceDirectory(), cookOutputDirectory()}) {
+        for (const std::string& path : platform::listFiles(directory.c_str())) {
+            if (!platform::deleteFile(path.c_str())) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool writeScratchFile(const std::string& path, const std::vector<std::uint8_t>& bytes)
+{
+    return platform::writeFileBytes(path.c_str(), bytes.data(), bytes.size());
+}
+
+[[nodiscard]] bool fileExists(const std::string& path)
+{
+    return platform::fileModificationTime(path.c_str()) != 0;
+}
+
+// The cheapest real source this suite can cook: four silent frames of mono.
+std::vector<std::uint8_t> tinyWav()
+{
+    return buildWav(1, 1, 22050, 16, pcm16Payload({0, 0, 0, 0}));
+}
+
+} // namespace
+
+SOL_TEST(theDispatchIsByExtensionAndTheOutputIsKeyedOnTheStem)
+{
+    SOL_CHECK(cooker::cookKindForSource("a/b/hull.png") == cooker::CookKind::Texture);
+    SOL_CHECK(cooker::cookKindForSource("a/b/hull.tex") == cooker::CookKind::TextureDoc);
+    SOL_CHECK(cooker::cookKindForSource("a/b/hull.gltf") == cooker::CookKind::Mesh);
+    SOL_CHECK(cooker::cookKindForSource("a/b/hull.glb") == cooker::CookKind::Mesh);
+    SOL_CHECK(cooker::cookKindForSource("a/b/hull.forge") == cooker::CookKind::ForgeMesh);
+    SOL_CHECK(cooker::cookKindForSource("a/b/ui.font") == cooker::CookKind::Font);
+    SOL_CHECK(cooker::cookKindForSource("a/b/thrust.wav") == cooker::CookKind::Sound);
+    SOL_CHECK(cooker::cookKindForSource("a/b/thrust.ogg") == cooker::CookKind::Sound);
+
+    // Blender hands back `.GLTF` on a case-preserving filesystem and means the
+    // same file kind.
+    SOL_CHECK(cooker::cookKindForSource("a/b/HULL.GLTF") == cooker::CookKind::Mesh);
+
+    // ⚑ What a source tree holds that is not a source, and the `.ttf` is the one
+    // that matters: a `.font` manifest names the TTFs beside it, so a cooker
+    // that treated one as a source would be inventing an asset nobody asked
+    // for. Skipping is silent because it is the ordinary case.
+    SOL_CHECK(cooker::cookKindForSource("a/b/.gitkeep") == cooker::CookKind::None);
+    SOL_CHECK(cooker::cookKindForSource("a/b/Inter.ttf") == cooker::CookKind::None);
+    SOL_CHECK(cooker::cookKindForSource("a/b/README.md") == cooker::CookKind::None);
+    SOL_CHECK(cooker::cookKindForSource("a/b/noextension") == cooker::CookKind::None);
+    SOL_CHECK(cooker::cookedExtension(cooker::CookKind::None)[0] == '\0');
+
+    // ⚑ The source tree is deep and the output is FLAT: a cooked name is what a
+    // `[[model]]` row names, and rows carry no paths.
+    const std::vector<cooker::CookJob> jobs = cooker::planCook(
+        {"assets/meshes/hull.forge", "assets/fonts/Inter.ttf", "assets/sounds/deep/thrust.wav"},
+        "out/cooked");
+    SOL_REQUIRE(jobs.size() == 2);
+    SOL_CHECK(jobs[0].kind == cooker::CookKind::ForgeMesh);
+    SOL_CHECK(jobs[0].output == "out/cooked/hull.smesh");
+    SOL_CHECK(jobs[1].kind == cooker::CookKind::Sound);
+    SOL_CHECK(jobs[1].output == "out/cooked/thrust.saud");
+}
+
+SOL_TEST(twoSourcesThatCookToOneOutputAreACollisionHoweverFarApartTheySit)
+{
+    // The pair that made this reachable at all: `.forge` and `.gltf` are
+    // different extensions in different directories, and the output is keyed on
+    // the stem. It was unreachable while `.gltf` was the only mesh source.
+    const std::vector<cooker::CookJob> jobs = cooker::planCook(
+        {"assets/meshes/gate.forge", "blender-inbox/gate.gltf", "assets/textures/hull.tex"}, "out");
+    SOL_REQUIRE(jobs.size() == 3);
+
+    const std::vector<cooker::CookCollision> collisions = cooker::cookCollisions(jobs);
+    SOL_REQUIRE(collisions.size() == 1);
+    SOL_CHECK(collisions[0].firstSource == "assets/meshes/gate.forge");
+    SOL_CHECK(collisions[0].secondSource == "blender-inbox/gate.gltf");
+    SOL_CHECK(collisions[0].output == "out/gate.smesh");
+
+    // ⚑ The same stem with different cooked extensions is NOT a collision -
+    // `hull.tex` and `hull.forge` are a texture and a mesh, which is the normal
+    // way an author names a thing and its skin.
+    SOL_CHECK(cooker::cookCollisions(cooker::planCook({"a/hull.tex", "b/hull.forge"}, "out")).empty());
+}
+
+SOL_TEST(aPartTreeAlwaysCooksAndAFontManifestWatchesTheFilesBesideIt)
+{
+    // ⚑ A `.forge` cooks to a level SET whose size is not knowable without
+    // building the mesh, so a timestamp check would let a stale `.lod2.smesh`
+    // survive a re-cook and be drawn at distance, where nobody is looking.
+    SOL_CHECK(cooker::stalenessRuleFor(cooker::CookKind::ForgeMesh) == cooker::StalenessRule::AlwaysCook);
+    // A manifest's own timestamp does not move when a TTF it names is edited.
+    SOL_CHECK(cooker::stalenessRuleFor(cooker::CookKind::Font) ==
+              cooker::StalenessRule::TimestampAndSiblings);
+    SOL_CHECK(cooker::stalenessRuleFor(cooker::CookKind::Texture) == cooker::StalenessRule::Timestamp);
+    SOL_CHECK(cooker::stalenessRuleFor(cooker::CookKind::TextureDoc) == cooker::StalenessRule::Timestamp);
+    SOL_CHECK(cooker::stalenessRuleFor(cooker::CookKind::Mesh) == cooker::StalenessRule::Timestamp);
+    SOL_CHECK(cooker::stalenessRuleFor(cooker::CookKind::Sound) == cooker::StalenessRule::Timestamp);
+}
+
+SOL_TEST(aRefusalAndAFailureAreDifferentSentencesBecauseTheyAreDifferentNews)
+{
+    cooker::CookReport ran;
+    ran.cooked = 3;
+    ran.skipped = 5;
+    SOL_CHECK(ran.ok());
+    SOL_CHECK(ran.summary() == "3 cooked, 5 up to date, 0 failed");
+
+    cooker::CookReport partial = ran;
+    partial.failed = 1;
+    SOL_CHECK(!partial.ok());
+    SOL_CHECK(partial.summary() == "3 cooked, 5 up to date, 1 failed");
+
+    // ⚑ A refusal is not a failure count. Nothing was attempted, so the output
+    // directory is exactly as it was - and "0 failed" would be true and
+    // useless. This is the line the Forge's status bar shows.
+    cooker::CookReport refused;
+    refused.refusal = "2 output collision(s); nothing cooked";
+    SOL_CHECK(!refused.ok());
+    SOL_CHECK(refused.summary() == "2 output collision(s); nothing cooked");
+}
+
+SOL_TEST(cookingTheSameDirectoryTwiceCooksOnceAndThenSkips)
+{
+    SOL_REQUIRE(resetCookScratch());
+    SOL_REQUIRE(writeScratchFile(cookSourceDirectory() + "/beep.wav", tinyWav()));
+
+    const cooker::CookReport first = cooker::cookDirectory(cookSourceDirectory(), cookOutputDirectory());
+    SOL_CHECK(first.ok());
+    SOL_CHECK(first.cooked == 1 && first.skipped == 0 && first.failed == 0);
+    SOL_CHECK(fileExists(cookOutputDirectory() + "/beep.saud"));
+
+    const cooker::CookReport second = cooker::cookDirectory(cookSourceDirectory(), cookOutputDirectory());
+    SOL_CHECK(second.ok());
+    SOL_CHECK(second.cooked == 0 && second.skipped == 1 && second.failed == 0);
+}
+
+SOL_TEST(anOutputCollisionRefusesTheWholeCookAndWritesNothing)
+{
+    SOL_REQUIRE(resetCookScratch());
+    SOL_REQUIRE(writeScratchFile(cookSourceDirectory() + "/beep.wav", tinyWav()));
+    // Junk, and it is never read: the collision is found from the PLAN, before
+    // a single source is opened.
+    SOL_REQUIRE(writeScratchFile(cookSourceDirectory() + "/beep.ogg", std::vector<std::uint8_t>(64, 7)));
+
+    const cooker::CookReport report = cooker::cookDirectory(cookSourceDirectory(), cookOutputDirectory());
+    SOL_CHECK(!report.ok());
+    SOL_CHECK(report.refusal == "1 output collision(s); nothing cooked");
+    SOL_CHECK(report.cooked == 0 && report.failed == 0);
+    // ⚑ The VALID half of the pair did not cook either, and that is the whole
+    // rule: whichever cooked last would silently win, and the staleness check
+    // would then report the loser as up to date.
+    SOL_CHECK(!fileExists(cookOutputDirectory() + "/beep.saud"));
+}
+
+SOL_TEST(anOutputWhoseSourceIsDeletedIsSweptOnTheNextCook)
+{
+    SOL_REQUIRE(resetCookScratch());
+    SOL_REQUIRE(writeScratchFile(cookSourceDirectory() + "/beep.wav", tinyWav()));
+    SOL_REQUIRE(writeScratchFile(cookSourceDirectory() + "/boop.wav", tinyWav()));
+    SOL_REQUIRE(cooker::cookDirectory(cookSourceDirectory(), cookOutputDirectory()).cooked == 2);
+
+    SOL_REQUIRE(platform::deleteFile((cookSourceDirectory() + "/boop.wav").c_str()));
+
+    const cooker::CookReport report = cooker::cookDirectory(cookSourceDirectory(), cookOutputDirectory());
+    SOL_CHECK(report.ok());
+    SOL_CHECK(!fileExists(cookOutputDirectory() + "/boop.saud"));
+    // The positive control, in the same run: this is a deletion and not a wipe.
+    SOL_CHECK(fileExists(cookOutputDirectory() + "/beep.saud"));
+}
+
+SOL_TEST(theSweepIsSkippedAfterAFailureSoABuildErrorIsNotAlsoAMissingAsset)
+{
+    SOL_REQUIRE(resetCookScratch());
+    SOL_REQUIRE(writeScratchFile(cookSourceDirectory() + "/beep.wav", tinyWav()));
+    SOL_REQUIRE(writeScratchFile(cookSourceDirectory() + "/boop.wav", tinyWav()));
+    SOL_REQUIRE(cooker::cookDirectory(cookSourceDirectory(), cookOutputDirectory()).cooked == 2);
+
+    // One source goes away and, in the same edit, another stops cooking - which
+    // is what a real broken edit looks like.
+    SOL_REQUIRE(platform::deleteFile((cookSourceDirectory() + "/boop.wav").c_str()));
+    SOL_REQUIRE(writeScratchFile(cookSourceDirectory() + "/broken.png", std::vector<std::uint8_t>(64, 7)));
+
+    const cooker::CookReport report = cooker::cookDirectory(cookSourceDirectory(), cookOutputDirectory());
+    SOL_CHECK(!report.ok());
+    SOL_CHECK(report.failed == 1);
+    // ⚑ The stray survives the failing run. A job that failed may not have
+    // written its output, so deleting a previous good one here would turn a
+    // build error into a missing asset - two problems where there was one.
+    SOL_CHECK(fileExists(cookOutputDirectory() + "/boop.saud"));
+}
+
+SOL_TEST(withNoSourcesTheCookLeavesTheOutputDirectoryAloneRatherThanEmptyingIt)
+{
+    SOL_REQUIRE(resetCookScratch());
+    // ⚑ An empty source tree is exactly what a MISTYPED source path looks like
+    // from inside the cook: `listFiles` on a directory that does not exist
+    // returns nothing and reports nothing wrong. Without the guard, every
+    // cooked file is unclaimed and the sweep empties the directory.
+    SOL_REQUIRE(writeScratchFile(cookOutputDirectory() + "/hull.stex", std::vector<std::uint8_t>(64, 7)));
+
+    const cooker::CookReport report = cooker::cookDirectory(cookSourceDirectory(), cookOutputDirectory());
+    SOL_CHECK(report.ok());
+    SOL_CHECK(report.cooked == 0 && report.skipped == 0 && report.failed == 0);
+    SOL_CHECK(fileExists(cookOutputDirectory() + "/hull.stex"));
+
+    // The last test in the group, so it takes the file with it: what a run
+    // leaves behind is then two empty directories and nothing that looks like a
+    // cooked asset sitting beside a real one.
+    SOL_CHECK(platform::deleteFile((cookOutputDirectory() + "/hull.stex").c_str()));
 }

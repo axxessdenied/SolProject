@@ -9,6 +9,7 @@
 // boxes and the metric grid are here and why the lighting numbers are the
 // game's rather than a viewer's own.
 
+#include "cook.hpp"
 #include "def_editor.hpp"
 #include "forge_view.hpp"
 #include "history_buttons.hpp"
@@ -1494,6 +1495,49 @@ int main(int argc, char** argv)
                 }
             }
             ImGui::EndDisabled();
+
+            // ⚑⚑ THE COOK (Phase 24 stage T), AND IT IS A BUTTON RATHER THAN A
+            // MENU ITEM BECAUSE OF WHAT IT IS. The Blender bridge got a menu
+            // because it is meant to be invisible - you press `Send to Forge`
+            // over there and the mesh is here. A cook is the opposite: a
+            // deliberate act, repeated after every edit, whose result you wait
+            // for. It is never disabled, because it is the one action in this
+            // bar that needs nothing open.
+            //
+            // ⚑⚑ IT CALLS THE COOKER'S OWN DISPATCH RATHER THAN A SECOND COPY
+            // OF IT, AND THAT IS THE WHOLE POINT OF THE STAGE. Until now the
+            // dispatch lived in `tools/cooker/src/main.cpp`, which nothing can
+            // link; it is in `sol_cooker_lib` now, which this tool already
+            // linked for the glTF importer. So the button runs exactly what
+            // `cooker.exe` runs, logs the same lines, and needs no cooker
+            // executable shipped beside the Forge - which is what keeps
+            // `packaging/check_layout.cmake`'s `cooker*` exclusion true.
+            //
+            // ⚑ It blocks the frame, deliberately. The committed set is 26
+            // files and 2,298 triangles, so the pause is not worth a thread or
+            // a progress bar - and a cook that returned before it had finished
+            // would be a button that lies about the thing an author is about to
+            // go and look at.
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 4.0f);
+            if (ImGui::Button("Cook")) {
+                const cooker::CookReport cookReport = cooker::cookDirectory(assetsDirectory, cookedDirectory);
+                status = "cook: " + cookReport.summary();
+
+                // A cook adds cooked files, and sweeps the ones whose source is
+                // gone - so the list read at startup is now a list of something
+                // else, and `openIndex` indexes straight into it. Same pair as
+                // `Rescan` for the same reason.
+                meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
+                openIndex = -1;
+
+                // ⚑ TEXTURES ARE DELIBERATELY NOT REFRESHED HERE. Every texture
+                // is uploaded once at startup, and `textureStems` - what the
+                // `[[model]]` row's combo offers - is derived from the ones that
+                // actually uploaded. Re-listing without re-uploading would offer
+                // a stem the viewport cannot draw, which is exactly the mistake
+                // stage H exists to make inexpressible. A newly cooked texture
+                // appears on the next launch; giving it a surface is stage U2.
+            }
         }
         ImGui::End();
 
