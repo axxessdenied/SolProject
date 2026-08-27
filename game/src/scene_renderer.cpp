@@ -96,7 +96,14 @@ bool SceneRenderer::initialize(rhi::Context& context,
     m_context = &context;
     m_swapchain = &swapchain;
 
-    if (!m_meshRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
+    // ⚑ Phase 25 stage B: the mesh pipelines are `MaterialRegistry`'s now, and
+    // it builds them against `MeshRenderer`'s layout - so the mesh renderer
+    // must come up first, and it is the only one of the seven that no longer
+    // takes a shader directory at all.
+    m_shaderSearchPath.assign(1, std::string(shaderDirectory));
+    if (!m_meshRenderer.initialize(context) ||
+        !m_materials.initialize(
+            context, kHdrFormat, kDepthFormat, m_meshRenderer.pipelineLayout(), m_shaderSearchPath) ||
         !m_skyRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory, kStarfieldSeed) ||
         !m_impostorRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
         !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat, shaderDirectory) ||
@@ -216,6 +223,18 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
 {
     unloadModels();
 
+    // ⚑⚑ THE PIPELINES COME FIRST (Phase 25 stage B), because whether a model
+    // is drawable now depends on whether its material's SHADERS loaded as well
+    // as on whether its mesh and texture did. False here is structural - not
+    // one pipeline could be built - and is the shader-side twin of an empty
+    // base `cooked/`: an install missing its shaders must say so rather than
+    // boot into a black galaxy.
+    if (!m_materials.build(materials)) {
+        return false;
+    }
+    m_opaqueBuckets.assign(materials.size(), {});
+    m_translucentBuckets.assign(materials.size(), {});
+
     // Uploads a cooked asset once per stem and hands back its pool index; the
     // shipped catalog has six models sharing three meshes and three textures,
     // and an authored one will share far more than that.
@@ -278,7 +297,22 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
         CatalogEntry entry = {.radius = def.radius,
                               .emissive = material.emissive,
                               .translucent = material.translucent,
-                              .alpha = material.alpha};
+                              .alpha =
+                                  material.blend == assets::MaterialBlend::Opaque ? 1.0f : material.alpha,
+                              .material = def.materialIndex};
+
+        // ⚑ A material whose shaders would not load leaves its models
+        // undrawable, exactly as a missing mesh does and in the same slot-
+        // keeping way - `MaterialRegistry::build` already named the material
+        // and the directories it searched, once, rather than every frame.
+        if (m_materials.pipeline(def.materialIndex) == VK_NULL_HANDLE) {
+            SOL_LOG_ERROR("model '%s': material '%s' has no pipeline - it will draw nothing",
+                          def.id.c_str(),
+                          material.id.c_str());
+            entry.drawable = false;
+            m_models.push_back(entry);
+            continue;
+        }
         // ⚑⚑⚑ NOT A HARD FAILURE ANY MORE, AND THAT IS PHASE 24 STAGE S's ONE
         // BEHAVIOURAL CHANGE. Until a mod could carry an asset, every
         // `[[model]]` row was ours, so a row naming a missing mesh was our bug
@@ -358,12 +392,13 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
     // one number: every model drew through a row, and this says how many rows
     // there were. It will stop equalling the model count the moment anybody
     // authors a material two models share.
-    SOL_LOG_INFO("models: %zu (%zu meshes, %zu textures, %zu materials, %u level(s) over %u model(s), "
-                 "%zu undrawable)",
+    SOL_LOG_INFO("models: %zu (%zu meshes, %zu textures, %zu materials over %zu pipeline(s), %u "
+                 "level(s) over %u model(s), %zu undrawable)",
                  m_models.size(),
                  m_meshes.size(),
                  m_textures.size(),
                  materials.size(),
+                 m_materials.pipelineCount(),
                  report.levelsLoaded,
                  report.modelsWithLevels,
                  undrawable);
@@ -383,6 +418,12 @@ void SceneRenderer::unloadModels()
     m_textures.clear();
     m_meshStems.clear();
     m_textureStems.clear();
+    // ⚑ The buckets hold pointers into the caller's instance span, which is
+    // frame-scoped - but they are also sized to the MATERIAL count, and a
+    // reload can change that. Emptied here so a bucket for a material that no
+    // longer exists cannot outlive it; `loadModels` sizes them again.
+    m_opaqueBuckets.clear();
+    m_translucentBuckets.clear();
 }
 
 void SceneRenderer::shutdown()
@@ -404,6 +445,10 @@ void SceneRenderer::shutdown()
     rhi::destroyImage(*m_context, m_depth);
     rhi::destroyImage(*m_context, m_hdrColor);
     unloadModels();
+    // ⚑ Before the mesh renderer: the registry's pipelines were built against
+    // that renderer's layout, and destroying the layout first would leave them
+    // referring to a dead handle.
+    m_materials.shutdown();
     m_meshRenderer.shutdown();
     m_skyRenderer.shutdown();
     m_impostorRenderer.shutdown();
@@ -453,9 +498,13 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
 
     const std::uint32_t gpuMeshZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.meshes");
     m_meshRenderer.setSunlight(sunDirection, kSunIntensity, kAmbient);
-    m_meshRenderer.bind(commandBuffer, extent);
     m_drawCallCount = 0;
-    m_translucentScratch.clear();
+    for (std::vector<const RenderInstance*>& bucket : m_opaqueBuckets) {
+        bucket.clear();
+    }
+    for (std::vector<const RenderInstance*>& bucket : m_translucentBuckets) {
+        bucket.clear();
+    }
 
     // Stage F: how big a thing is on screen decides which level it draws, and
     // the focal length is the same one the target pick projects through - one
@@ -480,6 +529,12 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
     m_lodLast.swap(m_lodThis);
     m_lodThis.clear();
 
+    // ⚑⚑ ONE PASS TO SORT, ONE PASS TO DRAW (Phase 25 stage B). The old code
+    // bound a single pipeline up front and drew straight out of this loop,
+    // which is only possible while every mesh in the game shares one pipeline.
+    // Now each instance is filed under its model's MATERIAL, so the pipeline
+    // is bound once per material rather than once per draw - the bind count is
+    // the number of materials on screen, not the number of objects.
     for (const RenderInstance& instance : instances) {
         // A stale or unset model draws nothing rather than crashing: the def
         // layer is reloadable at runtime, so an index can outlive its row.
@@ -488,49 +543,69 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
             continue;
         }
         const CatalogEntry& entry = m_models[index];
-        // ⚑ Phase 24 stage S: a row whose files were not found in ANY layer.
-        // Same treatment and the same line of code as a stale index, one
-        // reason further along - the entity still exists, still collides and
-        // still shows on the map; it just has no picture. `loadModels` logged
-        // which model and where it looked, once, rather than every frame.
+        // ⚑ Phase 24 stage S: a row whose files were not found in ANY layer,
+        // and since stage B also one whose material has no pipeline. Same
+        // treatment and the same line of code as a stale index, one reason
+        // further along - the entity still exists, still collides and still
+        // shows on the map; it just has no picture. `loadModels` logged which
+        // model and why, once, rather than every frame.
         if (!entry.drawable) {
             continue;
         }
         // Phase 12: translucent models sit out the opaque block entirely and
         // are replayed after the sky. Deferring the pointer rather than the
         // built matrix keeps this loop doing one thing.
-        if (entry.translucent) {
-            m_translucentScratch.push_back(&instance);
-            continue;
+        auto& buckets = entry.translucent ? m_translucentBuckets : m_opaqueBuckets;
+        if (entry.material < buckets.size()) {
+            buckets[entry.material].push_back(&instance);
         }
+    }
 
-        // Camera-relative: demote sim-space positions to float only after
-        // subtracting the camera position (the large-world rule).
-        const core::Vec3 relative = (instance.position - camera.position).toVec3();
-        const core::Mat4 model =
-            core::translation(relative) * toMat4(instance.rotation) * core::scale(instance.scale);
-
-        // ⚑ The instance scale is not uniform in general (a rock takes its size
-        // from it), so the silhouette is bounded by the LARGEST axis. Erring
-        // large means erring towards detail, which is the safe direction: the
-        // cost of being wrong is a few triangles, not a visible pop.
-        const float widest = std::max({instance.scale.x, instance.scale.y, instance.scale.z});
-        const float screenRadius =
-            ui::screenRadiusPixels(static_cast<double>(entry.radius * widest), length(relative), lodFocal);
-        const std::uint32_t level = chooseLevel(instance.key, screenRadius, entry.levelCount);
-
-        m_meshRenderer.draw(commandBuffer,
-                            m_meshes[entry.levels[level]],
-                            m_textures[entry.texture],
-                            viewProjection * model,
-                            model,
-                            entry.emissive);
-        ++m_drawCallCount;
-        ++report.drawn[level];
-        if (entry.levelCount > 1 && screenRadius > report.largestChainedRadius) {
-            report.largestChainedRadius = screenRadius;
-            report.largestChainedLevel = level;
+    // Records one material's bucket: bind its pipeline, then draw. Shared by
+    // the opaque block here and the translucent one after the sky, so the two
+    // cannot drift on level selection or on the report - which is the mistake
+    // Phase 12 explicitly wrote its second loop to avoid, by hand.
+    const auto drawBucket = [&](std::uint32_t material, const std::vector<const RenderInstance*>& bucket) {
+        if (bucket.empty()) {
+            return;
         }
+        m_meshRenderer.bindPipeline(commandBuffer, extent, m_materials.pipeline(material));
+        for (const RenderInstance* instance : bucket) {
+            const CatalogEntry& entry = m_models[modelIndex(instance->model)];
+            // Camera-relative: demote sim-space positions to float only after
+            // subtracting the camera position (the large-world rule).
+            const core::Vec3 relative = (instance->position - camera.position).toVec3();
+            const core::Mat4 model =
+                core::translation(relative) * toMat4(instance->rotation) * core::scale(instance->scale);
+
+            // ⚑ The instance scale is not uniform in general (a rock takes its
+            // size from it), so the silhouette is bounded by the LARGEST axis.
+            // Erring large means erring towards detail, which is the safe
+            // direction: the cost of being wrong is a few triangles, not a
+            // visible pop.
+            const float widest = std::max({instance->scale.x, instance->scale.y, instance->scale.z});
+            const float screenRadius = ui::screenRadiusPixels(
+                static_cast<double>(entry.radius * widest), length(relative), lodFocal);
+            const std::uint32_t level = chooseLevel(instance->key, screenRadius, entry.levelCount);
+
+            m_meshRenderer.draw(commandBuffer,
+                                m_meshes[entry.levels[level]],
+                                m_textures[entry.texture],
+                                viewProjection * model,
+                                model,
+                                entry.emissive,
+                                entry.alpha);
+            ++m_drawCallCount;
+            ++report.drawn[level];
+            if (entry.levelCount > 1 && screenRadius > report.largestChainedRadius) {
+                report.largestChainedRadius = screenRadius;
+                report.largestChainedLevel = level;
+            }
+        }
+    };
+
+    for (std::uint32_t material = 0; material < m_opaqueBuckets.size(); ++material) {
+        drawBucket(material, m_opaqueBuckets[material]);
     }
 
     m_gpuProfiler.endZone(commandBuffer, gpuMeshZone);
@@ -593,35 +668,23 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
     // pass. After the sky, before the particles: exhaust glow then reads as
     // being in front of the film rather than trapped behind it.
     //
-    // No back-to-front sort. The only translucent object in the game is one
-    // flat disc per gate and gates are ~100,000 km apart, so two cannot
-    // meaningfully overlap on screen; sorting is the right answer the day a
-    // second translucent KIND exists, and is machinery guarding nothing today.
-    if (!m_translucentScratch.empty()) {
+    // ⚑⚑ NO BACK-TO-FRONT SORT, AND STAGE B HAS NOT CHANGED THAT - BUT IT HAS
+    // CHANGED WHY. The deferral used to rest on "the only translucent object
+    // in the game is one flat disc per gate, and gates are ~100,000 km apart";
+    // a second translucent MATERIAL is now a def row and no C++, so the
+    // premise is no longer a fact about the engine, only a fact about the
+    // shipped content. ⚑ Phase 25 stage C inherits this and must DECIDE it
+    // rather than discover it in a screenshot: the moment two translucent
+    // materials can overlap on screen, unsorted blending is order-dependent
+    // and the order here is material index, which is arbitrary.
+    bool anyTranslucent = false;
+    for (const std::vector<const RenderInstance*>& bucket : m_translucentBuckets) {
+        anyTranslucent = anyTranslucent || !bucket.empty();
+    }
+    if (anyTranslucent) {
         const std::uint32_t gpuTranslucentZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.translucent");
-        m_meshRenderer.bindTranslucent(commandBuffer, extent);
-        for (const RenderInstance* instance : m_translucentScratch) {
-            const core::Vec3 relative = (instance->position - camera.position).toVec3();
-            const core::Mat4 model =
-                core::translation(relative) * toMat4(instance->rotation) * core::scale(instance->scale);
-            const CatalogEntry& entry = m_models[modelIndex(instance->model)];
-            // Selected the same way as an opaque draw, so translucency does not
-            // quietly become a second rule about which mesh to use. Nothing
-            // translucent has a chain today, which is exactly why it must be
-            // written the same rather than left as an assumption.
-            const float widest = std::max({instance->scale.x, instance->scale.y, instance->scale.z});
-            const float screenRadius = ui::screenRadiusPixels(
-                static_cast<double>(entry.radius * widest), length(relative), lodFocal);
-            const std::uint32_t level = chooseLevel(instance->key, screenRadius, entry.levelCount);
-            m_meshRenderer.draw(commandBuffer,
-                                m_meshes[entry.levels[level]],
-                                m_textures[entry.texture],
-                                viewProjection * model,
-                                model,
-                                entry.emissive,
-                                entry.alpha);
-            ++m_drawCallCount;
-            ++report.drawn[level];
+        for (std::uint32_t material = 0; material < m_translucentBuckets.size(); ++material) {
+            drawBucket(material, m_translucentBuckets[material]);
         }
         m_gpuProfiler.endZone(commandBuffer, gpuTranslucentZone);
     }

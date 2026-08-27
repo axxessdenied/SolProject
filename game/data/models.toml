@@ -74,21 +74,26 @@ solid = false
 # flying through it cannot be affected by it. That is the point: it is something
 # you see, not something you hit.
 #
-# `emissive` is insurance, and it is worth saying what against. The lane axis
-# points at the system hub and the star sits on it, so this disc meets the
-# sunlight dead-on rather than across it - and the shader does not flip a normal
-# for back faces, so lambert is all-or-nothing across BOTH faces at once. As
-# authored the profile's normal is -Z, which faces the star, so the film is lit.
-# Wind that profile the other way and it goes black from every angle at the same
-# time. geometry.unit asserts the sign; this floor is what it would fall back to.
+# ⚑⚑ THE ONE ROW IN THIS FILE THAT NAMES A MATERIAL (Phase 25 stage B), and
+# therefore the one that carries none of `texture`/`emissive`/`translucent`/
+# `alpha` - a row may name a material or describe one, never both, and the
+# schema refuses a row that tries. Everything that used to be on those four
+# keys is in materials.toml under `sol.gate_membrane`, unchanged in value.
+#
+# It moved because it wanted something those keys cannot say: its own fragment
+# shader. `mesh.frag` does not flip the normal for back faces, so lambert on a
+# one-sided film is all-or-nothing across BOTH faces at once - this disc was
+# lit only because its authored profile normal is -Z, which happens to face the
+# star, and the paragraph that used to sit here hedged against that with an
+# emissive floor. `membrane.frag` flips it, so winding the profile the other
+# way no longer turns the film black from every angle at once. geometry.unit
+# still asserts the sign; it is no longer the only thing standing between the
+# aperture and a black disc.
 [[model]]
 id = "gate_membrane"
 mesh = "gate_membrane"
-texture = "hull"
+material = "sol.gate_membrane"
 radius = 70.0
-translucent = true
-alpha = 0.30
-emissive = 0.35
 solid = false
 
 # The player's own frame (Phase 8m), authored in SHIP space around the eye and

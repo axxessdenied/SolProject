@@ -633,10 +633,26 @@ bool hasSynthesisedMaterialPrefix(const std::string& id)
 // because both the conflict check and the synthesis have to agree on the list.
 constexpr const char* kModelSurfaceKeys[] = {"texture", "emissive", "translucent", "alpha"};
 
+// ⚑⚑ PHASE 12's TRANSLUCENT VARIANT, AS DEFAULTS RATHER THAN AS A BRANCH.
+// `mesh_renderer.cpp` built it by hand as "the same shaders, layout and vertex
+// format with three fields moved"; these are those three fields. Shared by
+// `parseMaterial` and by the synthesis in `resolveMaterials` so the two cannot
+// drift - a derived material and a hand-written one that say the same thing
+// must produce the same pipeline, or stage B's cache is keyed on a lie.
+void applyBlendDefaults(MaterialDef& def)
+{
+    def.blend = def.translucent ? MaterialBlend::Alpha : MaterialBlend::Opaque;
+    // No depth write so it does not occlude what is behind it, and no back-face
+    // cull because the player flies through it and would otherwise watch it
+    // vanish on the way past.
+    def.depthWrite = !def.translucent;
+    def.cullBackFaces = !def.translucent;
+}
+
 // A `[[material]]` row (Phase 25 stage A): how a surface is drawn, split out of
-// the model that wears it. No shader pair and no pipeline state yet - stage B
-// adds those - so the keys here are exactly the four the mesh pipeline has
-// always read, and a material built from a model draws the identical frame.
+// the model that wears it. Stage B added the shader pair and the pipeline
+// state, which is everything `GraphicsPipelineDesc` can be told that this
+// engine has a reason to vary.
 bool parseMaterial(const TomlValue& table,
                    const char* sourceName,
                    std::vector<MaterialDef>& out,
@@ -654,8 +670,50 @@ bool parseMaterial(const TomlValue& table,
     reader.optionalFloat("emissive", def.emissive);
     reader.optionalBool("translucent", def.translucent);
     reader.optionalFloat("alpha", def.alpha);
+    reader.optionalString("vertex_shader", def.vertexShader);
+    reader.optionalString("fragment_shader", def.fragmentShader);
 
-    reader.rejectUnknownKeys({"id", "texture", "emissive", "translucent", "alpha"});
+    // ⚑ ORDER IS LOAD-BEARING: the three state keys are SEEDED from
+    // `translucent` and then overridden by whatever the row says explicitly.
+    // Reading them before this call would have the defaults silently overwrite
+    // the author.
+    applyBlendDefaults(def);
+    if (!reader.failed) {
+        std::string blend;
+        reader.optionalString("blend", blend);
+        if (!reader.failed && !blend.empty()) {
+            if (blend == "opaque") {
+                def.blend = MaterialBlend::Opaque;
+            } else if (blend == "alpha") {
+                def.blend = MaterialBlend::Alpha;
+            } else if (blend == "additive") {
+                def.blend = MaterialBlend::Additive;
+            } else {
+                reader.fail("'blend' must be \"opaque\", \"alpha\" or \"additive\"");
+            }
+        }
+    }
+    reader.optionalBool("depth_test", def.depthTest);
+    reader.optionalBool("depth_write", def.depthWrite);
+    reader.optionalBool("cull", def.cullBackFaces);
+
+    reader.rejectUnknownKeys({"id",
+                              "texture",
+                              "emissive",
+                              "translucent",
+                              "alpha",
+                              "vertex_shader",
+                              "fragment_shader",
+                              "blend",
+                              "depth_test",
+                              "depth_write",
+                              "cull"});
+    // A shader stem reaches the filesystem as "<stem>.vert.spv". An empty one
+    // would build that into ".vert.spv" and fail with a path nobody can read
+    // back to a row, so it dies here where the file name is still in hand.
+    if (!reader.failed && (def.vertexShader.empty() || def.fragmentShader.empty())) {
+        reader.fail("'vertex_shader' and 'fragment_shader' name a SPIR-V stem and cannot be empty");
+    }
     // ⚑ The synthesis rebuilds its rows from scratch after every merge, so an
     // authored row wearing that prefix would be shadowed by a derived one with
     // the same id - a name that resolves to something the file does not say.
@@ -1097,6 +1155,12 @@ void DefDatabase::resolveMaterials()
         derived.emissive = model.emissive;
         derived.translucent = model.translucent;
         derived.alpha = model.alpha;
+        // ⚑ Stage B: the shader stems keep their defaults (the stock lambert
+        // pair), and the three state fields come from the SAME function the
+        // parser seeds from - so a derived material and an authored one that
+        // say the same thing land on the same cache key, which is the whole
+        // basis of pipeline sharing.
+        applyBlendDefaults(derived);
         derived.synthesised = true;
         derived.source = model.source;
         model.materialIndex = static_cast<std::uint32_t>(m_materials.size());

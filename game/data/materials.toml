@@ -1,0 +1,54 @@
+# Materials (Phase 25). A `[[material]]` row says HOW a surface is drawn: the
+# texture it samples, the shader pair that runs, and the pipeline state that
+# pair runs under. A `[[model]]` row says WHAT is drawn and names one of these.
+#
+# Before this file existed, nothing in this engine could draw with a shader it
+# was not compiled to know about - nine pipelines built from fourteen shaders
+# across seven renderers, every pair named by a hardcoded filename inside its
+# own C++. That is the same sentence Phase 9 stage A wrote about meshes and
+# Phase 24 stage S wrote about cooked assets, and it was the last one left.
+#
+# ⚑ A `[[model]]` ROW DOES NOT NEED TO BE HERE. A row that names no material
+# gets one derived from its own `texture`/`emissive`/`translucent`/`alpha`
+# keys, so every model in models.toml except the membrane below still describes
+# its own surface in place and works exactly as it always has. Naming a
+# material is what you do when you want something those four keys cannot say -
+# which, today, means a different shader.
+#
+# ⚑ THE KEYS, AND THEIR DEFAULTS, BECAUSE THE DEFAULTS ARE WHAT MAKE A ROW
+# SHORT. `vertex_shader` and `fragment_shader` are SPIR-V stems and both
+# default to "mesh": name only the stage you are actually replacing.
+# `translucent` seeds `blend`, `depth_write` and `cull` with the values Phase
+# 12 hardcoded for its alpha-blended variant (alpha, no depth write, no cull),
+# and each can be overridden on its own line if a surface wants blending
+# without giving up its depth write. `depth_test` defaults on.
+#
+# ⚑ TWO MATERIALS THAT SAY THE SAME THING SHARE ONE PIPELINE. The engine keys
+# its cache on the shader pair plus the state, so adding a material that
+# differs only in `texture` or `emissive` costs no pipeline at all - those are
+# per-draw, not per-pipeline. The boot log prints both numbers.
+
+# The gate's membrane (Phase 12), and the first surface in this game to bring
+# its own shader.
+#
+# ⚑ WHAT IT BUYS, AND IT IS A FIX RATHER THAN A LOOK. `mesh.frag` never flips
+# the normal for a back face, so lambert on a one-sided film is all-or-nothing
+# across both faces at once - this disc is lit only because its authored
+# profile normal happens to point at the star, which models.toml says out loud
+# and hedges against with an `emissive` floor. `membrane.frag` is `mesh.frag`
+# with one `gl_FrontFacing` flip, so the film is lit from whichever side you
+# are looking at and the authoring accident stops being load-bearing.
+#
+# ⚑ It names no `vertex_shader`, because its vertex work is identical to every
+# other mesh's. That is why there are two shader keys and not one stem.
+[[material]]
+id = "sol.gate_membrane"
+texture = "hull"
+fragment_shader = "membrane"
+translucent = true
+alpha = 0.30
+# Kept from the model row it replaced. It is no longer insurance against the
+# back-face problem above - that is fixed now - but it is still what stops the
+# film reading as a black hole in the aperture when the star is off to one
+# side, so it is a value and not a leftover.
+emissive = 0.35

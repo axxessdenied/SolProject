@@ -31,9 +31,22 @@ bool ForgeView::initialize(rhi::Context& context, rhi::Swapchain& swapchain, con
     m_context = &context;
     m_swapchain = &swapchain;
 
-    if (!m_meshRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
+    if (!m_meshRenderer.initialize(context) ||
         !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory, kFramesInFlight) ||
         !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat, shaderDirectory)) {
+        return false;
+    }
+
+    // The viewport's one material: the stock lambert pair, opaque, which is
+    // exactly what this tool drew before the pipeline became data. Every
+    // default in `MaterialDef` is that pipeline, so the row says nothing.
+    const std::string shaderPath = shaderDirectory;
+    const std::array<std::string, 1> shaderSearchPath = {shaderPath};
+    const std::array<assets::MaterialDef, 1> viewportMaterial = {
+        assets::MaterialDef{.id = "forge.viewport", .texture = ""}};
+    if (!m_materials.initialize(
+            context, kHdrFormat, kDepthFormat, m_meshRenderer.pipelineLayout(), shaderSearchPath) ||
+        !m_materials.build(viewportMaterial)) {
         return false;
     }
 
@@ -115,6 +128,8 @@ void ForgeView::shutdown()
 
     rhi::destroyImage(*m_context, m_depth);
     rhi::destroyImage(*m_context, m_hdrColor);
+    // Before the mesh renderer: the pipeline was built against its layout.
+    m_materials.shutdown();
     m_meshRenderer.shutdown();
     m_debugDraw.shutdown();
     m_tonemapRenderer.shutdown();
@@ -140,7 +155,7 @@ void ForgeView::recordCommands(VkCommandBuffer commandBuffer,
 
     renderer::beginHdrScenePass(commandBuffer, m_hdrColor, m_depth, kViewportClearColor);
 
-    m_meshRenderer.bind(commandBuffer, extent);
+    m_meshRenderer.bindPipeline(commandBuffer, extent, m_materials.pipeline(0));
     for (const DrawItem& item : frame.items) {
         if (item.mesh == nullptr || item.texture == nullptr) {
             continue;

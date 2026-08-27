@@ -13,6 +13,7 @@
 
 #include "sol/core/math/math.hpp"
 #include "sol/renderer/debug_draw_renderer.hpp"
+#include "sol/renderer/material_registry.hpp"
 #include "sol/renderer/mesh_renderer.hpp"
 #include "sol/renderer/tonemap_renderer.hpp"
 #include "sol/rhi/context.hpp"
@@ -100,6 +101,12 @@ private:
     sol::rhi::Swapchain* m_swapchain = nullptr;
 
     sol::renderer::MeshRenderer m_meshRenderer;
+    // ⚑ Phase 25 stage B: the tool builds its viewport pipeline through the
+    // same registry the game does, from one stock `MaterialDef`. It is not a
+    // material EDITOR - that is stage D - but going through the registry is
+    // what keeps "the Forge draws what the game draws" true by construction
+    // rather than by two call sites agreeing about a `GraphicsPipelineDesc`.
+    sol::renderer::MaterialRegistry m_materials;
     sol::renderer::DebugDrawRenderer m_debugDraw;
     sol::renderer::TonemapRenderer m_tonemapRenderer;
 

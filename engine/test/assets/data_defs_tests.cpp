@@ -705,6 +705,101 @@ SOL_TEST(data_defs_synthesised_materials_are_rebuilt_by_a_later_layer)
     SOL_CHECK(db.findModel("gate")->materialIndex == 0);
 }
 
+// Phase 25 stage B. A material names its shader pair and its pipeline state,
+// and the three state keys are SEEDED from `translucent` before being
+// overridden - which is what makes Phase 12's hardcoded variant a default
+// instead of a branch, and what lets a row want blending without giving up
+// its depth write.
+SOL_TEST(data_defs_material_shaders_and_pipeline_state)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db,
+                    R"(
+[[material]]
+id = "sol.hull"
+texture = "hull"
+
+[[material]]
+id = "sol.film"
+texture = "hull"
+fragment_shader = "membrane"
+translucent = true
+alpha = 0.3
+
+[[material]]
+id = "sol.exhaust"
+texture = "hull"
+vertex_shader = "billboard"
+fragment_shader = "glow"
+blend = "additive"
+depth_write = false
+cull = false
+
+[[material]]
+id = "sol.decal"
+texture = "hull"
+translucent = true
+depth_write = true
+)",
+                    "materials.toml",
+                    &error));
+
+    // Says nothing: the stock pair and the opaque state, which is exactly the
+    // pipeline this engine had before a material could name one.
+    const auto* hull = db.findMaterial("sol.hull");
+    SOL_REQUIRE(hull != nullptr);
+    SOL_CHECK(hull->vertexShader == "mesh");
+    SOL_CHECK(hull->fragmentShader == "mesh");
+    SOL_CHECK(hull->blend == sol::assets::MaterialBlend::Opaque);
+    SOL_CHECK(hull->depthTest);
+    SOL_CHECK(hull->depthWrite);
+    SOL_CHECK(hull->cullBackFaces);
+
+    // ⚑ Brings only a FRAGMENT stage, which is the common case and the reason
+    // there are two keys rather than one stem - a byte-identical copy of
+    // mesh.vert would be a file nothing binds.
+    const auto* film = db.findMaterial("sol.film");
+    SOL_REQUIRE(film != nullptr);
+    SOL_CHECK(film->vertexShader == "mesh");
+    SOL_CHECK(film->fragmentShader == "membrane");
+    // Phase 12's three fields, arriving as defaults rather than as a branch.
+    SOL_CHECK(film->blend == sol::assets::MaterialBlend::Alpha);
+    SOL_CHECK(!film->depthWrite);
+    SOL_CHECK(!film->cullBackFaces);
+    SOL_CHECK(film->depthTest);
+
+    // Both stages replaced, and state said outright rather than implied.
+    const auto* exhaust = db.findMaterial("sol.exhaust");
+    SOL_REQUIRE(exhaust != nullptr);
+    SOL_CHECK(exhaust->vertexShader == "billboard");
+    SOL_CHECK(exhaust->fragmentShader == "glow");
+    SOL_CHECK(exhaust->blend == sol::assets::MaterialBlend::Additive);
+    SOL_CHECK(!exhaust->depthWrite);
+
+    // ⚑⚑ THE CASE THE SEEDING EXISTS FOR: blended, and keeping its depth
+    // write. Under a branch this was not expressible at all; here it is one
+    // key over a default, and the ORDER of the two reads is what makes it
+    // work - defaults first, then the author.
+    const auto* decal = db.findMaterial("sol.decal");
+    SOL_REQUIRE(decal != nullptr);
+    SOL_CHECK(decal->blend == sol::assets::MaterialBlend::Alpha);
+    SOL_CHECK(decal->depthWrite);
+    SOL_CHECK(!decal->cullBackFaces); // untouched keys keep the seeded value
+
+    // The schema. An unknown blend names the three that exist rather than
+    // falling back to opaque, and a shader stem reaches the filesystem as
+    // "<stem>.vert.spv" so an empty one would build an unreadable path.
+    SOL_CHECK(
+        !merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\nblend = \"screen\"\n", "m.toml", &error));
+    SOL_CHECK(error.find("additive") != std::string::npos);
+    SOL_CHECK(
+        !merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\nvertex_shader = \"\"\n", "m.toml", &error));
+    SOL_CHECK(
+        !merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\nfragment_shader = \"\"\n", "m.toml", &error));
+    SOL_CHECK(!merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\ncull = \"yes\"\n", "m.toml", &error));
+}
+
 // ⚑ The shipped catalog itself, because the claim this stage has to make is
 // about `game/data` and not about a fixture: every committed `[[model]]` row
 // keeps working untouched, and every one of them now draws through a material.
@@ -715,28 +810,55 @@ SOL_TEST(data_defs_shipped_models_all_reach_a_material)
     SOL_REQUIRE(db.mergeDirectory(SOL_DEF_DATA_DIR, &error));
     SOL_CHECK(db.validateMaterials(&error));
     SOL_CHECK(!db.models().empty());
-    // Nothing is authored yet - stage B ships the first `[[material]]` row with
-    // its shader pair - so today the count is one derived row per model. This
-    // assertion is the one that says the committed files did not have to change.
-    SOL_CHECK(db.materials().size() == db.models().size());
     for (const auto& model : db.models()) {
         SOL_REQUIRE(model.materialIndex < db.materials().size());
         const sol::assets::MaterialDef& material = db.materials()[model.materialIndex];
+        SOL_CHECK(!material.texture.empty());
+        if (!model.material.empty()) {
+            // An AUTHORED material: the row names it and carries none of the
+            // four surface keys itself.
+            SOL_CHECK(!material.synthesised);
+            SOL_CHECK(material.id == model.material);
+            SOL_CHECK(model.texture.empty());
+            continue;
+        }
+        // A DERIVED one carries exactly what the model row says, which is what
+        // makes stage A's frame identical rather than merely similar - and is
+        // still true of every row that did not need its own shader.
         SOL_CHECK(material.synthesised);
         SOL_CHECK(material.id == "sol.auto." + model.id);
-        // The derived row carries exactly what the file says, which is what
-        // makes the frame identical rather than merely similar.
         SOL_CHECK(material.texture == model.texture);
         SOL_CHECK(material.emissive == model.emissive);
         SOL_CHECK(material.translucent == model.translucent);
         SOL_CHECK(material.alpha == model.alpha);
-        SOL_CHECK(!material.texture.empty());
+        // ⚑ Stage B: a row that says nothing about its pipeline gets the
+        // stock lambert pair and Phase 12's state, so the derived set produces
+        // exactly the two pipelines it always did.
+        SOL_CHECK(material.vertexShader == "mesh");
+        SOL_CHECK(material.fragmentShader == "mesh");
+        SOL_CHECK(material.depthTest);
+        SOL_CHECK(material.blend == (model.translucent ? sol::assets::MaterialBlend::Alpha
+                                                       : sol::assets::MaterialBlend::Opaque));
+        SOL_CHECK(material.depthWrite == !model.translucent);
+        SOL_CHECK(material.cullBackFaces == !model.translucent);
     }
-    // The membrane is the one row that exercises every field at once.
+
+    // ⚑⚑ THE MEMBRANE IS THE SHIPPED PROOF OF STAGE B, and the assertion is
+    // against `game/data` rather than a fixture on purpose: the row named a
+    // material, the material named a fragment shader, and the values that used
+    // to sit on the model row came across unchanged.
     const auto* membrane = db.findModel("gate_membrane");
     SOL_REQUIRE(membrane != nullptr);
+    SOL_CHECK(membrane->material == "sol.gate_membrane");
     const sol::assets::MaterialDef& film = db.materials()[membrane->materialIndex];
+    SOL_CHECK(!film.synthesised);
+    SOL_CHECK(film.fragmentShader == "membrane");
+    // It brings only a FRAGMENT stage; the vertex work is every other mesh's.
+    SOL_CHECK(film.vertexShader == "mesh");
     SOL_CHECK(film.translucent);
+    SOL_CHECK(film.blend == sol::assets::MaterialBlend::Alpha);
+    SOL_CHECK(!film.depthWrite);
+    SOL_CHECK(!film.cullBackFaces);
     SOL_CHECK(std::abs(film.alpha - 0.30f) < 1e-6f);
     SOL_CHECK(std::abs(film.emissive - 0.35f) < 1e-6f);
 }

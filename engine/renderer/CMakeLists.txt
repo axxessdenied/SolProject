@@ -1,6 +1,8 @@
 add_library(sol_renderer STATIC
     src/debug_draw_renderer.cpp
     src/impostor_renderer.cpp
+    src/material_registry.cpp
+    src/material_state.cpp
     src/mesh_renderer.cpp
     src/particle_renderer.cpp
     src/scene_pass.cpp

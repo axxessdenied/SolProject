@@ -7,6 +7,7 @@
 #include "sol/core/math/math.hpp"
 #include "sol/renderer/debug_draw_renderer.hpp"
 #include "sol/renderer/impostor_renderer.hpp"
+#include "sol/renderer/material_registry.hpp"
 #include "sol/renderer/mesh_renderer.hpp"
 #include "sol/renderer/particle_renderer.hpp"
 #include "sol/renderer/sky_renderer.hpp"
@@ -179,9 +180,14 @@ public:
     [[nodiscard]] bool onSwapchainRecreated();
 
     // Recreates every pipeline from SPIR-V on disk (device must be idle).
+    // ⚑ The mesh half is `m_materials` now, and it rebuilds EVERY material's
+    // pipeline - so editing a material's own fragment shader hot-reloads
+    // exactly like editing `mesh.frag` always has. That the watcher needed no
+    // change at all is the point: Phase 25 inherited a working compile-and-
+    // reload loop rather than inventing one.
     [[nodiscard]] bool reloadShaders()
     {
-        return m_meshRenderer.reloadPipeline() && m_skyRenderer.reloadPipeline() &&
+        return m_materials.reloadPipelines() && m_skyRenderer.reloadPipeline() &&
                m_impostorRenderer.reloadPipeline() && m_tonemapRenderer.reloadPipeline() &&
                m_debugDraw.reloadPipeline() && m_particleRenderer.reloadPipeline() &&
                m_uiRenderer.reloadPipeline();
@@ -252,6 +258,10 @@ private:
     sol::rhi::Swapchain* m_swapchain = nullptr;
 
     sol::renderer::MeshRenderer m_meshRenderer;
+    // Phase 25 stage B: every mesh pipeline in the game, built from the
+    // `[[material]]` rows and shared by state.
+    sol::renderer::MaterialRegistry m_materials;
+    std::vector<std::string> m_shaderSearchPath;
     sol::renderer::SkyRenderer m_skyRenderer;
     sol::renderer::ImpostorRenderer m_impostorRenderer;
     sol::renderer::TonemapRenderer m_tonemapRenderer;
@@ -286,7 +296,17 @@ private:
         // def row rather than on the instance - so the second translucent
         // thing in this game is a def row and no C++ at all.
         bool translucent = false;
+        // ⚑ THE ALPHA AS THE SHADER SHOULD SEE IT, resolved once at load
+        // rather than branched on per draw. It is the material's `alpha` under
+        // a blending pipeline and 1.0 under an opaque one - because the
+        // fragment shader premultiplies unconditionally, so handing an opaque
+        // draw a coverage below 1 would darken it rather than fade it. That
+        // was the pre-Phase-25 behaviour too; it just lived in which of two
+        // call sites did the drawing.
         float alpha = 1.0f;
+        // Which `[[material]]` row this model draws through (Phase 25 stage
+        // A), and therefore which pipeline the draw binds (stage B).
+        std::uint32_t material = 0;
         // ⚑⚑ Phase 24 stage S. False when this model's mesh or texture could
         // not be found in any layer's cooked directory. The row KEEPS ITS SLOT
         // - `ModelId` is an index into `defs.models()` and `m_models` is built
@@ -310,9 +330,18 @@ private:
     // jump retires every entity in the bubble at once.
     std::unordered_map<RenderInstanceKey, std::uint32_t> m_lodLast;
     std::unordered_map<RenderInstanceKey, std::uint32_t> m_lodThis;
-    // Translucent instances deferred out of the opaque loop and drawn after
-    // the sky (see the draw path for why the order is not negotiable).
-    std::vector<const RenderInstance*> m_translucentScratch;
+    // ⚑⚑ DRAWS GROUPED BY MATERIAL (Phase 25 stage B), one bucket per material
+    // index, so a pipeline is bound once per material rather than once per
+    // pass. Two arrays because the SPLIT is by pass and the GROUPING is by
+    // material, and those are different questions: `translucent` decides which
+    // block a draw is recorded in - after the sky, for the reason spelled out
+    // in the draw path - and the material decides what it binds inside it.
+    //
+    // ⚑ Cleared rather than rebuilt each frame: `clear()` on the inner vectors
+    // keeps their capacity, so after the first frame this allocates nothing.
+    // Resized only when the material count changes, i.e. on a def load.
+    std::vector<std::vector<const RenderInstance*>> m_opaqueBuckets;
+    std::vector<std::vector<const RenderInstance*>> m_translucentBuckets;
     std::vector<sol::renderer::GpuMesh> m_meshes;
     std::vector<sol::renderer::GpuTexture> m_textures;
     std::vector<std::string> m_meshStems;

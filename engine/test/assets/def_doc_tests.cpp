@@ -214,13 +214,17 @@ SOL_TEST(defDocumentKeepsAnExponentForm)
 }
 
 // `alpha = 0.30` and `emissive = 0.10` lose their zero through a number.
+//
+// ⚑ It reads materials.toml since Phase 25 stage B: the membrane's surface
+// keys moved onto `sol.gate_membrane` when the row took its own shader, and
+// they moved with their SPELLING intact - which is the whole claim here.
 SOL_TEST(defDocumentKeepsAFractionalTrailingZero)
 {
-    const std::string source = readWholeFile(defPath("models"));
+    const std::string source = readWholeFile(defPath("materials"));
     SOL_REQUIRE(!source.empty());
     DefDoc doc;
     SOL_REQUIRE(parses(source, doc));
-    const DefRow* membrane = doc.find("model", "gate_membrane");
+    const DefRow* membrane = doc.find("material", "sol.gate_membrane");
     SOL_REQUIRE(membrane != nullptr);
     const assets::DefKey* alpha = membrane->find("alpha");
     SOL_REQUIRE(alpha != nullptr);

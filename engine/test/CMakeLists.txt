@@ -54,6 +54,19 @@ target_compile_definitions(sol_assets_tests
             SOL_DEF_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data")
 add_test(NAME assets.unit COMMAND sol_assets_tests)
 
+# Phase 25 stage B. ⚑ The renderer is mostly a device away from any suite, and
+# this is the part that is not: which `[[material]]` rows can share a pipeline
+# is a decision about data, and `material_state.hpp` deliberately pulls no
+# Vulkan so it can be asserted here. The shipped def directory is the regression
+# net for the same reason it is one for assets.unit - the number that matters
+# ("eight materials, two pipelines") is a fact about game/data, not a fixture.
+add_executable(sol_renderer_tests
+    renderer/material_state_tests.cpp
+)
+target_link_libraries(sol_renderer_tests PRIVATE sol::test sol::renderer)
+target_compile_definitions(sol_renderer_tests PRIVATE SOL_DEF_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data")
+add_test(NAME renderer.unit COMMAND sol_renderer_tests)
+
 # The editable mesh core (Phase 9 stage B). Headless by construction - no
 # device, no window - and the five shipped meshes are its regression net.
 add_executable(sol_geometry_tests

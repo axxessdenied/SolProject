@@ -9,22 +9,25 @@ endif()
 
 set(SOL_SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/bin/shaders)
 
-set(SOL_SHADER_SOURCES
-    mesh.vert
-    mesh.frag
-    fullscreen.vert
-    tonemap.frag
-    sky.vert
-    sky.frag
-    impostor.vert
-    impostor.frag
-    debug_line.vert
-    debug_line.frag
-    particle.vert
-    particle.frag
-    ui.vert
-    ui.frag
+# ⚑⚑ EVERY .vert/.frag IN THIS DIRECTORY, RATHER THAN A HANDWRITTEN LIST OF
+# FOURTEEN (engine plan Phase 25 stage B). The list was one of the walls the
+# phase's diagnosis counted: with a material naming its shader pair as data, a
+# new pair is meant to be two files and a `[[material]]` row, and a build list
+# that has to be edited as well is a C++-shaped step wearing CMake's clothes.
+#
+# ⚑ CONFIGURE_DEPENDS is not optional here. Without it CMake globs once, at
+# configure time, and a shader added later is silently never compiled - which
+# would show up as a material that "cannot find its SPIR-V" and send the reader
+# looking at the search path rather than at this file.
+file(GLOB SOL_SHADER_SOURCES CONFIGURE_DEPENDS
+    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.vert
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.frag
 )
+list(SORT SOL_SHADER_SOURCES)
+if(NOT SOL_SHADER_SOURCES)
+    message(FATAL_ERROR "No GLSL sources found in ${CMAKE_CURRENT_SOURCE_DIR}")
+endif()
 
 set(SOL_SHADER_OUTPUTS "")
 foreach(shader IN LISTS SOL_SHADER_SOURCES)

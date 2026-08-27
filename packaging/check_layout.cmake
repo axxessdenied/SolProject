@@ -39,6 +39,12 @@ sol_require_file("data/ships.toml")
 sol_require_file("data/scripts/init.lua")
 sol_require_file("shaders/mesh.vert.spv")
 sol_require_file("shaders/ui.frag.spv")
+# ⚑ Phase 25 stage B: the first shader a DEF names rather than C++, and the
+# file that names it. A shader reached by a hardcoded filename cannot go
+# missing without the build breaking; one reached by a `[[material]]` row can,
+# and the only symptom would be a gate you can see straight through.
+sol_require_file("data/materials.toml")
+sol_require_file("shaders/membrane.frag.spv")
 sol_require_file("cooked/ui.sfont")
 sol_require_file("LICENSE")
 sol_require_file("THIRD-PARTY.txt")

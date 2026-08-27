@@ -30,95 +30,15 @@ constexpr std::uint32_t kMaxTextures = 256;
 
 } // namespace
 
-bool MeshRenderer::initialize(rhi::Context& context,
-                              VkFormat colorFormat,
-                              VkFormat depthFormat,
-                              const char* shaderDirectory)
+bool MeshRenderer::initialize(rhi::Context& context)
 {
     m_context = &context;
-    m_colorFormat = colorFormat;
-    m_depthFormat = depthFormat;
-    m_shaderDirectory = shaderDirectory;
-
     m_textureSetLayout = rhi::createTextureSetLayout(context.device());
     m_descriptorPool = rhi::createTextureDescriptorPool(context.device(), kMaxTextures);
     m_pipelineLayout =
         rhi::createPipelineLayout(context.device(), &m_textureSetLayout, 1, sizeof(PushConstants));
-    return createPipeline();
-}
-
-bool MeshRenderer::createPipeline()
-{
-    const VkDevice device = m_context->device();
-    const std::string vertexPath = m_shaderDirectory + "mesh.vert.spv";
-    const std::string fragmentPath = m_shaderDirectory + "mesh.frag.spv";
-
-    VkShaderModule vertexShader = rhi::createShaderModuleFromFile(device, vertexPath.c_str());
-    VkShaderModule fragmentShader = rhi::createShaderModuleFromFile(device, fragmentPath.c_str());
-    if (vertexShader == VK_NULL_HANDLE || fragmentShader == VK_NULL_HANDLE) {
-        return false;
-    }
-
-    static constexpr rhi::VertexAttribute kAttributes[] = {
-        {0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(assets::MeshVertex, position)},
-        {1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(assets::MeshVertex, normal)},
-        {2, VK_FORMAT_R32G32_SFLOAT, offsetof(assets::MeshVertex, uv)},
-    };
-
-    rhi::GraphicsPipelineDesc desc = {};
-    desc.vertexShader = vertexShader;
-    desc.fragmentShader = fragmentShader;
-    desc.colorFormat = m_colorFormat;
-    desc.vertexStride = sizeof(assets::MeshVertex);
-    desc.attributes = kAttributes;
-    desc.attributeCount = 3;
-    desc.depthFormat = m_depthFormat;
-    desc.depthTest = true;
-    desc.depthWrite = true;
-    desc.cullBackFaces = true;
-    desc.frontFaceCounterClockwise = true;
-    desc.layout = m_pipelineLayout;
-
-    VkPipeline newPipeline = VK_NULL_HANDLE;
-    bool created = rhi::createGraphicsPipeline(device, desc, newPipeline);
-
-    // Phase 12: the translucent variant is the same shaders, layout and vertex
-    // format with three fields moved. No depth write so it does not occlude
-    // what is behind it, and no back-face cull because the player flies
-    // through it and would otherwise watch it vanish on the way past.
-    VkPipeline newTranslucent = VK_NULL_HANDLE;
-    if (created) {
-        desc.blendMode = rhi::BlendMode::Alpha;
-        desc.depthWrite = false;
-        desc.cullBackFaces = false;
-        created = rhi::createGraphicsPipeline(device, desc, newTranslucent);
-        if (!created) {
-            vkDestroyPipeline(device, newPipeline, nullptr);
-        }
-    }
-
-    vkDestroyShaderModule(device, vertexShader, nullptr);
-    vkDestroyShaderModule(device, fragmentShader, nullptr);
-    if (!created) {
-        return false;
-    }
-
-    // Both or neither: a reload that built one pipeline and failed the other
-    // would leave the renderer in a state no code path expects.
-    if (m_pipeline != VK_NULL_HANDLE) {
-        vkDestroyPipeline(device, m_pipeline, nullptr);
-    }
-    if (m_translucentPipeline != VK_NULL_HANDLE) {
-        vkDestroyPipeline(device, m_translucentPipeline, nullptr);
-    }
-    m_pipeline = newPipeline;
-    m_translucentPipeline = newTranslucent;
-    return true;
-}
-
-bool MeshRenderer::reloadPipeline()
-{
-    return createPipeline();
+    return m_textureSetLayout != VK_NULL_HANDLE && m_descriptorPool != VK_NULL_HANDLE &&
+           m_pipelineLayout != VK_NULL_HANDLE;
 }
 
 void MeshRenderer::shutdown()
@@ -127,13 +47,9 @@ void MeshRenderer::shutdown()
         return;
     }
     const VkDevice device = m_context->device();
-    vkDestroyPipeline(device, m_pipeline, nullptr);
-    vkDestroyPipeline(device, m_translucentPipeline, nullptr);
     vkDestroyPipelineLayout(device, m_pipelineLayout, nullptr);
     vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, m_textureSetLayout, nullptr);
-    m_pipeline = VK_NULL_HANDLE;
-    m_translucentPipeline = VK_NULL_HANDLE;
     m_pipelineLayout = VK_NULL_HANDLE;
     m_descriptorPool = VK_NULL_HANDLE;
     m_textureSetLayout = VK_NULL_HANDLE;
@@ -197,16 +113,6 @@ void MeshRenderer::destroyTexture(GpuTexture& texture)
     }
     rhi::destroyImage(*m_context, texture.image);
     texture.descriptorSet = VK_NULL_HANDLE; // pool-owned
-}
-
-void MeshRenderer::bind(VkCommandBuffer commandBuffer, VkExtent2D extent) const
-{
-    bindPipeline(commandBuffer, extent, m_pipeline);
-}
-
-void MeshRenderer::bindTranslucent(VkCommandBuffer commandBuffer, VkExtent2D extent) const
-{
-    bindPipeline(commandBuffer, extent, m_translucentPipeline);
 }
 
 void MeshRenderer::bindPipeline(VkCommandBuffer commandBuffer, VkExtent2D extent, VkPipeline pipeline) const

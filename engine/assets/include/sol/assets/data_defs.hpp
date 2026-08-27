@@ -316,12 +316,22 @@ struct SoundDef
 // static because `ModelDef` carries one and is declared first.
 inline constexpr std::uint32_t kNoMaterial = 0xFFFFFFFFu;
 
+// How colour leaves a material's fragment shader and reaches the target.
+// ⚑ A MIRROR OF `rhi::BlendMode` AND DELIBERATELY NOT THAT TYPE: `sol::assets`
+// does not depend on `sol::rhi`, and a def layer that included Vulkan headers
+// to name three states would be the wrong end of that dependency. The mapping
+// is one switch in `MaterialRegistry`, and a test asserts it stays total.
+enum class MaterialBlend
+{
+    Opaque,
+    Alpha,    // premultiplied: src.rgb + dst.rgb * (1 - src.a)
+    Additive, // src.rgb + dst.rgb
+};
+
 // HOW A SURFACE IS DRAWN (Phase 25 stage A), split out of the model that wears
-// it. Four fields, and they are exactly the four the mesh pipeline already
-// reads - this stage moves the ownership and changes no pixel. Stage B gives a
-// material its own shader pair and pipeline state, stage C turns `texture` and
-// `emissive`/`alpha` into declared slots and parameters; until then the shape
-// here is the shape the renderer has always had.
+// it, and WHAT DRAWS IT (stage B). Stage C turns `texture` and
+// `emissive`/`alpha` into declared slots and parameters; until then those four
+// are the shape the renderer has always had.
 //
 // ⚑ THE PREFIX `sol.auto.` IS RESERVED and an authored row using it is
 // refused. Every `[[model]]` row that names no material gets one SYNTHESISED
@@ -340,6 +350,31 @@ struct MaterialDef
     // its output unchanged.
     bool translucent = false;
     float alpha = 1.0f;
+
+    // ⚑⚑ PHASE 25 STAGE B: WHAT DRAWS IT. SPIR-V stems, so "mesh" is
+    // mesh.vert.spv and mesh.frag.spv, found on the shader search path. Two
+    // keys rather than one because a material may keep the stock vertex stage
+    // and bring only its own fragment stage, which is the common case.
+    std::string vertexShader = "mesh";
+    std::string fragmentShader = "mesh";
+
+    // ⚑⚑ PIPELINE STATE, AND ITS DEFAULTS ARE PHASE 12's HARDCODED VARIANT.
+    // `mesh_renderer.cpp` used to build the translucent pipeline as "the same
+    // shaders, layout and vertex format with three fields moved"; those three
+    // fields are these, and `translucent` now SEEDS them rather than deciding
+    // them. So a row that says nothing draws exactly as it always did, and a
+    // row that wants blending without giving up its depth write can say so.
+    //
+    // ⚑ `translucent` still decides which PASS a draw is recorded in - after
+    // the sky rather than in the opaque block - because that is a fact about
+    // the frame, not about the pipeline. Blending in the opaque block would be
+    // painted over by the sky, which reads as broken blending and is in fact a
+    // misplaced pass.
+    MaterialBlend blend = MaterialBlend::Opaque;
+    bool depthTest = true;
+    bool depthWrite = true;
+    bool cullBackFaces = true;
+
     // True for a row this database derived from a `[[model]]`, false for one
     // somebody wrote. The derived set is rebuilt from scratch after every
     // merge, so a later layer editing a model row cannot leave a stale one
