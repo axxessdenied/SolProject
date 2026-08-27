@@ -45,6 +45,16 @@ std::string directoryOf(const std::string& path)
     return slash == std::string::npos ? std::string() : path.substr(0, slash);
 }
 
+// ⚑ For `collisionSentence` and nothing else. The per-collision LOG lines print
+// full paths, because a build log is where you go to find out exactly which two
+// files on disk are fighting; the sentence has to fit a status bar and is read
+// by somebody who already knows where their own project is.
+std::string fileName(const std::string& path)
+{
+    const std::size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
 // ⚑ The output directory arrives from argv - or, now, from the Forge - and may
 // be spelled `.\build\bin\cooked`, while `platform::listFiles` hands back '/'
 // separators. So "is this file directly in the output directory" is a
@@ -482,6 +492,20 @@ std::vector<CookCollision> cookCollisions(const std::vector<CookJob>& jobs)
     return collisions;
 }
 
+std::string collisionSentence(const std::vector<CookCollision>& collisions)
+{
+    if (collisions.empty()) {
+        return {};
+    }
+    const CookCollision& first = collisions.front();
+    std::string sentence = fileName(first.firstSource) + " and " + fileName(first.secondSource) +
+                           " both cook to " + fileName(first.output);
+    if (collisions.size() > 1) {
+        sentence += " (+" + std::to_string(collisions.size() - 1) + " more)";
+    }
+    return sentence + "; nothing cooked";
+}
+
 std::string CookReport::summary() const
 {
     if (!refusal.empty()) {
@@ -511,7 +535,7 @@ CookReport cookDirectory(const std::string& sourceDirectory, const std::string& 
                           collision.secondSource.c_str(),
                           collision.output.c_str());
         }
-        report.refusal = std::to_string(collisions.size()) + " output collision(s); nothing cooked";
+        report.refusal = collisionSentence(collisions);
         SOL_LOG_ERROR("cooker: %s", report.refusal.c_str());
         return report;
     }

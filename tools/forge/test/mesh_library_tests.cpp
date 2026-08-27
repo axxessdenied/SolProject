@@ -9,6 +9,7 @@
 // in no ImGui and needs no GPU, and it carries a threshold the D checkpoint
 // flagged as "a real decision sitting in untested code".
 
+#include "cook.hpp"
 #include "edit_history.hpp"
 #include "gltf.hpp"
 #include "list_layout.hpp"
@@ -31,6 +32,62 @@
 using namespace sol;
 
 namespace {
+
+// ⚑⚑ THE SAME 2x2 RGBA PNG `cooker.unit` DECODES, AND IT IS COPIED RATHER THAN
+// GENERATED ON PURPOSE (Phase 24 stage U2). A PNG writer in a test file would be
+// a second implementation of a format, and a fixture only this repo's decoder
+// accepts is exactly the "parses for one and not the other" failure these tests
+// exist to catch - this one came out of System.Drawing, so anything can open it.
+//
+// ⚑ 2x2 is also not a multiple of 4, which is the size question an imported
+// image actually raises: BC1 works in 4x4 blocks and every committed `.tex` is
+// 256x256, so the edge-clamped block path had never been reached by a whole
+// file. Pixels: (0,0) red, (1,0) green, (0,1) blue, (1,1) white at alpha 128.
+const std::uint8_t kProbePng[] = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d,
+    0x24, 0x00, 0x00, 0x00, 0x01, 0x73, 0x52, 0x47, 0x42, 0x00, 0xae, 0xce, 0x1c, 0xe9, 0x00, 0x00,
+    0x00, 0x04, 0x67, 0x41, 0x4d, 0x41, 0x00, 0x00, 0xb1, 0x8f, 0x0b, 0xfc, 0x61, 0x05, 0x00, 0x00,
+    0x00, 0x09, 0x70, 0x48, 0x59, 0x73, 0x00, 0x00, 0x0e, 0xc3, 0x00, 0x00, 0x0e, 0xc3, 0x01, 0xc7,
+    0x6f, 0xa8, 0x64, 0x00, 0x00, 0x00, 0x14, 0x49, 0x44, 0x41, 0x54, 0x18, 0x57, 0x63, 0xf8, 0xcf,
+    0xc0, 0xf0, 0x1f, 0x0c, 0x19, 0x18, 0xfe, 0x83, 0x40, 0x03, 0x00, 0x49, 0x49, 0x09, 0x78, 0xce,
+    0xd7, 0x63, 0xf7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+
+// A `.tex` with one op, so a directory can hold a document and an imported image
+// at once and the listing can be asked what it does with both.
+const char* const kProbeTex = R"(size = [4, 4]
+
+[[op]]
+kind = "fill"
+color = [10, 20, 30]
+)";
+
+// A scratch project under the test executable, never under `assets/`: the cook
+// SWEEPS outputs whose source is gone, so pointing it at a directory somebody
+// else owns is how a test deletes an author's work.
+[[nodiscard]] std::string probeDirectory(const char* leaf)
+{
+    const std::string path = platform::executableDirectory() + "/u2_texture_probe/" + leaf;
+    return platform::createDirectories(path.c_str()) ? path : std::string();
+}
+
+[[nodiscard]] bool
+writeProbe(const std::string& directory, const char* name, const void* data, std::size_t size)
+{
+    const std::string path = directory + "/" + name;
+    return platform::writeFileBytes(path.c_str(), data, size);
+}
+
+[[nodiscard]] const forge::AssetEntry* entryNamed(const std::vector<forge::AssetEntry>& entries,
+                                                  const char* label)
+{
+    for (const forge::AssetEntry& entry : entries) {
+        if (entry.label == label) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
 
 [[nodiscard]] forge::ModelMatch match(float authoredRadius, float measuredRadius)
 {
@@ -309,6 +366,168 @@ SOL_TEST(aTextureSourceLoadsAsTheCookedFormRatherThanRawPixels)
     // the first source here that is not a colour but is encoded exactly like
     // one, which is the claim this loop makes about all four.
     SOL_CHECK(sourcesSeen == 4);
+}
+
+// ⚑⚑⚑ PHASE 24 STAGE U2'S EXIT CRITERION AS ONE ASSERTION, AND IT IS THE SAME
+// SHAPE STAGE U1 USED FOR SOUND: what the tool shows an author from the SOURCE
+// is byte-for-byte what the game loads from the COOKED file. It goes the whole
+// way round rather than comparing `loadTexture` against the two functions
+// `loadTexture` calls - that would be a tautology. Here the `.stex` is produced
+// by `cookDirectory`, i.e. the cooker's real dispatch over a real directory, and
+// read back by `assets::loadTexture`, i.e. the runtime loader the game uses.
+//
+// ⚑ If these two ever disagree the tool is lying about the asset, which is the
+// one thing a preview must not do (stage G).
+SOL_TEST(anImportedPngPreviewsAsExactlyWhatTheCookerWritesAndTheGameLoads)
+{
+    const std::string source = probeDirectory("source");
+    const std::string cooked = probeDirectory("cooked");
+    SOL_REQUIRE(!source.empty() && !cooked.empty());
+    SOL_REQUIRE(writeProbe(source, "probe.png", kProbePng, sizeof(kProbePng)));
+
+    const cooker::CookReport report = cooker::cookDirectory(source, cooked);
+    SOL_REQUIRE(report.ok());
+
+    const std::vector<forge::AssetEntry> entries = forge::listTextures(source, cooked);
+    const forge::AssetEntry* imported = entryNamed(entries, "probe.png");
+    const forge::AssetEntry* built = entryNamed(entries, "probe.stex");
+    SOL_REQUIRE(imported != nullptr);
+    SOL_REQUIRE(built != nullptr);
+
+    assets::TextureData fromSource;
+    assets::TextureData fromCooked;
+    std::string error;
+    SOL_REQUIRE(forge::loadTexture(*imported, fromSource, &error));
+    SOL_REQUIRE(forge::loadTexture(*built, fromCooked, &error));
+
+    SOL_CHECK(fromSource.width == 2 && fromSource.height == 2);
+    SOL_CHECK(fromSource.format == assets::TextureFormat::BC1);
+    // 2 down to 1 is two levels, and a 2x2 image is ONE 4x4 block at every level
+    // - the edge clamp doing its job rather than the encoder refusing the size.
+    SOL_REQUIRE(fromSource.mips.size() == 2);
+    SOL_CHECK(fromSource.mips[0].size() == 8);
+    SOL_CHECK(fromSource.mips[1].size() == 8);
+
+    SOL_REQUIRE(fromCooked.mips.size() == fromSource.mips.size());
+    SOL_CHECK(fromCooked.width == fromSource.width);
+    SOL_CHECK(fromCooked.height == fromSource.height);
+    SOL_CHECK(fromCooked.format == fromSource.format);
+    for (std::size_t i = 0; i < fromSource.mips.size(); ++i) {
+        SOL_CHECK(fromSource.mips[i] == fromCooked.mips[i]);
+    }
+}
+
+// ⚑⚑ THE LISTING HALF, AND THE PROPERTY `drawAssetList` DEPENDS ON. `.tex` and
+// `.png` are collected in two passes into ONE group name, so their runs must
+// still be contiguous or a second `source (n)` header appears further down the
+// list. Exactly the invariant `soundsAreListedSourcesFirstAndInContiguousGroups`
+// asserts for `.wav` and `.ogg`, at the kind that now has three extensions.
+SOL_TEST(aDocumentAndAnImportedImageShareOneContiguousSourceGroup)
+{
+    const std::string source = probeDirectory("mixed");
+    SOL_REQUIRE(!source.empty());
+    SOL_REQUIRE(writeProbe(source, "painted.png", kProbePng, sizeof(kProbePng)));
+    SOL_REQUIRE(writeProbe(source, "drawn.tex", kProbeTex, std::strlen(kProbeTex)));
+
+    const std::vector<forge::AssetEntry> entries = forge::listTextures(source, "no/such/cooked/directory");
+    SOL_REQUIRE(entries.size() == 2);
+    // The document first, for `listMeshes`'s reason: it is the only one of the
+    // two this tool can edit. Alphabetically `drawn` precedes `painted` anyway,
+    // which is why the ORDER is asserted by extension rather than by name.
+    SOL_CHECK(forge::isTextureSource(entries[0]));
+    SOL_CHECK(forge::isImportedTexture(entries[1]));
+    for (const forge::AssetEntry& entry : entries) {
+        SOL_CHECK(entry.group == "source");
+        SOL_CHECK(!entry.cooked);
+    }
+
+    std::vector<std::string> starts;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (i == 0 || entries[i].group != entries[i - 1].group) {
+            SOL_CHECK(std::find(starts.begin(), starts.end(), entries[i].group) == starts.end());
+            starts.push_back(entries[i].group);
+        }
+    }
+
+    // ⚑⚑ AND THE STEMS ARE WHAT A `[[model]]` ROW WOULD NAME. This is stage U2's
+    // other half - a painted image is only usable if a row can point at it - and
+    // the cooked name is the stem, so `painted.png` is selectable as `painted`.
+    SOL_CHECK(entries[1].stem == "painted");
+}
+
+// ⚑⚑ THE PREDICATES ARE EXCLUSIVE AND CASE-INSENSITIVE, AND THE CASE IS NOT
+// PEDANTRY. `cookKindForSource` has lower-cased extensions since Phase 5 and the
+// Forge's listing did not, so the cooker would cook `HULL.PNG` into `HULL.stex`
+// while the tool showed the author nothing at all - and a paint program on
+// Windows writes `.PNG` readily. The two now agree.
+SOL_TEST(anImportedImageIsASourceButNotADocumentWhateverTheCase)
+{
+    const auto entry = [](const char* path) {
+        forge::AssetEntry out;
+        out.path = path;
+        return out;
+    };
+    SOL_CHECK(forge::isImportedTexture(entry("assets/textures/hull.png")));
+    SOL_CHECK(forge::isImportedTexture(entry("assets/textures/HULL.PNG")));
+    SOL_CHECK(!forge::isTextureSource(entry("assets/textures/hull.png")));
+    SOL_CHECK(forge::isTextureSource(entry("assets/textures/hull.tex")));
+    SOL_CHECK(forge::isTextureSource(entry("assets/textures/HULL.TEX")));
+    SOL_CHECK(!forge::isImportedTexture(entry("assets/textures/hull.tex")));
+    // The cooked side of the same list is neither: it is what the game loads.
+    SOL_CHECK(!forge::isImportedTexture(entry("cooked/hull.stex")));
+    SOL_CHECK(!forge::isTextureSource(entry("cooked/hull.stex")));
+    // ⚑ And a `.png` is not a mesh drop, which is the other listing that reads
+    // extensions and the one an inbox poll runs over every frame.
+    SOL_CHECK(!forge::forgeIsPendingDrop("blender-inbox/hull.png", "blender-inbox"));
+}
+
+// ⚑ The listing agrees with the predicate about case, not just the predicate
+// with itself: `collect` is what an author's eye actually depends on.
+SOL_TEST(anUpperCasePngIsListedTheWayTheCookerWouldCookIt)
+{
+    const std::string source = probeDirectory("shouty");
+    SOL_REQUIRE(!source.empty());
+    SOL_REQUIRE(writeProbe(source, "SHOUTY.PNG", kProbePng, sizeof(kProbePng)));
+
+    const std::vector<forge::AssetEntry> entries = forge::listTextures(source, "no/such/cooked/directory");
+    SOL_REQUIRE(entries.size() == 1);
+    SOL_CHECK(forge::isImportedTexture(entries[0]));
+    SOL_CHECK(entries[0].stem == "SHOUTY");
+    SOL_CHECK(cooker::cookKindForSource(entries[0].path) == cooker::CookKind::Texture);
+
+    // It loads, too - the extension check and the decoder are separate answers
+    // and only one of them was ever case-sensitive.
+    assets::TextureData data;
+    std::string error;
+    SOL_REQUIRE(forge::loadTexture(entries[0], data, &error));
+    SOL_CHECK(data.width == 2 && data.height == 2);
+}
+
+// ⚑⚑ A REFUSAL, AND IT IS THE HALF THAT PROTECTS THE OTHER TESTS' CLAIM. A
+// `.png` this decoder cannot read must fail with a SENTENCE rather than hand
+// back an empty image that would upload as a black texture and look like a
+// broken paint job. `decodePng` takes 8-bit non-interlaced only, so a 16-bit
+// export lands here - and the tool's own status bar counts what did not load.
+SOL_TEST(aPngThatCannotBeDecodedFailsWithASentenceRatherThanAnEmptyImage)
+{
+    const std::string source = probeDirectory("broken");
+    SOL_REQUIRE(!source.empty());
+    // A valid signature and IHDR with a truncated body: the shape a half-written
+    // file actually has, rather than random bytes.
+    std::vector<std::uint8_t> truncated(kProbePng, kProbePng + 40);
+    SOL_REQUIRE(writeProbe(source, "half.png", truncated.data(), truncated.size()));
+
+    const std::vector<forge::AssetEntry> entries = forge::listTextures(source, "no/such/cooked/directory");
+    SOL_REQUIRE(entries.size() == 1);
+
+    assets::TextureData data;
+    std::string error;
+    SOL_CHECK(!forge::loadTexture(entries[0], data, &error));
+    SOL_CHECK(!error.empty());
+    // It names the FILE, because "cannot decode" alone is useless in a status
+    // bar that is showing one line about a project with many textures in it.
+    SOL_CHECK(error.find("half.png") != std::string::npos);
+    SOL_CHECK(data.mips.empty());
 }
 
 // ⚑⚑ THE CROSS-REFERENCE THE STRICT SCHEMA DOES NOT CHECK, asserted over the

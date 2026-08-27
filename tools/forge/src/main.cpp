@@ -450,30 +450,46 @@ int main(int argc, char** argv)
     view.setImGuiHost(&imguiHost);
 
     std::vector<forge::AssetEntry> meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
-    std::vector<forge::AssetEntry> textureEntries = forge::listTextures(assetsDirectory, cookedDirectory);
-    SOL_LOG_INFO("forge: %zu mesh(es) and %zu texture(s) under %s and %s",
-                 meshEntries.size(),
-                 textureEntries.size(),
-                 assetsDirectory.c_str(),
-                 cookedDirectory.c_str());
 
     // Every texture is uploaded once at startup - there are a handful, they are
     // BC1, and it means switching one costs no device idle in the middle of a
     // frame. A `.tex` source is evaluated and encoded here exactly as the cooker
     // would, so what shades the mesh is the compressed image the game loads.
+    //
+    // ⚑⚑ A LAMBDA RATHER THAN A LOOP SINCE STAGE U2, BECAUSE THERE ARE NOW TWO
+    // CALLERS AND THEY MUST NOT BE TWO ANSWERS TO WHAT THIS TOOL CAN DRAW. The
+    // second is `reloadTextures`, below, which runs after a Cook - and the whole
+    // hazard it manages is that the set it swaps in has to be built by exactly
+    // the same rules as the one it replaces. Returns how many were LISTED, which
+    // is not how many loaded: the difference is a texture the tool refused, and
+    // the caller is what decides whether that is a log line or a status line.
+    const auto loadTextureSet = [&](std::vector<renderer::GpuTexture>& outTextures,
+                                    std::vector<std::string>& outLabels,
+                                    std::vector<forge::AssetEntry>& outEntries) {
+        const std::vector<forge::AssetEntry> listed = forge::listTextures(assetsDirectory, cookedDirectory);
+        for (const forge::AssetEntry& entry : listed) {
+            assets::TextureData data;
+            std::string textureError;
+            if (!forge::loadTexture(entry, data, &textureError)) {
+                SOL_LOG_WARN("forge: cannot load texture %s: %s", entry.path.c_str(), textureError.c_str());
+                continue;
+            }
+            outTextures.push_back(view.meshes().createTexture(data));
+            outLabels.push_back(entry.label);
+            outEntries.push_back(entry);
+        }
+        return listed.size();
+    };
+
     std::vector<renderer::GpuTexture> textures;
     std::vector<std::string> textureLabels;
     std::vector<forge::AssetEntry> loadedTextureEntries;
-    for (const forge::AssetEntry& entry : textureEntries) {
-        assets::TextureData data;
-        if (!forge::loadTexture(entry, data)) {
-            SOL_LOG_WARN("forge: cannot load texture %s", entry.path.c_str());
-            continue;
-        }
-        textures.push_back(view.meshes().createTexture(data));
-        textureLabels.push_back(entry.label);
-        loadedTextureEntries.push_back(entry);
-    }
+    const std::size_t listedTextures = loadTextureSet(textures, textureLabels, loadedTextureEntries);
+    SOL_LOG_INFO("forge: %zu mesh(es) and %zu texture(s) under %s and %s",
+                 meshEntries.size(),
+                 listedTextures,
+                 assetsDirectory.c_str(),
+                 cookedDirectory.c_str());
     if (textures.empty()) {
         SOL_LOG_ERROR("forge: no textures under %s or %s - build the cooker target first",
                       assetsDirectory.c_str(),
@@ -507,12 +523,26 @@ int main(int argc, char** argv)
     std::string defStatus = defEditor.loaded() ? "def rows loaded" : defEditor.error();
     // The stems the texture combo offers, which is exactly what the tool can
     // open rather than whatever a text field might be made to say.
+    //
+    // ⚑⚑ DERIVED FROM WHAT UPLOADED, NEVER FROM WHAT WAS LISTED, and that is the
+    // rule stage U2 had to carry across a reload rather than quietly drop. A
+    // stem offered here is a promise that the viewport can draw it; a `.png` the
+    // decoder refused is listed, is not in `textures`, and must not reach this
+    // combo - otherwise stage H's whole point, that a row cannot name something
+    // that is not there, becomes untrue the first time somebody exports a 16-bit
+    // image. ⚑ Deduplicated, because `hull.tex` and `cooked/hull.stex` are one
+    // stem in two places and always have been.
     std::vector<std::string> textureStems;
-    for (const forge::AssetEntry& textureEntry : loadedTextureEntries) {
-        if (std::find(textureStems.begin(), textureStems.end(), textureEntry.stem) == textureStems.end()) {
-            textureStems.push_back(textureEntry.stem);
+    const auto refreshTextureStems = [&]() {
+        textureStems.clear();
+        for (const forge::AssetEntry& textureEntry : loadedTextureEntries) {
+            if (std::find(textureStems.begin(), textureStems.end(), textureEntry.stem) ==
+                textureStems.end()) {
+                textureStems.push_back(textureEntry.stem);
+            }
         }
-    }
+    };
+    refreshTextureStems();
 
     renderer::GpuMesh openMesh = {};
     forge::MeshReport report;
@@ -790,7 +820,11 @@ int main(int argc, char** argv)
         refreshTexturePreview();
         if (!forge::isTextureSource(loadedTextureEntries[static_cast<std::size_t>(index)])) {
             // A cooked `.stex` can be looked at and not edited: there is no
-            // document behind it to change.
+            // document behind it to change. ⚑ Stage U2 puts a second kind of row
+            // through this branch and it needs no new code: an imported `.png`
+            // has no document behind it either, and this tool is not a bitmap
+            // editor. Selecting one still shades the mesh, which is the half of
+            // "does my texture work" the author came here to see.
             textureEditor.close();
             editingTextureIndex = -1;
             return;
@@ -804,6 +838,96 @@ int main(int argc, char** argv)
         }
         editingTextureIndex = index;
         status = textureStatus;
+    };
+
+    // ⚑⚑⚑ PHASE 24 STAGE U2: THE WHOLE TEXTURE SET, RE-LISTED AND RE-UPLOADED,
+    // WHICH IS WHAT LETS A PAINTED IMAGE REACH THE MESH WITHOUT A RELAUNCH. The
+    // Cook button has refreshed meshes since stage T and sounds since U1 and
+    // said out loud that textures were the exception, "because a texture cannot
+    // be re-listed without being re-uploaded". This is that upload.
+    //
+    // ⚑⚑ THE NEW SET IS BUILT BEFORE THE OLD ONE IS DESTROYED, AND THE SWAP IS
+    // REFUSED IF IT WOULD BE EMPTY. Two lines draw `textures[textureIndex]` and
+    // `textureLabels[textureIndex]` with no range check at all - they are
+    // entitled to, because startup treats an empty set as fatal and the set has
+    // never been able to shrink until now. Keeping that invariant true is
+    // cheaper and safer than teaching the View combo and the frame submission to
+    // handle a case that only a swept project can produce, and it degrades the
+    // right way: an author who deletes every texture keeps drawing the last ones
+    // that worked instead of watching the tool exit.
+    //
+    // ⚑ Selection is restored BY PATH rather than by index. A cook adds cooked
+    // siblings and sweeps orphans, so the row a number pointed at is not the row
+    // it points at afterwards - the same reason the Cook button resets
+    // `openIndex` and `soundIndex` rather than keeping them.
+    const auto reloadTextures = [&]() {
+        std::vector<renderer::GpuTexture> nextTextures;
+        std::vector<std::string> nextLabels;
+        std::vector<forge::AssetEntry> nextEntries;
+        loadTextureSet(nextTextures, nextLabels, nextEntries);
+        if (nextTextures.empty()) {
+            status = "no textures loaded; keeping the ones already open";
+            return;
+        }
+
+        const auto pathAt = [&](int index) {
+            return index >= 0 && index < static_cast<int>(loadedTextureEntries.size())
+                       ? loadedTextureEntries[static_cast<std::size_t>(index)].path
+                       : std::string();
+        };
+        const std::string shownPath = pathAt(textureIndex);
+        const std::string editedPath = pathAt(editingTextureIndex);
+
+        // ⚑ The old images may still be named by a frame the GPU has not
+        // finished, exactly as in `rebuildTexture` - and `texturePreview` is a
+        // descriptor set pointing into one of them, so it goes first. This whole
+        // lambda runs above every `Begin` in the tool (see the pending block), so
+        // no draw list can yet be naming what it frees.
+        context.waitIdle();
+        if (texturePreview != VK_NULL_HANDLE) {
+            ImGui_ImplVulkan_RemoveTexture(texturePreview);
+            texturePreview = VK_NULL_HANDLE;
+        }
+        for (renderer::GpuTexture& texture : textures) {
+            view.meshes().destroyTexture(texture);
+        }
+        textures = std::move(nextTextures);
+        textureLabels = std::move(nextLabels);
+        loadedTextureEntries = std::move(nextEntries);
+        refreshTextureStems();
+
+        const auto indexOf = [&](const std::string& path) {
+            if (path.empty()) {
+                return -1;
+            }
+            for (std::size_t i = 0; i < loadedTextureEntries.size(); ++i) {
+                if (loadedTextureEntries[i].path == path) {
+                    return static_cast<int>(i);
+                }
+            }
+            return -1;
+        };
+        const int shownAgain = indexOf(shownPath);
+        textureIndex = shownAgain >= 0 ? shownAgain : 0;
+        // ⚑⚑ THE EDITOR IS RE-POINTED AND NEVER RE-OPENED. `openTextureAt` would
+        // read the document back off disk and throw away whatever the author has
+        // typed since their last save - and Cook is a button an author presses
+        // WHILE editing, which is exactly when that would hurt. If the file being
+        // edited has gone, the index goes to -1 and the editor stays open with
+        // nothing to shade, which is the state `new texture` already produces.
+        editingTextureIndex = textureEditor.isOpen() ? indexOf(editedPath) : -1;
+        refreshTexturePreview();
+
+        // ⚑⚑ A REFUSED TEXTURE IS LOGGED AND DELIBERATELY NOT PUT IN THE STATUS
+        // BAR, AND THE FIRST DRAFT HAD IT THE OTHER WAY ROUND. Writing
+        // "1 texture(s) could not be loaded" here reads like the more helpful
+        // choice until you work out when it fires: the only realistic way a
+        // `.png` fails to LOAD is that it also failed to COOK - both go through
+        // `decodePng` - so this line would land one frame after "cook: 4 cooked,
+        // 5 up to date, 1 failed" and OVERWRITE it, trading the counts for a
+        // restatement. ⚑ A message that replaces a better message is worse than
+        // no message, and inventing a texture-only exception to how every other
+        // asset kind reports a failure would be worse again.
     };
 
     const auto openMeshAt = [&](int index) {
@@ -1161,6 +1285,12 @@ int main(int argc, char** argv)
     // ⚑ Both go through here rather than one, because "safe as long as nobody
     // moves that call" is the shape of defect this tool keeps rediscovering.
     int pendingTextureOpen = -1;
+    // ⚑⚑ A THIRD ROUTE TO THE SAME FREE (stage U2), AND THE LARGEST: a reload
+    // frees `texturePreview` AND every image behind it. The Cook button happens
+    // to be submitted above all four panels today, so doing it inline would work
+    // - which is exactly the "safe as long as nobody moves that call" the
+    // paragraph above says this tool keeps rediscovering. So it is raised too.
+    bool textureReloadPending = false;
     double previousTime = platform::timeSeconds();
     float frameMilliseconds = 0.0f;
 
@@ -1341,6 +1471,17 @@ int main(int argc, char** argv)
         //
         // ⚑ Collapsing to one call per frame is a side benefit rather than the
         // point: a drag in the picker used to rebuild once per widget per frame.
+        // ⚑ The reload goes FIRST because it invalidates the other two: a
+        // pending index refers to the list as it was before the cook, and a
+        // pending rebuild would write into a slot that is about to be destroyed.
+        // Both are dropped rather than translated - the same call the Cook button
+        // already makes for `openIndex` and `soundIndex`, for the same reason.
+        if (textureReloadPending) {
+            textureReloadPending = false;
+            pendingTextureOpen = -1;
+            textureRebuildPending = false;
+            reloadTextures();
+        }
         if (pendingTextureOpen >= 0) {
             const int index = pendingTextureOpen;
             pendingTextureOpen = -1;
@@ -1561,25 +1702,24 @@ int main(int argc, char** argv)
                 meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
                 openIndex = -1;
 
-                // ⚑⚑ SOUNDS *ARE* REFRESHED HERE, AND THE ASYMMETRY WITH THE
-                // PARAGRAPH BELOW IS THE POINT RATHER THAN AN OVERSIGHT. A
-                // texture cannot be re-listed without being re-uploaded, and
-                // uploading mid-frame is what stage T declined to do; a sound
-                // has no GPU side at all, so `rebuild` is the whole of it -
-                // close the device, refill the bank, reopen. So the loop stage
-                // U1 exists for closes inside one launch: drop a `.wav` in,
-                // press Cook, hear it, name it, save.
+                // ⚑ A sound has no GPU side at all, so `rebuild` is the whole of
+                // it - close the device, refill the bank, reopen.
                 soundEntries = forge::listSounds(assetsDirectory, cookedDirectory);
                 soundIndex = -1;
                 soundPreview.rebuild(soundEntries);
 
-                // ⚑ TEXTURES ARE DELIBERATELY NOT REFRESHED HERE. Every texture
-                // is uploaded once at startup, and `textureStems` - what the
-                // `[[model]]` row's combo offers - is derived from the ones that
-                // actually uploaded. Re-listing without re-uploading would offer
-                // a stem the viewport cannot draw, which is exactly the mistake
-                // stage H exists to make inexpressible. A newly cooked texture
-                // appears on the next launch; giving it a surface is stage U2.
+                // ⚑⚑⚑ AND TEXTURES ARE REFRESHED TOO SINCE STAGE U2, WHICH IS
+                // WHAT CLOSES THE LAST OF THE THREE LOOPS INSIDE ONE LAUNCH.
+                // This line used to be a paragraph explaining why it could not be
+                // done: a texture cannot be re-listed without being re-uploaded,
+                // `textureStems` is derived from what uploaded, and offering a
+                // stem the viewport cannot draw is the mistake stage H exists to
+                // make inexpressible. All three are still true - `reloadTextures`
+                // SATISFIES them rather than working around them, which is why it
+                // is a lambda carrying an invariant and not two lines here.
+                //
+                // ⚑ RAISED, NOT PERFORMED. See `textureReloadPending`.
+                textureReloadPending = true;
             }
         }
         ImGui::End();
@@ -2126,8 +2266,20 @@ int main(int argc, char** argv)
                         textureRebuildPending = true;
                     }
                     ImGui::SameLine();
+                    // ⚑ "cooked textures are read-only" until stage U2, and it
+                    // stopped being true the moment a `.png` could be selected:
+                    // an imported image is read-only and is not cooked, so the
+                    // one sentence that used to cover the whole else-branch now
+                    // covers half of it and misnames the other half. A hint that
+                    // is wrong about why is worse than no hint - it sends an
+                    // author looking for a cooked file they never made.
+                    const bool importedSelected =
+                        textureIndex >= 0 && textureIndex < static_cast<int>(loadedTextureEntries.size()) &&
+                        forge::isImportedTexture(
+                            loadedTextureEntries[static_cast<std::size_t>(textureIndex)]);
                     ImGui::TextDisabled("%s",
                                         textureEditor.isOpen() ? "editing the selected source"
+                                        : importedSelected     ? "imported images are read-only here"
                                                                : "cooked textures are read-only");
                     ImGui::Separator();
                     if (textureEditor.draw()) {

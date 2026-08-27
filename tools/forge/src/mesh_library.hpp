@@ -56,10 +56,15 @@ struct AssetEntry
 [[nodiscard]] std::vector<AssetEntry> listMeshes(const std::string& sourceDirectory,
                                                  const std::string& cookedDirectory);
 
-// Authored `.tex` under the source tree first, then cooked `.stex` beside the
-// executable - the same order as listMeshes and for the same reason. A mesh does
-// not name its texture (that is the `[[model]]` row's job, and stage H's), so
-// the viewer lets one be picked.
+// Authored `.tex` and imported `.png` under the source tree first, then cooked
+// `.stex` beside the executable - the same order as listMeshes and for the same
+// reason. A mesh does not name its texture (that is the `[[model]]` row's job,
+// and stage H's), so the viewer lets one be picked.
+//
+// ⚑⚑ THE `.png` IS PHASE 24 STAGE U2 AND IT IS THE SECOND TEXTURE SOURCE, not a
+// second texture PIPELINE: `CookKind::Texture` has meant `.png` -> `.stex` since
+// Phase 5 and the two sources already share the cooker's encode. What was
+// missing was only that the tool could not see one.
 [[nodiscard]] std::vector<AssetEntry> listTextures(const std::string& sourceDirectory,
                                                    const std::string& cookedDirectory);
 
@@ -79,7 +84,22 @@ struct AssetEntry
 [[nodiscard]] bool isPartSource(const AssetEntry& entry);
 
 // A `.tex` document: likewise, the only kind of texture it can edit.
+//
+// ⚑⚑ IT IS FALSE FOR A `.png`, WHICH IS A SOURCE, AND THE WORD IS DELIBERATE
+// RATHER THAN STALE. `isPartSource` has been false for an imported `.gltf` since
+// stage L on the same argument: in these predicates "source" means the authored
+// thing this tool OWNS, and the question every caller is really asking is "does
+// the editor open on this". Renaming it for textures alone would make one asset
+// kind read differently from the other two. ⚑ What must not be done is to infer
+// the OTHER kinds from its negation - see `loadTexture`.
 [[nodiscard]] bool isTextureSource(const AssetEntry& entry);
+
+// ⚑ A `.png`, i.e. the half of the texture list that came from a paint program.
+// There is no bitmap editor here and stage U2 does not invent one (stage I
+// answered direct manipulation of a document's OPS); the predicate exists so
+// `loadTexture` can dispatch on it and the panel can say which of three things
+// an author is looking at.
+[[nodiscard]] bool isImportedTexture(const AssetEntry& entry);
 
 // ⚑ A `.wav`/`.ogg`, i.e. the half of the sound list this tool did not build.
 // There is no sound EDITOR and this stage does not invent one - the predicate
@@ -87,7 +107,9 @@ struct AssetEntry
 [[nodiscard]] bool isSoundSource(const AssetEntry& entry);
 
 // Dispatches on extension: `.tex` is parsed, evaluated and encoded exactly as
-// the cooker would, `.stex` goes through the runtime loader.
+// the cooker would, `.png` is decoded and encoded by the cooker's own importer,
+// and `.stex` goes through the runtime loader. All three give the same BC1 chain
+// the game uploads, which is the point.
 //
 // ⚑ The encode matters and is not an optimisation: an author looking at a
 // texture in this tool is looking at BC1 with a mip chain, which is what the

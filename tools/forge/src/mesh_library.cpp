@@ -1,6 +1,7 @@
 #include "mesh_library.hpp"
 
 #include "gltf.hpp"
+#include "png.hpp"
 #include "sound.hpp"
 #include "texture.hpp"
 
@@ -94,7 +95,17 @@ void collect(const std::string& directory,
     std::vector<std::string> files = platform::listFiles(directory.c_str());
     std::sort(files.begin(), files.end());
     for (const std::string& path : files) {
-        if (endsWith(path, extension)) {
+        // ⚑⚑ COMPARED THROUGH `lowerExtension` RATHER THAN `endsWith` SO THIS
+        // AGREES WITH `cookKindForSource`, which has been case-insensitive since
+        // Phase 5 "because Blender will hand back `.GLTF` and mean the same
+        // thing". The two have disagreed ever since, and it took stage U2's
+        // `.png` to make the disagreement reachable: a paint program on Windows
+        // writes `.PNG` far more readily than Blender writes `.GLTF`.
+        //
+        // ⚑ And the failure it produces is the worst available shape - the
+        // cooker cooks the file and the tool cannot see it, so an author is told
+        // their texture does not exist by the only window they are looking at.
+        if (lowerExtension(path) == extension) {
             out.push_back({fileName(path), path, fileStem(path), group, cooked});
         }
     }
@@ -119,7 +130,22 @@ std::vector<AssetEntry> listMeshes(const std::string& sourceDirectory, const std
 std::vector<AssetEntry> listTextures(const std::string& sourceDirectory, const std::string& cookedDirectory)
 {
     std::vector<AssetEntry> entries;
+    // ⚑ `.tex` before `.png` for `listMeshes`'s reason rather than by alphabet:
+    // the document is the only kind of texture this tool can EDIT, and an
+    // imported image is what a texture arrived as rather than what it is.
     collect(sourceDirectory, ".tex", "source", /*cooked=*/false, entries);
+    // ⚑⚑ STAGE U2, AND IT IS ONE LINE BECAUSE THE COOKER ALREADY AGREED WITH IT.
+    // `CookKind::Texture` has meant `.png` -> `.stex` since Phase 5, and
+    // `cookTexture` shares `writeTextureImage` with the document path - so a
+    // painted image was already a first-class asset everywhere except in the one
+    // window an author actually looks at.
+    //
+    // ⚑ Both source extensions land in ONE group, exactly as `.wav` and `.ogg`
+    // do: the distinction a group draws is authored-versus-built, and a painted
+    // image is no more built than a document is. Which of the two a row is stays
+    // visible anyway - the label carries the extension, and `isTextureSource` is
+    // what decides whether the editor opens on it.
+    collect(sourceDirectory, ".png", "source", /*cooked=*/false, entries);
     collect(cookedDirectory, ".stex", "cooked", /*cooked=*/true, entries);
     return entries;
 }
@@ -294,11 +320,53 @@ bool importGltfIntoDoc(const std::string& gltfPath,
 
 bool isTextureSource(const AssetEntry& entry)
 {
-    return endsWith(entry.path, ".tex");
+    return lowerExtension(entry.path) == ".tex";
+}
+
+bool isImportedTexture(const AssetEntry& entry)
+{
+    return lowerExtension(entry.path) == ".png";
 }
 
 bool loadTexture(const AssetEntry& entry, assets::TextureData& out, std::string* error)
 {
+    // ⚑⚑⚑ THE IMPORTED IMAGE IS TESTED FIRST AND BY ITS OWN EXTENSION, NOT BY
+    // FALLING OFF `!isTextureSource`, AND THAT ORDER IS THE WHOLE BUG STAGE U2
+    // COULD HAVE SHIPPED. The `.stex` branch below used to be spelled "anything
+    // that is not a document", which was exact while `.tex` and `.stex` were the
+    // only two things in the list - and becomes wrong in the NEW case only: a
+    // `.png` would have been handed to the runtime `.stex` loader, failed on the
+    // header, and reported "cannot load hull.png" about a file that is perfectly
+    // good. A predicate that was right for two kinds is not right for three.
+    if (isImportedTexture(entry)) {
+        std::vector<std::uint8_t> pngBytes;
+        if (!platform::readFileBytes(entry.path.c_str(), pngBytes)) {
+            if (error != nullptr) {
+                *error = "cannot read " + entry.path;
+            }
+            return false;
+        }
+        cooker::ImageRgba image;
+        if (!cooker::decodePng(pngBytes.data(), pngBytes.size(), image)) {
+            // ⚑ `decodePng` names its own reason in the log - 8-bit only, no
+            // interlacing, unsupported colour type - and inventing a second
+            // diagnosis here would be less specific than the first. Same bargain
+            // `loadSound` already makes for a bad wav.
+            if (error != nullptr) {
+                *error = "cannot decode " + entry.label + " (see the log)";
+            }
+            return false;
+        }
+        // ⚑⚑ THROUGH `encodeTexture`, WHICH IS STAGE G'S RULE ARRIVING AT THE
+        // SECOND TEXTURE SOURCE: what an author sees is the BC1 chain the game
+        // uploads, not the RGBA that came out of the paint program. It matters
+        // more here than for a `.tex`, because an imported photograph is exactly
+        // the kind of image BC1 mangles - and the mangling is the thing this
+        // tool exists to show before it is in the game.
+        out = cooker::encodeTexture(image);
+        return true;
+    }
+
     if (!isTextureSource(entry)) {
         if (assets::loadTexture(entry.path.c_str(), out)) {
             return true;

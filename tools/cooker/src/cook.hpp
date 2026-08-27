@@ -113,6 +113,22 @@ struct CookCollision
 // an author can type.
 [[nodiscard]] std::vector<CookCollision> cookCollisions(const std::vector<CookJob>& jobs);
 
+// The refusal a set of collisions produces, naming the first pair and counting
+// the rest. Empty for no collisions.
+//
+// ⚑⚑ IT NAMES FILES BECAUSE A COUNT IS NOT AN ANSWER TO THIS QUESTION, and that
+// was found by giving the Forge a Cook button (stage T) and then a second
+// texture source (stage U2). The refusal used to read "2 output collision(s);
+// nothing cooked" with the two filenames going only to the LOG - fine for
+// `cooker.exe`, whose output IS the log, and useless in a status bar, which is
+// the only surface an author in the tool has. ⚑ The whole content of this
+// failure is WHICH TWO FILES, so the sentence carries them.
+//
+// ⚑ Pure and here rather than in the Forge, for `summary`'s reason one line
+// down: a sentence an author reads is a sentence `cooker.unit` can assert. It
+// also means the tool and the command line refuse in the same words.
+[[nodiscard]] std::string collisionSentence(const std::vector<CookCollision>& collisions);
+
 // What one run of `cookDirectory` did.
 struct CookReport
 {

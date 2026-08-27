@@ -1096,6 +1096,43 @@ SOL_TEST(twoSourcesThatCookToOneOutputAreACollisionHoweverFarApartTheySit)
     // `hull.tex` and `hull.forge` are a texture and a mesh, which is the normal
     // way an author names a thing and its skin.
     SOL_CHECK(cooker::cookCollisions(cooker::planCook({"a/hull.tex", "b/hull.forge"}, "out")).empty());
+
+    // ⚑⚑ AND THE PAIR PHASE 24 STAGE U2 MADE ORDINARY: two TEXTURE sources
+    // sharing a stem. `hull.png` beside `hull.tex` is what an author produces by
+    // painting a texture and naming it after the thing it goes on, and until the
+    // Forge could list a `.png` nobody would have put one there.
+    const std::vector<cooker::CookCollision> textures = cooker::cookCollisions(
+        cooker::planCook({"assets/textures/hull.tex", "assets/textures/hull.png"}, "out"));
+    SOL_REQUIRE(textures.size() == 1);
+    SOL_CHECK(textures[0].output == "out/hull.stex");
+}
+
+// ⚑⚑⚑ THE REFUSAL NAMES THE TWO FILES, BECAUSE A COUNT IS NOT AN ANSWER TO THIS
+// QUESTION (Phase 24 stage U2). It read "2 output collision(s); nothing cooked"
+// with the filenames going only to the log - which is fine for `cooker.exe`,
+// whose entire output IS the log, and useless in the Forge's status bar, the
+// only surface an author inside the tool has. The whole content of this failure
+// is WHICH TWO FILES, so the sentence carries them.
+SOL_TEST(aCollisionRefusalNamesTheFilesRatherThanCountingThem)
+{
+    SOL_CHECK(cooker::collisionSentence({}).empty());
+
+    const std::vector<cooker::CookCollision> one = cooker::cookCollisions(
+        cooker::planCook({"assets/textures/hull.tex", "assets/textures/hull.png"}, "out"));
+    // ⚑ Base names, not paths: the sentence has to fit one line and is read by
+    // somebody who already knows where their own project is. The per-collision
+    // LOG lines keep the full paths, which is where you go to find out exactly
+    // which two files on disk are fighting.
+    SOL_CHECK(cooker::collisionSentence(one) ==
+              "hull.tex and hull.png both cook to hull.stex; nothing cooked");
+
+    const std::vector<cooker::CookCollision> several = cooker::cookCollisions(cooker::planCook(
+        {"a/hull.tex", "b/hull.png", "a/gate.forge", "b/gate.gltf", "a/beep.wav", "b/beep.ogg"}, "out"));
+    SOL_REQUIRE(several.size() == 3);
+    // The first pair in full, the rest counted: naming all of them would push
+    // the one an author can act on off the end of the bar.
+    SOL_CHECK(cooker::collisionSentence(several) ==
+              "hull.tex and hull.png both cook to hull.stex (+2 more); nothing cooked");
 }
 
 SOL_TEST(aPartTreeAlwaysCooksAndAFontManifestWatchesTheFilesBesideIt)
@@ -1130,9 +1167,9 @@ SOL_TEST(aRefusalAndAFailureAreDifferentSentencesBecauseTheyAreDifferentNews)
     // directory is exactly as it was - and "0 failed" would be true and
     // useless. This is the line the Forge's status bar shows.
     cooker::CookReport refused;
-    refused.refusal = "2 output collision(s); nothing cooked";
+    refused.refusal = "hull.tex and hull.png both cook to hull.stex; nothing cooked";
     SOL_CHECK(!refused.ok());
-    SOL_CHECK(refused.summary() == "2 output collision(s); nothing cooked");
+    SOL_CHECK(refused.summary() == "hull.tex and hull.png both cook to hull.stex; nothing cooked");
 }
 
 SOL_TEST(cookingTheSameDirectoryTwiceCooksOnceAndThenSkips)
@@ -1160,7 +1197,9 @@ SOL_TEST(anOutputCollisionRefusesTheWholeCookAndWritesNothing)
 
     const cooker::CookReport report = cooker::cookDirectory(cookSourceDirectory(), cookOutputDirectory());
     SOL_CHECK(!report.ok());
-    SOL_CHECK(report.refusal == "1 output collision(s); nothing cooked");
+    // ⚑ `.ogg` before `.wav` because the pair is named in LISTING order, which is
+    // sorted - not in the order an author happens to think of the two files.
+    SOL_CHECK(report.refusal == "beep.ogg and beep.wav both cook to beep.saud; nothing cooked");
     SOL_CHECK(report.cooked == 0 && report.failed == 0);
     // ⚑ The VALID half of the pair did not cook either, and that is the whole
     // rule: whichever cooked last would silently win, and the staleness check
