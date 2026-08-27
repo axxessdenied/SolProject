@@ -193,7 +193,24 @@ std::string forgePartIdFromName(const std::string& name)
     return id.empty() ? std::string("part") : id;
 }
 
+std::string importedTextureStem(const std::string& documentStem, const std::string& imageName)
+{
+    // ⚑ LOWER-CASED, and that is not cosmetic either. Every texture committed to
+    // this repo is lower case, Blender hands back whatever the author typed, and
+    // U2 has already been bitten once by the listing and the cooker disagreeing
+    // about case - so the one place that INVENTS a filename should only ever
+    // invent one spelling.
+    std::string stem = forgePartIdFromName(documentStem) + "_" + forgePartIdFromName(imageName);
+    for (char& c : stem) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return stem;
+}
+
 bool importGltfIntoDoc(const std::string& gltfPath,
+                       const std::string& texturesDirectory,
                        assets::ForgeDoc& doc,
                        ImportOutcome& outcome,
                        std::string* error)
@@ -210,6 +227,65 @@ bool importGltfIntoDoc(const std::string& gltfPath,
 
     if (doc.name.empty()) {
         doc.name = fileStem(gltfPath);
+    }
+
+    // --- the textures, and deliberately BEFORE the parts (stage U3) ----------
+    //
+    // ⚑ A pass of its own, ahead of the id matching, because an imported
+    // texture's name does not depend on how a part resolved: it is the mesh
+    // document's stem and the image's own name, and both are known here.
+    // Threading it through the loop below would tie a file on disk to a rename
+    // rule that has nothing to do with it - and that loop already carries the
+    // hardest bookkeeping in this tool.
+    const std::string documentStem = fileStem(gltfPath);
+    // ⚑ Stems SEEN rather than stems WRITTEN, and the difference shows up only
+    // in the case where both rules fire at once: two objects sharing one
+    // material produce one stem, and if that stem also collides with a
+    // hand-authored `.tex` then tracking only what was written would report the
+    // same refusal once per object. One image is one line, whatever it did.
+    std::vector<std::string> seenStems;
+    for (const cooker::GltfPart& part : imported) {
+        if (!part.imageNote.empty()) {
+            outcome.imageNotes.emplace_back(part.name, part.imageNote);
+        }
+        if (part.imageBytes.empty() || texturesDirectory.empty()) {
+            continue;
+        }
+
+        // ⚑ The IMAGE's name first and the object's only as a fallback. Two
+        // objects sharing one material share one image, and naming the file
+        // after the object would write those identical bytes twice under two
+        // names - which an author then has to keep in step by hand for the rest
+        // of the asset's life. The object name is what is left when a GLB packs
+        // an image that never had one.
+        const std::string label = part.imageName.empty() ? part.name : part.imageName;
+        const std::string stem = importedTextureStem(documentStem, label);
+        if (std::find(seenStems.begin(), seenStems.end(), stem) != seenStems.end()) {
+            continue; // already dealt with this import: the shared-material case
+        }
+        seenStems.push_back(stem);
+
+        // ⚑⚑ THE ONE COLLISION THE PREFIX CANNOT RULE OUT, AND IT IS WORTH A
+        // CHECK BECAUSE OF WHAT IT COSTS: an author who has hand-authored
+        // `ship_hull.tex` gets a `ship_hull.png` written beside it, and that
+        // pair does not fail the texture - it ABORTS THE WHOLE COOK, every
+        // asset, until they work out which of two files to delete. Refusing one
+        // image by name is a far smaller failure than that, and it leaves the
+        // document they authored alone.
+        const std::string documentSibling = texturesDirectory + "/" + stem + ".tex";
+        if (platform::fileModificationTime(documentSibling.c_str()) != 0) {
+            outcome.imageNotes.emplace_back(
+                part.name, "would be written as " + stem + ".png, which collides with " + stem + ".tex");
+            continue;
+        }
+
+        const std::string target = texturesDirectory + "/" + stem + ".png";
+        if (!platform::createDirectories(texturesDirectory.c_str()) ||
+            !platform::writeFileBytes(target.c_str(), part.imageBytes.data(), part.imageBytes.size())) {
+            outcome.imageNotes.emplace_back(part.name, "could not be written to " + target);
+            continue;
+        }
+        outcome.textures.emplace_back(part.name, stem);
     }
 
     // ⚑ Claimed by INDEX rather than by id, because stage P lets a match be

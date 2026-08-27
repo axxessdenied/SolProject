@@ -18,7 +18,13 @@
 #                    cage, which is not the shape anyone modelled
 #   no Draco       the importer in this repo has no Draco decompressor, and a
 #                  compressed file fails at read rather than looking wrong
-#   no materials   a mesh's texture comes from its `[[model]]` row, not glTF
+#   materials ON   for the BASE COLOUR IMAGE and nothing else (plan stage U3).
+#                  It was NONE until then, on the argument that a mesh's texture
+#                  comes from its `[[model]]` row - which is still true, and is
+#                  now something the Forge can FILL IN rather than something the
+#                  author has to do in a text editor. One image per object,
+#                  because the engine draws one texture per mesh; an object with
+#                  two materials is reported, never flattened into whichever won.
 #   no animation   nothing in this engine has a bone (plan Phase 9, out of scope)
 #   extras ON      the object's uid rides in the node's `extras`, and it is the
 #                  only thing that survives a rename - without it the Forge
@@ -120,7 +126,24 @@ def _export(context, filepath, use_selection):
         "export_normals": True,
         "export_texcoords": True,
         "export_tangents": False,
-        "export_materials": "NONE",
+        # ⚑⚑ EXPORTED SINCE STAGE U3, WHERE THIS WAS "NONE" FOR THE WHOLE OF ITS
+        # LIFE BEFORE. It is on for exactly one thing: the base-colour IMAGE. The
+        # Forge takes that image, writes it into the project's textures and
+        # offers it on the model row - so a texture painted in Blender reaches
+        # the game without either window being left. Nothing else in the material
+        # is read. A `[[material]]` row CAN declare extra textures and scalar
+        # params since Phase 25 stage C, so the engine now has somewhere to put a
+        # metallic or a roughness map - but nothing maps a glTF channel onto one,
+        # and deciding that mapping is Phase 25's business rather than this
+        # bridge's. Exporting a channel nothing reads would only make the drop
+        # bigger.
+        "export_materials": "EXPORT",
+        # ⚑ AUTO means "PNG unless the source was a JPEG", and there is no "always
+        # PNG" to ask for. The importer therefore checks the SIGNATURE rather
+        # than trusting this, and refuses a JPEG BY NAME - this repo has a PNG
+        # decoder and nothing else, and the alternative is an image that fails
+        # much later while naming the decoder instead of the file.
+        "export_image_format": "AUTO",
         "export_animations": False,
         "export_skins": False,
         "export_morph": False,

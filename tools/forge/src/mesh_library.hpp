@@ -204,6 +204,24 @@ struct ImportOutcome
     // because they re-exported from Blender, and deleting someone's work is a
     // worse failure than leaving a part they must remove by hand.
     std::vector<std::string> kept;
+
+    // --- what came in beside the geometry (stage U3) -------------------------
+    //
+    // Base-colour images written into the project's textures directory:
+    // {the Blender object they came from, the stem they were written under}.
+    // ⚑ The object rather than the part id, because the id is this tool's
+    // spelling and the object is the thing the author would go back and change.
+    std::vector<std::pair<std::string, std::string>> textures;
+
+    // ⚑⚑ WHY AN OBJECT ARRIVED WITHOUT ITS TEXTURE, when there is a reason worth
+    // saying: {object, sentence}. An object with no material at all produces
+    // NOTHING here, deliberately - that is what every mesh in this repo is and
+    // what the bridge sent for its whole life, so a note on it would fire on the
+    // normal case and teach an author to ignore the line. What lands here is a
+    // two-material object, an image in a format this pipeline cannot read, and a
+    // reference that does not resolve - each one a thing that is otherwise
+    // invisible in BOTH windows, because the mesh imports perfectly either way.
+    std::vector<std::pair<std::string, std::string>> imageNotes;
 };
 
 // Brings every mesh-bearing node of `gltfPath` into `doc` as a literal `mesh`
@@ -225,10 +243,28 @@ struct ImportOutcome
 // whose object was renamed, and it refuses to hand an object a part that
 // belongs to a different one, which is what renaming ONTO another object's old
 // name would otherwise do.
+// ⚑ `texturesDirectory` is where a base-colour image is written, and passing it
+// is what keeps this function honest about having a SIDE EFFECT ON DISK beyond
+// the document it is handed. An empty string turns the writing off and leaves
+// the notes intact, which is what a caller that only wants the geometry - the
+// suite, and any future dry run - should pass.
 [[nodiscard]] bool importGltfIntoDoc(const std::string& gltfPath,
+                                     const std::string& texturesDirectory,
                                      sol::assets::ForgeDoc& doc,
                                      ImportOutcome& outcome,
                                      std::string* error = nullptr);
+
+// The file stem an imported image is written under: the mesh document's stem,
+// an underscore, then the image's own name reduced to `[a-z0-9_]`.
+//
+// ⚑⚑ THE PREFIX IS NOT TIDINESS, IT IS THE COOK. The cooker walks `assets/`
+// into ONE flat output directory keyed on the stem, so an imported `hull.png`
+// landing beside the committed `hull.tex` is a collision that ABORTS THE WHOLE
+// COOK rather than skipping a file - and "Hull" is the single likeliest object
+// name an author will ever export. Prefixing with the document stem makes the
+// clash unreachable by construction: the only name that can collide is another
+// import of the same document, which is a re-import and is meant to overwrite.
+[[nodiscard]] std::string importedTextureStem(const std::string& documentStem, const std::string& imageName);
 
 // --- the inbox lifecycle (stage R) -------------------------------------------
 //

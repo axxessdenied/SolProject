@@ -1008,6 +1008,14 @@ int main(int argc, char** argv)
     int inboxPollCountdown = 0;
     std::string inboxStatus;
     bool inboxAuto = true;
+    // ⚑ Raised by an import that wrote a texture, and READ by the frame loop -
+    // which is the only thing that may act on it, because a reload frees every
+    // descriptor the frame in flight is still drawing with (stage U2). It cannot
+    // set `textureReloadPending` itself: that lives with the other deferrals,
+    // far below, and this lambda is built before it. Same shape as
+    // `InboxImport::openRow` - the import reports what happened and the loop
+    // decides when it is safe to act.
+    bool inboxWroteTexture = false;
     const std::string inboxArchive = forge::forgeInboxArchive(inboxDirectory);
 
     // What one drop's import did, so a drain of several can report once and
@@ -1058,7 +1066,7 @@ int main(int argc, char** argv)
 
         forge::ImportOutcome outcome;
         std::string importError;
-        if (!forge::importGltfIntoDoc(gltfPath, doc, outcome, &importError)) {
+        if (!forge::importGltfIntoDoc(gltfPath, assetsDirectory + "/textures", doc, outcome, &importError)) {
             result.message = importError;
             SOL_LOG_ERROR("forge: %s", result.message.c_str());
             return result;
@@ -1101,6 +1109,34 @@ int main(int argc, char** argv)
         if (!outcome.kept.empty()) {
             result.message += ", " + std::to_string(outcome.kept.size()) + " kept";
         }
+        // Named on the same argument as a rename: the stem is what the author
+        // has to pick out of the `[[model]]` combo afterwards, and a count alone
+        // would send them to the Texture panel to guess which row is new.
+        if (!outcome.textures.empty()) {
+            result.message += ", " + std::to_string(outcome.textures.size()) + " texture(s) (" +
+                              outcome.textures.front().second;
+            result.message += outcome.textures.size() > 1
+                                  ? ", +" + std::to_string(outcome.textures.size() - 1) + " more)"
+                                  : ")";
+        }
+        // ⚑⚑ ON THE BAR AND NOT ONLY IN THE LOG, WHICH IS THE WHOLE VALUE OF
+        // THESE. Every one of them is a case where the GEOMETRY imported
+        // perfectly and the texture did not - the viewport looks like a clean
+        // success, the parts are all there, and the only sign that anything was
+        // dropped is a mesh that stays whatever texture its `[[model]]` row
+        // already named. An author with no sentence here has no reason to go
+        // and read a log at all, so they would find this at ship time.
+        for (const auto& [object, why] : outcome.imageNotes) {
+            SOL_LOG_WARN("forge: %s %s", object.c_str(), why.c_str());
+        }
+        if (!outcome.imageNotes.empty()) {
+            result.message +=
+                "; " + outcome.imageNotes.front().first + " " + outcome.imageNotes.front().second;
+            if (outcome.imageNotes.size() > 1) {
+                result.message += " (+" + std::to_string(outcome.imageNotes.size() - 1) + " more)";
+            }
+        }
+        inboxWroteTexture = inboxWroteTexture || !outcome.textures.empty();
         for (const auto& [was, is] : outcome.renamed) {
             SOL_LOG_INFO("forge: renamed part '%s' -> '%s'", was.c_str(), is.c_str());
         }
@@ -1460,6 +1496,18 @@ int main(int argc, char** argv)
         }
         undoPressed = undoDown;
         redoPressed = redoDown;
+
+        // ⚑ Stage U3's import RAISES a request rather than reloading where it
+        // writes, and this is where the raise becomes one. An import runs from
+        // `pollInbox`, below the panels, so reloading there would free
+        // `texturePreview` and every image behind it out from under the frame
+        // still being submitted - the exact hazard the block below exists for.
+        // Translated here rather than set directly at the import because the
+        // import lambda is built long before `textureReloadPending`.
+        if (inboxWroteTexture) {
+            inboxWroteTexture = false;
+            textureReloadPending = true;
+        }
 
         // ⚑⚑ THE ONE PLACE A TEXTURE IS REBUILT, AND IT IS HERE BECAUSE THIS IS
         // ABOVE EVERY `Begin` IN THE TOOL - the menu bar, both side bars and all

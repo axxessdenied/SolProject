@@ -644,6 +644,16 @@ void PartEditor::noteActivation(const char* label)
 bool PartEditor::drawParams(ForgePart& part)
 {
     bool changed = false;
+    // ⚑⚑ WHAT A BAKED PART SAYS INSTEAD OF NOTHING (Phase 24 stage U3). Its two
+    // params are a vertex list and an index list, neither of which is editable
+    // here, so the panel drew a separator and then a HOLE - and stage U3 makes a
+    // baked part the common case rather than an exotic one, because every
+    // Blender import is made of them. Collected across the loop and printed
+    // ONCE: a mesh has both lists, and emitting the line per param would say it
+    // twice.
+    bool baked = false;
+    std::size_t vertexCount = 0;
+    std::size_t indexCount = 0;
     for (const ForgeParamSpec& spec : assets::forgeParams(part.primitive)) {
         ForgeValue value = part.value(spec.name);
         bool edited = false;
@@ -718,14 +728,24 @@ bool PartEditor::drawParams(ForgePart& part)
         // deserves to know the blank panel is deliberate.
         //
         // ⚑ Phase 21 found this with GCC's -Wswitch, which MSVC's /W4 did not
-        // raise. The behaviour is UNCHANGED - a platform port is the wrong
-        // place to redesign a panel - but note that a baked part is what every
-        // Blender import is made of, so "select an imported part and the
-        // params list is empty with no explanation" is the common case, not an
-        // exotic one. Whether it should say so is a Forge question, recorded
-        // rather than answered here.
+        // raise, and left the behaviour alone on the grounds that a platform
+        // port is the wrong place to redesign a panel - noting that a baked part
+        // is what every Blender import is made of, so "select an imported part
+        // and the params list is empty with no explanation" is the common case
+        // rather than an exotic one.
+        //
+        // ✅ ANSWERED IN PHASE 24 STAGE U3, WHICH IS THE STAGE THAT MADE IT THE
+        // COMMON CASE: the panel now says what the part is and how big it is,
+        // once, below the loop. Neither list gains a WIDGET - there is still
+        // nothing to edit here, and inventing a vertex table would be a mesh
+        // editor rather than a caption.
         case ForgeParamKind::VertexList:
+            baked = true;
+            vertexCount = value.vertices.size();
+            break;
         case ForgeParamKind::IndexList:
+            baked = true;
+            indexCount = value.indices.size();
             break;
         }
         ImGui::PopID();
@@ -736,6 +756,21 @@ bool PartEditor::drawParams(ForgePart& part)
             part.set(spec.name, value);
             changed = true;
         }
+    }
+    if (baked) {
+        // ⚑ The first PER-PART measurement this panel has ever shown. The Report
+        // panel's triangle and vertex counts are the whole DOCUMENT's, which
+        // happen to coincide only while a document has one part - and a Blender
+        // scene of forty objects is the case stage U3 exists to serve.
+        ImGui::TextDisabled("%zu vertices, %zu triangles", vertexCount, indexCount / 3);
+        // ⚑⚑ THE SECOND LINE IS CONDITIONAL BECAUSE THE UNCONDITIONAL VERSION
+        // WOULD LIE. `origin` carries the exporting tool's uid, so it is exactly
+        // "this part came from Blender" - and the `bake` button three rows up
+        // makes baked parts too, out of a box or a torus that never went near
+        // it. Telling that author to go and edit it in Blender would send them
+        // to a program their part does not exist in.
+        ImGui::TextDisabled(part.origin.empty() ? "baked geometry, not editable here"
+                                                : "baked geometry, edited in Blender");
     }
     return changed;
 }

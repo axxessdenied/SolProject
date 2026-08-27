@@ -5,6 +5,7 @@
 #include "sol/core/math/math.hpp"
 #include "sol/platform/file_io.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -326,8 +327,221 @@ std::string nodeOriginId(const JsonValue& node)
     return uid->asString();
 }
 
+// --- stage U3: the base-colour image of a node's material --------------------
+
+// A raw byte range of a bufferView, which is what an EMBEDDED IMAGE is.
+//
+// ⚑ Deliberately not `resolveAccessor`, which is element-shaped: it wants a
+// componentType, a count and a stride, and lays the accessor's own offset on top
+// of the view's. An image has none of those - it is a whole FILE lying in the
+// buffer - and reaching it through the accessor path would mean inventing values
+// for four fields that do not apply to it.
+bool resolveBufferView(const JsonValue& document,
+                       const BufferSet& buffers,
+                       std::size_t viewIndex,
+                       const std::uint8_t*& data,
+                       std::size_t& length)
+{
+    const JsonValue* bufferViews = document.find("bufferViews");
+    if (bufferViews == nullptr || viewIndex >= bufferViews->size()) {
+        return false;
+    }
+    const JsonValue& view = (*bufferViews)[viewIndex];
+    const JsonValue* lengthValue = view.find("byteLength");
+    if (lengthValue == nullptr) {
+        return false;
+    }
+    const std::size_t bufferIndex =
+        static_cast<std::size_t>(view.find("buffer") != nullptr ? view.find("buffer")->asNumber() : 0);
+    if (bufferIndex >= buffers.buffers.size()) {
+        return false;
+    }
+    const std::vector<std::uint8_t>& buffer = buffers.buffers[bufferIndex];
+    const std::size_t offset = view.find("byteOffset") != nullptr
+                                   ? static_cast<std::size_t>(view.find("byteOffset")->asNumber())
+                                   : 0;
+    const std::size_t byteLength = static_cast<std::size_t>(lengthValue->asNumber());
+    // ⚑ Subtraction rather than `offset + byteLength > size()`, which is the
+    // same test only until one of them is a hostile number and the sum wraps.
+    if (offset > buffer.size() || byteLength > buffer.size() - offset) {
+        return false;
+    }
+    data = buffer.data() + offset;
+    length = byteLength;
+    return true;
+}
+
+// ⚑⚑ THE MAGIC DECIDES WHAT AN IMAGE IS, NOT THE `mimeType` STRING. The mime
+// type is what the exporter CLAIMS; the signature is what the bytes ARE. This is
+// the one place in the stage where being wrong is SILENT: a JPEG written out
+// under a `.png` name cooks into a `decodePng` failure that names the decoder,
+// so the author is told about a format they never chose instead of about the
+// image they can actually go and change.
+bool isPng(const std::uint8_t* data, std::size_t length)
+{
+    static const std::uint8_t kSignature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    return length >= sizeof(kSignature) && std::memcmp(data, kSignature, sizeof(kSignature)) == 0;
+}
+
+// What a non-PNG image actually is, so the refusal can name it. Blender's
+// exporter writes JPEG for a JPEG source and WebP when asked, and both are
+// formats this repo has no decoder for - naming which one is the difference
+// between "convert your image" and "something went wrong".
+const char* imageFormatName(const std::uint8_t* data, std::size_t length)
+{
+    if (length >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) {
+        return "a JPEG";
+    }
+    if (length >= 12 && std::memcmp(data, "RIFF", 4) == 0 && std::memcmp(data + 8, "WEBP", 4) == 0) {
+        return "a WebP";
+    }
+    return "an unrecognised format";
+}
+
+std::string jsonName(const JsonValue& object)
+{
+    const JsonValue* name = object.find("name");
+    return name != nullptr && name->isString() ? name->asString() : std::string();
+}
+
+// Fills `part`'s image fields from the one material its primitives share.
+//
+// ⚑⚑⚑ THE MATERIAL SET IS THE CHECK, AND "NO MATERIAL" IS ONE OF ITS MEMBERS. A
+// primitive with no `material` key draws with glTF's default material, which is
+// a DIFFERENT surface from material 0 rather than an absent one - so an object
+// with a textured primitive and an untextured one is a two-surface object and
+// gets reported as such. Counting only the primitives that name a material would
+// let exactly that case take the texture silently, which is the flattening this
+// stage exists to refuse.
+//
+// ⚑ Every failure past that point is a NOTE rather than a `false`: the geometry
+// imported fine, and refusing a mesh because its texture did not resolve would
+// throw away the part of the work that succeeded.
+void takeNodeImage(const JsonValue& document,
+                   const BufferSet& buffers,
+                   const std::string& gltfDirectory,
+                   const JsonValue& primitives,
+                   GltfPart& part)
+{
+    constexpr std::size_t kNoMaterial = static_cast<std::size_t>(-1);
+    std::vector<std::size_t> distinct;
+    for (std::size_t p = 0; p < primitives.size(); ++p) {
+        const JsonValue* materialIndex = primitives[p].find("material");
+        const std::size_t value =
+            materialIndex != nullptr ? static_cast<std::size_t>(materialIndex->asNumber()) : kNoMaterial;
+        if (std::find(distinct.begin(), distinct.end(), value) == distinct.end()) {
+            distinct.push_back(value);
+        }
+    }
+
+    // An object with no material at all. ⚑ SILENT, and deliberately: it is what
+    // every mesh in this repo was before this stage and what the bridge produced
+    // for its whole life, so a sentence here would fire on the normal case.
+    if (distinct.empty() || (distinct.size() == 1 && distinct.front() == kNoMaterial)) {
+        return;
+    }
+    if (distinct.size() > 1) {
+        part.imageNote = "has " + std::to_string(distinct.size()) +
+                         " materials and this engine draws one texture per mesh, so none was taken";
+        return;
+    }
+
+    const std::size_t materialIndex = distinct.front();
+    const JsonValue* materials = document.find("materials");
+    if (materials == nullptr || materialIndex >= materials->size()) {
+        part.imageNote =
+            "names material " + std::to_string(materialIndex) + ", which the file does not contain";
+        return;
+    }
+    const JsonValue& material = (*materials)[materialIndex];
+
+    const JsonValue* pbr = material.find("pbrMetallicRoughness");
+    const JsonValue* baseColor = pbr != nullptr ? pbr->find("baseColorTexture") : nullptr;
+    // ⚑ Also silent. A material with a flat base colour and no image is a thing
+    // an author MEANT, and the model row's texture combo is where they say
+    // otherwise - this stage adds a route, it does not make one compulsory.
+    if (baseColor == nullptr) {
+        return;
+    }
+
+    const std::string materialName = jsonName(material);
+    const std::string subject =
+        materialName.empty() ? std::string("its material") : "material " + materialName;
+
+    const JsonValue* textureIndexValue = baseColor->find("index");
+    const JsonValue* textures = document.find("textures");
+    if (textureIndexValue == nullptr || textures == nullptr ||
+        static_cast<std::size_t>(textureIndexValue->asNumber()) >= textures->size()) {
+        part.imageNote = subject + " names a base colour texture the file does not contain";
+        return;
+    }
+    const std::size_t textureIndex = static_cast<std::size_t>(textureIndexValue->asNumber());
+
+    const JsonValue* sourceValue = (*textures)[textureIndex].find("source");
+    const JsonValue* images = document.find("images");
+    if (sourceValue == nullptr || images == nullptr ||
+        static_cast<std::size_t>(sourceValue->asNumber()) >= images->size()) {
+        part.imageNote = subject + " has a base colour texture with no image behind it";
+        return;
+    }
+    const JsonValue& image = (*images)[static_cast<std::size_t>(sourceValue->asNumber())];
+
+    std::vector<std::uint8_t> bytes;
+    if (const JsonValue* viewValue = image.find("bufferView"); viewValue != nullptr) {
+        // ⚑ THE CASE THE BRIDGE ACTUALLY PRODUCES. `sol_forge_bridge.py` exports
+        // GLB, and a GLB packs its images into the BIN chunk - so the path with
+        // no pre-existing machinery is the COMMON one, and the base64 and
+        // external-file routes below are the fallback rather than the other way
+        // round, which is the opposite of how this stage was estimated.
+        const std::uint8_t* data = nullptr;
+        std::size_t length = 0;
+        if (!resolveBufferView(
+                document, buffers, static_cast<std::size_t>(viewValue->asNumber()), data, length)) {
+            part.imageNote = subject + " has a base colour image outside the file's buffer";
+            return;
+        }
+        bytes.assign(data, data + length);
+    } else if (const JsonValue* uri = image.find("uri"); uri != nullptr && uri->isString()) {
+        const std::string& uriText = uri->asString();
+        static const char* kDataPrefix = "data:";
+        if (uriText.rfind(kDataPrefix, 0) == 0) {
+            const std::size_t comma = uriText.find(',');
+            if (comma == std::string::npos || uriText.find(";base64", 0) == std::string::npos) {
+                part.imageNote = subject + " has a base colour image in a data uri this tool cannot read";
+                return;
+            }
+            if (!decodeBase64(uriText.c_str() + comma + 1, uriText.size() - comma - 1, bytes)) {
+                part.imageNote = subject + " has a base colour image whose data uri does not decode";
+                return;
+            }
+        } else if (!platform::readFileBytes((gltfDirectory + uriText).c_str(), bytes)) {
+            part.imageNote = subject + " has a base colour image this tool cannot find: " + uriText;
+            return;
+        }
+    } else {
+        part.imageNote = subject + " has a base colour image with neither a uri nor a buffer view";
+        return;
+    }
+
+    if (!isPng(bytes.data(), bytes.size())) {
+        part.imageNote = subject + " has a base colour image that is " +
+                         imageFormatName(bytes.data(), bytes.size()) + ", and this pipeline reads only PNG";
+        return;
+    }
+
+    // The image's own name first: it is the one an author sees in Blender's
+    // image editor and the one they would go looking for. The material's name is
+    // the fallback, because an image packed into a GLB often carries none.
+    part.imageName = jsonName(image);
+    if (part.imageName.empty()) {
+        part.imageName = materialName;
+    }
+    part.imageBytes = std::move(bytes);
+}
+
 bool traverseNode(const JsonValue& document,
                   const BufferSet& buffers,
+                  const std::string& gltfDirectory,
                   std::size_t nodeIndex,
                   const Mat4& parentTransform,
                   std::vector<GltfPart>& out)
@@ -364,6 +578,11 @@ bool traverseNode(const JsonValue& document,
                 }
             }
             if (!part.mesh.vertices.empty() && !part.mesh.indices.empty()) {
+                // ⚑ After the geometry and only for a node that HAS some. A
+                // part with no triangles is never pushed, so extracting its
+                // image would be work on behalf of a part nobody downstream
+                // will ever be handed.
+                takeNodeImage(document, buffers, gltfDirectory, *primitives, part);
                 out.push_back(std::move(part));
             }
         }
@@ -371,8 +590,12 @@ bool traverseNode(const JsonValue& document,
 
     if (const JsonValue* children = node.find("children"); children != nullptr) {
         for (std::size_t c = 0; c < children->size(); ++c) {
-            if (!traverseNode(
-                    document, buffers, static_cast<std::size_t>((*children)[c].asNumber()), transform, out)) {
+            if (!traverseNode(document,
+                              buffers,
+                              gltfDirectory,
+                              static_cast<std::size_t>((*children)[c].asNumber()),
+                              transform,
+                              out)) {
                 return false;
             }
         }
@@ -548,6 +771,7 @@ bool importGltfParts(const char* path, std::vector<GltfPart>& out)
     for (std::size_t i = 0; i < rootNodes->size(); ++i) {
         if (!traverseNode(document,
                           buffers,
+                          directoryOf(path),
                           static_cast<std::size_t>((*rootNodes)[i].asNumber()),
                           Mat4::identity(),
                           out)) {

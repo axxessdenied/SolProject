@@ -759,7 +759,7 @@ SOL_TEST(aGltfImportedAsPartsBuildsBackToTheMeshTheCookerWouldHaveCooked)
 
     assets::ForgeDoc doc;
     forge::ImportOutcome outcome;
-    SOL_CHECK(forge::importGltfIntoDoc(path, doc, outcome, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(path, "", doc, outcome, nullptr));
     SOL_CHECK(outcome.added.size() == 2);
     SOL_CHECK(outcome.replaced.empty());
 
@@ -796,7 +796,7 @@ SOL_TEST(eachBlenderObjectArrivesAsItsOwnNamedPart)
 
     assets::ForgeDoc doc;
     forge::ImportOutcome outcome;
-    SOL_CHECK(forge::importGltfIntoDoc(path, doc, outcome, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(path, "", doc, outcome, nullptr));
 
     SOL_CHECK(doc.parts.size() == 2);
     SOL_CHECK(hasPart(doc, "Hull_001"));
@@ -841,7 +841,7 @@ SOL_TEST(aSecondImportReplacesItsOwnPartsAndKeepsTheAuthorsOwn)
 
     assets::ForgeDoc doc;
     forge::ImportOutcome first;
-    SOL_CHECK(forge::importGltfIntoDoc(path, doc, first, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(path, "", doc, first, nullptr));
 
     // What an author does next: add a part of their own, and comment one of
     // the imported ones.
@@ -857,7 +857,7 @@ SOL_TEST(aSecondImportReplacesItsOwnPartsAndKeepsTheAuthorsOwn)
     doc.parts[hull].position = {5.0, 0.0, 0.0};
 
     forge::ImportOutcome second;
-    SOL_CHECK(forge::importGltfIntoDoc(path, doc, second, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(path, "", doc, second, nullptr));
 
     SOL_CHECK(second.replaced.size() == 2);
     SOL_CHECK(second.added.empty());
@@ -972,7 +972,7 @@ SOL_TEST(aRenamedBlenderObjectUpdatesItsPartInsteadOfLeavingADuplicate)
 
     assets::ForgeDoc doc;
     forge::ImportOutcome first;
-    SOL_CHECK(forge::importGltfIntoDoc(before, doc, first, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(before, "", doc, first, nullptr));
     SOL_CHECK(doc.parts.size() == 2);
     SOL_CHECK(first.added.size() == 2);
     // The identity landed in the document, or nothing below can work.
@@ -980,7 +980,7 @@ SOL_TEST(aRenamedBlenderObjectUpdatesItsPartInsteadOfLeavingADuplicate)
     SOL_CHECK(hull != std::string::npos && doc.parts[hull].origin == "uid-hull");
 
     forge::ImportOutcome second;
-    SOL_CHECK(forge::importGltfIntoDoc(after, doc, second, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(after, "", doc, second, nullptr));
 
     // Still two parts. Under the old rule this was three.
     SOL_CHECK(doc.parts.size() == 2);
@@ -1016,7 +1016,7 @@ SOL_TEST(aRenamedPartIsStillNamedByTheChildrenItCarries)
 
     assets::ForgeDoc doc;
     forge::ImportOutcome first;
-    SOL_CHECK(forge::importGltfIntoDoc(before, doc, first, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(before, "", doc, first, nullptr));
 
     // What an author does: hang something of their own off the imported hull.
     assets::ForgePart antenna;
@@ -1026,7 +1026,7 @@ SOL_TEST(aRenamedPartIsStillNamedByTheChildrenItCarries)
     doc.parts.push_back(antenna);
 
     forge::ImportOutcome second;
-    SOL_CHECK(forge::importGltfIntoDoc(after, doc, second, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(after, "", doc, second, nullptr));
 
     const std::size_t child = doc.indexOf("antenna");
     SOL_CHECK(child != std::string::npos);
@@ -1054,7 +1054,7 @@ SOL_TEST(twoObjectsWearingOneUidStillArriveAsTwoParts)
 
     assets::ForgeDoc doc;
     forge::ImportOutcome outcome;
-    SOL_CHECK(forge::importGltfIntoDoc(path, doc, outcome, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(path, "", doc, outcome, nullptr));
 
     SOL_CHECK(doc.parts.size() == 2);
     SOL_CHECK(outcome.added.size() == 2);
@@ -1063,7 +1063,7 @@ SOL_TEST(twoObjectsWearingOneUidStillArriveAsTwoParts)
     // Re-importing the same file is still two parts, not four: the first node
     // takes the first part and the second cannot take it again.
     forge::ImportOutcome again;
-    SOL_CHECK(forge::importGltfIntoDoc(path, doc, again, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(path, "", doc, again, nullptr));
     SOL_CHECK(doc.parts.size() == 2);
     SOL_CHECK(again.added.empty());
 
@@ -1093,7 +1093,7 @@ SOL_TEST(aNewObjectDoesNotCaptureThePartOfAnIdentifiedOneWithTheSameName)
     doc.parts.push_back(squatter);
 
     forge::ImportOutcome outcome;
-    SOL_CHECK(forge::importGltfIntoDoc(path, doc, outcome, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(path, "", doc, outcome, nullptr));
 
     // The incoming `Hull.001` carries `uid-hull`, which matches nothing here,
     // so it must arrive as a NEW part beside the squatter rather than eating it.
@@ -1129,7 +1129,7 @@ SOL_TEST(aPartWithNoOriginIsMatchedByNameOnceAndCarriesOneAfterwards)
     // A document as it exists today: imported before stage P, no identities.
     assets::ForgeDoc doc;
     forge::ImportOutcome first;
-    SOL_CHECK(forge::importGltfIntoDoc(old, doc, first, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(old, "", doc, first, nullptr));
     SOL_CHECK(doc.parts.size() == 2);
     for (const assets::ForgePart& part : doc.parts) {
         SOL_CHECK(part.origin.empty());
@@ -1137,7 +1137,7 @@ SOL_TEST(aPartWithNoOriginIsMatchedByNameOnceAndCarriesOneAfterwards)
 
     // The first send from the upgraded addon: matched by name, and identified.
     forge::ImportOutcome second;
-    SOL_CHECK(forge::importGltfIntoDoc(identified, doc, second, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(identified, "", doc, second, nullptr));
     SOL_CHECK(doc.parts.size() == 2);
     SOL_CHECK(second.replaced.size() == 2 && second.added.empty() && second.renamed.empty());
     SOL_REQUIRE(hasPart(doc, "Hull_001") && hasPart(doc, "Wing_L"));
@@ -1146,7 +1146,7 @@ SOL_TEST(aPartWithNoOriginIsMatchedByNameOnceAndCarriesOneAfterwards)
 
     // And now a rename works, which it could not have before the send above.
     forge::ImportOutcome third;
-    SOL_CHECK(forge::importGltfIntoDoc(renamed, doc, third, nullptr));
+    SOL_CHECK(forge::importGltfIntoDoc(renamed, "", doc, third, nullptr));
     SOL_CHECK(doc.parts.size() == 2);
     SOL_CHECK(third.renamed.size() == 1 && third.added.empty());
 
@@ -2233,4 +2233,196 @@ SOL_TEST(anEmptySoundReportsZeroesRatherThanDividingByItsRate)
     SOL_CHECK(report.frames == 0);
     SOL_CHECK(report.seconds == 0.0f);
     SOL_CHECK(report.peak == 0.0f);
+}
+
+// --- stage U3: a texture that came from Blender ------------------------------
+
+namespace {
+
+// ⚑ THE SAME 2x2 PNG `cooker_tests.cpp` USES, COPIED RATHER THAN GENERATED, for
+// the reason U2 gave when it first borrowed it: a PNG written by a test file is
+// a second implementation of a format, and a fixture only this repo's decoder
+// accepts is precisely the failure these tests exist to catch. This one came out
+// of another program entirely. What is under test here is the NAMING and the
+// WRITE, and both of those care that the bytes arrive unchanged - so the fixture
+// has to be a file that a real decoder would accept, not a plausible header.
+const std::uint8_t kPng2x2[] = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d,
+    0x24, 0x00, 0x00, 0x00, 0x01, 0x73, 0x52, 0x47, 0x42, 0x00, 0xae, 0xce, 0x1c, 0xe9, 0x00, 0x00,
+    0x00, 0x04, 0x67, 0x41, 0x4d, 0x41, 0x00, 0x00, 0xb1, 0x8f, 0x0b, 0xfc, 0x61, 0x05, 0x00, 0x00,
+    0x00, 0x09, 0x70, 0x48, 0x59, 0x73, 0x00, 0x00, 0x0e, 0xc3, 0x00, 0x00, 0x0e, 0xc3, 0x01, 0xc7,
+    0x6f, 0xa8, 0x64, 0x00, 0x00, 0x00, 0x14, 0x49, 0x44, 0x41, 0x54, 0x18, 0x57, 0x63, 0xf8, 0xcf,
+    0xc0, 0xf0, 0x1f, 0x0c, 0x19, 0x18, 0xfe, 0x83, 0x40, 0x03, 0x00, 0x49, 0x49, 0x09, 0x78, 0xce,
+    0xd7, 0x63, 0xf7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+
+// A one-object glTF whose material carries that PNG behind a data uri. The
+// buffer-view route is the bridge's and is covered in `cooker.unit`; what this
+// suite needs is any file that produces a part with an image on it.
+[[nodiscard]] std::string texturedGltf(const char* imageName)
+{
+    return std::string(R"({
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0, "name": "Hull"}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
+        "materials": [{"name": "HullPaint", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+        "textures": [{"source": 0}],
+        "images": [{"name": ")") +
+           imageName + R"(", "uri": "data:image/png;base64,)" +
+           cooker::encodeBase64(kPng2x2, sizeof(kPng2x2)) + R"("}],
+        "buffers": [{"byteLength": 42, "uri":
+            "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAABAAIA"}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+            {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+        ],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+            {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+        ]
+    })";
+}
+
+} // namespace
+
+// ⚑⚑⚑ THE PREFIX IS THE COOK, NOT TIDINESS, AND THIS IS WHERE THAT IS WRITTEN
+// DOWN. The cooker walks `assets/` into ONE flat output directory keyed on the
+// stem, so an imported `hull.png` landing beside the committed `hull.tex` is a
+// collision that aborts the WHOLE cook - every asset, not just the pair - and
+// "Hull" is the single likeliest object name anybody will ever export from
+// Blender. Prefixing with the document's stem makes that unreachable by
+// construction rather than by luck.
+SOL_TEST(anImportedTextureIsNamedForTheDocumentItCameInWith)
+{
+    SOL_CHECK(forge::importedTextureStem("ship", "Hull") == "ship_hull");
+    // Lower-cased, and that is not cosmetic: every texture committed to this
+    // repo is lower case, Blender hands back whatever the author typed, and U2
+    // was already bitten once by the listing and the cooker disagreeing about
+    // case. The one place that INVENTS a filename spells it one way.
+    SOL_CHECK(forge::importedTextureStem("Ship", "HULL") == "ship_hull");
+    // The same reduction a part id gets, so an image called "Base Color" and a
+    // part called "Base Color" cannot end up spelled differently.
+    SOL_CHECK(forge::importedTextureStem("ship", "Base Color") == "ship_base_color");
+    SOL_CHECK(forge::importedTextureStem("ship", "hull.001") == "ship_hull_001");
+    // ⚑ The collision the prefix rules out, stated as the assertion it is: two
+    // documents cannot produce one stem from the same object name.
+    SOL_CHECK(forge::importedTextureStem("ship", "Hull") != forge::importedTextureStem("station", "Hull"));
+}
+
+// ⚑⚑ THE EXIT CRITERION'S DISK HALF: the image is written where the Forge lists
+// textures from, under a name a `[[model]]` row can then select. It is asserted
+// BYTE FOR BYTE against the fixture rather than by size or by decoding it,
+// because the claim this stage makes is that the exporter's own file is what
+// lands - a re-encode that produced an equivalent image would pass a looser
+// check and would silently need a PNG encoder this repo does not have.
+SOL_TEST(anImportedBaseColourImageIsWrittenIntoTheProjectsTextures)
+{
+    const std::string gltf = texturedGltf("hull paint");
+    const std::string path = std::string(platform::executableDirectory()) + "test_u3_ship.gltf";
+    SOL_CHECK(platform::writeFileBytes(path.c_str(), gltf.data(), gltf.size()));
+    const std::string textures = std::string(platform::executableDirectory()) + "test_u3_textures";
+
+    assets::ForgeDoc doc;
+    forge::ImportOutcome outcome;
+    SOL_CHECK(forge::importGltfIntoDoc(path, textures, doc, outcome, nullptr));
+
+    SOL_REQUIRE(outcome.textures.size() == 1);
+    // Keyed by the OBJECT, because that is what the author would go back and
+    // change; the stem is what they will pick out of the texture combo.
+    SOL_CHECK(outcome.textures[0].first == "Hull");
+    SOL_CHECK(outcome.textures[0].second == "test_u3_ship_hull_paint");
+    SOL_CHECK(outcome.imageNotes.empty());
+
+    const std::string written = textures + "/test_u3_ship_hull_paint.png";
+    std::vector<std::uint8_t> bytes;
+    SOL_REQUIRE(platform::readFileBytes(written.c_str(), bytes));
+    SOL_REQUIRE(bytes.size() == sizeof(kPng2x2));
+    SOL_CHECK(std::memcmp(bytes.data(), kPng2x2, sizeof(kPng2x2)) == 0);
+    // The part came in as well - a texture is something an import gains, never
+    // something it trades the geometry for.
+    SOL_CHECK(outcome.added.size() == 1);
+
+    (void)platform::deleteFile(written.c_str());
+    std::remove(path.c_str());
+}
+
+// ⚑⚑⚑ THE ONE COLLISION THE PREFIX CANNOT RULE OUT, AND WHY IT IS WORTH A CHECK
+// RATHER THAN A SHRUG: an author who hand-authored `test_u3_ship_hull_paint.tex`
+// would get a `.png` written beside it, and that pair does not fail the texture -
+// it ABORTS THE WHOLE COOK until they work out which of two files to delete.
+// Refusing one image by name is a far smaller failure, and it leaves the
+// document they authored untouched, which is the half that cannot be regenerated.
+SOL_TEST(anImportedTextureRefusesToLandOnADocumentAnAuthorWroteByHand)
+{
+    const std::string gltf = texturedGltf("hull paint");
+    const std::string path = std::string(platform::executableDirectory()) + "test_u3_clash.gltf";
+    SOL_CHECK(platform::writeFileBytes(path.c_str(), gltf.data(), gltf.size()));
+    const std::string textures = std::string(platform::executableDirectory()) + "test_u3_clash_textures";
+    SOL_CHECK(platform::createDirectories(textures.c_str()));
+
+    const std::string document = textures + "/test_u3_clash_hull_paint.tex";
+    const char* authored = "hand authored";
+    SOL_CHECK(platform::writeFileBytes(document.c_str(), authored, std::strlen(authored)));
+
+    // ⚑⚑ THE ABSENCE THIS TEST ASSERTS BELOW HAS TO BE ESTABLISHED HERE FIRST,
+    // and leaving that out cost a real failure while this stage was being
+    // written: a run with the refusal deliberately disabled left the `.png`
+    // behind, and every later run then read that stale file as this import
+    // having written one. A test that asserts a file is absent OWNS that
+    // absence - otherwise it passes on a clean machine, fails on the machine
+    // that has run it before, and blames the wrong change either way.
+    const std::string wouldBe = textures + "/test_u3_clash_hull_paint.png";
+    (void)platform::deleteFile(wouldBe.c_str());
+    SOL_REQUIRE(platform::fileModificationTime(wouldBe.c_str()) == 0);
+
+    assets::ForgeDoc doc;
+    forge::ImportOutcome outcome;
+    SOL_CHECK(forge::importGltfIntoDoc(path, textures, doc, outcome, nullptr));
+
+    // Nothing written, and said so by name in both directions.
+    SOL_CHECK(outcome.textures.empty());
+    SOL_REQUIRE(outcome.imageNotes.size() == 1);
+    SOL_CHECK(outcome.imageNotes[0].first == "Hull");
+    SOL_CHECK(outcome.imageNotes[0].second.find("test_u3_clash_hull_paint.tex") != std::string::npos);
+
+    SOL_CHECK(platform::fileModificationTime(wouldBe.c_str()) == 0);
+
+    // ⚑ The negative control that makes the refusal mean something: the file the
+    // author wrote is still exactly what they wrote.
+    std::vector<std::uint8_t> after;
+    SOL_REQUIRE(platform::readFileBytes(document.c_str(), after));
+    SOL_CHECK(after.size() == std::strlen(authored));
+
+    // And the mesh still imported, which is what makes this a refusal of one
+    // image rather than of the drop.
+    SOL_CHECK(outcome.added.size() == 1);
+
+    (void)platform::deleteFile(document.c_str());
+    std::remove(path.c_str());
+}
+
+// ⚑⚑ AN EMPTY TEXTURES DIRECTORY TURNS THE WRITING OFF AND LEAVES THE READING
+// ON. It is what every geometry test in this file passes, and asserting it here
+// is what stops those tests from quietly scattering `.png` files beside the
+// binary for the rest of the suite's life.
+SOL_TEST(anImportWithNoTexturesDirectoryWritesNothingAndStillReportsWhatItSaw)
+{
+    const std::string gltf = texturedGltf("hull paint");
+    const std::string path = std::string(platform::executableDirectory()) + "test_u3_dry.gltf";
+    SOL_CHECK(platform::writeFileBytes(path.c_str(), gltf.data(), gltf.size()));
+
+    assets::ForgeDoc doc;
+    forge::ImportOutcome outcome;
+    SOL_CHECK(forge::importGltfIntoDoc(path, "", doc, outcome, nullptr));
+
+    SOL_CHECK(outcome.textures.empty());
+    SOL_CHECK(outcome.imageNotes.empty());
+    SOL_CHECK(outcome.added.size() == 1);
+    SOL_CHECK(platform::fileModificationTime(
+                  (std::string(platform::executableDirectory()) + "test_u3_dry_hull_paint.png").c_str()) ==
+              0);
+
+    std::remove(path.c_str());
 }

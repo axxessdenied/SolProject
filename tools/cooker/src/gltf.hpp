@@ -25,6 +25,33 @@ struct GltfPart
     std::string originId;
 
     assets::MeshData mesh;
+
+    // --- the node's base-colour image, when it has exactly one (stage U3) ----
+    //
+    // ⚑⚑ THE BYTES ARE THE EXPORTER'S OWN, COPIED AND NEVER RE-ENCODED. A glTF
+    // carries a base-colour image as a whole PNG or JPEG file, so extracting one
+    // is a byte range rather than a decode - which matters because this repo has
+    // a PNG decoder and NO PNG ENCODER, and writing one to serve this stage
+    // would be a second implementation of a format (the trap stage U2's fixture
+    // note refused). Verbatim is also lossless, which a decode and a re-encode
+    // through RGBA8 would not be for a palette image.
+    //
+    // Empty when the node has no material, when its material names no base
+    // colour texture, or when `imageNote` says why not.
+    std::vector<std::uint8_t> imageBytes;
+
+    // The glTF image's name, then its material's, then empty. It is a LABEL
+    // from another program and NOT a filename - the caller decides what the file
+    // is called, because only the caller knows what is already on disk.
+    std::string imageName;
+
+    // ⚑ Why this node has no image WHEN THAT IS WORTH SAYING, and empty
+    // otherwise. An untextured object is not an error and must not produce a
+    // sentence; a two-material object, an image this repo cannot read, and a
+    // reference that does not resolve are all things an author has to be told,
+    // because the alternative is a mesh that arrives untextured for a reason
+    // invisible in both windows.
+    std::string imageNote;
 };
 
 // Every node in the default scene that carries triangles, kept SEPARATE.
