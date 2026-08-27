@@ -54,6 +54,15 @@ namespace {
 // drifting would silently strand somebody's save under the old spelling.
 constexpr const char* kAppName = "The Stars Don't Wait";
 
+// Phase 23. Set by game/CMakeLists.txt in the same branch that bakes the dev
+// data paths, because they are the same fact. Absent means a build intended
+// for somebody else, so the fallback below is the SAFE direction: a define
+// that fails to arrive hides dev UI rather than shipping it.
+#if !defined(SOL_DEV_BUILD)
+#define SOL_DEV_BUILD 0
+#endif
+constexpr bool kDevBuild = SOL_DEV_BUILD != 0;
+
 #if defined(NDEBUG)
 constexpr bool kEnableValidation = false;
 #else
@@ -281,6 +290,21 @@ int main(int argc, char** argv)
     }
     sol::ui::DevUi devUi;
     devUi.initialize();
+    // Phase 23. A build somebody else runs boots to a clean menu; a dev build
+    // is untouched, because Full-by-default is what the 8n/8o drives that
+    // screenshot the zone tree depend on. AGENTS.md 5 has always said ImGui is
+    // dev tooling and never shipping game UI - until Phase 22 there was no
+    // shipping build in which that could be true or false.
+    //
+    // ⚑ HIDDEN, NOT REMOVED, AND THE COST IS KNOWN: F1 still opens the console
+    // in a packaged build, with the whole Lua binding surface behind it. That
+    // is a cheat console in a shipped game, accepted deliberately - it is also
+    // what keeps a packaged build debuggable, which Phase 22 needed within a
+    // day of the first archive existing.
+    if (!kDevBuild) {
+        devUi.setConsoleVisible(false);
+        devUi.setOverlayMode(sol::ui::DevUi::OverlayMode::Hidden);
+    }
     renderer.setImGuiHost(&imguiHost);
 
     // Game UI (Phase 8d). One context builds every custom surface - the flight

@@ -70,6 +70,24 @@ public:
     using CommandHandler = void (*)(const char* command, void* userData);
     void setCommandHandler(CommandHandler handler, void* userData);
 
+    // What is on screen at boot (Phase 23). Both fields already existed and
+    // both were already reachable by F1/F2 - what was missing was any way for
+    // a CLIENT to state a preference, so "the dev overlay is up at boot" was
+    // a decision this layer made on everyone's behalf.
+    //
+    // ⚑⚑ THIS CLASS DELIBERATELY LEARNS NOTHING ABOUT SHIPPING. Whether a
+    // build is one somebody else will run is the game's business, not the
+    // engine's (AGENTS.md 4) - and the Forge is a second client of this same
+    // library with a different right answer. Same split as the game supplying
+    // its own name to userDataDirectory: mechanism here, policy there.
+    //
+    // ⚑ Hiding the console does NOT stop logging. initialize() points the
+    // core log sink at the ring buffer regardless, so F1 later opens a console
+    // with the whole session already in it rather than an empty one.
+    void setConsoleVisible(bool visible) { m_showConsole = visible; }
+
+    void setOverlayMode(OverlayMode mode) { m_overlayMode = mode; }
+
 private:
     void buildConsoleInput();
     static int consoleTextCallback(ImGuiInputTextCallbackData* data);

@@ -60,6 +60,12 @@ if(SOL_DEV_DATA_PATHS)
     target_compile_definitions(sol_game PRIVATE
         SOL_DATA_SOURCE_DIR="${CMAKE_SOURCE_DIR}/game/data"
         SOL_MODS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/game/mods"
+        # ⚑⚑ Phase 23. "This build reads the source tree" and "this is a dev
+        # build" are the same fact, so they share ONE branch and cannot drift
+        # apart. Deliberately not NDEBUG: a developer profiling a
+        # RelWithDebInfo build WITH dev paths must keep their overlay, and
+        # Phases 8n/8o are exactly that workflow.
+        SOL_DEV_BUILD=1
     )
 endif()
 
