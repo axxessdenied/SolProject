@@ -403,7 +403,7 @@ int main(int argc, char** argv)
     // ⚑ Stage S made this tolerant of a model it cannot find (it draws
     // nothing and says so), so a false here now means something structural
     // rather than one bad row - a level that exists but will not decode.
-    if (!renderer.loadModels(content.defs().models(), cookedSearchPath)) {
+    if (!renderer.loadModels(content.defs().models(), content.defs().materials(), cookedSearchPath)) {
         return EXIT_FAILURE;
     }
     devUi.setCommandHandler(&consoleCommandHandler, &content);

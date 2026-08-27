@@ -469,10 +469,18 @@ matchModels(const assets::DefDatabase& defs, const AssetEntry& entry, const Mesh
         }
         ModelMatch match;
         match.id = model.id;
-        match.texture = model.texture;
+        // ⚑ Phase 25 stage A: the texture and the glow belong to the model's
+        // MATERIAL now, and a row that names one carries neither itself. The
+        // database resolves the index for every row, so the fallback below is
+        // for a tool that loaded defs without validating them - it shows blank
+        // rather than showing a stale value that used to be true.
+        if (model.materialIndex < defs.materials().size()) {
+            const assets::MaterialDef& material = defs.materials()[model.materialIndex];
+            match.texture = material.texture;
+            match.emissive = material.emissive;
+        }
         match.authoredRadius = model.radius;
         match.authoredAvoidRadius = model.avoidRadius > 0.0f ? model.avoidRadius : model.radius;
-        match.emissive = model.emissive;
         match.solid = model.solid;
         match.radiusDelta = report.boundingRadius - model.radius;
         matches.push_back(std::move(match));

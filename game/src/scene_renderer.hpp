@@ -158,7 +158,14 @@ public:
     // reload the catalog without rebuilding the swapchain. Meshes and
     // textures are cached by cooked stem, so ten models sharing hull.stex
     // upload it once.
+    //
+    // ⚑ Phase 25 stage A: the surface comes from `materials`, indexed by the
+    // model's own `materialIndex`, and this function no longer reads a model's
+    // `texture`/`emissive`/`translucent`/`alpha` at all. `DefDatabase` fills
+    // that index for every row, synthesising a material for one that names
+    // none, so the two spans are always consistent by construction.
     [[nodiscard]] bool loadModels(std::span<const sol::assets::ModelDef> models,
+                                  std::span<const sol::assets::MaterialDef> materials,
                                   std::span<const std::string> cookedSearchPath);
     void unloadModels();
     void shutdown();
@@ -268,11 +275,16 @@ private:
         // DRAWING's radius only: collision, weapons and avoidance keep reading
         // the def, because a level is a picture of a shape and not the shape.
         float radius = 1.0f;
+        // ⚑ THE FOUR BELOW COME FROM THE MODEL'S MATERIAL (Phase 25 stage A),
+        // not from the model. They stay flattened into the entry because the
+        // draw loop reads them per instance and an indirection there would buy
+        // nothing: a material is resolved once, at load, exactly as a mesh and
+        // a texture stem are. What changed is who owns the values.
         std::uint32_t texture = 0;
         float emissive = 0.0f;
-        // Phase 12: translucency is a property of the MODEL, declared in
-        // models.toml, not of the instance - so the second translucent thing
-        // in this game is a def row and no C++ at all.
+        // Phase 12: translucency is a property of the SURFACE, declared in a
+        // def row rather than on the instance - so the second translucent
+        // thing in this game is a def row and no C++ at all.
         bool translucent = false;
         float alpha = 1.0f;
         // ⚑⚑ Phase 24 stage S. False when this model's mesh or texture could

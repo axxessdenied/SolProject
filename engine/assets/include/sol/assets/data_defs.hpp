@@ -311,6 +311,43 @@ struct SoundDef
     std::string source;
 };
 
+// "no material", the value a model's resolved index holds until the merged
+// database has been walked. Namespace scope rather than a `DefDatabase`
+// static because `ModelDef` carries one and is declared first.
+inline constexpr std::uint32_t kNoMaterial = 0xFFFFFFFFu;
+
+// HOW A SURFACE IS DRAWN (Phase 25 stage A), split out of the model that wears
+// it. Four fields, and they are exactly the four the mesh pipeline already
+// reads - this stage moves the ownership and changes no pixel. Stage B gives a
+// material its own shader pair and pipeline state, stage C turns `texture` and
+// `emissive`/`alpha` into declared slots and parameters; until then the shape
+// here is the shape the renderer has always had.
+//
+// ⚑ THE PREFIX `sol.auto.` IS RESERVED and an authored row using it is
+// refused. Every `[[model]]` row that names no material gets one SYNTHESISED
+// from its own `texture`/`emissive`/`translucent`/`alpha` under that prefix,
+// which is what lets every committed def file keep working untouched while the
+// renderer stops reading a model's fields at all.
+struct MaterialDef
+{
+    std::string id;
+    std::string texture; // cooked file stem, e.g. "hull" -> hull.stex
+    // Unlit albedo glow added at draw time; see `ModelDef` for what it is for.
+    float emissive = 0.0f;
+    // Phase 12's alpha-blended pipeline, recorded after the sky. `alpha` is
+    // coverage in 0..1 and is only meaningful when `translucent` is set; the
+    // opaque path passes 1.0, which the shader premultiplies by and so leaves
+    // its output unchanged.
+    bool translucent = false;
+    float alpha = 1.0f;
+    // True for a row this database derived from a `[[model]]`, false for one
+    // somebody wrote. The derived set is rebuilt from scratch after every
+    // merge, so a later layer editing a model row cannot leave a stale one
+    // behind, and nothing outside this file has to remember to ask for it.
+    bool synthesised = false;
+    std::string source;
+};
+
 // A drawable model (Phase 9): the cooked mesh and texture the renderer binds,
 // and the figures the sim measures the thing by. Data rather than an enum
 // because until this existed the whole set was a five-member C++ enum behind
@@ -320,7 +357,19 @@ struct SoundDef
 struct ModelDef
 {
     std::string id;
-    std::string mesh;    // cooked file stem, e.g. "ship" -> ship.smesh
+    std::string mesh; // cooked file stem, e.g. "ship" -> ship.smesh
+    // ⚑ Phase 25 stage A: `material` names a `[[material]]` row, and a row
+    // that names one carries NONE of the four surface keys below - they are
+    // that row's business now, and a model carrying both is refused at load
+    // rather than resolved by a precedence rule nobody can see in the file.
+    // A row that names no material gets one synthesised from the four, so the
+    // committed catalog and every mod written before this stage keep working
+    // exactly as written.
+    std::string material;
+    // The index into `materials()` this row resolved to, or `kNoMaterial`
+    // while the named row has not been merged yet. `validateMaterials` is what
+    // turns "still unresolved once every layer is in" into a refusal.
+    std::uint32_t materialIndex = kNoMaterial;
     std::string texture; // cooked file stem, e.g. "hull" -> hull.stex
     // Radius in meters at instance scale 1; the sim multiplies by the scale
     // for collision and weapon hit tests. A model authored at unit radius
@@ -462,6 +511,14 @@ public:
     [[nodiscard]] bool validateRoles(std::span<const char* const> required,
                                      std::string* outError = nullptr) const;
 
+    // Cross-def check for `[[model]]` rows naming a `[[material]]` (Phase 25
+    // stage A), and it REFUSES for the same reason `validateRoles` does: a
+    // model whose material is missing has nothing left to draw with, because
+    // naming a material is exactly what gave up the four surface keys. It is
+    // a separate pass rather than a parse-time check because a material may
+    // legitimately live in an earlier or a later layer than the model.
+    [[nodiscard]] bool validateMaterials(std::string* outError = nullptr) const;
+
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;
     [[nodiscard]] const FactionDef* findFaction(const char* id) const;
@@ -471,6 +528,7 @@ public:
     [[nodiscard]] const CrewDef* findCrew(const char* id) const;
     [[nodiscard]] const SoundDef* findSound(const char* id) const;
     [[nodiscard]] const ModelDef* findModel(const char* id) const;
+    [[nodiscard]] const MaterialDef* findMaterial(const char* id) const;
     [[nodiscard]] const RoleDef* findRole(const char* id) const;
 
     // Index of a model by id, or kNoModel. The renderer and the sim both key
@@ -478,6 +536,10 @@ public:
     // spawn and never in a per-tick loop.
     static constexpr std::uint32_t kNoModel = 0xFFFFFFFFu;
     [[nodiscard]] std::uint32_t modelIndex(const char* id) const;
+
+    // Index of a material by id, or `kNoMaterial`. Same bargain as
+    // `modelIndex`: the renderer binds off an integer, never off a string.
+    [[nodiscard]] std::uint32_t materialIndex(const char* id) const;
 
     // The model index filling a role, or kNoModel. After `validateRoles` has
     // passed this cannot fail for a required role, so callers resolve once at
@@ -504,6 +566,11 @@ public:
 
     [[nodiscard]] const std::vector<ModelDef>& models() const { return m_models; }
 
+    // Authored rows first, in first-definition order, then the synthesised
+    // ones in model order. Both halves are deterministic, which is what lets a
+    // model hold an index into this rather than a name.
+    [[nodiscard]] const std::vector<MaterialDef>& materials() const { return m_materials; }
+
     [[nodiscard]] const std::vector<RoleDef>& roles() const { return m_roles; }
 
 private:
@@ -516,7 +583,15 @@ private:
     std::vector<CrewDef> m_crew;
     std::vector<SoundDef> m_sounds;
     std::vector<ModelDef> m_models;
+    std::vector<MaterialDef> m_materials;
     std::vector<RoleDef> m_roles;
+
+    // Drops every synthesised row, derives one afresh for each model that
+    // names no material, and re-resolves every model's index. Runs at the tail
+    // of each merge so the database is never half-resolved and no caller has
+    // to remember a second call - the trap `validateRoles` avoids only by
+    // being const.
+    void resolveMaterials();
 };
 
 } // namespace sol::assets

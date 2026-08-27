@@ -211,6 +211,7 @@ bool SceneRenderer::onSwapchainRecreated()
 }
 
 bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
+                               std::span<const assets::MaterialDef> materials,
                                std::span<const std::string> cookedSearchPath)
 {
     unloadModels();
@@ -259,10 +260,25 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
 
     m_models.reserve(models.size());
     for (const assets::ModelDef& def : models) {
+        // ⚑⚑ PHASE 25 STAGE A: THE SURFACE IS THE MATERIAL'S, AND THIS IS THE
+        // WHOLE OF THE STAGE ON THE RENDERER'S SIDE. `DefDatabase` resolves
+        // every row - synthesising a material for one that names none - so the
+        // index is in range for a database that was loaded and validated. The
+        // guard is for a caller that skipped `validateMaterials`, which is a
+        // programming error rather than a data one, and it refuses rather than
+        // drawing something nobody authored.
+        if (def.materialIndex >= materials.size()) {
+            SOL_LOG_ERROR("model '%s': material '%s' did not resolve - the def database was not validated",
+                          def.id.c_str(),
+                          def.material.c_str());
+            unloadModels();
+            return false;
+        }
+        const assets::MaterialDef& material = materials[def.materialIndex];
         CatalogEntry entry = {.radius = def.radius,
-                              .emissive = def.emissive,
-                              .translucent = def.translucent,
-                              .alpha = def.alpha};
+                              .emissive = material.emissive,
+                              .translucent = material.translucent,
+                              .alpha = material.alpha};
         // ⚑⚑⚑ NOT A HARD FAILURE ANY MORE, AND THAT IS PHASE 24 STAGE S's ONE
         // BEHAVIOURAL CHANGE. Until a mod could carry an asset, every
         // `[[model]]` row was ours, so a row naming a missing mesh was our bug
@@ -283,12 +299,17 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
         // ⚑ The error names every directory searched, because when a load
         // fails WHERE it looked is most of the answer (Phase 22's lesson about
         // the data directory, one level down).
-        if (!meshIndex(def.mesh, entry.levels[0]) || !textureIndex(def.texture, entry.texture)) {
-            SOL_LOG_ERROR("model '%s': cannot load mesh '%s' / texture '%s' - it will draw "
-                          "nothing. Looked in: %s",
+        if (!meshIndex(def.mesh, entry.levels[0]) || !textureIndex(material.texture, entry.texture)) {
+            // ⚑ The material is NAMED in the error, because with Phase 25 the
+            // texture may come from a row in a different file than the model -
+            // and "which file do I edit" is the question an error like this
+            // exists to answer.
+            SOL_LOG_ERROR("model '%s': cannot load mesh '%s' / texture '%s' (material '%s') - it will "
+                          "draw nothing. Looked in: %s",
                           def.id.c_str(),
                           def.mesh.c_str(),
-                          def.texture.c_str(),
+                          material.texture.c_str(),
+                          material.id.c_str(),
                           describeSearchPath(cookedSearchPath).c_str());
             entry.drawable = false;
             m_models.push_back(entry);
@@ -333,10 +354,16 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
     for (const CatalogEntry& entry : m_models) {
         undrawable += entry.drawable ? 0u : 1u;
     }
-    SOL_LOG_INFO("models: %zu (%zu meshes, %zu textures, %u level(s) over %u model(s), %zu undrawable)",
+    // ⚑ The material count is here because it is stage A's exit criterion in
+    // one number: every model drew through a row, and this says how many rows
+    // there were. It will stop equalling the model count the moment anybody
+    // authors a material two models share.
+    SOL_LOG_INFO("models: %zu (%zu meshes, %zu textures, %zu materials, %u level(s) over %u model(s), "
+                 "%zu undrawable)",
                  m_models.size(),
                  m_meshes.size(),
                  m_textures.size(),
+                 materials.size(),
                  report.levelsLoaded,
                  report.modelsWithLevels,
                  undrawable);

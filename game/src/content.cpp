@@ -177,29 +177,38 @@ std::string listModels(GameContent& content)
 {
     std::string out;
     const auto& models = content.defs().models();
+    const auto& materials = content.defs().materials();
     for (std::size_t i = 0; i < models.size(); ++i) {
         const assets::ModelDef& def = models[i];
+        // ⚑ Phase 25 stage A: the surface half of this line is the MATERIAL's,
+        // and a row that names one carries none of it itself. Reading the model
+        // here would have printed an empty texture and an unlit membrane for
+        // every migrated row - a probe quietly disagreeing with the picture,
+        // which is the one thing a probe must never do.
+        const assets::MaterialDef* material =
+            def.materialIndex < materials.size() ? &materials[def.materialIndex] : nullptr;
         // Phase 12: the blend state is reported too. Without it a drive cannot
         // tell a translucent row from an opaque one, which is the same gap this
         // probe exists to close for the mesh and texture indices.
         char film[24] = {};
-        if (def.translucent) {
-            std::snprintf(film, sizeof(film), " [film a%.2f]", static_cast<double>(def.alpha));
+        if (material != nullptr && material->translucent) {
+            std::snprintf(film, sizeof(film), " [film a%.2f]", static_cast<double>(material->alpha));
         }
-        char line[192] = {};
+        char line[256] = {};
         std::snprintf(line,
                       sizeof(line),
-                      "%s#%zu %s: %s/%s r%.0f a%.0f%s%s%s",
+                      "%s#%zu %s: %s/%s r%.0f a%.0f%s%s%s <%s>",
                       i == 0 ? "" : "\n",
                       i,
                       def.id.c_str(),
                       def.mesh.c_str(),
-                      def.texture.c_str(),
+                      material != nullptr ? material->texture.c_str() : "?",
                       static_cast<double>(def.radius),
                       static_cast<double>(def.avoidRadius),
                       def.solid ? "" : " [pass-through]",
-                      def.emissive > 0.0f ? " [lit]" : "",
-                      film);
+                      material != nullptr && material->emissive > 0.0f ? " [lit]" : "",
+                      film,
+                      material != nullptr ? material->id.c_str() : "unresolved");
         out += line;
     }
     if (out.empty()) {
@@ -3223,6 +3232,15 @@ bool GameContent::reloadDefs()
     // what makes that safe - a typo in a role leaves the running game on the
     // defs it already had rather than un-drawing every gate in the galaxy.
     if (!fresh.validateRoles(modelRoles(), &error)) {
+        SOL_LOG_ERROR("data defs: %s", error.c_str());
+        return false;
+    }
+    // Phase 25 stage A, and it refuses for the same reason the roles check
+    // does: naming a material is exactly what makes a model give up its own
+    // surface keys, so a name that resolves to nothing has nothing left to
+    // draw with. On the HOT-RELOAD path this leaves the running game on the
+    // defs it already had, which is what makes editing a material safe.
+    if (!fresh.validateMaterials(&error)) {
         SOL_LOG_ERROR("data defs: %s", error.c_str());
         return false;
     }

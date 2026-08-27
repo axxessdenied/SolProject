@@ -278,22 +278,36 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
         ImGui::PushID(id.c_str());
         ImGui::Text("[[model]] %s", id.c_str());
 
-        // ⚑ The texture is a COMBO over what the tool can actually open, not a
-        // text field. A `[[model]]` naming a texture that does not exist passes
-        // the schema and fails at load, so the safest edit is the one that
-        // cannot express the mistake.
-        const std::string texture = stringOr(row, "texture", "");
-        ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::BeginCombo("texture", texture.c_str())) {
-            for (const std::string& stem : textureStems) {
-                const bool selected = stem == texture;
-                if (ImGui::Selectable(stem.c_str(), selected) && !selected) {
-                    beginEdit(kModels, "set texture");
-                    row.set("texture", assets::defString(stem));
-                    changed = true;
+        // ⚑⚑ PHASE 25 STAGE A: A ROW THAT NAMES A MATERIAL OWNS NONE OF THE
+        // FOUR SURFACE KEYS, AND THE SCHEMA REFUSES A ROW CARRYING BOTH. Every
+        // control below that writes one is therefore hidden rather than
+        // disabled - a greyed-out combo still reads as "this row has a
+        // texture", which is exactly the wrong thing to say. Authoring the
+        // material itself is stage D; until then this panel's job is to not
+        // write a file the game will refuse.
+        const assets::DefKey* materialKey = row.find("material");
+        const bool surfaceIsMaterials = materialKey != nullptr;
+        if (surfaceIsMaterials) {
+            ImGui::Text("material %s", std::string(materialKey->unquoted()).c_str());
+            ImGui::TextDisabled("  the surface lives on that [[material]] row, not here");
+        } else {
+            // ⚑ The texture is a COMBO over what the tool can actually open,
+            // not a text field. A `[[model]]` naming a texture that does not
+            // exist passes the schema and fails at load, so the safest edit is
+            // the one that cannot express the mistake.
+            const std::string texture = stringOr(row, "texture", "");
+            ImGui::SetNextItemWidth(160.0f);
+            if (ImGui::BeginCombo("texture", texture.c_str())) {
+                for (const std::string& stem : textureStems) {
+                    const bool selected = stem == texture;
+                    if (ImGui::Selectable(stem.c_str(), selected) && !selected) {
+                        beginEdit(kModels, "set texture");
+                        row.set("texture", assets::defString(stem));
+                        changed = true;
+                    }
                 }
+                ImGui::EndCombo();
             }
-            ImGui::EndCombo();
         }
 
         float radius = floatOr(row, "radius", 1.0f);
@@ -352,13 +366,15 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
             ImGui::TextDisabled("  below radius: the schema will refuse this");
         }
 
-        float emissive = floatOr(row, "emissive", 0.0f);
-        ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::DragFloat("emissive", &emissive, 0.005f, 0.0f, 4.0f, "%.3f")) {
-            row.set("emissive", assets::defNumber(emissive, kUnitDecimals));
-            changed = true;
+        if (!surfaceIsMaterials) {
+            float emissive = floatOr(row, "emissive", 0.0f);
+            ImGui::SetNextItemWidth(160.0f);
+            if (ImGui::DragFloat("emissive", &emissive, 0.005f, 0.0f, 4.0f, "%.3f")) {
+                row.set("emissive", assets::defNumber(emissive, kUnitDecimals));
+                changed = true;
+            }
+            noteActivation(kModels, "set emissive");
         }
-        noteActivation(kModels, "set emissive");
 
         bool solid = boolOr(row, "solid", true);
         if (ImGui::Checkbox("solid", &solid)) {
@@ -369,20 +385,22 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
         ImGui::SameLine();
         ImGui::TextDisabled(solid ? "(blocks flight)" : "(fly through)");
 
-        bool translucent = boolOr(row, "translucent", false);
-        if (ImGui::Checkbox("translucent", &translucent)) {
-            beginEdit(kModels, "toggle translucent");
-            row.set("translucent", assets::defBool(translucent));
-            changed = true;
-        }
-        if (translucent) {
-            float alpha = floatOr(row, "alpha", 1.0f);
-            ImGui::SetNextItemWidth(160.0f);
-            if (ImGui::DragFloat("alpha", &alpha, 0.005f, 0.0f, 1.0f, "%.3f")) {
-                row.set("alpha", assets::defNumber(alpha, kUnitDecimals));
+        if (!surfaceIsMaterials) {
+            bool translucent = boolOr(row, "translucent", false);
+            if (ImGui::Checkbox("translucent", &translucent)) {
+                beginEdit(kModels, "toggle translucent");
+                row.set("translucent", assets::defBool(translucent));
                 changed = true;
             }
-            noteActivation(kModels, "set alpha");
+            if (translucent) {
+                float alpha = floatOr(row, "alpha", 1.0f);
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::DragFloat("alpha", &alpha, 0.005f, 0.0f, 1.0f, "%.3f")) {
+                    row.set("alpha", assets::defNumber(alpha, kUnitDecimals));
+                    changed = true;
+                }
+                noteActivation(kModels, "set alpha");
+            }
         }
         ImGui::PopID();
         ImGui::Separator();

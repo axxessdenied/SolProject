@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <string_view>
 #include <utility>
 
 namespace sol::assets {
@@ -617,6 +618,65 @@ bool parseSound(const TomlValue& table,
     return true;
 }
 
+// The prefix a synthesised material's id carries, reserved so that the rebuild
+// after every merge cannot collide with something a person wrote.
+constexpr const char* kSynthesisedMaterialPrefix = "sol.auto.";
+
+bool hasSynthesisedMaterialPrefix(const std::string& id)
+{
+    const std::string_view prefix{kSynthesisedMaterialPrefix};
+    return id.size() >= prefix.size() && id.compare(0, prefix.size(), prefix) == 0;
+}
+
+// The four surface keys a `[[model]]` row carried before Phase 25 stage A, and
+// which it gives up entirely the moment it names a material. Named once here
+// because both the conflict check and the synthesis have to agree on the list.
+constexpr const char* kModelSurfaceKeys[] = {"texture", "emissive", "translucent", "alpha"};
+
+// A `[[material]]` row (Phase 25 stage A): how a surface is drawn, split out of
+// the model that wears it. No shader pair and no pipeline state yet - stage B
+// adds those - so the keys here are exactly the four the mesh pipeline has
+// always read, and a material built from a model draws the identical frame.
+bool parseMaterial(const TomlValue& table,
+                   const char* sourceName,
+                   std::vector<MaterialDef>& out,
+                   std::string* outError)
+{
+    MaterialDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": material '" + def.id + "'";
+    }
+    reader.requireString("texture", def.texture);
+    reader.optionalFloat("emissive", def.emissive);
+    reader.optionalBool("translucent", def.translucent);
+    reader.optionalFloat("alpha", def.alpha);
+
+    reader.rejectUnknownKeys({"id", "texture", "emissive", "translucent", "alpha"});
+    // ⚑ The synthesis rebuilds its rows from scratch after every merge, so an
+    // authored row wearing that prefix would be shadowed by a derived one with
+    // the same id - a name that resolves to something the file does not say.
+    // Refused where the file name is still in hand instead.
+    if (!reader.failed && hasSynthesisedMaterialPrefix(def.id)) {
+        reader.fail(std::string("'") + kSynthesisedMaterialPrefix +
+                    "' is reserved for materials this engine derives from a [[model]] row");
+    }
+    if (!reader.failed && (def.alpha < 0.0f || def.alpha > 1.0f)) {
+        reader.fail("'alpha' must be between 0 and 1");
+    }
+    if (!reader.failed && def.emissive < 0.0f) {
+        reader.fail("'emissive' must be >= 0");
+    }
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
 bool parseModel(const TomlValue& table,
                 const char* sourceName,
                 std::vector<ModelDef>& out,
@@ -631,7 +691,27 @@ bool parseModel(const TomlValue& table,
         reader.context = std::string(sourceName) + ": model '" + def.id + "'";
     }
     reader.requireString("mesh", def.mesh);
-    reader.requireString("texture", def.texture);
+    // ⚑⚑ PHASE 25 STAGE A: A ROW EITHER NAMES A MATERIAL OR DESCRIBES ONE, AND
+    // NEVER BOTH. The alternative - a precedence rule - is invisible in the
+    // file, and the file is the whole point: an author reading a row with both
+    // has no way to tell which half is doing anything. So `texture` stays
+    // required exactly as it was for a row that names no material, and every
+    // one of the four surface keys is refused by name for a row that does.
+    reader.optionalString("material", def.material);
+    if (!reader.failed && table.find("material") != nullptr && def.material.empty()) {
+        reader.fail("'material' cannot be empty - omit the key to describe the surface on this row");
+    }
+    if (!reader.failed && !def.material.empty()) {
+        for (const char* key : kModelSurfaceKeys) {
+            if (table.find(key) != nullptr) {
+                reader.fail(std::string("names material '") + def.material + "' and also sets '" + key +
+                            "' - a material owns the surface, so move the key onto the [[material]] row");
+                break;
+            }
+        }
+    } else if (!reader.failed) {
+        reader.requireString("texture", def.texture);
+    }
     reader.optionalFloat("radius", def.radius);
     reader.optionalFloat("avoid_radius", def.avoidRadius);
     reader.optionalFloat("emissive", def.emissive);
@@ -639,8 +719,16 @@ bool parseModel(const TomlValue& table,
     reader.optionalBool("translucent", def.translucent);
     reader.optionalFloat("alpha", def.alpha);
 
-    reader.rejectUnknownKeys(
-        {"id", "mesh", "texture", "radius", "avoid_radius", "emissive", "solid", "translucent", "alpha"});
+    reader.rejectUnknownKeys({"id",
+                              "mesh",
+                              "material",
+                              "texture",
+                              "radius",
+                              "avoid_radius",
+                              "emissive",
+                              "solid",
+                              "translucent",
+                              "alpha"});
     if (!reader.failed && def.radius <= 0.0f) {
         reader.fail("'radius' must be > 0");
     }
@@ -843,6 +931,7 @@ void DefDatabase::clear()
     m_crew.clear();
     m_sounds.clear();
     m_models.clear();
+    m_materials.clear();
     m_roles.clear();
 }
 
@@ -870,6 +959,16 @@ bool DefDatabase::mergeToml(const char* text,
     std::vector<CrewDef> crew = m_crew;
     std::vector<SoundDef> sounds = m_sounds;
     std::vector<ModelDef> models = m_models;
+    // ⚑ The synthesised rows are dropped from the staging copy rather than
+    // carried, because `resolveMaterials` rebuilds them from the models below
+    // and a carried one would be a duplicate. The authored rows are staged like
+    // any other def kind.
+    std::vector<MaterialDef> materials;
+    for (const MaterialDef& material : m_materials) {
+        if (!material.synthesised) {
+            materials.push_back(material);
+        }
+    }
     std::vector<RoleDef> roles = m_roles;
 
     for (const auto& [key, value] : root.members()) {
@@ -920,6 +1019,11 @@ bool DefDatabase::mergeToml(const char* text,
                 return parseModel(t, s, *static_cast<std::vector<ModelDef>*>(v), e);
             };
             target = &models;
+        } else if (key == "material") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseMaterial(t, s, *static_cast<std::vector<MaterialDef>*>(v), e);
+            };
+            target = &materials;
         } else if (key == "role") {
             parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
                 return parseRole(t, s, *static_cast<std::vector<RoleDef>*>(v), e);
@@ -929,7 +1033,7 @@ bool DefDatabase::mergeToml(const char* text,
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
                             "' (expected ship, weapon, faction, commodity, station, module, "
-                            "crew, sound, model, or role)";
+                            "crew, sound, model, material, or role)";
             }
             return false;
         }
@@ -957,7 +1061,61 @@ bool DefDatabase::mergeToml(const char* text,
     m_crew = std::move(crew);
     m_sounds = std::move(sounds);
     m_models = std::move(models);
+    m_materials = std::move(materials);
     m_roles = std::move(roles);
+    // ⚑ At the TAIL of every merge, not as a pass a caller has to remember.
+    // The database is therefore never half-resolved, and the one thing that
+    // genuinely cannot be answered until every layer is in - whether a named
+    // material exists - is left to `validateMaterials`.
+    resolveMaterials();
+    return true;
+}
+
+void DefDatabase::resolveMaterials()
+{
+    m_materials.erase(std::remove_if(m_materials.begin(),
+                                     m_materials.end(),
+                                     [](const MaterialDef& m) { return m.synthesised; }),
+                      m_materials.end());
+
+    for (ModelDef& model : m_models) {
+        if (!model.material.empty()) {
+            model.materialIndex = materialIndex(model.material.c_str());
+            continue;
+        }
+        // ⚑⚑ ONE DERIVED ROW PER MODEL, DELIBERATELY NOT DEDUPED BY VALUE.
+        // Four of the shipped models would share a single "hull, opaque, unlit"
+        // row, and sharing it would put a name in every future error message
+        // that points at some OTHER model's row. `sol.auto.<model id>` points
+        // at the row the author can actually edit. Materials cost nothing to
+        // hold here - there is no UBO and no descriptor set until stage C -
+        // and de-duplication is a PIPELINE concern that stage B owns by
+        // caching on state rather than on identity.
+        MaterialDef derived;
+        derived.id = std::string(kSynthesisedMaterialPrefix) + model.id;
+        derived.texture = model.texture;
+        derived.emissive = model.emissive;
+        derived.translucent = model.translucent;
+        derived.alpha = model.alpha;
+        derived.synthesised = true;
+        derived.source = model.source;
+        model.materialIndex = static_cast<std::uint32_t>(m_materials.size());
+        m_materials.push_back(std::move(derived));
+    }
+}
+
+bool DefDatabase::validateMaterials(std::string* outError) const
+{
+    for (const ModelDef& model : m_models) {
+        if (model.materialIndex != kNoMaterial) {
+            continue;
+        }
+        if (outError != nullptr) {
+            *outError = model.source + ": model '" + model.id + "' names material '" + model.material +
+                        "', which no [[material]] row defines";
+        }
+        return false;
+    }
     return true;
 }
 
@@ -1048,6 +1206,22 @@ std::uint32_t DefDatabase::modelIndex(const char* id) const
         }
     }
     return kNoModel;
+}
+
+const MaterialDef* DefDatabase::findMaterial(const char* id) const
+{
+    const std::uint32_t index = materialIndex(id);
+    return index == kNoMaterial ? nullptr : &m_materials[index];
+}
+
+std::uint32_t DefDatabase::materialIndex(const char* id) const
+{
+    for (std::size_t i = 0; i < m_materials.size(); ++i) {
+        if (m_materials[i].id == id) {
+            return static_cast<std::uint32_t>(i);
+        }
+    }
+    return kNoMaterial;
 }
 
 const RoleDef* DefDatabase::findRole(const char* id) const

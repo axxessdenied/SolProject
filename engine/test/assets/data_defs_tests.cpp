@@ -531,6 +531,216 @@ solid = false
         db, "[[model]]\nid = \"b\"\nmesh = \"m\"\ntexture = \"t\"\ntranslucent = 1\n", "m.toml", &error));
 }
 
+// Phase 25 stage A. A `[[material]]` row owns how a surface is drawn, and every
+// `[[model]]` row reaches one - either by naming it or by having one derived
+// from the four keys it used to carry. The three cases below are the whole
+// migration: a row WITH a material, a row WITHOUT, and a row with BOTH.
+SOL_TEST(data_defs_model_reaches_a_material_by_naming_or_by_synthesis)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db,
+                    R"(
+[[material]]
+id = "sol.hull"
+texture = "hull"
+
+[[model]]
+id = "ship"
+mesh = "ship"
+material = "sol.hull"
+radius = 8.0
+
+[[model]]
+id = "cockpit"
+mesh = "cockpit"
+texture = "cockpit"
+radius = 8.0
+emissive = 0.10
+solid = false
+)",
+                    "models.toml",
+                    &error));
+    SOL_CHECK(db.validateMaterials(&error));
+
+    // WITH. The row carries none of the four surface keys itself; the material
+    // it names carries all of them.
+    const auto* ship = db.findModel("ship");
+    SOL_REQUIRE(ship != nullptr);
+    SOL_CHECK(ship->material == "sol.hull");
+    SOL_CHECK(ship->texture.empty());
+    SOL_REQUIRE(ship->materialIndex < db.materials().size());
+    const sol::assets::MaterialDef& hull = db.materials()[ship->materialIndex];
+    SOL_CHECK(hull.id == "sol.hull");
+    SOL_CHECK(hull.texture == "hull");
+    SOL_CHECK(!hull.synthesised);
+    SOL_CHECK(db.materialIndex("sol.hull") == ship->materialIndex);
+
+    // WITHOUT. The four keys stay legal and stay where they were written; what
+    // changed is that the renderer now reads them off a derived row. This is
+    // what makes the stage a no-op for every def file already committed and
+    // every mod written before it.
+    const auto* cockpit = db.findModel("cockpit");
+    SOL_REQUIRE(cockpit != nullptr);
+    SOL_CHECK(cockpit->material.empty());
+    SOL_REQUIRE(cockpit->materialIndex < db.materials().size());
+    const sol::assets::MaterialDef& derived = db.materials()[cockpit->materialIndex];
+    SOL_CHECK(derived.id == "sol.auto.cockpit");
+    SOL_CHECK(derived.texture == "cockpit");
+    SOL_CHECK(std::abs(derived.emissive - 0.10f) < 1e-6f);
+    SOL_CHECK(!derived.translucent);
+    SOL_CHECK(derived.alpha == 1.0f);
+    SOL_CHECK(derived.synthesised);
+    // Authored rows first, derived ones after, so an author's indices do not
+    // move when somebody else adds a model.
+    SOL_CHECK(ship->materialIndex < cockpit->materialIndex);
+    SOL_CHECK(db.materials().size() == 2);
+
+    // BOTH, and it is REFUSED rather than resolved by precedence. A row
+    // carrying a material and a surface key gives a reader no way to tell
+    // which half is doing anything, and the error names the key to move.
+    SOL_CHECK(!merge(db,
+                     R"(
+[[model]]
+id = "bad"
+mesh = "ship"
+material = "sol.hull"
+texture = "checker"
+)",
+                     "bad.toml",
+                     &error));
+    SOL_CHECK(error.find("texture") != std::string::npos);
+    SOL_CHECK(error.find("sol.hull") != std::string::npos);
+    for (const char* key : {"emissive = 0.5", "translucent = true", "alpha = 0.5"}) {
+        const std::string toml = std::string("[[model]]\nid = \"bad\"\nmesh = \"ship\"\nmaterial = "
+                                             "\"sol.hull\"\n") +
+                                 key + "\n";
+        SOL_CHECK(!merge(db, toml.c_str(), "bad.toml", &error));
+    }
+    // A failed merge leaves the previous state intact, derived rows included.
+    SOL_CHECK(db.models().size() == 2);
+    SOL_CHECK(db.materials().size() == 2);
+}
+
+// The cross-def half, and it is a SEPARATE pass for the same reason
+// `validateRoles` is: which layer a material lives in is not the merge's
+// business, and refusing at parse time would forbid the perfectly ordinary
+// case below.
+SOL_TEST(data_defs_material_validation_and_layer_order)
+{
+    DefDatabase db;
+    std::string error;
+    // A model naming a material NOT YET MERGED parses. It has to: a mod may
+    // ship its models in one file and its materials in another, and
+    // `mergeDirectory` reads them in sorted order.
+    SOL_CHECK(merge(
+        db, "[[model]]\nid = \"ship\"\nmesh = \"ship\"\nmaterial = \"sol.hull\"\n", "a_models.toml", &error));
+    SOL_CHECK(db.findModel("ship")->materialIndex == sol::assets::kNoMaterial);
+    // ... and it is `validateMaterials`, once every layer is in, that refuses.
+    SOL_CHECK(!db.validateMaterials(&error));
+    SOL_CHECK(error.find("ship") != std::string::npos);
+    SOL_CHECK(error.find("sol.hull") != std::string::npos);
+    SOL_CHECK(error.find("a_models.toml") != std::string::npos);
+
+    SOL_CHECK(merge(db, "[[material]]\nid = \"sol.hull\"\ntexture = \"hull\"\n", "b_materials.toml", &error));
+    SOL_CHECK(db.validateMaterials(&error));
+    SOL_CHECK(db.findModel("ship")->materialIndex == db.materialIndex("sol.hull"));
+
+    // The prefix the synthesis owns is reserved, because a derived row is
+    // rebuilt after every merge and would otherwise shadow an authored one -
+    // a name resolving to something no file says.
+    SOL_CHECK(!merge(db, "[[material]]\nid = \"sol.auto.ship\"\ntexture = \"hull\"\n", "m.toml", &error));
+    SOL_CHECK(error.find("reserved") != std::string::npos);
+
+    // The rest of the schema, in the shape the model's own keys had.
+    SOL_CHECK(!merge(db, "[[material]]\nid = \"m\"\n", "m.toml", &error)); // texture is required
+    SOL_CHECK(!merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\nalpha = 1.5\n", "m.toml", &error));
+    SOL_CHECK(!merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\nemissive = -0.1\n", "m.toml", &error));
+    SOL_CHECK(!merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\nshader = \"x\"\n", "m.toml", &error));
+    // An empty name is a mistake rather than "no material": omitting the key
+    // is how a row says it describes its own surface.
+    SOL_CHECK(!merge(db, "[[model]]\nid = \"e\"\nmesh = \"m\"\nmaterial = \"\"\n", "m.toml", &error));
+}
+
+// The derived rows are rebuilt from the models after every merge, which is what
+// keeps a caller from ever seeing a half-resolved database - and what keeps a
+// layer that edits a model row from leaving the old surface behind.
+SOL_TEST(data_defs_synthesised_materials_are_rebuilt_by_a_later_layer)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db,
+                    "[[model]]\nid = \"gate\"\nmesh = \"gate\"\ntexture = \"hull\"\nradius = 106.7\n",
+                    "base.toml",
+                    &error));
+    SOL_CHECK(db.materials().size() == 1);
+    SOL_CHECK(db.materials()[0].texture == "hull");
+
+    // A mod replaces the row wholesale (that is what `mergeDef` does), so the
+    // material derived from the old values must not survive it.
+    SOL_CHECK(merge(db,
+                    "[[model]]\nid = \"gate\"\nmesh = \"gate\"\ntexture = \"checker\"\nradius = "
+                    "106.7\ntranslucent = true\nalpha = 0.5\n",
+                    "mod.toml",
+                    &error));
+    SOL_CHECK(db.models().size() == 1);
+    SOL_CHECK(db.materials().size() == 1); // rebuilt, not appended to
+    const sol::assets::MaterialDef& derived = db.materials()[db.findModel("gate")->materialIndex];
+    SOL_CHECK(derived.id == "sol.auto.gate");
+    SOL_CHECK(derived.texture == "checker");
+    SOL_CHECK(derived.translucent);
+    SOL_CHECK(std::abs(derived.alpha - 0.5f) < 1e-6f);
+
+    // And a row that switches to naming a material drops its derived one
+    // entirely rather than leaving an orphan behind.
+    SOL_CHECK(merge(db,
+                    "[[material]]\nid = \"sol.film\"\ntexture = \"hull\"\ntranslucent = true\nalpha = "
+                    "0.3\n\n[[model]]\nid = \"gate\"\nmesh = \"gate\"\nmaterial = \"sol.film\"\nradius = "
+                    "106.7\n",
+                    "mod2.toml",
+                    &error));
+    SOL_CHECK(db.validateMaterials(&error));
+    SOL_CHECK(db.materials().size() == 1);
+    SOL_CHECK(db.materials()[0].id == "sol.film");
+    SOL_CHECK(db.findModel("gate")->materialIndex == 0);
+}
+
+// ⚑ The shipped catalog itself, because the claim this stage has to make is
+// about `game/data` and not about a fixture: every committed `[[model]]` row
+// keeps working untouched, and every one of them now draws through a material.
+SOL_TEST(data_defs_shipped_models_all_reach_a_material)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(db.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+    SOL_CHECK(db.validateMaterials(&error));
+    SOL_CHECK(!db.models().empty());
+    // Nothing is authored yet - stage B ships the first `[[material]]` row with
+    // its shader pair - so today the count is one derived row per model. This
+    // assertion is the one that says the committed files did not have to change.
+    SOL_CHECK(db.materials().size() == db.models().size());
+    for (const auto& model : db.models()) {
+        SOL_REQUIRE(model.materialIndex < db.materials().size());
+        const sol::assets::MaterialDef& material = db.materials()[model.materialIndex];
+        SOL_CHECK(material.synthesised);
+        SOL_CHECK(material.id == "sol.auto." + model.id);
+        // The derived row carries exactly what the file says, which is what
+        // makes the frame identical rather than merely similar.
+        SOL_CHECK(material.texture == model.texture);
+        SOL_CHECK(material.emissive == model.emissive);
+        SOL_CHECK(material.translucent == model.translucent);
+        SOL_CHECK(material.alpha == model.alpha);
+        SOL_CHECK(!material.texture.empty());
+    }
+    // The membrane is the one row that exercises every field at once.
+    const auto* membrane = db.findModel("gate_membrane");
+    SOL_REQUIRE(membrane != nullptr);
+    const sol::assets::MaterialDef& film = db.materials()[membrane->materialIndex];
+    SOL_CHECK(film.translucent);
+    SOL_CHECK(std::abs(film.alpha - 0.30f) < 1e-6f);
+    SOL_CHECK(std::abs(film.emissive - 0.35f) < 1e-6f);
+}
+
 // Phase 19. A `[[role]]` row says which model fills a slot the engine draws
 // into, so that a gate, a rock, an ore chunk and a bolt stop being string
 // literals compiled into the game. `sol::assets` deliberately does NOT know

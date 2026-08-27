@@ -182,6 +182,32 @@ radius = 100.0
     // The measured radius is set against each row's own authored one.
     SOL_CHECK(std::fabs(matches[0].radiusDelta - 0.13f) < 1e-5f);
     SOL_CHECK(std::fabs(matches[1].radiusDelta - -0.87f) < 1e-5f);
+
+    // ⚑⚑ Phase 25 stage A: the surface is read THROUGH the model's material,
+    // so a row that names one still reports a texture and a glow - it just does
+    // not carry them itself. Reading the model here would have shown the panel
+    // an empty texture for every migrated row, and the rows above prove the
+    // other half: an unmigrated row is unaffected, because its material is
+    // derived from exactly those keys.
+    const std::string withMaterial = R"(
+[[material]]
+id = "sol.lit_panel"
+texture = "panel"
+emissive = 0.25
+
+[[model]]
+id = "d"
+mesh = "cube"
+material = "sol.lit_panel"
+radius = 1.0
+)";
+    SOL_REQUIRE(defs.mergeToml(withMaterial.c_str(), withMaterial.size(), "mat.toml", &error));
+    SOL_REQUIRE(defs.validateMaterials(&error));
+    const std::vector<forge::ModelMatch> withMat = forge::matchModels(defs, entry, report);
+    SOL_REQUIRE(withMat.size() == 3);
+    SOL_CHECK(withMat[2].id == "d");
+    SOL_CHECK(withMat[2].texture == "panel");
+    SOL_CHECK(std::fabs(withMat[2].emissive - 0.25f) < 1e-6f);
 }
 
 // ⚑⚑ AND THE SAME QUESTION ASKED OF THE REAL ASSETS RATHER THAN OF FIXTURES.
