@@ -1,0 +1,69 @@
+THIRD-PARTY NOTICES
+The Stars Don't Wait
+
+This game is built on a from-scratch engine. Almost everything in it - the
+math, the ECS, the containers and allocators, the asset formats, the mesh and
+image importers, the platform layer, the audio mixer, the UI - is written in
+this project's own repository and is covered by the LICENSE file beside this
+one.
+
+Two third-party libraries are compiled into the game executable. Both are MIT
+licensed, and both licences require this notice to accompany the binary. Their
+full texts follow.
+
+Not listed here, deliberately: stb_vorbis. It decodes Ogg Vorbis, and it is
+linked ONLY into the asset cooker, which is a build tool and is not part of
+this distribution. Audio is decoded to PCM when the game is built, so the
+shipping binary carries no audio decoder at all. That was a design decision
+rather than an accident; this shorter notice is what it bought.
+
+================================================================================
+Lua 5.4 - https://www.lua.org/
+================================================================================
+
+Copyright (C) 1994-2025 Lua.org, PUC-Rio.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+================================================================================
+Dear ImGui 1.91.5 - https://github.com/ocornut/imgui
+================================================================================
+
+The MIT License (MIT)
+
+Copyright (c) 2014-2024 Omar Cornut
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

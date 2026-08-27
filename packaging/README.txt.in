@@ -1,0 +1,56 @@
+THE STARS DON'T WAIT
+Carve out a life in a galaxy already in motion.
+
+Version @PROJECT_VERSION@
+Platform: @SOL_PACKAGE_PLATFORM@
+
+
+RUNNING
+-------
+@SOL_PACKAGE_RUN@
+
+This is a portable build. Unpack it anywhere you like and run it from there;
+there is nothing to install and nothing to uninstall. Deleting this folder
+removes the game.
+
+
+REQUIREMENTS
+------------
+@SOL_PACKAGE_REQUIREMENTS@
+
+
+WHERE YOUR SAVE AND SETTINGS LIVE
+---------------------------------
+Not in this folder. The game keeps its save and its settings in a per-user
+location, so the folder you unpacked stays read-only as far as the game is
+concerned - which means it still works if you unpack it somewhere you cannot
+write, and it survives replacing this folder with a newer version.
+
+  Windows:  %LOCALAPPDATA%\The Stars Don't Wait\
+  Linux:    $XDG_DATA_HOME/the-stars-dont-wait/
+            (or ~/.local/share/the-stars-dont-wait/ if that is unset)
+
+To reset the game completely, delete that directory.
+
+
+MODS
+----
+The mods/ folder beside this file is empty and that is not a mistake. Each
+first-level subdirectory of mods/ is one mod, laid over the base game's data
+in name order - so mods/zebra/ships.toml wins over mods/alpha/ships.toml, and
+both win over data/ships.toml. Ids replace wholesale rather than merging.
+
+
+COMMAND LINE
+------------
+  --seed <number>   Generate a specific galaxy. The same seed always produces
+                    the same galaxy.
+  --hardcore        Death deletes the save.
+  --frames <count>  Run for a fixed number of frames and exit. Used by the
+                    project's own smoke tests.
+
+
+LICENCE
+-------
+See LICENSE for this game's licence, and THIRD-PARTY.txt for the notices of
+the two libraries compiled into it.

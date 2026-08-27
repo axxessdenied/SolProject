@@ -12,7 +12,14 @@ namespace sol::platform {
 // Writes a whole binary file, replacing any existing content.
 [[nodiscard]] bool writeFileBytes(const char* path, const void* data, std::size_t size);
 
-// Absolute directory containing the running executable, with a trailing separator.
+// Absolute directory containing the running executable, with a trailing
+// separator. '/' separators on every platform, like listFiles below.
+//
+// ⚑ Both halves of that sentence are load-bearing and both have cost a bug.
+// Dropping the trailing separator silently moves the save file, the settings
+// and the cooked directory one level up, because every caller concatenates
+// straight onto it. And returning '\' on Windows silently broke the one caller
+// that prefix-matches this against a listFiles result (Phase 22).
 [[nodiscard]] std::string executableDirectory();
 
 // Last-write time as an opaque monotonic-comparable value; 0 if the file is missing.

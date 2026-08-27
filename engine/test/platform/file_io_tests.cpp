@@ -138,3 +138,54 @@ SOL_TEST(listFilesDescendsIntoSubdirectories)
     (void)deleteFile(top.c_str());
     (void)deleteFile(deep.c_str());
 }
+
+// ⚑⚑ Phase 22. The two promises in executableDirectory's header comment, and
+// both of them have now cost a bug rather than being hypothetical.
+//
+// The trailing separator is documented in both backends already: every caller
+// concatenates straight onto the result (`executableDir + "world.sav"`), so
+// dropping it moves the save file, the settings and the cooked directory one
+// level up without any error anywhere.
+//
+// The separator CHARACTER is the one Phase 22 found. listFiles has always
+// promised '/', executableDirectory returned Win32's '\', and the caller that
+// combines them - GameContent::initialize, stripping `modsDirectory + "/"` off
+// each listFiles result to recover the mod name - therefore never matched its
+// prefix and produced a mod layer literally named "C:". It needed a shipping
+// layout AND a mods directory that exists, so it hid until this phase created
+// game/mods. A mutation restoring either backslashes or the missing separator
+// fails this test on Windows and is invisible on Linux, which is exactly why
+// the assertion is written here and not left to a Windows-only reviewer.
+SOL_TEST(executableDirectoryKeepsItsSeparatorPromises)
+{
+    const std::string dir = sol::platform::executableDirectory();
+    SOL_REQUIRE(!dir.empty());
+    SOL_CHECK(dir.back() == '/');
+    SOL_CHECK(dir.find('\\') == std::string::npos);
+}
+
+// The other half of the same contract: whatever listFiles hands back must be
+// recoverable by stripping the directory it was given as a plain string
+// prefix. That is the operation content.cpp performs on the mods directory,
+// and it is the one that broke.
+//
+// ⚑ This test does NOT call executableDirectory, and the distinction matters
+// enough to name: disabling the Win32 normalisation fails the test above and
+// leaves this one green, because this one supplies its own '/' directory. It
+// guards listFiles' end of the promise, not the pair of them together.
+SOL_TEST(listFilesResultsArePrefixedByTheDirectoryAsGiven)
+{
+    const std::string dir = scratchRoot() + "/separators";
+    SOL_REQUIRE(createDirectories(dir.c_str()));
+    const std::string file = dir + "/marker.txt";
+    SOL_REQUIRE(writeText(file, "m"));
+
+    const std::vector<std::string> files = listFiles(dir.c_str());
+    SOL_REQUIRE(!files.empty());
+    for (const std::string& path : files) {
+        SOL_CHECK(path.find('\\') == std::string::npos);
+        SOL_CHECK(path.rfind(dir + "/", 0) == 0);
+    }
+
+    (void)deleteFile(file.c_str());
+}

@@ -190,7 +190,27 @@ std::string executableDirectory()
                                                nullptr,
                                                nullptr);
 
-    return std::string(utf8Path, static_cast<std::size_t>(utf8Length));
+    std::string path(utf8Path, static_cast<std::size_t>(utf8Length));
+    // ⚑⚑ Phase 22. NORMALISED TO '/', to match what listFiles has always
+    // promised in this same header. Win32 file APIs and the CRT accept either,
+    // so this costs nothing - but a CALLER that combines the two functions is
+    // silently broken when they disagree, and one was: GameContent::initialize
+    // strips `modsDirectory + "/"` off each listFiles result to find the mod
+    // name, and with a backslash directory the prefix never matched, so the
+    // name came out as everything up to the first '/' - the string "C:".
+    //
+    // It survived because it needs BOTH a shipping-layout path (dev builds bake
+    // a CMake path, which is already '/') AND a mods directory that exists,
+    // and game/mods did not exist until this phase. The Forge had already met
+    // the same mismatch and worked around it locally (`normalisedPath` in
+    // mesh_library.cpp, whose comment states the cause exactly). Fixing the
+    // source rather than adding a second workaround is the point.
+    for (char& c : path) {
+        if (c == '\\') {
+            c = '/';
+        }
+    }
+    return path;
 }
 
 } // namespace sol::platform

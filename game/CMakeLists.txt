@@ -50,14 +50,28 @@ set_target_properties(sol_game PROPERTIES OUTPUT_NAME sol)
 target_link_libraries(sol_game PRIVATE sol_game_lib)
 
 # Data defs + Lua scripts load straight from the source tree in dev builds so
-# edits hot-reload; shipping layouts fall back to dirs beside the executable.
-target_compile_definitions(sol_game PRIVATE
-    SOL_DATA_SOURCE_DIR="${CMAKE_SOURCE_DIR}/game/data"
-    SOL_MODS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/game/mods"
-)
+# edits hot-reload; shipping layouts fall back to dirs beside the executable
+# (`main.cpp` picks the fallback when the define is absent or empty).
+#
+# ⚑ Phase 22 made these CONDITIONAL. They were unconditional for seventeen
+# phases, so no build ever took the fallback and the shipping path had never
+# once been executed - the branch was written, reviewed, and dead.
+if(SOL_DEV_DATA_PATHS)
+    target_compile_definitions(sol_game PRIVATE
+        SOL_DATA_SOURCE_DIR="${CMAKE_SOURCE_DIR}/game/data"
+        SOL_MODS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/game/mods"
+    )
+endif()
 
 # Shader hot-reload (dev): recompile changed GLSL at runtime with glslc.
-if(SOL_GLSLC)
+#
+# ⚑⚑ Phase 22. This pair is gated on SOL_DEV_DATA_PATHS too, and it is the pair
+# nobody had counted - the roadmap named only the data/mods defines. It was
+# baked into every build on any machine with the Vulkan SDK, including release.
+# It never broke anything (ShaderWatcher gets an empty listFiles, leaves itself
+# unavailable and says so) - it simply shipped the build machine's absolute
+# paths, including the developer's user name, as strings inside the binary.
+if(SOL_GLSLC AND SOL_DEV_DATA_PATHS)
     target_compile_definitions(sol_game PRIVATE
         SOL_SHADER_SOURCE_DIR="${CMAKE_SOURCE_DIR}/shaders"
         SOL_GLSLC_PATH="${SOL_GLSLC}"
@@ -74,6 +88,80 @@ add_custom_target(sol_cook_assets
     VERBATIM
 )
 add_dependencies(sol_cook_assets sol_cooker)
+
+# ---------------------------------------------------------------------------
+# The shipping layout (Phase 22).
+#
+# Until this block existed there was no statement anywhere in the tree of what
+# "the game" IS as a set of files - only of what the build tree happened to
+# contain, which is why build/release/bin/ has always held cooked/ and shaders/
+# (custom targets generate them there) and never data/ or mods/ (nothing
+# copies them, and nothing ever did).
+#
+# ⚑ The exclusions are enforced by omission and that is deliberate: the cooker,
+# the Forge and every test binary are absent because they are never named here.
+# AGENTS.md 5 keeps ImGui to dev tooling and tools/forge/CMakeLists.txt says
+# the shipping binary carries no editor - this is where those stop being
+# comments and become something a test can assert (see package.layout).
+# ---------------------------------------------------------------------------
+
+install(TARGETS sol_game RUNTIME DESTINATION .)
+
+# Authored content. ⚑ `mods/` ships empty-but-present on purpose: listFiles
+# cannot tell a missing directory from an empty one, so a player with no mods
+# and a player whose mods directory vanished would see identical behaviour.
+# Shipping the directory is what makes the layer visible.
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/game/data/ DESTINATION data)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/game/mods/ DESTINATION mods)
+
+# ⚑⚑ Generated payload, and the reason it needs a guard rather than a rule.
+# cooked/ and shaders/ are produced INTO the build tree by sol_cook_assets and
+# sol_shaders, so at install time they are merely directories that may or may
+# not exist yet. install(DIRECTORY) over a missing source is NOT an error - it
+# creates an empty destination and says nothing, which yields a package that
+# unpacks cleanly and then dies at first load on somebody else's machine. That
+# is the exact failure mode packaging is prone to, so refuse instead, naming
+# the directory: a refusal that names the file beats a silent fallback.
+set(solPayloadGuard [[
+if(NOT EXISTS "@solPayloadDir@")
+    message(FATAL_ERROR "Nothing to install from @solPayloadDir@ - build the sol_game target first (it depends on sol_cook_assets and sol_shaders).")
+endif()
+]])
+foreach(solPayloadName cooked shaders)
+    set(solPayloadDir ${CMAKE_BINARY_DIR}/bin/${solPayloadName})
+    string(CONFIGURE "${solPayloadGuard}" solPayloadCheck @ONLY)
+    install(CODE "${solPayloadCheck}")
+endforeach()
+install(DIRECTORY ${CMAKE_BINARY_DIR}/bin/cooked/ DESTINATION cooked)
+install(DIRECTORY ${CMAKE_BINARY_DIR}/bin/shaders/ DESTINATION shaders)
+
+# What a distribution has to carry and this repo did not have: the third-party
+# notices MIT requires to ACCOMPANY A BINARY (third_party/ is not distributed,
+# so neither Lua's nor Dear ImGui's notice reached a player), and a README
+# written for someone who wants to play rather than to build.
+#
+# ⚑ The requirements differ per platform and the Linux one is a measured
+# claim, not a polite guess: the binary needs GLIBC_2.38, so "Linux" would be
+# false and "Ubuntu 24.04 or newer" is true.
+if(WIN32)
+    set(SOL_PACKAGE_PLATFORM "Windows 10 or newer, 64-bit")
+    set(SOL_PACKAGE_REQUIREMENTS
+        "A GPU and driver supporting Vulkan 1.3. Nothing else: the C runtime is\nlinked statically, so no Visual C++ redistributable is required.")
+    set(SOL_PACKAGE_RUN "Double-click sol.exe.")
+else()
+    set(SOL_PACKAGE_PLATFORM "Ubuntu 24.04 or newer (glibc 2.38+), 64-bit")
+    set(SOL_PACKAGE_REQUIREMENTS
+        "A GPU and driver supporting Vulkan 1.3, plus the Vulkan loader and the\nWayland client libraries, which ship with any current desktop install:\n  libvulkan1  libwayland-client0  libwayland-cursor0  libxkbcommon0\nA Wayland session is required; there is no X11 backend.")
+    set(SOL_PACKAGE_RUN "Run ./sol from a terminal in this directory.")
+endif()
+configure_file(${CMAKE_SOURCE_DIR}/packaging/README.txt.in
+               ${CMAKE_CURRENT_BINARY_DIR}/README.txt @ONLY)
+
+install(FILES
+    ${CMAKE_SOURCE_DIR}/LICENSE
+    ${CMAKE_SOURCE_DIR}/packaging/THIRD-PARTY.txt
+    ${CMAKE_CURRENT_BINARY_DIR}/README.txt
+    DESTINATION .)
 
 # Needs a GPU + Vulkan driver, so it is excluded from the default test presets
 # (label "gpu"); run locally with: ctest --preset dev-gpu

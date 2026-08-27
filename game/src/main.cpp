@@ -292,6 +292,14 @@ int main(int argc, char** argv)
         std::strlen(SOL_DATA_SOURCE_DIR) > 0 ? SOL_DATA_SOURCE_DIR : executableDir + "data";
     const std::string modsDirectory =
         std::strlen(SOL_MODS_SOURCE_DIR) > 0 ? SOL_MODS_SOURCE_DIR : executableDir + "mods";
+    // Phase 22. Logged BEFORE initialize rather than after, for two reasons.
+    // When the defs fail to load, WHERE the game looked is most of the answer,
+    // and a line printed after the `return EXIT_FAILURE` below never arrives.
+    // And it is the only local evidence that a packaged build resolved into
+    // its own install tree instead of into the source tree it was built from -
+    // the failure that works perfectly on the machine that produced it.
+    SOL_LOG_INFO("data directory: %s", dataDirectory.c_str());
+    SOL_LOG_INFO("mods directory: %s", modsDirectory.c_str());
     game::GameContent content;
     if (!content.initialize(dataDirectory, modsDirectory, &world)) {
         return EXIT_FAILURE;

@@ -11,10 +11,13 @@
     },
     {
       "name": "release",
-      "displayName": "Release (RelWithDebInfo, Ninja, MSVC)",
+      "displayName": "Release (RelWithDebInfo, Ninja, MSVC) - the SHIPPING configuration",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/release",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SOL_DEV_DATA_PATHS": "OFF"
+      }
     },
     {
       "name": "linux-dev",
@@ -27,12 +30,28 @@
         "lhs": "${hostSystemName}",
         "rhs": "Linux"
       }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux release (RelWithDebInfo, Ninja, GCC) - the SHIPPING configuration",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SOL_DEV_DATA_PATHS": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
     }
   ],
   "buildPresets": [
     { "name": "dev", "configurePreset": "dev" },
     { "name": "release", "configurePreset": "release" },
-    { "name": "linux-dev", "configurePreset": "linux-dev" }
+    { "name": "linux-dev", "configurePreset": "linux-dev" },
+    { "name": "linux-release", "configurePreset": "linux-release" }
   ],
   "testPresets": [
     {
@@ -56,6 +75,12 @@
     {
       "name": "linux-dev",
       "configurePreset": "linux-dev",
+      "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "gpu" } }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
       "output": { "outputOnFailure": true },
       "filter": { "exclude": { "label": "gpu" } }
     },
