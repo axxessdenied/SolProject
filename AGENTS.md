@@ -71,9 +71,9 @@ This is a from-scratch engine. The **only** approved third-party dependencies ar
 | Dependency | Scope |
 |---|---|
 | Vulkan SDK / headers | Graphics API (runtime) |
-| glslang (or shaderc) | GLSL → SPIR-V, **build-time only** |
+| glslang (or shaderc) | GLSL → SPIR-V, **build-time only** — and it stays that way now that mods can carry shaders: a mod ships `.spv`, and no compiler is distributed (`docs/decisions/011-mod-shaders-spirv.md`) |
 | Lua 5.4 (vendored source) | Scripting runtime |
-| Dear ImGui (vendored) | **Dev/debug tooling only** — never shipping game UI |
+| Dear ImGui (vendored) | **Dev/debug tooling only** — never shipping game UI. ⚑ The Forge itself IS now distributed (`docs/decisions/010-forge-ships.md`), so ImGui reaches end users inside a tool; the rule this row protects is that **the GAME's UI is first-party**, and that is unchanged. |
 | stb_vorbis (vendored) | Ogg Vorbis decode, **cooker only** — the shipping binary carries no decoder (`docs/decisions/009-audio-decoder.md`) |
 
 Everything else — math, ECS, containers/allocators, asset formats, image/mesh importing in the cooker, platform abstraction — is written in this repo. **Adding, upgrading, or expanding the scope of any dependency requires explicit approval from the user first.** Do not add a library "temporarily," and do not copy-paste library source into the tree as a workaround.
