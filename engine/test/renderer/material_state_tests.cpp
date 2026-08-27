@@ -7,6 +7,7 @@
 
 using sol::assets::MaterialBlend;
 using sol::assets::MaterialDef;
+using sol::renderer::applyParamValues;
 using sol::renderer::groupMaterialsByState;
 using sol::renderer::materialPipelineState;
 using sol::renderer::MaterialStateGrouping;
@@ -219,4 +220,42 @@ SOL_TEST(materialStateInterfaceSplitsAnOtherwiseIdenticalPair)
     SOL_CHECK(shared.states.size() == 2);
     SOL_CHECK(shared.materialState[0] == shared.materialState[1]);
     SOL_CHECK(shared.materialState[2] == shared.materialState[3]);
+}
+
+// ⚑⚑ PHASE 25 STAGE D. A slider must be able to move a number that is already
+// declared and must NOT be able to invent one - because the param block's size
+// comes from the shader, so a value with nowhere to go is either dropped in
+// silence or written past a mapped buffer. This is the pure half of
+// `MaterialRegistry::setParams`; the other half is one memcpy.
+SOL_TEST(materialStateAppliesDeclaredParamValuesByName)
+{
+    sol::assets::MaterialDef tuned = material("tuned");
+    tuned.params.push_back({.name = "glow_strength", .value = 2.2f});
+    tuned.params.push_back({.name = "rim", .value = 0.5f});
+
+    // ⚑ Handed in REVERSED, which is the assertion: a def document's keys are
+    // in whatever order an author wrote them, so matching by position would
+    // have put the rim value on the glow.
+    const std::vector<sol::assets::MaterialParam> values = {{.name = "rim", .value = 0.25f},
+                                                            {.name = "glow_strength", .value = 4.0f}};
+    SOL_CHECK(applyParamValues(tuned, values));
+    SOL_CHECK(tuned.params[0].name == "glow_strength");
+    SOL_CHECK(tuned.params[0].value == 4.0f);
+    SOL_CHECK(tuned.params[1].value == 0.25f);
+}
+
+SOL_TEST(materialStateRefusesAnUndeclaredParamAndChangesNothing)
+{
+    sol::assets::MaterialDef tuned = material("tuned");
+    tuned.params.push_back({.name = "glow_strength", .value = 2.2f});
+
+    // One name is declared and one is not. ⚑ The declared one is FIRST, so a
+    // check-as-you-go implementation would have written it before discovering
+    // the second - which is the half-applied state the all-or-nothing rule
+    // exists to make unreachable.
+    const std::vector<sol::assets::MaterialParam> values = {{.name = "glow_strength", .value = 4.0f},
+                                                            {.name = "rim", .value = 0.25f}};
+    SOL_CHECK(!applyParamValues(tuned, values));
+    SOL_CHECK(tuned.params.size() == 1);
+    SOL_CHECK(tuned.params[0].value == 2.2f);
 }

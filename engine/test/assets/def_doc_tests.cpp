@@ -530,3 +530,88 @@ SOL_TEST(defNumberRoundsToThePrecisionThePanelShows)
     const float worst = 0.00005f / 1.0f;
     SOL_CHECK(worst * 100.0f < 0.001f * 100.0f);
 }
+
+// ⚑⚑ PHASE 25 STAGE D: THE INLINE TABLE, WHICH IS WHERE A MATERIAL'S TEXTURE
+// SLOTS AND TUNABLE NUMBERS HAVE TO LIVE. `def_doc` refuses a nested
+// `[material.params]` header rather than silently reassigning its keys to the
+// row above, so `materials.toml` writes them as one-line inline tables - and
+// the Forge cannot author a material without being able to change one entry of
+// one of them.
+SOL_TEST(defDocReadsAnInlineTablesEntries)
+{
+    DefDoc doc;
+    SOL_CHECK(parses("[[material]]\n"
+                     "id = \"sol.cockpit\"\n"
+                     "textures = { glow = \"cockpit_glow\" }\n"
+                     "params = { glow_strength = 2.2, rim = 0.5 }\n",
+                     doc));
+    const assets::DefKey* textures = doc.rows[0].find("textures");
+    SOL_CHECK(textures != nullptr);
+    const std::vector<assets::DefInlineEntry> slots = textures->inlineEntries();
+    SOL_CHECK(slots.size() == 1);
+    SOL_CHECK(slots[0].name == "glow");
+    SOL_CHECK(textures->text.substr(slots[0].valueBegin, slots[0].valueEnd - slots[0].valueBegin) ==
+              "\"cockpit_glow\"");
+
+    const assets::DefKey* params = doc.rows[0].find("params");
+    SOL_CHECK(params != nullptr);
+    const std::vector<assets::DefInlineEntry> tuned = params->inlineEntries();
+    SOL_CHECK(tuned.size() == 2);
+    SOL_CHECK(tuned[0].name == "glow_strength");
+    SOL_CHECK(params->text.substr(tuned[0].valueBegin, tuned[0].valueEnd - tuned[0].valueBegin) == "2.2");
+    SOL_CHECK(tuned[1].name == "rim");
+    SOL_CHECK(params->text.substr(tuned[1].valueBegin, tuned[1].valueEnd - tuned[1].valueBegin) == "0.5");
+
+    // ⚑ A value that is not a table is not half-read into one. `id` would parse
+    // as a single nameless entry under a looser rule, and a caller that then
+    // spliced it would rewrite the id.
+    SOL_CHECK(doc.rows[0].find("id")->inlineEntries().empty());
+}
+
+// ⚑⚑ THE WHOLE REASON THIS SPLICES RATHER THAN RE-EMITS. Rewriting the table
+// from parsed doubles is the obvious implementation and it loses exactly what
+// this file exists to keep: the author's spacing, and a `2.2` that a double
+// prints back as something longer. Every byte outside the one value survives.
+SOL_TEST(defDocSplicesOneInlineEntryAndLeavesTheRestByteExact)
+{
+    DefDoc doc;
+    SOL_CHECK(parses("[[material]]\n"
+                     "params = { glow_strength = 2.2, rim = 0.5 }  # tuned by eye\n",
+                     doc));
+    assets::DefKey* params = doc.rows[0].find("params");
+    SOL_CHECK(params != nullptr);
+    SOL_CHECK(params->setInlineValue("glow_strength", "4.125"));
+    SOL_CHECK(params->text == "params = { glow_strength = 4.125, rim = 0.5 }  # tuned by eye");
+
+    // ⚑ AND THE KEY'S OWN RANGE MOVED WITH IT. A splice that left `valueEnd`
+    // behind would give back a table with its closing brace cut off, which
+    // parses as no entries at all - so the NEXT edit would silently do nothing
+    // and the failure would surface one gesture later than its cause.
+    SOL_CHECK(params->value() == "{ glow_strength = 4.125, rim = 0.5 }");
+    SOL_CHECK(params->setInlineValue("rim", "0.75"));
+    SOL_CHECK(params->text == "params = { glow_strength = 4.125, rim = 0.75 }  # tuned by eye");
+    SOL_CHECK(assets::writeDefs(doc) == "[[material]]\n"
+                                        "params = { glow_strength = 4.125, rim = 0.75 }  # tuned by eye\n");
+
+    // It never creates an entry: a key that is not there is a declaration
+    // change, and this file interprets no schema.
+    SOL_CHECK(!params->setInlineValue("absent", "1.0"));
+    SOL_CHECK(params->text == "params = { glow_strength = 4.125, rim = 0.75 }  # tuned by eye");
+}
+
+// ⚑ A COMMA INSIDE A QUOTED VALUE. `textures = { a = "x,y" }` is legal TOML,
+// and the obvious scan-to-the-next-comma cuts the entry in half - then splices
+// into the middle of somebody's filename, which is the worst available failure
+// because the file still parses.
+SOL_TEST(defDocInlineTableScansAQuotedValueRatherThanSplittingOnItsComma)
+{
+    DefDoc doc;
+    SOL_CHECK(parses("[[material]]\ntextures = { odd = \"a,b\", glow = \"cockpit_glow\" }\n", doc));
+    assets::DefKey* textures = doc.rows[0].find("textures");
+    const std::vector<assets::DefInlineEntry> slots = textures->inlineEntries();
+    SOL_CHECK(slots.size() == 2);
+    SOL_CHECK(slots[0].name == "odd");
+    SOL_CHECK(slots[1].name == "glow");
+    SOL_CHECK(textures->setInlineValue("glow", "\"checker\""));
+    SOL_CHECK(textures->text == "textures = { odd = \"a,b\", glow = \"checker\" }");
+}

@@ -39,6 +39,27 @@
 
 namespace sol::assets {
 
+// ⚑⚑ ONE ENTRY OF AN INLINE TABLE, AS A RANGE RATHER THAN A COPY - which is
+// `DefKey` itself one level down, for the same reason (Phase 25 stage D).
+// `materials.toml` writes a material's texture slots and its tunable numbers as
+// `textures = { glow = "cockpit_glow" }` and `params = { glow_strength = 2.2 }`,
+// because `def_doc` models a def file as a flat list of rows and REFUSES a
+// nested `[material.textures]` header - so an inline table is where those keys
+// have to live, and the Forge has to be able to change one of them.
+//
+// ⚑ A WHOLE-TABLE REWRITE WAS THE OBVIOUS IMPLEMENTATION AND IT IS THE WRONG
+// ONE. Re-emitting `{ a = 1.0, b = 2.0 }` from parsed values loses exactly what
+// this file exists to keep: the author's spacing, their `2.2` that a double
+// would print as `2.2000000476837158`, and their `0.30` that would come back as
+// `0.3`. Splicing one value keeps every other byte, which is the same bargain
+// `DefKey::setValue` already makes for a whole line.
+struct DefInlineEntry
+{
+    std::string name;
+    std::uint32_t valueBegin = 0;
+    std::uint32_t valueEnd = 0; // one past the last byte, in the KEY'S text
+};
+
 // One `key = value` line, kept as the line rather than as a value.
 //
 // ⚑ `text` is the raw line with its trailing newline stripped, and it can span
@@ -60,6 +81,20 @@ struct DefKey
     [[nodiscard]] std::string_view value() const;
     // A string value with its quotes removed; the value itself when unquoted.
     [[nodiscard]] std::string_view unquoted() const;
+    // The entries of an inline-table value, in written order. Empty when this
+    // value is not an inline table, which is the same answer as an empty one -
+    // a caller that cares knows which key it asked for.
+    //
+    // ⚑ ONE LEVEL DEEP, DELIBERATELY. A nested table or an array inside an
+    // entry is not something any def file writes and not something this can
+    // represent, so a value containing `{` or `[` is left as one opaque entry
+    // rather than half-parsed into something a splice would corrupt.
+    [[nodiscard]] std::vector<DefInlineEntry> inlineEntries() const;
+    // Splices `v` into one inline-table entry, keeping every other byte of the
+    // line. False when this value is not an inline table or has no such entry -
+    // it never CREATES one, because a key that is not there is a schema change
+    // and this file interprets no schema.
+    bool setInlineValue(std::string_view entryName, std::string_view v);
     // Splices `v` into the value's range, keeping the prefix and any suffix.
     void setValue(std::string_view v);
 };

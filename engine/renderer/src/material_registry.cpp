@@ -521,6 +521,40 @@ bool MaterialRegistry::writeMaterialSet(std::uint32_t materialIndex,
     return true;
 }
 
+bool MaterialRegistry::setParams(std::uint32_t materialIndex, std::span<const assets::MaterialParam> params)
+{
+    if (materialIndex >= m_materialResources.size()) {
+        return false;
+    }
+    MaterialResources& resources = m_materialResources[materialIndex];
+    if (resources.mapped == nullptr) {
+        return false; // no params buffer: this material declares none
+    }
+    const std::uint32_t state = m_materialState[materialIndex];
+    if (state >= m_stateFragment.size()) {
+        return false;
+    }
+    // ⚑ THE STORED ROW IS UPDATED FIRST AND IS WHAT GETS PACKED, rather than
+    // packing the caller's span directly. `reloadPipelines` re-packs from
+    // `m_materials` after an F5, so a registry that wrote new bytes without
+    // recording them would put the load-time values back the next time a shader
+    // changed - a slider that quietly undid itself several seconds later.
+    assets::MaterialDef& material = m_materials[materialIndex];
+    if (!applyParamValues(material, params)) {
+        return false;
+    }
+    const std::vector<std::uint8_t> blob = packParams(material, m_stateFragment[state]);
+    // ⚑ The size CANNOT have changed - the declaration is untouched by the line
+    // above, and the reflection is the one this buffer was allocated against -
+    // so this is an assertion rather than a case. It is written as a refusal
+    // because a memcpy past a mapped range is not a bug that reports itself.
+    if (blob.size() != resources.params.size) {
+        return false;
+    }
+    std::memcpy(resources.mapped, blob.data(), blob.size());
+    return true;
+}
+
 bool MaterialRegistry::createPipelines()
 {
     const VkDevice device = m_context->device();

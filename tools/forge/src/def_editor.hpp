@@ -53,6 +53,15 @@ public:
     // `loadModelCatalog` already follows for reading.
     void load(const std::string& dataDirectory);
 
+    // ⚑⚑⚑ WHICH MESH IS OPEN, SET ONCE A FRAME BY THE CALLER AND OWNED BY NO
+    // PANEL. It decides the `[[model]]` rows the panels show and, through them,
+    // the material the viewport draws with - and it must be true whether or not
+    // any particular window is submitted. See the implementation for the defect
+    // that made this a separate call: the Material panel docked in front of the
+    // Report panel, ImGui stopped submitting Report, and a hidden window cannot
+    // update anything.
+    void setOpenMesh(const std::string& stem);
+
     // Draws the `[[model]]` rows naming this mesh, with the measured report
     // beside the authored numbers. Returns true when a document changed.
     [[nodiscard]] bool drawModelRows(const AssetEntry& entry,
@@ -84,6 +93,61 @@ public:
 
     [[nodiscard]] bool drawSoundRows(const AssetEntry& entry, Audition& audition);
 
+    // ⚑⚑⚑ PHASE 25 STAGE D: THE SURFACE OF WHATEVER IS OPEN, EDITED IN PLACE.
+    // Draws the `[[material]]` row the open mesh's model row NAMES - not a row
+    // the author picked off a list - so the viewport can never show a surface
+    // the game would not. `drawModelRows` decides which one that is, so this
+    // must be called after it.
+    //
+    // ⚑⚑ THE COMMON CASE IS A MATERIAL WITH NO ROW, AND SAYING SO IS HALF THE
+    // PANEL. Five of the eight shipped models name no material, so the game
+    // derives one - `sol.auto.<model id>`, rebuilt from scratch after every
+    // merge - which exists only in memory and has no file to edit. That is
+    // where the `[[material]]` row this stage writes comes from: the button
+    // moves the four surface keys off the model row and onto a real material,
+    // in ONE undo entry, because half of that move is a model naming a material
+    // that does not exist.
+    enum class MaterialEdit
+    {
+        None,
+        // A declared number moved. The registry rewrites one mapped buffer and
+        // touches no pipeline.
+        Params,
+        // Anything a pipeline or a descriptor set is BUILT from - a shader
+        // stem, a state flag, a slot's texture, or a whole new row. Needs an
+        // idle device, so the caller raises it rather than serving it here.
+        Structure,
+    };
+
+    // ⚑⚑ `shownTexture` AND `outShowTexture` ARE HOW THIS PANEL AND THE TEXTURE
+    // LIST STAY ONE ANSWER TO "WHICH SURFACE AM I LOOKING AT". Stage G made
+    // selecting a texture shade the open mesh, and that is still what a list
+    // click does - it is how an author checks a UV against a checker without
+    // touching any def. But a material OWNS the texture the game will use, so
+    // changing it here has to move the picture too, or the exit criterion of
+    // this stage is false. So: the combo below reports the stem it wrote
+    // through `outShowTexture`, the caller selects it, and whenever the two
+    // disagree the panel SAYS SO rather than leaving a viewport that quietly
+    // does not match the file.
+    [[nodiscard]] MaterialEdit drawMaterialRows(const std::vector<std::string>& textureStems,
+                                                const std::vector<std::string>& vertexStems,
+                                                const std::vector<std::string>& fragmentStems,
+                                                const std::string& shownTexture,
+                                                std::string* outShowTexture);
+
+    // The materials as the GAME resolves them: the authored rows plus the ones
+    // derived from `[[model]]` rows that name none, in the order the renderer
+    // indexes them. Empty until `load` succeeds.
+    [[nodiscard]] const std::vector<sol::assets::MaterialDef>& materials() const
+    {
+        return m_defs.materials();
+    }
+
+    // Which of those the open mesh is drawn with, or `kNoMaterial`.
+    static constexpr std::uint32_t kNoMaterial = 0xFFFFFFFFu;
+
+    [[nodiscard]] std::uint32_t openMaterialIndex() const { return m_openMaterial; }
+
     // Draws the `[[ship]]` and `[[station]]` rows that name any of those models
     // - the content that actually puts the mesh in front of a player - and can
     // make a new one. ⚑ Only the keys that are about the ASSET: id, name, model,
@@ -105,7 +169,7 @@ public:
 
     // Undo is a copy of the document, per E1's precedent and G's: a `DefDoc` is
     // a plain value and the largest def file in this game is 139 lines.
-    void beginEdit(std::size_t document, std::string label);
+    void beginEdit(std::string label);
     [[nodiscard]] bool undoStep();
     [[nodiscard]] bool redoStep();
 
@@ -122,7 +186,7 @@ public:
     // path turns one drag into twenty-four entries. This pushes on the frame the
     // LAST-SUBMITTED widget became active, so it must be called immediately
     // after the widget it is about.
-    void noteActivation(std::size_t document, const char* label);
+    void noteActivation(const char* label);
     // Throws this editor's snapshots away AND tells the history.
     void forgetHistory();
 
@@ -136,13 +200,8 @@ private:
         bool ok = false;
     };
 
-    struct UndoEntry
-    {
-        std::size_t document = 0;
-        sol::assets::DefDoc doc;
-    };
-
-    // Indices into m_docs, fixed so the undo stack can name one.
+    // Indices into m_docs. Fixed, because a `[[model]]` row and the material it
+    // names live in different files and one gesture can touch both.
     static constexpr std::size_t kModels = 0;
     static constexpr std::size_t kShips = 1;
     static constexpr std::size_t kStations = 2;
@@ -152,17 +211,57 @@ private:
     // `revalidate`, so a bad gain is refused by the GAME'S schema and not by a
     // second one written here.
     static constexpr std::size_t kSounds = 3;
-    static constexpr std::size_t kDocumentCount = 4;
+    // ⚑⚑ STAGE 25-D. `materials.toml` joins the set for the same reason
+    // `sounds.toml` did, and one more: a material is the ONLY def in this game
+    // that another def file points AT. A `[[model]]` naming a material that no
+    // row defines passes `mergeToml` clean - `validateMaterials` is a separate
+    // call the game makes and this editor did not - so until this document was
+    // here, the tool could write that dangling reference and not know.
+    static constexpr std::size_t kMaterials = 4;
+    static constexpr std::size_t kDocumentCount = 5;
     static constexpr std::size_t kUndoDepth = 64;
+
+    // ⚑⚑⚑ STAGE 25-D MADE THIS A SNAPSHOT OF EVERY DOCUMENT RATHER THAN OF
+    // ONE, AND THE REASON IS A SINGLE BUTTON. Promoting a synthesised material
+    // into a real `[[material]]` row writes TWO files at once: the row is
+    // appended to `materials.toml` and, in the same gesture, `models.toml` gains
+    // a `material` key and loses the four surface keys it can no longer carry.
+    // Recorded as two entries, one Ctrl+Z would leave a model naming a material
+    // that does not exist yet - an invalid halfway state that the panel would
+    // then report as an author's mistake.
+    //
+    // ⚑ The dirty flags travel with it, which also fixes something that was
+    // already slightly wrong: undoing back to the start used to leave every
+    // document it had touched marked dirty, so `save defs` rewrote files whose
+    // contents were identical to what was on disk.
+    //
+    // ⚑ Five documents copied instead of one, per edit. The largest def file in
+    // this game is 139 lines; the whole set is under 20 KB.
+    struct UndoEntry
+    {
+        sol::assets::DefDoc docs[kDocumentCount];
+        bool dirty[kDocumentCount] = {};
+    };
+
+    [[nodiscard]] UndoEntry snapshot() const;
+    void restore(UndoEntry& entry);
 
     // Serialises every document, validates each through the game's schema, and
     // keeps the merged result. False with `m_error` set on the first refusal.
     [[nodiscard]] bool revalidate();
     // The `[[model]]` ids that exist, for the combos and the cross-check.
     [[nodiscard]] std::vector<std::string> modelIds() const;
+    // The `[[material]]` row with this id, or null when the id names one the
+    // database DERIVED rather than one somebody wrote.
+    [[nodiscard]] sol::assets::DefRow* materialRow(const std::string& id);
+    // Moves a model row's surface onto a new `[[material]]` row. One undo entry
+    // covering two documents; see `UndoEntry`.
+    void promoteMaterial(sol::assets::DefRow& model);
+    // One inline table's entries, edited. Returns true when one changed.
+    [[nodiscard]] bool drawSlotTable(sol::assets::DefRow& row, const std::vector<std::string>& textureStems);
+    [[nodiscard]] bool drawParamTable(sol::assets::DefRow& row);
     // One `[[ship]]`/`[[station]]` row's asset keys. Returns true when changed.
-    [[nodiscard]] bool
-    drawContentRow(std::size_t document, sol::assets::DefRow& row, const std::vector<std::string>& models);
+    [[nodiscard]] bool drawContentRow(sol::assets::DefRow& row, const std::vector<std::string>& models);
 
     Document m_docs[kDocumentCount];
     std::vector<UndoEntry> m_undo;
@@ -172,6 +271,9 @@ private:
     // The model ids on the mesh currently open, which is what decides whether a
     // content row is worth showing. Set by drawModelRows, read by drawContentRows.
     std::vector<std::string> m_openModels;
+    // The material the open mesh draws with, decided in `drawModelRows` and read
+    // by `drawMaterialRows` and by the viewport.
+    std::uint32_t m_openMaterial = kNoMaterial;
     std::string m_dataDirectory;
     std::string m_error;
     bool m_loaded = false;

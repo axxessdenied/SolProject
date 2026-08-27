@@ -65,6 +65,22 @@ struct MaterialStateGrouping
     std::vector<std::uint32_t> materialState;
 };
 
+// ⚑⚑ PHASE 25 STAGE D: NEW VALUES FOR PARAMS THAT ARE ALREADY DECLARED, WHICH
+// IS THE ONLY KIND OF PARAM EDIT THAT IS NOT ALSO A LAYOUT CHANGE. A slider in
+// an editor moves a number; it does not add a member to the shader's uniform
+// block, and it must not be able to. So this refuses a name the material does
+// not already declare rather than appending it - an undeclared param is a
+// DECLARATION change, and a declaration change has to go back through `build`
+// and the SPIR-V check that lives there.
+//
+// ⚑ BY NAME, NEVER BY POSITION, for the reason `spirv_reflect.hpp` gives: the
+// values arriving here come from a def document whose keys an author reorders
+// freely, and position matching is the silent misalignment stage C exists to
+// avoid. ⚑ ALL OR NOTHING: false leaves `material` exactly as it was, so a
+// caller cannot half-apply a set of values and then report a failure.
+[[nodiscard]] bool applyParamValues(assets::MaterialDef& material,
+                                    std::span<const assets::MaterialParam> values);
+
 [[nodiscard]] MaterialStateGrouping groupMaterialsByState(std::span<const assets::MaterialDef> materials);
 
 } // namespace sol::renderer

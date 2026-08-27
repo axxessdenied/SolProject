@@ -1,5 +1,7 @@
 #include "def_editor.hpp"
 
+#include "def_surface.hpp"
+
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
 
@@ -87,10 +89,12 @@ void DefEditor::load(const std::string& dataDirectory)
     m_error.clear();
     forgetHistory();
     m_openModels.clear();
+    m_openMaterial = kNoMaterial;
     m_docs[kModels] = Document{.file = "models.toml"};
     m_docs[kShips] = Document{.file = "ships.toml"};
     m_docs[kStations] = Document{.file = "stations.toml"};
     m_docs[kSounds] = Document{.file = "sounds.toml"};
+    m_docs[kMaterials] = Document{.file = "materials.toml"};
     if (dataDirectory.empty()) {
         m_error = "no data directory";
         return;
@@ -148,12 +152,17 @@ bool DefEditor::dirty() const
     return false;
 }
 
-void DefEditor::beginEdit(std::size_t document, std::string label)
+void DefEditor::beginEdit(std::string label)
 {
-    if (!m_loaded || document >= kDocumentCount) {
+    if (!m_loaded) {
         return;
     }
-    m_undo.push_back(UndoEntry{.document = document, .doc = m_docs[document].doc});
+    UndoEntry entry;
+    for (std::size_t i = 0; i < kDocumentCount; ++i) {
+        entry.docs[i] = m_docs[i].doc;
+        entry.dirty[i] = m_docs[i].dirty;
+    }
+    m_undo.push_back(std::move(entry));
     m_redo.clear();
     if (m_history != nullptr) {
         m_history->note(EditHistory::Editor::Def, std::move(label));
@@ -166,10 +175,10 @@ void DefEditor::beginEdit(std::size_t document, std::string label)
     }
 }
 
-void DefEditor::noteActivation(std::size_t document, const char* label)
+void DefEditor::noteActivation(const char* label)
 {
     if (ImGui::IsItemActivated()) {
-        beginEdit(document, label);
+        beginEdit(label);
     }
 }
 
@@ -182,6 +191,28 @@ void DefEditor::forgetHistory()
     }
 }
 
+// The state as it stands, for the opposite stack. ⚑ Taken BEFORE the swap in
+// both directions, so a redo puts back exactly what the undo took - which is
+// the same promise the one-document version made, now over the whole set.
+DefEditor::UndoEntry DefEditor::snapshot() const
+{
+    UndoEntry entry;
+    for (std::size_t i = 0; i < kDocumentCount; ++i) {
+        entry.docs[i] = m_docs[i].doc;
+        entry.dirty[i] = m_docs[i].dirty;
+    }
+    return entry;
+}
+
+void DefEditor::restore(UndoEntry& entry)
+{
+    for (std::size_t i = 0; i < kDocumentCount; ++i) {
+        m_docs[i].doc = std::move(entry.docs[i]);
+        m_docs[i].dirty = entry.dirty[i];
+    }
+    (void)revalidate();
+}
+
 bool DefEditor::undoStep()
 {
     if (m_undo.empty()) {
@@ -189,13 +220,8 @@ bool DefEditor::undoStep()
     }
     UndoEntry entry = std::move(m_undo.back());
     m_undo.pop_back();
-    // ⚑ The forward entry carries the document as it stands NOW, under the same
-    // index the backward one named - so a redo puts back exactly what the undo
-    // took, in the file it took it from.
-    m_redo.push_back(UndoEntry{.document = entry.document, .doc = m_docs[entry.document].doc});
-    m_docs[entry.document].doc = std::move(entry.doc);
-    m_docs[entry.document].dirty = true;
-    (void)revalidate();
+    m_redo.push_back(snapshot());
+    restore(entry);
     return true;
 }
 
@@ -206,10 +232,8 @@ bool DefEditor::redoStep()
     }
     UndoEntry entry = std::move(m_redo.back());
     m_redo.pop_back();
-    m_undo.push_back(UndoEntry{.document = entry.document, .doc = m_docs[entry.document].doc});
-    m_docs[entry.document].doc = std::move(entry.doc);
-    m_docs[entry.document].dirty = true;
-    (void)revalidate();
+    m_undo.push_back(snapshot());
+    restore(entry);
     return true;
 }
 
@@ -254,11 +278,49 @@ bool DefEditor::save(std::string& status)
     return true;
 }
 
+void DefEditor::setOpenMesh(const std::string& stem)
+{
+    // ⚑⚑⚑ THIS USED TO LIVE INSIDE `drawModelRows`, AND STAGE D MADE THAT A
+    // DEFECT RATHER THAN FINDING ONE. `drawModelRows` is submitted by the
+    // Report panel; the Material panel arrived docked into the same node, so
+    // Report became a TAB BEHIND IT - and a hidden ImGui window is not
+    // submitted at all. Opening `ship.forge` with the Material tab in front
+    // therefore left both of these holding `cockpit`, and the viewport drew the
+    // ship wearing the cockpit's material: a surface the game will never put on
+    // it, which is the exact failure this panel was shaped to make impossible.
+    //
+    // ⚑ So the caller sets it once a frame, above every panel, and no panel
+    // owns it. The cost is walking eight rows; the alternative is a rule that
+    // one window must be visible for another to be correct, which is the shape
+    // of defect this tool keeps rediscovering.
+    m_openModels.clear();
+    m_openMaterial = kNoMaterial;
+    if (!m_loaded || stem.empty()) {
+        return;
+    }
+    for (const DefRow& row : m_docs[kModels].doc.rows) {
+        if (row.type != "model") {
+            continue;
+        }
+        const assets::DefKey* mesh = row.find("mesh");
+        if (mesh != nullptr && mesh->unquoted() == stem && !row.id().empty()) {
+            m_openModels.emplace_back(row.id());
+        }
+    }
+    if (m_openModels.empty()) {
+        return;
+    }
+    const std::uint32_t model = m_defs.modelIndex(m_openModels.front().c_str());
+    if (model < m_defs.models().size()) {
+        m_openMaterial = m_defs.models()[model].materialIndex;
+    }
+}
+
 bool DefEditor::drawModelRows(const AssetEntry& entry,
                               const MeshReport& report,
                               const std::vector<std::string>& textureStems)
 {
-    m_openModels.clear();
+    setOpenMesh(entry.stem);
     if (!m_loaded) {
         ImGui::TextDisabled("def rows unavailable: %s",
                             m_error.empty() ? "no data directory" : m_error.c_str());
@@ -275,7 +337,6 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
             continue;
         }
         const std::string id(row.id());
-        m_openModels.push_back(id);
         ImGui::PushID(id.c_str());
         ImGui::Text("[[model]] %s", id.c_str());
 
@@ -302,7 +363,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
                 for (const std::string& stem : textureStems) {
                     const bool selected = stem == texture;
                     if (ImGui::Selectable(stem.c_str(), selected) && !selected) {
-                        beginEdit(kModels, "set texture");
+                        beginEdit("set texture");
                         row.set("texture", assets::defString(stem));
                         changed = true;
                     }
@@ -317,7 +378,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
             row.set("radius", assets::defNumber(radius, kMetreDecimals));
             changed = true;
         }
-        noteActivation(kModels, "set radius");
+        noteActivation("set radius");
 
         // The stage-C warning, and the button it never had. `ModelMatch` owns
         // the agreement rule so that the panel and `forge.unit` cannot drift.
@@ -346,7 +407,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
             std::snprintf(
                 label, sizeof(label), "use measured %.4f m", static_cast<double>(report.boundingRadius));
             if (ImGui::Button(label)) {
-                beginEdit(kModels, "use measured radius");
+                beginEdit("use measured radius");
                 row.set("radius", assets::defNumber(report.boundingRadius, kMetreDecimals));
                 changed = true;
             }
@@ -360,7 +421,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
             row.set("avoid_radius", assets::defNumber(avoid, kMetreDecimals));
             changed = true;
         }
-        noteActivation(kModels, "set avoid_radius");
+        noteActivation("set avoid_radius");
         if (avoid == 0.0f) {
             ImGui::TextDisabled("  0 = the same as radius");
         } else if (avoid < radius) {
@@ -374,12 +435,12 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
                 row.set("emissive", assets::defNumber(emissive, kUnitDecimals));
                 changed = true;
             }
-            noteActivation(kModels, "set emissive");
+            noteActivation("set emissive");
         }
 
         bool solid = boolOr(row, "solid", true);
         if (ImGui::Checkbox("solid", &solid)) {
-            beginEdit(kModels, "toggle solid");
+            beginEdit("toggle solid");
             row.set("solid", assets::defBool(solid));
             changed = true;
         }
@@ -389,7 +450,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
         if (!surfaceIsMaterials) {
             bool translucent = boolOr(row, "translucent", false);
             if (ImGui::Checkbox("translucent", &translucent)) {
-                beginEdit(kModels, "toggle translucent");
+                beginEdit("toggle translucent");
                 row.set("translucent", assets::defBool(translucent));
                 changed = true;
             }
@@ -400,7 +461,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
                     row.set("alpha", assets::defNumber(alpha, kUnitDecimals));
                     changed = true;
                 }
-                noteActivation(kModels, "set alpha");
+                noteActivation("set alpha");
             }
         }
         ImGui::PopID();
@@ -417,7 +478,7 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
                             "from inside this tool");
         ImGui::PopTextWrapPos();
         if (ImGui::Button("create [[model]] row")) {
-            beginEdit(kModels, "create [[model]] row");
+            beginEdit("create [[model]] row");
             DefRow& row = m_docs[kModels].doc.append("model");
             // Prefilled from what is on screen: the stem names the mesh, the
             // measurement sets the radius, and the texture is whichever one the
@@ -439,7 +500,390 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
         ImGui::TextWrapped("%s", m_error.c_str());
         ImGui::PopStyleColor();
     }
+    // ⚑ Re-resolved after the revalidate above: an edit re-derives the whole
+    // database, and `resolveMaterials` rebuilds every synthesised row FROM
+    // SCRATCH after each merge, so an index taken before it names a material
+    // from the previous one.
+    setOpenMesh(entry.stem);
     return changed;
+}
+
+DefRow* DefEditor::materialRow(const std::string& id)
+{
+    return m_docs[kMaterials].doc.find("material", id);
+}
+
+void DefEditor::promoteMaterial(DefRow& model)
+{
+    const std::string modelId(model.id());
+    // ⚑ ONE ENTRY FOR BOTH FILES. See `UndoEntry`: half of this move is a model
+    // naming a material that does not exist, which is a state no author asked
+    // for and the schema refuses.
+    beginEdit("make a [[material]] row");
+    DefRow& row = m_docs[kMaterials].doc.append("material");
+    // ⚑⚑ THE ID IS `sol.` PLUS THE MODEL'S, WHICH IS THE CONVENTION THE TWO
+    // SHIPPED ROWS ALREADY FOLLOW RATHER THAN ONE INVENTED HERE: model
+    // `cockpit` wears `sol.cockpit` and model `gate_membrane` wears
+    // `sol.gate_membrane`. Model ids are bare in this game and every other def
+    // kind's are prefixed, so a promoted material that took the model's id
+    // verbatim would be the only unprefixed row in `materials.toml` - visible
+    // in a file an author reads, and wrong in exactly the way that teaches the
+    // next person the wrong rule. ⚑ `sol.auto.` is reserved for the DERIVED
+    // rows, so this can never collide with the one it replaces.
+    const std::string base = modelId.rfind("sol.", 0) == 0 ? modelId : "sol." + modelId;
+    row.set("id", assets::defString(uniqueId(m_docs[kMaterials].doc, "material", base)));
+    moveSurfaceToMaterial(model, row);
+
+    m_docs[kMaterials].dirty = true;
+    m_docs[kModels].dirty = true;
+    (void)revalidate();
+}
+
+bool DefEditor::drawSlotTable(DefRow& row, const std::vector<std::string>& textureStems)
+{
+    assets::DefKey* key = row.find("textures");
+    if (key == nullptr) {
+        return false;
+    }
+
+    // ⚑⚑ THE ENTRIES ARE READ IN FULL BEFORE ANY OF THEM IS WRITTEN. A splice
+    // changes the length of the line every later entry's range is measured in,
+    // so drawing straight off `inlineEntries()` would show garbage for the rest
+    // of the table on the frame an edit happened - and those stale ranges are
+    // what the next combo would then splice into.
+    struct Slot
+    {
+        std::string name;
+        std::string texture;
+    };
+
+    std::vector<Slot> slots;
+    for (const assets::DefInlineEntry& entry : key->inlineEntries()) {
+        std::string value(key->text.substr(entry.valueBegin, entry.valueEnd - entry.valueBegin));
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+            value = value.substr(1, value.size() - 2);
+        }
+        slots.push_back({entry.name, std::move(value)});
+    }
+
+    bool changed = false;
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        const Slot& slot = slots[i];
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::BeginCombo(slot.name.c_str(), slot.texture.c_str())) {
+            for (const std::string& stem : textureStems) {
+                const bool selected = stem == slot.texture;
+                if (ImGui::Selectable(stem.c_str(), selected) && !selected) {
+                    beginEdit("set texture slot");
+                    // Found again by NAME rather than by the range read above,
+                    // which an earlier splice this frame may already have moved.
+                    if (assets::DefKey* live = row.find("textures"); live != nullptr) {
+                        changed = live->setInlineValue(slot.name, assets::defString(stem)) || changed;
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("set 1 binding %zu", i);
+    }
+    return changed;
+}
+
+bool DefEditor::drawParamTable(DefRow& row)
+{
+    assets::DefKey* key = row.find("params");
+    if (key == nullptr) {
+        return false;
+    }
+
+    struct Param
+    {
+        std::string name;
+        float value = 0.0f;
+    };
+
+    std::vector<Param> params;
+    for (const assets::DefInlineEntry& entry : key->inlineEntries()) {
+        const std::string value(key->text.substr(entry.valueBegin, entry.valueEnd - entry.valueBegin));
+        params.push_back({entry.name, static_cast<float>(std::strtod(value.c_str(), nullptr))});
+    }
+
+    bool changed = false;
+    for (Param& param : params) {
+        ImGui::SetNextItemWidth(160.0f);
+        // ⚑ NO RANGE, BECAUSE NOTHING DECLARES ONE. `glow_strength` is a gain on
+        // an albedo and 2.2 is a sensible value for it; the next param this game
+        // adds could be a metre or a count. A DragFloat with a speed and no clamp
+        // says "this is a number the shader reads" without inventing a limit the
+        // shader does not have - and a slider would have to invent one.
+        if (ImGui::DragFloat(param.name.c_str(), &param.value, 0.01f, 0.0f, 0.0f, "%.3f")) {
+            if (assets::DefKey* live = row.find("params"); live != nullptr) {
+                changed = live->setInlineValue(param.name, assets::defNumber(param.value, kUnitDecimals)) ||
+                          changed;
+            }
+        }
+        noteActivation("set material param");
+    }
+    return changed;
+}
+
+DefEditor::MaterialEdit DefEditor::drawMaterialRows(const std::vector<std::string>& textureStems,
+                                                    const std::vector<std::string>& vertexStems,
+                                                    const std::vector<std::string>& fragmentStems,
+                                                    const std::string& shownTexture,
+                                                    std::string* outShowTexture)
+{
+    if (!m_loaded) {
+        ImGui::TextDisabled("def rows unavailable: %s",
+                            m_error.empty() ? "no data directory" : m_error.c_str());
+        return MaterialEdit::None;
+    }
+    if (m_openModels.empty()) {
+        // ⚑ The order matters, and the panel says it rather than leaving an
+        // author to infer it: a material is what a model is drawn WITH, so there
+        // is nothing to edit here until a row names this mesh.
+        ImGui::TextDisabled("no [[model]] row names this mesh, so nothing here has a surface");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("the Mesh panel can make one; a material is how a model is drawn, so "
+                            "the model row comes first");
+        ImGui::PopTextWrapPos();
+        return MaterialEdit::None;
+    }
+
+    const std::string modelId = m_openModels.front();
+    if (m_openModels.size() > 1) {
+        // ⚑ REPORTED RATHER THAN GUESSED AT. Several models can share one mesh
+        // and wear different surfaces; the viewport draws one thing, so it draws
+        // the first and this says which.
+        ImGui::TextDisabled(
+            "%zu [[model]] rows use this mesh - showing %s", m_openModels.size(), modelId.c_str());
+    }
+
+    if (m_openMaterial >= m_defs.materials().size()) {
+        // ⚑⚑ THE CROSS-REFERENCE `mergeToml` DOES NOT CHECK, reachable now that
+        // this editor can see both files. `validateMaterials` is a separate call
+        // the GAME makes at boot, so before stage D a model naming a missing
+        // material parsed clean in this tool and failed at load.
+        const DefRow* model = m_docs[kModels].doc.find("model", modelId);
+        const assets::DefKey* names = model != nullptr ? model->find("material") : nullptr;
+        const std::string named = names != nullptr ? std::string(names->unquoted()) : std::string("?");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+        ImGui::TextWrapped("model '%s' names material '%s', which no [[material]] row defines",
+                           modelId.c_str(),
+                           named.c_str());
+        ImGui::PopStyleColor();
+        return MaterialEdit::None;
+    }
+
+    const assets::MaterialDef& material = m_defs.materials()[m_openMaterial];
+
+    // ⚑⚑⚑ THE COMMON CASE, AND THE ONE THIS PANEL EXISTS FOR. Five of the eight
+    // shipped models name no material, so the database derives one and rebuilds
+    // it from scratch after every merge - which means it has no file, no row and
+    // nothing an author can put a slider on.
+    if (material.synthesised) {
+        ImGui::Text("%s", material.id.c_str());
+        ImGui::TextDisabled("  derived from [[model]] %s - it has no row to edit", modelId.c_str());
+        ImGui::TextDisabled("  texture %s, emissive %.3f%s",
+                            material.texture.c_str(),
+                            static_cast<double>(material.emissive),
+                            material.translucent ? ", translucent" : "");
+        ImGui::TextDisabled("  the stock lambert pair (mesh.vert, mesh.frag)");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("a [[material]] row is what lets this surface name its own shaders, "
+                            "declare extra textures and carry tunable numbers. Making one moves the "
+                            "surface keys off the model row, where they can no longer both live.");
+        ImGui::PopTextWrapPos();
+        if (ImGui::Button("make this a [[material]] row")) {
+            if (DefRow* model = m_docs[kModels].doc.find("model", modelId); model != nullptr) {
+                promoteMaterial(*model);
+                return MaterialEdit::Structure;
+            }
+        }
+        return MaterialEdit::None;
+    }
+
+    DefRow* row = materialRow(material.id);
+    if (row == nullptr) {
+        ImGui::TextDisabled("material '%s' is not defined in materials.toml", material.id.c_str());
+        return MaterialEdit::None;
+    }
+
+    bool structure = false;
+    bool params = false;
+    ImGui::PushID(material.id.c_str());
+    ImGui::Text("[[material]] %s", material.id.c_str());
+    // ⚑ `id` is the match key - the model row points at it by name - so it is
+    // shown and not edited, exactly as `asset` is on a sound row. Renaming it
+    // here would break the reference in the same gesture that made it.
+    ImGui::TextDisabled("  the surface of [[model]] %s", modelId.c_str());
+
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::BeginCombo("texture", material.texture.c_str())) {
+        for (const std::string& stem : textureStems) {
+            const bool selected = stem == material.texture;
+            if (ImGui::Selectable(stem.c_str(), selected) && !selected) {
+                beginEdit("set material texture");
+                row->set("texture", assets::defString(stem));
+                // ⚑ The picture follows the file. Without this the row would
+                // change, the game would draw the new albedo, and the viewport
+                // would go on showing the old one - which is the exact class of
+                // "the tool disagrees with the game" this whole programme
+                // exists to remove.
+                if (outShowTexture != nullptr) {
+                    *outShowTexture = stem;
+                }
+                structure = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    // ⚑ THE DEVIATION IS NAMED, NOT HIDDEN. Clicking a texture in the Texture
+    // list still shades the mesh - that is how a UV gets checked against a
+    // checker without touching a def - so the viewport can legitimately show
+    // something this material does not name. What it must never do is show it
+    // SILENTLY.
+    if (!shownTexture.empty() && shownTexture != material.texture) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+        ImGui::TextWrapped("  the viewport is showing %s, which this material does not name",
+                           shownTexture.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+        if (ImGui::Button("show this material's texture")) {
+            if (outShowTexture != nullptr) {
+                *outShowTexture = material.texture;
+            }
+        }
+    }
+
+    // ⚑⚑ THE SHADER STEMS ARE COMBOS OVER WHAT IS ACTUALLY ON THE SEARCH PATH,
+    // for the reason the texture combo is one: a stem that resolves to no `.spv`
+    // costs the material its pipeline and every model wearing it its picture,
+    // and that failure arrives as a log line rather than as anything the schema
+    // could refuse. The lists are the compiled `.vert.spv` and `.frag.spv`
+    // beside the tool, which is the same set the game looks in.
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::BeginCombo("vertex_shader", material.vertexShader.c_str())) {
+        for (const std::string& stem : vertexStems) {
+            const bool selected = stem == material.vertexShader;
+            if (ImGui::Selectable(stem.c_str(), selected) && !selected) {
+                beginEdit("set vertex_shader");
+                row->set("vertex_shader", assets::defString(stem));
+                structure = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::BeginCombo("fragment_shader", material.fragmentShader.c_str())) {
+        for (const std::string& stem : fragmentStems) {
+            const bool selected = stem == material.fragmentShader;
+            if (ImGui::Selectable(stem.c_str(), selected) && !selected) {
+                beginEdit("set fragment_shader");
+                row->set("fragment_shader", assets::defString(stem));
+                structure = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    float emissive = material.emissive;
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::DragFloat("emissive", &emissive, 0.005f, 0.0f, 4.0f, "%.3f")) {
+        row->set("emissive", assets::defNumber(emissive, kUnitDecimals));
+        // ⚑ Per-DRAW, not per-pipeline: emissive reaches the shader in the push
+        // block, so moving it needs neither a rebuild nor a buffer write. The
+        // viewport picks it up from the next frame's resolved `MaterialDef`.
+        params = true;
+    }
+    noteActivation("set material emissive");
+
+    bool translucent = material.translucent;
+    if (ImGui::Checkbox("translucent", &translucent)) {
+        beginEdit("toggle material translucent");
+        row->set("translucent", assets::defBool(translucent));
+        structure = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(seeds blend, depth_write and cull)");
+    if (material.translucent) {
+        float alpha = material.alpha;
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::DragFloat("alpha", &alpha, 0.005f, 0.0f, 1.0f, "%.3f")) {
+            row->set("alpha", assets::defNumber(alpha, kUnitDecimals));
+            params = true;
+        }
+        noteActivation("set material alpha");
+    }
+
+    // ⚑ SHOWN AS RESOLVED, WRITTEN AS A KEY. `translucent` seeds these three, so
+    // a row that says nothing still HAS values - and showing the raw key would
+    // print "opaque" under a translucent row that never spelled `blend` out. A
+    // key appears in the file the moment an author moves the control, and not
+    // before, which is `floatOr`'s rule one type over.
+    static const char* const kBlendNames[] = {"opaque", "alpha", "additive"};
+    int blend = static_cast<int>(material.blend);
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::Combo("blend", &blend, kBlendNames, 3)) {
+        beginEdit("set blend");
+        row->set("blend", assets::defString(kBlendNames[blend]));
+        structure = true;
+    }
+    bool depthTest = material.depthTest;
+    if (ImGui::Checkbox("depth_test", &depthTest)) {
+        beginEdit("toggle depth_test");
+        row->set("depth_test", assets::defBool(depthTest));
+        structure = true;
+    }
+    ImGui::SameLine();
+    bool depthWrite = material.depthWrite;
+    if (ImGui::Checkbox("depth_write", &depthWrite)) {
+        beginEdit("toggle depth_write");
+        row->set("depth_write", assets::defBool(depthWrite));
+        structure = true;
+    }
+    ImGui::SameLine();
+    bool cull = material.cullBackFaces;
+    if (ImGui::Checkbox("cull", &cull)) {
+        beginEdit("toggle cull");
+        row->set("cull", assets::defBool(cull));
+        structure = true;
+    }
+
+    if (!material.slots.empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled("declared textures - a slot's POSITION is its binding");
+        structure = drawSlotTable(*row, textureStems) || structure;
+    }
+    if (!material.params.empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled("declared params - matched into the shader by NAME");
+        params = drawParamTable(*row) || params;
+    }
+    if (material.slots.empty() && material.params.empty()) {
+        ImGui::Separator();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("this material declares no extra textures and no params, so it gets no "
+                            "set 1 at all. Declaring one is a change to what the shader reads, so it "
+                            "belongs beside the shader that wants it.");
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::PopID();
+
+    if (structure || params) {
+        m_docs[kMaterials].dirty = true;
+        (void)revalidate();
+    }
+    if (!m_error.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+        ImGui::TextWrapped("%s", m_error.c_str());
+        ImGui::PopStyleColor();
+    }
+    // ⚑ Structure wins when both moved: a rebuild repacks the params anyway, and
+    // doing the cheap one as well would write into a buffer about to be freed.
+    return structure ? MaterialEdit::Structure : (params ? MaterialEdit::Params : MaterialEdit::None);
 }
 
 bool DefEditor::drawSoundRows(const AssetEntry& entry, Audition& audition)
@@ -492,7 +936,7 @@ bool DefEditor::drawSoundRows(const AssetEntry& entry, Audition& audition)
             row.set("gain", assets::defNumber(editedGain, kUnitDecimals));
             changed = true;
         }
-        noteActivation(kSounds, "set gain");
+        noteActivation("set gain");
 
         float editedJitter = jitter;
         ImGui::SetNextItemWidth(160.0f);
@@ -501,7 +945,7 @@ bool DefEditor::drawSoundRows(const AssetEntry& entry, Audition& audition)
             row.set("pitch_jitter", assets::defNumber(editedJitter, kUnitDecimals));
             changed = true;
         }
-        noteActivation(kSounds, "set pitch_jitter");
+        noteActivation("set pitch_jitter");
         if (editedJitter == 0.0f) {
             ImGui::TextDisabled("  0 = every firing is the same recording");
         }
@@ -528,7 +972,7 @@ bool DefEditor::drawSoundRows(const AssetEntry& entry, Audition& audition)
             row.set("max_instances", std::to_string(editedCap));
             changed = true;
         }
-        noteActivation(kSounds, "set max_instances");
+        noteActivation("set max_instances");
         if (editedCap == 0) {
             ImGui::TextDisabled("  0 = unlimited");
         }
@@ -547,7 +991,7 @@ bool DefEditor::drawSoundRows(const AssetEntry& entry, Audition& audition)
                             "script, which is what a cue id is for");
         ImGui::PopTextWrapPos();
         if (ImGui::Button("create [[sound]] row")) {
-            beginEdit(kSounds, "create [[sound]] row");
+            beginEdit("create [[sound]] row");
             DefDoc& doc = m_docs[kSounds].doc;
             DefRow& row = doc.append("sound");
             // ⚑ Two keys and no more. `gain`, `pitch_jitter`, `rolloff` and
@@ -575,7 +1019,7 @@ bool DefEditor::drawSoundRows(const AssetEntry& entry, Audition& audition)
     return changed;
 }
 
-bool DefEditor::drawContentRow(std::size_t document, DefRow& row, const std::vector<std::string>& models)
+bool DefEditor::drawContentRow(DefRow& row, const std::vector<std::string>& models)
 {
     bool changed = false;
     const std::string id(row.id());
@@ -589,7 +1033,7 @@ bool DefEditor::drawContentRow(std::size_t document, DefRow& row, const std::vec
         row.set("name", assets::defString(name));
         changed = true;
     }
-    noteActivation(document, "set name");
+    noteActivation("set name");
 
     // ⚑ A COMBO, not a text field, and this is the cross-check the schema does
     // not do: `parseShip` reads `model` with `optionalString` and never resolves
@@ -602,7 +1046,7 @@ bool DefEditor::drawContentRow(std::size_t document, DefRow& row, const std::vec
         for (const std::string& candidate : models) {
             const bool selected = candidate == model;
             if (ImGui::Selectable(candidate.c_str(), selected) && !selected) {
-                beginEdit(document, "set model");
+                beginEdit("set model");
                 row.set("model", assets::defString(candidate));
                 changed = true;
             }
@@ -631,7 +1075,7 @@ bool DefEditor::drawContentRow(std::size_t document, DefRow& row, const std::vec
             row.set("scale", assets::defNumber(scale, kMetreDecimals));
             changed = true;
         }
-        noteActivation(document, "set scale");
+        noteActivation("set scale");
         ImGui::TextDisabled("  the sim multiplies the model's radius by this");
     }
     ImGui::PopID();
@@ -663,7 +1107,7 @@ bool DefEditor::drawContentRows()
                 continue;
             }
             ++shown;
-            if (drawContentRow(document, row, models)) {
+            if (drawContentRow(row, models)) {
                 m_docs[document].dirty = true;
                 changed = true;
             }
@@ -680,7 +1124,7 @@ bool DefEditor::drawContentRows()
     // schema default, which is a flyable ship - `ShipDef`'s defaults are a
     // complete tuning, not zeroes.
     if (ImGui::Button("create [[ship]] row")) {
-        beginEdit(kShips, "create [[ship]] row");
+        beginEdit("create [[ship]] row");
         DefDoc& doc = m_docs[kShips].doc;
         DefRow& row = doc.append("ship");
         const std::string base = "sol." + m_openModels.front();

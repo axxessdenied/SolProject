@@ -47,6 +47,14 @@ struct DrawItem
     const sol::renderer::GpuTexture* texture = nullptr;
     sol::core::Mat4 model = sol::core::Mat4::identity();
     float emissive = 0.0f;
+    // ⚑ Phase 25 stage D. An index into whatever this frame's `MaterialRegistry`
+    // was last built from. 0 is right by construction rather than by luck: with
+    // no def data the registry holds exactly the one stock `forge.viewport` row
+    // `initialize` builds, which is what this tool drew before materials existed.
+    std::uint32_t material = 0;
+    // Coverage, so a translucent material previews as one. Per-draw like
+    // `emissive`, in the push block's last lane.
+    float alpha = 1.0f;
 };
 
 struct FrameDesc
@@ -73,6 +81,12 @@ public:
     [[nodiscard]] bool onSwapchainRecreated();
 
     [[nodiscard]] sol::renderer::MeshRenderer& meshes() { return m_meshRenderer; }
+
+    // ⚑ Phase 25 stage D. The registry the viewport binds through, so the tool
+    // can rebuild it from `materials.toml` and rewrite one material's params
+    // when a slider moves. `initialize` leaves one stock row in it, which is
+    // what draws when there is no def data to read.
+    [[nodiscard]] sol::renderer::MaterialRegistry& materials() { return m_materials; }
 
     // Accumulate this frame's grid and reference lines here; the list is drawn
     // inside the HDR pass and cleared afterwards.

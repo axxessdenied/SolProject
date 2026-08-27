@@ -159,17 +159,41 @@ void ForgeView::recordCommands(VkCommandBuffer commandBuffer,
 
     renderer::beginHdrScenePass(commandBuffer, m_hdrColor, m_depth, kViewportClearColor);
 
-    // ⚑ One material, so one bind - and its set 1 is VK_NULL_HANDLE because
-    // `forge.viewport` declares no slots and no params (Phase 25 stage C). This
-    // tool binds a texture PER DRAW rather than per material, which is the one
-    // place in this codebase where that is right: an author is swapping the
-    // texture on one part, so the texture is a property of the draw and not of
-    // the surface. Stage D is what gives the viewport real materials.
-    const VkPipelineLayout layout = m_materials.pipelineLayout(0);
-    m_meshRenderer.bindMaterial(
-        commandBuffer, extent, m_materials.pipeline(0), layout, m_materials.materialSet(0));
+    // ⚑⚑⚑ PHASE 25 STAGE D: BOUND PER ITEM, AND THE MATERIAL IS THE OPEN
+    // MESH'S OWN. Until this stage the tool built one stock `forge.viewport`
+    // row and bound it once, with a comment saying stage D was what would give
+    // the viewport real materials. This is that: `item.material` indexes the
+    // registry the caller built from `materials.toml`, so what shades the mesh
+    // is the shader pair, the pipeline state, the declared slots and the packed
+    // params the GAME will use - not a second opinion about them.
+    //
+    // ⚑ RE-BOUND ONLY WHEN IT CHANGES. There is one item in this viewport today
+    // and two when a level is previewed, so the saving is nothing; the shape is
+    // here because `SceneRenderer` groups for the same reason and the two
+    // reading alike is worth more than the branch costs.
+    //
+    // ⚑ A MATERIAL WITH NO PIPELINE DRAWS NOTHING, which is the refusal stage C
+    // built arriving in front of an author. `pipeline()` returns null for a
+    // shader that would not load, a declaration its SPIR-V disagrees with, or a
+    // set 1 that was never written - and an empty viewport with a named reason
+    // in the panel beats a validation-layer wall of text.
+    std::uint32_t boundMaterial = 0xFFFFFFFFu;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
     for (const DrawItem& item : frame.items) {
         if (item.mesh == nullptr || item.texture == nullptr) {
+            continue;
+        }
+        if (item.material != boundMaterial) {
+            const VkPipeline pipeline = m_materials.pipeline(item.material);
+            if (pipeline == VK_NULL_HANDLE) {
+                continue;
+            }
+            layout = m_materials.pipelineLayout(item.material);
+            m_meshRenderer.bindMaterial(
+                commandBuffer, extent, pipeline, layout, m_materials.materialSet(item.material));
+            boundMaterial = item.material;
+        }
+        if (layout == VK_NULL_HANDLE) {
             continue;
         }
         m_meshRenderer.draw(commandBuffer,
@@ -178,9 +202,9 @@ void ForgeView::recordCommands(VkCommandBuffer commandBuffer,
                             layout,
                             viewProjection * item.model,
                             item.model,
-                            item.emissive);
+                            item.emissive,
+                            item.alpha);
     }
-
     m_debugDraw.draw(commandBuffer, m_frameIndex, viewProjection);
     m_debugDraw.clear();
 

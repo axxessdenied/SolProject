@@ -10,6 +10,7 @@
 // flagged as "a real decision sitting in untested code".
 
 #include "cook.hpp"
+#include "def_surface.hpp"
 #include "edit_history.hpp"
 #include "gltf.hpp"
 #include "list_layout.hpp"
@@ -17,6 +18,7 @@
 #include "part_pick.hpp"
 #include "status_line.hpp"
 
+#include "sol/assets/def_doc.hpp"
 #include "sol/assets/forge_doc.hpp"
 #include "sol/platform/file_io.hpp"
 #include "sol/test/test.hpp"
@@ -2425,4 +2427,84 @@ SOL_TEST(anImportWithNoTexturesDirectoryWritesNothingAndStillReportsWhatItSaw)
               0);
 
     std::remove(path.c_str());
+}
+
+// ⚑⚑⚑ PHASE 25 STAGE D: THE ONE GESTURE IN THIS STAGE THAT EDITS TWO COMMITTED
+// FILES AT ONCE. Five of the eight shipped models describe their surface on the
+// model row, so this is the button that gets pressed - and both ways it can go
+// wrong are silent. A key left behind makes a def file the game refuses to load
+// (`parseModel` names a material AND a surface key as a failure, deliberately);
+// a comment dropped deletes reasoning that exists nowhere else.
+SOL_TEST(forgeSurfaceMovesOnlyTheKeysTheModelCarries)
+{
+    // ⚑ `emissive` carries a comment, and `translucent`/`alpha` are absent -
+    // which is the shape of a real row rather than a convenient one:
+    // `models.toml` sets one surface key out of four and explains it.
+    const std::string source = "[[model]]\n"
+                               "id = \"sol.cockpit\"\n"
+                               "mesh = \"cockpit\"\n"
+                               "texture = \"cockpit\"\n"
+                               "radius = 1.5\n"
+                               "# 1.2% vacuum ambient is pitch black for a room\n"
+                               "# somebody is sitting in.\n"
+                               "emissive = 0.10\n";
+    assets::DefDoc models;
+    std::string error;
+    SOL_CHECK(assets::parseDefs(source.c_str(), source.size(), "models.toml", models, &error));
+
+    assets::DefDoc materials;
+    assets::DefRow& material = materials.append("material");
+    material.set("id", assets::defString("sol.cockpit"));
+
+    forge::moveSurfaceToMaterial(models.rows[0], material);
+
+    // ⚑ NOTHING IS LEFT BEHIND. A `[[model]]` row carrying both is refused at
+    // load, so a partial move is not a smaller version of this operation - it is
+    // a file the game will not read.
+    SOL_CHECK(models.rows[0].find("texture") == nullptr);
+    SOL_CHECK(models.rows[0].find("emissive") == nullptr);
+    SOL_CHECK(models.rows[0].find("material") != nullptr);
+    SOL_CHECK(models.rows[0].find("material")->unquoted() == "sol.cockpit");
+    // Keys the row never had are not invented on the way across.
+    SOL_CHECK(material.find("translucent") == nullptr);
+    SOL_CHECK(material.find("alpha") == nullptr);
+
+    // ⚑⚑ THE VALUE IS THE AUTHOR'S BYTES, NOT A REPRINT OF THEM. `0.10` round
+    // -tripped through a double comes back `0.1`, which is a diff on a line
+    // nobody edited.
+    SOL_CHECK(material.find("texture")->unquoted() == "cockpit");
+    SOL_CHECK(material.find("emissive")->value() == "0.10");
+    // ⚑⚑ AND THE REASON TRAVELS WITH THE NUMBER. This is the assertion worth
+    // having: dropping it is invisible in the tool, permanent in the file, and
+    // reads as tidying rather than as a loss.
+    SOL_CHECK(material.find("emissive")->leading ==
+              "# 1.2% vacuum ambient is pitch black for a room\n# somebody is sitting in.\n");
+
+    // The model keeps everything that was never the surface's.
+    SOL_CHECK(material.find("radius") == nullptr);
+    SOL_CHECK(models.rows[0].find("radius")->value() == "1.5");
+    SOL_CHECK(models.rows[0].find("mesh")->unquoted() == "cockpit");
+}
+
+// ⚑ The other direction, and the one an author reaches by accident: a model that
+// says nothing about its surface beyond the required `texture`. Three of the
+// four keys are absent, and the material must not gain them - a row with
+// `translucent = false` written into it looks like a decision somebody made.
+SOL_TEST(forgeSurfaceMoveWritesNoDefaultsForAbsentKeys)
+{
+    const std::string source = "[[model]]\nid = \"sol.ship\"\nmesh = \"ship\"\ntexture = \"hull\"\n";
+    assets::DefDoc models;
+    std::string error;
+    SOL_CHECK(assets::parseDefs(source.c_str(), source.size(), "models.toml", models, &error));
+    assets::DefDoc materials;
+    assets::DefRow& material = materials.append("material");
+    material.set("id", assets::defString("sol.ship"));
+
+    forge::moveSurfaceToMaterial(models.rows[0], material);
+
+    SOL_CHECK(material.keys.size() == 2); // id and texture, and nothing else
+    SOL_CHECK(assets::writeDefs(models) == "[[model]]\n"
+                                           "id = \"sol.ship\"\n"
+                                           "mesh = \"ship\"\n"
+                                           "material = \"sol.ship\"\n");
 }

@@ -124,6 +124,88 @@ std::string_view DefKey::unquoted() const
     return v;
 }
 
+std::vector<DefInlineEntry> DefKey::inlineEntries() const
+{
+    std::vector<DefInlineEntry> entries;
+    const std::string_view whole = value();
+    if (whole.size() < 2 || whole.front() != '{' || whole.back() != '}') {
+        return entries;
+    }
+    // Offsets are into `text`, so everything below counts from the '{'.
+    const std::uint32_t base = valueBegin + 1;
+    const std::string_view body = whole.substr(1, whole.size() - 2);
+
+    std::size_t at = 0;
+    while (at < body.size()) {
+        while (at < body.size() && (body[at] == ' ' || body[at] == '\t' || body[at] == ',')) {
+            ++at;
+        }
+        if (at >= body.size()) {
+            break;
+        }
+        const std::size_t nameBegin = at;
+        while (at < body.size() && body[at] != '=' && body[at] != ',') {
+            ++at;
+        }
+        if (at >= body.size() || body[at] != '=') {
+            break; // not `name = value`; nothing here can be spliced safely
+        }
+        std::size_t nameEnd = at;
+        while (nameEnd > nameBegin && (body[nameEnd - 1] == ' ' || body[nameEnd - 1] == '\t')) {
+            --nameEnd;
+        }
+        ++at; // the '='
+        while (at < body.size() && (body[at] == ' ' || body[at] == '\t')) {
+            ++at;
+        }
+        const std::size_t valueAt = at;
+        // ⚑ A QUOTED VALUE IS SCANNED AS A STRING, NOT SPLIT ON THE NEXT COMMA.
+        // `textures = { a = "x,y" }` is legal TOML and a comma scan would cut
+        // the entry in half, then splice into the middle of somebody's filename.
+        if (at < body.size() && body[at] == '"') {
+            ++at;
+            while (at < body.size() && body[at] != '"') {
+                at += (body[at] == '\\' && at + 1 < body.size()) ? 2 : 1;
+            }
+            at = at < body.size() ? at + 1 : at;
+        } else {
+            while (at < body.size() && body[at] != ',') {
+                ++at;
+            }
+        }
+        std::size_t valueStop = at;
+        while (valueStop > valueAt && (body[valueStop - 1] == ' ' || body[valueStop - 1] == '\t')) {
+            --valueStop;
+        }
+        entries.push_back(DefInlineEntry{.name = std::string(body.substr(nameBegin, nameEnd - nameBegin)),
+                                         .valueBegin = base + static_cast<std::uint32_t>(valueAt),
+                                         .valueEnd = base + static_cast<std::uint32_t>(valueStop)});
+    }
+    return entries;
+}
+
+bool DefKey::setInlineValue(std::string_view entryName, std::string_view v)
+{
+    for (const DefInlineEntry& entry : inlineEntries()) {
+        if (entry.name != entryName) {
+            continue;
+        }
+        if (entry.valueEnd > text.size() || entry.valueBegin > entry.valueEnd) {
+            return false;
+        }
+        text.replace(entry.valueBegin, entry.valueEnd - entry.valueBegin, v);
+        // ⚑ The key's own range has to move with it: the inline table IS this
+        // value, so a longer entry makes the whole value longer. Forgetting
+        // this leaves `value()` returning a table with its closing brace cut
+        // off, which then parses as no entries at all - i.e. the next edit
+        // would silently do nothing.
+        valueEnd = static_cast<std::uint32_t>(static_cast<std::size_t>(valueEnd) + v.size() -
+                                              (entry.valueEnd - entry.valueBegin));
+        return true;
+    }
+    return false;
+}
+
 void DefKey::setValue(std::string_view v)
 {
     if (valueEnd > text.size() || valueBegin > valueEnd) {

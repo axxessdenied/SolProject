@@ -147,7 +147,7 @@ struct PanelToggle
 
 struct PanelToggles
 {
-    PanelToggle items[5];
+    PanelToggle items[6];
 
     [[nodiscard]] bool* find(const char* name) const
     {
@@ -544,6 +544,151 @@ int main(int argc, char** argv)
     };
     refreshTextureStems();
 
+    // ⚑⚑⚑ PHASE 25 STAGE D: THE SHADER STEMS ON THE SEARCH PATH, so a material
+    // names its shader from a list rather than from a text field. A stem that
+    // resolves to no `.spv` costs the material its pipeline and every model
+    // wearing it its picture, and the only signal is a log line - the schema
+    // cannot refuse it, because whether a shader exists is not a fact about the
+    // def file. This is the same argument as the texture combo, one asset kind
+    // over.
+    //
+    // ⚑ THE DIRECTORY IS THE ONE THE REGISTRY ACTUALLY SEARCHES - `shaders/`
+    // beside the executable, which the build fills - so the list cannot offer a
+    // stem the loader will then fail to find. Listed once: the shaders are a
+    // build output, and `Cook` does not compile any (decision 5 puts the GLSL
+    // compiler in the author's hands, not in this tool).
+    std::vector<std::string> vertexShaderStems;
+    std::vector<std::string> fragmentShaderStems;
+    {
+        const auto collectStems =
+            [](const std::string& path, const char* suffix, std::vector<std::string>& out) {
+                for (const std::string& file : platform::listFiles(path.c_str())) {
+                    const std::size_t slash = file.find_last_of("/\\");
+                    const std::string name = slash == std::string::npos ? file : file.substr(slash + 1);
+                    const std::size_t suffixLength = std::strlen(suffix);
+                    if (name.size() <= suffixLength ||
+                        name.compare(name.size() - suffixLength, suffixLength, suffix) != 0) {
+                        continue;
+                    }
+                    out.push_back(name.substr(0, name.size() - suffixLength));
+                }
+                std::sort(out.begin(), out.end());
+            };
+        collectStems(shaderDirectory, ".vert.spv", vertexShaderStems);
+        collectStems(shaderDirectory, ".frag.spv", fragmentShaderStems);
+    }
+
+    // ⚑⚑⚑ THE VIEWPORT'S MATERIALS ARE THE GAME'S, BUILT FROM `materials.toml`
+    // RATHER THAN FROM ONE STOCK ROW. Stage B put the tool's viewport through
+    // `MaterialRegistry` deliberately, with a comment saying stage D was what
+    // would give it real ones; this is that call. What draws the open mesh is
+    // now the shader pair, the pipeline state, the declared slots and the packed
+    // params the GAME will use, so "the Forge draws what the game draws" is true
+    // by construction rather than by two call sites agreeing.
+    //
+    // ⚑ FAILURE IS NOT FATAL AND MUST NOT BE. `build` returns false only when
+    // NOTHING built; a single material whose shader will not load, or whose
+    // declaration its SPIR-V disagrees with, simply gets no pipeline - and the
+    // viewport then draws nothing for it, which is stage C's named refusal
+    // arriving in front of an author instead of in a log they are not reading.
+    std::string materialStatus;
+    const auto textureSlotIndex = [&](const std::string& stem) {
+        // ⚑ THE FIRST MATCH, WHICH IS THE SOURCE RATHER THAN THE COOKED SIBLING,
+        // because `listTextures` puts sources first and a source is the one an
+        // author is editing. A slot pointing at `cooked/glow.stex` would go on
+        // showing the last cook while the `.tex` beside it changed under the
+        // hand that was changing it.
+        for (std::size_t i = 0; i < loadedTextureEntries.size(); ++i) {
+            if (loadedTextureEntries[i].stem == stem) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+    // Writes every material's set 1. ⚑ Separate from the build because a
+    // TEXTURE reload has to redo this and must not redo the pipelines: the
+    // images behind those descriptors have been destroyed and recreated, but
+    // nothing about any shader has changed.
+    const auto writeMaterialSets = [&]() {
+        std::vector<sol::rhi::MaterialTextureBinding> bindings;
+        std::size_t unresolved = 0;
+        const std::vector<assets::MaterialDef>& materials = defEditor.materials();
+        for (std::uint32_t m = 0; m < materials.size(); ++m) {
+            if (view.materials().materialSet(m) == VK_NULL_HANDLE) {
+                continue; // declares nothing, or has already been refused by name
+            }
+            bindings.clear();
+            bool resolved = true;
+            for (const assets::MaterialSlot& slot : materials[m].slots) {
+                const int index = textureSlotIndex(slot.texture);
+                if (index < 0) {
+                    SOL_LOG_ERROR("forge: material '%s': no texture '%s' for slot '%s'",
+                                  materials[m].id.c_str(),
+                                  slot.texture.c_str(),
+                                  slot.name.c_str());
+                    resolved = false;
+                    break;
+                }
+                const renderer::GpuTexture& texture = textures[static_cast<std::size_t>(index)];
+                bindings.push_back({.view = texture.image.view, .sampler = texture.sampler});
+            }
+            if (!resolved || !view.materials().writeMaterialSet(m, bindings)) {
+                ++unresolved;
+            }
+        }
+        return unresolved;
+    };
+    const auto rebuildMaterials = [&]() {
+        if (!defEditor.loaded()) {
+            return;
+        }
+        // ⚑ The pipelines and descriptor sets being destroyed may still be named
+        // by a frame the GPU has not finished, exactly as with a texture. This
+        // runs from the pending block above every `Begin`, so no draw list can
+        // yet name what it frees - but the SUBMITTED frames still can.
+        context.waitIdle();
+        if (!view.materials().build(defEditor.materials())) {
+            materialStatus = "no materials built - the shader directory is unreadable";
+            return;
+        }
+        const std::size_t unresolved = writeMaterialSets();
+        std::size_t undrawable = 0;
+        for (std::uint32_t m = 0; m < defEditor.materials().size(); ++m) {
+            undrawable += view.materials().pipeline(m) == VK_NULL_HANDLE ? 1 : 0;
+        }
+        char line[128];
+        std::snprintf(line,
+                      sizeof(line),
+                      "materials: %zu (%zu pipeline(s), %zu undrawable)",
+                      view.materials().materialCount(),
+                      view.materials().pipelineCount(),
+                      undrawable + unresolved);
+        materialStatus = line;
+        SOL_LOG_INFO("forge: %s", materialStatus.c_str());
+    };
+    rebuildMaterials();
+
+    // ⚑⚑ RAISED, NEVER PERFORMED WHERE THEY ARE RAISED - the fourth and fifth
+    // members of the pending block near the top of the frame, and here rather
+    // than beside the other three only because `reloadTextures` below has to be
+    // able to set one and is built long before them.
+    //
+    // ⚑ THE SPLIT IS NOT AN OPTIMISATION. A rebuild destroys and recreates every
+    // pipeline and every descriptor set in the registry and needs an idle
+    // device; rewriting one material's params is a memcpy into a buffer that
+    // stays mapped. Doing the first on every frame of a drag would idle the
+    // device twenty-four times a second to change one float.
+    bool materialRebuildPending = false;
+    // The material whose params moved, or kNoMaterial. Not a bool, because the
+    // write needs to know which buffer.
+    std::uint32_t materialParamsPending = forge::DefEditor::kNoMaterial;
+    // ⚑⚑ A TEXTURE RELOAD INVALIDATES EVERY SET 1 THIS TOOL HAS WRITTEN, and
+    // that is the subtle one. `writeMaterialSet` records an image view and a
+    // sampler; `reloadTextures` destroys every image and creates new ones. The
+    // pipelines are untouched - no shader changed - so this rewrites the sets
+    // and deliberately does NOT rebuild.
+    bool materialSetsStale = false;
+
     renderer::GpuMesh openMesh = {};
     forge::MeshReport report;
     std::vector<forge::ModelMatch> modelMatches;
@@ -635,6 +780,7 @@ int main(int argc, char** argv)
     bool showReport = true;
     bool showTexture = true;
     bool showSound = true;
+    bool showMaterial = true;
     bool showView = true;
     bool resetLayout = false;
     bool focusMeshPending = false;
@@ -652,6 +798,10 @@ int main(int argc, char** argv)
     // ONCE and is the author's from then on - ImGui writes it into the ini like
     // any other window and this never fires again.
     bool adoptSoundPanel = true;
+    // ⚑ Stage 25-D, and the SECOND panel to need this - which is the point of
+    // having solved it once. Every author who has arranged this tool has an ini
+    // that has never heard of `Material`.
+    bool adoptMaterialPanel = true;
 
     // ⚑ Registered here rather than inside the host, because WHICH panels exist
     // is the Forge's business and the host is shared with the game.
@@ -659,13 +809,14 @@ int main(int argc, char** argv)
                                   {"Report", &showReport},
                                   {"Texture", &showTexture},
                                   {"Sound", &showSound},
+                                  {"Material", &showMaterial},
                                   {"View", &showView}}};
     // ⚑ ImGui only rewrites the ini when something MARKS it dirty, and it has no
     // idea these bools exist - so a toggle would be forgotten unless the change
     // is reported. Compared per frame rather than at each of the several places
     // a panel can close (menu item, window X, `Reset layout`), because a rule
     // spread over three call sites is a rule that gets missed at one of them.
-    bool wasShown[5] = {showMesh, showReport, showTexture, showSound, showView};
+    bool wasShown[6] = {showMesh, showReport, showTexture, showSound, showMaterial, showView};
     {
         ImGuiSettingsHandler handler;
         handler.TypeName = "ForgePanels";
@@ -916,6 +1067,9 @@ int main(int argc, char** argv)
         // edited has gone, the index goes to -1 and the editor stays open with
         // nothing to shade, which is the state `new texture` already produces.
         editingTextureIndex = textureEditor.isOpen() ? indexOf(editedPath) : -1;
+        // ⚑ Every set 1 this tool wrote names an image that has just been
+        // destroyed. See `materialSetsStale`.
+        materialSetsStale = true;
         refreshTexturePreview();
 
         // ⚑⚑ A REFUSED TEXTURE IS LOGGED AND DELIBERATELY NOT PUT IN THE STATUS
@@ -1539,6 +1693,49 @@ int main(int argc, char** argv)
             textureRebuildPending = false;
             rebuildTexture();
         }
+        // ⚑⚑ AFTER THE TEXTURE WORK, ALWAYS, AND THE ORDER IS THE WHOLE POINT.
+        // A material's set 1 names image views owned by `textures`; a reload
+        // destroys and recreates all of them. Rewriting the sets first would
+        // record handles that the reload one line later invalidates - which is
+        // the same "raised and served in one place" discipline the three above
+        // exist for, in the one direction that is not obvious.
+        if (materialRebuildPending) {
+            materialRebuildPending = false;
+            materialSetsStale = false;
+            // A rebuild repacks every params buffer from the new reflection, so
+            // a write pending against the OLD buffer is not just redundant, it
+            // is a write into memory that has been unmapped.
+            materialParamsPending = forge::DefEditor::kNoMaterial;
+            rebuildMaterials();
+        }
+        if (materialSetsStale) {
+            materialSetsStale = false;
+            context.waitIdle();
+            (void)writeMaterialSets();
+        }
+        if (materialParamsPending != forge::DefEditor::kNoMaterial) {
+            const std::uint32_t index = materialParamsPending;
+            materialParamsPending = forge::DefEditor::kNoMaterial;
+            // ⚑ NO `waitIdle`. The buffer is host-visible and stays mapped, and
+            // a param is read per fragment rather than per submission - so the
+            // worst a frame in flight can see is the new value one frame early,
+            // which is what "the mesh changes while your hand is on the number"
+            // means. Idling the device here would make a drag stutter to buy
+            // nothing an author could perceive.
+            if (index < defEditor.materials().size()) {
+                (void)view.materials().setParams(index, defEditor.materials()[index].params);
+            }
+        }
+
+        // ⚑⚑ WHICH MESH IS OPEN, TOLD TO THE DEF EDITOR ONCE, ABOVE EVERY
+        // `Begin`. It used to be a side effect of the Report panel drawing its
+        // rows, which was true until stage D put the Material panel in the same
+        // dock node and made Report a tab BEHIND it - a hidden ImGui window is
+        // not submitted, so opening a second mesh left the tool drawing it with
+        // the first one's material. One place, every frame, no window involved.
+        defEditor.setOpenMesh(openIndex >= 0 && openIndex < static_cast<int>(meshEntries.size())
+                                  ? meshEntries[static_cast<std::size_t>(openIndex)].stem
+                                  : std::string());
 
         // A drag is claimed on its first frame and kept for its duration:
         // deciding every frame would hand the camera a drag that began on a
@@ -1612,6 +1809,7 @@ int main(int argc, char** argv)
                 ImGui::MenuItem("Report", nullptr, &showReport);
                 ImGui::MenuItem("Texture", nullptr, &showTexture);
                 ImGui::MenuItem("Sound", nullptr, &showSound);
+                ImGui::MenuItem("Material", nullptr, &showMaterial);
                 ImGui::MenuItem("View", nullptr, &showView);
                 ImGui::EndMenu();
             }
@@ -1667,7 +1865,7 @@ int main(int argc, char** argv)
                 // been told about.
                 if (ImGui::MenuItem("Reset layout")) {
                     resetLayout = true;
-                    showMesh = showReport = showTexture = showSound = showView = true;
+                    showMesh = showReport = showTexture = showSound = showMaterial = showView = true;
                 }
                 ImGui::EndMenu();
             }
@@ -1983,6 +2181,11 @@ int main(int argc, char** argv)
             // preview of that asset as the game receives it, and the def rows
             // naming it. `Sound` is that shape a third time.
             ImGui::DockBuilderDockWindow("Sound", leftId);
+            // Stage 25-D. Beside `Report` rather than in the asset column: it
+            // is not a list of files, it is what the open mesh is DRAWN with -
+            // and it is read against the report and the viewport at the same
+            // time, which is exactly what the right column is for.
+            ImGui::DockBuilderDockWindow("Material", rightId);
             ImGui::DockBuilderDockWindow("View", leftId);
             ImGui::DockBuilderDockWindow("Report", rightId);
             ImGui::DockBuilderFinish(dockspaceId);
@@ -2478,6 +2681,73 @@ int main(int argc, char** argv)
             ImGui::End();
         }
 
+        // ⚑⚑⚑ THE FOURTH ASSET KIND AND THE FIRST THAT IS NOT A FILE (PHASE 25
+        // STAGE D). A mesh, a texture and a sound are each something on disk
+        // this tool lists; a material is a ROW, and the one it shows is not
+        // picked from a list at all - it is whatever the open mesh's `[[model]]`
+        // row names. That is deliberate: a list you pick from could put a
+        // surface on this mesh that the game will never draw on it, and the one
+        // claim this viewport has always been able to make is that what you are
+        // looking at is what ships.
+        if (showMaterial) {
+            if (adoptMaterialPanel) {
+                // Stage U1's fix, second customer. See `adoptSoundPanel`.
+                const ImGuiWindow* materialWindow = ImGui::FindWindowByName("Material");
+                const ImGuiWindow* reportWindow = ImGui::FindWindowByName("Report");
+                if (materialWindow != nullptr && materialWindow->DockId != 0) {
+                    adoptMaterialPanel = false;
+                } else if (reportWindow != nullptr && reportWindow->DockId != 0) {
+                    ImGui::SetNextWindowDockID(reportWindow->DockId, ImGuiCond_Always);
+                    ImGui::MarkIniSettingsDirty();
+                    adoptMaterialPanel = false;
+                }
+            }
+            if (ImGui::Begin("Material", &showMaterial, kPanelFlags)) {
+                if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    if (openIndex < 0) {
+                        ImGui::TextDisabled("no mesh open");
+                    } else {
+                        const std::string shownStem =
+                            textureIndex >= 0 && textureIndex < static_cast<int>(loadedTextureEntries.size())
+                                ? loadedTextureEntries[static_cast<std::size_t>(textureIndex)].stem
+                                : std::string();
+                        std::string wantTexture;
+                        const forge::DefEditor::MaterialEdit edit = defEditor.drawMaterialRows(
+                            textureStems, vertexShaderStems, fragmentShaderStems, shownStem, &wantTexture);
+                        // ⚑ RAISED, NOT PERFORMED - this panel is submitted well
+                        // below the top of the frame, and a rebuild frees
+                        // pipelines and descriptor sets that this frame's draw
+                        // list will name. Same rule as every texture rebuild in
+                        // this tool, for the same reason.
+                        if (edit == forge::DefEditor::MaterialEdit::Structure) {
+                            materialRebuildPending = true;
+                        } else if (edit == forge::DefEditor::MaterialEdit::Params) {
+                            materialParamsPending = defEditor.openMaterialIndex();
+                        }
+                        if (!wantTexture.empty()) {
+                            for (std::size_t i = 0; i < loadedTextureEntries.size(); ++i) {
+                                if (loadedTextureEntries[i].stem == wantTexture) {
+                                    pendingTextureOpen = static_cast<int>(i);
+                                    break;
+                                }
+                            }
+                        }
+                        ImGui::Separator();
+                        if (ImGui::Button("save defs")) {
+                            (void)defEditor.save(defStatus);
+                            status = defStatus;
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("%s", defEditor.dirty() ? "* unsaved" : "saved");
+                        if (!materialStatus.empty()) {
+                            ImGui::TextDisabled("%s", materialStatus.c_str());
+                        }
+                    }
+                }
+            }
+            ImGui::End();
+        }
+
         // Neither document: how you are LOOKING at whichever one is open.
         if (showView) {
             if (ImGui::Begin("View", &showView, kPanelFlags)) {
@@ -2535,8 +2805,8 @@ int main(int argc, char** argv)
         // three routes did it. Without this the toggle is real for the session
         // and gone on the next launch, which is exactly what was reported.
         {
-            const bool shown[5] = {showMesh, showReport, showTexture, showSound, showView};
-            for (int i = 0; i < 5; ++i) {
+            const bool shown[6] = {showMesh, showReport, showTexture, showSound, showMaterial, showView};
+            for (int i = 0; i < 6; ++i) {
                 if (shown[i] != wasShown[i]) {
                     wasShown[i] = shown[i];
                     ImGui::MarkIniSettingsDirty();
@@ -2613,8 +2883,31 @@ int main(int argc, char** argv)
             drawn = &levelMeshes[static_cast<std::size_t>(previewLevel) - 1];
         }
         if (drawn->indexCount > 0) {
-            frame.items.push_back(
-                {drawn, &textures[static_cast<std::size_t>(textureIndex)], core::Mat4::identity(), emissive});
+            // ⚑⚑⚑ PHASE 25 STAGE D: THE ITEM CARRIES ITS MATERIAL. `emissive`
+            // and `alpha` come from the material too, and the View panel's
+            // `emissive` slider now ADDS to it rather than replacing it - it is
+            // a lighting control for looking at a mesh, not an edit of the
+            // surface, and the two were indistinguishable while there was only
+            // one of them.
+            //
+            // ⚑ THE FALLBACK IS THE STOCK ROW AT INDEX 0, which is what
+            // `ForgeView::initialize` built and what this tool drew before
+            // materials existed - reached when there is no def data, when no
+            // `[[model]]` row names this mesh, or when the row names a material
+            // nothing defines. All three are states the Material panel reports
+            // in words; none of them is a reason to show a black viewport.
+            const std::uint32_t openMaterial = defEditor.openMaterialIndex();
+            const bool haveMaterial = openMaterial < defEditor.materials().size();
+            const assets::MaterialDef* surface =
+                haveMaterial ? &defEditor.materials()[openMaterial] : nullptr;
+            frame.items.push_back({
+                .mesh = drawn,
+                .texture = &textures[static_cast<std::size_t>(textureIndex)],
+                .model = core::Mat4::identity(),
+                .emissive = emissive + (surface != nullptr ? surface->emissive : 0.0f),
+                .material = haveMaterial ? openMaterial : 0,
+                .alpha = surface != nullptr && surface->translucent ? surface->alpha : 1.0f,
+            });
         }
 
         bool needRecreate = window.consumeResize();

@@ -24,6 +24,35 @@ MaterialPipelineState materialPipelineState(const assets::MaterialDef& material)
                                  .hasParams = !material.params.empty()};
 }
 
+bool applyParamValues(assets::MaterialDef& material, std::span<const assets::MaterialParam> values)
+{
+    // ⚑ CHECKED IN FULL BEFORE ANYTHING IS WRITTEN. Applying as we go and
+    // bailing on the first bad name would leave the material carrying half of
+    // an edit that was reported as refused, which is the state a caller has no
+    // way to reason about.
+    for (const assets::MaterialParam& value : values) {
+        bool declared = false;
+        for (const assets::MaterialParam& param : material.params) {
+            if (param.name == value.name) {
+                declared = true;
+                break;
+            }
+        }
+        if (!declared) {
+            return false;
+        }
+    }
+    for (const assets::MaterialParam& value : values) {
+        for (assets::MaterialParam& param : material.params) {
+            if (param.name == value.name) {
+                param.value = value.value;
+                break;
+            }
+        }
+    }
+    return true;
+}
+
 MaterialStateGrouping groupMaterialsByState(std::span<const assets::MaterialDef> materials)
 {
     MaterialStateGrouping grouping;

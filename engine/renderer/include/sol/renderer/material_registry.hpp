@@ -95,6 +95,22 @@ public:
     [[nodiscard]] bool writeMaterialSet(std::uint32_t materialIndex,
                                         std::span<const rhi::MaterialTextureBinding> textures);
 
+    // ⚑⚑ PHASE 25 STAGE D: NEW VALUES FOR THE PARAMS A MATERIAL ALREADY
+    // DECLARES, WITHOUT TOUCHING A SINGLE PIPELINE. Until stage D the only ways
+    // params reached the GPU were `build` and `reloadPipelines`, and both
+    // rebuild every pipeline in the registry and require an idle device - which
+    // is the right price for a def load and an absurd one for one frame of a
+    // drag in an editor. A param is a float in a mapped uniform buffer; moving
+    // it is a memcpy.
+    //
+    // ⚑ It refuses a name the material does not declare (see
+    // `applyParamValues`), because adding one is a LAYOUT change: the block's
+    // size comes from the shader, and a value with nowhere to go would either
+    // be dropped silently or write past the buffer. False when this material
+    // has no params at all, or when any name is undeclared - and nothing is
+    // written in either case.
+    [[nodiscard]] bool setParams(std::uint32_t materialIndex, std::span<const assets::MaterialParam> params);
+
     // Rebuilds every pipeline from the SPIR-V on disk, for the shader watcher's
     // F5. Caller must ensure the device is idle. ⚑ All or nothing: a reload
     // that built some pipelines and failed others would leave the frame drawing
