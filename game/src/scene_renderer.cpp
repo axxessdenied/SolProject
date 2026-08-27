@@ -97,13 +97,18 @@ bool SceneRenderer::initialize(rhi::Context& context,
     m_swapchain = &swapchain;
 
     // ⚑ Phase 25 stage B: the mesh pipelines are `MaterialRegistry`'s now, and
-    // it builds them against `MeshRenderer`'s layout - so the mesh renderer
-    // must come up first, and it is the only one of the seven that no longer
-    // takes a shader directory at all.
+    // stage C moved the pipeline LAYOUTS there too - so what the mesh renderer
+    // still hands over is set 0's descriptor layout and the push block's size.
+    // It must come up first either way, and it is the only one of the seven
+    // that no longer takes a shader directory at all.
     m_shaderSearchPath.assign(1, std::string(shaderDirectory));
     if (!m_meshRenderer.initialize(context) ||
-        !m_materials.initialize(
-            context, kHdrFormat, kDepthFormat, m_meshRenderer.pipelineLayout(), m_shaderSearchPath) ||
+        !m_materials.initialize(context,
+                                kHdrFormat,
+                                kDepthFormat,
+                                m_meshRenderer.textureSetLayout(),
+                                sol::renderer::MeshRenderer::kPushConstantSize,
+                                m_shaderSearchPath) ||
         !m_skyRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory, kStarfieldSeed) ||
         !m_impostorRenderer.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory) ||
         !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat, shaderDirectory) ||
@@ -233,7 +238,7 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
         return false;
     }
     m_opaqueBuckets.assign(materials.size(), {});
-    m_translucentBuckets.assign(materials.size(), {});
+    m_translucentDraws.clear();
 
     // Uploads a cooked asset once per stem and hands back its pool index; the
     // shipped catalog has six models sharing three meshes and three textures,
@@ -272,6 +277,56 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
         m_textureStems.push_back(stem);
         return true;
     };
+
+    // ⚑⚑ A MATERIAL'S OWN TEXTURES, RESOLVED PER MATERIAL RATHER THAN PER
+    // MODEL (Phase 25 stage C). The albedo below still goes through the model
+    // loop, because it is one texture that every model has had since Phase 3
+    // and its error already names both rows. These are different: a declared
+    // slot belongs to the material and to nothing else, so its failure is the
+    // material's failure and the message says so once instead of once per model
+    // wearing it.
+    //
+    // ⚑ A slot that will not load leaves the material with an unwritten set,
+    // and `MaterialRegistry::pipeline` returns null for exactly that - so the
+    // models using it go undrawable through the same branch as a missing mesh,
+    // keeping their slots, which is Phase 24 stage S's rule again.
+    std::vector<sol::rhi::MaterialTextureBinding> slotBindings;
+    for (std::uint32_t m = 0; m < materials.size(); ++m) {
+        const assets::MaterialDef& material = materials[m];
+        if (material.slots.empty()) {
+            continue;
+        }
+        // ⚑ A material the registry already refused - a missing shader, or a
+        // declaration its SPIR-V disagreed with - has no set to write, and it
+        // has already been named once with the actual reason. Uploading its
+        // textures anyway would cost real memory for a surface that will not
+        // draw, and reporting the failed write would bury the real error under
+        // a second one that describes a consequence.
+        if (m_materials.materialSet(m) == VK_NULL_HANDLE) {
+            continue;
+        }
+        slotBindings.clear();
+        bool resolved = true;
+        for (const assets::MaterialSlot& slot : material.slots) {
+            std::uint32_t index = 0;
+            if (!textureIndex(slot.texture, index)) {
+                SOL_LOG_ERROR("material '%s': cannot load texture '%s' for slot '%s' - every model "
+                              "wearing it will draw nothing. Looked in: %s",
+                              material.id.c_str(),
+                              slot.texture.c_str(),
+                              slot.name.c_str(),
+                              describeSearchPath(cookedSearchPath).c_str());
+                resolved = false;
+                break;
+            }
+            slotBindings.push_back(
+                {.view = m_textures[index].image.view, .sampler = m_textures[index].sampler});
+        }
+        if (resolved && !m_materials.writeMaterialSet(m, slotBindings)) {
+            SOL_LOG_ERROR("material '%s': its textures loaded but its descriptor set would not write",
+                          material.id.c_str());
+        }
+    }
 
     LodReport& report = lodReport();
     report.levelsLoaded = 0;
@@ -418,12 +473,16 @@ void SceneRenderer::unloadModels()
     m_textures.clear();
     m_meshStems.clear();
     m_textureStems.clear();
-    // ⚑ The buckets hold pointers into the caller's instance span, which is
-    // frame-scoped - but they are also sized to the MATERIAL count, and a
-    // reload can change that. Emptied here so a bucket for a material that no
-    // longer exists cannot outlive it; `loadModels` sizes them again.
+    // ⚑ Both hold pointers into the caller's instance span, which is
+    // frame-scoped - and the opaque one is also sized to the MATERIAL count,
+    // which a reload can change. Emptied here so a bucket for a material that
+    // no longer exists cannot outlive it; `loadModels` sizes it again. The
+    // translucent list is flat and carries a material INDEX rather than a
+    // bucket per material, so it only has the pointer problem, but it is
+    // cleared beside its neighbour rather than being the one exception a reader
+    // has to notice.
     m_opaqueBuckets.clear();
-    m_translucentBuckets.clear();
+    m_translucentDraws.clear();
 }
 
 void SceneRenderer::shutdown()
@@ -502,9 +561,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
     for (std::vector<const RenderInstance*>& bucket : m_opaqueBuckets) {
         bucket.clear();
     }
-    for (std::vector<const RenderInstance*>& bucket : m_translucentBuckets) {
-        bucket.clear();
-    }
+    m_translucentDraws.clear();
 
     // Stage F: how big a thing is on screen decides which level it draws, and
     // the focal length is the same one the target pick projects through - one
@@ -555,57 +612,78 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
         // Phase 12: translucent models sit out the opaque block entirely and
         // are replayed after the sky. Deferring the pointer rather than the
         // built matrix keeps this loop doing one thing.
-        auto& buckets = entry.translucent ? m_translucentBuckets : m_opaqueBuckets;
-        if (entry.material < buckets.size()) {
-            buckets[entry.material].push_back(&instance);
+        //
+        // ⚑ Phase 25 stage C: the translucent side keeps a FLAT list with the
+        // camera distance already in hand, because it is about to be sorted
+        // across materials rather than grouped by them. The distance is the
+        // same subtraction the draw does, done once.
+        if (entry.translucent) {
+            const core::Vec3 relative = (instance.position - camera.position).toVec3();
+            m_translucentDraws.push_back({.instance = &instance,
+                                          .material = entry.material,
+                                          .distanceSquared = dot(relative, relative)});
+        } else if (entry.material < m_opaqueBuckets.size()) {
+            m_opaqueBuckets[entry.material].push_back(&instance);
         }
     }
 
-    // Records one material's bucket: bind its pipeline, then draw. Shared by
-    // the opaque block here and the translucent one after the sky, so the two
-    // cannot drift on level selection or on the report - which is the mistake
-    // Phase 12 explicitly wrote its second loop to avoid, by hand.
-    const auto drawBucket = [&](std::uint32_t material, const std::vector<const RenderInstance*>& bucket) {
-        if (bucket.empty()) {
-            return;
-        }
-        m_meshRenderer.bindPipeline(commandBuffer, extent, m_materials.pipeline(material));
-        for (const RenderInstance* instance : bucket) {
-            const CatalogEntry& entry = m_models[modelIndex(instance->model)];
-            // Camera-relative: demote sim-space positions to float only after
-            // subtracting the camera position (the large-world rule).
-            const core::Vec3 relative = (instance->position - camera.position).toVec3();
-            const core::Mat4 model =
-                core::translation(relative) * toMat4(instance->rotation) * core::scale(instance->scale);
+    // Records ONE instance under an already-bound material. Shared by the
+    // opaque block here and the sorted translucent one after the sky, so the
+    // two cannot drift on level selection or on the report - which is the
+    // mistake Phase 12 explicitly wrote its second loop to avoid, by hand.
+    //
+    // ⚑ It takes the material because the LAYOUT is the material's since stage
+    // C, and a push constant is addressed through a layout.
+    const auto drawInstance = [&](std::uint32_t material, const RenderInstance& instance) {
+        const CatalogEntry& entry = m_models[modelIndex(instance.model)];
+        // Camera-relative: demote sim-space positions to float only after
+        // subtracting the camera position (the large-world rule).
+        const core::Vec3 relative = (instance.position - camera.position).toVec3();
+        const core::Mat4 model =
+            core::translation(relative) * toMat4(instance.rotation) * core::scale(instance.scale);
 
-            // ⚑ The instance scale is not uniform in general (a rock takes its
-            // size from it), so the silhouette is bounded by the LARGEST axis.
-            // Erring large means erring towards detail, which is the safe
-            // direction: the cost of being wrong is a few triangles, not a
-            // visible pop.
-            const float widest = std::max({instance->scale.x, instance->scale.y, instance->scale.z});
-            const float screenRadius = ui::screenRadiusPixels(
-                static_cast<double>(entry.radius * widest), length(relative), lodFocal);
-            const std::uint32_t level = chooseLevel(instance->key, screenRadius, entry.levelCount);
+        // ⚑ The instance scale is not uniform in general (a rock takes its
+        // size from it), so the silhouette is bounded by the LARGEST axis.
+        // Erring large means erring towards detail, which is the safe
+        // direction: the cost of being wrong is a few triangles, not a
+        // visible pop.
+        const float widest = std::max({instance.scale.x, instance.scale.y, instance.scale.z});
+        const float screenRadius =
+            ui::screenRadiusPixels(static_cast<double>(entry.radius * widest), length(relative), lodFocal);
+        const std::uint32_t level = chooseLevel(instance.key, screenRadius, entry.levelCount);
 
-            m_meshRenderer.draw(commandBuffer,
-                                m_meshes[entry.levels[level]],
-                                m_textures[entry.texture],
-                                viewProjection * model,
-                                model,
-                                entry.emissive,
-                                entry.alpha);
-            ++m_drawCallCount;
-            ++report.drawn[level];
-            if (entry.levelCount > 1 && screenRadius > report.largestChainedRadius) {
-                report.largestChainedRadius = screenRadius;
-                report.largestChainedLevel = level;
-            }
+        m_meshRenderer.draw(commandBuffer,
+                            m_meshes[entry.levels[level]],
+                            m_textures[entry.texture],
+                            m_materials.pipelineLayout(material),
+                            viewProjection * model,
+                            model,
+                            entry.emissive,
+                            entry.alpha);
+        ++m_drawCallCount;
+        ++report.drawn[level];
+        if (entry.levelCount > 1 && screenRadius > report.largestChainedRadius) {
+            report.largestChainedRadius = screenRadius;
+            report.largestChainedLevel = level;
         }
     };
 
+    const auto bindMaterial = [&](std::uint32_t material) {
+        m_meshRenderer.bindMaterial(commandBuffer,
+                                    extent,
+                                    m_materials.pipeline(material),
+                                    m_materials.pipelineLayout(material),
+                                    m_materials.materialSet(material));
+    };
+
     for (std::uint32_t material = 0; material < m_opaqueBuckets.size(); ++material) {
-        drawBucket(material, m_opaqueBuckets[material]);
+        if (m_opaqueBuckets[material].empty()) {
+            continue;
+        }
+        bindMaterial(material);
+        for (const RenderInstance* instance : m_opaqueBuckets[material]) {
+            drawInstance(material, *instance);
+        }
     }
 
     m_gpuProfiler.endZone(commandBuffer, gpuMeshZone);
@@ -668,23 +746,45 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
     // pass. After the sky, before the particles: exhaust glow then reads as
     // being in front of the film rather than trapped behind it.
     //
-    // ⚑⚑ NO BACK-TO-FRONT SORT, AND STAGE B HAS NOT CHANGED THAT - BUT IT HAS
-    // CHANGED WHY. The deferral used to rest on "the only translucent object
-    // in the game is one flat disc per gate, and gates are ~100,000 km apart";
-    // a second translucent MATERIAL is now a def row and no C++, so the
-    // premise is no longer a fact about the engine, only a fact about the
-    // shipped content. ⚑ Phase 25 stage C inherits this and must DECIDE it
-    // rather than discover it in a screenshot: the moment two translucent
-    // materials can overlap on screen, unsorted blending is order-dependent
-    // and the order here is material index, which is arbitrary.
-    bool anyTranslucent = false;
-    for (const std::vector<const RenderInstance*>& bucket : m_translucentBuckets) {
-        anyTranslucent = anyTranslucent || !bucket.empty();
-    }
-    if (anyTranslucent) {
+    // ⚑⚑⚑ SORTED BACK TO FRONT, AND THIS IS THE QUESTION PHASE 25 STAGE C WAS
+    // HANDED AND DECIDED. Stage B did not change the behaviour but it changed
+    // the reasoning: the deferral used to rest on "the only translucent object
+    // in the game is one flat disc per gate, and gates are ~100,000 km apart",
+    // and once a second translucent MATERIAL became a def row and no C++, that
+    // stopped being a fact about the engine and became a fact about today's
+    // content. Blending is order-dependent, and the order it USED to run in was
+    // material index - the order rows happen to sit in a file. Arbitrary, and
+    // wrong in the way nobody files a bug about, because it looks like a
+    // lighting problem.
+    //
+    // ⚑ THE PASS GIVES UP ITS BUCKETING TO GET THIS, DELIBERATELY. Grouping by
+    // material exists to hold the bind count down, which matters in the opaque
+    // block where the whole bubble draws; here the draws are few and each is
+    // expensive per pixel, so a bind per run of one material is a price worth
+    // paying for a correct picture. The rebind is on CHANGE, so the shipped
+    // case - several gate membranes, one material - is still one bind.
+    if (!m_translucentDraws.empty()) {
         const std::uint32_t gpuTranslucentZone = m_gpuProfiler.beginZone(commandBuffer, "gpu.translucent");
-        for (std::uint32_t material = 0; material < m_translucentBuckets.size(); ++material) {
-            drawBucket(material, m_translucentBuckets[material]);
+        std::sort(m_translucentDraws.begin(),
+                  m_translucentDraws.end(),
+                  [](const TranslucentDraw& a, const TranslucentDraw& b) {
+                      // Farthest first. ⚑ The material index breaks the tie so
+                      // the order is TOTAL: two membranes at the same distance
+                      // would otherwise sort differently between std::sort
+                      // implementations, and a frame that differs by toolchain
+                      // is a frame no A/B capture can measure against.
+                      if (a.distanceSquared != b.distanceSquared) {
+                          return a.distanceSquared > b.distanceSquared;
+                      }
+                      return a.material < b.material;
+                  });
+        std::uint32_t bound = 0xFFFFFFFFu;
+        for (const TranslucentDraw& draw : m_translucentDraws) {
+            if (draw.material != bound) {
+                bindMaterial(draw.material);
+                bound = draw.material;
+            }
+            drawInstance(draw.material, *draw.instance);
         }
         m_gpuProfiler.endZone(commandBuffer, gpuTranslucentZone);
     }

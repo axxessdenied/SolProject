@@ -101,14 +101,16 @@ solid = false
 # origin, not from the cockpit's own centre, and comes out just inside the
 # ship's own 8 m. Nothing reads it today: the cockpit is a RenderInstance and
 # never gets a RenderShape, so it is in no collision or avoidance set.
-# emissive is here because vacuum ambient is 1.2%, which is right for a hull
-# seen from outside and pitch black for a room the player is sitting in.
+#
+# ⚑ Phase 25 stage C: the surface moved to `sol.cockpit` in materials.toml,
+# which keeps the same texture and the same `emissive` floor and adds a glow
+# mask so the instruments light rather than the whole cabin. A row naming a
+# material carries none of the four surface keys - that row's business now.
 [[model]]
 id = "cockpit"
 mesh = "cockpit"
-texture = "cockpit"
+material = "sol.cockpit"
 radius = 8.0
-emissive = 0.10
 solid = false
 
 # ---------------------------------------------------------------------------
@@ -194,17 +196,19 @@ model = "ship"
 # Forge's `create [[model]] row` button, which measured `radius` off the mesh -
 # 7.4173 m, and it said so.
 #
-# ⚑ THE THREE VALUES BELOW ARE THE ONES THE TOOL CANNOT INFER, and they are
-# what makes this an INTERIOR rather than a prop. `texture` defaulted to
-# `checker` because a combo has to default to something; `emissive` is here for
-# the same reason cockpit.toml's is - vacuum ambient is 1.2%, which is right
-# for a hull seen from outside and PITCH BLACK for a room you are sitting in;
-# and `solid` is off because this is a room, not an obstacle. Geometry cannot
-# tell you any of that.
+# ⚑ THE VALUES BELOW ARE THE ONES THE TOOL CANNOT INFER, and they are what
+# makes this an INTERIOR rather than a prop. `solid` is off because this is a
+# room, not an obstacle; geometry cannot tell you that.
+#
+# ⚑ Phase 25 stage C: the surface keys this row used to carry - `texture`, which
+# defaulted to `checker` because a combo has to default to something, and the
+# `emissive` floor that stopped a room being pitch black at 1.2% ambient - are
+# both in `sol.cockpit` now, which it shares with the player's own frame. That
+# is the first material two models wear, so the boot line's model count and
+# material count finally disagree, on purpose.
 [[model]]
 id = "freighter_cockpit"
 mesh = "freighter_cockpit"
-texture = "cockpit"
+material = "sol.cockpit"
 radius = 7.4173
-emissive = 0.10
 solid = false

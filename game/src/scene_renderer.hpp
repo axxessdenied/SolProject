@@ -341,7 +341,35 @@ private:
     // keeps their capacity, so after the first frame this allocates nothing.
     // Resized only when the material count changes, i.e. on a def load.
     std::vector<std::vector<const RenderInstance*>> m_opaqueBuckets;
-    std::vector<std::vector<const RenderInstance*>> m_translucentBuckets;
+
+    // ⚑⚑⚑ THE TRANSLUCENT PASS IS SORTED AND THEREFORE IS NOT BUCKETED (Phase
+    // 25 stage C), AND THIS IS THE STAGE'S ONE DECISION ABOUT THE PICTURE.
+    // Until stage B, "no back-to-front sort" rested on a fact about the shipped
+    // content - the only translucent object in the game was one flat disc per
+    // gate, and gates are ~100,000 km apart. Stage B made a second translucent
+    // material a def row and no C++, so that premise stopped being a fact about
+    // the engine. Two translucent surfaces that overlap on screen blend in
+    // whatever order they were recorded, and the recording order was MATERIAL
+    // INDEX, which is the order rows happen to sit in a file: arbitrary, and
+    // silently wrong rather than loudly wrong.
+    //
+    // ⚑ SO CORRECTNESS WINS OVER BIND COUNT HERE, AND ONLY HERE. The argument
+    // for bucketing is that binding a pipeline per object is wasteful - which
+    // is true of the opaque pass, where every ship, rock and station in the
+    // bubble is drawn. It is not true of this pass: a blended, depth-write-free
+    // draw is expensive per pixel and is deliberately rare, so the worst case
+    // is a bind per translucent object and the realistic case is a handful. The
+    // sort is by camera distance, farthest first, and the pipeline is rebound
+    // only when the material actually changes - so a run of one material still
+    // costs one bind.
+    struct TranslucentDraw
+    {
+        const RenderInstance* instance = nullptr;
+        std::uint32_t material = 0;
+        float distanceSquared = 0.0f;
+    };
+
+    std::vector<TranslucentDraw> m_translucentDraws;
     std::vector<sol::renderer::GpuMesh> m_meshes;
     std::vector<sol::renderer::GpuTexture> m_textures;
     std::vector<std::string> m_meshStems;

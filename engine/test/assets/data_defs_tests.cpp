@@ -800,6 +800,117 @@ depth_write = true
     SOL_CHECK(!merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\ncull = \"yes\"\n", "m.toml", &error));
 }
 
+// ⚑⚑ PHASE 25 STAGE C: WHAT A MATERIAL DECLARES. `textures` is ORDERED because
+// a slot's position is its descriptor binding number; `params` is NAMED because
+// a param is matched into the shader's uniform block by name. Both facts are
+// asserted here because both are invisible in the file and load-bearing in the
+// renderer.
+SOL_TEST(data_defs_material_declares_slots_and_params)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[material]]
+id = "sol.plain"
+texture = "hull"
+
+[[material]]
+id = "sol.cabin"
+texture = "cockpit"
+fragment_shader = "cockpit"
+textures = { glow = "cockpit_glow", wear = "hull" }
+params = { glow_strength = 2.2, tint = 0.5 }
+)",
+                      "materials.toml",
+                      &error));
+
+    const sol::assets::MaterialDef* plain = db.findMaterial("sol.plain");
+    SOL_REQUIRE(plain != nullptr);
+    // ⚑ A row that declares nothing must stay EMPTY rather than gaining an
+    // implicit slot, because that emptiness is what keeps every material
+    // written before this stage on the pipeline layout it already had.
+    SOL_CHECK(plain->slots.empty());
+    SOL_CHECK(plain->params.empty());
+
+    const sol::assets::MaterialDef* cabin = db.findMaterial("sol.cabin");
+    SOL_REQUIRE(cabin != nullptr);
+    SOL_REQUIRE(cabin->slots.size() == 2);
+    // File order, which is binding order. Reversing these two lines in the file
+    // rewires the shader, and that is the whole reason this is a table and not
+    // a set.
+    SOL_CHECK(cabin->slots[0].name == "glow");
+    SOL_CHECK(cabin->slots[0].texture == "cockpit_glow");
+    SOL_CHECK(cabin->slots[1].name == "wear");
+    SOL_CHECK(cabin->slots[1].texture == "hull");
+    // ⚑ The ALBEDO is not one of them. It is set 0, it is what every mesh
+    // material has, and a stage that folded it in here would have changed every
+    // shader in the engine.
+    SOL_CHECK(cabin->texture == "cockpit");
+
+    SOL_REQUIRE(cabin->params.size() == 2);
+    SOL_CHECK(cabin->params[0].name == "glow_strength");
+    SOL_CHECK(cabin->params[0].value > 2.19f && cabin->params[0].value < 2.21f);
+    SOL_CHECK(cabin->params[1].name == "tint");
+
+    // The schema, one refusal per way of getting it wrong.
+    SOL_CHECK(
+        !merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\ntextures = \"glow\"\n", "m.toml", &error));
+    SOL_CHECK(error.find("table") != std::string::npos);
+    // An empty stem would reach the filesystem as ".stex", which is a path
+    // nobody can read back to a row - so it dies where the slot name is in hand.
+    SOL_CHECK(!merge(
+        db, "[[material]]\nid = \"m\"\ntexture = \"t\"\ntextures = { glow = \"\" }\n", "m.toml", &error));
+    SOL_CHECK(error.find("glow") != std::string::npos);
+    SOL_CHECK(!merge(
+        db, "[[material]]\nid = \"m\"\ntexture = \"t\"\nparams = { gain = \"loud\" }\n", "m.toml", &error));
+    SOL_CHECK(error.find("gain") != std::string::npos);
+    // ⚑ An integer IS a number here. TOML tells 2 and 2.0 apart and a shader
+    // param does not, so refusing `glow_strength = 2` would be the schema
+    // enforcing a distinction the renderer cannot see.
+    SOL_CHECK(
+        merge(db, "[[material]]\nid = \"m\"\ntexture = \"t\"\nparams = { gain = 2 }\n", "m.toml", &error));
+    const sol::assets::MaterialDef* integral = db.findMaterial("m");
+    SOL_REQUIRE(integral != nullptr);
+    SOL_REQUIRE(integral->params.size() == 1);
+    SOL_CHECK(integral->params[0].value > 1.99f && integral->params[0].value < 2.01f);
+}
+
+// ⚑ The shipped cockpit material, because stage C's exit criterion is about
+// `game/data` and not about a fixture: two textures and a tunable parameter,
+// on a row two models wear.
+SOL_TEST(data_defs_shipped_cockpit_declares_two_textures_and_a_param)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(db.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+    SOL_REQUIRE(db.validateMaterials(&error));
+
+    const sol::assets::MaterialDef* cockpit = db.findMaterial("sol.cockpit");
+    SOL_REQUIRE(cockpit != nullptr);
+    SOL_CHECK(cockpit->texture == "cockpit"); // set 0, the albedo
+    SOL_REQUIRE(cockpit->slots.size() == 1);  // set 1 binding 0
+    SOL_CHECK(cockpit->slots[0].name == "glow");
+    SOL_CHECK(cockpit->slots[0].texture == "cockpit_glow");
+    SOL_REQUIRE(cockpit->params.size() == 1); // set 1 binding 1
+    SOL_CHECK(cockpit->params[0].name == "glow_strength");
+    SOL_CHECK(cockpit->fragmentShader == "cockpit");
+    SOL_CHECK(!cockpit->synthesised);
+
+    // ⚑ TWO MODELS, ONE MATERIAL - the first time that has been true in this
+    // game, and the reason the boot line's model and material counts differ.
+    std::size_t wearers = 0;
+    for (const auto& model : db.models()) {
+        if (model.material == "sol.cockpit") {
+            ++wearers;
+            // A row that names a material carries none of the four surface
+            // keys; stage A refuses one that carries both.
+            SOL_CHECK(model.texture.empty());
+        }
+    }
+    SOL_CHECK(wearers == 2);
+}
+
 // ⚑ The shipped catalog itself, because the claim this stage has to make is
 // about `game/data` and not about a fixture: every committed `[[model]]` row
 // keeps working untouched, and every one of them now draws through a material.

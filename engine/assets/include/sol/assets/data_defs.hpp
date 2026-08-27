@@ -328,10 +328,31 @@ enum class MaterialBlend
     Additive, // src.rgb + dst.rgb
 };
 
+// One extra texture a material declares beyond its albedo (Phase 25 stage C).
+//
+// ⚑ THE ALBEDO IS NOT ONE OF THESE, and that asymmetry is deliberate rather
+// than a leftover. `texture` is the one every mesh material has, it is bound at
+// set 0 exactly as it has been since Phase 3, and keeping it there is what lets
+// `mesh.frag`, `membrane.frag` and the Forge's whole viewport stay untouched by
+// this stage. These are the material's OWN slots, bound at set 1 in the order
+// written, which is the order the shader must declare them in.
+struct MaterialSlot
+{
+    std::string name;    // the shader's variable name, for an error a reader can act on
+    std::string texture; // cooked file stem, e.g. "cockpit_glow" -> cockpit_glow.stex
+};
+
+// One scalar a material tunes on its shader (Phase 25 stage C). Matched into
+// the shader's uniform block BY NAME, never by position - see `spirv_reflect`
+// for why position is the silent-misalignment bug this exists to avoid.
+struct MaterialParam
+{
+    std::string name;
+    float value = 0.0f;
+};
+
 // HOW A SURFACE IS DRAWN (Phase 25 stage A), split out of the model that wears
-// it, and WHAT DRAWS IT (stage B). Stage C turns `texture` and
-// `emissive`/`alpha` into declared slots and parameters; until then those four
-// are the shape the renderer has always had.
+// it, WHAT DRAWS IT (stage B), and WHAT THAT SHADER GETS FED (stage C).
 //
 // ⚑ THE PREFIX `sol.auto.` IS RESERVED and an authored row using it is
 // refused. Every `[[model]]` row that names no material gets one SYNTHESISED
@@ -374,6 +395,21 @@ struct MaterialDef
     bool depthTest = true;
     bool depthWrite = true;
     bool cullBackFaces = true;
+
+    // ⚑⚑ PHASE 25 STAGE C: WHAT THE SHADER GETS FED, DECLARED RATHER THAN
+    // REFLECTED (decision 2). `slots` are extra textures at set 1 bindings
+    // 0..n-1 in written order; `params` are floats packed into a uniform buffer
+    // at the binding after them. The declaration is what the descriptor layout
+    // is BUILT from; the SPIR-V is what it is CHECKED against, so a material
+    // that lies about its shader is refused at load with the slot named
+    // instead of reaching the validation layer - which is on in dev builds and
+    // off in shipping, i.e. exactly backwards from where it is needed.
+    //
+    // ⚑ A material with neither declares no set 1 at all and gets the same
+    // pipeline layout every material had before this stage. That is what keeps
+    // the other eight rows free.
+    std::vector<MaterialSlot> slots;
+    std::vector<MaterialParam> params;
 
     // True for a row this database derived from a `[[model]]`, false for one
     // somebody wrote. The derived set is rebuilt from scratch after every

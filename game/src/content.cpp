@@ -210,6 +210,32 @@ std::string listModels(GameContent& content)
                       film,
                       material != nullptr ? material->id.c_str() : "unresolved");
         out += line;
+
+        // ⚑ Phase 25 stage C: WHAT THE MATERIAL DECLARES, because otherwise the
+        // only way to see a slot or a param is to look at the picture and guess.
+        // The declaration is the half of a material that has no visible
+        // consequence a drive can measure - a wrong `glow_strength` looks like a
+        // lighting opinion - so it is printed, values included. Appended rather
+        // than squeezed into the buffer above: a material may declare several of
+        // each, and a probe that truncates is a probe that lies.
+        if (material != nullptr && (!material->slots.empty() || !material->params.empty())) {
+            out += " {";
+            bool first = true;
+            for (const assets::MaterialSlot& slot : material->slots) {
+                out += first ? "" : ", ";
+                first = false;
+                out += slot.name + "=" + slot.texture;
+            }
+            for (const assets::MaterialParam& param : material->params) {
+                char value[64] = {};
+                std::snprintf(
+                    value, sizeof(value), "%s=%.3f", param.name.c_str(), static_cast<double>(param.value));
+                out += first ? "" : ", ";
+                first = false;
+                out += value;
+            }
+            out += "}";
+        }
     }
     if (out.empty()) {
         return "no model defs";

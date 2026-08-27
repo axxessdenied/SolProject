@@ -6,9 +6,22 @@
 #include "sol/platform/file_io.hpp"
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace sol::rhi {
+
+VkShaderModule createShaderModule(VkDevice device, std::span<const std::uint32_t> words)
+{
+    VkShaderModuleCreateInfo createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = words.size() * sizeof(std::uint32_t);
+    createInfo.pCode = words.data();
+
+    VkShaderModule shaderModule = VK_NULL_HANDLE;
+    SOL_VK_CHECK(vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule));
+    return shaderModule;
+}
 
 VkShaderModule createShaderModuleFromFile(VkDevice device, const char* path)
 {

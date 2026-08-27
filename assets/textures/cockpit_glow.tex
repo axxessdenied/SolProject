@@ -1,0 +1,40 @@
+# cockpit_glow.tex - which parts of the cabin are lit from the inside
+# (Phase 25 stage C), and the first texture in this game that is not a colour.
+#
+# ⚑ IT IS A MASK, SO ITS COORDINATES ARE NOT ITS OWN. Every rect below is
+# copied from cockpit.tex's "Instrument glow" op, and it has to stay copied:
+# this file says WHICH pixels of that texture glow, in that texture's uv space,
+# so a strip moved there and not here stops glowing and a strip moved here and
+# not there lights up bare panelling. They are two halves of one decision and
+# the only thing keeping them together is this paragraph.
+#
+# ⚑ WHY IT EXISTS AT ALL, WHICH IS A FIX AND NOT A LOOK. models.toml lifted the
+# whole cockpit with a flat `emissive = 0.10`, for a stated and correct reason -
+# vacuum ambient is 1.2%, which is right for a hull seen from outside and pitch
+# black for a room the player sits in. But a flat lift is the wrong shape for
+# what cockpit.tex says it is drawing: "a cabin is dark, with the light coming
+# from the instruments". A scalar cannot say "these five strips and nothing
+# else"; a second texture can. The `emissive` floor is KEPT beside it, so this
+# adds the instruments rather than redistributing the cabin.
+#
+# ⚑ Red channel only is what the shader reads, but this is written as white
+# because the cooker's encoder is BC1 RGB - a mask stored in one channel would
+# still cost three, and grey values here would read as partial glow, which is a
+# feature nothing wants yet.
+size = [256, 256]
+
+[[op]]
+kind = "fill"
+color = [0, 0, 0]
+
+# The five instrument strips, exactly as cockpit.tex paints them in amber.
+[[op]]
+kind = "rects"
+color = [255, 255, 255]
+rects = [
+  [148, 197, 26, 4],
+  [173, 66, 26, 4],
+  [105, 194, 26, 4],
+  [40, 105, 26, 4],
+  [50, 156, 26, 4],
+]

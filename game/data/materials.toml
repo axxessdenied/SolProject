@@ -52,3 +52,52 @@ alpha = 0.30
 # film reading as a black hole in the aperture when the star is off to one
 # side, so it is a value and not a leftover.
 emissive = 0.35
+
+
+# ---------------------------------------------------------------------------
+
+# The cabin the player sits in (Phase 25 stage C), and the first surface in this
+# game to bring its own TEXTURE SLOT and its own tunable number.
+#
+# ⚑ WHAT IT BUYS, AND LIKE THE MEMBRANE IT IS A FIX. models.toml lit the whole
+# cockpit with a flat `emissive = 0.10`, for a reason that was right - vacuum
+# ambient is 1.2%, which is pitch black for a room somebody is sitting in - but
+# with the wrong shape: cockpit.tex says it is drawing "a cabin is dark, with
+# the light coming from the instruments", and a single scalar cannot say "these
+# five strips and nothing else". A second texture can. The `emissive` floor is
+# kept exactly as it was, so this ADDS the instruments rather than
+# redistributing the cabin.
+#
+# ⚑⚑ INLINE TABLES, NOT `[material.textures]` SUB-HEADERS, AND THE REASON IS
+# NOT STYLE. `def_doc` - the document reader the Forge edits these files
+# through, which preserves comments and key order - models a def file as a flat
+# list of `[[table]]` rows each holding keys, and REFUSES a nested `[table]`
+# header rather than silently reassigning its keys to the row above. So a
+# sub-header here would parse for the game and break the tool. An inline table
+# is one key with one value, which is also the honest description: these are
+# properties OF this row, not sections of their own.
+# ⚑ Keep each on ONE line. `def_doc` continues a value across lines on square
+# brackets only, so a brace left open at end of line ends the document early.
+#
+# ⚑ `textures` IS ORDERED AND `params` IS NAMED, and that difference is the
+# whole of stage C's contract. A slot's position is its set 1 binding number, so
+# reordering them rewires the shader; a param is matched into the shader's
+# uniform block by NAME, so reordering them does nothing. Either kind of
+# disagreement with cockpit.frag is refused at load with the slot named, rather
+# than reaching the Vulkan validation layer - which is on in dev builds and off
+# in the one a player runs.
+[[material]]
+id = "sol.cockpit"
+texture = "cockpit"
+fragment_shader = "cockpit"
+# Unchanged from the model row this replaced. See above: it is a floor, and the
+# glow below is what picks the instruments out of it.
+emissive = 0.10
+# The emissive MASK: which pixels of `texture` above are lit from inside. Its
+# rects are copied from cockpit.tex's own "Instrument glow" op and have to stay
+# copied - see cockpit_glow.tex.
+textures = { glow = "cockpit_glow" }
+# How hard those strips burn, multiplied by the albedo underneath - so it is a
+# gain on the amber cockpit.tex already painted, not a colour of its own. Stage
+# D is what puts a slider on it.
+params = { glow_strength = 2.2 }

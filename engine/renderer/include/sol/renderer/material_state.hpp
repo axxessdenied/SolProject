@@ -26,6 +26,15 @@ namespace sol::renderer {
 // cost nothing extra. Adding a field to `GraphicsPipelineDesc` that a material
 // can vary means adding it here too, or the cache will hand back a pipeline
 // that is wrong in the new dimension.
+//
+// ⚑⚑ WHICH IS EXACTLY WHY STAGE C HAD TO ADD TWO. A material's declared slots
+// and params decide its set 1 LAYOUT, the layout is part of the pipeline
+// layout, and the pipeline layout is a field of `GraphicsPipelineDesc` - so two
+// materials sharing a shader pair and a blend mode but declaring different
+// interfaces must NOT share a pipeline. Only the SHAPE matters, never the names
+// or the values: `slotCount` textures, then one uniform buffer after them if
+// `hasParams`. Two materials feeding the same shader different textures and
+// different numbers still share one pipeline, which is the whole point.
 struct MaterialPipelineState
 {
     std::string vertexShader;
@@ -34,6 +43,8 @@ struct MaterialPipelineState
     bool depthTest = true;
     bool depthWrite = true;
     bool cullBackFaces = true;
+    std::uint32_t slotCount = 0;
+    bool hasParams = false;
 
     [[nodiscard]] bool operator==(const MaterialPipelineState& other) const;
 

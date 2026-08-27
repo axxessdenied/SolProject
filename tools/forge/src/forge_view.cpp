@@ -44,8 +44,12 @@ bool ForgeView::initialize(rhi::Context& context, rhi::Swapchain& swapchain, con
     const std::array<std::string, 1> shaderSearchPath = {shaderPath};
     const std::array<assets::MaterialDef, 1> viewportMaterial = {
         assets::MaterialDef{.id = "forge.viewport", .texture = ""}};
-    if (!m_materials.initialize(
-            context, kHdrFormat, kDepthFormat, m_meshRenderer.pipelineLayout(), shaderSearchPath) ||
+    if (!m_materials.initialize(context,
+                                kHdrFormat,
+                                kDepthFormat,
+                                m_meshRenderer.textureSetLayout(),
+                                sol::renderer::MeshRenderer::kPushConstantSize,
+                                shaderSearchPath) ||
         !m_materials.build(viewportMaterial)) {
         return false;
     }
@@ -155,13 +159,26 @@ void ForgeView::recordCommands(VkCommandBuffer commandBuffer,
 
     renderer::beginHdrScenePass(commandBuffer, m_hdrColor, m_depth, kViewportClearColor);
 
-    m_meshRenderer.bindPipeline(commandBuffer, extent, m_materials.pipeline(0));
+    // ⚑ One material, so one bind - and its set 1 is VK_NULL_HANDLE because
+    // `forge.viewport` declares no slots and no params (Phase 25 stage C). This
+    // tool binds a texture PER DRAW rather than per material, which is the one
+    // place in this codebase where that is right: an author is swapping the
+    // texture on one part, so the texture is a property of the draw and not of
+    // the surface. Stage D is what gives the viewport real materials.
+    const VkPipelineLayout layout = m_materials.pipelineLayout(0);
+    m_meshRenderer.bindMaterial(
+        commandBuffer, extent, m_materials.pipeline(0), layout, m_materials.materialSet(0));
     for (const DrawItem& item : frame.items) {
         if (item.mesh == nullptr || item.texture == nullptr) {
             continue;
         }
-        m_meshRenderer.draw(
-            commandBuffer, *item.mesh, *item.texture, viewProjection * item.model, item.model, item.emissive);
+        m_meshRenderer.draw(commandBuffer,
+                            *item.mesh,
+                            *item.texture,
+                            layout,
+                            viewProjection * item.model,
+                            item.model,
+                            item.emissive);
     }
 
     m_debugDraw.draw(commandBuffer, m_frameIndex, viewProjection);

@@ -8,7 +8,8 @@ bool MaterialPipelineState::operator==(const MaterialPipelineState& other) const
 {
     return vertexShader == other.vertexShader && fragmentShader == other.fragmentShader &&
            blend == other.blend && depthTest == other.depthTest && depthWrite == other.depthWrite &&
-           cullBackFaces == other.cullBackFaces;
+           cullBackFaces == other.cullBackFaces && slotCount == other.slotCount &&
+           hasParams == other.hasParams;
 }
 
 MaterialPipelineState materialPipelineState(const assets::MaterialDef& material)
@@ -18,7 +19,9 @@ MaterialPipelineState materialPipelineState(const assets::MaterialDef& material)
                                  .blend = material.blend,
                                  .depthTest = material.depthTest,
                                  .depthWrite = material.depthWrite,
-                                 .cullBackFaces = material.cullBackFaces};
+                                 .cullBackFaces = material.cullBackFaces,
+                                 .slotCount = static_cast<std::uint32_t>(material.slots.size()),
+                                 .hasParams = !material.params.empty()};
 }
 
 MaterialStateGrouping groupMaterialsByState(std::span<const assets::MaterialDef> materials)

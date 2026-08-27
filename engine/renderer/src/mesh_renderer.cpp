@@ -24,7 +24,11 @@ struct PushConstants
     core::Vec4 sunDirection; // .xyz = surface-to-sun, world space
 };
 
-static_assert(sizeof(PushConstants) == 128, "must fit the guaranteed push constant minimum");
+// ⚑ Checked against the exported constant rather than against a literal, so
+// the size the registry builds a pipeline layout with and the size this file
+// pushes cannot drift apart silently.
+static_assert(sizeof(PushConstants) == MeshRenderer::kPushConstantSize,
+              "must fit the guaranteed push constant minimum");
 
 constexpr std::uint32_t kMaxTextures = 256;
 
@@ -35,10 +39,7 @@ bool MeshRenderer::initialize(rhi::Context& context)
     m_context = &context;
     m_textureSetLayout = rhi::createTextureSetLayout(context.device());
     m_descriptorPool = rhi::createTextureDescriptorPool(context.device(), kMaxTextures);
-    m_pipelineLayout =
-        rhi::createPipelineLayout(context.device(), &m_textureSetLayout, 1, sizeof(PushConstants));
-    return m_textureSetLayout != VK_NULL_HANDLE && m_descriptorPool != VK_NULL_HANDLE &&
-           m_pipelineLayout != VK_NULL_HANDLE;
+    return m_textureSetLayout != VK_NULL_HANDLE && m_descriptorPool != VK_NULL_HANDLE;
 }
 
 void MeshRenderer::shutdown()
@@ -47,10 +48,8 @@ void MeshRenderer::shutdown()
         return;
     }
     const VkDevice device = m_context->device();
-    vkDestroyPipelineLayout(device, m_pipelineLayout, nullptr);
     vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, m_textureSetLayout, nullptr);
-    m_pipelineLayout = VK_NULL_HANDLE;
     m_descriptorPool = VK_NULL_HANDLE;
     m_textureSetLayout = VK_NULL_HANDLE;
     m_context = nullptr;
@@ -115,7 +114,11 @@ void MeshRenderer::destroyTexture(GpuTexture& texture)
     texture.descriptorSet = VK_NULL_HANDLE; // pool-owned
 }
 
-void MeshRenderer::bindPipeline(VkCommandBuffer commandBuffer, VkExtent2D extent, VkPipeline pipeline) const
+void MeshRenderer::bindMaterial(VkCommandBuffer commandBuffer,
+                                VkExtent2D extent,
+                                VkPipeline pipeline,
+                                VkPipelineLayout layout,
+                                VkDescriptorSet materialSet) const
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
@@ -130,11 +133,21 @@ void MeshRenderer::bindPipeline(VkCommandBuffer commandBuffer, VkExtent2D extent
     const VkRect2D scissor = {{0, 0}, extent};
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+    // ⚑ ONCE PER MATERIAL, NOT ONCE PER DRAW. Set 1 is the material's - its
+    // declared textures and its params buffer - so every object wearing the
+    // material binds the same one, and binding it here is what makes that true
+    // by construction rather than by a caller remembering.
+    if (materialSet != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(
+            commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &materialSet, 0, nullptr);
+    }
 }
 
 void MeshRenderer::draw(VkCommandBuffer commandBuffer,
                         const GpuMesh& mesh,
                         const GpuTexture& texture,
+                        VkPipelineLayout layout,
                         const core::Mat4& mvp,
                         const core::Mat4& model,
                         float emissive,
@@ -152,19 +165,13 @@ void MeshRenderer::draw(VkCommandBuffer commandBuffer,
     // premultiplies by, and 1.0 reproduces the pre-Phase-12 output exactly.
     push.sunDirection = {m_sunDirection.x, m_sunDirection.y, m_sunDirection.z, alpha};
     vkCmdPushConstants(commandBuffer,
-                       m_pipelineLayout,
+                       layout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                        0,
                        sizeof(push),
                        &push);
-    vkCmdBindDescriptorSets(commandBuffer,
-                            VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            m_pipelineLayout,
-                            0,
-                            1,
-                            &texture.descriptorSet,
-                            0,
-                            nullptr);
+    vkCmdBindDescriptorSets(
+        commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &texture.descriptorSet, 0, nullptr);
 
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &mesh.vertexBuffer.buffer, &offset);

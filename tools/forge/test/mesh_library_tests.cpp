@@ -303,7 +303,11 @@ SOL_TEST(aTextureSourceLoadsAsTheCookedFormRatherThanRawPixels)
         SOL_REQUIRE(!data.mips.empty());
         SOL_CHECK(data.mips[0].size() == 256 / 4 * 256 / 4 * 8);
     }
-    SOL_CHECK(sourcesSeen == 3); // never a vacuous pass
+    // ⚑ Never a vacuous pass, and the number tracks `assets/textures/`: hull,
+    // checker, cockpit, and since Phase 25 stage C the cockpit's glow mask -
+    // the first source here that is not a colour but is encoded exactly like
+    // one, which is the claim this loop makes about all four.
+    SOL_CHECK(sourcesSeen == 4);
 }
 
 // ⚑⚑ THE CROSS-REFERENCE THE STRICT SCHEMA DOES NOT CHECK, asserted over the

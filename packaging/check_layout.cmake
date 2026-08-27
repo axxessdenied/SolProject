@@ -45,6 +45,14 @@ sol_require_file("shaders/ui.frag.spv")
 # and the only symptom would be a gate you can see straight through.
 sol_require_file("data/materials.toml")
 sol_require_file("shaders/membrane.frag.spv")
+# ⚑ Phase 25 stage C: the first shader a def names that also needs a SECOND
+# FILE beside it. `cockpit.frag.spv` going missing costs the cabin its
+# instruments; `cooked/cockpit_glow.stex` going missing costs the same thing
+# through a completely different path - the material's descriptor set never
+# gets written - and neither is reachable from a hardcoded filename anywhere in
+# the build. The cooked glob below would catch the second only if a cook ran.
+sol_require_file("shaders/cockpit.frag.spv")
+sol_require_file("cooked/cockpit_glow.stex")
 sol_require_file("cooked/ui.sfont")
 sol_require_file("LICENSE")
 sol_require_file("THIRD-PARTY.txt")

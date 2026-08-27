@@ -62,9 +62,20 @@ add_test(NAME assets.unit COMMAND sol_assets_tests)
 # ("eight materials, two pipelines") is a fact about game/data, not a fixture.
 add_executable(sol_renderer_tests
     renderer/material_state_tests.cpp
+    renderer/spirv_reflect_tests.cpp
 )
 target_link_libraries(sol_renderer_tests PRIVATE sol::test sol::renderer)
-target_compile_definitions(sol_renderer_tests PRIVATE SOL_DEF_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data")
+# ⚑ Phase 25 stage C: the SPIR-V the BUILD compiled, not a hand-written blob.
+# Reflection has to agree with the compiler this game is built with, and that is
+# the only thing it has to agree with - so the fixtures are the shipped shaders,
+# for the same reason `assets.unit` reads the committed `.tex` sources and
+# `geometry.unit` the `.forge` files. ⚑ The dependency is real and declared:
+# without it a fresh build can run this suite before glslc has produced a single
+# .spv, and every test in it fails on a missing file.
+add_dependencies(sol_renderer_tests sol_shaders)
+target_compile_definitions(sol_renderer_tests
+    PRIVATE SOL_DEF_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data"
+            SOL_SHADER_BINARY_DIR="${CMAKE_BINARY_DIR}/bin/shaders")
 add_test(NAME renderer.unit COMMAND sol_renderer_tests)
 
 # The editable mesh core (Phase 9 stage B). Headless by construction - no

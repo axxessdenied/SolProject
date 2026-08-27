@@ -129,12 +129,19 @@ SOL_TEST(materialStateKeepsFirstUseOrder)
     SOL_CHECK(again.materialState[3] == 0);
 }
 
-// ⚑⚑ THE SHIPPED SET, AND THE NUMBER THIS STAGE IS MEASURED BY. The seven
+// ⚑⚑ THE SHIPPED SET, AND THE NUMBER THIS PHASE IS MEASURED BY. The five
 // derived materials all ask for the stock lambert pair under Phase 12's opaque
-// state; the membrane brings its own fragment stage and blends. Eight rows,
-// two pipelines - and a regression here is a pipeline count that grows with
+// state; the membrane brings its own fragment stage and blends; the cockpit
+// brings its own fragment stage and its own declared interface. Seven rows,
+// three pipelines - and a regression here is a pipeline count that grows with
 // the catalog, which nothing else would notice.
-SOL_TEST(materialStateShippedCatalogNeedsTwoPipelines)
+//
+// ⚑ THESE NUMBERS ARE SUPPOSED TO MOVE WHEN THE CATALOG DOES. Stage B asserted
+// eight rows and two states; stage C made the two cockpits share one material
+// and gave it a third state, so this now reads seven and three. A failure here
+// is a question - "did the catalog change, or did sharing break?" - and the
+// checks below are what tell the two apart.
+SOL_TEST(materialStateShippedCatalogNeedsThreePipelines)
 {
     sol::assets::DefDatabase db;
     std::string error;
@@ -142,11 +149,10 @@ SOL_TEST(materialStateShippedCatalogNeedsTwoPipelines)
     SOL_REQUIRE(db.validateMaterials(&error));
 
     const MaterialStateGrouping grouping = groupMaterialsByState(db.materials());
-    SOL_CHECK(db.materials().size() == 8);
-    SOL_CHECK(grouping.states.size() == 2);
+    SOL_CHECK(db.materials().size() == 7);
+    SOL_CHECK(grouping.states.size() == 3);
 
-    // The membrane is the one that is on its own, and it is on its own because
-    // of its SHADER as much as its blend.
+    // The membrane is on its own because of its SHADER as much as its blend.
     const std::uint32_t membrane = db.materialIndex("sol.gate_membrane");
     SOL_REQUIRE(membrane != sol::assets::kNoMaterial);
     const std::uint32_t hull = db.materialIndex("sol.auto.ship");
@@ -154,4 +160,63 @@ SOL_TEST(materialStateShippedCatalogNeedsTwoPipelines)
     SOL_CHECK(grouping.materialState[membrane] != grouping.materialState[hull]);
     SOL_CHECK(grouping.states[grouping.materialState[hull]] ==
               materialPipelineState(db.materials()[db.materialIndex("sol.auto.station")]));
+
+    // ⚑ THE COCKPIT IS THE FIRST MATERIAL TWO MODELS WEAR, which is why the
+    // model count and the material count finally disagree. Asserted here
+    // because it is the thing that makes seven rather than eight, and a future
+    // edit that gave the freighter its own material would otherwise put the
+    // count back to eight and look like this test passing again.
+    const std::uint32_t cockpit = db.materialIndex("sol.cockpit");
+    SOL_REQUIRE(cockpit != sol::assets::kNoMaterial);
+    std::size_t wearers = 0;
+    for (const sol::assets::ModelDef& model : db.models()) {
+        wearers += model.materialIndex == cockpit ? 1u : 0u;
+    }
+    SOL_CHECK(wearers == 2);
+
+    // ⚑ AND ITS STATE IS ITS OWN BECAUSE OF ITS DECLARED INTERFACE, not only
+    // its shader. A material declaring a slot or a param needs a set 1, and a
+    // pipeline is built against a layout - so sharing a pipeline across
+    // different interfaces would bind the wrong one.
+    SOL_CHECK(grouping.materialState[cockpit] != grouping.materialState[hull]);
+    SOL_CHECK(grouping.materialState[cockpit] != grouping.materialState[membrane]);
+    SOL_CHECK(grouping.states[grouping.materialState[cockpit]].slotCount == 1);
+    SOL_CHECK(grouping.states[grouping.materialState[cockpit]].hasParams);
+    SOL_CHECK(grouping.states[grouping.materialState[membrane]].slotCount == 0);
+    SOL_CHECK(!grouping.states[grouping.materialState[membrane]].hasParams);
+}
+
+// ⚑ THE INTERFACE IS PART OF THE PIPELINE KEY, AND THIS IS THE TEST THAT SAYS
+// SO. Two materials identical in every field the state carried before stage C
+// but differing in what they DECLARE must not share a pipeline: the layout is
+// built from the declaration, and a pipeline built against one layout bound
+// with another is undefined behaviour that no log line would mention.
+SOL_TEST(materialStateInterfaceSplitsAnOtherwiseIdenticalPair)
+{
+    sol::assets::MaterialDef plain = material("plain");
+    sol::assets::MaterialDef slotted = material("slotted");
+    slotted.slots.push_back({.name = "glow", .texture = "cockpit_glow"});
+    sol::assets::MaterialDef tuned = material("tuned");
+    tuned.params.push_back({.name = "gain", .value = 1.0f});
+
+    const std::vector<sol::assets::MaterialDef> materials = {plain, slotted, tuned};
+    const MaterialStateGrouping grouping = groupMaterialsByState(materials);
+    SOL_CHECK(grouping.states.size() == 3);
+    SOL_CHECK(grouping.materialState[0] != grouping.materialState[1]);
+    SOL_CHECK(grouping.materialState[0] != grouping.materialState[2]);
+    SOL_CHECK(grouping.materialState[1] != grouping.materialState[2]);
+
+    // ⚑ But the VALUES inside the declaration are not part of the key: two
+    // materials feeding the same shader different textures and different
+    // numbers still share one pipeline, which is the entire point of caching on
+    // state rather than on identity.
+    sol::assets::MaterialDef otherSlot = material("other_slot");
+    otherSlot.slots.push_back({.name = "glow", .texture = "checker"});
+    sol::assets::MaterialDef otherTuning = material("other_tuning");
+    otherTuning.params.push_back({.name = "gain", .value = 9.0f});
+    const std::vector<sol::assets::MaterialDef> pairs = {slotted, otherSlot, tuned, otherTuning};
+    const MaterialStateGrouping shared = groupMaterialsByState(pairs);
+    SOL_CHECK(shared.states.size() == 2);
+    SOL_CHECK(shared.materialState[0] == shared.materialState[1]);
+    SOL_CHECK(shared.materialState[2] == shared.materialState[3]);
 }

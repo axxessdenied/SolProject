@@ -7,6 +7,7 @@ add_library(sol_renderer STATIC
     src/particle_renderer.cpp
     src/scene_pass.cpp
     src/sky_renderer.cpp
+    src/spirv_reflect.cpp
     src/tonemap_renderer.cpp
     src/ui_renderer.cpp
 )

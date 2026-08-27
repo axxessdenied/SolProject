@@ -3,11 +3,19 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <span>
 
 namespace sol::rhi {
 
 // Loads a SPIR-V file from disk; VK_NULL_HANDLE on failure.
 [[nodiscard]] VkShaderModule createShaderModuleFromFile(VkDevice device, const char* path);
+
+// The same from words already in hand. ⚑ Phase 25 stage C reads a .spv once
+// and then both REFLECTS it and creates its module from that one copy - if it
+// read the file twice, the thing checked and the thing bound could differ, and
+// a shader edited between the two reads would fail in the least legible way
+// available.
+[[nodiscard]] VkShaderModule createShaderModule(VkDevice device, std::span<const std::uint32_t> words);
 
 struct VertexAttribute
 {

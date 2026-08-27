@@ -649,10 +649,72 @@ void applyBlendDefaults(MaterialDef& def)
     def.cullBackFaces = !def.translucent;
 }
 
+// `[material.textures]` (Phase 25 stage C): the extra textures this material
+// binds beyond its albedo, in the order the shader declares them.
+//
+// ⚑ ORDER IS THE CONTRACT AND IT IS WORTH SAYING WHY THE NAME IS NOT. A
+// descriptor binding is a number, so what the engine must get right is the
+// POSITION; the name is carried so that a refusal can say "slot 'glow'" rather
+// than "set 1 binding 0" and send the author counting. `TomlValue` keeps table
+// members in file order, which is what makes reading the file enough to know
+// what the shader will see.
+void readMaterialSlots(FieldReader& reader, MaterialDef& def)
+{
+    const TomlValue* table = reader.table.find("textures");
+    if (table == nullptr) {
+        return;
+    }
+    if (!table->isTable()) {
+        reader.fail("'textures' must be a table of slot name to cooked texture stem");
+        return;
+    }
+    for (const std::pair<std::string, TomlValue>& member : table->members()) {
+        if (!member.second.isString() || member.second.asString().empty()) {
+            reader.fail("texture slot '" + member.first + "' must be a non-empty cooked texture stem");
+            return;
+        }
+        for (const MaterialSlot& existing : def.slots) {
+            if (existing.name == member.first) {
+                reader.fail("texture slot '" + member.first + "' is declared twice");
+                return;
+            }
+        }
+        def.slots.push_back({.name = member.first, .texture = member.second.asString()});
+    }
+}
+
+// `[material.params]` (Phase 25 stage C): the scalars this material tunes on
+// its shader, matched into the shader's uniform block by NAME.
+void readMaterialParams(FieldReader& reader, MaterialDef& def)
+{
+    const TomlValue* table = reader.table.find("params");
+    if (table == nullptr) {
+        return;
+    }
+    if (!table->isTable()) {
+        reader.fail("'params' must be a table of parameter name to number");
+        return;
+    }
+    for (const std::pair<std::string, TomlValue>& member : table->members()) {
+        if (!member.second.isFloat() && !member.second.isInteger()) {
+            reader.fail("parameter '" + member.first + "' must be a number");
+            return;
+        }
+        for (const MaterialParam& existing : def.params) {
+            if (existing.name == member.first) {
+                reader.fail("parameter '" + member.first + "' is declared twice");
+                return;
+            }
+        }
+        def.params.push_back({.name = member.first, .value = static_cast<float>(member.second.asFloat())});
+    }
+}
+
 // A `[[material]]` row (Phase 25 stage A): how a surface is drawn, split out of
 // the model that wears it. Stage B added the shader pair and the pipeline
 // state, which is everything `GraphicsPipelineDesc` can be told that this
-// engine has a reason to vary.
+// engine has a reason to vary. Stage C added the declared slots and params -
+// what that shader actually gets fed.
 bool parseMaterial(const TomlValue& table,
                    const char* sourceName,
                    std::vector<MaterialDef>& out,
@@ -697,6 +759,29 @@ bool parseMaterial(const TomlValue& table,
     reader.optionalBool("depth_write", def.depthWrite);
     reader.optionalBool("cull", def.cullBackFaces);
 
+    // ⚑ PHASE 25 STAGE C. `textures` and `params` are TABLES rather than key
+    // lists because their ORDER is their meaning for the first and their NAMES
+    // are for the second, and a TOML table preserves both.
+    //
+    // ⚑⚑ AN INLINE TABLE, NOT A `[material.textures]` SUB-HEADER, AND THE
+    // CONSTRAINT COMES FROM THE TOOL RATHER THAN FROM HERE. `def_doc` - the
+    // comment-preserving document the Forge edits def files through - models a
+    // file as a flat list of `[[table]]` rows holding keys, and REFUSES a
+    // nested header rather than silently reassigning its keys to the row above.
+    // A sub-header would therefore parse for the game and break the tool, which
+    // is the worst of the available failures because only one of the two is in
+    // front of a person. Both spellings reach this code as a `TomlValue` table,
+    // so nothing below cares.
+    //
+    // ⚑ Read before `rejectUnknownKeys` so an author's typo inside one still
+    // reaches the unknown-key path with the material's name in context.
+    if (!reader.failed) {
+        readMaterialSlots(reader, def);
+    }
+    if (!reader.failed) {
+        readMaterialParams(reader, def);
+    }
+
     reader.rejectUnknownKeys({"id",
                               "texture",
                               "emissive",
@@ -707,7 +792,9 @@ bool parseMaterial(const TomlValue& table,
                               "blend",
                               "depth_test",
                               "depth_write",
-                              "cull"});
+                              "cull",
+                              "textures",
+                              "params"});
     // A shader stem reaches the filesystem as "<stem>.vert.spv". An empty one
     // would build that into ".vert.spv" and fail with a path nobody can read
     // back to a row, so it dies here where the file name is still in hand.
