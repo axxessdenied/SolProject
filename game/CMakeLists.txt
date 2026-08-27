@@ -163,10 +163,61 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/README.txt
     DESTINATION .)
 
+# ---------------------------------------------------------------------------
+# Tests over the SHIPPING layout (Phase 22 stage C). Only in a shipping
+# configuration, because in a dev tree they would test the wrong thing: the
+# installed binary would still read the source tree, so package.smoke would
+# pass while proving nothing at all.
+#
+# A CTest fixture rather than test DEPENDS: the install has to happen once,
+# before either test, and CTest pulls a fixture's setup in automatically even
+# when a label filter would otherwise have excluded it - which is what lets
+# `ctest -L gpu` run package.smoke on its own and still get a tree to run.
+# ---------------------------------------------------------------------------
+if(NOT SOL_DEV_DATA_PATHS)
+    set(solPackageTestPrefix ${CMAKE_BINARY_DIR}/package-test)
+
+    add_test(NAME package.install COMMAND ${CMAKE_COMMAND}
+        -DSOL_BUILD_DIR=${CMAKE_BINARY_DIR}
+        -DSOL_PREFIX=${solPackageTestPrefix}
+        -P ${CMAKE_SOURCE_DIR}/packaging/install_fresh.cmake)
+    set_tests_properties(package.install PROPERTIES FIXTURES_SETUP sol_package_tree)
+
+    # What the package must contain, and - the half that needs a test at all -
+    # what it must not. The exclusions are enforced by omission above, and an
+    # omission is invisible to everything except an assertion like this one.
+    add_test(NAME package.layout COMMAND ${CMAKE_COMMAND}
+        -DSOL_PREFIX=${solPackageTestPrefix}
+        -DSOL_EXE_NAME=$<TARGET_FILE_NAME:sol_game>
+        -P ${CMAKE_SOURCE_DIR}/packaging/check_layout.cmake)
+    set_tests_properties(package.layout PROPERTIES FIXTURES_REQUIRED sol_package_tree)
+
+    # ⚑ The only test that exercises the real resolution path end to end, and
+    # the one that would catch a data file which exists in the source tree and
+    # never made it into an install rule. It runs the INSTALLED binary, so a
+    # baked source path would be the difference between passing here and
+    # failing on every other machine.
+    add_test(NAME package.smoke
+        COMMAND ${solPackageTestPrefix}/$<TARGET_FILE_NAME:sol_game> --frames 120)
+    set_tests_properties(package.smoke PROPERTIES
+        FIXTURES_REQUIRED sol_package_tree
+        LABELS gpu
+        WORKING_DIRECTORY ${solPackageTestPrefix})
+endif()
+
 # Needs a GPU + Vulkan driver, so it is excluded from the default test presets
 # (label "gpu"); run locally with: ctest --preset dev-gpu
-add_test(NAME game.smoke COMMAND sol_game --frames 120)
-set_tests_properties(game.smoke PROPERTIES LABELS gpu)
+#
+# ⚑ Phase 22. Dev configurations only, and not out of tidiness: this runs the
+# binary AS IT SITS IN THE BUILD TREE, which only works while that tree is
+# self-sufficient - i.e. while dev paths are baked. A shipping build looks for
+# data/ beside the executable and there is none there, so this test would fail
+# for a completely uninteresting reason. `package.smoke` below is its
+# replacement in a shipping tree, and it runs the artifact that actually ships.
+if(SOL_DEV_DATA_PATHS)
+    add_test(NAME game.smoke COMMAND sol_game --frames 120)
+    set_tests_properties(game.smoke PROPERTIES LABELS gpu)
+endif()
 
 # The game's own logic, headless. Declared here rather than in engine/test/
 # because `engine` is configured before `game`, so the library does not exist

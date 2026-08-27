@@ -73,6 +73,12 @@
       "filter": { "exclude": { "label": "gpu" } }
     },
     {
+      "name": "release-gpu",
+      "configurePreset": "release",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "gpu" } }
+    },
+    {
       "name": "linux-dev",
       "configurePreset": "linux-dev",
       "output": { "outputOnFailure": true },
@@ -85,10 +91,28 @@
       "filter": { "exclude": { "label": "gpu" } }
     },
     {
+      "name": "linux-release-gpu",
+      "configurePreset": "linux-release",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "gpu" } }
+    },
+    {
       "name": "linux-dev-gpu",
       "configurePreset": "linux-dev",
       "output": { "outputOnFailure": true },
       "filter": { "include": { "label": "gpu" } }
+    }
+  ],
+  "packagePresets": [
+    { "name": "release", "configurePreset": "release" },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
     }
   ]
 }

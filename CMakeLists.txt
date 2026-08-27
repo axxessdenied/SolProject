@@ -125,3 +125,46 @@ add_subdirectory(shaders)
 add_subdirectory(game)
 # After game/: the Forge depends on sol_cook_assets, which game/ defines.
 add_subdirectory(tools/forge)
+
+# ---------------------------------------------------------------------------
+# Packaging (Phase 22 stage C). A portable archive per platform: unpack
+# anywhere, run, delete the folder to uninstall. No installer - see the engine
+# plan's Phase 22 decision 1 for why, and for what an installer would have
+# dragged in that this tree does not have.
+#
+# ⚑⚑ ONLY IN A SHIPPING CONFIGURATION, AND THAT GUARD IS THE POINT. Packaging
+# a dev build would produce an archive whose binary reads THIS machine's source
+# tree - and it would run perfectly here and nowhere else, which is exactly the
+# failure decision 6 exists to make impossible. Refusing to configure CPack at
+# all is louder than producing a broken archive.
+# ---------------------------------------------------------------------------
+if(SOL_DEV_DATA_PATHS)
+    message(STATUS "Packaging disabled: this is a dev configuration (SOL_DEV_DATA_PATHS=ON). Use the release presets.")
+else()
+    set(CPACK_PACKAGE_NAME "TheStarsDontWait")
+    set(CPACK_PACKAGE_VENDOR "Nick Slusarczyk")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Carve out a life in a galaxy already in motion.")
+    set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+    set(CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE)
+    set(CPACK_PACKAGE_DIRECTORY ${CMAKE_BINARY_DIR}/package)
+
+    # ⚑ Strips the installed binaries. Meaningless on MSVC, which keeps debug
+    # info in a .pdb that is never installed - and load-bearing on GCC, where
+    # -g embeds it in the ELF: measured 37 MB unstripped against 4.8 MB
+    # stripped, for the same game. Setting it here is what stops that being a
+    # flag somebody has to remember.
+    set(CPACK_STRIP_FILES ON)
+
+    if(WIN32)
+        set(CPACK_GENERATOR ZIP)
+        set(CPACK_PACKAGE_FILE_NAME "TheStarsDontWait-${PROJECT_VERSION}-win64")
+    else()
+        set(CPACK_GENERATOR TGZ)
+        set(CPACK_PACKAGE_FILE_NAME "TheStarsDontWait-${PROJECT_VERSION}-linux-x86_64")
+    endif()
+
+    # The archive keeps its top-level directory (CPack's default for archive
+    # generators): unpacking gives one folder rather than spraying 56 files
+    # into whatever directory the player happened to be in.
+    include(CPack)
+endif()
