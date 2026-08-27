@@ -24,9 +24,13 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd,
 
 namespace sol::ui {
 
-bool devUiPlatformInit(const platform::NativeWindowHandle& handle)
+bool devUiPlatformInit(platform::Window& window)
 {
-    return ImGui_ImplWin32_Init(handle.windowHandle);
+    // Only the HWND is wanted here: this backend reads the rest of a frame's
+    // input out of the message stream, through the hook below. The wider
+    // parameter is for the Wayland twin, which has no message stream and polls
+    // the window instead (Phase 21 decision 2).
+    return ImGui_ImplWin32_Init(window.nativeHandle().windowHandle);
 }
 
 void devUiPlatformShutdown()

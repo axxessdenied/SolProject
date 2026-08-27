@@ -13,8 +13,13 @@ if(WIN32)
     # ImGui platform backend bridge: sanctioned platform touch point (AGENTS.md 4).
     target_sources(sol_ui PRIVATE src/win32/dev_ui_win32.cpp)
 elseif(LINUX)
-    # Hand-written: there is no upstream imgui_impl_wayland to delegate to.
-    target_sources(sol_ui PRIVATE src/linux/dev_ui_wayland.cpp)
+    # Hand-written: there is no upstream imgui_impl_wayland to delegate to. The
+    # key table is a second file because it is pure data over two enums, which
+    # makes it the one part of this backend a headless suite can walk.
+    target_sources(sol_ui PRIVATE
+        src/linux/dev_ui_wayland.cpp
+        src/linux/imgui_keys.cpp
+    )
 else()
     # Same reasoning as sol_rhi's: fail naming the gap, not the mangled symbol.
     message(FATAL_ERROR "sol_ui has no ImGui platform backend for this OS (Windows and Linux only).")

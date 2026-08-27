@@ -111,6 +111,14 @@ add_executable(sol_ui_tests
     ui/radar_projection_tests.cpp
 )
 target_link_libraries(sol_ui_tests PRIVATE sol::test sol::ui)
+# The Key -> ImGuiKey table (Phase 21 stage C) has the same shape of risk the
+# xkb table does one layer down: a wrong row is invisible until somebody
+# presses that key with the console focused. It joins this suite on Linux only,
+# because on Windows imgui_impl_win32 owns the equivalent table upstream and
+# there is nothing of ours to check.
+if(LINUX)
+    target_sources(sol_ui_tests PRIVATE ui/imgui_key_map_tests.cpp)
+endif()
 add_test(NAME ui.unit COMMAND sol_ui_tests)
 
 add_executable(sol_scripting_tests

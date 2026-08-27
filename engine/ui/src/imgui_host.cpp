@@ -77,7 +77,7 @@ bool ImGuiHost::initialize(platform::Window& window,
         ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     }
 
-    if (!devUiPlatformInit(window.nativeHandle())) {
+    if (!devUiPlatformInit(window)) {
         SOL_LOG_ERROR("[imgui] platform backend init failed");
         ImGui::DestroyContext();
         return false;
