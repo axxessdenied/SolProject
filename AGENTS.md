@@ -14,7 +14,7 @@ SolProject is a single-player 3D space sandbox game — **The Stars Don't Wait**
 ## 2. Build & Verify
 
 - Build system: **CMake ≥ 3.28**, out-of-source builds only, into `build/`.
-- Generator: **Ninja** preferred; MSVC (cl) is the primary compiler on Windows. Keep code Clang-clean for the future Linux port.
+- Generator: **Ninja** preferred; MSVC (cl) is the primary compiler on Windows, GCC on Linux. **The Linux port landed in Phase 21** — `linux-dev` / `linux-dev-gpu` presets, guarded by `hostSystemName == Linux` so they are invisible to the Windows CMake. A clean MSVC build is not evidence of a clean GCC build, or the reverse: the first Linux build produced five classes of diagnostic `/W4 /WX` had never mentioned.
 - Once `CMakePresets.json` exists, always use presets:
   ```
   cmake --preset dev
@@ -57,7 +57,7 @@ game (C++ glue + Lua scripts)
 ```
 
 - A module may depend only on modules **below** it. No upward or sideways includes; no cycles.
-- **Platform-specific code lives only in the platform layer**, behind portable interfaces. No `#include <windows.h>` or `#ifdef _WIN32` anywhere else, with two sanctioned exceptions: native Vulkan surface creation in `engine/rhi/src/win32/` and the Dear ImGui platform-backend bridge in `engine/ui/src/win32/`. Windows is the first target, but nothing may lock us to it.
+- **Platform-specific code lives only in the platform layer**, behind portable interfaces. No `#include <windows.h>` or `#ifdef _WIN32` anywhere else, with two sanctioned exceptions: native Vulkan surface creation in `engine/rhi/src/<os>/` and the Dear ImGui platform-backend bridge in `engine/ui/src/<os>/`. **Both now have a `win32/` and a `linux/` half** (Phase 21), and the rule is the directory: an OS `#ifdef` outside a `src/<os>/` directory is a defect, and there are currently zero.
 - **Engine code never includes game code.** The engine is a library; the game is its client.
 - Rendering talks to Vulkan **only through the RHI**. No raw `vk*` calls above `sol::rhi`.
 - Game logic (missions, faction decisions, economy tuning, UI flow) belongs in **Lua**; C++ is for the engine, performance-critical simulation, and the binding layer. When in doubt which side logic belongs on, check `docs/engine-plan.md` §Scripting, or ask.
@@ -79,6 +79,8 @@ This is a from-scratch engine. The **only** approved third-party dependencies ar
 Everything else — math, ECS, containers/allocators, asset formats, image/mesh importing in the cooker, platform abstraction — is written in this repo. **Adding, upgrading, or expanding the scope of any dependency requires explicit approval from the user first.** Do not add a library "temporarily," and do not copy-paste library source into the tree as a workaround.
 
 Vendored third-party code lives in `third_party/`, is never modified in place, and is excluded from formatting/linting.
+
+**System libraries are not dependencies under this section, and Phase 21 leaned on that standing rather than widening the table.** `ole32` (WASAPI) on Windows, and `libwayland-client`, `libwayland-cursor`, `libxkbcommon` and `wayland-protocols`/`wayland-scanner` on Linux, have the same standing this project already gives the Vulkan loader: they ship with the OS, no source enters the tree, and `third_party/` gains nothing. ⚑ The generated `wayland-scanner` output is machine-written C and is **deliberately not linked to `sol_options`** — it holds third_party's standing, and `-Werror` over it would let a `wayland-protocols` upgrade break the build for reasons no first-party file could be edited to fix. **SDL3 was offered as an explicit change to this table and declined; do not re-litigate it.**
 
 ## 6. Git Workflow
 
