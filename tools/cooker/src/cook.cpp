@@ -440,6 +440,20 @@ StalenessRule stalenessRuleFor(CookKind kind)
 
 std::vector<CookJob> planCook(const std::vector<std::string>& sources, const std::string& outputDirectory)
 {
+    // ⚑⚑ NORMALISED ONCE, HERE, RATHER THAN TRUSTED. Callers spell a directory
+    // however their own code happened to build it: `cooker.exe` gets argv, CMake
+    // passes a path with no trailing separator, and the FORGE hands over
+    // `executableDirectory() + "cooked/"` - built for concatenation, so it ends
+    // in one. Found by running the tool on Linux, where the log read
+    // `bin/cooked//ship.smesh`.
+    //
+    // ⚑ Harmless to the filesystem and harmless to the sweep (which compares
+    // LISTED paths, never job paths) - but a job path that does not equal the
+    // path the same file lists back as is the exact shape of every path bug this
+    // repo has had, and `platform::listFiles` promising '/' is what makes one
+    // spelling the right one.
+    const std::string directory = normalizeSeparators(outputDirectory);
+
     std::vector<CookJob> jobs;
     for (const std::string& source : sources) {
         const CookKind kind = cookKindForSource(source);
@@ -448,7 +462,7 @@ std::vector<CookJob> planCook(const std::vector<std::string>& sources, const std
         }
         CookJob job;
         job.source = source;
-        job.output = outputDirectory + "/" + fileStem(source) + cookedExtension(kind);
+        job.output = directory + "/" + fileStem(source) + cookedExtension(kind);
         job.kind = kind;
         jobs.push_back(std::move(job));
     }

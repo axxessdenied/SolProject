@@ -1051,6 +1051,32 @@ SOL_TEST(theDispatchIsByExtensionAndTheOutputIsKeyedOnTheStem)
     SOL_CHECK(jobs[1].output == "out/cooked/thrust.saud");
 }
 
+SOL_TEST(anOutputDirectoryIsSpelledOneWayHoweverTheCallerSpelledIt)
+{
+    // ⚑ FOUND BY RUNNING THE FORGE ON LINUX. The tool hands over
+    // `executableDirectory() + "cooked/"` - built for concatenation, so it ends
+    // in a separator - and the cook logged `bin/cooked//ship.smesh`. The
+    // filesystem does not care and neither does the sweep, which compares
+    // LISTED paths rather than job paths; but a job path that does not equal
+    // the path the same file lists back as is the shape of every path bug this
+    // repo has had, so it is normalised once rather than trusted.
+    const std::vector<cooker::CookJob> trailing = cooker::planCook({"a/hull.tex"}, "out/cooked/");
+    SOL_REQUIRE(trailing.size() == 1);
+    SOL_CHECK(trailing[0].output == "out/cooked/hull.stex");
+
+    // Several, and the caller's own separator convention: `platform::listFiles`
+    // promises '/', which is what makes that the right spelling here too.
+    const std::vector<cooker::CookJob> windows =
+        cooker::planCook({"a/hull.tex"}, ".\\build\\bin\\cooked\\\\");
+    SOL_REQUIRE(windows.size() == 1);
+    SOL_CHECK(windows[0].output == "./build/bin/cooked/hull.stex");
+
+    // ⚑ The stripping stops at one character, so a lone separator stays a
+    // directory: "" here would silently turn an absolute output path into a
+    // relative one, which is the only way this normalisation could do harm.
+    SOL_CHECK(cooker::planCook({"a/hull.tex"}, "/")[0].output == "//hull.stex");
+}
+
 SOL_TEST(twoSourcesThatCookToOneOutputAreACollisionHoweverFarApartTheySit)
 {
     // The pair that made this reachable at all: `.forge` and `.gltf` are
