@@ -15,6 +15,25 @@ bool writeFileBytes(const char* path, const void* data, std::size_t size)
     return written == size;
 }
 
+// Portable because it is only readFileBytes plus writeFileBytes plus the
+// guard; nothing here needs an OS. ⚑ The existence probe is a read attempt
+// rather than a stat: a file that exists but cannot be opened is, for this
+// function's purpose, the same as one that is already there - overwriting it
+// would be the destructive move either way.
+bool copyFileIfAbsent(const char* fromPath, const char* toPath)
+{
+    std::vector<std::uint8_t> existing;
+    if (readFileBytes(toPath, existing)) {
+        return true; // already migrated; leaving it alone is the entire point
+    }
+
+    std::vector<std::uint8_t> source;
+    if (!readFileBytes(fromPath, source)) {
+        return false; // nothing to migrate, which is the normal first run
+    }
+    return writeFileBytes(toPath, source.data(), source.size());
+}
+
 bool readFileBytes(const char* path, std::vector<std::uint8_t>& outBytes)
 {
     outBytes.clear();

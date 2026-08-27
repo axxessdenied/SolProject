@@ -2,9 +2,16 @@
 #include "sol/platform/platform.hpp"
 #include "sol/platform/time.hpp"
 
+// ⚑ clang-format off, and it is load-bearing: `IncludeBlocks: Regroup` sorts
+// across blank lines, and <shlobj.h> sorts ABOVE <windows.h> alphabetically -
+// which does not compile. Three other files in this repo carry the same guard
+// for the same reason.
+// clang-format off
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <shlobj.h>
+// clang-format on
 
 namespace sol::platform {
 
@@ -211,6 +218,51 @@ std::string executableDirectory()
         }
     }
     return path;
+}
+
+std::string userDataDirectory(const char* appName)
+{
+    if (appName == nullptr || appName[0] == '\0') {
+        return {};
+    }
+
+    // ⚑ SHGetKnownFolderPath rather than _wgetenv("LOCALAPPDATA"), even though
+    // the env var is simpler and set in every interactive session: this decides
+    // where a player's save lives, and the known-folder API is the one that
+    // honours folder redirection and survives a scrubbed environment block.
+    // shell32 has exactly the standing ole32 already has here (AGENTS.md 5).
+    PWSTR wideBase = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &wideBase))) {
+        CoTaskMemFree(wideBase); // documented as required even on failure
+        return {};
+    }
+
+    char utf8Base[MAX_PATH * 4] = {};
+    const int utf8Length =
+        WideCharToMultiByte(CP_UTF8, 0, wideBase, -1, utf8Base, sizeof(utf8Base) - 1, nullptr, nullptr);
+    CoTaskMemFree(wideBase);
+    if (utf8Length <= 1) { // 1 would be the terminator alone
+        return {};
+    }
+
+    // utf8Length counts the terminator because the input was -1 terminated.
+    std::string directory(utf8Base, static_cast<std::size_t>(utf8Length - 1));
+    for (char& c : directory) {
+        if (c == '\\') {
+            c = '/'; // same promise executableDirectory makes, for the same reason
+        }
+    }
+    // The name goes on verbatim: Windows convention is the display name, and
+    // the apostrophe in "The Stars Don't Wait" is perfectly legal on NTFS. It
+    // IS a quoting hazard for any shell or script that later touches the path.
+    directory += '/';
+    directory += appName;
+    directory += '/';
+
+    if (!createDirectories(directory.c_str())) {
+        return {}; // empty means unusable, and the caller decides the policy
+    }
+    return directory;
 }
 
 } // namespace sol::platform

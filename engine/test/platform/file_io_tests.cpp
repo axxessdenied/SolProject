@@ -5,6 +5,7 @@
 #include <sol/platform/file_io.hpp>
 #include <sol/test/test.hpp>
 
+using sol::platform::copyFileIfAbsent;
 using sol::platform::createDirectories;
 using sol::platform::deleteFile;
 using sol::platform::listFiles;
@@ -188,4 +189,90 @@ SOL_TEST(listFilesResultsArePrefixedByTheDirectoryAsGiven)
     }
 
     (void)deleteFile(file.c_str());
+}
+
+// ⚑⚑ Phase 22 stage B. userDataDirectory carries the SAME two promises
+// executableDirectory does, and it carries them somewhere worse to get wrong:
+// this is where a player's save goes. A missing trailing separator turns
+// ".../The Stars Don't Wait/" + "world.sav" into a FILE named
+// "The Stars Don't Waitworld.sav" one level up, which no error anywhere would
+// report - the write succeeds.
+//
+// The contract is also "non-empty means usable": the function creates the
+// directory and returns empty rather than handing back a path whose first
+// write will fail. So asserting a file can be written there is asserting the
+// contract, not testing the filesystem.
+// ⚑ The one test in this suite that CANNOT keep its mess inside the scratch
+// directory: the function under test is the one that decides where per-user
+// files go, so exercising it honestly means touching the real location. It
+// deletes the file it writes and leaves behind an empty directory named
+// "Sol Engine Test Scratch" (%LOCALAPPDATA% on Windows, ~/.local/share as
+// "sol-engine-test-scratch" on Linux). Named so it is obvious what dropped it,
+// and deliberately NOT the game's own name, so a test run can never collide
+// with a real save.
+SOL_TEST(userDataDirectoryIsUsableAndKeepsItsSeparatorPromise)
+{
+    const std::string dir = sol::platform::userDataDirectory("Sol Engine Test Scratch");
+    SOL_REQUIRE(!dir.empty());
+    SOL_CHECK(dir.back() == '/');
+    SOL_CHECK(dir.find('\\') == std::string::npos);
+
+    // Non-empty is a promise that the directory exists, so this must not need
+    // a createDirectories of its own.
+    const std::string probe = dir + "probe.txt";
+    SOL_REQUIRE(writeText(probe, "probe"));
+    SOL_CHECK(readText(probe) == "probe");
+    (void)deleteFile(probe.c_str());
+}
+
+// A name with nothing usable in it has no directory to offer, and the honest
+// answer is the empty string rather than a directory named after punctuation.
+SOL_TEST(userDataDirectoryRefusesANameItCannotUse)
+{
+    SOL_CHECK(sol::platform::userDataDirectory("").empty());
+    SOL_CHECK(sol::platform::userDataDirectory(nullptr).empty());
+}
+
+// ⚑⚑⚑ THE DESTRUCTIVE DIRECTION, AND THE ONLY TEST HERE THAT GUARDS AGAINST
+// DATA LOSS. copyFileIfAbsent exists to move a save and a settings file to
+// their new home exactly once. Inverted - copying whenever the SOURCE exists
+// rather than only when the DESTINATION does not - it would overwrite the
+// live save with the stale one on every single launch, and the player would
+// lose their game a little at a time while everything appeared to work.
+//
+// Both directions are asserted because only the pair pins the predicate: the
+// first case alone passes for an unconditional copy, and the second alone
+// passes for a function that never copies at all.
+SOL_TEST(copyFileIfAbsentSeedsAnEmptyDestinationAndNeverOverwritesALiveOne)
+{
+    const std::string dir = scratchRoot() + "/migrate";
+    SOL_REQUIRE(createDirectories(dir.c_str()));
+    const std::string legacy = dir + "/legacy.toml";
+    const std::string fresh = dir + "/fresh.toml";
+    (void)deleteFile(fresh.c_str());
+
+    // Destination absent: the content arrives, and the source stays put -
+    // this is a copy, not a move, so an older build keeps working.
+    SOL_REQUIRE(writeText(legacy, "effects_volume = 0.209"));
+    SOL_CHECK(copyFileIfAbsent(legacy.c_str(), fresh.c_str()));
+    SOL_CHECK(readText(fresh) == "effects_volume = 0.209");
+    SOL_CHECK(readText(legacy) == "effects_volume = 0.209");
+
+    // Destination present: it is left exactly as it was, even though the
+    // source is still there and still different. Reporting success is correct
+    // - the destination does hold content - and it is what lets the caller
+    // run this on every launch without a flag of its own.
+    SOL_REQUIRE(writeText(fresh, "effects_volume = 1.0"));
+    SOL_CHECK(copyFileIfAbsent(legacy.c_str(), fresh.c_str()));
+    SOL_CHECK(readText(fresh) == "effects_volume = 1.0");
+
+    // No source and no destination is the ordinary first run on a clean
+    // machine: nothing to migrate is a false, not a failure to report.
+    const std::string missing = dir + "/absent.toml";
+    const std::string target = dir + "/target.toml";
+    (void)deleteFile(target.c_str());
+    SOL_CHECK(!copyFileIfAbsent(missing.c_str(), target.c_str()));
+
+    (void)deleteFile(legacy.c_str());
+    (void)deleteFile(fresh.c_str());
 }

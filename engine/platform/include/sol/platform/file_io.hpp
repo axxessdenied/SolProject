@@ -22,6 +22,41 @@ namespace sol::platform {
 // that prefix-matches this against a listFiles result (Phase 22).
 [[nodiscard]] std::string executableDirectory();
 
+// Per-user writable directory for `appName`, created if missing, with a
+// trailing '/'. Empty means unusable - the OS gave no location, or the
+// directory could not be created - and the caller decides what to do about it
+// rather than being handed a path that will fail on first write.
+//
+// ⚑ Each backend applies its own platform's convention to `appName`:
+//   Windows  <%LOCALAPPDATA%>/<appName>
+//   Linux    <$XDG_DATA_HOME>/<slug>, else <$HOME>/.local/share/<slug>
+// (each with the trailing separator this function promises). ⚑ Written with
+// forward slashes on purpose: a '\' at the end of a // comment continues it
+// onto the next line, which GCC warns about and MSVC does not - so the first
+// draft of these two lines silently ate the third.
+// where <slug> keeps alphanumerics lowercased, treats whitespace as a word
+// break joined with '-', and DISCARDS everything else. So "The Stars Don't
+// Wait" reaches disk as itself on Windows and as "the-stars-dont-wait" on
+// Linux, which is what each platform expects to see. ⚑ Discarding rather than
+// separating is why the apostrophe does not yield "don-t".
+//
+// ⚑⚑ `appName` is a PARAMETER rather than a constant in each backend, and the
+// reason is not style: `sol::platform` is engine, so it must not know the
+// game's title (AGENTS.md 4), and the Forge links this same library - a baked
+// name would silently hand a tool the game's save directory. The game passes
+// the same string it already gives ContextDesc::appName and WindowDesc::title.
+[[nodiscard]] std::string userDataDirectory(const char* appName);
+
+// Copies `fromPath` to `toPath` only when nothing exists at `toPath`; true if
+// `toPath` holds content afterwards, including when it already did.
+//
+// ⚑ The "only when absent" half is the whole point and is the destructive
+// direction if inverted: this exists to migrate a file to a new home ONCE,
+// and a version that copied unconditionally would overwrite a live save with
+// a stale one on every launch. Copy rather than move is also deliberate - see
+// engine plan Phase 22 decision 3 - so the old location keeps working.
+[[nodiscard]] bool copyFileIfAbsent(const char* fromPath, const char* toPath);
+
 // Last-write time as an opaque monotonic-comparable value; 0 if the file is missing.
 [[nodiscard]] std::uint64_t fileModificationTime(const char* path);
 

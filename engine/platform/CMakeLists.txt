@@ -14,7 +14,12 @@ if(WIN32)
         src/win32/window_win32.cpp
     )
     # WASAPI reaches the endpoint through COM (decisions/009 / Phase 8t).
-    target_link_libraries(sol_platform PRIVATE ole32)
+    # shell32 joins it for SHGetKnownFolderPath, which is how userDataDirectory
+    # finds %LOCALAPPDATA% (Phase 22). Both are system libraries in the sense
+    # AGENTS.md section 5 uses - no source enters the tree and third_party/
+    # gains nothing - and ole32 is already here for the CoTaskMemFree that
+    # SHGetKnownFolderPath's result requires.
+    target_link_libraries(sol_platform PRIVATE ole32 shell32)
 elseif(LINUX)
     # Phase 21. The directory is the OS and the file name is the backend, so an
     # X11 window could sit beside the Wayland one without either being renamed.

@@ -8,6 +8,7 @@
 #include "sol/platform/platform.hpp"
 #include "sol/platform/time.hpp"
 
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
@@ -183,6 +184,71 @@ std::string executableDirectory()
         return "./";
     }
     return exe.parent_path().generic_string() + "/";
+}
+
+namespace {
+
+// "The Stars Don't Wait" -> "the-stars-dont-wait".
+//
+// ⚑ The apostrophe is DROPPED, not turned into a separator. Mapping every
+// non-alphanumeric to '-' would give "the-stars-don-t-wait", which is the
+// obvious implementation and the wrong answer: a word is not split by the
+// punctuation inside it. So alphanumerics are kept and lowercased, whitespace
+// (and '-'/'_', already separators) opens a new word, and everything else is
+// discarded. Runs collapse and the ends are trimmed, so no input can produce
+// a leading, trailing or doubled '-'.
+std::string slugify(const char* name)
+{
+    std::string slug;
+    bool pendingSeparator = false;
+    for (const char* c = name; *c != '\0'; ++c) {
+        const unsigned char ch = static_cast<unsigned char>(*c);
+        if (std::isalnum(ch) != 0) {
+            if (pendingSeparator && !slug.empty()) {
+                slug += '-';
+            }
+            pendingSeparator = false;
+            slug += static_cast<char>(std::tolower(ch));
+        } else if (std::isspace(ch) != 0 || ch == '-' || ch == '_') {
+            pendingSeparator = true;
+        }
+        // anything else: dropped, and it does NOT open a new word
+    }
+    return slug;
+}
+
+} // namespace
+
+std::string userDataDirectory(const char* appName)
+{
+    if (appName == nullptr) {
+        return {};
+    }
+    const std::string slug = slugify(appName);
+    if (slug.empty()) {
+        return {}; // a name with no alphanumerics has no directory to offer
+    }
+
+    std::string base;
+    const char* xdgDataHome = std::getenv("XDG_DATA_HOME");
+    // ⚑ The XDG spec says a RELATIVE XDG_DATA_HOME is invalid and must be
+    // ignored rather than resolved against the working directory - which for a
+    // game launched from a desktop file is somewhere nobody intended.
+    if (xdgDataHome != nullptr && xdgDataHome[0] == '/') {
+        base = xdgDataHome;
+    } else {
+        const char* home = std::getenv("HOME");
+        if (home == nullptr || home[0] == '\0') {
+            return {};
+        }
+        base = std::string(home) + "/.local/share";
+    }
+
+    const std::string directory = base + "/" + slug + "/";
+    if (!createDirectories(directory.c_str())) {
+        return {}; // empty means unusable, and the caller decides the policy
+    }
+    return directory;
 }
 
 } // namespace sol::platform

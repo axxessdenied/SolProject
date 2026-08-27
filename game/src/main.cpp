@@ -48,6 +48,12 @@
 
 namespace {
 
+// The game's name, in one place. It reaches three different subsystems - the
+// window title, the Vulkan application name, and from Phase 22 the per-user
+// save directory - and the last of those puts it on disk, so a second copy
+// drifting would silently strand somebody's save under the old spelling.
+constexpr const char* kAppName = "The Stars Don't Wait";
+
 #if defined(NDEBUG)
 constexpr bool kEnableValidation = false;
 #else
@@ -197,14 +203,14 @@ int main(int argc, char** argv)
 
     sol::platform::Window window;
     sol::platform::WindowDesc windowDesc = {};
-    windowDesc.title = "The Stars Don't Wait";
+    windowDesc.title = kAppName;
     if (!window.create(windowDesc)) {
         return EXIT_FAILURE;
     }
 
     sol::rhi::Context context;
     sol::rhi::ContextDesc contextDesc = {};
-    contextDesc.appName = "The Stars Don't Wait";
+    contextDesc.appName = kAppName;
     contextDesc.enableValidation = kEnableValidation;
     if (!context.initialize(contextDesc, window.nativeHandle())) {
         return EXIT_FAILURE;
@@ -213,12 +219,46 @@ int main(int argc, char** argv)
     const std::string executableDir = sol::platform::executableDirectory();
     const std::string shaderDirectory = executableDir + "shaders/";
     const std::string cookedDirectory = executableDir + "cooked/";
-    const std::string savePath = executableDir + "world.sav";
+
+    // Phase 22. The two files the game WRITES live in a per-user OS directory,
+    // not beside the executable: a portable archive can be unpacked into
+    // Program Files or /usr/local, where writing next to the binary fails
+    // silently and takes the player's save with it. Everything the game only
+    // READS - shaders, cooked assets, data, mods - stays executable-relative,
+    // because that half genuinely is part of the installation.
+    //
+    // ⚑ An empty result means the OS offered no location or the directory
+    // could not be created. That is not fatal and must not be: falling back to
+    // the old behaviour keeps the game playable, and the warning is what stops
+    // it being a silent relocation of somebody's save.
+    std::string writableDir = sol::platform::userDataDirectory(kAppName);
+    if (writableDir.empty()) {
+        SOL_LOG_WARN("no per-user data directory available; using the program directory");
+        writableDir = executableDir;
+    }
+    SOL_LOG_INFO("user data directory: %s", writableDir.c_str());
+
+    const std::string savePath = writableDir + "world.sav";
+    const std::string settingsPath = writableDir + "settings.toml";
+
+    // ⚑⚑ A ONE-TIME MIGRATION, AND IT COPIES RATHER THAN MOVES (Phase 22
+    // decision 3). Every build before this one wrote both files beside the
+    // executable, so an existing player - and every existing build tree -
+    // has them there. A move would take build/dev/bin/settings.toml out of
+    // the tree, and an A/B against an older commit would then silently come
+    // up on default volumes and default bindings. copyFileIfAbsent leaves the
+    // old file working and seeds the new location exactly once; running it
+    // unconditionally is the destructive inversion, and it is what the tests
+    // in platform.unit exist to catch.
+    if (writableDir != executableDir) {
+        (void)sol::platform::copyFileIfAbsent((executableDir + "settings.toml").c_str(),
+                                              settingsPath.c_str());
+        (void)sol::platform::copyFileIfAbsent((executableDir + "world.sav").c_str(), savePath.c_str());
+    }
 
     // Settings load before the swapchain exists, because V-Sync is a swapchain
     // present mode (Phase 8k) and creating it the wrong way round would mean
     // rebuilding it on the first frame of every run.
-    const std::string settingsPath = executableDir + "settings.toml";
     game::Settings settings;
     (void)settings.load(settingsPath.c_str()); // absent is normal on a first run
 
