@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <set>
 #include <utility>
 
 namespace game {
@@ -2982,31 +2981,24 @@ bool missionPost(GameContent& content)
 } // namespace
 
 bool GameContent::initialize(const std::string& dataDirectory,
-                             const std::string& modsDirectory,
+                             std::span<const std::string> modLayerDirectories,
                              SpaceWorld* world)
 {
     m_world = world;
 
-    // Layer order: base game first (mod zero), then mods sorted by name.
-    // Mods are the first-level subdirectories of the mods dir; listFiles is
-    // recursive, so derive their names from the returned paths.
+    // Layer order: base game first (mod zero), then the mods in name order, so
+    // a later name overwrites an earlier one in place.
+    //
+    // ⚑ THE SCAN THAT USED TO LIVE HERE MOVED OUT (Phase 24 stage S), and the
+    // move is not tidying. Deriving layer names by prefix-matching
+    // `platform::listFiles` output is the code that produced a mod layer named
+    // `C:` in the first shipping build, and it sat in this function where no
+    // suite could reach it. It is now `game::modLayerNames`, pure and tested,
+    // and `main.cpp` runs it once - which it has to anyway, because the cooked
+    // ASSET search path needs the same list before the renderer comes up.
     m_layerDirectories = {dataDirectory};
-    std::set<std::string> modNames;
-    const std::string modsPrefix = modsDirectory + "/";
-    for (const std::string& path : platform::listFiles(modsDirectory.c_str())) {
-        std::string relative = path;
-        if (relative.rfind(modsPrefix, 0) == 0) {
-            relative = relative.substr(modsPrefix.size());
-        }
-        const std::size_t slash = relative.find('/');
-        if (slash != std::string::npos) {
-            modNames.insert(relative.substr(0, slash));
-        }
-    }
-    for (const std::string& name : modNames) {
-        m_layerDirectories.push_back(modsDirectory + "/" + name);
-        SOL_LOG_INFO("mod layer: %s", name.c_str());
-    }
+    m_layerDirectories.insert(
+        m_layerDirectories.end(), modLayerDirectories.begin(), modLayerDirectories.end());
 
     registerBindings();
     if (!reloadDefs()) {

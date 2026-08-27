@@ -1,5 +1,7 @@
 #include "game_audio.hpp"
 
+#include "asset_paths.hpp"
+
 #include "sol/core/log.hpp"
 
 #include <algorithm>
@@ -15,7 +17,7 @@ const std::string kNoName;
 
 } // namespace
 
-bool GameAudio::initialize(const assets::DefDatabase& defs, const std::string& cookedDirectory)
+bool GameAudio::initialize(const assets::DefDatabase& defs, std::span<const std::string> cookedSearchPath)
 {
     m_cueTable.clear();
     m_bank.clear();
@@ -23,10 +25,13 @@ bool GameAudio::initialize(const assets::DefDatabase& defs, const std::string& c
     // The bank is built before the device opens and never mutated while it is
     // running: the mixer thread reads these samples directly.
     for (const assets::SoundDef& def : defs.sounds()) {
-        const std::string path = cookedDirectory + def.asset + ".saud";
-        const audio::SoundId sound = m_bank.load(path.c_str());
+        const std::string path = resolveAsset(cookedSearchPath, def.asset + ".saud");
+        const audio::SoundId sound = path.empty() ? audio::kNoSound : m_bank.load(path.c_str());
         if (sound == audio::kNoSound) {
-            SOL_LOG_WARN("audio: cue '%s' has no cooked asset at %s", def.id.c_str(), path.c_str());
+            SOL_LOG_WARN("audio: cue '%s' has no cooked asset '%s.saud' in any of: %s",
+                         def.id.c_str(),
+                         def.asset.c_str(),
+                         describeSearchPath(cookedSearchPath).c_str());
             continue;
         }
         m_cueTable.push_back({.id = def.id,

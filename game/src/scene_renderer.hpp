@@ -144,10 +144,13 @@ public:
         Failure,
     };
 
+    // `cookedSearchPath` is the ordered list from `asset_paths.hpp`, highest
+    // priority first, and it must outlive nothing - it is read here and again
+    // in `loadModels`, never stored (Phase 24 stage S).
     [[nodiscard]] bool initialize(sol::rhi::Context& context,
                                   sol::rhi::Swapchain& swapchain,
                                   const char* shaderDirectory,
-                                  const char* cookedDirectory);
+                                  std::span<const std::string> cookedSearchPath);
 
     // Uploads the catalog the `[[model]]` defs name (Phase 9). Separate from
     // initialize because the pipelines come up before the def database is
@@ -155,7 +158,8 @@ public:
     // reload the catalog without rebuilding the swapchain. Meshes and
     // textures are cached by cooked stem, so ten models sharing hull.stex
     // upload it once.
-    [[nodiscard]] bool loadModels(std::span<const sol::assets::ModelDef> models, const char* cookedDirectory);
+    [[nodiscard]] bool loadModels(std::span<const sol::assets::ModelDef> models,
+                                  std::span<const std::string> cookedSearchPath);
     void unloadModels();
     void shutdown();
 
@@ -271,6 +275,13 @@ private:
         // in this game is a def row and no C++ at all.
         bool translucent = false;
         float alpha = 1.0f;
+        // ⚑⚑ Phase 24 stage S. False when this model's mesh or texture could
+        // not be found in any layer's cooked directory. The row KEEPS ITS SLOT
+        // - `ModelId` is an index into `defs.models()` and `m_models` is built
+        // parallel to it, so skipping one would silently re-point every model
+        // after it - and the draw loop passes over it instead, which is the
+        // rule it already applies to a stale index one line up.
+        bool drawable = true;
     };
 
     std::vector<CatalogEntry> m_models;

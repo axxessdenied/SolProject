@@ -1,5 +1,7 @@
 #include "scene_renderer.hpp"
 
+#include "asset_paths.hpp"
+
 #include "sol/assets/asset_loader.hpp"
 #include "sol/assets/mesh_lod.hpp"
 #include "sol/core/log.hpp"
@@ -89,7 +91,7 @@ SceneRenderer::chooseLevel(RenderInstanceKey key, float screenRadiusPixels, std:
 bool SceneRenderer::initialize(rhi::Context& context,
                                rhi::Swapchain& swapchain,
                                const char* shaderDirectory,
-                               const char* cookedDirectory)
+                               std::span<const std::string> cookedSearchPath)
 {
     m_context = &context;
     m_swapchain = &swapchain;
@@ -113,11 +115,20 @@ bool SceneRenderer::initialize(rhi::Context& context,
         SOL_LOG_WARN("GPU profiler unavailable; frame report will have no gpu.* zones");
     }
 
-    const std::string cookedBase = cookedDirectory;
-
     // Game UI font: one R8 coverage atlas, viewed as white with the coverage
     // in alpha so it shares the UI shader with solid fills.
-    if (!m_uiFont.load((cookedBase + "ui.sfont").c_str())) {
+    //
+    // ⚑ Resolved through the layer search since Phase 24 stage S, so a mod CAN
+    // replace it - but the style names `hud`, `body`, `body_strong` and
+    // `heading` are read by name all over `game_ui`, so a replacement that
+    // drops one leaves that text unrenderable. Nothing enforces that here;
+    // it is a documented constraint in `mods/README.md`, not a schema.
+    // ⚑ Still a HARD failure when it is missing, and correctly so: this runs
+    // before any def is read, so there is no mod to blame and no degraded
+    // state worth entering - a game with no font can draw no menu to say so.
+    const std::string fontPath = resolveAsset(cookedSearchPath, "ui.sfont");
+    if (fontPath.empty() || !m_uiFont.load(fontPath.c_str())) {
+        SOL_LOG_ERROR("ui font: no ui.sfont in any of: %s", describeSearchPath(cookedSearchPath).c_str());
         return false;
     }
     {
@@ -199,10 +210,10 @@ bool SceneRenderer::onSwapchainRecreated()
     return createPerImageSemaphores();
 }
 
-bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models, const char* cookedDirectory)
+bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models,
+                               std::span<const std::string> cookedSearchPath)
 {
     unloadModels();
-    const std::string cookedBase = cookedDirectory;
 
     // Uploads a cooked asset once per stem and hands back its pool index; the
     // shipped catalog has six models sharing three meshes and three textures,
@@ -214,8 +225,9 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models, const c
                 return true;
             }
         }
+        const std::string path = resolveAsset(cookedSearchPath, stem + ".smesh");
         assets::MeshData data;
-        if (!assets::loadMesh((cookedBase + stem + ".smesh").c_str(), data)) {
+        if (path.empty() || !assets::loadMesh(path.c_str(), data)) {
             return false;
         }
         out = static_cast<std::uint32_t>(m_meshes.size());
@@ -230,8 +242,9 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models, const c
                 return true;
             }
         }
+        const std::string path = resolveAsset(cookedSearchPath, stem + ".stex");
         assets::TextureData data;
-        if (!assets::loadTexture((cookedBase + stem + ".stex").c_str(), data)) {
+        if (path.empty() || !assets::loadTexture(path.c_str(), data)) {
             return false;
         }
         out = static_cast<std::uint32_t>(m_textures.size());
@@ -250,13 +263,36 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models, const c
                               .emissive = def.emissive,
                               .translucent = def.translucent,
                               .alpha = def.alpha};
+        // ⚑⚑⚑ NOT A HARD FAILURE ANY MORE, AND THAT IS PHASE 24 STAGE S's ONE
+        // BEHAVIOURAL CHANGE. Until a mod could carry an asset, every
+        // `[[model]]` row was ours, so a row naming a missing mesh was our bug
+        // and killing startup was right. Now the row may be a mod's, and
+        // "one broken mod and the game will not boot" is not a thing a player
+        // can diagnose or a modder can survive. The def layer has said the same
+        // thing since Phase 5 - a layer that fails to parse leaves the previous
+        // state intact rather than half-applying - and assets simply never had
+        // the equivalent rule.
+        //
+        // ⚑⚑ THE ROW KEEPS ITS SLOT. `ModelId` IS the index into
+        // `defs.models()` and `m_models` is built parallel to it, so skipping
+        // an entry would silently re-point every model after it - a far worse
+        // failure than the one being handled, and a silent one. It is marked
+        // undrawable instead and the draw loop passes over it, which is the
+        // rule that loop already applies to a stale index.
+        //
+        // ⚑ The error names every directory searched, because when a load
+        // fails WHERE it looked is most of the answer (Phase 22's lesson about
+        // the data directory, one level down).
         if (!meshIndex(def.mesh, entry.levels[0]) || !textureIndex(def.texture, entry.texture)) {
-            SOL_LOG_ERROR("model '%s': cannot load mesh '%s' / texture '%s'",
+            SOL_LOG_ERROR("model '%s': cannot load mesh '%s' / texture '%s' - it will draw "
+                          "nothing. Looked in: %s",
                           def.id.c_str(),
                           def.mesh.c_str(),
-                          def.texture.c_str());
-            unloadModels();
-            return false;
+                          def.texture.c_str(),
+                          describeSearchPath(cookedSearchPath).c_str());
+            entry.drawable = false;
+            m_models.push_back(entry);
+            continue;
         }
 
         // ⚑ The chain is whatever the cook left on disk, and its ABSENCE is the
@@ -265,9 +301,15 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models, const c
         // probe and not a failed load: `assets::loadMesh` logs when it cannot
         // read a file, which is right when someone asked for that file by name
         // and wrong for an optional sibling nobody promised.
+        //
+        // ⚑⚑ IT GOES THROUGH THE SAME SEARCH AS LEVEL 0, AND MUST. A probe of
+        // the base directory alone would leave a mod's `.lod1.smesh` invisible
+        // while its level 0 loaded fine - a mod whose LOD chain silently never
+        // engages, with nothing logged and nothing to see but a distant model
+        // that costs too much.
         for (std::uint32_t level = 1; level < kMaxDrawLevels; ++level) {
             const std::string stem = def.mesh + ".lod" + std::to_string(level);
-            if (platform::fileModificationTime((cookedBase + stem + ".smesh").c_str()) == 0) {
+            if (resolveAsset(cookedSearchPath, stem + ".smesh").empty()) {
                 break; // the chain ends where the files do
             }
             if (!meshIndex(stem, entry.levels[level])) {
@@ -283,12 +325,21 @@ bool SceneRenderer::loadModels(std::span<const assets::ModelDef> models, const c
         }
         m_models.push_back(entry);
     }
-    SOL_LOG_INFO("models: %zu (%zu meshes, %zu textures, %u level(s) over %u model(s))",
+    // ⚑ The undrawable count is in the SUMMARY as well as in the per-model
+    // errors above, because the errors scroll and this line is the one anybody
+    // reads. A zero here is the only thing that says "every model in this
+    // install, mods included, found its files".
+    std::size_t undrawable = 0;
+    for (const CatalogEntry& entry : m_models) {
+        undrawable += entry.drawable ? 0u : 1u;
+    }
+    SOL_LOG_INFO("models: %zu (%zu meshes, %zu textures, %u level(s) over %u model(s), %zu undrawable)",
                  m_models.size(),
                  m_meshes.size(),
                  m_textures.size(),
                  report.levelsLoaded,
-                 report.modelsWithLevels);
+                 report.modelsWithLevels,
+                 undrawable);
     return true;
 }
 
@@ -410,6 +461,14 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
             continue;
         }
         const CatalogEntry& entry = m_models[index];
+        // ⚑ Phase 24 stage S: a row whose files were not found in ANY layer.
+        // Same treatment and the same line of code as a stale index, one
+        // reason further along - the entity still exists, still collides and
+        // still shows on the map; it just has no picture. `loadModels` logged
+        // which model and where it looked, once, rather than every frame.
+        if (!entry.drawable) {
+            continue;
+        }
         // Phase 12: translucent models sit out the opaque block entirely and
         // are replayed after the sky. Deferring the pointer rather than the
         // built matrix keeps this loop doing one thing.

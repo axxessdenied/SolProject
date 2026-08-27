@@ -8,6 +8,7 @@
 #include "sol/scripting/vm.hpp"
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -18,12 +19,23 @@ namespace game {
 // then each subdirectory of the mods dir sorted by name), and hot-reloads
 // either kind when a source file changes. Layer layout: *.toml defs anywhere
 // under the layer root, boot script at scripts/init.lua.
+//
+// ⚑ Since Phase 24 stage S a layer can also carry ASSETS - `assets/` as source
+// and `cooked/` as output - but nothing in this class touches them. Defs and
+// scripts are what a layer means HERE; the cooked search path built from the
+// same layer list lives in `asset_paths.hpp` and is consumed by the renderer
+// and the audio bank. Two readers of one list, deliberately not merged: this
+// one reloads at runtime, and that one is fixed once at startup.
 class GameContent
 {
 public:
-    // World must outlive this. Missing mods directory is fine.
-    [[nodiscard]] bool
-    initialize(const std::string& dataDirectory, const std::string& modsDirectory, SpaceWorld* world);
+    // World must outlive this. `modLayerDirectories` is the full path of each
+    // mod, in name order, and empty is the normal case - `main.cpp` finds them
+    // with `game::discoverModLayers` because the cooked ASSET search path needs
+    // the same list before this is called (Phase 24 stage S).
+    [[nodiscard]] bool initialize(const std::string& dataDirectory,
+                                  std::span<const std::string> modLayerDirectories,
+                                  SpaceWorld* world);
 
     // Polls watched TOML/Lua sources (throttled); on a def change reloads the
     // database and re-applies it to the world, on a script change re-runs the

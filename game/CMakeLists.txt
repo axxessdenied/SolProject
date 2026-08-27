@@ -7,6 +7,7 @@
 # structural cause as `encodeMesh` sitting in the cooker's main.cpp outside
 # sol_cooker_lib, and the same fix.
 add_library(sol_game_lib STATIC
+    src/asset_paths.cpp
     src/combat_effects.cpp
     src/content.cpp
     src/game_audio.cpp
@@ -231,6 +232,7 @@ endif()
 # targeting, the map's rows - and NOT the renderer, which is still verified by
 # running the app.
 add_executable(sol_game_tests
+    test/asset_paths_tests.cpp
     test/keyboard_routing_tests.cpp
     test/map_row_tests.cpp
     test/model_role_tests.cpp

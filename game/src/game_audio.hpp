@@ -14,6 +14,7 @@
 #include "sol/core/random.hpp"
 #include "sol/platform/audio.hpp"
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -40,7 +41,11 @@ public:
     // Loads every [[sound]] def's cooked asset and opens the device. Returns
     // false when there is no output endpoint, which the caller logs and
     // carries on from: a machine with no sound card still plays the game.
-    bool initialize(const sol::assets::DefDatabase& defs, const std::string& cookedDirectory);
+    // ⚑ `cookedSearchPath` is the layer-ordered list from `asset_paths.hpp`
+    // (Phase 24 stage S), so a mod can replace a cue by shipping the same
+    // stem. A cue whose asset is missing has warned and carried on since
+    // Phase 8t, which is already the rule the model catalog only just learned.
+    bool initialize(const sol::assets::DefDatabase& defs, std::span<const std::string> cookedSearchPath);
     void shutdown();
 
     // Re-reads gains, jitter, rolloff and caps from the defs after a script

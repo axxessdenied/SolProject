@@ -1,3 +1,4 @@
+#include "asset_paths.hpp"
 #include "content.hpp"
 #include "fly_camera.hpp"
 #include "game_audio.hpp"
@@ -229,6 +230,54 @@ int main(int argc, char** argv)
     const std::string shaderDirectory = executableDir + "shaders/";
     const std::string cookedDirectory = executableDir + "cooked/";
 
+    // Phase 5 data-driven content: defs + Lua from the source tree in dev
+    // builds (hot-reloadable), from the install layout otherwise.
+    //
+    // ⚑⚑ RESOLVED HERE, BEFORE THE RENDERER, WHICH IS EARLIER THAN IT USED TO
+    // BE (Phase 24 stage S). The mod layers decide where COOKED ASSETS are
+    // looked for, and `SceneRenderer::initialize` loads the UI font — so the
+    // layer list has to exist before the renderer comes up, not after the defs
+    // are read. The scan happens exactly once and both readers get the same
+    // list, which is the whole reason it moved out of `GameContent`.
+#if !defined(SOL_DATA_SOURCE_DIR)
+#define SOL_DATA_SOURCE_DIR ""
+#endif
+#if !defined(SOL_MODS_SOURCE_DIR)
+#define SOL_MODS_SOURCE_DIR ""
+#endif
+    const std::string dataDirectory =
+        std::strlen(SOL_DATA_SOURCE_DIR) > 0 ? SOL_DATA_SOURCE_DIR : executableDir + "data";
+    const std::string modsDirectory =
+        std::strlen(SOL_MODS_SOURCE_DIR) > 0 ? SOL_MODS_SOURCE_DIR : executableDir + "mods";
+    // Phase 22. Logged BEFORE initialize rather than after, for two reasons.
+    // When the defs fail to load, WHERE the game looked is most of the answer,
+    // and a line printed after the `return EXIT_FAILURE` below never arrives.
+    // And it is the only local evidence that a packaged build resolved into
+    // its own install tree instead of into the source tree it was built from -
+    // the failure that works perfectly on the machine that produced it.
+    SOL_LOG_INFO("data directory: %s", dataDirectory.c_str());
+    SOL_LOG_INFO("mods directory: %s", modsDirectory.c_str());
+
+    const std::vector<std::string> modLayers = game::discoverModLayers(modsDirectory);
+    for (const std::string& layer : modLayers) {
+        SOL_LOG_INFO("mod layer: %s", layer.c_str());
+    }
+    const std::vector<std::string> cookedSearchPath = game::cookedSearchPath(cookedDirectory, modLayers);
+
+    // ⚑⚑ THE BROKEN-INSTALL CHECK, AND IT IS SEPARATE FROM A MISSING ASSET ON
+    // PURPOSE. Since stage S a model that will not resolve draws nothing
+    // instead of killing startup, because it may be a mod's. That is right per
+    // model and wrong for the whole directory: an archive that unpacked without
+    // its `cooked/` would then boot to an invisible galaxy and blame the
+    // player's mods. So the base directory is checked ONCE, by name, and a
+    // missing one still refuses to start — the same shape as the install
+    // guard in game/CMakeLists.txt, which refuses to PACKAGE what this refuses
+    // to run.
+    if (sol::platform::listFiles(cookedDirectory.c_str()).empty()) {
+        SOL_LOG_ERROR("no cooked assets in %s - this install is incomplete", cookedDirectory.c_str());
+        return EXIT_FAILURE;
+    }
+
     // Phase 22. The two files the game WRITES live in a per-user OS directory,
     // not beside the executable: a portable archive can be unpacked into
     // Program Files or /usr/local, where writing next to the binary fails
@@ -277,7 +326,7 @@ int main(int argc, char** argv)
     }
 
     game::SceneRenderer renderer;
-    if (!renderer.initialize(context, swapchain, shaderDirectory.c_str(), cookedDirectory.c_str())) {
+    if (!renderer.initialize(context, swapchain, shaderDirectory.c_str(), cookedSearchPath)) {
         return EXIT_FAILURE;
     }
 
@@ -344,34 +393,17 @@ int main(int argc, char** argv)
         SOL_LOG_INFO("HARDCORE run: death deletes the save");
     }
 
-    // Phase 5 data-driven content: defs + Lua from the source tree in dev
-    // builds (hot-reloadable), from the install layout otherwise.
-#if !defined(SOL_DATA_SOURCE_DIR)
-#define SOL_DATA_SOURCE_DIR ""
-#endif
-#if !defined(SOL_MODS_SOURCE_DIR)
-#define SOL_MODS_SOURCE_DIR ""
-#endif
-    const std::string dataDirectory =
-        std::strlen(SOL_DATA_SOURCE_DIR) > 0 ? SOL_DATA_SOURCE_DIR : executableDir + "data";
-    const std::string modsDirectory =
-        std::strlen(SOL_MODS_SOURCE_DIR) > 0 ? SOL_MODS_SOURCE_DIR : executableDir + "mods";
-    // Phase 22. Logged BEFORE initialize rather than after, for two reasons.
-    // When the defs fail to load, WHERE the game looked is most of the answer,
-    // and a line printed after the `return EXIT_FAILURE` below never arrives.
-    // And it is the only local evidence that a packaged build resolved into
-    // its own install tree instead of into the source tree it was built from -
-    // the failure that works perfectly on the machine that produced it.
-    SOL_LOG_INFO("data directory: %s", dataDirectory.c_str());
-    SOL_LOG_INFO("mods directory: %s", modsDirectory.c_str());
     game::GameContent content;
-    if (!content.initialize(dataDirectory, modsDirectory, &world)) {
+    if (!content.initialize(dataDirectory, modLayers, &world)) {
         return EXIT_FAILURE;
     }
     // The model catalog (Phase 9). It cannot go in the renderer's initialize
     // because the pipelines come up before the defs are read, and a missing
     // mesh is a hard failure exactly as the hardcoded loads used to be.
-    if (!renderer.loadModels(content.defs().models(), cookedDirectory.c_str())) {
+    // ⚑ Stage S made this tolerant of a model it cannot find (it draws
+    // nothing and says so), so a false here now means something structural
+    // rather than one bad row - a level that exists but will not decode.
+    if (!renderer.loadModels(content.defs().models(), cookedSearchPath)) {
         return EXIT_FAILURE;
     }
     devUi.setCommandHandler(&consoleCommandHandler, &content);
@@ -383,7 +415,7 @@ int main(int argc, char** argv)
     // silently and every cue site is guarded, so this return value is logged
     // rather than acted on.
     game::GameAudio audio;
-    if (!audio.initialize(content.defs(), cookedDirectory)) {
+    if (!audio.initialize(content.defs(), cookedSearchPath)) {
         SOL_LOG_WARN("audio: running without sound");
     }
     audio.setVolumes(settings.masterVolume, settings.effectsVolume);
