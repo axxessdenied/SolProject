@@ -10,10 +10,11 @@
 // warning that an author then had to go and fix in a text editor. Everything
 // else the Forge does ends in a file it wrote; this one ended in a sentence.
 //
-// It owns the def DOCUMENTS (`models.toml`, `ships.toml`, `stations.toml`)
-// rather than a parsed database, because what an author needs preserved is the
-// half a typed parse throws away - see `sol/assets/def_doc.hpp` for why values
-// are text and what breaks when they are not.
+// It owns the def DOCUMENTS (`models.toml`, `ships.toml`, `stations.toml`, and
+// since Phase 24 stage U1 `sounds.toml`) rather than a parsed database, because
+// what an author needs preserved is the half a typed parse throws away - see
+// `sol/assets/def_doc.hpp` for why values are text and what breaks when they
+// are not.
 //
 // ⚑ VALIDATION IS THE GAME'S OWN SCHEMA AND NOT A SECOND ONE. After every edit
 // the document is serialised and handed to `DefDatabase::mergeToml`, which is
@@ -37,6 +38,7 @@
 #include "sol/assets/def_doc.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -56,6 +58,31 @@ public:
     [[nodiscard]] bool drawModelRows(const AssetEntry& entry,
                                      const MeshReport& report,
                                      const std::vector<std::string>& textureStems);
+
+    // Draws the `[[sound]]` rows whose `asset` is this file's stem, and offers
+    // to make one when nothing names it (Phase 24 stage U1) - the same shape
+    // `drawModelRows` has for a mesh, because it is the same gap: an asset on
+    // disk that no def gives a name to cannot be fired by anything.
+    //
+    // ⚑ `asset` IS THE MATCH KEY, so it is shown and not edited. Every other
+    // panel in this tool offers a combo where a name could be mistyped; here
+    // the combo would make the row being edited disappear from under the hand
+    // the moment it was used, which is a worse failure than the typo. A cue
+    // that should point somewhere else is a cue with the wrong file open.
+    //
+    // ⚑ `audition` is how the panel asks to be HEARD without this editor
+    // knowing what audio is: it says what to play at what gain, and the caller
+    // owns the device. Keeping `sol::audio` out of the def editor is the same
+    // line `drawAssetList` keeps ImGui out of `mesh_library.cpp` for.
+    struct Audition
+    {
+        bool wanted = false;
+        float gain = 1.0f;
+        float pitchJitter = 0.0f;
+        std::uint32_t maxInstances = 0;
+    };
+
+    [[nodiscard]] bool drawSoundRows(const AssetEntry& entry, Audition& audition);
 
     // Draws the `[[ship]]` and `[[station]]` rows that name any of those models
     // - the content that actually puts the mesh in front of a player - and can
@@ -119,7 +146,13 @@ private:
     static constexpr std::size_t kModels = 0;
     static constexpr std::size_t kShips = 1;
     static constexpr std::size_t kStations = 2;
-    static constexpr std::size_t kDocumentCount = 3;
+    // ⚑ Stage U1. `sounds.toml` joins the same set rather than getting an
+    // editor of its own, which is what buys it the undo stack, the dirty
+    // tracking, the write-only-what-changed rule and - the one that matters -
+    // `revalidate`, so a bad gain is refused by the GAME'S schema and not by a
+    // second one written here.
+    static constexpr std::size_t kSounds = 3;
+    static constexpr std::size_t kDocumentCount = 4;
     static constexpr std::size_t kUndoDepth = 64;
 
     // Serialises every document, validates each through the game's schema, and

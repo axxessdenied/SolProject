@@ -20,6 +20,7 @@
 #include "sol/platform/file_io.hpp"
 #include "sol/test/test.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1860,4 +1861,157 @@ SOL_TEST(anEmptyOrArchiveOnlyInboxHasNothingPending)
     SOL_CHECK(forge::forgePendingDrops(
                   {"C:/repo/blender-inbox/imported/A.glb", "C:/repo/blender-inbox/imported/B.glb"}, kInbox)
                   .empty());
+}
+
+// --- sounds (Phase 24 stage U1) ----------------------------------------------
+//
+// ⚑ What is NOT here: the device, the mixer and the panel. `SoundPreview` opens
+// an audio endpoint and `main.cpp` draws the buttons, and AGENTS section 7's
+// rule covers both - they are verified by running the tool. What is testable is
+// the same half as for meshes and textures: which files the tool decides are
+// sounds, and what it says about the samples once it has them.
+
+SOL_TEST(soundsAreListedSourcesFirstAndInContiguousGroups)
+{
+    const std::vector<forge::AssetEntry> entries =
+        forge::listSounds(SOL_SOUND_SOURCE_DIR, "no/such/cooked/directory");
+
+    // The nine cues Phase 8t generated. Pinned against the committed tree
+    // rather than a fixture, exactly as the radius thresholds above are.
+    SOL_REQUIRE(entries.size() >= 9);
+
+    bool sawAlarm = false;
+    bool sawUiClick = false;
+    for (const forge::AssetEntry& entry : entries) {
+        SOL_CHECK(entry.group == "source");
+        SOL_CHECK(!entry.cooked);
+        SOL_CHECK(forge::isSoundSource(entry));
+        sawAlarm = sawAlarm || entry.stem == "alarm";
+        sawUiClick = sawUiClick || entry.stem == "ui_click";
+    }
+    SOL_CHECK(sawAlarm);
+    SOL_CHECK(sawUiClick);
+
+    // ⚑⚑ THE PROPERTY `drawAssetList` DEPENDS ON, AND IT IS THE ONE `listSounds`
+    // COULD PLAUSIBLY BREAK: `.wav` and `.ogg` are collected in two passes into
+    // ONE group name, so the runs must still be contiguous or the list draws a
+    // second `source (n)` header further down. A group name may begin exactly
+    // once.
+    std::vector<std::string> starts;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (i == 0 || entries[i].group != entries[i - 1].group) {
+            SOL_CHECK(std::find(starts.begin(), starts.end(), entries[i].group) == starts.end());
+            starts.push_back(entries[i].group);
+        }
+    }
+}
+
+SOL_TEST(aMissingSoundDirectoryListsNothingRatherThanFailing)
+{
+    // An installed tool pointed at a project with no sounds yet. Same rule
+    // `loadModelCatalog` follows for a missing data directory.
+    SOL_CHECK(forge::listSounds("no/such/directory", "no/such/directory/either").empty());
+}
+
+SOL_TEST(soundSourcesAreWavAndOggAndNothingElse)
+{
+    const auto entry = [](const char* path) {
+        forge::AssetEntry out;
+        out.path = path;
+        return out;
+    };
+    SOL_CHECK(forge::isSoundSource(entry("assets/sounds/alarm.wav")));
+    SOL_CHECK(forge::isSoundSource(entry("assets/sounds/theme.ogg")));
+    // The cooked side of the same list is not a source: it is what the game
+    // loads, and the panel says which of the two you are hearing.
+    SOL_CHECK(!forge::isSoundSource(entry("cooked/alarm.saud")));
+    SOL_CHECK(!forge::isSoundSource(entry("assets/textures/hull.tex")));
+}
+
+SOL_TEST(aCommittedWavImportsToThePayloadTheGameWouldLoad)
+{
+    forge::AssetEntry entry;
+    entry.path = std::string(SOL_SOUND_SOURCE_DIR) + "/ui_click.wav";
+    entry.label = "ui_click.wav";
+    entry.stem = "ui_click";
+
+    assets::SoundData data;
+    std::string error;
+    SOL_REQUIRE(forge::loadSound(entry, data, &error));
+
+    const forge::SoundReport report = forge::reportSound(data);
+    SOL_CHECK(report.sampleRate == data.sampleRate);
+    SOL_CHECK(report.sampleRate > 0);
+    SOL_CHECK(report.frames > 0);
+    SOL_CHECK(report.seconds > 0.0f);
+    // A UI click is short by design - the def caps it at three instances
+    // precisely because it is fired faster than it lasts.
+    SOL_CHECK(report.seconds < 1.0f);
+    SOL_CHECK(report.peak > 0.0f && report.peak <= 1.0f);
+}
+
+SOL_TEST(aSoundThatCannotBeReadFailsWithASentenceRatherThanEmptySamples)
+{
+    forge::AssetEntry entry;
+    entry.path = std::string(SOL_SOUND_SOURCE_DIR) + "/there_is_no_such_cue.wav";
+    entry.label = "there_is_no_such_cue.wav";
+
+    assets::SoundData data;
+    std::string error;
+    SOL_CHECK(!forge::loadSound(entry, data, &error));
+    SOL_CHECK(!error.empty());
+    // ⚑ The listing keeps a file it cannot decode - an author needs to SEE the
+    // broken thing - so the failure has to be legible from the report alone.
+    SOL_CHECK(forge::reportSound(data).sampleRate == 0);
+}
+
+SOL_TEST(theSoundReportMeasuresDurationAndPeakIncludingTheNegativeFullScaleTrough)
+{
+    assets::SoundData data;
+    data.sampleRate = 48000;
+    data.channelCount = 1;
+    data.samples.assign(24000, 0);
+
+    forge::SoundReport report = forge::reportSound(data);
+    SOL_CHECK(report.frames == 24000);
+    SOL_CHECK(std::fabs(report.seconds - 0.5f) < 1e-6f);
+    SOL_CHECK(report.peak == 0.0f);
+
+    // Stereo halves the frame count for the same sample count, which is what
+    // makes a duration a duration rather than a buffer size.
+    data.channelCount = 2;
+    report = forge::reportSound(data);
+    SOL_CHECK(report.frames == 12000);
+    SOL_CHECK(std::fabs(report.seconds - 0.25f) < 1e-6f);
+
+    // ⚑⚑ THE ASYMMETRIC CASE, AND IT PINS BOTH HALVES OF ONE DECISION. int16
+    // runs -32768..32767, so the loudest possible sample is a TROUGH with no
+    // positive counterpart. `== 1.0f` exactly is the assertion, and it fails in
+    // two opposite directions: a magnitude narrowed back to int16 wraps to
+    // -32768, loses every comparison and reports the loudest cue in existence
+    // as SILENT (0.0); a divisor of 32767 instead of 32768 reports it as
+    // 1.000031, a peak above full scale. Verified by measurement, not by
+    // reading the standard - integer promotion means the obvious negation is
+    // fine and only the STORAGE is not, which is the opposite of what it looks
+    // like.
+    data.channelCount = 1;
+    data.samples.assign(8, 0);
+    data.samples[3] = -32768;
+    report = forge::reportSound(data);
+    SOL_CHECK(report.peak == 1.0f);
+
+    // A full-scale positive sample is the same loudness, one bit short of it.
+    data.samples.assign(8, 0);
+    data.samples[3] = 32767;
+    report = forge::reportSound(data);
+    SOL_CHECK(report.peak > 0.999f && report.peak < 1.0f);
+}
+
+SOL_TEST(anEmptySoundReportsZeroesRatherThanDividingByItsRate)
+{
+    const forge::SoundReport report = forge::reportSound(assets::SoundData{});
+    SOL_CHECK(report.sampleRate == 0);
+    SOL_CHECK(report.frames == 0);
+    SOL_CHECK(report.seconds == 0.0f);
+    SOL_CHECK(report.peak == 0.0f);
 }

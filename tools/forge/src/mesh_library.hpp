@@ -63,12 +63,28 @@ struct AssetEntry
 [[nodiscard]] std::vector<AssetEntry> listTextures(const std::string& sourceDirectory,
                                                    const std::string& cookedDirectory);
 
+// Authored `.wav`/`.ogg` under the source tree first, then cooked `.saud`
+// beside the executable - the third listing of one shape, and the last asset
+// kind this tool could not see at all (Phase 24 stage U1).
+//
+// ⚑ THE THIRD KIND IS THE ONE THAT MAKES THE PATTERN A RULE RATHER THAN A
+// COINCIDENCE, so this deliberately adds no new idea: same argument order, same
+// group names, same contiguity, and therefore the same `drawAssetList` with no
+// widget written for it.
+[[nodiscard]] std::vector<AssetEntry> listSounds(const std::string& sourceDirectory,
+                                                 const std::string& cookedDirectory);
+
 // A `.forge` part tree: the only kind of MESH this tool can edit rather than
 // just open.
 [[nodiscard]] bool isPartSource(const AssetEntry& entry);
 
 // A `.tex` document: likewise, the only kind of texture it can edit.
 [[nodiscard]] bool isTextureSource(const AssetEntry& entry);
+
+// ⚑ A `.wav`/`.ogg`, i.e. the half of the sound list this tool did not build.
+// There is no sound EDITOR and this stage does not invent one - the predicate
+// exists so the panel can say which of two audible things you are hearing.
+[[nodiscard]] bool isSoundSource(const AssetEntry& entry);
 
 // Dispatches on extension: `.tex` is parsed, evaluated and encoded exactly as
 // the cooker would, `.stex` goes through the runtime loader.
@@ -92,6 +108,39 @@ loadTexture(const AssetEntry& entry, sol::assets::TextureData& out, std::string*
 // through the cooker's importer, `.smesh` through the runtime loader. All three
 // give the same buffer the game would draw, which is the point.
 [[nodiscard]] bool loadMesh(const AssetEntry& entry, sol::assets::MeshData& out);
+
+// --- sounds (stage U1) -------------------------------------------------------
+
+// Dispatches on extension: `.wav` and `.ogg` go through the cooker's own
+// importers, `.saud` through the runtime loader.
+//
+// ⚑⚑ AND THE PREVIEW IS THE COOKED PAYLOAD RATHER THAN A SECOND READING OF THE
+// FILE, WHICH IS `loadTexture`'s BC1 ARGUMENT ARRIVING AT A SECOND FORMAT - but
+// here it costs nothing to be exact instead of merely close. `SoundData` IS what
+// a `.saud` holds: `encodeSound` serialises this struct and `assets::loadSound`
+// reads it back, so importing the wav gives sample-for-sample what the cook
+// would have written. An author auditioning a `.wav` before it is cooked is
+// hearing the cooked cue, and the pair in the list can be played against each
+// other to say so out loud.
+[[nodiscard]] bool
+loadSound(const AssetEntry& entry, sol::assets::SoundData& out, std::string* error = nullptr);
+
+// Everything the panel prints about a sound.
+//
+// ⚑ `peak` is here because it is the number `gain` is a number ABOUT. A cue
+// authored at 0.3 and one clipping at 1.0 want opposite edits, and the row
+// beside them cannot say which is which - the same reason the mesh report
+// prints a measured radius next to the authored one.
+struct SoundReport
+{
+    std::uint32_t sampleRate = 0;
+    std::uint32_t channelCount = 0;
+    std::uint32_t frames = 0;
+    float seconds = 0.0f;
+    float peak = 0.0f; // 0..1, the loudest sample as a fraction of full scale
+};
+
+[[nodiscard]] SoundReport reportSound(const sol::assets::SoundData& data);
 
 // --- the Blender bridge (stage L) -------------------------------------------
 //

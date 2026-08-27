@@ -90,6 +90,7 @@ void DefEditor::load(const std::string& dataDirectory)
     m_docs[kModels] = Document{.file = "models.toml"};
     m_docs[kShips] = Document{.file = "ships.toml"};
     m_docs[kStations] = Document{.file = "stations.toml"};
+    m_docs[kSounds] = Document{.file = "sounds.toml"};
     if (dataDirectory.empty()) {
         m_error = "no data directory";
         return;
@@ -431,6 +432,139 @@ bool DefEditor::drawModelRows(const AssetEntry& entry,
 
     if (changed) {
         m_docs[kModels].dirty = true;
+        (void)revalidate();
+    }
+    if (!m_error.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+        ImGui::TextWrapped("%s", m_error.c_str());
+        ImGui::PopStyleColor();
+    }
+    return changed;
+}
+
+bool DefEditor::drawSoundRows(const AssetEntry& entry, Audition& audition)
+{
+    audition = Audition{};
+    if (!m_loaded) {
+        ImGui::TextDisabled("def rows unavailable: %s",
+                            m_error.empty() ? "no data directory" : m_error.c_str());
+        return false;
+    }
+
+    bool changed = false;
+    std::size_t shown = 0;
+    for (DefRow& row : m_docs[kSounds].doc.rows) {
+        if (row.type != "sound") {
+            continue;
+        }
+        const assets::DefKey* asset = row.find("asset");
+        if (asset == nullptr || asset->unquoted() != entry.stem) {
+            continue;
+        }
+        ++shown;
+        const std::string id(row.id());
+        ImGui::PushID(id.c_str());
+        ImGui::Text("[[sound]] %s", id.c_str());
+
+        const float gain = floatOr(row, "gain", 1.0f);
+        const float jitter = floatOr(row, "pitch_jitter", 0.0f);
+        const auto cap = static_cast<int>(floatOr(row, "max_instances", 0.0f));
+
+        // ⚑⚑ THE BUTTON THIS WHOLE STAGE IS FOR, AND IT PLAYS THE CUE RATHER
+        // THAN THE FILE. The list above auditions what is on disk at gain 1;
+        // this plays what the GAME would play - the row's gain, its jitter, its
+        // instance cap - which is the only version of the sound anybody will
+        // ever hear. Press it repeatedly and the cap and the jitter are both
+        // audible, which is what makes those two numbers editable rather than
+        // decorative.
+        if (ImGui::Button("play cue")) {
+            audition = Audition{.wanted = true,
+                                .gain = gain,
+                                .pitchJitter = jitter,
+                                .maxInstances = static_cast<std::uint32_t>(cap < 0 ? 0 : cap)};
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("as the game fires it");
+
+        float editedGain = gain;
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::DragFloat("gain", &editedGain, 0.005f, 0.0f, 4.0f, "%.3f")) {
+            row.set("gain", assets::defNumber(editedGain, kUnitDecimals));
+            changed = true;
+        }
+        noteActivation(kSounds, "set gain");
+
+        float editedJitter = jitter;
+        ImGui::SetNextItemWidth(160.0f);
+        // The schema's own ceiling: half is already a musical fifth either way.
+        if (ImGui::DragFloat("pitch_jitter", &editedJitter, 0.002f, 0.0f, 0.5f, "%.3f")) {
+            row.set("pitch_jitter", assets::defNumber(editedJitter, kUnitDecimals));
+            changed = true;
+        }
+        noteActivation(kSounds, "set pitch_jitter");
+        if (editedJitter == 0.0f) {
+            ImGui::TextDisabled("  0 = every firing is the same recording");
+        }
+
+        // ⚑ SHOWN WITHOUT A CONTROL, because a 2D audition cannot demonstrate
+        // it and a slider that does nothing you can hear is a lever reaching a
+        // state this panel cannot show. Distance is the viewport's kind of
+        // question and this tool has no world to put a listener in.
+        ImGui::TextDisabled("rolloff %.0f m (positional only - the audition is 2D)",
+                            static_cast<double>(floatOr(row, "rolloff", 500.0f)));
+
+        int editedCap = cap;
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::DragInt("max_instances", &editedCap, 0.1f, 0, 32)) {
+            // ⚑⚑ `std::to_string` AND NOT `defNumber`, AND IT IS THE FIRST
+            // INTEGER KEY THIS EDITOR HAS EVER WRITTEN. `defNumber` "always
+            // carries a `.` so TOML reads a float rather than an integer" - its
+            // own words - and `max_instances` is read with `optionalUint`,
+            // which refuses anything that is not `isInteger()`. So the obvious
+            // call writes `4.0` and the game's own schema throws the file out.
+            // The panel would have SHOWN that refusal rather than shipping it,
+            // which is `revalidate` earning its place; the point of writing it
+            // down is that the next integer key will look equally obvious.
+            row.set("max_instances", std::to_string(editedCap));
+            changed = true;
+        }
+        noteActivation(kSounds, "set max_instances");
+        if (editedCap == 0) {
+            ImGui::TextDisabled("  0 = unlimited");
+        }
+
+        ImGui::PopID();
+        ImGui::Separator();
+    }
+
+    if (shown == 0) {
+        // ⚑ The sound half of the gap stage H closed for meshes: a cue cooked
+        // and sitting in the output directory that no def names, and that
+        // therefore nothing in the game can fire.
+        ImGui::TextDisabled("no [[sound]] row names this asset");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("without one the cooked sound cannot be fired by the engine or by a "
+                            "script, which is what a cue id is for");
+        ImGui::PopTextWrapPos();
+        if (ImGui::Button("create [[sound]] row")) {
+            beginEdit(kSounds, "create [[sound]] row");
+            DefDoc& doc = m_docs[kSounds].doc;
+            DefRow& row = doc.append("sound");
+            // ⚑ Two keys and no more. `gain`, `pitch_jitter`, `rolloff` and
+            // `max_instances` all have schema defaults that are already the
+            // right answer for a new cue, and `writeForge`'s rule - "a
+            // parameter the source never mentioned stays unmentioned" - is what
+            // keeps a def file readable as a list of DECISIONS rather than a
+            // dump of every key that exists. Each appears the moment it is
+            // dragged above.
+            row.set("id", assets::defString(uniqueId(doc, "sound", "sol." + entry.stem)));
+            row.set("asset", assets::defString(entry.stem));
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        m_docs[kSounds].dirty = true;
         (void)revalidate();
     }
     if (!m_error.empty()) {

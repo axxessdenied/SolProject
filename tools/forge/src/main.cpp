@@ -18,6 +18,7 @@
 #include "orbit_camera.hpp"
 #include "part_editor.hpp"
 #include "point_tool.hpp"
+#include "sound_preview.hpp"
 #include "status_line.hpp"
 #include "texture_editor.hpp"
 
@@ -146,7 +147,7 @@ struct PanelToggle
 
 struct PanelToggles
 {
-    PanelToggle items[4];
+    PanelToggle items[5];
 
     [[nodiscard]] bool* find(const char* name) const
     {
@@ -547,6 +548,17 @@ int main(int argc, char** argv)
         }
     }
 
+    // ⚑⚑ STAGE U1: THE THIRD ASSET KIND, AND THE FIRST THAT IS NOT A PICTURE.
+    // The listing, the samples behind it and the device are one object because
+    // they have one lifetime: the mixer thread reads the bank directly, so
+    // nothing may re-list without also rebuilding what the device is playing
+    // from. Keeping them apart is how those two get out of step.
+    std::vector<forge::AssetEntry> soundEntries = forge::listSounds(assetsDirectory, cookedDirectory);
+    forge::SoundPreview soundPreview;
+    soundPreview.rebuild(soundEntries);
+    int soundIndex = -1;
+    float soundListContent = 0.0f;
+
     // Stage G: the open `.tex` document, and which uploaded texture it stands
     // behind. -1 means the editor's document has no slot on the GPU yet, which
     // is the state a brand new texture starts in.
@@ -592,20 +604,38 @@ int main(int argc, char** argv)
     bool showMesh = true;
     bool showReport = true;
     bool showTexture = true;
+    bool showSound = true;
     bool showView = true;
     bool resetLayout = false;
     bool focusMeshPending = false;
+    // ⚑⚑⚑ THE CASE THE DEFAULT LAYOUT CANNOT COVER: A SAVED LAYOUT THAT
+    // PREDATES A PANEL. `forge.ini` always wins over the built-in default,
+    // which is right and is the whole of stage K - but it means an author who
+    // has arranged this tool even once has an ini that has never heard of
+    // `Sound`, so a new panel arrives as a floating window on top of their
+    // work and the only remedy on offer is `Reset layout`: throwing the
+    // arrangement away in order to see the new thing. That trades a small
+    // annoyance for a bigger one, and it will recur at every stage that adds a
+    // panel, so it is worth solving once rather than apologising for.
+    //
+    // ⚑ A window nobody has ever placed is docked beside its nearest sibling
+    // ONCE and is the author's from then on - ImGui writes it into the ini like
+    // any other window and this never fires again.
+    bool adoptSoundPanel = true;
 
     // ⚑ Registered here rather than inside the host, because WHICH panels exist
     // is the Forge's business and the host is shared with the game.
-    PanelToggles panelToggles = {
-        {{"Mesh", &showMesh}, {"Report", &showReport}, {"Texture", &showTexture}, {"View", &showView}}};
+    PanelToggles panelToggles = {{{"Mesh", &showMesh},
+                                  {"Report", &showReport},
+                                  {"Texture", &showTexture},
+                                  {"Sound", &showSound},
+                                  {"View", &showView}}};
     // ⚑ ImGui only rewrites the ini when something MARKS it dirty, and it has no
     // idea these bools exist - so a toggle would be forgotten unless the change
     // is reported. Compared per frame rather than at each of the several places
     // a panel can close (menu item, window X, `Reset layout`), because a rule
     // spread over three call sites is a rule that gets missed at one of them.
-    bool wasShown[4] = {showMesh, showReport, showTexture, showView};
+    bool wasShown[5] = {showMesh, showReport, showTexture, showSound, showView};
     {
         ImGuiSettingsHandler handler;
         handler.TypeName = "ForgePanels";
@@ -1392,6 +1422,7 @@ int main(int argc, char** argv)
                 ImGui::MenuItem("Mesh", nullptr, &showMesh);
                 ImGui::MenuItem("Report", nullptr, &showReport);
                 ImGui::MenuItem("Texture", nullptr, &showTexture);
+                ImGui::MenuItem("Sound", nullptr, &showSound);
                 ImGui::MenuItem("View", nullptr, &showView);
                 ImGui::EndMenu();
             }
@@ -1447,7 +1478,7 @@ int main(int argc, char** argv)
                 // been told about.
                 if (ImGui::MenuItem("Reset layout")) {
                     resetLayout = true;
-                    showMesh = showReport = showTexture = showView = true;
+                    showMesh = showReport = showTexture = showSound = showView = true;
                 }
                 ImGui::EndMenu();
             }
@@ -1529,6 +1560,18 @@ int main(int argc, char** argv)
                 // `Rescan` for the same reason.
                 meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
                 openIndex = -1;
+
+                // ⚑⚑ SOUNDS *ARE* REFRESHED HERE, AND THE ASYMMETRY WITH THE
+                // PARAGRAPH BELOW IS THE POINT RATHER THAN AN OVERSIGHT. A
+                // texture cannot be re-listed without being re-uploaded, and
+                // uploading mid-frame is what stage T declined to do; a sound
+                // has no GPU side at all, so `rebuild` is the whole of it -
+                // close the device, refill the bank, reopen. So the loop stage
+                // U1 exists for closes inside one launch: drop a `.wav` in,
+                // press Cook, hear it, name it, save.
+                soundEntries = forge::listSounds(assetsDirectory, cookedDirectory);
+                soundIndex = -1;
+                soundPreview.rebuild(soundEntries);
 
                 // ⚑ TEXTURES ARE DELIBERATELY NOT REFRESHED HERE. Every texture
                 // is uploaded once at startup, and `textureStems` - what the
@@ -1747,6 +1790,11 @@ int main(int argc, char** argv)
             rightId = ImGui::DockBuilderSplitNode(centreId, ImGuiDir_Right, 0.32f, nullptr, &centreId);
             ImGui::DockBuilderDockWindow("Mesh", leftId);
             ImGui::DockBuilderDockWindow("Texture", leftId);
+            // Stage U1's panel joins the left column beside `Texture` for the
+            // reason those two are already there: both are an asset list, a
+            // preview of that asset as the game receives it, and the def rows
+            // naming it. `Sound` is that shape a third time.
+            ImGui::DockBuilderDockWindow("Sound", leftId);
             ImGui::DockBuilderDockWindow("View", leftId);
             ImGui::DockBuilderDockWindow("Report", rightId);
             ImGui::DockBuilderFinish(dockspaceId);
@@ -2090,6 +2138,146 @@ int main(int argc, char** argv)
             ImGui::End();
         }
 
+        // ⚑⚑⚑ THE THIRD ASSET KIND (PHASE 24 STAGE U1), AND THE ONE THIS TOOL
+        // COULD NOT SEE AT ALL. `assets/sounds/` has held nine files since
+        // Phase 8t and the Forge listed none of them, so the only way to hear
+        // whether a cue was too loud was to build the game, fly to something
+        // that fires it, and edit `sounds.toml` in a text editor between
+        // attempts. This panel is that loop collapsed into one window.
+        //
+        // ⚑ It is the SAME SHAPE as `Texture` on purpose - a list, the asset as
+        // the game receives it, then the def rows that name it - because the
+        // shape is now the pattern rather than a coincidence, and an author who
+        // has learned one of these three panels has learned all of them.
+        if (showSound) {
+            // ⚑ HERE rather than beside the dock builder, and that placement is
+            // the correction to a first draft that was wrong: `SetNextWindowDockID`
+            // applies to the NEXT `Begin`, and three other windows are submitted
+            // between the layout block and this one - so setting it up there
+            // would have docked `Mesh` into the texture node and left `Sound`
+            // floating anyway. A "next window" call belongs against its window.
+            if (adoptSoundPanel) {
+                const ImGuiWindow* soundWindow = ImGui::FindWindowByName("Sound");
+                const ImGuiWindow* textureWindow = ImGui::FindWindowByName("Texture");
+                if (soundWindow != nullptr && soundWindow->DockId != 0) {
+                    // Already placed - by the default layout, by the ini, or by
+                    // the author dragging it. Nothing to adopt, ever again.
+                    adoptSoundPanel = false;
+                } else if (textureWindow != nullptr && textureWindow->DockId != 0) {
+                    // `DockId == 0` is the whole test: it is what "no saved
+                    // layout has ever placed this window" means. Asked of
+                    // `Texture` too, because docking into a node that does not
+                    // exist yet is docking into nothing.
+                    ImGui::SetNextWindowDockID(textureWindow->DockId, ImGuiCond_Always);
+                    ImGui::MarkIniSettingsDirty();
+                    adoptSoundPanel = false;
+                }
+            }
+            if (ImGui::Begin("Sound", &showSound, kPanelFlags)) {
+                if (ImGui::CollapsingHeader("Sounds", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    const int clicked =
+                        drawAssetList("##sounds", soundEntries, soundIndex, 0.30f, soundListContent);
+                    if (clicked >= 0) {
+                        soundIndex = clicked;
+                        // ⚑ Selecting PLAYS it, which is the one place this
+                        // panel departs from `Texture` - and the reason is that
+                        // a picture is shown by being selected while a sound is
+                        // not. A list that made you click twice to hear
+                        // anything would be a picture viewer with the picture
+                        // left out.
+                        soundPreview.play(soundIndex, 1.0f, 0.0f, 0);
+                    }
+
+                    const bool haveSound =
+                        soundIndex >= 0 && static_cast<std::size_t>(soundIndex) < soundEntries.size();
+                    ImGui::BeginDisabled(!soundPreview.canPlay(soundIndex));
+                    if (ImGui::Button("play file")) {
+                        // ⚑ Gain 1 and no jitter: this is "what is in the
+                        // file", the raw material. The cue as the GAME fires it
+                        // is the button on the def row below, and keeping the
+                        // two separate is what lets an author tell a quiet
+                        // recording from a low `gain`.
+                        soundPreview.play(soundIndex, 1.0f, 0.0f, 0);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    if (ImGui::Button("stop")) {
+                        soundPreview.stopAll();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Rescan")) {
+                        soundEntries = forge::listSounds(assetsDirectory, cookedDirectory);
+                        soundIndex = -1;
+                        // ⚑ The pair, and it is not optional: the preview's
+                        // banks are indexed BY POSITION in this listing, so a
+                        // re-list without a rebuild plays the wrong sound - or
+                        // reads past the end of the bank.
+                        soundPreview.rebuild(soundEntries);
+                        status = std::to_string(soundEntries.size()) + " sound(s)";
+                    }
+
+                    ImGui::TextDisabled(
+                        "%s | %u voice(s)", soundPreview.status().c_str(), soundPreview.activeVoices());
+
+                    if (haveSound) {
+                        const forge::AssetEntry& entry = soundEntries[static_cast<std::size_t>(soundIndex)];
+                        const forge::SoundReport& soundReport = soundPreview.report(soundIndex);
+                        ImGui::Separator();
+                        ImGui::Text("%s", entry.label.c_str());
+                        if (soundReport.sampleRate == 0) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+                            ImGui::TextWrapped("this file did not decode - see the log");
+                            ImGui::PopStyleColor();
+                        } else {
+                            ImGui::Text("%.3f s   %u Hz   %s",
+                                        static_cast<double>(soundReport.seconds),
+                                        soundReport.sampleRate,
+                                        soundReport.channelCount == 1 ? "mono" : "stereo");
+                            ImGui::Text("frames         %u", soundReport.frames);
+                            // ⚑ The number `gain` is a number ABOUT. A cue
+                            // recorded at 0.2 and one clipping at 1.0 want
+                            // opposite edits and the gain slider cannot tell
+                            // you which you have.
+                            ImGui::Text("peak           %.3f", static_cast<double>(soundReport.peak));
+                            if (soundReport.peak >= 0.999f) {
+                                ImGui::TextDisabled("  at full scale: this cue may already clip");
+                            }
+                        }
+                        // ⚑ THE SENTENCE THAT MAKES THE PREVIEW HONEST, and it
+                        // is stage G's BC1 argument arriving at a second
+                        // format. A `.wav` is imported by the cooker's own
+                        // importer into the exact struct a `.saud` serialises,
+                        // so what plays here is sample-for-sample what the game
+                        // would load - which is why the pair in the list can be
+                        // played against each other and sound identical.
+                        ImGui::TextDisabled("%s",
+                                            forge::isSoundSource(entry)
+                                                ? "as cooked: imported exactly as the cooker would"
+                                                : "the cooked .saud the game loads");
+                        ImGui::SeparatorText("in the game");
+                        forge::DefEditor::Audition audition;
+                        (void)defEditor.drawSoundRows(entry, audition);
+                        if (audition.wanted) {
+                            soundPreview.play(
+                                soundIndex, audition.gain, audition.pitchJitter, audition.maxInstances);
+                        }
+                        if (ImGui::Button("save defs##sound")) {
+                            (void)defEditor.save(defStatus);
+                        }
+                        ImGui::SameLine();
+                        forge::drawHistoryButtons(history);
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("%s", defEditor.dirty() ? "* unsaved" : "saved");
+                        ImGui::TextDisabled("%s", defStatus.c_str());
+                    } else {
+                        ImGui::TextDisabled("select a sound to hear it and to see the cue that "
+                                            "names it");
+                    }
+                }
+            }
+            ImGui::End();
+        }
+
         // Neither document: how you are LOOKING at whichever one is open.
         if (showView) {
             if (ImGui::Begin("View", &showView, kPanelFlags)) {
@@ -2147,8 +2335,8 @@ int main(int argc, char** argv)
         // three routes did it. Without this the toggle is real for the session
         // and gone on the next launch, which is exactly what was reported.
         {
-            const bool shown[4] = {showMesh, showReport, showTexture, showView};
-            for (int i = 0; i < 4; ++i) {
+            const bool shown[5] = {showMesh, showReport, showTexture, showSound, showView};
+            for (int i = 0; i < 5; ++i) {
                 if (shown[i] != wasShown[i]) {
                     wasShown[i] = shown[i];
                     ImGui::MarkIniSettingsDirty();
@@ -2265,6 +2453,11 @@ int main(int argc, char** argv)
     }
 
     context.waitIdle();
+    // ⚑ Explicit rather than left to the destructor, and it is the same reason
+    // every line below is: this joins a thread that is still reading the sound
+    // bank, and a teardown order that is stated is a teardown order that can be
+    // checked. It is first because it is the only one that is not the GPU's.
+    soundPreview.shutdown();
     // Before the ImGui host goes down: the set belongs to its descriptor pool.
     if (texturePreview != VK_NULL_HANDLE) {
         ImGui_ImplVulkan_RemoveTexture(texturePreview);

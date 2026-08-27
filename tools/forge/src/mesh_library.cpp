@@ -1,6 +1,7 @@
 #include "mesh_library.hpp"
 
 #include "gltf.hpp"
+#include "sound.hpp"
 #include "texture.hpp"
 
 #include "sol/assets/forge_doc.hpp"
@@ -123,9 +124,28 @@ std::vector<AssetEntry> listTextures(const std::string& sourceDirectory, const s
     return entries;
 }
 
+std::vector<AssetEntry> listSounds(const std::string& sourceDirectory, const std::string& cookedDirectory)
+{
+    std::vector<AssetEntry> entries;
+    // ⚑ Both source extensions land in ONE group rather than a `wav` run and an
+    // `ogg` run. The distinction the groups draw is authored-versus-built, and
+    // which decoder read a file is not something an author is choosing between:
+    // `sounds.toml` already says every cue "can be replaced one file at a time
+    // by a recorded .ogg", i.e. the two are the same row in two spellings.
+    collect(sourceDirectory, ".wav", "source", /*cooked=*/false, entries);
+    collect(sourceDirectory, ".ogg", "source", /*cooked=*/false, entries);
+    collect(cookedDirectory, ".saud", "cooked", /*cooked=*/true, entries);
+    return entries;
+}
+
 bool isPartSource(const AssetEntry& entry)
 {
     return endsWith(entry.path, ".forge");
+}
+
+bool isSoundSource(const AssetEntry& entry)
+{
+    return endsWith(entry.path, ".wav") || endsWith(entry.path, ".ogg");
 }
 
 std::string forgePartIdFromName(const std::string& name)
@@ -356,6 +376,67 @@ bool loadMesh(const AssetEntry& entry, assets::MeshData& out)
         return cooker::importGltf(entry.path.c_str(), out);
     }
     return assets::loadMesh(entry.path.c_str(), out);
+}
+
+bool loadSound(const AssetEntry& entry, assets::SoundData& out, std::string* error)
+{
+    if (!isSoundSource(entry)) {
+        if (assets::loadSound(entry.path.c_str(), out)) {
+            return true;
+        }
+        if (error != nullptr) {
+            *error = "cannot load " + entry.label;
+        }
+        return false;
+    }
+
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(entry.path.c_str(), bytes)) {
+        if (error != nullptr) {
+            *error = "cannot read " + entry.path;
+        }
+        return false;
+    }
+    const bool ok = endsWith(entry.path, ".ogg") ? cooker::importOgg(bytes.data(), bytes.size(), out)
+                                                 : cooker::importWav(bytes.data(), bytes.size(), out);
+    if (!ok && error != nullptr) {
+        // ⚑ The importers log their own reason and return a bare bool, so the
+        // sentence here names the FILE and points at the log rather than
+        // inventing a second diagnosis that would be less specific than the
+        // first. Same bargain `loadMesh` already makes for a bad glTF.
+        *error = "cannot import " + entry.label + " (see the log)";
+    }
+    return ok;
+}
+
+SoundReport reportSound(const assets::SoundData& data)
+{
+    SoundReport report;
+    report.sampleRate = data.sampleRate;
+    report.channelCount = data.channelCount;
+    report.frames = data.frameCount();
+    if (data.sampleRate > 0) {
+        report.seconds = static_cast<float>(report.frames) / static_cast<float>(data.sampleRate);
+    }
+    // ⚑⚑ TWO DELIBERATE CHOICES ABOUT ONE ASYMMETRIC NUMBER, both measured
+    // rather than assumed. int16 runs -32768..32767, so the loudest possible
+    // sample is a TROUGH with no positive counterpart:
+    //
+    // (1) The magnitude is kept in `int32`. Integer promotion already saves the
+    //     negation itself - `-sample` on an int16 is computed as int and gives
+    //     32768 - but a magnitude stored back into an `int16` wraps to -32768
+    //     and then loses every comparison, so a clipped cue would report as
+    //     SILENT in the panel an author consults to find out whether it clips.
+    //     The width is what makes that unwritable, and the test pins it.
+    // (2) The divisor is 32768 and not 32767, so that trough is exactly 1.0.
+    //     Measured: over 32767 it is 1.000031, i.e. a "peak" above full scale.
+    std::int32_t loudest = 0;
+    for (const std::int16_t sample : data.samples) {
+        const std::int32_t magnitude = sample < 0 ? -static_cast<std::int32_t>(sample) : sample;
+        loudest = magnitude > loudest ? magnitude : loudest;
+    }
+    report.peak = static_cast<float>(loudest) / 32768.0f;
+    return report;
 }
 
 std::string forgeInboxArchive(const std::string& inboxDirectory)

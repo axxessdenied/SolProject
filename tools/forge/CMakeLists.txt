@@ -9,6 +9,7 @@ add_executable(sol_forge
     src/mesh_library.cpp
     src/part_editor.cpp
     src/point_tool.cpp
+    src/sound_preview.cpp
     src/texture_editor.cpp
 )
 set_target_properties(sol_forge PROPERTIES OUTPUT_NAME forge)
@@ -16,12 +17,21 @@ set_target_properties(sol_forge PROPERTIES OUTPUT_NAME forge)
 # `sol_cooker_lib` is what reads a `.gltf`; the Forge opens authored source
 # files as well as cooked ones, and a second importer would be a second
 # implementation of the one thing the cooker already does.
+#
+# ⚑⚑ `sol::audio` IS PHASE 24 STAGE U1's ONE BUILD CHANGE, AND THE SPEC SAID
+# THIS STAGE WOULD NEED "ZERO C++" - IT WAS WRONG BY THIS LINE PLUS A FILE.
+# `platform::AudioDevice` was already here (`sol::platform`), which is what made
+# the estimate look free, but a device without a mixer is a callback with
+# nothing to put in the buffer. What the tool still does NOT link is `GameAudio`
+# - that is game policy, and AGENTS.md 4's line holds: the tool reads the
+# game's DATA and never its CODE.
 target_link_libraries(sol_forge PRIVATE
     sol::core
     sol::platform
     sol::rhi
     sol::renderer
     sol::assets
+    sol::audio
     sol::ui
     sol_cooker_lib
     imgui
@@ -79,6 +89,7 @@ target_link_libraries(sol_forge_tests PRIVATE
 target_compile_definitions(sol_forge_tests PRIVATE
     SOL_MESH_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/meshes"
     SOL_TEXTURE_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/textures"
+    SOL_SOUND_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/sounds"
     SOL_MODEL_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data"
 )
 add_test(NAME forge.unit COMMAND sol_forge_tests)
