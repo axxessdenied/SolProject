@@ -96,6 +96,15 @@ bool Settings::load(const char* path)
     masterVolume = readFloat("master_volume", defaults.masterVolume, 0.0f, 1.0f);
     effectsVolume = readFloat("effects_volume", defaults.effectsVolume, 0.0f, 1.0f);
 
+    // Autosave (Phase 27). Clamped on the way in like every other value here:
+    // a hand-edited interval of 0 would autosave every frame, and a negative
+    // ring size would index backwards out of the catalog.
+    autosaveEnabled = readBool("autosave_enabled", defaults.autosaveEnabled);
+    autosaveMinutes = readFloat("autosave_minutes", defaults.autosaveMinutes, 1.0f, 60.0f);
+    autosaveOnDock = readBool("autosave_on_dock", defaults.autosaveOnDock);
+    autosaveKeep =
+        static_cast<int>(readFloat("autosave_keep", static_cast<float>(defaults.autosaveKeep), 1.0f, 10.0f));
+
     // Bindings (Phase 8k). Defaults are already installed by the constructor,
     // so an absent [bindings] table, an absent action within it, or a line
     // this build does not understand all leave the shipped layout in place -
@@ -136,7 +145,12 @@ bool Settings::save(const char* path) const
 {
     // A std::string builder rather than the fixed char[512] this used to be:
     // 34 bindings overflow that buffer several times over.
-    char scalars[256] = {};
+    // Grown for Phase 27's four autosave keys. ⚑ snprintf TRUNCATES rather
+    // than failing, and a truncated settings file loses whichever keys fell
+    // off the end - silently, and only for players whose values happen to be
+    // long. The `written` check below catches a negative return, not a clipped
+    // one, so the buffer is the whole guard.
+    char scalars[512] = {};
     const int written = std::snprintf(scalars,
                                       sizeof(scalars),
                                       "# The Stars Don't Wait - player settings\n"
@@ -145,13 +159,27 @@ bool Settings::save(const char* path) const
                                       "invert_pitch = %s\n"
                                       "vsync = %s\n"
                                       "master_volume = %.3f\n"
-                                      "effects_volume = %.3f\n",
+                                      "effects_volume = %.3f\n"
+                                      "autosave_enabled = %s\n"
+                                      "autosave_minutes = %.1f\n"
+                                      "autosave_on_dock = %s\n"
+                                      // ⚑ %d, not %.3f. autosave_keep is a
+                                      // COUNT, and writing it as "3.000" makes
+                                      // a file that is meant to be hand-edited
+                                      // read as though a fractional number of
+                                      // autosaves were a thing you could ask
+                                      // for. The reader accepts either.
+                                      "autosave_keep = %d\n",
                                       static_cast<double>(uiScale),
                                       static_cast<double>(mouseSensitivity),
                                       invertPitch ? "true" : "false",
                                       vsync ? "true" : "false",
                                       static_cast<double>(masterVolume),
-                                      static_cast<double>(effectsVolume));
+                                      static_cast<double>(effectsVolume),
+                                      autosaveEnabled ? "true" : "false",
+                                      static_cast<double>(autosaveMinutes),
+                                      autosaveOnDock ? "true" : "false",
+                                      autosaveKeep);
     if (written <= 0) {
         return false;
     }
@@ -367,11 +395,13 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
     ui.pushId("settings");
 
     const float rowHeight = 34.0f;
-    // Six rows since Phase 8t added the two volume sliders, and one spacing
-    // per item: the panel is sized from its contents, so adding a row without
-    // moving these two numbers pushes the buttons out through the bottom.
-    const float height = kTitleHeight + rowHeight * 6.0f + kButtonHeight * 2.0f + ui.theme().spacing * 9.0f +
-                         ui.theme().padding * 2.0f;
+    // Ten rows since Phase 27 added the four autosave controls, and one
+    // spacing per item: the panel is sized from its contents, so adding a row
+    // without moving these two numbers pushes the buttons out through the
+    // bottom. (Phase 27 shipped exactly that defect on the main menu by
+    // forgetting this comment lives here.)
+    const float height = kTitleHeight + rowHeight * 10.0f + kButtonHeight * 2.0f +
+                         ui.theme().spacing * 13.0f + ui.theme().padding * 2.0f;
     const Rect panel = centeredPanel(ui, 540.0f, height);
     ui.panel(panel);
 
@@ -400,6 +430,59 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
     (void)ui.checkbox(column.row(rowHeight), "V-Sync", settings.vsync);
     sliderRow("Master volume", settings.masterVolume, 0.0f, 1.0f);
     sliderRow("Effects volume", settings.effectsVolume, 0.0f, 1.0f);
+
+    (void)ui.checkbox(column.row(rowHeight), "Autosave", settings.autosaveEnabled);
+    // The two that only mean anything while autosave is on are DISABLED rather
+    // than hidden: a settings panel whose rows move as you toggle things is a
+    // panel you cannot learn the shape of, and the same rule already keeps
+    // Continue on the main menu when there is nothing to continue.
+    {
+        Row row(column.row(rowHeight), ui.theme().spacing);
+        ui.label(row.cell(190.0f),
+                 "Autosave every",
+                 settings.autosaveEnabled ? ui.theme().textDim : ui.theme().textDisabled,
+                 ui.theme().bodyStyle);
+        std::snprintf(buffer, sizeof(buffer), "%.0f min", static_cast<double>(settings.autosaveMinutes));
+        const Rect valueBox = row.cellFromRight(56.0f);
+        if (settings.autosaveEnabled) {
+            (void)ui.slider(row.remaining(), "Autosave every", settings.autosaveMinutes, 1.0f, 30.0f);
+        } else {
+            (void)row.remaining();
+        }
+        ui.label(valueBox,
+                 buffer,
+                 settings.autosaveEnabled ? ui.theme().textPrimary : ui.theme().textDisabled,
+                 ui.theme().smallStyle,
+                 TextAlign::Right);
+    }
+    {
+        // A count, so it steps rather than slides: an autosave ring of 2.7 is
+        // not a thing, and a float slider that renders as "3" while holding
+        // 3.4 is the kind of quiet lie the settings file then records.
+        Row row(column.row(rowHeight), ui.theme().spacing);
+        ui.label(row.cell(190.0f),
+                 "Autosaves to keep",
+                 settings.autosaveEnabled ? ui.theme().textDim : ui.theme().textDisabled,
+                 ui.theme().bodyStyle);
+        std::snprintf(buffer, sizeof(buffer), "%d", settings.autosaveKeep);
+        const Rect valueBox = row.cellFromRight(56.0f);
+        const Rect track = row.remaining();
+        float keep = static_cast<float>(settings.autosaveKeep);
+        if (settings.autosaveEnabled && ui.slider(track, "Autosaves to keep", keep, 1.0f, 10.0f)) {
+            settings.autosaveKeep = static_cast<int>(keep + 0.5f);
+        }
+        ui.label(valueBox,
+                 buffer,
+                 settings.autosaveEnabled ? ui.theme().textPrimary : ui.theme().textDisabled,
+                 ui.theme().smallStyle,
+                 TextAlign::Right);
+    }
+    if (settings.autosaveEnabled) {
+        (void)ui.checkbox(column.row(rowHeight), "Autosave when docking", settings.autosaveOnDock);
+    } else {
+        ui.label(
+            column.row(rowHeight), "Autosave when docking", ui.theme().textDisabled, ui.theme().bodyStyle);
+    }
 
     column.skip(6.0f);
     MenuAction action = MenuAction::None;

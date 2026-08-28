@@ -424,6 +424,22 @@ int main(int argc, char** argv)
     std::string activeCampaign;
     game::SaveCatalog saveCatalog;
     saveCatalog.initialize(savesDirectory);
+    // Autosave bookkeeping (Phase 27). The timer runs on `timeSeconds()` -
+    // MONOTONIC REAL TIME - and on neither of the other two clocks this
+    // project now has. Not the sim clock, because a player under time
+    // compression is not owed six autosaves a minute. Not
+    // `wallClockSeconds()`, which stage A added for dating a save: that one
+    // steps backwards over an NTP correction, and an interval measured with it
+    // would either stall or fire in a burst.
+    //
+    // ⚑ It is seeded at the first flight frame rather than here, so the
+    // interval is measured from when a run started rather than from when the
+    // process did - otherwise a long sit on the main menu spends the whole
+    // interval and the first autosave fires immediately on New Game, which
+    // reads as the game saving over something.
+    double lastAutosaveSeconds = 0.0;
+    bool autosaveArmed = false;
+    bool previousDocked = false;
     game::StationScreenState stationScreen; // tab + scroll positions, across frames
     game::MapScreenState mapScreen;         // map tab, scroll, and selection
     game::ShipScreenState shipScreen;       // ship readout scroll
@@ -1108,6 +1124,63 @@ int main(int argc, char** argv)
                 refreshMainMenu();
             } else {
                 SOL_LOG_ERROR("hardcore death: could not delete campaign '%s'", activeCampaign.c_str());
+            }
+        }
+
+        // --- Autosave (Phase 27) ------------------------------------------
+        //
+        // ⚑⚑ ONLY WHILE ACTUALLY PLAYING. Autosaving from a menu would write a
+        // save of a world the player has stepped away from, and autosaving
+        // from the main menu after a Quit would write one for a run that is
+        // over. `inFlight || docked` is the same pair the pause key tests.
+        {
+            const bool playing = (state == game::GameState::Flying || state == game::GameState::Docked ||
+                                  state == game::GameState::Map || state == game::GameState::ShipInfo) &&
+                                 !activeCampaign.empty();
+            if (!playing) {
+                autosaveArmed = false; // re-seeds the timer when play resumes
+            } else {
+                if (!autosaveArmed) {
+                    lastAutosaveSeconds = now;
+                    previousDocked = world.isDocked();
+                    autosaveArmed = true;
+                }
+                // Docking is an EDGE, and it is read here rather than through
+                // world.consumeDockEvent() - that one is single-shot and
+                // GameContent already consumes it, so a second reader would
+                // race it for the same event and one of them would lose.
+                const bool dockedNow = world.isDocked();
+                const bool justDocked = dockedNow && !previousDocked;
+                previousDocked = dockedNow;
+
+                const double interval = static_cast<double>(settings.autosaveMinutes) * 60.0;
+                const bool dueByTime = (now - lastAutosaveSeconds) >= interval;
+                const bool dueByDock = settings.autosaveOnDock && justDocked;
+                // ⚑ A hardcore run is NOT exempt. Its autosave is the ironman
+                // save - the thing death then deletes - so switching autosave
+                // off in that mode would quietly turn ironman into "one manual
+                // save", which is a different game mode than the one the
+                // player picked.
+                if (settings.autosaveEnabled && (dueByTime || dueByDock)) {
+                    const game::Campaign* campaign = saveCatalog.find(activeCampaign);
+                    if (campaign != nullptr) {
+                        const std::string path = saveCatalog.nextAutoPath(
+                            *campaign, static_cast<std::uint32_t>(settings.autosaveKeep));
+                        if (world.saveTo(path.c_str(), dueByDock ? "Autosave (docked)" : "Autosave")) {
+                            SOL_LOG_INFO("autosave: %s", path.c_str());
+                            saveCatalog.rescan();
+                            refreshMainMenu();
+                        } else {
+                            SOL_LOG_ERROR("autosave FAILED (%s)", path.c_str());
+                        }
+                    }
+                    // The clock restarts whether or not the write worked, and
+                    // whether or not it was a dock that triggered it. Retrying
+                    // a failed write every frame would turn one disk problem
+                    // into a stutter, and a dock-triggered save still means the
+                    // player has just been saved for.
+                    lastAutosaveSeconds = now;
+                }
             }
         }
 

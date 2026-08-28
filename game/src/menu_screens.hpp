@@ -59,6 +59,23 @@ struct Settings
     float masterVolume = 0.8f;
     float effectsVolume = 1.0f;
 
+    // Autosave (Phase 27). Off would be the safe-looking default and is the
+    // wrong one: the feature exists because a player who has not thought about
+    // saving is exactly the player who loses an hour, and they will not go
+    // looking for a switch to protect themselves with.
+    bool autosaveEnabled = true;
+    // Minutes. Five is short enough that a lost stretch is an annoyance rather
+    // than an evening, and long enough that the write is never felt.
+    float autosaveMinutes = 5.0f;
+    // Also when docking, which is the natural safe moment and a state edge the
+    // frame loop already has.
+    bool autosaveOnDock = true;
+    // How many autosaves a campaign keeps before the oldest is replaced. Three
+    // rather than one, because the point of an autosave is often to undo
+    // something that happened a while ago - a ring of one only ever offers the
+    // moment you just ruined.
+    int autosaveKeep = 3;
+
     // Controls (Phase 8k). Constructed with the shipped layout so a missing or
     // partial settings file is a complete, playable binding set rather than a
     // ship that cannot be flown.
