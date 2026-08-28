@@ -1044,7 +1044,8 @@ int main(int argc, char** argv)
         // World save/load round trip: F9 saves, F10 loads (edge-triggered).
         const bool f9Down = window.isKeyDown(sol::platform::Key::F9);
         if (f9Down && !previousF9) {
-            SOL_LOG_INFO(world.saveTo(savePath.c_str()) ? "world saved to %s" : "world save FAILED (%s)",
+            SOL_LOG_INFO(world.saveTo(savePath.c_str(), "Quicksave") ? "world saved to %s"
+                                                                     : "world save FAILED (%s)",
                          savePath.c_str());
         }
         previousF9 = f9Down;
@@ -1571,7 +1572,8 @@ int main(int argc, char** argv)
             state = game::GameState::Flying;
             break;
         case game::MenuAction::SaveGame:
-            SOL_LOG_INFO(world.saveTo(savePath.c_str()) ? "world saved to %s" : "world save FAILED (%s)",
+            SOL_LOG_INFO(world.saveTo(savePath.c_str(), "Quicksave") ? "world saved to %s"
+                                                                     : "world save FAILED (%s)",
                          savePath.c_str());
             mainMenuState.hasSave = true;
             state = game::GameState::Flying;

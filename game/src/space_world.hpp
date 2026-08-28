@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace game {
@@ -555,6 +556,39 @@ struct OwnedShip
                                       const char* context,
                                       const char* role,
                                       bool unitRadius);
+
+// What a save says about itself, without loading it (Phase 27).
+//
+// ⚑⚑ WHY THIS IS IN THE SAVE AND NOT IN A SIDECAR FILE. Everything here
+// except `systemName` was already in the first forty bytes of the blob - seed,
+// system index, credits, worldSeconds, hardcore - so the browser was always
+// one read away from most of a row. The system NAME is the exception and it is
+// the one that decided the shape: turning a system INDEX into a name needs
+// that seed's whole galaxy generated (80 systems, plus mining params derived
+// from the loaded defs), which is a second way to compute something the world
+// already knows. Recording the name the world had at save time is one source
+// of truth; regenerating it per listed row is two.
+struct SaveInfo
+{
+    std::string displayName;        // what the player called it
+    std::string systemName;         // resolved when the save was written
+    std::uint64_t savedAtUnix = 0;  // platform::wallClockSeconds at write
+    std::uint64_t universeSeed = 0; // which galaxy this is
+    double credits = 0.0;           // player wealth, for the row
+    double worldSeconds = 0.0;      // elapsed in-game time, i.e. playtime
+    bool hardcore = false;          // the run's own rule, carried by the save
+};
+
+// Reads a save's header without restoring anything. False for a missing file,
+// a foreign one, or one from another version - all three of which the browser
+// shows the same way, as a row it cannot offer.
+//
+// ⚑ It reads the WHOLE file and parses the first block, because readFileBytes
+// is all-or-nothing. That is fine at present sizes and for a list of a handful
+// of saves built once when the browser opens; if saves ever grow enough for
+// this to be felt, the fix is a bounded read in the platform layer, not a
+// cache here.
+[[nodiscard]] bool readSaveInfo(const char* path, SaveInfo& out);
 
 class SpaceWorld
 {
@@ -1340,7 +1374,11 @@ public:
         return static_cast<std::uint32_t>(m_registry.aliveCount());
     }
 
-    [[nodiscard]] bool saveTo(const char* path);
+    // `displayName` is what the save browser will show for this file. It is
+    // the caller's string - a slot name the player typed, or an autosave
+    // label - and the world never invents one; everything else in the header
+    // (when, where, how rich, how far in) it already knows and fills itself.
+    [[nodiscard]] bool saveTo(const char* path, std::string_view displayName);
     [[nodiscard]] bool loadFrom(const char* path);
 
     // Re-reads the player def's tuning and visuals plus every def-spawned

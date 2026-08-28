@@ -10,6 +10,7 @@
 #include "sol/core/serialize.hpp"
 #include "sol/ecs/snapshot.hpp"
 #include "sol/platform/file_io.hpp"
+#include "sol/platform/time.hpp"
 #include "sol/sim/collision.hpp"
 #include "sol/sim/predation.hpp"
 #include "sol/sim/steering.hpp"
@@ -42,7 +43,12 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // v15: station archetypes now consult the system's asteroid fields and its
 // owner's character (Phase 13), so the same seed describes a different galaxy.
 // No migration, per precedent — a v14 save is rejected cleanly.
-constexpr std::uint32_t kSaveVersion = 15;
+//
+// v16 (Phase 27): a self-describing header - display name, wall-clock stamp
+// and resolved system name - written immediately after the version so a save
+// browser can build a row without restoring the world. No migration, per the
+// same precedent: a v15 save is rejected cleanly.
+constexpr std::uint32_t kSaveVersion = 16;
 
 // Market intel (Phase 8g): what a station's market report covers and costs.
 // Deliberately shorter than the traders' own horizon — a station's brokers
@@ -6858,11 +6864,58 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
     }
 }
 
-bool SpaceWorld::saveTo(const char* path)
+bool readSaveInfo(const char* path, SaveInfo& out)
+{
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(path, bytes)) {
+        return false;
+    }
+    core::BinaryReader reader(
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
+
+    std::uint32_t magic = 0;
+    std::uint32_t version = 0;
+    if (!reader.read(magic) || magic != kSaveMagic || !reader.read(version) || version != kSaveVersion) {
+        return false; // foreign or from another version - the same row either way
+    }
+
+    // The field order below IS the v16 header order in saveTo, and the two
+    // have to be read together. `dockedStation` and the two last-dock indices
+    // are skipped over rather than kept: the browser has nothing to say about
+    // them, but the stream cannot be skipped past them without reading them.
+    SaveInfo info;
+    std::uint32_t systemIndex = 0;
+    std::uint32_t dockedStation = 0;
+    std::uint32_t lastDockSystem = 0;
+    std::uint32_t lastDockStation = 0;
+    std::uint8_t hardcore = 0;
+    if (!reader.readString(info.displayName) || !reader.read(info.savedAtUnix) ||
+        !reader.readString(info.systemName) || !reader.read(info.universeSeed) || !reader.read(systemIndex) ||
+        !reader.read(dockedStation) || !reader.read(lastDockSystem) || !reader.read(lastDockStation) ||
+        !reader.read(hardcore) || !reader.read(info.worldSeconds) || !reader.read(info.credits)) {
+        return false; // truncated: a save being written when the game died
+    }
+    info.hardcore = hardcore != 0;
+    out = std::move(info);
+    return true;
+}
+
+bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
 {
     core::BinaryWriter writer;
     writer.write(kSaveMagic);
     writer.write(kSaveVersion);
+    // v16 header. FIRST, and deliberately so: readSaveInfo below stops as soon
+    // as it has these, and anything appended later cannot push them out of
+    // reach. The three fields are the ones the browser cannot derive.
+    writer.writeString(displayName);
+    writer.write(platform::wallClockSeconds());
+    // The system name resolved HERE, where the galaxy is already in hand.
+    // Doing it at read time would mean regenerating a galaxy per listed save.
+    // Through currentSystemName() rather than indexing m_galaxy directly: the
+    // out-of-range fallback is that accessor's business and having a second
+    // spelling of it here is how the two would drift apart.
+    writer.writeString(currentSystemName());
     writer.write(m_universeSeed);
     writer.write(m_currentSystem);
     writer.write(m_dockedStation);
@@ -6918,7 +6971,16 @@ bool SpaceWorld::loadFrom(const char* path)
     std::uint32_t lastDockStation = 0;
     std::uint8_t hardcore = 0;
     double worldSeconds = 0.0;
+    // v16's header is read and DISCARDED here, and that is not an oversight.
+    // The name, the stamp and the system name describe the FILE, not the
+    // world: a run loaded from "Before the gate run" and saved again belongs
+    // in whatever slot the player picks next, under whatever they call it
+    // then. Reading them is still mandatory - the stream has to stay aligned.
+    std::string savedName;
+    std::uint64_t savedAtUnix = 0;
+    std::string savedSystemName;
     if (!reader.read(magic) || magic != kSaveMagic || !reader.read(version) || version != kSaveVersion ||
+        !reader.readString(savedName) || !reader.read(savedAtUnix) || !reader.readString(savedSystemName) ||
         !reader.read(seed) || !reader.read(systemIndex) || !reader.read(dockedStation) ||
         !reader.read(lastDockSystem) || !reader.read(lastDockStation) || !reader.read(hardcore) ||
         !reader.read(worldSeconds)) {
