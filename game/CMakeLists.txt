@@ -18,6 +18,7 @@ add_library(sol_game_lib STATIC
     src/ship_screen.cpp
     src/ship_ui.cpp
     src/menu_screens.cpp
+    src/save_catalog.cpp
     src/scene_renderer.cpp
     src/shader_watcher.cpp
     src/space_world.cpp
@@ -237,6 +238,7 @@ add_executable(sol_game_tests
     test/keyboard_routing_tests.cpp
     test/map_row_tests.cpp
     test/model_role_tests.cpp
+    test/save_catalog_tests.cpp
     test/save_format_tests.cpp
     test/target_cycle_tests.cpp
 )
