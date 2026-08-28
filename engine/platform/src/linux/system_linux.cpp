@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <system_error>
 #include <thread>
@@ -37,6 +38,35 @@ double timeSeconds()
     using Clock = std::chrono::steady_clock;
     static const Clock::time_point epoch = Clock::now();
     return std::chrono::duration<double>(Clock::now() - epoch).count();
+}
+
+std::uint64_t wallClockSeconds()
+{
+    // system_clock, deliberately, and it is the one place in this project
+    // where that is the right clock: the caller wants the date on the wall,
+    // not an interval. `timeSeconds` above is steady_clock for the opposite
+    // reason and the two must never be swapped.
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+    return seconds > 0 ? static_cast<std::uint64_t>(seconds) : 0;
+}
+
+bool localCalendarTime(std::uint64_t unixSeconds, CalendarTime& out)
+{
+    // localtime_r rather than localtime: the reentrant form has no shared
+    // buffer to be overwritten by another caller between the call and the read.
+    const std::time_t stamp = static_cast<std::time_t>(unixSeconds);
+    struct tm broken = {};
+    if (::localtime_r(&stamp, &broken) == nullptr) {
+        return false; // out is untouched, as the header promises
+    }
+    out.year = broken.tm_year + 1900; // tm counts from 1900 and months from 0;
+    out.month = broken.tm_mon + 1;    // the struct this fills does neither.
+    out.day = broken.tm_mday;
+    out.hour = broken.tm_hour;
+    out.minute = broken.tm_min;
+    out.second = broken.tm_sec;
+    return true;
 }
 
 void sleepMilliseconds(std::uint32_t milliseconds)
@@ -101,6 +131,49 @@ std::vector<std::string> listFiles(const char* directory)
         files.push_back(it->path().generic_string());
     }
     return files;
+}
+
+std::vector<std::string> listDirectories(const char* directory)
+{
+    // One level deep and directories only - the exact complement of listFiles
+    // above, which is recursive and files only. Same forward-slashed,
+    // caller-prefixed paths, and the same "missing is empty, not an error".
+    std::vector<std::string> directories;
+    std::error_code error;
+    std::filesystem::directory_iterator it(directory, error);
+    if (error) {
+        return directories;
+    }
+    const std::filesystem::directory_iterator end;
+    for (; it != end; it.increment(error)) {
+        if (error) {
+            break;
+        }
+        if (!it->is_directory(error) || error) {
+            continue;
+        }
+        directories.push_back(it->path().generic_string());
+    }
+    return directories;
+}
+
+bool deleteDirectory(const char* path)
+{
+    // `remove_all` takes a file quite happily, and the header promises it does
+    // not: a caller who passes a save FILE where a save DIRECTORY was meant
+    // gets a refusal rather than a deletion. Checking the type first is the
+    // whole of that guarantee.
+    std::error_code error;
+    const std::filesystem::file_status status = std::filesystem::symlink_status(path, error);
+    if (error || !std::filesystem::exists(status)) {
+        return true; // already gone, which is the contract
+    }
+    if (!std::filesystem::is_directory(status)) {
+        return false;
+    }
+    (void)std::filesystem::remove_all(path, error);
+    std::error_code existsError;
+    return !std::filesystem::exists(path, existsError);
 }
 
 bool deleteFile(const char* path)

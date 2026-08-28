@@ -2,6 +2,8 @@
 #include "sol/platform/platform.hpp"
 #include "sol/platform/time.hpp"
 
+#include <ctime>
+
 // ⚑ clang-format off, and it is load-bearing: `IncludeBlocks: Regroup` sorts
 // across blank lines, and <shlobj.h> sorts ABOVE <windows.h> alphabetically -
 // which does not compile. Three other files in this repo carry the same guard
@@ -31,6 +33,40 @@ double timeSeconds()
     LARGE_INTEGER counter = {};
     QueryPerformanceCounter(&counter);
     return static_cast<double>(counter.QuadPart) * secondsPerTick;
+}
+
+std::uint64_t wallClockSeconds()
+{
+    // FILETIME is 100 ns ticks since 1601-01-01; the Unix epoch is a fixed
+    // 11,644,473,600 seconds later. Doing the subtraction in SECONDS rather
+    // than in ticks keeps the intermediate inside a comfortable range and
+    // makes the constant one a reader can check against a calendar.
+    FILETIME fileTime = {};
+    GetSystemTimeAsFileTime(&fileTime);
+    const std::uint64_t ticks =
+        (static_cast<std::uint64_t>(fileTime.dwHighDateTime) << 32) | fileTime.dwLowDateTime;
+    constexpr std::uint64_t kTicksPerSecond = 10'000'000ull;
+    constexpr std::uint64_t kSecondsFrom1601To1970 = 11'644'473'600ull;
+    const std::uint64_t seconds = ticks / kTicksPerSecond;
+    return seconds > kSecondsFrom1601To1970 ? seconds - kSecondsFrom1601To1970 : 0;
+}
+
+bool localCalendarTime(std::uint64_t unixSeconds, CalendarTime& out)
+{
+    // _localtime64_s over the CRT's own 64-bit time_t, so this does not stop
+    // working in 2038 the way the 32-bit variant would.
+    const __time64_t stamp = static_cast<__time64_t>(unixSeconds);
+    struct tm broken = {};
+    if (_localtime64_s(&broken, &stamp) != 0) {
+        return false; // out is untouched, as the header promises
+    }
+    out.year = broken.tm_year + 1900; // tm counts from 1900 and months from 0;
+    out.month = broken.tm_mon + 1;    // the struct this fills does neither.
+    out.day = broken.tm_mday;
+    out.hour = broken.tm_hour;
+    out.minute = broken.tm_min;
+    out.second = broken.tm_sec;
+    return true;
 }
 
 void sleepMilliseconds(std::uint32_t milliseconds)
@@ -105,6 +141,80 @@ std::vector<std::string> listFiles(const char* directory)
     std::vector<std::string> files;
     listFilesRecursive(utf8ToWide(directory), files);
     return files;
+}
+
+std::vector<std::string> listDirectories(const char* directory)
+{
+    std::vector<std::string> directories;
+    const std::wstring wideDirectory = utf8ToWide(directory);
+    WIN32_FIND_DATAW findData = {};
+    HANDLE find = FindFirstFileW((wideDirectory + L"\\*").c_str(), &findData);
+    if (find == INVALID_HANDLE_VALUE) {
+        return directories; // a missing directory is empty, not an error
+    }
+    do {
+        const std::wstring name = findData.cFileName;
+        if (name == L"." || name == L"..") {
+            continue;
+        }
+        if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+            continue;
+        }
+        // The caller's own prefix, forward-slashed, exactly as listFiles
+        // promises - a caller that prefix-matches one against the other is
+        // relying on the two agreeing (Phase 22 found that out the hard way).
+        std::string full = std::string(directory);
+        if (!full.empty() && full.back() != '/' && full.back() != '\\') {
+            full.push_back('/');
+        }
+        full += wideToUtf8(name.c_str(), static_cast<int>(name.size()));
+        for (char& c : full) {
+            if (c == '\\') {
+                c = '/';
+            }
+        }
+        directories.push_back(std::move(full));
+    } while (FindNextFileW(find, &findData) != 0);
+    FindClose(find);
+    return directories;
+}
+
+bool deleteDirectory(const char* path)
+{
+    const std::wstring widePath = utf8ToWide(path);
+    const DWORD attributes = GetFileAttributesW(widePath.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        return true; // already gone, which is the contract
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        return false; // a file is not a directory; delete nothing and say so
+    }
+    // Depth first: a directory cannot be removed until it is empty, and
+    // RemoveDirectoryW does not recurse.
+    WIN32_FIND_DATAW findData = {};
+    HANDLE find = FindFirstFileW((widePath + L"\\*").c_str(), &findData);
+    if (find != INVALID_HANDLE_VALUE) {
+        do {
+            const std::wstring name = findData.cFileName;
+            if (name == L"." || name == L"..") {
+                continue;
+            }
+            const std::wstring child = widePath + L"\\" + name;
+            if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+                (void)deleteDirectory(wideToUtf8(child.c_str(), static_cast<int>(child.size())).c_str());
+            } else {
+                // Clear read-only first: a file that refuses to go would
+                // otherwise leave the parent un-removable with no explanation.
+                if ((findData.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0) {
+                    SetFileAttributesW(child.c_str(), findData.dwFileAttributes & ~FILE_ATTRIBUTE_READONLY);
+                }
+                DeleteFileW(child.c_str());
+            }
+        } while (FindNextFileW(find, &findData) != 0);
+        FindClose(find);
+    }
+    RemoveDirectoryW(widePath.c_str());
+    return GetFileAttributesW(widePath.c_str()) == INVALID_FILE_ATTRIBUTES;
 }
 
 bool deleteFile(const char* path)

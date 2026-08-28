@@ -63,8 +63,33 @@ namespace sol::platform {
 // Full paths of all regular files under directory (recursive). '/' separators.
 [[nodiscard]] std::vector<std::string> listFiles(const char* directory);
 
+// Full paths of the IMMEDIATE subdirectories of `directory`. '/' separators,
+// prefixed by `directory` exactly as given, like listFiles. A missing
+// directory yields an empty list rather than an error, also like listFiles.
+//
+// ⚑⚑ TWO DELIBERATE DIFFERENCES FROM `listFiles`, AND BOTH ARE THE POINT.
+// That one is RECURSIVE and returns FILES ONLY, descending into directories
+// without ever naming them - so an EMPTY directory is invisible to it. This
+// one is one level deep and returns directories, which is what lets a caller
+// see a folder that has nothing in it yet. `game/mods/` documents the same
+// trap from the other side: it ships empty-but-present precisely because
+// listFiles cannot tell a missing directory from an empty one.
+[[nodiscard]] std::vector<std::string> listDirectories(const char* directory);
+
 // Creates the directory and any missing parents; true if it exists afterwards.
 [[nodiscard]] bool createDirectories(const char* path);
+
+// Deletes a directory and everything under it; true if it no longer exists
+// afterwards (including when it was already missing), matching deleteFile's
+// idempotence.
+//
+// ⚑⚑ THE MOST DESTRUCTIVE FUNCTION IN THIS HEADER, AND THE ONLY RECURSIVE
+// ONE. It removes files the caller never named. Every caller owes the same
+// two things: the path must be one this program built, and it must be checked
+// for emptiness of MEANING before the call, not after - there is no undo and
+// no confirmation inside here. It refuses a path that is not a directory, so
+// a caller that passes a file by mistake deletes nothing.
+[[nodiscard]] bool deleteDirectory(const char* path);
 
 // Deletes a regular file; true if it no longer exists afterwards (including
 // when it was already missing).
