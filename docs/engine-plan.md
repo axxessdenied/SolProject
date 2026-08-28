@@ -3362,6 +3362,202 @@ Every clause is true of the nine `.wav` cues today, and the script has said so s
 
 **Suites: `platform.unit` 27 → 35, `game.unit` 41 → 59.** Windows dev 13/13 + dev-gpu 2/2, release 17/17 + release-gpu 5/5; clang-format clean by exit code.
 
+### The Depth Arc — Phases 28–40 (sketch, spec before starting) 📋 (planned 2026-08-28)
+
+**From the user, 2026-08-28**, as eleven asks in one message: ship classes by size and role; parts, upgrades and subsystems; hardpoints on hulls with Forge authoring and in-game visuals; stations built from modules; a wider material tree with contraband; a black-market faction; transponders and running dark; authored systems and constellations for narrative control; ship commands with a right-click menu; multiple owned ships, captains and fleets; and station lore with characters who know things.
+
+**It was priced against the code before any of it was designed**, per the standing rule that a roadmap estimate is re-read against the tree before it is trusted. Eight decisions were then put to the user with the counter-argument inside each; **seven came back at the recommended end and one — Q9, multi-system simulation — came back at the fuller end.** All eight are recorded in `docs/decisions/014` through `018` and mirrored into `docs/gdd.md` §10 as Q8–Q12.
+
+**What the survey found, and it is the shape of the whole arc.** Roughly half of what was asked for is already sitting in the tree unwired:
+
+- `OwnedShip` already exists and already saves — **the player can already own several ships**; they are inert.
+- `steerFormation` (hold a world offset from a moving anchor, velocity-matched) and `steerPursue` (settle at a range) already exist. Half the command vocabulary is a primitive with no commander.
+- `pickTarget(world, cursor)` already answers "what is under this arbitrary screen point". The hard half of a right-click menu is done.
+- Hailing (Phase 8s), docking clearance (8r) and timed target scanning (8e) are three built loops that the law system needs and would otherwise have to invent.
+- The Forge's `point_tool.cpp` already picks and drags named points on a mesh in 3D, and `def_editor.cpp` already owns `ships.toml` and validates writes through the game's own schema.
+- **69 of 158 bound `sol.*` functions are never called by any script.** A great deal of this arc's policy can land in Lua.
+
+And the other half is genuinely empty: **zero** occurrences of hardpoint, transponder, contraband, smuggling, crime or fleet anywhere in the engine; `generateGalaxy` reads nothing from disk; `ui::InputState` has exactly one mouse button; and there are **eight meshes in the whole game — one ship, one station.**
+
+**How to read this section.** These are *sketches at survey depth*, not specs. Each names what it depends on, what the code actually says today, the stages it probably falls into, and the exit criterion that would prove it. **Each gets a full spec, written against a fresh re-read of the code, immediately before it starts** — the same discipline every phase since 8a has used, and the one that caught stage 24-V's estimate before a line was written. This project's record is that eight consecutive roadmap estimates were refuted by the code; treat every number below as a hypothesis.
+
+**Sequencing, and why it is this order.** Phase 28 first because it is immediately playable and independent — it needs no other phase and it is visible the moment it lands. Phase 29 second because it is small, independent, and **it unblocks Campaign Act 2**, which has been the sole remaining roadmap item for several sessions: the arc's own justification for authored systems is the campaign, which makes them a dependency of Act 2 rather than a competitor to it. **Campaign Act 2 should be written after 29 and can be written any time after it.** Then the mount system, because everything ship-shaped rests on it. Then matter, stations, people, law and the black market, each of which depends on the ones before. The v2 arc opens with the frame-of-reference change, because captains and fleets are unbuildable without it.
+
+**Four standing risks, stated once here rather than repeated in every phase.**
+
+1. **This arc breaks the save format at least five times** — mounts (30), commodities (32), station modules (33), legal state (35), per-entity system index (37). This project's precedent is an exact version check with no migration, which is correct while pre-release and should be reconsidered before v1 ships, not during the arc.
+2. **⚑⚑ THE ECONOMY IS DENSE IN COMMODITY COUNT AND THE MATERIAL TREE IS A 10× MULTIPLIER ON IT.** `m_tickPrices` and `m_inbound` are `[market * commodityCount + commodity]` flat arrays, `Market::stock` is per commodity, and the agent loop is documented as `O(markets x commodities)`. Today that is ~124 markets × **4** commodities; the tree in GDD §6 is **~40**. `sim.unit` already runs two four-sim-hour steady-state economies and is ~80 s of a ~90–107 s `ctest --preset dev`. **Phase 32 must decide between a sparse market (a station stocks only what it trades) and a shorter test horizon, and it must measure before and after rather than assume.** This is the single most likely place in the arc for a change to be correct and unshippable.
+3. **Art is the binding constraint, not code.** Eight meshes exist. The taxonomy in GDD §11 names roughly forty ship types across seven hull classes; Phase 31 deliberately builds a spine of eight to ten and leaves the rest as named classes. **A phase that needs a mesh that does not exist is blocked on the Forge and a person, not on the engine.**
+4. **Two nouns collide and the rename is scheduled deliberately.** `[[module]]` is ship outfitting today and must become `[[component]]` so that stations can have modules. It happens in **Phase 30**, which is already rewriting every ship def — doing it later would be a second breaking change to the same files.
+
+---
+
+#### Phase 28 — Say What You Want: Ship Commands and the Context Menu
+
+**Depends on**: nothing. **v1.**
+
+**Priced against the code.** `steerPursue` settles at a desired range and `steerFormation` holds a world-space offset from a moving anchor with velocity matching — so *maintain distance*, *match speed* and *follow* are existing primitives. *Orbit at a range* is the one genuinely new steering function. `pickTarget(world, cursor)` answers a click at an arbitrary screen point already, and `pickBoresight` answers it under mouse-look. Hail (`hailTarget`, 20 km) and docking (`requestDocking`) are built. The gap is elsewhere and it is specific: **`ui::InputState` carries one mouse button** — `mouseDown`/`mousePressed`/`mouseReleased` — with no right button, no popup widget, and no overlay z-order. `input_actions.cpp` has 37 actions and `MouseButton::Right` is already bound to Mouse Steering, so a right-*click* must be distinguished from a right-*drag* rather than simply taken.
+
+**Stages.** (A) a second mouse button through the UI layer plus a popup/menu widget with its own z-order; (B) the command vocabulary as sim state on the player's ship — orbit, match, hold, follow, align — with `steerOrbit` as the one new primitive; (C) the context menu itself, built by asking the world what can be done to the picked thing, routed to existing calls for hail/dock/scan; (D) bindings for every command, defaults for the common ones, and the Controls screen growing to hold them; (E) the same menu on the radar disc and the map, which is what makes the map a place to act from.
+
+**Exit**: right-click a station in space and dock from the menu; right-click a ship and order an orbit at 5 km and watch it hold; do both again from the map screen; and fly the whole loop a second time using only key bindings, having never opened a menu.
+
+**Risk**: the right-click/right-drag disambiguation is the kind of input detail that reads as a broken menu. Decide it by measurement (a drag threshold in pixels and a time), not by feel.
+
+---
+
+#### Phase 29 — Places That Were Put There: Authored Systems and Constellations
+
+**Depends on**: nothing. **v1.** → **unblocks Campaign Act 2.**
+
+**Priced against the code.** `generateGalaxy` reads nothing from disk; `SystemSpec` is a plain struct of named fields and vectors, which is the format an author would have designed anyway. `routeBetween` already does BFS over the gate graph, which is exactly the `jumps_from` primitive. `DefDatabase` layering, strict schema, replace-by-id and hot reload all come free by staying in TOML. Determinism is a hard documented constraint and the pre-pass must preserve it. See `docs/decisions/018-authored-systems.md`.
+
+**Stages.** (A) `[[system]]` as a def kind with partial specification — an authored system fills in what it cares about and the generator fills the rest; (B) placement rules (`at_system`, `jumps_from`, `random` with `exclude_secret`, `anywhere`) resolved in def order against seeded streams before the procedural pass; (C) `[[constellation]]`, placed as a unit with internal topology intact; (D) an authored example shipped in the base game and a second one shipped as a mod, proving the modding path.
+
+**Exit**: **a galaxy generated with no authored systems present is byte-identical to today's at the shipped seed** — the cleanest exit criterion in the arc and directly testable. Then: an authored system lands where its rule says, a constellation keeps its internal links, an unsatisfiable rule is a loud error naming the file, and a mod adds a system without touching the base game.
+
+---
+
+#### Phase 30 — A Ship Is Its Mounts
+
+**Depends on**: nothing. **v1.** The spine of the arc, and the longest.
+
+**Priced against the code.** `ShipDef::weaponId` is one string; `ship_ui.cpp:190` calls it *"the one hardpoint"* in a comment. Fitting is four integer counts and a four-member `ModuleSlot` enum. What survives untouched is `loadout.hpp`'s stat resolution — 17 `FitStat` members, adds-then-muls, order-independent — because *where* a fitting sits is orthogonal to *what it does*. See `docs/decisions/014-ship-mounts.md`.
+
+**Stages.** (A) `[[ship.mount]]` in the schema, mount kinds and sizes, the three shipped hulls converted, `[[module]]` renamed `[[component]]`; (B) the fit model and the save format — a fitting is named by the mount it occupies, never by index — and the outfitting screen rebuilt around a mount list; (C) multiple weapons that actually fire: fire groups, per-mount capacitor draw, turret traverse; (D) the Forge places mounts on a hull in 3D, built on `point_tool` and `def_editor`; (E) a fitted mount is drawn on the hull in game; (F) **mount condition** — hit points per mount, external hits resolved against `at`, a destroyed drive or turret that stops working, which is GDD §5's standing systems-damage promise.
+
+**⚑ Checkpoint after B**, before any of the visual work: the fit model is where the shape is either right or wrong, and C through F are all built on its vocabulary. This is Phase 27's lesson applied in advance — a stage can be made unnecessary by the one before it.
+
+**Exit**: fit two different guns to two mounts on one hull and fire them independently; place a mount in the Forge and see the turret appear there in game; shoot a freighter's drive off and watch it stop, still alive.
+
+---
+
+#### Phase 31 — The Hull Spine: A Taxonomy, and Eight Ships That Prove It
+
+**Depends on**: 30. **v1.**
+
+**Priced against the code.** Three ship defs exist and all three share one mesh — the freighter is the shuttle at 4× scale. GDD §11 is the vocabulary; this phase builds the spine that proves it and leaves the rest of the grid named. Faction rosters already exist as `ships_patrol`/`ships_raider`/`ships_trader` lists, so a roster is data that already has a consumer.
+
+**Stages.** (A) hull class and role family in the schema, with the class band checked as a *content warning* rather than a schema error; (B) roughly eight to ten authored hulls across classes 1–4 with real meshes and real mount layouts; (C) faction rosters that specialise — and, as much to the point, that **leave cells empty**; (D) the generator's spawn tables reading class and role so that what you meet in the fringe differs from what you meet in the core.
+
+**Exit**: three factions field visibly different ships for the same role, a class-4 hull reads as a class-4 hull from the cockpit, and a faction that builds no covert hulls demonstrably has none.
+
+**Risk**: this is the art-bound phase. Its schedule is a person modelling eight ships, not the engine.
+
+---
+
+#### Phase 32 — Matter: The Material Tree, Salvage, and Things You Should Not Be Carrying
+
+**Depends on**: 30 (T2 components are what fittings are made of). **v1.**
+
+**Priced against the code.** Four commodities exist; one is mineable. Ore weights per region tier already exist on `CommodityDef`, so mining a wider ore set is data. Refining exists (`refineInput`/`refineOutput`), wrecks exist and are lootable, and the production chain already distinguishes feedstock from upkeep — which is the mechanism the deeper tree needs and it is already built and already documented as to why.
+
+**⚑ This phase carries standing risk 2 and must open by measuring it.** See above: the economy is dense in commodity count and the tree is a ~10× multiplier on arrays and loops that already dominate `ctest --preset dev`.
+
+**Stages.** (A) **measure the economy at 10× commodity count before changing anything**, then decide sparse-market vs. test-horizon; (B) the T0/T1/T2 tree as commodity defs with ore weights and refining chains; (C) salvage and the recycling leg — wrecks feed T1, so battlefields are an industrial input; (D) contraband as a *legality* — per-faction `contraband` and `restricted` lists on `FactionDef`, with no consumer yet beyond price and availability; (E) T3 assemblies, the construction tier that Phases 33 and 40 spend.
+
+**Exit**: a full chain runs from an ore nobody had before to a fitting on a ship; a wreck's salvage re-enters industry; the same commodity is legal in one faction's space and listed in another's; and **`ctest --preset dev` has a runtime the phase measured and defends.**
+
+---
+
+#### Phase 33 — A Station Is a List of Modules
+
+**Depends on**: 32 (industry modules need the tree), 30 (the `[[module]]` rename). **v1.**
+
+**Priced against the code.** A station is an archetype id, four rate lists and one mesh. `station_screen.cpp:42` hardcodes eight tab labels for every station in the galaxy. `StationDef`'s rates are tuned against what the trader fleet can move, and `stations.toml` documents at length *why* every producer runs a quarter ahead of its customers — that tuning has to survive being decomposed into modules. See `docs/decisions/016-station-modules.md`.
+
+**Stages.** (A) `[[module]]` as a station def kind across the eight families of GDD §12; (B) archetypes become weighted recipes and the generator composes; (C) **a station's screens derive from its modules** — no market floor, no Trade tab; (D) storage by goods class, which is what lets a station be unable to hold contraband; (E) shadow modules placeable on any owner's station, which is the footprint the black market needs.
+
+**Exit**: two stations of the same archetype differ in what they offer; a mining outpost with no market floor cannot be traded with and reads as deliberate; and the galaxy's economy is measurably no less stable than before the decomposition.
+
+**Risk**: the balance risk, not a code risk. The exit criterion above is the guard.
+
+---
+
+#### Phase 34 — Somebody Who Knows Something: The Bar
+
+**Depends on**: 33 (recreation modules say which stations have people). **v1.**
+
+**Priced against the code.** Station screens, tabs, scrolling lists, elision and tooltips all exist; the mission board already composes offers in Lua from enumerated candidates plus one seeded roll, which is the exact pattern a rumour generator wants and the exact pattern `mission_board` already proves. Nothing here needs new UI machinery.
+
+**Stages.** (A) a Bar screen on stations whose modules include one; (B) generated ambient talk read from live sim state — real shortages, real fronts, real raids, real bounties; (C) authored named characters with persistent state, placed by the generator into stations that suit them, with Lua hooks; (D) leads that become real missions posted by real state, so a rumour is never a lie.
+
+**Exit**: a barkeep mentions a shortage that is actually two jumps away and actually pays; a named character is still there, and still remembers you, on a later visit.
+
+---
+
+#### Phase 35 — Running Dark: Transponders, Inspection and the Law
+
+**Depends on**: 32 (contraband), 33 (somewhere to sell it), 30 (covert subsystem mounts). **v1.**
+
+**Priced against the code.** Nothing of it exists — and three of its four ingredients do. Hailing is a complete round trip through Lua (Phase 8s). Docking clearance is a timed, revocable grant (8r). Target scanning has range, rate and modifiers (8e); a cargo scan is that machinery pointed at a hold. Patrol AI already receives role, state, player attitude and faction in `pilot_think`, so most of the new policy belongs in `init.lua`. Phase 8e explicitly deferred *"scannable NPC cargo"*; this reverses that deliberately. See `docs/decisions/017-law-and-transponders.md`.
+
+**Stages.** (A) transponder state and broadcast identity on a ship, saved; (B) notice — when a patrol decides you are worth stopping — tuned so a clean pilot in the core is rarely bothered and a dark one usually is; (C) the stop: hail, hold, timed cargo scan at real range, all interruptible by flying away; (D) judgement against the owning faction's legality table, and consequence — waved on, fined, impounded, bountied, fired on; (E) covert countermeasure components: dampeners, spoofers, shielded holds, early-warning sensors.
+
+**Exit**: carry something legal through a Hegemony checkpoint and be waved on; carry the same crate through it dark and lose it; fit a dampener and get through; and run from a scan mid-way and watch the consequence differ from having complied.
+
+**Risk**: an inspection loop that fires too often is a tax, not a mechanic. Stage B is the whole phase's balance and must be playtested rather than assumed.
+
+---
+
+#### Phase 36 — The Shadow Faction: A Black Market With No Address
+
+**Depends on**: 35, 33. **v1.**
+
+**Priced against the code.** `FactionKind` is `Major | Pirate` and majors claim territory from core capitals in def order; pirate clans are templates stamped per lawless neighbourhood. A third kind that claims *nothing* and lives inside other people's stations is a new placement rule, not a new faction system. Catalog gating already lets pirate-kind owners fence past `min_rep`, which is most of what a fence does.
+
+**Stages.** (A) `kind = "shadow"` — no territory, no stations, present where shadow modules are; (B) fencing, black-market catalogs and contraband contracts; (C) covert-ops pilots flying the covert hulls of Phase 31, with their own `pilot_think` role; (D) shadow standing as a genuinely opposed reputation axis — earned by exactly what costs you standing with the law.
+
+**Exit**: sell contraband at a station owned by the faction whose law forbids it; gain shadow standing and lose Hegemony standing for the same act; and be offered something at a fence that no lawful outfitter will sell you.
+
+---
+
+### The v2 arc — empire
+
+Specced now so that v1 builds nothing that forecloses it (GDD §9).
+
+#### Phase 37 — Many Systems At Once
+
+**Depends on**: nothing in the arc; blocks 38, 39, 40. **v2, and the largest single item in it.**
+
+**Priced against the code.** `space_world.hpp:36` says exactly one system is instantiated. `despawnSystem()` destroys everything but the player on a jump. **Positions are metres in the current system's barycentre frame** — not a rendering convention but what every `DVec3` in the ECS means. **132 references to `m_currentSystem`** in a 7,198-line file, **45 external callers of `currentSystemIndex()`**, **15 component storages** written against one frame. A global frame is refused on the space-scale constraint. See `docs/decisions/015-multi-system-simulation.md`.
+
+**Stages.** (A) an entity carries a system index and `Transform` means "in that system's frame"; (B) the tick becomes a loop over instantiated systems — the player's plus every system holding a player asset; (C) every query that reads a position learns to ask which frame, radar/targeting/picking first, because omitting that filter shows a ship two jumps away as a contact at 300 m; (D) the save format grows the index.
+
+**Exit**: leave a ship in one system, jump twice, come back, and find it where it was — having been simulated the whole time, not restored.
+
+**Risk**: nothing in this phase is player-visible except an absence of bugs, which makes it the hardest phase in the arc to verify by playing. Its exit criterion has to be instrumented.
+
+---
+
+#### Phase 38 — Captains and Standing Orders
+
+**Depends on**: 37, 28 (the command vocabulary). **v2.**
+
+`OwnedShip` already stores a ship, its fit, its crew and where it is parked. A captain is crew given a ship instead of a bonus, accepting Phase 28's vocabulary plus orders that outlive a session: mine here, haul between there and there, patrol this, sell above X.
+
+**Exit**: hire a captain, give them a freighter and a route, fly away, and come back richer without having flown the route.
+
+---
+
+#### Phase 39 — Fleets and Formations
+
+**Depends on**: 38. **v2.**
+
+`steerFormation` exists. What does not is a fleet: a commander, a customisable formation, and an order the fleet resolves *according to what it is made of*. A mining fleet told to work a field does not need to be told that miners stay at the rock, haulers shuttle to the refinery and escorts split to cover both — that is what the composition means.
+
+**Exit**: a three-role mining fleet works a field unattended and defends itself when raided, with no per-ship orders given.
+
+---
+
+#### Phase 40 — Station Construction
+
+**Depends on**: 37, 33, 32 (T3 kits), 31 (industrial hulls). **v2.** Reverses the second half of GDD §9's amended base-building non-goal.
+
+The player buys T3 station module kits, hauls them with industrial hulls, and assembles a station from the same vocabulary the generator has been composing NPC stations from since Phase 33.
+
+**Exit**: build a station that a NPC trader then actually visits, because it is a real market in a real economy and not a special case.
+
 ## 5. Standing Design Questions
 
 Tracked here so they're decided consciously (record outcomes in `docs/decisions/`):

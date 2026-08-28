@@ -1,0 +1,120 @@
+# 014 — A ship is its mounts: named hardpoints replace one weapon and four slot counts
+
+- **Date**: 2026-08-28
+- **Status**: accepted
+
+## Context
+
+`docs/gdd.md` has promised hardpoints since it was written — §5 says *"Hardpoint
+sizes/classes per ship"* and §8 says *"ships have hardpoints + module slots"*.
+Priced against the code on 2026-08-28, before anything was designed:
+
+- **The word "hardpoint" appears nowhere in the engine.** Six matches across the
+  whole repo: three prose comments, one GDD line, and two lines of a TOML parser
+  test that uses it as an arbitrary key name.
+- **A ship has exactly one weapon.** `ShipDef::weaponId` is a `std::string`
+  (`data_defs.hpp:117`). `game/src/ship_ui.cpp:190` says so out loud in a
+  comment: *"Weapon first, because it is the one hardpoint."*
+- **Everything else is four integers.** `slotsShield`, `slotsEngine`,
+  `slotsCargo`, `slotsUtility`, and `ModuleSlot` is a four-member enum. A module
+  is a bag of stat multipliers with no position, no size, no identity and no
+  condition.
+- **`ModuleDef` cannot express "this hull takes a large turret and that one
+  does not."** Slot counts are quantities; the ask is about *kinds and sizes in
+  places*, which counts cannot say.
+- **`FitStat` has 17 members and resolution is order-independent** (adds sum,
+  then muls multiply — `loadout.hpp`). That machinery is good and survives; what
+  fails is only *where a fitting sits and what may sit there*.
+
+The Depth Arc asks for turret/gun/laser/torpedo/launcher/engine/thruster/shield/
+covert mounts *and* upgradeable subsystems *and* visual representation on the
+hull *and* the Forge authoring them. None of that is expressible against four
+integers, and half of it is not expressible against a position-free module.
+
+## Decision
+
+**A mount is a named, typed, sized place on a hull where exactly one fitting
+goes, and it is the only fitting mechanism.** `weaponId` and the four
+`slots_*` counts are removed rather than kept alongside.
+
+```toml
+[[ship]]
+id = "sol.destroyer"
+
+  [[ship.mount]]
+  id   = "turret_dorsal_1"
+  kind = "turret"
+  size = "medium"
+  at   = [0.0, 3.2, -1.5]   # metres, hull frame -> external, drawn, shootable
+  aim  = [0.0, 1.0, 0.0]
+  arc  = 220.0              # degrees of traverse
+
+  [[ship.mount]]
+  id   = "internal_reactor"
+  kind = "subsystem"
+  size = "large"            # no `at` -> internal, never drawn
+```
+
+Four rules carry the weight:
+
+1. **`id` is stable and a save refers to a fitting by the mount it occupies.**
+   Not by index — an author inserting a mount would silently rearrange every
+   existing player's ship.
+2. **`at` present means external; absent means internal.** One key decides
+   drawn-or-not, shootable-at-a-position-or-not, and nothing else needs a flag.
+   An internal mount is still destructible; it is simply not aimed at.
+3. **A mount accepts its own size or smaller.** Fitting small kit to a large
+   mount wastes the mount. That waste is the player's trade, not an error.
+4. **Ship outfitting `[[module]]` is renamed `[[component]]`.** A component is a
+   thing that occupies a mount. This frees the word `module` for stations
+   (`decisions/016`), where it is the natural noun and where no other word fits.
+
+**Mount condition is in scope** (GDD §5, promoted to [core]). Each mount carries
+hit points and a destroyed mount stops working. External mounts resolve hits
+against `at`; internal mounts are reachable only once armour and hull are
+compromised.
+
+## Alternatives considered
+
+- **External hardpoints beside internal slot counts.** Half the change: mounts
+  carry geometry for guns and drives, subsystems stay counts. Rejected because
+  the ask explicitly wants *"the type of subsystems they can handle and what kind
+  of upgrades"* — a count cannot say which subsystems a hull accepts, so the
+  cheaper shape does not answer the question that motivated the work. It also
+  guarantees two fitting models, two UI paths and two save representations
+  forever.
+- **Hardpoints as pure geometry**, with fitting rules untouched. Cheapest, and it
+  would deliver the visual half. Rejected for the same reason plus one more: it
+  makes the Forge's mount authoring produce data the game does not fit against,
+  so the tool would be editing decoration.
+- **Keeping `weaponId` as "the primary weapon" with mounts additive.** Rejected —
+  a special case that every consumer must branch on, for no benefit once mounts
+  exist.
+
+## Consequences
+
+- **The save format breaks.** `OwnedShip` currently holds `weaponId` plus a flat
+  `moduleIds` vector; it becomes a mount-id → component-id mapping. `kSaveVersion`
+  bumps and older saves are rejected, per this project's standing precedent of
+  an exact version check and no migration.
+- **Every def file that names a ship changes**, and so do the three shipped hulls,
+  `modules.toml` (renamed), and the outfitting screen — which is rebuilt around
+  a mount list rather than four slot-type tabs.
+- **`loadout.hpp`'s stat resolution survives unchanged.** Adds-then-muls over
+  `FitStat` is orthogonal to *where* a fitting sits; only enumeration of the
+  fitted set changes. This is the single largest piece of existing machinery the
+  decision preserves.
+- **Weapons become plural**, which is new sim surface: fire groups, per-mount
+  capacitor draw, convergence, and traverse limits on turrets.
+- **The Forge gains a mount tool.** Priced as an extension rather than a new
+  capability: `point_tool.cpp` already picks and drags named points on a mesh in
+  3D (1,287 lines), and `def_editor.cpp` already owns `ships.toml` and validates
+  writes through `DefDatabase::mergeToml` — the game's own schema. Placing a
+  mount is those two facilities meeting.
+- **It unblocks four later phases.** Covert suites (§13) are subsystem mounts;
+  EW, remote logistics and command hulls are subsystem mounts; the ship taxonomy
+  (§11) is only meaningful because mount budget is what separates a class-2 hull
+  from a class-5 one; and the visual representation of a fit is `at` plus a model.
+- **What it does not do**: it is not ship *construction*. An author places mounts;
+  a player fills them. GDD §9's block-building non-goal is untouched, and the
+  distinction is written into that non-goal so it is not re-litigated.
