@@ -37,6 +37,17 @@ public:
                                   std::span<const std::string> modLayerDirectories,
                                   SpaceWorld* world);
 
+    // The other half of SpaceWorld::resetForNewGame (Phase 27): re-applies the
+    // already-loaded defs to the fresh world, regenerates its galaxy, and
+    // re-runs the boot scripts so the campaign's Lua-side state starts over.
+    //
+    // ⚑ Deliberately NOT `initialize` again. That re-reads every def file off
+    // disk and re-registers the whole binding surface into the VM, neither of
+    // which a new game needs - the defs have not changed and the bindings are
+    // already there. This is `initialize`'s tail, which is the part that is
+    // about the WORLD rather than about the process.
+    void restartForNewGame();
+
     // Polls watched TOML/Lua sources (throttled); on a def change reloads the
     // database and re-applies it to the world, on a script change re-runs the
     // boot scripts in layer order. Errors keep the previous state.

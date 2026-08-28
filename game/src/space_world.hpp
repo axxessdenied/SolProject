@@ -1342,6 +1342,25 @@ public:
         return static_cast<std::uint32_t>(m_registry.aliveCount());
     }
 
+    // Puts the world back to the state it had at construction and spawns a
+    // fresh player ship for `seed`. What "Quit to Main Menu" and then "New
+    // Game" needs, and what buildPauseMenu's comment has said does not exist
+    // since Phase 8d: "starting a second run in one process needs a world
+    // reset that does not exist".
+    //
+    // ⚑⚑ IT MOVE-ASSIGNS A DEFAULT-CONSTRUCTED WORLD RATHER THAN CLEARING
+    // FIELDS, AND THAT IS THE WHOLE POINT. A hand-written reset has to name
+    // every member, so it is wrong the moment somebody adds one - and wrong
+    // silently, as state that survives a new game. This cannot go stale:
+    // whatever the class holds next year is default-constructed here for free.
+    // The object's ADDRESS does not change, which is what keeps GameContent's
+    // `SpaceWorld*` and every other observer valid across the reset.
+    //
+    // ⚑ It does NOT regenerate the galaxy - that needs the def database, which
+    // is GameContent's. `GameContent::restartForNewGame` is the other half and
+    // the two are always called together.
+    void resetForNewGame(std::uint64_t seed);
+
     // `displayName` is what the save browser will show for this file. It is
     // the caller's string - a slot name the player typed, or an autosave
     // label - and the world never invents one; everything else in the header

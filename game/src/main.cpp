@@ -205,6 +205,33 @@ void consoleCommandHandler(const char* command, void* userData)
 
 } // namespace
 
+namespace {
+
+// ⚑⚑ WHAT THE BROWSER'S SELECTION POINTS AT, RESOLVED FRESH EVERY TIME IT IS
+// USED. The catalog is rescanned after every save and every delete, so an
+// index the player clicked a moment ago can name a row that no longer exists.
+// Resolving through these two - which bounds-check rather than assume - is the
+// difference between a Delete acting on the wrong file and acting on nothing.
+// Neither returns a pointer that survives a rescan; every caller copies what
+// it needs out first.
+const game::Campaign* browserCampaign(const game::SaveCatalog& catalog, const game::SaveBrowserState& browser)
+{
+    if (browser.campaign < 0 || browser.campaign >= static_cast<int>(catalog.campaigns().size())) {
+        return nullptr;
+    }
+    return &catalog.campaigns()[static_cast<std::size_t>(browser.campaign)];
+}
+
+const game::SaveSlot* browserSave(const game::Campaign* campaign, const game::SaveBrowserState& browser)
+{
+    if (campaign == nullptr || browser.save < 0 || browser.save >= static_cast<int>(campaign->saves.size())) {
+        return nullptr;
+    }
+    return &campaign->saves[static_cast<std::size_t>(browser.save)];
+}
+
+} // namespace
+
 int main(int argc, char** argv)
 {
     const std::uint64_t maxFrames = parseMaxFrames(argc, argv);
@@ -301,7 +328,8 @@ int main(int argc, char** argv)
     }
     SOL_LOG_INFO("user data directory: %s", writableDir.c_str());
 
-    const std::string savePath = writableDir + "world.sav";
+    const std::string legacySavePath = writableDir + "world.sav";
+    const std::string savesDirectory = writableDir + "saves";
     const std::string settingsPath = writableDir + "settings.toml";
 
     // ⚑⚑ A ONE-TIME MIGRATION, AND IT COPIES RATHER THAN MOVES (Phase 22
@@ -316,7 +344,19 @@ int main(int argc, char** argv)
     if (writableDir != executableDir) {
         (void)sol::platform::copyFileIfAbsent((executableDir + "settings.toml").c_str(),
                                               settingsPath.c_str());
-        (void)sol::platform::copyFileIfAbsent((executableDir + "world.sav").c_str(), savePath.c_str());
+        (void)sol::platform::copyFileIfAbsent((executableDir + "world.sav").c_str(), legacySavePath.c_str());
+    }
+
+    // ⚑⚑ THE PRE-PHASE-27 SAVE IS LEFT EXACTLY WHERE IT IS AND NEVER MOVED.
+    // It is format v15 and this build is v16, so it cannot be loaded at all -
+    // migrating it into a campaign folder would build a run out of a file that
+    // can never be opened, which is worse than leaving it alone. Saying so
+    // once is the whole handling: the file stays, and the player is told it is
+    // there rather than left to wonder where their save went.
+    if (sol::platform::fileModificationTime(legacySavePath.c_str()) != 0) {
+        SOL_LOG_INFO("saves: an older-format save is still at %s; this build cannot read it, and it "
+                     "has been left untouched",
+                     legacySavePath.c_str());
     }
 
     // Settings load before the swapchain exists, because V-Sync is a swapchain
@@ -370,7 +410,20 @@ int main(int argc, char** argv)
     // into the cockpit.
     game::GameState state = game::GameState::MainMenu;
     game::GameState settingsReturnState = game::GameState::MainMenu;
+    // Where Back goes from the browser. It is reachable from the main menu and
+    // from the pause menu, and returning to the wrong one either resumes a run
+    // that was not running or strands the player in a paused game they never
+    // started.
+    game::GameState browserReturnState = game::GameState::MainMenu;
     game::MainMenuState mainMenuState;
+    game::NewGameState newGameState;
+    game::SaveBrowserState saveBrowser;
+    // Where the run in progress files its saves. Empty until a New Game names
+    // a campaign or a load picks one, which is exactly when saving becomes
+    // meaningful - the pause menu's Save is unreachable before either.
+    std::string activeCampaign;
+    game::SaveCatalog saveCatalog;
+    saveCatalog.initialize(savesDirectory);
     game::StationScreenState stationScreen; // tab + scroll positions, across frames
     game::MapScreenState mapScreen;         // map tab, scroll, and selection
     game::ShipScreenState shipScreen;       // ship readout scroll
@@ -378,7 +431,14 @@ int main(int argc, char** argv)
     // carries a span into it.
     std::vector<sol::ui::RadarContact> radarContacts;
     std::vector<sol::ui::CommsLine> commsLines; // same lifetime rule (Phase 8r)
-    mainMenuState.hasSave = sol::platform::fileModificationTime(savePath.c_str()) != 0;
+    // What Continue would resume, named on the button. Refreshed by
+    // `refreshMainMenu` below every time the catalog changes underneath it.
+    const auto refreshMainMenu = [&] {
+        const game::Campaign* recent = saveCatalog.mostRecentCampaign();
+        mainMenuState.hasSave = recent != nullptr;
+        mainMenuState.continueLabel = recent != nullptr ? recent->name : std::string();
+    };
+    refreshMainMenu();
 
 #if !defined(SOL_SHADER_SOURCE_DIR)
 #define SOL_SHADER_SOURCE_DIR ""
@@ -1033,26 +1093,61 @@ int main(int argc, char** argv)
         }
 
         // Hardcore death (decisions/007): the save goes with the run.
+        //
+        // ⚑⚑ THE RUN, NOW, AND NOT EVERY RUN. Before Phase 27 there was one
+        // save file and deleting it was unambiguous. With a folder per
+        // campaign this has to delete THIS campaign and leave every other one
+        // standing - a hardcore death that took somebody's other saves with it
+        // would be the worst defect this phase could ship.
         if (world.consumeHardcoreDeath()) {
-            if (sol::platform::deleteFile(savePath.c_str())) {
-                SOL_LOG_WARN("hardcore death: save deleted (%s)", savePath.c_str());
+            if (activeCampaign.empty()) {
+                SOL_LOG_WARN("hardcore death: this run has no campaign folder, so nothing was deleted");
+            } else if (saveCatalog.deleteCampaign(activeCampaign)) {
+                SOL_LOG_WARN("hardcore death: campaign '%s' deleted", activeCampaign.c_str());
+                activeCampaign.clear();
+                refreshMainMenu();
             } else {
-                SOL_LOG_ERROR("hardcore death: save delete FAILED (%s)", savePath.c_str());
+                SOL_LOG_ERROR("hardcore death: could not delete campaign '%s'", activeCampaign.c_str());
             }
         }
 
-        // World save/load round trip: F9 saves, F10 loads (edge-triggered).
+        // Quicksave/quickload: F9 and F10 (edge-triggered), now into the
+        // running campaign's own `quick.sav` rather than into the one save
+        // file the game used to have. Both are no-ops before a campaign
+        // exists, and say so rather than writing somewhere arbitrary.
         const bool f9Down = window.isKeyDown(sol::platform::Key::F9);
         if (f9Down && !previousF9) {
-            SOL_LOG_INFO(world.saveTo(savePath.c_str(), "Quicksave") ? "world saved to %s"
+            const game::Campaign* campaign = saveCatalog.find(activeCampaign);
+            if (campaign == nullptr) {
+                SOL_LOG_WARN("quicksave: no campaign is running");
+            } else {
+                const std::string path = saveCatalog.quickPath(*campaign);
+                SOL_LOG_INFO(world.saveTo(path.c_str(), "Quicksave") ? "world saved to %s"
                                                                      : "world save FAILED (%s)",
-                         savePath.c_str());
+                             path.c_str());
+                saveCatalog.rescan();
+                refreshMainMenu();
+            }
         }
         previousF9 = f9Down;
         const bool f10Down = window.isKeyDown(sol::platform::Key::F10);
         if (f10Down && !previousF10) {
-            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s" : "world load FAILED (%s)",
-                         savePath.c_str());
+            const game::Campaign* campaign = saveCatalog.find(activeCampaign);
+            const game::SaveSlot* quick = nullptr;
+            if (campaign != nullptr) {
+                for (const game::SaveSlot& slot : campaign->saves) {
+                    if (slot.kind == game::SaveKind::Quick) {
+                        quick = &slot;
+                    }
+                }
+            }
+            if (quick == nullptr) {
+                SOL_LOG_WARN("quickload: no quicksave in this campaign");
+            } else {
+                SOL_LOG_INFO(world.loadFrom(quick->path.c_str()) ? "world loaded from %s"
+                                                                 : "world load FAILED (%s)",
+                             quick->path.c_str());
+            }
         }
         previousF10 = f10Down;
 
@@ -1496,6 +1591,12 @@ int main(int argc, char** argv)
             case game::GameState::Settings:
                 menuAction = game::buildSettingsScreen(ui, settings);
                 break;
+            case game::GameState::NewGame:
+                menuAction = game::buildNewGameScreen(ui, newGameState);
+                break;
+            case game::GameState::SaveBrowser:
+                menuAction = game::buildSaveBrowser(ui, saveCatalog, saveBrowser, activeCampaign);
+                break;
             case game::GameState::Controls:
                 // The capture reads the raw chord edge rather than any binding, so
                 // a key can be assigned to an action whatever else already holds
@@ -1556,33 +1657,157 @@ int main(int argc, char** argv)
         switch (menuAction) {
         case game::MenuAction::None:
             break;
-        case game::MenuAction::NewGame:
-            world.setHardcore(mainMenuState.hardcore);
-            if (world.hardcore()) {
-                SOL_LOG_INFO("HARDCORE run: death deletes the save");
+        case game::MenuAction::OpenNewGame:
+            // ⚑ Back from this screen shares CloseBrowser with the save
+            // browser, so it shares the return state too - and it has to be
+            // set HERE. Without this line the naming screen inherits whatever
+            // the browser was last opened from, so New Game -> Back after a
+            // Quit to Main Menu would drop the player into a pause menu for a
+            // run that is no longer running.
+            browserReturnState = state;
+            newGameState.name = "New Run";
+            newGameState.nameIsSuggestion = true; // first keypress replaces it
+            newGameState.focusRequested = true;
+            state = game::GameState::NewGame;
+            break;
+        case game::MenuAction::StartNewGame: {
+            const game::Campaign* created = saveCatalog.createCampaign(newGameState.name);
+            if (created == nullptr) {
+                SOL_LOG_ERROR("new game: could not create a campaign folder");
+                break; // stay on the screen rather than starting an unsaveable run
             }
+            activeCampaign = created->name;
+            // ⚑ A SECOND NEW GAME IN ONE PROCESS IS THE CASE THIS HAS TO GET
+            // RIGHT, and it is why the reset exists. The first one runs on the
+            // world main() spawned at startup; every later one runs on a world
+            // that has been played in, so both halves of the reset are needed
+            // - the world's own state and the galaxy GameContent generates.
+            world.resetForNewGame(parseUniverseSeed(argc, argv));
+            content.restartForNewGame();
+            world.setHardcore(newGameState.hardcore);
+            if (world.hardcore()) {
+                SOL_LOG_INFO("HARDCORE run: death deletes the campaign");
+            }
+            SOL_LOG_INFO("new game: campaign '%s'", activeCampaign.c_str());
+            refreshMainMenu();
             state = game::GameState::Flying;
             break;
-        case game::MenuAction::ContinueGame:
-            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s" : "world load FAILED (%s)",
-                         savePath.c_str());
-            state = game::GameState::Flying;
+        }
+        case game::MenuAction::ContinueGame: {
+            const game::SaveSlot* recent = saveCatalog.mostRecentSave();
+            const game::Campaign* campaign = saveCatalog.mostRecentCampaign();
+            if (recent == nullptr || campaign == nullptr) {
+                break;
+            }
+            const std::string path = recent->path;
+            const std::string name = campaign->name;
+            if (world.loadFrom(path.c_str())) {
+                activeCampaign = name;
+                SOL_LOG_INFO("world loaded from %s", path.c_str());
+                state = game::GameState::Flying;
+            } else {
+                SOL_LOG_ERROR("world load FAILED (%s)", path.c_str());
+            }
             break;
+        }
         case game::MenuAction::Resume:
             state = game::GameState::Flying;
             break;
-        case game::MenuAction::SaveGame:
-            SOL_LOG_INFO(world.saveTo(savePath.c_str(), "Quicksave") ? "world saved to %s"
-                                                                     : "world save FAILED (%s)",
-                         savePath.c_str());
-            mainMenuState.hasSave = true;
-            state = game::GameState::Flying;
+        case game::MenuAction::OpenSaveBrowser:
+        case game::MenuAction::OpenLoadBrowser:
+            saveBrowser.mode = menuAction == game::MenuAction::OpenSaveBrowser ? game::SaveBrowserMode::Save
+                                                                               : game::SaveBrowserMode::Load;
+            // Rescanned on the way in rather than held live: this is file I/O,
+            // and nothing but this process changes these files while it runs.
+            saveCatalog.rescan();
+            saveBrowser.disarm();
+            saveBrowser.notice.clear();
+            saveBrowser.save = -1;
+            saveBrowser.newSaveName.clear();
+            saveBrowser.focusRequested = saveBrowser.mode == game::SaveBrowserMode::Save;
+            browserReturnState = state;
+            state = game::GameState::SaveBrowser;
             break;
-        case game::MenuAction::LoadGame:
-            SOL_LOG_INFO(world.loadFrom(savePath.c_str()) ? "world loaded from %s" : "world load FAILED (%s)",
-                         savePath.c_str());
-            state = game::GameState::Flying;
+        case game::MenuAction::CloseBrowser:
+            state = browserReturnState;
             break;
+        case game::MenuAction::LoadSelected: {
+            const game::Campaign* campaign = browserCampaign(saveCatalog, saveBrowser);
+            const game::SaveSlot* slot = browserSave(campaign, saveBrowser);
+            if (slot == nullptr) {
+                break;
+            }
+            // Copied before the load: `slot` points into the catalog, and the
+            // rescan below frees what it points at.
+            const std::string path = slot->path;
+            const std::string name = campaign->name;
+            if (world.loadFrom(path.c_str())) {
+                activeCampaign = name;
+                SOL_LOG_INFO("world loaded from %s", path.c_str());
+                state = game::GameState::Flying;
+            } else {
+                SOL_LOG_ERROR("world load FAILED (%s)", path.c_str());
+                saveBrowser.notice = "That save could not be loaded.";
+            }
+            break;
+        }
+        case game::MenuAction::SaveSelected: {
+            const game::Campaign* campaign = saveCatalog.find(activeCampaign);
+            if (campaign == nullptr) {
+                saveBrowser.notice = "No campaign is running.";
+                break;
+            }
+            const std::string path = saveCatalog.nextManualPath(*campaign);
+            const std::string name =
+                saveBrowser.newSaveName.empty() ? std::string("Save") : saveBrowser.newSaveName;
+            if (world.saveTo(path.c_str(), name)) {
+                SOL_LOG_INFO("world saved to %s", path.c_str());
+                saveCatalog.rescan();
+                refreshMainMenu();
+                state = browserReturnState;
+            } else {
+                SOL_LOG_ERROR("world save FAILED (%s)", path.c_str());
+                saveBrowser.notice = "That save could not be written.";
+            }
+            break;
+        }
+        case game::MenuAction::DeleteSelectedSave: {
+            const game::Campaign* campaign = browserCampaign(saveCatalog, saveBrowser);
+            const game::SaveSlot* slot = browserSave(campaign, saveBrowser);
+            if (slot == nullptr) {
+                break;
+            }
+            saveBrowser.notice =
+                saveCatalog.deleteSave(*slot) ? "Save deleted." : "That save could not be deleted.";
+            saveBrowser.save = -1;
+            saveBrowser.disarm();
+            refreshMainMenu();
+            break;
+        }
+        case game::MenuAction::DeleteSelectedCampaign: {
+            const game::Campaign* campaign = browserCampaign(saveCatalog, saveBrowser);
+            if (campaign == nullptr) {
+                break;
+            }
+            const std::string name = campaign->name; // copied: the rescan frees it
+            if (saveCatalog.deleteCampaign(name)) {
+                saveBrowser.notice = "Run deleted.";
+                if (activeCampaign == name) {
+                    // The run in progress just lost its folder. It keeps
+                    // playing - throwing the player out mid-flight would be a
+                    // worse surprise than a Save that says there is nowhere to
+                    // save to.
+                    activeCampaign.clear();
+                }
+            } else {
+                saveBrowser.notice = "That run could not be deleted.";
+            }
+            saveBrowser.save = -1;
+            saveBrowser.campaign = -1;
+            saveBrowser.disarm();
+            refreshMainMenu();
+            break;
+        }
         case game::MenuAction::OpenSettings:
             settingsReturnState = state;
             state = game::GameState::Settings;
@@ -1606,6 +1831,18 @@ int main(int argc, char** argv)
                 SOL_LOG_WARN("could not write %s", settingsPath.c_str());
             }
             state = game::GameState::Settings;
+            break;
+        case game::MenuAction::QuitToMainMenu:
+            // The run is abandoned, not saved: the player had Save Game one
+            // menu entry away and chose this instead. The world is reset so
+            // the main menu is not sitting on top of a live galaxy, and so
+            // starting a second run finds the same clean slate the first did.
+            world.resetForNewGame(parseUniverseSeed(argc, argv));
+            content.restartForNewGame();
+            activeCampaign.clear();
+            saveCatalog.rescan();
+            refreshMainMenu();
+            state = game::GameState::MainMenu;
             break;
         case game::MenuAction::QuitGame:
             quitRequested = true;

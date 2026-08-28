@@ -6864,6 +6864,12 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
     }
 }
 
+void SpaceWorld::resetForNewGame(std::uint64_t seed)
+{
+    *this = SpaceWorld{};
+    spawn(seed);
+}
+
 bool readSaveInfo(const char* path, SaveInfo& out)
 {
     std::vector<std::uint8_t> bytes;

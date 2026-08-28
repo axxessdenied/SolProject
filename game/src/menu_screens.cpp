@@ -177,8 +177,15 @@ MenuAction buildMainMenu(UiContext& ui, MainMenuState& state)
     dimBackground(ui);
     ui.pushId("main_menu");
 
-    const float height = kTitleHeight + 40.0f + kButtonHeight * 4.0f + ui.theme().spacing * 5.0f +
-                         ui.theme().padding * 2.0f + 34.0f;
+    // ⚑ Sized from its contents, and the contents changed in Phase 27: five
+    // buttons where there were four, and no hardcore checkbox (naming a run
+    // owns that now). The count here is title + subtitle + a 12 px gap + five
+    // buttons, with one spacing after each of the seven rows. Getting this
+    // wrong does not fail to build - it pushes the last button out through the
+    // bottom of the panel, which is the defect buildSettingsScreen's own
+    // comment warns about.
+    const float height = kTitleHeight + 28.0f + 12.0f + kButtonHeight * 5.0f + ui.theme().spacing * 7.0f +
+                         ui.theme().padding * 2.0f;
     const Rect panel = centeredPanel(ui, kMenuWidth, height);
     ui.panel(panel);
 
@@ -197,12 +204,24 @@ MenuAction buildMainMenu(UiContext& ui, MainMenuState& state)
 
     MenuAction action = MenuAction::None;
     if (ui.button(column.row(kButtonHeight), "New Game")) {
-        action = MenuAction::NewGame;
+        action = MenuAction::OpenNewGame;
     }
     // Continue is present but disabled without a save, so its absence never
     // reshuffles the menu under the player's cursor.
-    if (ui.button(column.row(kButtonHeight), "Continue", state.hasSave)) {
+    //
+    // ⚑ It NAMES the run it would resume (Phase 27). With one save "Continue"
+    // was unambiguous; with several campaigns it is a question, and a button
+    // that silently picks one of them is worse than one that says which.
+    std::string continueLabel = "Continue";
+    if (!state.continueLabel.empty()) {
+        continueLabel += " - ";
+        continueLabel += state.continueLabel;
+    }
+    if (ui.button(column.row(kButtonHeight), continueLabel, state.hasSave)) {
         action = MenuAction::ContinueGame;
+    }
+    if (ui.button(column.row(kButtonHeight), "Load Game", state.hasSave)) {
+        action = MenuAction::OpenLoadBrowser;
     }
     if (ui.button(column.row(kButtonHeight), "Settings")) {
         action = MenuAction::OpenSettings;
@@ -211,8 +230,77 @@ MenuAction buildMainMenu(UiContext& ui, MainMenuState& state)
         action = MenuAction::QuitGame;
     }
 
+    ui.popId();
+    return action;
+}
+
+MenuAction buildNewGameScreen(UiContext& ui, NewGameState& state)
+{
+    dimBackground(ui);
+    ui.pushId("new_game");
+
+    constexpr float kRowHeight = 34.0f;
+    const float height = kTitleHeight + 26.0f + kRowHeight * 3.0f + kButtonHeight * 2.0f +
+                         ui.theme().spacing * 8.0f + ui.theme().padding * 2.0f;
+    const Rect panel = centeredPanel(ui, 460.0f, height);
+    ui.panel(panel);
+
+    Column column(panel, ui.theme().padding, ui.theme().spacing);
+    ui.label(column.row(kTitleHeight),
+             "New Game",
+             ui.theme().textPrimary,
+             ui.theme().headingStyle,
+             TextAlign::Center);
+    ui.label(column.row(26.0f),
+             "This run gets its own folder. Saves inside it stay together.",
+             ui.theme().textDim,
+             ui.theme().smallStyle,
+             TextAlign::Center);
+
+    {
+        Row row(column.row(kRowHeight), ui.theme().spacing);
+        ui.label(row.cell(90.0f), "Name", ui.theme().textDim, ui.theme().bodyStyle);
+        const Rect field = row.remaining();
+        if (state.focusRequested) {
+            ui.setFocus(ui.idFor("campaign_name"));
+            ui.setCaret(state.name.size());
+            state.focusRequested = false;
+        }
+        const std::size_t before = state.name.size();
+        if (ui.textField(field, "campaign_name", state.name, 48) && state.nameIsSuggestion) {
+            // The prefill is a suggestion until the player types, and then the
+            // first character REPLACES it rather than appending. Same rule as
+            // BookmarkPrompt, and for the same reason: there are no selection
+            // ranges to delete a prefill with.
+            if (state.name.size() > before) {
+                const char typed = state.name.back();
+                state.name.assign(1, typed);
+                ui.setCaret(state.name.size());
+            }
+            state.nameIsSuggestion = false;
+        }
+    }
+
+    // What the folder will actually be called, shown live. A name is reduced
+    // to something a directory can be called (see sanitizeCampaignName), and a
+    // player typing "Nyx/../etc" deserves to see that before they commit
+    // rather than to find a folder they did not name.
+    const std::string folder = sanitizeCampaignName(state.name);
+    std::string folderLine = "Folder: ";
+    folderLine += folder;
+    ui.label(column.row(kRowHeight), folderLine, ui.theme().textDim, ui.theme().smallStyle);
+
+    (void)ui.checkbox(column.row(kRowHeight), "Hardcore (death ends the run)", state.hardcore);
+
     column.skip(6.0f);
-    (void)ui.checkbox(column.row(30.0f), "Hardcore (death ends the run)", state.hardcore);
+    MenuAction action = MenuAction::None;
+    // Enter starts the run, but only while the field is not eating the key.
+    if (ui.button(column.row(kButtonHeight), "Start") || (ui.submitRequested() && !state.name.empty())) {
+        action = MenuAction::StartNewGame;
+    }
+    if (ui.button(column.row(kButtonHeight), "Back") || ui.cancelRequested()) {
+        action = MenuAction::CloseBrowser;
+    }
 
     ui.popId();
     return action;
@@ -223,7 +311,7 @@ MenuAction buildPauseMenu(UiContext& ui, bool hardcore)
     dimBackground(ui);
     ui.pushId("pause_menu");
 
-    const int buttonCount = hardcore ? 4 : 5;
+    const int buttonCount = hardcore ? 5 : 6;
     const float height = kTitleHeight + kButtonHeight * static_cast<float>(buttonCount) +
                          ui.theme().spacing * static_cast<float>(buttonCount) + ui.theme().padding * 2.0f;
     const Rect panel = centeredPanel(ui, kMenuWidth, height);
@@ -243,17 +331,23 @@ MenuAction buildPauseMenu(UiContext& ui, bool hardcore)
     // A hardcore run has one save that death deletes; offering "Save" would
     // imply a safety net the mode does not have.
     if (!hardcore && ui.button(column.row(kButtonHeight), "Save Game")) {
-        action = MenuAction::SaveGame;
+        action = MenuAction::OpenSaveBrowser;
     }
     if (ui.button(column.row(kButtonHeight), "Load Game")) {
-        action = MenuAction::LoadGame;
+        action = MenuAction::OpenLoadBrowser;
     }
     if (ui.button(column.row(kButtonHeight), "Settings")) {
         action = MenuAction::OpenSettings;
     }
-    // No "quit to main menu" yet: starting a second run in one process needs a
-    // world reset that does not exist, and a menu entry that only half works
-    // is worse than one that is missing.
+    // ⚑ Phase 27. This button was missing for nineteen phases and this comment
+    // used to explain why: "starting a second run in one process needs a world
+    // reset that does not exist". It exists now - SpaceWorld::resetForNewGame
+    // move-assigns a default-constructed world, so it cannot go stale as the
+    // class grows, and GameContent::restartForNewGame regenerates the galaxy
+    // and re-runs the boot scripts.
+    if (ui.button(column.row(kButtonHeight), "Quit to Main Menu")) {
+        action = MenuAction::QuitToMainMenu;
+    }
     if (ui.button(column.row(kButtonHeight), "Quit to Desktop")) {
         action = MenuAction::QuitGame;
     }
@@ -314,6 +408,270 @@ MenuAction buildSettingsScreen(UiContext& ui, Settings& settings)
     }
     if (ui.button(column.row(kButtonHeight), "Back") || ui.cancelRequested()) {
         action = MenuAction::CloseSettings;
+    }
+
+    ui.popId();
+    return action;
+}
+
+// The CONTENTS of one save row: the name on the left, the date on the right,
+// and a dim second line saying where and how far in.
+//
+// ⚑⚑ THIS DRAWS ONLY. The caller has already put a `selectable` with an empty
+// label under this rectangle and read its click; drawing a second interactive
+// widget over the same bounds - which the first draft of this function did -
+// puts two entries in the nav order for one row and counts one click twice,
+// which the UI turns into two ui-click cues and a double activation.
+//
+// Labels of our own rather than one long selectable label, because a row has
+// two lines and three alignments. Cramming it into one string would also lose
+// the elision that keeps a long save name inside its box.
+void drawSaveRow(UiContext& ui, const Rect& bounds, const SaveSlot& slot)
+{
+    const float padding = 8.0f;
+    const Rect inner = {{bounds.min.x + padding, bounds.min.y + 4.0f},
+                        {bounds.max.x - padding, bounds.max.y - 4.0f}};
+    Column lines(inner, 0.0f, 2.0f);
+
+    {
+        Row top(lines.row(18.0f), ui.theme().spacing);
+        // The date first, from the right, so the name gets whatever is left -
+        // a name is variable and a date is not, so the date is what should
+        // keep its width.
+        const std::string date = formatSaveDate(slot.info.savedAtUnix);
+        const Rect dateBox = top.cellFromRight(112.0f);
+        (void)ui.labelElided(top.remaining(),
+                             slot.info.displayName.empty() ? "(unnamed)" : slot.info.displayName,
+                             ui.theme().textPrimary,
+                             ui.theme().bodyStyle);
+        // An unreadable stamp prints NOTHING rather than 1970: an empty cell
+        // is honest about not knowing, a wrong date looks like a right one.
+        if (!date.empty()) {
+            ui.label(dateBox, date, ui.theme().textDim, ui.theme().smallStyle, TextAlign::Right);
+        }
+    }
+
+    char detail[160] = {};
+    const char* kind = slot.kind == SaveKind::Auto    ? "Autosave"
+                       : slot.kind == SaveKind::Quick ? "Quicksave"
+                                                      : "Manual";
+    (void)std::snprintf(detail,
+                        sizeof(detail),
+                        "%s  -  %s  -  %.0f cr  -  %s%s",
+                        kind,
+                        slot.info.systemName.c_str(),
+                        slot.info.credits,
+                        formatPlaytime(slot.info.worldSeconds).c_str(),
+                        slot.info.hardcore ? "  -  HARDCORE" : "");
+    (void)ui.labelElided(lines.row(16.0f),
+                         detail,
+                         slot.info.hardcore ? ui.theme().negative : ui.theme().textDim,
+                         ui.theme().smallStyle);
+}
+
+MenuAction buildSaveBrowser(UiContext& ui,
+                            const SaveCatalog& catalog,
+                            SaveBrowserState& state,
+                            std::string_view activeCampaign)
+{
+    dimBackground(ui);
+    ui.pushId("save_browser");
+
+    const bool saving = state.mode == SaveBrowserMode::Save;
+    const float spacing = ui.theme().spacing;
+    const float padding = ui.theme().padding;
+    constexpr float kPanelWidth = 760.0f;
+    constexpr float kListHeight = 340.0f;
+    constexpr float kRowHeight = 46.0f;
+    constexpr float kCampaignRowHeight = 30.0f;
+
+    const std::vector<Campaign>& campaigns = catalog.campaigns();
+
+    // ⚑ THE SELECTION IS CLAMPED BEFORE ANYTHING READS IT, EVERY FRAME. The
+    // catalog is rescanned behind this screen after every save and every
+    // delete, so an index that was valid when the player clicked can name a
+    // row that no longer exists - which is how a delete button ends up acting
+    // on the wrong file. Clamping here means every read below is in range.
+    if (saving) {
+        // Save mode writes into the run in progress and nowhere else. Pinning
+        // the campaign rather than offering the list is the whole guard: there
+        // is no sequence of clicks that files run A's save under run B.
+        state.campaign = -1;
+        for (std::size_t i = 0; i < campaigns.size(); ++i) {
+            if (campaigns[i].name == activeCampaign) {
+                state.campaign = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    if (campaigns.empty()) {
+        state.campaign = -1;
+    } else if (state.campaign < 0 || state.campaign >= static_cast<int>(campaigns.size())) {
+        state.campaign = saving ? -1 : 0;
+    }
+    const Campaign* campaign =
+        state.campaign >= 0 ? &campaigns[static_cast<std::size_t>(state.campaign)] : nullptr;
+    const std::size_t saveCount = campaign == nullptr ? 0 : campaign->saves.size();
+    if (state.save >= static_cast<int>(saveCount)) {
+        state.save = -1;
+        state.disarm(); // an armed delete must never survive onto another row
+    }
+
+    const float extraRows = saving ? 1.0f : 0.0f; // the name field
+    const float height = kTitleHeight + kListHeight + 24.0f + 34.0f * extraRows + kButtonHeight * 2.0f +
+                         spacing * (7.0f + extraRows) + padding * 2.0f;
+    const Rect panel = centeredPanel(ui, kPanelWidth, height);
+    ui.panel(panel);
+
+    Column column(panel, padding, spacing);
+    ui.label(column.row(kTitleHeight),
+             saving ? "Save Game" : "Load Game",
+             ui.theme().textPrimary,
+             ui.theme().headingStyle,
+             TextAlign::Center);
+
+    MenuAction action = MenuAction::None;
+
+    // --- the two lists ------------------------------------------------------
+    const Rect lists = column.row(kListHeight);
+    Rect saveList = lists;
+    if (!saving) {
+        // Load mode gets a campaign column; Save mode does not, because there
+        // is nothing to choose.
+        constexpr float kCampaignWidth = 230.0f;
+        const Rect campaignList = {{lists.min.x, lists.min.y}, {lists.min.x + kCampaignWidth, lists.max.y}};
+        saveList = {{lists.min.x + kCampaignWidth + spacing, lists.min.y}, {lists.max.x, lists.max.y}};
+
+        ui.panel(campaignList);
+        const Rect inner = sol::ui::inset(campaignList, 4.0f);
+        const float contentHeight = static_cast<float>(campaigns.size()) * (kCampaignRowHeight + 4.0f) + 4.0f;
+        const Rect content = ui.beginScroll(inner, contentHeight, state.campaignScroll);
+        Column rows(content, 0.0f, 4.0f);
+        for (std::size_t i = 0; i < campaigns.size(); ++i) {
+            ui.pushId(static_cast<int>(i));
+            const bool selected = static_cast<int>(i) == state.campaign;
+            // A campaign's own row says how many saves it holds, because an
+            // empty campaign is listed too and would otherwise look identical
+            // to a full one.
+            char label[96] = {};
+            (void)std::snprintf(
+                label, sizeof(label), "%s  (%zu)", campaigns[i].name.c_str(), campaigns[i].saves.size());
+            if (ui.selectable(rows.row(kCampaignRowHeight), label, selected)) {
+                if (state.campaign != static_cast<int>(i)) {
+                    state.campaign = static_cast<int>(i);
+                    state.save = -1;
+                    state.saveScroll = 0.0f;
+                    state.disarm();
+                    state.notice.clear();
+                }
+            }
+            ui.popId();
+        }
+        ui.endScroll();
+    }
+
+    ui.panel(saveList);
+    if (campaign == nullptr) {
+        ui.label(sol::ui::inset(saveList, 12.0f),
+                 campaigns.empty() ? "No saved games yet." : "Select a campaign.",
+                 ui.theme().textDim,
+                 ui.theme().bodyStyle,
+                 TextAlign::Center);
+    } else if (campaign->saves.empty()) {
+        ui.label(sol::ui::inset(saveList, 12.0f),
+                 saving ? "No saves in this run yet - name one below." : "This run has no saves.",
+                 ui.theme().textDim,
+                 ui.theme().bodyStyle,
+                 TextAlign::Center);
+    } else {
+        const Rect inner = sol::ui::inset(saveList, 4.0f);
+        const float contentHeight = static_cast<float>(saveCount) * (kRowHeight + 4.0f) + 4.0f;
+        const Rect content = ui.beginScroll(inner, contentHeight, state.saveScroll);
+        Column rows(content, 0.0f, 4.0f);
+        for (std::size_t i = 0; i < saveCount; ++i) {
+            const Rect bounds = rows.row(kRowHeight);
+            const bool selected = static_cast<int>(i) == state.save;
+            ui.pushId(static_cast<int>(i) + 1000); // clear of the campaign ids
+            const bool clicked = ui.selectable(bounds, "", selected);
+            ui.popId();
+            drawSaveRow(ui, bounds, campaign->saves[i]);
+            if (clicked && state.save != static_cast<int>(i)) {
+                state.save = static_cast<int>(i);
+                state.disarm();
+                state.notice.clear();
+            }
+        }
+        ui.endScroll();
+    }
+
+    // --- the name field, Save mode only -------------------------------------
+    if (saving) {
+        Row row(column.row(34.0f), spacing);
+        ui.label(row.cell(70.0f), "Name", ui.theme().textDim, ui.theme().bodyStyle);
+        if (state.focusRequested) {
+            ui.setFocus(ui.idFor("save_name"));
+            ui.setCaret(state.newSaveName.size());
+            state.focusRequested = false;
+        }
+        (void)ui.textField(row.remaining(), "save_name", state.newSaveName, 40);
+    }
+
+    // --- one line of feedback ----------------------------------------------
+    ui.label(column.row(24.0f), state.notice, ui.theme().textDim, ui.theme().smallStyle);
+
+    // --- buttons ------------------------------------------------------------
+    const SaveSlot* picked = (campaign != nullptr && state.save >= 0)
+                                 ? &campaign->saves[static_cast<std::size_t>(state.save)]
+                                 : nullptr;
+    {
+        Row row(column.row(kButtonHeight), spacing);
+        if (saving) {
+            // Saving needs a campaign to save into; the name may be blank and
+            // the save is simply called "(unnamed)" - refusing a blank name
+            // would stop somebody hitting Save twice in a hurry.
+            if (ui.button(row.cell(160.0f), "Save", campaign != nullptr)) {
+                action = MenuAction::SaveSelected;
+            }
+        } else {
+            if (ui.button(row.cell(160.0f), "Load", picked != nullptr)) {
+                action = MenuAction::LoadSelected;
+            }
+        }
+
+        // ⚑ THE TWO DELETES, AND BOTH ARE TWO-PRESS. The label CHANGES to say
+        // what the second press will do, rather than a separate confirm dialog
+        // - a dialog is another screen to build and another Escape to route,
+        // and a button that has visibly changed its mind is a confirmation the
+        // player cannot miss and cannot mis-click through.
+        const bool armedSave = state.pending == SaveBrowserState::Pending::Save;
+        if (ui.button(
+                row.cell(190.0f), armedSave ? "Delete - are you sure?" : "Delete Save", picked != nullptr)) {
+            if (armedSave) {
+                action = MenuAction::DeleteSelectedSave;
+            } else {
+                state.pending = SaveBrowserState::Pending::Save;
+                state.notice = "Press again to delete this save. It cannot be undone.";
+            }
+        }
+        if (!saving) {
+            const bool armedCampaign = state.pending == SaveBrowserState::Pending::Campaign;
+            if (ui.button(row.cell(220.0f),
+                          armedCampaign ? "Delete run - are you sure?" : "Delete Run",
+                          campaign != nullptr)) {
+                if (armedCampaign) {
+                    action = MenuAction::DeleteSelectedCampaign;
+                } else {
+                    state.pending = SaveBrowserState::Pending::Campaign;
+                    state.notice = campaign == nullptr ? std::string()
+                                                       : "Press again to delete '" + campaign->name +
+                                                             "' and every save in it. It cannot be undone.";
+                }
+            }
+        }
+    }
+
+    if (ui.button(column.row(kButtonHeight), "Back") || ui.cancelRequested()) {
+        action = MenuAction::CloseBrowser;
     }
 
     ui.popId();

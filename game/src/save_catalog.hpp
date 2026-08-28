@@ -63,12 +63,11 @@ struct SaveInfo
 // drift apart.
 //
 // ⚑ It reads the WHOLE file and parses the first block, because readFileBytes
-// is all-or-nothing. A measured save is ~9 KB (game.unit's fixture worlds), so
-// a browser listing a few dozen is reading well under a megabyte, once, when
-// it opens. If saves ever grow enough for this to be felt, the fix is a
-// bounded read in the platform layer, not a cache here - a cache would have to
-// be invalidated by the game's own writes, which is a harder problem than the
-// one it solves.
+// is all-or-nothing. A measured save is 17.7 KB from a real launch and ~9 KB
+// from game.unit's smaller fixture worlds, so a browser listing a few dozen is
+// reading well under a megabyte, once, when it opens. If saves ever grow enough for this to be felt, the fix
+// is a bounded read in the platform layer, not a cache here - a cache would have to be invalidated by the
+// game's own writes, which is a harder problem than the one it solves.
 [[nodiscard]] bool readSaveInfo(const char* path, SaveInfo& out);
 
 // Which of the three kinds of save a file is. The kind is carried by the

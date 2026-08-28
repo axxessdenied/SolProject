@@ -3051,6 +3051,16 @@ bool GameContent::initialize(const std::string& dataDirectory,
     return true;
 }
 
+void GameContent::restartForNewGame()
+{
+    if (m_world == nullptr) {
+        return;
+    }
+    m_world->applyDefs(m_defs);
+    m_world->generateUniverse(m_defs);
+    runBootScripts();
+}
+
 void GameContent::registerBindings()
 {
     m_vm.registerFunction<&spawnShip>("sol", "spawn_ship", this);
