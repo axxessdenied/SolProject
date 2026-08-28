@@ -1,0 +1,51 @@
+# weapon_hit_shield.snd - energy, so it rings - two partials and a short tick.
+#
+# Transcribed at Phase 26 stage B from tools/scripts/gen_assets.ps1, which is
+# deleted in the same commit. See sound_doc.hpp for why a sound is a document:
+# the same argument .forge made for meshes and .tex made for textures.
+#
+# The noise here is NOT the noise the committed .wav had. The PowerShell drew
+# from .NET's System.Random, whose subtractive generator has no C++ twin, so
+# the seeds below feed core::Rng (PCG32) instead - deterministic on every
+# compiler, which System.Random never was, and different. Accepted at Phase 26
+# decision 2 because these nine cues are signed-off placeholder.
+seconds = 0.35
+sample_rate = 44100
+channels = 1
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 0.35
+f0 = 900.0
+f1 = 780.0
+decay = 11.0
+gain = 0.7
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 0.35
+f0 = 1350.0
+f1 = 1230.0
+decay = 14.0
+gain = 0.4
+
+[[op]]
+kind = "noise_burst"
+start = 0.0
+duration = 0.06
+decay = 70.0
+gain = 0.35
+cutoff0 = 8000.0
+cutoff1 = 3000.0
+seed = 102
+
+[[op]]
+kind = "peak"
+level = 0.8
+
+[[op]]
+kind = "fade"
+in = 0.001
+out = 0.03

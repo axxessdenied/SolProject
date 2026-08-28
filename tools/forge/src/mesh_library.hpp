@@ -172,6 +172,10 @@ loadTexture(const AssetEntry& entry, sol::assets::TextureData& out, std::string*
 // would have written. An author auditioning a `.wav` before it is cooked is
 // hearing the cooked cue, and the pair in the list can be played against each
 // other to say so out loud.
+// True when this row is an authored `.snd` document rather than a recording.
+// A recording can only be played; a document can be described and edited.
+[[nodiscard]] bool isSoundDocument(const AssetEntry& entry);
+
 [[nodiscard]] bool
 loadSound(const AssetEntry& entry, sol::assets::SoundData& out, std::string* error = nullptr);
 

@@ -1,0 +1,63 @@
+# engine_loop.snd - the one looping voice in the game. Integer frequencies over a
+#
+# Transcribed at Phase 26 stage B from tools/scripts/gen_assets.ps1, which is
+# deleted in the same commit. See sound_doc.hpp for why a sound is a document:
+# the same argument .forge made for meshes and .tex made for textures.
+# 2 s buffer complete a whole number of cycles, so the tonal layers wrap
+# cleanly; the noise layer is crossfaded to do the same. It carries no fade,
+# deliberately - a ramp at either end is exactly what a loop must not have.
+#
+# The noise here is NOT the noise the committed .wav had. The PowerShell drew
+# from .NET's System.Random, whose subtractive generator has no C++ twin, so
+# the seeds below feed core::Rng (PCG32) instead - deterministic on every
+# compiler, which System.Random never was, and different. Accepted at Phase 26
+# decision 2 because these nine cues are signed-off placeholder.
+seconds = 2.0
+sample_rate = 44100
+channels = 1
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 2.0
+f0 = 48.0
+f1 = 48.0
+decay = 0.0
+gain = 0.55
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 2.0
+f0 = 96.0
+f1 = 96.0
+decay = 0.0
+gain = 0.3
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 2.0
+f0 = 145.0
+f1 = 145.0
+decay = 0.0
+gain = 0.16
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 2.0
+f0 = 194.0
+f1 = 194.0
+decay = 0.0
+gain = 0.08
+
+[[op]]
+kind = "loop_noise"
+gain = 0.45
+cutoff = 900.0
+seed = 107
+
+[[op]]
+kind = "peak"
+level = 0.7

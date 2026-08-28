@@ -3,6 +3,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -321,4 +323,149 @@ SOL_TEST(soundEveryOpNamesItselfBothWays)
     SoundOp ignored = SoundOp::Tone;
     SOL_CHECK(!assets::soundOpFromName("fill", ignored));
     SOL_CHECK(!assets::soundOpFromName(nullptr, ignored));
+}
+
+// --- the committed corpus (Phase 26 stage B) ---------------------------------
+
+namespace {
+
+[[nodiscard]] std::string readWholeFile(const std::string& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        std::printf("  cannot open %s\n", path.c_str());
+        return {};
+    }
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
+[[nodiscard]] std::string soundPath(const char* stem)
+{
+    return std::string(SOL_SOUND_SOURCE_DIR) + "/" + stem + ".snd";
+}
+
+constexpr const char* kCommittedCues[] = {"weapon_fire",
+                                          "weapon_hit_shield",
+                                          "weapon_hit_hull",
+                                          "explosion",
+                                          "mining_cut",
+                                          "engine_loop",
+                                          "ui_click",
+                                          "docking_chime",
+                                          "alarm"};
+
+} // namespace
+
+SOL_TEST(everyCommittedSoundRoundTripsByteForByte)
+{
+    // ⚑⚑⚑ THE GUARANTEE `writeSound` PROMISES, ASSERTED WHERE IT MATTERS. The
+    // header is explicit that a `.snd` round trip is weaker than a `.tex` one by
+    // one step - a double has more than one spelling, so only files this writer
+    // produced come back byte for byte. These nine ARE such files, which is what
+    // makes the promise real rather than theoretical, and it is the property
+    // that lets the Forge save on every edit without reformatting a comment
+    // somebody wrote.
+    for (const char* stem : kCommittedCues) {
+        const std::string source = readWholeFile(soundPath(stem));
+        SOL_REQUIRE(!source.empty());
+        SoundDoc doc;
+        std::string error;
+        SOL_REQUIRE(assets::parseSound(source.c_str(), source.size(), stem, doc, &error));
+        SOL_CHECK(!doc.hasUnplaceableComments);
+        const std::string written = assets::writeSound(doc);
+        if (written != source) {
+            std::printf("  %s.snd does not round trip\n", stem);
+        }
+        SOL_CHECK(written == source);
+    }
+}
+
+SOL_TEST(everyCommittedSoundKeepsItsAuthoredCommentary)
+{
+    // ⚑⚑ THE DOCUMENTS CARRY THE ARGUMENT THE DELETED SCRIPT USED TO CARRY, and
+    // that is load-bearing rather than decorative: `gen_assets.ps1` held the
+    // only written explanation of why `engine_loop` uses integer frequencies
+    // over a two-second buffer, and it does not exist any more. A transcription
+    // that dropped the prose would have moved the format forward and the
+    // knowledge backward.
+    for (const char* stem : kCommittedCues) {
+        const std::string source = readWholeFile(soundPath(stem));
+        SOL_REQUIRE(!source.empty());
+        SoundDoc doc;
+        SOL_REQUIRE(assets::parseSound(source.c_str(), source.size(), stem, doc, nullptr));
+        SOL_CHECK(doc.header.find('#') != std::string::npos);
+    }
+}
+
+SOL_TEST(noCommittedSoundHasAnOpThatWritesNothing)
+{
+    // The one thing about a sound source that is broken rather than unusual: an
+    // op whose span falls entirely outside the buffer contributes silence and
+    // reads, in a diff, exactly like one that works.
+    for (const char* stem : kCommittedCues) {
+        const std::string source = readWholeFile(soundPath(stem));
+        SOL_REQUIRE(!source.empty());
+        SoundDoc doc;
+        SOL_REQUIRE(assets::parseSound(source.c_str(), source.size(), stem, doc, nullptr));
+        SOL_REQUIRE(!doc.layers.empty());
+        for (std::size_t i = 0; i < doc.layers.size(); ++i) {
+            if (assets::soundLayerCoverage(doc, i) == 0) {
+                std::printf("  %s.snd op %zu writes nothing\n", stem, i);
+            }
+            SOL_CHECK(assets::soundLayerCoverage(doc, i) > 0);
+        }
+    }
+}
+
+SOL_TEST(theOnlyLoopingCueCarriesNoFade)
+{
+    // ⚑⚑ A RULE THE FORMAT CANNOT ENFORCE AND THE ASSET MUST OBEY, so it is
+    // asserted here rather than trusted. `engine_loop` is the game's one looping
+    // voice; a fade at either end is precisely what a loop must not have, and
+    // adding one in the Forge would be an easy, plausible edit whose symptom is
+    // a pulse under thrust rather than an error.
+    const std::string source = readWholeFile(soundPath("engine_loop"));
+    SOL_REQUIRE(!source.empty());
+    SoundDoc doc;
+    SOL_REQUIRE(assets::parseSound(source.c_str(), source.size(), "engine_loop", doc, nullptr));
+    for (const auto& layer : doc.layers) {
+        SOL_CHECK(layer.op != SoundOp::Fade);
+    }
+    // ...and it is the only cue using the op that exists for it.
+    int loopNoiseUsers = 0;
+    for (const char* stem : kCommittedCues) {
+        const std::string text = readWholeFile(soundPath(stem));
+        SoundDoc other;
+        SOL_REQUIRE(assets::parseSound(text.c_str(), text.size(), stem, other, nullptr));
+        for (const auto& layer : other.layers) {
+            if (layer.op == SoundOp::LoopNoise) {
+                ++loopNoiseUsers;
+                break;
+            }
+        }
+    }
+    SOL_CHECK(loopNoiseUsers == 1);
+}
+
+SOL_TEST(soundWritesNumbersTheWayAPersonWouldReadThem)
+{
+    // ⚑⚑ FOUND BY `ui_click.snd` FAILING THE CORPUS ROUND TRIP, and worth an
+    // assertion of its own because the failure was invisible in every other
+    // cue. `std::to_chars` in its default shortest mode spells 0.0005 as
+    // "5e-04" - the same value in fewer bytes, and a fade time no author would
+    // recognise in a format whose whole purpose is being edited by hand. The
+    // round trip was never in danger; the readability was.
+    SoundDoc doc;
+    SOL_REQUIRE(parses("seconds = 0.05\n\n[[op]]\nkind = \"fade\"\nin = 0.0005\nout = 0.008\n", doc));
+    const std::string written = assets::writeSound(doc);
+    SOL_CHECK(written.find("in = 0.0005") != std::string::npos);
+    SOL_CHECK(written.find("out = 0.008") != std::string::npos);
+    SOL_CHECK(written.find("e-0") == std::string::npos);
+    // ...and a large round value still keeps the decimal point that marks it a
+    // float key, which is the same rule pulling the other way.
+    SoundDoc big;
+    SOL_REQUIRE(parses("seconds = 0.1\n\n[[op]]\nkind = \"tone\"\nf0 = 1800.0\n", big));
+    SOL_CHECK(assets::writeSound(big).find("f0 = 1800.0") != std::string::npos);
 }

@@ -6,6 +6,7 @@
 #include "texture.hpp"
 
 #include "sol/assets/forge_doc.hpp"
+#include "sol/assets/sound_doc.hpp"
 #include "sol/assets/texture_doc.hpp"
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
@@ -158,6 +159,7 @@ std::vector<AssetEntry> listSounds(const std::string& sourceDirectory, const std
     // which decoder read a file is not something an author is choosing between:
     // `sounds.toml` already says every cue "can be replaced one file at a time
     // by a recorded .ogg", i.e. the two are the same row in two spellings.
+    collect(sourceDirectory, ".snd", "source", /*cooked=*/false, entries);
     collect(sourceDirectory, ".wav", "source", /*cooked=*/false, entries);
     collect(sourceDirectory, ".ogg", "source", /*cooked=*/false, entries);
     collect(cookedDirectory, ".saud", "cooked", /*cooked=*/true, entries);
@@ -171,7 +173,16 @@ bool isPartSource(const AssetEntry& entry)
 
 bool isSoundSource(const AssetEntry& entry)
 {
-    return endsWith(entry.path, ".wav") || endsWith(entry.path, ".ogg");
+    return endsWith(entry.path, ".snd") || endsWith(entry.path, ".wav") || endsWith(entry.path, ".ogg");
+}
+
+// ⚑⚑ THE AUTHORED KIND, WHICH IS THE ONE THE FORGE CAN EDIT. A `.wav` and an
+// `.ogg` are recordings the tool can only play back; a `.snd` is a document,
+// so the panel can say what is IN it and, from stage D, change it. The same
+// split `isPartSource` draws between a `.forge` and an imported `.gltf`.
+bool isSoundDocument(const AssetEntry& entry)
+{
+    return endsWith(entry.path, ".snd");
 }
 
 std::string forgePartIdFromName(const std::string& name)
@@ -579,6 +590,31 @@ bool loadSound(const AssetEntry& entry, assets::SoundData& out, std::string* err
         }
         return false;
     }
+    // ⚑⚑⚑ THE THIRD SOURCE KIND, AND STAGE B MADE IT THE ONLY ONE THIS REPO
+    // SHIPS. The nine committed cues became `.snd` documents in the same commit
+    // that deleted their `.wav` files, so a Forge that did not read this
+    // extension would list an EMPTY Sound panel against a game full of audio -
+    // which is exactly what the suite caught, one command after the deletion.
+    if (isSoundDocument(entry)) {
+        assets::SoundDoc doc;
+        std::string parseError;
+        if (!assets::parseSound(reinterpret_cast<const char*>(bytes.data()),
+                                bytes.size(),
+                                entry.path.c_str(),
+                                doc,
+                                &parseError) ||
+            !assets::buildSound(doc, out, &parseError)) {
+            // ⚑ A document says its own reason, unlike the importers below, so it
+            // is carried through instead of being replaced with a pointer at the
+            // log. A wrong number in a `.snd` is a thing an author can fix.
+            if (error != nullptr) {
+                *error = parseError;
+            }
+            return false;
+        }
+        return true;
+    }
+
     const bool ok = endsWith(entry.path, ".ogg") ? cooker::importOgg(bytes.data(), bytes.size(), out)
                                                  : cooker::importWav(bytes.data(), bytes.size(), out);
     if (!ok && error != nullptr) {

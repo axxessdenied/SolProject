@@ -62,14 +62,29 @@ constexpr std::array<OpName, 5> kOpNames = {{
     return static_cast<std::int64_t>(std::nearbyint(seconds * rate));
 }
 
-// The shortest spelling that reads back as the same double, always carrying a
-// decimal point so a float key cannot be demoted to an integer key by a save.
+// The spelling a person would have written, chosen to read back as the same
+// double. FIXED notation first, then scientific only when fixed would be
+// absurd; always carrying a decimal point so a float key cannot be demoted to
+// an integer key by a save.
+//
+// ⚑⚑ THE SHORTEST SPELLING IS NOT THE RIGHT ONE, AND `ui_click` IS WHAT
+// SAID SO. `std::to_chars` in its default shortest mode writes 0.0005 as
+// "5e-04" - fewer characters, identical value, and a fade time no author would
+// recognise in a file whose entire purpose is being edited by hand. The round
+// trip was never in danger; the readability was. A document format optimising
+// for bytes over the person reading it has forgotten what it is for.
 [[nodiscard]] std::string formatNumber(double v)
 {
-    std::array<char, 40> buffer{};
-    const std::to_chars_result result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), v);
-    if (result.ec != std::errc{}) {
-        return "0.0";
+    std::array<char, 64> buffer{};
+    std::to_chars_result result =
+        std::to_chars(buffer.data(), buffer.data() + buffer.size(), v, std::chars_format::fixed);
+    // ⚑ A number whose fixed form runs away - 1e300, or a value needing many
+    // significant digits - falls back rather than writing a wall of zeroes.
+    if (result.ec != std::errc{} || (result.ptr - buffer.data()) > 24) {
+        result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), v);
+        if (result.ec != std::errc{}) {
+            return "0.0";
+        }
     }
     std::string text(buffer.data(), result.ptr);
     if (text.find('.') == std::string::npos && text.find('e') == std::string::npos &&

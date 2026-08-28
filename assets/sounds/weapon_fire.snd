@@ -1,0 +1,42 @@
+# weapon_fire.snd - a falling sweep with a bright transient in front of it.
+#
+# Transcribed at Phase 26 stage B from tools/scripts/gen_assets.ps1, which is
+# deleted in the same commit. See sound_doc.hpp for why a sound is a document:
+# the same argument .forge made for meshes and .tex made for textures.
+#
+# The noise here is NOT the noise the committed .wav had. The PowerShell drew
+# from .NET's System.Random, whose subtractive generator has no C++ twin, so
+# the seeds below feed core::Rng (PCG32) instead - deterministic on every
+# compiler, which System.Random never was, and different. Accepted at Phase 26
+# decision 2 because these nine cues are signed-off placeholder.
+seconds = 0.22
+sample_rate = 44100
+channels = 1
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 0.22
+f0 = 1800.0
+f1 = 320.0
+decay = 22.0
+gain = 0.9
+
+[[op]]
+kind = "noise_burst"
+start = 0.0
+duration = 0.05
+decay = 90.0
+gain = 0.5
+cutoff0 = 6000.0
+cutoff1 = 2000.0
+seed = 101
+
+[[op]]
+kind = "peak"
+level = 0.85
+
+[[op]]
+kind = "fade"
+in = 0.001
+out = 0.02

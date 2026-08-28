@@ -2135,26 +2135,41 @@ SOL_TEST(aMissingSoundDirectoryListsNothingRatherThanFailing)
     SOL_CHECK(forge::listSounds("no/such/directory", "no/such/directory/either").empty());
 }
 
-SOL_TEST(soundSourcesAreWavAndOggAndNothingElse)
+SOL_TEST(soundSourcesAreTheDocumentTheWavAndTheOggAndNothingElse)
 {
     const auto entry = [](const char* path) {
         forge::AssetEntry out;
         out.path = path;
         return out;
     };
+    SOL_CHECK(forge::isSoundSource(entry("assets/sounds/alarm.snd")));
     SOL_CHECK(forge::isSoundSource(entry("assets/sounds/alarm.wav")));
     SOL_CHECK(forge::isSoundSource(entry("assets/sounds/theme.ogg")));
+    // ⚑⚑ A DOCUMENT IS A SOURCE, BUT NOT EVERY SOURCE IS A DOCUMENT, and the
+    // panel needs the sharper question: a recording can only be played back,
+    // while a `.snd` can be described and - from stage D - edited. Same split
+    // `isPartSource` draws between a `.forge` and an imported `.gltf`.
+    SOL_CHECK(forge::isSoundDocument(entry("assets/sounds/alarm.snd")));
+    SOL_CHECK(!forge::isSoundDocument(entry("assets/sounds/alarm.wav")));
+    SOL_CHECK(!forge::isSoundDocument(entry("cooked/alarm.saud")));
     // The cooked side of the same list is not a source: it is what the game
     // loads, and the panel says which of the two you are hearing.
     SOL_CHECK(!forge::isSoundSource(entry("cooked/alarm.saud")));
     SOL_CHECK(!forge::isSoundSource(entry("assets/textures/hull.tex")));
 }
 
-SOL_TEST(aCommittedWavImportsToThePayloadTheGameWouldLoad)
+SOL_TEST(aCommittedSoundDocumentBuildsToThePayloadTheGameWouldLoad)
 {
+    // ⚑⚑⚑ THIS TEST USED TO READ `ui_click.wav`, AND PHASE 26 STAGE B DELETED
+    // IT. That is the whole change in one line: the repo ships nine documents
+    // and no recordings, so the Forge's own definition of a sound source had
+    // to grow a third extension or the tool would have listed an empty Sound
+    // panel against a game full of audio. The suite caught it one command
+    // after the deletion, which is the argument for a tool test that reads the
+    // committed assets rather than a fixture of its own.
     forge::AssetEntry entry;
-    entry.path = std::string(SOL_SOUND_SOURCE_DIR) + "/ui_click.wav";
-    entry.label = "ui_click.wav";
+    entry.path = std::string(SOL_SOUND_SOURCE_DIR) + "/ui_click.snd";
+    entry.label = "ui_click.snd";
     entry.stem = "ui_click";
 
     assets::SoundData data;
@@ -2175,8 +2190,8 @@ SOL_TEST(aCommittedWavImportsToThePayloadTheGameWouldLoad)
 SOL_TEST(aSoundThatCannotBeReadFailsWithASentenceRatherThanEmptySamples)
 {
     forge::AssetEntry entry;
-    entry.path = std::string(SOL_SOUND_SOURCE_DIR) + "/there_is_no_such_cue.wav";
-    entry.label = "there_is_no_such_cue.wav";
+    entry.path = std::string(SOL_SOUND_SOURCE_DIR) + "/there_is_no_such_cue.snd";
+    entry.label = "there_is_no_such_cue.snd";
 
     assets::SoundData data;
     std::string error;

@@ -1,0 +1,80 @@
+# alarm.snd - a two-tone warble, harmonics on so it cuts through the mix.
+#
+# Transcribed at Phase 26 stage B from tools/scripts/gen_assets.ps1, which is
+# deleted in the same commit. See sound_doc.hpp for why a sound is a document:
+# the same argument .forge made for meshes and .tex made for textures.
+#
+# NO NOISE: the second of the two cues proved SAMPLE-EXACT at stage A, and the
+# one that exercises `harmonic` and a six-segment sequence.
+seconds = 0.9
+sample_rate = 44100
+channels = 1
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 0.15
+f0 = 740.0
+f1 = 740.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.15
+duration = 0.15
+f0 = 580.0
+f1 = 580.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.3
+duration = 0.15
+f0 = 740.0
+f1 = 740.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.45
+duration = 0.15
+f0 = 580.0
+f1 = 580.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.6
+duration = 0.15
+f0 = 740.0
+f1 = 740.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.75
+duration = 0.15
+f0 = 580.0
+f1 = 580.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "peak"
+level = 0.75
+
+[[op]]
+kind = "fade"
+in = 0.004
+out = 0.02

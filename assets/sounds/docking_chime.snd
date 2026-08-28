@@ -1,0 +1,39 @@
+# docking_chime.snd - two notes a fifth apart, soft and unhurried.
+#
+# Transcribed at Phase 26 stage B from tools/scripts/gen_assets.ps1, which is
+# deleted in the same commit. See sound_doc.hpp for why a sound is a document:
+# the same argument .forge made for meshes and .tex made for textures.
+#
+# NO NOISE, which is why this file is evidence rather than only an asset: its
+# transcription was proved SAMPLE-EXACT against docking_chime.wav before that
+# file was deleted, and cooker.unit still holds it to the same samples.
+seconds = 0.9
+sample_rate = 44100
+channels = 1
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 0.6
+f0 = 660.0
+f1 = 660.0
+decay = 4.0
+gain = 0.7
+
+[[op]]
+kind = "tone"
+start = 0.22
+duration = 0.68
+f0 = 988.0
+f1 = 988.0
+decay = 4.0
+gain = 0.6
+
+[[op]]
+kind = "peak"
+level = 0.65
+
+[[op]]
+kind = "fade"
+in = 0.005
+out = 0.08
