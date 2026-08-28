@@ -9,6 +9,7 @@
 #include "texture.hpp"
 
 #include "sol/assets/mesh_lod.hpp"
+#include "sol/assets/sound_doc.hpp"
 #include "sol/assets/texture_doc.hpp"
 #include "sol/core/log.hpp"
 #include "sol/platform/file_io.hpp"
@@ -45,7 +46,7 @@ std::string directoryOf(const std::string& path)
     return slash == std::string::npos ? std::string() : path.substr(0, slash);
 }
 
-// ⚑ For `collisionSentence` and nothing else. The per-collision LOG lines print
+// â For `collisionSentence` and nothing else. The per-collision LOG lines print
 // full paths, because a build log is where you go to find out exactly which two
 // files on disk are fighting; the sentence has to fit a status bar and is read
 // by somebody who already knows where their own project is.
@@ -55,14 +56,14 @@ std::string fileName(const std::string& path)
     return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
-// ⚑ The output directory arrives from argv - or, now, from the Forge - and may
+// â The output directory arrives from argv - or, now, from the Forge - and may
 // be spelled `.\build\bin\cooked`, while `platform::listFiles` hands back '/'
 // separators. So "is this file directly in the output directory" is a
 // comparison between two spellings of the same place. Trailing separators go
 // too, because `out/` and `out` are one directory and only one of them ever
 // matches.
 //
-// ⚑ `tools/forge/src/mesh_library.cpp` keeps its own copy of this for the
+// â `tools/forge/src/mesh_library.cpp` keeps its own copy of this for the
 // inbox, and the two are deliberately not shared yet: they normalise for
 // different comparisons and neither has been wrong. If a THIRD appears, or if
 // either is ever wrong, the fix belongs in `platform` beside the promise it is
@@ -191,7 +192,7 @@ bool cookTextureDoc(const std::string& source, const std::string& output)
     return writeTextureImage(image, source, output);
 }
 
-// ⚑ The format itself is `cooker::encodeMesh`, and this is only the plumbing
+// â The format itself is `cooker::encodeMesh`, and this is only the plumbing
 // around it. It used to be one function in `main.cpp` - which is why
 // `cooker.unit`, which links the library and not that file, could not reach the
 // `.smesh` layout at all and the D checkpoint's gap survived three slices.
@@ -316,6 +317,49 @@ bool cookSound(const std::string& source, const std::string& output)
     return true;
 }
 
+// The authored source: a `.snd` document synthesised to samples here rather
+// than drawn by a script on somebody's machine (Phase 26 stage A).
+//
+// ⚡ It writes `.saud` beside the imported cue rather than a format of its own,
+// which is the same argument `cookTextureDoc` makes one directory over:
+// `assets::SoundData` is exactly what `encodeSound` serialises, so an authored
+// sound and a recorded one are indistinguishable by the time the game loads
+// them. Nothing downstream learns a new format, and the Forge's Sound panel
+// already plays both through one path.
+bool cookSoundDoc(const std::string& source, const std::string& output)
+{
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(source.c_str(), bytes)) {
+        SOL_LOG_ERROR("cooker: cannot read %s", source.c_str());
+        return false;
+    }
+    assets::SoundDoc doc;
+    std::string error;
+    if (!assets::parseSound(
+            reinterpret_cast<const char*>(bytes.data()), bytes.size(), source.c_str(), doc, &error)) {
+        SOL_LOG_ERROR("cooker: %s", error.c_str());
+        return false;
+    }
+    assets::SoundData sound;
+    if (!assets::buildSound(doc, sound, &error)) {
+        SOL_LOG_ERROR("cooker: %s: %s", source.c_str(), error.c_str());
+        return false;
+    }
+
+    const std::vector<std::uint8_t> fileBytes = encodeSound(sound);
+    if (!platform::writeFileBytes(output.c_str(), fileBytes.data(), fileBytes.size())) {
+        SOL_LOG_ERROR("cooker: cannot write %s", output.c_str());
+        return false;
+    }
+    SOL_LOG_INFO("cooked %s -> %s (%u frames, %u ch, %u Hz)",
+                 source.c_str(),
+                 output.c_str(),
+                 sound.frameCount(),
+                 sound.channelCount,
+                 sound.sampleRate);
+    return true;
+}
+
 bool runJob(const CookJob& job)
 {
     switch (job.kind) {
@@ -331,13 +375,15 @@ bool runJob(const CookJob& job)
         return cookFont(job.source, job.output);
     case CookKind::Sound:
         return cookSound(job.source, job.output);
+    case CookKind::SoundDoc:
+        return cookSoundDoc(job.source, job.output);
     case CookKind::None:
         break;
     }
     return false;
 }
 
-// ⚑⚑ OUTPUTS WHOSE SOURCE HAS BEEN DELETED. The cook walks SOURCES, so it can
+// ââ OUTPUTS WHOSE SOURCE HAS BEEN DELETED. The cook walks SOURCES, so it can
 // never visit an asset that is gone - `foo.forge` deleted leaves `foo.smesh`
 // and its levels on disk forever, and a rebuild will not clear them. Stage F's
 // `writeMeshLevels` solves the neighbouring case (a chain that got shorter) but
@@ -352,7 +398,7 @@ void sweepStrays(const std::vector<CookJob>& jobs,
         jobOutputs.push_back(job.output);
     }
 
-    // ⚑⚑ THE GUARD THAT MATTERS MOST, AND IT IS A TYPO GUARD RATHER THAN A
+    // ââ THE GUARD THAT MATTERS MOST, AND IT IS A TYPO GUARD RATHER THAN A
     // LOGIC ONE: with no jobs, EVERY cooked file is unclaimed and the sweep
     // would empty the directory. That is exactly what a mistyped source path
     // looks like from in here - `listFiles` on a directory that does not exist
@@ -409,6 +455,9 @@ CookKind cookKindForSource(const std::string& path)
     if (extension == ".wav" || extension == ".ogg") {
         return CookKind::Sound;
     }
+    if (extension == ".snd") {
+        return CookKind::SoundDoc;
+    }
     return CookKind::None;
 }
 
@@ -424,6 +473,7 @@ const char* cookedExtension(CookKind kind)
     case CookKind::Font:
         return ".sfont";
     case CookKind::Sound:
+    case CookKind::SoundDoc:
         return ".saud";
     case CookKind::None:
         break;
@@ -442,6 +492,7 @@ StalenessRule stalenessRuleFor(CookKind kind)
     case CookKind::TextureDoc:
     case CookKind::Mesh:
     case CookKind::Sound:
+    case CookKind::SoundDoc:
     case CookKind::None:
         break;
     }
@@ -450,14 +501,14 @@ StalenessRule stalenessRuleFor(CookKind kind)
 
 std::vector<CookJob> planCook(const std::vector<std::string>& sources, const std::string& outputDirectory)
 {
-    // ⚑⚑ NORMALISED ONCE, HERE, RATHER THAN TRUSTED. Callers spell a directory
+    // ââ NORMALISED ONCE, HERE, RATHER THAN TRUSTED. Callers spell a directory
     // however their own code happened to build it: `cooker.exe` gets argv, CMake
     // passes a path with no trailing separator, and the FORGE hands over
     // `executableDirectory() + "cooked/"` - built for concatenation, so it ends
     // in one. Found by running the tool on Linux, where the log read
     // `bin/cooked//ship.smesh`.
     //
-    // ⚑ Harmless to the filesystem and harmless to the sweep (which compares
+    // â Harmless to the filesystem and harmless to the sweep (which compares
     // LISTED paths, never job paths) - but a job path that does not equal the
     // path the same file lists back as is the exact shape of every path bug this
     // repo has had, and `platform::listFiles` promising '/' is what makes one
@@ -552,7 +603,7 @@ CookReport cookDirectory(const std::string& sourceDirectory, const std::string& 
         }
     }
 
-    // ⚑ THE SWEEP IS NOT RUN AFTER A FAILURE. A job that failed may not have
+    // â THE SWEEP IS NOT RUN AFTER A FAILURE. A job that failed may not have
     // written its output, and deleting the previous good one would turn a build
     // error into a missing asset - the cook's own report is "nothing changed",
     // so leave the directory as it is and let the author fix the source.
@@ -560,7 +611,7 @@ CookReport cookDirectory(const std::string& sourceDirectory, const std::string& 
         sweepStrays(jobs, sourceDirectory, outputDirectory);
     }
 
-    // ⚑ The tally is logged HERE rather than by the caller so that every caller
+    // â The tally is logged HERE rather than by the caller so that every caller
     // logs it - the cooker's build output and the Forge's console say the same
     // sentence about the same run, and it is the sentence the status bar shows.
     SOL_LOG_INFO("cooker: %s", report.summary().c_str());

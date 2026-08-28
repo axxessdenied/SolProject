@@ -37,6 +37,7 @@ add_executable(sol_assets_tests
     assets/def_doc_tests.cpp
     assets/font_tests.cpp
     assets/loadout_tests.cpp
+    assets/sound_doc_tests.cpp
     assets/texture_doc_tests.cpp
     assets/truetype_tests.cpp
 )
@@ -51,6 +52,7 @@ target_link_libraries(sol_assets_tests PRIVATE sol::test sol::assets)
 # the integer spellings and the exponent forms it exists to preserve.
 target_compile_definitions(sol_assets_tests
     PRIVATE SOL_TEXTURE_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/textures"
+            SOL_SOUND_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/sounds"
             SOL_DEF_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data")
 add_test(NAME assets.unit COMMAND sol_assets_tests)
 

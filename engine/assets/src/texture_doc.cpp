@@ -1,5 +1,7 @@
 #include "sol/assets/texture_doc.hpp"
 
+#include "doc_trivia.hpp"
+
 #include "sol/core/toml.hpp"
 
 #include <algorithm>
@@ -58,125 +60,11 @@ struct Reader
 
 // --- trivia -----------------------------------------------------------------
 //
-// The same model `forge_doc.cpp` proved and for the same reason: comments and
-// blank lines attach VERBATIM to whatever stands below them, so a tool that
-// saves on every edit gives a committed file back the way it found it. The only
-// difference is which header a run of trivia can land on.
-
-struct SourceTrivia
-{
-    std::string header;
-    std::vector<std::string> layerLeading; // one entry per [[op]], in file order
-    std::string trailer;
-    bool unplaceable = false;
-};
-
-[[nodiscard]] bool isTriviaLine(std::string_view line)
-{
-    for (const char c : line) {
-        if (c == ' ' || c == '\t' || c == '\r') {
-            continue;
-        }
-        return c == '#';
-    }
-    return true; // blank
-}
-
-[[nodiscard]] std::string_view trimLeft(std::string_view line)
-{
-    std::size_t i = 0;
-    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) {
-        ++i;
-    }
-    return line.substr(i);
-}
-
-// ⚑ Quoted spans are skipped so a `#` or `[` inside a string reads as text
-// rather than as syntax, and the bracket depth is what keeps a comment sitting
-// between two panel rows attached to that value instead of to the next op.
-void scanContentLine(std::string_view line, int& depth, bool& sawComment)
-{
-    char quote = '\0';
-    for (std::size_t i = 0; i < line.size(); ++i) {
-        const char c = line[i];
-        if (quote != '\0') {
-            if (c == '\\' && quote == '"') {
-                ++i;
-            } else if (c == quote) {
-                quote = '\0';
-            }
-            continue;
-        }
-        if (c == '"' || c == '\'') {
-            quote = c;
-        } else if (c == '#') {
-            sawComment = true;
-            return;
-        } else if (c == '[') {
-            ++depth;
-        } else if (c == ']') {
-            --depth;
-        }
-    }
-}
-
-[[nodiscard]] SourceTrivia scanTrivia(const char* text, std::size_t length)
-{
-    SourceTrivia trivia;
-    std::string pending;
-    bool sawElement = false;
-    int depth = 0;
-
-    std::size_t cursor = 0;
-    while (cursor < length) {
-        std::size_t end = cursor;
-        while (end < length && text[end] != '\n') {
-            ++end;
-        }
-        const std::string_view line(text + cursor, end - cursor);
-        const std::size_t next = (end < length) ? end + 1 : end;
-
-        if (depth == 0 && isTriviaLine(line)) {
-            pending.append(text + cursor, next - cursor);
-            if (next == end) {
-                pending += '\n';
-            }
-            cursor = next;
-            continue;
-        }
-
-        if (depth == 0) {
-            const std::string_view body = trimLeft(line);
-            if (body.starts_with("[[op]]")) {
-                trivia.layerLeading.push_back(std::move(pending));
-            } else if (!sawElement) {
-                trivia.header = std::move(pending);
-            } else if (!pending.empty()) {
-                trivia.unplaceable = true;
-            }
-            sawElement = true;
-            pending.clear();
-        }
-
-        bool sawComment = false;
-        scanContentLine(line, depth, sawComment);
-        if (sawComment) {
-            trivia.unplaceable = true;
-        }
-        cursor = next;
-    }
-
-    trivia.trailer = std::move(pending);
-    return trivia;
-}
-
-[[nodiscard]] std::string separatorFor(const std::string& leading, const std::string& soFar)
-{
-    if (!leading.empty()) {
-        return leading;
-    }
-    return soFar.empty() ? std::string() : std::string("\n");
-}
+// ⚚ MOVED TO `doc_trivia.hpp` AT PHASE 26 STAGE A, when `.snd` would have been
+// the THIRD identical copy of this scanner. Nothing about the model changed -
+// comments and blank lines attach VERBATIM to whatever stands below them - and
+// the byte-exact round trip this file promises is what the move is checked
+// against.
 
 // --- reading values ---------------------------------------------------------
 
@@ -635,12 +523,12 @@ bool parseTexture(
         reader.context.clear();
     }
 
-    const SourceTrivia trivia = scanTrivia(text, length);
+    const doc::SourceTrivia trivia = doc::scanTrivia(text, length, "[[op]]");
     doc.header = trivia.header;
     doc.trailer = trivia.trailer;
     doc.hasUnplaceableComments = trivia.unplaceable;
-    for (std::size_t i = 0; i < doc.layers.size() && i < trivia.layerLeading.size(); ++i) {
-        doc.layers[i].leading = trivia.layerLeading[i];
+    for (std::size_t i = 0; i < doc.layers.size() && i < trivia.elementLeading.size(); ++i) {
+        doc.layers[i].leading = trivia.elementLeading[i];
     }
 
     out = std::move(doc);
@@ -659,7 +547,7 @@ std::string writeTexture(const TextureDoc& doc)
     out += "size = [" + std::to_string(doc.width) + ", " + std::to_string(doc.height) + "]\n";
 
     for (const TextureLayer& layer : doc.layers) {
-        out += separatorFor(layer.leading, out);
+        out += doc::separatorFor(layer.leading, out);
         out += "[[op]]\n";
         out += std::string("kind = \"") + textureOpName(layer.op) + "\"\n";
 

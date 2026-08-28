@@ -44,6 +44,7 @@ enum class CookKind
     Mesh,       // .gltf/.glb -> .smesh  an imported mesh
     ForgeMesh,  // .forge     -> .smesh  an authored part tree, plus its levels
     Font,       // .font      -> .sfont  a manifest naming .ttf sources
+    SoundDoc,   // .snd       -> .saud   an authored sound document
     Sound,      // .wav/.ogg  -> .saud
 };
 

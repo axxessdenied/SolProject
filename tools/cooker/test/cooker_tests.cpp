@@ -9,6 +9,7 @@
 
 #include "sol/assets/asset_loader.hpp"
 #include "sol/assets/formats.hpp"
+#include "sol/assets/sound_doc.hpp"
 #include "sol/platform/file_io.hpp"
 #include "sol/test/test.hpp"
 
@@ -1596,4 +1597,256 @@ SOL_TEST(aMaterialWithNoBaseColourTextureIsAlsoSilent)
     SOL_REQUIRE(parts.size() == 1);
     SOL_CHECK(parts[0].imageBytes.empty());
     SOL_CHECK(parts[0].imageNote.empty());
+}
+
+// --- the transcription proof (Phase 26 stage A) ------------------------------
+//
+// ⚑⚑⚑ THE STRONGEST EVIDENCE THIS PHASE CAN PRODUCE, AND IT IS AVAILABLE
+// FOR EXACTLY TWO OF THE NINE CUES. `docking_chime` and `alarm` are the only
+// committed sounds built from analytic ops alone - tones, then `peak`, then
+// `fade`, with no PRNG anywhere in them. So a correct transcription of those
+// three ops MUST reproduce the `.wav` files sample for sample, and anything
+// less is a bug in this file rather than a tolerance to be widened. It is the
+// same standard Phase 9 stage G held its textures to: "the transcription was
+// proved pixel-exact against the PNGs it replaced before those were deleted."
+//
+// ⚑ THE OTHER SEVEN CUES CANNOT BE HELD TO IT, and the reason is written down
+// in `sound_doc.hpp`: their noise came from .NET's `System.Random`, which has
+// no C++ twin. They change, deliberately, with the user's ruling recorded at
+// Phase 26 decision 2 - so this pair is what stands between "the analytic ops
+// are right" and "we hope so".
+//
+// ⚑⚑ WHAT THIS PROOF DOES NOT COVER, SAID HERE SO NOBODY READS IT AS MORE
+// THAN IT IS. Two of the 36 seconds-to-samples conversions the nine cues
+// perform disagree between rounding and truncation - `weapon_hit_shield`'s
+// length and `ui_click`'s fade-out - and NEITHER is in these two files. That
+// rule was found by checking all 36 against PowerShell, not by this test going
+// red, and stage B is where it gets exercised.
+
+namespace {
+
+// The two documents, transcribed from `tools/scripts/gen_assets.ps1`. They live
+// here rather than in `assets/sounds/` because a `.snd` beside its `.wav` is a
+// STEM COLLISION, and the cooker's guard aborts the entire cook rather than
+// skipping the pair. Stage B lands the files and deletes the wavs together.
+constexpr const char* kDockingChimeSnd = R"(name = "docking_chime"
+seconds = 0.9
+sample_rate = 44100
+channels = 1
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 0.6
+f0 = 660.0
+f1 = 660.0
+decay = 4.0
+gain = 0.7
+
+[[op]]
+kind = "tone"
+start = 0.22
+duration = 0.68
+f0 = 988.0
+f1 = 988.0
+decay = 4.0
+gain = 0.6
+
+[[op]]
+kind = "peak"
+level = 0.65
+
+[[op]]
+kind = "fade"
+in = 0.005
+out = 0.08
+)";
+
+constexpr const char* kAlarmSnd = R"(name = "alarm"
+seconds = 0.9
+sample_rate = 44100
+channels = 1
+
+[[op]]
+kind = "tone"
+start = 0.0
+duration = 0.15
+f0 = 740.0
+f1 = 740.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.15
+duration = 0.15
+f0 = 580.0
+f1 = 580.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.3
+duration = 0.15
+f0 = 740.0
+f1 = 740.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.45
+duration = 0.15
+f0 = 580.0
+f1 = 580.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.6
+duration = 0.15
+f0 = 740.0
+f1 = 740.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "tone"
+start = 0.75
+duration = 0.15
+f0 = 580.0
+f1 = 580.0
+decay = 1.0
+gain = 0.7
+harmonic = 0.35
+
+[[op]]
+kind = "peak"
+level = 0.75
+
+[[op]]
+kind = "fade"
+in = 0.004
+out = 0.02
+)";
+
+[[nodiscard]] bool importCommittedWav(const char* stem, assets::SoundData& out)
+{
+    const std::string path = std::string(SOL_SOUND_SOURCE_DIR) + "/" + stem + ".wav";
+    std::vector<std::uint8_t> bytes;
+    if (!platform::readFileBytes(path.c_str(), bytes)) {
+        std::printf("  cannot read %s\n", path.c_str());
+        return false;
+    }
+    return cooker::importWav(bytes.data(), bytes.size(), out);
+}
+
+[[nodiscard]] bool buildSnd(const char* text, const char* name, assets::SoundData& out)
+{
+    assets::SoundDoc doc;
+    std::string error;
+    if (!assets::parseSound(text, std::strlen(text), name, doc, &error)) {
+        std::printf("  parse failed: %s\n", error.c_str());
+        return false;
+    }
+    if (!assets::buildSound(doc, out, &error)) {
+        std::printf("  build failed: %s\n", error.c_str());
+        return false;
+    }
+    return true;
+}
+
+// Reports where the two first differ and by how much, because "not equal" on
+// 39,690 samples is a result nobody can act on.
+void reportMismatch(const char* stem, const assets::SoundData& a, const assets::SoundData& b)
+{
+    std::size_t differing = 0;
+    int worst = 0;
+    long long firstAt = -1;
+    const std::size_t n = std::min(a.samples.size(), b.samples.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        const int delta = std::abs(static_cast<int>(a.samples[i]) - static_cast<int>(b.samples[i]));
+        if (delta != 0) {
+            ++differing;
+            worst = std::max(worst, delta);
+            if (firstAt < 0) {
+                firstAt = static_cast<long long>(i);
+            }
+        }
+    }
+    if (differing != 0) {
+        std::printf("  %s: %zu of %zu samples differ, first at %lld, worst delta %d\n",
+                    stem,
+                    differing,
+                    n,
+                    firstAt,
+                    worst);
+    }
+}
+
+} // namespace
+
+SOL_TEST(soundDocTranscribesDockingChimeSampleExact)
+{
+    assets::SoundData wav;
+    assets::SoundData snd;
+    SOL_REQUIRE(importCommittedWav("docking_chime", wav));
+    SOL_REQUIRE(buildSnd(kDockingChimeSnd, "docking_chime.snd", snd));
+
+    SOL_CHECK(snd.sampleRate == wav.sampleRate);
+    SOL_CHECK(snd.channelCount == wav.channelCount);
+    SOL_CHECK(snd.frameCount() == wav.frameCount());
+    reportMismatch("docking_chime", wav, snd);
+    SOL_CHECK(snd.samples == wav.samples);
+}
+
+SOL_TEST(soundDocTranscribesAlarmSampleExact)
+{
+    assets::SoundData wav;
+    assets::SoundData snd;
+    SOL_REQUIRE(importCommittedWav("alarm", wav));
+    SOL_REQUIRE(buildSnd(kAlarmSnd, "alarm.snd", snd));
+
+    SOL_CHECK(snd.sampleRate == wav.sampleRate);
+    SOL_CHECK(snd.channelCount == wav.channelCount);
+    SOL_CHECK(snd.frameCount() == wav.frameCount());
+    reportMismatch("alarm", wav, snd);
+    SOL_CHECK(snd.samples == wav.samples);
+}
+
+SOL_TEST(soundDocProofWouldFailIfTheOpsWereWrong)
+{
+    // ⚑⚑ THE NEGATIVE CONTROL, because a test that compares two things it
+    // built itself can pass while measuring nothing. One parameter moved by a
+    // hair must break the match - otherwise the equality above is telling us
+    // about the harness rather than about the transcription.
+    std::string tweaked = kAlarmSnd;
+    const std::size_t at = tweaked.find("level = 0.75");
+    SOL_REQUIRE(at != std::string::npos);
+    tweaked.replace(at, std::strlen("level = 0.75"), "level = 0.76");
+
+    assets::SoundData wav;
+    assets::SoundData off;
+    SOL_REQUIRE(importCommittedWav("alarm", wav));
+    SOL_REQUIRE(buildSnd(tweaked.c_str(), "alarm.snd", off));
+    SOL_CHECK(off.frameCount() == wav.frameCount());
+    SOL_CHECK(off.samples != wav.samples);
+}
+
+SOL_TEST(cookKindDispatchesSndToTheSoundDocument)
+{
+    SOL_CHECK(cooker::cookKindForSource("assets/sounds/alarm.snd") == cooker::CookKind::SoundDoc);
+    SOL_CHECK(cooker::cookKindForSource("assets/sounds/alarm.wav") == cooker::CookKind::Sound);
+    // ⚑ Both land on `.saud`: an authored cue and a recorded one are
+    // indistinguishable by the time the game loads them, which is what keeps
+    // the runtime out of this phase entirely.
+    SOL_CHECK(std::strcmp(cooker::cookedExtension(cooker::CookKind::SoundDoc), ".saud") == 0);
+    SOL_CHECK(cooker::stalenessRuleFor(cooker::CookKind::SoundDoc) == cooker::StalenessRule::Timestamp);
 }

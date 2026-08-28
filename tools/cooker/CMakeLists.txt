@@ -29,5 +29,6 @@ target_link_libraries(sol_cooker_tests PRIVATE sol_cooker_lib sol::test)
 # suite reads the real assets rather than a fixture that agrees with the code by
 # construction - the same reason geometry.unit is handed this directory.
 target_compile_definitions(sol_cooker_tests
-    PRIVATE SOL_MESH_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/meshes")
+    PRIVATE SOL_MESH_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/meshes"
+            SOL_SOUND_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/sounds")
 add_test(NAME cooker.unit COMMAND sol_cooker_tests)
