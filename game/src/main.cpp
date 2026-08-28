@@ -263,6 +263,11 @@ int main(int argc, char** argv)
         SOL_LOG_INFO("mod layer: %s", layer.c_str());
     }
     const std::vector<std::string> cookedSearchPath = game::cookedSearchPath(cookedDirectory, modLayers);
+    // Phase 25 stage E: a mod ships its material's SPIR-V in its own
+    // `shaders/`, resolved the same way and in the same order as its cooked
+    // assets. `MaterialRegistry` searches all of it; the six fixed pipelines
+    // take the install's own directory only (see `SceneRenderer::initialize`).
+    const std::vector<std::string> shaderSearchPath = game::shaderSearchPath(shaderDirectory, modLayers);
 
     // ⚑⚑ THE BROKEN-INSTALL CHECK, AND IT IS SEPARATE FROM A MISSING ASSET ON
     // PURPOSE. Since stage S a model that will not resolve draws nothing
@@ -326,7 +331,7 @@ int main(int argc, char** argv)
     }
 
     game::SceneRenderer renderer;
-    if (!renderer.initialize(context, swapchain, shaderDirectory.c_str(), cookedSearchPath)) {
+    if (!renderer.initialize(context, swapchain, shaderSearchPath, cookedSearchPath)) {
         return EXIT_FAILURE;
     }
 

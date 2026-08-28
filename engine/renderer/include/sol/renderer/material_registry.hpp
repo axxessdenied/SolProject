@@ -140,7 +140,10 @@ public:
     [[nodiscard]] std::string describeSearchPath() const;
 
 private:
-    static constexpr std::uint32_t kNoPipeline = 0xFFFFFFFFu;
+    // ⚑ The SAME value as `material_state.hpp`'s, by construction rather than
+    // by both files spelling `0xFFFFFFFFu`: `materialPipelineSlots` returns it
+    // and every read below compares against it (Phase 25 stage E).
+    static constexpr std::uint32_t kNoPipeline = kNoMaterialPipeline;
     static constexpr std::uint32_t kNoLayout = 0xFFFFFFFFu;
 
     // One pipeline layout per distinct DECLARATION SHAPE, which is all a layout

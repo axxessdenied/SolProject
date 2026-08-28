@@ -404,9 +404,19 @@ bool MaterialRegistry::build(std::span<const assets::MaterialDef> materials)
     if (!createPipelines()) {
         return false;
     }
-    for (const std::uint32_t rejected : m_rejected) {
-        m_materialPipeline[rejected] = kNoPipeline;
+    // ⚑⚑ ONE ANSWER TO "WHICH MATERIALS HAVE NO PIPELINE", AND IT IS PURE
+    // (PHASE 25 STAGE E). This used to apply `m_rejected` here and nothing
+    // else, which missed the materials whose whole STATE failed to build - see
+    // `materialPipelineSlots` for what that cost. Both kinds are folded in
+    // there now, where a suite can assert them without a device, exactly as the
+    // grouping above already is.
+    std::vector<std::uint32_t> unbuiltStates;
+    for (std::size_t i = 0; i < m_pipelines.size(); ++i) {
+        if (m_pipelines[i] == VK_NULL_HANDLE) {
+            unbuiltStates.push_back(static_cast<std::uint32_t>(i));
+        }
     }
+    m_materialPipeline = materialPipelineSlots(m_materialState, unbuiltStates, m_rejected);
 
     if (!allocateMaterialResources(materials)) {
         return false;

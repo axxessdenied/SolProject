@@ -9,6 +9,8 @@ using sol::assets::MaterialBlend;
 using sol::assets::MaterialDef;
 using sol::renderer::applyParamValues;
 using sol::renderer::groupMaterialsByState;
+using sol::renderer::kNoMaterialPipeline;
+using sol::renderer::materialPipelineSlots;
 using sol::renderer::materialPipelineState;
 using sol::renderer::MaterialStateGrouping;
 
@@ -258,4 +260,87 @@ SOL_TEST(materialStateRefusesAnUndeclaredParamAndChangesNothing)
     SOL_CHECK(!applyParamValues(tuned, values));
     SOL_CHECK(tuned.params.size() == 1);
     SOL_CHECK(tuned.params[0].value == 2.2f);
+}
+
+// ---------------------------------------------------------------------------
+// Which materials end up with no pipeline (engine plan Phase 25 stage E).
+//
+// ⚑⚑ THIS IS THE PURE HALF OF A DEFECT STAGE E FOUND BY DRIVING IT. There are
+// two ways to be undrawable and they are counted at different granularities: a
+// declaration that does not match its SPIR-V is refused per MATERIAL, while a
+// `.spv` that is missing or unreadable fails the whole STATE. `build` wrote
+// down only the first, so a material of the second kind kept an index into a
+// null pipeline and slipped past a guard written to stop it - and reported
+// "its params block reflected as empty" about a material whose shader was
+// simply not there, sending an author to check the one thing that was right.
+
+SOL_TEST(materialPipelineSlotsPassesEveryMaterialThroughWhenEverythingBuilt)
+{
+    const std::vector<std::uint32_t> materialState = {0, 1, 0};
+    const std::vector<std::uint32_t> slots = materialPipelineSlots(materialState, {}, {});
+
+    SOL_REQUIRE(slots.size() == 3);
+    SOL_CHECK(slots[0] == 0);
+    SOL_CHECK(slots[1] == 1);
+    SOL_CHECK(slots[2] == 0);
+}
+
+// ⚑ THE CASE THAT WAS WRONG, AND THE SHARING IS WHAT MAKES IT MATTER: one
+// missing `.spv` takes out every material naming that shader pair, not one.
+SOL_TEST(materialPipelineSlotsClearsEveryMaterialSharingAnUnbuiltState)
+{
+    const std::vector<std::uint32_t> materialState = {0, 1, 0, 2};
+    const std::vector<std::uint32_t> unbuilt = {0};
+    const std::vector<std::uint32_t> slots = materialPipelineSlots(materialState, unbuilt, {});
+
+    SOL_REQUIRE(slots.size() == 4);
+    SOL_CHECK(slots[0] == kNoMaterialPipeline);
+    SOL_CHECK(slots[2] == kNoMaterialPipeline); // the second user of state 0
+    SOL_CHECK(slots[1] == 1);                   // untouched
+    SOL_CHECK(slots[3] == 2);
+}
+
+// ⚑ The other kind, and it is per-MATERIAL: two materials share state 0 and
+// only the one whose declaration lied loses its pipeline. Clearing both would
+// be the same bug from the other side.
+SOL_TEST(materialPipelineSlotsClearsOnlyTheRejectedMaterialNotItsStateSiblings)
+{
+    const std::vector<std::uint32_t> materialState = {0, 0, 1};
+    const std::vector<std::uint32_t> rejected = {1};
+    const std::vector<std::uint32_t> slots = materialPipelineSlots(materialState, {}, rejected);
+
+    SOL_REQUIRE(slots.size() == 3);
+    SOL_CHECK(slots[0] == 0);
+    SOL_CHECK(slots[1] == kNoMaterialPipeline);
+    SOL_CHECK(slots[2] == 1);
+}
+
+// ⚑ Both at once, because the live failure is usually both: a mod ships a
+// material whose shader is missing AND another whose declaration is stale.
+SOL_TEST(materialPipelineSlotsAppliesBothKindsOfRefusalTogether)
+{
+    const std::vector<std::uint32_t> materialState = {0, 1, 2};
+    const std::vector<std::uint32_t> unbuilt = {2};
+    const std::vector<std::uint32_t> rejected = {0};
+    const std::vector<std::uint32_t> slots = materialPipelineSlots(materialState, unbuilt, rejected);
+
+    SOL_REQUIRE(slots.size() == 3);
+    SOL_CHECK(slots[0] == kNoMaterialPipeline); // rejected declaration
+    SOL_CHECK(slots[1] == 1);                   // the survivor
+    SOL_CHECK(slots[2] == kNoMaterialPipeline); // unbuilt state
+}
+
+// ⚑ The two index spaces are different sizes and a material index arriving in
+// the state list - or the reverse - must not read out of bounds. `build` hands
+// these in from two different loops, which is exactly how they get swapped.
+SOL_TEST(materialPipelineSlotsIgnoresIndicesOutsideItsOwnRange)
+{
+    const std::vector<std::uint32_t> materialState = {0, 1};
+    const std::vector<std::uint32_t> unbuilt = {7};
+    const std::vector<std::uint32_t> rejected = {9};
+    const std::vector<std::uint32_t> slots = materialPipelineSlots(materialState, unbuilt, rejected);
+
+    SOL_REQUIRE(slots.size() == 2);
+    SOL_CHECK(slots[0] == 0);
+    SOL_CHECK(slots[1] == 1);
 }

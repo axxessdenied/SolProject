@@ -90,18 +90,34 @@ SceneRenderer::chooseLevel(RenderInstanceKey key, float screenRadiusPixels, std:
 
 bool SceneRenderer::initialize(rhi::Context& context,
                                rhi::Swapchain& swapchain,
-                               const char* shaderDirectory,
+                               std::span<const std::string> shaderSearchPath,
                                std::span<const std::string> cookedSearchPath)
 {
     m_context = &context;
     m_swapchain = &swapchain;
+
+    // ⚑ Phase 25 stage E. An empty path is not a mod problem and not a
+    // recoverable one - it means the caller has nothing to load ANY shader
+    // from, including the seven this class builds itself - so it is refused
+    // here rather than turning into seven identical "cannot find" errors.
+    if (shaderSearchPath.empty()) {
+        SOL_LOG_ERROR("no shader directories to search");
+        return false;
+    }
+    m_shaderSearchPath.assign(shaderSearchPath.begin(), shaderSearchPath.end());
+    // ⚑⚑ THE INSTALL'S OWN, AND IT IS THE LAST ENTRY BY CONTRACT rather than
+    // by luck: `layeredSearchPath` puts the mod layers first and the base
+    // last, and `asset_paths_tests.cpp` asserts it under that name. The six
+    // renderers below are the ones with no declaration to check a shader
+    // against, so they resolve here and never into a mod - see the header.
+    const std::string& installShaderDirectory = m_shaderSearchPath.back();
+    const char* shaderDirectory = installShaderDirectory.c_str();
 
     // ⚑ Phase 25 stage B: the mesh pipelines are `MaterialRegistry`'s now, and
     // stage C moved the pipeline LAYOUTS there too - so what the mesh renderer
     // still hands over is set 0's descriptor layout and the push block's size.
     // It must come up first either way, and it is the only one of the seven
     // that no longer takes a shader directory at all.
-    m_shaderSearchPath.assign(1, std::string(shaderDirectory));
     if (!m_meshRenderer.initialize(context) ||
         !m_materials.initialize(context,
                                 kHdrFormat,

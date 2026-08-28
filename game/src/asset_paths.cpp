@@ -95,8 +95,9 @@ std::vector<std::string> discoverModLayers(const std::string& modsDirectory)
     return directories;
 }
 
-std::vector<std::string> cookedSearchPath(const std::string& baseCookedDirectory,
-                                          std::span<const std::string> modLayerDirectories)
+std::vector<std::string> layeredSearchPath(const std::string& baseDirectory,
+                                           std::span<const std::string> modLayerDirectories,
+                                           const std::string& layerSubdirectory)
 {
     std::vector<std::string> searchPath;
     searchPath.reserve(modLayerDirectories.size() + 1);
@@ -104,10 +105,22 @@ std::vector<std::string> cookedSearchPath(const std::string& baseCookedDirectory
     // Reverse layer order: the last-named mod wins, which is the same
     // precedence the def merge produces by overwriting in place.
     for (std::size_t i = modLayerDirectories.size(); i > 0; --i) {
-        searchPath.push_back(normalizeDirectory(modLayerDirectories[i - 1]) + "/cooked/");
+        searchPath.push_back(normalizeDirectory(modLayerDirectories[i - 1]) + "/" + layerSubdirectory + "/");
     }
-    searchPath.push_back(normalizeDirectory(baseCookedDirectory) + "/");
+    searchPath.push_back(normalizeDirectory(baseDirectory) + "/");
     return searchPath;
+}
+
+std::vector<std::string> cookedSearchPath(const std::string& baseCookedDirectory,
+                                          std::span<const std::string> modLayerDirectories)
+{
+    return layeredSearchPath(baseCookedDirectory, modLayerDirectories, "cooked");
+}
+
+std::vector<std::string> shaderSearchPath(const std::string& baseShaderDirectory,
+                                          std::span<const std::string> modLayerDirectories)
+{
+    return layeredSearchPath(baseShaderDirectory, modLayerDirectories, "shaders");
 }
 
 std::vector<std::string> assetCandidates(std::span<const std::string> searchPath, const std::string& name)

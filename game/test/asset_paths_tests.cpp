@@ -26,7 +26,9 @@
 using game::assetCandidates;
 using game::cookedSearchPath;
 using game::describeSearchPath;
+using game::layeredSearchPath;
 using game::modLayerNames;
+using game::shaderSearchPath;
 
 namespace {
 
@@ -195,4 +197,83 @@ SOL_TEST(the_search_path_describes_itself_for_an_error_message)
     const std::string described = describeSearchPath(cookedSearchPath("/install/cooked/", layers));
 
     SOL_CHECK(described == "/game/mods/alpha/cooked/, /install/cooked/");
+}
+
+// ---------------------------------------------------------------------------
+// The shader search path (engine plan Phase 25 stage E).
+//
+// ⚑ A mod's SPIR-V is found the same way and in the same order as its cooked
+// assets, one directory over. These tests are deliberately the cooked ones
+// restated, because the two paths now share `layeredSearchPath` and the thing
+// worth guarding is that sharing it did not quietly change either.
+
+SOL_TEST(a_mods_shaders_are_searched_before_the_installs)
+{
+    const std::vector<std::string> layers = {"/game/mods/alpha", "/game/mods/zebra"};
+    const std::vector<std::string> path = shaderSearchPath("/install/shaders/", layers);
+
+    SOL_REQUIRE(path.size() == 3);
+    SOL_CHECK(path[0] == "/game/mods/zebra/shaders/"); // last name wins, as with cooked/
+    SOL_CHECK(path[1] == "/game/mods/alpha/shaders/");
+    SOL_CHECK(path[2] == "/install/shaders/");
+}
+
+SOL_TEST(with_no_mods_the_shader_search_path_is_just_the_install)
+{
+    const std::vector<std::string> path = shaderSearchPath("/install/shaders", {});
+
+    SOL_REQUIRE(path.size() == 1);
+    SOL_CHECK(path[0] == "/install/shaders/");
+}
+
+// ⚑⚑ THE INVARIANT ANOTHER FILE DEPENDS ON, ASSERTED HERE BY NAME BECAUSE THAT
+// IS WHAT MAKES IT SAFE TO DEPEND ON. `SceneRenderer::initialize` takes this
+// list's LAST entry as the install's own shader directory and hands it to the
+// six renderers that are not materials, so that a mod cannot replace
+// `tonemap.frag.spv` underneath a pipeline with no declaration to check it
+// against. If the base ever stops being last, those six start resolving into a
+// mod layer - which compiles, runs, and is wrong only on a machine that has a
+// mod installed.
+SOL_TEST(the_base_directory_is_last_which_is_what_scene_renderer_reads_as_the_install)
+{
+    const std::vector<std::string> layers = {"/game/mods/alpha", "/game/mods/zebra"};
+
+    SOL_CHECK(shaderSearchPath("/install/shaders/", layers).back() == "/install/shaders/");
+    SOL_CHECK(cookedSearchPath("/install/cooked/", layers).back() == "/install/cooked/");
+    SOL_CHECK(shaderSearchPath("/install/shaders/", {}).back() == "/install/shaders/");
+}
+
+// ⚑ The separator rule is the shader path's too, and its inputs differ the same
+// way: `executableDirectory()` supplies a trailing '/' and a layer path does
+// not. A missed one here concatenates into `/install/sharedersmesh.vert.spv`.
+SOL_TEST(every_shader_search_entry_ends_in_exactly_one_separator)
+{
+    const std::vector<std::string> layers = {"/game/mods/alpha/", "/game/mods/zebra"};
+    for (const std::string& entry : shaderSearchPath("/install/shaders", layers)) {
+        SOL_REQUIRE(!entry.empty());
+        SOL_CHECK(entry.back() == '/');
+        SOL_CHECK(entry.size() < 2 || entry[entry.size() - 2] != '/');
+    }
+}
+
+// ⚑⚑ THE TWO PATHS DIFFER IN EXACTLY ONE THING, AND SAYING SO IS THE POINT OF
+// FACTORING THEM. A second copy of the reverse-order loop would compile and
+// pass every test above while disagreeing about precedence - the same drift
+// `outputs.cpp` refuses when it names a mesh level through `meshLevelPath`
+// rather than rebuilding the pattern, on the grounds that the copy that drifts
+// is the one that decides what gets deleted. Here it would decide which mod's
+// shader a player runs.
+SOL_TEST(the_cooked_and_shader_paths_are_the_same_rule_with_a_different_subdirectory)
+{
+    const std::vector<std::string> layers = {"/game/mods/alpha", "/game/mods/zebra"};
+    const std::vector<std::string> cooked = cookedSearchPath("/install/cooked", layers);
+    const std::vector<std::string> shaders = shaderSearchPath("/install/shaders", layers);
+
+    SOL_REQUIRE(cooked.size() == shaders.size());
+    SOL_CHECK(cooked == layeredSearchPath("/install/cooked", layers, "cooked"));
+    SOL_CHECK(shaders == layeredSearchPath("/install/shaders", layers, "shaders"));
+    // Layer for layer, the only difference is the directory name.
+    for (std::size_t i = 0; i + 1 < cooked.size(); ++i) {
+        SOL_CHECK(cooked[i] == shaders[i].substr(0, shaders[i].size() - 8) + "cooked/");
+    }
 }

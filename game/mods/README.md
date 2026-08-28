@@ -15,6 +15,7 @@ mods/my-mod/
   scripts/init.lua  boot script, run in layer order
   assets/           SOURCE assets (.forge, .tex, .png, .wav, .glb …)
   cooked/           what the game actually loads (.smesh, .stex, .saud …)
+  shaders/          compiled SPIR-V a [[material]] row names (.spv)
 ```
 
 Only the parts you want are needed. A mod that changes a price is one
@@ -61,19 +62,60 @@ empty the game refuses to start and says so: an install missing its assets is
 not a mod problem, and booting into an invisible galaxy would blame the wrong
 thing.
 
-## Two constraints worth knowing before you hit them
+## One constraint worth knowing before you hit it
 
 **The UI font is replaceable, and its style names are not.** `ui.sfont` is
 resolved through the same search, so a mod can replace it — but `hud`, `body`,
 `body_strong` and `heading` are read by name throughout the interface, and a
 replacement that drops one leaves that text unrenderable. Nothing checks this.
 
+## Materials and shaders
+
+A `[[material]]` row says how a surface is drawn — the texture it samples, the
+shader pair that runs, and the pipeline state it runs under — and a `[[model]]`
+row names one. Both are ordinary def rows, so a mod adds a material the same way
+it adds a ship: a `*.toml` file in the mod directory.
+
+What is different is where the shader itself lives:
+
+```
+mods/my-mod/
+  materials.toml    [[material]] id = "mymod.glass", fragment_shader = "glass"
+  shaders/glass.frag       the GLSL you edit          (convention)
+  shaders/glass.frag.spv   what the game loads        (required)
+```
+
+`shaders/` is searched exactly like `cooked/` — last-named mod first, then the
+base game's own `shaders/` — so a material can name one of the engine's shader
+stems (`mesh`, `membrane`, `cockpit`) and only bring the stage it is replacing.
+A material names its stems, and the engine appends `.vert.spv` / `.frag.spv`.
+
 **Shaders are the one asset kind with a toolchain prerequisite.** A mod ships
 compiled SPIR-V (`.spv`); no GLSL compiler is distributed with the game or the
-Forge, so writing one needs the Vulkan SDK installed. Ship your `.glsl` beside
-the `.spv` so the mod stays editable. See
-`docs/decisions/011-mod-shaders-spirv.md`. Meshes, textures, sounds and def
-rows need no SDK at all.
+Forge, so writing one needs the Vulkan SDK installed:
+
+```
+glslc --target-env=vulkan1.3 shaders/glass.frag -o shaders/glass.frag.spv
+```
+
+Ship your `.frag` beside the `.spv` so the mod stays editable by whoever has it
+next — that is a convention, not a mechanism. See
+`docs/decisions/011-mod-shaders-spirv.md`. Meshes, textures, sounds and def rows
+need no SDK at all.
+
+**A mod cannot replace the engine's own seven pipelines**, only the ones a
+material names. `tonemap`, `sky`, `ui`, `particle`, `impostor` and `debug_line`
+resolve from the install's `shaders/` and never from a mod. The reason is where
+the checking is: a material's shader is checked against the row that declares it
+and a mismatch is refused by name, while those seven have no declaration to
+check against — their descriptor sets and push blocks are contracts written in
+C++, so a swapped `.spv` there is undefined behaviour that only the validation
+layer would catch, and that is off in the build a player runs.
+
+**When a shader is missing or does not match**, the material draws nothing and
+every model using it draws nothing, with both named in the log along with every
+directory searched. The game still boots — one broken mod does not stop it,
+exactly as with a missing mesh.
 
 ## Why this file exists
 

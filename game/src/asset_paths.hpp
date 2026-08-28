@@ -48,7 +48,10 @@ namespace game {
 // name wins. A missing directory yields none, which is normal.
 [[nodiscard]] std::vector<std::string> discoverModLayers(const std::string& modsDirectory);
 
-// The cooked-asset directories to search, HIGHEST PRIORITY FIRST.
+// The directories to search for one KIND of asset, HIGHEST PRIORITY FIRST:
+// each mod layer's `<layerSubdirectory>/`, last-named layer first, then
+// `baseDirectory`. The two wrappers below are the only callers, and they exist
+// so that this rule is written once.
 //
 // ⚑⚑ THE ORDER IS THE REVERSE OF THE DEF LAYER ORDER AND THAT IS NOT A
 // MISTAKE. Defs merge base-first so that a later layer OVERWRITES what an
@@ -58,12 +61,42 @@ namespace game {
 // the kind of bug that reaches a player rather than a test - so the order is
 // asserted rather than commented.
 //
+// ⚑⚑ AND THE BASE DIRECTORY IS LAST, WHICH IS LOAD-BEARING BEYOND PRECEDENCE
+// SINCE PHASE 25 STAGE E. `SceneRenderer` takes the shader path's LAST entry
+// as the install's own shader directory, because the six renderers that are
+// not materials must not resolve into a mod (see its `initialize`). That makes
+// "the base is the fallback and therefore last" a fact another file depends on
+// rather than a property of this one, so it is asserted here by name.
+//
 // ⚑ Every returned directory ends with exactly one '/'. `file_io.hpp` is
 // explicit that dropping a trailing separator "silently moves the save file,
 // the settings and the cooked directory one level up", because every caller
 // concatenates straight onto it - and here the inputs genuinely differ
 // (`executableDirectory()` supplies one, a layer path does not).
+[[nodiscard]] std::vector<std::string> layeredSearchPath(const std::string& baseDirectory,
+                                                         std::span<const std::string> modLayerDirectories,
+                                                         const std::string& layerSubdirectory);
+
+// Where a cooked asset is looked for (Phase 24 stage S): `mods/<name>/cooked/`
+// over the base game's `cooked/`.
 [[nodiscard]] std::vector<std::string> cookedSearchPath(const std::string& baseCookedDirectory,
+                                                        std::span<const std::string> modLayerDirectories);
+
+// Where a material's SPIR-V is looked for (Phase 25 stage E):
+// `mods/<name>/shaders/` over the install's own `shaders/`.
+//
+// ⚑⚑ `shaders/` AND NOT `cooked/`, AND THE REASON IS THAT `cooked/` HAS AN
+// OWNER. The cooker writes exactly four extensions - `.smesh`, `.stex`,
+// `.saud`, `.sfont` - and `strayOutputNames` calls that list exhaustive,
+// because a cooked format missing from it is never swept and one added to it
+// wrongly deletes real files. A `.spv` is produced by the author's glslc
+// (decision 011) and by nothing the cooker knows about, so it is not a cooked
+// asset and a directory whose contract is "what the cooker wrote" is the wrong
+// place to say it is. `mods/<name>/shaders/` mirrors the install layout the
+// base game already has, one directory per kind, and it is also where decision
+// 011's "ship the .glsl beside the .spv" convention puts the GLSL - which is
+// this repo's own `shaders/` directory exactly.
+[[nodiscard]] std::vector<std::string> shaderSearchPath(const std::string& baseShaderDirectory,
                                                         std::span<const std::string> modLayerDirectories);
 
 // Every path `name` could be at, in search order. Pure.

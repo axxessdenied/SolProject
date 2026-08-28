@@ -83,4 +83,24 @@ struct MaterialStateGrouping
 
 [[nodiscard]] MaterialStateGrouping groupMaterialsByState(std::span<const assets::MaterialDef> materials);
 
+// ⚑⚑ WHICH MATERIALS HAVE NO PIPELINE, GIVEN WHICH STATES BUILT - PHASE 25
+// STAGE E, AND IT EXISTS AS A FUNCTION BECAUSE THE BUG IT FIXES WAS THE TWO
+// ANSWERS DISAGREEING. There are two ways to end up undrawable and they are
+// counted at different granularities: a DECLARATION that does not match its
+// SPIR-V is refused per MATERIAL (`rejected` here), while a `.spv` that is
+// missing, unreadable or unreflectable fails the whole STATE, which several
+// materials can share. `MaterialRegistry::build` wrote down only the first, so
+// a material of the second kind kept an index pointing at a null pipeline and
+// walked past a guard that was written to stop it - reporting "its params
+// block reflected as empty" about a material whose shader is simply absent.
+//
+// `kNoMaterialPipeline` marks a material with none. Both inputs are lists of
+// INDICES and that symmetry is the point: `unbuiltStates` indexes states,
+// `rejected` indexes materials, and mixing them up is the bug this replaces.
+inline constexpr std::uint32_t kNoMaterialPipeline = 0xFFFFFFFFu;
+
+[[nodiscard]] std::vector<std::uint32_t> materialPipelineSlots(std::span<const std::uint32_t> materialState,
+                                                               std::span<const std::uint32_t> unbuiltStates,
+                                                               std::span<const std::uint32_t> rejected);
+
 } // namespace sol::renderer

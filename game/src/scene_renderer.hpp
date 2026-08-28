@@ -148,9 +148,29 @@ public:
     // `cookedSearchPath` is the ordered list from `asset_paths.hpp`, highest
     // priority first, and it must outlive nothing - it is read here and again
     // in `loadModels`, never stored (Phase 24 stage S).
+    //
+    // ⚑⚑ `shaderSearchPath` IS THE SAME SHAPE AND IS USED BY EXACTLY ONE OF
+    // THE SEVEN RENDERERS, WHICH IS PHASE 25 STAGE E'S ONE JUDGEMENT CALL.
+    // `MaterialRegistry` gets the whole layered list, so a mod's `[[material]]`
+    // row can name SPIR-V the mod ships. The other six take the INSTALL's own
+    // directory - the list's last entry, which `layeredSearchPath` guarantees
+    // is the base - so a mod cannot replace `tonemap.frag.spv` or `sky.vert.spv`
+    // underneath them.
+    //
+    // That asymmetry is not caution, it is where the checking is. A material's
+    // shader is checked against the row that names it: `spirv_reflect` reads
+    // its interface and a disagreement is refused by name, at load, in every
+    // build. The six fixed pipelines have no such declaration to check against
+    // - their descriptor sets, push blocks and vertex formats are C++ contracts
+    // written at the call site - so a swapped `.spv` there is undefined
+    // behaviour caught only by the validation layer, which is on in dev builds
+    // and off in the one a player runs. Layering the checked half is a feature;
+    // layering the unchecked half is a way to make a mod crash somebody's
+    // driver. Replacing an engine pipeline is a real ask and wants its own
+    // decision, not a side effect of this one.
     [[nodiscard]] bool initialize(sol::rhi::Context& context,
                                   sol::rhi::Swapchain& swapchain,
-                                  const char* shaderDirectory,
+                                  std::span<const std::string> shaderSearchPath,
                                   std::span<const std::string> cookedSearchPath);
 
     // Uploads the catalog the `[[model]]` defs name (Phase 9). Separate from

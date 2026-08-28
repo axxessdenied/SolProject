@@ -82,4 +82,28 @@ MaterialStateGrouping groupMaterialsByState(std::span<const assets::MaterialDef>
     return grouping;
 }
 
+std::vector<std::uint32_t> materialPipelineSlots(std::span<const std::uint32_t> materialState,
+                                                 std::span<const std::uint32_t> unbuiltStates,
+                                                 std::span<const std::uint32_t> rejected)
+{
+    std::vector<std::uint32_t> slots(materialState.begin(), materialState.end());
+    for (const std::uint32_t material : rejected) {
+        if (material < slots.size()) {
+            slots[material] = kNoMaterialPipeline;
+        }
+    }
+    for (std::uint32_t& slot : slots) {
+        if (slot == kNoMaterialPipeline) {
+            continue;
+        }
+        for (const std::uint32_t unbuilt : unbuiltStates) {
+            if (slot == unbuilt) {
+                slot = kNoMaterialPipeline;
+                break;
+            }
+        }
+    }
+    return slots;
+}
+
 } // namespace sol::renderer
