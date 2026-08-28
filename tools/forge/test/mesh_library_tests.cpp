@@ -18,6 +18,7 @@
 #include "part_pick.hpp"
 #include "project_paths.hpp"
 #include "status_line.hpp"
+#include "waveform.hpp"
 
 #include "sol/assets/def_doc.hpp"
 #include "sol/assets/forge_doc.hpp"
@@ -2650,4 +2651,153 @@ SOL_TEST(forgeProjectArgumentSkipsTheOtherFlagsOperands)
     SOL_CHECK(forge::parseProjectArgument(opened).empty());
     SOL_CHECK(forge::parseProjectArgument(smoke).empty());
     SOL_CHECK(forge::parseProjectArgument(both) == "C:/mods/my-mod");
+}
+
+// --- the waveform envelope (Phase 26 stage C) --------------------------------
+
+namespace {
+
+[[nodiscard]] assets::SoundData monoCue(std::vector<std::int16_t> samples)
+{
+    assets::SoundData data;
+    data.sampleRate = 44100;
+    data.channelCount = 1;
+    data.samples = std::move(samples);
+    return data;
+}
+
+} // namespace
+
+SOL_TEST(waveformEnvelopeReturnsOneColumnPerPixelAsked)
+{
+    const assets::SoundData cue = monoCue(std::vector<std::int16_t>(4410, 1000));
+    SOL_CHECK(forge::waveformEnvelope(cue.samples, cue.channelCount, 200).size() == 200);
+    SOL_CHECK(forge::waveformEnvelope(cue.samples, cue.channelCount, 1).size() == 1);
+    // Nothing to draw is an empty result rather than a row of zeroes, so a
+    // caller can tell "silence" from "no cue" without a second question.
+    SOL_CHECK(forge::waveformEnvelope(cue.samples, cue.channelCount, 0).empty());
+    SOL_CHECK(forge::waveformEnvelope({}, 1, 200).empty());
+}
+
+SOL_TEST(waveformEnvelopeKeepsTheExtremesSoThePeakIsTheTopOfTheDrawing)
+{
+    // ⚑⚑⚑ THE STAGE'S EXIT CRITERION, ASSERTED RATHER THAN EYEBALLED. The panel
+    // prints `peak` beside this picture, so the loudest sample MUST survive the
+    // reduction - otherwise the number sits above the drawing and the panel
+    // contradicts itself at exactly the value an author is looking at. A single
+    // loud frame buried in 40,000 quiet ones is the case that decides it, and
+    // it is precisely the case decimation loses.
+    std::vector<std::int16_t> samples(40000, 100);
+    samples[31337] = 30000;
+    samples[9001] = -28000;
+    const assets::SoundData cue = monoCue(std::move(samples));
+
+    const std::vector<forge::WaveformColumn> columns =
+        forge::waveformEnvelope(cue.samples, cue.channelCount, 320);
+    SOL_REQUIRE(columns.size() == 320);
+    float high = -2.0f;
+    float low = 2.0f;
+    for (const forge::WaveformColumn& column : columns) {
+        high = std::max(high, column.high);
+        low = std::min(low, column.low);
+    }
+    SOL_CHECK(std::abs(high - (30000.0f / 32768.0f)) < 0.0001f);
+    SOL_CHECK(std::abs(low - (-28000.0f / 32768.0f)) < 0.0001f);
+
+    // ...and it agrees with the number the panel already prints, which is the
+    // half that makes the picture and the report one statement.
+    const forge::SoundReport report = forge::reportSound(cue);
+    SOL_CHECK(std::abs(report.peak - (30000.0f / 32768.0f)) < 0.0001f);
+    SOL_CHECK(std::abs(high - report.peak) < 0.0001f);
+}
+
+SOL_TEST(waveformEnvelopeLeavesNoEmptyColumnOnAShortCue)
+{
+    // ⚑⚑ `ui_click` IS 2,205 FRAMES AND A PANEL IS WIDER THAN THAT. Asked for
+    // more columns than there are frames, integer division gives most spans
+    // begin == end, and every one of those would draw as silence - a short cue
+    // would look like an empty panel with a few spikes, which is a picture of
+    // the arithmetic rather than of the sound.
+    std::vector<std::int16_t> samples(300, 0);
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        samples[i] = static_cast<std::int16_t>((i % 2 == 0) ? 8000 : -8000);
+    }
+    const assets::SoundData cue = monoCue(std::move(samples));
+
+    const std::vector<forge::WaveformColumn> columns =
+        forge::waveformEnvelope(cue.samples, cue.channelCount, 900);
+    SOL_REQUIRE(columns.size() == 900);
+    std::size_t silent = 0;
+    for (const forge::WaveformColumn& column : columns) {
+        if (column.low == 0.0f && column.high == 0.0f) {
+            ++silent;
+        }
+    }
+    SOL_CHECK(silent == 0);
+}
+
+SOL_TEST(waveformEnvelopeFoldsChannelsTheWayTheMixerWill)
+{
+    // ⚑⚑ A STEREO CUE IS FOLDED, NOT DRAWN AS TWO LANES, because
+    // `audio::Mixer::sampleClip` sums and divides by the stride one step before
+    // the speakers. Two lanes would show an author a stereo image the game is
+    // going to discard, which is the opposite of this panel's standing promise
+    // that what you see is what the game receives.
+    assets::SoundData stereo;
+    stereo.sampleRate = 44100;
+    stereo.channelCount = 2;
+    // Left at full positive, right at full negative: the fold is silence, and a
+    // max-across-channels reduction would draw it at full scale instead.
+    stereo.samples.assign(2000, 0);
+    for (std::size_t frame = 0; frame < 1000; ++frame) {
+        stereo.samples[frame * 2] = 20000;
+        stereo.samples[(frame * 2) + 1] = -20000;
+    }
+
+    const std::vector<forge::WaveformColumn> columns =
+        forge::waveformEnvelope(stereo.samples, stereo.channelCount, 64);
+    SOL_REQUIRE(columns.size() == 64);
+    for (const forge::WaveformColumn& column : columns) {
+        SOL_CHECK(std::abs(column.high) < 0.001f);
+        SOL_CHECK(std::abs(column.low) < 0.001f);
+    }
+}
+
+SOL_TEST(waveformEnvelopeDrawsEveryCommittedCue)
+{
+    // The nine documents this repo ships, read from `assets/sounds/` for the
+    // reason every other suite here reads the real files: a fixture that agrees
+    // with the code by construction cannot tell you a shipped asset changed.
+    const char* stems[] = {"weapon_fire",
+                           "weapon_hit_shield",
+                           "weapon_hit_hull",
+                           "explosion",
+                           "mining_cut",
+                           "engine_loop",
+                           "ui_click",
+                           "docking_chime",
+                           "alarm"};
+    for (const char* stem : stems) {
+        forge::AssetEntry entry;
+        entry.path = std::string(SOL_SOUND_SOURCE_DIR) + "/" + stem + ".snd";
+        entry.label = std::string(stem) + ".snd";
+        entry.stem = stem;
+
+        assets::SoundData data;
+        std::string error;
+        SOL_REQUIRE(forge::loadSound(entry, data, &error));
+
+        const std::vector<forge::WaveformColumn> columns =
+            forge::waveformEnvelope(data.samples, data.channelCount, 400);
+        SOL_REQUIRE(columns.size() == 400);
+        const forge::SoundReport report = forge::reportSound(data);
+        float high = 0.0f;
+        for (const forge::WaveformColumn& column : columns) {
+            high = std::max(high, std::max(column.high, -column.low));
+        }
+        // ⚑ The reduction never invents amplitude and never loses the peak, on
+        // every asset the game actually ships.
+        SOL_CHECK(high <= report.peak + 0.0001f);
+        SOL_CHECK(high >= report.peak - 0.0001f);
+    }
 }

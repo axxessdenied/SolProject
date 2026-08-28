@@ -118,6 +118,14 @@ std::uint32_t SoundPreview::activeVoices() const
     return m_mixer == nullptr ? 0 : m_mixer->activeVoices();
 }
 
+const sol::audio::SoundClip* SoundPreview::clip(int index) const
+{
+    if (!canPlay(index)) {
+        return nullptr;
+    }
+    return m_bank.clip(m_sounds[static_cast<std::size_t>(index)]);
+}
+
 const SoundReport& SoundPreview::report(int index) const
 {
     if (index < 0 || static_cast<std::size_t>(index) >= m_reports.size()) {

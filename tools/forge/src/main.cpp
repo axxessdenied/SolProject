@@ -22,6 +22,7 @@
 #include "sound_preview.hpp"
 #include "status_line.hpp"
 #include "texture_editor.hpp"
+#include "waveform.hpp"
 
 #include "sol/assets/mesh_lod.hpp"
 #include "sol/core/log.hpp"
@@ -388,6 +389,87 @@ std::string elideToWidth(const std::string& text, float width)
 }
 
 } // namespace
+
+// ⚑⚑⚑ THE PANEL'S FIRST PICTURE OF A SOUND (PHASE 26 STAGE C). Everything the
+// Sound panel has said since Phase 24 stage U1 has been a number - seconds,
+// frames, peak - and a number cannot distinguish a cue that clips once from one
+// that clips throughout, or show an author that the fade they wrote eats half
+// the cue. This draws the thing those numbers summarise.
+//
+// ⚑⚑ IT READS THE PREVIEW'S BANK RATHER THAN THE FILE, so it costs no I/O and
+// no parsing: `SoundPreview::rebuild` already decoded every listed cue, and
+// what plays is what is drawn, by construction rather than by agreement. It
+// therefore works identically for a `.snd`, a `.wav` and a cooked `.saud` -
+// three source kinds, one picture, because all three are int16 by the time they
+// reach the bank.
+//
+// ⚑ NO PLAYHEAD, DELIBERATELY. `Mixer::Voice::cursor` is device-thread state
+// with no accessor, and `mixer.hpp`'s rule about not touching the bank while
+// the device runs is load-bearing enough that `SoundPreview` throws the whole
+// mixer away on a rebuild. A moving cursor is a new atomic in that file, which
+// is a change worth making on its own evidence rather than as a decoration on
+// this one.
+void drawWaveform(const forge::SoundPreview& preview, int index, const forge::SoundReport& report)
+{
+    const sol::audio::SoundClip* clip = preview.clip(index);
+    const float height = ImGui::GetFontSize() * 4.5f;
+    const float width = std::max(ImGui::GetContentRegionAvail().x, 32.0f);
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, height));
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 min = origin;
+    const ImVec2 max = ImVec2(origin.x + width, origin.y + height);
+    draw->AddRectFilled(min, max, IM_COL32(18, 20, 24, 255));
+    draw->AddRect(min, max, IM_COL32(70, 76, 86, 255));
+
+    if (clip == nullptr || clip->samples.empty()) {
+        // A row that would not decode is still LISTED - an author needs to see
+        // the thing that is broken - so the picture says so rather than being
+        // absent and leaving a gap nobody can interpret.
+        const char* label = "no samples";
+        const ImVec2 size = ImGui::CalcTextSize(label);
+        draw->AddText(ImVec2(min.x + ((width - size.x) * 0.5f), min.y + ((height - size.y) * 0.5f)),
+                      IM_COL32(150, 90, 90, 255),
+                      label);
+        return;
+    }
+
+    const float centre = min.y + (height * 0.5f);
+    const float halfHeight = height * 0.5f;
+
+    // ⚑ THE FULL-SCALE GUIDES ARE DRAWN EVEN WHEN NOTHING REACHES THEM, so the
+    // vertical scale is fixed rather than fitted. An envelope normalised to its
+    // own loudest sample would draw a quiet cue and a clipping one identically,
+    // which is precisely the comparison `peak` exists to let an author make.
+    draw->AddLine(ImVec2(min.x, centre), ImVec2(max.x, centre), IM_COL32(70, 76, 86, 255));
+    if (report.peak > 0.0f) {
+        const float top = centre - (report.peak * halfHeight);
+        const float bottom = centre + (report.peak * halfHeight);
+        const ImU32 guide = report.peak >= 0.999f ? IM_COL32(190, 90, 80, 130) : IM_COL32(90, 130, 90, 110);
+        draw->AddLine(ImVec2(min.x, top), ImVec2(max.x, top), guide);
+        draw->AddLine(ImVec2(min.x, bottom), ImVec2(max.x, bottom), guide);
+    }
+
+    const auto columns = static_cast<std::size_t>(width);
+    const std::vector<forge::WaveformColumn> envelope =
+        forge::waveformEnvelope(clip->samples, clip->channelCount, columns);
+    for (std::size_t i = 0; i < envelope.size(); ++i) {
+        const float x = min.x + static_cast<float>(i) + 0.5f;
+        float top = centre - (envelope[i].high * halfHeight);
+        float bottom = centre - (envelope[i].low * halfHeight);
+        // A column of pure silence would be a zero-length line and draw
+        // nothing, leaving a gap that reads as missing data rather than as
+        // quiet. One pixel is the honest minimum.
+        if (bottom - top < 1.0f) {
+            top = centre - 0.5f;
+            bottom = centre + 0.5f;
+        }
+        draw->AddLine(ImVec2(x, top), ImVec2(x, bottom), IM_COL32(120, 200, 170, 220));
+    }
+
+    ImGui::TextDisabled("%.3f s, full scale at the edges", static_cast<double>(report.seconds));
+}
 
 int main(int argc, char** argv)
 {
@@ -2750,6 +2832,15 @@ int main(int argc, char** argv)
                             if (soundReport.peak >= 0.999f) {
                                 ImGui::TextDisabled("  at full scale: this cue may already clip");
                             }
+
+                            // ⚑⚑⚑ THE SHAPE THOSE THREE NUMBERS ARE SUMMARIES OF
+                            // (PHASE 26 STAGE C). A cue that peaks at 0.85 once and a cue
+                            // that sits at 0.85 for a tenth of a second print the SAME
+                            // three lines above, and they are not the same cue. The
+                            // envelope keeps the extremes of every column, so the `peak`
+                            // printed above is literally the top of the drawing rather
+                            // than a number beside an unrelated picture.
+                            drawWaveform(soundPreview, soundIndex, soundReport);
                         }
                         // ⚑ THE SENTENCE THAT MAKES THE PREVIEW HONEST, and it
                         // is stage G's BC1 argument arriving at a second

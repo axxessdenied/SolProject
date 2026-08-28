@@ -80,6 +80,19 @@ public:
 
     [[nodiscard]] std::uint32_t activeVoices() const;
 
+    // The samples behind a row, or nullptr when it did not load.
+    //
+    // ⚑⚑ THE BANK IS ALREADY THE RIGHT PLACE TO ASK, WHICH IS WHY THE
+    // WAVEFORM COSTS NO FILE READING. Every listed cue was decoded once by
+    // `rebuild` and lives here until the next one; drawing a picture of it
+    // needs the samples, not the file. ⚑ Handing out a pointer into the bank
+    // is safe for exactly the reason `mixer.hpp` states about the mixer
+    // thread: the bank is filled before the device opens and never mutated
+    // while it runs, and a rebuild throws the whole thing away rather than
+    // editing it. A caller must not hold this across a `rebuild`, and no
+    // caller does - the panel asks once a frame.
+    [[nodiscard]] const sol::audio::SoundClip* clip(int index) const;
+
     // What `reportSound` measured while the bank was being filled, so the panel
     // does not re-read the file to print a duration. Zeroed for a row that did
     // not load.

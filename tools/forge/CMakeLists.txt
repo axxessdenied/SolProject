@@ -12,6 +12,7 @@ add_executable(sol_forge
     src/project_paths.cpp
     src/sound_preview.cpp
     src/texture_editor.cpp
+    src/waveform.cpp
 )
 set_target_properties(sol_forge PROPERTIES OUTPUT_NAME forge)
 
@@ -96,6 +97,7 @@ set_tests_properties(forge.smoke PROPERTIES LABELS gpu)
 add_executable(sol_forge_tests
     src/mesh_library.cpp
     src/project_paths.cpp
+    src/waveform.cpp
     test/mesh_library_tests.cpp
 )
 target_include_directories(sol_forge_tests PRIVATE src)
