@@ -40,6 +40,16 @@ first-level subdirectory of mods/ is one mod, laid over the base game's data
 in name order - so mods/zebra/ships.toml wins over mods/alpha/ships.toml, and
 both win over data/ships.toml. Ids replace wholesale rather than merging.
 
+Installing a mod is copying its folder into mods/. Nothing else; there is no
+manager and no load order to edit.
+
+To MAKE one, there is a second download: THE SOL FORGE, the authoring tool
+this game is built with. It opens a mod folder and builds meshes, textures,
+sounds, materials and the def rows that tie them together, then cooks them
+into the form this game loads. It is a separate archive on purpose - a player
+who will never mod should not be handed an editor - so this folder contains no
+editor and never will.
+
 
 COMMAND LINE
 ------------

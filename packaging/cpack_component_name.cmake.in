@@ -1,0 +1,35 @@
+# Chooses an archive's NAME and its TOP-LEVEL DIRECTORY from the component
+# being packaged (Phase 24 stage V).
+#
+# ⚑⚑⚑ WHY THIS FILE EXISTS, AND IT IS A CPACK CONSTRAINT RATHER THAN A CHOICE.
+# The directory inside an archive is always `CPACK_PACKAGE_FILE_NAME`, in every
+# case: component or not, and regardless of `CPACK_ARCHIVE_<COMPONENT>_FILE_NAME`,
+# which renames only the .zip. That was measured, not assumed - a single cpack
+# run over two components produced two archives that both unpacked into
+# `TheStarsDontWait-0.1.0-win64/`, so a mod author who unpacked the game and
+# then the tool got them MERGED, with the Forge's README, LICENSE and
+# THIRD-PARTY.txt overwriting the game's and forge.exe landing inside the game
+# folder. That last part is the promise `check_layout.cmake` guards, arriving
+# through a file manager instead of through the build.
+#
+# So each package is its own cpack run with its own `CPACK_PACKAGE_FILE_NAME`,
+# and this file is what sets it: `CPACK_PROJECT_CONFIG_FILE` is read at PACKAGE
+# time, after `-D` arguments are applied, which is the only point where the
+# component being built is known.
+#
+# ⚑ The version is `${CPACK_PACKAGE_VERSION}` and is deliberately NOT baked in
+# at configure time (`@ONLY` above leaves it alone). Putting it in the package
+# presets would have been the obvious route and would have hard-coded 0.1.0 into
+# a JSON file that nothing updates when `project(... VERSION)` moves.
+
+if(CPACK_COMPONENTS_ALL STREQUAL "forge")
+    set(CPACK_PACKAGE_FILE_NAME "SolForge-${CPACK_PACKAGE_VERSION}-@solPackagePlatform@")
+else()
+    set(CPACK_PACKAGE_FILE_NAME "TheStarsDontWait-${CPACK_PACKAGE_VERSION}-@solPackagePlatform@")
+endif()
+
+# The .zip's own name, which CPack would otherwise suffix with the component
+# ("...-win64-game.zip"). The game's archive filename is part of the game
+# package and decision 010 says that package does not change.
+set(CPACK_ARCHIVE_GAME_FILE_NAME "${CPACK_PACKAGE_FILE_NAME}")
+set(CPACK_ARCHIVE_FORGE_FILE_NAME "${CPACK_PACKAGE_FILE_NAME}")

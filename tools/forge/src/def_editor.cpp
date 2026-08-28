@@ -31,6 +31,18 @@ namespace {
 constexpr int kMetreDecimals = 4;
 constexpr int kUnitDecimals = 3;
 
+// ⚑ One separator, whatever the caller supplied. Stage V hands this a PROJECT
+// directory, which comes from `project_paths.hpp` with a trailing '/' already
+// on it, where `game/data` never had one - and `C:/mod//models.toml` would have
+// gone on working while reading back in every message the tool prints.
+[[nodiscard]] std::string joinPath(const std::string& directory, const std::string& file)
+{
+    if (!directory.empty() && (directory.back() == '/' || directory.back() == '\\')) {
+        return directory + file;
+    }
+    return directory + "/" + file;
+}
+
 [[nodiscard]] std::string readWholeFile(const std::string& path, bool& ok)
 {
     std::vector<std::uint8_t> bytes;
@@ -101,11 +113,26 @@ void DefEditor::load(const std::string& dataDirectory)
     }
     for (Document& document : m_docs) {
         bool ok = false;
-        const std::string path = dataDirectory + "/" + document.file;
+        const std::string path = joinPath(dataDirectory, document.file);
         const std::string text = readWholeFile(path, ok);
+        // ⚑⚑⚑ A MISSING FILE IS AN EMPTY DOCUMENT, NOT A REFUSAL, AND PHASE 24
+        // STAGE V IS WHAT MADE THAT THE COMMON CASE. All five had to exist,
+        // which was true of `game/data` and of nothing else: a mod supplies only
+        // the def files it wants - "a mod that changes a price is one
+        // commodities.toml" (game/mods/README.md) - and a NEW mod supplies none
+        // at all. The old rule made the first thing an installed Forge is
+        // pointed at report "cannot read models.toml" and refuse to edit
+        // anything, which is the whole authoring surface closed on the whole
+        // audience the tool was shipped for.
+        //
+        // ⚑⚑ MISSING AND UNPARSEABLE STAY DIFFERENT. An absent file is a
+        // decision an author made; a file that will not parse is a mistake, and
+        // silently treating it as empty would put an empty document in front of
+        // somebody whose work is still on disk - and then WRITE it back over
+        // them on the next save. The parse below is unchanged and still fatal.
         if (!ok) {
-            m_error = std::string("cannot read ") + document.file;
-            return;
+            document.ok = true;
+            continue;
         }
         if (!assets::parseDefs(text.c_str(), text.size(), document.file, document.doc, &m_error)) {
             return;
@@ -264,7 +291,7 @@ bool DefEditor::save(std::string& status)
             continue;
         }
         const std::string text = assets::writeDefs(document.doc);
-        const std::string path = m_dataDirectory + "/" + document.file;
+        const std::string path = joinPath(m_dataDirectory, document.file);
         if (!platform::writeFileBytes(path.c_str(), text.data(), text.size())) {
             status = "cannot write " + path;
             return false;

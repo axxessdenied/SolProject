@@ -22,6 +22,8 @@
 #include "sol/ui/imgui_host.hpp"
 
 #include <cstdint>
+#include <span>
+#include <string>
 #include <vector>
 
 namespace forge {
@@ -75,8 +77,17 @@ public:
         Failure,
     };
 
-    [[nodiscard]] bool
-    initialize(sol::rhi::Context& context, sol::rhi::Swapchain& swapchain, const char* shaderDirectory);
+    // ⚑⚑ A SEARCH PATH RATHER THAN A DIRECTORY SINCE PHASE 24 STAGE V, and it
+    // is the same change `SceneRenderer::initialize` took at Phase 25 stage E,
+    // for the same reason and with the same rule about its LAST entry: a
+    // project's `shaders/` comes first so a mod can replace one stage of a
+    // pair, and the install's comes last because the renderers that are not
+    // materials - tonemap and the debug lines in this tool - must resolve there
+    // and nowhere else. Their descriptor sets and push blocks are C++ contracts
+    // that no `[[material]]` row declares, so nothing would check a substitute.
+    [[nodiscard]] bool initialize(sol::rhi::Context& context,
+                                  sol::rhi::Swapchain& swapchain,
+                                  std::span<const std::string> shaderSearchPath);
     void shutdown();
     [[nodiscard]] bool onSwapchainRecreated();
 

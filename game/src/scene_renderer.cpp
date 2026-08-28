@@ -817,7 +817,7 @@ void SceneRenderer::recordCommands(VkCommandBuffer commandBuffer,
     m_particleRenderer.draw(
         commandBuffer, m_frameIndex, viewProjection, camera.orientation, m_particleScratch);
 
-    m_debugDraw.draw(commandBuffer, m_frameIndex, viewProjection);
+    m_debugDraw.draw(commandBuffer, m_frameIndex, extent, viewProjection);
     m_debugDraw.clear();
     m_gpuProfiler.endZone(commandBuffer, gpuParticleZone);
 

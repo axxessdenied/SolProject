@@ -126,6 +126,34 @@ loadTexture(const AssetEntry& entry, sol::assets::TextureData& out, std::string*
                                     sol::assets::TextureData& out,
                                     std::string* error = nullptr);
 
+// The label the built-in placeholder wears in the texture list. Its `stem` is
+// EMPTY, and that is the load-bearing half - see `builtinCheckerTexture`.
+[[nodiscard]] const char* builtinTextureLabel();
+
+// A placeholder surface for a project that has no textures yet (Phase 24 stage
+// V).
+//
+// ⚑⚑⚑ WHY THIS EXISTS AT ALL: A NEW MOD IS AN EMPTY DIRECTORY, AND AN EMPTY
+// TEXTURE SET WAS FATAL. `main.cpp` exited with "no textures - build the cooker
+// target first", which was exactly right while the only project was this repo
+// and is exactly wrong for the first thing an installed Forge is ever pointed
+// at. Stage U2 wrote the invariant down while relying on it: two lines draw
+// `textures[textureIndex]` and `textureLabels[textureIndex]` with no range
+// check, "entitled to, because startup treats an empty set as fatal". Rather
+// than teach the View combo and the frame submission about an empty set, this
+// keeps the invariant TRUE - the set is never empty, so nothing downstream
+// changes and `reloadTextures` can go on refusing a swap that would empty it.
+//
+// ⚑⚑ IT IS BUILT, NOT SHIPPED, AND ITS STEM IS EMPTY. Built: a `.tex` document
+// is a recipe, so the placeholder is eight lines of text through the same
+// parse, evaluate and BC1 encode every other texture in this tool takes - no
+// file in the package, and no second way to make an image. Empty stem: a stem
+// in `textureStems` is a PROMISE that a `[[model]]` row naming it will draw in
+// the game, and the game has no built-in checker. An author who could name this
+// one would ship a mod whose model is invisible to everybody else, and the tool
+// would have been what told them it was fine.
+[[nodiscard]] bool builtinCheckerTexture(sol::assets::TextureData& out, std::string* error = nullptr);
+
 // Dispatches on extension: `.forge` is parsed and evaluated, `.gltf`/`.glb` go
 // through the cooker's importer, `.smesh` through the runtime loader. All three
 // give the same buffer the game would draw, which is the point.

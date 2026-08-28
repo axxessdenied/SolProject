@@ -476,6 +476,44 @@ bool loadTexture(const AssetEntry& entry, assets::TextureData& out, std::string*
     return buildTextureData(doc, out, error);
 }
 
+const char* builtinTextureLabel()
+{
+    // ⚑ Angle brackets because no file can be called this: the list mixes rows
+    // that are files with one row that is not, and the difference has to be
+    // visible in the only place an author looks.
+    return "<built-in checker>";
+}
+
+bool builtinCheckerTexture(assets::TextureData& out, std::string* error)
+{
+    // ⚑⚑ A DOCUMENT RATHER THAN PIXELS, WHICH IS WHAT KEEPS THIS FROM BEING A
+    // SECOND IMAGE PIPELINE. It goes through `parseTexture` and `buildTexture`
+    // and the BC1 encode exactly as `assets/textures/checker.tex` does, so the
+    // placeholder is compressed the way the game compresses, and a change to the
+    // encoder cannot make this one drift away from the rest.
+    //
+    // ⚑ Deliberately NOT a copy of the committed `checker.tex`: that one is a
+    // real asset an author can open and edit, and this one must be unmistakable
+    // for it. Magenta is the convention for "no texture assigned" and 64x64 is
+    // four mip levels, which is enough for the chain to be exercised.
+    static constexpr char kDocument[] = "size = [64, 64]\n"
+                                        "[[op]]\n"
+                                        "kind = \"checker\"\n"
+                                        "cell = 8\n"
+                                        "color_a = [255, 0, 255]\n"
+                                        "color_b = [40, 40, 40]\n";
+    assets::TextureDoc doc;
+    std::string parseError;
+    if (!assets::parseTexture(kDocument, sizeof(kDocument) - 1, "<built-in>", doc, &parseError)) {
+        SOL_LOG_ERROR("forge: %s", parseError.c_str());
+        if (error != nullptr) {
+            *error = parseError;
+        }
+        return false;
+    }
+    return buildTextureData(doc, out, error);
+}
+
 bool buildTextureData(const assets::TextureDoc& doc, assets::TextureData& out, std::string* error)
 {
     assets::TextureImage image;

@@ -131,6 +131,7 @@ void DebugDrawRenderer::axes(core::Vec3 origin, const core::Quat& orientation, f
 
 void DebugDrawRenderer::draw(VkCommandBuffer commandBuffer,
                              std::uint32_t frameIndex,
+                             VkExtent2D extent,
                              const core::Mat4& viewProjection)
 {
     if (m_vertices.empty()) {
@@ -139,6 +140,21 @@ void DebugDrawRenderer::draw(VkCommandBuffer commandBuffer,
     std::memcpy(m_mappedPointers[frameIndex], m_vertices.data(), m_vertices.size() * sizeof(Vertex));
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
+
+    // The same negative viewport height `MeshRenderer::bindMaterial` uses, and
+    // it has to be the same: these lines are drawn in world space beside the
+    // meshes, so a y-down viewport here would put the grid under a ship that is
+    // above it. Copied rather than shared because the alternative is a third
+    // renderer knowing about the second.
+    const VkViewport viewport = {0.0f,
+                                 static_cast<float>(extent.height),
+                                 static_cast<float>(extent.width),
+                                 -static_cast<float>(extent.height),
+                                 0.0f,
+                                 1.0f};
+    const VkRect2D scissor = {{0, 0}, extent};
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
     const PushConstants push = {viewProjection};
     vkCmdPushConstants(commandBuffer,
                        m_pipelineLayout,

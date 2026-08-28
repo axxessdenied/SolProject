@@ -1,0 +1,67 @@
+The Sol Forge @PROJECT_VERSION@
+===============================
+
+The authoring tool for The Stars Don't Wait. It opens a mod folder and lets you
+build meshes, paint-in textures, sounds, materials and the def rows that tie
+them together, then cooks the lot into the form the game loads.
+
+This is a separate download from the game on purpose. You need both: the game
+to play, this to author. Unpack it anywhere; delete the folder to uninstall.
+
+
+Requirements
+------------
+
+@SOL_FORGE_REQUIREMENTS@
+
+
+Pointing it at a mod
+--------------------
+
+The Forge always works on one PROJECT, which is a mod folder inside your game
+install:
+
+    <your game folder>/mods/my-mod/
+
+@SOL_FORGE_OPEN@
+
+The first time it opens a folder it creates the layout for you:
+
+    my-mod/
+      assets/           what you author       (.forge .tex .png .wav)
+        meshes/
+        textures/
+        sounds/
+      cooked/           what the game loads   (.smesh .stex .saud)
+      shaders/          compiled SPIR-V       (.spv)
+      blender-inbox/    where Send to Forge drops a .glb
+
+Your def rows - models.toml, materials.toml, ships.toml, stations.toml,
+sounds.toml - sit at the top of the mod folder, beside assets/. Write only the
+ones you need; a mod that changes nothing else does not need the rest.
+
+Press Cook when you have changed an asset. It writes into the mod's cooked/,
+which is exactly where the game looks, so there is no copying step. Then start
+the game: mods load automatically, in folder-name order.
+
+
+Shaders need one extra thing
+----------------------------
+
+Meshes, textures, sounds and def rows need nothing but this tool. A SHADER is
+the exception: a mod ships compiled SPIR-V, and no GLSL compiler is distributed
+with the game or with the Forge. To write one you need the Vulkan SDK, and you
+compile it yourself:
+
+    glslc --target-env=vulkan1.3 shaders/glass.frag -o shaders/glass.frag.spv
+
+Ship the .frag beside the .spv so whoever has your mod next can still edit it.
+
+
+What this folder is not
+-----------------------
+
+There is no game here, and no game data. The Forge reads and writes YOUR mod
+folder and nothing else; your saves and the base game's files are untouched by
+it. If you want to look at how the base game builds something, open its files
+in the game folder with a text editor - this tool will not edit them for you.

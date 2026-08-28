@@ -106,8 +106,25 @@
   "packagePresets": [
     { "name": "release", "configurePreset": "release" },
     {
+      "name": "release-forge",
+      "displayName": "The Sol Forge (Windows) - the authoring tool, a SECOND archive",
+      "configurePreset": "release",
+      "variables": { "CPACK_COMPONENTS_ALL": "forge" }
+    },
+    {
       "name": "linux-release",
       "configurePreset": "linux-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-release-forge",
+      "displayName": "The Sol Forge (Linux) - the authoring tool, a SECOND archive",
+      "configurePreset": "linux-release",
+      "variables": { "CPACK_COMPONENTS_ALL": "forge" },
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",

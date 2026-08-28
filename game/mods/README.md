@@ -35,6 +35,15 @@ Cook a mod the same way the build cooks the base game:
 cooker mods/my-mod/assets mods/my-mod/cooked
 ```
 
+Or — and this is what a mod author actually has, since `cooker` is a build tool
+and is in neither download — **open the mod in the Forge and press Cook.** The
+Forge is a separate archive beside the game's; point it at this directory (drag
+the folder onto `forge.exe`, or pass it on the command line) and it reads and
+writes exactly the layout above: sources from `assets/`, output into `cooked/`,
+def rows from the `*.toml` at the top, shaders searched here before the game's
+own. It creates whatever is missing the first time it opens a folder, so a new
+mod starts as an empty directory and nothing else.
+
 **Search order is the reverse of the layer order.** An asset is *found*, not
 merged, so the game looks in the last-named mod's `cooked/` first, then earlier
 mods, then the base game's. That is the same precedence the def files get, said

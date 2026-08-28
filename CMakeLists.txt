@@ -157,13 +157,71 @@ else()
 
     if(WIN32)
         set(CPACK_GENERATOR ZIP)
-        set(CPACK_PACKAGE_FILE_NAME "TheStarsDontWait-${PROJECT_VERSION}-win64")
+        set(solPackagePlatform "win64")
     else()
         set(CPACK_GENERATOR TGZ)
-        set(CPACK_PACKAGE_FILE_NAME "TheStarsDontWait-${PROJECT_VERSION}-linux-x86_64")
+        set(solPackagePlatform "linux-x86_64")
     endif()
+    set(CPACK_PACKAGE_FILE_NAME "TheStarsDontWait-${PROJECT_VERSION}-${solPackagePlatform}")
 
-    # The archive keeps its top-level directory (CPack's default for archive
+    # ---------------------------------------------------------------------
+    # TWO ARCHIVES (Phase 24 stage V, decision 010): the game, and the Forge.
+    #
+    # ⚑⚑ A SECOND ARCHIVE RATHER THAN EXTRA FILES IN THE FIRST, AND THE
+    # DECIDING REASON IS THE TEST THAT ALREADY EXISTED. `check_layout.cmake`
+    # asserts the game tree is ONLY the game - it forbids `forge*` - and that
+    # assertion is the thing that caught the whole question. Putting the editor
+    # in the game's archive would have meant weakening the guard that raised
+    # the issue. So Phase 9's promise is narrowed to the GAME binary and kept,
+    # and the tool gets an assertion of its own.
+    #
+    # ⚑ A player downloads one archive; a mod author downloads two. Both
+    # README files say so, because "what the game is as a distributable" now
+    # has two answers and neither is guessable from the other.
+    set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
+    # ⚑ The DEFAULT run is the game. `cpack --preset release-forge` overrides this
+    # to `forge`, which is what `cpack_component_name.cmake` switches on.
+    set(CPACK_COMPONENTS_ALL game)
+
+    # ⚑⚑⚑ WITHOUT THIS LINE, TURNING COMPONENTS ON SILENTLY FLATTENS BOTH
+    # ARCHIVES - AND IT WAS FOUND BY UNPACKING THEM, NOT BY READING THE BUILD.
+    # `CPACK_INCLUDE_TOPLEVEL_DIRECTORY` does not govern the component case;
+    # `CPACK_COMPONENT_INCLUDE_TOPLEVEL_DIRECTORY` does, and it defaults OFF. So
+    # the first pair of archives this stage produced sprayed their contents into
+    # whatever directory they were unpacked in - and, unpacked into the same
+    # one, the game and the tool OVERWROTE each other's LICENSE, README.txt and
+    # THIRD-PARTY.txt.
+    #
+    # ⚑⚑ THE LESSON IS ABOUT WHAT "THE GAME PACKAGE IS UNCHANGED" MEANS.
+    # Decision 010 promises exactly that, and the obvious reading is the
+    # filename, which is guarded above. The archive's INTERNAL SHAPE is the
+    # other half, it is not visible in any file in this repo, and a component
+    # setting several lines away had quietly rewritten it. A package is not
+    # unchanged until it has been unpacked.
+    set(CPACK_COMPONENT_INCLUDE_TOPLEVEL_DIRECTORY ON)
+
+    # ⚑⚑ ONE CPACK RUN PER PACKAGE, AND THAT IS FORCED RATHER THAN PREFERRED.
+    # The top-level directory inside an archive is always
+    # `CPACK_PACKAGE_FILE_NAME`, which one run has exactly one of - so a single
+    # run cannot give two archives two different roots, and both would unpack
+    # into the same folder and merge. `packaging/cpack_component_name.cmake.in`
+    # carries the measurement and the consequence; the package presets
+    # `release` and `release-forge` are the two runs.
+    #
+    # ⚑ The game's archive keeps its exact filename as well as its shape, because
+    # decision 010 says the game package does not change and a filename is part
+    # of a package. Without this, components would have renamed the player's
+    # download to `TheStarsDontWait-0.1.0-win64-game.zip`.
+    configure_file(${CMAKE_SOURCE_DIR}/packaging/cpack_component_name.cmake.in
+                   ${CMAKE_BINARY_DIR}/cpack_component_name.cmake @ONLY)
+    set(CPACK_PROJECT_CONFIG_FILE ${CMAKE_BINARY_DIR}/cpack_component_name.cmake)
+
+    set(CPACK_COMPONENT_GAME_DISPLAY_NAME "The Stars Don't Wait")
+    set(CPACK_COMPONENT_FORGE_DISPLAY_NAME "The Sol Forge")
+    set(CPACK_COMPONENT_FORGE_DESCRIPTION
+        "The authoring tool: build meshes, textures, sounds, materials and def rows for a mod.")
+
+    # Each archive keeps its top-level directory (CPack's default for archive
     # generators): unpacking gives one folder rather than spraying 56 files
     # into whatever directory the player happened to be in.
     include(CPack)

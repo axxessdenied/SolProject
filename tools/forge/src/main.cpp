@@ -18,6 +18,7 @@
 #include "orbit_camera.hpp"
 #include "part_editor.hpp"
 #include "point_tool.hpp"
+#include "project_paths.hpp"
 #include "sound_preview.hpp"
 #include "status_line.hpp"
 #include "texture_editor.hpp"
@@ -62,8 +63,20 @@ constexpr bool kEnableValidation = false;
 constexpr bool kEnableValidation = true;
 #endif
 
+// ⚑⚑ ALL THREE, AND THE MISSING TWO WERE THE STAGE V DEFECT. `SOL_MODEL_DATA_DIR`
+// had no fallback at all and was used raw, so a build without it did not fall
+// back - it failed to compile, which is why nothing ever noticed that a release
+// build was the only configuration that would have wanted one. Empty means
+// "this build bakes no source tree", which `resolveProjectPaths` reads as a
+// shipping build.
 #if !defined(SOL_ASSETS_SOURCE_DIR)
 #define SOL_ASSETS_SOURCE_DIR ""
+#endif
+#if !defined(SOL_MODEL_DATA_DIR)
+#define SOL_MODEL_DATA_DIR ""
+#endif
+#if !defined(SOL_FORGE_INBOX_DIR)
+#define SOL_FORGE_INBOX_DIR ""
 #endif
 
 // --frames N: render N frames, then exit (for automated runs), exactly as the
@@ -400,20 +413,51 @@ int main(int argc, char** argv)
     }
 
     const std::string executableDir = platform::executableDirectory();
-    const std::string shaderDirectory = executableDir + "shaders/";
-    const std::string cookedDirectory = executableDir + "cooked/";
-    // Authored sources come from the tree in a dev build, the same way the
-    // game reads its defs; an installed tool falls back to a directory beside
-    // the executable.
-    const std::string assetsDirectory =
-        std::strlen(SOL_ASSETS_SOURCE_DIR) > 0 ? SOL_ASSETS_SOURCE_DIR : executableDir + "assets";
-    // ⚑⚑ WHERE BLENDER DROPS, AND IT IS NOT UNDER `assets/` (stage L). The
-    // cooker scans the source tree RECURSIVELY into one flat output directory
-    // keyed on the file STEM, so a `ship.gltf` anywhere beneath it collides with
+
+    // ⚑⚑⚑ PHASE 24 STAGE V: EVERY DIRECTORY THIS TOOL TOUCHES COMES FROM ONE
+    // RULE, AND THE RULE IS TESTED. What was here before was five expressions
+    // spelled out inline - three of them reading defines that a release build
+    // baked from this machine's source tree, and two of them (`cooked/` and
+    // `shaders/`) hard-wired beside the executable with no define at all. Those
+    // last two were the ones that mattered most to a shipped tool: the Cook
+    // button writes `cooked/`, so an installed Forge would have cooked an
+    // author's mod into the TOOL's folder, where the game never looks.
+    //
+    // ⚑⚑ WHERE BLENDER DROPS IS STILL NOT UNDER `assets/` (stage L). The cooker
+    // scans the source tree RECURSIVELY into one flat output directory keyed on
+    // the file STEM, so a `ship.gltf` anywhere beneath it collides with
     // `ship.forge` - and that guard aborts the ENTIRE cook rather than skipping
     // the pair. The glTF is transport: once imported, the `.forge` is the source.
-    const std::string inboxDirectory =
-        std::strlen(SOL_FORGE_INBOX_DIR) > 0 ? SOL_FORGE_INBOX_DIR : executableDir + "blender-inbox";
+    const std::vector<std::string> arguments(argv, argv + argc);
+    const std::string requestedProject = forge::parseProjectArgument(arguments);
+    const forge::DevPaths devPaths = {
+        .assets = SOL_ASSETS_SOURCE_DIR, .data = SOL_MODEL_DATA_DIR, .inbox = SOL_FORGE_INBOX_DIR};
+    const forge::ProjectPaths paths = forge::resolveProjectPaths(requestedProject, devPaths, executableDir);
+    // ⚑ Asked of the RULE, never re-derived here - see `ProjectPaths::isProject`.
+
+    const std::string& cookedDirectory = paths.cooked;
+    const std::string& assetsDirectory = paths.assets;
+    const std::string& inboxDirectory = paths.inbox;
+
+    // ⚑⚑ MADE RATHER THAN REQUIRED, AND ONLY FOR A PROJECT. A new mod is an
+    // empty directory, and `listFiles` cannot tell a missing directory from an
+    // empty one - which is the property `game/mods/README.md` records as the
+    // reason `mods/` ships empty-but-present. So the drop target the Blender
+    // bridge writes into and the `cooked/` the Cook button fills have to exist
+    // before anything has been authored. The dev tree's directories are the
+    // repo's and are not this tool's to invent, which is why the branch is here
+    // and not inside the rule.
+    if (paths.isProject && !forge::createProjectDirectories(paths)) {
+        SOL_LOG_WARN("forge: could not create every directory under %s", paths.data.c_str());
+    }
+    SOL_LOG_INFO("forge: project %s (%s)", paths.data.c_str(), paths.isProject ? "project" : "source tree");
+    SOL_LOG_INFO("forge: assets %s | cooked %s | inbox %s",
+                 assetsDirectory.c_str(),
+                 cookedDirectory.c_str(),
+                 inboxDirectory.c_str());
+    for (const std::string& directory : paths.shaderSearchPath) {
+        SOL_LOG_INFO("forge: shaders %s", directory.c_str());
+    }
 
     rhi::Swapchain swapchain;
     if (!swapchain.create(context, window.width(), window.height(), /*vsync=*/true)) {
@@ -421,7 +465,7 @@ int main(int argc, char** argv)
     }
 
     forge::ForgeView view;
-    if (!view.initialize(context, swapchain, shaderDirectory.c_str())) {
+    if (!view.initialize(context, swapchain, paths.shaderSearchPath)) {
         return EXIT_FAILURE;
     }
 
@@ -478,6 +522,36 @@ int main(int argc, char** argv)
             outLabels.push_back(entry.label);
             outEntries.push_back(entry);
         }
+        // ⚑⚑⚑ PHASE 24 STAGE V: THE SET IS NEVER EMPTY, WHICH IS HOW A BRAND-NEW
+        // MOD OPENS AT ALL. An empty project used to be `EXIT_FAILURE` here -
+        // right while the only project was this repo, wrong for the first thing
+        // an installed tool is ever pointed at. Stage U2's invariant ("two lines
+        // draw `textures[textureIndex]` with no range check, entitled to because
+        // startup treats an empty set as fatal") is kept TRUE rather than
+        // relaxed, so nothing downstream had to learn a new case.
+        //
+        // ⚑ Inside the lambda and not beside it, because `reloadTextures` is the
+        // second caller and its whole hazard is that the set it swaps in must be
+        // built by the same rules as the one it replaces. An author who cooks a
+        // project back to empty gets the placeholder, not the last image that
+        // worked.
+        if (outTextures.empty()) {
+            assets::TextureData placeholder;
+            std::string placeholderError;
+            if (forge::builtinCheckerTexture(placeholder, &placeholderError)) {
+                outTextures.push_back(view.meshes().createTexture(placeholder));
+                outLabels.push_back(forge::builtinTextureLabel());
+                // ⚑ An entry with no path and no STEM. No path so the editor
+                // takes its "nothing to edit here" branch, and no stem so
+                // `textureStems` cannot offer it to a `[[model]]` row - the game
+                // has no built-in checker, and a row naming one would be a mod
+                // that is invisible on every machine but this one.
+                outEntries.push_back(
+                    forge::AssetEntry{.label = forge::builtinTextureLabel(), .group = "built-in"});
+            } else {
+                SOL_LOG_ERROR("forge: cannot build the placeholder texture: %s", placeholderError.c_str());
+            }
+        }
         return listed.size();
     };
 
@@ -490,11 +564,22 @@ int main(int argc, char** argv)
                  listedTextures,
                  assetsDirectory.c_str(),
                  cookedDirectory.c_str());
+    // ⚑⚑ STILL FATAL, AND NOW FOR A REASON THAT IS ACTUALLY FATAL. It used to
+    // fire whenever the project held no textures, which is the normal state of a
+    // mod nobody has authored into yet; `loadTextureSet` supplies the built-in
+    // placeholder for that case. What is left can only be the placeholder itself
+    // failing to build - the parser or the encoder refusing a document compiled
+    // into this binary - and there is nothing an author can do about that and
+    // nothing left to draw with.
     if (textures.empty()) {
-        SOL_LOG_ERROR("forge: no textures under %s or %s - build the cooker target first",
-                      assetsDirectory.c_str(),
-                      cookedDirectory.c_str());
+        SOL_LOG_ERROR("forge: no textures and no placeholder - this build is broken");
         return EXIT_FAILURE;
+    }
+    if (listedTextures == 0) {
+        SOL_LOG_INFO("forge: no textures under %s or %s yet - showing %s",
+                     assetsDirectory.c_str(),
+                     cookedDirectory.c_str(),
+                     forge::builtinTextureLabel());
     }
 
     // ⚑ The authored side of every mesh in this game. The tool reads the game's
@@ -503,8 +588,10 @@ int main(int argc, char** argv)
     // 1.1584 m and the sim thinks it is 1.0" instead of leaving that to be
     // noticed by a person holding a panel next to a text file, which is exactly
     // how stage C found it.
+    // ⚑ In a project this is the project directory itself: a mod's def
+    // documents sit at its top level, beside `assets/` (game/mods/README.md).
     assets::DefDatabase defs;
-    const std::string dataDirectory = SOL_MODEL_DATA_DIR;
+    const std::string& dataDirectory = paths.data;
     {
         std::string defError;
         if (!forge::loadModelCatalog(dataDirectory, defs, &defError)) {
@@ -536,6 +623,14 @@ int main(int argc, char** argv)
     const auto refreshTextureStems = [&]() {
         textureStems.clear();
         for (const forge::AssetEntry& textureEntry : loadedTextureEntries) {
+            // ⚑ The built-in placeholder carries no stem, and this is where that
+            // stops it being nameable (stage V). Everything above about a stem
+            // being a promise the viewport can draw it goes one step further for
+            // this row: the GAME cannot draw it, because it exists only inside
+            // this binary. A skipped empty stem is the whole enforcement.
+            if (textureEntry.stem.empty()) {
+                continue;
+            }
             if (std::find(textureStems.begin(), textureStems.end(), textureEntry.stem) ==
                 textureStems.end()) {
                 textureStems.push_back(textureEntry.stem);
@@ -552,11 +647,18 @@ int main(int argc, char** argv)
     // def file. This is the same argument as the texture combo, one asset kind
     // over.
     //
-    // ⚑ THE DIRECTORY IS THE ONE THE REGISTRY ACTUALLY SEARCHES - `shaders/`
-    // beside the executable, which the build fills - so the list cannot offer a
-    // stem the loader will then fail to find. Listed once: the shaders are a
-    // build output, and `Cook` does not compile any (decision 5 puts the GLSL
-    // compiler in the author's hands, not in this tool).
+    // ⚑ THE DIRECTORIES ARE THE ONES THE REGISTRY ACTUALLY SEARCHES, so the
+    // list cannot offer a stem the loader will then fail to find. Listed once:
+    // the shaders are a build output, and `Cook` does not compile any (decision
+    // 011 puts the GLSL compiler in the author's hands, not in this tool).
+    //
+    // ⚑⚑ EVERY ENTRY OF THE SEARCH PATH, AND DEDUPLICATED, SINCE STAGE V. A
+    // project's `shaders/` sits in front of the install's, and the whole point
+    // of that order is that a mod may replace ONE stage of a pair the engine
+    // already ships - so `mesh` has to keep appearing once whether the project
+    // overrides it or not. Offering it twice would put two identical rows in
+    // front of an author and make the combo read as though the two were
+    // different shaders.
     std::vector<std::string> vertexShaderStems;
     std::vector<std::string> fragmentShaderStems;
     {
@@ -573,9 +675,12 @@ int main(int argc, char** argv)
                     out.push_back(name.substr(0, name.size() - suffixLength));
                 }
                 std::sort(out.begin(), out.end());
+                out.erase(std::unique(out.begin(), out.end()), out.end());
             };
-        collectStems(shaderDirectory, ".vert.spv", vertexShaderStems);
-        collectStems(shaderDirectory, ".frag.spv", fragmentShaderStems);
+        for (const std::string& directory : paths.shaderSearchPath) {
+            collectStems(directory, ".vert.spv", vertexShaderStems);
+            collectStems(directory, ".frag.spv", fragmentShaderStems);
+        }
     }
 
     // ⚑⚑⚑ THE VIEWPORT'S MATERIALS ARE THE GAME'S, BUILT FROM `materials.toml`

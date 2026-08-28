@@ -112,14 +112,14 @@ add_dependencies(sol_cook_assets sol_cooker)
 # comments and become something a test can assert (see package.layout).
 # ---------------------------------------------------------------------------
 
-install(TARGETS sol_game RUNTIME DESTINATION .)
+install(TARGETS sol_game RUNTIME DESTINATION . COMPONENT game)
 
 # Authored content. ⚑ `mods/` ships empty-but-present on purpose: listFiles
 # cannot tell a missing directory from an empty one, so a player with no mods
 # and a player whose mods directory vanished would see identical behaviour.
 # Shipping the directory is what makes the layer visible.
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/game/data/ DESTINATION data)
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/game/mods/ DESTINATION mods)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/game/data/ DESTINATION data COMPONENT game)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/game/mods/ DESTINATION mods COMPONENT game)
 
 # ⚑⚑ Generated payload, and the reason it needs a guard rather than a rule.
 # cooked/ and shaders/ are produced INTO the build tree by sol_cook_assets and
@@ -137,10 +137,10 @@ endif()
 foreach(solPayloadName cooked shaders)
     set(solPayloadDir ${CMAKE_BINARY_DIR}/bin/${solPayloadName})
     string(CONFIGURE "${solPayloadGuard}" solPayloadCheck @ONLY)
-    install(CODE "${solPayloadCheck}")
+    install(CODE "${solPayloadCheck}" COMPONENT game)
 endforeach()
-install(DIRECTORY ${CMAKE_BINARY_DIR}/bin/cooked/ DESTINATION cooked)
-install(DIRECTORY ${CMAKE_BINARY_DIR}/bin/shaders/ DESTINATION shaders)
+install(DIRECTORY ${CMAKE_BINARY_DIR}/bin/cooked/ DESTINATION cooked COMPONENT game)
+install(DIRECTORY ${CMAKE_BINARY_DIR}/bin/shaders/ DESTINATION shaders COMPONENT game)
 
 # What a distribution has to carry and this repo did not have: the third-party
 # notices MIT requires to ACCOMPANY A BINARY (third_party/ is not distributed,
@@ -168,7 +168,7 @@ install(FILES
     ${CMAKE_SOURCE_DIR}/LICENSE
     ${CMAKE_SOURCE_DIR}/packaging/THIRD-PARTY.txt
     ${CMAKE_CURRENT_BINARY_DIR}/README.txt
-    DESTINATION .)
+    DESTINATION . COMPONENT game)
 
 # ---------------------------------------------------------------------------
 # Tests over the SHIPPING layout (Phase 22 stage C). Only in a shipping
@@ -187,6 +187,7 @@ if(NOT SOL_DEV_DATA_PATHS)
     add_test(NAME package.install COMMAND ${CMAKE_COMMAND}
         -DSOL_BUILD_DIR=${CMAKE_BINARY_DIR}
         -DSOL_PREFIX=${solPackageTestPrefix}
+        -DSOL_COMPONENT=game
         -P ${CMAKE_SOURCE_DIR}/packaging/install_fresh.cmake)
     set_tests_properties(package.install PROPERTIES FIXTURES_SETUP sol_package_tree)
 

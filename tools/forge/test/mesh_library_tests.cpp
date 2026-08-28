@@ -16,6 +16,7 @@
 #include "list_layout.hpp"
 #include "mesh_library.hpp"
 #include "part_pick.hpp"
+#include "project_paths.hpp"
 #include "status_line.hpp"
 
 #include "sol/assets/def_doc.hpp"
@@ -2507,4 +2508,131 @@ SOL_TEST(forgeSurfaceMoveWritesNoDefaultsForAbsentKeys)
                                            "id = \"sol.ship\"\n"
                                            "mesh = \"ship\"\n"
                                            "material = \"sol.ship\"\n");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 24 stage V: where the tool reads and writes.
+//
+// ⚑⚑⚑ THE BRANCH A PLAYER TAKES IS TESTED FROM A DEV BUILD, WHICH IS THE WHOLE
+// REASON `resolveProjectPaths` TAKES ITS DEV PATHS AS AN ARGUMENT INSTEAD OF
+// READING THE MACROS. Phase 22 found the game's shipping fallback had been
+// written, reviewed and dead for seventeen phases because no configuration ever
+// reached it. Handing the bake in makes both sides of the branch reachable from
+// one suite, in the configuration that always runs.
+// ---------------------------------------------------------------------------
+
+SOL_TEST(forgeProjectPathsPutTheDefsAtTheProjectRoot)
+{
+    // A mod's `models.toml` sits beside `assets/`, not inside a `data/`
+    // (game/mods/README.md). Getting this wrong is invisible until the game
+    // fails to load rows the tool was happily editing.
+    const forge::ProjectPaths paths = forge::projectPathsFor("C:/mods/my-mod", "C:/tools/forge/");
+
+    SOL_CHECK(paths.data == "C:/mods/my-mod/");
+    SOL_CHECK(paths.assets == "C:/mods/my-mod/assets/");
+    SOL_CHECK(paths.cooked == "C:/mods/my-mod/cooked/");
+    SOL_CHECK(paths.inbox == "C:/mods/my-mod/blender-inbox/");
+}
+
+SOL_TEST(forgeProjectPathsNormalizeSeparatorsAndTrailingSlashes)
+{
+    // What an author types, or what a folder dragged onto forge.exe supplies.
+    const forge::ProjectPaths backslashes = forge::projectPathsFor("C:\\mods\\my-mod\\", "C:/tools/forge/");
+    const forge::ProjectPaths bare = forge::projectPathsFor("C:/mods/my-mod", "C:/tools/forge");
+
+    SOL_CHECK(backslashes.data == "C:/mods/my-mod/");
+    SOL_CHECK(backslashes.cooked == "C:/mods/my-mod/cooked/");
+    SOL_CHECK(bare.shaderSearchPath.back() == "C:/tools/forge/shaders/");
+}
+
+SOL_TEST(forgeProjectShadersBeatTheInstallsAndTheInstallIsLast)
+{
+    // The same order and the same reason as the game's (Phase 25 stage E): a
+    // material may name an engine stem and ship only the stage it replaces, and
+    // the renderers that are not materials take the LAST entry.
+    const forge::ProjectPaths paths = forge::projectPathsFor("C:/mods/my-mod", "C:/tools/forge/");
+
+    SOL_CHECK(paths.shaderSearchPath.size() == 2);
+    SOL_CHECK(paths.shaderSearchPath.front() == "C:/mods/my-mod/shaders/");
+    SOL_CHECK(paths.shaderSearchPath.back() == "C:/tools/forge/shaders/");
+}
+
+SOL_TEST(forgeDevPathsKeepCookedAndShadersBesideTheBinary)
+{
+    // A dev tree is three unrelated directories rather than one project: the
+    // repo has no `cooked/` at all, because the build generates it beside the
+    // executable. One shader entry, not two - repeating the install directory
+    // would read the same file twice before failing.
+    const forge::DevPaths dev = {
+        .assets = "C:/repo/assets", .data = "C:/repo/game/data", .inbox = "C:/repo/blender-inbox"};
+    const forge::ProjectPaths paths = forge::devPathsFor(dev, "C:/repo/build/dev/bin/");
+
+    SOL_CHECK(paths.assets == "C:/repo/assets/");
+    SOL_CHECK(paths.data == "C:/repo/game/data/");
+    SOL_CHECK(paths.inbox == "C:/repo/blender-inbox/");
+    SOL_CHECK(paths.cooked == "C:/repo/build/dev/bin/cooked/");
+    SOL_CHECK(paths.shaderSearchPath.size() == 1);
+    SOL_CHECK(paths.shaderSearchPath.front() == "C:/repo/build/dev/bin/shaders/");
+}
+
+SOL_TEST(forgeExplicitProjectBeatsTheBakedDevPaths)
+{
+    // ⚑ In a DEV build, which is what stops the shipping arrangement being a
+    // branch nobody ever runs until a stranger runs it.
+    const forge::DevPaths dev = {
+        .assets = "C:/repo/assets", .data = "C:/repo/game/data", .inbox = "C:/repo/blender-inbox"};
+
+    const forge::ProjectPaths paths =
+        forge::resolveProjectPaths("C:/mods/my-mod", dev, "C:/repo/build/dev/bin/");
+
+    SOL_CHECK(paths.data == "C:/mods/my-mod/");
+    SOL_CHECK(paths.cooked == "C:/mods/my-mod/cooked/");
+}
+
+SOL_TEST(forgeShippingBuildWithNoProjectFallsBackToItsOwnDirectory)
+{
+    // Every define empty is what a release configuration produces now.
+    const forge::ProjectPaths paths = forge::resolveProjectPaths("", forge::DevPaths{}, "C:/tools/forge/");
+
+    SOL_CHECK(paths.data == "C:/tools/forge/");
+    SOL_CHECK(paths.assets == "C:/tools/forge/assets/");
+    SOL_CHECK(paths.shaderSearchPath.front() == "C:/tools/forge/shaders/");
+}
+
+SOL_TEST(forgeHalfBakedDevPathsAreNotTreatedAsADevBuild)
+{
+    // No configuration produces this, and that is the point: resolving one
+    // directory against a repo that is not on this machine is worse than
+    // resolving all of them against the install.
+    const forge::DevPaths partial = {
+        .assets = "C:/repo/assets", .data = "", .inbox = "C:/repo/blender-inbox"};
+
+    const forge::ProjectPaths paths = forge::resolveProjectPaths("", partial, "C:/tools/forge/");
+
+    SOL_CHECK(paths.data == "C:/tools/forge/");
+    SOL_CHECK(paths.assets == "C:/tools/forge/assets/");
+}
+
+SOL_TEST(forgeProjectArgumentAcceptsTheFlagAndABarePath)
+{
+    const std::string flag[] = {"forge.exe", "--project", "C:/mods/my-mod"};
+    const std::string dragged[] = {"forge.exe", "C:/mods/my-mod"};
+
+    SOL_CHECK(forge::parseProjectArgument(flag) == "C:/mods/my-mod");
+    SOL_CHECK(forge::parseProjectArgument(dragged) == "C:/mods/my-mod");
+    SOL_CHECK(forge::parseProjectArgument(std::span<const std::string>{}).empty());
+}
+
+SOL_TEST(forgeProjectArgumentSkipsTheOtherFlagsOperands)
+{
+    // ⚑ The defect this exists to stop: `--open ship` would otherwise read
+    // `ship` as a bare project path, and the tool would come up empty and blame
+    // a directory the author never named. `forge.smoke` passes `--frames 120`.
+    const std::string opened[] = {"forge.exe", "--open", "ship"};
+    const std::string smoke[] = {"forge.exe", "--frames", "120"};
+    const std::string both[] = {"forge.exe", "--frames", "120", "C:/mods/my-mod", "--open", "ship"};
+
+    SOL_CHECK(forge::parseProjectArgument(opened).empty());
+    SOL_CHECK(forge::parseProjectArgument(smoke).empty());
+    SOL_CHECK(forge::parseProjectArgument(both) == "C:/mods/my-mod");
 }

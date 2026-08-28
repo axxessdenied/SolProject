@@ -26,22 +26,31 @@ constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
 } // namespace
 
-bool ForgeView::initialize(rhi::Context& context, rhi::Swapchain& swapchain, const char* shaderDirectory)
+bool ForgeView::initialize(rhi::Context& context,
+                           rhi::Swapchain& swapchain,
+                           std::span<const std::string> shaderSearchPath)
 {
     m_context = &context;
     m_swapchain = &swapchain;
 
+    // ⚑⚑ THE LAST ENTRY, NOT THE FIRST, AND THAT IS THE JUDGEMENT PHASE 25
+    // STAGE E RECORDED. The debug lines and the tonemap have no `[[material]]`
+    // row declaring what their sets and push blocks contain, so a project that
+    // happened to ship a `debug_line.frag.spv` would silently replace a C++
+    // contract with something nothing checks - undefined behaviour caught only
+    // by the validation layer, which is on in this tool and off in the game.
+    // The install's own directory is last by construction (project_paths.hpp).
+    const char* installShaders = shaderSearchPath.back().c_str();
+
     if (!m_meshRenderer.initialize(context) ||
-        !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, shaderDirectory, kFramesInFlight) ||
-        !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat, shaderDirectory)) {
+        !m_debugDraw.initialize(context, kHdrFormat, kDepthFormat, installShaders, kFramesInFlight) ||
+        !m_tonemapRenderer.initialize(context, swapchain.imageFormat(), kDepthFormat, installShaders)) {
         return false;
     }
 
     // The viewport's one material: the stock lambert pair, opaque, which is
     // exactly what this tool drew before the pipeline became data. Every
     // default in `MaterialDef` is that pipeline, so the row says nothing.
-    const std::string shaderPath = shaderDirectory;
-    const std::array<std::string, 1> shaderSearchPath = {shaderPath};
     const std::array<assets::MaterialDef, 1> viewportMaterial = {
         assets::MaterialDef{.id = "forge.viewport", .texture = ""}};
     if (!m_materials.initialize(context,
@@ -205,7 +214,7 @@ void ForgeView::recordCommands(VkCommandBuffer commandBuffer,
                             item.emissive,
                             item.alpha);
     }
-    m_debugDraw.draw(commandBuffer, m_frameIndex, viewProjection);
+    m_debugDraw.draw(commandBuffer, m_frameIndex, extent, viewProjection);
     m_debugDraw.clear();
 
     renderer::endHdrScenePass(commandBuffer, m_hdrColor);
