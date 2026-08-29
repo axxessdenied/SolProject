@@ -811,13 +811,40 @@ int main(int argc, char** argv)
         // what a gate IS): you fly through the frame, SpaceWorld::tickGateCrossing
         // catches the crossing, and the arrival is logged when the tunnel swaps.
 
-        // Autopilot to the selected target (toggles; manual input cancels).
-        if (gameplayPressed(game::Action::Autopilot)) {
-            if (world.autopilotActive()) {
-                world.disengageAutopilot();
-                SOL_LOG_INFO("Autopilot: disengaged");
-            } else if (!world.engageAutopilot()) {
-                SOL_LOG_INFO("Autopilot: no target (or docked)");
+        // Ship commands (Phase 28 stage A). Every one of them toggles on its own
+        // key: pressing the key for the mode you are already in ends it, which
+        // is the behaviour autopilot has had since it existed and the reason a
+        // player never has to remember whether a mode is running.
+        //
+        // ⚑ Cancel is a separate binding as well, and it is not redundant: a
+        // standing order otherwise ends only by docking or by losing its
+        // subject, so without one key that always stops the ship flying itself,
+        // an unbound mode engaged from a menu could not be ended at all.
+        {
+            const auto commandKey = [&](game::Action action, game::CommandMode mode) {
+                if (!gameplayPressed(action)) {
+                    return;
+                }
+                if (world.commandMode() == mode) {
+                    SOL_LOG_INFO("%s: disengaged", game::commandModeName(mode));
+                    world.clearCommand();
+                } else if (!world.engageCommand(mode)) {
+                    SOL_LOG_INFO("%s: no target (or docked)", game::commandModeName(mode));
+                }
+            };
+            commandKey(game::Action::Autopilot, game::CommandMode::Autopilot);
+            commandKey(game::Action::CommandOrbit, game::CommandMode::Orbit);
+            commandKey(game::Action::CommandMatchSpeed, game::CommandMode::MatchSpeed);
+            commandKey(game::Action::CommandKeepDistance, game::CommandMode::KeepDistance);
+            commandKey(game::Action::CommandHold, game::CommandMode::Hold);
+            commandKey(game::Action::CommandFollow, game::CommandMode::Follow);
+            if (gameplayPressed(game::Action::CommandCancel)) {
+                if (world.commandMode() == game::CommandMode::None) {
+                    SOL_LOG_INFO("No command to cancel");
+                } else {
+                    SOL_LOG_INFO("%s: cancelled", game::commandModeName(world.commandMode()));
+                    world.clearCommand();
+                }
             }
         }
 
@@ -1262,7 +1289,7 @@ int main(int argc, char** argv)
         hud.assist = world.shipInput().assist;
         hud.boost = world.shipInput().boost;
         hud.cruise = world.shipInput().cruise;
-        hud.autopilot = world.autopilotActive();
+        hud.commandLabel = game::commandModeChip(world.commandMode());
         switch (cameraMode) {
         case game::CameraMode::Cockpit:
             hud.cameraMode = "COCKPIT";

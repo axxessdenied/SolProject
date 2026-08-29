@@ -51,7 +51,6 @@ enum class Action : std::uint32_t
     CycleContactBack,
     SelectObjective,
     NearestHostile,
-    Autopilot,
     // Phase 8v removed Jump: you fly THROUGH a gate now, so there is no key to
     // press. It is gone rather than left in the Controls screen doing nothing,
     // for the reason game_ui.cpp already gives about "[J] JUMP" — a listed
@@ -61,6 +60,27 @@ enum class Action : std::uint32_t
     ScanPulse,
     Bookmark,
     HailTarget,
+
+    // Commands (Phase 28): manoeuvres the player orders and the ship holds.
+    //
+    // ⚑ Autopilot MOVED HERE from Targeting above, and only its group changed.
+    // Bindings serialize by id string rather than by ordinal (see the Phase 15
+    // note above), so "autopilot" keeps whatever key a player has already put
+    // it on — but the Controls screen now lists it beside its six siblings,
+    // which is the honest place for it once it is one member of an enum rather
+    // than the only thing the ship could be told to do.
+    //
+    // ⚑ Every action in this block MUST stay contiguous and in the same order
+    // as kActions in the .cpp: info() indexes that table by ordinal, and the
+    // Controls screen emits a heading whenever actionGroup() changes as it
+    // walks 0..kActionCount, so a group split in two would print twice.
+    Autopilot,
+    CommandOrbit,
+    CommandMatchSpeed,
+    CommandKeepDistance,
+    CommandHold,
+    CommandFollow,
+    CommandCancel,
 
     // Views & mouse.
     CycleCamera,
@@ -76,12 +96,16 @@ enum class Action : std::uint32_t
 
 constexpr std::uint32_t kActionCount = static_cast<std::uint32_t>(Action::Count);
 
-// The four sections the Controls screen lists, in this order.
+// The five sections the Controls screen lists, in this order. Commands (Phase
+// 28) is the fifth: the four that came before it have no home for "tell the
+// ship to hold this manoeuvre", which is a different kind of thing from
+// picking a target or opening a view.
 enum class ActionGroup : std::uint32_t
 {
     Flight = 0,
     Systems,
     Targeting,
+    Commands,
     Views,
     Count,
 };

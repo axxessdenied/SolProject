@@ -601,7 +601,7 @@ bool SpaceWorld::warpToStationOffset(std::uint32_t station, const core::DVec3& o
     if (station >= spec.stations.size()) {
         return false;
     }
-    m_autopilotActive = false;
+    clearCommand();
     Transform& transform = m_registry.storage<Transform>().get(playerEntityIndex());
     const core::DVec3 position = spec.stations[station].position + offset;
     transform.position = position;
@@ -1030,9 +1030,9 @@ void SpaceWorld::rebuildDynamicTargets()
             // FlyTo completed at its radius while autopilot was still closing,
             // the slot vanished, and the ship carried on to a neutral
             // interceptor four kilometres away without being asked (Phase 8i).
-            if (m_targetIndex == removed && m_autopilotActive) {
-                m_autopilotActive = false;
-                SOL_LOG_INFO("Autopilot: disengaged, the destination is gone");
+            if (m_targetIndex == removed && commandNeedsTarget(m_commandMode)) {
+                SOL_LOG_INFO("%s: disengaged, the destination is gone", commandModeName(m_commandMode));
+                clearCommand();
             }
             if (m_targetIndex > removed) {
                 --m_targetIndex;
@@ -1909,7 +1909,7 @@ bool SpaceWorld::warpTo(const core::DVec3& target, double standoff)
     approach = length2 > 1.0 ? approach * (1.0 / length2) : core::DVec3{0.0, 0.0, 1.0};
     const core::DVec3 parked = target + approach * standoff;
 
-    m_autopilotActive = false;
+    clearCommand();
     Transform& transform = m_registry.storage<Transform>().get(playerEntityIndex());
     transform.position = parked;
     transform.previousPosition = parked;
@@ -3466,7 +3466,7 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     m_hails.clear();
     m_pendingHail = HailRequest{};
     m_answeringHail = HailMemory{};
-    m_autopilotActive = false; // the target list is about to change under it
+    clearCommand(); // the target list is about to change under it
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
     instantiateSystemEntities(spec);
     rebuildSystemSideData(spec);
@@ -3665,7 +3665,7 @@ void SpaceWorld::completeDock(std::uint32_t station, std::uint32_t berth)
     transform.previousPosition = pad;
     m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     m_playerSpawn = pad;
-    m_autopilotActive = false;
+    clearCommand();
     if (m_audio != nullptr) {
         // Docking kills relative motion, so the engine has to go quiet with
         // it - otherwise the hum runs on through every station screen.
@@ -5678,17 +5678,112 @@ sim::ShipState SpaceWorld::shipState() const
     };
 }
 
+const char* commandModeName(CommandMode mode)
+{
+    switch (mode) {
+    case CommandMode::None:
+        return "none";
+    case CommandMode::Autopilot:
+        return "Autopilot";
+    case CommandMode::Orbit:
+        return "Orbit";
+    case CommandMode::MatchSpeed:
+        return "Match Speed";
+    case CommandMode::KeepDistance:
+        return "Keep Distance";
+    case CommandMode::Hold:
+        return "Hold Station";
+    case CommandMode::Follow:
+        return "Follow";
+    }
+    return "none";
+}
+
+const char* commandModeChip(CommandMode mode)
+{
+    switch (mode) {
+    case CommandMode::None:
+        return "";
+    case CommandMode::Autopilot:
+        return "AUTO"; // unchanged: this is the chip the game has always shown
+    case CommandMode::Orbit:
+        return "ORBIT";
+    case CommandMode::MatchSpeed:
+        return "MATCH";
+    case CommandMode::KeepDistance:
+        return "KEEP";
+    case CommandMode::Hold:
+        return "HOLD";
+    case CommandMode::Follow:
+        return "FOLLOW";
+    }
+    return "";
+}
+
 bool SpaceWorld::engageAutopilot()
 {
-    if (isDocked() || (m_targets.empty() && m_spawnedShips.empty())) {
+    return engageCommand(CommandMode::Autopilot);
+}
+
+bool SpaceWorld::engageCommand(CommandMode mode)
+{
+    if (mode == CommandMode::None) {
+        clearCommand();
+        return true;
+    }
+    // The docked guard, asked at the gate rather than only in tick(): a ship on
+    // a pad may not be given a flying order in the first place.
+    if (isDocked()) {
         return false;
     }
-    m_autopilotActive = true;
-    const TargetInfo target = currentTargetInfo();
-    SOL_LOG_INFO("Autopilot: flying to '%s' (arrive %.1f km out)",
-                 target.nav.name.c_str(),
-                 autopilotArrivalRange(target) / 1000.0);
+    if (commandNeedsTarget(mode) && m_targets.empty() && m_spawnedShips.empty()) {
+        return false;
+    }
+
+    const sim::ShipState state = shipState();
+    // Capture the geometry the order was given at, for the two modes whose
+    // meaning IS that geometry. Done before the mode is set so a failure
+    // leaves nothing half-applied.
+    if (mode == CommandMode::Hold) {
+        m_holdPosition = state.position;
+    } else if (mode == CommandMode::MatchSpeed) {
+        m_matchOffset = state.position - currentTargetInfo().nav.position;
+    }
+
+    m_commandMode = mode;
+    if (mode == CommandMode::Autopilot) {
+        const TargetInfo target = currentTargetInfo();
+        SOL_LOG_INFO("Autopilot: flying to '%s' (arrive %.1f km out)",
+                     target.nav.name.c_str(),
+                     autopilotArrivalRange(target) / 1000.0);
+    } else if (mode == CommandMode::Hold) {
+        SOL_LOG_INFO("Command: %s here", commandModeName(mode));
+    } else {
+        // ⚑ The current range is in the line on purpose. These are all
+        // CLOSE-QUARTERS manoeuvres — none of them travels, because none of
+        // them may command the cruise drive — so ordering one against a target
+        // 300,000 km away is a ship that creeps toward it at thruster speed for
+        // the rest of the week. That is honest behaviour and it reads as a bug,
+        // so the log says the distance and the player can see why nothing is
+        // happening. Composing "fly there, THEN orbit" is a real question and
+        // it belongs to the phase's checkpoint, not to a silent guess here.
+        const TargetInfo target = currentTargetInfo();
+        SOL_LOG_INFO("Command: %s '%s' (target %.1f km away)",
+                     commandModeName(mode),
+                     target.nav.name.c_str(),
+                     length(target.nav.position - state.position) / 1000.0);
+    }
     return true;
+}
+
+void SpaceWorld::setOrbitRange(double meters)
+{
+    m_orbitRange = core::clamp(meters, 200.0, 1.0e6);
+}
+
+void SpaceWorld::setKeepDistanceRange(double meters)
+{
+    m_keepDistanceRange = core::clamp(meters, 100.0, 1.0e6);
 }
 
 double SpaceWorld::autopilotArrivalRange(const TargetInfo& target) const
@@ -5770,23 +5865,45 @@ core::DVec3 SpaceWorld::autopilotDestination(const TargetInfo& target, const cor
     return gate->position + gate->axis * (sign * kGateApproachOvershoot);
 }
 
-sim::FlightInput SpaceWorld::autopilotInput()
+sim::FlightInput SpaceWorld::commandInput()
 {
-    // Any manual steering/thrust interrupts (the mapper's assist/cruise
-    // toggles alone don't); the threshold ignores mouse-stick noise.
+    // GUARD 1 — manual deflection. Any real steering/thrust means the player
+    // has reached for the controls (the mapper's assist/cruise toggles alone
+    // don't, deliberately); the threshold ignores mouse-stick noise.
+    //
+    // ⚑⚑ This is the guard the phase had to DECIDE rather than inherit, and it
+    // is where autopilot and a standing order part company. Autopilot is going
+    // somewhere, so your input replaces its plan and it is cancelled. An orbit
+    // is a frame you are flying inside, so your input is layered ON it: you fly
+    // manually while the stick is deflected and the order picks up again the
+    // moment you let go. Nothing is logged for the standing case because it is
+    // not an event — it is the player flying.
     const auto deflected = [](const core::Vec3& v) {
         return std::fabs(v.x) > 0.25f || std::fabs(v.y) > 0.25f || std::fabs(v.z) > 0.25f;
     };
     if (deflected(m_shipInput.linear) || deflected(m_shipInput.angular) || m_shipInput.boost) {
-        m_autopilotActive = false;
+        if (isStandingCommand(m_commandMode)) {
+            return m_shipInput; // overridden while held; the mode survives
+        }
+        m_commandMode = CommandMode::None;
         SOL_LOG_INFO("Autopilot: cancelled by manual input");
         return m_shipInput;
     }
 
+    // GUARD 3 — the target went away (2 is the docked guard, in tick()). Hold
+    // is exempt: it is the one command that is about a place, not a thing, so
+    // losing the target list must not end it.
     const TargetInfo target = currentTargetInfo();
-    if (target.nav.name.empty()) {
-        m_autopilotActive = false;
+    if (commandNeedsTarget(m_commandMode) && target.nav.name.empty()) {
+        if (isStandingCommand(m_commandMode)) {
+            SOL_LOG_INFO("Command: %s ended, target lost", commandModeName(m_commandMode));
+        }
+        m_commandMode = CommandMode::None;
         return m_shipInput;
+    }
+
+    if (isStandingCommand(m_commandMode)) {
+        return standingCommandInput(target);
     }
 
     const double effectiveRange = autopilotArrivalRange(target);
@@ -5795,7 +5912,7 @@ sim::FlightInput SpaceWorld::autopilotInput()
     const core::DVec3 destination = autopilotDestination(target, state.position);
     const double remaining = length(destination - state.position) - effectiveRange;
     if (remaining <= 0.0 && length(state.velocity - targetVelocity) < 25.0) {
-        m_autopilotActive = false;
+        m_commandMode = CommandMode::None;
         SOL_LOG_INFO("Autopilot: arrived at '%s'", target.nav.name.c_str());
         return m_shipInput;
     }
@@ -5824,6 +5941,96 @@ sim::FlightInput SpaceWorld::autopilotInput()
     return input;
 }
 
+namespace {
+
+// Where a follower sits relative to what it is following.
+//
+// ⚑ This is what makes Follow a different order from MatchSpeed rather than a
+// synonym for it. MatchSpeed keeps whatever geometry you had when you gave the
+// order; Follow takes up a station, so it needs a canonical one — and the only
+// frame available from a TargetInfo is the target's own motion, since a nav
+// target carries a position and a velocity but no orientation.
+//
+// Behind and off to one side: dead astern is the single place a follower cannot
+// see past the ship it is following, and it is where the exhaust is. A target
+// that is not moving has no "behind", so the offset falls back to holding the
+// bearing the follower already has — which is the same answer MatchSpeed would
+// give, and is right, because a stationary thing has no shoulder to sit off.
+[[nodiscard]] core::DVec3 followOffset(const core::DVec3& shipPosition,
+                                       const core::DVec3& targetPosition,
+                                       const core::DVec3& targetVelocity,
+                                       double range)
+{
+    const double speed = length(targetVelocity);
+    if (speed < 1.0) {
+        const core::DVec3 bearing = shipPosition - targetPosition;
+        const double distance = length(bearing);
+        return distance > 1.0e-6 ? bearing * (range / distance) : core::DVec3{0.0, 0.0, range};
+    }
+    const core::DVec3 forward = targetVelocity * (1.0 / speed);
+    // Any axis not parallel to the travel direction spans a plane with it; the
+    // 0.9 test keeps the cross product from collapsing when they coincide.
+    const core::DVec3 axis =
+        std::fabs(forward.y) < 0.9 ? core::DVec3{0.0, 1.0, 0.0} : core::DVec3{1.0, 0.0, 0.0};
+    const core::DVec3 side = normalize(cross(forward, axis));
+    return forward * (-range) + side * (range * 0.5);
+}
+
+} // namespace
+
+sim::FlightInput SpaceWorld::standingCommandInput(const TargetInfo& target)
+{
+    const sim::ShipState state = shipState();
+    const sim::ShipTuning& tuning = shipTuning();
+    // A station has no velocity of its own worth matching; a ship does. Same
+    // test autopilotInput has always used to decide whether to close on a
+    // moving mark or a fixed one.
+    const core::DVec3 targetVelocity = target.isShip ? target.velocity : core::DVec3{};
+
+    sim::FlightInput input;
+    switch (m_commandMode) {
+    case CommandMode::Orbit:
+        input = sim::steerOrbit(state, tuning, target.nav.position, targetVelocity, m_orbitRange);
+        break;
+    case CommandMode::MatchSpeed:
+        // Keep the geometry the order was given at. steerFormation is exactly
+        // "hold a world offset from a moving anchor, velocity-matched", which
+        // is what match speed means once you say it precisely.
+        input = sim::steerFormation(state, tuning, target.nav.position, targetVelocity, m_matchOffset);
+        break;
+    case CommandMode::KeepDistance:
+        input = sim::steerPursue(state, tuning, target.nav.position, targetVelocity, m_keepDistanceRange);
+        break;
+    case CommandMode::Follow:
+        // Off the shoulder rather than dead astern: a follower parked exactly
+        // behind is the one place it cannot see past the ship it is following,
+        // and it is also where that ship's exhaust is. The offset is built in
+        // the target's own frame so it stays "off the left shoulder" however
+        // the target is pointing.
+        input = sim::steerFormation(
+            state,
+            tuning,
+            target.nav.position,
+            targetVelocity,
+            followOffset(state.position, target.nav.position, targetVelocity, m_keepDistanceRange));
+        break;
+    case CommandMode::Hold:
+        // Stand on the spot the order was given. A zero anchor velocity is the
+        // whole difference between this and MatchSpeed.
+        input = sim::steerFormation(state, tuning, m_holdPosition, core::DVec3{}, core::DVec3{});
+        break;
+    case CommandMode::None:
+    case CommandMode::Autopilot:
+        return m_shipInput; // unreachable: commandInput routes these away
+    }
+    // Standing orders fly inside the assist envelope, exactly as autopilot
+    // does. Cruise is deliberately never commanded here: every one of these
+    // modes is a close-quarters manoeuvre, and a cruise burn crosses the thing
+    // being orbited in a single tick.
+    input.assist = true;
+    return input;
+}
+
 void SpaceWorld::tick(double dt)
 {
     // The run's own clock. Market intel is stamped against it, so it advances
@@ -5842,7 +6049,10 @@ void SpaceWorld::tick(double dt)
     if (isDocked()) {
         // Parked: flight input is ignored and the ship stays pinned to the
         // pad (collision impulses must not drift a docked ship).
-        m_autopilotActive = false;
+        //
+        // GUARD 2 of commandInput's four. Docking ends every command, standing
+        // ones included: a ship on a pad is not orbiting anything.
+        clearCommand();
         m_appliedInput = sim::FlightInput{};
         m_registry.storage<ShipControl>().get(playerIndex).input = sim::FlightInput{};
         Transform& transform = m_registry.storage<Transform>().get(playerIndex);
@@ -5851,8 +6061,11 @@ void SpaceWorld::tick(double dt)
         transform.previousPosition = pad;
         m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     } else {
-        m_appliedInput = m_autopilotActive ? autopilotInput() : m_shipInput;
-        if (!m_autopilotActive && m_appliedInput.cruise) {
+        m_appliedInput = m_commandMode != CommandMode::None ? commandInput() : m_shipInput;
+        // The manual-cruise guard is about a cruise burn the PLAYER lit, so it
+        // asks whether the ship is flying itself, not whether it is on
+        // autopilot specifically.
+        if (m_commandMode == CommandMode::None && m_appliedInput.cruise) {
             guardManualCruise(dt);
         } else {
             m_cruiseWarningTimer = 0.0;
@@ -7177,10 +7390,13 @@ bool SpaceWorld::loadFrom(const char* path)
     m_announcedContestAttacker = kNoIndex;
     m_contestResolutions.clear();
     m_pendingRespawnSystem = kNoIndex;
-    // A scan in flight does not survive a load, and neither does an autopilot
-    // leg: the target list is rebuilt below, so an engaged autopilot would
-    // wake up flying at whatever now sits in slot 0.
-    m_autopilotActive = false;
+    // A scan in flight does not survive a load, and neither does a command:
+    // the target list is rebuilt below, so an engaged one would wake up flying
+    // at whatever now sits in slot 0. Phase 28 keeps the command mode OUT of
+    // the save deliberately — it is per-session flight state like throttle and
+    // pips, and loading into a ship already flying itself is a worse first
+    // frame than loading into one that is not.
+    clearCommand();
     m_scanActive = false;
     m_scanProgress = 0.0f;
     m_pulseCooldown = 0.0;

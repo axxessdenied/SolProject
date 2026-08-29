@@ -103,7 +103,6 @@ const ActionInfo kActions[] = {
      "nearest_hostile",
      "Nearest Hostile",
      InputChord::ofKey(Key::H)},
-    {Action::Autopilot, ActionGroup::Targeting, "autopilot", "Autopilot", InputChord::ofKey(Key::F)},
     {Action::DockSalvage,
      ActionGroup::Targeting,
      "dock_salvage",
@@ -117,6 +116,32 @@ const ActionInfo kActions[] = {
     // gone - H is Nearest Hostile and C is Cycle Contact, both in this group -
     // and Y is free in the same physical cluster as T and H.
     {Action::HailTarget, ActionGroup::Targeting, "hail_target", "Hail Target", InputChord::ofKey(Key::Y)},
+
+    // Commands (Phase 28). The id strings are new, so these arrive unbound for
+    // an existing player only where the default below is empty — the three that
+    // ship with a key get it on first run like any other default.
+    //
+    // ⚑ Only three of the seven are bound, and that is the phase's own rule:
+    // the common ones ship with a key and the rest ship available. J, K and L
+    // were the letters left — and J in particular is free BECAUSE Phase 8v
+    // removed Jump, which is the enum comment above paying off.
+    {Action::Autopilot, ActionGroup::Commands, "autopilot", "Autopilot", InputChord::ofKey(Key::F)},
+    {Action::CommandOrbit, ActionGroup::Commands, "command_orbit", "Orbit Target", InputChord::ofKey(Key::K)},
+    {Action::CommandMatchSpeed, ActionGroup::Commands, "command_match_speed", "Match Speed", InputChord{}},
+    {Action::CommandKeepDistance,
+     ActionGroup::Commands,
+     "command_keep_distance",
+     "Keep Distance",
+     InputChord{}},
+    {Action::CommandHold, ActionGroup::Commands, "command_hold", "Hold Station", InputChord::ofKey(Key::J)},
+    {Action::CommandFollow, ActionGroup::Commands, "command_follow", "Follow Target", InputChord{}},
+    // The way out. Without it a standing order ends only by docking or by
+    // losing its subject, which would make every one of them a trap.
+    {Action::CommandCancel,
+     ActionGroup::Commands,
+     "command_cancel",
+     "Cancel Command",
+     InputChord::ofKey(Key::L)},
 
     {Action::CycleCamera, ActionGroup::Views, "cycle_camera", "Cycle Camera", InputChord::ofKey(Key::V)},
     {Action::OpenMap, ActionGroup::Views, "open_map", "Map", InputChord::ofKey(Key::M)},
@@ -175,6 +200,8 @@ const char* actionGroupLabel(ActionGroup group)
         return "Systems";
     case ActionGroup::Targeting:
         return "Targeting & Navigation";
+    case ActionGroup::Commands:
+        return "Ship Commands";
     case ActionGroup::Views:
         return "Views & Mouse";
     case ActionGroup::Count:

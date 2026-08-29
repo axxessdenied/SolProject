@@ -125,6 +125,49 @@ struct Projectile
     std::uint32_t shooterIndex = 0; // entity index; never hits its shooter
 };
 
+// What the PLAYER's ship has been told to do for itself (engine plan Phase 28).
+// Distinct from PilotState below, which is what an NPC's Lua brain has decided:
+// these are orders a person gave, and the vocabulary is deliberately one a
+// captain could accept unchanged when Phase 39 arrives.
+//
+// ⚑ Autopilot is the only TERMINATING member — it arrives and disengages. Every
+// other member is STANDING: it holds until it is ended, its subject is lost, or
+// the ship docks. See the engage/clear block on SpaceWorld for why the two
+// kinds answer a stick nudge differently.
+enum class CommandMode : std::uint32_t
+{
+    None = 0,
+    Autopilot,    // fly to the target and stop at the arrival range
+    Orbit,        // circle the target at orbitRange()
+    MatchSpeed,   // hold the current offset from the target, velocity-matched
+    KeepDistance, // settle at keepDistanceRange() from the target
+    Hold,         // stop, and stay where you are
+    Follow,       // sit off the target's shoulder and stay there
+};
+
+// Whether a mode is one the ship holds until told otherwise. The single place
+// this question is answered, because three separate guards ask it.
+[[nodiscard]] constexpr bool isStandingCommand(CommandMode mode)
+{
+    return mode != CommandMode::None && mode != CommandMode::Autopilot;
+}
+
+// Whether a mode is meaningless without something to point it at. Hold is the
+// one command that needs no target: it is about where the ship IS.
+[[nodiscard]] constexpr bool commandNeedsTarget(CommandMode mode)
+{
+    return mode != CommandMode::None && mode != CommandMode::Hold;
+}
+
+// Prose, for logs and menus: "Keep Distance".
+[[nodiscard]] const char* commandModeName(CommandMode mode);
+
+// The HUD chip, and a separate function on purpose: the flight panel drops a
+// chip whole rather than clipping it when the row runs out of width, so these
+// are short and upper-case to match ASSIST / BOOST / CRUISE beside them. ""
+// when nothing is engaged, which is what makes the chip vanish.
+[[nodiscard]] const char* commandModeChip(CommandMode mode);
+
 enum class PilotRole : std::uint32_t
 {
     Fighter = 0,
@@ -1096,14 +1139,53 @@ public:
 
     void tick(double dt);
 
-    // --- Autopilot (playtest QoL): flies the ship to the selected nav target
-    // and stops at the arrival range; any manual steering/thrust cancels it.
-    // Engage fails while docked or with nothing targeted.
+    // --- Ship commands (engine plan Phase 28 stage A).
+    //
+    // ⚑ This used to be a bool called m_autopilotActive, and the phase's whole
+    // shape follows from noticing that the bool was already a one-slot command
+    // system: engage/disengage were its verbs and autopilotInput() already
+    // returned "the FlightInput the ship flies itself with this tick". Widening
+    // it to an enum is what turns one behaviour into a vocabulary.
+    //
+    // ⚑⚑ AUTOPILOT TERMINATES; EVERY OTHER MODE IS STANDING. Autopilot is going
+    // somewhere and disengages on arrival, so a nudge of the stick REPLACES its
+    // plan and cancels it. A standing order is a frame you are flying inside —
+    // nudging the nose to look at something is not a request to stop orbiting —
+    // so it is overridden while the stick is held and resumes when released. It
+    // ends only when explicitly ended, when its subject is lost, or on docking.
+    // That asymmetry is the one genuinely reversible decision in this phase and
+    // the first thing its playtest must ask about.
     bool engageAutopilot();
 
-    void disengageAutopilot() { m_autopilotActive = false; }
+    // Engages any command mode. Fails (returning false, changing nothing) while
+    // docked, or when the mode needs a target and there is none.
+    bool engageCommand(CommandMode mode);
 
-    [[nodiscard]] bool autopilotActive() const { return m_autopilotActive; }
+    void clearCommand() { m_commandMode = CommandMode::None; }
+
+    [[nodiscard]] CommandMode commandMode() const { return m_commandMode; }
+
+    // Kept as-is for the HUD, the pause menu and the two Lua bindings, all of
+    // which ask specifically about autopilot rather than about commands.
+    void disengageAutopilot()
+    {
+        if (m_commandMode == CommandMode::Autopilot) {
+            m_commandMode = CommandMode::None;
+        }
+    }
+
+    [[nodiscard]] bool autopilotActive() const { return m_commandMode == CommandMode::Autopilot; }
+
+    // The parameter a parametrised command takes when it is given without one:
+    // whatever the player last used (phase decision 4), which is what keeps a
+    // bound key and a menu entry doing the identical thing.
+    [[nodiscard]] double orbitRange() const { return m_orbitRange; }
+
+    void setOrbitRange(double meters);
+
+    [[nodiscard]] double keepDistanceRange() const { return m_keepDistanceRange; }
+
+    void setKeepDistanceRange(double meters);
 
     [[nodiscard]] double autopilotArrivalRange() const { return m_autopilotRange; }
 
@@ -1737,9 +1819,20 @@ private:
         return m_registry.storage<PlayerShip>().entityIndices()[0];
     }
 
-    // The autopilot's flight input for this tick, or the player's when it is
-    // off/cancelled; also arrives/disengages as a side effect.
-    [[nodiscard]] sol::sim::FlightInput autopilotInput();
+    // The flight input the commanded ship flies this tick, or the player's when
+    // no command is running or the player has taken over; also arrives,
+    // disengages and drops lost targets as a side effect.
+    //
+    // ⚑ Was autopilotInput(). The four guards it grew between Phase 8 and 8y —
+    // cancel on manual deflection, the docked guard, the target-lost guard, and
+    // the obstacle filter that excludes the destination's own sphere — are each
+    // a shipped bug fix, so every one of them was generalised here rather than
+    // rewritten per mode.
+    [[nodiscard]] sol::sim::FlightInput commandInput();
+
+    // The steering for one standing mode, split out only so commandInput's
+    // guard sequence stays readable as a sequence.
+    [[nodiscard]] sol::sim::FlightInput standingCommandInput(const TargetInfo& target);
 
     sol::ecs::Registry m_registry;
     std::vector<SpawnedShip> m_spawnedShips;
@@ -1768,9 +1861,23 @@ private:
     std::vector<std::uint8_t> m_preyHostile;
     sol::sim::FlightInput m_shipInput;    // player input latch, applied in tick
     sol::sim::FlightInput m_appliedInput; // what the ship flew last tick
-    bool m_autopilotActive = false;
+    CommandMode m_commandMode = CommandMode::None;
     double m_autopilotRange = 1'500.0;                           // arrival standoff, meters (see engage)
     std::vector<sol::sim::AvoidanceSphere> m_autopilotObstacles; // per-tick scratch
+    // Defaults for the parametrised commands, moved by the player and then
+    // reused (phase decision 4). 5 km is the spec's own worked example for an
+    // orbit; 1 km is a station-keeping distance that reads as "off the wing"
+    // rather than "in the way".
+    double m_orbitRange = 5'000.0;
+    double m_keepDistanceRange = 1'000.0;
+    // Where Hold was ordered. Hold is the one command with no target, so the
+    // point it keeps has to be remembered when the order is given — reading the
+    // ship's live position every tick would make it a no-op that drifts.
+    sol::core::DVec3 m_holdPosition;
+    // The offset MatchSpeed was ordered at, in the target's frame at that
+    // moment. Same reasoning as m_holdPosition: "match speed" means keep the
+    // geometry you had, so the geometry is captured on engage.
+    sol::core::DVec3 m_matchOffset;
     ThrusterParticles m_thrusters;
     CombatEffects m_combatEffects;
     GameAudio* m_audio = nullptr; // borrowed; null when there is no device

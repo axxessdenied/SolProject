@@ -409,7 +409,9 @@ void drawFlightPanel(DrawList& list,
         {hud.assist ? "ASSIST" : "MANUAL", hud.assist ? kFriendly : kWarning, true},
         {"BOOST", kWarning, hud.boost},
         {"CRUISE", kAccent, hud.cruise},
-        {"AUTO", rgba(0xCC99FFFFu), hud.autopilot},
+        // Names the mode rather than lighting a lamp: with seven of them, "AUTO"
+        // would be true of six things the ship does very differently.
+        {hud.commandLabel, rgba(0xCC99FFFFu), hud.commandLabel[0] != '\0'},
     };
     float x = left;
     for (const Chip& chip : chips) {

@@ -16,6 +16,7 @@ using sol::sim::ShipTuning;
 using sol::sim::steerAimAndMove;
 using sol::sim::steerEvade;
 using sol::sim::steerFormation;
+using sol::sim::steerOrbit;
 using sol::sim::steerPursue;
 using sol::sim::steerTravel;
 using sol::sim::stepShipFlight;
@@ -120,6 +121,88 @@ SOL_TEST(steering_formation_holds_slot_on_moving_anchor)
     const DVec3 anchorEnd = anchorStart + anchorVelocity * 60.0;
     SOL_CHECK(length(state.position - (anchorEnd + offset)) < 40.0);
     SOL_CHECK(length(state.velocity - anchorVelocity) < 10.0);
+}
+
+SOL_TEST(steering_orbit_settles_onto_the_ring_and_goes_round_it)
+{
+    const ShipTuning tuning;
+    ShipState state;
+    state.position = {0.0, 0.0, 3'000.0}; // well outside a 1 km ring
+    const DVec3 center{0.0, 0.0, 0.0};
+    constexpr double kRadius = 1'000.0;
+
+    // ⚑ The sweep is ACCUMULATED, one second at a time, and that is not
+    // fussiness. The first version of this test compared the start bearing with
+    // the end bearing — which is sampling a periodic signal at a single point.
+    // The orbit's period here is 2*pi*1000/122.5 = 51 s, so at the 120 s mark
+    // the ship is 2.34 revolutions round and sitting almost back where it
+    // started: the endpoint check failed while the code was doing exactly what
+    // it should. An endpoint cannot measure a thing that goes in circles.
+    double sweptRadians = 0.0;
+    DVec3 previousBearing = normalize(state.position - center);
+    for (int second = 0; second < 120; ++second) {
+        simulate(state, tuning, 1.0, [&](const ShipState& s, double) {
+            return steerOrbit(s, tuning, center, {}, kRadius);
+        });
+        const DVec3 bearing = normalize(state.position - center);
+        sweptRadians += std::acos(std::clamp(dot(previousBearing, bearing), -1.0, 1.0));
+        previousBearing = bearing;
+    }
+
+    // On the ring...
+    const double distance = length(state.position - center);
+    SOL_CHECK(std::abs(distance - kRadius) < 150.0);
+    // ...still moving, rather than having parked on it. A "hold at range" that
+    // stops is steerPursue; the whole difference here is that it circles.
+    SOL_CHECK(length(state.velocity) > 40.0);
+    // ...and it has been round at least once, measured as arc actually flown.
+    SOL_CHECK(sweptRadians > 6.28);
+    // ...with the nose kept on what it is orbiting, which is what makes an
+    // orbit a firing position rather than just a circle.
+    SOL_CHECK(aimError(state, center) < 0.3);
+}
+
+SOL_TEST(steering_orbit_holds_a_moving_centre)
+{
+    const ShipTuning tuning;
+    ShipState state;
+    state.position = {1'200.0, 0.0, 0.0};
+    const DVec3 centerStart{0.0, 0.0, 0.0};
+    const DVec3 centerVelocity{30.0, 0.0, -45.0};
+    constexpr double kRadius = 800.0;
+
+    simulate(state, tuning, 120.0, [&](const ShipState& s, double t) {
+        return steerOrbit(s, tuning, centerStart + centerVelocity * t, centerVelocity, kRadius);
+    });
+
+    const DVec3 centerEnd = centerStart + centerVelocity * 120.0;
+    SOL_CHECK(std::abs(length(state.position - centerEnd) - kRadius) < 200.0);
+}
+
+SOL_TEST(steering_orbit_flies_a_tight_ring_slower_than_a_wide_one)
+{
+    // ⚑ The centripetal bound, and the reason it exists. A ring small enough
+    // that sqrt(0.5 * lateralAccel * r) falls under the envelope must be flown
+    // SLOWER, or the command is asking for a turn the thrusters cannot make and
+    // the ship answers by spiralling out — which reads as a broken orbit and is
+    // really an impossible order.
+    const ShipTuning tuning;
+    const auto settledSpeed = [&](double radius) {
+        ShipState state;
+        state.position = {radius, 0.0, 0.0};
+        simulate(state, tuning, 120.0, [&](const ShipState& s, double) {
+            return steerOrbit(s, tuning, {}, {}, radius);
+        });
+        return length(state.velocity);
+    };
+
+    // 400 m: sqrt(0.5 * 30 * 400) = 77 m/s, under the 0.7 * 220 = 154 envelope.
+    // 6 km:  sqrt(0.5 * 30 * 6000) = 300 m/s, so the envelope binds instead.
+    const double tight = settledSpeed(400.0);
+    const double wide = settledSpeed(6'000.0);
+    SOL_CHECK(tight < wide);
+    SOL_CHECK(tight < 110.0); // bounded by the turn, not by the envelope
+    SOL_CHECK(wide > 120.0);  // bounded by the envelope
 }
 
 SOL_TEST(steering_travel_phases)

@@ -2,6 +2,7 @@
 
 #include "sol/sim/weapons.hpp" // segmentHitsSphere: what is in the way, and how far
 
+#include <algorithm>
 #include <cmath>
 
 namespace sol::sim {
@@ -226,6 +227,60 @@ FlightInput steerFormation(const ShipState& state,
     // Look where the formation is going once settled, at the slot until then.
     const DVec3 aimPoint = slot + anchorVelocity * 2.0;
     return steerAimAndMove(state, tuning, aimPoint, desiredVelocity);
+}
+
+FlightInput steerOrbit(const ShipState& state,
+                       const ShipTuning& tuning,
+                       const DVec3& centerPosition,
+                       const DVec3& centerVelocity,
+                       double radius)
+{
+    const DVec3 toShip = state.position - centerPosition;
+    const double distance = length(toShip);
+    // Sitting exactly on the centre has no radial direction, so there is no
+    // circle to be on. Pick an axis and let the radial correction below push
+    // out to the ring; the next tick has a real geometry to work with.
+    const DVec3 radial = distance > 1.0e-6 ? toShip * (1.0 / distance) : DVec3{1.0, 0.0, 0.0};
+
+    // The plane the ship is already turning in (see the header): relative
+    // velocity minus its radial part.
+    const DVec3 relativeVelocity = state.velocity - centerVelocity;
+    DVec3 tangent = relativeVelocity - radial * dot(relativeVelocity, radial);
+    if (length(tangent) > 1.0e-3) {
+        tangent = normalize(tangent);
+    } else {
+        // No usable tangential motion. Any axis not parallel to the radial
+        // spans a plane with it; the 0.9 test is what keeps the cross product
+        // from collapsing when the radial happens to BE that axis.
+        const DVec3 axis = std::fabs(radial.y) < 0.9 ? DVec3{0.0, 1.0, 0.0} : DVec3{1.0, 0.0, 0.0};
+        tangent = normalize(cross(radial, axis));
+    }
+
+    // How fast this hull may be carried around a circle this tight before the
+    // lateral thrusters stop being able to bend the path (v^2/r <= a), and how
+    // much of the envelope the tangential leg is allowed to spend.
+    //
+    // ⚑ HALF the lateral acceleration, for the same reason brakingSpeedLimit
+    // takes half the deceleration: at the full figure the commanded speed needs
+    // every newton the thrusters have just to hold the curve, leaving nothing
+    // to correct the radius with — so the ship rides the ring at exactly the
+    // limit and any disturbance walks it outward with no authority to come back.
+    const double envelopeSpeed = static_cast<double>(tuning.maxSpeed) * 0.7;
+    const double centripetalSpeed =
+        std::sqrt(std::max(0.0, 0.5 * static_cast<double>(tuning.lateralAccel) * radius));
+    const double tangentialSpeed = std::min(envelopeSpeed, centripetalSpeed);
+
+    // Close the radius error the same proportional way steerPursue closes a
+    // range error, so the two commands settle onto their marks alike. The
+    // remaining third of the envelope is what this is allowed to spend.
+    const double radialBudget = static_cast<double>(tuning.maxSpeed) * 0.3;
+    const double radialSpeed = core::clamp((radius - distance) * 0.5, -radialBudget, radialBudget);
+
+    const DVec3 desiredVelocity = centerVelocity + tangent * tangentialSpeed + radial * radialSpeed;
+    // Nose on the thing being orbited rather than along the path: an orbit is
+    // a firing position and a sensor position, and the tangential leg becomes
+    // a strafe the assist envelope already knows how to fly.
+    return steerAimAndMove(state, tuning, centerPosition, desiredVelocity);
 }
 
 void avoidObstacles(DVec3& desiredVelocity,

@@ -110,6 +110,32 @@ inline constexpr double kPathClearance = 100.0;
                                          const core::DVec3& anchorVelocity,
                                          const core::DVec3& worldOffset);
 
+// Circle a moving centre at `radius` metres, nose kept on it (engine plan
+// Phase 28 stage A). The one steering primitive that phase adds: *match speed*
+// and *maintain distance* are steerFormation and steerPursue already, but
+// nothing in here orbited anything.
+//
+// ⚑ The orbit PLANE is the one the ship is already moving in, not an authored
+// one. Relative velocity with its radial component removed is the tangential
+// part, and that is the plane — so an ordered orbit continues the approach the
+// player was already flying instead of snapping to some global-axis circle.
+// When there is no tangential motion to read (a ship sitting still, or flying
+// straight down the radial) any perpendicular will do and one tick of drift
+// gives the next call a real plane to keep.
+//
+// ⚑ The tangential speed is bounded by TWO things and the second is the
+// interesting one: the assist envelope (a fraction of maxSpeed, leaving room
+// for the radial correction to be heard) and `sqrt(lateralAccel * radius)`,
+// which is the fastest this hull can actually be pushed around a circle that
+// tight. Without the second bound a small radius is a command the ship cannot
+// hold, and it answers by spiralling out — the failure looks like a bug in the
+// orbit and is really a request for an impossible centripetal acceleration.
+[[nodiscard]] FlightInput steerOrbit(const ShipState& state,
+                                     const ShipTuning& tuning,
+                                     const core::DVec3& centerPosition,
+                                     const core::DVec3& centerVelocity,
+                                     double radius);
+
 // Deflects desiredVelocity away from any obstacle the current velocity would
 // carry the ship near within lookahead seconds. Apply before steerAimAndMove.
 void avoidObstacles(core::DVec3& desiredVelocity,

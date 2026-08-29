@@ -119,7 +119,16 @@ struct FlightHud
     bool assist = true;
     bool boost = false;
     bool cruise = false;
-    bool autopilot = false;
+    // What the ship has been told to do for itself, or "" when it is being
+    // flown by hand (Phase 28). Was `bool autopilot`, and the widening is the
+    // same one the game layer made: with seven modes instead of one, a lit
+    // lamp can no longer say WHICH. The chip prints this verbatim.
+    //
+    // ⚑ A label rather than an enum on purpose. CommandMode is a game-layer
+    // noun and the engine has no business knowing what "orbit" means — the same
+    // split input_actions.hpp draws for Action, and the reason `cameraMode` and
+    // `targetName` beside it are strings too.
+    const char* commandLabel = "";
     const char* cameraMode = "";
     const char* targetName = "";
     double targetDistanceMeters = 0.0;
