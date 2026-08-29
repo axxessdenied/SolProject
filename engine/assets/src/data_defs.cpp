@@ -1027,18 +1027,26 @@ bool parseStation(const TomlValue& table,
 // `[[system.planet]]` lands inside the `[[system]]` above it exactly the way
 // standard TOML says it should. No def in the tree had ever used one, so this
 // was a supported-but-unexercised path until `toml_tests` started exercising it.
-bool parseSystem(const TomlValue& table,
-                 const char* sourceName,
-                 std::vector<SystemDef>& out,
-                 std::string* outError)
+//
+// ⚑⚑ SPLIT FROM `parseSystem` IN STAGE C BECAUSE A CONSTELLATION MEMBER IS THE
+// SAME ROW READ IN A DIFFERENT PLACE. `parseSystem` merges into the database;
+// a member is read into its group and merged with it. `isMember` changes
+// exactly one thing - a member may not carry a placement rule of its own,
+// because its group carries one - and that is refused by name rather than left
+// to `rejectUnknownKeys` to call "unknown key", which would be true and useless.
+bool readSystemDef(const TomlValue& table,
+                   const char* sourceName,
+                   const std::string& contextLead,
+                   bool isMember,
+                   SystemDef& def,
+                   std::string* outError)
 {
-    SystemDef def;
     def.source = sourceName;
 
-    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    FieldReader reader{.table = table, .context = contextLead, .outError = outError};
     reader.requireString("id", def.id);
     if (!reader.failed) {
-        reader.context = std::string(sourceName) + ": system '" + def.id + "'";
+        reader.context = contextLead + ": system '" + def.id + "'";
     }
     reader.optionalString("placement", def.placement);
     reader.optionalString("name", def.name, &def.hasName);
@@ -1060,6 +1068,21 @@ bool parseSystem(const TomlValue& table,
                               "secret",
                               "planet",
                               "station"});
+
+    // ⚑ A MEMBER IS PLACED BY ITS GROUP, AND SAYING SO IS BETTER THAN THE THREE
+    // KEYS SIMPLY NOT EXISTING. An author who writes `placement` on a member is
+    // not making a typo, they are asking a question - "can this one be somewhere
+    // else?" - and the answer is that sentence, not "unknown key".
+    if (!reader.failed && isMember) {
+        for (const char* key : {"placement", "at_system", "jumps_from"}) {
+            if (table.find(key) != nullptr) {
+                reader.fail(std::string("'") + key +
+                            "' is not a constellation member's to write: the whole group takes one "
+                            "placement rule, on the [[constellation]] itself");
+                break;
+            }
+        }
+    }
 
     // `jumps_from = { system = "…", min = N, max = M }`. Read by hand for the
     // same reason the nested arrays below are: it is the only inline table in
@@ -1207,6 +1230,141 @@ bool parseSystem(const TomlValue& table,
     if (!reader.failed && def.hasPrimaryPlanet && def.planets.empty()) {
         reader.fail("'primary_planet' needs [[system.planet]] rows to point into");
     }
+    return !reader.failed;
+}
+
+bool parseSystem(const TomlValue& table,
+                 const char* sourceName,
+                 std::vector<SystemDef>& out,
+                 std::string* outError)
+{
+    SystemDef def;
+    if (!readSystemDef(table, sourceName, sourceName, false, def, outError)) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
+// One `[[constellation]]`: places somebody put somewhere TOGETHER (Phase 29
+// stage C).
+//
+// ⚑⚑⚑ THE NESTING GOES THREE DEEP AND THAT WAS CHECKED RATHER THAN HOPED.
+// `TomlParser::descend` walks every header segment but the last, following an
+// array of tables to its final element each time - so `[[constellation.system]]`
+// lands in the last constellation and `[[constellation.system.planet]]` lands in
+// the last system inside it, to any depth. Stage A exercised two levels for the
+// first time in this project's history; this is the first three.
+bool parseConstellation(const TomlValue& table,
+                        const char* sourceName,
+                        std::vector<ConstellationDef>& out,
+                        std::string* outError)
+{
+    ConstellationDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": constellation '" + def.id + "'";
+    }
+    reader.optionalString("placement", def.placement);
+    reader.rejectUnknownKeys({"id", "placement", "system", "link"});
+
+    // ⚑⚑ ONE LEGAL VALUE, AND THE REFUSAL CARRIES THE REASON. The other three
+    // rules REPLACE a system the generator already made; a group of three
+    // cannot replace one node as a unit, and reading `random` as "near a random
+    // system" for a group while it means "become a random system" for a system
+    // is two rules wearing one word. The key exists so this can be said.
+    if (!reader.failed && def.placement != "anywhere") {
+        reader.fail("'placement' must be \"anywhere\", not \"" + def.placement +
+                    "\": the other rules replace a system the generator already made, and a group "
+                    "cannot replace one node as a unit");
+    }
+
+    if (const TomlValue* members = table.find("system"); members != nullptr && !reader.failed) {
+        if (!members->isArray()) {
+            reader.fail("'system' must be an array of tables ([[constellation.system]])");
+        }
+        for (std::size_t i = 0; !reader.failed && i < members->size(); ++i) {
+            const TomlValue& row = (*members)[i];
+            if (!row.isTable()) {
+                reader.fail("'system' must be an array of tables ([[constellation.system]])");
+                break;
+            }
+            SystemDef member;
+            if (!readSystemDef(row, sourceName, reader.context, true, member, outError)) {
+                reader.failed = true;
+                break;
+            }
+            def.members.push_back(std::move(member));
+        }
+    }
+    // A group of one is a system, and a group of none is nothing. Refused
+    // rather than tolerated because both are almost certainly a file that lost
+    // a row, and both would otherwise place silently.
+    if (!reader.failed && def.members.size() < 2) {
+        reader.fail("a constellation needs at least two [[constellation.system]] rows; " +
+                    std::string(def.members.size() == 1 ? "one place on its own is a [[system]]"
+                                                        : "this one declares none"));
+    }
+
+    if (const TomlValue* links = table.find("link"); links != nullptr && !reader.failed) {
+        if (!links->isArray()) {
+            reader.fail("'link' must be an array of tables ([[constellation.link]])");
+        }
+        for (std::size_t i = 0; !reader.failed && i < links->size(); ++i) {
+            const TomlValue& row = (*links)[i];
+            if (!row.isTable()) {
+                reader.fail("'link' must be an array of tables ([[constellation.link]])");
+                break;
+            }
+            ConstellationLinkDef link;
+            FieldReader inner{
+                .table = row, .context = reader.context + " link " + std::to_string(i), .outError = outError};
+            inner.requireString("from", link.fromId);
+            inner.requireString("to", link.toId);
+            inner.rejectUnknownKeys({"from", "to"});
+            if (!inner.failed && link.fromId == link.toId) {
+                inner.fail("'from' and 'to' name the same system; a lane needs two ends");
+            }
+            // ⚑ BOTH ENDS MUST BE THIS GROUP'S OWN MEMBERS. A lane out of the
+            // constellation is a gate, and which gates a system gets is the
+            // generator's to decide - that is exactly the "authored layout
+            // contradicts the gate graph" that decisions/018 refused.
+            const std::string* ends[2] = {&link.fromId, &link.toId};
+            const char* endNames[2] = {"from", "to"};
+            for (int end = 0; end < 2 && !inner.failed; ++end) {
+                bool isMember = false;
+                for (const SystemDef& member : def.members) {
+                    if (member.id == *ends[end]) {
+                        isMember = true;
+                        break;
+                    }
+                }
+                if (!isMember) {
+                    inner.fail(std::string("'") + endNames[end] + "' names '" + *ends[end] +
+                               "', which is not a [[constellation.system]] of this constellation");
+                }
+            }
+            for (const ConstellationLinkDef& existing : def.links) {
+                if (inner.failed) {
+                    break;
+                }
+                if ((existing.fromId == link.fromId && existing.toId == link.toId) ||
+                    (existing.fromId == link.toId && existing.toId == link.fromId)) {
+                    inner.fail("'" + link.fromId + "' and '" + link.toId +
+                               "' are already linked; one lane is one lane");
+                }
+            }
+            if (inner.failed) {
+                reader.failed = true;
+                break;
+            }
+            def.links.push_back(std::move(link));
+        }
+    }
+
     if (reader.failed) {
         return false;
     }
@@ -1298,6 +1456,12 @@ void DefDatabase::clear()
     m_factions.clear();
     m_commodities.clear();
     m_stations.clear();
+    // ⚑ `m_systems` was missed when stage A added it, and `m_constellations`
+    // would have been missed the same way. Nothing calls `clear()` today, which
+    // is exactly why the omission was invisible - so it is fixed rather than
+    // left as a trap for the first caller.
+    m_systems.clear();
+    m_constellations.clear();
     m_modules.clear();
     m_crew.clear();
     m_sounds.clear();
@@ -1327,6 +1491,7 @@ bool DefDatabase::mergeToml(const char* text,
     std::vector<CommodityDef> commodities = m_commodities;
     std::vector<StationDef> stations = m_stations;
     std::vector<SystemDef> systems = m_systems;
+    std::vector<ConstellationDef> constellations = m_constellations;
     std::vector<ModuleDef> modules = m_modules;
     std::vector<CrewDef> crew = m_crew;
     std::vector<SoundDef> sounds = m_sounds;
@@ -1376,6 +1541,11 @@ bool DefDatabase::mergeToml(const char* text,
                 return parseSystem(t, s, *static_cast<std::vector<SystemDef>*>(v), e);
             };
             target = &systems;
+        } else if (key == "constellation") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseConstellation(t, s, *static_cast<std::vector<ConstellationDef>*>(v), e);
+            };
+            target = &constellations;
         } else if (key == "module") {
             parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
                 return parseModule(t, s, *static_cast<std::vector<ModuleDef>*>(v), e);
@@ -1410,7 +1580,7 @@ bool DefDatabase::mergeToml(const char* text,
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
                             "' (expected ship, weapon, faction, commodity, station, system, "
-                            "module, crew, sound, model, material, or role)";
+                            "constellation, module, crew, sound, model, material, or role)";
             }
             return false;
         }
@@ -1435,6 +1605,7 @@ bool DefDatabase::mergeToml(const char* text,
     m_commodities = std::move(commodities);
     m_stations = std::move(stations);
     m_systems = std::move(systems);
+    m_constellations = std::move(constellations);
     m_modules = std::move(modules);
     m_crew = std::move(crew);
     m_sounds = std::move(sounds);
@@ -1550,24 +1721,66 @@ bool DefDatabase::validateFactions(std::string* outError) const
 
 bool DefDatabase::validateSystems(std::string* outError) const
 {
-    const auto refuse = [&](const SystemDef& system, const std::string& message) {
+    // ⚑⚑ EVERY AUTHORED SYSTEM IN THE DATABASE, STANDALONE ROWS AND
+    // CONSTELLATION MEMBERS ALIKE (Phase 29 stage C). A member is a system - it
+    // names a faction, it names station archetypes, it can collide with another
+    // system's name - so validating only `m_systems` would leave exactly half of
+    // an authored galaxy unchecked, and the half a mod is most likely to break.
+    struct Row
+    {
+        const SystemDef* system = nullptr;
+        const ConstellationDef* group = nullptr; // null for a standalone [[system]]
+    };
+
+    std::vector<Row> rows;
+    rows.reserve(m_systems.size() + m_constellations.size() * 3);
+    for (const SystemDef& system : m_systems) {
+        rows.push_back({&system, nullptr});
+    }
+    for (const ConstellationDef& group : m_constellations) {
+        for (const SystemDef& member : group.members) {
+            rows.push_back({&member, &group});
+        }
+    }
+
+    const auto refuse = [&](const Row& row, const std::string& message) {
         if (outError != nullptr) {
-            *outError = system.source + ": system '" + system.id + "': " + message;
+            *outError = row.system->source +
+                        (row.group != nullptr ? ": constellation '" + row.group->id + "'" : "") +
+                        ": system '" + row.system->id + "': " + message;
         }
         return false;
     };
-    for (const SystemDef& system : m_systems) {
+    // Is this id one a `jumps_from` may anchor on, and is it available yet?
+    // ⚑ A CONSTELLATION MEMBER IS ALWAYS AVAILABLE, WHATEVER ORDER THE FILE
+    // WAS WRITTEN IN, because a constellation cannot fail to be placed - it
+    // makes its own nodes - so the generator resolves every member before any
+    // rule runs. Def order only constrains anchors that could themselves fail.
+    const auto isConstellationMember = [&](const std::string& id) {
+        for (const ConstellationDef& group : m_constellations) {
+            for (const SystemDef& member : group.members) {
+                if (member.id == id) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const Row& row = rows[i];
+        const SystemDef& system = *row.system;
         // ⚑ REFUSE rather than warn, per decision 3 and the `validateRoles`
         // precedent: warn-and-fall-back is right where a real thing is still
         // there to stand in, and here there is none. A system whose faction was
         // removed by a mod would silently become lawless, which is a different
         // place from the one the campaign was written against.
         if (system.hasFaction && findFaction(system.factionId.c_str()) == nullptr) {
-            return refuse(system, "'faction' names '" + system.factionId + "', which is not a [[faction]]");
+            return refuse(row, "'faction' names '" + system.factionId + "', which is not a [[faction]]");
         }
         for (const AuthoredStationDef& station : system.stations) {
             if (findStation(station.stationId.c_str()) == nullptr) {
-                return refuse(system,
+                return refuse(row,
                               "station '" + station.name + "' names archetype '" + station.stationId +
                                   "', which is not a [[station]]");
             }
@@ -1580,12 +1793,11 @@ bool DefDatabase::validateSystems(std::string* outError) const
         if (system.placement == "at_system") {
             const FactionDef* faction = findFaction(system.atSystemFactionId.c_str());
             if (faction == nullptr) {
-                return refuse(system,
-                              "'at_system' names '" + system.atSystemFactionId +
-                                  "', which is not a [[faction]]");
+                return refuse(
+                    row, "'at_system' names '" + system.atSystemFactionId + "', which is not a [[faction]]");
             }
             if (faction->kind != FactionKind::Major) {
-                return refuse(system,
+                return refuse(row,
                               "'at_system' names '" + system.atSystemFactionId +
                                   "', which is a clan template and holds no capital");
             }
@@ -1597,32 +1809,50 @@ bool DefDatabase::validateSystems(std::string* outError) const
         // behind it and catches the case this cannot: an anchor that parsed
         // fine and then failed its own placement rule.
         if (system.placement == "jumps_from") {
-            bool anchorIsEarlier = false;
-            for (const SystemDef& other : m_systems) {
-                if (&other == &system) {
-                    break; // reached this row; anything after it is declared later
-                }
-                if (other.id == system.jumpsFromSystemId) {
-                    anchorIsEarlier = true;
-                    break;
+            bool anchorIsAvailable = isConstellationMember(system.jumpsFromSystemId);
+            for (std::size_t j = 0; !anchorIsAvailable && j < i; ++j) {
+                if (rows[j].system->id == system.jumpsFromSystemId) {
+                    anchorIsAvailable = true;
                 }
             }
-            if (!anchorIsEarlier) {
-                const bool existsAtAll = findSystem(system.jumpsFromSystemId.c_str()) != nullptr;
-                return refuse(system,
+            if (!anchorIsAvailable) {
+                bool existsAtAll = false;
+                for (const Row& other : rows) {
+                    if (other.system->id == system.jumpsFromSystemId) {
+                        existsAtAll = true;
+                        break;
+                    }
+                }
+                return refuse(row,
                               "'jumps_from' anchors on '" + system.jumpsFromSystemId + "', which is " +
                                   (system.jumpsFromSystemId == system.id ? "this system itself"
                                    : existsAtAll ? "declared after it; an anchor must come first"
                                                  : "not a [[system]]"));
             }
         }
+        // ⚑ TWO SYSTEMS CANNOT SHARE AN ID, AND ONLY THIS LAYER CAN SAY SO.
+        // `mergeDef` keeps ids unique WITHIN a list by letting a later layer
+        // replace an earlier one - but a constellation's members are merged with
+        // their group rather than one at a time, so two members of one group, or
+        // a member and a `[[system]]`, can both carry the same id and both
+        // survive. `sol.system_by_id` would then answer with whichever the
+        // generator reached first, which is not an answer.
+        for (std::size_t j = 0; j < i; ++j) {
+            if (rows[j].system->id == system.id) {
+                return refuse(row,
+                              "'id' is already used by another authored system" +
+                                  std::string(rows[j].group != nullptr
+                                                  ? " in constellation '" + rows[j].group->id + "'"
+                                                  : ""));
+            }
+        }
         // Two authored systems fighting over one node is not resolvable in a
         // way either author would recognise as theirs, so it is a refusal here
         // rather than a rule about who wins.
-        for (const SystemDef& other : m_systems) {
-            if (&other != &system && other.hasName && system.hasName && other.name == system.name &&
-                other.id != system.id) {
-                return refuse(system, "'name' collides with system '" + other.id + "'");
+        for (const Row& other : rows) {
+            if (other.system != &system && other.system->hasName && system.hasName &&
+                other.system->name == system.name && other.system->id != system.id) {
+                return refuse(row, "'name' collides with system '" + other.system->id + "'");
             }
         }
     }

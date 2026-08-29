@@ -135,6 +135,46 @@ struct AuthoredSystem
     std::vector<AuthoredStation> stations;
 };
 
+// One internal jump lane inside a constellation, by MEMBER index rather than
+// by system index: the members do not have system indices until the group has
+// been appended, and which indices they get is the generator's business.
+//
+// ⚑ Deliberately not `GateLink`, which is structurally identical and means
+// something else. A reader who sees `GateLink` in an authored struct will read
+// its fields as system indices, and they are not.
+struct AuthoredConstellationLink
+{
+    std::uint32_t a = 0;
+    std::uint32_t b = 0;
+};
+
+// A group of systems placed together, keeping the links their author drew
+// between them (Phase 29 stage C, decisions/018).
+//
+// ⚑⚑⚑ A CONSTELLATION IS AN INSERTION AND ONLY AN INSERTION, AND THAT IS
+// FORCED THE SAME WAY THE TWO PASSES WERE. Three of the four placement rules
+// REPLACE an existing node; a group cannot replace one node as a unit, and
+// making `random` mean "near a randomly chosen system" for a group while it
+// means "become a randomly chosen system" for a system is two rules wearing
+// one word. So the group is appended - which is also the only way its internal
+// links can exist, since a replacement inherits the neighbours the generator
+// already chose and declares none of its own.
+//
+// ⚑⚑ `AuthoredSystem::placement` IS UNREAD FOR A MEMBER. The group carries the
+// placement; the def layer refuses a member that writes one, so a member never
+// arrives here carrying a rule that would be silently ignored.
+struct AuthoredConstellation
+{
+    std::string id; // the group's own id; names it in a refusal
+    std::vector<AuthoredSystem> members;
+    // Internal lanes, seeded into `Galaxy::links` before Prim runs. Empty is
+    // not "no links": the generator chains the members in declaration order,
+    // because a group with no lanes between its members is not a group. The
+    // default lives there rather than in the def layer so that a hand-built
+    // `GalaxyParams` means the same thing a hand-written file does.
+    std::vector<AuthoredConstellationLink> links;
+};
+
 struct GalaxyParams
 {
     std::uint64_t seed = 0;
@@ -174,6 +214,10 @@ struct GalaxyParams
     // order their placement rules resolve in. Empty is the pre-29 galaxy
     // exactly, which is what `game.unit`'s golden holds this to.
     std::vector<AuthoredSystem> authoredSystems;
+    // Groups placed as a unit (Phase 29 stage C). Their members are appended
+    // AFTER every `anywhere` system, contiguously and in def order, so a
+    // constellation grows the galaxy exactly the way an insertion does.
+    std::vector<AuthoredConstellation> constellations;
 };
 
 struct PlanetSpec

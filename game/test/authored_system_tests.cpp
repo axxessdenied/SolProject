@@ -331,3 +331,178 @@ SOL_TEST(a_stage_a_file_still_places_after_stage_b)
     SOL_CHECK(world.galaxy().systems.size() == 80);
     SOL_CHECK(findAuthored(world.galaxy(), "test.harrow") != nullptr);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 29 stage C: a constellation, across the same seam.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A five-member group against the REAL `game/data`, so the faction id and the
+// archetype id are the ones the shipped galaxy actually has - and a STAR rather
+// than a chain, because members land in a tight cluster and proximity draws a
+// near-complete mesh over any small group by accident. A shape proximity does
+// not draw is the only shape that can prove a lane was seeded.
+constexpr const char* kStageCAuthored = R"(
+[[constellation]]
+id = "test.deadfall"
+
+[[constellation.system]]
+id = "test.deadfall_hub"
+name = "Deadfall"
+region = "fringe"
+faction = "sol.navy"
+
+[[constellation.system.planet]]
+name = "Deadfall Prime"
+radius = 6400000.0
+
+[[constellation.system.station]]
+name = "The Long Watch"
+station = "sol.station_refinery"
+
+[[constellation.system]]
+id = "test.deadfall_n"
+name = "Deadfall North"
+
+[[constellation.system]]
+id = "test.deadfall_e"
+name = "Deadfall East"
+
+[[constellation.system]]
+id = "test.deadfall_s"
+name = "Deadfall South"
+
+[[constellation.system]]
+id = "test.deadfall_w"
+name = "Deadfall West"
+lawless = true
+
+[[constellation.link]]
+from = "test.deadfall_hub"
+to = "test.deadfall_n"
+
+[[constellation.link]]
+from = "test.deadfall_hub"
+to = "test.deadfall_e"
+
+[[constellation.link]]
+from = "test.deadfall_hub"
+to = "test.deadfall_s"
+
+[[constellation.link]]
+from = "test.deadfall_hub"
+to = "test.deadfall_w"
+
+[[system]]
+id = "test.picket"
+name = "Picket"
+placement = "jumps_from"
+jumps_from = { system = "test.deadfall_hub", min = 1, max = 3 }
+)";
+
+[[nodiscard]] bool linked(const Galaxy& galaxy, std::uint32_t a, std::uint32_t b)
+{
+    for (const sol::sim::GateLink& link : galaxy.links) {
+        if ((link.a == a && link.b == b) || (link.a == b && link.b == a)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] std::uint32_t indexOfAuthored(const Galaxy& galaxy, const char* id)
+{
+    const SystemSpec* spec = findAuthored(galaxy, id);
+    return spec != nullptr ? static_cast<std::uint32_t>(spec - galaxy.systems.data()) : 0xffff'ffffu;
+}
+
+} // namespace
+
+// The seam for stage C, and it carries a resolution neither other suite can
+// see: a lane's ENDS are member IDS in the file and member INDICES by the time
+// `sol::sim` receives them, the same way a station id becomes an archetype
+// index. A mis-resolved member index is a legal member index, which is exactly
+// the shape this suite exists to catch.
+SOL_TEST(a_constellation_reaches_the_galaxy_as_a_group_with_its_lanes_intact)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    std::string error;
+    SOL_REQUIRE(defs.mergeToml(kStageCAuthored, std::strlen(kStageCAuthored), "test/systems.toml", &error));
+    if (!defs.validateSystems(&error)) {
+        std::printf("  %s\n", error.c_str());
+    }
+    SOL_REQUIRE(defs.validateSystems(&error));
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    SOL_REQUIRE(world.generateUniverse(defs));
+    const Galaxy& galaxy = world.galaxy();
+
+    // Five appended members plus one `jumps_from` REPLACEMENT, which consumes
+    // an ordinary system's slot rather than adding one: 80 + 5.
+    std::printf("  %zu systems\n", galaxy.systems.size());
+    SOL_CHECK(galaxy.systems.size() == 85);
+
+    const std::uint32_t hub = indexOfAuthored(galaxy, "test.deadfall_hub");
+    SOL_REQUIRE(hub == 80); // members are contiguous, at the end, in def order
+
+    // The hub kept every field its author wrote, resolved through the shipped
+    // defs: the Navy is a claimant index, the refinery is an archetype index.
+    const SystemSpec* hubSpec = &galaxy.systems[hub];
+    SOL_CHECK(hubSpec->name == "Deadfall");
+    SOL_CHECK(hubSpec->region == sol::sim::Region::Fringe);
+    SOL_CHECK(hubSpec->factionIndex == majorIndexOf(defs, "sol.navy"));
+    SOL_REQUIRE(hubSpec->stations.size() == 1);
+    SOL_CHECK(hubSpec->stations[0].name == "The Long Watch");
+    SOL_CHECK(hubSpec->stations[0].archetype == archetypeIndexOf(defs, "sol.station_refinery"));
+    SOL_REQUIRE(!hubSpec->planets.empty());
+    SOL_CHECK(hubSpec->planets[0].name == "Deadfall Prime");
+
+    // ⚑ The star, spoke by spoke. Each lane is present, each spoke is exactly
+    // one jump from the hub, and each is reachable from the rest of the galaxy.
+    const char* spokes[4] = {"test.deadfall_n", "test.deadfall_e", "test.deadfall_s", "test.deadfall_w"};
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        const std::uint32_t spoke = indexOfAuthored(galaxy, spokes[i]);
+        SOL_REQUIRE(spoke == 81 + i);
+        SOL_CHECK(linked(galaxy, hub, spoke));
+        SOL_CHECK(sol::sim::routeBetween(galaxy, hub, spoke).size() == 2);
+        SOL_CHECK(!sol::sim::routeBetween(galaxy, 0, spoke).empty());
+    }
+
+    // Authored lawlessness on a member survives the whole pipeline, which is
+    // the same guard a `[[system]]` gets because it is the same code.
+    SOL_CHECK(galaxy.systems[indexOfAuthored(galaxy, "test.deadfall_w")].factionIndex ==
+              sol::sim::kNoFaction);
+
+    // ⚑⚑ AND A RING ANCHORED ON A MEMBER RESOLVED, even though the member is
+    // declared in a `[[constellation]]` rather than in a `[[system]]`. A
+    // constellation cannot fail to be placed, so a member is an anchor whatever
+    // order the file was written in.
+    const std::uint32_t picket = indexOfAuthored(galaxy, "test.picket");
+    SOL_REQUIRE(picket != 0xffff'ffffu);
+    const std::vector<std::uint32_t> route = sol::sim::routeBetween(galaxy, hub, picket);
+    SOL_REQUIRE(!route.empty());
+    const std::uint32_t jumps = static_cast<std::uint32_t>(route.size()) - 1;
+    std::printf("  picket is %u jump(s) from Deadfall\n", jumps);
+    SOL_CHECK(jumps >= 1 && jumps <= 3);
+}
+
+// Stage A's and stage B's files both still place with stage C in the tree, and
+// a galaxy with no `[[constellation]]` in it is still 80 systems: the golden's
+// claim, restated at the seam.
+SOL_TEST(a_file_with_no_constellation_is_the_galaxy_stage_b_left)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    SOL_CHECK(defs.constellations().empty()); // nothing shipped declares one yet
+    std::string error;
+    SOL_REQUIRE(defs.mergeToml(kStageBAuthored, std::strlen(kStageBAuthored), "test/systems.toml", &error));
+    SOL_REQUIRE(defs.validateSystems(&error));
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    SOL_REQUIRE(world.generateUniverse(defs));
+    SOL_CHECK(world.galaxy().systems.size() == 81); // one `anywhere`, two replacements
+}

@@ -250,3 +250,79 @@ station = "sol.station_refinery"
     SOL_REQUIRE(two.find("station") != nullptr && two.find("station")->size() == 1);
     SOL_CHECK((*two.find("station"))[0].find("station")->asString() == "sol.station_refinery");
 }
+
+// Phase 29 stage C goes one level deeper than stage A did, so the rule
+// `descend` implements is checked at the depth that actually ships rather than
+// assumed to generalise: `[[a.b.c]]` has to land in the last `b` of the last
+// `a`. Every header segment but the last is walked, and each walk follows an
+// array of tables to its final element - so the depth is not special-cased and
+// this is the test that says so.
+SOL_TEST(toml_nestedArrayOfTablesGoesThreeDeep)
+{
+    TomlValue root;
+    SOL_REQUIRE(parseToml(R"(
+[[constellation]]
+id = "first"
+
+[[constellation.system]]
+id = "first.a"
+
+[[constellation.system.planet]]
+name = "A I"
+
+[[constellation.system]]
+id = "first.b"
+
+[[constellation.system.planet]]
+name = "B I"
+
+[[constellation.system.planet]]
+name = "B II"
+
+[[constellation.link]]
+from = "first.a"
+to = "first.b"
+
+[[constellation]]
+id = "second"
+
+[[constellation.system]]
+id = "second.a"
+
+[[constellation.system.planet]]
+name = "Second A I"
+)",
+                          root));
+
+    const TomlValue* groups = root.find("constellation");
+    SOL_REQUIRE(groups != nullptr && groups->isArray());
+    SOL_REQUIRE(groups->size() == 2);
+
+    const TomlValue& first = (*groups)[0];
+    SOL_CHECK(first.find("id")->asString() == "first");
+    const TomlValue* members = first.find("system");
+    SOL_REQUIRE(members != nullptr && members->size() == 2);
+
+    // The planet rows landed in the member they were written under, not in the
+    // first member and not in the constellation.
+    SOL_CHECK((*members)[0].find("id")->asString() == "first.a");
+    SOL_REQUIRE((*members)[0].find("planet") != nullptr);
+    SOL_REQUIRE((*members)[0].find("planet")->size() == 1);
+    SOL_CHECK((*(*members)[0].find("planet"))[0].find("name")->asString() == "A I");
+
+    SOL_CHECK((*members)[1].find("id")->asString() == "first.b");
+    SOL_REQUIRE((*members)[1].find("planet") != nullptr);
+    SOL_REQUIRE((*members)[1].find("planet")->size() == 2);
+    SOL_CHECK((*(*members)[1].find("planet"))[1].find("name")->asString() == "B II");
+
+    // A sibling array at the middle depth is not swallowed by the deeper one.
+    SOL_REQUIRE(first.find("link") != nullptr && first.find("link")->size() == 1);
+    SOL_CHECK((*first.find("link"))[0].find("to")->asString() == "first.b");
+
+    // And the second constellation starts a fresh chain rather than continuing
+    // the first one's.
+    const TomlValue& second = (*groups)[1];
+    SOL_REQUIRE(second.find("system") != nullptr && second.find("system")->size() == 1);
+    SOL_CHECK((*second.find("system"))[0].find("id")->asString() == "second.a");
+    SOL_CHECK(second.find("link") == nullptr);
+}

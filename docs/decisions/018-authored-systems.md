@@ -74,6 +74,47 @@ takes one placement rule.
    replace the map, not just the rules — which is the strongest single answer to
    the "yours to break" pillar the arc contains.
 
+## Third amendment — 2026-08-29, when Phase 29 stage C was built
+
+Building constellations narrowed one sentence in this record and confirmed
+another for a reason it did not give. The original wording is left above.
+
+- **"The constellation as a whole takes one placement rule" is true, and the
+  rule can only ever be `anywhere`.** The sentence reads, beside the four-row
+  table above it, as *"any one of the four"*. It cannot be. Three of those four
+  rules **replace** a system the generator already made, and a group cannot
+  replace one node as a unit — so `random` would have to mean *"near a randomly
+  chosen system"* for a group while it means *"become a randomly chosen system"*
+  for a system, which is two rules wearing one word. `at_system` and
+  `jumps_from` split the same way. **So `placement` on a `[[constellation]]` has
+  exactly one legal value, and anything else is refused with that reason** —
+  which is a better answer to an author than a key that is not there.
+- **And the restriction is not a limitation, it is the same fact as the
+  feature.** Only an insertion can carry internal lanes at all: a replacement
+  inherits the neighbours the generator already chose and declares none of its
+  own, which is precisely why a replacement contradicts no gate graph. A
+  constellation declares lanes, so a constellation appends.
+- **"Its member systems keep their links to each other" needed the adjacency
+  list taught about them, not just the link list.** Lanes are seeded into
+  `Galaxy::links` before Prim runs, and `buildGateGraph` now reads them into its
+  adjacency list first. Without that second half the dedup cannot see them and
+  Prim draws a **second copy** of every lane the MST would have drawn anyway —
+  a galaxy that looks entirely correct and has doubled gates.
+- **⚑ A CONSTELLATION CANNOT FAIL TO BE PLACED, WHICH GIVES `jumps_from` AN
+  ANCHOR THAT DEF ORDER DOES NOT CONSTRAIN.** It makes its own nodes, so there
+  is no "nowhere to go" for it to report and no ordering in which a member is
+  not yet placed. A `[[system]]` anchoring on a member may therefore be written
+  before the group it names, where anchoring on another `[[system]]` still
+  requires the anchor to come first.
+- **⚑⚑ AND A WARNING ABOUT MEASURING ANY OF THIS: MEMBERS SIT IN A TIGHT
+  CLUSTER, SO THE MST AND THE EXTRA-LANE PASS BETWEEN THEM DRAW A NEAR-COMPLETE
+  MESH OVER A SMALL GROUP BY ACCIDENT.** A three-member constellation asserting
+  its own triangle passes with the lane seeding **removed entirely**. Only a
+  shape proximity does not produce — a star, or a path through six members in
+  declaration order — can tell an authored lane from a lucky one. *"Internal
+  topology intact"* is therefore easy to believe and hard to check, and the
+  check is a counterfactual rather than an assertion.
+
 ## Second amendment — 2026-08-29, when Phase 29 stage B was built
 
 Building the placement rules refuted one more line of the table above, and the

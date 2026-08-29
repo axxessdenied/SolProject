@@ -5,12 +5,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
 #include <sol/sim/mining.hpp>
 #include <sol/test/test.hpp>
 
+using sol::sim::AuthoredConstellation;
 using sol::sim::AuthoredSystem;
 using sol::sim::fieldCountFor;
 using sol::sim::Galaxy;
@@ -1091,5 +1093,343 @@ SOL_TEST(universe_every_placement_rule_together_is_deterministic)
     }
     for (const char* id : {"test.random", "test.anywhere", "test.capital", "test.ring"}) {
         SOL_CHECK(indexOfAuthored(first, id) != kNotPlaced);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 29 stage C: a constellation, placed as a unit.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+AuthoredConstellation testConstellation(const char* id, std::initializer_list<const char*> memberIds)
+{
+    AuthoredConstellation constellation;
+    constellation.id = id;
+    for (const char* memberId : memberIds) {
+        AuthoredSystem member;
+        member.id = memberId;
+        constellation.members.push_back(std::move(member));
+    }
+    return constellation;
+}
+
+[[nodiscard]] bool linked(const Galaxy& galaxy, std::uint32_t a, std::uint32_t b)
+{
+    for (const GateLink& link : galaxy.links) {
+        if ((link.a == a && link.b == b) || (link.a == b && link.b == a)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+// STAGE C'S EXIT, CLAUSE BY CLAUSE: the internal lanes are all in
+// `galaxy.links`, every member is reachable from system 0, and the whole thing
+// is identical across two runs at the same seed.
+//
+// ⚑⚑⚑⚑ THE SHAPE IS A STAR RATHER THAN A TRIANGLE, AND THAT IS NOT A DETAIL -
+// IT IS WHAT MAKES THIS TEST ABLE TO FAIL. Members are placed in a tight
+// cluster, so Prim and the extra-lane pass between them draw a near-complete
+// mesh over any small group by accident. A triangle over three members was the
+// first version of this test and it PASSED with the lane seeding removed
+// entirely: proximity had already drawn every lane it asked for. A star over
+// five - one hub, four spokes, no rim - is a shape nearest-neighbour linking
+// does not produce, and removing the seeding fails it. Measured, not assumed.
+SOL_TEST(universe_a_constellation_keeps_the_lanes_its_author_drew)
+{
+    GalaxyParams params = testParams(2029);
+    AuthoredConstellation group =
+        testConstellation("test.deadfall", {"test.hub", "test.a", "test.b", "test.c", "test.d"});
+    group.links = {{0, 1}, {0, 2}, {0, 3}, {0, 4}};
+    params.constellations.push_back(group);
+
+    const Galaxy galaxy = generateGalaxy(params);
+    const std::uint32_t hub = indexOfAuthored(galaxy, "test.hub");
+    SOL_REQUIRE(hub != kNotPlaced);
+
+    for (const char* spokeId : {"test.a", "test.b", "test.c", "test.d"}) {
+        const std::uint32_t spoke = indexOfAuthored(galaxy, spokeId);
+        SOL_REQUIRE(spoke != kNotPlaced);
+        SOL_CHECK(linked(galaxy, hub, spoke));
+
+        // Each lane exactly once: `addLink` dedups against an adjacency list
+        // that now starts out holding the seeded lanes, so an MST edge that
+        // happens to be one of them is adopted rather than duplicated.
+        std::uint32_t copies = 0;
+        for (const GateLink& link : galaxy.links) {
+            if ((link.a == hub && link.b == spoke) || (link.a == spoke && link.b == hub)) {
+                ++copies;
+            }
+        }
+        SOL_CHECK(copies == 1);
+
+        // And a lane is a lane in both directions: the gate lists mirror it.
+        bool hubSeesSpoke = false;
+        for (const sol::sim::GateSpec& gate : galaxy.systems[hub].gates) {
+            hubSeesSpoke = hubSeesSpoke || gate.toSystem == spoke;
+        }
+        bool spokeSeesHub = false;
+        for (const sol::sim::GateSpec& gate : galaxy.systems[spoke].gates) {
+            spokeSeesHub = spokeSeesHub || gate.toSystem == hub;
+        }
+        SOL_CHECK(hubSeesSpoke);
+        SOL_CHECK(spokeSeesHub);
+
+        // Reachable from the rest of the galaxy, not a pocket beside it. Prim
+        // runs over the grown vector, so the group is woven in like anything
+        // else - which is the half of decisions/018 this phase deliberately
+        // does NOT change ("reachable through exactly one gate" is a separate
+        // feature).
+        SOL_CHECK(!routeBetween(galaxy, 0, spoke).empty());
+    }
+    SOL_CHECK(!routeBetween(galaxy, 0, hub).empty());
+}
+
+// Determinism, stated the way the exit criterion states it. A constellation
+// draws from the authored stream, after the `anywhere` systems and before the
+// placement rules, so nothing about it can move a procedural roll.
+SOL_TEST(universe_a_constellation_is_the_same_group_every_run)
+{
+    GalaxyParams params = testParams(7788);
+    params.constellations.push_back(testConstellation("test.reach", {"test.x", "test.y", "test.z"}));
+
+    const Galaxy first = generateGalaxy(params);
+    const Galaxy second = generateGalaxy(params);
+    SOL_REQUIRE(first.systems.size() == second.systems.size());
+    SOL_REQUIRE(first.links.size() == second.links.size());
+    for (std::size_t i = 0; i < first.systems.size(); ++i) {
+        SOL_CHECK(specsEqual(first.systems[i], second.systems[i]));
+        SOL_CHECK(first.systems[i].mapPosition.x == second.systems[i].mapPosition.x);
+        SOL_CHECK(first.systems[i].authoredId == second.systems[i].authoredId);
+    }
+    for (std::size_t i = 0; i < first.links.size(); ++i) {
+        SOL_CHECK(first.links[i].a == second.links[i].a && first.links[i].b == second.links[i].b);
+    }
+}
+
+// The insertion contract, unchanged from stage B and extended: a constellation
+// grows the galaxy by exactly its member count, its members are contiguous at
+// the END, and nothing the seed produced moved.
+SOL_TEST(universe_a_constellation_appends_and_moves_no_procedural_system)
+{
+    const GalaxyParams plain = testParams(31337);
+    const Galaxy before = generateGalaxy(plain);
+
+    GalaxyParams params = plain;
+    params.constellations.push_back(testConstellation("test.trio", {"test.a", "test.b", "test.c"}));
+    const Galaxy after = generateGalaxy(params);
+
+    SOL_REQUIRE(after.systems.size() == before.systems.size() + 3);
+    SOL_CHECK(indexOfAuthored(after, "test.a") == plain.systemCount);
+    SOL_CHECK(indexOfAuthored(after, "test.b") == plain.systemCount + 1);
+    SOL_CHECK(indexOfAuthored(after, "test.c") == plain.systemCount + 2);
+    for (std::uint32_t i = 0; i < before.systems.size(); ++i) {
+        SOL_CHECK(after.systems[i].mapPosition.x == before.systems[i].mapPosition.x);
+        SOL_CHECK(after.systems[i].mapPosition.z == before.systems[i].mapPosition.z);
+        SOL_CHECK(after.systems[i].name == before.systems[i].name);
+    }
+}
+
+// ⚑⚑ `anywhere` KEEPS `proceduralCount + k` WHETHER OR NOT THERE IS ALSO A
+// GROUP IN THE FILE, which is why constellations are appended second. Stage B
+// wrote that arithmetic down as a contract and a test asserts it; appending
+// groups first would have broken it silently for any file that has both.
+SOL_TEST(universe_a_group_does_not_move_an_anywhere_system)
+{
+    GalaxyParams params = testParams(4242);
+    params.constellations.push_back(testConstellation("test.group", {"test.m0", "test.m1"}));
+    params.authoredSystems.push_back(anywhereSystem("test.loner"));
+
+    const Galaxy galaxy = generateGalaxy(params);
+    SOL_REQUIRE(galaxy.systems.size() == params.systemCount + 3);
+    SOL_CHECK(indexOfAuthored(galaxy, "test.loner") == params.systemCount);
+    SOL_CHECK(indexOfAuthored(galaxy, "test.m0") == params.systemCount + 1);
+    SOL_CHECK(indexOfAuthored(galaxy, "test.m1") == params.systemCount + 2);
+}
+
+// ⚑ NO LANES WRITTEN MEANS A CHAIN IN DECLARATION ORDER, NOT AN ABSENCE. The
+// default lives in the generator rather than in the parser so a hand-built
+// `GalaxyParams` means what a hand-written file means.
+//
+// ⚑⚑ SIX MEMBERS RATHER THAN THREE, FOR THE REASON THE STAR TEST ABOVE GIVES.
+// Three members in a cluster get every lane from proximity anyway, so a
+// three-link chain proves nothing; a five-link path through six members in
+// DECLARATION order is not the path proximity picks, and the seeding is what
+// puts it there.
+SOL_TEST(universe_a_constellation_with_no_lanes_written_is_chained)
+{
+    GalaxyParams params = testParams(555);
+    params.constellations.push_back(
+        testConstellation("test.chain", {"test.a", "test.b", "test.c", "test.d", "test.e", "test.f"}));
+
+    const Galaxy galaxy = generateGalaxy(params);
+    const char* order[6] = {"test.a", "test.b", "test.c", "test.d", "test.e", "test.f"};
+    for (int i = 1; i < 6; ++i) {
+        const std::uint32_t previous = indexOfAuthored(galaxy, order[i - 1]);
+        const std::uint32_t current = indexOfAuthored(galaxy, order[i]);
+        SOL_REQUIRE(previous != kNotPlaced && current != kNotPlaced);
+        SOL_CHECK(linked(galaxy, previous, current));
+    }
+}
+
+// Every field a member's author wrote survives the whole pipeline, exactly as
+// it does for a `[[system]]` - because it goes through the same block. A member
+// that lost its owner to `claimTerritory` would be the phase's signature silent
+// failure wearing a new hat.
+SOL_TEST(universe_a_constellation_member_keeps_every_authored_field)
+{
+    GalaxyParams params = testParams(1234);
+    AuthoredConstellation group;
+    group.id = "test.pair";
+    AuthoredSystem first;
+    first.id = "test.held";
+    first.name = "Held";
+    first.hasName = true;
+    first.region = Region::Core;
+    first.hasRegion = true;
+    first.factionIndex = 1;
+    first.hasFaction = true;
+    first.secret = true;
+    first.planets.push_back({.name = "Held Prime", .radius = 6'400'000.0, .hasRadius = true});
+    AuthoredSystem second;
+    second.id = "test.empty";
+    // ⚑ FRONTIER ON PURPOSE, SO THE CHECK BELOW CANNOT PASS BY ACCIDENT.
+    // `claimTerritory`'s Dijkstra reaches every system in the galaxy, so an
+    // unguarded member would come out owned; a FRINGE member could have been
+    // re-rolled lawless anyway and the assertion would prove nothing.
+    second.region = Region::Frontier;
+    second.hasRegion = true;
+    second.hasFaction = true;
+    second.factionIndex = kNoFaction; // authored lawlessness, not an absence
+    group.members = {first, second};
+    params.constellations.push_back(std::move(group));
+
+    const Galaxy galaxy = generateGalaxy(params);
+    const SystemSpec* held = findAuthored(galaxy, "test.held");
+    const SystemSpec* empty = findAuthored(galaxy, "test.empty");
+    SOL_REQUIRE(held != nullptr && empty != nullptr);
+    SOL_CHECK(held->name == "Held");
+    SOL_CHECK(held->region == Region::Core);
+    SOL_CHECK(held->factionIndex == 1);
+    SOL_CHECK(held->secret);
+    SOL_REQUIRE(!held->planets.empty());
+    SOL_CHECK(held->planets[0].name == "Held Prime");
+    SOL_CHECK(held->planets[0].radius == 6'400'000.0);
+    // ⚑ Authored lawlessness is not the absence of an owner: the member was
+    // declared unowned and `spawnClans` left it alone.
+    SOL_CHECK(empty->factionIndex == kNoFaction);
+    // And the member that said nothing about itself still got a name.
+    SOL_CHECK(!empty->name.empty());
+}
+
+// ⚑⚑ A MEMBER IS A LEGAL `jumps_from` ANCHOR, AND DEF ORDER DOES NOT CONSTRAIN
+// IT. A constellation cannot fail to be placed - it makes its own nodes - so
+// every member has an index before any rule runs, which is why the generator
+// resolves groups first.
+SOL_TEST(universe_a_ring_can_anchor_on_a_constellation_member)
+{
+    GalaxyParams params = testParams(9090);
+    params.constellations.push_back(testConstellation("test.group", {"test.hub", "test.spur"}));
+    AuthoredSystem ring;
+    ring.id = "test.picket";
+    ring.placement = sol::sim::Placement::JumpsFrom;
+    ring.anchorId = "test.hub";
+    ring.jumpsMin = 1;
+    ring.jumpsMax = 3;
+    params.authoredSystems.push_back(ring);
+
+    std::vector<sol::sim::AuthoredPlacementFailure> failures;
+    const Galaxy galaxy = generateGalaxy(params, nullptr, &failures);
+    for (const sol::sim::AuthoredPlacementFailure& failure : failures) {
+        std::printf("  unexpected refusal: %s (%s) - %s\n",
+                    failure.id.c_str(),
+                    failure.rule.c_str(),
+                    failure.reason.c_str());
+    }
+    SOL_REQUIRE(failures.empty());
+
+    const std::uint32_t hub = indexOfAuthored(galaxy, "test.hub");
+    const std::uint32_t picket = indexOfAuthored(galaxy, "test.picket");
+    SOL_REQUIRE(hub != kNotPlaced && picket != kNotPlaced);
+    const std::vector<std::uint32_t> route = routeBetween(galaxy, hub, picket);
+    SOL_REQUIRE(!route.empty());
+    const std::uint32_t jumps = static_cast<std::uint32_t>(route.size()) - 1;
+    std::printf("  picket is %u jump(s) from a constellation member\n", jumps);
+    SOL_CHECK(jumps >= 1 && jumps <= 3);
+}
+
+// ⚑⚑⚑ THE COUNTERFACTUAL, RUN RATHER THAN REASONED ABOUT: with the lane
+// seeding removed from `appendConstellations`, this test FAILS and the rest of
+// the suite still passes. That is the whole argument that the feature is real,
+// and it is also how the vacuity in the first draft of these tests was found -
+// a triangle over three clustered members is exactly what proximity draws, so
+// asserting it proved nothing at all. What proximity gives is a bonus; what the
+// author wrote is the contract, and only a shape proximity does not draw can
+// tell them apart.
+SOL_TEST(universe_a_constellations_lanes_are_the_authors_not_the_geometrys)
+{
+    GalaxyParams params = testParams(313);
+    AuthoredConstellation group =
+        testConstellation("test.web", {"test.0", "test.1", "test.2", "test.3", "test.4"});
+    // A star: member 0 is linked to every other one, and nothing else is linked
+    // to anything. Proximity draws a nearest-neighbour mesh, not a star.
+    group.links = {{0, 1}, {0, 2}, {0, 3}, {0, 4}};
+    params.constellations.push_back(group);
+
+    const Galaxy galaxy = generateGalaxy(params);
+    const std::uint32_t hub = indexOfAuthored(galaxy, "test.0");
+    SOL_REQUIRE(hub != kNotPlaced);
+    for (const char* spoke : {"test.1", "test.2", "test.3", "test.4"}) {
+        const std::uint32_t index = indexOfAuthored(galaxy, spoke);
+        SOL_REQUIRE(index != kNotPlaced);
+        SOL_CHECK(linked(galaxy, hub, index));
+        SOL_CHECK(routeBetween(galaxy, hub, index).size() == 2); // one jump
+    }
+}
+
+// Two groups in one file are two groups: neither borrows the other's lanes, and
+// the second one's members follow the first one's.
+SOL_TEST(universe_two_constellations_stay_separate)
+{
+    GalaxyParams params = testParams(6161);
+    params.constellations.push_back(testConstellation("test.first", {"test.a", "test.b"}));
+    params.constellations.push_back(testConstellation("test.second", {"test.c", "test.d"}));
+
+    const Galaxy galaxy = generateGalaxy(params);
+    SOL_REQUIRE(galaxy.systems.size() == params.systemCount + 4);
+    const std::uint32_t a = indexOfAuthored(galaxy, "test.a");
+    const std::uint32_t b = indexOfAuthored(galaxy, "test.b");
+    const std::uint32_t c = indexOfAuthored(galaxy, "test.c");
+    const std::uint32_t d = indexOfAuthored(galaxy, "test.d");
+    SOL_CHECK(a == params.systemCount && b == a + 1 && c == b + 1 && d == c + 1);
+    // ⚑ The claim here is the INDEX ARITHMETIC above, not the lanes: two
+    // members in one cluster are linked by proximity whether or not anything
+    // seeded them, so `linked` proves nothing at this size. The lane seeding is
+    // held by the star and the chain above.
+    SOL_CHECK(linked(galaxy, a, b));
+    SOL_CHECK(linked(galaxy, c, d));
+    // Still one galaxy: two groups are two insertions, not two components.
+    SOL_CHECK(!routeBetween(galaxy, a, c).empty());
+}
+
+// The whole of stage C's cost to a galaxy with no groups in it: nothing. An
+// empty `constellations` makes no draw, seeds no lane, and appends no node - so
+// the pre-stage-C galaxy is identical rather than merely similar. The shipped
+// seed is held by `game.unit`'s golden; this is the same claim at test scale.
+SOL_TEST(universe_no_constellations_is_the_galaxy_that_was_there_before)
+{
+    const GalaxyParams params = testParams(31337);
+    const Galaxy first = generateGalaxy(params);
+    GalaxyParams withEmptyGroups = params;
+    withEmptyGroups.constellations.clear();
+    const Galaxy second = generateGalaxy(withEmptyGroups);
+
+    SOL_REQUIRE(first.systems.size() == second.systems.size());
+    SOL_REQUIRE(first.links.size() == second.links.size());
+    for (std::size_t i = 0; i < first.systems.size(); ++i) {
+        SOL_CHECK(specsEqual(first.systems[i], second.systems[i]));
     }
 }

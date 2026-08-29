@@ -1870,3 +1870,407 @@ at_system = "sol.reavers"
 )",
             "clan template");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 29 stage C: `[[constellation]]`, a group placed as a unit.
+// ---------------------------------------------------------------------------
+
+// The whole shape, read back field by field - and the point of reading it back
+// is that a member is an ordinary `[[system]]` row wearing a different header.
+// Everything stage A taught the parser about a system holds inside a group,
+// including the nested planet and station rows, which here sit THREE headers
+// deep for the first time in this project.
+SOL_TEST(data_defs_constellation_parses_members_and_lanes)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[constellation]]
+id = "campaign.deadfall"
+
+[[constellation.system]]
+id = "campaign.deadfall_gate"
+name = "Deadfall Gate"
+region = "fringe"
+lawless = true
+
+[[constellation.system]]
+id = "campaign.deadfall"
+name = "Deadfall"
+faction = "sol.navy"
+secret = true
+primary_planet = 1
+
+[[constellation.system.planet]]
+name = "Deadfall I"
+
+[[constellation.system.planet]]
+name = "Deadfall Prime"
+radius = 6400000.0
+
+[[constellation.system.station]]
+name = "The Long Watch"
+station = "sol.station_refinery"
+
+[[constellation.system]]
+id = "campaign.deadfall_deep"
+name = "Deadfall Deep"
+
+[[constellation.link]]
+from = "campaign.deadfall_gate"
+to = "campaign.deadfall"
+
+[[constellation.link]]
+from = "campaign.deadfall"
+to = "campaign.deadfall_deep"
+)",
+                      "systems.toml",
+                      &error));
+    SOL_REQUIRE(db.constellations().size() == 1);
+    const sol::assets::ConstellationDef& group = db.constellations()[0];
+    SOL_CHECK(group.id == "campaign.deadfall");
+    SOL_CHECK(group.placement == "anywhere"); // the default, and the only value
+    SOL_CHECK(group.source == "systems.toml");
+    SOL_REQUIRE(group.members.size() == 3);
+
+    SOL_CHECK(group.members[0].id == "campaign.deadfall_gate");
+    SOL_CHECK(group.members[0].lawless);
+    SOL_CHECK(group.members[0].region == "fringe");
+    SOL_CHECK(group.members[0].hasRegion);
+    SOL_CHECK(group.members[0].planets.empty());
+
+    // ⚑ The nested rows landed in the member they were written under, which is
+    // the three-deep descent `toml_nestedArrayOfTablesGoesThreeDeep` proves at
+    // the parser and this asserts at the def layer.
+    SOL_CHECK(group.members[1].id == "campaign.deadfall");
+    SOL_CHECK(group.members[1].factionId == "sol.navy");
+    SOL_CHECK(group.members[1].hasFaction);
+    SOL_CHECK(group.members[1].secret);
+    SOL_CHECK(group.members[1].hasPrimaryPlanet);
+    SOL_CHECK(group.members[1].primaryPlanet == 1);
+    SOL_REQUIRE(group.members[1].planets.size() == 2);
+    SOL_CHECK(group.members[1].planets[1].name == "Deadfall Prime");
+    SOL_CHECK(group.members[1].planets[1].radius == 6'400'000.0);
+    SOL_REQUIRE(group.members[1].stations.size() == 1);
+    SOL_CHECK(group.members[1].stations[0].stationId == "sol.station_refinery");
+
+    SOL_CHECK(group.members[2].id == "campaign.deadfall_deep");
+    SOL_CHECK(group.members[2].planets.empty());
+
+    SOL_REQUIRE(group.links.size() == 2);
+    SOL_CHECK(group.links[0].fromId == "campaign.deadfall_gate");
+    SOL_CHECK(group.links[0].toId == "campaign.deadfall");
+    SOL_CHECK(group.links[1].toId == "campaign.deadfall_deep");
+
+    // A group's members are NOT `[[system]]` rows: they are reachable through
+    // the group and nowhere else, which is what stops a member being placed
+    // twice.
+    SOL_CHECK(db.systems().empty());
+
+    // The cross-def checks see them anyway - that is the point of stage C's
+    // change to `validateSystems`.
+    SOL_CHECK(db.validateSystems(&error));
+}
+
+// Every way a constellation is refused, in one table. Each of these is a file
+// somebody could plausibly write, and each of them would otherwise place
+// silently and read to its author as a broken parser.
+SOL_TEST(data_defs_constellation_refusals)
+{
+    const auto refused = [](const char* toml, const char* needle, bool atParse) {
+        DefDatabase db;
+        std::string error;
+        SOL_CHECK(merge(db, kSystemFixtureDeps, "deps.toml"));
+        const bool merged = merge(db, toml, "systems.toml", &error);
+        if (atParse) {
+            SOL_CHECK(!merged);
+        } else {
+            SOL_CHECK(merged);
+            const bool ok = db.validateSystems(&error);
+            if (ok) {
+                std::printf("  expected a refusal, got a clean validation\n");
+            }
+            SOL_CHECK(!ok);
+        }
+        if (error.find(needle) == std::string::npos) {
+            std::printf("  message was: %s (wanted '%s')\n", error.c_str(), needle);
+        }
+        SOL_CHECK(error.find(needle) != std::string::npos);
+        SOL_CHECK(error.find("systems.toml") != std::string::npos);
+    };
+
+    // ⚑⚑ THE OTHER THREE RULES ARE REFUSED WITH THE REASON, NOT WITH SILENCE.
+    // They REPLACE a system the generator already made, and a group cannot
+    // replace one node as a unit.
+    refused(R"(
+[[constellation]]
+id = "campaign.group"
+placement = "random"
+
+[[constellation.system]]
+id = "campaign.a"
+
+[[constellation.system]]
+id = "campaign.b"
+)",
+            "cannot replace one node as a unit",
+            true);
+
+    // A group of one is a system; a group of none is nothing. Both are almost
+    // certainly a file that lost a row.
+    refused(R"(
+[[constellation]]
+id = "campaign.lonely"
+
+[[constellation.system]]
+id = "campaign.only"
+)",
+            "one place on its own is a [[system]]",
+            true);
+    refused(R"(
+[[constellation]]
+id = "campaign.empty"
+)",
+            "this one declares none",
+            true);
+
+    // ⚑ A MEMBER MAY NOT CARRY A PLACEMENT RULE, and the refusal answers the
+    // question rather than calling the key unknown. The group carries one.
+    for (const char* key : {"placement = \"anywhere\"",
+                            "at_system = \"sol.navy\"",
+                            "jumps_from = { system = \"campaign.a\", min = 1, max = 2 }"}) {
+        const std::string toml = std::string(R"(
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.a"
+
+[[constellation.system]]
+id = "campaign.b"
+)") + key + "\n";
+        refused(toml.c_str(), "the whole group takes one placement rule", true);
+    }
+
+    // A lane names two of THIS group's members. A lane out of the constellation
+    // is a gate, and which gates a system gets is the generator's to decide.
+    refused(R"(
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.a"
+
+[[constellation.system]]
+id = "campaign.b"
+
+[[constellation.link]]
+from = "campaign.a"
+to = "campaign.elsewhere"
+)",
+            "not a [[constellation.system]] of this constellation",
+            true);
+    refused(R"(
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.a"
+
+[[constellation.system]]
+id = "campaign.b"
+
+[[constellation.link]]
+from = "campaign.a"
+to = "campaign.a"
+)",
+            "a lane needs two ends",
+            true);
+    refused(R"(
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.a"
+
+[[constellation.system]]
+id = "campaign.b"
+
+[[constellation.link]]
+from = "campaign.a"
+to = "campaign.b"
+
+[[constellation.link]]
+from = "campaign.b"
+to = "campaign.a"
+)",
+            "one lane is one lane",
+            true);
+
+    // ⚑⚑ TWO SYSTEMS CANNOT SHARE AN ID, AND ONLY THE CROSS-DEF PASS CAN SAY
+    // SO. `mergeDef` keeps ids unique within a list by having a later layer
+    // replace an earlier one - but members are merged WITH their group rather
+    // than one at a time, so a collision inside a group, or between a group and
+    // a `[[system]]`, survives the parse and would leave `sol.system_by_id`
+    // answering with whichever the generator reached first.
+    refused(R"(
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.twin"
+
+[[constellation.system]]
+id = "campaign.twin"
+)",
+            "already used by another authored system",
+            false);
+    refused(R"(
+[[system]]
+id = "campaign.twin"
+
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.twin"
+
+[[constellation.system]]
+id = "campaign.other"
+)",
+            "already used by another authored system",
+            false);
+
+    // A member is a system, so every cross-def check a `[[system]]` gets, it
+    // gets - which is the half of the galaxy stage C would otherwise have left
+    // unvalidated.
+    refused(R"(
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.a"
+faction = "sol.consortium"
+
+[[constellation.system]]
+id = "campaign.b"
+)",
+            "which is not a [[faction]]",
+            false);
+    refused(R"(
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.a"
+
+[[constellation.system]]
+id = "campaign.b"
+
+[[constellation.system.station]]
+name = "Pier Nine"
+station = "sol.station_shipyard"
+)",
+            "which is not a [[station]]",
+            false);
+    // A member's name colliding with a standalone system's is the same refusal
+    // two `[[system]]` rows already get.
+    refused(R"(
+[[system]]
+id = "campaign.solo"
+name = "Harrow"
+
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.a"
+name = "Harrow"
+
+[[constellation.system]]
+id = "campaign.b"
+)",
+            "collides",
+            false);
+}
+
+// ⚑⚑ A RING MAY ANCHOR ON A CONSTELLATION MEMBER, AND DEF ORDER DOES NOT
+// CONSTRAIN IT - which is a real difference from anchoring on a `[[system]]`,
+// where the anchor must be declared first. A constellation cannot fail to be
+// placed, so every member has an index before any rule runs; refusing a
+// backwards reference would be a rule an author could not act on.
+SOL_TEST(data_defs_ring_may_anchor_on_a_constellation_member_declared_later)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[system]]
+id = "campaign.picket"
+placement = "jumps_from"
+jumps_from = { system = "campaign.hub", min = 1, max = 3 }
+
+[[constellation]]
+id = "campaign.group"
+
+[[constellation.system]]
+id = "campaign.hub"
+
+[[constellation.system]]
+id = "campaign.spur"
+)",
+                      "systems.toml",
+                      &error));
+    if (!db.validateSystems(&error)) {
+        std::printf("  %s\n", error.c_str());
+    }
+    SOL_CHECK(db.validateSystems(&error));
+}
+
+// A later layer replaces a constellation wholesale by id, the way it already
+// replaces a ship or a system - which is what lets a mod re-draw a base game's
+// group rather than only add one beside it.
+SOL_TEST(data_defs_constellation_overridden_by_a_later_layer)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[constellation]]
+id = "campaign.deadfall"
+
+[[constellation.system]]
+id = "campaign.a"
+name = "Base A"
+
+[[constellation.system]]
+id = "campaign.b"
+)",
+                      "base/systems.toml",
+                      &error));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[constellation]]
+id = "campaign.deadfall"
+
+[[constellation.system]]
+id = "campaign.a"
+name = "Modded A"
+
+[[constellation.system]]
+id = "campaign.b"
+
+[[constellation.system]]
+id = "campaign.c"
+)",
+                      "mods/x/systems.toml",
+                      &error));
+    SOL_REQUIRE(db.constellations().size() == 1);
+    SOL_CHECK(db.constellations()[0].source == "mods/x/systems.toml");
+    SOL_REQUIRE(db.constellations()[0].members.size() == 3);
+    SOL_CHECK(db.constellations()[0].members[0].name == "Modded A");
+}

@@ -160,6 +160,18 @@ void buildGateGraph(const GalaxyParams& params,
     std::vector<std::uint32_t> bestFrom(count, 0);
     std::vector<std::vector<std::uint32_t>> adjacency(count);
 
+    // ⚑⚑ LANES THAT ARE ALREADY HERE ARE ADOPTED RATHER THAN REDISCOVERED, AND
+    // THAT IS THE WHOLE OF WHAT A CONSTELLATION COSTS THE GATE GRAPH (Phase 29
+    // stage C). A constellation seeds its internal lanes into `links` before
+    // this runs; reading them into the adjacency list is what makes the dedup
+    // below see them, so Prim cannot add a second copy of one and the extra-lane
+    // pass cannot either. An empty `links` - every caller before stage C - leaves
+    // this loop doing nothing at all.
+    for (const GateLink& seeded : links) {
+        adjacency[seeded.a].push_back(seeded.b);
+        adjacency[seeded.b].push_back(seeded.a);
+    }
+
     const auto addLink = [&](std::uint32_t a, std::uint32_t b) {
         if (a > b) {
             std::swap(a, b);
@@ -342,6 +354,148 @@ void appendAnywhereSystems(const GalaxyParams& params, core::Rng& rng, std::vect
     }
 }
 
+// PASS 1, second half (Phase 29 stage C): a constellation appends its members
+// together and hands the gate graph the lanes their author drew between them.
+//
+// ⚑⚑⚑⚑ THE INTERNAL LANES ARE SEEDED HERE, BEFORE `buildGateGraph`, AND THAT
+// ORDERING IS THE ENTIRE FEATURE. decisions/018 says a constellation is "placed
+// as a unit with its internal topology intact", and the only moment at which
+// that topology can be stated is before Prim decides what the neighbours are.
+// Seeded after, it would be exactly the post-generation patching 018 refused -
+// lanes contradicting a graph that had already been settled. `addLink` dedups
+// against the adjacency list, so a lane the MST would have drawn anyway is
+// adopted rather than duplicated, and Prim does not mind an already-connected
+// component.
+//
+// ⚑⚑ MEMBERS ARE APPENDED AFTER EVERY `anywhere` SYSTEM, WHICH IS WHAT KEEPS
+// THE INDEX ARITHMETIC SAYABLE. `anywhere` systems are `proceduralCount + k`;
+// a constellation's members follow them, contiguously, in def order. Nothing
+// the seed produced moves, and the name stream is untouched for exactly the
+// reason stage B wrote down: the extra draws all land after the procedural ones
+// and the uniqueness rescan only ever looks backwards.
+//
+// ⚑ A CONSTELLATION CANNOT FAIL. It creates its own nodes, so there is no
+// "nowhere to go" for it to report - which is also why a member is always
+// available as a `jumps_from` anchor, whatever def order the file used.
+void appendConstellations(const GalaxyParams& params,
+                          core::Rng& rng,
+                          std::vector<SystemSpec>& systems,
+                          std::vector<GateLink>& links)
+{
+    const float radius = params.galaxyRadius;
+    const float separation = radius / std::sqrt(static_cast<float>(params.systemCount)) * 1.1f;
+    // A constellation has to READ as a cluster or it is only a list, so its
+    // members sit closer together than the procedural scatter would ever put
+    // them - and the group as a whole asks for more elbow room than one system
+    // does, so it lands beside the galaxy's existing neighbourhoods rather than
+    // through the middle of one.
+    const float clusterRadius = separation * 0.9f;
+    constexpr float kTau = 6.28318530717958647692f;
+
+    const auto seedLink = [&links](std::uint32_t a, std::uint32_t b) {
+        if (a == b) {
+            return;
+        }
+        if (a > b) {
+            std::swap(a, b);
+        }
+        for (const GateLink& existing : links) {
+            if (existing.a == a && existing.b == b) {
+                return; // an author wrote the same lane twice; one lane is one lane
+            }
+        }
+        links.push_back({a, b});
+    };
+
+    for (const AuthoredConstellation& constellation : params.constellations) {
+        if (constellation.members.empty()) {
+            continue; // the def layer refuses this; the generator does not assume it
+        }
+        const std::uint32_t base = static_cast<std::uint32_t>(systems.size());
+
+        // The group's centre, rejected against the whole galaxy so the cluster
+        // has room for itself. Best-effort and relaxing, exactly as
+        // `scatterSystems` is and for the same reason: the count is honoured.
+        core::Vec3 centre{};
+        float clearance = separation + clusterRadius;
+        bool centred = false;
+        while (!centred) {
+            for (std::uint32_t tries = 0; tries < 64 && !centred; ++tries) {
+                const float r = radius * std::sqrt(rng.nextFloat01());
+                const float theta = kTau * rng.nextFloat01();
+                const core::Vec3 candidate{r * std::cos(theta),
+                                           0.08f * radius * (rng.nextFloat01() * 2.0f - 1.0f),
+                                           r * std::sin(theta)};
+                bool clear = true;
+                for (const SystemSpec& other : systems) {
+                    if (core::length(candidate - other.mapPosition) < clearance) {
+                        clear = false;
+                        break;
+                    }
+                }
+                if (clear) {
+                    centre = candidate;
+                    centred = true;
+                }
+            }
+            if (!centred) {
+                clearance *= 0.9f;
+            }
+        }
+
+        float memberSeparation = separation * 0.4f;
+        for (std::size_t member = 0; member < constellation.members.size(); ++member) {
+            bool placed = false;
+            while (!placed) {
+                for (std::uint32_t tries = 0; tries < 64 && !placed; ++tries) {
+                    const float r = clusterRadius * std::sqrt(rng.nextFloat01());
+                    const float theta = kTau * rng.nextFloat01();
+                    const core::Vec3 candidate{centre.x + r * std::cos(theta),
+                                               centre.y +
+                                                   0.25f * clusterRadius * (rng.nextFloat01() * 2.0f - 1.0f),
+                                               centre.z + r * std::sin(theta)};
+                    bool clear = true;
+                    for (const SystemSpec& other : systems) {
+                        if (core::length(candidate - other.mapPosition) < memberSeparation) {
+                            clear = false;
+                            break;
+                        }
+                    }
+                    if (clear) {
+                        SystemSpec spec;
+                        spec.mapPosition = candidate;
+                        systems.push_back(std::move(spec));
+                        placed = true;
+                    }
+                }
+                if (!placed) {
+                    memberSeparation *= 0.9f;
+                }
+            }
+        }
+
+        const std::uint32_t memberCount = static_cast<std::uint32_t>(constellation.members.size());
+        if (constellation.links.empty()) {
+            // ⚑ NO LANES WRITTEN MEANS A CHAIN, NOT AN ABSENCE. A group whose
+            // members have no lanes between them is not a group - Prim would
+            // wire each member to whatever happened to be nearest and the
+            // author's "unit" would be three unrelated systems that happen to
+            // sit close together. Declaration order is the only order there is,
+            // so that is the chain.
+            for (std::uint32_t k = 1; k < memberCount; ++k) {
+                seedLink(base + k - 1, base + k);
+            }
+        } else {
+            for (const AuthoredConstellationLink& link : constellation.links) {
+                if (link.a >= memberCount || link.b >= memberCount) {
+                    continue; // the def layer refuses this; the generator does not index on trust
+                }
+                seedLink(base + link.a, base + link.b);
+            }
+        }
+    }
+}
+
 // Faction capitals: greedy farthest-point spread through the core.
 //
 // ⚑⚑⚑⚑ THIS WAS LIFTED OUT OF `claimTerritory` SO THAT `at_system` CAN NAME
@@ -413,7 +567,66 @@ void appendAnywhereSystems(const GalaxyParams& params, core::Rng& rng, std::vect
     return capitals;
 }
 
-// PASS 2 of placement: every rule chooses an index, then one shared block
+// The one place an author's fields are written onto a node, shared by both
+// ways of getting one (Phase 29 stage C). A `[[system]]` chose its node with a
+// rule; a constellation member was handed one by its group - and from here on
+// there is no difference between them, which is what keeps the skip points at
+// five rather than at ten.
+void applyAuthoredFields(const AuthoredSystem& authored,
+                         std::uint32_t index,
+                         std::vector<SystemSpec>& systems,
+                         std::vector<const AuthoredSystem*>& authoredFor)
+{
+    SystemSpec& system = systems[index];
+    system.authoredId = authored.id;
+    system.secret = authored.secret;
+    // ⚑ The NAME is deliberately not written here. It is applied after the
+    // procedural name loop has run untouched, because how many times that
+    // loop redraws depends on which names it can already see - so writing
+    // one in ahead of it changes what every other system is called.
+    // ⚑⚑ The REGION is written here for every rule, replacement and
+    // insertion alike, and that is what saves `assignRegions` from needing
+    // a skip point: this pass runs after it, so this is the last word on
+    // the field no matter which pass created the node.
+    if (authored.hasRegion) {
+        system.region = authored.region;
+    }
+    if (authored.hasFaction) {
+        system.factionIndex = authored.factionIndex;
+    }
+    authoredFor[index] = &authored;
+}
+
+// PASS 2, first half (Phase 29 stage C): a constellation's members take the
+// nodes pass 1 already made for them, in the same order it made them.
+//
+// ⚑⚑ THIS RUNS BEFORE THE RULES DO, AND THAT IS WHAT MAKES A MEMBER A LEGAL
+// `jumps_from` ANCHOR REGARDLESS OF DEF ORDER. A constellation cannot fail to
+// be placed - it creates its own nodes - so there is no ordering in which a
+// member is "not placed yet", and pretending otherwise would be a refusal an
+// author could not act on.
+//
+// Returns where each member landed, which seeds the anchor list the placement
+// rules then extend.
+[[nodiscard]] std::vector<std::pair<std::string, std::uint32_t>>
+applyConstellations(const GalaxyParams& params,
+                    std::uint32_t firstIndex,
+                    std::vector<SystemSpec>& systems,
+                    std::vector<const AuthoredSystem*>& authoredFor)
+{
+    std::vector<std::pair<std::string, std::uint32_t>> placedById;
+    std::uint32_t index = firstIndex;
+    for (const AuthoredConstellation& constellation : params.constellations) {
+        for (const AuthoredSystem& member : constellation.members) {
+            applyAuthoredFields(member, index, systems, authoredFor);
+            placedById.emplace_back(member.id, index);
+            ++index;
+        }
+    }
+    return placedById;
+}
+
+// PASS 2, second half: every rule chooses an index, then the shared block above
 // applies the fields the author wrote.
 void placeAuthoredSystems(const GalaxyParams& params,
                           core::Rng& rng,
@@ -422,6 +635,7 @@ void placeAuthoredSystems(const GalaxyParams& params,
                           std::uint32_t proceduralCount,
                           std::vector<SystemSpec>& systems,
                           std::vector<const AuthoredSystem*>& authoredFor,
+                          std::vector<std::pair<std::string, std::uint32_t>>& placedById,
                           std::vector<AuthoredPlacementFailure>* outFailures)
 {
     // Every node the seed produced is a candidate until an earlier authored
@@ -433,11 +647,11 @@ void placeAuthoredSystems(const GalaxyParams& params,
     for (std::uint32_t i = 0; i < proceduralCount; ++i) {
         free.push_back(i);
     }
-    // Where each authored id ended up, so `jumps_from` can anchor on one placed
-    // earlier in def order. Only successfully placed systems are in here, which
-    // is what makes a ring anchored on a failed system fail by name too rather
-    // than silently anchoring on nothing.
-    std::vector<std::pair<std::string, std::uint32_t>> placedById;
+    // `placedById` arrives holding every constellation member and grows with
+    // each `[[system]]` this loop places, so `jumps_from` can anchor on either.
+    // Only successfully placed systems are ever in it, which is what makes a
+    // ring anchored on a FAILED system fail by name too rather than silently
+    // anchoring on nothing.
 
     const auto fail = [&](const AuthoredSystem& authored, const char* rule, std::string reason) {
         if (outFailures != nullptr) {
@@ -536,24 +750,7 @@ void placeAuthoredSystems(const GalaxyParams& params,
             continue; // refused above, and named there
         }
 
-        SystemSpec& system = systems[index];
-        system.authoredId = authored.id;
-        system.secret = authored.secret;
-        // ⚑ The NAME is deliberately not written here. It is applied after the
-        // procedural name loop has run untouched, because how many times that
-        // loop redraws depends on which names it can already see - so writing
-        // one in ahead of it changes what every other system is called.
-        // ⚑⚑ The REGION is written here for every rule, replacement and
-        // insertion alike, and that is what saves `assignRegions` from needing
-        // a skip point: this pass runs after it, so this is the last word on
-        // the field no matter which pass created the node.
-        if (authored.hasRegion) {
-            system.region = authored.region;
-        }
-        if (authored.hasFaction) {
-            system.factionIndex = authored.factionIndex;
-        }
-        authoredFor[index] = &authored;
+        applyAuthoredFields(authored, index, systems, authoredFor);
         placedById.emplace_back(authored.id, index);
     }
 }
@@ -901,10 +1098,15 @@ Galaxy generateGalaxy(const GalaxyParams& params,
     // `galaxy.systems.size()`, which `anywhere` grows.
     const std::uint32_t proceduralCount = static_cast<std::uint32_t>(galaxy.systems.size());
 
-    // PASS 1: `anywhere` appends its nodes, before regions and before the
-    // gate graph, so they are laid out and woven in like any other system.
+    // PASS 1: `anywhere` appends its nodes and then each constellation appends
+    // its members, before regions and before the gate graph, so they are laid
+    // out and woven in like any other system. Constellations come SECOND so
+    // that an `anywhere` system keeps the index arithmetic stage B wrote down -
+    // `proceduralCount + k` - whether or not the file also has a group in it.
     core::Rng authoredRng(params.seed, kStreamAuthored);
     appendAnywhereSystems(params, authoredRng, galaxy.systems);
+    const std::uint32_t firstConstellationIndex = static_cast<std::uint32_t>(galaxy.systems.size());
+    appendConstellations(params, authoredRng, galaxy.systems, galaxy.links);
 
     assignRegions(params, galaxy.systems);
     buildGateGraph(params, galaxy.systems, galaxy.links);
@@ -935,10 +1137,22 @@ Galaxy generateGalaxy(const GalaxyParams& params,
     // what the later stages need is "did the AUTHOR write this field", and
     // only the def row knows that.
     std::vector<const AuthoredSystem*> authoredFor(galaxy.systems.size(), nullptr);
-    // PASS 2: the three replacement rules choose a node, and every rule -
-    // insertion included - applies its author's fields here.
-    placeAuthoredSystems(
-        params, authoredRng, galaxy, capitals, proceduralCount, galaxy.systems, authoredFor, outFailures);
+    // PASS 2: constellation members take the nodes pass 1 made for them, then
+    // the three replacement rules choose theirs - and every one of them,
+    // insertion included, applies its author's fields through the same block.
+    // Members go first because a constellation cannot fail, so a member is an
+    // anchor a `jumps_from` may name whatever order the file was written in.
+    std::vector<std::pair<std::string, std::uint32_t>> placedById =
+        applyConstellations(params, firstConstellationIndex, galaxy.systems, authoredFor);
+    placeAuthoredSystems(params,
+                         authoredRng,
+                         galaxy,
+                         capitals,
+                         proceduralCount,
+                         galaxy.systems,
+                         authoredFor,
+                         placedById,
+                         outFailures);
 
     // ⚑⚑⚑⚑ THE NAME LOOP IS UNTOUCHED, AND THE FIRST ATTEMPT AT THIS WAS THE
     // BUG THE WHOLE PHASE EXISTS TO AVOID. Skipping the draw for an authored

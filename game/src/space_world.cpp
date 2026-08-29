@@ -376,7 +376,12 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         return sim::kNoFaction;
     };
 
-    for (const assets::SystemDef& def : defs.systems()) {
+    // ⚑⚑ ONE TRANSLATION, TWO PLACES IT IS ASKED FOR (Phase 29 stage C). A
+    // constellation member is a `SystemDef` that arrived nested rather than
+    // top-level, and nothing about crossing the seam differs - so the rule is
+    // written once here and a divergence between a `[[system]]` and a
+    // `[[constellation.system]]` is not expressible.
+    const auto translate = [&](const assets::SystemDef& def) {
         sim::AuthoredSystem authored;
         authored.id = def.id;
         authored.placement = def.placement == "anywhere"     ? sim::Placement::Anywhere
@@ -439,7 +444,41 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
             }
             authored.stations.push_back({.name = station.name, .archetype = archetype});
         }
-        m_galaxyParams.authoredSystems.push_back(std::move(authored));
+        return authored;
+    };
+
+    for (const assets::SystemDef& def : defs.systems()) {
+        m_galaxyParams.authoredSystems.push_back(translate(def));
+    }
+    // ⚑ The LANES cross the seam as member INDICES rather than as ids, for the
+    // same reason a station crosses it as an archetype index: `sol::sim` has
+    // never known what an id is. `validateSystems` has already refused a lane
+    // naming something that is not a member of this group, so every id here
+    // resolves - and a lane that somehow did not would be dropped by the
+    // generator rather than indexed on trust.
+    for (const assets::ConstellationDef& group : defs.constellations()) {
+        sim::AuthoredConstellation constellation;
+        constellation.id = group.id;
+        for (const assets::SystemDef& member : group.members) {
+            constellation.members.push_back(translate(member));
+        }
+        const auto memberIndexOf = [&group](const std::string& id) {
+            for (std::size_t i = 0; i < group.members.size(); ++i) {
+                if (group.members[i].id == id) {
+                    return static_cast<std::uint32_t>(i);
+                }
+            }
+            return sim::kNoSystem;
+        };
+        for (const assets::ConstellationLinkDef& link : group.links) {
+            const std::uint32_t from = memberIndexOf(link.fromId);
+            const std::uint32_t to = memberIndexOf(link.toId);
+            if (from == sim::kNoSystem || to == sim::kNoSystem) {
+                continue;
+            }
+            constellation.links.push_back({from, to});
+        }
+        m_galaxyParams.constellations.push_back(std::move(constellation));
     }
 
     // Economy: commodities + archetype rates from the defs (unknown

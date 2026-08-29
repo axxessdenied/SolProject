@@ -632,6 +632,41 @@ struct SystemDef
     std::string source;
 };
 
+// One internal jump lane inside a constellation, naming two of that same
+// constellation's member ids (Phase 29 stage C).
+struct ConstellationLinkDef
+{
+    std::string fromId;
+    std::string toId;
+};
+
+// A group of systems placed together, keeping the lanes their author drew
+// between them (Phase 29 stage C, decisions/018).
+//
+// ⚑⚑⚑ ITS MEMBERS ARE `[[constellation.system]]` ROWS RATHER THAN IDS POINTING
+// AT `[[system]]` ROWS ELSEWHERE, because a member has no placement of its own
+// - the group carries it - and a `[[system]]` that is secretly placed by
+// something else is a row whose own `placement` key would be a lie. Nesting
+// says it once: everything inside the group belongs to the group.
+//
+// ⚑⚑ `placement` HAS EXACTLY ONE LEGAL VALUE, AND SAYING SO IS WHY THE KEY
+// EXISTS. Three of the four rules REPLACE an existing system, and a group
+// cannot replace one node as a unit; making `random` mean "near a random
+// system" for a group while it means "become a random system" for a system is
+// two rules wearing one word. Anything but "anywhere" is refused with that
+// reason, which is a better answer to an author than a key that is not there.
+struct ConstellationDef
+{
+    std::string id; // the group's own id; names it in a refusal
+    std::string placement = "anywhere";
+    std::vector<SystemDef> members;
+    // Empty means the members are chained in declaration order, which is what
+    // the generator does with it: a group whose members have no lanes between
+    // them is not a group.
+    std::vector<ConstellationLinkDef> links;
+    std::string source;
+};
+
 class DefDatabase
 {
 public:
@@ -674,7 +709,8 @@ public:
     // legitimately live in an earlier or a later layer than the model.
     [[nodiscard]] bool validateMaterials(std::string* outError = nullptr) const;
 
-    // Cross-def check for `[[system]]` rows (Phase 29), and it REFUSES for the
+    // Cross-def check for `[[system]]` and `[[constellation]]` rows (Phase 29),
+    // and it REFUSES for the
     // reason decision 3 gives: an authored system whose faction or whose
     // station archetype does not exist has no fallback that is not a lie about
     // where the campaign starts. Separate from the parse for the same reason
@@ -726,6 +762,11 @@ public:
     // placement rules resolve in (decision 4).
     [[nodiscard]] const std::vector<SystemDef>& systems() const { return m_systems; }
 
+    // Groups placed as a unit, in first-definition order. Their members are
+    // authored systems too, so everything `systems()` promises about a
+    // `[[system]]` row holds for a `[[constellation.system]]` row as well.
+    [[nodiscard]] const std::vector<ConstellationDef>& constellations() const { return m_constellations; }
+
     [[nodiscard]] const std::vector<ModuleDef>& modules() const { return m_modules; }
 
     [[nodiscard]] const std::vector<CrewDef>& crew() const { return m_crew; }
@@ -748,6 +789,7 @@ private:
     std::vector<CommodityDef> m_commodities;
     std::vector<StationDef> m_stations;
     std::vector<SystemDef> m_systems;
+    std::vector<ConstellationDef> m_constellations;
     std::vector<ModuleDef> m_modules;
     std::vector<CrewDef> m_crew;
     std::vector<SoundDef> m_sounds;
