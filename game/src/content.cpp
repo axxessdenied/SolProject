@@ -1677,6 +1677,57 @@ std::string systemMap(GameContent& content, double index)
     return lines + "\n" + summary;
 }
 
+// The galaxy row and the system readout for one system, exactly as the map
+// screen composes them (Phase 30 stage D). Same argument sol.system_map makes
+// and the same construction: run the REAL fill, because what is being asserted
+// is what the SCREEN says at each rung of the knowledge ladder, and a second
+// read here could agree with itself while disagreeing with the game.
+//
+// ⚑ It prints the row's own `hasSecurity` and `securityAnswers` beside the
+// composed text, because the whole of this stage is a knowledge rule and a
+// band, and neither is visible in a sentence that has already been assembled
+// out of them.
+std::string mapRow(GameContent& content, double index)
+{
+    const SpaceWorld& world = content.world();
+    if (index < 0.0 || static_cast<std::size_t>(index) >= world.galaxy().systems.size()) {
+        return "no such system";
+    }
+    const auto system = static_cast<std::uint32_t>(index);
+    if (world.survey().knowledge(system) == sol::sim::KnowledgeState::Unknown) {
+        return "unknown system - the map draws no row for it at all";
+    }
+    std::deque<std::string> text;
+    sol::ui::MapPanel panel;
+    std::vector<sol::ui::MapSystemRow> systems;
+    std::vector<sol::ui::MapLaneRow> lanes;
+    std::vector<sol::ui::MapMarkerRow> markers;
+    panel.viewSystem = static_cast<int>(index);
+    panel.securityOverlay = true; // so the overlay legend is composed too
+    fillMapPanel(world, text, panel, systems, lanes, markers);
+
+    const sol::ui::MapSystemRow& row = panel.systems[system];
+    char rating[128];
+    if (row.hasSecurity) {
+        std::snprintf(rating,
+                      sizeof(rating),
+                      "rating: shown %+.3f, a call here is answered: %s",
+                      static_cast<double>(row.security),
+                      row.securityAnswers ? "yes" : "NO");
+    } else {
+        std::snprintf(
+            rating, sizeof(rating), "rating: HIDDEN - the row declines, this is not a visited system");
+    }
+    std::string lines = row.detail;
+    lines += "\nreadout: ";
+    lines += panel.viewSecurity;
+    lines += "\n";
+    lines += rating;
+    lines += "\nlegend: ";
+    lines += panel.securitySummary;
+    return lines;
+}
+
 std::string deleteBookmark(GameContent& content, double id)
 {
     return content.world().removeBookmark(static_cast<std::uint32_t>(id)) ? "deleted" : "no such bookmark";
@@ -3382,6 +3433,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&deleteBookmark>("sol", "bookmark_delete", this);
     // Remote system maps (Phase 8q): what the System tab draws for any system.
     m_vm.registerFunction<&systemMap>("sol", "system_map", this);
+    m_vm.registerFunction<&mapRow>("sol", "map_row", this);
     m_vm.registerFunction<&warpBookmark>("sol", "warp_bookmark", this);
     m_vm.registerFunction<&shipInfo>("sol", "ship_info", this);
     // Which level each instance drew at (Phase 9 stage F), because no frame

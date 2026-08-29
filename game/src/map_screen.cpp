@@ -79,9 +79,35 @@ constexpr const char* const kTabLabels[MapScreenState::TabCount] = {"Galaxy", "S
     return system.tradeStale ? color.withAlpha(0.45f) : color;
 }
 
+// Security overlay (Phase 30 stage D): a DIVERGING scale, and it has to be one
+// because the number is signed and the sign is not a magnitude — it names whose
+// law reaches you. Green is a navy that comes, red is a clan that comes for
+// you, and amber sits at zero, which is the band where nobody comes at all. A
+// system the player has only heard of from a gate keeps the same "no reading"
+// slate the trade overlay uses: it is not amber, because "I do not know" and
+// "nobody is coming" are the two answers this map must never confuse.
+[[nodiscard]] Color securityColor(const MapSystemRow& system)
+{
+    if (!system.hasSecurity) {
+        return rgba(0x44505CFFu);
+    }
+    constexpr Color kNoLaw = rgba(0xE0A44CFFu);
+    constexpr Color kPoliced = rgba(0x69C48CFFu);
+    constexpr Color kClan = rgba(0xE0704CFFu);
+    const float level = std::min(std::abs(system.security), 1.0f);
+    const Color far = system.security < 0.0f ? kClan : kPoliced;
+    return {kNoLaw.r + (far.r - kNoLaw.r) * level,
+            kNoLaw.g + (far.g - kNoLaw.g) * level,
+            kNoLaw.b + (far.b - kNoLaw.b) * level,
+            1.0f};
+}
+
 [[nodiscard]] Color systemColor(const MapPanel& panel, const MapSystemRow& system)
 {
-    return panel.tradeCommodity >= 0 ? tradeColor(system) : ownerColor(system);
+    if (panel.tradeCommodity >= 0) {
+        return tradeColor(system);
+    }
+    return panel.securityOverlay ? securityColor(system) : ownerColor(system);
 }
 
 // Marker glyph colors: what a thing is, at a glance, without a legend.
@@ -583,6 +609,18 @@ void drawSystemList(UiContext& ui, const MapPanel& panel, const Rect& bounds, Ma
                 clipped(
                     ui, name, "no data", ui.theme().textDisabled, ui.theme().smallStyle, TextAlign::Right);
             }
+        } else if (panel.securityOverlay) {
+            // Phase 30 stage D, the same shape one branch up: with an overlay
+            // showing, the right-hand tag is the thing being compared. Signed,
+            // because the list is where a -0.62 sits three rows from a +0.85.
+            if (system.hasSecurity) {
+                char buffer[32] = {};
+                std::snprintf(buffer, sizeof(buffer), "%+.2f", static_cast<double>(system.security));
+                clipped(ui, name, buffer, securityColor(system), ui.theme().smallStyle, TextAlign::Right);
+            } else {
+                clipped(
+                    ui, name, "unknown", ui.theme().textDisabled, ui.theme().smallStyle, TextAlign::Right);
+            }
         } else if (system.current) {
             clipped(ui, name, "here", ui.theme().accent, ui.theme().smallStyle, TextAlign::Right);
         } else if (system.onRoute) {
@@ -720,10 +758,10 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state, const
         if (state.selectedSystem < 0 || state.selectedSystem >= static_cast<int>(panel.systems.size())) {
             state.selectedSystem = panel.currentIndex;
         }
-        // Trade overlay picker (Phase 8g), above the list. One cycling button
-        // rather than a row of cells: five choices across a column this
-        // narrow leaves no room for a name like "Refined Metal", and a
-        // truncated legend is worse than an extra click.
+        // Overlay picker (Phase 8g, and Phase 30 stage D added a stop to it),
+        // above the list. One cycling button rather than a row of cells: five
+        // choices across a column this narrow leaves no room for a name like
+        // "Refined Metal", and a truncated legend is worse than an extra click.
         Column listColumn(listBounds, 0.0f, ui.theme().spacing);
         const Rect overlayRow = listColumn.row(kRowHeight);
         {
@@ -735,13 +773,28 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state, const
                               "Colour: %s",
                               panel.commodityNames[static_cast<std::size_t>(panel.tradeCommodity)]);
             } else {
-                std::snprintf(label, sizeof(label), "Colour: owners");
+                std::snprintf(
+                    label, sizeof(label), "Colour: %s", panel.securityOverlay ? "security" : "owners");
             }
-            if (ui.button(overlayRow, label, commodityCount > 0)) {
-                // Owners -> each commodity -> back to owners.
-                const int next = panel.tradeCommodity + 1;
-                panel.action = {.kind = MapAction::Kind::SetTradeCommodity,
-                                .index = next >= commodityCount ? -1 : next};
+            // The button is ALWAYS enabled since stage D. It used to be
+            // disabled with no commodities loaded, which was right when trade
+            // was the only thing it could reach; the security overlay needs no
+            // market data, so that guard would now hide it behind an economy.
+            if (ui.button(overlayRow, label)) {
+                // Owners -> security -> each commodity -> back to owners. Two
+                // action kinds, because leaving security for a commodity has to
+                // turn one off and the other on and an action carries one
+                // answer; whoever executes them enforces the exclusivity.
+                if (panel.securityOverlay) {
+                    panel.action = {.kind = MapAction::Kind::SetTradeCommodity,
+                                    .index = commodityCount > 0 ? 0 : -1};
+                } else if (panel.tradeCommodity < 0) {
+                    panel.action = {.kind = MapAction::Kind::SetSecurityOverlay, .index = 1};
+                } else {
+                    const int next = panel.tradeCommodity + 1;
+                    panel.action = {.kind = MapAction::Kind::SetTradeCommodity,
+                                    .index = next >= commodityCount ? -1 : next};
+                }
             }
         }
         drawSystemList(ui, panel, listColumn.remaining(), state);
@@ -770,6 +823,7 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state, const
         clipped(ui,
                 detailCell,
                 panel.tradeCommodity >= 0                            ? panel.tradeSummary
+                : panel.securityOverlay                              ? panel.securitySummary
                 : selected != nullptr && selected->detail[0] != '\0' ? selected->detail
                                                                      : panel.routeSummary,
                 ui.theme().textDim);
@@ -801,6 +855,25 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state, const
                 panel.viewSummary,
                 panel.viewIsCurrent ? ui.theme().textDim : ui.theme().accent,
                 ui.theme().smallStyle);
+        // And who polices it (Phase 30 stage D), directly under the rung and
+        // the distance, because it is the same kind of fact: something about
+        // the place as a whole rather than about anything in the marker list.
+        //
+        // labelElided rather than `clipped`, which is the one thing in this
+        // file that hard-clips with nothing to show for it. A faction name is
+        // variable-length and this column is 290 px, so the sentence CAN run
+        // out of room - and a cut that says nothing is how the first version of
+        // this line lost its "no response" clause without leaving a mark.
+        // Elided visibly, with the whole of it on hover, is Phase 10's answer.
+        {
+            const Rect securityRow = listColumn.row(kRowHeight);
+            const Rect securityText = {{securityRow.min.x + 4.0f, securityRow.min.y},
+                                       {securityRow.max.x - 4.0f, securityRow.max.y}};
+            if (ui.labelElided(securityText, panel.viewSecurity, ui.theme().textDim, ui.theme().smallStyle) &&
+                securityRow.contains(ui.input().mousePosition)) {
+                ui.tooltip(panel.viewSecurity);
+            }
+        }
         drawMarkerList(ui, panel, listColumn.remaining(), state);
         drawSystemMap(ui, panel, mapBounds, state.selectedMarker, magnify, pick);
         if (pick.result() != sol::ui::kNoPick) {

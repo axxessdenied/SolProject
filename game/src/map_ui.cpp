@@ -37,6 +37,18 @@ namespace {
     return buffer;
 }
 
+// System security (Phase 30 stage D). ALWAYS SIGNED, because the sign is the
+// half of this number that is not a magnitude: it names who polices the place,
+// and "0.85" and "+0.85" do not say the same thing beside a "-0.75" three rows
+// down. `SpaceWorld::systemSecurity` already flattens negative zero for exactly
+// this printf.
+[[nodiscard]] std::string formatSecurity(float value)
+{
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%+.2f", static_cast<double>(value));
+    return buffer;
+}
+
 [[nodiscard]] const char* regionName(sim::Region region)
 {
     switch (region) {
@@ -402,6 +414,17 @@ void fillMapPanel(const SpaceWorld& world,
             row.hasOwner = true;
             row.ownerColor = world.factions()[owner].color;
         }
+        // And how well it is policed is knowledge on the same terms again
+        // (Phase 30 stage D). This is the LIVE rating, not the baseline: what
+        // a player plans a route around is how safe the place is right now,
+        // and `systemSecurity` is the one call holding both halves. The number
+        // has existed since Phase 8x under the name `danger` and has never
+        // once been shown to anybody.
+        if (visited) {
+            row.hasSecurity = true;
+            row.security = world.systemSecurity(i);
+            row.securityAnswers = game::securityAnswers(row.security);
+        }
         // A war is knowledge on the same terms (Phase 8u): the front is only
         // drawn where the player has actually been.
         const sim::SystemContest contest = world.factionSim().contestOf(i);
@@ -424,6 +447,12 @@ void fillMapPanel(const SpaceWorld& world,
             detail += row.hasOwner ? ", " + world.factions()[owner].name : ", unclaimed";
             if (row.contested) {
                 detail += " - CONTESTED by " + world.factions()[contest.attacker].name;
+            }
+            // Beside the owner, because the two are one sentence: the sign of
+            // this number says whose law it is and the owner says whose flag.
+            detail += ", security " + formatSecurity(row.security);
+            if (!row.securityAnswers) {
+                detail += " (no response)";
             }
             detail += ", " + std::to_string(spec.stations.size()) + " station(s)";
             detail += ", sites " + std::to_string(resolved) + "/" + std::to_string(signals);
@@ -451,6 +480,19 @@ void fillMapPanel(const SpaceWorld& world,
             knownMarkets == 0 ? std::string("No price data yet - dock somewhere, or buy a market report")
                               : std::to_string(knownMarkets) + " markets known: " + formatNumber(cheapest) +
                                     " - " + formatNumber(dearest) + " cr/unit");
+    }
+    // The security overlay's legend (Phase 30 stage D). A diverging scale needs
+    // one, because the reader has to be told that the two ends are two
+    // different laws rather than two amounts of the same one - and it says how
+    // many systems are actually coloured, since the rest are grey for a reason
+    // the player can do something about.
+    if (panel.securityOverlay) {
+        std::uint32_t rated = 0;
+        for (const ui::MapSystemRow& row : systemRows) {
+            rated += row.hasSecurity ? 1u : 0u;
+        }
+        panel.securitySummary = store(
+            text, "Green policed, amber nobody comes, red clan-held (" + std::to_string(rated) + " visited)");
     }
 
     for (const sim::GateLink& link : galaxy.links) {
@@ -495,6 +537,40 @@ void fillMapPanel(const SpaceWorld& world,
                                         : ", no route known";
         }
         panel.viewSummary = store(text, std::move(summary));
+
+        // Who polices it (Phase 30 stage D), which is the half of the signed
+        // scale a number cannot say on its own. ⚑ WHO reads the BASELINE and
+        // WHETHER reads the live rating, and keeping them apart is the whole
+        // point: a core system ground down to nothing by a month of raiding is
+        // still the Navy's, and calling it unpoliced would be the sign-crossing
+        // lie `systemSecurity` refuses to tell. It is thin, not somebody
+        // else's.
+        //
+        // It is also written SHORT, and the drive is what settled that: this
+        // line sits in the 290 px list column, which holds about forty
+        // characters, and the first wording ran to sixty-four and was sheared
+        // in the middle of the one clause that mattered. So the caveat comes
+        // FIRST - the same rule the objective marker's detail follows twenty
+        // lines down, for the same reason - and the faction name, which the
+        // galaxy row carries anyway, is what a long one costs.
+        std::string policing;
+        if (rung < sim::KnowledgeState::Visited) {
+            policing = "Security unknown - go there to read it";
+        } else {
+            const float baseline = world.systemSecurityBaseline(viewSystem);
+            const float live = world.systemSecurity(viewSystem);
+            const std::uint32_t holder = world.systemOwnerFaction(viewSystem);
+            const std::string held = holder < world.factions().size() ? world.factions()[holder].name : "";
+            if (baseline == 0.0f || held.empty()) {
+                policing = "Nobody polices this - you are on your own";
+            } else if (!game::securityAnswers(live)) {
+                policing = "NOBODY COMES - " + formatSecurity(live) + ", " + held;
+            } else {
+                policing =
+                    (baseline > 0.0f ? "Policed by " : "Held by ") + held + ": " + formatSecurity(live);
+            }
+        }
+        panel.viewSecurity = store(text, std::move(policing));
     }
 
     // Somewhere else: the markers come from the galaxy plan and the two
@@ -636,7 +712,8 @@ bool executeMapAction(SpaceWorld& world, const ui::MapAction& action)
     switch (action.kind) {
     case Kind::None:
     case Kind::Close:
-    case Kind::SetTradeCommodity: // view state; main.cpp owns it
+    case Kind::SetTradeCommodity:  // view state; main.cpp owns it
+    case Kind::SetSecurityOverlay: // the same, and its exclusive twin
         break;
     case Kind::PlotRoute:
         if (action.index >= 0) {

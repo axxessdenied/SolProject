@@ -6043,8 +6043,11 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
     m_lastResponse.live = live;
     m_lastResponse.responderFaction = owner;
     // ⚑ Nobody comes, and that is an ANSWER rather than a failure: it is the
-    // zero band of decisions/019 doing exactly what it says on the map.
-    if (std::abs(live) < kResponseSilenceBand) {
+    // zero band of decisions/019 doing exactly what it says on the map. ⚑⚑ And
+    // it says it through `securityAnswers` rather than through its own
+    // comparison, because since stage D the MAP makes this same claim to the
+    // player before they fly anywhere - see the header.
+    if (!securityAnswers(live)) {
         return 0;
     }
 

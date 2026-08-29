@@ -464,6 +464,23 @@ struct MapSystemRow
     float tradePrice = 0.0f;
     float tradeLevel = 0.0f; // 0 = cheapest known, 1 = dearest known
     bool tradeStale = false;
+    // System security (Phase 30 stage D, decisions/019): the LIVE rating -
+    // the generated baseline eroded by how dangerous the place is right now -
+    // on the signed scale whose sign names WHO polices it. Positive is a
+    // major, negative is a clan, zero is nobody.
+    //
+    // ⚑ Knowledge on exactly the terms ownership is: a system the player has
+    // only heard of from a gate does not tell you how well it is policed, and
+    // `hasSecurity` is false there. That is not a nicety - the number is the
+    // one thing a route is planned around, so being able to LEARN it is what
+    // makes going somewhere worth anything.
+    bool hasSecurity = false;
+    float security = 0.0f;
+    // ⚑⚑ Whether a call here is answered AT ALL, decided by the same
+    // `securityAnswers` band the dispatcher itself refuses on. Carried on the
+    // row rather than recomputed by the screen so the constant lives in one
+    // file: the game layer knows the rule, the UI layer only draws it.
+    bool securityAnswers = false;
 };
 
 // A lane between two rows of the system list; drawn only when both ends are
@@ -541,7 +558,12 @@ struct MapAction
         Autopilot,    // Phase 15: index = nav-target slot: target it and engage
         Close,
         SetTradeCommodity, // Phase 8g: index = commodity, or -1 to turn it off
-        DeleteBookmark,    // Phase 8h/8q: bookmarkId names the bookmark
+        // Phase 30 stage D: index != 0 turns the security gradient on. It and
+        // the trade overlay are ONE colour channel, so whoever executes these
+        // turns the other off - which is why the picker cannot express the
+        // whole cycle with a single action kind.
+        SetSecurityOverlay,
+        DeleteBookmark, // Phase 8h/8q: bookmarkId names the bookmark
         // Phase 28 stage D: a right-click inside the system map. index = the
         // NAV-TARGET SLOT under the cursor, or -1 for a click that hit nothing
         // - which still opens a menu, about whatever is already selected, for
@@ -590,7 +612,18 @@ struct MapPanel
     std::span<const char* const> commodityNames;
     int tradeCommodity = -1;
     const char* tradeSummary = ""; // "Refined Metal: 12 markets known", prebuilt
-    MapAction action;              // out
+    // Security overlay (Phase 30 stage D): the galaxy map colors every visited
+    // system by how well it is policed. Shares the colour channel with the
+    // trade overlay and the same one cycling button picks between them, so at
+    // most one of the two is ever set.
+    bool securityOverlay = false;
+    const char* securitySummary = ""; // the legend, prebuilt
+    // "Policed by Solar Navy - security +0.85", for whichever system the System
+    // tab is showing. Names WHO polices it, which the galaxy row does not: the
+    // row already carries the owner, and this one is about the law rather than
+    // the flag. Refuses for a system the player has only heard of.
+    const char* viewSecurity = "";
+    MapAction action; // out
 };
 
 // What the player clicked this frame; the game executes it.

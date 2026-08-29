@@ -1635,6 +1635,7 @@ int main(int argc, char** argv)
             // The trade overlay's commodity is view state the screen owns
             // across frames; fillMapPanel reads it to decide what to color by.
             mapPanel.tradeCommodity = mapScreen.tradeCommodity;
+            mapPanel.securityOverlay = mapScreen.securityOverlay;
             mapPanel.commodityNames = commodityNames;
             // And which system the System tab is looking at (Phase 8q) - the
             // galaxy tab's own selection, so finding a system on one tab and
@@ -2124,8 +2125,19 @@ int main(int argc, char** argv)
         if (state == game::GameState::Map) {
             // The overlay picker is view state, so it is handled here rather
             // than in executeMapAction, which acts on the world.
+            // ⚑⚑ ONE COLOUR CHANNEL, TWO FIELDS, AND THE EXCLUSIVITY LIVES
+            // HERE. A node can only be one colour, so turning either overlay on
+            // turns the other off - and the picker's cycle needs exactly that
+            // in the step from security to the first commodity, which is one
+            // press and therefore one action. Saying it in both handlers is
+            // what makes a third overlay a third line rather than a rewrite.
             if (mapPanel.action.kind == sol::ui::MapAction::Kind::SetTradeCommodity) {
                 mapScreen.tradeCommodity = mapPanel.action.index;
+                mapScreen.securityOverlay = false;
+            }
+            if (mapPanel.action.kind == sol::ui::MapAction::Kind::SetSecurityOverlay) {
+                mapScreen.securityOverlay = mapPanel.action.index != 0;
+                mapScreen.tradeCommodity = -1;
             }
             // Phase 28 stage D: the world half of a right-click (selecting what
             // was under it) is executeMapAction's, below; opening the menu is

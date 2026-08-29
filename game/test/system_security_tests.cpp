@@ -1,7 +1,10 @@
+#include "map_ui.hpp"
 #include "space_world.hpp"
 
 #include <cstdint>
 #include <cstdio>
+#include <deque>
+#include <string>
 #include <vector>
 
 #include <sol/assets/data_defs.hpp>
@@ -672,4 +675,316 @@ SOL_TEST(a_hit_on_the_local_law_is_what_calls_the_local_law)
         friendly.spawnPilotFromDef(*defs.findShip("sol.interceptor"), defs, game::PilotRole::Patrol, owner);
     friendly.considerResponse(victim.index, shooter.index, at);
     SOL_CHECK(friendly.lastResponse().diverted + friendly.lastResponse().spawned == 0);
+}
+
+// ---------------------------------------------------------------------------
+// Stage D: the player can see it.
+
+namespace {
+
+// Everything the map screen would draw, from the real fill. A parallel read
+// here could agree with itself while disagreeing with the game, which is the
+// argument sol.system_map made in 8q and it has not got weaker since.
+struct MapFill
+{
+    std::deque<std::string> text;
+    sol::ui::MapPanel panel;
+    std::vector<sol::ui::MapSystemRow> systems;
+    std::vector<sol::ui::MapLaneRow> lanes;
+    std::vector<sol::ui::MapMarkerRow> markers;
+
+    void run(const game::SpaceWorld& world, int viewSystem = -1)
+    {
+        panel = sol::ui::MapPanel{};
+        panel.viewSystem = viewSystem;
+        game::fillMapPanel(world, text, panel, systems, lanes, markers);
+    }
+
+    [[nodiscard]] const sol::ui::MapSystemRow& row(std::uint32_t system) const
+    {
+        return panel.systems[system];
+    }
+};
+
+[[nodiscard]] bool mentions(const char* text, const char* needle)
+{
+    return std::string(text).find(needle) != std::string::npos;
+}
+
+// A call nobody in particular made: SpaceWorld::kNoIndex, which is private.
+constexpr std::uint32_t kNobodyInParticular = 0xffff'ffffu;
+
+// The thinnest raidable garrison in the galaxy: the one place danger can be
+// made to swamp, which is what both of the erosion tests below need. Picking
+// the FIRST positive system instead draws a core capital at +0.850 that no
+// faction has a legal raid against, and the test then passes by never moving
+// anything - a stage A finding, paid for once already.
+std::uint32_t weakestRaidableGarrison(game::SpaceWorld& world)
+{
+    std::vector<RaidCandidate> candidates;
+    std::uint32_t target = sol::sim::kNoFaction;
+    for (std::uint32_t faction = 0; faction < world.factions().size(); ++faction) {
+        world.factionSim().raidCandidates(world.galaxy(), faction, candidates);
+        for (const RaidCandidate& candidate : candidates) {
+            const float baseline = world.systemSecurityBaseline(candidate.system);
+            if (baseline > 0.0f &&
+                (target == sol::sim::kNoFaction || baseline < world.systemSecurityBaseline(target))) {
+                target = candidate.system;
+            }
+        }
+    }
+    return target;
+}
+
+// A system the player has heard of from a gate and never flown to, reached the
+// way a player reaches it: identify a gate in the system you are standing in
+// and the map learns the name of where it goes.
+//
+// Since Phase 8z that is the ONLY route to Charted - `setKnowledge` stopped
+// charting neighbours deliberately (a lever must not reach a state by a route
+// the sim no longer has), and arrival never did it. So a test that wants the
+// fog this stage is gated on has to look through a gate to get it, which is
+// also the exact sentence the phase exit uses.
+std::uint32_t chartANeighbour(game::SpaceWorld& world)
+{
+    const std::uint32_t here = world.currentSystemIndex();
+    const std::vector<sol::sim::GateSpec>& gates = world.galaxy().systems[here].gates;
+    for (std::uint32_t gate = 0; gate < gates.size(); ++gate) {
+        const std::uint32_t destination = gates[gate].toSystem;
+        if (world.survey().knowledge(destination) != sol::sim::KnowledgeState::Unknown) {
+            continue;
+        }
+        (void)world.survey().notifyGateDiscovered(world.galaxy(), here, gate);
+        (void)world.survey().notifyGateIdentified(world.galaxy(), here, gate);
+        if (world.survey().knowledge(destination) == sol::sim::KnowledgeState::Charted) {
+            return destination;
+        }
+    }
+    return sol::sim::kNoFaction;
+}
+
+} // namespace
+
+// THE KNOWLEDGE RULE, WHICH IS HALF OF WHAT THIS STAGE IS FOR. The rating is
+// the one number a route is planned around, so being able to LEARN it is what
+// makes flying somewhere worth anything - and the phase exit says so in its own
+// words: "watch a system you have only heard of from a gate decline to tell you
+// its rating". It rides the same `visited` gate the owner colour has obeyed
+// since 8q, and the fog it needs is generated rather than arranged: entering a
+// system charts its neighbours, which is exactly the rung the exit is about.
+SOL_TEST(the_map_row_tells_a_visited_system_and_declines_for_a_rumour)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    const std::uint32_t here = world.currentSystemIndex();
+    SOL_REQUIRE(world.survey().knowledge(here) >= sol::sim::KnowledgeState::Visited);
+    const std::uint32_t rumour = chartANeighbour(world);
+    SOL_REQUIRE(rumour != sol::sim::kNoFaction);
+
+    MapFill map;
+    map.run(world);
+    SOL_REQUIRE(map.panel.systems.size() == world.galaxy().systems.size());
+
+    // Where the player has been, the row says so, and it says the same number
+    // the world does.
+    SOL_CHECK(map.row(here).hasSecurity);
+    SOL_CHECK(map.row(here).security == world.systemSecurity(here));
+    SOL_CHECK(mentions(map.row(here).detail, "security "));
+    std::printf("  %s\n", map.row(here).detail);
+
+    // Where they have only heard of, it does not - and the number does not leak
+    // into the sentence either, which is the failure a bare `hasSecurity` check
+    // would sail straight past.
+    SOL_CHECK(!map.row(rumour).hasSecurity);
+    SOL_CHECK(map.row(rumour).security == 0.0f);
+    SOL_CHECK(!mentions(map.row(rumour).detail, "security"));
+    std::printf("  %s\n", map.row(rumour).detail);
+}
+
+// The LIVE rating, not the baseline - decisions/019 decision 1's whole point. A
+// system raided for the last hour must not still read as safe, because that is
+// the precise lie `danger` was built to avoid, and the map is where it would
+// finally be told to somebody.
+SOL_TEST(the_map_row_shows_the_live_rating_rather_than_the_baseline)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    const std::uint32_t target = weakestRaidableGarrison(world);
+    SOL_REQUIRE(target != sol::sim::kNoFaction);
+    world.survey().setKnowledge(world.galaxy(), target, sol::sim::KnowledgeState::Visited);
+
+    MapFill map;
+    map.run(world);
+    const float quiet = map.row(target).security;
+    SOL_REQUIRE(quiet == world.systemSecurityBaseline(target)); // nothing to erode yet
+
+    SOL_REQUIRE(raiseDanger(world, target, 0.9f) > 0.0f);
+    map.run(world);
+    const float raided = map.row(target).security;
+    std::printf("  %s: baseline %+.3f, map showed %+.3f quiet and %+.3f under raid\n",
+                world.galaxy().systems[target].name.c_str(),
+                static_cast<double>(world.systemSecurityBaseline(target)),
+                static_cast<double>(quiet),
+                static_cast<double>(raided));
+
+    SOL_CHECK(raided == world.systemSecurity(target));
+    SOL_CHECK(raided < quiet);
+    // And it did not cross zero on the way down, which would have the map
+    // claiming a pirate clan had taken a system the Navy still holds.
+    SOL_CHECK(raided >= 0.0f);
+}
+
+// THE COUPLING THIS STAGE EXISTS TO KEEP HONEST, AND THE SPEC DID NOT NAME IT.
+// The map's whole promise is that a route planned off it was planned off the
+// truth. A row saying a system is policed, about a system `respondTo` will
+// silently refuse to answer a call in, is worse than a row that says nothing -
+// the player flies in on purpose. So the row's `securityAnswers` and the
+// dispatcher's own refusal are ONE predicate in ONE file, and this asserts they
+// agree on real systems from both sides of the band.
+//
+// `lastResponse().reach` is the discriminator rather than the responder count:
+// reach is set only AFTER the band is consulted, so reach == 0 is precisely
+// "nobody was ever going to come", and a system that simply had no hull to
+// spare is not confused with one whose law has stopped reaching.
+SOL_TEST(the_map_never_promises_a_response_the_dispatcher_would_refuse)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    // One from each side of the band, chosen by the sign the generator wrote
+    // rather than by index - the coupling Phase 29 stage D paid for.
+    std::vector<std::uint32_t> sample = {world.currentSystemIndex()};
+    const std::uint32_t clan = systemInBand(world, -1.0f, -0.2f);
+    const std::uint32_t middling = systemInBand(world, 0.40f, 0.60f);
+    SOL_REQUIRE(clan != sol::sim::kNoFaction);
+    SOL_REQUIRE(middling != sol::sim::kNoFaction);
+    sample.push_back(clan);
+    sample.push_back(middling);
+    for (std::uint32_t i = 0; i < world.galaxy().systems.size(); ++i) {
+        if (world.galaxy().systems[i].authoredId == "sol.lantern") {
+            sample.push_back(i); // the galaxy's one system nobody polices
+        }
+    }
+    // AND ONE WHOSE LAW HAS COLLAPSED RATHER THAN NEVER EXISTED, because
+    // without it the only silent system here is `sol.lantern` - and respondTo
+    // refuses THAT at the owner check, before the band is ever consulted. The
+    // test would then prove the owner check and leave kResponseSilenceBand
+    // entirely unexercised on both sides. That is stage C's own finding, and it
+    // is reproduced here deliberately rather than rediscovered later.
+    const std::uint32_t collapsed = weakestRaidableGarrison(world);
+    SOL_REQUIRE(collapsed != sol::sim::kNoFaction);
+    SOL_REQUIRE(collapsed != middling);
+    SOL_REQUIRE(raiseDanger(world, collapsed, 0.9f) > 0.0f);
+    SOL_REQUIRE(world.systemOwnerFaction(collapsed) < world.factions().size());
+    sample.push_back(collapsed);
+
+    std::uint32_t answered = 0;
+    std::uint32_t silent = 0;
+    MapFill map;
+    for (const std::uint32_t system : sample) {
+        SOL_REQUIRE(world.enterSystem(system));
+        map.run(world);
+        const bool promised = map.row(system).securityAnswers;
+        const sol::core::DVec3 at = sol::sim::playfieldHub(world.galaxy().systems[system]);
+        (void)world.respondTo(at, kNobodyInParticular, game::ResponseCause::WeaponsFire);
+        const bool dispatched = world.lastResponse().reach > 0.0;
+        std::printf("  %-16s live %+.3f: map says %s, dispatcher says %s\n",
+                    world.galaxy().systems[system].name.c_str(),
+                    static_cast<double>(map.row(system).security),
+                    promised ? "somebody comes" : "nobody comes",
+                    dispatched ? "somebody comes" : "nobody comes");
+        SOL_CHECK(promised == dispatched);
+        answered += promised ? 1u : 0u;
+        silent += promised ? 0u : 1u;
+    }
+    // AND THE SAMPLE MUST CONTAIN BOTH ANSWERS, or this test agrees with itself
+    // about one case and cannot fail - the exact shape of vacuity this project
+    // has now been bitten by three times.
+    SOL_CHECK(answered > 0);
+    SOL_CHECK(silent > 0);
+}
+
+// The System tab's readout, which carries the half of a signed number that a
+// number cannot carry: WHO. The galaxy row already names the owner; this names
+// the law, and the two are not the same sentence.
+SOL_TEST(the_system_readout_names_who_polices_it)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+    const std::uint32_t here = world.currentSystemIndex();
+    const std::uint32_t major = world.systemOwnerFaction(here);
+    SOL_REQUIRE(major < world.factions().size());
+
+    MapFill map;
+    map.run(world, static_cast<int>(here));
+    std::printf("  %s\n", map.panel.viewSecurity);
+    SOL_CHECK(mentions(map.panel.viewSecurity, "Policed by"));
+    SOL_CHECK(mentions(map.panel.viewSecurity, world.factions()[major].name.c_str()));
+
+    // Down the negative band the same readout names a clan, because a clan
+    // responds to intrusion the way a navy does - decisions/019 decision 2.
+    const std::uint32_t clan = systemInBand(world, -1.0f, -0.2f);
+    SOL_REQUIRE(clan != sol::sim::kNoFaction);
+    world.survey().setKnowledge(world.galaxy(), clan, sol::sim::KnowledgeState::Visited);
+    map.run(world, static_cast<int>(clan));
+    std::printf("  %s\n", map.panel.viewSecurity);
+    SOL_CHECK(mentions(map.panel.viewSecurity, "Held by"));
+    SOL_CHECK(!mentions(map.panel.viewSecurity, "Policed by"));
+
+    // And a system heard of from a gate says so instead of a number.
+    const std::uint32_t rumour = chartANeighbour(world);
+    SOL_REQUIRE(rumour != sol::sim::kNoFaction);
+    map.run(world, static_cast<int>(rumour));
+    std::printf("  %s\n", map.panel.viewSecurity);
+    SOL_CHECK(mentions(map.panel.viewSecurity, "unknown"));
+    SOL_CHECK(!mentions(map.panel.viewSecurity, "Policed by"));
+    SOL_CHECK(!mentions(map.panel.viewSecurity, "Held by"));
+}
+
+// THE SIGN RULING, SAID ONE MORE TIME WHERE A PLAYER CAN READ IT. A core system
+// ground down by a month of raiding is still the Navy's - it is THIN, not
+// somebody else's and not unowned. So the readout's WHO comes off the baseline
+// while its WHETHER comes off the live rating, and this is the test that fails
+// if a future edit keys the whole sentence off one number.
+SOL_TEST(a_swamped_system_still_says_who_it_belongs_to)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    const std::uint32_t target = weakestRaidableGarrison(world);
+    SOL_REQUIRE(target != sol::sim::kNoFaction);
+    world.survey().setKnowledge(world.galaxy(), target, sol::sim::KnowledgeState::Visited);
+    SOL_REQUIRE(raiseDanger(world, target, 0.9f) > 0.0f);
+    SOL_REQUIRE(world.systemSecurity(target) == 0.0f); // eroded into the zero band
+    const std::uint32_t owner = world.systemOwnerFaction(target);
+    SOL_REQUIRE(owner < world.factions().size());
+
+    MapFill map;
+    map.run(world, static_cast<int>(target));
+    std::printf("  %s\n", map.panel.viewSecurity);
+    std::printf("  %s\n", map.row(target).detail);
+
+    // Still theirs - it names them, and it does NOT use the wording reserved
+    // for a place that belongs to nobody at all.
+    SOL_CHECK(mentions(map.panel.viewSecurity, world.factions()[owner].name.c_str()));
+    SOL_CHECK(!mentions(map.panel.viewSecurity, "Nobody polices"));
+    // ...and honest about what that is currently worth, in both of the places
+    // the player can read it. The caveat LEADS, because this line is elided
+    // from the right in a 290 px column and it is the half that must survive -
+    // which the live drive found by shearing it off.
+    SOL_CHECK(mentions(map.panel.viewSecurity, "NOBODY COMES"));
+    SOL_CHECK(!map.row(target).securityAnswers);
+    SOL_CHECK(mentions(map.row(target).detail, "no response"));
 }

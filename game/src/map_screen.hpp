@@ -45,6 +45,11 @@ struct MapScreenState
     // faction ownership, the way the map has always looked. Pure view state,
     // so it lives here rather than in the world.
     int tradeCommodity = -1;
+    // Whether the galaxy map is coloured by system security instead (Phase 30
+    // stage D). ⚑ These two are ONE colour channel and are mutually exclusive:
+    // the picker cycles owners -> security -> commodities, and main.cpp's two
+    // action handlers are where that exclusivity is enforced.
+    bool securityOverlay = false;
 };
 
 // What main.cpp knows about the mouse that the map cannot work out for itself

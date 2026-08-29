@@ -339,6 +339,20 @@ inline constexpr double kResponseCooldownSeconds = 20.0;
 // nobody comes at all - decisions/019's zero band, given a width.
 inline constexpr float kResponseSilenceBand = 0.08f;
 
+// Whether a call for help HERE is answered at all.
+//
+// ⚑⚑⚑ THIS IS A FUNCTION RATHER THAN TWO COMPARISONS BECAUSE STAGE D PUTS THE
+// RATING IN FRONT OF A PLAYER, AND THE MAP AND THE DISPATCHER MUST NOT BE ABLE
+// TO DISAGREE ABOUT IT. The map's whole promise is that a route planned off it
+// was planned off the truth - so a map saying "somebody polices this" about a
+// system `respondTo` will silently refuse is worse than a map that says
+// nothing, because the player flies into it on purpose. `respondTo` reads this
+// and so does the map row, and there is one band, in one place, for both.
+[[nodiscard]] inline bool securityAnswers(float liveSecurity)
+{
+    return std::abs(liveSecurity) >= kResponseSilenceBand;
+}
+
 // Why a responder was called. Phase 36 is where this grows a legal meaning; for
 // now it only distinguishes the two things that already happen in the world.
 enum class ResponseCause : std::uint32_t
