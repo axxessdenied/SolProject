@@ -893,6 +893,123 @@ void spawnClans(const GalaxyParams& params,
     }
 }
 
+// ---------------------------------------------------------------------------
+// System security (Phase 30 stage A, decisions/019 decision 1).
+//
+// (1) THIS RUNS *AFTER* `spawnClans`, AND THAT IS FORCED RATHER THAN CHOSEN.
+// The negative band means "a clan holds it", and until `spawnClans` has walked
+// the lawless components there is no clan to hold anything - every system the
+// band exists for is still sitting at `kNoFaction`, which is the value that
+// means the OPPOSITE thing (nobody comes at all). Writing security any earlier
+// puts every future pirate stronghold at exactly zero; the counterfactual was
+// run and it collapses 24 systems in the test galaxy alone.
+//
+// (2) AND IT TAKES NO DRAW. `claimTerritory` already runs a Dijkstra whose
+// `bestCost` is distance-from-capital and throws it away, which looks exactly
+// like the thing to reuse - and it is a trap twice over: it is accumulated MAP
+// distance rather than gate hops, and it is computed BEFORE the lawless re-roll
+// and before clans exist, so for precisely the systems the negative band cares
+// about it holds the distance to a MAJOR's capital instead. A fresh hop-count
+// walk from each seat is both correct and cheaper to read.
+//
+// (3) A NOTE ON WHY (2) IS STRUCTURAL AND NOT A DISCIPLINE. Sitting last means
+// every shared stream in this file is already finished, so a draw taken here
+// could not shift one even by accident. That is worth saying out loud because
+// it is the reason the golden cannot be the guard for this pass: the golden
+// proves nothing MOVED, and it is blind to `security` by construction, so what
+// certifies the field itself is `universe_retuning_security_moves_security_and
+// _nothing_else` and its "something actually changed" guard.
+
+constexpr std::uint32_t kUnreachable = 0xffff'ffffu;
+
+// Gate hops from `source` to every system; `kUnreachable` where the graph does
+// not connect. Hops rather than light-years because what this measures is how
+// far help has to come, and help comes through gates.
+void gateHopsFrom(const std::vector<std::vector<std::uint32_t>>& adjacency,
+                  std::uint32_t source,
+                  std::vector<std::uint32_t>& hops)
+{
+    std::fill(hops.begin(), hops.end(), kUnreachable);
+    if (source >= hops.size()) {
+        return;
+    }
+    hops[source] = 0;
+    std::vector<std::uint32_t> frontier{source};
+    for (std::size_t head = 0; head < frontier.size(); ++head) {
+        const std::uint32_t index = frontier[head];
+        for (const std::uint32_t neighbor : adjacency[index]) {
+            if (hops[neighbor] == kUnreachable) {
+                hops[neighbor] = hops[index] + 1;
+                frontier.push_back(neighbor);
+            }
+        }
+    }
+}
+
+// A seat's reach after `hops`: the base, less a per-hop tilt that saturates.
+// An unreachable seat takes the whole penalty - a system its owner cannot even
+// route to is the least policed one that owner has, which is the honest answer
+// rather than a special case.
+[[nodiscard]] float reachAfter(float base, float perJump, float maxPenalty, std::uint32_t hops)
+{
+    const float penalty =
+        hops == kUnreachable ? maxPenalty : std::min(maxPenalty, perJump * static_cast<float>(hops));
+    return core::clamp(base - penalty, 0.0f, 1.0f);
+}
+
+void assignSecurity(const GalaxyParams& params,
+                    std::vector<SystemSpec>& systems,
+                    const std::vector<GateLink>& links,
+                    const std::vector<std::uint32_t>& capitals,
+                    const std::vector<ClanSpec>& clans)
+{
+    const std::uint32_t count = static_cast<std::uint32_t>(systems.size());
+    // The default is EXACTLY ZERO and it is a value with a meaning rather than
+    // an unset marker: a system nobody claimed is one where nobody comes. It is
+    // also the only way a system reaches zero, which is what makes the reading
+    // legible - see `sol.lantern`, the shipped authored lawless system, which
+    // has been the galaxy's one zero-security place since before this existed.
+    for (SystemSpec& system : systems) {
+        system.security = 0.0f;
+    }
+
+    std::vector<std::vector<std::uint32_t>> adjacency(count);
+    for (const GateLink& link : links) {
+        adjacency[link.a].push_back(link.b);
+        adjacency[link.b].push_back(link.a);
+    }
+    std::vector<std::uint32_t> hops(count, kUnreachable);
+
+    // Majors, measured from the capital that seeded their territory.
+    for (std::uint32_t f = 0; f < capitals.size(); ++f) {
+        gateHopsFrom(adjacency, capitals[f], hops);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (systems[i].factionIndex != f) {
+                continue;
+            }
+            const float base = params.securityByRegion[static_cast<std::size_t>(systems[i].region)];
+            systems[i].security =
+                reachAfter(base, params.securityPerJump, params.securityMaxJumpPenalty, hops[i]);
+        }
+    }
+
+    // Clans, measured from the home system the component was seeded at - the
+    // clan's capital in all but name. Same curve, written negative.
+    for (std::uint32_t k = 0; k < clans.size(); ++k) {
+        const std::uint32_t faction = params.factionCount + k;
+        gateHopsFrom(adjacency, clans[k].homeSystem, hops);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (systems[i].factionIndex != faction) {
+                continue;
+            }
+            systems[i].security = -reachAfter(params.securityClanHome,
+                                              params.securityClanPerJump,
+                                              params.securityClanMaxJumpPenalty,
+                                              hops[i]);
+        }
+    }
+}
+
 // The weight one archetype carries in one system: its region tuning, vetoed to
 // zero when it needs rock the system does not have (Phase 13).
 //
@@ -1193,6 +1310,12 @@ Galaxy generateGalaxy(const GalaxyParams& params,
 
     core::Rng clanRng(params.seed, kStreamClans);
     spawnClans(params, clanRng, galaxy.systems, galaxy.links, authoredFor, galaxy.clans);
+
+    // Security last of the galaxy-wide passes, because it reads every one of
+    // them: the region, the owner, the clan roster and the gate graph. It takes
+    // no Rng, so it is placed by what it DEPENDS on rather than by what it
+    // would perturb - by here there is nothing left to perturb.
+    assignSecurity(params, galaxy.systems, galaxy.links, capitals, galaxy.clans);
 
     for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
         core::Rng contentRng(galaxy.systems[i].seed, kStreamContents);

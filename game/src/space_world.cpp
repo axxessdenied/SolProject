@@ -685,6 +685,61 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
                  m_factionTable.size(),
                  m_galaxy.clans.size(),
                  currentSystemName());
+    // The security gradient, beside the line that already says how big the
+    // galaxy is (Phase 30 stage A). Baselines only: the live rating moves under
+    // the player, and what this reports is a property of the GENERATOR.
+    // Logged rather than left to a console probe because five lines of answer
+    // scroll out of the dev console within a second under the faction sim's
+    // own chatter, and because `--frames N` then answers the whole of stage A's
+    // exit criterion without a GUI at all.
+    {
+        double sum[3] = {0.0, 0.0, 0.0};
+        std::uint32_t seen[3] = {0, 0, 0};
+        float lowest[3] = {2.0f, 2.0f, 2.0f};
+        float highest[3] = {-2.0f, -2.0f, -2.0f};
+        std::uint32_t clanHeld = 0;
+        std::uint32_t unpoliced = 0;
+        float deepest = 0.0f;
+        for (const sim::SystemSpec& spec : m_galaxy.systems) {
+            if (spec.security < 0.0f) {
+                ++clanHeld;
+                deepest = std::min(deepest, spec.security);
+                continue;
+            }
+            if (spec.security == 0.0f) {
+                ++unpoliced;
+                continue;
+            }
+            const auto tier = static_cast<std::size_t>(spec.region);
+            sum[tier] += static_cast<double>(spec.security);
+            ++seen[tier];
+            lowest[tier] = std::min(lowest[tier], spec.security);
+            highest[tier] = std::max(highest[tier], spec.security);
+        }
+        for (std::size_t tier = 0; tier < 3; ++tier) {
+            if (seen[tier] == 0) {
+                lowest[tier] = 0.0f;
+                highest[tier] = 0.0f;
+            }
+        }
+        SOL_LOG_INFO("security: core %u [%.2f..%.2f] mean %.3f | frontier %u [%.2f..%.2f] mean %.3f "
+                     "| fringe %u [%.2f..%.2f] mean %.3f | clan-held %u deepest %.2f | unpoliced %u",
+                     seen[0],
+                     static_cast<double>(lowest[0]),
+                     static_cast<double>(highest[0]),
+                     seen[0] > 0 ? sum[0] / seen[0] : 0.0,
+                     seen[1],
+                     static_cast<double>(lowest[1]),
+                     static_cast<double>(highest[1]),
+                     seen[1] > 0 ? sum[1] / seen[1] : 0.0,
+                     seen[2],
+                     static_cast<double>(lowest[2]),
+                     static_cast<double>(highest[2]),
+                     seen[2] > 0 ? sum[2] / seen[2] : 0.0,
+                     clanHeld,
+                     static_cast<double>(deepest),
+                     unpoliced);
+    }
     return true;
 }
 

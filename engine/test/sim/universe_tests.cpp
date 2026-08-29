@@ -1433,3 +1433,236 @@ SOL_TEST(universe_no_constellations_is_the_galaxy_that_was_there_before)
         SOL_CHECK(specsEqual(first.systems[i], second.systems[i]));
     }
 }
+
+// ---------------------------------------------------------------------------
+// System security (Phase 30 stage A).
+
+namespace {
+
+constexpr std::uint32_t kUnreachableHops = 0xffff'ffffu;
+
+// Gate hops from one system to every other, walked INDEPENDENTLY of the
+// generator's own walk. The point of recomputing it here is that a test which
+// asks the implementation for its distances and then checks its arithmetic
+// against those distances cannot fail when the distances are what is wrong -
+// and the hop walk is the half of this pass that is new code.
+std::vector<std::uint32_t> hopsFrom(const Galaxy& galaxy, std::uint32_t source)
+{
+    const auto count = static_cast<std::uint32_t>(galaxy.systems.size());
+    std::vector<std::vector<std::uint32_t>> adjacency(count);
+    for (const GateLink& link : galaxy.links) {
+        adjacency[link.a].push_back(link.b);
+        adjacency[link.b].push_back(link.a);
+    }
+    std::vector<std::uint32_t> hops(count, kUnreachableHops);
+    hops[source] = 0;
+    std::vector<std::uint32_t> frontier{source};
+    for (std::size_t head = 0; head < frontier.size(); ++head) {
+        for (const std::uint32_t neighbor : adjacency[frontier[head]]) {
+            if (hops[neighbor] == kUnreachableHops) {
+                hops[neighbor] = hops[frontier[head]] + 1;
+                frontier.push_back(neighbor);
+            }
+        }
+    }
+    return hops;
+}
+
+} // namespace
+
+// Decisions/019 decision 2, as an exhaustive partition: the SIGN says who
+// polices a place, so every system in the galaxy falls into exactly one of
+// three cases and there is no fourth.
+SOL_TEST(universe_security_is_signed_by_who_polices_the_place)
+{
+    GalaxyParams params = testParams(31337);
+    params.pirateTemplateCount = 2;
+    const Galaxy galaxy = generateGalaxy(params);
+
+    std::uint32_t majors = 0;
+    std::uint32_t clanHeld = 0;
+    for (const SystemSpec& system : galaxy.systems) {
+        if (system.factionIndex == kNoFaction) {
+            // Nobody claimed it, so nobody comes. Exactly zero - and it is the
+            // only way a system reaches zero, which is what makes the reading
+            // legible rather than merely defined.
+            SOL_CHECK(system.security == 0.0f);
+        } else if (system.factionIndex < params.factionCount) {
+            SOL_CHECK(system.security > 0.0f);
+            ++majors;
+        } else {
+            SOL_CHECK(system.security < 0.0f);
+            ++clanHeld;
+        }
+    }
+    // Both bands are actually populated, or the checks above are vacuous.
+    SOL_CHECK(majors > 0);
+    SOL_CHECK(clanHeld > 0);
+}
+
+// The gradient the GDD has promised since day one, stated as the property that
+// makes it READABLE rather than as an average: the bands do not overlap, so a
+// security number names its region on its own. A mean-per-tier check would pass
+// with the three tiers thoroughly interleaved, which is the failure that would
+// actually matter to somebody reading a map.
+SOL_TEST(universe_security_bands_do_not_overlap_so_a_number_names_its_region)
+{
+    GalaxyParams params = testParams(31337);
+    params.pirateTemplateCount = 2;
+    const Galaxy galaxy = generateGalaxy(params);
+
+    float lowest[3] = {2.0f, 2.0f, 2.0f};
+    float highest[3] = {-2.0f, -2.0f, -2.0f};
+    std::uint32_t seen[3] = {0, 0, 0};
+    for (const SystemSpec& system : galaxy.systems) {
+        if (system.security <= 0.0f) {
+            continue; // clan space and unpoliced space are their own bands
+        }
+        const auto tier = static_cast<std::size_t>(system.region);
+        lowest[tier] = std::min(lowest[tier], system.security);
+        highest[tier] = std::max(highest[tier], system.security);
+        ++seen[tier];
+    }
+    for (std::size_t tier = 0; tier < 3; ++tier) {
+        SOL_REQUIRE(seen[tier] > 0); // all three tiers hold major territory here
+    }
+    SOL_CHECK(lowest[0] > highest[1]); // every core system beats every frontier one
+    SOL_CHECK(lowest[1] > highest[2]); // every frontier system beats every fringe one
+    // And clan space clears zero by a margin rather than merely sitting on the
+    // far side of it, so "negative" survives being read off a coloured map.
+    for (const SystemSpec& system : galaxy.systems) {
+        if (system.security < 0.0f) {
+            SOL_CHECK(system.security <= -0.25f);
+        }
+    }
+}
+
+// Distance from the seat of power is the detail inside a band, and this is the
+// test of the hop walk itself.
+//
+// It runs over CLAN space, and that is not an arbitrary choice: a clan's seat
+// is `ClanSpec::homeSystem`, the one seat this galaxy actually exposes. A
+// major's capital is not returned by `generateGalaxy`, so a test would have to
+// guess it - and the obvious guess, "the faction's highest-security system", is
+// circular: it asks the curve where its own peak is and then checks that the
+// peak is where the curve said it was. An anchor the implementation did not
+// choose is the whole value of the assertion.
+SOL_TEST(universe_security_never_rises_with_distance_from_its_seat)
+{
+    GalaxyParams params = testParams(31337);
+    params.pirateTemplateCount = 2;
+    const Galaxy galaxy = generateGalaxy(params);
+    SOL_REQUIRE(!galaxy.clans.empty());
+
+    std::uint32_t compared = 0;
+    std::uint32_t varied = 0;
+    for (std::uint32_t c = 0; c < galaxy.clans.size(); ++c) {
+        const std::uint32_t faction = params.factionCount + c;
+        const std::vector<std::uint32_t> hops = hopsFrom(galaxy, galaxy.clans[c].homeSystem);
+        // The seat is the strongest grip the clan has anywhere, which on the
+        // negative side means the most negative number it holds.
+        const float atHome = galaxy.systems[galaxy.clans[c].homeSystem].security;
+        for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
+            if (galaxy.systems[i].factionIndex != faction) {
+                continue;
+            }
+            SOL_CHECK(galaxy.systems[i].security >= atHome);
+            for (std::uint32_t j = 0; j < galaxy.systems.size(); ++j) {
+                if (galaxy.systems[j].factionIndex != faction || hops[i] >= hops[j]) {
+                    continue;
+                }
+                // Same clan, i strictly nearer its home: its grip can never be
+                // the weaker of the two. Compared as magnitudes, so it reads
+                // the same way it would on the positive side.
+                SOL_CHECK(-galaxy.systems[i].security >= -galaxy.systems[j].security);
+                ++compared;
+                varied += galaxy.systems[i].security != galaxy.systems[j].security ? 1u : 0u;
+            }
+        }
+    }
+    SOL_CHECK(compared > 0); // the inner loop actually compared something
+    // ⚑⚑ AND THE CURVE IS NOT FLAT, WHICH IS THE HALF THIS TEST WAS MISSING.
+    // A monotonicity check is satisfied by EQUALITY, so a hop walk that reports
+    // every system as sitting on its seat's doorstep passes it - and passes the
+    // sign, band and ordering tests too, because a constant distance still
+    // gives every faction one internally consistent number. The counterfactual
+    // was run and all five tests stayed green, which is exactly the vacuity
+    // Phase 29 stage C paid for: the obvious assertion could not fail. Distance
+    // has to be shown to CHANGE something before "it never rises" means
+    // anything at all.
+    SOL_CHECK(varied > 0);
+}
+
+// The ordering ruling, made falsifiable. Security is written AFTER `spawnClans`
+// because the negative band needs a clan to exist to be held by; run the pass
+// any earlier and every future stronghold sits at exactly zero, which is the
+// value that means the OPPOSITE thing. Turning the clans off is that
+// counterfactual - and the second half is the one that would catch a pass
+// reaching too far: every major-held system keeps the number it already had.
+SOL_TEST(universe_security_waits_for_the_clans_and_leaves_the_majors_alone)
+{
+    GalaxyParams withClans = testParams(31337);
+    withClans.pirateTemplateCount = 2;
+    const Galaxy clanned = generateGalaxy(withClans);
+    const Galaxy lawless = generateGalaxy(testParams(31337)); // pirateTemplateCount 0
+
+    SOL_REQUIRE(clanned.systems.size() == lawless.systems.size());
+    std::uint32_t flipped = 0;
+    for (std::size_t i = 0; i < clanned.systems.size(); ++i) {
+        if (lawless.systems[i].factionIndex == kNoFaction) {
+            // Unclaimed without clans, clan-held with them: zero becomes a
+            // negative number, and nothing else in the pipeline could have
+            // made it negative.
+            SOL_CHECK(lawless.systems[i].security == 0.0f);
+            SOL_CHECK(clanned.systems[i].security < 0.0f);
+            ++flipped;
+        } else {
+            SOL_CHECK(clanned.systems[i].security == lawless.systems[i].security);
+        }
+    }
+    SOL_CHECK(flipped > 0);
+}
+
+// Stage A's own exit clause at test scale: the pass takes no draw from any
+// stream, so retuning it moves the security numbers and NOTHING else. The
+// shipped seed is held to the same claim by `game.unit`'s golden, which does
+// not hash `security` at all and therefore must not move by one bit.
+SOL_TEST(universe_retuning_security_moves_security_and_nothing_else)
+{
+    GalaxyParams params = testParams(31337);
+    params.pirateTemplateCount = 2;
+    const Galaxy base = generateGalaxy(params);
+
+    GalaxyParams retuned = params;
+    retuned.securityByRegion[0] = 0.40f;
+    retuned.securityByRegion[1] = 0.31f;
+    retuned.securityByRegion[2] = 0.22f;
+    retuned.securityPerJump = 0.001f;
+    retuned.securityMaxJumpPenalty = 0.005f;
+    retuned.securityClanHome = 0.50f;
+    retuned.securityClanPerJump = 0.0f;
+    retuned.securityClanMaxJumpPenalty = 0.0f;
+    const Galaxy moved = generateGalaxy(retuned);
+
+    SOL_REQUIRE(base.systems.size() == moved.systems.size());
+    SOL_REQUIRE(base.clans.size() == moved.clans.size());
+    SOL_REQUIRE(base.links.size() == moved.links.size());
+    std::uint32_t different = 0;
+    for (std::size_t i = 0; i < base.systems.size(); ++i) {
+        // specsEqual deliberately does not look at `security`, which is what
+        // lets this say "everything except the new field" in one call.
+        SOL_CHECK(specsEqual(base.systems[i], moved.systems[i]));
+        different += base.systems[i].security != moved.systems[i].security ? 1u : 0u;
+    }
+    for (std::size_t i = 0; i < base.links.size(); ++i) {
+        SOL_CHECK(base.links[i].a == moved.links[i].a && base.links[i].b == moved.links[i].b);
+    }
+    for (std::size_t c = 0; c < base.clans.size(); ++c) {
+        SOL_CHECK(base.clans[c].name == moved.clans[c].name);
+        SOL_CHECK(base.clans[c].seed == moved.clans[c].seed);
+        SOL_CHECK(base.clans[c].homeSystem == moved.clans[c].homeSystem);
+    }
+    // Without this the test passes when the tuning is ignored entirely -
+    // "nothing else moved" is trivially true of a pass that does nothing.
+    SOL_CHECK(different > 0);
+}

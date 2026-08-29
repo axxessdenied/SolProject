@@ -25,6 +25,8 @@
 #include "sol/sim/universe.hpp"
 #include "sol/ui/screens.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -942,6 +944,50 @@ public:
     [[nodiscard]] std::uint32_t systemOwnerFaction(std::uint32_t systemIndex) const
     {
         return systemIndex < m_galaxy.systems.size() ? m_factionSim.systemOwner(systemIndex) : kNoIndex;
+    }
+
+    // --- System security (Phase 30 stage A, decisions/019) -----------------
+    //
+    // The static half: how much force the owner keeps here, straight off the
+    // generated spec. Signed - see `SystemSpec::security`.
+    [[nodiscard]] float systemSecurityBaseline(std::uint32_t systemIndex) const
+    {
+        return systemIndex < m_galaxy.systems.size() ? m_galaxy.systems[systemIndex].security : 0.0f;
+    }
+
+    // The live half: how safe the place actually is right now. This is the
+    // number a consumer reads, and it joins the two halves nothing else can -
+    // the baseline lives on the galaxy and `danger` lives in the faction sim,
+    // and SpaceWorld is the only thing holding both.
+    //
+    // ⚑⚑⚑⚑ DANGER ERODES THE MAGNITUDE AND NEVER TOUCHES THE SIGN, AND THAT
+    // IS A RULING TAKEN HERE RATHER THAN DISCOVERED AS A BUG. The obvious
+    // arithmetic is `baseline - danger`, and it is wrong for a reason the band
+    // makes plain: the sign is not "how much", it is WHO POLICES THIS PLACE.
+    // A core system under sustained raiding would cross zero and start
+    // reporting that a pirate clan holds it, which is false and which every
+    // downstream reader of the sign - the response dispatcher in stage C, the
+    // map colour in stage D - would then act on.
+    //
+    // So danger walks whoever holds it toward zero and stops there, which says
+    // something true in both directions: a place under enough pressure is one
+    // where NOBODY'S law reaches you, and it does not matter whose it was.
+    [[nodiscard]] float systemSecurity(std::uint32_t systemIndex) const
+    {
+        const float baseline = systemSecurityBaseline(systemIndex);
+        if (baseline == 0.0f) {
+            return 0.0f; // nobody polices it, so there is nothing for danger to erode
+        }
+        const float danger = m_factionSim.danger(systemIndex);
+        const float magnitude = std::max(0.0f, std::abs(baseline) - danger);
+        // ⚑ The `magnitude == 0` arm is not redundant: negating a zero gives
+        // NEGATIVE zero, which compares equal to zero everywhere and then
+        // prints as "-0.000" in the readout stage D puts in front of a player.
+        // Zero here means "nobody is coming", and it has no sign.
+        if (magnitude == 0.0f) {
+            return 0.0f;
+        }
+        return baseline < 0.0f ? -magnitude : magnitude;
     }
 
     // "hostile"/"neutral"/"friendly" for a faction table index; "" outside it.

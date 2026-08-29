@@ -218,6 +218,40 @@ struct GalaxyParams
     // AFTER every `anywhere` system, contiguously and in def order, so a
     // constellation grows the galaxy exactly the way an insertion does.
     std::vector<AuthoredConstellation> constellations;
+
+    // ---- System security baselines (Phase 30 stage A, decisions/019) -------
+    // The gradient the GDD has promised since day one, finally a number. A
+    // major's seat of power is its capital and a clan's is its home system, so
+    // both bands are the same shape measured from two different chairs.
+    //
+    // What a major keeps in a system at its capital's own doorstep, by region.
+    float securityByRegion[3] = {0.85f, 0.55f, 0.30f}; // core/frontier/fringe
+    // What one gate hop from the capital costs, and the most the whole journey
+    // can ever cost.
+    //
+    // ⚑⚑⚑ THE PENALTY SATURATES, AND THAT IS WHAT KEEPS THE THREE BANDS FROM
+    // OVERLAPPING. Region and hop-distance are not independent - capitals are
+    // drawn from the core and the fringe is by definition the outer ring - so a
+    // plain `base - perJump * hops` DOUBLE-COUNTS the same distance twice and
+    // flattens every fringe system onto whatever floor it is given. Capping the
+    // tilt at a fraction of the gap between the region bands makes region the
+    // headline and distance the detail, which is the order decisions/019 asked
+    // for. With these numbers core lives in [0.73, 0.85], frontier in
+    // [0.43, 0.55] and fringe in [0.18, 0.30]: DISJOINT, so a security number
+    // names its region unambiguously and still says where in it you are.
+    //
+    // ⚑ Saturation is also why there is no separate floor parameter - the cap
+    // is the floor, and one number cannot drift out of agreement with itself.
+    float securityPerJump = 0.02f;
+    float securityMaxJumpPenalty = 0.12f;
+    // The clan band, written NEGATIVE onto the spec. Same curve, measured from
+    // the clan's home system - the seat its component was seeded at, which is
+    // its capital in all but name. A clan neighbourhood is a handful of systems
+    // rather than a third of a galaxy, so its per-hop cost is steeper and the
+    // band it spans, [-0.75, -0.30], stays clear of zero by a wide margin.
+    float securityClanHome = 0.75f;
+    float securityClanPerJump = 0.10f;
+    float securityClanMaxJumpPenalty = 0.45f;
 };
 
 struct PlanetSpec
@@ -259,6 +293,24 @@ struct SystemSpec
     // A placement flag and nothing else in this phase (Phase 29): nothing hides
     // a system from the map yet.
     bool secret = false;
+    // How well this place is policed, as a STATIC BASELINE (Phase 30 stage A):
+    // how much force the owner keeps here, before anything that has happened
+    // recently. What a consumer actually reads is the LIVE rating, which is
+    // this minus `FactionSim::danger` and lives on the game side because only
+    // it holds both halves - see `SpaceWorld::systemSecurity`.
+    //
+    // ⚑⚑ THE SCALE IS SIGNED AND THE SIGN NAMES *WHO POLICES IT*, NOT HOW MUCH
+    // (decisions/019 decision 2). Positive: a major holds it. Zero: nobody
+    // comes, and you are on your own. Negative: a clan holds it and answers an
+    // intrusion the way a navy does - the magnitude is how hard it will answer.
+    //
+    // ⚑⚑⚑ IT IS A PURE FUNCTION OF OWNER, REGION AND GATE DISTANCE, WITH NO
+    // DRAW IN IT AT ALL. Every shared stream in this file is order-sensitive -
+    // the name loop's comment is a monument to what one shifted draw costs - so
+    // taking even one for this would reshape the galaxy at the shipped seed.
+    // Consuming nothing makes `shipped_seed_galaxy_keeps_its_recorded_structure`
+    // hold by construction rather than by luck.
+    float security = 0.0f;
 };
 
 // A unit direction biased to the orbital plane (y small): the playfield is

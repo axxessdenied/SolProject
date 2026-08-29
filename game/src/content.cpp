@@ -722,6 +722,95 @@ std::string systemDanger(GameContent& content, double systemIndex)
     return buffer;
 }
 
+// How well one place is policed (Phase 30 stage A). Both halves are printed
+// side by side deliberately: the whole of decisions/019 is that they answer two
+// different questions, and a probe showing only the live number cannot tell a
+// quiet fringe system from a core system somebody is currently burning down.
+std::string systemSecurity(GameContent& content, double systemIndex)
+{
+    SpaceWorld& world = content.world();
+    const auto system = static_cast<std::uint32_t>(systemIndex);
+    if (system >= world.galaxy().systems.size()) {
+        return "no such system";
+    }
+    const float baseline = world.systemSecurityBaseline(system);
+    const float live = world.systemSecurity(system);
+    const std::uint32_t owner = world.systemOwnerFaction(system);
+    const char* held = baseline > 0.0f ? "policed by" : baseline < 0.0f ? "held by" : "nobody polices";
+    char buffer[256];
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s: security %+.3f (baseline %+.3f - danger %.3f), %s %s",
+                  world.galaxy().systems[system].name.c_str(),
+                  static_cast<double>(live),
+                  static_cast<double>(baseline),
+                  static_cast<double>(world.factionSim().danger(system)),
+                  held,
+                  owner < world.factions().size() ? world.factions()[owner].name.c_str() : "no one");
+    return buffer;
+}
+
+// The gradient, galaxy-wide, in one call - this is Phase 30 stage A's own exit
+// criterion made runnable rather than a thing to be eyeballed system by system.
+// Baselines only: the live rating moves under the player's feet, and what stage
+// A claims is a property of the GENERATOR.
+std::string securityHistogram(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const std::vector<sol::sim::SystemSpec>& systems = world.galaxy().systems;
+    // core / frontier / fringe, then the clan band, which cuts across regions.
+    double sum[3] = {0.0, 0.0, 0.0};
+    std::uint32_t seen[3] = {0, 0, 0};
+    float lowest[3] = {2.0f, 2.0f, 2.0f};
+    float highest[3] = {-2.0f, -2.0f, -2.0f};
+    double clanSum = 0.0;
+    std::uint32_t clanSeen = 0;
+    float clanDeepest = 0.0f;
+    std::uint32_t zeroes = 0;
+    for (std::uint32_t i = 0; i < systems.size(); ++i) {
+        const float value = systems[i].security;
+        if (value < 0.0f) {
+            clanSum += static_cast<double>(value);
+            ++clanSeen;
+            clanDeepest = std::min(clanDeepest, value);
+            continue;
+        }
+        if (value == 0.0f) {
+            ++zeroes;
+            continue;
+        }
+        const auto tier = static_cast<std::size_t>(systems[i].region);
+        sum[tier] += static_cast<double>(value);
+        ++seen[tier];
+        lowest[tier] = std::min(lowest[tier], value);
+        highest[tier] = std::max(highest[tier], value);
+    }
+    std::string out;
+    static constexpr const char* kTierNames[3] = {"core     ", "frontier ", "fringe   "};
+    char buffer[192];
+    for (std::size_t tier = 0; tier < 3; ++tier) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%s %3u system(s)  mean %+.3f  [%+.3f .. %+.3f]\n",
+                      kTierNames[tier],
+                      seen[tier],
+                      seen[tier] > 0 ? sum[tier] / seen[tier] : 0.0,
+                      seen[tier] > 0 ? static_cast<double>(lowest[tier]) : 0.0,
+                      seen[tier] > 0 ? static_cast<double>(highest[tier]) : 0.0);
+        out += buffer;
+    }
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "clan-held %3u system(s)  mean %+.3f  deepest %+.3f\n"
+                  "unpoliced %3u system(s) at exactly 0\n",
+                  clanSeen,
+                  clanSeen > 0 ? clanSum / clanSeen : 0.0,
+                  static_cast<double>(clanDeepest),
+                  zeroes);
+    out += buffer;
+    return out;
+}
+
 // What the board would be offered here (Phase 8x §E). Printed against the
 // player's own system rather than against a docked station, so the eligibility
 // rule can be read while flying: an escort candidate is a hauler DEPARTING
@@ -3149,6 +3238,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&minerPuppets>("sol", "miners", this);
     m_vm.registerFunction<&traderHunters>("sol", "hunters", this);
     m_vm.registerFunction<&systemDanger>("sol", "danger", this);
+    m_vm.registerFunction<&systemSecurity>("sol", "security", this);
+    m_vm.registerFunction<&securityHistogram>("sol", "security_map", this);
     m_vm.registerFunction<&escortCandidates>("sol", "escort_candidates", this);
     m_vm.registerFunction<&killTrader>("sol", "trader_kill", this);
     m_vm.registerFunction<&killMiner>("sol", "miner_kill", this);
