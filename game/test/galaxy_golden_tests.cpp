@@ -261,7 +261,7 @@ SOL_TEST(shipped_seed_galaxy_keeps_its_recorded_structure)
 
     game::SpaceWorld world;
     world.spawn(game::kDefaultUniverseSeed);
-    world.generateUniverse(defs);
+    SOL_CHECK(world.generateUniverse(defs));
     const Galaxy& galaxy = world.galaxy();
 
     // Counts first: a failure here says WHAT the galaxy is before a hash says
@@ -286,7 +286,7 @@ SOL_TEST(shipped_seed_galaxy_keeps_its_recorded_geometry_on_a_known_libm)
 
     game::SpaceWorld world;
     world.spawn(game::kDefaultUniverseSeed);
-    world.generateUniverse(defs);
+    SOL_CHECK(world.generateUniverse(defs));
     const Digests d = digestOf(world.galaxy());
 
     const GeometryGolden* golden = geometryGoldenForThisBuild();
@@ -314,7 +314,7 @@ SOL_TEST(each_digest_layer_notices_a_change_in_its_own_fields)
 
     game::SpaceWorld world;
     world.spawn(game::kDefaultUniverseSeed);
-    world.generateUniverse(defs);
+    SOL_CHECK(world.generateUniverse(defs));
     const Digests base = digestOf(world.galaxy());
 
     Galaxy mutated = world.galaxy();

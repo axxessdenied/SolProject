@@ -1473,15 +1473,41 @@ SOL_TEST(data_defs_system_errors_name_the_file_and_the_id)
         SOL_CHECK(error.find("systems.toml") != std::string::npos);
     };
 
-    // A rule nobody implements yet would put the campaign's starting system
-    // wherever the fallback happened to land, which is the failure this phase
-    // is about. It is refused with the rule quoted back.
+    // ⚑ A RULE NAMED WITHOUT ITS PARAMETERS IS THE MISTAKE THE "placement
+    // names it, a sibling carries them" shape invites, so it is refused in
+    // both directions. Silently placing this at random instead would read to
+    // an author as a parser that ate their ring.
     refused(R"(
 [[system]]
 id = "campaign.x"
 placement = "jumps_from"
 )",
-            "jumps_from");
+            "no 'jumps_from' table");
+    refused(R"(
+[[system]]
+id = "campaign.x"
+jumps_from = { system = "campaign.anchor", min = 1, max = 2 }
+)",
+            "placement = \"jumps_from\"");
+    refused(R"(
+[[system]]
+id = "campaign.x"
+placement = "at_system"
+)",
+            "no 'at_system' key");
+    refused(R"(
+[[system]]
+id = "campaign.x"
+at_system = "sol.navy"
+)",
+            "placement = \"at_system\"");
+    // A rule nobody implements at all still names itself in the refusal.
+    refused(R"(
+[[system]]
+id = "campaign.x"
+placement = "somewhere_nice"
+)",
+            "somewhere_nice");
     refused(R"(
 [[system]]
 id = "campaign.x"
@@ -1638,4 +1664,209 @@ name = "Harrow Reborn"
     SOL_CHECK(db.systems()[0].planets.empty());
     SOL_CHECK(!db.systems()[0].secret);
     SOL_CHECK(db.systems()[0].source == "mod/systems.toml");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 29 stage B: the other three placement rules, as an author writes them.
+// ---------------------------------------------------------------------------
+
+// THE RULE IS ALWAYS NAMED IN `placement`, AND A RULE WITH PARAMETERS PUTS
+// THEM IN A SIBLING KEY OF THE SAME NAME. decisions/018 wrote the four rules
+// two different ways - two as bare words and two as keys carrying a value -
+// which left a reader scanning every key in a row to find out how the system
+// was placed.
+SOL_TEST(data_defs_system_parses_every_placement_rule)
+{
+    DefDatabase db;
+    SOL_REQUIRE(merge(db, kSystemFixtureDeps, "deps.toml"));
+    std::string error;
+    const bool ok = merge(db,
+                          R"(
+[[system]]
+id = "campaign.anchor"
+placement = "anywhere"
+
+[[system]]
+id = "campaign.home"
+placement = "at_system"
+at_system = "sol.navy"
+
+[[system]]
+id = "campaign.ring"
+placement = "jumps_from"
+jumps_from = { system = "campaign.anchor", min = 2, max = 4 }
+
+[[system]]
+id = "campaign.plain"
+)",
+                          "systems.toml",
+                          &error);
+    if (!ok) {
+        std::printf("  %s\n", error.c_str());
+    }
+    SOL_REQUIRE(ok);
+    SOL_REQUIRE(db.systems().size() == 4);
+
+    SOL_CHECK(db.systems()[0].placement == "anywhere");
+    SOL_CHECK(db.systems()[1].placement == "at_system");
+    SOL_CHECK(db.systems()[1].atSystemFactionId == "sol.navy");
+    SOL_CHECK(db.systems()[2].placement == "jumps_from");
+    SOL_CHECK(db.systems()[2].jumpsFromSystemId == "campaign.anchor");
+    SOL_CHECK(db.systems()[2].jumpsFromMin == 2);
+    SOL_CHECK(db.systems()[2].jumpsFromMax == 4);
+    // Unwritten is still "random", which is what keeps every stage A file
+    // parsing unchanged.
+    SOL_CHECK(db.systems()[3].placement == "random");
+
+    SOL_CHECK(db.validateSystems(&error));
+}
+
+// The ring's own arithmetic, refused where an author can read it rather than
+// at generation time where it would look like an unsatisfiable galaxy.
+SOL_TEST(data_defs_system_ring_bounds_are_checked_in_the_file)
+{
+    const auto refused = [](const char* toml, const char* needle) {
+        DefDatabase db;
+        std::string error;
+        SOL_CHECK(merge(db, kSystemFixtureDeps, "deps.toml"));
+        const bool ok = merge(db, toml, "systems.toml", &error);
+        SOL_CHECK(!ok);
+        if (error.find(needle) == std::string::npos) {
+            std::printf("  message was: %s (wanted '%s')\n", error.c_str(), needle);
+        }
+        SOL_CHECK(error.find(needle) != std::string::npos);
+        SOL_CHECK(error.find("systems.toml") != std::string::npos);
+    };
+
+    refused(R"(
+[[system]]
+id = "campaign.a"
+
+[[system]]
+id = "campaign.b"
+placement = "jumps_from"
+jumps_from = { system = "campaign.a", min = 5, max = 2 }
+)",
+            "'min' must not be greater than 'max'");
+    // ZERO JUMPS FROM THE ANCHOR IS THE ANCHOR, and the anchor is already
+    // taken by the system that placed it - so the ring would be empty for a
+    // reason the author cannot see anywhere in their own file.
+    refused(R"(
+[[system]]
+id = "campaign.a"
+
+[[system]]
+id = "campaign.b"
+placement = "jumps_from"
+jumps_from = { system = "campaign.a", min = 0, max = 0 }
+)",
+            "at least 1");
+    refused(R"(
+[[system]]
+id = "campaign.a"
+
+[[system]]
+id = "campaign.b"
+placement = "jumps_from"
+jumps_from = { system = "campaign.a", min = 1 }
+)",
+            "'max' is required");
+    refused(R"(
+[[system]]
+id = "campaign.a"
+
+[[system]]
+id = "campaign.b"
+placement = "jumps_from"
+jumps_from = { system = "campaign.a", min = 1, max = 2, radius = 3 }
+)",
+            "radius");
+}
+
+// AN ANCHOR MUST BE DECLARED EARLIER, AND THAT IS A FACT ABOUT THE FILES
+// RATHER THAN ABOUT THE GALAXY - so it is settled here, in the only layer that
+// can see every layer at once. The generator's own "not placed before this
+// one" refusal still stands behind it and catches what this cannot: an anchor
+// that parsed fine and then failed its own placement rule.
+SOL_TEST(data_defs_system_ring_anchor_must_come_first)
+{
+    const auto refused = [](const char* toml, const char* needle) {
+        DefDatabase db;
+        std::string error;
+        SOL_CHECK(merge(db, kSystemFixtureDeps, "deps.toml"));
+        SOL_CHECK(merge(db, toml, "systems.toml", &error));
+        const bool ok = db.validateSystems(&error);
+        if (ok) {
+            std::printf("  expected a refusal, got a clean validation\n");
+        }
+        SOL_CHECK(!ok);
+        if (error.find(needle) == std::string::npos) {
+            std::printf("  message was: %s (wanted '%s')\n", error.c_str(), needle);
+        }
+        SOL_CHECK(error.find(needle) != std::string::npos);
+        SOL_CHECK(error.find("systems.toml") != std::string::npos);
+    };
+
+    refused(R"(
+[[system]]
+id = "campaign.ring"
+placement = "jumps_from"
+jumps_from = { system = "campaign.anchor", min = 1, max = 2 }
+
+[[system]]
+id = "campaign.anchor"
+)",
+            "declared after it");
+    refused(R"(
+[[system]]
+id = "campaign.ring"
+placement = "jumps_from"
+jumps_from = { system = "campaign.nobody", min = 1, max = 2 }
+)",
+            "not a [[system]]");
+    refused(R"(
+[[system]]
+id = "campaign.ring"
+placement = "jumps_from"
+jumps_from = { system = "campaign.ring", min = 1, max = 2 }
+)",
+            "this system itself");
+}
+
+// `at_system` NAMES A MAJOR, because a clan template claims nothing and is
+// never handed a capital by `claimTerritory`. Refused rather than warned: a
+// system meant to be somebody's home, placed at random instead, is a different
+// place from the one the campaign was written against.
+SOL_TEST(data_defs_system_at_system_names_a_faction_that_holds_a_capital)
+{
+    const auto refused = [](const char* toml, const char* needle) {
+        DefDatabase db;
+        std::string error;
+        SOL_CHECK(merge(db, kSystemFixtureDeps, "deps.toml"));
+        SOL_CHECK(merge(db, toml, "systems.toml", &error));
+        const bool ok = db.validateSystems(&error);
+        SOL_CHECK(!ok);
+        if (error.find(needle) == std::string::npos) {
+            std::printf("  message was: %s (wanted '%s')\n", error.c_str(), needle);
+        }
+        SOL_CHECK(error.find(needle) != std::string::npos);
+        SOL_CHECK(error.find("systems.toml") != std::string::npos);
+    };
+
+    refused(R"(
+[[system]]
+id = "campaign.home"
+placement = "at_system"
+at_system = "sol.nobody"
+)",
+            "is not a [[faction]]");
+    // A pirate def is a clan TEMPLATE, instantiated per lawless neighbourhood.
+    // It has no capital to take and never will.
+    refused(R"(
+[[system]]
+id = "campaign.home"
+placement = "at_system"
+at_system = "sol.reavers"
+)",
+            "clan template");
 }

@@ -274,82 +274,123 @@ void assignRegions(const GalaxyParams& params, std::vector<SystemSpec>& systems)
 // seed, the Dijkstra propagation and the lawless re-roll - and `spawnClans`
 // writes it at two. Counting STAGES undercounts, because what has to be guarded
 // is a WRITE.
-void placeAuthoredSystems(const GalaxyParams& params,
-                          core::Rng& rng,
-                          std::vector<SystemSpec>& systems,
-                          std::vector<const AuthoredSystem*>& authoredFor)
+// ---------------------------------------------------------------------------
+// PASS 1 of placement (Phase 29 stage B): `anywhere` appends a node.
+//
+// ⚑⚑⚑ THIS RUNS BEFORE `assignRegions` AND BEFORE `buildGateGraph`, WHICH IS
+// THE WHOLE POINT OF IT BEING A SEPARATE PASS. An appended node has to be in
+// the vector before Prim runs or it would have no gates at all, and it has to
+// be there before regions are assigned or it would have no region. Both are
+// exactly what "gated in like any other node" means.
+//
+// ⚑⚑⚑ APPENDING AT THE END IS WHAT KEEPS THE PROCEDURAL GALAXY STILL. Three
+// properties fall out of it and none of them survives pre-seeding:
+//   - the procedural scatter is bit-identical, because this draws from the
+//     AUTHORED stream and runs after `scatterSystems` has finished rejecting;
+//   - every procedural system index is unmoved, so an `anywhere` system is
+//     index `systemCount + k` and nothing that already existed shifted;
+//   - the NAME stream is untouched for every procedural system. The name loop
+//     runs over the grown vector, but the first `systemCount` draws - and the
+//     uniqueness rescan behind them, which only ever looks at j < i - see
+//     exactly what they saw before. The extra draws all land at the END.
+//
+// ⚑⚑ AND THE FIELDS AN AUTHOR WROTE ARE NOT APPLIED HERE. Only the position
+// is. Identity, region, owner and the rest are applied in pass 2, which runs
+// after `assignRegions` - so an `anywhere` system needs NO skip point in that
+// pass, which is what stage A's own forward-looking comment predicted it would.
+// One field-application pass, two ways of choosing an index.
+void appendAnywhereSystems(const GalaxyParams& params, core::Rng& rng, std::vector<SystemSpec>& systems)
 {
-    // Every node is a candidate until an earlier authored system has taken it;
-    // def order decides who chooses first (decision 4).
-    std::vector<std::uint32_t> free;
-    free.reserve(systems.size());
-    for (std::uint32_t i = 0; i < systems.size(); ++i) {
-        free.push_back(i);
-    }
+    const float radius = params.galaxyRadius;
+    // The same separation rule `scatterSystems` uses, and best-effort for the
+    // same documented reason. An authored node may end up closer to a
+    // neighbour than the procedural rule would have allowed; choosing
+    // `anywhere` is a statement about wanting a new place, not about wanting a
+    // particular amount of elbow room.
+    float separation = radius / std::sqrt(static_cast<float>(params.systemCount)) * 1.1f;
+    constexpr float kTau = 6.28318530717958647692f;
     for (const AuthoredSystem& authored : params.authoredSystems) {
-        if (free.empty()) {
-            break; // more authored systems than the galaxy has nodes
+        if (authored.placement != Placement::Anywhere) {
+            continue;
         }
-        const std::uint32_t slot = rng.range(static_cast<std::uint32_t>(free.size()));
-        const std::uint32_t index = free[slot];
-        free.erase(free.begin() + slot);
-
-        SystemSpec& system = systems[index];
-        system.authoredId = authored.id;
-        system.secret = authored.secret;
-        // ⚑ The NAME is deliberately not written here. It is applied after the
-        // procedural name loop has run untouched, because how many times that
-        // loop redraws depends on which names it can already see - so writing
-        // one in ahead of it changes what every other system is called.
-        // ⚑ The region needs no skip point in this stage and DOES need one in
-        // the next: `assignRegions` has already run by here, so writing the
-        // region now is the last word on it. `anywhere` appends nodes BEFORE
-        // that pass, and will have to teach it to skip.
-        if (authored.hasRegion) {
-            system.region = authored.region;
+        bool placed = false;
+        while (!placed) {
+            for (std::uint32_t tries = 0; tries < 64 && !placed; ++tries) {
+                const float r = radius * std::sqrt(rng.nextFloat01());
+                const float theta = kTau * rng.nextFloat01();
+                const core::Vec3 candidate{r * std::cos(theta),
+                                           0.08f * radius * (rng.nextFloat01() * 2.0f - 1.0f),
+                                           r * std::sin(theta)};
+                bool clear = true;
+                for (const SystemSpec& other : systems) {
+                    if (core::length(candidate - other.mapPosition) < separation) {
+                        clear = false;
+                        break;
+                    }
+                }
+                if (clear) {
+                    SystemSpec spec;
+                    spec.mapPosition = candidate;
+                    systems.push_back(std::move(spec));
+                    placed = true;
+                }
+            }
+            if (!placed) {
+                separation *= 0.9f;
+            }
         }
-        if (authored.hasFaction) {
-            system.factionIndex = authored.factionIndex;
-        }
-        authoredFor[index] = &authored;
     }
 }
 
-// Did an author state who owns this system - including by stating that nobody
-// does? The two are the same bit pattern in `factionIndex`, which is exactly
-// why this asks the flag instead.
-[[nodiscard]] bool hasAuthoredFaction(const std::vector<const AuthoredSystem*>& authoredFor,
-                                      std::size_t index)
+// Faction capitals: greedy farthest-point spread through the core.
+//
+// ⚑⚑⚑⚑ THIS WAS LIFTED OUT OF `claimTerritory` SO THAT `at_system` CAN NAME
+// ONE, AND THE LIFT IS WHAT MAKES THE RULE BUILDABLE AT ALL. `claimTerritory`
+// runs AFTER placement and is what CHOOSES the capitals, so before this move
+// there was no moment at which "the Navy's home" was a thing a placement rule
+// could point at.
+//
+// ⚑⚑⚑ THE FACTION STREAM IS UNDISTURBED, WHICH IS THE ONLY REASON THIS IS
+// SAFE. This makes exactly one draw - the first capital - and it is still the
+// first draw taken from `kStreamFactions`; `claimTerritory` keeps the same
+// generator and takes the lawless rolls from it afterwards, in the same order.
+// The golden is what holds that claim rather than this comment.
+//
+// ⚑⚑ TWO BEHAVIOUR CHANGES ARE REAL AND BOTH ARE DELIBERATE, AND NEITHER CAN
+// BE SEEN BY A GALAXY WITH NO AUTHORED SYSTEMS IN IT:
+//   - Candidacy reads the PROCEDURAL region assignment, because this now runs
+//     before an authored `region` is applied. An authored system declaring
+//     itself core therefore does not add itself to the pool of places a
+//     faction might be capital of, which is the more predictable of the two
+//     readings: who the galaxy's powers are is a fact about the seed.
+//   - An APPENDED node is not a candidate. A place somebody put somewhere is
+//     not a candidate to be silently promoted to a faction's homeworld - and
+//     it is also what keeps `at_system` resolvable, since a capital that was
+//     itself authored would already be occupied when `at_system` reached it.
+[[nodiscard]] std::vector<std::uint32_t> chooseCapitals(const GalaxyParams& params,
+                                                        core::Rng& rng,
+                                                        const std::vector<SystemSpec>& systems,
+                                                        std::uint32_t proceduralCount)
 {
-    return authoredFor[index] != nullptr && authoredFor[index]->hasFaction;
-}
-
-// Faction capitals spread greedily through the core (farthest-point), then
-// multi-source Dijkstra over the gate graph claims territory; fringe systems
-// roll to stay lawless.
-void claimTerritory(const GalaxyParams& params,
-                    core::Rng& rng,
-                    std::vector<SystemSpec>& systems,
-                    const std::vector<GateLink>& links,
-                    const std::vector<const AuthoredSystem*>& authoredFor)
-{
+    std::vector<std::uint32_t> capitals;
     if (params.factionCount == 0) {
-        return;
+        return capitals;
     }
-    const std::uint32_t count = static_cast<std::uint32_t>(systems.size());
     std::vector<std::uint32_t> candidates;
-    for (std::uint32_t i = 0; i < count; ++i) {
+    for (std::uint32_t i = 0; i < proceduralCount; ++i) {
         if (systems[i].region == Region::Core) {
             candidates.push_back(i);
         }
     }
     if (candidates.empty()) { // degenerate params: claim from anywhere
-        for (std::uint32_t i = 0; i < count; ++i) {
+        for (std::uint32_t i = 0; i < proceduralCount; ++i) {
             candidates.push_back(i);
         }
     }
+    if (candidates.empty()) {
+        return capitals;
+    }
 
-    std::vector<std::uint32_t> capitals;
     capitals.push_back(candidates[rng.range(static_cast<std::uint32_t>(candidates.size()))]);
     while (capitals.size() < params.factionCount && capitals.size() < candidates.size()) {
         std::uint32_t farthest = candidates[0];
@@ -369,6 +410,177 @@ void claimTerritory(const GalaxyParams& params,
         }
         capitals.push_back(farthest);
     }
+    return capitals;
+}
+
+// PASS 2 of placement: every rule chooses an index, then one shared block
+// applies the fields the author wrote.
+void placeAuthoredSystems(const GalaxyParams& params,
+                          core::Rng& rng,
+                          const Galaxy& galaxy,
+                          const std::vector<std::uint32_t>& capitals,
+                          std::uint32_t proceduralCount,
+                          std::vector<SystemSpec>& systems,
+                          std::vector<const AuthoredSystem*>& authoredFor,
+                          std::vector<AuthoredPlacementFailure>* outFailures)
+{
+    // Every node the seed produced is a candidate until an earlier authored
+    // system has taken it; def order decides who chooses first (decision 4).
+    // ⚑ APPENDED nodes are NOT in this list. An `anywhere` system already owns
+    // the node it created, so a later `random` cannot be handed it.
+    std::vector<std::uint32_t> free;
+    free.reserve(proceduralCount);
+    for (std::uint32_t i = 0; i < proceduralCount; ++i) {
+        free.push_back(i);
+    }
+    // Where each authored id ended up, so `jumps_from` can anchor on one placed
+    // earlier in def order. Only successfully placed systems are in here, which
+    // is what makes a ring anchored on a failed system fail by name too rather
+    // than silently anchoring on nothing.
+    std::vector<std::pair<std::string, std::uint32_t>> placedById;
+
+    const auto fail = [&](const AuthoredSystem& authored, const char* rule, std::string reason) {
+        if (outFailures != nullptr) {
+            outFailures->push_back({authored.id, rule, std::move(reason)});
+        }
+    };
+
+    // `anywhere` nodes were appended in def order, so the k-th one is at
+    // `proceduralCount + k`.
+    std::uint32_t nextAppended = proceduralCount;
+
+    for (const AuthoredSystem& authored : params.authoredSystems) {
+        std::uint32_t index = kInvalidIndex;
+        switch (authored.placement) {
+        case Placement::Anywhere: {
+            // Pass 1 already made the node and it cannot fail: the separation
+            // rule relaxes until a position is accepted, exactly as the
+            // procedural scatter's does.
+            index = nextAppended++;
+            break;
+        }
+        case Placement::Random: {
+            if (free.empty()) {
+                fail(authored, "random", "the galaxy has no unclaimed system left to become");
+                break;
+            }
+            const std::uint32_t slot = rng.range(static_cast<std::uint32_t>(free.size()));
+            index = free[slot];
+            free.erase(free.begin() + slot);
+            break;
+        }
+        case Placement::AtSystem: {
+            if (authored.atFactionCapital >= capitals.size()) {
+                // Reached when a mod removes the faction whose capital this
+                // names, or when the core was too small for it to get one.
+                fail(authored, "at_system", "the faction it names holds no capital in this galaxy");
+                break;
+            }
+            const std::uint32_t capital = capitals[authored.atFactionCapital];
+            const auto slot = std::find(free.begin(), free.end(), capital);
+            if (slot == free.end()) {
+                fail(authored,
+                     "at_system",
+                     "that capital was already taken by an authored system declared earlier");
+                break;
+            }
+            index = capital;
+            free.erase(slot);
+            break;
+        }
+        case Placement::JumpsFrom: {
+            std::uint32_t anchor = kInvalidIndex;
+            for (const auto& [id, at] : placedById) {
+                if (id == authored.anchorId) {
+                    anchor = at;
+                    break;
+                }
+            }
+            if (anchor == kInvalidIndex) {
+                fail(authored,
+                     "jumps_from",
+                     "'" + authored.anchorId +
+                         "' is not an authored system placed before this one; an anchor must be "
+                         "declared earlier in the file");
+                break;
+            }
+            // ⚑⚑ `routeBetween` MEASURES THIS, WHICH IS ONLY TRUE BECAUSE THE
+            // GATE LISTS ARE FILLED BEFORE PLACEMENT RUNS. It walks
+            // `SystemSpec::gates`, and until stage B those were populated
+            // fifty lines further down - so the primitive decisions/018 named
+            // was real but unreachable at the moment it was needed.
+            std::vector<std::uint32_t> ring;
+            for (const std::uint32_t candidate : free) {
+                const std::vector<std::uint32_t> route = routeBetween(galaxy, anchor, candidate);
+                if (route.empty()) {
+                    continue; // unreachable; cannot happen for a connected graph
+                }
+                const std::uint32_t jumps = static_cast<std::uint32_t>(route.size()) - 1;
+                if (jumps >= authored.jumpsMin && jumps <= authored.jumpsMax) {
+                    ring.push_back(candidate);
+                }
+            }
+            if (ring.empty()) {
+                fail(authored,
+                     "jumps_from",
+                     "no unclaimed system is between " + std::to_string(authored.jumpsMin) + " and " +
+                         std::to_string(authored.jumpsMax) + " jumps from '" + authored.anchorId + "'");
+                break;
+            }
+            index = ring[rng.range(static_cast<std::uint32_t>(ring.size()))];
+            free.erase(std::find(free.begin(), free.end(), index));
+            break;
+        }
+        }
+        if (index == kInvalidIndex) {
+            continue; // refused above, and named there
+        }
+
+        SystemSpec& system = systems[index];
+        system.authoredId = authored.id;
+        system.secret = authored.secret;
+        // ⚑ The NAME is deliberately not written here. It is applied after the
+        // procedural name loop has run untouched, because how many times that
+        // loop redraws depends on which names it can already see - so writing
+        // one in ahead of it changes what every other system is called.
+        // ⚑⚑ The REGION is written here for every rule, replacement and
+        // insertion alike, and that is what saves `assignRegions` from needing
+        // a skip point: this pass runs after it, so this is the last word on
+        // the field no matter which pass created the node.
+        if (authored.hasRegion) {
+            system.region = authored.region;
+        }
+        if (authored.hasFaction) {
+            system.factionIndex = authored.factionIndex;
+        }
+        authoredFor[index] = &authored;
+        placedById.emplace_back(authored.id, index);
+    }
+}
+
+// Did an author state who owns this system - including by stating that nobody
+// does? The two are the same bit pattern in `factionIndex`, which is exactly
+// why this asks the flag instead.
+[[nodiscard]] bool hasAuthoredFaction(const std::vector<const AuthoredSystem*>& authoredFor,
+                                      std::size_t index)
+{
+    return authoredFor[index] != nullptr && authoredFor[index]->hasFaction;
+}
+
+// Faction capitals spread greedily through the core (farthest-point), then
+// multi-source Dijkstra over the gate graph claims territory; fringe systems
+// roll to stay lawless.
+void claimTerritory(const GalaxyParams& params,
+                    core::Rng& rng,
+                    std::vector<SystemSpec>& systems,
+                    const std::vector<GateLink>& links,
+                    const std::vector<const AuthoredSystem*>& authoredFor,
+                    const std::vector<std::uint32_t>& capitals)
+{
+    if (params.factionCount == 0 || capitals.empty()) {
+        return;
+    }
+    const std::uint32_t count = static_cast<std::uint32_t>(systems.size());
 
     std::vector<std::vector<std::uint32_t>> adjacency(count);
     for (const GateLink& link : links) {
@@ -669,25 +881,64 @@ core::DVec3 playfieldHub(const SystemSpec& spec)
     return spec.planets[index].position;
 }
 
-Galaxy generateGalaxy(const GalaxyParams& params, const MiningParams* mining)
+Galaxy generateGalaxy(const GalaxyParams& params,
+                      const MiningParams* mining,
+                      std::vector<AuthoredPlacementFailure>* outFailures)
 {
     SOL_ASSERT(params.systemCount >= 2);
+    if (outFailures != nullptr) {
+        outFailures->clear();
+    }
     Galaxy galaxy;
     galaxy.seed = params.seed;
     galaxy.systems.reserve(params.systemCount);
 
     core::Rng positionRng(params.seed, kStreamPositions);
     scatterSystems(params, positionRng, galaxy.systems);
+
+    // ⚑ How many systems the SEED produced. Everything that has to keep its
+    // pre-Phase-29 meaning is expressed against this rather than against
+    // `galaxy.systems.size()`, which `anywhere` grows.
+    const std::uint32_t proceduralCount = static_cast<std::uint32_t>(galaxy.systems.size());
+
+    // PASS 1: `anywhere` appends its nodes, before regions and before the
+    // gate graph, so they are laid out and woven in like any other system.
+    core::Rng authoredRng(params.seed, kStreamAuthored);
+    appendAnywhereSystems(params, authoredRng, galaxy.systems);
+
     assignRegions(params, galaxy.systems);
     buildGateGraph(params, galaxy.systems, galaxy.links);
+
+    // ⚑⚑⚑ THE GATE LISTS ARE FILLED HERE, AND MOVING THEM UP IS WHAT MAKES
+    // `jumps_from` MEASURABLE. `routeBetween` walks `SystemSpec::gates`, not
+    // `galaxy.links`, and until stage B this loop ran fifty lines further down
+    // - after `spawnClans` - so at the moment placement needed to measure a
+    // ring, every gate list in the galaxy was still empty. The move is pure
+    // data with no draw in it, and nothing between here and where it used to
+    // sit reads `gates`: `claimTerritory` and `spawnClans` both walk `links`,
+    // and `populateSystem` (which fills in each gate's POSITION) still runs
+    // last.
+    for (const GateLink& link : galaxy.links) {
+        galaxy.systems[link.a].gates.push_back({link.b, {}});
+        galaxy.systems[link.b].gates.push_back({link.a, {}});
+    }
+
+    // Capitals are chosen before placement so that `at_system` has something
+    // to name. This takes the first draw from the faction stream and
+    // `claimTerritory` takes the rest, in the order it always did.
+    core::Rng factionRng(params.seed, kStreamFactions);
+    const std::vector<std::uint32_t> capitals =
+        chooseCapitals(params, factionRng, galaxy.systems, proceduralCount);
 
     // Which node each authored system took, by index; null for the ones the
     // seed produced. Passed down rather than stamped onto SystemSpec because
     // what the later stages need is "did the AUTHOR write this field", and
     // only the def row knows that.
     std::vector<const AuthoredSystem*> authoredFor(galaxy.systems.size(), nullptr);
-    core::Rng authoredRng(params.seed, kStreamAuthored);
-    placeAuthoredSystems(params, authoredRng, galaxy.systems, authoredFor);
+    // PASS 2: the three replacement rules choose a node, and every rule -
+    // insertion included - applies its author's fields here.
+    placeAuthoredSystems(
+        params, authoredRng, galaxy, capitals, proceduralCount, galaxy.systems, authoredFor, outFailures);
 
     // ⚑⚑⚑⚑ THE NAME LOOP IS UNTOUCHED, AND THE FIRST ATTEMPT AT THIS WAS THE
     // BUG THE WHOLE PHASE EXISTS TO AVOID. Skipping the draw for an authored
@@ -724,16 +975,11 @@ Galaxy generateGalaxy(const GalaxyParams& params, const MiningParams* mining)
         }
     }
 
-    core::Rng factionRng(params.seed, kStreamFactions);
-    claimTerritory(params, factionRng, galaxy.systems, galaxy.links, authoredFor);
+    claimTerritory(params, factionRng, galaxy.systems, galaxy.links, authoredFor, capitals);
 
     core::Rng clanRng(params.seed, kStreamClans);
     spawnClans(params, clanRng, galaxy.systems, galaxy.links, authoredFor, galaxy.clans);
 
-    for (const GateLink& link : galaxy.links) {
-        galaxy.systems[link.a].gates.push_back({link.b, {}});
-        galaxy.systems[link.b].gates.push_back({link.a, {}});
-    }
     for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
         core::Rng contentRng(galaxy.systems[i].seed, kStreamContents);
         populateSystem(params, i, galaxy.systems[i], galaxy.systems, contentRng, authoredFor[i], mining);

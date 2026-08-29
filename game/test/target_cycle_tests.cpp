@@ -51,7 +51,7 @@ weight_fringe = 0.5
 {
     auto world = std::make_unique<game::SpaceWorld>();
     world->spawn(1701);
-    world->generateUniverse(testDefs());
+    SOL_CHECK(world->generateUniverse(testDefs()));
     return world;
 }
 

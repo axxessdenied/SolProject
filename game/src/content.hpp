@@ -46,7 +46,9 @@ public:
     // which a new game needs - the defs have not changed and the bindings are
     // already there. This is `initialize`'s tail, which is the part that is
     // about the WORLD rather than about the process.
-    void restartForNewGame();
+    // FALSE when the new seed's galaxy could not place an authored system;
+    // the errors are already logged. See SpaceWorld::generateUniverse.
+    [[nodiscard]] bool restartForNewGame();
 
     // Polls watched TOML/Lua sources (throttled); on a def change reloads the
     // database and re-applies it to the world, on a script change re-runs the

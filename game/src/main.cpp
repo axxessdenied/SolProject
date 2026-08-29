@@ -1934,7 +1934,16 @@ int main(int argc, char** argv)
             // that has been played in, so both halves of the reset are needed
             // - the world's own state and the galaxy GameContent generates.
             world.resetForNewGame(parseUniverseSeed(argc, argv));
-            content.restartForNewGame();
+            // ⚑ NOT REACHABLE TODAY, AND NAMED SO IT STAYS THAT WAY. The
+            // seed is `parseUniverseSeed(argc, argv)` - the same one boot
+            // already generated and validated this galaxy from - so an
+            // authored system that placed at startup places again here. It
+            // becomes reachable the moment a campaign picks its own seed, and
+            // at that point this needs a refusal the player can see rather
+            // than a log line.
+            if (!content.restartForNewGame()) {
+                SOL_LOG_ERROR("new game: authored systems could not be placed in this galaxy");
+            }
             world.setHardcore(newGameState.hardcore);
             if (world.hardcore()) {
                 SOL_LOG_INFO("HARDCORE run: death deletes the campaign");
@@ -2089,7 +2098,9 @@ int main(int argc, char** argv)
             // the main menu is not sitting on top of a live galaxy, and so
             // starting a second run finds the same clean slate the first did.
             world.resetForNewGame(parseUniverseSeed(argc, argv));
-            content.restartForNewGame();
+            if (!content.restartForNewGame()) {
+                SOL_LOG_ERROR("abandon: authored systems could not be placed in this galaxy");
+            }
             activeCampaign.clear();
             saveCatalog.rescan();
             refreshMainMenu();

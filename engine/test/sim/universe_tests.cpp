@@ -5,11 +5,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 #include <sol/sim/mining.hpp>
 #include <sol/test/test.hpp>
 
+using sol::sim::AuthoredSystem;
 using sol::sim::fieldCountFor;
 using sol::sim::Galaxy;
 using sol::sim::GalaxyParams;
@@ -712,5 +714,382 @@ SOL_TEST(universe_authoring_one_system_leaves_every_other_one_alone)
     SOL_REQUIRE(after.links.size() == before.links.size());
     for (std::size_t i = 0; i < after.links.size(); ++i) {
         SOL_CHECK(after.links[i].a == before.links[i].a && after.links[i].b == before.links[i].b);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 29 stage B: the other three placement rules.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// `kInvalidIndex` is file-local to universe.cpp and deliberately not exported,
+// so the tests carry their own "not placed" sentinel.
+constexpr std::uint32_t kNotPlaced = 0xFFFFFFFFu;
+
+std::uint32_t indexOfAuthored(const Galaxy& galaxy, const char* id)
+{
+    for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
+        if (galaxy.systems[i].authoredId == id) {
+            return i;
+        }
+    }
+    return kNotPlaced;
+}
+
+AuthoredSystem anywhereSystem(const char* id)
+{
+    AuthoredSystem authored;
+    authored.id = id;
+    authored.placement = sol::sim::Placement::Anywhere;
+    return authored;
+}
+
+} // namespace
+
+// Stage B's first exit clause: `anywhere` GROWS the galaxy, and it grows it at
+// the end. The index arithmetic is the contract - an `anywhere` system is
+// `systemCount + k` - because that is what lets everything the seed produced
+// keep the index it had.
+SOL_TEST(universe_anywhere_appends_a_node_and_moves_no_procedural_one)
+{
+    const GalaxyParams plain = testParams(31337);
+    const Galaxy before = generateGalaxy(plain);
+
+    GalaxyParams params = plain;
+    params.authoredSystems.push_back(anywhereSystem("test.first"));
+    params.authoredSystems.push_back(anywhereSystem("test.second"));
+    const Galaxy after = generateGalaxy(params);
+
+    SOL_REQUIRE(after.systems.size() == before.systems.size() + 2);
+    SOL_CHECK(indexOfAuthored(after, "test.first") == plain.systemCount);
+    SOL_CHECK(indexOfAuthored(after, "test.second") == plain.systemCount + 1);
+
+    // EVERY PROCEDURAL POSITION IS UNMOVED, WHICH IS THE PROPERTY THAT
+    // PRE-SEEDING WOULD HAVE COST. `scatterSystems` rejection-tests each
+    // candidate against every system already placed, so a position seeded
+    // ahead of it perturbs the whole scatter; appended after it, the authored
+    // node cannot be seen by a draw that has already happened.
+    for (std::uint32_t i = 0; i < before.systems.size(); ++i) {
+        SOL_CHECK(after.systems[i].mapPosition.x == before.systems[i].mapPosition.x);
+        SOL_CHECK(after.systems[i].mapPosition.y == before.systems[i].mapPosition.y);
+        SOL_CHECK(after.systems[i].mapPosition.z == before.systems[i].mapPosition.z);
+    }
+}
+
+// THE NAME STREAM SURVIVES AN INSERTION, AND THIS IS THE TEST THAT SAYS SO.
+// Stage A's expensive finding was that touching the name loop for an authored
+// index renames the galaxy; an appended node grows that loop, which is a
+// second way to reach the same disaster. It does not, because the extra draws
+// all land AFTER the procedural ones and the uniqueness rescan only ever looks
+// backwards at j < i.
+SOL_TEST(universe_anywhere_does_not_rename_the_galaxy)
+{
+    const GalaxyParams plain = testParams(31337);
+    const Galaxy before = generateGalaxy(plain);
+
+    GalaxyParams params = plain;
+    params.authoredSystems.push_back(anywhereSystem("test.newcomer"));
+    const Galaxy after = generateGalaxy(params);
+
+    SOL_REQUIRE(after.systems.size() == before.systems.size() + 1);
+    for (std::uint32_t i = 0; i < before.systems.size(); ++i) {
+        SOL_CHECK(after.systems[i].name == before.systems[i].name);
+    }
+    // And the newcomer got a name of its own rather than an empty one.
+    SOL_CHECK(!after.systems.back().name.empty());
+}
+
+// An appended node is not a stranded island: Prim runs over the grown vector,
+// so it takes an MST edge like everything else and is reachable from system 0.
+SOL_TEST(universe_anywhere_is_gated_in_like_any_other_node)
+{
+    GalaxyParams params = testParams(909);
+    params.authoredSystems.push_back(anywhereSystem("test.reachable"));
+    const Galaxy galaxy = generateGalaxy(params);
+
+    const std::uint32_t index = indexOfAuthored(galaxy, "test.reachable");
+    SOL_REQUIRE(index != kNotPlaced);
+    SOL_CHECK(!galaxy.systems[index].gates.empty());
+    SOL_CHECK(!routeBetween(galaxy, 0, index).empty());
+}
+
+// AN INSERTION NEEDS NO `assignRegions` SKIP POINT, WHICH REFUTES STAGE A'S
+// OWN FORWARD-LOOKING COMMENT. The node is appended BEFORE regions are
+// assigned - so a guard looked mandatory - but the author's fields are applied
+// in a second pass that runs AFTER them, so the write is simply the last word.
+// Splitting "make the node" from "apply the fields" removed the guard instead
+// of adding one.
+SOL_TEST(universe_anywhere_keeps_its_authored_region)
+{
+    GalaxyParams params = testParams(1234);
+    AuthoredSystem authored = anywhereSystem("test.core");
+    authored.region = Region::Core;
+    authored.hasRegion = true;
+    params.authoredSystems.push_back(authored);
+
+    const Galaxy galaxy = generateGalaxy(params);
+    const SystemSpec* spec = findAuthored(galaxy, "test.core");
+    SOL_REQUIRE(spec != nullptr);
+    SOL_CHECK(spec->region == Region::Core);
+}
+
+// Stage B's second exit clause, and it is measured with the primitive
+// decisions/018 named rather than with a second opinion written beside it.
+SOL_TEST(universe_jumps_from_lands_inside_the_ring_it_asked_for)
+{
+    GalaxyParams params = testParams(77777);
+    params.authoredSystems.push_back({.id = "test.anchor"});
+    AuthoredSystem ring;
+    ring.id = "test.ring";
+    ring.placement = sol::sim::Placement::JumpsFrom;
+    ring.anchorId = "test.anchor";
+    ring.jumpsMin = 2;
+    ring.jumpsMax = 4;
+    params.authoredSystems.push_back(ring);
+
+    std::vector<sol::sim::AuthoredPlacementFailure> failures;
+    const Galaxy galaxy = generateGalaxy(params, nullptr, &failures);
+    SOL_CHECK(failures.empty());
+
+    const std::uint32_t anchor = indexOfAuthored(galaxy, "test.anchor");
+    const std::uint32_t placed = indexOfAuthored(galaxy, "test.ring");
+    SOL_REQUIRE(anchor != kNotPlaced);
+    SOL_REQUIRE(placed != kNotPlaced);
+
+    const std::vector<std::uint32_t> route = routeBetween(galaxy, anchor, placed);
+    SOL_REQUIRE(!route.empty());
+    const std::uint32_t jumps = static_cast<std::uint32_t>(route.size()) - 1;
+    std::printf("  ring: anchor %u -> placed %u is %u jump(s)\n", anchor, placed, jumps);
+    SOL_CHECK(jumps >= 2);
+    SOL_CHECK(jumps <= 4);
+}
+
+// THIS IS THE TEST THAT WOULD HAVE FAILED BEFORE THE GATE LISTS WERE HOISTED,
+// AND IT IS WORTH SAYING WHY IT IS NOT REDUNDANT WITH THE ONE ABOVE.
+// `routeBetween` walks `SystemSpec::gates`. Until stage B those were filled
+// fifty lines below the placement pass, so at the moment a ring was measured
+// every gate list in the galaxy was still empty - and an empty graph makes
+// EVERY candidate unreachable, which reads as "no system satisfies this ring"
+// rather than as a crash. A ring that CAN be satisfied and is reported
+// unsatisfiable is the exact shape of that bug.
+SOL_TEST(universe_a_satisfiable_ring_is_not_reported_unsatisfiable)
+{
+    for (std::uint64_t seed = 1; seed <= 8; ++seed) {
+        GalaxyParams params = testParams(seed);
+        params.authoredSystems.push_back({.id = "test.anchor"});
+        AuthoredSystem ring;
+        ring.id = "test.ring";
+        ring.placement = sol::sim::Placement::JumpsFrom;
+        ring.anchorId = "test.anchor";
+        ring.jumpsMin = 1;
+        ring.jumpsMax = 3;
+        params.authoredSystems.push_back(ring);
+
+        std::vector<sol::sim::AuthoredPlacementFailure> failures;
+        const Galaxy galaxy = generateGalaxy(params, nullptr, &failures);
+        SOL_CHECK(failures.empty());
+        SOL_CHECK(indexOfAuthored(galaxy, "test.ring") != kNotPlaced);
+    }
+}
+
+// Stage B's third exit clause: a ring nothing can satisfy refuses BY NAME
+// rather than landing somewhere plausible. 60 systems on an MST plus extra
+// lanes are nowhere near 40 jumps across.
+SOL_TEST(universe_an_unsatisfiable_ring_refuses_by_name)
+{
+    GalaxyParams params = testParams(2468);
+    params.authoredSystems.push_back({.id = "test.anchor"});
+    AuthoredSystem ring;
+    ring.id = "test.nowhere";
+    ring.placement = sol::sim::Placement::JumpsFrom;
+    ring.anchorId = "test.anchor";
+    ring.jumpsMin = 40;
+    ring.jumpsMax = 50;
+    params.authoredSystems.push_back(ring);
+
+    std::vector<sol::sim::AuthoredPlacementFailure> failures;
+    const Galaxy galaxy = generateGalaxy(params, nullptr, &failures);
+
+    SOL_REQUIRE(failures.size() == 1);
+    SOL_CHECK(failures[0].id == "test.nowhere");
+    SOL_CHECK(failures[0].rule == "jumps_from");
+    std::printf("  refusal: %s\n", failures[0].reason.c_str());
+    SOL_CHECK(failures[0].reason.find("test.anchor") != std::string::npos);
+
+    // AND IT IS ABSENT RATHER THAN SOMEWHERE PLAUSIBLE, which is the half of
+    // the clause a refusal message alone would not prove. The anchor, which
+    // placed fine, is still there - one bad rule does not discard the file.
+    SOL_CHECK(indexOfAuthored(galaxy, "test.nowhere") == kNotPlaced);
+    SOL_CHECK(indexOfAuthored(galaxy, "test.anchor") != kNotPlaced);
+}
+
+// A ring anchored on a system that itself failed to place fails too, rather
+// than anchoring on nothing and quietly becoming `random`.
+SOL_TEST(universe_a_ring_anchored_on_a_failure_fails_too)
+{
+    GalaxyParams params = testParams(1357);
+    params.authoredSystems.push_back({.id = "test.anchor"});
+    AuthoredSystem doomed;
+    doomed.id = "test.doomed";
+    doomed.placement = sol::sim::Placement::JumpsFrom;
+    doomed.anchorId = "test.anchor";
+    doomed.jumpsMin = 40;
+    doomed.jumpsMax = 50;
+    params.authoredSystems.push_back(doomed);
+    AuthoredSystem dependent;
+    dependent.id = "test.dependent";
+    dependent.placement = sol::sim::Placement::JumpsFrom;
+    dependent.anchorId = "test.doomed";
+    dependent.jumpsMin = 1;
+    dependent.jumpsMax = 2;
+    params.authoredSystems.push_back(dependent);
+
+    std::vector<sol::sim::AuthoredPlacementFailure> failures;
+    const Galaxy galaxy = generateGalaxy(params, nullptr, &failures);
+
+    SOL_REQUIRE(failures.size() == 2);
+    SOL_CHECK(failures[1].id == "test.dependent");
+    SOL_CHECK(indexOfAuthored(galaxy, "test.dependent") == kNotPlaced);
+}
+
+// `at_system` lands on the capital of the faction it names, and it is a real
+// capital: the node already belonged to that faction before anything was
+// authored onto it.
+SOL_TEST(universe_at_system_takes_the_named_factions_capital)
+{
+    const GalaxyParams plain = testParams(5150);
+    const Galaxy before = generateGalaxy(plain);
+
+    GalaxyParams params = plain;
+    AuthoredSystem authored;
+    authored.id = "test.home";
+    authored.placement = sol::sim::Placement::AtSystem;
+    authored.atFactionCapital = 1;
+    params.authoredSystems.push_back(authored);
+
+    std::vector<sol::sim::AuthoredPlacementFailure> failures;
+    const Galaxy after = generateGalaxy(params, nullptr, &failures);
+    SOL_REQUIRE(failures.empty());
+
+    const std::uint32_t index = indexOfAuthored(after, "test.home");
+    SOL_REQUIRE(index != kNotPlaced);
+    SOL_CHECK(before.systems[index].factionIndex == 1);
+    SOL_CHECK(after.systems[index].factionIndex == 1);
+    SOL_CHECK(after.systems[index].region == Region::Core);
+}
+
+// THE HOIST THAT MADE `at_system` POSSIBLE DID NOT MOVE THE CAPITALS, AND THIS
+// IS WHAT HOLDS THAT RATHER THAN THE COMMENT ON `chooseCapitals`. Selection was
+// lifted out of `claimTerritory` to run before placement; it still takes the
+// same first draw from the same faction stream, so a galaxy with no authored
+// systems in it is unchanged in every field.
+SOL_TEST(universe_lifting_capital_selection_left_the_galaxy_alone)
+{
+    for (std::uint64_t seed = 1; seed <= 4; ++seed) {
+        const Galaxy galaxy = generateGalaxy(testParams(seed));
+        const Galaxy again = generateGalaxy(testParams(seed));
+        SOL_REQUIRE(galaxy.systems.size() == again.systems.size());
+        for (std::size_t i = 0; i < galaxy.systems.size(); ++i) {
+            SOL_CHECK(specsEqual(galaxy.systems[i], again.systems[i]));
+        }
+    }
+}
+
+// An authored owner still outranks a capital, even when the authored system IS
+// the capital. Guard 1 of 5 was written for a `random` system that happened to
+// land on one; `at_system` makes that the deliberate case rather than the
+// coincidence, so the guard now has a test aimed at it.
+SOL_TEST(universe_at_system_can_declare_a_capital_lawless)
+{
+    GalaxyParams params = testParams(5150);
+    AuthoredSystem authored;
+    authored.id = "test.fallen";
+    authored.placement = sol::sim::Placement::AtSystem;
+    authored.atFactionCapital = 1;
+    authored.hasFaction = true;
+    authored.factionIndex = sol::sim::kNoFaction;
+    params.authoredSystems.push_back(authored);
+
+    const Galaxy galaxy = generateGalaxy(params);
+    const SystemSpec* spec = findAuthored(galaxy, "test.fallen");
+    SOL_REQUIRE(spec != nullptr);
+    SOL_CHECK(spec->factionIndex == sol::sim::kNoFaction);
+}
+
+// Two systems cannot take one capital, and the second is told why rather than
+// being quietly rehoused.
+SOL_TEST(universe_two_systems_cannot_share_one_capital)
+{
+    GalaxyParams params = testParams(5150);
+    AuthoredSystem first;
+    first.id = "test.first";
+    first.placement = sol::sim::Placement::AtSystem;
+    first.atFactionCapital = 0;
+    params.authoredSystems.push_back(first);
+    AuthoredSystem second = first;
+    second.id = "test.second";
+    params.authoredSystems.push_back(second);
+
+    std::vector<sol::sim::AuthoredPlacementFailure> failures;
+    const Galaxy galaxy = generateGalaxy(params, nullptr, &failures);
+
+    SOL_REQUIRE(failures.size() == 1);
+    SOL_CHECK(failures[0].id == "test.second");
+    SOL_CHECK(failures[0].rule == "at_system");
+    SOL_CHECK(indexOfAuthored(galaxy, "test.first") != kNotPlaced);
+    SOL_CHECK(indexOfAuthored(galaxy, "test.second") == kNotPlaced);
+}
+
+// `at_system` naming a faction that holds no capital - removed by a mod, or a
+// core too small to give it one - refuses instead of falling back to random.
+SOL_TEST(universe_at_system_without_a_capital_refuses)
+{
+    GalaxyParams params = testParams(5150);
+    AuthoredSystem authored;
+    authored.id = "test.homeless";
+    authored.placement = sol::sim::Placement::AtSystem;
+    authored.atFactionCapital = 9; // only three factions exist
+    params.authoredSystems.push_back(authored);
+
+    std::vector<sol::sim::AuthoredPlacementFailure> failures;
+    const Galaxy galaxy = generateGalaxy(params, nullptr, &failures);
+    SOL_REQUIRE(failures.size() == 1);
+    SOL_CHECK(failures[0].rule == "at_system");
+    SOL_CHECK(indexOfAuthored(galaxy, "test.homeless") == kNotPlaced);
+}
+
+// All four rules in one file, resolving in def order and reproducing exactly.
+SOL_TEST(universe_every_placement_rule_together_is_deterministic)
+{
+    GalaxyParams params = testParams(31337);
+    params.authoredSystems.push_back({.id = "test.random"});
+    params.authoredSystems.push_back(anywhereSystem("test.anywhere"));
+    AuthoredSystem capital;
+    capital.id = "test.capital";
+    capital.placement = sol::sim::Placement::AtSystem;
+    capital.atFactionCapital = 2;
+    params.authoredSystems.push_back(capital);
+    AuthoredSystem ring;
+    ring.id = "test.ring";
+    ring.placement = sol::sim::Placement::JumpsFrom;
+    ring.anchorId = "test.anywhere"; // an insertion is a legal anchor
+    ring.jumpsMin = 1;
+    ring.jumpsMax = 3;
+    params.authoredSystems.push_back(ring);
+
+    std::vector<sol::sim::AuthoredPlacementFailure> failures;
+    const Galaxy first = generateGalaxy(params, nullptr, &failures);
+    SOL_REQUIRE(failures.empty());
+    const Galaxy second = generateGalaxy(params);
+
+    SOL_REQUIRE(first.systems.size() == second.systems.size());
+    SOL_CHECK(first.systems.size() == params.systemCount + 1); // one insertion
+    for (std::size_t i = 0; i < first.systems.size(); ++i) {
+        SOL_CHECK(specsEqual(first.systems[i], second.systems[i]));
+        SOL_CHECK(first.systems[i].authoredId == second.systems[i].authoredId);
+    }
+    for (const char* id : {"test.random", "test.anywhere", "test.capital", "test.ring"}) {
+        SOL_CHECK(indexOfAuthored(first, id) != kNotPlaced);
     }
 }

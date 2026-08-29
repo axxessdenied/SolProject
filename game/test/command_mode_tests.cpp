@@ -74,7 +74,7 @@ struct Fixture
         std::string error;
         SOL_CHECK(defs.mergeToml(kDefs, std::strlen(kDefs), "test_defs.toml", &error));
         world.spawn(seed);
-        world.generateUniverse(defs);
+        SOL_CHECK(world.generateUniverse(defs));
     }
 };
 

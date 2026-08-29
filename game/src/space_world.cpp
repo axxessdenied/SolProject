@@ -279,7 +279,7 @@ void SpaceWorld::spawn(std::uint64_t universeSeed)
     m_registry.emplace<ShipWeapon>(e);
 }
 
-void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
+bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
 {
     m_galaxyParams = sim::GalaxyParams{};
     m_galaxyParams.seed = m_universeSeed;
@@ -358,9 +358,34 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     // that is the order `claimTerritory` hands them out in - the same rule the
     // bias rows above are built on. Pirate defs are clan templates and are not
     // claimants, so they are skipped rather than counted.
+    // A faction's position among the MAJORS in def order, or kNoFaction. Both
+    // things an authored system can say about a faction - who owns it, and
+    // whose capital it takes - resolve through this one rule, because it is
+    // the rule `claimTerritory` hands capitals and territory out by.
+    const auto majorIndexOf = [&defs](const std::string& id) {
+        std::uint32_t majorIndex = 0;
+        for (const assets::FactionDef& faction : defs.factions()) {
+            if (faction.kind == assets::FactionKind::Pirate) {
+                continue;
+            }
+            if (faction.id == id) {
+                return majorIndex;
+            }
+            ++majorIndex;
+        }
+        return sim::kNoFaction;
+    };
+
     for (const assets::SystemDef& def : defs.systems()) {
         sim::AuthoredSystem authored;
         authored.id = def.id;
+        authored.placement = def.placement == "anywhere"     ? sim::Placement::Anywhere
+                             : def.placement == "at_system"  ? sim::Placement::AtSystem
+                             : def.placement == "jumps_from" ? sim::Placement::JumpsFrom
+                                                             : sim::Placement::Random;
+        authored.anchorId = def.jumpsFromSystemId;
+        authored.jumpsMin = def.jumpsFromMin;
+        authored.jumpsMax = def.jumpsFromMax;
         authored.name = def.name;
         authored.hasName = def.hasName;
         authored.secret = def.secret;
@@ -380,19 +405,11 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
             authored.hasFaction = true;
             authored.factionIndex = sim::kNoFaction;
         } else if (def.hasFaction) {
-            std::uint32_t majorIndex = 0;
-            for (const assets::FactionDef& faction : defs.factions()) {
-                if (faction.kind == assets::FactionKind::Pirate) {
-                    continue;
-                }
-                if (faction.id == def.factionId) {
-                    authored.hasFaction = true;
-                    authored.factionIndex = majorIndex;
-                    break;
-                }
-                ++majorIndex;
-            }
-            if (!authored.hasFaction) {
+            const std::uint32_t majorIndex = majorIndexOf(def.factionId);
+            if (majorIndex != sim::kNoFaction) {
+                authored.hasFaction = true;
+                authored.factionIndex = majorIndex;
+            } else {
                 // `validateSystems` refuses an unknown faction id before this
                 // runs, so reaching here means the id names a PIRATE def -
                 // a clan template, which claims nothing and cannot be a
@@ -401,6 +418,12 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
                              def.id.c_str(),
                              def.factionId.c_str());
             }
+        }
+        // ⚑ `validateSystems` has already refused a non-major here, so this
+        // resolves or the def never reached the generator. kNoFaction survives
+        // as "no capital to take", which `placeAuthoredSystems` refuses by name.
+        if (def.placement == "at_system") {
+            authored.atFactionCapital = majorIndexOf(def.atSystemFactionId);
         }
         for (const assets::AuthoredPlanetDef& planet : def.planets) {
             authored.planets.push_back(
@@ -436,7 +459,26 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     const std::uint32_t commodityCount = static_cast<std::uint32_t>(m_commodityIds.size());
 
     buildMiningParams();
-    m_galaxy = sim::generateGalaxy(m_galaxyParams, &m_miningParams);
+    std::vector<sim::AuthoredPlacementFailure> placementFailures;
+    m_galaxy = sim::generateGalaxy(m_galaxyParams, &m_miningParams, &placementFailures);
+
+    // ⚑⚑⚑ THE REFUSAL IS COMPOSED HERE BECAUSE THIS IS THE ONLY LAYER THAT
+    // KNOWS WHAT A FILE IS. `sol::sim` reported the id, the rule and the
+    // reason; `SystemDef::source` supplies the file, which is the third thing
+    // decision 3 says an error has to name. Refused rather than warned for the
+    // `validateRoles` precedent: there is no fallback that is not a lie about
+    // where the campaign starts.
+    for (const sim::AuthoredPlacementFailure& failure : placementFailures) {
+        const assets::SystemDef* def = defs.findSystem(failure.id.c_str());
+        SOL_LOG_ERROR("%s: system '%s': placement \"%s\" found nowhere to go - %s",
+                      def != nullptr ? def->source.c_str() : "<unknown source>",
+                      failure.id.c_str(),
+                      failure.rule.c_str(),
+                      failure.reason.c_str());
+    }
+    if (!placementFailures.empty()) {
+        return false;
+    }
 
     for (const assets::StationDef& station : defs.stations()) {
         sim::EconomyArchetype archetype;
@@ -508,6 +550,7 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
                  m_factionTable.size(),
                  m_galaxy.clans.size(),
                  currentSystemName());
+    return true;
 }
 
 void SpaceWorld::initializeFactions()

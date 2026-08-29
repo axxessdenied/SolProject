@@ -3040,7 +3040,11 @@ bool GameContent::initialize(const std::string& dataDirectory,
         return false; // boot data must be valid; the error was logged
     }
     m_world->applyDefs(m_defs);
-    m_world->generateUniverse(m_defs); // defs feed the generator params
+    if (!m_world->generateUniverse(m_defs)) { // defs feed the generator params
+        // Same treatment `validateRoles` gets four lines up: boot data must be
+        // valid, and the errors naming file/id/rule are already logged.
+        return false;
+    }
     runBootScripts();
     rebuildWatchList();
     SOL_LOG_INFO("content: %zu layer(s), %zu ship / %zu weapon / %zu faction def(s)",
@@ -3051,14 +3055,22 @@ bool GameContent::initialize(const std::string& dataDirectory,
     return true;
 }
 
-void GameContent::restartForNewGame()
+bool GameContent::restartForNewGame()
 {
     if (m_world == nullptr) {
-        return;
+        return false;
     }
     m_world->applyDefs(m_defs);
-    m_world->generateUniverse(m_defs);
+    // ⚑⚑ THIS CAN FAIL WHERE BOOT SUCCEEDED, AND THE REASON IS WORTH KNOWING:
+    // a `jumps_from` ring is a claim about a gate graph, the gate graph comes
+    // from the seed, and a new game may carry a different one. So placement
+    // satisfiability is a per-seed verdict and there is no load-time check
+    // that could have settled it once for every galaxy the player will see.
+    if (!m_world->generateUniverse(m_defs)) {
+        return false;
+    }
     runBootScripts();
+    return true;
 }
 
 void GameContent::registerBindings()

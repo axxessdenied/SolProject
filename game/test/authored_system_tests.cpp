@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include <sol/assets/data_defs.hpp>
 #include <sol/sim/universe.hpp>
@@ -118,7 +119,7 @@ SOL_TEST(an_authored_system_reaches_the_galaxy_with_every_field_it_was_written_w
 
     game::SpaceWorld world;
     world.spawn(game::kDefaultUniverseSeed);
-    world.generateUniverse(defs);
+    SOL_CHECK(world.generateUniverse(defs));
     const Galaxy& galaxy = world.galaxy();
 
     const SystemSpec* harrow = findAuthored(galaxy, "test.harrow");
@@ -182,4 +183,151 @@ station = "sol.station_that_was_removed"
     SOL_CHECK(error.find("sol.station_that_was_removed") != std::string::npos);
     SOL_CHECK(error.find("test.pier") != std::string::npos);
     SOL_CHECK(error.find("test/systems.toml") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 29 stage B: the other three rules, across the same seam.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// All three of stage B's rules against the REAL `game/data`, so the faction id
+// and the archetype id are the ones the shipped galaxy actually has. The ring
+// is 1-3 jumps because that is satisfiable in an 80-system galaxy at any seed
+// worth shipping; the unsatisfiable case gets its own fixture below.
+constexpr const char* kStageBAuthored = R"(
+[[system]]
+id = "test.outpost"
+name = "Outpost"
+placement = "anywhere"
+
+[[system]]
+id = "test.capital"
+name = "Admiralty"
+placement = "at_system"
+at_system = "sol.navy"
+
+[[system]]
+id = "test.picket"
+name = "Picket"
+placement = "jumps_from"
+jumps_from = { system = "test.capital", min = 1, max = 3 }
+)";
+
+// A ring no 80-system galaxy can satisfy: the graph is nowhere near 40 jumps
+// across.
+constexpr const char* kImpossibleRing = R"(
+[[system]]
+id = "test.anchor"
+
+[[system]]
+id = "test.nowhere"
+placement = "jumps_from"
+jumps_from = { system = "test.anchor", min = 40, max = 50 }
+)";
+
+} // namespace
+
+// The seam for stage B: a faction id becomes a CAPITAL rather than an owner,
+// which is a second and entirely separate resolution of the same id through
+// the same rule. A mis-resolved capital is a legal index, so this is exactly
+// the shape this suite exists to catch.
+SOL_TEST(the_three_stage_b_rules_reach_the_galaxy_through_the_real_defs)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    std::string error;
+    SOL_REQUIRE(defs.mergeToml(kStageBAuthored, std::strlen(kStageBAuthored), "test/systems.toml", &error));
+    if (!defs.validateSystems(&error)) {
+        std::printf("  %s\n", error.c_str());
+    }
+    SOL_REQUIRE(defs.validateSystems(&error));
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    SOL_REQUIRE(world.generateUniverse(defs));
+    const Galaxy& galaxy = world.galaxy();
+
+    const SystemSpec* outpost = findAuthored(galaxy, "test.outpost");
+    const SystemSpec* capital = findAuthored(galaxy, "test.capital");
+    const SystemSpec* picket = findAuthored(galaxy, "test.picket");
+    SOL_REQUIRE(outpost != nullptr);
+    SOL_REQUIRE(capital != nullptr);
+    SOL_REQUIRE(picket != nullptr);
+
+    const std::uint32_t outpostIndex = static_cast<std::uint32_t>(outpost - galaxy.systems.data());
+    const std::uint32_t capitalIndex = static_cast<std::uint32_t>(capital - galaxy.systems.data());
+    const std::uint32_t picketIndex = static_cast<std::uint32_t>(picket - galaxy.systems.data());
+
+    // `anywhere` GREW the galaxy, and it grew it at the end. 80 is what the
+    // golden asserts for a galaxy with no authored systems in it; one
+    // insertion makes it 81, and the newcomer is the last index.
+    std::printf("  %zu systems; outpost %u, capital %u, picket %u\n",
+                galaxy.systems.size(),
+                outpostIndex,
+                capitalIndex,
+                picketIndex);
+    SOL_CHECK(galaxy.systems.size() == 81);
+    SOL_CHECK(outpostIndex == 80);
+    SOL_CHECK(outpost->name == "Outpost");
+
+    // ⚑⚑ THE ONE THIS SUITE IS FOR: "sol.navy" resolved to the CAPITAL of the
+    // Navy, not merely to a system the Navy owns. It is a core system, and the
+    // Navy holds it - which is what a capital is, and a wrong index would
+    // almost certainly still be a legal system somewhere.
+    SOL_CHECK(capital->name == "Admiralty");
+    SOL_CHECK(capital->region == sol::sim::Region::Core);
+    SOL_CHECK(capital->factionIndex == majorIndexOf(defs, "sol.navy"));
+
+    // And the ring is measured against the graph the player will fly.
+    const std::vector<std::uint32_t> route = sol::sim::routeBetween(galaxy, capitalIndex, picketIndex);
+    SOL_REQUIRE(!route.empty());
+    const std::uint32_t jumps = static_cast<std::uint32_t>(route.size()) - 1;
+    std::printf("  picket is %u jump(s) from the Admiralty\n", jumps);
+    SOL_CHECK(jumps >= 1);
+    SOL_CHECK(jumps <= 3);
+}
+
+// ⚑⚑⚑ THE REFUSAL, END TO END, AND THIS IS THE HALF NEITHER OTHER SUITE CAN
+// REACH. `sol::sim` reports an id, a rule and a reason and has never known
+// what a file is - there is not one `SOL_LOG` in all of `engine/sim/src`. The
+// game layer holds `SystemDef::source`, matches on the id and composes the
+// error decision 3 asks for. What is testable from here is the VERDICT: boot
+// data that cannot be placed makes `generateUniverse` say so instead of
+// shipping a galaxy with a hole where the campaign starts.
+SOL_TEST(an_unplaceable_authored_system_refuses_the_whole_universe)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    std::string error;
+    SOL_REQUIRE(defs.mergeToml(kImpossibleRing, std::strlen(kImpossibleRing), "test/systems.toml", &error));
+    // ⚑ It passes VALIDATION, and that is the point rather than an oversight:
+    // the anchor exists and is declared first, so nothing about the file is
+    // wrong. Whether the ring can be satisfied is a claim about a gate graph,
+    // and the gate graph comes from the seed - so there is no load-time check
+    // that could have settled it.
+    SOL_CHECK(defs.validateSystems(&error));
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    SOL_CHECK(!world.generateUniverse(defs));
+}
+
+// The stage A file still parses and still lands, with no `placement` line in
+// it at all. Stage B added three rules and changed nothing an author had
+// already written.
+SOL_TEST(a_stage_a_file_still_places_after_stage_b)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    std::string error;
+    SOL_REQUIRE(defs.mergeToml(kAuthored, std::strlen(kAuthored), "test/systems.toml", &error));
+    SOL_REQUIRE(defs.validateSystems(&error));
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    SOL_REQUIRE(world.generateUniverse(defs));
+    // A replacement, so the galaxy is still the size the golden records.
+    SOL_CHECK(world.galaxy().systems.size() == 80);
+    SOL_CHECK(findAuthored(world.galaxy(), "test.harrow") != nullptr);
 }

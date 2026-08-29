@@ -69,7 +69,7 @@ struct World
         std::string error;
         SOL_CHECK(defs.mergeToml(kDefs, std::strlen(kDefs), "test_defs.toml", &error));
         world.spawn(1701);
-        world.generateUniverse(defs);
+        SOL_CHECK(world.generateUniverse(defs));
     }
 
     void writeSave(const std::string& path, const char* name)

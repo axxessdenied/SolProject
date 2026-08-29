@@ -621,7 +621,14 @@ public:
     // Generates the galaxy from the stored seed + defs and instantiates the
     // starting system (first core system with a station). Called once by
     // GameContent::initialize after defs load.
-    void generateUniverse(const sol::assets::DefDatabase& defs);
+    //
+    // ⚑⚑ FALSE when an authored system's placement rule found nowhere to go
+    // (Phase 29 stage B). Each one is logged as an error naming the file, the
+    // id and the rule before this returns, so a caller that refuses to boot
+    // has nothing to add. ⚑ It is a per-SEED verdict rather than a per-file
+    // one - a `jumps_from` ring is a claim about a gate graph - so there is no
+    // load-time check that could have caught it earlier.
+    [[nodiscard]] bool generateUniverse(const sol::assets::DefDatabase& defs);
 
     // Begins a jump through the nearest gate within activationRange meters of
     // the player. Since Phase 8v this STARTS a transition rather than arriving:

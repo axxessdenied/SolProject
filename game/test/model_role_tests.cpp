@@ -272,7 +272,7 @@ SOL_TEST(the_cockpit_comes_from_the_active_ships_def)
 
         game::SpaceWorld world;
         world.spawn(1701);
-        world.generateUniverse(defs);
+        SOL_CHECK(world.generateUniverse(defs));
         world.applyDefs(defs);
         SOL_CHECK(game::modelIndex(world.cockpitModel()) == defs.modelIndex("seat_freighter"));
     }
@@ -288,7 +288,7 @@ SOL_TEST(the_cockpit_comes_from_the_active_ships_def)
 
         game::SpaceWorld world;
         world.spawn(1701);
-        world.generateUniverse(defs);
+        SOL_CHECK(world.generateUniverse(defs));
         world.applyDefs(defs);
         SOL_CHECK(game::modelIndex(world.cockpitModel()) == defs.modelIndex("seat_default"));
     }
@@ -327,7 +327,7 @@ scale = 4.0
 
     game::SpaceWorld world;
     world.spawn(1701);
-    world.generateUniverse(defs);
+    SOL_CHECK(world.generateUniverse(defs));
     world.applyDefs(defs);
 
     const std::uint32_t system = world.currentSystemIndex();

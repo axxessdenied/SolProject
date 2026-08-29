@@ -1047,8 +1047,11 @@ bool parseSystem(const TomlValue& table,
     reader.optionalBool("lawless", def.lawless);
     reader.optionalUint("primary_planet", def.primaryPlanet, &def.hasPrimaryPlanet);
     reader.optionalBool("secret", def.secret);
+    reader.optionalString("at_system", def.atSystemFactionId);
     reader.rejectUnknownKeys({"id",
                               "placement",
+                              "at_system",
+                              "jumps_from",
                               "name",
                               "region",
                               "faction",
@@ -1057,6 +1060,42 @@ bool parseSystem(const TomlValue& table,
                               "secret",
                               "planet",
                               "station"});
+
+    // `jumps_from = { system = "…", min = N, max = M }`. Read by hand for the
+    // same reason the nested arrays below are: it is the only inline table in
+    // a def row, and a shared helper for one caller is not a helper.
+    if (const TomlValue* ring = table.find("jumps_from"); ring != nullptr && !reader.failed) {
+        if (!ring->isTable()) {
+            reader.fail("'jumps_from' must be a table: { system = \"…\", min = 2, max = 4 }");
+        } else {
+            FieldReader inner{
+                .table = *ring, .context = reader.context + " jumps_from", .outError = outError};
+            bool hasMin = false;
+            bool hasMax = false;
+            inner.requireString("system", def.jumpsFromSystemId);
+            inner.optionalUint("min", def.jumpsFromMin, &hasMin);
+            inner.optionalUint("max", def.jumpsFromMax, &hasMax);
+            if (!inner.failed && !hasMin) {
+                inner.fail("'min' is required");
+            }
+            if (!inner.failed && !hasMax) {
+                inner.fail("'max' is required");
+            }
+            inner.rejectUnknownKeys({"system", "min", "max"});
+            if (!inner.failed && def.jumpsFromMin > def.jumpsFromMax) {
+                inner.fail("'min' must not be greater than 'max'");
+            }
+            // Zero jumps from the anchor IS the anchor, and the anchor is
+            // already taken by the system that placed it - so the ring would be
+            // empty for a reason the author cannot see in their own file.
+            if (!inner.failed && def.jumpsFromMax == 0) {
+                inner.fail("'max' must be at least 1; 0 jumps from the anchor is the anchor itself");
+            }
+            if (inner.failed) {
+                reader.failed = true;
+            }
+        }
+    }
 
     // Nested rows, read by hand because they are the only arrays-of-tables
     // inside a def row and a shared helper for one caller is not a helper.
@@ -1116,9 +1155,31 @@ bool parseSystem(const TomlValue& table,
     // that is not a lie: a rule nobody implements yet would put the campaign's
     // starting system somewhere nobody chose, and an out-of-range primary
     // planet is `spec.planets[spec.primaryPlanet]` at six unguarded call sites.
-    if (!reader.failed && def.placement != "random") {
-        reader.fail("'placement' must be \"random\" (stage A ships only that rule), not \"" + def.placement +
-                    "\"");
+    if (!reader.failed && def.placement != "random" && def.placement != "anywhere" &&
+        def.placement != "at_system" && def.placement != "jumps_from") {
+        reader.fail("'placement' must be \"random\", \"anywhere\", \"at_system\" or \"jumps_from\", not \"" +
+                    def.placement + "\"");
+    }
+    // ⚑ A PARAMETER WITHOUT ITS RULE IS THE MISTAKE THIS SHAPE INVITES, so it
+    // is refused in both directions rather than silently ignored. Writing
+    // `jumps_from = {…}` and forgetting `placement = "jumps_from"` would
+    // otherwise place the system at random and read to the author as a parser
+    // that ate their ring.
+    if (!reader.failed && def.placement == "at_system" && def.atSystemFactionId.empty()) {
+        reader.fail("'placement' is \"at_system\" but no 'at_system' key names a [[faction]] whose capital "
+                    "to take");
+    }
+    if (!reader.failed && def.placement != "at_system" && !def.atSystemFactionId.empty()) {
+        reader.fail("'at_system' is set but 'placement' is \"" + def.placement +
+                    "\"; write placement = \"at_system\" to use it");
+    }
+    if (!reader.failed && def.placement == "jumps_from" && def.jumpsFromSystemId.empty()) {
+        reader.fail("'placement' is \"jumps_from\" but there is no 'jumps_from' table; write "
+                    "jumps_from = { system = \"…\", min = 2, max = 4 }");
+    }
+    if (!reader.failed && def.placement != "jumps_from" && !def.jumpsFromSystemId.empty()) {
+        reader.fail("'jumps_from' is set but 'placement' is \"" + def.placement +
+                    "\"; write placement = \"jumps_from\" to use it");
     }
     if (!reader.failed && def.hasName && def.name.empty()) {
         reader.fail("'name' must not be empty when given");
@@ -1509,6 +1570,50 @@ bool DefDatabase::validateSystems(std::string* outError) const
                 return refuse(system,
                               "station '" + station.name + "' names archetype '" + station.stationId +
                                   "', which is not a [[station]]");
+            }
+        }
+        // ⚑ `at_system` names a MAJOR, because a clan template claims nothing
+        // and so is never handed a capital by `claimTerritory`. Refused rather
+        // than warned for decision 3's reason: a system meant to be somebody's
+        // home placed at random instead is a different place from the one the
+        // campaign was written against.
+        if (system.placement == "at_system") {
+            const FactionDef* faction = findFaction(system.atSystemFactionId.c_str());
+            if (faction == nullptr) {
+                return refuse(system,
+                              "'at_system' names '" + system.atSystemFactionId +
+                                  "', which is not a [[faction]]");
+            }
+            if (faction->kind != FactionKind::Major) {
+                return refuse(system,
+                              "'at_system' names '" + system.atSystemFactionId +
+                                  "', which is a clan template and holds no capital");
+            }
+        }
+        // ⚑⚑ AN ANCHOR MUST BE DECLARED EARLIER, AND THAT IS CHECKED HERE
+        // RATHER THAN LEFT TO THE GENERATOR, because def order is a fact about
+        // the FILES and this is the only layer that can see all of them. The
+        // generator's own "not placed before this one" refusal still stands
+        // behind it and catches the case this cannot: an anchor that parsed
+        // fine and then failed its own placement rule.
+        if (system.placement == "jumps_from") {
+            bool anchorIsEarlier = false;
+            for (const SystemDef& other : m_systems) {
+                if (&other == &system) {
+                    break; // reached this row; anything after it is declared later
+                }
+                if (other.id == system.jumpsFromSystemId) {
+                    anchorIsEarlier = true;
+                    break;
+                }
+            }
+            if (!anchorIsEarlier) {
+                const bool existsAtAll = findSystem(system.jumpsFromSystemId.c_str()) != nullptr;
+                return refuse(system,
+                              "'jumps_from' anchors on '" + system.jumpsFromSystemId + "', which is " +
+                                  (system.jumpsFromSystemId == system.id ? "this system itself"
+                                   : existsAtAll ? "declared after it; an anchor must come first"
+                                                 : "not a [[system]]"));
             }
         }
         // Two authored systems fighting over one node is not resolvable in a

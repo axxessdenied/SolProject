@@ -82,12 +82,46 @@ struct AuthoredStation
     std::uint32_t archetype = 0; // index into GalaxyParams::stationRules
 };
 
+// How the generator chooses which node an authored system becomes (Phase 29).
+//
+// ⚑⚑⚑ THREE OF THE FOUR REPLACE AN EXISTING NODE AND ONE CREATES ONE, WHICH
+// IS WHAT SPLITS PLACEMENT INTO TWO PASSES RATHER THAN ONE. `Anywhere` appends
+// a node after `scatterSystems` and before the gate graph is built, so it is
+// woven in like any other system; the other three pick a node that already
+// exists, after `buildGateGraph`, and overwrite its spec.
+enum class Placement : std::uint8_t
+{
+    Random = 0, // any ordinary node, drawn from the authored stream
+    Anywhere,   // a new node at a new map position; grows the galaxy
+    AtSystem,   // the capital of a named faction
+    JumpsFrom,  // a ring of gate distance around an earlier authored system
+};
+
 struct AuthoredSystem
 {
     // The author's own id. It is the only stable handle on a place in this
     // galaxy: procedural names are rolled AFTER placement, so they are a fact
     // about one seed at one systemCount rather than a name anything can rely on.
     std::string id;
+    Placement placement = Placement::Random;
+    // `AtSystem` only. The major-faction index whose capital to take, resolved
+    // at the seam the way every other def id is.
+    //
+    // ⚑⚑ A FACTION CAPITAL IS THE ONLY STABLE PROCEDURAL LANDMARK IN THIS
+    // GALAXY, AND IT IS THE ONLY THING `at_system` CAN LEGALLY NAME. The rule
+    // was specified as naming an authored id, which cannot work: every
+    // authored id belongs to a system that already occupies its own node, so
+    // every legal argument was a contradiction. Procedural NAMES are worse -
+    // they are rolled after placement and are a fact about one seed at one
+    // system count. Capitals are chosen from map geometry, which an authored
+    // replacement does not move.
+    std::uint32_t atFactionCapital = kNoFaction;
+    // `JumpsFrom` only: an EARLIER authored system's id, and a closed ring of
+    // gate distance around the node it took. Def order is what makes this
+    // resolvable - the anchor has an index by the time this row is read.
+    std::string anchorId;
+    std::uint32_t jumpsMin = 0;
+    std::uint32_t jumpsMax = 0;
     std::string name;
     bool hasName = false;
     Region region = Region::Fringe;
@@ -227,7 +261,36 @@ struct Galaxy
 // whose output comes out of the ground where there is none. Null keeps the
 // pre-Phase-13 behaviour exactly, which is why every caller that does not care
 // about rock — and every test written before this rule existed — is unchanged.
-[[nodiscard]] Galaxy generateGalaxy(const GalaxyParams& params, const MiningParams* mining = nullptr);
+// An authored system whose placement rule no node satisfied (Phase 29 stage B).
+//
+// ⚑⚑⚑ THIS IS A RETURN VALUE RATHER THAN A LOG LINE, AND THE SEAM IS WHY.
+// There is not one `SOL_LOG` in all of `engine/sim/src`, and `sol::sim` has
+// never known what a file is - so it cannot write the refusal decision 3 asks
+// for, which names the FILE, the id and the rule. It reports what failed and
+// why; the game layer already holds `SystemDef::source` and matches on `id` to
+// name the file. That keeps the refusal complete without teaching the
+// generator about defs.
+//
+// ⚑⚑ AND SATISFIABILITY IS A PER-SEED FACT, WHICH IS WHY THERE IS NO
+// LOAD-TIME CHECK THAT COULD HAVE REPLACED THIS. A `jumps_from` ring is a
+// claim about a gate graph, and the gate graph is built from the seed. A ring
+// that holds at the shipped seed can be empty at another one, so the check has
+// to live where the graph does.
+struct AuthoredPlacementFailure
+{
+    std::string id;     // the authored system's own id
+    std::string rule;   // the placement rule it asked for, spelled as an author wrote it
+    std::string reason; // why no node satisfied it
+};
+
+// `outFailures`, when given, is CLEARED and then filled with one entry per
+// authored system that could not be placed. Those systems are absent from the
+// returned galaxy rather than placed somewhere plausible (decision 3). Null
+// keeps the pre-Phase-29-stage-B signature working for every caller that has
+// no authored input to fail.
+[[nodiscard]] Galaxy generateGalaxy(const GalaxyParams& params,
+                                    const MiningParams* mining = nullptr,
+                                    std::vector<AuthoredPlacementFailure>* outFailures = nullptr);
 
 // Fewest-jumps route through the gate graph, inclusive of endpoints; empty
 // if unreachable (cannot happen for generateGalaxy output) or on bad input.

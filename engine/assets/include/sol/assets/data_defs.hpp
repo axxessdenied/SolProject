@@ -585,10 +585,32 @@ struct AuthoredStationDef
 struct SystemDef
 {
     std::string id; // invented by the author; the campaign's handle on the place
-    // How the generator chooses which node this system becomes. Phase 29
-    // stage A ships only "random" (any ordinary system); the other three
-    // rules in decisions/018 arrive in stage B.
+    // How the generator chooses which node this system becomes: "random",
+    // "anywhere", "at_system" or "jumps_from".
+    //
+    // ⚑⚑ THE RULE IS ALWAYS NAMED HERE, AND A RULE THAT TAKES PARAMETERS PUTS
+    // THEM IN A SIBLING KEY OF THE SAME NAME. decisions/018 wrote the four
+    // rules two different ways - two as bare words and two as keys carrying a
+    // value - which left a reader scanning every key in the row to find out
+    // how the system was placed. Naming it in one place costs one line in the
+    // parameterised cases and makes the refusals sayable:
+    //
+    //   placement = "jumps_from"
+    //   jumps_from = { system = "campaign.hollow", min = 2, max = 4 }
     std::string placement = "random";
+    // "at_system" only: a `[[faction]]` id, meaning THAT FACTION'S CAPITAL.
+    //
+    // ⚑⚑⚑ IT NAMES A FACTION RATHER THAN A SYSTEM BECAUSE A CAPITAL IS THE
+    // ONLY STABLE PROCEDURAL LANDMARK THERE IS. An authored id cannot be named
+    // - that system already occupies its own node, so every such argument is a
+    // contradiction - and a procedural NAME is a fact about one seed at one
+    // system count, rolled after placement has already happened.
+    std::string atSystemFactionId;
+    // "jumps_from" only: an earlier authored system's id and a closed ring of
+    // gate distance around it.
+    std::string jumpsFromSystemId;
+    std::uint32_t jumpsFromMin = 0;
+    std::uint32_t jumpsFromMax = 0;
     std::string name;
     bool hasName = false;
     // "core" | "frontier" | "fringe".

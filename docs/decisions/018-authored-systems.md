@@ -74,6 +74,48 @@ takes one placement rule.
    replace the map, not just the rules — which is the strongest single answer to
    the "yours to break" pillar the arc contains.
 
+## Second amendment — 2026-08-29, when Phase 29 stage B was built
+
+Building the placement rules refuted one more line of the table above, and the
+user took the ruling that replaced it.
+
+- **`at_system = "<id>"` had no legal argument, and the spec's own restriction
+  is what removed the last one.** The table says *"Replace/occupy a specific
+  named system"*. Naming a **procedural** system was already refused when this
+  phase was spec'd — names are rolled *after* placement, so they are a fact
+  about one seed at one system count — which left decision 4's *"authored ids
+  only"*. But **every authored id belongs to a system that already occupies its
+  own node**, so every remaining argument was a contradiction: the rule could
+  only ever name a place that was taken. (A mod *replacing* a base game's
+  authored system needs none of this and already worked: `mergeDef` has a later
+  layer replace an earlier one wholesale, by id.)
+- **So `at_system` names a FACTION, and means that faction's capital.**
+  `at_system = "sol.navy"` is *"the Navy's home"* — which is the sentence the
+  spec itself said a campaign wants to say, and which it had deliberately
+  deferred to a later phase. It was pulled forward here because the alternative
+  was shipping a key whose every use was an error.
+- **The cost was an ordering change, and it was smaller than it looked.**
+  `claimTerritory` *chose* the capitals and ran *after* placement, so there was
+  no moment at which a capital was a thing a rule could point at. Selection is
+  now its own function running before placement. It still takes the same single
+  draw from the same faction stream, so a galaxy with no authored systems in it
+  is unchanged in every field — which the shipped-seed golden holds rather than
+  a comment.
+- **Two behaviour changes ride along, both invisible to an unauthored galaxy.**
+  Capital candidacy now reads the *procedural* region assignment, so an authored
+  system declaring itself core does not add itself to the pool of places a
+  faction might be capital of; and an **appended** (`anywhere`) node is not a
+  candidate at all, which is also what keeps `at_system` resolvable.
+- **`exclude_secret` still names nothing**, as the first amendment recorded.
+
+⚑ **And one sharpening rather than a refutation: *"placement can fail, and
+failure is loud"* is a per-SEED verdict, not a per-file one.** A `jumps_from`
+ring is a claim about a gate graph and the gate graph is built from the seed, so
+a ring that holds at the shipped seed can be empty at another one. There is no
+load-time check that could have settled it once for every galaxy a player will
+see — which is why the refusal lives where the graph does, and why it is a
+return value rather than a validation pass.
+
 ## Amendment — 2026-08-29, when Phase 29 was spec'd against the code
 
 The re-read this project requires before a phase starts refuted one sentence in

@@ -79,7 +79,7 @@ struct Fixture
         SOL_REQUIRE(defs.factions().size() == 2);
         SOL_REQUIRE(defs.stations().size() == 2);
         world.spawn(1701);
-        world.generateUniverse(defs);
+        SOL_CHECK(world.generateUniverse(defs));
     }
 
     void fill(MapPanel& panel, std::vector<MapMarkerRow>& markers)
