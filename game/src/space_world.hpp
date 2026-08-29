@@ -303,6 +303,70 @@ struct GameFaction
     std::vector<std::string> shipsTrader; // Phase 8x: hulls its haulers fly
 };
 
+// --- Ambient presence, as curves on the security baseline (Phase 30 stage B) --
+//
+// ⚑⚑⚑⚑ THESE READ THE BASELINE AND MUST NEVER READ THE LIVE RATING. That is
+// decisions/019's ruling taken rather than discovered: the live number is
+// `baseline - danger`, so wiring garrison size to it makes a positive-feedback
+// spiral - a raid raises danger, which lowers live security, which THINS THE
+// PATROLS, which makes the next raid cheaper. A navy's garrison does not
+// evaporate because pirates turned up; if anything it digs in. The baseline is
+// how much force the owner keeps here; the live rating is how safe it actually
+// is right now, and only response TIME is allowed to read the second one.
+//
+// ⚑⚑ WHAT THESE REPLACED, AND WHY THE SHIPPED GALAXY BARELY MOVES.
+// `kPatrolsPerRegion[3] = {3, 2, 1}` and `kCiviliansPerRegion[3] = {4, 3, 1}`,
+// with a comment from Phase 13 that already called the index "region
+// security". The point of the curve is NOT to change what ships today - it is
+// that the input becomes a NUMBER, so an authored `security =` (stage E) or a
+// retune moves the sky with no new code. `patrolsFor` is tuned to reproduce
+// {3, 2, 1} exactly across all three shipped bands; `civiliansFor` deliberately
+// does not, because civilian traffic is the one of the two that can vary
+// inside a band without meaning anything about force.
+
+// Patrol hulls a major keeps over its station. Floored at one: territory its
+// owner cannot police at all is territory it does not hold, and the generator
+// has already decided that it does.
+[[nodiscard]] inline std::uint32_t patrolsFor(float baselineSecurity)
+{
+    if (baselineSecurity <= 0.0f) {
+        return 0; // nobody holds it, so nobody garrisons it
+    }
+    const auto count = static_cast<std::uint32_t>(std::lround(baselineSecurity * 4.0f));
+    return count < 1u ? 1u : count;
+}
+
+// Civilian traffic over the same station.
+//
+// ⚑⚑⚑ EXPRESSED AGAINST THE GARRISON RATHER THAN AS ITS OWN CURVE, AND THAT
+// IS DELIBERATE. `kCiviliansPerRegion` was {4, 3, 1}, which is NOT linear in
+// security - the step from frontier to fringe is more than twice the step from
+// core to frontier - so no single multiplier reproduces it, and every one that
+// was tried moved ambient traffic in ~32 frontier systems as a side effect.
+// Civilian density is scenery rather than strength, this phase was not asked
+// to retune it, and it is exactly the kind of change this project's playtests
+// notice (a sky that felt dead was once a whole phase's worth of notes). So:
+// one hauler per patrol, plus one more wherever the garrison is more than
+// token. That reproduces {4, 3, 1} exactly across all three shipped bands with
+// no magic threshold in it, and it still moves when an authored rating moves.
+[[nodiscard]] inline std::uint32_t civiliansFor(float baselineSecurity)
+{
+    const std::uint32_t patrols = patrolsFor(baselineSecurity);
+    return patrols + (patrols >= 2u ? 1u : 0u);
+}
+
+// Raider hulls a clan keeps in a system it holds, scaling DOWN the negative
+// band - so a clan's home is genuinely thick with hostiles where today every
+// clan system alike holds a flat two.
+[[nodiscard]] inline std::uint32_t raidersFor(float baselineSecurity)
+{
+    if (baselineSecurity >= 0.0f) {
+        return 0;
+    }
+    const auto count = static_cast<std::uint32_t>(std::lround(-baselineSecurity * 6.0f));
+    return count < 1u ? 1u : count;
+}
+
 struct RenderShape
 {
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};

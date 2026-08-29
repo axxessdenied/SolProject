@@ -163,3 +163,154 @@ SOL_TEST(danger_erodes_security_toward_zero_and_never_past_it)
         SOL_CHECK(world.systemSecurity(system) == 0.0f);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Stage B: the two per-region tables become curves on the baseline.
+
+// ⚑⚑⚑ THE CLAIM THAT MATTERS MOST IS THAT THE SKY DID NOT MOVE. Retiring a
+// table into a curve is a refactor unless it changes something, and what it is
+// ALLOWED to change is bounded: `kPatrolsPerRegion` was {3, 2, 1} keyed on
+// region, and every system in the shipped galaxy must still get exactly the
+// count its region used to give it. What the curve buys is that the INPUT is a
+// number now, so stage E's authored `security =` moves the sky with no new
+// code - which is checked separately below, because a curve that reproduced
+// the table by ignoring its argument would pass this test perfectly.
+SOL_TEST(patrol_strength_still_matches_the_region_table_it_replaced)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    world.applyDefs(defs);
+    SOL_REQUIRE(world.generateUniverse(defs));
+    const Galaxy& galaxy = world.galaxy();
+
+    constexpr std::uint32_t kPatrolsPerRegion[3] = {3, 2, 1};
+    constexpr std::uint32_t kCiviliansPerRegion[3] = {4, 3, 1};
+    std::uint32_t checked = 0;
+    for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
+        const float baseline = world.systemSecurityBaseline(i);
+        if (baseline <= 0.0f) {
+            continue; // clan space and unpoliced space had no entry in the table
+        }
+        const auto tier = static_cast<std::size_t>(galaxy.systems[i].region);
+        SOL_CHECK(game::patrolsFor(baseline) == kPatrolsPerRegion[tier]);
+        SOL_CHECK(game::civiliansFor(baseline) == kCiviliansPerRegion[tier]);
+        ++checked;
+    }
+    SOL_CHECK(checked > 0);
+    std::printf("  %u major-held system(s) keep the count their region gave them\n", checked);
+}
+
+// ...and the half that proves the curve is a curve. A function that returned
+// the old table by looking at nothing would satisfy the test above; these are
+// values the shipped bands never produce.
+SOL_TEST(a_security_rating_outside_the_shipped_bands_moves_the_garrison)
+{
+    // A fortress and a token presence, both reachable only by authoring
+    // (stage E) or retuning - which is exactly the point of the curve.
+    SOL_CHECK(game::patrolsFor(1.00f) == 4);
+    SOL_CHECK(game::patrolsFor(0.95f) == 4);
+    SOL_CHECK(game::patrolsFor(0.05f) == 1); // floored: an owner keeps something
+    SOL_CHECK(game::patrolsFor(0.0f) == 0);  // nobody holds it, nobody garrisons it
+
+    // Monotone, so "more secure" can never mean "fewer hulls".
+    for (int step = 1; step <= 100; ++step) {
+        const float lower = static_cast<float>(step - 1) / 100.0f;
+        const float higher = static_cast<float>(step) / 100.0f;
+        SOL_CHECK(game::patrolsFor(higher) >= game::patrolsFor(lower));
+        SOL_CHECK(game::civiliansFor(higher) >= game::civiliansFor(lower));
+        SOL_CHECK(game::raidersFor(-higher) >= game::raidersFor(-lower));
+    }
+}
+
+// The negative band is where stage B is meant to be FELT: every clan system
+// holds a flat two today, and a clan's home should be thick with hostiles
+// while its periphery is thin.
+SOL_TEST(clan_space_thickens_toward_the_clans_home)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    world.applyDefs(defs);
+    SOL_REQUIRE(world.generateUniverse(defs));
+    const Galaxy& galaxy = world.galaxy();
+
+    std::uint32_t thickest = 0;
+    std::uint32_t thinnest = 0xffff'ffffu;
+    std::uint32_t clanSystems = 0;
+    for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
+        const float baseline = world.systemSecurityBaseline(i);
+        if (baseline >= 0.0f) {
+            continue;
+        }
+        const std::uint32_t raiders = game::raidersFor(baseline);
+        SOL_CHECK(raiders >= 1u); // a clan that holds a place is present in it
+        thickest = std::max(thickest, raiders);
+        thinnest = std::min(thinnest, raiders);
+        ++clanSystems;
+    }
+    SOL_REQUIRE(clanSystems > 0);
+    std::printf(
+        "  %u clan system(s), %u..%u raider(s) each (was a flat 2)\n", clanSystems, thinnest, thickest);
+    // The whole point: it is no longer flat, and the deep end is heavier than
+    // the two every clan system used to hold.
+    SOL_CHECK(thickest > thinnest);
+    SOL_CHECK(thickest > 2u);
+}
+
+// ⚑⚑⚑⚑ THE ANTI-SPIRAL WIRING, CHECKED WHERE IT IS ACTUALLY WIRED. The test
+// above it proves the RULING about the arithmetic; this one proves the CALL
+// SITE obeys it. Raiding a system hard enough to halve its live rating must
+// leave its garrison untouched, because a navy digs in rather than evaporating
+// - and because the alternative is a raid making the next raid cheaper.
+SOL_TEST(raiding_a_system_does_not_thin_the_garrison_that_defends_it)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    world.applyDefs(defs);
+    SOL_REQUIRE(world.generateUniverse(defs));
+    const Galaxy& galaxy = world.galaxy();
+
+    std::vector<RaidCandidate> candidates;
+    std::uint32_t target = sol::sim::kNoFaction;
+    for (std::uint32_t faction = 0; faction < world.factions().size(); ++faction) {
+        world.factionSim().raidCandidates(galaxy, faction, candidates);
+        for (const RaidCandidate& candidate : candidates) {
+            if (world.systemSecurityBaseline(candidate.system) > 0.0f) {
+                target = candidate.system;
+                break;
+            }
+        }
+        if (target != sol::sim::kNoFaction) {
+            break;
+        }
+    }
+    SOL_REQUIRE(target != sol::sim::kNoFaction);
+
+    const float baselineBefore = world.systemSecurityBaseline(target);
+    const std::uint32_t patrolsBefore = game::patrolsFor(baselineBefore);
+    const float danger = raiseDanger(world, target, 0.9f);
+    SOL_REQUIRE(danger > 0.0f); // or the check below is about nothing at all
+
+    const float liveAfter = world.systemSecurity(target);
+    std::printf("  system %u: baseline %+.3f (unmoved), live %+.3f, patrols %u\n",
+                target,
+                static_cast<double>(world.systemSecurityBaseline(target)),
+                static_cast<double>(liveAfter),
+                patrolsBefore);
+    // The live rating fell...
+    SOL_CHECK(liveAfter < baselineBefore);
+    // ...the baseline did not, and neither did the garrison it sizes.
+    SOL_CHECK(world.systemSecurityBaseline(target) == baselineBefore);
+    SOL_CHECK(game::patrolsFor(world.systemSecurityBaseline(target)) == patrolsBefore);
+    // And the spiral, stated directly: sizing off the live rating would have
+    // thinned it, which is the wiring this phase refuses.
+    SOL_CHECK(game::patrolsFor(liveAfter) < patrolsBefore);
+}

@@ -2700,18 +2700,20 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
     // navy in the sky above a station that has changed hands.
     const std::uint32_t owner = systemOwnerFaction(systemIndex);
     const core::DVec3 anchor = spec.stations.empty() ? hub : spec.stations[0].position;
+    // ⚑⚑ Phase 30 stage B: the two per-region tables that used to sit here are
+    // curves on the security BASELINE now - see `patrolsFor` and friends in the
+    // header, including why they must not read the live rating. The branch is
+    // still on `faction.pirate` rather than on the sign, because the roster is
+    // what actually differs; the sign only decides how many.
+    const float baselineSecurity = systemSecurityBaseline(systemIndex);
     if (owner < m_factionTable.size()) {
         const GameFaction& faction = m_factionTable[owner];
         if (faction.pirate) {
-            spawnWing(owner, faction.shipsRaider, PilotRole::Fighter, 2, anchor, 900.0);
+            spawnWing(
+                owner, faction.shipsRaider, PilotRole::Fighter, raidersFor(baselineSecurity), anchor, 900.0);
         } else {
-            constexpr std::uint32_t kPatrolsPerRegion[3] = {3, 2, 1}; // core/frontier/fringe
-            spawnWing(owner,
-                      faction.shipsPatrol,
-                      PilotRole::Patrol,
-                      kPatrolsPerRegion[static_cast<std::size_t>(spec.region)],
-                      anchor,
-                      700.0);
+            spawnWing(
+                owner, faction.shipsPatrol, PilotRole::Patrol, patrolsFor(baselineSecurity), anchor, 700.0);
 
             // Civilian traffic (Phase 13, note 5b). Before this, everything in
             // the sky over a station was military: three interceptors in a core
@@ -2729,11 +2731,10 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             // No Lua change: pilot_think's role == "trader" branch already
             // flies a two-leg station circuit, and PilotRole::Trader,
             // PilotState::Travel and shipsTrader all predate this.
-            constexpr std::uint32_t kCiviliansPerRegion[3] = {4, 3, 1};
             spawnWing(owner,
                       faction.shipsTrader,
                       PilotRole::Trader,
-                      kCiviliansPerRegion[static_cast<std::size_t>(spec.region)],
+                      civiliansFor(baselineSecurity),
                       anchor,
                       1'500.0);
         }
