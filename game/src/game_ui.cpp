@@ -97,17 +97,6 @@ struct Styles
     return kNeutral;
 }
 
-void formatDistance(double meters, char* buffer, std::size_t size)
-{
-    if (meters < 10'000.0) {
-        std::snprintf(buffer, size, "%.0f m", meters);
-    } else if (meters < 1.0e9) {
-        std::snprintf(buffer, size, "%.1f km", meters / 1000.0);
-    } else {
-        std::snprintf(buffer, size, "%.2f Mkm", meters / 1.0e9);
-    }
-}
-
 void formatSpeed(float metersPerSecond, char* buffer, std::size_t size)
 {
     if (metersPerSecond < 10'000.0f) {
@@ -1044,6 +1033,17 @@ void drawCommsPanel(DrawList& list,
 }
 
 } // namespace
+
+void formatDistance(double meters, char* buffer, std::size_t size)
+{
+    if (meters < 10'000.0) {
+        std::snprintf(buffer, size, "%.0f m", meters);
+    } else if (meters < 1.0e9) {
+        std::snprintf(buffer, size, "%.1f km", meters / 1000.0);
+    } else {
+        std::snprintf(buffer, size, "%.2f Mkm", meters / 1.0e9);
+    }
+}
 
 void buildFlightUi(DrawList& list, const Font& font, Vec2 screenSize, const sol::ui::FlightHud& hud)
 {

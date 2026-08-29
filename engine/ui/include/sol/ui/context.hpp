@@ -227,8 +227,16 @@ public:
     // after being clamped onto the screen. The caller needs it for the
     // close-on-a-click-elsewhere rule, and only the widget knows where the
     // clamp put it.
-    [[nodiscard]] int
-    contextMenu(core::Vec2 anchor, std::span<const MenuItem> items, Rect* boundsOut = nullptr);
+    //
+    // ⚑ `title` names what the menu is ABOUT, and it earns its place from
+    // stage C on: the rows are composed from whatever is selected, and a
+    // selection can be off screen or behind the player. "Orbit" with no
+    // heading does not say what it would orbit. Empty draws no heading and
+    // leaves every row exactly where it was without one.
+    [[nodiscard]] int contextMenu(core::Vec2 anchor,
+                                  std::span<const MenuItem> items,
+                                  Rect* boundsOut = nullptr,
+                                  std::string_view title = {});
 
     [[nodiscard]] bool button(const Rect& bounds, std::string_view label, bool enabled = true);
     [[nodiscard]] bool checkbox(const Rect& bounds, std::string_view label, bool& value);

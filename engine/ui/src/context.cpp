@@ -290,7 +290,10 @@ void UiContext::drawTooltip()
     m_tooltip.clear();
 }
 
-int UiContext::contextMenu(core::Vec2 anchor, std::span<const MenuItem> items, Rect* boundsOut)
+int UiContext::contextMenu(core::Vec2 anchor,
+                           std::span<const MenuItem> items,
+                           Rect* boundsOut,
+                           std::string_view title)
 {
     if (boundsOut != nullptr) {
         *boundsOut = Rect{};
@@ -310,9 +313,21 @@ int UiContext::contextMenu(core::Vec2 anchor, std::span<const MenuItem> items, R
     for (const MenuItem& item : items) {
         widest = std::max(widest, m_font->measureWidth(*record, item.label));
     }
+    // The heading is measured into the same width. A title that gets elided is
+    // a menu that will not say what it is about, which is the one thing the
+    // title is for.
+    float titleHeight = 0.0f;
+    const assets::FontStyleRecord* heading = title.empty() ? nullptr : style(m_theme.headingStyle);
+    if (heading != nullptr) {
+        widest = std::max(widest, m_font->measureWidth(*heading, title));
+        // panel() puts a title at padding/2 below the top edge; the rows start
+        // a full padding below that, which is the gap every other panel uses.
+        titleHeight = m_theme.padding * 0.5f + heading->lineHeight;
+    }
     const float width = widest + m_theme.padding * 4.0f;
     const float rows = static_cast<float>(items.size());
-    const float height = rows * m_theme.rowHeight + (rows - 1.0f) * m_theme.spacing + m_theme.padding * 2.0f;
+    const float height =
+        titleHeight + rows * m_theme.rowHeight + (rows - 1.0f) * m_theme.spacing + m_theme.padding * 2.0f;
 
     // Below and right of the anchor, then pushed back inside the screen — the
     // same rule drawTooltip uses, and for the same reason: a menu that opens
@@ -325,7 +340,7 @@ int UiContext::contextMenu(core::Vec2 anchor, std::span<const MenuItem> items, R
         *boundsOut = box;
     }
 
-    panel(box);
+    panel(box, title);
 
     // ⚑ Pushed as its own id scope so a menu row's identity cannot collide with
     // a button of the same label on the screen underneath it — which is not
@@ -333,7 +348,7 @@ int UiContext::contextMenu(core::Vec2 anchor, std::span<const MenuItem> items, R
     // HUD and the station screens also name.
     pushId("context_menu");
     int activated = -1;
-    float y = box.min.y + m_theme.padding;
+    float y = box.min.y + titleHeight + m_theme.padding;
     for (std::size_t i = 0; i < items.size(); ++i) {
         const MenuItem& item = items[i];
         const Rect row{{box.min.x + m_theme.padding, y},

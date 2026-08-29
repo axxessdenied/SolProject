@@ -1692,6 +1692,25 @@ int main(int argc, char** argv)
             // cursor and let it drift.
             contextMenuOpen = true;
             contextMenuAnchor = rightPressCursor;
+            // ⚑⚑ STAGE C: THE RIGHT-CLICK SELECTS, AND THAT IS WHAT MAKES THE
+            // MENU CONTEXTUAL. Every verb the menu offers - engageCommand,
+            // hailTarget, requestDocking - already reads the ONE selection the
+            // weapons lead, the HUD readout and the map's Set Target all read,
+            // so "the thing you clicked" and "the thing that is selected" have
+            // to be made the same thing rather than a second notion of a
+            // target being threaded through four call sites.
+            //
+            // ⚑ A miss changes nothing, which is Phase 8j's ruling inherited
+            // whole: losing a target to a stray click is worse than a click
+            // that does nothing. The menu is then about whatever was already
+            // selected, which is also what makes Hold and Cancel reachable
+            // from a right-click on empty space.
+            //
+            // ⚑ pickTarget rather than pickBoresight even though the cursor
+            // was locked for the whole hold: unlike the left button, this one
+            // recorded a real screen point at press time, before the lock, so
+            // there is a meaningful position to ask about.
+            (void)game::selectPicked(world, game::pickTarget(world, rightPressCursor));
         }
         uiInput.scrollDelta = window.wheelDelta();
 
@@ -1784,10 +1803,15 @@ int main(int argc, char** argv)
                 // drawTooltip() after this, which is right: a tooltip explaining
                 // a greyed-out row must not be covered by the row.
                 if (contextMenuOpen) {
-                    const int picked =
+                    // ⚑ REBUILT EVERY FRAME, NOT FROZEN WHEN IT OPENED. The stage
+                    // exit is to read "Request Docking - 412.4 km" greyed out
+                    // and then WATCH IT ENABLE as you close, so the rows are a
+                    // live reading of the world rather than a snapshot of the
+                    // moment the button came up.
+                    const game::CommandMenuPick picked =
                         game::buildCommandMenu(ui, world, contextMenuAnchor, contextMenuBounds);
-                    if (picked >= 0) {
-                        game::applyCommandMenu(world, picked);
+                    if (picked.picked) {
+                        game::applyCommandMenu(world, picked.entry);
                         contextMenuOpen = false;
                     } else if (uiInput.mousePressed && !contextMenuBounds.contains(uiInput.mousePosition)) {
                         // Closed by anything else (phase decision 4). No pinning,

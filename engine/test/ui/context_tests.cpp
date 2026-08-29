@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include <sol/test/synthetic_cooked_font.hpp>
@@ -893,7 +894,11 @@ void useSyntheticStyles(UiContext& ui)
 }
 
 // One frame of a three-row menu at `anchor`; returns the picked index.
-int runMenu(UiContext& ui, const InputState& input, sol::core::Vec2 anchor, Rect* bounds = nullptr)
+int runMenu(UiContext& ui,
+            const InputState& input,
+            sol::core::Vec2 anchor,
+            Rect* bounds = nullptr,
+            std::string_view title = {})
 {
     const UiContext::MenuItem items[] = {
         {.label = "Orbit", .enabled = true, .reason = ""},
@@ -901,7 +906,7 @@ int runMenu(UiContext& ui, const InputState& input, sol::core::Vec2 anchor, Rect
         {.label = "Request Docking", .enabled = false, .reason = "412 km"},
     };
     ui.beginFrame(input, kScreen);
-    const int picked = ui.contextMenu(anchor, {items, 3}, bounds);
+    const int picked = ui.contextMenu(anchor, {items, 3}, bounds, title);
     ui.endFrame();
     return picked;
 }
@@ -970,6 +975,46 @@ SOL_TEST(a_disabled_context_menu_row_cannot_be_picked)
 
     (void)runMenu(ui, pressAt(rowX, thirdRowY), {400.0f, 300.0f});
     SOL_CHECK(runMenu(ui, releaseAt(rowX, thirdRowY), {400.0f, 300.0f}) == -1);
+}
+
+SOL_TEST(a_titled_context_menu_makes_room_for_its_heading_and_keeps_its_rows_reachable)
+{
+    // ⚑⚑ THE TITLE IS WHAT SAYS WHICH THING THE MENU IS ABOUT, and from
+    // Phase 28 stage C the rows are composed from a selection that can be off
+    // screen or behind the player - "Orbit" with no heading does not say what
+    // it would orbit. The heading must therefore push the rows DOWN rather than
+    // draw over the first one, and it must be measured into the width so a long
+    // name is not elided into saying nothing.
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+    useSyntheticStyles(ui);
+
+    Rect plain{};
+    (void)runMenu(ui, mouseAt(400.0f, 300.0f), {400.0f, 300.0f}, &plain);
+    Rect titled{};
+    (void)runMenu(ui, mouseAt(400.0f, 300.0f), {400.0f, 300.0f}, &titled, "Lyrioa Alpha");
+    SOL_CHECK(titled.height() > plain.height());
+
+    // A name wider than every row widens the box rather than being cut.
+    Rect wide{};
+    (void)runMenu(
+        ui, mouseAt(400.0f, 300.0f), {400.0f, 300.0f}, &wide, "A Station With A Preposterously Long Name");
+    SOL_CHECK(wide.width() > titled.width());
+
+    // ⚑ AND THE FIRST ROW MOVES WITH THE HEADING RATHER THAN STAYING UNDER IT.
+    // Clicking where row 0 sat in the untitled menu must not fire row 0 here -
+    // that point is now inside the heading.
+    const float untitledRowY = plain.min.y + 12.0f + 14.0f;
+    const float rowX = plain.min.x + plain.width() * 0.5f;
+    (void)runMenu(ui, pressAt(rowX, untitledRowY), {400.0f, 300.0f}, nullptr, "Lyrioa Alpha");
+    SOL_CHECK(runMenu(ui, releaseAt(rowX, untitledRowY), {400.0f, 300.0f}, nullptr, "Lyrioa Alpha") == -1);
+
+    // Where row 0 actually is, it still picks.
+    const float titledRowY = titled.max.y - 12.0f - 2.0f * (28.0f + 6.0f) - 14.0f;
+    (void)runMenu(ui, pressAt(rowX, titledRowY), {400.0f, 300.0f}, nullptr, "Lyrioa Alpha");
+    SOL_CHECK(runMenu(ui, releaseAt(rowX, titledRowY), {400.0f, 300.0f}, nullptr, "Lyrioa Alpha") == 0);
 }
 
 SOL_TEST(an_empty_context_menu_draws_nothing_rather_than_an_empty_box)
