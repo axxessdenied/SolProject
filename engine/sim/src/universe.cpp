@@ -30,6 +30,17 @@ enum Stream : std::uint64_t
     kStreamClans,
 };
 
+// ⚑⚑⚑ THE ENUM'S TAIL IS NOT FREE SPACE, AND A NEW STAGE MUST NOT APPEND TO IT.
+// Below, each system's own seed is drawn from `kStreamContents + i` - stream ids
+// 4, 5, 6, ... - so the per-system range runs off the end of this enum and over
+// whatever follows. `kStreamClans` is 5, which means system 1's seed stream and
+// the clan stream ARE THE SAME STREAM today. That is deterministic and harmless
+// (they are read at different times for different things) and it is not Phase
+// 29's to fix, but it makes appending a member a collision rather than a
+// no-op. An id chosen to sit above any plausible system index is not elegant;
+// it is the only thing here that is actually true.
+constexpr std::uint64_t kStreamAuthored = 1'000'000; // > kStreamContents + systemCount, always
+
 constexpr const char* kNamePrefixes[] = {
     "Al",  "Be",  "Ca",  "Dra", "Er",  "Fen", "Gal", "Hel", "Ith", "Ka",
     "Lyr", "Mar", "Nor", "Oph", "Pra", "Que", "Rig", "Sar", "Tau", "Vel",
@@ -230,13 +241,97 @@ void assignRegions(const GalaxyParams& params, std::vector<SystemSpec>& systems)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Authored systems (Phase 29 stage A).
+//
+// ⚑⚑⚑⚑ THIS RUNS *AFTER* buildGateGraph, AND THAT IS FORCED BY THE PIPELINE
+// RATHER THAN CHOSEN. decisions/018 sketched placement as resolving "before the
+// procedural pass", but three of its four rules do not create a node at all:
+// `at_system`, `jumps_from` and `random` all REPLACE an existing one, and
+// `jumps_from` measures a gate graph that does not exist until `buildGateGraph`
+// has run over final positions. Only `anywhere` (stage B) is an insertion.
+//
+// ⚑⚑ A REPLACEMENT IS NOT THE "POST-GENERATION PATCHING" 018 REFUSED. That
+// alternative was refused because patching "produces gate graphs that
+// contradict the authored layout - the generator has already decided the
+// neighbours". An authored system declares no external links, so it contradicts
+// nothing: it inherits the node's map position, its region and its gates, and
+// the galaxy's shape is untouched. What stays forbidden is patching after
+// `populateSystem`, which is a different point and is not this.
+//
+// ⚑ The cost of replacing is stated rather than hidden: a `random` system
+// consumes an ordinary system's slot, so the galaxy does not grow. Growing it
+// is what `anywhere` means, and that is stage B.
+//
+// ⚑⚑⚑ AND THE SPEC'S "FOUR SKIP POINTS, ONE PER STAGE" TURNED OUT TO BE THE
+// WRONG SHAPE - THE COUNT WAS CLOSE AND THE PLACES WERE NOT. Two of the four
+// stages it named need no guard at all for a REPLACEMENT, because the authored
+// write lands after them: `assignRegions` runs before this function, and the
+// name loop is left strictly alone and overwritten afterwards (guarding it
+// changes how many times its uniqueness scan redraws, which renames the
+// galaxy). The other two need FIVE guards between them rather than two:
+// `claimTerritory` writes `factionIndex` at three separate points - the capital
+// seed, the Dijkstra propagation and the lawless re-roll - and `spawnClans`
+// writes it at two. Counting STAGES undercounts, because what has to be guarded
+// is a WRITE.
+void placeAuthoredSystems(const GalaxyParams& params,
+                          core::Rng& rng,
+                          std::vector<SystemSpec>& systems,
+                          std::vector<const AuthoredSystem*>& authoredFor)
+{
+    // Every node is a candidate until an earlier authored system has taken it;
+    // def order decides who chooses first (decision 4).
+    std::vector<std::uint32_t> free;
+    free.reserve(systems.size());
+    for (std::uint32_t i = 0; i < systems.size(); ++i) {
+        free.push_back(i);
+    }
+    for (const AuthoredSystem& authored : params.authoredSystems) {
+        if (free.empty()) {
+            break; // more authored systems than the galaxy has nodes
+        }
+        const std::uint32_t slot = rng.range(static_cast<std::uint32_t>(free.size()));
+        const std::uint32_t index = free[slot];
+        free.erase(free.begin() + slot);
+
+        SystemSpec& system = systems[index];
+        system.authoredId = authored.id;
+        system.secret = authored.secret;
+        // ⚑ The NAME is deliberately not written here. It is applied after the
+        // procedural name loop has run untouched, because how many times that
+        // loop redraws depends on which names it can already see - so writing
+        // one in ahead of it changes what every other system is called.
+        // ⚑ The region needs no skip point in this stage and DOES need one in
+        // the next: `assignRegions` has already run by here, so writing the
+        // region now is the last word on it. `anywhere` appends nodes BEFORE
+        // that pass, and will have to teach it to skip.
+        if (authored.hasRegion) {
+            system.region = authored.region;
+        }
+        if (authored.hasFaction) {
+            system.factionIndex = authored.factionIndex;
+        }
+        authoredFor[index] = &authored;
+    }
+}
+
+// Did an author state who owns this system - including by stating that nobody
+// does? The two are the same bit pattern in `factionIndex`, which is exactly
+// why this asks the flag instead.
+[[nodiscard]] bool hasAuthoredFaction(const std::vector<const AuthoredSystem*>& authoredFor,
+                                      std::size_t index)
+{
+    return authoredFor[index] != nullptr && authoredFor[index]->hasFaction;
+}
+
 // Faction capitals spread greedily through the core (farthest-point), then
 // multi-source Dijkstra over the gate graph claims territory; fringe systems
 // roll to stay lawless.
 void claimTerritory(const GalaxyParams& params,
                     core::Rng& rng,
                     std::vector<SystemSpec>& systems,
-                    const std::vector<GateLink>& links)
+                    const std::vector<GateLink>& links,
+                    const std::vector<const AuthoredSystem*>& authoredFor)
 {
     if (params.factionCount == 0) {
         return;
@@ -287,7 +382,13 @@ void claimTerritory(const GalaxyParams& params,
     std::vector<float> bestCost(count, std::numeric_limits<float>::max());
     for (std::uint32_t f = 0; f < capitals.size(); ++f) {
         const std::uint32_t capital = capitals[f];
-        systems[capital].factionIndex = f;
+        // ⚑ GUARD 1 OF 5. An authored owner outranks a capital: the
+        // capital still seeds the search from here, so territory still spreads
+        // outward, but the author's system keeps the flag the author wrote on
+        // it rather than becoming somebody's home by geometry.
+        if (!hasAuthoredFaction(authoredFor, capital)) {
+            systems[capital].factionIndex = f;
+        }
         bestCost[capital] = 0.0f;
         queue.push({0.0f, capital});
     }
@@ -301,15 +402,27 @@ void claimTerritory(const GalaxyParams& params,
             const float next = cost + mapDistance(systems[index], systems[neighbor]);
             if (next < bestCost[neighbor]) {
                 bestCost[neighbor] = next;
-                systems[neighbor].factionIndex = systems[index].factionIndex;
+                // ⚑ GUARD 2 OF 5. The search still walks THROUGH an
+                // authored system - its neighbours are claimed normally - it
+                // just does not repaint it on the way past.
+                if (!hasAuthoredFaction(authoredFor, neighbor)) {
+                    systems[neighbor].factionIndex = systems[index].factionIndex;
+                }
                 queue.push({next, neighbor});
             }
         }
     }
 
     // Lawless fringe: one roll per system, in index order.
-    for (SystemSpec& system : systems) {
-        if (system.region == Region::Fringe && rng.nextFloat01() < params.fringeLawlessChance) {
+    //
+    // ⚑ GUARD 3 OF 5, and note the roll still HAPPENS for an authored
+    // system - only its result is discarded. Skipping the draw itself would
+    // shift every later system's roll and reshape the galaxy around the
+    // authored one, which is the opposite of what a replacement is for.
+    for (std::uint32_t i = 0; i < systems.size(); ++i) {
+        SystemSpec& system = systems[i];
+        if (system.region == Region::Fringe && rng.nextFloat01() < params.fringeLawlessChance &&
+            !hasAuthoredFaction(authoredFor, i)) {
             system.factionIndex = kNoFaction;
         }
     }
@@ -324,6 +437,7 @@ void spawnClans(const GalaxyParams& params,
                 core::Rng& rng,
                 std::vector<SystemSpec>& systems,
                 const std::vector<GateLink>& links,
+                const std::vector<const AuthoredSystem*>& authoredFor,
                 std::vector<ClanSpec>& clans)
 {
     if (params.factionCount == 0 || params.pirateTemplateCount == 0) {
@@ -336,7 +450,15 @@ void spawnClans(const GalaxyParams& params,
         adjacency[link.b].push_back(link.a);
     }
     for (std::uint32_t i = 0; i < count; ++i) {
-        if (systems[i].factionIndex != kNoFaction) {
+        // ⚑ GUARDS 4 AND 5 OF 5 (this one and the neighbour sweep below), and
+        // this is the one a sentinel could never have
+        // expressed. `factionIndex == kNoFaction` is BOTH "nobody has decided"
+        // and "the author decided nobody owns this", and only the second must
+        // survive a clan sweeping through. A pirate clan holding a system IS an
+        // owner, so an authored lawless system splits a lawless neighbourhood
+        // into two components rather than joining one - which is the author
+        // getting what they asked for, not an accident.
+        if (systems[i].factionIndex != kNoFaction || hasAuthoredFaction(authoredFor, i)) {
             continue;
         }
         const std::uint32_t clanFaction = params.factionCount + static_cast<std::uint32_t>(clans.size());
@@ -346,7 +468,8 @@ void spawnClans(const GalaxyParams& params,
             const std::uint32_t index = frontier.back();
             frontier.pop_back();
             for (const std::uint32_t neighbor : adjacency[index]) {
-                if (systems[neighbor].factionIndex == kNoFaction) {
+                if (systems[neighbor].factionIndex == kNoFaction &&
+                    !hasAuthoredFaction(authoredFor, neighbor)) {
                     systems[neighbor].factionIndex = clanFaction;
                     frontier.push_back(neighbor);
                 }
@@ -442,6 +565,7 @@ void populateSystem(const GalaxyParams& params,
                     SystemSpec& system,
                     const std::vector<SystemSpec>& systems,
                     core::Rng& rng,
+                    const AuthoredSystem* authored,
                     const MiningParams* mining)
 {
     // Asked once per system, before any station is placed. A field is a pure
@@ -453,7 +577,16 @@ void populateSystem(const GalaxyParams& params,
 
     system.starRadius = 7.0e8 * (0.6 + 0.9 * rng.nextDouble01());
 
-    const std::uint32_t planetCount = 1 + rng.range(4);
+    // ⚑⚑ AN AUTHOR NAMES PLANETS; THE GENERATOR STILL LAYS OUT THE ORBITS.
+    // Writing a system by hand must not mean writing coordinates in metres, so
+    // an authored planet supplies a name (and optionally a radius) and takes
+    // the same orbit ladder a rolled one would have had. Authoring NO planets
+    // is not the same as authoring zero of them: it means "roll them", which
+    // is what keeps `spec.planets[spec.primaryPlanet]` legal at the six
+    // call sites that index it with no guard.
+    const bool authoredPlanets = authored != nullptr && !authored->planets.empty();
+    const std::uint32_t planetCount =
+        authoredPlanets ? static_cast<std::uint32_t>(authored->planets.size()) : 1 + rng.range(4);
     double orbit = 4.0e10 * (1.0 + rng.nextDouble01()); // innermost 0.27-0.53 AU
     for (std::uint32_t p = 0; p < planetCount; ++p) {
         PlanetSpec planet;
@@ -462,23 +595,44 @@ void populateSystem(const GalaxyParams& params,
         planet.radius = 2.5e6 + 4.5e7 * rng.nextDouble01();
         planet.position = randomPlayfieldDirection(rng) * orbit;
         orbit *= 1.6 + 0.8 * rng.nextDouble01();
+        if (authoredPlanets) {
+            const AuthoredPlanet& row = authored->planets[p];
+            planet.name = row.name;
+            if (row.hasRadius) {
+                planet.radius = row.radius;
+            }
+        }
         system.planets.push_back(std::move(planet));
     }
     // Hub: middle planet, so inner/outer scenery flanks the playfield.
     system.primaryPlanet = planetCount / 2;
+    if (authored != nullptr && authored->hasPrimaryPlanet && authored->primaryPlanet < planetCount) {
+        system.primaryPlanet = authored->primaryPlanet;
+    }
     const core::DVec3 hub = system.planets[system.primaryPlanet].position;
 
     const std::size_t tier = static_cast<std::size_t>(system.region);
     const std::uint32_t minStations = params.stationCount[tier][0];
     const std::uint32_t maxStations = params.stationCount[tier][1];
+    const bool authoredStations = authored != nullptr && !authored->stations.empty();
     const std::uint32_t stationCount =
-        minStations + (maxStations > minStations ? rng.range(maxStations - minStations + 1) : 0);
+        authoredStations
+            ? static_cast<std::uint32_t>(authored->stations.size())
+            : minStations + (maxStations > minStations ? rng.range(maxStations - minStations + 1) : 0);
     for (std::uint32_t s = 0; s < stationCount; ++s) {
         StationSpec station;
         station.archetype =
             pickArchetype(params, rng, system.region, system.factionIndex, fieldCount, enforceFields);
         station.name =
             system.name + " " + kStationOrdinals[std::min<std::size_t>(s, std::size(kStationOrdinals) - 1)];
+        if (authoredStations) {
+            // The archetype was resolved from a def id at the seam, the same
+            // way `factionStationBias` already resolves one; `sol::sim`
+            // never learns what a def is. The roll above still happened, so the
+            // stream stays in step with a rolled system's.
+            station.name = authored->stations[s].name;
+            station.archetype = authored->stations[s].archetype;
+        }
         const double distance = params.stationMinDistance +
                                 (params.stationMaxDistance - params.stationMinDistance) * rng.nextDouble01();
         station.position = hub + randomPlayfieldDirection(rng) * distance;
@@ -527,6 +681,26 @@ Galaxy generateGalaxy(const GalaxyParams& params, const MiningParams* mining)
     assignRegions(params, galaxy.systems);
     buildGateGraph(params, galaxy.systems, galaxy.links);
 
+    // Which node each authored system took, by index; null for the ones the
+    // seed produced. Passed down rather than stamped onto SystemSpec because
+    // what the later stages need is "did the AUTHOR write this field", and
+    // only the def row knows that.
+    std::vector<const AuthoredSystem*> authoredFor(galaxy.systems.size(), nullptr);
+    core::Rng authoredRng(params.seed, kStreamAuthored);
+    placeAuthoredSystems(params, authoredRng, galaxy.systems, authoredFor);
+
+    // ⚑⚑⚑⚑ THE NAME LOOP IS UNTOUCHED, AND THE FIRST ATTEMPT AT THIS WAS THE
+    // BUG THE WHOLE PHASE EXISTS TO AVOID. Skipping the draw for an authored
+    // index shifts every LATER system onto a different name - one authored
+    // system renamed most of the galaxy, which a test caught and which would
+    // have read to a player installing a mod as "the galaxy regenerated". A
+    // widened uniqueness scan was the second attempt and is subtler but the
+    // same species: how many times the scan redraws depends on which names are
+    // already present, so letting it see an authored name changes the draw
+    // COUNT and shifts the stream again.
+    //
+    // So the procedural naming runs exactly as it did before Phase 29 existed,
+    // and an authored name is applied afterwards, over the top.
     core::Rng nameRng(params.seed, kStreamNames);
     for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
         std::string name = makeSystemName(nameRng);
@@ -541,12 +715,20 @@ Galaxy generateGalaxy(const GalaxyParams& params, const MiningParams* mining)
         galaxy.systems[i].name = std::move(name);
         galaxy.systems[i].seed = core::Rng(params.seed, kStreamContents + i).nextU64();
     }
+    // ⚑ The SEED above is deliberately still the node's rather than the
+    // author's: populateSystem draws its contents from it, so an authored
+    // system that kept a name but lost its seed would generate from zero.
+    for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
+        if (authoredFor[i] != nullptr && authoredFor[i]->hasName) {
+            galaxy.systems[i].name = authoredFor[i]->name;
+        }
+    }
 
     core::Rng factionRng(params.seed, kStreamFactions);
-    claimTerritory(params, factionRng, galaxy.systems, galaxy.links);
+    claimTerritory(params, factionRng, galaxy.systems, galaxy.links, authoredFor);
 
     core::Rng clanRng(params.seed, kStreamClans);
-    spawnClans(params, clanRng, galaxy.systems, galaxy.links, galaxy.clans);
+    spawnClans(params, clanRng, galaxy.systems, galaxy.links, authoredFor, galaxy.clans);
 
     for (const GateLink& link : galaxy.links) {
         galaxy.systems[link.a].gates.push_back({link.b, {}});
@@ -554,7 +736,7 @@ Galaxy generateGalaxy(const GalaxyParams& params, const MiningParams* mining)
     }
     for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
         core::Rng contentRng(galaxy.systems[i].seed, kStreamContents);
-        populateSystem(params, i, galaxy.systems[i], galaxy.systems, contentRng, mining);
+        populateSystem(params, i, galaxy.systems[i], galaxy.systems, contentRng, authoredFor[i], mining);
     }
     return galaxy;
 }

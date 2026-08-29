@@ -548,6 +548,68 @@ struct StationDef
     std::string source;
 };
 
+// ---------------------------------------------------------------------------
+// Authored systems (Phase 29). A `[[system]]` row is a place somebody PUT
+// somewhere, as opposed to the eighty the seed produces, and the campaign can
+// name it because its id is invented here rather than rolled.
+//
+// ⚑⚑⚑ EVERY OPTIONAL FIELD CARRIES AN EXPLICIT `has…` FLAG RATHER THAN A
+// SENTINEL, AND THAT IS FORCED RATHER THAN CHOSEN. Two of the fields the
+// generator holds have no free sentinel to spare: `SystemSpec::factionIndex`
+// is `kNoFaction` both when nobody has said anything and when an author
+// deliberately says "lawless", and `primaryPlanet == 0` is both "unset" and
+// "the first planet". Comparing against a default therefore cannot answer
+// "did the author write this?", which is the only question the generator needs
+// to ask - so the parser answers it once and records the answer.
+// ---------------------------------------------------------------------------
+
+// A planet an author named. Positions are deliberately absent: the generator
+// still lays the orbits out, so writing a system by hand never means writing
+// coordinates in metres.
+struct AuthoredPlanetDef
+{
+    std::string name;
+    double radius = 0.0; // metres; unset means the generator rolls one
+    bool hasRadius = false;
+};
+
+// A station an author placed. `stationId` names a `[[station]]` archetype and
+// is resolved to its index at the same place, and by the same rule, that
+// `faction_station_bias` already resolves one.
+struct AuthoredStationDef
+{
+    std::string name;
+    std::string stationId;
+};
+
+struct SystemDef
+{
+    std::string id; // invented by the author; the campaign's handle on the place
+    // How the generator chooses which node this system becomes. Phase 29
+    // stage A ships only "random" (any ordinary system); the other three
+    // rules in decisions/018 arrive in stage B.
+    std::string placement = "random";
+    std::string name;
+    bool hasName = false;
+    // "core" | "frontier" | "fringe".
+    std::string region;
+    bool hasRegion = false;
+    // A `[[faction]]` id. Mutually exclusive with `lawless`, because the two
+    // are exactly the pair that a sentinel could not tell apart.
+    std::string factionId;
+    bool hasFaction = false;
+    bool lawless = false;
+    std::uint32_t primaryPlanet = 0;
+    bool hasPrimaryPlanet = false;
+    // A placement flag and nothing else in this phase: nothing hides a system
+    // from the map yet, and the exploration payoff GDD §8 promises is a later
+    // phase reading this.
+    bool secret = false;
+    std::vector<AuthoredPlanetDef> planets;
+    std::vector<AuthoredStationDef> stations;
+    std::string source;
+};
+
 class DefDatabase
 {
 public:
@@ -590,11 +652,20 @@ public:
     // legitimately live in an earlier or a later layer than the model.
     [[nodiscard]] bool validateMaterials(std::string* outError = nullptr) const;
 
+    // Cross-def check for `[[system]]` rows (Phase 29), and it REFUSES for the
+    // reason decision 3 gives: an authored system whose faction or whose
+    // station archetype does not exist has no fallback that is not a lie about
+    // where the campaign starts. Separate from the parse for the same reason
+    // `validateMaterials` is - a faction may legitimately live in an earlier or
+    // a later layer than the system that names it.
+    [[nodiscard]] bool validateSystems(std::string* outError = nullptr) const;
+
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;
     [[nodiscard]] const FactionDef* findFaction(const char* id) const;
     [[nodiscard]] const CommodityDef* findCommodity(const char* id) const;
     [[nodiscard]] const StationDef* findStation(const char* id) const;
+    [[nodiscard]] const SystemDef* findSystem(const char* id) const;
     [[nodiscard]] const ModuleDef* findModule(const char* id) const;
     [[nodiscard]] const CrewDef* findCrew(const char* id) const;
     [[nodiscard]] const SoundDef* findSound(const char* id) const;
@@ -629,6 +700,10 @@ public:
 
     [[nodiscard]] const std::vector<StationDef>& stations() const { return m_stations; }
 
+    // Authored systems in first-definition order, which is the order their
+    // placement rules resolve in (decision 4).
+    [[nodiscard]] const std::vector<SystemDef>& systems() const { return m_systems; }
+
     [[nodiscard]] const std::vector<ModuleDef>& modules() const { return m_modules; }
 
     [[nodiscard]] const std::vector<CrewDef>& crew() const { return m_crew; }
@@ -650,6 +725,7 @@ private:
     std::vector<FactionDef> m_factions;
     std::vector<CommodityDef> m_commodities;
     std::vector<StationDef> m_stations;
+    std::vector<SystemDef> m_systems;
     std::vector<ModuleDef> m_modules;
     std::vector<CrewDef> m_crew;
     std::vector<SoundDef> m_sounds;

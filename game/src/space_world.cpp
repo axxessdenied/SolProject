@@ -349,6 +349,76 @@ void SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         }
     }
 
+    // Authored systems (Phase 29). This is the translation point, and it does
+    // the job it already does three times over just above: ids become indices
+    // here so `sol::sim` never learns what a def is, exactly as `StationRule`
+    // and `factionStationBias` already cross the same seam.
+    //
+    // ⚑ A faction index is its position among the MAJORS in def order, because
+    // that is the order `claimTerritory` hands them out in - the same rule the
+    // bias rows above are built on. Pirate defs are clan templates and are not
+    // claimants, so they are skipped rather than counted.
+    for (const assets::SystemDef& def : defs.systems()) {
+        sim::AuthoredSystem authored;
+        authored.id = def.id;
+        authored.name = def.name;
+        authored.hasName = def.hasName;
+        authored.secret = def.secret;
+        authored.primaryPlanet = def.primaryPlanet;
+        authored.hasPrimaryPlanet = def.hasPrimaryPlanet;
+        if (def.hasRegion) {
+            authored.hasRegion = true;
+            authored.region = def.region == "core"       ? sim::Region::Core
+                              : def.region == "frontier" ? sim::Region::Frontier
+                                                         : sim::Region::Fringe;
+        }
+        // ⚑⚑ TWO WAYS TO SAY WHO OWNS A PLACE, AND ONE OF THEM IS "NOBODY".
+        // `lawless = true` is not the absence of `faction`: it is an authored
+        // kNoFaction that `spawnClans` must leave alone, and the flag is the
+        // only thing that can tell the two apart.
+        if (def.lawless) {
+            authored.hasFaction = true;
+            authored.factionIndex = sim::kNoFaction;
+        } else if (def.hasFaction) {
+            std::uint32_t majorIndex = 0;
+            for (const assets::FactionDef& faction : defs.factions()) {
+                if (faction.kind == assets::FactionKind::Pirate) {
+                    continue;
+                }
+                if (faction.id == def.factionId) {
+                    authored.hasFaction = true;
+                    authored.factionIndex = majorIndex;
+                    break;
+                }
+                ++majorIndex;
+            }
+            if (!authored.hasFaction) {
+                // `validateSystems` refuses an unknown faction id before this
+                // runs, so reaching here means the id names a PIRATE def -
+                // a clan template, which claims nothing and cannot be a
+                // system's owner.
+                SOL_LOG_WARN("system '%s': faction '%s' is not a territory claimant; leaving it unowned",
+                             def.id.c_str(),
+                             def.factionId.c_str());
+            }
+        }
+        for (const assets::AuthoredPlanetDef& planet : def.planets) {
+            authored.planets.push_back(
+                {.name = planet.name, .radius = planet.radius, .hasRadius = planet.hasRadius});
+        }
+        for (const assets::AuthoredStationDef& station : def.stations) {
+            std::uint32_t archetype = 0;
+            for (std::size_t s = 0; s < defs.stations().size(); ++s) {
+                if (defs.stations()[s].id == station.stationId) {
+                    archetype = static_cast<std::uint32_t>(s);
+                    break;
+                }
+            }
+            authored.stations.push_back({.name = station.name, .archetype = archetype});
+        }
+        m_galaxyParams.authoredSystems.push_back(std::move(authored));
+    }
+
     // Economy: commodities + archetype rates from the defs (unknown
     // commodity ids in a rate list are warnings, not errors — a mod may
     // remove a commodity a base station references).

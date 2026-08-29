@@ -3280,6 +3280,16 @@ bool GameContent::reloadDefs()
         SOL_LOG_ERROR("data defs: %s", error.c_str());
         return false;
     }
+    // Phase 29, and it refuses for the same reason the two above do: an
+    // authored system whose faction or whose station archetype does not exist
+    // has no fallback that is not a lie about where the campaign starts. On the
+    // HOT-RELOAD path this leaves the running game on the defs it already had -
+    // which matters more here than elsewhere, because the galaxy is built ONCE
+    // and a reload never rebuilds it (see the log line below).
+    if (!fresh.validateSystems(&error)) {
+        SOL_LOG_ERROR("data defs: %s", error.c_str());
+        return false;
+    }
     m_defs = std::move(fresh);
     // Cue tuning follows the defs (Phase 8t): gain, jitter, rolloff and caps
     // are re-read, the cooked samples are not - retuning a cue is a file save,
@@ -3407,9 +3417,29 @@ void GameContent::poll(double nowSeconds)
     }
 
     if (defsChanged) {
+        // ⚑⚑ Phase 29. "Hot reload comes free by staying in TOML" is true of the
+        // PARSE and false of the EFFECT: reloadDefs swaps the whole DefDatabase
+        // and never touches m_galaxy, which is built once and regenerated only
+        // when the SEED differs. Re-placing authored systems under a running
+        // campaign would move the player's own system out from under them, so
+        // the galaxy deliberately does not reload - and this says so, because
+        // an author editing systems.toml and seeing "data defs reloaded" would
+        // otherwise reasonably conclude their edit had taken.
+        std::vector<std::string> systemsBefore;
+        for (const assets::SystemDef& system : m_defs.systems()) {
+            systemsBefore.push_back(system.id);
+        }
         if (reloadDefs()) {
             m_world->applyDefs(m_defs);
             SOL_LOG_INFO("data defs reloaded");
+            std::vector<std::string> systemsAfter;
+            for (const assets::SystemDef& system : m_defs.systems()) {
+                systemsAfter.push_back(system.id);
+            }
+            if (systemsAfter != systemsBefore) {
+                SOL_LOG_WARN("[[system]] rows changed, but the galaxy is generated once at startup - "
+                             "restart to see authored systems move");
+            }
         } else {
             SOL_LOG_ERROR("data def reload failed; keeping previous defs");
         }

@@ -58,6 +58,49 @@ struct StationRule
     bool requiresField = false;
 };
 
+// ---------------------------------------------------------------------------
+// Authored systems (Phase 29). These cross the game/sim seam as plain structs
+// exactly the way `StationRule` does: `sol::sim` never learns what a def is,
+// and ids have already been resolved to indices by the time they arrive.
+//
+// ⚑⚑ EVERY OPTIONAL FIELD CARRIES ITS OWN `has…` FLAG, because two of the
+// fields it writes into have no free sentinel: `kNoFaction` means both "unset"
+// and "deliberately lawless", and `primaryPlanet == 0` means both "unset" and
+// "the first planet". A generation stage asks the flag, never the value.
+// ---------------------------------------------------------------------------
+
+struct AuthoredPlanet
+{
+    std::string name;
+    double radius = 0.0; // metres; unset lets the generator roll one
+    bool hasRadius = false;
+};
+
+struct AuthoredStation
+{
+    std::string name;
+    std::uint32_t archetype = 0; // index into GalaxyParams::stationRules
+};
+
+struct AuthoredSystem
+{
+    // The author's own id. It is the only stable handle on a place in this
+    // galaxy: procedural names are rolled AFTER placement, so they are a fact
+    // about one seed at one systemCount rather than a name anything can rely on.
+    std::string id;
+    std::string name;
+    bool hasName = false;
+    Region region = Region::Fringe;
+    bool hasRegion = false;
+    std::uint32_t factionIndex = kNoFaction;
+    bool hasFaction = false; // true for a named owner AND for authored lawlessness
+    std::uint32_t primaryPlanet = 0;
+    bool hasPrimaryPlanet = false;
+    bool secret = false;
+    std::vector<AuthoredPlanet> planets;
+    std::vector<AuthoredStation> stations;
+};
+
 struct GalaxyParams
 {
     std::uint64_t seed = 0;
@@ -93,6 +136,10 @@ struct GalaxyParams
     // ⚑ Indexed by the faction that HOLDS the system, so a system that changed
     // hands is not still building to its founder's taste.
     std::vector<std::vector<float>> factionStationBias;
+    // Places somebody put somewhere (Phase 29), in def order - which is the
+    // order their placement rules resolve in. Empty is the pre-29 galaxy
+    // exactly, which is what `game.unit`'s golden holds this to.
+    std::vector<AuthoredSystem> authoredSystems;
 };
 
 struct PlanetSpec
@@ -118,6 +165,10 @@ struct GateSpec
 struct SystemSpec
 {
     std::string name;
+    // The `[[system]]` id that claimed this node, or empty for one the seed
+    // produced. This is what `sol.system_by_id` will look up, and what every
+    // "was this authored?" question in the generator asks.
+    std::string authoredId;
     core::Vec3 mapPosition; // light-years, galaxy map space (not sim space)
     Region region = Region::Fringe;
     std::uint32_t factionIndex = kNoFaction;
@@ -127,6 +178,9 @@ struct SystemSpec
     std::vector<PlanetSpec> planets;
     std::vector<StationSpec> stations;
     std::vector<GateSpec> gates; // one per link touching this system
+    // A placement flag and nothing else in this phase (Phase 29): nothing hides
+    // a system from the map yet.
+    bool secret = false;
 };
 
 // A unit direction biased to the orbital plane (y small): the playfield is

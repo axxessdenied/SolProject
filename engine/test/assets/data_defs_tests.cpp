@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -1324,4 +1325,317 @@ ore_weight_core = -1.0
 )",
                      "bad_ore.toml",
                      &error));
+}
+
+// ---------------------------------------------------------------------------
+// `[[system]]` - a place somebody put somewhere (Phase 29 stage A).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The smallest set an authored system can legally point at: a claimant faction
+// and one station archetype.
+constexpr const char* kSystemFixtureDeps = R"(
+[[faction]]
+id = "sol.navy"
+name = "Solar Navy"
+color = [0.25, 0.45, 1.0]
+kind = "major"
+
+[[faction]]
+id = "sol.reavers"
+name = "Reavers"
+color = [0.8, 0.2, 0.2]
+kind = "pirate"
+
+[[station]]
+id = "sol.station_refinery"
+name = "Refinery"
+)";
+
+} // namespace
+
+// ⚑⚑ THE WHOLE OF DECISION 2, ASSERTED RATHER THAN COMMENTED: a field an author
+// WROTE and a field that happens to equal the default are different states, and
+// two of them cannot be told apart any other way. `faction` unset and `lawless`
+// both leave `factionIndex` at kNoFaction; `primary_planet = 0` is
+// indistinguishable from an unwritten one. The `has…` flags are what carry the
+// difference into the generator, so they are what this checks.
+SOL_TEST(data_defs_system_records_which_fields_the_author_wrote)
+{
+    DefDatabase db;
+    SOL_REQUIRE(merge(db, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[system]]
+id = "campaign.harrow"
+name = "Harrow"
+region = "fringe"
+faction = "sol.navy"
+primary_planet = 0
+secret = true
+
+[[system.planet]]
+name = "Harrow Prime"
+radius = 3200000.0
+
+[[system.planet]]
+name = "Harrow Deep"
+
+[[system.station]]
+name = "The Long Watch"
+station = "sol.station_refinery"
+
+[[system]]
+id = "campaign.bare"
+)",
+                      "systems.toml"));
+
+    SOL_REQUIRE(db.systems().size() == 2);
+    const sol::assets::SystemDef& harrow = db.systems()[0];
+    SOL_CHECK(harrow.id == "campaign.harrow");
+    SOL_CHECK(harrow.placement == "random"); // the default, and the only rule in stage A
+    SOL_CHECK(harrow.hasName && harrow.name == "Harrow");
+    SOL_CHECK(harrow.hasRegion && harrow.region == "fringe");
+    SOL_CHECK(harrow.hasFaction && harrow.factionId == "sol.navy");
+    SOL_CHECK(!harrow.lawless);
+    SOL_CHECK(harrow.hasPrimaryPlanet && harrow.primaryPlanet == 0);
+    SOL_CHECK(harrow.secret);
+    SOL_REQUIRE(harrow.planets.size() == 2);
+    SOL_CHECK(harrow.planets[0].name == "Harrow Prime");
+    SOL_CHECK(harrow.planets[0].hasRadius && harrow.planets[0].radius == 3'200'000.0);
+    SOL_CHECK(harrow.planets[1].name == "Harrow Deep");
+    SOL_CHECK(!harrow.planets[1].hasRadius); // the generator will roll one
+    SOL_REQUIRE(harrow.stations.size() == 1);
+    SOL_CHECK(harrow.stations[0].name == "The Long Watch");
+    SOL_CHECK(harrow.stations[0].stationId == "sol.station_refinery");
+
+    // ⚑ The one that a sentinel gets wrong. Every value below is what the
+    // default already was; only the flags say nobody wrote them.
+    const sol::assets::SystemDef& bare = db.systems()[1];
+    SOL_CHECK(!bare.hasName && !bare.hasRegion && !bare.hasFaction && !bare.hasPrimaryPlanet);
+    SOL_CHECK(!bare.lawless && !bare.secret);
+    SOL_CHECK(bare.planets.empty() && bare.stations.empty());
+    SOL_CHECK(db.findSystem("campaign.bare") == &bare);
+    SOL_CHECK(db.findSystem("campaign.nowhere") == nullptr);
+}
+
+// "Nobody owns this" is a thing an author says, not a thing they leave out, and
+// saying it twice in two different ways is a mistake worth naming.
+SOL_TEST(data_defs_system_lawless_is_an_authored_state_not_an_absence)
+{
+    DefDatabase db;
+    SOL_REQUIRE(merge(db, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[system]]
+id = "campaign.haven"
+lawless = true
+)",
+                      "systems.toml"));
+    SOL_REQUIRE(db.systems().size() == 1);
+    SOL_CHECK(db.systems()[0].lawless);
+    SOL_CHECK(!db.systems()[0].hasFaction);
+
+    DefDatabase both;
+    std::string error;
+    SOL_REQUIRE(merge(both, kSystemFixtureDeps, "deps.toml"));
+    SOL_CHECK(!merge(both,
+                     R"(
+[[system]]
+id = "campaign.confused"
+faction = "sol.navy"
+lawless = true
+)",
+                     "systems.toml",
+                     &error));
+    SOL_CHECK(error.find("say different things") != std::string::npos);
+}
+
+// ⚑⚑ REFUSED, AND BY NAME - decision 3 and the `validateRoles` precedent. Every
+// message below has to name the file and the id, because the author reading it
+// is looking at a directory of TOML rather than at a debugger.
+SOL_TEST(data_defs_system_errors_name_the_file_and_the_id)
+{
+    const auto refused = [](const char* toml, const char* needle) {
+        DefDatabase db;
+        std::string error;
+        SOL_CHECK(merge(db, kSystemFixtureDeps, "deps.toml"));
+        const bool ok = merge(db, toml, "systems.toml", &error);
+        if (ok) {
+            std::printf("  expected a refusal, got a clean parse\n");
+        }
+        SOL_CHECK(!ok);
+        if (error.find(needle) == std::string::npos) {
+            std::printf("  message was: %s (wanted '%s')\n", error.c_str(), needle);
+        }
+        SOL_CHECK(error.find(needle) != std::string::npos);
+        SOL_CHECK(error.find("systems.toml") != std::string::npos);
+    };
+
+    // A rule nobody implements yet would put the campaign's starting system
+    // wherever the fallback happened to land, which is the failure this phase
+    // is about. It is refused with the rule quoted back.
+    refused(R"(
+[[system]]
+id = "campaign.x"
+placement = "jumps_from"
+)",
+            "jumps_from");
+    refused(R"(
+[[system]]
+id = "campaign.x"
+region = "outskirts"
+)",
+            "outskirts");
+    // The generator invariant six unguarded call sites depend on, stated where
+    // an author can be told about it rather than crashed by it.
+    refused(R"(
+[[system]]
+id = "campaign.x"
+primary_planet = 3
+
+[[system.planet]]
+name = "Only One"
+)",
+            "primary_planet");
+    refused(R"(
+[[system]]
+id = "campaign.x"
+primary_planet = 0
+)",
+            "primary_planet");
+    refused(R"(
+[[system]]
+id = "campaign.x"
+name = ""
+)",
+            "must not be empty");
+    refused(R"(
+[[system]]
+id = "campaign.x"
+speed = 12
+)",
+            "unknown key");
+    // A nested row is held to the same strict schema as the row that holds it.
+    refused(R"(
+[[system]]
+id = "campaign.x"
+
+[[system.station]]
+name = "Nameless Dock"
+)",
+            "missing key 'station'");
+    refused(R"(
+[[system]]
+id = "campaign.x"
+
+[[system.planet]]
+name = "Hollow"
+radius = -1.0
+)",
+            "radius");
+}
+
+// Cross-def checks, which cannot run at parse time because a faction may
+// legitimately live in an earlier or a later layer than the system naming it -
+// the same reason `validateMaterials` is a separate pass.
+SOL_TEST(data_defs_system_validation_refuses_names_that_resolve_to_nothing)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[system]]
+id = "campaign.good"
+faction = "sol.navy"
+
+[[system.station]]
+name = "Watchpost"
+station = "sol.station_refinery"
+)",
+                      "systems.toml"));
+    SOL_CHECK(db.validateSystems(&error));
+
+    DefDatabase missingFaction;
+    SOL_REQUIRE(merge(missingFaction, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(missingFaction,
+                      R"(
+[[system]]
+id = "campaign.orphan"
+faction = "sol.consortium"
+)",
+                      "systems.toml"));
+    SOL_CHECK(!missingFaction.validateSystems(&error));
+    SOL_CHECK(error.find("sol.consortium") != std::string::npos);
+    SOL_CHECK(error.find("campaign.orphan") != std::string::npos);
+
+    DefDatabase missingStation;
+    SOL_REQUIRE(merge(missingStation, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(missingStation,
+                      R"(
+[[system]]
+id = "campaign.pier"
+
+[[system.station]]
+name = "Pier Nine"
+station = "sol.station_shipyard"
+)",
+                      "systems.toml"));
+    SOL_CHECK(!missingStation.validateSystems(&error));
+    SOL_CHECK(error.find("sol.station_shipyard") != std::string::npos);
+    SOL_CHECK(error.find("Pier Nine") != std::string::npos);
+
+    // Two authored systems wearing one name is not resolvable in a way either
+    // author would recognise as theirs.
+    DefDatabase twins;
+    SOL_REQUIRE(merge(twins, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(twins,
+                      R"(
+[[system]]
+id = "campaign.a"
+name = "Harrow"
+
+[[system]]
+id = "campaign.b"
+name = "Harrow"
+)",
+                      "systems.toml"));
+    SOL_CHECK(!twins.validateSystems(&error));
+    SOL_CHECK(error.find("collides") != std::string::npos);
+}
+
+// A later layer replaces an id wholesale, which is what makes a mod able to
+// re-place a base-game system rather than only add beside it.
+SOL_TEST(data_defs_system_overridden_by_a_later_layer)
+{
+    DefDatabase db;
+    SOL_REQUIRE(merge(db, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[system]]
+id = "campaign.harrow"
+name = "Harrow"
+secret = true
+
+[[system.planet]]
+name = "Harrow Prime"
+)",
+                      "base/systems.toml"));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[system]]
+id = "campaign.harrow"
+name = "Harrow Reborn"
+)",
+                      "mod/systems.toml"));
+
+    SOL_REQUIRE(db.systems().size() == 1);
+    SOL_CHECK(db.systems()[0].name == "Harrow Reborn");
+    // Wholesale, not merged: the mod said nothing about planets or secrecy, so
+    // the mod's silence is what the database now holds.
+    SOL_CHECK(db.systems()[0].planets.empty());
+    SOL_CHECK(!db.systems()[0].secret);
+    SOL_CHECK(db.systems()[0].source == "mod/systems.toml");
 }

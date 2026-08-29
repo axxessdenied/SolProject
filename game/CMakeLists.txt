@@ -236,6 +236,7 @@ endif()
 # running the app.
 add_executable(sol_game_tests
     test/asset_paths_tests.cpp
+    test/authored_system_tests.cpp
     test/autosave_settings_tests.cpp
     test/command_mode_tests.cpp
     test/galaxy_golden_tests.cpp

@@ -195,3 +195,58 @@ SOL_TEST(toml_conflictingDefinitionsFail)
     SOL_CHECK(!parseToml("x = 1\n[[x]]\ny = 2\n", root, &error));
     SOL_CHECK(!parseToml("x.y = 1\nx.y.z = 2\n", root, &error));
 }
+
+// ⚑⚑ THE PATH THAT WAS SUPPORTED, CORRECT, AND NEVER ONCE EXERCISED. `descend`
+// has carried the rule "[a.b] where a is an array of tables means the last
+// element of a" since this parser was written, and until Phase 29 needed
+// `[[system.planet]]` no def file in the tree had ever contained a nested
+// array-of-tables header - so the whole branch was reachable only in principle.
+// A phase that plans to build a def format on top of it should find out whether
+// it works BEFORE writing the def format, which is what this is.
+SOL_TEST(toml_nestedArrayOfTablesLandsInTheLastParent)
+{
+    TomlValue root;
+    SOL_REQUIRE(parseToml(R"(
+[[system]]
+id = "one"
+
+[[system.planet]]
+name = "One I"
+
+[[system.planet]]
+name = "One II"
+
+[[system]]
+id = "two"
+
+[[system.planet]]
+name = "Two I"
+
+[[system.station]]
+name = "Two Dock"
+station = "sol.station_refinery"
+)",
+                          root));
+
+    const TomlValue* systems = root.find("system");
+    SOL_REQUIRE(systems != nullptr && systems->isArray());
+    SOL_REQUIRE(systems->size() == 2);
+
+    // Each nested row lands under the `[[system]]` it was written beneath, not
+    // under the first one and not at the document root.
+    const TomlValue& one = (*systems)[0];
+    SOL_REQUIRE(one.find("id") != nullptr && one.find("id")->asString() == "one");
+    const TomlValue* onePlanets = one.find("planet");
+    SOL_REQUIRE(onePlanets != nullptr && onePlanets->isArray());
+    SOL_REQUIRE(onePlanets->size() == 2);
+    SOL_CHECK((*onePlanets)[0].find("name")->asString() == "One I");
+    SOL_CHECK((*onePlanets)[1].find("name")->asString() == "One II");
+    SOL_CHECK(one.find("station") == nullptr);
+
+    const TomlValue& two = (*systems)[1];
+    SOL_REQUIRE(two.find("id") != nullptr && two.find("id")->asString() == "two");
+    SOL_REQUIRE(two.find("planet") != nullptr && two.find("planet")->size() == 1);
+    SOL_CHECK((*two.find("planet"))[0].find("name")->asString() == "Two I");
+    SOL_REQUIRE(two.find("station") != nullptr && two.find("station")->size() == 1);
+    SOL_CHECK((*two.find("station"))[0].find("station")->asString() == "sol.station_refinery");
+}

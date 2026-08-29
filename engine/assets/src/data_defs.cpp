@@ -68,7 +68,11 @@ struct FieldReader
         out = value->asString();
     }
 
-    void optionalString(const char* key, std::string& out)
+    // ⚑ The optional `present` flag exists for Phase 29 and is the whole of
+    // decision 2: an authored field has to record that the author WROTE it,
+    // because two of the generator's fields have no spare sentinel and
+    // comparing against a default cannot tell "unset" from a real value.
+    void optionalString(const char* key, std::string& out, bool* present = nullptr)
     {
         const TomlValue* value = table.find(key);
         if (value == nullptr) {
@@ -79,6 +83,9 @@ struct FieldReader
             return;
         }
         out = value->asString();
+        if (present != nullptr) {
+            *present = true;
+        }
     }
 
     void optionalFloat(const char* key, float& out)
@@ -92,6 +99,24 @@ struct FieldReader
             return;
         }
         out = static_cast<float>(value->asFloat());
+    }
+
+    // Metres, and a station or a planet radius is a number a float cannot hold
+    // to the digit an author wrote, so authored distances read as double.
+    void optionalDouble(const char* key, double& out, bool* present = nullptr)
+    {
+        const TomlValue* value = table.find(key);
+        if (value == nullptr) {
+            return;
+        }
+        if (!value->isFloat() && !value->isInteger()) {
+            fail(std::string("key '") + key + "' must be a number");
+            return;
+        }
+        out = value->asFloat();
+        if (present != nullptr) {
+            *present = true;
+        }
     }
 
     void optionalFloat3(const char* key, float (&out)[3])
@@ -254,7 +279,7 @@ struct FieldReader
         }
     }
 
-    void optionalBool(const char* key, bool& out)
+    void optionalBool(const char* key, bool& out, bool* present = nullptr)
     {
         const TomlValue* value = table.find(key);
         if (value == nullptr) {
@@ -265,9 +290,12 @@ struct FieldReader
             return;
         }
         out = value->asBool();
+        if (present != nullptr) {
+            *present = true;
+        }
     }
 
-    void optionalUint(const char* key, std::uint32_t& out)
+    void optionalUint(const char* key, std::uint32_t& out, bool* present = nullptr)
     {
         const TomlValue* value = table.find(key);
         if (value == nullptr) {
@@ -278,6 +306,9 @@ struct FieldReader
             return;
         }
         out = static_cast<std::uint32_t>(value->asInteger());
+        if (present != nullptr) {
+            *present = true;
+        }
     }
 
     // Reads every "<stat>_add"/"<stat>_mul" modifier key (Phase 8a).
@@ -988,6 +1019,140 @@ bool parseStation(const TomlValue& table,
     return true;
 }
 
+// One `[[system]]`: a place somebody put somewhere (Phase 29).
+//
+// ⚑⚑ THE NESTED ROWS NEEDED NO PARSER WORK, WHICH WAS NOT OBVIOUS AND WAS
+// CHECKED RATHER THAN HOPED. `TomlParser::descend` already carries the rule
+// "`[a.b]` where a is an array of tables means the last element of a", so
+// `[[system.planet]]` lands inside the `[[system]]` above it exactly the way
+// standard TOML says it should. No def in the tree had ever used one, so this
+// was a supported-but-unexercised path until `toml_tests` started exercising it.
+bool parseSystem(const TomlValue& table,
+                 const char* sourceName,
+                 std::vector<SystemDef>& out,
+                 std::string* outError)
+{
+    SystemDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": system '" + def.id + "'";
+    }
+    reader.optionalString("placement", def.placement);
+    reader.optionalString("name", def.name, &def.hasName);
+    reader.optionalString("region", def.region, &def.hasRegion);
+    reader.optionalString("faction", def.factionId, &def.hasFaction);
+    reader.optionalBool("lawless", def.lawless);
+    reader.optionalUint("primary_planet", def.primaryPlanet, &def.hasPrimaryPlanet);
+    reader.optionalBool("secret", def.secret);
+    reader.rejectUnknownKeys({"id",
+                              "placement",
+                              "name",
+                              "region",
+                              "faction",
+                              "lawless",
+                              "primary_planet",
+                              "secret",
+                              "planet",
+                              "station"});
+
+    // Nested rows, read by hand because they are the only arrays-of-tables
+    // inside a def row and a shared helper for one caller is not a helper.
+    if (const TomlValue* planets = table.find("planet"); planets != nullptr && !reader.failed) {
+        if (!planets->isArray()) {
+            reader.fail("'planet' must be an array of tables ([[system.planet]])");
+        }
+        for (std::size_t i = 0; !reader.failed && i < planets->size(); ++i) {
+            const TomlValue& row = (*planets)[i];
+            if (!row.isTable()) {
+                reader.fail("'planet' must be an array of tables ([[system.planet]])");
+                break;
+            }
+            AuthoredPlanetDef planet;
+            FieldReader inner{.table = row,
+                              .context = reader.context + " planet " + std::to_string(i),
+                              .outError = outError};
+            inner.requireString("name", planet.name);
+            inner.optionalDouble("radius", planet.radius, &planet.hasRadius);
+            inner.rejectUnknownKeys({"name", "radius"});
+            if (!inner.failed && planet.hasRadius && planet.radius <= 0.0) {
+                inner.fail("'radius' must be > 0 metres");
+            }
+            if (inner.failed) {
+                reader.failed = true;
+                break;
+            }
+            def.planets.push_back(std::move(planet));
+        }
+    }
+    if (const TomlValue* stations = table.find("station"); stations != nullptr && !reader.failed) {
+        if (!stations->isArray()) {
+            reader.fail("'station' must be an array of tables ([[system.station]])");
+        }
+        for (std::size_t i = 0; !reader.failed && i < stations->size(); ++i) {
+            const TomlValue& row = (*stations)[i];
+            if (!row.isTable()) {
+                reader.fail("'station' must be an array of tables ([[system.station]])");
+                break;
+            }
+            AuthoredStationDef station;
+            FieldReader inner{.table = row,
+                              .context = reader.context + " station " + std::to_string(i),
+                              .outError = outError};
+            inner.requireString("name", station.name);
+            inner.requireString("station", station.stationId);
+            inner.rejectUnknownKeys({"name", "station"});
+            if (inner.failed) {
+                reader.failed = true;
+                break;
+            }
+            def.stations.push_back(std::move(station));
+        }
+    }
+
+    // ⚑ REFUSED, NOT WARNED, AND BY NAME - decision 3. There is no fallback
+    // that is not a lie: a rule nobody implements yet would put the campaign's
+    // starting system somewhere nobody chose, and an out-of-range primary
+    // planet is `spec.planets[spec.primaryPlanet]` at six unguarded call sites.
+    if (!reader.failed && def.placement != "random") {
+        reader.fail("'placement' must be \"random\" (stage A ships only that rule), not \"" + def.placement +
+                    "\"");
+    }
+    if (!reader.failed && def.hasName && def.name.empty()) {
+        reader.fail("'name' must not be empty when given");
+    }
+    if (!reader.failed && def.hasFaction && def.lawless) {
+        reader.fail("'faction' and 'lawless' say different things; give one");
+    }
+    if (!reader.failed && def.hasFaction && def.factionId.empty()) {
+        reader.fail("'faction' must name a [[faction]] row; use lawless = true for no owner");
+    }
+    if (!reader.failed && def.hasRegion && def.region != "core" && def.region != "frontier" &&
+        def.region != "fringe") {
+        reader.fail("'region' must be \"core\", \"frontier\" or \"fringe\", not \"" + def.region + "\"");
+    }
+    // The generator's own invariant, stated where an author can be told about
+    // it: `populateSystem` has always produced at least one planet and set
+    // primaryPlanet inside it, and six call sites index that pair with no
+    // guard. An authored system with no planets of its own gets generated ones,
+    // so only an explicit primary planet can point past the end.
+    if (!reader.failed && def.hasPrimaryPlanet && !def.planets.empty() &&
+        def.primaryPlanet >= def.planets.size()) {
+        reader.fail("'primary_planet' is " + std::to_string(def.primaryPlanet) + " but only " +
+                    std::to_string(def.planets.size()) + " [[system.planet]] row(s) are declared");
+    }
+    if (!reader.failed && def.hasPrimaryPlanet && def.planets.empty()) {
+        reader.fail("'primary_planet' needs [[system.planet]] rows to point into");
+    }
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
 bool parseModule(const TomlValue& table,
                  const char* sourceName,
                  std::vector<ModuleDef>& out,
@@ -1100,6 +1265,7 @@ bool DefDatabase::mergeToml(const char* text,
     std::vector<FactionDef> factions = m_factions;
     std::vector<CommodityDef> commodities = m_commodities;
     std::vector<StationDef> stations = m_stations;
+    std::vector<SystemDef> systems = m_systems;
     std::vector<ModuleDef> modules = m_modules;
     std::vector<CrewDef> crew = m_crew;
     std::vector<SoundDef> sounds = m_sounds;
@@ -1144,6 +1310,11 @@ bool DefDatabase::mergeToml(const char* text,
                 return parseStation(t, s, *static_cast<std::vector<StationDef>*>(v), e);
             };
             target = &stations;
+        } else if (key == "system") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseSystem(t, s, *static_cast<std::vector<SystemDef>*>(v), e);
+            };
+            target = &systems;
         } else if (key == "module") {
             parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
                 return parseModule(t, s, *static_cast<std::vector<ModuleDef>*>(v), e);
@@ -1177,8 +1348,8 @@ bool DefDatabase::mergeToml(const char* text,
         } else {
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
-                            "' (expected ship, weapon, faction, commodity, station, module, "
-                            "crew, sound, model, material, or role)";
+                            "' (expected ship, weapon, faction, commodity, station, system, "
+                            "module, crew, sound, model, material, or role)";
             }
             return false;
         }
@@ -1202,6 +1373,7 @@ bool DefDatabase::mergeToml(const char* text,
     m_factions = std::move(factions);
     m_commodities = std::move(commodities);
     m_stations = std::move(stations);
+    m_systems = std::move(systems);
     m_modules = std::move(modules);
     m_crew = std::move(crew);
     m_sounds = std::move(sounds);
@@ -1309,6 +1481,43 @@ bool DefDatabase::validateFactions(std::string* outError) const
                     }
                     return false;
                 }
+            }
+        }
+    }
+    return true;
+}
+
+bool DefDatabase::validateSystems(std::string* outError) const
+{
+    const auto refuse = [&](const SystemDef& system, const std::string& message) {
+        if (outError != nullptr) {
+            *outError = system.source + ": system '" + system.id + "': " + message;
+        }
+        return false;
+    };
+    for (const SystemDef& system : m_systems) {
+        // ⚑ REFUSE rather than warn, per decision 3 and the `validateRoles`
+        // precedent: warn-and-fall-back is right where a real thing is still
+        // there to stand in, and here there is none. A system whose faction was
+        // removed by a mod would silently become lawless, which is a different
+        // place from the one the campaign was written against.
+        if (system.hasFaction && findFaction(system.factionId.c_str()) == nullptr) {
+            return refuse(system, "'faction' names '" + system.factionId + "', which is not a [[faction]]");
+        }
+        for (const AuthoredStationDef& station : system.stations) {
+            if (findStation(station.stationId.c_str()) == nullptr) {
+                return refuse(system,
+                              "station '" + station.name + "' names archetype '" + station.stationId +
+                                  "', which is not a [[station]]");
+            }
+        }
+        // Two authored systems fighting over one node is not resolvable in a
+        // way either author would recognise as theirs, so it is a refusal here
+        // rather than a rule about who wins.
+        for (const SystemDef& other : m_systems) {
+            if (&other != &system && other.hasName && system.hasName && other.name == system.name &&
+                other.id != system.id) {
+                return refuse(system, "'name' collides with system '" + other.id + "'");
             }
         }
     }
@@ -1430,6 +1639,13 @@ const CommodityDef* DefDatabase::findCommodity(const char* id) const
     const auto it = std::find_if(
         m_commodities.begin(), m_commodities.end(), [&](const CommodityDef& d) { return d.id == id; });
     return it != m_commodities.end() ? &*it : nullptr;
+}
+
+const SystemDef* DefDatabase::findSystem(const char* id) const
+{
+    const auto it =
+        std::find_if(m_systems.begin(), m_systems.end(), [&](const SystemDef& d) { return d.id == id; });
+    return it != m_systems.end() ? &*it : nullptr;
 }
 
 const StationDef* DefDatabase::findStation(const char* id) const
