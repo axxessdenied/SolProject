@@ -16,6 +16,26 @@ namespace sol::ui {
 using WidgetId = std::uint64_t;
 inline constexpr WidgetId kNoWidget = 0;
 
+// How far a pointer may travel between press and release and still count as a
+// click rather than a drag.
+//
+// ⚑ MEASURED BY PHASE 15 FOR THE MAP, PROMOTED HERE BY PHASE 28 FOR THE RIGHT
+// BUTTON, AND THE VALUE IS UNCHANGED. Its original reasoning still governs:
+// "a hand moves a pixel or two on any real click, and a player nudging the map
+// by three pixels meant to nudge it." It lives here rather than being written
+// a second time because this project has paid repeatedly for the second
+// expression of a thing that already existed.
+//
+// ⚑⚑ THE THRESHOLD IS SHARED; THE QUANTITY MEASURED AGAINST IT IS NOT, AND THAT
+// IS NOT AN INCONSISTENCY. The map compares cursor POSITIONS, which is right
+// for a cursor that is visible and free. The right button cannot: holding it is
+// Mouse Steering, which locks the cursor — hidden and clipped to the client
+// rect — so a long steering sweep can move the cursor barely at all once it is
+// against an edge, and main.cpp's own pick site already states that a locked
+// cursor's position is "meaningless by contract". That caller accumulates RAW
+// MOUSE DELTA instead, which is the same quantity the steering itself consumes.
+inline constexpr float kClickSlopPixels = 4.0f;
+
 // What the player did this frame. The game fills this from the platform
 // layer; the UI never reads input hardware itself.
 struct InputState
@@ -25,6 +45,16 @@ struct InputState
     bool mousePressed = false;  // went down this frame
     bool mouseReleased = false; // came up this frame
     float scrollDelta = 0.0f;
+
+    // The second button (Phase 28). Every widget in this layer still answers to
+    // the left one alone: this exists so a screen can offer a context menu, and
+    // nothing reads it except the caller that opens one.
+    //
+    // ⚑ It carries the SAME `wantsMouseCapture` gate the left button does, or a
+    // right-click on the dev overlay opens a ship menu behind it.
+    bool rightDown = false;
+    bool rightPressed = false;
+    bool rightReleased = false;
 
     // Keyboard navigation. Every screen must be fully operable through these
     // alone - that is a requirement of the phase, and the groundwork for
@@ -165,6 +195,40 @@ public:
     void tooltip(std::string_view text);
 
     void panel(const Rect& bounds, std::string_view title = {});
+
+    // One row of a context menu. A row that does not apply is DISABLED and says
+    // why, never hidden (Phase 28 decision 3): "Request Docking - 412 km"
+    // greyed out teaches the range rule, while an entry that silently vanishes
+    // teaches nothing and reads as a bug.
+    struct MenuItem
+    {
+        std::string_view label;
+        bool enabled = true;
+        // Shown as a tooltip while the cursor is on a disabled row. Empty is
+        // fine for a row that is disabled for an obvious reason.
+        std::string_view reason;
+    };
+
+    // Draws a context menu anchored at `anchor` and returns the index of the
+    // item activated this frame, or -1.
+    //
+    // ⚑⚑ IT IS NOT DEFERRED, AND THE SKETCH THAT SAID IT WOULD BE WAS
+    // OVER-SPECIFIED. "Draw on top of everything" only needs "be submitted
+    // last", because DrawList batches strictly in call order — and the frame
+    // builds exactly ONE screen between beginFrame and endFrame, so a caller
+    // that builds its menu as the last thing in its own case is already last.
+    // A tooltip needs endFrame() because it is queued from INSIDE a list being
+    // built; a menu is not. The one thing that genuinely must draw over a menu
+    // is a tooltip, and endFrame() already runs after this.
+    //
+    // ⚑ The caller owns whether the menu is open, where it is anchored, and
+    // closing it. This draws and answers; it keeps no state.
+    // `boundsOut`, when given, receives the box the menu actually occupied
+    // after being clamped onto the screen. The caller needs it for the
+    // close-on-a-click-elsewhere rule, and only the widget knows where the
+    // clamp put it.
+    [[nodiscard]] int
+    contextMenu(core::Vec2 anchor, std::span<const MenuItem> items, Rect* boundsOut = nullptr);
 
     [[nodiscard]] bool button(const Rect& bounds, std::string_view label, bool enabled = true);
     [[nodiscard]] bool checkbox(const Rect& bounds, std::string_view label, bool& value);

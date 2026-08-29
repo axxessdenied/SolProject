@@ -10,10 +10,13 @@
 // guard and one threshold, and the only thing that separates them is
 // isStandingCommand(), which is why it is worth pinning both halves here.
 
+#include "command_menu.hpp"
 #include "space_world.hpp"
 
 #include <cstring>
+#include <span>
 #include <string>
+#include <string_view>
 
 #include <sol/assets/data_defs.hpp>
 #include <sol/test/test.hpp>
@@ -205,4 +208,103 @@ SOL_TEST(hold_engages_and_is_standing)
     fixture.world.setShipInput(deflected());
     fixture.world.tick(kDt);
     SOL_CHECK(fixture.world.commandMode() == CommandMode::Hold);
+}
+
+// --- The context menu's contents (stage B) ---
+
+SOL_TEST(the_menu_offers_the_same_vocabulary_the_keys_do)
+{
+    // ⚑ THE PHASE EXIT IS "fly the loop twice, once by menu and once by key,
+    // and have both do the same things". That is only possible if the two are
+    // built from one list. Every command mode must appear exactly once, plus
+    // the cancel entry — and if somebody adds an eighth mode without adding a
+    // row, this is what says so.
+    const std::span<const game::CommandMenuEntry> entries = game::commandMenuEntries();
+
+    int seen[7] = {};
+    for (const game::CommandMenuEntry& entry : entries) {
+        seen[static_cast<std::size_t>(entry.mode)] += 1;
+    }
+    SOL_CHECK(seen[static_cast<std::size_t>(CommandMode::None)] == 1); // the cancel row
+    SOL_CHECK(seen[static_cast<std::size_t>(CommandMode::Autopilot)] == 1);
+    SOL_CHECK(seen[static_cast<std::size_t>(CommandMode::Orbit)] == 1);
+    SOL_CHECK(seen[static_cast<std::size_t>(CommandMode::MatchSpeed)] == 1);
+    SOL_CHECK(seen[static_cast<std::size_t>(CommandMode::KeepDistance)] == 1);
+    SOL_CHECK(seen[static_cast<std::size_t>(CommandMode::Hold)] == 1);
+    SOL_CHECK(seen[static_cast<std::size_t>(CommandMode::Follow)] == 1);
+}
+
+SOL_TEST(a_menu_entry_and_its_key_binding_do_the_identical_thing)
+{
+    // Decision 4's real content: "the bound key and the menu entry do the
+    // identical thing". Proven by doing both and comparing the resulting mode.
+    const std::span<const game::CommandMenuEntry> entries = game::commandMenuEntries();
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i].mode == CommandMode::None) {
+            continue;
+        }
+        Fixture viaKey;
+        Fixture viaMenu;
+        SOL_REQUIRE(viaKey.world.engageCommand(entries[i].mode));
+        game::applyCommandMenu(viaMenu.world, static_cast<int>(i));
+        SOL_CHECK(viaKey.world.commandMode() == viaMenu.world.commandMode());
+    }
+}
+
+SOL_TEST(the_cancel_row_clears_whatever_is_running)
+{
+    Fixture fixture;
+    const std::span<const game::CommandMenuEntry> entries = game::commandMenuEntries();
+    int cancelIndex = -1;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i].mode == CommandMode::None) {
+            cancelIndex = static_cast<int>(i);
+        }
+    }
+    SOL_REQUIRE(cancelIndex >= 0);
+
+    SOL_REQUIRE(fixture.world.engageCommand(CommandMode::Orbit));
+    game::applyCommandMenu(fixture.world, cancelIndex);
+    SOL_CHECK(fixture.world.commandMode() == CommandMode::None);
+}
+
+SOL_TEST(an_out_of_range_menu_index_does_nothing_rather_than_aborting)
+{
+    Fixture fixture;
+    SOL_REQUIRE(fixture.world.engageCommand(CommandMode::Orbit));
+    game::applyCommandMenu(fixture.world, -1);
+    game::applyCommandMenu(fixture.world, 9999);
+    SOL_CHECK(fixture.world.commandMode() == CommandMode::Orbit);
+}
+
+SOL_TEST(a_menu_row_says_why_it_cannot_be_chosen)
+{
+    // Decision 3 as a predicate. The reason matters as much as the disabling:
+    // "Request Docking - 412 km" greyed out teaches the range rule, while a row
+    // that silently vanishes teaches nothing.
+    Fixture fixture;
+    const std::span<const game::CommandMenuEntry> entries = game::commandMenuEntries();
+
+    // Nothing engaged: the cancel row is off, and it says so.
+    for (const game::CommandMenuEntry& entry : entries) {
+        const char* reason = "";
+        if (entry.mode == CommandMode::None) {
+            SOL_CHECK(!game::commandMenuEntryEnabled(fixture.world, entry, reason));
+            SOL_CHECK(std::string_view(reason) == "nothing to cancel");
+        }
+    }
+
+    // Engaged: the row for the mode you are already in goes off, the cancel
+    // row comes on, and every other row stays available.
+    SOL_REQUIRE(fixture.world.engageCommand(CommandMode::Orbit));
+    for (const game::CommandMenuEntry& entry : entries) {
+        const char* reason = "";
+        const bool enabled = game::commandMenuEntryEnabled(fixture.world, entry, reason);
+        if (entry.mode == CommandMode::Orbit) {
+            SOL_CHECK(!enabled);
+            SOL_CHECK(std::string_view(reason) == "already engaged");
+        } else {
+            SOL_CHECK(enabled);
+        }
+    }
 }

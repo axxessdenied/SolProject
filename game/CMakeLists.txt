@@ -9,6 +9,7 @@
 add_library(sol_game_lib STATIC
     src/asset_paths.cpp
     src/combat_effects.cpp
+    src/command_menu.cpp
     src/content.cpp
     src/game_audio.cpp
     src/game_ui.cpp

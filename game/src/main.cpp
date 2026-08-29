@@ -1,4 +1,5 @@
 #include "asset_paths.hpp"
+#include "command_menu.hpp"
 #include "content.hpp"
 #include "fly_camera.hpp"
 #include "game_audio.hpp"
@@ -582,6 +583,32 @@ int main(int argc, char** argv)
     sol::core::DVec3 bookmarkPosition;
     std::string bookmarkWhere; // backs prompt.whereSummary across frames
     bool previousMouseDown = false;
+    bool previousRightDown = false;
+
+    // Right-click vs right-drag (Phase 28 stage B). The right button is Mouse
+    // Steering, so this has to separate "I flicked the view" from "I asked for
+    // a menu" — and a mistake here does not read as a broken menu, it reads as
+    // BROKEN FLIGHT, which is much worse.
+    //
+    // ⚑⚑ MEASURED IN ACCUMULATED RAW MOUSE DELTA, NOT IN CURSOR TRAVEL, AND
+    // THAT IS THE ONE PLACE THIS DIVERGES FROM PHASE 15's MAP RULE. Steering
+    // locks the cursor: hidden, and CLIPPED to the client rect. A long sweep
+    // that runs into an edge stops moving the cursor while the mouse keeps
+    // moving, so cursor travel would read a genuine steering gesture as a click
+    // — and main.cpp's own pick site already says a locked cursor's position is
+    // "meaningless by contract". The threshold is still ui::kClickSlopPixels:
+    // one number, two ways of arriving at it.
+    float rightDragPixels = 0.0f;
+    sol::core::Vec2 rightPressCursor{};
+
+    // The context menu is deliberately NOT a GameState (Phase 28). Both
+    // GameState::Map and GameState::ShipInfo carry comments refusing to stop
+    // the clock — "a galaxy that pauses while you read the map is not the
+    // galaxy this game is selling" — and a popup that froze the world to ask
+    // which manoeuvre you wanted would be a worse offender than either.
+    bool contextMenuOpen = false;
+    sol::core::Vec2 contextMenuAnchor{};
+    sol::ui::Rect contextMenuBounds{};
     bool quitRequested = false;
     bool showDebugDraw = false;
     // Every gameplay chord's up/down state, sampled once per frame and handed
@@ -698,8 +725,17 @@ int main(int argc, char** argv)
         // though its clock is running - and so does an open text field, where
         // Esc means "abandon what I was typing" rather than "pause".
         if (escapeEdge && (inFlight || docked) && keys.shortcuts) {
-            state = game::GameState::Paused;
-            window.setCursorLocked(false);
+            // ⚑ Esc dismisses an open context menu FIRST and pauses nothing
+            // (Phase 28 stage B). It is the same rule the map already follows -
+            // Esc means "close the thing that is open" before it means "pause" -
+            // and a menu you cannot back out of without stopping the galaxy
+            // would be the worst kind of popup.
+            if (contextMenuOpen) {
+                contextMenuOpen = false;
+            } else {
+                state = game::GameState::Paused;
+                window.setCursorLocked(false);
+            }
         }
 
         // Camera mode cycle: cockpit -> chase -> free.
@@ -1050,7 +1086,11 @@ int main(int argc, char** argv)
             // about a different game than the one on screen.
             audio.setListener(camera.position, camera.orientation);
 
-            if (gameplayLive && !imguiHost.wantsMouseCapture() &&
+            // ⚑ An open context menu owns the left button (Phase 28 stage B).
+            // Without this the same click both picks a menu row and re-targets
+            // whatever happens to be behind the menu, which reads as the menu
+            // choosing the wrong thing.
+            if (gameplayLive && !imguiHost.wantsMouseCapture() && !contextMenuOpen &&
                 game::pressed(binds, game::Action::Select)) {
                 // While the cursor is captured for mouse-look its position is
                 // meaningless by contract, so the click asks the same question
@@ -1627,6 +1667,32 @@ int main(int argc, char** argv)
         uiInput.mousePressed = uiInput.mouseDown && !previousMouseDown;
         uiInput.mouseReleased = !uiInput.mouseDown && previousMouseDown;
         previousMouseDown = uiInput.mouseDown;
+        // The right button (Phase 28), mirrored from the left including its
+        // ImGui gate: without that gate a right-click on the dev overlay opens
+        // a ship menu behind it.
+        uiInput.rightDown =
+            window.isMouseButtonDown(sol::platform::MouseButton::Right) && !imguiHost.wantsMouseCapture();
+        uiInput.rightPressed = uiInput.rightDown && !previousRightDown;
+        uiInput.rightReleased = !uiInput.rightDown && previousRightDown;
+        previousRightDown = uiInput.rightDown;
+
+        // The gesture. Accumulated while the button is held, judged on release.
+        if (uiInput.rightPressed) {
+            rightDragPixels = 0.0f;
+            rightPressCursor = uiInput.mousePosition;
+        }
+        if (uiInput.rightDown) {
+            const sol::core::Vec2 delta = window.mouseDelta();
+            rightDragPixels += std::sqrt(delta.x * delta.x + delta.y * delta.y);
+        }
+        if (uiInput.rightReleased && state == game::GameState::Flying &&
+            rightDragPixels <= sol::ui::kClickSlopPixels) {
+            // A click, not a sweep: open at the point the button went down,
+            // which is where the player was pointing before steering hid the
+            // cursor and let it drift.
+            contextMenuOpen = true;
+            contextMenuAnchor = rightPressCursor;
+        }
         uiInput.scrollDelta = window.wheelDelta();
 
         // Navigation keys are edge-triggered: holding Tab must not race
@@ -1711,6 +1777,25 @@ int main(int argc, char** argv)
                 // the galaxy keeps running, and writing down a waypoint should not
                 // feel like leaving the cockpit.
                 game::buildBookmarkPrompt(ui, bookmarkPrompt);
+                // ⚑ LAST IN THIS CASE, AND THAT IS THE WHOLE OF "DRAWS ON TOP".
+                // DrawList batches strictly in call order and the frame builds
+                // exactly one screen, so being submitted last IS being on top —
+                // no z-order, no deferral, no layer. endFrame() still runs
+                // drawTooltip() after this, which is right: a tooltip explaining
+                // a greyed-out row must not be covered by the row.
+                if (contextMenuOpen) {
+                    const int picked =
+                        game::buildCommandMenu(ui, world, contextMenuAnchor, contextMenuBounds);
+                    if (picked >= 0) {
+                        game::applyCommandMenu(world, picked);
+                        contextMenuOpen = false;
+                    } else if (uiInput.mousePressed && !contextMenuBounds.contains(uiInput.mousePosition)) {
+                        // Closed by anything else (phase decision 4). No pinning,
+                        // no submenus: one level deep, and a click elsewhere is a
+                        // click elsewhere.
+                        contextMenuOpen = false;
+                    }
+                }
                 break;
             case game::GameState::Docked:
                 // Docked, the station screen owns the view; the flight readout has

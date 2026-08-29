@@ -290,6 +290,70 @@ void UiContext::drawTooltip()
     m_tooltip.clear();
 }
 
+int UiContext::contextMenu(core::Vec2 anchor, std::span<const MenuItem> items, Rect* boundsOut)
+{
+    if (boundsOut != nullptr) {
+        *boundsOut = Rect{};
+    }
+    if (items.empty()) {
+        return -1;
+    }
+    const assets::FontStyleRecord* record = style(m_theme.bodyStyle);
+    if (record == nullptr || m_font == nullptr) {
+        return -1;
+    }
+
+    // Sized from the widest row, so no label is ever elided in a menu the
+    // player opened to read. The panel that would not fit is clamped onto the
+    // screen below, not shrunk.
+    float widest = 0.0f;
+    for (const MenuItem& item : items) {
+        widest = std::max(widest, m_font->measureWidth(*record, item.label));
+    }
+    const float width = widest + m_theme.padding * 4.0f;
+    const float rows = static_cast<float>(items.size());
+    const float height = rows * m_theme.rowHeight + (rows - 1.0f) * m_theme.spacing + m_theme.padding * 2.0f;
+
+    // Below and right of the anchor, then pushed back inside the screen — the
+    // same rule drawTooltip uses, and for the same reason: a menu that opens
+    // half off the edge is a menu with unreachable entries.
+    core::Vec2 min{anchor.x + 2.0f, anchor.y + 2.0f};
+    min.x = std::max(0.0f, std::min(min.x, m_screenSize.x - width));
+    min.y = std::max(0.0f, std::min(min.y, m_screenSize.y - height));
+    const Rect box{min, {min.x + width, min.y + height}};
+    if (boundsOut != nullptr) {
+        *boundsOut = box;
+    }
+
+    panel(box);
+
+    // ⚑ Pushed as its own id scope so a menu row's identity cannot collide with
+    // a button of the same label on the screen underneath it — which is not
+    // hypothetical here, since a menu's entries are named after actions the
+    // HUD and the station screens also name.
+    pushId("context_menu");
+    int activated = -1;
+    float y = box.min.y + m_theme.padding;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        const MenuItem& item = items[i];
+        const Rect row{{box.min.x + m_theme.padding, y},
+                       {box.max.x - m_theme.padding, y + m_theme.rowHeight}};
+        pushId(static_cast<int>(i));
+        if (button(row, item.label, item.enabled)) {
+            activated = static_cast<int>(i);
+        }
+        // The reason a row is unavailable is worth more than the row, and the
+        // tooltip facility already puts it where the cursor is.
+        if (!item.enabled && !item.reason.empty() && row.contains(m_input.mousePosition)) {
+            tooltip(item.reason);
+        }
+        popId();
+        y += m_theme.rowHeight + m_theme.spacing;
+    }
+    popId();
+    return activated;
+}
+
 void UiContext::panel(const Rect& bounds, std::string_view title)
 {
     m_drawList.addRoundedRect(bounds, m_theme.radius, m_theme.panel);

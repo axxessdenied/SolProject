@@ -130,10 +130,11 @@ void clipped(UiContext& ui,
 constexpr float kMinZoom = 1.0f;
 constexpr float kMaxZoom = 8.0f;
 constexpr float kZoomPerNotch = 1.2f;
-// Phase 15. How far the cursor may travel between press and release and still
-// count as a click rather than a pan: a hand moves a pixel or two on any real
-// click, and a player nudging the map by three pixels meant to nudge it.
-constexpr float kClickSlopPixels = 4.0f;
+// Phase 15's click-vs-pan slop now lives in `sol/ui/context.hpp` as
+// `sol::ui::kClickSlopPixels`, because Phase 28 gave the right button the same
+// question to answer. ⚑ The VALUE is unchanged at 4.0f and this file's
+// behaviour is unchanged with it; the reasoning moved with the constant.
+using sol::ui::kClickSlopPixels;
 // The grab radius for a map marker. Wider than the radar's 11 px because a map
 // dot is 3.5 px across and the two tiers can place a station and its gates
 // within a few pixels of each other, and narrower than the flight view's 28

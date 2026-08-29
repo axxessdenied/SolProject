@@ -873,3 +873,120 @@ SOL_TEST(ui_selectable_offers_a_hidden_name_as_a_tooltip)
     // screen would fire on every row of every list.
     SOL_CHECK(tooltipVerts(mouseAt(130.0f, 120.0f), kShort) == 0);
 }
+
+// --- Context menu (engine plan Phase 28 stage B) ---
+
+namespace {
+
+// The synthetic cooked font carries "hud" and "heading" only, so a context
+// pointed at it has to be told which of those to measure with. The widget
+// deliberately draws NOTHING when its style is missing - the same bail
+// drawTooltip makes - so without this the menu would silently not exist and
+// every assertion below would be about an empty rectangle.
+void useSyntheticStyles(UiContext& ui)
+{
+    sol::ui::Theme theme = ui.theme();
+    theme.bodyStyle = "hud";
+    theme.smallStyle = "hud";
+    theme.headingStyle = "heading";
+    ui.setTheme(theme);
+}
+
+// One frame of a three-row menu at `anchor`; returns the picked index.
+int runMenu(UiContext& ui, const InputState& input, sol::core::Vec2 anchor, Rect* bounds = nullptr)
+{
+    const UiContext::MenuItem items[] = {
+        {.label = "Orbit", .enabled = true, .reason = ""},
+        {.label = "Match Speed", .enabled = true, .reason = ""},
+        {.label = "Request Docking", .enabled = false, .reason = "412 km"},
+    };
+    ui.beginFrame(input, kScreen);
+    const int picked = ui.contextMenu(anchor, {items, 3}, bounds);
+    ui.endFrame();
+    return picked;
+}
+
+} // namespace
+
+SOL_TEST(a_context_menu_opens_at_its_anchor_and_stays_on_screen)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+    useSyntheticStyles(ui);
+
+    Rect bounds{};
+    (void)runMenu(ui, mouseAt(400.0f, 300.0f), {400.0f, 300.0f}, &bounds);
+    // Just below and right of the click, the way a menu should sit.
+    SOL_CHECK(bounds.min.x >= 400.0f);
+    SOL_CHECK(bounds.min.y >= 300.0f);
+    SOL_CHECK(bounds.width() > 0.0f);
+
+    // ⚑ Opened hard against the bottom-right corner it must be pushed back
+    // INSIDE the screen, not drawn off it. A menu with unreachable entries is
+    // worse than no menu, and this is the same clamp drawTooltip already makes.
+    Rect corner{};
+    (void)runMenu(ui, mouseAt(1279.0f, 719.0f), {1279.0f, 719.0f}, &corner);
+    SOL_CHECK(corner.max.x <= kScreen.x);
+    SOL_CHECK(corner.max.y <= kScreen.y);
+    SOL_CHECK(corner.min.x >= 0.0f);
+    SOL_CHECK(corner.min.y >= 0.0f);
+}
+
+SOL_TEST(a_context_menu_row_activates_on_release_over_itself)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+    useSyntheticStyles(ui);
+
+    // Find where row 0 landed, then press and release on it.
+    Rect bounds{};
+    (void)runMenu(ui, mouseAt(400.0f, 300.0f), {400.0f, 300.0f}, &bounds);
+    const float rowY = bounds.min.y + 12.0f + 14.0f; // padding + half a row
+    const float rowX = bounds.min.x + bounds.width() * 0.5f;
+
+    SOL_CHECK(runMenu(ui, pressAt(rowX, rowY), {400.0f, 300.0f}) == -1); // press alone does not fire
+    SOL_CHECK(runMenu(ui, releaseAt(rowX, rowY), {400.0f, 300.0f}) == 0);
+}
+
+SOL_TEST(a_disabled_context_menu_row_cannot_be_picked)
+{
+    // ⚑ Decision 3: a row that does not apply is shown DISABLED with its reason
+    // rather than hidden, so the menu keeps its shape and the player learns the
+    // rule. "Shown" must not mean "clickable".
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+    useSyntheticStyles(ui);
+
+    Rect bounds{};
+    (void)runMenu(ui, mouseAt(400.0f, 300.0f), {400.0f, 300.0f}, &bounds);
+    const float thirdRowY = bounds.min.y + 12.0f + 2.0f * (28.0f + 6.0f) + 14.0f;
+    const float rowX = bounds.min.x + bounds.width() * 0.5f;
+
+    (void)runMenu(ui, pressAt(rowX, thirdRowY), {400.0f, 300.0f});
+    SOL_CHECK(runMenu(ui, releaseAt(rowX, thirdRowY), {400.0f, 300.0f}) == -1);
+}
+
+SOL_TEST(an_empty_context_menu_draws_nothing_rather_than_an_empty_box)
+{
+    Font font;
+    SOL_REQUIRE(loadFont(font));
+    UiContext ui;
+    ui.setFont(&font, 1);
+    useSyntheticStyles(ui);
+
+    Rect bounds{{1.0f, 2.0f}, {3.0f, 4.0f}}; // deliberately dirty
+    ui.beginFrame(mouseAt(0.0f, 0.0f), kScreen);
+    const int picked = ui.contextMenu({100.0f, 100.0f}, {}, &bounds);
+    ui.endFrame();
+    SOL_CHECK(picked == -1);
+    // The bounds must be CLEARED, not left holding a stale box: the caller
+    // tests them for "did the click land outside the menu", and a stale
+    // rectangle would swallow clicks at a place no menu is drawn.
+    SOL_CHECK(bounds.empty());
+}
