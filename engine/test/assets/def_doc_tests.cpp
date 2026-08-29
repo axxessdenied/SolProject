@@ -79,7 +79,24 @@ void reportFirstDifferingLine(const char* name, const std::string& expected, con
 // globbed so that a file DISAPPEARING is a failure rather than a shorter loop.
 [[nodiscard]] std::vector<std::string> committedDefs()
 {
-    return {"commodities", "crew", "factions", "models", "modules", "ships", "sounds", "stations", "weapons"};
+    // ⚑ `systems` joined this list in Phase 29 stage D, and it is the first
+    // committed def file with a NESTED array-of-tables header in it
+    // (`[[system.planet]]`). Phase 25 stage A cost a session to a sub-header
+    // that parsed fine for the game and broke this document model - so the
+    // question got asked before the file shipped rather than after: `[[a.b]]`
+    // is still a `[[table]]`, and DefDoc keeps it as a row of its own with its
+    // header line raw, which round-trips. A plain `[a.b]` is what it refuses,
+    // and no def kind in this game uses one.
+    return {"commodities",
+            "crew",
+            "factions",
+            "models",
+            "modules",
+            "ships",
+            "sounds",
+            "stations",
+            "systems",
+            "weapons"};
 }
 
 [[nodiscard]] std::string defPath(const std::string& stem)

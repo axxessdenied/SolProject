@@ -4,6 +4,7 @@
 #include "model_roles.hpp"
 
 #include "sol/assets/loadout.hpp"
+#include "sol/core/hash.hpp"
 #include "sol/core/log.hpp"
 #include "sol/core/profiler.hpp"
 #include "sol/core/random.hpp"
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <iterator>
 #include <span>
 #include <utility>
@@ -48,7 +50,97 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // and resolved system name - written immediately after the version so a save
 // browser can build a row without restoring the world. No migration, per the
 // same precedent: a v15 save is rejected cleanly.
-constexpr std::uint32_t kSaveVersion = 16;
+//
+// v17 (Phase 29 stage D): the authored-content digest, beside the seed.
+constexpr std::uint32_t kSaveVersion = 17;
+
+// ---------------------------------------------------------------------------
+// ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
+// (Phase 29 stage D, decisions/018 decision 7).
+//
+// A galaxy is not saved - it is regenerated from the seed on load, and
+// `galaxyChanged` keys on the seed alone. That was sound while the seed was
+// the only input. It stopped being sound the moment a MOD could change the
+// galaxy: a player who installs one mid-campaign reloads into a world that has
+// silently reshaped around them, their save's system index now pointing at
+// somewhere else entirely, and nothing anywhere says so. A content version
+// bump cannot see it either, because the mod is not the build.
+//
+// So the authored input is digested and the digest rides the save beside the
+// seed. A mismatch is refused, which turns silent corruption into the same
+// clean rejection a save from another version already gets.
+//
+// ⚑⚑ IT HASHES THE INPUT, NOT THE OUTPUT, AND THAT IS THE CHEAP HALF OF THE
+// BARGAIN. Digesting the generated galaxy would answer the same question and
+// would cost a full generation at load time before the answer arrived; the
+// authored rows are a few dozen strings, are already in hand in
+// `m_galaxyParams`, and are the only thing that can differ at a fixed seed.
+// Everything else that shapes a galaxy - faction count, station archetypes,
+// their weights - is already covered by the version check, because changing
+// any of it means changing the build.
+//
+// ⚑ Deliberately covers the RESOLVED input rather than the file bytes: a
+// comment rewritten in `systems.toml` is not a different galaxy, and a save
+// that refused over one would be a worse instrument than none.
+[[nodiscard]] std::uint64_t digestAuthoredSystem(std::uint64_t seed, const sim::AuthoredSystem& authored)
+{
+    seed = core::fnv1a(authored.id, seed);
+    seed = core::hashCombine(seed, static_cast<std::uint64_t>(authored.placement));
+    seed = core::hashCombine(seed, authored.atFactionCapital);
+    seed = core::fnv1a(authored.anchorId, seed);
+    seed = core::hashCombine(seed, authored.jumpsMin);
+    seed = core::hashCombine(seed, authored.jumpsMax);
+    seed = core::fnv1a(authored.name, seed);
+    seed = core::hashCombine(seed, authored.hasName ? 1u : 0u);
+    seed = core::hashCombine(seed, static_cast<std::uint64_t>(authored.region));
+    seed = core::hashCombine(seed, authored.hasRegion ? 1u : 0u);
+    seed = core::hashCombine(seed, authored.factionIndex);
+    seed = core::hashCombine(seed, authored.hasFaction ? 1u : 0u);
+    seed = core::hashCombine(seed, authored.primaryPlanet);
+    seed = core::hashCombine(seed, authored.hasPrimaryPlanet ? 1u : 0u);
+    seed = core::hashCombine(seed, authored.secret ? 1u : 0u);
+    seed = core::hashCombine(seed, authored.planets.size());
+    for (const sim::AuthoredPlanet& planet : authored.planets) {
+        seed = core::fnv1a(planet.name, seed);
+        // ⚑ Bits rather than the double: a radius is the only float an author
+        // writes, and this digest is compared against one another machine
+        // wrote. Reading it as an integer is exact everywhere.
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &planet.radius, sizeof(bits));
+        seed = core::hashCombine(seed, bits);
+        seed = core::hashCombine(seed, planet.hasRadius ? 1u : 0u);
+    }
+    seed = core::hashCombine(seed, authored.stations.size());
+    for (const sim::AuthoredStation& station : authored.stations) {
+        seed = core::fnv1a(station.name, seed);
+        seed = core::hashCombine(seed, station.archetype);
+    }
+    return seed;
+}
+
+[[nodiscard]] std::uint64_t authoredContentDigestOf(const sim::GalaxyParams& params)
+{
+    std::uint64_t seed = core::kFnvOffsetBasis;
+    // The COUNTS are folded in as well as the rows, so that removing the last
+    // authored system is a different digest from never having had one.
+    seed = core::hashCombine(seed, params.authoredSystems.size());
+    for (const sim::AuthoredSystem& authored : params.authoredSystems) {
+        seed = digestAuthoredSystem(seed, authored);
+    }
+    seed = core::hashCombine(seed, params.constellations.size());
+    for (const sim::AuthoredConstellation& constellation : params.constellations) {
+        seed = core::fnv1a(constellation.id, seed);
+        seed = core::hashCombine(seed, constellation.members.size());
+        for (const sim::AuthoredSystem& member : constellation.members) {
+            seed = digestAuthoredSystem(seed, member);
+        }
+        seed = core::hashCombine(seed, constellation.links.size());
+        for (const sim::AuthoredConstellationLink& link : constellation.links) {
+            seed = core::hashCombine(core::hashCombine(seed, link.a), link.b);
+        }
+    }
+    return seed;
+}
 
 // Market intel (Phase 8g): what a station's market report covers and costs.
 // Deliberately shorter than the traders' own horizon — a station's brokers
@@ -498,6 +590,10 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     const std::uint32_t commodityCount = static_cast<std::uint32_t>(m_commodityIds.size());
 
     buildMiningParams();
+    // Taken from the translated params rather than from the defs, so what is
+    // digested is exactly what the generator was handed - the same rule the
+    // seam already follows for everything else that crosses it.
+    m_authoredDigest = authoredContentDigestOf(m_galaxyParams);
     std::vector<sim::AuthoredPlacementFailure> placementFailures;
     m_galaxy = sim::generateGalaxy(m_galaxyParams, &m_miningParams, &placementFailures);
 
@@ -7250,20 +7346,30 @@ bool readSaveInfo(const char* path, SaveInfo& out)
         return false; // foreign or from another version - the same row either way
     }
 
-    // The field order below IS the v16 header order in saveTo, and the two
+    // The field order below IS the v17 header order in saveTo, and the two
     // have to be read together. `dockedStation` and the two last-dock indices
     // are skipped over rather than kept: the browser has nothing to say about
     // them, but the stream cannot be skipped past them without reading them.
+    //
+    // ⚑⚑ THE AUTHORED DIGEST IS READ AND DISCARDED HERE, AND THE ASYMMETRY IS
+    // DELIBERATE. This function is free of any world, so it has nothing to
+    // compare against - and it should not acquire one. A save whose authored
+    // content has changed is still perfectly describable as a FILE, which is
+    // all a browser row is, and hiding it would leave a player unable to see
+    // that their campaign still exists. `loadFrom` is where the comparison
+    // belongs, because that is where acting on the answer is possible.
     SaveInfo info;
     std::uint32_t systemIndex = 0;
+    std::uint64_t authoredDigest = 0;
     std::uint32_t dockedStation = 0;
     std::uint32_t lastDockSystem = 0;
     std::uint32_t lastDockStation = 0;
     std::uint8_t hardcore = 0;
     if (!reader.readString(info.displayName) || !reader.read(info.savedAtUnix) ||
-        !reader.readString(info.systemName) || !reader.read(info.universeSeed) || !reader.read(systemIndex) ||
-        !reader.read(dockedStation) || !reader.read(lastDockSystem) || !reader.read(lastDockStation) ||
-        !reader.read(hardcore) || !reader.read(info.worldSeconds) || !reader.read(info.credits)) {
+        !reader.readString(info.systemName) || !reader.read(info.universeSeed) ||
+        !reader.read(authoredDigest) || !reader.read(systemIndex) || !reader.read(dockedStation) ||
+        !reader.read(lastDockSystem) || !reader.read(lastDockStation) || !reader.read(hardcore) ||
+        !reader.read(info.worldSeconds) || !reader.read(info.credits)) {
         return false; // truncated: a save being written when the game died
     }
     info.hardcore = hardcore != 0;
@@ -7288,6 +7394,10 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
     // spelling of it here is how the two would drift apart.
     writer.writeString(currentSystemName());
     writer.write(m_universeSeed);
+    // v17: beside the seed, because it answers the same question the seed
+    // does - "is this the galaxy this save was made in?" - for the half of the
+    // input the seed cannot see.
+    writer.write(m_authoredDigest);
     writer.write(m_currentSystem);
     writer.write(m_dockedStation);
     writer.write(m_lastDockSystem);
@@ -7350,12 +7460,31 @@ bool SpaceWorld::loadFrom(const char* path)
     std::string savedName;
     std::uint64_t savedAtUnix = 0;
     std::string savedSystemName;
+    std::uint64_t savedAuthoredDigest = 0;
     if (!reader.read(magic) || magic != kSaveMagic || !reader.read(version) || version != kSaveVersion ||
         !reader.readString(savedName) || !reader.read(savedAtUnix) || !reader.readString(savedSystemName) ||
-        !reader.read(seed) || !reader.read(systemIndex) || !reader.read(dockedStation) ||
-        !reader.read(lastDockSystem) || !reader.read(lastDockStation) || !reader.read(hardcore) ||
-        !reader.read(worldSeconds)) {
+        !reader.read(seed) || !reader.read(savedAuthoredDigest) || !reader.read(systemIndex) ||
+        !reader.read(dockedStation) || !reader.read(lastDockSystem) || !reader.read(lastDockStation) ||
+        !reader.read(hardcore) || !reader.read(worldSeconds)) {
         return false; // pre-fleet or foreign save: rejected cleanly
+    }
+
+    // ⚑⚑⚑ THE OTHER HALF OF "SAME INPUT, SAME GALAXY" (Phase 29 stage D,
+    // decisions/018 decision 7). The seed below decides whether to regenerate;
+    // this decides whether regenerating would produce the world this save was
+    // written in at all. A mod installed or removed mid-campaign changes the
+    // galaxy without changing either the seed or the build, and every index in
+    // the rest of this file - the player's system, their fleet's berths, every
+    // market - would then point somewhere else. Refused rather than migrated,
+    // for the reason every other version mismatch here is: there is no honest
+    // way to move a campaign into a different galaxy.
+    if (savedAuthoredDigest != m_authoredDigest) {
+        SOL_LOG_ERROR("save was made against different authored content (0x%016llX, this galaxy is "
+                      "0x%016llX): a [[system]] or [[constellation]] was added, changed or removed, "
+                      "in game/data or in a mod",
+                      static_cast<unsigned long long>(savedAuthoredDigest),
+                      static_cast<unsigned long long>(m_authoredDigest));
+        return false;
     }
 
     // Same seed => same galaxy, so the galaxy itself regenerates instead of

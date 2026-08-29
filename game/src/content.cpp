@@ -2808,6 +2808,32 @@ double currentSystemIndex(GameContent& content)
     return content.world().currentSystemIndex();
 }
 
+// The campaign's only handle on a place somebody PUT somewhere (Phase 29 stage
+// D, decisions/018 decision 5). Returns the galaxy index, or -1.
+//
+// ⚑⚑ IT LOOKS THE ID UP ON THE GALAXY RATHER THAN ON A DEF, AND THAT IS ONE
+// LOOKUP COVERING BOTH KINDS FOR FREE. `applyAuthoredFields` stamps
+// `SystemSpec::authoredId` for a `[[system]]` and for a
+// `[[constellation.system]]` member alike, so a member is addressable here
+// with no code that knows constellations exist - and the answer is about the
+// galaxy that was actually generated rather than about what a file asked for,
+// which is the difference between "this place exists" and "somebody wrote a
+// row". A def whose placement was refused never reaches this.
+//
+// ⚑ Every other system lookup in the 158 bindings goes by NAME, and none of
+// them could be used for this: procedural names are drawn after placement, so
+// they are a fact about one seed at one system count. An id is not.
+double systemIndexById(GameContent& content, const std::string& id)
+{
+    const std::vector<sol::sim::SystemSpec>& systems = content.world().galaxy().systems;
+    for (std::size_t i = 0; i < systems.size(); ++i) {
+        if (systems[i].authoredId == id) {
+            return static_cast<double>(i);
+        }
+    }
+    return -1.0;
+}
+
 // 0-based station index while docked (mission dock objectives), or -1.
 double dockedStationIndex(GameContent& content)
 {
@@ -3167,6 +3193,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&gateDestination>("sol", "gate_destination", this);
     m_vm.registerFunction<&stationCount>("sol", "station_count", this);
     m_vm.registerFunction<&currentSystemIndex>("sol", "system_index", this);
+    m_vm.registerFunction<&systemIndexById>("sol", "system_by_id", this);
     m_vm.registerFunction<&dockedStationIndex>("sol", "docked_station_index", this);
     m_vm.registerFunction<&missionBegin>("sol", "mission_begin", this);
     m_vm.registerFunction<&missionDeadline>("sol", "mission_deadline", this);

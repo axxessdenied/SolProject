@@ -1,0 +1,70 @@
+# Places somebody put somewhere (Phase 29). Everything else in the galaxy is
+# rolled from the seed; a `[[system]]` row is a place a person decided on, and
+# its `id` is the only handle anything - a campaign script, a mission, another
+# def - has on a particular place. Procedural names are drawn AFTER placement,
+# so they are a fact about one seed at one system count and nothing can rely on
+# them. An id is forever.
+#
+# THE WHOLE SCHEMA, in the order it reads:
+#
+#   id             required, and yours. `sol.system_by_id("<id>")` in Lua
+#                  returns the galaxy index, or -1.
+#   placement      how the generator chooses which node this becomes:
+#                  "random"     an ordinary node somewhere (the default)
+#                  "anywhere"   a NEW node at a new map position; this one
+#                               grows the galaxy rather than taking a slot
+#                  "at_system"  the capital of a faction, named in a sibling
+#                               `at_system = "<faction id>"` key
+#                  "jumps_from" a ring of gate distance around an EARLIER
+#                               authored system, in a sibling
+#                               `jumps_from = { system = "…", min = 2, max = 4 }`
+#   name           what it is called. Omit it and the generator rolls one.
+#   region         "core" | "frontier" | "fringe". Omit it and the map radius
+#                  decides, the same way it does for every other system.
+#   faction        a [[faction]] id: who holds it. Mutually exclusive with…
+#   lawless        …`lawless = true`, which is NOT the absence of `faction`:
+#                  it is an authored "nobody", and the pirate-clan pass leaves
+#                  it alone rather than handing it to whoever is nearest.
+#   primary_planet index into the [[system.planet]] rows below; the hub the
+#                  playfield is laid out around.
+#   secret         a placement flag and nothing else yet.
+#
+# Every field is optional except `id`. A row that names only a station and a
+# placement rule is legal and useful: what you leave out is filled in
+# procedurally, and what you write is never overwritten.
+#
+# ⚑ EDITING THIS FILE NEEDS A RESTART. Def hot-reload reaches the parser and
+# deliberately not the galaxy - re-placing systems under a running campaign
+# would move the player's own system out from under them. A save also records
+# a digest of this content and refuses to load against a different one, which
+# is the same rejection a save from another build already gets.
+#
+# ⚑ A MOD ADDS PLACES THE SAME WAY, in its own `systems.toml`, with no change
+# to this file. `game/mods/example-systems/` is a worked example carrying a
+# `[[constellation]]` - a group of systems placed together, keeping the lanes
+# their author drew between them - and it is deliberately NOT in the shipped
+# package (docs/decisions/018).
+
+# The one authored place the base game ships, and it is here to be an example
+# more than to be content: one system, `anywhere`, so it takes nothing away
+# from the eighty the seed produces.
+#
+# It is also the only system in the galaxy that nobody owns. Every other
+# unclaimed system ends up belonging to a pirate clan, because `spawnClans`
+# hands each connected neighbourhood of lawless systems to one - `lawless =
+# true` here says a person decided that, so the pass leaves it alone.
+[[system]]
+id = "sol.lantern"
+name = "Lantern"
+placement = "anywhere"
+region = "fringe"
+lawless = true
+primary_planet = 0
+
+[[system.planet]]
+name = "Lantern's Rest"
+radius = 3100000.0
+
+[[system.station]]
+name = "The Slow Lantern"
+station = "sol.station_refinery"

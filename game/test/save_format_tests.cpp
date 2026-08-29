@@ -5,6 +5,7 @@
 
 #include "space_world.hpp"
 
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -243,6 +244,110 @@ SOL_TEST(a_hardcore_run_says_so_in_its_own_header)
     game::SaveInfo info;
     SOL_REQUIRE(game::readSaveInfo(path.c_str(), info));
     SOL_CHECK(info.hardcore);
+
+    (void)deleteFile(path.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// Phase 29 stage D, decisions/018 decision 7: what a save says about the
+// CONTENT its galaxy was made from.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The same fixture defs plus one authored place. Two spellings of it, differing
+// in one field, so "the content changed" is the smallest change a person could
+// actually make rather than a wholesale replacement.
+constexpr const char* kAuthoredHere = R"(
+[[system]]
+id = "test.waypoint"
+name = "Waypoint"
+placement = "anywhere"
+)";
+
+constexpr const char* kAuthoredElsewhere = R"(
+[[system]]
+id = "test.waypoint"
+name = "Waypoint Two"
+placement = "anywhere"
+)";
+
+struct AuthoredFixture
+{
+    DefDatabase defs;
+    game::SpaceWorld world;
+
+    explicit AuthoredFixture(const char* authored)
+    {
+        std::string error;
+        SOL_CHECK(defs.mergeToml(kDefs, std::strlen(kDefs), "test_defs.toml", &error));
+        SOL_CHECK(defs.mergeToml(authored, std::strlen(authored), "test_systems.toml", &error));
+        SOL_CHECK(defs.validateSystems(&error));
+        world.spawn(1701);
+        SOL_CHECK(world.generateUniverse(defs));
+    }
+};
+
+} // namespace
+
+// ⚑⚑⚑ THE HAZARD THIS CATCHES IS SILENT AND IT ARRIVES THROUGH A MOD RATHER
+// THAN THROUGH A BUILD. A galaxy is regenerated from the seed on load rather
+// than serialized, and until v17 `galaxyChanged` keyed on the seed alone -
+// sound while the seed was the only input, and no longer sound now that a
+// `[[system]]` in any mod layer changes the galaxy without changing the seed
+// OR the version. The player installs a mod mid-campaign, loads, and every
+// index in the file - their system, their fleet's berths, every market - now
+// points somewhere else, with nothing anywhere saying so.
+SOL_TEST(a_save_refuses_a_galaxy_whose_authored_content_has_changed)
+{
+    const std::string path = scratchPath("authored.sav");
+    (void)deleteFile(path.c_str());
+
+    AuthoredFixture here(kAuthoredHere);
+    SOL_REQUIRE(here.world.saveTo(path.c_str(), "Before the mod"));
+
+    // The digests are facts about the content, so they differ before any file
+    // is involved. Printed because a bare refusal below would not say why.
+    AuthoredFixture elsewhere(kAuthoredElsewhere);
+    std::printf("  digests: 0x%016llX then 0x%016llX\n",
+                static_cast<unsigned long long>(here.world.authoredContentDigest()),
+                static_cast<unsigned long long>(elsewhere.world.authoredContentDigest()));
+    SOL_CHECK(here.world.authoredContentDigest() != elsewhere.world.authoredContentDigest());
+
+    // Same seed, same version, same defs in every other respect - and refused.
+    SOL_CHECK(!elsewhere.world.loadFrom(path.c_str()));
+
+    // ⚑ And the refusal is about the CONTENT rather than about the file: the
+    // world that wrote it loads it back, from the same bytes, straight after.
+    AuthoredFixture again(kAuthoredHere);
+    SOL_CHECK(again.world.authoredContentDigest() == here.world.authoredContentDigest());
+    SOL_CHECK(again.world.loadFrom(path.c_str()));
+
+    // The browser still describes it. Refusing to LIST a save whose content
+    // has moved would leave a player unable to see that their campaign exists
+    // at all, and `readSaveInfo` has no world to compare against anyway.
+    game::SaveInfo info;
+    SOL_CHECK(game::readSaveInfo(path.c_str(), info));
+    SOL_CHECK(info.displayName == "Before the mod");
+
+    (void)deleteFile(path.c_str());
+}
+
+// ⚑ Removing the last authored system is not the same fact as never having had
+// one, and a digest that folded in only the rows would say it was. The counts
+// go in for exactly this case, which is the one a player hits when they
+// UNINSTALL a mod.
+SOL_TEST(a_save_refuses_a_galaxy_whose_authored_content_was_removed_entirely)
+{
+    const std::string path = scratchPath("authored_removed.sav");
+    (void)deleteFile(path.c_str());
+
+    AuthoredFixture withContent(kAuthoredHere);
+    SOL_REQUIRE(withContent.world.saveTo(path.c_str(), "Before the uninstall"));
+
+    Fixture bare; // the same defs with no [[system]] row at all
+    SOL_CHECK(bare.world.authoredContentDigest() != withContent.world.authoredContentDigest());
+    SOL_CHECK(!bare.world.loadFrom(path.c_str()));
 
     (void)deleteFile(path.c_str());
 }

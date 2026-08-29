@@ -1143,6 +1143,20 @@ public:
     // coherence rule spans 80 systems and no amount of flying can assert it.
     [[nodiscard]] const sol::sim::GalaxyParams& galaxyParams() const { return m_galaxyParams; }
 
+    // The mining rules the galaxy was generated under, which are an INPUT to
+    // generation since Phase 13 (station siting consults a system's fields).
+    // Exposed beside `galaxyParams` for the same reason and by the same rule:
+    // regenerating this galaxy outside `generateUniverse` needs both halves,
+    // and a test that passed only one would be photographing a galaxy the game
+    // does not produce.
+    [[nodiscard]] const sol::sim::MiningParams& miningParams() const { return m_miningParams; }
+
+    // A digest of the AUTHORED content this galaxy was generated from - every
+    // `[[system]]` and `[[constellation]]` in `game/data` and every mod layer
+    // (Phase 29 stage D, decisions/018 decision 7). It rides the save beside
+    // the seed, and a mismatch refuses the load.
+    [[nodiscard]] std::uint64_t authoredContentDigest() const { return m_authoredDigest; }
+
     [[nodiscard]] std::uint32_t currentSystemIndex() const { return m_currentSystem; }
 
     [[nodiscard]] const char* currentSystemName() const
@@ -1933,6 +1947,11 @@ private:
     };
 
     std::uint64_t m_universeSeed = 0;
+    // What the authored half of this galaxy was made of (Phase 29 stage D).
+    // Recomputed by every `generateUniverse`, never restored from a save: the
+    // save carries the value it was WRITTEN with, and the comparison is the
+    // whole point.
+    std::uint64_t m_authoredDigest = 0;
     // Sim seconds since the run began; market intel is stamped against it, so
     // it has to survive a save like any other world state.
     double m_worldSeconds = 0.0;

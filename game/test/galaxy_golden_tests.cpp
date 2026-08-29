@@ -177,6 +177,49 @@ struct Digests
     return true;
 }
 
+// ⚑⚑⚑⚑ AND THE GALAXY THIS FILE PHOTOGRAPHS IS NOT THE ONE THE GAME SHIPS ANY
+// MORE - IT IS THE ONE WITH THE AUTHORED CONTENT TAKEN BACK OUT. Phase 29's
+// criterion is *"a galaxy generated with NO AUTHORED SYSTEMS PRESENT is
+// byte-identical to today's"*, and since stage D `game/data/systems.toml`
+// exists, so loading `game/data` whole no longer produces that galaxy. The
+// strip happens at the PARAMS layer rather than by filtering the defs, because
+// that is where the claim is actually made: `GalaxyParams::authoredSystems`
+// says of itself that empty "is the pre-29 galaxy exactly, which is what
+// game.unit's golden holds this to". This is that sentence, executed.
+//
+// ⚑⚑ A STRIP THAT STRIPS NOTHING LOOKS EXACTLY LIKE A STRIP THAT WORKS, which
+// is the same species of invisible failure as an install EXCLUDE that matches
+// nothing - the other half of this same stage. So it is checked: the caller
+// requires that something was removed, and the count is printed. Delete
+// `game/data/systems.toml` and this test stops certifying anything, loudly.
+struct StrippedGalaxy
+{
+    Galaxy galaxy;
+    std::size_t authoredSystems = 0;
+    std::size_t constellations = 0;
+};
+
+[[nodiscard]] StrippedGalaxy generateWithoutAuthoredContent(const DefDatabase& defs, game::SpaceWorld& world)
+{
+    StrippedGalaxy out;
+    world.spawn(game::kDefaultUniverseSeed);
+    if (!world.generateUniverse(defs)) {
+        return out; // the caller's SOL_REQUIRE on the counts reports this
+    }
+    // The params the shipped defs actually produced, with the authored halves
+    // emptied. Everything else - faction count, station archetypes, their
+    // weights and biases, the mining rules station siting consults - stays
+    // exactly as `generateUniverse` built it, so this is the shipped galaxy
+    // minus one input rather than a fixture that resembles it.
+    sol::sim::GalaxyParams params = world.galaxyParams();
+    out.authoredSystems = params.authoredSystems.size();
+    out.constellations = params.constellations.size();
+    params.authoredSystems.clear();
+    params.constellations.clear();
+    out.galaxy = sol::sim::generateGalaxy(params, &world.miningParams());
+    return out;
+}
+
 // A bare hash comparison is undiagnosable when it fails, so say what came out,
 // in a form that can be pasted straight back into the tables below on the day
 // changing a golden is a DECISION rather than an accident.
@@ -260,9 +303,14 @@ SOL_TEST(shipped_seed_galaxy_keeps_its_recorded_structure)
     SOL_REQUIRE(loadShippedDefs(defs));
 
     game::SpaceWorld world;
-    world.spawn(game::kDefaultUniverseSeed);
-    SOL_CHECK(world.generateUniverse(defs));
-    const Galaxy& galaxy = world.galaxy();
+    const StrippedGalaxy stripped = generateWithoutAuthoredContent(defs, world);
+    // The strip did something. Without this the whole file passes vacuously
+    // the day `game/data/systems.toml` is emptied or renamed.
+    std::printf("  stripped %zu authored system(s) and %zu constellation(s) from the shipped defs\n",
+                stripped.authoredSystems,
+                stripped.constellations);
+    SOL_REQUIRE(stripped.authoredSystems + stripped.constellations > 0);
+    const Galaxy& galaxy = stripped.galaxy;
 
     // Counts first: a failure here says WHAT the galaxy is before a hash says
     // only that it differs, and `anywhere` placement growing `galaxy.systems`
@@ -285,9 +333,9 @@ SOL_TEST(shipped_seed_galaxy_keeps_its_recorded_geometry_on_a_known_libm)
     SOL_REQUIRE(loadShippedDefs(defs));
 
     game::SpaceWorld world;
-    world.spawn(game::kDefaultUniverseSeed);
-    SOL_CHECK(world.generateUniverse(defs));
-    const Digests d = digestOf(world.galaxy());
+    const StrippedGalaxy stripped = generateWithoutAuthoredContent(defs, world);
+    SOL_REQUIRE(stripped.authoredSystems + stripped.constellations > 0);
+    const Digests d = digestOf(stripped.galaxy);
 
     const GeometryGolden* golden = geometryGoldenForThisBuild();
     if (golden == nullptr) {
@@ -313,11 +361,10 @@ SOL_TEST(each_digest_layer_notices_a_change_in_its_own_fields)
     SOL_REQUIRE(loadShippedDefs(defs));
 
     game::SpaceWorld world;
-    world.spawn(game::kDefaultUniverseSeed);
-    SOL_CHECK(world.generateUniverse(defs));
-    const Digests base = digestOf(world.galaxy());
+    const StrippedGalaxy stripped = generateWithoutAuthoredContent(defs, world);
+    const Digests base = digestOf(stripped.galaxy);
 
-    Galaxy mutated = world.galaxy();
+    Galaxy mutated = stripped.galaxy;
     SOL_REQUIRE(mutated.systems.size() >= 2);
     SOL_REQUIRE(!mutated.links.empty());
     SOL_REQUIRE(!mutated.clans.empty());
@@ -326,22 +373,22 @@ SOL_TEST(each_digest_layer_notices_a_change_in_its_own_fields)
     mutated.systems[1].name += "x";
     SOL_CHECK(digestOf(mutated).structure != base.structure);
 
-    mutated = world.galaxy();
+    mutated = stripped.galaxy;
     mutated.links.pop_back();
     SOL_CHECK(digestOf(mutated).structure != base.structure);
 
-    mutated = world.galaxy();
+    mutated = stripped.galaxy;
     mutated.clans[0].homeSystem += 1;
     SOL_CHECK(digestOf(mutated).structure != base.structure);
 
     // The two that must move ONE number each: geometry is not allowed to leak
     // into the digest that other platforms are held to.
-    mutated = world.galaxy();
+    mutated = stripped.galaxy;
     mutated.systems[1].mapPosition.y += 1.0f;
     SOL_CHECK(digestOf(mutated).mapGeometry != base.mapGeometry);
     SOL_CHECK(digestOf(mutated).structure == base.structure);
 
-    mutated = world.galaxy();
+    mutated = stripped.galaxy;
     mutated.systems[1].planets[0].position.z += 1.0;
     SOL_CHECK(digestOf(mutated).systemGeometry != base.systemGeometry);
     SOL_CHECK(digestOf(mutated).structure == base.structure);

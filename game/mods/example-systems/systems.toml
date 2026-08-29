@@ -1,0 +1,119 @@
+# The Sable Chain - a worked example of a mod adding places to the galaxy.
+#
+# Nothing in `game/data` is touched by this file. A mod's `systems.toml` is
+# merged over the base game's the same way its `ships.toml` would be, so
+# authored places are ordinary mod content: a total-overhaul mod can replace
+# the map, not just the rules.
+#
+# The base game's own `game/data/systems.toml` documents the `[[system]]`
+# schema field by field. What is demonstrated HERE is the other def kind and
+# the one thing it can do that a lone system cannot.
+
+# ---------------------------------------------------------------------------
+# A CONSTELLATION IS A GROUP PLACED AS A UNIT, KEEPING THE LANES BETWEEN ITS
+# MEMBERS.
+#
+# The generator decides every other jump lane in the galaxy: it draws a
+# minimum spanning tree over the systems and then adds a few nearest-neighbour
+# lanes on top. A `[[constellation.link]]` row is the one place an author gets
+# to say "these two are connected" and have the graph honour it, because the
+# lanes are seeded BEFORE that pass runs rather than patched in afterwards.
+#
+# `placement` has exactly one legal value here, and the key exists so that can
+# be said out loud: the other three rules REPLACE a system the generator
+# already made, and a group cannot replace one node as a unit. A constellation
+# is always an insertion - which is also the only reason it can carry internal
+# lanes at all, since a replacement inherits the neighbours the generator
+# already chose for it.
+#
+# Members are `[[constellation.system]]` rows rather than ids pointing at
+# `[[system]]` rows elsewhere, because a member has no placement of its own:
+# the group carries it. Everything else a `[[system]]` can say, a member can
+# say too - name, region, faction, planets, stations.
+[[constellation]]
+id = "example.sable_chain"
+placement = "anywhere"
+
+[[constellation.system]]
+id = "example.sable_gate"
+name = "Sable Gate"
+region = "fringe"
+faction = "sol.navy"
+
+[[constellation.system.planet]]
+name = "Sable Gate I"
+radius = 2900000.0
+
+[[constellation.system.station]]
+name = "Chainhead"
+station = "sol.station_refinery"
+
+[[constellation.system]]
+id = "example.sable_reach"
+name = "Sable Reach"
+region = "fringe"
+lawless = true
+
+[[constellation.system]]
+id = "example.sable_deep"
+name = "Sable Deep"
+region = "fringe"
+lawless = true
+
+[[constellation.system]]
+id = "example.sable_end"
+name = "Sable End"
+region = "fringe"
+lawless = true
+secret = true
+
+[[constellation.system.planet]]
+name = "The Last Anvil"
+radius = 5400000.0
+
+# The lanes, and they are a CHAIN rather than a huddle: gate - reach - deep -
+# end, one way in and one way through. Both ends of every lane must be members
+# of this same group; a lane out of the constellation is an ordinary gate, and
+# which gates a system gets is the generator's to decide.
+#
+# Leave the `[[constellation.link]]` rows out entirely and the members are
+# chained in declaration order, which is this exact shape - they are written
+# here because a file that says what it means is the point of the example.
+[[constellation.link]]
+from = "example.sable_gate"
+to = "example.sable_reach"
+
+[[constellation.link]]
+from = "example.sable_reach"
+to = "example.sable_deep"
+
+[[constellation.link]]
+from = "example.sable_deep"
+to = "example.sable_end"
+
+# ---------------------------------------------------------------------------
+# And one ordinary `[[system]]` placed BY MEASUREMENT rather than by position:
+# somewhere between one and four gate jumps of the chain's mouth, whichever
+# node satisfies that at whatever seed the galaxy was rolled with.
+#
+# ⚑ It anchors on a constellation member, and it may do so no matter which of
+# the two is declared first. A group makes its own nodes and so cannot fail to
+# be placed; groups therefore resolve before any placement rule does. Anchoring
+# on another `[[system]]` is stricter - that one has to be declared earlier in
+# the file, because it is placed in def order.
+#
+# ⚑ A ring is a claim about a gate graph, so it is satisfiable or not PER
+# SEED, and no amount of checking this file could settle it. If nothing is in
+# range the game refuses to start and names the file, the id and the rule -
+# rather than dropping the system somewhere plausible and letting a campaign
+# begin in the wrong place.
+[[system]]
+id = "example.sable_watch"
+name = "Sable Watch"
+placement = "jumps_from"
+jumps_from = { system = "example.sable_gate", min = 1, max = 4 }
+faction = "sol.navy"
+
+[[system.station]]
+name = "The Long Watch"
+station = "sol.station_factory"

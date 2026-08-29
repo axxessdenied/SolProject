@@ -74,6 +74,58 @@ takes one placement rule.
    replace the map, not just the rules — which is the strongest single answer to
    the "yours to break" pillar the arc contains.
 
+## Fourth amendment — 2026-08-29, when Phase 29 stage D was built
+
+Shipping the first authored content changed nothing about what an authored
+system *is* and quite a lot about what the tests around it were actually
+asserting. Nothing above is refuted; four things are added.
+
+- **⚑⚑⚑ THE MOMENT `game/data` SHIPS AN AUTHORED SYSTEM, EVERY LITERAL INDEX IN
+  THE SUITE BECOMES A STATEMENT ABOUT HOW MUCH CONTENT THE BASE GAME CARRIES.**
+  Stages A–C could write *"the appended system is index 80"* because there was
+  no authored content but the fixture's. One `[[system]]` in `game/data` made
+  four of those literals wrong at once — and each of them was wrong in a way
+  that read as the fixture being broken. They are now derived from **def
+  order**: everything the seed produced, then every `anywhere` row in def order,
+  then every constellation's members contiguously. That is the generator's own
+  documented rule restated, and it is a better assertion than the numbers were.
+- **⚑⚑⚑ THE GOLDEN NOW PHOTOGRAPHS A GALAXY THE GAME NO LONGER GENERATES, AND
+  THE STRIP THAT MAKES IT DO SO NEEDS ITS OWN GUARD.** The exit criterion is
+  *"with no authored systems present"*, so the golden takes the params
+  `generateUniverse` built and empties `authoredSystems`/`constellations` before
+  regenerating — the layer where `GalaxyParams` already says empty means the
+  pre-29 galaxy. **A strip that strips nothing looks exactly like a strip that
+  works**, which is the same species of invisible failure as an install EXCLUDE
+  that matches nothing — the other half of this same stage — so it requires that
+  something was removed and prints the count. Both counterfactuals were RUN: with
+  the strip disabled the golden fails on three digests, and with
+  `game/data/systems.toml` moved aside it refuses to certify anything.
+- **⚑⚑ THE SAVE DIGEST OF DECISION 7 IS OVER THE RESOLVED *INPUT*, NOT OVER THE
+  GALAXY AND NOT OVER THE FILE BYTES.** Digesting the generated galaxy answers
+  the same question and costs a full generation at load time before the answer
+  arrives; digesting the file would refuse a save because somebody reflowed a
+  comment. The authored rows are already in hand in `GalaxyParams`, and they are
+  the only thing that can differ at a fixed seed and a fixed build. ⚑ The counts
+  are folded in beside the rows, so **removing the last authored system is a
+  different digest from never having had one** — which is the case a player hits
+  when they uninstall a mod. ⚑ And `readSaveInfo` reads the digest and
+  **discards** it: a save whose content has moved is still perfectly describable
+  as a *file*, and hiding it would leave a player unable to see that their
+  campaign exists. The comparison belongs where acting on it is possible.
+- **⚑⚑ THE SUB-HEADER HAZARD THAT COST PHASE 25 A SESSION DOES NOT APPLY HERE,
+  AND THAT WAS CHECKED BEFORE THE FILE SHIPPED RATHER THAN AFTER.** `def_doc` —
+  the comment-preserving document the Forge edits through — refuses a plain
+  `[table]` header, and `systems.toml` is the first committed def file with a
+  nested header in it. `[[system.planet]]` is still a `[[table]]`, so it becomes
+  a row of its own with its header line kept raw and round-trips byte for byte;
+  `systems.toml` is in the round-trip suite as of this stage. The Forge itself
+  opens five named documents and never sees this file at all.
+- **⚑ AND THE CONTENT THIS REPOSITORY SHIPS IS ITSELF A PER-SEED CLAIM.** The
+  example mod places a system by `jumps_from`, `--seed N` is a command-line
+  flag, and a ring satisfiable at 1701 and nowhere else would turn every other
+  galaxy into a refusal at boot. The committed content is therefore placed at
+  eight seeds by a test rather than at the one the game launches with.
+
 ## Third amendment — 2026-08-29, when Phase 29 stage C was built
 
 Building constellations narrowed one sentence in this record and confirmed

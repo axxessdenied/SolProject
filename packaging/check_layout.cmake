@@ -63,6 +63,20 @@ sol_require_file("README.txt")
 # game/mods managed not to exist at all for seventeen phases.
 sol_require_file("mods/README.md")
 
+# ⚑⚑ Phase 29 stage D. The repository now CONTAINS a mod - the worked example
+# for authored systems - and every first-level subdirectory of mods/ is an
+# active layer with no enable/disable anywhere in the game. So an example that
+# reached a package would silently add five systems to every player's galaxy.
+# game/CMakeLists.txt excludes it and refuses to configure if the pattern
+# stops matching; this is the other half, asserted against an installed tree
+# rather than against the rule that produced it.
+file(GLOB installedMods LIST_DIRECTORIES true "${SOL_PREFIX}/mods/*")
+foreach(entry IN LISTS installedMods)
+    if(IS_DIRECTORY "${entry}")
+        set(failures "${failures}\n  PRESENT BUT MUST NOT BE (mods/ ships empty-but-present; a mod in the package is an active layer): ${entry}")
+    endif()
+endforeach()
+
 # cooked/ is generated into the build tree, so its contents depend on a cook
 # having run. A named file is not enough - assert the whole set is there.
 file(GLOB cookedFiles "${SOL_PREFIX}/cooked/*")

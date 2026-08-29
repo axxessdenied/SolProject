@@ -97,6 +97,65 @@ station = "sol.station_refinery"
     return sol::sim::kNoFaction;
 }
 
+// ⚑⚑⚑ EVERY INDEX IN THIS SUITE IS DERIVED FROM DEF ORDER RATHER THAN WRITTEN
+// DOWN, AND STAGE D IS WHY. Stages A-C could say "the appended system is index
+// 80" because `game/data` shipped no authored content at all and a fixture was
+// the only thing being appended. Since stage D it ships `sol.lantern`, so every
+// literal index in this file was a statement about how much content the base
+// game happens to carry, wearing the costume of a statement about the fixture
+// under test. The helpers below restate the generator's own documented rule -
+// everything the seed produced first, then every `anywhere` [[system]] in def
+// order, then every constellation's members contiguously in def order - which
+// is a better assertion than the numbers were, because it says what it means.
+constexpr std::size_t kProceduralSystems = 80; // what the golden records
+
+[[nodiscard]] std::size_t anywhereCount(const DefDatabase& defs)
+{
+    std::size_t count = 0;
+    for (const sol::assets::SystemDef& system : defs.systems()) {
+        count += system.placement == "anywhere" ? 1 : 0;
+    }
+    return count;
+}
+
+[[nodiscard]] std::size_t memberCount(const DefDatabase& defs)
+{
+    std::size_t count = 0;
+    for (const sol::assets::ConstellationDef& group : defs.constellations()) {
+        count += group.members.size();
+    }
+    return count;
+}
+
+// How many nodes these defs ADD to the galaxy rather than replace.
+[[nodiscard]] std::size_t appendedNodeCount(const DefDatabase& defs)
+{
+    return anywhereCount(defs) + memberCount(defs);
+}
+
+// Where an `anywhere` [[system]] should land: after the procedural galaxy, in
+// def order among the other `anywhere` rows.
+[[nodiscard]] std::size_t expectedAnywhereIndex(const DefDatabase& defs, const char* id)
+{
+    std::size_t ordinal = 0;
+    for (const sol::assets::SystemDef& system : defs.systems()) {
+        if (system.placement != "anywhere") {
+            continue;
+        }
+        if (system.id == id) {
+            break;
+        }
+        ++ordinal;
+    }
+    return kProceduralSystems + ordinal;
+}
+
+// Where a constellation's members begin: after every `anywhere` system.
+[[nodiscard]] std::size_t expectedConstellationBase(const DefDatabase& defs)
+{
+    return kProceduralSystems + anywhereCount(defs);
+}
+
 [[nodiscard]] std::uint32_t archetypeIndexOf(const DefDatabase& defs, const char* id)
 {
     for (std::size_t i = 0; i < defs.stations().size(); ++i) {
@@ -157,9 +216,13 @@ SOL_TEST(an_authored_system_reaches_the_galaxy_with_every_field_it_was_written_w
     SOL_CHECK(!harrow->gates.empty());
     SOL_CHECK(!sol::sim::routeBetween(galaxy, 0, index).empty());
 
-    // And the galaxy did not grow: a `random` system consumes an ordinary
-    // system's slot. `anywhere` is what grows it, and that is stage B.
-    SOL_CHECK(galaxy.systems.size() == 80);
+    // And the galaxy did not grow BY THIS ROW: a `random` system consumes an
+    // ordinary system's slot. `anywhere` is what grows it, and that is stage B.
+    // ⚑ The 81st is `sol.lantern`, which `game/data/systems.toml` has shipped
+    // since stage D - so this count is a statement about `test.harrow` plus
+    // whatever the base game authors, and it is written that way rather than
+    // as a literal that would need re-deriving the next time either changes.
+    SOL_CHECK(galaxy.systems.size() == kProceduralSystems + appendedNodeCount(defs));
 }
 
 // ⚑ A mod that names something the base game does not have is refused BEFORE it
@@ -267,8 +330,8 @@ SOL_TEST(the_three_stage_b_rules_reach_the_galaxy_through_the_real_defs)
                 outpostIndex,
                 capitalIndex,
                 picketIndex);
-    SOL_CHECK(galaxy.systems.size() == 81);
-    SOL_CHECK(outpostIndex == 80);
+    SOL_CHECK(galaxy.systems.size() == kProceduralSystems + appendedNodeCount(defs));
+    SOL_CHECK(outpostIndex == expectedAnywhereIndex(defs, "test.outpost"));
     SOL_CHECK(outpost->name == "Outpost");
 
     // ⚑⚑ THE ONE THIS SUITE IS FOR: "sol.navy" resolved to the CAPITAL of the
@@ -327,8 +390,9 @@ SOL_TEST(a_stage_a_file_still_places_after_stage_b)
     game::SpaceWorld world;
     world.spawn(game::kDefaultUniverseSeed);
     SOL_REQUIRE(world.generateUniverse(defs));
-    // A replacement, so the galaxy is still the size the golden records.
-    SOL_CHECK(world.galaxy().systems.size() == 80);
+    // A replacement, so this file adds nothing to the size the base game's own
+    // authored content already made it.
+    SOL_CHECK(world.galaxy().systems.size() == kProceduralSystems + appendedNodeCount(defs));
     SOL_CHECK(findAuthored(world.galaxy(), "test.harrow") != nullptr);
 }
 
@@ -443,10 +507,12 @@ SOL_TEST(a_constellation_reaches_the_galaxy_as_a_group_with_its_lanes_intact)
     // Five appended members plus one `jumps_from` REPLACEMENT, which consumes
     // an ordinary system's slot rather than adding one: 80 + 5.
     std::printf("  %zu systems\n", galaxy.systems.size());
-    SOL_CHECK(galaxy.systems.size() == 85);
+    SOL_CHECK(galaxy.systems.size() == kProceduralSystems + appendedNodeCount(defs));
 
     const std::uint32_t hub = indexOfAuthored(galaxy, "test.deadfall_hub");
-    SOL_REQUIRE(hub == 80); // members are contiguous, at the end, in def order
+    // Members are contiguous, at the end, in def order - after every `anywhere`
+    // system, this file's and the base game's alike.
+    SOL_REQUIRE(hub == expectedConstellationBase(defs));
 
     // The hub kept every field its author wrote, resolved through the shipped
     // defs: the Navy is a claimant index, the refinery is an archetype index.
@@ -465,7 +531,7 @@ SOL_TEST(a_constellation_reaches_the_galaxy_as_a_group_with_its_lanes_intact)
     const char* spokes[4] = {"test.deadfall_n", "test.deadfall_e", "test.deadfall_s", "test.deadfall_w"};
     for (std::uint32_t i = 0; i < 4; ++i) {
         const std::uint32_t spoke = indexOfAuthored(galaxy, spokes[i]);
-        SOL_REQUIRE(spoke == 81 + i);
+        SOL_REQUIRE(spoke == expectedConstellationBase(defs) + 1 + i);
         SOL_CHECK(linked(galaxy, hub, spoke));
         SOL_CHECK(sol::sim::routeBetween(galaxy, hub, spoke).size() == 2);
         SOL_CHECK(!sol::sim::routeBetween(galaxy, 0, spoke).empty());
@@ -496,7 +562,9 @@ SOL_TEST(a_file_with_no_constellation_is_the_galaxy_stage_b_left)
 {
     DefDatabase defs;
     SOL_REQUIRE(loadShippedDefs(defs));
-    SOL_CHECK(defs.constellations().empty()); // nothing shipped declares one yet
+    // game/data still declares no constellation of its own - the worked example
+    // for one lives in game/mods/example-systems/, which is not on this path.
+    SOL_CHECK(defs.constellations().empty());
     std::string error;
     SOL_REQUIRE(defs.mergeToml(kStageBAuthored, std::strlen(kStageBAuthored), "test/systems.toml", &error));
     SOL_REQUIRE(defs.validateSystems(&error));
@@ -504,5 +572,204 @@ SOL_TEST(a_file_with_no_constellation_is_the_galaxy_stage_b_left)
     game::SpaceWorld world;
     world.spawn(game::kDefaultUniverseSeed);
     SOL_REQUIRE(world.generateUniverse(defs));
-    SOL_CHECK(world.galaxy().systems.size() == 81); // one `anywhere`, two replacements
+    // One `anywhere` and two replacements here, plus whatever the base game
+    // appends on its own account.
+    SOL_CHECK(world.galaxy().systems.size() == kProceduralSystems + appendedNodeCount(defs));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 29 stage D: the content this repository actually ships, and the mod
+// beside it.
+//
+// ⚑⚑ THESE RUN AGAINST THE COMMITTED FILES RATHER THAN A FIXTURE, WHICH IS THE
+// WHOLE POINT OF THEM. Every test above proves the machinery with a string
+// literal; nothing anywhere proved that the TOML a person will read as the
+// reference example is itself valid, places, and survives the pipeline. A
+// worked example that does not work is worse than none.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] bool mergeExampleMod(DefDatabase& defs)
+{
+    std::string error;
+    if (!defs.mergeDirectory(SOL_EXAMPLE_MOD_DIR, &error)) {
+        std::printf("  cannot load %s: %s\n", SOL_EXAMPLE_MOD_DIR, error.c_str());
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+// The one authored place the base game ships, end to end through the real
+// defs - and addressable by the id `sol.system_by_id` looks up, which is what
+// turns this phase from a generator feature into the Act 2 dependency it was
+// sequenced as.
+SOL_TEST(the_base_game_ships_one_authored_place_and_it_is_findable_by_its_id)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    std::string error;
+    SOL_REQUIRE(defs.validateSystems(&error));
+    // The claim the golden's strip depends on. If this is ever false the
+    // golden stops certifying anything, and it says so there too.
+    SOL_REQUIRE(!defs.systems().empty());
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    SOL_REQUIRE(world.generateUniverse(defs));
+    const Galaxy& galaxy = world.galaxy();
+
+    const SystemSpec* lantern = findAuthored(galaxy, "sol.lantern");
+    SOL_REQUIRE(lantern != nullptr);
+    const std::uint32_t index = static_cast<std::uint32_t>(lantern - galaxy.systems.data());
+    std::printf(
+        "  sol.lantern is system %u of %zu, '%s'\n", index, galaxy.systems.size(), lantern->name.c_str());
+
+    // `anywhere`, so it is appended rather than taking an ordinary system's
+    // slot: nothing the seed produced moved to make room for it.
+    SOL_CHECK(index == expectedAnywhereIndex(defs, "sol.lantern"));
+    SOL_CHECK(galaxy.systems.size() == kProceduralSystems + appendedNodeCount(defs));
+
+    SOL_CHECK(lantern->name == "Lantern");
+    SOL_CHECK(lantern->region == sol::sim::Region::Fringe);
+    SOL_REQUIRE(!lantern->planets.empty());
+    SOL_CHECK(lantern->planets[0].name == "Lantern's Rest");
+    SOL_CHECK(lantern->primaryPlanet == 0);
+    SOL_REQUIRE(lantern->stations.size() == 1);
+    SOL_CHECK(lantern->stations[0].name == "The Slow Lantern");
+    SOL_CHECK(lantern->stations[0].archetype == archetypeIndexOf(defs, "sol.station_refinery"));
+
+    // ⚑⚑ AUTHORED LAWLESSNESS, AND IT IS THE ONE FIELD ON THIS ROW THAT COULD
+    // FAIL QUIETLY. Every OTHER unclaimed system in the galaxy ends up
+    // belonging to a pirate clan, because `spawnClans` gives each connected
+    // neighbourhood of lawless systems to one - so "nobody owns it" is a claim
+    // that survives only because that pass was taught to skip an authored
+    // owner, and a broken skip would leave a plausible clan sitting here.
+    SOL_CHECK(lantern->factionIndex == sol::sim::kNoFaction);
+
+    // It is a place you can get to, not a place beside the galaxy.
+    SOL_CHECK(!lantern->gates.empty());
+    SOL_CHECK(!sol::sim::routeBetween(galaxy, 0, index).empty());
+}
+
+// The other half of decision 6: the example mod is real content that really
+// merges, and it adds places without `game/data` knowing it exists.
+//
+// ⚑ Decision 6 refused making this a test fixture INSTEAD of a mod, on the
+// grounds that a fixture "proves the merge and nothing about the runtime".
+// That still holds - the runtime proof is the drive - and this is the
+// regression net under it rather than a substitute for it.
+SOL_TEST(the_example_mod_adds_places_without_touching_the_base_game)
+{
+    DefDatabase base;
+    SOL_REQUIRE(loadShippedDefs(base));
+    game::SpaceWorld without;
+    without.spawn(game::kDefaultUniverseSeed);
+    SOL_REQUIRE(without.generateUniverse(base));
+
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    SOL_REQUIRE(mergeExampleMod(defs));
+    std::string error;
+    if (!defs.validateSystems(&error)) {
+        std::printf("  %s\n", error.c_str());
+    }
+    SOL_REQUIRE(defs.validateSystems(&error));
+    SOL_REQUIRE(defs.constellations().size() == 1);
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    SOL_REQUIRE(world.generateUniverse(defs));
+    const Galaxy& galaxy = world.galaxy();
+    std::printf(
+        "  %zu systems with the mod, %zu without\n", galaxy.systems.size(), without.galaxy().systems.size());
+
+    // Four members appended plus one `jumps_from` replacement, on top of
+    // whatever the base game already appends.
+    SOL_CHECK(galaxy.systems.size() == kProceduralSystems + appendedNodeCount(defs));
+    SOL_CHECK(galaxy.systems.size() == without.galaxy().systems.size() + 4);
+
+    // ⚑⚑ "WITHOUT TOUCHING THE BASE GAME", ASSERTED RATHER THAN ASSUMED. The
+    // base game's own authored system is appended from the same stream the
+    // mod's constellation draws from, so a change to the order those two
+    // passes run in would move it - silently, and only for players with a mod
+    // installed. Same index, same map position, both layers or one.
+    const SystemSpec* lantern = findAuthored(galaxy, "sol.lantern");
+    const SystemSpec* lanternAlone = findAuthored(without.galaxy(), "sol.lantern");
+    SOL_REQUIRE(lantern != nullptr);
+    SOL_REQUIRE(lanternAlone != nullptr);
+    SOL_CHECK(lantern - galaxy.systems.data() == lanternAlone - without.galaxy().systems.data());
+    SOL_CHECK(lantern->mapPosition.x == lanternAlone->mapPosition.x);
+    SOL_CHECK(lantern->mapPosition.z == lanternAlone->mapPosition.z);
+
+    // The group, contiguous and in declaration order, each member keeping what
+    // its author wrote.
+    const char* chain[4] = {
+        "example.sable_gate", "example.sable_reach", "example.sable_deep", "example.sable_end"};
+    for (std::size_t i = 0; i < 4; ++i) {
+        const std::uint32_t member = indexOfAuthored(galaxy, chain[i]);
+        SOL_REQUIRE(member != sol::sim::kNoSystem);
+        SOL_CHECK(member == expectedConstellationBase(defs) + i);
+        SOL_CHECK(!sol::sim::routeBetween(galaxy, 0, member).empty());
+    }
+    SOL_CHECK(findAuthored(galaxy, "example.sable_gate")->name == "Sable Gate");
+    SOL_CHECK(findAuthored(galaxy, "example.sable_gate")->factionIndex == majorIndexOf(defs, "sol.navy"));
+    SOL_CHECK(findAuthored(galaxy, "example.sable_end")->secret);
+    SOL_REQUIRE(!findAuthored(galaxy, "example.sable_end")->planets.empty());
+    SOL_CHECK(findAuthored(galaxy, "example.sable_end")->planets[0].name == "The Last Anvil");
+
+    // ⚑⚑ THE LANES ARE DELIBERATELY NOT ASSERTED HERE, AND THAT IS STAGE C's
+    // FINDING BEING APPLIED RATHER THAN FORGOTTEN. A group's members sit in a
+    // tight cluster by construction, so Prim plus the extra-lane pass draw a
+    // near-complete mesh over any small group BY ACCIDENT - a four-member chain
+    // asserting its own three lanes passes with the seeding removed entirely.
+    // The shapes that can fail are a star over five and a path through six, and
+    // `a_constellation_reaches_the_galaxy_as_a_group_with_its_lanes_intact`
+    // above carries both. An assertion here would read as coverage and be none.
+
+    // The RING, which is not vacuous: a measured gate distance the generator
+    // had to search for, against the file's own declared bounds.
+    const std::uint32_t gate = indexOfAuthored(galaxy, "example.sable_gate");
+    const std::uint32_t watch = indexOfAuthored(galaxy, "example.sable_watch");
+    SOL_REQUIRE(watch != sol::sim::kNoSystem);
+    const std::vector<std::uint32_t> route = sol::sim::routeBetween(galaxy, watch, gate);
+    SOL_REQUIRE(!route.empty());
+    const std::size_t jumps = route.size() - 1;
+    std::printf("  example.sable_watch is %zu jump(s) from the chain's mouth\n", jumps);
+    SOL_CHECK(jumps >= 1 && jumps <= 4);
+
+    // ⚑ And the anchor is a constellation MEMBER declared in a group this file
+    // writes BEFORE the [[system]] anchoring on it - which is legal only
+    // because a group cannot fail to be placed and so resolves before any rule.
+    SOL_CHECK(galaxy.systems[watch].name == "Sable Watch");
+}
+
+// ⚑⚑⚑ SATISFIABILITY IS A PER-SEED VERDICT AND NO LOAD-TIME CHECK CAN SETTLE
+// IT, WHICH IS EXACTLY WHY THE CONTENT THIS REPOSITORY SHIPS NEEDS THIS TEST.
+// `jumps_from` is a claim about a gate graph; the gate graph comes from the
+// seed; and `--seed N` is a command-line flag. A ring that happens to be
+// satisfiable at 1701 and nowhere else would turn every other galaxy into a
+// refusal at boot - and the example mod would be a worked example of something
+// that does not work.
+SOL_TEST(the_authored_content_in_this_repository_places_at_every_seed_checked)
+{
+    constexpr std::uint64_t kSeeds[] = {1701, 1, 2, 7, 42, 9'999, 123'456, 0xDEAD'BEEFull};
+    for (const std::uint64_t seed : kSeeds) {
+        DefDatabase defs;
+        SOL_REQUIRE(loadShippedDefs(defs));
+        SOL_REQUIRE(mergeExampleMod(defs));
+        std::string error;
+        SOL_REQUIRE(defs.validateSystems(&error));
+
+        game::SpaceWorld world;
+        world.spawn(seed);
+        const bool placed = world.generateUniverse(defs);
+        std::printf("  seed %llu: %s, %zu systems\n",
+                    static_cast<unsigned long long>(seed),
+                    placed ? "placed" : "REFUSED",
+                    world.galaxy().systems.size());
+        SOL_CHECK(placed);
+    }
 }

@@ -121,7 +121,30 @@ install(TARGETS sol_game RUNTIME DESTINATION . COMPONENT game)
 # and a player whose mods directory vanished would see identical behaviour.
 # Shipping the directory is what makes the layer visible.
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/game/data/ DESTINATION data COMPONENT game)
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/game/mods/ DESTINATION mods COMPONENT game)
+
+# ⚑⚑⚑ Phase 29 stage D, decisions/018 decision 6. The example mod lives in the
+# repository for anyone with the source and is kept OUT of the package, because
+# every first-level subdirectory of mods/ is an active layer with no
+# enable/disable anywhere in the game - so shipping an example would change the
+# galaxy of every player who installs a build, turning a demo into content.
+#
+# ⚑⚑ AND THE EXCLUDE GETS ITS OWN CHECK, BECAUSE AN EXCLUDE THAT SILENTLY
+# MATCHES NOTHING LOOKS EXACTLY LIKE AN EXCLUDE THAT WORKS. Rename the
+# directory, or drop the prefix from a future example, and the pattern below
+# would go on excluding nothing at all while the package quietly grew a mod.
+# This project has already paid once for a mods directory whose absence and
+# whose emptiness were indistinguishable; the glob is what makes the rule say
+# something falsifiable at configure time. `package.layout` asserts the other
+# half - that no example reached an installed tree.
+file(GLOB solExampleMods LIST_DIRECTORIES true ${CMAKE_SOURCE_DIR}/game/mods/example-*)
+if(NOT solExampleMods)
+    message(FATAL_ERROR
+        "No game/mods/example-* directory exists, so the EXCLUDE below matches nothing. "
+        "Either restore the example mod or delete the exclusion - a rule that guards nothing "
+        "reads exactly like one that works.")
+endif()
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/game/mods/ DESTINATION mods COMPONENT game
+    PATTERN "example-*" EXCLUDE)
 
 # ⚑⚑ Generated payload, and the reason it needs a guard rather than a rule.
 # cooked/ and shaders/ are produced INTO the build tree by sol_cook_assets and
@@ -256,6 +279,13 @@ target_link_libraries(sol_game_tests PRIVATE sol::test sol_game_lib)
 # promise rather than after.
 target_compile_definitions(sol_game_tests
     PRIVATE SOL_DEF_DATA_DIR="${CMAKE_SOURCE_DIR}/game/data")
+# Phase 29 stage D. The example mod is content this repository SHIPS IN SOURCE
+# and deliberately not in the package, so nothing else in the tree can prove it
+# parses, places and survives the pipeline - a worked example that does not
+# work is worse than none. Same argument as the line above: the test goes where
+# it can see both the file and the generator.
+target_compile_definitions(sol_game_tests
+    PRIVATE SOL_EXAMPLE_MOD_DIR="${CMAKE_SOURCE_DIR}/game/mods/example-systems")
 # Phase 27. The save suite writes real save files, because the thing under test
 # IS the file. Same arrangement as engine/test's platform scratch: one
 # directory inside the build tree, so a failed run leaves nothing anywhere a
