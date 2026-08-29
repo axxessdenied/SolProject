@@ -278,9 +278,11 @@ The same crate of stims is ordinary medicine in the Compact, a licensed pharmace
 
 ## 14. Ship Commands, Captains & Fleets
 
-### 14.1 Commanding your own ship **[core, v1]**
+### 14.1 Commanding your own ship **[core, v1]** — ✅ shipped as engine-plan Phase 28, 2026-08-28
 
 Standing manoeuvres the player orders and the ship holds: **match speed**, **maintain distance**, **orbit at a range**, **hold station**, **follow**, **align to**, plus the interactions that already exist as keys — hail, request docking, scan, autopilot to.
+
+**⚑ SIX OF THOSE SEVEN SHIPPED, AND `align to` IS THE ONE THAT DID NOT.** `CommandMode` is `Autopilot`, `Orbit`, `MatchSpeed`, `KeepDistance`, `Hold`, `Follow`. Align-to was never carried into Phase 28's spec — it was lost between this section and that one rather than refused — so it is **still owed**, and it is a small one: a mode that aims the nose and commands nothing else. Everything else in this section is live, by key and by menu alike.
 
 Two ways to give an order, and **both are first-class**:
 
