@@ -609,6 +609,11 @@ int main(int argc, char** argv)
     bool contextMenuOpen = false;
     sol::core::Vec2 contextMenuAnchor{};
     sol::ui::Rect contextMenuBounds{};
+    // ⚑ WHICH SURFACE THE MENU WAS OPENED ON (Phase 28 stage D). It is ONE menu
+    // with two ways in now, and the two surfaces put the box in different
+    // places for different reasons: a menu opened over a marker on the map
+    // must not survive into the cockpit at the anchor the map gave it.
+    game::GameState contextMenuState = game::GameState::Flying;
     bool quitRequested = false;
     bool showDebugDraw = false;
     // Every gameplay chord's up/down state, sampled once per frame and handed
@@ -1685,13 +1690,18 @@ int main(int argc, char** argv)
             const sol::core::Vec2 delta = window.mouseDelta();
             rightDragPixels += std::sqrt(delta.x * delta.x + delta.y * delta.y);
         }
-        if (uiInput.rightReleased && state == game::GameState::Flying &&
-            rightDragPixels <= sol::ui::kClickSlopPixels) {
+        // ⚑ ONE JUDGE FOR THE WHOLE GAME (Phase 28 stage D). Two surfaces read
+        // this now - the flight view below and the map further down - and the
+        // click-vs-drag question has exactly one answer, one threshold and one
+        // measure, rather than the map reaching its own verdict a second time.
+        const bool rightClicked = uiInput.rightReleased && rightDragPixels <= sol::ui::kClickSlopPixels;
+        if (rightClicked && state == game::GameState::Flying) {
             // A click, not a sweep: open at the point the button went down,
             // which is where the player was pointing before steering hid the
             // cursor and let it drift.
             contextMenuOpen = true;
             contextMenuAnchor = rightPressCursor;
+            contextMenuState = game::GameState::Flying;
             // ⚑⚑ STAGE C: THE RIGHT-CLICK SELECTS, AND THAT IS WHAT MAKES THE
             // MENU CONTEXTUAL. Every verb the menu offers - engageCommand,
             // hailTarget, requestDocking - already reads the ONE selection the
@@ -1740,7 +1750,11 @@ int main(int argc, char** argv)
         // Only a menu treats Esc as "back out". While docked it opened the
         // pause menu above, and reading it here as well would cancel that menu
         // on the very frame it appeared.
-        uiInput.navCancel = escapeEdge && inMenuScreen;
+        // ⚑ Phase 28 stage D: an open context menu takes Esc first, which on the
+        // map means the key is WITHHELD from the screen rather than the menu
+        // being closed here - "close the thing that is open" before "close the
+        // screen behind it", the same precedence stage B gave it in flight.
+        uiInput.navCancel = escapeEdge && inMenuScreen && !contextMenuOpen;
 
         // Text entry (Phase 8h). The characters come from the platform layer
         // rather than from key states, so the keyboard layout is respected;
@@ -1766,6 +1780,9 @@ int main(int argc, char** argv)
         {
             SOL_PROFILE_ZONE("ui.build");
             ui.beginFrame(uiInput, uiSize, deltaSeconds);
+            if (contextMenuOpen && state != contextMenuState) {
+                contextMenuOpen = false;
+            }
             switch (state) {
             case game::GameState::MainMenu:
                 menuAction = game::buildMainMenu(ui, mainMenuState);
@@ -1829,7 +1846,32 @@ int main(int argc, char** argv)
             case game::GameState::Map:
                 // The map owns the view (it dims what is behind it), but the ship
                 // is still flying under it - this state does not stop the clock.
-                mapClosed = game::buildMapScreen(ui, mapPanel, mapScreen);
+                mapClosed = game::buildMapScreen(ui,
+                                                 mapPanel,
+                                                 mapScreen,
+                                                 {.rightClicked = rightClicked,
+                                                  .rightCursor = rightPressCursor,
+                                                  .commandMenuOpen = contextMenuOpen});
+                // ⚑ THE SAME MENU, BUILT THE SAME WAY, LAST IN ITS OWN CASE -
+                // which is the whole of "draws on top" here as it is in flight.
+                // It is the same widget reading the same world, so a station
+                // right-clicked on the map offers exactly what it offers
+                // through the canopy; only the surface that answered "what is
+                // under the cursor" is different.
+                if (contextMenuOpen) {
+                    const game::CommandMenuPick picked =
+                        game::buildCommandMenu(ui, world, contextMenuAnchor, contextMenuBounds);
+                    if (picked.picked) {
+                        game::applyCommandMenu(world, picked.entry);
+                        contextMenuOpen = false;
+                    } else if (escapeEdge ||
+                               (uiInput.mousePressed && !contextMenuBounds.contains(uiInput.mousePosition))) {
+                        // The Esc half of the pair above: navCancel was
+                        // withheld from the map this frame, so the key has to
+                        // be spent here or it would be spent on nothing.
+                        contextMenuOpen = false;
+                    }
+                }
                 break;
             case game::GameState::ShipInfo:
                 if (game::buildShipScreen(ui, shipPanel, shipScreen)) {
@@ -2073,6 +2115,14 @@ int main(int argc, char** argv)
             // than in executeMapAction, which acts on the world.
             if (mapPanel.action.kind == sol::ui::MapAction::Kind::SetTradeCommodity) {
                 mapScreen.tradeCommodity = mapPanel.action.index;
+            }
+            // Phase 28 stage D: the world half of a right-click (selecting what
+            // was under it) is executeMapAction's, below; opening the menu is
+            // view state and belongs here, the same split the trade picker has.
+            if (mapPanel.action.kind == sol::ui::MapAction::Kind::CommandMenu) {
+                contextMenuOpen = true;
+                contextMenuAnchor = rightPressCursor;
+                contextMenuState = game::GameState::Map;
             }
             if (game::executeMapAction(world, mapPanel.action)) {
                 mapClosed = true;

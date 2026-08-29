@@ -11,6 +11,7 @@
 // isStandingCommand(), which is why it is worth pinning both halves here.
 
 #include "command_menu.hpp"
+#include "map_ui.hpp"
 #include "space_world.hpp"
 
 #include <cstring>
@@ -538,4 +539,47 @@ SOL_TEST(a_docked_ship_is_offered_nothing_it_could_act_on)
         SOL_CHECK(!row.enabled);
         SOL_CHECK(row.reason == "docked");
     }
+}
+
+// --- The same menu, whichever surface answered (stage D) ---------------------
+
+// ⚑⚑ STAGE D ADDS NO MENU. It adds two more ways of asking "what is under the
+// cursor" - the radar disc, which pickTarget has routed since Phase 8j, and the
+// system map, which answers with a nav slot. Both end at ONE selection and
+// therefore at one composed menu, and that is the whole claim worth pinning:
+// a station right-clicked on the map must offer exactly what the same station
+// offers through the canopy, or the map has grown a second menu that will drift.
+SOL_TEST(a_station_picked_on_the_map_offers_what_the_canopy_offers)
+{
+    Fixture fixture;
+    const std::size_t station = firstStationSlot(fixture.world);
+    SOL_REQUIRE(station != game::SpaceWorld::kNoTarget);
+
+    // Reached the way the flight view reaches it.
+    SOL_REQUIRE(fixture.world.selectTarget(station));
+    std::vector<game::CommandMenuRow> throughTheCanopy;
+    game::fillCommandMenu(fixture.world, throughTheCanopy);
+
+    // Now clear the selection and reach the same station through the map's
+    // right-click action instead.
+    SOL_REQUIRE(fixture.world.selectTarget(fixture.world.navTargets().size() - 1));
+    SOL_REQUIRE(fixture.world.currentTargetIndex() != station);
+    (void)game::executeMapAction(fixture.world,
+                                 {sol::ui::MapAction::Kind::CommandMenu, static_cast<int>(station)});
+    SOL_REQUIRE(fixture.world.currentTargetIndex() == station);
+
+    std::vector<game::CommandMenuRow> throughTheMap;
+    game::fillCommandMenu(fixture.world, throughTheMap);
+
+    SOL_REQUIRE(throughTheMap.size() == throughTheCanopy.size());
+    for (std::size_t i = 0; i < throughTheMap.size(); ++i) {
+        SOL_CHECK(throughTheMap[i].entry.action == throughTheCanopy[i].entry.action);
+        SOL_CHECK(throughTheMap[i].entry.mode == throughTheCanopy[i].entry.mode);
+        SOL_CHECK(throughTheMap[i].label == throughTheCanopy[i].label);
+        SOL_CHECK(throughTheMap[i].enabled == throughTheCanopy[i].enabled);
+        SOL_CHECK(throughTheMap[i].reason == throughTheCanopy[i].reason);
+    }
+    // And the heading names the station the map was clicked on, which is the
+    // thing that stops "Orbit" being a row about nobody knows what.
+    SOL_CHECK(game::commandMenuTitle(fixture.world) == fixture.world.navTargets()[station].name);
 }

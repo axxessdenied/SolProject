@@ -542,6 +542,11 @@ struct MapAction
         Close,
         SetTradeCommodity, // Phase 8g: index = commodity, or -1 to turn it off
         DeleteBookmark,    // Phase 8h/8q: bookmarkId names the bookmark
+        // Phase 28 stage D: a right-click inside the system map. index = the
+        // NAV-TARGET SLOT under the cursor, or -1 for a click that hit nothing
+        // - which still opens a menu, about whatever is already selected, for
+        // the same reason a right-click on empty space does in flight.
+        CommandMenu,
     };
     Kind kind = Kind::None;
     int index = -1;

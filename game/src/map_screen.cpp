@@ -147,13 +147,27 @@ using sol::ui::MapView;
 // cannot be thrown out of the panel entirely. Returns the transform to draw
 // with. Only responds while the cursor is inside `view`, so the wheel still
 // belongs to the system list when it is over the list.
-[[nodiscard]] MapView updateMapView(UiContext& ui, const Rect& view, MapScreenState& state, bool& clicked)
+[[nodiscard]] MapView
+updateMapView(UiContext& ui, const Rect& view, MapScreenState& state, bool menuOpen, bool& clicked)
 {
     const std::size_t tab = static_cast<std::size_t>(state.tab);
     const Vec2 origin = {(view.min.x + view.max.x) * 0.5f, (view.min.y + view.max.y) * 0.5f};
     const sol::ui::InputState& input = ui.input();
-    const bool inside = input.mousePosition.x >= view.min.x && input.mousePosition.x <= view.max.x &&
-                        input.mousePosition.y >= view.min.y && input.mousePosition.y <= view.max.y;
+    // ⚑ Phase 28 stage D: an open command menu owns the mouse, and on this
+    // screen that is three things rather than flight's one - the wheel zoom,
+    // the pan drag and the marker pick all hang off `inside`, so taking that
+    // away takes away all three at once. Overlapping BUTTONS need no guard: the
+    // menu is submitted after them, so it wins `m_activeId` on the press and
+    // the button underneath never sees a release it was held for.
+    const bool inside = !menuOpen && input.mousePosition.x >= view.min.x &&
+                        input.mousePosition.x <= view.max.x && input.mousePosition.y >= view.min.y &&
+                        input.mousePosition.y <= view.max.y;
+    if (menuOpen) {
+        // A drag already running when the menu opened would otherwise keep
+        // panning and still report a click on release, which is the one way
+        // the guard above can be got around.
+        state.dragging = false;
+    }
 
     float& zoom = state.zoom[tab];
     Vec2& pan = state.pan[tab];
@@ -609,7 +623,7 @@ void drawMarkerList(UiContext& ui, const MapPanel& panel, const Rect& bounds, Ma
 
 } // namespace
 
-bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
+bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state, const MapInput& input)
 {
     panel.action = MapAction{};
     if (ui.drawList().font() == nullptr) {
@@ -677,12 +691,25 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
     // reset. The wheel only bites inside the map area, so it still scrolls
     // the list when the cursor is over the list.
     bool mapClicked = false;
-    const MapView magnify = updateMapView(ui, mapBounds, state, mapClicked);
+    const MapView magnify = updateMapView(ui, mapBounds, state, input.commandMenuOpen, mapClicked);
+    // Phase 28 stage D: the right button asks the same question of the same
+    // surface. Only inside the map area - the phase does not put a menu on a
+    // list row or a footer button - and only where the button went down, which
+    // is the anchor rule the flight view already uses.
+    const bool rightInMap = input.rightClicked && mapBounds.contains(input.rightCursor);
     // Phase 15: a click on the map selects the same way a click on a list row
     // does. Resolved inside whichever view draws, because that is where a
     // marker's screen position is worked out.
-    sol::ui::NearestPick pick =
-        mapClicked ? sol::ui::NearestPick(ui.input().mousePosition, kMapGrabPixels) : sol::ui::NearestPick{};
+    //
+    // ⚑ ONE pick per frame, from whichever button asked. Two buttons cannot
+    // both come up as a click on one frame in any real hand, and the right one
+    // is answered at its press point rather than at the cursor.
+    sol::ui::NearestPick pick{};
+    if (rightInMap) {
+        pick = sol::ui::NearestPick(input.rightCursor, kMapGrabPixels);
+    } else if (mapClicked) {
+        pick = sol::ui::NearestPick(ui.input().mousePosition, kMapGrabPixels);
+    }
     const bool zoomed = state.zoom[static_cast<std::size_t>(state.tab)] > 1.0f ||
                         state.pan[static_cast<std::size_t>(state.tab)].x != 0.0f ||
                         state.pan[static_cast<std::size_t>(state.tab)].y != 0.0f;
@@ -778,6 +805,24 @@ bool buildMapScreen(UiContext& ui, MapPanel& panel, MapScreenState& state)
         drawSystemMap(ui, panel, mapBounds, state.selectedMarker, magnify, pick);
         if (pick.result() != sol::ui::kNoPick) {
             state.selectedMarker = static_cast<int>(pick.result());
+        }
+
+        // ⚑⚑ THE MENU IS OFFERED ONLY WHERE THE COMMANDS MEAN SOMETHING, AND
+        // THE MAP ALREADY KNOWS WHERE THAT IS. Every verb the menu carries -
+        // dock, hail, orbit, follow - is about the system the ship is standing
+        // in, so a remote view gets no menu, exactly as it gets Plot Route and
+        // Show Current instead of Set Target and Autopilot. The Galaxy tab gets
+        // none either: it is drawn from systems, not from nav slots, and
+        // "Orbit" is not a thing you say to a star four jumps away.
+        if (rightInMap && panel.viewIsCurrent) {
+            const MapMarkerRow* hit =
+                pick.result() != sol::ui::kNoPick ? &panel.markers[pick.result()] : nullptr;
+            // Phase 15's rule inherited whole: the marker's own NAV SLOT, never
+            // its row number, which counts only what the fog left visible.
+            const int slot = hit != nullptr && hit->navTarget != sol::ui::kNoNavTarget
+                                 ? static_cast<int>(hit->navTarget)
+                                 : -1;
+            panel.action = {MapAction::Kind::CommandMenu, slot};
         }
 
         // Footer computed above; the buttons sit on the last row of the frame.

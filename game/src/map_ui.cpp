@@ -651,6 +651,22 @@ bool executeMapAction(SpaceWorld& world, const ui::MapAction& action)
             (void)world.selectTarget(static_cast<std::size_t>(action.index));
         }
         break;
+    case Kind::CommandMenu:
+        // ⚑ THE RIGHT-CLICK SELECTS, which is stage C's ruling inherited whole
+        // rather than restated: every verb the menu offers reads the one
+        // selection the weapons lead, the HUD readout and Set Target all read,
+        // so the thing you clicked and the thing that is selected have to be
+        // made the same thing. A miss (index -1) changes nothing and the menu
+        // opens about whatever was already selected.
+        //
+        // ⚑ Opening the menu is main.cpp's half, the way SetTradeCommodity is:
+        // this function acts on the WORLD, and a menu is view state. And it
+        // returns false, so the map stays open - a place to act from does not
+        // eject you for acting.
+        if (action.index >= 0) {
+            (void)world.selectTarget(static_cast<std::size_t>(action.index));
+        }
+        break;
     case Kind::Autopilot:
         if (action.index >= 0 && world.selectTarget(static_cast<std::size_t>(action.index))) {
             return world.engageAutopilot();

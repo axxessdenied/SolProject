@@ -173,3 +173,56 @@ SOL_TEST(remote_marker_rows_name_no_nav_slot)
         SOL_CHECK(row.navTarget == kNoNavTarget);
     }
 }
+
+// --- Phase 28 stage D: the same menu, reached from the map -------------------
+
+// ⚑ THE RIGHT-CLICK SELECTS, on the map for the same reason it does in flight:
+// every verb the menu offers reads the ONE selection the weapons lead, the HUD
+// readout and Set Target all read. The action carries a nav SLOT, never a row,
+// which is the Phase 15 defect the three tests above exist to keep dead.
+SOL_TEST(a_right_click_on_a_map_marker_selects_what_it_hit)
+{
+    Fixture fixture;
+    MapPanel panel;
+    std::vector<MapMarkerRow> markers;
+    fixture.fill(panel, markers);
+    SOL_REQUIRE(markers.size() > 1);
+
+    // Something other than whatever starts selected, so a pass cannot be an
+    // accident of the initial state.
+    const std::uint32_t slot = markers.back().navTarget;
+    SOL_REQUIRE(slot != kNoNavTarget);
+    SOL_REQUIRE(fixture.world.currentTargetIndex() != slot);
+
+    const sol::ui::MapAction action = {sol::ui::MapAction::Kind::CommandMenu, static_cast<int>(slot)};
+    const bool closesTheMap = game::executeMapAction(fixture.world, action);
+
+    SOL_CHECK(fixture.world.currentTargetIndex() == slot);
+    // ⚑ AND IT DOES NOT EJECT YOU. Measured against the one action that DOES:
+    // the footer's Autopilot button drops the map deliberately, because the
+    // point of that button is to go there. The menu offers seven manoeuvres and
+    // closing on one of them would be arbitrary - a place to act from is a
+    // place you are still standing in afterwards.
+    SOL_CHECK(!closesTheMap);
+    SOL_CHECK(
+        game::executeMapAction(fixture.world, {sol::ui::MapAction::Kind::Autopilot, static_cast<int>(slot)}));
+}
+
+// ⚑ A MISS CHANGES NOTHING - Phase 8j's ruling, inherited by the map through
+// stage C. The menu still opens, about whatever was already selected, which is
+// what keeps Hold and Cancel Command reachable from a right-click on empty
+// space. index = -1 is the map's word for that miss.
+SOL_TEST(a_right_click_on_empty_map_leaves_the_selection_alone)
+{
+    Fixture fixture;
+    MapPanel panel;
+    std::vector<MapMarkerRow> markers;
+    fixture.fill(panel, markers);
+    SOL_REQUIRE(!markers.empty());
+
+    const std::uint32_t slot = markers.front().navTarget;
+    SOL_REQUIRE(fixture.world.selectTarget(slot));
+
+    SOL_CHECK(!game::executeMapAction(fixture.world, {sol::ui::MapAction::Kind::CommandMenu, -1}));
+    SOL_CHECK(fixture.world.currentTargetIndex() == slot);
+}

@@ -47,12 +47,41 @@ struct MapScreenState
     int tradeCommodity = -1;
 };
 
+// What main.cpp knows about the mouse that the map cannot work out for itself
+// (Phase 28 stage D). Both fields exist so a rule is expressed ONCE for the
+// whole game rather than a second time in here: this project has paid
+// repeatedly for the second expression of a thing that already existed.
+struct MapInput
+{
+    // The click-vs-drag verdict for the right button, reached in main.cpp with
+    // the same `kClickSlopPixels` the flight view uses, and true on the frame
+    // the button came up as a click rather than a sweep.
+    bool rightClicked = false;
+    // Where the button went DOWN, in virtual UI pixels - the flight view's
+    // rule inherited whole, and the point this screen hit-tests, anchors from
+    // and reports about.
+    sol::core::Vec2 rightCursor;
+    // ⚑⚑ AN OPEN MENU OWNS THE MOUSE. Flight only had a world pick to protect
+    // (stage B); the map has a pan, a wheel zoom and a marker pick as well, and
+    // all three sit under the box the menu draws in. Without this a click on a
+    // menu row also drags the map and selects whatever the row was covering.
+    bool commandMenuOpen = false;
+};
+
 // The map screen (engine plan Phase 8e, deferred here out of Phase 8d): a
 // galaxy view over the lane graph and a system view of the playfield. Reads
 // only what the game says the player knows, and reports what they did through
 // `panel.action` - the same fill-then-execute seam the station screen uses.
 //
+// ⚑ That seam is why the context menu is not built in here (Phase 28 stage D):
+// this file draws from a MapPanel and knows nothing of SpaceWorld, and the
+// menu's rows are composed by asking the world what is selected. So the map
+// answers WHAT WAS RIGHT-CLICKED and main.cpp builds the menu about it.
+//
 // Returns true on the frame the player asked to close the map.
-[[nodiscard]] bool buildMapScreen(sol::ui::UiContext& ui, sol::ui::MapPanel& panel, MapScreenState& state);
+[[nodiscard]] bool buildMapScreen(sol::ui::UiContext& ui,
+                                  sol::ui::MapPanel& panel,
+                                  MapScreenState& state,
+                                  const MapInput& input);
 
 } // namespace game
