@@ -102,9 +102,50 @@ generator is already doing** rather than adding a mechanism.
 
 ### 3. Divert first; spawn only when nobody is in range
 
-`respondTo(position, cause)` redirects the nearest un-engaged patrol with
+~~`respondTo(position, cause)` redirects the nearest un-engaged patrol with
 `pilotPatrolTo`. When there is none, a wing is spawned **at the nearest station
-or gate** and flown in on `PilotState::Travel`.
+or gate** and flown in on `PilotState::Travel`.~~
+
+> **⚑⚑⚑ AMENDED 2026-08-29, BY PHASE 30 STAGE A'S RE-READ AND PROVEN BY STAGE
+> C. THE TWO FUNCTIONS NAMED ABOVE DO NOT COMPOSE, AND THE ORIGINAL WORDING IS
+> STRUCK RATHER THAN DELETED SO THE FAILURE MODE STAYS VISIBLE.**
+>
+> `SpaceWorld::pilotPatrolTo` sets **`PilotState::Patrol`**, not `Travel`. That
+> is the *combat-scale* state, and its own enum comment says so: *"Patrol's
+> steering is combat-scale — it closes to 50 m and stops — and a trade leg is
+> hundreds of thousands of kilometres, which is a distance only the cruise
+> envelope crosses in a sane time."* So the route this decision named produces
+> exactly the failure `Travel` was written to prevent — a responder grinding
+> across 600,000 km on dogfight steering. **Nothing in the tree put a pilot into
+> `Travel` toward an arbitrary waypoint**; the survey assumed a primitive that
+> did not exist, because the two function names read as though they compose.
+>
+> **The repair was already shipped, under another name.**
+> `SpaceWorld::pilotHuntTrader` (Phase 8x) does the whole shape a responder
+> needs: pick a target at arbitrary range, fly `Travel` toward **where it is
+> going**, and hand over to `Attack` at weapon range — with a comment spelling
+> out why that split is not a tuning choice. Stage C adds the missing primitive
+> **`pilotTravelTo(entity, waypoint)`** on that model. It is still *no new
+> steering*, which is the part of this decision that survives intact:
+> `steerTravel` is the cruise drive the player's own autopilot already flies.
+>
+> **The decision itself is unchanged** — divert first, spawn only to make up the
+> shortfall, and response time is a real transit. Only the named mechanism was
+> wrong. ⚑ *An ADR is a hypothesis about the code in exactly the way a roadmap
+> estimate is, and it earns the same re-read before it is built.*
+
+`respondTo(position, offender, cause)` redirects the nearest un-engaged local
+hulls with **`pilotTravelTo`**. It then **tops up** any shortfall with a wing
+spawned **at the nearest station or gate**, also on `PilotState::Travel`.
+
+⚑ *Topping up rather than spawning only when nobody is in range is a stage C
+finding.* Reach reads the live rating, so a raided system's reach shrinks — and
+with it the number of local hulls close enough to divert. Measured: a system
+that sent two answered with **one** once it was being raided, which is the
+spiral getting back in through a side door. `wanted` comes from the baseline, so
+the shortfall is made up rather than lost: **how many come is the garrison's
+size; the live rating decides only how far away they start, and therefore how
+long they take.**
 
 **Response time is therefore a real transit across real distance, not a timer.**
 A crime over the pad and a crime at a gate 600,000 km out differ without either
@@ -148,8 +189,21 @@ slower — and that is the single place the live number touches enforcement.
   **Whichever lands second inherits the obligation to re-run the tuning, not just
   the test.**
 - `kPatrolsPerRegion` and `kCiviliansPerRegion` retire into curves.
-- `spawnWing` must be lifted out of `loadSystem` into a member function before
-  any of stage C is reachable.
+- ~~`spawnWing` must be lifted out of `loadSystem` into a member function before
+  any of stage C is reachable.~~ **Amended 2026-08-29: it was never in
+  `loadSystem`.** `spawnWing` is a lambda inside `SpaceWorld::spawnAmbientPilots`,
+  which has been a member the whole time, and the lambda captures only members —
+  so the lift is a move with an empty capture list rather than the refactor this
+  was priced as. Stage C's stated *first requirement* was close to free.
+- **⚑ Nothing emerges for free, which is why the trigger must be pushed rather
+  than polled.** `pilotEngageEnemy` has a hard `kSensorRange` of `8.0e4` m
+  against a `gateDistance` of `6.0e8` — every patrol is 7500× short of noticing
+  a crime at a gate on its own.
+- **⚑ And there is no ambient source for the weapons-fire trigger in a quiet
+  core system**: majors and clans are **not `atWar` at boot**, so
+  `pilot_engage_enemy` between them returns false and NPCs do not shoot each
+  other there. Stage C's trigger is reachable by the player firing, and by
+  raiders in systems where a war is live. Phase 36 should not assume otherwise.
 - The player-facing half is a field on a row that is already built, under the
   same `visited` knowledge rule the owner colour already obeys.
 

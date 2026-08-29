@@ -750,6 +750,37 @@ std::string systemSecurity(GameContent& content, double systemIndex)
     return buffer;
 }
 
+// Stand in a system directly (Phase 30 stage C). A response is a property of
+// where you are, and routing eight gates to reach a place is how a stage goes
+// unverified. Same call the death-respawn path already makes.
+bool enterSystemAt(GameContent& content, double systemIndex)
+{
+    return content.world().enterSystem(static_cast<std::uint32_t>(systemIndex));
+}
+
+// Dispatch a response at a point, and say what came (Phase 30 stage C). The
+// probe reports both halves because "nobody came" and "two were diverted" are
+// the same call with a different rating behind it, and telling them apart from
+// the cockpit alone would mean waiting out a flight that never starts.
+std::string dispatchResponse(GameContent& content, double x, double y, double z)
+{
+    SpaceWorld& world = content.world();
+    const sol::core::DVec3 at{x, y, z};
+    const std::uint32_t sent = world.respondTo(at, 0xffff'ffffu, game::ResponseCause::WeaponsFire);
+    const game::SpaceWorld::ResponseReport& report = world.lastResponse();
+    char buffer[256];
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s: live %+.3f, reach %.0f km -> %u diverted, %u launched%s",
+                  world.galaxy().systems[world.currentSystemIndex()].name.c_str(),
+                  static_cast<double>(report.live),
+                  report.reach / 1000.0,
+                  report.diverted,
+                  report.spawned,
+                  sent == 0 ? " (NOBODY CAME)" : "");
+    return buffer;
+}
+
 // The gradient, galaxy-wide, in one call - this is Phase 30 stage A's own exit
 // criterion made runnable rather than a thing to be eyeballed system by system.
 // Baselines only: the live rating moves under the player's feet, and what stage
@@ -3240,6 +3271,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&systemDanger>("sol", "danger", this);
     m_vm.registerFunction<&systemSecurity>("sol", "security", this);
     m_vm.registerFunction<&securityHistogram>("sol", "security_map", this);
+    m_vm.registerFunction<&dispatchResponse>("sol", "respond", this);
+    m_vm.registerFunction<&enterSystemAt>("sol", "enter_system", this);
     m_vm.registerFunction<&escortCandidates>("sol", "escort_candidates", this);
     m_vm.registerFunction<&killTrader>("sol", "trader_kill", this);
     m_vm.registerFunction<&killMiner>("sol", "miner_kill", this);

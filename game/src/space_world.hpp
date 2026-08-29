@@ -213,6 +213,12 @@ struct ShipPilot
     // Faction table index (Phase 8b), or ~0u for unaffiliated console spawns
     // (which Lua treats as unconditionally player-hostile, the pre-8b rule).
     std::uint32_t factionIndex = 0xffff'ffffu;
+    // Seconds left on a dispatched response (Phase 30 stage C). Non-zero is
+    // also the MARKER that says this pilot is answering a call rather than
+    // flying its own business, which the Travel case needs: a responder that
+    // arrives and finds nothing has to go back to its patrol, where a trader
+    // puppet arriving at its pad deliberately holds station instead.
+    float respondTimer = 0.0f;
 };
 
 // One trader body, for the console probe that proves the promotion happened.
@@ -277,6 +283,23 @@ struct MinerPuppetInfo
 // promotion's failure mode is the record and the sky disagreeing, and
 // predation's is a raider that says it is hunting while flying nowhere - so
 // this reports every fighter, hunting or not, and what it settled for.
+// One hull currently answering a call (Phase 30 stage C), for the console probe
+// and the tests. Same shape and same reason as HunterInfo below it: a response
+// is a thing you have to be able to ASK about, because the alternative is
+// waiting out a flight that may correctly never start.
+struct ResponderInfo
+{
+    std::string name;
+    double distanceToIncident = 0.0; // meters, to the point it was sent to
+    double secondsLeft = 0.0;        // before it gives up and goes back on beat
+    // ⚑ Every responder must be in `Travel`. Carried explicitly rather than
+    // left implied because it is the exact thing decisions/019 §3 got wrong:
+    // `Patrol` is combat-scale steering and would grind across the system.
+    PilotState state = PilotState::Idle;
+    sol::core::DVec3 position;
+    bool pirate = false; // down the negative band the responders ARE the clan
+};
+
 struct HunterInfo
 {
     std::string name;
@@ -301,6 +324,26 @@ struct GameFaction
     std::vector<std::string> shipsPatrol;
     std::vector<std::string> shipsRaider;
     std::vector<std::string> shipsTrader; // Phase 8x: hulls its haulers fly
+};
+
+// --- Response (Phase 30 stage C) -------------------------------------------
+//
+// How long a dispatched responder keeps flying at an incident before giving up
+// and going back to its own patrol. A response that hunts forever is a tax; one
+// that never arrives is scenery.
+inline constexpr float kResponseGiveUpSeconds = 180.0f;
+// Minimum interval between dispatches for one system, so a burst of hits is one
+// call rather than one per projectile.
+inline constexpr double kResponseCooldownSeconds = 20.0;
+// Below this the place is not policed by anybody in any meaningful sense and
+// nobody comes at all - decisions/019's zero band, given a width.
+inline constexpr float kResponseSilenceBand = 0.08f;
+
+// Why a responder was called. Phase 36 is where this grows a legal meaning; for
+// now it only distinguishes the two things that already happen in the world.
+enum class ResponseCause : std::uint32_t
+{
+    WeaponsFire = 0, // somebody shot somebody the local law protects
 };
 
 // --- Ambient presence, as curves on the security baseline (Phase 30 stage B) --
@@ -1632,10 +1675,77 @@ public:
     bool pilotFlee(sol::ecs::Entity entity);
     bool pilotIdle(sol::ecs::Entity entity);
     bool pilotPatrolTo(sol::ecs::Entity entity, sol::core::DVec3 waypoint);
+
+    // ⚑⚑⚑⚑ THE PRIMITIVE decisions/019 §3 ASSUMED ALREADY EXISTED, AND THE
+    // REASON THAT DECISION COULD NOT BE BUILT AS WRITTEN. It said a patrol
+    // crossing 600,000 km to reach a gate is "`pilotPatrolTo` plus
+    // `PilotState::Travel`, and no new steering". Those do not compose:
+    // `pilotPatrolTo` above sets `PilotState::PATROL`, the combat-scale state
+    // whose own comment says it "closes to 50 m and stops" - so the named
+    // route produces a responder grinding across the system on dogfight
+    // steering, which is the precise failure `Travel` was written to prevent.
+    // Nothing in the tree put a pilot into `Travel` toward an arbitrary
+    // waypoint; this does, and it is still no new STEERING - `steerTravel` is
+    // the cruise drive the player's own autopilot flies.
+    bool pilotTravelTo(sol::ecs::Entity entity, sol::core::DVec3 waypoint);
+
+    // ⚑⚑⚑ SEND SOMEBODY. Diverts the nearest un-engaged local force toward
+    // `position`, and spawns a wing at the nearest station or gate only when
+    // there is nobody in range to divert - decisions/019 decision 3, which is
+    // what makes response time A REAL TRANSIT ACROSS REAL DISTANCE rather than
+    // a timer. Returns how many hulls were dispatched; 0 means nobody came,
+    // which is a legitimate answer and the whole point of the zero band.
+    //
+    // ⚑⚑ WHICH HALF OF THE RATING EACH QUESTION READS, PER decisions/019.
+    // HOW MANY come is drawn from the garrison, so it reads the BASELINE - the
+    // spiral this phase refuses is a raid thinning the force that answers it.
+    // HOW FAR one will come, and WHETHER one comes at all, read the LIVE
+    // rating, because that is the single place 019 allows the live number to
+    // touch enforcement: patrols that are busy really are slower to arrive.
+    std::uint32_t respondTo(sol::core::DVec3 position, std::uint32_t offenderIndex, ResponseCause cause);
+
+    // ⚑⚑ THE INCIDENT HOOK, AND IT IS PUBLIC BECAUSE IT IS THE POLICY HALF.
+    // `respondTo` is the mechanism - it sends whoever the rating says - and
+    // this decides whether a given hit is even something the local law answers,
+    // then throttles a burst of them into one call. `noteDamage` calls it on
+    // every hit, and Phase 36 is where other incident sources (a contraband
+    // scan, a transponder that does not answer) hook the same seam rather than
+    // growing their own. It is also the only way to state the policy in a test:
+    // whether a bolt connects is not a thing a scripted drive can promise.
+    void considerResponse(std::uint32_t targetIndex, std::uint32_t attackerIndex, sol::core::DVec3 at);
+
+    // What the last dispatch did, for the console probe and the tests.
+    struct ResponseReport
+    {
+        std::uint32_t diverted = 0;
+        std::uint32_t spawned = 0;
+        float live = 0.0f;
+        double reach = 0.0;
+        std::uint32_t responderFaction = 0xffff'ffffu;
+    };
+
+    [[nodiscard]] const ResponseReport& lastResponse() const { return m_lastResponse; }
+
     [[nodiscard]] double shipHullFraction(sol::ecs::Entity entity) const;
     // Every hunter in the system and the hauler it is going for, for the
     // console.
     void hunterInfo(std::vector<HunterInfo>& out);
+
+    // Who is currently on a call, nearest first.
+    void responderInfo(std::vector<ResponderInfo>& out) const;
+
+    // What state a pilot is in. Small, but it is what lets a test state the
+    // difference between `pilotPatrolTo` and `pilotTravelTo` in one line -
+    // and that difference is the whole of decisions/019 §3's correction.
+    [[nodiscard]] PilotState pilotStateOf(sol::ecs::Entity entity) const;
+
+    // ⚑ Stand in a system directly, without flying the gates to it. This is
+    // not new power: the death-respawn path already calls `loadSystem` with an
+    // arbitrary index, and this is the same call with a name on it. It exists
+    // because a response is a property of WHERE YOU ARE, so both the tests and
+    // the drive need to be somewhere specific without an eight-hop route
+    // deciding whether the stage gets verified.
+    bool enterSystem(std::uint32_t systemIndex);
 
     // The playfield anchor Lua patrol offsets are relative to: the first
     // station of the current system, or the first nav target without one.
@@ -1896,6 +2006,25 @@ private:
     // Ambient NPC population for a freshly instantiated system: owner
     // patrol/raider wings by region security plus raid-intensity incursions.
     void spawnAmbientPilots(std::uint32_t systemIndex, const sol::sim::SystemSpec& spec);
+
+    ResponseReport m_lastResponse;
+    double m_responseCooldown = 0.0;
+
+    // ⚑⚑⚑ LIFTED OUT OF `spawnAmbientPilots` (Phase 30 stage C), WHERE IT WAS
+    // A LAMBDA. decisions/019 called this "stage C's first requirement" and
+    // described it as lifting out of `loadSystem`; it was never in
+    // `loadSystem` - `spawnAmbientPilots` has been a member the whole time -
+    // and the lambda captured nothing but members, so the lift is a move with
+    // an empty capture list rather than the refactor it was priced as.
+    // "Send a wing later" is callable now, which is the whole point.
+    void spawnWing(std::uint32_t faction,
+                   const std::vector<std::string>& roster,
+                   PilotRole role,
+                   std::uint32_t count,
+                   const sol::core::DVec3& anchor,
+                   double spread,
+                   PilotState state = PilotState::Idle,
+                   const sol::core::DVec3* waypoint = nullptr);
     // Rebuilds m_avoidance for this tick from the same source the collision
     // bodies come from (Phase 8y). Runs before any steering, because a ship
     // that steers on last tick's picture of a moving fleet is steering at

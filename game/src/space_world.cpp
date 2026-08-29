@@ -2664,34 +2664,53 @@ void SpaceWorld::tickMining(double dt)
     }
 }
 
+// Places `count` hulls from a roster around an anchor. Was a lambda inside
+// `spawnAmbientPilots` until Phase 30 stage C needed to send a wing at a moment
+// that is not "the system just loaded".
+//
+// ⚑ It goes through `spawnShipAt`, NOT `spawnShipFromDef`. That matters: the
+// latter places a ship 150-250 m directly in front of the PLAYER, facing the
+// player's own orientation, which is correct for the dev console it was written
+// for and is exactly the trap decisions/019 warned this stage about - a
+// response wing built on it materialises in the offender's face, which is the
+// precise opposite of what a response time is for.
+void SpaceWorld::spawnWing(std::uint32_t faction,
+                           const std::vector<std::string>& roster,
+                           PilotRole role,
+                           std::uint32_t count,
+                           const core::DVec3& anchor,
+                           double spread,
+                           PilotState state,
+                           const core::DVec3* waypoint)
+{
+    if (roster.empty() || m_defs == nullptr || faction >= m_factionTable.size()) {
+        return;
+    }
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const assets::ShipDef* def = m_defs->findShip(roster[i % roster.size()].c_str());
+        if (def == nullptr) {
+            SOL_LOG_WARN("wing: no ship def '%s'", roster[i % roster.size()].c_str());
+            return;
+        }
+        const core::DVec3 position =
+            anchor + core::DVec3{spread * (1.0 + i), 300.0 + 250.0 * i, -spread * 0.5 * i};
+        const ecs::Entity entity = spawnShipAt(*def, *m_defs, position, m_factionTable[faction].name.c_str());
+        ShipPilot pilot{.role = role, .factionIndex = faction};
+        pilot.state = state;
+        if (waypoint != nullptr) {
+            pilot.waypoint = *waypoint;
+            pilot.respondTimer = kResponseGiveUpSeconds;
+        }
+        m_registry.emplace<ShipPilot>(entity, pilot);
+    }
+}
+
 void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::SystemSpec& spec)
 {
     if (m_defs == nullptr || m_factionTable.empty()) {
         return;
     }
     const core::DVec3 hub = spec.planets[spec.primaryPlanet].position;
-    const auto spawnWing = [&](std::uint32_t faction,
-                               const std::vector<std::string>& roster,
-                               PilotRole role,
-                               std::uint32_t count,
-                               const core::DVec3& anchor,
-                               double spread) {
-        if (roster.empty()) {
-            return;
-        }
-        for (std::uint32_t i = 0; i < count; ++i) {
-            const assets::ShipDef* def = m_defs->findShip(roster[i % roster.size()].c_str());
-            if (def == nullptr) {
-                SOL_LOG_WARN("ambient wing: no ship def '%s'", roster[i % roster.size()].c_str());
-                return;
-            }
-            const core::DVec3 position =
-                anchor + core::DVec3{spread * (1.0 + i), 300.0 + 250.0 * i, -spread * 0.5 * i};
-            const ecs::Entity entity =
-                spawnShipAt(*def, *m_defs, position, m_factionTable[faction].name.c_str());
-            m_registry.emplace<ShipPilot>(entity, ShipPilot{.role = role, .factionIndex = faction});
-        }
-    };
 
     // Owner presence: patrol wings by region security for majors, resident
     // raider wings for clan systems. Read through the accessor, not off the
@@ -3381,6 +3400,53 @@ void SpaceWorld::traderPuppetInfo(std::vector<TraderPuppetInfo>& out)
         }
         out.push_back(std::move(info));
     }
+}
+
+void SpaceWorld::responderInfo(std::vector<ResponderInfo>& out) const
+{
+    out.clear();
+    const ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const ShipPilot& pilot = pilots.values()[i];
+        if (pilot.respondTimer <= 0.0f) {
+            continue;
+        }
+        const std::uint32_t index = pilots.entityIndices()[i];
+        const Transform* transform = m_registry.storage<Transform>().tryGet(index);
+        if (transform == nullptr) {
+            continue;
+        }
+        ResponderInfo info;
+        info.name = m_registry.storage<ShipPilot>().tryGet(index) != nullptr &&
+                            pilot.factionIndex < m_factionTable.size()
+                        ? m_factionTable[pilot.factionIndex].name
+                        : std::string("unaffiliated");
+        info.distanceToIncident = length(pilot.waypoint - transform->position);
+        info.secondsLeft = static_cast<double>(pilot.respondTimer);
+        info.state = pilot.state;
+        info.position = transform->position;
+        info.pirate = pilot.factionIndex < m_factionTable.size() && m_factionTable[pilot.factionIndex].pirate;
+        out.push_back(std::move(info));
+    }
+    std::sort(out.begin(), out.end(), [](const ResponderInfo& a, const ResponderInfo& b) {
+        return a.distanceToIncident < b.distanceToIncident;
+    });
+}
+
+PilotState SpaceWorld::pilotStateOf(ecs::Entity entity) const
+{
+    const ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    return pilot != nullptr ? pilot->state : PilotState::Idle;
+}
+
+bool SpaceWorld::enterSystem(std::uint32_t systemIndex)
+{
+    if (systemIndex >= m_galaxy.systems.size()) {
+        return false;
+    }
+    m_jump.clear();
+    loadSystem(systemIndex, kNoIndex);
+    return true;
 }
 
 void SpaceWorld::hunterInfo(std::vector<HunterInfo>& out)
@@ -5926,6 +5992,210 @@ bool SpaceWorld::pilotPatrolTo(ecs::Entity entity, core::DVec3 waypoint)
     return true;
 }
 
+// The primitive decisions/019 §3 assumed was already there - see the header for
+// why `pilotPatrolTo` above could not stand in for it.
+bool SpaceWorld::pilotTravelTo(ecs::Entity entity, core::DVec3 waypoint)
+{
+    ShipPilot* pilot = m_registry.isAlive(entity) ? m_registry.tryGet<ShipPilot>(entity) : nullptr;
+    if (pilot == nullptr) {
+        return false;
+    }
+    pilot->state = PilotState::Travel;
+    pilot->waypoint = waypoint;
+    pilot->respondTimer = kResponseGiveUpSeconds;
+    if (ShipPower* power = m_registry.tryGet<ShipPower>(entity)) {
+        power->state.pips = pipsForPilot(pilot->state);
+    }
+    return true;
+}
+
+namespace {
+
+// How far a responder will cross to answer a call. Reads the LIVE rating: a
+// system that is currently being fought over answers its far corners badly,
+// which is the one place decisions/019 lets the live number touch enforcement.
+[[nodiscard]] double responseReachFor(float live, double gateDistance)
+{
+    return static_cast<double>(std::abs(live)) * gateDistance * 2.0;
+}
+
+// How many hulls come. Reads the BASELINE, because this is force drawn from the
+// garrison and sizing it off the live rating is the spiral the phase refuses -
+// a raid would thin the answer to itself. One always stays home.
+[[nodiscard]] std::uint32_t respondersFor(float baseline)
+{
+    const std::uint32_t garrison = patrolsFor(std::abs(baseline));
+    return garrison > 1u ? garrison - 1u : 1u;
+}
+
+} // namespace
+
+std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offenderIndex, ResponseCause cause)
+{
+    (void)cause; // one cause so far; Phase 36 is where this branches
+    m_lastResponse = ResponseReport{};
+    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    if (owner >= m_factionTable.size() || m_defs == nullptr) {
+        return 0;
+    }
+    const float live = systemSecurity(m_currentSystem);
+    const float baseline = systemSecurityBaseline(m_currentSystem);
+    m_lastResponse.live = live;
+    m_lastResponse.responderFaction = owner;
+    // ⚑ Nobody comes, and that is an ANSWER rather than a failure: it is the
+    // zero band of decisions/019 doing exactly what it says on the map.
+    if (std::abs(live) < kResponseSilenceBand) {
+        return 0;
+    }
+
+    const double reach = responseReachFor(live, m_galaxyParams.gateDistance);
+    const std::uint32_t wanted = respondersFor(baseline);
+    m_lastResponse.reach = reach;
+
+    // 1. DIVERT the nearest un-engaged local hulls. Nothing is created, nothing
+    // appears from nowhere, and the time it takes is the time the flight takes.
+    struct Candidate
+    {
+        double distance = 0.0;
+        std::uint32_t index = 0;
+    };
+
+    std::vector<Candidate> candidates;
+    const ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const ShipPilot& pilot = pilots.values()[i];
+        const std::uint32_t index = pilots.entityIndices()[i];
+        if (pilot.factionIndex != owner || index == offenderIndex) {
+            continue;
+        }
+        // Already fighting, or already on a call: a response that pulls a ship
+        // out of the fight it was sent to is not a response.
+        if (pilot.state == PilotState::Attack || pilot.respondTimer > 0.0f) {
+            continue;
+        }
+        // Haulers are not police. A clan's raiders ARE - down the negative band
+        // the resident wing is the local law, which is decisions/019 decision 2
+        // meaning what it says.
+        if (pilot.role == PilotRole::Trader) {
+            continue;
+        }
+        const Transform* transform = m_registry.storage<Transform>().tryGet(index);
+        const ShipDefense* defense = m_registry.storage<ShipDefense>().tryGet(index);
+        if (transform == nullptr || defense == nullptr || !defense->state.alive()) {
+            continue;
+        }
+        const double distance = length(transform->position - position);
+        if (distance <= reach) {
+            candidates.push_back({distance, index});
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        return a.distance != b.distance ? a.distance < b.distance : a.index < b.index;
+    });
+    for (const Candidate& candidate : candidates) {
+        if (m_lastResponse.diverted >= wanted) {
+            break;
+        }
+        if (pilotTravelTo(m_registry.entityFromIndex(candidate.index), position)) {
+            ++m_lastResponse.diverted;
+        }
+    }
+    if (m_lastResponse.diverted > 0) {
+        SOL_LOG_INFO("response: %u of %u diverted, live %+.3f, reach %.0f km, nearest %.0f km",
+                     m_lastResponse.diverted,
+                     wanted,
+                     static_cast<double>(live),
+                     reach / 1000.0,
+                     candidates.front().distance / 1000.0);
+    }
+    if (m_lastResponse.diverted >= wanted) {
+        return m_lastResponse.diverted;
+    }
+
+    // 2. TOP UP FROM THE NEAREST STATION, or failing that the nearest gate.
+    // Never from the offender's own position - see spawnWing.
+    //
+    // ⚑⚑⚑⚑ IT TOPS UP RATHER THAN ONLY FIRING WHEN NOBODY IS IN RANGE, AND A
+    // TEST IS WHY. Reach reads the LIVE rating, so a raided system's reach
+    // shrinks - and with it the number of local hulls close enough to divert.
+    // Measured: a system that sent two answered with ONE once it was being
+    // raided, which is the spiral getting back in through a side door. `wanted`
+    // comes from the BASELINE, so the shortfall is made up rather than lost:
+    // HOW MANY come is the garrison's size, and the live rating decides only
+    // how far away they start and therefore how long they take.
+    const std::uint32_t shortfall = wanted - m_lastResponse.diverted;
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    core::DVec3 origin = playfieldHub(spec);
+    double best = std::numeric_limits<double>::max();
+    bool found = false;
+    for (const sim::StationSpec& station : spec.stations) {
+        const double distance = length(station.position - position);
+        if (distance < best) {
+            best = distance;
+            origin = station.position;
+            found = true;
+        }
+    }
+    if (!found) {
+        for (const GateInstance& gate : m_gates) {
+            const double distance = length(gate.position - position);
+            if (distance < best) {
+                best = distance;
+                origin = gate.position;
+                found = true;
+            }
+        }
+    }
+    const GameFaction& faction = m_factionTable[owner];
+    const std::vector<std::string>& roster =
+        faction.pirate ? faction.shipsRaider
+                       : (faction.shipsPatrol.empty() ? faction.shipsRaider : faction.shipsPatrol);
+    const std::size_t before = m_registry.storage<ShipPilot>().size();
+    spawnWing(owner,
+              roster,
+              faction.pirate ? PilotRole::Fighter : PilotRole::Patrol,
+              shortfall,
+              origin,
+              700.0,
+              PilotState::Travel,
+              &position);
+    m_lastResponse.spawned = static_cast<std::uint32_t>(m_registry.storage<ShipPilot>().size() - before);
+    if (m_lastResponse.spawned > 0) {
+        SOL_LOG_INFO("response: %u launched from %.0f km out, live %+.3f, reach %.0f km",
+                     m_lastResponse.spawned,
+                     best / 1000.0,
+                     static_cast<double>(live),
+                     reach / 1000.0);
+    }
+    return m_lastResponse.diverted + m_lastResponse.spawned;
+}
+
+void SpaceWorld::considerResponse(std::uint32_t targetIndex, std::uint32_t attackerIndex, core::DVec3 at)
+{
+    if (m_responseCooldown > 0.0 || attackerIndex == kNoIndex || attackerIndex == targetIndex) {
+        return;
+    }
+    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    if (owner >= m_factionTable.size()) {
+        return;
+    }
+    // Somebody the local law protects. There is no CRIME until Phase 36, so
+    // the trigger is the thing that already exists: a hull belonging to the
+    // faction that polices this system taking fire from one that does not.
+    const ShipPilot* victim = m_registry.storage<ShipPilot>().tryGet(targetIndex);
+    if (victim == nullptr || victim->factionIndex != owner) {
+        return;
+    }
+    if (attackerIndex != playerEntityIndex()) {
+        const ShipPilot* attacker = m_registry.storage<ShipPilot>().tryGet(attackerIndex);
+        if (attacker == nullptr || attacker->factionIndex == owner) {
+            return; // friendly fire is not an incident anybody is dispatched to
+        }
+    }
+    m_responseCooldown = kResponseCooldownSeconds;
+    (void)respondTo(at, attackerIndex, ResponseCause::WeaponsFire);
+}
+
 double SpaceWorld::shipHullFraction(ecs::Entity entity) const
 {
     if (!m_registry.isAlive(entity)) {
@@ -5943,6 +6213,11 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
     static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel"};
     constexpr float kThinkInterval = 0.5f; // 2 Hz strategy; steering runs at 60
 
+    // The dispatch throttle ages with the pilots it throttles (Phase 30 stage
+    // C): this is the one per-frame pass that already has a dt and runs whether
+    // or not anything is shooting.
+    m_responseCooldown = std::max(0.0, m_responseCooldown - dt);
+
     ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
     for (std::size_t i = 0; i < pilots.size(); ++i) {
         ShipPilot& pilot = pilots.values()[i];
@@ -5951,6 +6226,15 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
         // a pilot with no hull left to shoot at still has to forget.
         if (pilot.threatTimer > 0.0f) {
             pilot.threatTimer = std::max(0.0f, pilot.threatTimer - static_cast<float>(dt));
+        }
+        // A dispatched responder gives up on the same terms and for the same
+        // reason (Phase 30 stage C): a call you have been flying at for three
+        // minutes without finding anything is a call that is over.
+        if (pilot.respondTimer > 0.0f) {
+            pilot.respondTimer = std::max(0.0f, pilot.respondTimer - static_cast<float>(dt));
+            if (pilot.respondTimer == 0.0f && pilot.state == PilotState::Travel) {
+                pilot.state = PilotState::Idle; // Lua's next think puts it back on its beat
+            }
         }
         pilot.thinkTimer -= static_cast<float>(dt);
         if (pilot.thinkTimer > 0.0f) {
@@ -6434,6 +6718,23 @@ void SpaceWorld::tick(double dt)
                 // autopilot flies. Arriving does NOT end the leg — the coarse
                 // record does that — so a puppet that beats its own clock
                 // simply holds station off the pad it came to.
+                //
+                // ⚑ A RESPONDER IS THE EXCEPTION, AND `respondTimer` IS WHAT
+                // TELLS THEM APART (Phase 30 stage C). It has no coarse record
+                // to end its leg, so arriving at an incident that has since
+                // dispersed would leave it holding station at an empty point in
+                // space forever. Going Idle hands it back to `pilot_think`,
+                // which puts a patrol on its next leg. It does NOT engage here:
+                // the Lua patrol branch already calls `pilot_engage_enemy` on
+                // every think while not attacking, so a responder that arrives
+                // with a hostile inside sensor range picks it up through the
+                // path that already exists.
+                if (pilot.respondTimer > 0.0f &&
+                    length(pilot.waypoint - self.position) < kTraderArrivalRange) {
+                    pilot.respondTimer = 0.0f;
+                    pilot.state = PilotState::Idle;
+                    break;
+                }
                 input = sim::steerTravel(
                     self, control->tuning, pilot.waypoint, {}, kTraderArrivalRange, obstacles, entityIndex);
                 break;
@@ -7150,6 +7451,12 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex,
             pilot->threatTimer = static_cast<float>(kThreatMemorySeconds);
         }
     }
+    // Phase 30 stage C: and tell whoever polices this place. The same argument
+    // the comment above makes is why the hook belongs here - damage is the one
+    // site that knows who shot whom for certain, and every hit funnels through
+    // it. `considerResponse` decides whether it is an incident and throttles a
+    // burst of hits into one call.
+    considerResponse(targetIndex, attackerIndex, hitPosition);
 }
 
 void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t attackerIndex)

@@ -314,3 +314,362 @@ SOL_TEST(raiding_a_system_does_not_thin_the_garrison_that_defends_it)
     // thinned it, which is the wiring this phase refuses.
     SOL_CHECK(game::patrolsFor(liveAfter) < patrolsBefore);
 }
+
+// ---------------------------------------------------------------------------
+// Stage C: somebody comes, or nobody does.
+
+namespace {
+
+// A world standing in a chosen system, with the ambient wings its security
+// rating calls for. `loadSystem` is what puts hulls in the sky, and `sol.jump`
+// is how the game itself gets there, so the test uses the same door.
+bool standIn(game::SpaceWorld& world, const DefDatabase& defs, std::uint32_t system)
+{
+    world.spawn(game::kDefaultUniverseSeed);
+    world.applyDefs(defs);
+    if (!world.generateUniverse(defs)) {
+        return false;
+    }
+    return world.enterSystem(system);
+}
+
+// The first system whose baseline sits in [low, high], or kNoFaction.
+std::uint32_t systemInBand(const game::SpaceWorld& world, float low, float high)
+{
+    for (std::uint32_t i = 0; i < world.galaxy().systems.size(); ++i) {
+        const float baseline = world.systemSecurityBaseline(i);
+        if (baseline >= low && baseline <= high) {
+            return i;
+        }
+    }
+    return sol::sim::kNoFaction;
+}
+
+} // namespace
+
+// ⚑⚑⚑⚑ THE PRIMITIVE decisions/019 §3 GOT WRONG, ASSERTED DIRECTLY, BECAUSE
+// THE WHOLE STAGE RESTS ON THE DIFFERENCE. §3 said a long-haul response is
+// "`pilotPatrolTo` plus `PilotState::Travel`". `pilotPatrolTo` sets PATROL -
+// combat-scale steering that "closes to 50 m and stops" - so the two named
+// functions never composed, and a responder built on them would grind across
+// 600,000 km on dogfight steering. This is the difference, in two lines.
+SOL_TEST(a_dispatched_responder_travels_rather_than_patrols)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    const sol::ecs::Entity ship =
+        world.spawnPilotFromDef(*defs.findShip("sol.interceptor"), defs, game::PilotRole::Patrol, 0);
+    const sol::core::DVec3 far{6.0e8, 0.0, 0.0};
+
+    SOL_REQUIRE(world.pilotPatrolTo(ship, far));
+    SOL_CHECK(world.pilotStateOf(ship) == game::PilotState::Patrol); // the wrong one
+
+    SOL_REQUIRE(world.pilotTravelTo(ship, far));
+    SOL_CHECK(world.pilotStateOf(ship) == game::PilotState::Travel); // the cruise drive
+}
+
+// The zero band, which is the answer that costs nothing to give and is the
+// hardest to notice is missing: at 0.1 nobody comes, and that is a RULE rather
+// than a system with no patrols in it.
+SOL_TEST(nobody_comes_in_a_system_nobody_polices)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld probe;
+    probe.spawn(game::kDefaultUniverseSeed);
+    probe.applyDefs(defs);
+    SOL_REQUIRE(probe.generateUniverse(defs));
+
+    // `sol.lantern` is the shipped galaxy's one unpoliced system - authored
+    // lawless in Phase 29, before this phase existed to give it a number.
+    std::uint32_t unpoliced = sol::sim::kNoFaction;
+    for (std::uint32_t i = 0; i < probe.galaxy().systems.size(); ++i) {
+        if (probe.galaxy().systems[i].authoredId == "sol.lantern") {
+            unpoliced = i;
+        }
+    }
+    SOL_REQUIRE(unpoliced != sol::sim::kNoFaction);
+    SOL_CHECK(probe.systemSecurityBaseline(unpoliced) == 0.0f);
+
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, unpoliced));
+    const sol::core::DVec3 at = sol::sim::playfieldHub(world.galaxy().systems[unpoliced]);
+    SOL_CHECK(world.respondTo(at, 0xffff'ffffu, game::ResponseCause::WeaponsFire) == 0);
+    SOL_CHECK(world.lastResponse().diverted == 0);
+    SOL_CHECK(world.lastResponse().spawned == 0);
+}
+
+// ⚑⚑⚑ THE SILENCE BAND, REACHED THE ONLY WAY IT CAN BE. An unowned system
+// returns before the band is ever consulted, so the obvious test for "nobody
+// comes" - stand in `sol.lantern` and call - proves the OWNER check and leaves
+// `kResponseSilenceBand` entirely untested. The counterfactual said so: setting
+// the band to zero changed nothing anywhere. What actually exercises it is a
+// system that IS policed, whose live rating has been eroded to near zero by
+// danger - a place with a garrison that has stopped being able to answer.
+SOL_TEST(a_system_whose_rating_has_collapsed_stops_answering_at_all)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    world.applyDefs(defs);
+    SOL_REQUIRE(world.generateUniverse(defs));
+
+    // The thinnest raidable garrison there is, so danger can swamp it.
+    std::vector<RaidCandidate> candidates;
+    std::uint32_t target = sol::sim::kNoFaction;
+    for (std::uint32_t faction = 0; faction < world.factions().size(); ++faction) {
+        world.factionSim().raidCandidates(world.galaxy(), faction, candidates);
+        for (const RaidCandidate& candidate : candidates) {
+            const float baseline = world.systemSecurityBaseline(candidate.system);
+            if (baseline > 0.0f &&
+                (target == sol::sim::kNoFaction || baseline < world.systemSecurityBaseline(target))) {
+                target = candidate.system;
+            }
+        }
+    }
+    SOL_REQUIRE(target != sol::sim::kNoFaction);
+    SOL_REQUIRE(world.enterSystem(target));
+    const sol::core::DVec3 at = sol::sim::playfieldHub(world.galaxy().systems[target]);
+
+    // It answers while it is quiet...
+    SOL_REQUIRE(world.respondTo(at, 0xffff'ffffu, game::ResponseCause::WeaponsFire) > 0);
+
+    SOL_REQUIRE(raiseDanger(world, target, 0.9f) > 0.0f);
+    SOL_REQUIRE(world.systemSecurity(target) == 0.0f); // eroded to the zero band
+    std::printf("  %s: baseline %+.3f, live %+.3f -> nobody comes\n",
+                world.galaxy().systems[target].name.c_str(),
+                static_cast<double>(world.systemSecurityBaseline(target)),
+                static_cast<double>(world.systemSecurity(target)));
+
+    // ...and stops when nobody's law reaches it any more. The garrison is still
+    // there - stage B holds that - it just is not coming for you.
+    SOL_CHECK(world.respondTo(at, 0xffff'ffffu, game::ResponseCause::WeaponsFire) == 0);
+    SOL_CHECK(world.lastResponse().diverted == 0);
+    SOL_CHECK(world.lastResponse().spawned == 0);
+    SOL_CHECK(game::patrolsFor(world.systemSecurityBaseline(target)) > 0);
+}
+
+// High security over the pad: somebody is already there, so nothing is created.
+// This is decisions/019 decision 3's first clause - divert first - and the
+// reason a response can be fast without anything appearing from nowhere.
+SOL_TEST(a_call_over_the_station_diverts_hulls_that_already_exist)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld probe;
+    probe.spawn(game::kDefaultUniverseSeed);
+    probe.applyDefs(defs);
+    SOL_REQUIRE(probe.generateUniverse(defs));
+    const std::uint32_t core = systemInBand(probe, 0.70f, 1.0f);
+    SOL_REQUIRE(core != sol::sim::kNoFaction);
+
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, core));
+    const sol::sim::SystemSpec& spec = world.galaxy().systems[core];
+    SOL_REQUIRE(!spec.stations.empty());
+
+    const std::uint32_t sent =
+        world.respondTo(spec.stations[0].position, 0xffff'ffffu, game::ResponseCause::WeaponsFire);
+    const game::SpaceWorld::ResponseReport& report = world.lastResponse();
+    std::printf("  core %u: live %+.3f, reach %.0f km -> %u diverted, %u launched\n",
+                core,
+                static_cast<double>(report.live),
+                report.reach / 1000.0,
+                report.diverted,
+                report.spawned);
+    SOL_CHECK(sent > 0);
+    SOL_CHECK(report.diverted > 0);
+    SOL_CHECK(report.spawned == 0); // nothing materialised; the garrison answered
+
+    // ⚑⚑⚑ AND THE DIVERTED HULLS ARE ON THE CRUISE DRIVE, WHICH IS THE CALL
+    // SITE OBEYING decisions/019's CORRECTION RATHER THAN THE PRIMITIVE MERELY
+    // EXISTING. The counterfactual - swapping `pilotTravelTo` back to the
+    // `pilotPatrolTo` §3 actually names - left every other test in this file
+    // green, because the state difference was only ever asserted on a pilot
+    // the test drove by hand.
+    std::vector<game::ResponderInfo> responders;
+    world.responderInfo(responders);
+    SOL_REQUIRE(responders.size() == report.diverted + report.spawned);
+    for (const game::ResponderInfo& responder : responders) {
+        SOL_CHECK(responder.state == game::PilotState::Travel);
+    }
+}
+
+// ⚑⚑⚑ AND THE TRAP decisions/019 NAMED BEFORE ANYBODY COULD TAKE IT: a
+// response wing must NOT materialise in the offender's face. `spawnPilotFromDef`
+// places a ship 150-250 m directly in front of the player - correct for the dev
+// console it was written for - and a fallback built on it would make "response
+// time" a lie told instantly. A call at a far gate with nobody in range has to
+// launch from a station or a gate, which is to say from somewhere ELSE.
+SOL_TEST(a_launched_response_starts_somewhere_other_than_the_incident)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld probe;
+    probe.spawn(game::kDefaultUniverseSeed);
+    probe.applyDefs(defs);
+    SOL_REQUIRE(probe.generateUniverse(defs));
+    // ⚑⚑⚑ A THIN SYSTEM, AND THAT IS THE WHOLE SETUP. The first version of
+    // this test used a CORE system and reported "2 diverted, 0 launched" - it
+    // passed every assertion while never once reaching the code its name is
+    // about. Reach scales with the rating, so at +0.850 it is 1,020,000 km and
+    // covers a 600,000 km system entirely: there is always somebody to divert,
+    // and the spawn fallback is unreachable. Only a system whose reach is
+    // SHORTER than the distance to its own garrison can produce a launch.
+    const std::uint32_t fringe = systemInBand(probe, 0.15f, 0.32f);
+    SOL_REQUIRE(fringe != sol::sim::kNoFaction);
+
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, fringe));
+    const sol::core::DVec3 hub = sol::sim::playfieldHub(world.galaxy().systems[fringe]);
+    const sol::core::DVec3 at = hub + sol::core::DVec3{5.0e8, 0.0, 0.0};
+
+    const std::uint32_t sent = world.respondTo(at, 0xffff'ffffu, game::ResponseCause::WeaponsFire);
+    const game::SpaceWorld::ResponseReport& report = world.lastResponse();
+    std::printf("  fringe %u: live %+.3f, reach %.0f km -> %u diverted, %u launched\n",
+                fringe,
+                static_cast<double>(report.live),
+                report.reach / 1000.0,
+                report.diverted,
+                report.spawned);
+    SOL_REQUIRE(sent > 0);
+    // ⚑ Named, so this can never again pass by diverting instead.
+    SOL_CHECK(report.spawned > 0);
+    SOL_CHECK(report.diverted == 0);
+
+    std::vector<game::ResponderInfo> responders;
+    world.responderInfo(responders);
+    SOL_REQUIRE(!responders.empty());
+    for (const game::ResponderInfo& responder : responders) {
+        // ⚑⚑ THE TRAP decisions/019 NAMED: `spawnPilotFromDef` puts a hull
+        // 150-250 m in front of the PLAYER, so a fallback built on it would
+        // make "response time" a lie told instantly. Every responder starts a
+        // long way from the incident, and then has to fly.
+        SOL_CHECK(length(responder.position - at) > 100'000.0);
+        SOL_CHECK(responder.distanceToIncident > 100'000.0);
+    }
+}
+
+// Reach reads the LIVE rating, so a system being fought over answers its far
+// corners worse - decisions/019's single permitted coupling from danger to
+// enforcement. The garrison itself is untouched, which stage B already holds.
+SOL_TEST(a_raided_system_answers_its_far_corners_worse)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    world.applyDefs(defs);
+    SOL_REQUIRE(world.generateUniverse(defs));
+
+    std::vector<RaidCandidate> candidates;
+    std::uint32_t target = sol::sim::kNoFaction;
+    for (std::uint32_t faction = 0; faction < world.factions().size() && target == sol::sim::kNoFaction;
+         ++faction) {
+        world.factionSim().raidCandidates(world.galaxy(), faction, candidates);
+        for (const RaidCandidate& candidate : candidates) {
+            if (world.systemSecurityBaseline(candidate.system) > 0.5f) {
+                target = candidate.system;
+                break;
+            }
+        }
+    }
+    SOL_REQUIRE(target != sol::sim::kNoFaction);
+    SOL_REQUIRE(world.enterSystem(target));
+
+    const sol::core::DVec3 at = sol::sim::playfieldHub(world.galaxy().systems[target]);
+    const float baselineBefore = world.systemSecurityBaseline(target);
+    const std::uint32_t patrolsBefore = game::patrolsFor(baselineBefore);
+    const std::uint32_t sentBefore = world.respondTo(at, 0xffff'ffffu, game::ResponseCause::WeaponsFire);
+    const double reachBefore = world.lastResponse().reach;
+    SOL_REQUIRE(sentBefore > 0);
+
+    SOL_REQUIRE(raiseDanger(world, target, 0.9f) > 0.0f);
+    (void)world.respondTo(at, 0xffff'ffffu, game::ResponseCause::WeaponsFire);
+    const double reachAfter = world.lastResponse().reach;
+
+    std::printf("  reach %.0f km -> %.0f km under raiding, responders %u -> %u\n",
+                reachBefore / 1000.0,
+                reachAfter / 1000.0,
+                sentBefore,
+                world.lastResponse().diverted + world.lastResponse().spawned);
+    SOL_CHECK(reachAfter < reachBefore);
+    // ⚑⚑⚑ AND HOW MANY CAME DID NOT MOVE, WHICH IS THE OTHER HALF AND THE ONE
+    // THE SPIRAL WOULD EAT. Reach reads the LIVE rating because a busy system
+    // really is slower; the SIZE of the answer reads the baseline, or a raid
+    // would thin the response to itself and make the next raid cheaper. The
+    // counterfactual - `respondersFor(live)` - is the naive wiring.
+    SOL_CHECK(world.lastResponse().diverted + world.lastResponse().spawned == sentBefore);
+    // ...and the garrison that answers is still the size it was, which is the
+    // half that keeps this from being the spiral wearing a different hat.
+    SOL_CHECK(world.systemSecurityBaseline(target) == baselineBefore);
+    SOL_CHECK(game::patrolsFor(world.systemSecurityBaseline(target)) == patrolsBefore);
+}
+
+// ⚑⚑⚑⚑ THE TRIGGER, WHICH IS THE HALF A DRIVE COULD NOT PIN DOWN. `respondTo`
+// is well covered above, but everything there calls it directly - nothing said
+// that a HIT turns into a call, and the obvious way to show that (fly the game,
+// shoot a Navy hull, read the log) failed for a reason worth writing down: the
+// gun fired and the capacitor drained, but whether a bolt CONNECTS at 200 m is
+// not something a scripted drive can promise, and five bursts produced no
+// incident. The policy is stated here instead, where it is deterministic.
+SOL_TEST(a_hit_on_the_local_law_is_what_calls_the_local_law)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    const std::uint32_t owner = world.systemOwnerFaction(world.currentSystemIndex());
+    SOL_REQUIRE(owner < world.factions().size());
+    SOL_REQUIRE(world.systemSecurityBaseline(world.currentSystemIndex()) > 0.0f);
+    const std::uint32_t outsider = owner == 0 ? 1u : 0u;
+    const sol::core::DVec3 at = sol::sim::playfieldHub(world.galaxy().systems[world.currentSystemIndex()]);
+
+    // The attacker is a hull of another faction rather than the player, which
+    // is the second trigger the phase names anyway - raiders engaging traders -
+    // and needs nothing private to say it.
+    const sol::ecs::Entity localHull =
+        world.spawnPilotFromDef(*defs.findShip("sol.shuttle"), defs, game::PilotRole::Trader, owner);
+    const sol::ecs::Entity raider =
+        world.spawnPilotFromDef(*defs.findShip("sol.interceptor"), defs, game::PilotRole::Fighter, outsider);
+
+    // 1. One of the owner's hulls takes fire from somebody else: they come.
+    world.considerResponse(localHull.index, raider.index, at);
+    const std::uint32_t called = world.lastResponse().diverted + world.lastResponse().spawned;
+    std::printf("  hit on a %s hull by %s -> %u responder(s)\n",
+                world.factions()[owner].name.c_str(),
+                world.factions()[outsider].name.c_str(),
+                called);
+    SOL_CHECK(called > 0);
+
+    // 2. Immediately again: the throttle holds, so a burst of projectile hits
+    // is ONE call rather than one call per bolt.
+    world.considerResponse(localHull.index, raider.index, at);
+    SOL_CHECK(world.lastResponse().diverted + world.lastResponse().spawned == called);
+
+    // 3. A hull the local law is NOT responsible for. A fresh world, so the
+    // throttle is down and a pass here cannot be the cooldown talking.
+    game::SpaceWorld elsewhere;
+    SOL_REQUIRE(standIn(elsewhere, defs, 0));
+    const sol::ecs::Entity foreignHull =
+        elsewhere.spawnPilotFromDef(*defs.findShip("sol.shuttle"), defs, game::PilotRole::Trader, outsider);
+    const sol::ecs::Entity attacker =
+        elsewhere.spawnPilotFromDef(*defs.findShip("sol.interceptor"), defs, game::PilotRole::Fighter, owner);
+    elsewhere.considerResponse(foreignHull.index, attacker.index, at);
+    SOL_CHECK(elsewhere.lastResponse().diverted + elsewhere.lastResponse().spawned == 0);
+
+    // 4. And the owner shooting its own is not an incident anybody attends.
+    game::SpaceWorld friendly;
+    SOL_REQUIRE(standIn(friendly, defs, 0));
+    const sol::ecs::Entity victim =
+        friendly.spawnPilotFromDef(*defs.findShip("sol.shuttle"), defs, game::PilotRole::Trader, owner);
+    const sol::ecs::Entity shooter =
+        friendly.spawnPilotFromDef(*defs.findShip("sol.interceptor"), defs, game::PilotRole::Patrol, owner);
+    friendly.considerResponse(victim.index, shooter.index, at);
+    SOL_CHECK(friendly.lastResponse().diverted + friendly.lastResponse().spawned == 0);
+}
