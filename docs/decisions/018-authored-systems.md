@@ -74,6 +74,41 @@ takes one placement rule.
    replace the map, not just the rules — which is the strongest single answer to
    the "yours to break" pillar the arc contains.
 
+## Amendment — 2026-08-29, when Phase 29 was spec'd against the code
+
+The re-read this project requires before a phase starts refuted one sentence in
+this record, and sharpened two others. The original wording is left above.
+
+- **"Authored placement resolves in def order against the same seeded streams,
+  before procedural placement runs" is not achievable for every rule, and the
+  table above already says why.** `jumps_from` measures gate distance, and the
+  gate graph does not exist until `buildGateGraph` has run over final positions
+  (`universe.cpp:528`). But `at_system` is documented here as *"Replace/occupy a
+  specific named system"* and `random` as *"Any ordinary system"* — **three of
+  the four rules pick an existing node**, and only `anywhere` creates one. So
+  placement has **two injection points**: `anywhere` and constellations append
+  nodes just after `scatterSystems`, and the three replacement rules resolve in
+  def order **after** the gate graph, overwriting a node's spec while inheriting
+  its position, its region and its gates. Determinism is preserved exactly as
+  rule 1 intends; only the *when* moves.
+- **This is still not the "post-generation patching" rejected below.** That was
+  refused because patching after generation *"produces gate graphs that
+  contradict the authored layout"*. A replacement contradicts nothing, because
+  an authored system declares no external links. What remains forbidden is
+  patching after `populateSystem`, which is a later point in the pipeline.
+- **`exclude_secret` names a concept that does not exist in the codebase.** No
+  occurrence of "secret" outside this document and the arc's own text. Phase 29
+  introduces it as a flag on an authored system and nothing more; the
+  exploration payoff GDD §8 describes is a later phase reading that flag.
+- **The save consequence below is understated.** It says a galaxy regenerates
+  from seed + defs, so adding an authored system changes the galaxy under an
+  existing save, handled by a content version bump. But `galaxyChanged` keys
+  **only on the seed** (`space_world.cpp:7211`), and a mod is not the build — so
+  a player who installs one mid-campaign gets a silently reshaped galaxy that no
+  version bump can see. Phase 29 writes the authored input's digest into the save
+  beside the seed and refuses a mismatch, which makes the phase a save format
+  break rather than a free one.
+
 ## Alternatives considered
 
 - **Post-generation patching** — generate procedurally, then overwrite chosen
