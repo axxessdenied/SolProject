@@ -48,6 +48,7 @@ Progression is horizontal as much as vertical: a mining barge, a fast smuggler, 
 ## 3. World & Universe
 
 - **Galaxy**: procedurally generated from a seed at new-game — 50–150 star systems (target; tune for density of interest, not raw size) connected by jump-gate lanes forming a graph with regions: civilized core, contested frontier, lawless fringe. Difficulty and opportunity rise toward the fringe (Avorion-style gradient). **[core]**
+- **System security** **[core, added 2026-08-28]**: that gradient stops being a colour on a map and becomes **a number every system carries**. Security is **signed**. A **positive** rating means a major faction polices the place, and both the strength of its patrols and how fast anything answers a distress scale with it. **Zero** means nobody comes. A **negative** rating means somebody else's law holds — a pirate clan — and it answers intrusion exactly the way a navy does, except that the wing it dispatches is coming for *you*. The rating is a **static baseline** (who owns it, how far from their capital) minus **what is happening there right now** (raids, live front lines), so a quiet core system and the same system three hours into a war do not read the same. This is what makes the fringe pay: nobody polices it, which is the same sentence as nobody protects you. See §15 and `docs/decisions/019-system-security.md`.
 - **Systems**: each system is a flat-ish playfield of real 3D space — star, planets (scenery + orbit anchors), stations, asteroid fields, gates, points of interest. Distances in the hundreds of thousands of km; in-system **cruise drive** (superlight throttle mode, interruptible) covers them. **[likely]**
 - **Authored systems and constellations** **[core, added 2026-08-28]**: a system may be **written by hand in TOML** and injected into generation rather than rolled — a named station, a fixed layout, a scripted anchor. Each authored system declares a **placement rule** (in a named system; N jumps from a named system; a random system excluding secrets; a random position in the galaxy) and several may be grouped into a **constellation** placed as a unit with its internal topology intact. Authored systems are moddable content like everything else, which is what makes a total-overhaul mod able to replace the map as well as the rules. This is the narrative control the campaign needs and the home every secret has lacked. See `docs/decisions/018-authored-systems.md`.
 - **Travel**: jump gates between systems as baseline; player-owned jump drive as a late-game unlock (decided, `decisions/004`). No time compression — the game runs at 1× real time, with cruise speed and system layout tuned so legs stay short (decided, `decisions/005`). **[core]**
@@ -95,6 +96,7 @@ The flagship simulation system, and the spine the sandbox hangs on:
 - 4–7 major handcrafted factions (distinct ideology, territory, ship aesthetic, economy specialty) + minor factions (pirate clans, corporations, independents) partly generated.
 - **Every major faction declares its own legality table** (§13): what it treats as contraband, what it merely licenses, and how hard it looks. A faction's *laws* are as much of its character as its ships — the Hegemony's list is long and its patrols are thorough; the Compact barely has one and cannot afford to enforce it.
 - **The black market is a faction template, not a place** **[added 2026-08-28]**: a `kind = "shadow"` faction has **no territory and no stations of its own**. It operates *inside* other factions' stations, wherever a station's module list includes black-market services (§12), and it flies purpose-built covert-ops hulls crewed by pilots who make a living going around the law. Standing with a shadow faction is earned by exactly the acts that cost you standing with the law, which is what makes smuggling a genuine allegiance rather than a tolerated exploit. See `docs/decisions/017-law-and-transponders.md`.
+- **A faction's reach is visible before you meet it** **[added 2026-08-28]**: how heavily a faction garrisons a system, and how quickly it answers trouble there, falls off with distance from its capital — which is why a border system flying somebody's flag can still be a bad place to be robbed. Security ratings (§15) are where a faction's *claim* and its actual *grip* are allowed to differ.
 - Live relations: wars, truces, and border shifts happen on the coarse sim from real events (Stellaris-flavored personality weights driving Lua-side decision rules).
 - Player reputation per faction, moved by actions (contracts, kills, smuggling, rescues). Consequences: market/equipment access, docking rights, patrol hostility, mission tiers. Reputation is a web, not a bar — helping one side is taken personally by their enemies, and being liked by smugglers is noticed by police.
 
@@ -135,11 +137,12 @@ Recorded here so v1 does not paint over it: **multi-system entity simulation** (
 | Q5 | Crew/officers as passive bonuses | ✅ Decided: trivial version in v1 — hired flat passive bonuses on module machinery (`decisions/006`) | Phase 8 |
 | Q6 | Death penalty severity / ironman modes | ✅ Decided: insurance deductible default + opt-in hardcore (`decisions/007`) | Phase 8 |
 | Q7 | Story campaign vs. pure sandbox + anchors | ✅ Decided: authored campaign spine, sandbox complete without it (`decisions/008`) | Phase 8 |
-| Q8 | Hardpoints: unified named mounts vs. mounts beside slot counts | ✅ Decided: **unified named mounts**; slot counts retire (`decisions/014`) | Phase 30 |
-| Q9 | Do owned ships exist while the player is elsewhere? | ✅ Decided: **full entities in every system that holds one**; the frame-of-reference change is its own phase (`decisions/015`) | Phase 37 |
-| Q10 | Station modules: composition, construction, or both | ✅ Decided: **generator composes in v1, player constructs in v2** (`decisions/016`) | Phase 33 |
-| Q11 | How deep does law enforcement go | ✅ Decided: **full inspection loop** — hail, hold, timed cargo scan, consequence (`decisions/017`) | Phase 35 |
+| Q8 | Hardpoints: unified named mounts vs. mounts beside slot counts | ✅ Decided: **unified named mounts**; slot counts retire (`decisions/014`) | Phase 31 |
+| Q9 | Do owned ships exist while the player is elsewhere? | ✅ Decided: **full entities in every system that holds one**; the frame-of-reference change is its own phase (`decisions/015`) | Phase 38 |
+| Q10 | Station modules: composition, construction, or both | ✅ Decided: **generator composes in v1, player constructs in v2** (`decisions/016`) | Phase 34 |
+| Q11 | How deep does law enforcement go | ✅ Decided: **full inspection loop** — hail, hold, timed cargo scan, consequence (`decisions/017`) | Phase 36 |
 | Q12 | Authored systems: how placed, how modded | ✅ Decided: **TOML systems + constellations with placement rules** (`decisions/018`) | Phase 29 |
+| Q13 | System security: static, dynamic, and what "negative" means | ✅ Decided: **static baseline − live danger, on a signed scale whose negative half is pirate-policed**; response diverts before it spawns (`decisions/019`) | Phase 30 |
 
 Decisions get recorded in `docs/decisions/` and reflected here.
 
@@ -147,7 +150,7 @@ Decisions get recorded in `docs/decisions/` and reflected here.
 
 ## 11. Ships: Classes, Roles & Mounts **[core, added 2026-08-28]**
 
-This section is the **vocabulary**, not the roster. It defines the axes every ship in the game is described on, so that a faction roster, a mod's roster, and the generator's spawn tables all speak the same language. What actually gets *built* in the arc's first pass is a spine of roughly eight to ten hulls (see `docs/engine-plan.md` Phase 31); the rest of the grid is named, sized and left for art.
+This section is the **vocabulary**, not the roster. It defines the axes every ship in the game is described on, so that a faction roster, a mod's roster, and the generator's spawn tables all speak the same language. What actually gets *built* in the arc's first pass is a spine of roughly eight to ten hulls (see `docs/engine-plan.md` Phase 32); the rest of the grid is named, sized and left for art.
 
 ### 11.1 Hull classes
 
@@ -218,7 +221,7 @@ Fittings are manufactured goods (§6 T2), which is what connects the fitting scr
 
 A station is **a list of modules**, and everything about it follows from that list: what it produces and consumes, which screens it offers when you dock, what its silhouette looks like, and who you can meet inside it. In v1 the **galaxy generator composes** every NPC station from this vocabulary. In v2 the **player builds** from the same vocabulary (§9, `decisions/016`).
 
-> **Naming.** `[[module]]` is currently ship outfitting. Phase 30 renames ship fittings to `[[component]]` — a thing that occupies a mount — which frees `[[module]]` for its natural meaning here. See `docs/decisions/014-ship-mounts.md`.
+> **Naming.** `[[module]]` is currently ship outfitting. Phase 31 renames ship fittings to `[[component]]` — a thing that occupies a mount — which frees `[[module]]` for its natural meaning here. See `docs/decisions/014-ship-mounts.md`.
 
 ### Module families
 
@@ -250,6 +253,8 @@ Recreation modules put **people** on a station — as a screen, never as a place
 ### The transponder
 
 Every ship broadcasts an identity. In **policed space** — systems held by a faction with the will to enforce — running with your transponder **off** is itself an offence, and it is also the only way to do a number of profitable things. The switch is the whole mechanic: it is always available, it is never free.
+
+**“Policed space” is a number, not a mood** (§15): how likely a patrol is to notice you, how many turn up, and how fast, all read off the system's security rating. The same run is routine at 0.9 and suicidal at 0.2 — and below zero the ships that stop you are not police at all.
 
 ### The inspection loop
 
@@ -293,3 +298,71 @@ Ships can be grouped into a **fleet** with a commander, a **formation** (customi
 ### 14.4 The prerequisite nobody asks for
 
 All of §14.2 and §14.3 rest on one engine change: **a ship you own that is not in your system has to actually exist**. Today exactly one system is instantiated and every position in the sim is expressed in that system's barycentre frame. Multi-system entity simulation is therefore its own phase, ahead of captains and fleets, and it is the largest single item in the v2 arc. See `docs/decisions/015-multi-system-simulation.md`.
+
+---
+
+## 15. System Security **[core, added 2026-08-28]**
+
+The GDD has promised a civilized core, a contested frontier and a lawless fringe
+since day one. §15 is where that promise stops being a colour on the galaxy map
+and becomes **a number every system carries, that the player can read before
+they fly there**.
+
+### The scale is signed, and the sign is the whole idea
+
+| Band | Who polices it | What that means for you |
+|---|---|---|
+| **High positive** | A major faction, heavily | Thick patrols. Fire on someone and a wing is on you in seconds. The safest place to be law-abiding and the worst place to be anything else. |
+| **Low positive** | A major faction, thinly | A patrol exists. It is probably somewhere else, and it will take a while. |
+| **Zero** | Nobody | Nobody comes. Not for you, and not for the people robbing you. |
+| **Negative** | A pirate clan | Somebody else's law. It answers intrusion exactly the way a navy does — and the wing it dispatches is coming for *you*. |
+
+**Negative security is not the absence of security.** It is security belonging to
+someone whose interests you are on the wrong side of. A clan-held system is
+patrolled, watched, and responded to; the difference is who the response is for.
+This is what makes the deep fringe a *place* rather than an empty region — and it
+is the home the black market (§7) has always needed.
+
+### What the rating is made of
+
+Two numbers, deliberately, because they answer two different questions:
+
+- **The baseline** — a property of the *place*. Who owns it, how far it sits from
+  their capital, and what kind of owner they are. Written when the galaxy is
+  generated; an authored system (§3) may declare its own.
+- **The live rating** — the baseline minus **what is happening there now**: raids
+  in progress, live front lines. A quiet core system and the same system three
+  hours into a war do not read the same.
+
+**Patrol strength reads the baseline. Danger, attrition and response *time* read
+the live rating.** A navy's garrison does not evaporate because pirates turned
+up — if anything it digs in — and wiring it the other way makes a spiral where
+one raid thins the patrols and buys the next one. What live pressure *does* cost
+you is speed: busy patrols are slower to arrive, and that is the honest penalty.
+
+### Response is a journey, not a timer
+
+When something happens that the local authority cares about, the nearest patrol
+that is not already fighting is **sent**. If there is none in range, one comes
+**from a station or a gate**, and it flies there.
+
+So response time is a real transit across real distance. A provocation over a
+station pad and the same provocation at a gate 600,000 km out are different
+events, with no special-casing and no script — and in a zero-security system the
+difference stops mattering, because nothing is coming either way.
+
+### What it changes about how the game is played
+
+- **Routes become decisions.** The safe road and the short road stop being the
+  same road, and the map is where you find that out.
+- **The fringe pays because nobody protects you.** Difficulty and opportunity
+  rising toward the fringe (§3) finally has a mechanism instead of a tuning
+  table.
+- **It is the dial the law runs on.** Whether a patrol bothers to stop and scan
+  you (§13) is a question about where you are, not just about what you are
+  carrying.
+- **It gives the shadow faction an address after all.** §7 says the black market
+  has no territory — and that stays true. But a negative-security system is
+  where its people are already at home.
+
+See `docs/decisions/019-system-security.md`.

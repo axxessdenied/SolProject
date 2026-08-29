@@ -3362,11 +3362,13 @@ Every clause is true of the nine `.wav` cues today, and the script has said so s
 
 **Suites: `platform.unit` 27 → 35, `game.unit` 41 → 59.** Windows dev 13/13 + dev-gpu 2/2, release 17/17 + release-gpu 5/5; clang-format clean by exit code.
 
-### The Depth Arc — Phases 28–40 📋 (planned 2026-08-28; Phase 28 spec'd, the rest are sketches to be spec'd before starting)
+### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; Phase 28 spec'd, the rest are sketches to be spec'd before starting)
 
 **From the user, 2026-08-28**, as eleven asks in one message: ship classes by size and role; parts, upgrades and subsystems; hardpoints on hulls with Forge authoring and in-game visuals; stations built from modules; a wider material tree with contraband; a black-market faction; transponders and running dark; authored systems and constellations for narrative control; ship commands with a right-click menu; multiple owned ships, captains and fleets; and station lore with characters who know things.
 
-**It was priced against the code before any of it was designed**, per the standing rule that a roadmap estimate is re-read against the tree before it is trusted. Eight decisions were then put to the user with the counter-argument inside each; **seven came back at the recommended end and one — Q9, multi-system simulation — came back at the fuller end.** All eight are recorded in `docs/decisions/014` through `018` and mirrored into `docs/gdd.md` §10 as Q8–Q12.
+**A twelfth ask arrived later the same day and became Phase 30**: *“security ratings for systems which will impact the strength of patrolling security forces and response times. systems with no security or negative security will be more dangerous to travel through and would be home of pirate factions for example.”* It was priced the same way, and it produced the arc's sharpest example of the survey's own headline — **the situational half of system security had already been built, three phases early, under the name `danger`.** See `docs/decisions/019-system-security.md`.
+
+**It was priced against the code before any of it was designed**, per the standing rule that a roadmap estimate is re-read against the tree before it is trusted. Eight decisions were then put to the user with the counter-argument inside each; **seven came back at the recommended end and one — Q9, multi-system simulation — came back at the fuller end.** All eight are recorded in `docs/decisions/014` through `018` and mirrored into `docs/gdd.md` §10 as Q8–Q12. **Three more were put the same way for Phase 30 and all three came back at the recommended end** (`decisions/019`, GDD Q13) — which sharpens the pattern rather than muddying it: **every one of those three recommendations was argued from something measured in the tree**, and the single ruling that ever came back at the fuller end, Q9, was the one argued from architectural taste.
 
 **What the survey found, and it is the shape of the whole arc.** Roughly half of what was asked for is already sitting in the tree unwired:
 
@@ -3375,6 +3377,7 @@ Every clause is true of the nine `.wav` cues today, and the script has said so s
 - `pickTarget(world, cursor)` already answers "what is under this arbitrary screen point". The hard half of a right-click menu is done.
 - Hailing (Phase 8s), docking clearance (8r) and timed target scanning (8e) are three built loops that the law system needs and would otherwise have to invent.
 - The Forge's `point_tool.cpp` already picks and drags named points on a mesh in 3D, and `def_editor.cpp` already owns `ships.toml` and validates writes through the game's own schema.
+- **⚑⚑ System security was two thirds built before it was asked for, and the strongest single instance of this whole pattern.** `FactionSim::danger(system)` is a live, saved, tested, Lua-bound per-system 0..1 scalar with two consumers already; `kPatrolsPerRegion[3] = {3, 2, 1}` already keys patrol strength to a per-system tier, under a comment that has read *“patrol wings by region security”* since Phase 13; and clan-held fringe neighbourhoods — the “home of pirate factions” — are already generated and already spawn raider wings. **What was missing was a number, a sign, a response, and the fact that the player had never been shown any of it.**
 - **69 of 158 bound `sol.*` functions are never called by any script.** A great deal of this arc's policy can land in Lua.
 
 And the other half is genuinely empty: **zero** occurrences of hardpoint, transponder, contraband, smuggling, crime or fleet anywhere in the engine; `generateGalaxy` reads nothing from disk; `ui::InputState` has exactly one mouse button; and there are **eight meshes in the whole game — one ship, one station.**
@@ -3383,14 +3386,15 @@ And the other half is genuinely empty: **zero** occurrences of hardpoint, transp
 
 **⚑⚑⚑ AND THE FIRST SPEC WRITTEN OFF THIS SECTION IMMEDIATELY MADE THAT NINE.** Phase 28's sketch was re-read against the code the same day it was written and was **wrong in the cheap direction in three places** — the player's ship already has a one-slot command system (the autopilot) with four guards that generalise; the right-click/right-drag rule it named as the phase's risk was already solved, measured and committed by Phase 15; and the Controls screen it promised to grow already scales. **The refuted wording is quoted inside Phase 28 rather than deleted**, because the evidence for the estimate lesson is worth more than a tidy document. ⚑ *A sketch written by the same session that read the code is still a sketch.*
 
-**Sequencing, and why it is this order.** Phase 28 first because it is immediately playable and independent — it needs no other phase and it is visible the moment it lands. Phase 29 second because it is small, independent, and **it unblocks Campaign Act 2**, which has been the sole remaining roadmap item for several sessions: the arc's own justification for authored systems is the campaign, which makes them a dependency of Act 2 rather than a competitor to it. **Campaign Act 2 should be written after 29 and can be written any time after it.** Then the mount system, because everything ship-shaped rests on it. Then matter, stations, people, law and the black market, each of which depends on the ones before. The v2 arc opens with the frame-of-reference change, because captains and fleets are unbuildable without it.
+**Sequencing, and why it is this order.** Phase 28 first because it is immediately playable and independent — it needs no other phase and it is visible the moment it lands. Phase 29 second because it is small, independent, and **it unblocks Campaign Act 2**, which has been the sole remaining roadmap item for several sessions: the arc's own justification for authored systems is the campaign, which makes them a dependency of Act 2 rather than a competitor to it. **Campaign Act 2 should be written after 29 and can be written any time after it.** Phase 30 third for the same two reasons as 29 — it depends on nothing, and it unblocks the balance of a later phase (36's *notice* rule is tuned against a number that has to exist first) — with the added argument that it is the phase that finally makes the core/frontier/fringe gradient the GDD has promised since day one *legible from the cockpit*, which every phase after it leans on. Then the mount system, because everything ship-shaped rests on it. Then matter, stations, people, law and the black market, each of which depends on the ones before. The v2 arc opens with the frame-of-reference change, because captains and fleets are unbuildable without it.
 
-**Four standing risks, stated once here rather than repeated in every phase.**
+**Five standing risks, stated once here rather than repeated in every phase.**
 
-1. **This arc breaks the save format at least five times** — mounts (30), commodities (32), station modules (33), legal state (35), per-entity system index (37). This project's precedent is an exact version check with no migration, which is correct while pre-release and should be reconsidered before v1 ships, not during the arc.
-2. **⚑⚑ THE ECONOMY IS DENSE IN COMMODITY COUNT AND THE MATERIAL TREE IS A 10× MULTIPLIER ON IT.** `m_tickPrices` and `m_inbound` are `[market * commodityCount + commodity]` flat arrays, `Market::stock` is per commodity, and the agent loop is documented as `O(markets x commodities)`. Today that is ~124 markets × **4** commodities; the tree in GDD §6 is **~40**. `sim.unit` already runs two four-sim-hour steady-state economies and is ~80 s of a ~90–107 s `ctest --preset dev`. **Phase 32 must decide between a sparse market (a station stocks only what it trades) and a shorter test horizon, and it must measure before and after rather than assume.** This is the single most likely place in the arc for a change to be correct and unshippable.
-3. **Art is the binding constraint, not code.** Eight meshes exist. The taxonomy in GDD §11 names roughly forty ship types across seven hull classes; Phase 31 deliberately builds a spine of eight to ten and leaves the rest as named classes. **A phase that needs a mesh that does not exist is blocked on the Forge and a person, not on the engine.**
-4. **Two nouns collide and the rename is scheduled deliberately.** `[[module]]` is ship outfitting today and must become `[[component]]` so that stations can have modules. It happens in **Phase 30**, which is already rewriting every ship def — doing it later would be a second breaking change to the same files.
+1. **This arc breaks the save format at least five times** — mounts (31), commodities (33), station modules (34), legal state (36), per-entity system index (38). This project's precedent is an exact version check with no migration, which is correct while pre-release and should be reconsidered before v1 ships, not during the arc.
+2. **⚑⚑ THE ECONOMY IS DENSE IN COMMODITY COUNT AND THE MATERIAL TREE IS A 10× MULTIPLIER ON IT.** `m_tickPrices` and `m_inbound` are `[market * commodityCount + commodity]` flat arrays, `Market::stock` is per commodity, and the agent loop is documented as `O(markets x commodities)`. Today that is ~124 markets × **4** commodities; the tree in GDD §6 is **~40**. `sim.unit` already runs two four-sim-hour steady-state economies and is ~80 s of a ~90–107 s `ctest --preset dev`. **Phase 33 must decide between a sparse market (a station stocks only what it trades) and a shorter test horizon, and it must measure before and after rather than assume.** This is the single most likely place in the arc for a change to be correct and unshippable.
+3. **Art is the binding constraint, not code.** Eight meshes exist. The taxonomy in GDD §11 names roughly forty ship types across seven hull classes; Phase 32 deliberately builds a spine of eight to ten and leaves the rest as named classes. **A phase that needs a mesh that does not exist is blocked on the Forge and a person, not on the engine.**
+4. **Two nouns collide and the rename is scheduled deliberately.** `[[module]]` is ship outfitting today and must become `[[component]]` so that stations can have modules. It happens in **Phase 31**, which is already rewriting every ship def — doing it later would be a second breaking change to the same files.
+5. **⚑⚑ A SECOND SYSTEM NOW WANTS TO MOVE `traderLossPerSecond`, AND ITS OWN COMMENT SAYS WHAT THAT COSTS.** `FactionSimParams::traderLossPerSecond` carries the note that it *“is guarded by `economy_shipped_rates_hold_a_steady_state`, not by taste: 8g tuned the galaxy's equilibrium against a fleet that never lost a haul, so raising it is re-running that tuning whether or not anyone re-runs the test.”* **Phase 30 makes system security a second input to exactly that number**, and Phase 33 is separately going to multiply the commodity count by ten. Either one alone is a re-tune; both without measuring is how a galaxy quietly starves. **Whichever lands second inherits the obligation to re-run 8g's tuning, not just the test.**
 
 ---
 
@@ -3416,13 +3420,13 @@ And the other half is genuinely empty: **zero** occurrences of hardpoint, transp
 **Decisions, taken here rather than discovered in a playtest.**
 
 1. **A standing order survives a nudge; a terminating one does not.** Autopilot keeps guard (1) exactly as written — deflect the stick and you have taken over, which is what a player reaching for the controls during an automated approach means. **A standing command (orbit, match, hold, follow) is NOT cancelled by stick deflection**; it is *overridden while held* and resumes when released, and it ends only when explicitly ended, when its subject is lost, or on docking. The reason is asymmetric intent: autopilot is going somewhere and your input replaces the plan, whereas an orbit is a *frame you are flying inside* and nudging the nose to look at something is not a request to stop orbiting. ⚑ **This is the phase's one genuinely reversible decision and the thing its playtest must ask about first.**
-2. **The command mode is not saved.** It is per-session flight state like throttle and pips. Loading into a ship that is already flying itself is a worse first frame than loading into one that is not. **No save format change in this phase**, which makes it the only phase in the arc that breaks nothing.
+2. **The command mode is not saved.** It is per-session flight state like throttle and pips. Loading into a ship that is already flying itself is a worse first frame than loading into one that is not. **No save format change in this phase.** ⚑ *Amended 2026-08-28 when Phase 30 was added:* this used to read *“the only phase in the arc that breaks nothing”*, and it no longer is — **Phase 30 breaks no format either**, because its static half regenerates from the seed and its live half is `FactionSim::danger`, which already saves. Two phases in fourteen cost nothing; the other twelve still cost something.
 3. **A menu entry that does not apply is shown DISABLED with its reason, never hidden.** "Request Docking — 412 km" greyed out teaches the 20 km rule; an entry that silently vanishes teaches nothing and reads as a bug. The UI already has `button(..., enabled)` and a tooltip facility to carry the reason.
 4. **The menu is opened by a right-click on a thing, and closed by anything else.** No pinning, no submenus, no nesting. If a command needs a parameter (orbit at what range?), it takes the **current default**, and the default is what the player last used — which keeps the menu one level deep and makes the bound key and the menu entry do the identical thing.
 
 **What this phase does NOT do, named so it is not half-built.**
 
-- **No commands to any ship but your own.** Captains and fleets are Phases 38–39 and need Phase 37 first. **The vocabulary is designed so a captain can accept it unchanged** — that is the whole reason this phase goes first — but nothing here addresses a second hull.
+- **No commands to any ship but your own.** Captains and fleets are Phases 39–40 and need Phase 38 first. **The vocabulary is designed so a captain can accept it unchanged** — that is the whole reason this phase goes first — but nothing here addresses a second hull.
 - **No formations**, no fleet orders, no standing orders that outlive a session.
 - **No NPC use of the new modes.** `pilot_think` is untouched; `steerOrbit` is available to it and no shipped script calls it.
 - **No right-click on UI widgets** (list rows, market entries). World objects, radar blips and map markers only.
@@ -3456,7 +3460,58 @@ And the other half is genuinely empty: **zero** occurrences of hardpoint, transp
 
 ---
 
-#### Phase 30 — A Ship Is Its Mounts
+#### Phase 30 — How Well Is This Place Policed: System Security, Patrol Strength and Response Time
+
+**Depends on**: nothing for A–D; **29** for stage E only (an authored system declaring its own rating). **v1.** Third in the arc, ahead of the mount system, because it depends on nothing and because Phase 36's balance is tuned against a number that has to exist first.
+
+**From the user, 2026-08-28**, in one sentence: *"security ratings for systems which will impact the strength of patrolling security forces and response times. systems with no security or negative security will be more dangerous to travel through and would be home of pirate factions for example."*
+
+**Priced against the code the day it was asked for, and it is the arc's usual shape — half of it is already in the tree, unwired, and the other half is zero.**
+
+- **⚑⚑⚑ THE LIVE HALF OF THE RATING ALREADY EXISTS, IS ALREADY SAVED, IS ALREADY TESTED, AND IS ALREADY BOUND TO LUA. IT IS CALLED `danger`.** `FactionSim::danger(system)` (`faction_sim.cpp:362`) returns a per-system 0..1 scalar composed as `raidIntensity * dangerPerRaid + contestPressure * dangerPerContest`, clamped. It is covered by `faction_sim_danger_is_made_of_raids_and_contests`, it rides `FactionSim::save`, it is exposed as `sol.danger`, and it already has **two** consumers: escort mission pay (`missions.cpp:232`) and coarse trader attrition (`faction_sim.cpp:156`). **Phase 8x built the situational half of system security three phases before anybody asked for system security.** What is missing is the *place* half, the sign, and the fact that a player has never once been shown the number.
+- **⚑⚑⚑ PATROL STRENGTH IS ALREADY A FUNCTION OF A PER-SYSTEM TIER — THE TIER IS JUST THREE VALUES WIDE AND CANNOT BE AUTHORED.** `space_world.cpp:2405` is `constexpr std::uint32_t kPatrolsPerRegion[3] = {3, 2, 1}; // core/frontier/fringe`, with `kCiviliansPerRegion[3] = {4, 3, 1}` twenty lines below it. **And the comment above them, written in Phase 13, already calls it by the name the user used**: *"Owner presence: patrol wings by region security for majors, resident raider wings for clan systems."* The words *region security* have been sitting in this file the whole time. This stage is a table becoming a curve, not a mechanism becoming real.
+- **⚑⚑⚑ NEGATIVE-SECURITY SYSTEMS ALREADY EXIST AND ARE ALREADY PIRATE HOMES. THEY HAVE NO NUMBER AND NO NAME.** `claimTerritory` rolls `fringeLawlessChance = 0.6` per fringe system down to `kNoFaction` (`universe.cpp:311`), and `spawnClans` then hands **every connected component of lawless systems** to one generated clan — which is why `universe_pirate_clans_claim_lawless_neighborhoods` asserts that *no system stays lawless* once templates exist. Those systems already spawn `shipsRaider` wings instead of `shipsPatrol` (`space_world.cpp:2403`). **The user's "home of pirate factions" is not a feature request, it is a description of the shipped galaxy** — the phase's job is to give it a number, a sign, and consequences.
+- **⚑⚑⚑ AND THE OTHER HALF IS *ZERO*: THERE IS NO RESPONSE OF ANY KIND, ANYWHERE.** No occurrence of `reinforce`, `distress`, or a respond/dispatch verb in `engine/sim` or `game/src`. **Every ambient wing in the game is spawned exactly once, inside `loadSystem`, and never again** — and `spawnWing` is a **lambda local to that function** (`space_world.cpp:2370`), not a member, so "send a wing later" cannot even be *called* today. Lifting it out is this phase's first obligation.
+- **⚑⚑ BUT BOTH HALVES OF A *DIVERTED* RESPONSE ARE BUILT.** `SpaceWorld::pilotPatrolTo(entity, waypoint)` (`space_world.hpp:1412`, bound as `sol.pilot_patrol_to`) already redirects a patrol to an arbitrary world point, and `PilotState::Travel` is already *"long-haul travel to waypoint on the cruise drive"* (`space_world.hpp:141`, Phase 8x). A patrol crossing 600,000 km to reach a gate is those two functions and no new steering. ⚑ Today the Lua patrol branch only ever calls `nextLeg` around a fixed diamond at station 0, so **nothing has ever asked a patrol to go somewhere it was not already going.**
+- **⚑⚑ THE OBVIOUS ROUTE TO A SPAWNED RESPONSE IS A TRAP, AND IT IS WORTH NAMING BEFORE SOMEBODY TAKES IT.** `spawnPilotFromDef` places the new ship **150–250 m directly in front of the player, facing the player's own orientation** (`space_world.cpp:4830`) — a console-debug placement, and correct for a console. Both bound spawns (`sol.spawn_pilot`, `sol.spawn_pilot_faction`) go through it, and `spawn_pilot_faction` is one of the 69 never-called bindings, so it looks exactly like the ready-made answer. **A response wing built on it materialises in the player's face**, which is the precise opposite of what a response time is for.
+- **⚑⚑ THE PRECEDENT FOR SPAWNING MID-FLIGHT IS THE PUPPET SYSTEM, AND IT IS A GOOD ONE.** `syncTraderPuppets` and `syncMinerPuppets` already spawn and despawn bodies during play from coarse state, at scheduled points that are not the player's nose, with `despawnShip` as the no-consequence sibling of death. A response wing is a puppet with a reason.
+- **⚑ THE STATIC HALF COSTS NOTHING IN THE SAVE FORMAT.** `SystemSpec` is a plain struct, the galaxy is **regenerated from the seed rather than serialised**, and `Region` is assigned purely by map radius (`universe.cpp:225`). A baseline field is therefore free on disk — and the live half is `danger`, which already saves. **⚑ Phase 30 breaks no format**, which is now true of exactly two phases in fourteen.
+- **⚑ THE PLAYER HAS NEVER BEEN SHOWN ANY OF THIS.** `map_ui.cpp:400` already composes a per-system row carrying region name, owner, contested flag, survey knowledge and bookmarks — and **not danger**, which has existed since 8x. Stage D is a field on a row that is already built, gated by the same `visited` knowledge rule the owner colour already uses.
+
+**Decisions, put to the user on 2026-08-28 with the counter-argument inside each. All three came back at the recommended end — and all three recommendations were argued from something measured in the code rather than from taste, which is the same pattern Phase 27 and the arc's own eight rulings established.**
+
+1. **A static baseline plus a live modifier, not one number.** Generation writes `SystemSpec::security` from owner kind, region and gate-distance to the owner's capital; the live rating a consumer reads is `baseline − danger(system)`, clamped into the band. Rejected: purely static (*"a system that has been raided for an hour still reads as safe"* is the exact lie `danger` was built to avoid) and fully dynamic (a new saved array, a decay curve, and a feedback loop with the faction sim, on top of standing risk 5).
+2. **⚑⚑ THE SCALE IS SIGNED, AND NEGATIVE MEANS *POLICED BY SOMEBODY ELSE*, NOT *UNPOLICED*.** Positive: a major holds it, and both patrol strength and response scale with the number. Zero: nobody comes; you are on your own. **Negative: a clan holds it and responds to intrusion exactly the way a navy does — a wing is dispatched, and it is coming for you.** This is the reading that costs least, because clan-held fringe neighbourhoods and their raider wings are already generated; the rating names what the galaxy is already doing.
+3. **Divert first, spawn only when nobody is in range.** The nearest un-engaged patrol is redirected with `pilotPatrolTo`; when there is none, a wing is spawned **at the nearest station or gate** and flown in on `PilotState::Travel`. **Response time is therefore a real transit across real distance, not a timer** — which is what makes a crime at a far gate different from a crime over the pad, without either being scripted.
+
+**⚑⚑⚑ ONE RULING TAKEN HERE RATHER THAN DISCOVERED AS A BUG: PATROL *STRENGTH* READS THE BASELINE, WHILE DANGER, ATTRITION AND RESPONSE *TIME* READ THE LIVE RATING.** The naive wiring — everything reads the live rating — is a **positive-feedback spiral**: a raid raises `danger`, which lowers live security, which thins the patrols, which makes the next raid cheaper. A navy's garrison does not evaporate because pirates turned up; if anything it digs in. So the two halves answer two different questions, and the phase says so out loud: **the baseline is how much force the owner keeps here, and the live rating is how safe it actually is right now.** Response time is allowed to degrade under load — patrols that are busy *are* slower — and that is the one place the live number touches the enforcement side.
+
+**What this phase does NOT do, named so it is not half-built.**
+
+- **No crime.** There is nothing to be wanted *for* until Phase 36. Response triggers on what already exists: the player firing on a ship whose owner polices the system, and raiders engaging traders. Contraband, transponders and the inspection loop are 36, and 36 is where security stops being scenery.
+- **No security *change* driven by the player.** Clearing out a system does not raise its rating in this phase; that is the fully-dynamic option that was declined, and it stays declined until something asks for it with a measurement behind it.
+- **No new steering, no new AI role.** A diverted patrol is `pilotPatrolTo` plus `PilotState::Travel`, both shipped.
+- **No bounty, fine, or legal consequence.** A response wing engages under the relations matrix exactly as patrols do today.
+
+**A. The rating.** `SystemSpec::security` written at generation from owner kind, region and gate-distance to the owner's capital; a clan-held system takes the negative band. `systemSecurity(i)` on the world returns baseline − `danger(i)`, clamped. Determinism is a hard constraint here as everywhere: the baseline draws from the existing per-system stream, and **a galaxy generated at the shipped seed must be byte-identical apart from the new field.** **Exit: dump the galaxy's security histogram and read the core/frontier/fringe gradient off it, with clan space below zero and the shipped seed otherwise unchanged.**
+
+**⚑⚑ CHECKPOINT AFTER B**, before any response work. A and B together are the user's first sentence — *strength of patrolling security forces* — and they are visible from the cockpit the moment they land. C is a different and larger thing built on top, and on this project's record a stage that has been flown changes the estimate for the one after it.
+
+**B. Strength reads the rating.** `kPatrolsPerRegion` and `kCiviliansPerRegion` retire into curves on the baseline; the clan branch scales its raider wing the other way down the negative band, so a deep-fringe clan system is genuinely thick with hostiles rather than holding the flat two it holds today. **Exit: fly to a 0.9 system and a 0.2 system and count hulls without opening a menu; then fly into a −0.7 clan system and be outnumbered in a way the map warned you about.**
+
+**C. Response.** `spawnWing` lifted out of `loadSystem` to a member function — its first requirement — and a `respondTo(position, cause)` that diverts the nearest un-engaged patrol via `pilotPatrolTo`, falling back to a wing spawned at the nearest station or gate on `PilotState::Travel`. The rating sets how far a responder will come, how many come, and whether one comes at all; the negative band dispatches the clan instead. **Exit: fire on a trader over a station in high-security space and have a wing on you in seconds; do the identical thing at a gate 600,000 km out and watch it take minutes; do it at 0.1 and watch nobody come at all; do it at −0.6 and watch the response arrive and be pirates.**
+
+**D. The player can see it.** The map row gains the rating — the number that has existed since Phase 8x and has never once been shown to anybody — under the same `visited` knowledge rule the owner colour already obeys, plus a gradient on the galaxy map and a line in the system readout naming who polices it. **Exit: plan a route around a bad neighbourhood from the map alone, and watch a system you have only heard of from a gate decline to tell you its rating.**
+
+**E. Authored override** (needs 29). `[[system]]` gains `security =`, so a campaign can put a lawless pocket three jumps from a capital or a fortress out on the rim. **Exit: an authored rating survives generation, and a galaxy with no authored systems is still byte-identical at the shipped seed.**
+
+**Phase exit**: fly the same provocation in four systems across the band and get four different answers — a wing in seconds, a wing in minutes, nobody, and pirates — then read all four off the map beforehand and have the map have been right.
+
+**Risks.** (1) **Standing risk 5 is this phase's risk**: if security modulates `traderLossPerSecond`, `economy_shipped_rates_hold_a_steady_state` is the gate, and 8g's tuning is what actually has to be re-run. Measure the galaxy's steady state before and after, exactly as Phase 33 must. (2) The spiral above is prevented by a ruling, not by a test — **write the test that would catch it anyway**, because a ruling in a document has never yet stopped anybody from wiring the obvious thing. (3) A response that always arrives is a tax and a response that never arrives is scenery; stage C's tuning is a playtest question, and it is the same question Phase 36 stage B will ask about *notice* — so **whichever runs first should hand the other its numbers.**
+
+---
+
+#### Phase 31 — A Ship Is Its Mounts
 
 **Depends on**: nothing. **v1.** The spine of the arc, and the longest.
 
@@ -3470,9 +3525,9 @@ And the other half is genuinely empty: **zero** occurrences of hardpoint, transp
 
 ---
 
-#### Phase 31 — The Hull Spine: A Taxonomy, and Eight Ships That Prove It
+#### Phase 32 — The Hull Spine: A Taxonomy, and Eight Ships That Prove It
 
-**Depends on**: 30. **v1.**
+**Depends on**: 31. **v1.**
 
 **Priced against the code.** Three ship defs exist and all three share one mesh — the freighter is the shuttle at 4× scale. GDD §11 is the vocabulary; this phase builds the spine that proves it and leaves the rest of the grid named. Faction rosters already exist as `ships_patrol`/`ships_raider`/`ships_trader` lists, so a roster is data that already has a consumer.
 
@@ -3484,23 +3539,23 @@ And the other half is genuinely empty: **zero** occurrences of hardpoint, transp
 
 ---
 
-#### Phase 32 — Matter: The Material Tree, Salvage, and Things You Should Not Be Carrying
+#### Phase 33 — Matter: The Material Tree, Salvage, and Things You Should Not Be Carrying
 
-**Depends on**: 30 (T2 components are what fittings are made of). **v1.**
+**Depends on**: 31 (T2 components are what fittings are made of). **v1.**
 
 **Priced against the code.** Four commodities exist; one is mineable. Ore weights per region tier already exist on `CommodityDef`, so mining a wider ore set is data. Refining exists (`refineInput`/`refineOutput`), wrecks exist and are lootable, and the production chain already distinguishes feedstock from upkeep — which is the mechanism the deeper tree needs and it is already built and already documented as to why.
 
 **⚑ This phase carries standing risk 2 and must open by measuring it.** See above: the economy is dense in commodity count and the tree is a ~10× multiplier on arrays and loops that already dominate `ctest --preset dev`.
 
-**Stages.** (A) **measure the economy at 10× commodity count before changing anything**, then decide sparse-market vs. test-horizon; (B) the T0/T1/T2 tree as commodity defs with ore weights and refining chains; (C) salvage and the recycling leg — wrecks feed T1, so battlefields are an industrial input; (D) contraband as a *legality* — per-faction `contraband` and `restricted` lists on `FactionDef`, with no consumer yet beyond price and availability; (E) T3 assemblies, the construction tier that Phases 33 and 40 spend.
+**Stages.** (A) **measure the economy at 10× commodity count before changing anything**, then decide sparse-market vs. test-horizon; (B) the T0/T1/T2 tree as commodity defs with ore weights and refining chains; (C) salvage and the recycling leg — wrecks feed T1, so battlefields are an industrial input; (D) contraband as a *legality* — per-faction `contraband` and `restricted` lists on `FactionDef`, with no consumer yet beyond price and availability; (E) T3 assemblies, the construction tier that Phases 34 and 41 spend.
 
 **Exit**: a full chain runs from an ore nobody had before to a fitting on a ship; a wreck's salvage re-enters industry; the same commodity is legal in one faction's space and listed in another's; and **`ctest --preset dev` has a runtime the phase measured and defends.**
 
 ---
 
-#### Phase 33 — A Station Is a List of Modules
+#### Phase 34 — A Station Is a List of Modules
 
-**Depends on**: 32 (industry modules need the tree), 30 (the `[[module]]` rename). **v1.**
+**Depends on**: 33 (industry modules need the tree), 31 (the `[[module]]` rename). **v1.**
 
 **Priced against the code.** A station is an archetype id, four rate lists and one mesh. `station_screen.cpp:42` hardcodes eight tab labels for every station in the galaxy. `StationDef`'s rates are tuned against what the trader fleet can move, and `stations.toml` documents at length *why* every producer runs a quarter ahead of its customers — that tuning has to survive being decomposed into modules. See `docs/decisions/016-station-modules.md`.
 
@@ -3512,9 +3567,9 @@ And the other half is genuinely empty: **zero** occurrences of hardpoint, transp
 
 ---
 
-#### Phase 34 — Somebody Who Knows Something: The Bar
+#### Phase 35 — Somebody Who Knows Something: The Bar
 
-**Depends on**: 33 (recreation modules say which stations have people). **v1.**
+**Depends on**: 34 (recreation modules say which stations have people). **v1.**
 
 **Priced against the code.** Station screens, tabs, scrolling lists, elision and tooltips all exist; the mission board already composes offers in Lua from enumerated candidates plus one seeded roll, which is the exact pattern a rumour generator wants and the exact pattern `mission_board` already proves. Nothing here needs new UI machinery.
 
@@ -3524,9 +3579,9 @@ And the other half is genuinely empty: **zero** occurrences of hardpoint, transp
 
 ---
 
-#### Phase 35 — Running Dark: Transponders, Inspection and the Law
+#### Phase 36 — Running Dark: Transponders, Inspection and the Law
 
-**Depends on**: 32 (contraband), 33 (somewhere to sell it), 30 (covert subsystem mounts). **v1.**
+**Depends on**: **30 (the security rating its “notice” rule is tuned against)**, 33 (contraband), 34 (somewhere to sell it), 31 (covert subsystem mounts). **v1.**
 
 **Priced against the code.** Nothing of it exists — and three of its four ingredients do. Hailing is a complete round trip through Lua (Phase 8s). Docking clearance is a timed, revocable grant (8r). Target scanning has range, rate and modifiers (8e); a cargo scan is that machinery pointed at a hold. Patrol AI already receives role, state, player attitude and faction in `pilot_think`, so most of the new policy belongs in `init.lua`. Phase 8e explicitly deferred *"scannable NPC cargo"*; this reverses that deliberately. See `docs/decisions/017-law-and-transponders.md`.
 
@@ -3538,13 +3593,13 @@ And the other half is genuinely empty: **zero** occurrences of hardpoint, transp
 
 ---
 
-#### Phase 36 — The Shadow Faction: A Black Market With No Address
+#### Phase 37 — The Shadow Faction: A Black Market With No Address
 
-**Depends on**: 35, 33. **v1.**
+**Depends on**: 36, 34, **30 (a negative-security system is where a shadow faction is already at home)**. **v1.**
 
 **Priced against the code.** `FactionKind` is `Major | Pirate` and majors claim territory from core capitals in def order; pirate clans are templates stamped per lawless neighbourhood. A third kind that claims *nothing* and lives inside other people's stations is a new placement rule, not a new faction system. Catalog gating already lets pirate-kind owners fence past `min_rep`, which is most of what a fence does.
 
-**Stages.** (A) `kind = "shadow"` — no territory, no stations, present where shadow modules are; (B) fencing, black-market catalogs and contraband contracts; (C) covert-ops pilots flying the covert hulls of Phase 31, with their own `pilot_think` role; (D) shadow standing as a genuinely opposed reputation axis — earned by exactly what costs you standing with the law.
+**Stages.** (A) `kind = "shadow"` — no territory, no stations, present where shadow modules are; (B) fencing, black-market catalogs and contraband contracts; (C) covert-ops pilots flying the covert hulls of Phase 32, with their own `pilot_think` role; (D) shadow standing as a genuinely opposed reputation axis — earned by exactly what costs you standing with the law.
 
 **Exit**: sell contraband at a station owned by the faction whose law forbids it; gain shadow standing and lose Hegemony standing for the same act; and be offered something at a fence that no lawful outfitter will sell you.
 
@@ -3554,9 +3609,9 @@ And the other half is genuinely empty: **zero** occurrences of hardpoint, transp
 
 Specced now so that v1 builds nothing that forecloses it (GDD §9).
 
-#### Phase 37 — Many Systems At Once
+#### Phase 38 — Many Systems At Once
 
-**Depends on**: nothing in the arc; blocks 38, 39, 40. **v2, and the largest single item in it.**
+**Depends on**: nothing in the arc; blocks 39, 40, 41. **v2, and the largest single item in it.**
 
 **Priced against the code.** `space_world.hpp:36` says exactly one system is instantiated. `despawnSystem()` destroys everything but the player on a jump. **Positions are metres in the current system's barycentre frame** — not a rendering convention but what every `DVec3` in the ECS means. **132 references to `m_currentSystem`** in a 7,198-line file, **45 external callers of `currentSystemIndex()`**, **15 component storages** written against one frame. A global frame is refused on the space-scale constraint. See `docs/decisions/015-multi-system-simulation.md`.
 
@@ -3568,9 +3623,9 @@ Specced now so that v1 builds nothing that forecloses it (GDD §9).
 
 ---
 
-#### Phase 38 — Captains and Standing Orders
+#### Phase 39 — Captains and Standing Orders
 
-**Depends on**: 37, 28 (the command vocabulary). **v2.**
+**Depends on**: 38, 28 (the command vocabulary). **v2.**
 
 `OwnedShip` already stores a ship, its fit, its crew and where it is parked. A captain is crew given a ship instead of a bonus, accepting Phase 28's vocabulary plus orders that outlive a session: mine here, haul between there and there, patrol this, sell above X.
 
@@ -3578,9 +3633,9 @@ Specced now so that v1 builds nothing that forecloses it (GDD §9).
 
 ---
 
-#### Phase 39 — Fleets and Formations
+#### Phase 40 — Fleets and Formations
 
-**Depends on**: 38. **v2.**
+**Depends on**: 39. **v2.**
 
 `steerFormation` exists. What does not is a fleet: a commander, a customisable formation, and an order the fleet resolves *according to what it is made of*. A mining fleet told to work a field does not need to be told that miners stay at the rock, haulers shuttle to the refinery and escorts split to cover both — that is what the composition means.
 
@@ -3588,11 +3643,11 @@ Specced now so that v1 builds nothing that forecloses it (GDD §9).
 
 ---
 
-#### Phase 40 — Station Construction
+#### Phase 41 — Station Construction
 
-**Depends on**: 37, 33, 32 (T3 kits), 31 (industrial hulls). **v2.** Reverses the second half of GDD §9's amended base-building non-goal.
+**Depends on**: 38, 34, 33 (T3 kits), 32 (industrial hulls). **v2.** Reverses the second half of GDD §9's amended base-building non-goal.
 
-The player buys T3 station module kits, hauls them with industrial hulls, and assembles a station from the same vocabulary the generator has been composing NPC stations from since Phase 33.
+The player buys T3 station module kits, hauls them with industrial hulls, and assembles a station from the same vocabulary the generator has been composing NPC stations from since Phase 34.
 
 **Exit**: build a station that a NPC trader then actually visits, because it is a real market in a real economy and not a special case.
 

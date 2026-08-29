@@ -77,7 +77,7 @@ if the price proves worse than estimated.
 ## Consequences
 
 - **This is the largest single item in the v2 arc**, and it is a phase before it
-  is a feature. It lands as its own phase (engine plan Phase 37) with nothing
+  is a feature. It lands as its own phase (engine plan Phase 38) with nothing
   player-visible in it except that a ship left behind is still there.
 - **Every system that reads a position must learn to ask "in which frame?"** The
   132 `m_currentSystem` references are the map of that work; most are queries
