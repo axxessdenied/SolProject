@@ -82,9 +82,9 @@ std::uint64_t parseMaxFrames(int argc, char** argv)
     return 0;
 }
 
-// --seed N: universe seed (same seed => same galaxy).
-constexpr std::uint64_t kDefaultUniverseSeed = 1701;
-
+// --seed N: universe seed (same seed => same galaxy). The default itself lives
+// in space_world.hpp since Phase 29, so the galaxy golden can photograph the
+// seed the game launches at rather than a copy of the literal.
 std::uint64_t parseUniverseSeed(int argc, char** argv)
 {
     for (int i = 1; i + 1 < argc; ++i) {
@@ -92,7 +92,7 @@ std::uint64_t parseUniverseSeed(int argc, char** argv)
             return std::strtoull(argv[i + 1], nullptr, 10);
         }
     }
-    return kDefaultUniverseSeed;
+    return game::kDefaultUniverseSeed;
 }
 
 // --hardcore: ironman mode (decisions/007) — death deletes the save.

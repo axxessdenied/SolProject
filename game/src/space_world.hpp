@@ -601,6 +601,15 @@ struct OwnedShip
                                       const char* role,
                                       bool unitRadius);
 
+// The seed the game ships with: `--seed N` overrides it, and nothing else does.
+//
+// ⚑ Phase 29 promoted this out of main.cpp's anonymous namespace, where the
+// only thing that could read it was `parseUniverseSeed`. The galaxy golden
+// (`game.unit`) has to photograph the seed the game ACTUALLY launches at, and a
+// test that copies the literal instead would keep passing while quietly
+// describing a galaxy nobody plays.
+inline constexpr std::uint64_t kDefaultUniverseSeed = 1701;
+
 class SpaceWorld
 {
 public:
