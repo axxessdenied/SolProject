@@ -3362,7 +3362,7 @@ Every clause is true of the nine `.wav` cues today, and the script has said so s
 
 **Suites: `platform.unit` 27 → 35, `game.unit` 41 → 59.** Windows dev 13/13 + dev-gpu 2/2, release 17/17 + release-gpu 5/5; clang-format clean by exit code.
 
-### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28, 29, 30 and 31 SHIPPED**, the rest are sketches to be spec'd before starting)
+### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28, 29, 30 and 31 SHIPPED; 32 SPEC'D**, the rest are sketches to be spec'd before starting)
 
 **From the user, 2026-08-28**, as eleven asks in one message: ship classes by size and role; parts, upgrades and subsystems; hardpoints on hulls with Forge authoring and in-game visuals; stations built from modules; a wider material tree with contraband; a black-market faction; transponders and running dark; authored systems and constellations for narrative control; ship commands with a right-click menu; multiple owned ships, captains and fleets; and station lore with characters who know things.
 
@@ -3740,17 +3740,51 @@ New: `[[system]]` and `[[constellation]]` as def kinds (`SystemDef`, `Constellat
 
 ---
 
-#### Phase 32 — The Hull Spine: A Taxonomy, and Eight Ships That Prove It
+#### Phase 32 — The Hull Spine: A Taxonomy, and Eight Ships That Prove It 🚧 (spec'd 2026-08-30)
 
 **Depends on**: 31. **v1.**
 
-**Priced against the code.** Three ship defs exist and all three share one mesh — the freighter is the shuttle at 4× scale. GDD §11 is the vocabulary; this phase builds the spine that proves it and leaves the rest of the grid named. Faction rosters already exist as `ships_patrol`/`ships_raider`/`ships_trader` lists, so a roster is data that already has a consumer.
+**⚑⚑⚑ THE SKETCH WAS RE-READ AGAINST THE CODE BEFORE THIS SPEC WAS WRITTEN, AS THE ARC'S OWN TEXT REQUIRES, AND IT WAS WRONG IN THE *EXPENSIVE* DIRECTION IN THREE PLACES.** The original wording is quoted below where it was refuted, because deleting it would destroy the evidence for the estimate lesson. **That makes twelve consecutive roadmap items whose written estimate was refuted by a re-read**, and the second in a row to be wrong in the expensive direction — Phase 29 was the first, and the run of "it was already in the tree" is properly over.
 
-**Stages.** (A) hull class and role family in the schema, with the class band checked as a *content warning* rather than a schema error; (B) roughly eight to ten authored hulls across classes 1–4 with real meshes and real mount layouts; (C) faction rosters that specialise — and, as much to the point, that **leave cells empty**; (D) the generator's spawn tables reading class and role so that what you meet in the fringe differs from what you meet in the core.
+**The sketch said, and it is still true:** *"Three ship defs exist and all three share one mesh — the freighter is the shuttle at 4× scale. Faction rosters already exist as `ships_patrol`/`ships_raider`/`ships_trader` lists, so a roster is data that already has a consumer."* Both hold. What follows is what it missed.
 
-**Exit**: three factions field visibly different ships for the same role, a class-4 hull reads as a class-4 hull from the cockpit, and a faction that builds no covert hulls demonstrably has none.
+**Diagnosis (read from the code as it stands, before any change).**
 
-**Risk**: this is the art-bound phase. Its schedule is a person modelling eight ships, not the engine.
+- **⚑⚑⚑⚑ THE CLASS BAND IS A *LENGTH* BAND AND NOTHING IN THE GAME KNOWS A HULL'S LENGTH.** GDD §11.1 keys classes 0–7 on metres. `ShipDef` carries `model` and `scale`; the length lives in the mesh. **`ModelDef::radius` is a hand-authored collision sphere, not a measurement** — `ship` declares 8.0 against a mesh that spans 12 m — so reading a class off it is reading a number somebody typed for physics. The cooked `.smesh` header is `magic, version, vertexCount, indexCount` and **carries no bounds at all** (`formats.hpp:17`), so the game would have to walk the vertex buffer, and does not. **The cooker has the mesh and no def dependency whatsoever** — zero hits for `data_defs` or `DefDatabase` under `tools/cooker/src`. **Only the Forge holds a mesh and a def at the same time.** That is not a preference; it is the only place the check can be written without a new format or a new dependency.
+- **⚑⚑⚑⚑ ALL THREE SHIPPED HULLS ARE OUTSIDE THE CLASS §11.3 ASSIGNS THEM, AND `ships.toml` ASSERTS A CLASS ITS OWN GEOMETRY CONTRADICTS.** The `ship` mesh spans z −7..+5 = **12 m**, which the file states itself. Shuttle **12 m** and interceptor **9.6 m** are class **0** (8–20 m), not the class 1 §11.3 puts them in; freighter **48 m** is class **2** (45–120 m), and the file says in as many words *"at `scale = 4.0` this is a class-3 hull by gdd.md §11.1's length band"*. 48 does not reach 120. Mount budgets miss too: five on a class-1 hull against 2–4 (the header already apologises for this), and the freighter's nine fits class 3's 8–14 while overrunning class 2's 4–8. **The warning fires on 3 of 3 hulls the day it exists.**
+- **⚑⚑⚑ TWO USER RULINGS SETTLED WHAT THAT MEANS, AND THE SECOND ONE SHAPES THE WHOLE PHASE.** (1) **The bands are right and the content is wrong** — §11.1 stands as written, so the check is a real check rather than a table needing re-tuning. (2) **The placeholders stay out of band**: *"new meshes aren't ready. these meshes were made as placeholders."* So **the warning names all three shipped hulls and is left unactioned on purpose — it is the artist's work queue, not a thing to silence**, and nothing visual changes in this phase.
+- **⚑⚑⚑ THE REASONING BEHIND RULING 2 IS THE PHASE'S PLANNING RULE: A REAL MESH WILL BE AUTHORED AT TRUE LENGTH AND WANT `scale = 1.0`.** `ShipDef::scale` exists today only to make **one 12 m mesh do duty for three ships**. Every scale number tuned now is thrown away the day art lands; `class`, `role` and the warning survive it. **Spend the phase on what outlives the placeholders.**
+- **⚑⚑⚑⚑ AND THE DAY THE CONTENT *IS* FIXED, THE CHASE CAMERA BREAKS FIRST — WHICH IS ENGINE WORK AVAILABLE NOW, WHILE ART IS NOT.** `kChaseOffset = {0, 8, 30}` is `static constexpr` and takes no scale (`ship_camera.hpp:105`). At the freighter's *current* 4× the camera already sits **ten metres off the tail** — Phase 31 stage C1 recorded that and declined to fix it. At the class-3 size the band asks for (scale ≥ 10, tail at z ≥ +50) **the camera would be inside the ship.** ⚑ `kCockpitOffset` is the opposite case and **must not be "fixed"**: `cockpit.forge` is authored around that exact point, and `ships.toml` argues the cabin deliberately does not scale — *"not a bigger cabin than the shuttle's, it is a different one at the same size"*. But at class-3 size the pilot sits ~65 m behind a nose that is not drawn in first person, so **E1's nose fittings would hang in space ahead of the canopy**: the cost E1's cockpit ruling accepted in the abstract, made real on shipped content. **Both are Phase 32's to answer, and neither needs a mesh.**
+- **⚑⚑ THE ROSTERS HAVE A CONSUMER, AS THE SKETCH SAID — BUT ALL SEVEN FACTIONS SHIP BYTE-IDENTICAL ONES.** `ships_patrol = ["sol.interceptor"]`, `ships_raider = ["sol.interceptor"]`, `ships_trader = ["sol.freighter", "sol.shuttle"]`, seven times over in `factions.toml`. So *"three factions field visibly different ships for the same role"* **is blocked on the hulls existing, not on the roster format** — stage C is downstream of B rather than parallel to it, which the sketch's stage list does not say.
+- **⚑⚑ AND THE OTHER HALF OF STAGE C'S EXIT IS NOT OBSERVABLE AT ALL.** `spawnWing` **returns silently on an empty roster** (`space_world.cpp:2818`), so *"a faction that builds no covert hulls demonstrably has none"* has no way to *show* absence — an empty cell and a bug look identical from the cockpit. Absence has to be made legible somewhere a player or a tool can read it, or the criterion cannot be met however the data is authored.
+- **⚑⚑ `PilotRole` IS THREE VALUES AGAINST §11.2's SIX ROLE FAMILIES.** `Fighter`, `Trader`, `Patrol` (`space_world.hpp:550`) answer *what this instance is doing*; Line/Carrier/Logistics/Support/Covert/Industrial answer *what the hull is for*. The sketch's *"spawn tables reading class and role"* is a **bridge between two different questions**, not a field being read.
+- **⚑ THE ONE CHEAP FINDING:** every `spawnWing` call site already computes `baselineSecurity` (`space_world.cpp:2859`), so stage D needs **weighted selection** and no new plumbing — the pick is round-robin `roster[i % roster.size()]` today.
+- **⚑ Standing risk 3's "eight meshes" figure is stale — there are fourteen** (Phase 31 stage E added `cannon`/`emitter`/`nozzle`/`pod`/`dish`; Phase 30 the gate membrane). Harmless direction; do not quote the old number.
+
+**What this phase does NOT do, named so it is not half-built.**
+
+- **No rescaling of the shipped hulls**, per ruling 2. The bands stay violated and the warning stays lit.
+- **No eight to ten authored hulls.** The sketch's stage B is *"roughly eight to ten authored hulls across classes 1–4 with real meshes"*; **that is blocked on a person modelling ships, which is standing risk 3 exactly**, and this spec does not pretend otherwise. What stage B becomes is the *schema and the roster shape* those hulls will land into, proven against the placeholders.
+- **No `hp` override on a mount.** Phase 31 stage F left that key for *"a hull that genuinely needs an armoured drive bell… against real content"*. Real content is what this phase does not yet have.
+- **No new role for the pilot AI.** Bridging §11.2 to `PilotRole` is a mapping, not a fourth brain.
+
+**Stages, re-priced.**
+
+**A. Class and role in the schema, and a warning that can actually measure.** `class` (0–7) and `role` (the six families of §11.2) on `ShipDef`, both optional with no default — an invented class is the parser deciding what a hull *is*. The band check lives in **the Forge**, beside `ModelMatch`, because that is the only place a mesh and a def meet; it measures the **longest axis of the bounding box** rather than the z extent, so it does not silently lie about a hull authored down another axis. **Exit: the tool lists every hull with its measured length, its authored class and its band status, and names all three shipped hulls as out of band — the work queue, lit on purpose.**
+
+**⚑ Checkpoint after A**, before any roster or spawn work: A is where the vocabulary is either right or wrong, and C and D are both built on it. Phase 31's checkpoint after B earned its place the same way.
+
+**B. The camera follows the hull.** `kChaseOffset` scales with the hull it is chasing, so a class-3 freighter is framed like one and the ten-metre tail clearance recorded in C1 stops being luck. `kCockpitOffset` **stays constant, deliberately**, and the fitting-draw rule gains the one thing E1's ruling left open: what to do about a fitting forward of the eye on a hull long enough for it to hang in space. **Exit: fly the shipped freighter in chase view and see the whole ship; then set its scale to 10 in a scratch def and see the whole ship again, with the cockpit unchanged.**
+
+**C. Rosters that specialise, and cells that are visibly empty.** The roster format already works; what it lacks is a way to *say* a faction builds nothing for a cell, and a way for anyone to see that it said so. `spawnWing`'s silent return becomes a legible absence. **Exit: a faction with an empty roster cell is distinguishable from a broken one without reading the source.**
+
+**D. Spawn tables read class and role.** The §11.2 family maps to `PilotRole` at the spawn site, and the pick becomes weighted on `baselineSecurity`, which every call site already has. **Exit: the same faction fields visibly different hulls in a core system and in the fringe.**
+
+**⚑⚑ STAGES C AND D SHIP AGAINST THE PLACEHOLDERS AND WILL LOOK LIKE VERY LITTLE UNTIL ART LANDS** — three hulls cannot differ much. That is the honest state of the phase and it is why A and B lead: **they are the two stages whose value does not depend on meshes that do not exist.**
+
+**Exit**: three factions field visibly different ships for the same role, a class-4 hull reads as a class-4 hull from the cockpit, and a faction that builds no covert hulls demonstrably has none. **⚑ The first and second criteria are art-bound and cannot be met in this pass**; the phase's own honest exit is the work queue lit, the camera fixed, and the roster able to say "we do not build that". **The written exit stays as the arc's, to be met when the hulls exist.**
+
+**Risk**: this is the art-bound phase, and the re-read has moved *where* the binding is. Its schedule is a person modelling eight ships; what this spec does is make sure the engine is ready for them and that nothing built now has to be undone when they arrive.
 
 ---
 
