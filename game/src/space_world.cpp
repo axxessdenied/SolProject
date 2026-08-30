@@ -8467,7 +8467,7 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
             .key = makeInstanceKey(entity.index, entity.generation),
         });
     }
-    appendFittingInstances(alpha, includeShip, out);
+    appendFittingInstances(alpha, out);
 }
 
 // ⚑⚑⚑ WHAT IS BOLTED TO A HULL, DRAWN WHERE IT IS BOLTED (Phase 31 stage
@@ -8495,6 +8495,23 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
 // turret straining against its own limit is exactly the picture a pilot needs
 // when their shots are not going off.
 //
+// ⚑⚑⚑ A FITTING IS DRAWN WHETHER OR NOT ITS HULL IS, AND THAT IS A RULED
+// DECISION RATHER THAN AN OBVIOUS ONE. The hull is hidden from the seat because
+// the eye sits INSIDE it; a fitting bolted to the outside is not inside
+// anything, so the reason does not carry over. Hiding it with the hull was the
+// tidier rule and it cost the thing the stage is for: the shuttle's `gun_nose`
+// sits at z = -6.6 against an eye at z = -5.0, so it is 1.6 m AHEAD of the
+// pilot and dead centre - your own cannon, firing, in the view this game is
+// actually played in. The freighter loses nothing either way: both its rings
+// are behind the eye, above and below the canopy.
+//
+// ⚑ WHAT IT COSTS is a hull nobody has authored yet - one with a fitting
+// forward of `kCockpitOffset` and off the centreline, which would be drawn
+// hanging in space with no hull behind it. That is a real cost and it is
+// accepted deliberately: the alternative is a third rule about which fittings
+// are cockpit-visible, and a special case is how "where a fitting is drawn"
+// stops having one answer.
+//
 // ⚑ `kNoInstanceKey`, so a fitting gets no LOD memory and answers statelessly.
 // The cockpit was the only instance without an identity until now; a fitting is
 // the second, and it costs nothing real for the same reason - both meshes are
@@ -8502,12 +8519,11 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
 // The alternative would be packing a mount index into a key whose upper half
 // is already the entity generation, which is a save-format-shaped change for a
 // LOD chain that does not exist.
-void SpaceWorld::appendFittingInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const
+void SpaceWorld::appendFittingInstances(float alpha, std::vector<RenderInstance>& out) const
 {
     const ecs::Pool<ShipArmament>& armaments = m_registry.storage<ShipArmament>();
     const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
     const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
-    const std::uint32_t shipIndex = playerEntityIndex();
     const double alphaD = static_cast<double>(alpha);
 
     const std::uint32_t count = static_cast<std::uint32_t>(armaments.size());
@@ -8515,14 +8531,6 @@ void SpaceWorld::appendFittingInstances(float alpha, bool includeShip, std::vect
     const ShipArmament* armaments_ = armaments.values().data();
     for (std::uint32_t i = 0; i < count; ++i) {
         const std::uint32_t entityIndex = entityIndices[i];
-        // The hull is hidden from the seat because the eye sits inside it, and
-        // its guns go with it. Half a ship drawn around a hull that is not
-        // there reads worse than none - and on the freighter, whose rings sit
-        // above and below the canopy, it would be two turrets floating in
-        // formation with nothing between them.
-        if (!includeShip && entityIndex == shipIndex) {
-            continue;
-        }
         const ShipArmament& armament = armaments_[i];
         // ⚑ Asked before the frame is built, not after. `gunneryFrame` walks the
         // selection and a target's transform, and every NPC in this galaxy

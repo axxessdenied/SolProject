@@ -1524,16 +1524,26 @@ SOL_TEST(a_fitting_is_drawn_at_the_same_interpolated_pose_as_its_hull)
     }
 }
 
-// ⚑ A fitting follows its hull in and out of the frame. The hull is hidden
-// from the seat because the eye sits inside it; guns left behind would be two
-// turrets flying in formation with nothing between them, which on the shipped
-// freighter - rings above and below the canopy - is exactly what you would
-// see.
-SOL_TEST(a_fitting_is_hidden_from_the_seat_with_the_hull_it_is_bolted_to)
+// ⚑⚑ A PILOT SEES THEIR OWN GUNS FROM THE SEAT, and this is the one place
+// the rule is written as a test rather than as a comment. `includeShip` hides
+// the HULL in first person, because the eye sits inside it; a fitting bolted to
+// the outside is not inside anything, so it stays. On the shuttle that is a
+// cannon 1.6 m ahead of the pilot and dead centre - the view this game is
+// played in, and the reason the tidier "follow the hull" rule was rejected.
+SOL_TEST(a_pilot_sees_their_own_guns_from_the_seat)
 {
     Fixture fixture(twoGuns());
-    SOL_CHECK(fixture.fittingsDrawn(true).size() == 2);
-    SOL_CHECK(fixture.fittingsDrawn(false).empty());
+    SOL_REQUIRE(fixture.fittingsDrawn(true).size() == 2);
+    const std::vector<game::RenderInstance> fromTheSeat = fixture.fittingsDrawn(false);
+    // REQUIRE rather than CHECK: the assertion below indexes this, and a
+    // counterfactual that empties it should turn the suite RED rather than
+    // taking the process down with it.
+    SOL_REQUIRE(fromTheSeat.size() == 2);
+
+    // And in the same place either way: the hull being drawn or not has no
+    // opinion about where what is bolted to it sits.
+    const sol::core::DVec3 hull = fixture.world.shipState().position;
+    SOL_CHECK(distance(fromTheSeat[0].position - hull, {-6.0, 0.0, -10.0}) < 1e-4);
 }
 
 // ⚑⚑ THE ROLL RULE ON ITS OWN, because the world-level tests above cannot

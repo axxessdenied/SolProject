@@ -1981,9 +1981,11 @@ public:
     // becomes one (see `kMaxShipWeapons`), so it has no RenderShape of its own
     // and this is the only place it can be drawn from.
     //
-    // ⚑ A fitting follows its hull in and out of the list: hidden from the
-    // seat exactly as the hull is, because half a ship drawn around a hull
-    // that is not there reads worse than none.
+    // ⚑⚑ A FITTING DOES NOT FOLLOW ITS HULL OUT OF THE LIST. `includeShip`
+    // hides the hull from the SEAT, because the eye sits inside it; a fitting
+    // bolted to the outside is not inside anything. So the shuttle's nose gun
+    // is drawn 1.6 m ahead of the pilot, which is the whole of what the stage
+    // is for. See `appendFittingInstances` for what that costs.
     void buildRenderInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const;
 
     // The interior to draw when the player is in the seat (Phase 19), from the
@@ -2263,7 +2265,7 @@ private:
     // The fitting half of `buildRenderInstances`, split out because it walks a
     // different pool under a different rule and because "which pose is this
     // in" has to be answerable about it on its own - see the definition.
-    void appendFittingInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const;
+    void appendFittingInstances(float alpha, std::vector<RenderInstance>& out) const;
 
     void applyShipDef(std::uint32_t entityIndex,
                       const sol::assets::ShipDef& def,
