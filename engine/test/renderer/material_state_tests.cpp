@@ -132,10 +132,10 @@ SOL_TEST(materialStateKeepsFirstUseOrder)
     SOL_CHECK(again.materialState[3] == 0);
 }
 
-// ⚑⚑ THE SHIPPED SET, AND THE NUMBER THIS PHASE IS MEASURED BY. The seven
+// ⚑⚑ THE SHIPPED SET, AND THE NUMBER THIS PHASE IS MEASURED BY. The ten
 // derived materials all ask for the stock lambert pair under Phase 12's opaque
 // state; the membrane brings its own fragment stage and blends; the cockpit
-// brings its own fragment stage and its own declared interface. Nine rows,
+// brings its own fragment stage and its own declared interface. Twelve rows,
 // three pipelines - and a regression here is a pipeline count that grows with
 // the catalog, which nothing else would notice.
 //
@@ -144,10 +144,11 @@ SOL_TEST(materialStateKeepsFirstUseOrder)
 // eight rows and two states; stage C made the two cockpits share one material
 // and gave it a third state, reading seven and three; Phase 31 stage E added
 // the cannon and the emitter - the first two models in this game that are
-// FITTINGS - and each names a texture rather than a material, so each derives
-// one. NINE and still THREE is the shape to want: the catalog grew and the
-// pipeline count did not, because a gun's surface is the same lambert hull
-// plating everything else opaque already wears.
+// FITTINGS - and E2 added the nozzle, the pod and the dish. Each names a
+// texture rather than a material, so each derives one. TWELVE and still THREE
+// is the shape to want: the catalog grew by five and the pipeline count did not
+// move, because a fitting's surface is the same lambert hull plating everything
+// else opaque already wears.
 //
 // A failure here is a question - "did the catalog change, or did sharing
 // break?" - and the checks below are what tell the two apart.
@@ -159,7 +160,7 @@ SOL_TEST(materialStateShippedCatalogNeedsThreePipelines)
     SOL_REQUIRE(db.validateMaterials(&error));
 
     const MaterialStateGrouping grouping = groupMaterialsByState(db.materials());
-    SOL_CHECK(db.materials().size() == 9);
+    SOL_CHECK(db.materials().size() == 12);
     SOL_CHECK(grouping.states.size() == 3);
 
     // ⚑ THE TWO FITTINGS COST NO PIPELINE, which is the half of the count that
@@ -167,7 +168,8 @@ SOL_TEST(materialStateShippedCatalogNeedsThreePipelines)
     // the total above, so a fitting that quietly acquired its own blend or its
     // own shader would fail HERE, saying which model did it, instead of only
     // moving a number.
-    for (const char* fitting : {"sol.auto.cannon", "sol.auto.emitter"}) {
+    for (const char* fitting :
+         {"sol.auto.cannon", "sol.auto.emitter", "sol.auto.nozzle", "sol.auto.pod", "sol.auto.dish"}) {
         const std::uint32_t index = db.materialIndex(fitting);
         SOL_REQUIRE(index != sol::assets::kNoMaterial);
         SOL_CHECK(grouping.materialState[index] == grouping.materialState[db.materialIndex("sol.auto.ship")]);

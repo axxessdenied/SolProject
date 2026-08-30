@@ -223,6 +223,50 @@ struct ShipArmament
     ShipWeapon weapons[kMaxShipWeapons];
 };
 
+// ⚑⚑ WHAT ELSE IS BOLTED TO THE OUTSIDE OF THIS HULL (Phase 31 stage E2):
+// every EXTERNAL mount holding a `[[component]]` that names a mesh, flattened
+// the way `ShipArmament` flattens the guns and for the same three reasons - the
+// snapshot stores components by memcpy, a fitting must not be able to outlive
+// its ship, and the draw path has no route from an entity back to a def.
+//
+// ⚑⚑ IT IS A SEPARATE COMPONENT FROM `ShipArmament` BECAUSE A GUN AND A POD
+// ARE DIFFERENT THINGS TO DRAW, not because they are different kinds of kit. A
+// gun is LAID: `layGun` answers where it points, every frame, and the answer
+// depends on a target. Nothing here moves at all - a hold pod bolted to the
+// belly is at its mount's `at` facing its mount's `aim` for the life of the
+// fit. Folding the two together would mean asking the gunnery question about a
+// cargo pod, once per pod per frame, to be told it points where it always did.
+//
+// ⚑ INTERNAL MOUNTS ARE NOT IN HERE. `decisions/014` rule 2: absent `at`
+// means internal, which means never drawn. Such a mount still exists and is
+// still destructible - that is stage F's business, and stage F will want a list
+// that includes them. This one is what the RENDERER needs, so it holds exactly
+// what is drawn.
+struct FittedPart
+{
+    // Hull frame at scale 1, exactly as authored - the muzzle rule from C1,
+    // applied to something that does not shoot.
+    float at[3] = {0.0f, 0.0f, 0.0f};
+    // Which way it faces, which for a fitting that does not traverse is the
+    // whole of its orientation. See `mountRotation`.
+    float aim[3] = {0.0f, 0.0f, -1.0f};
+    // Which of the hull's mounts this came out of, for the same reason
+    // `ShipWeapon::mount` carries it: here is the only walk that knows.
+    std::uint32_t mount = 0;
+    ModelId model = kNoModel;
+};
+
+// ⚑ Sixteen, matching `kMaxShipWeapons` and for the same reason - gdd.md
+// §11.1's mount budget through class 4 - and a hull that declares more is
+// warned by name rather than truncated in silence.
+inline constexpr std::uint32_t kMaxDrawnFittings = 16;
+
+struct ShipFittings
+{
+    std::uint32_t count = 0;
+    FittedPart parts[kMaxDrawnFittings];
+};
+
 // The groups this ship's guns actually occupy, as a bit per group: bit (n-1)
 // is set when at least one gun is in group n. Zero means nothing is fitted.
 // One bit set means there is no choice to make, which is what the HUD reads to
@@ -325,6 +369,29 @@ struct GunneryFrame
 // shortest arc is returned rather than a refusal, because there is nothing
 // wrong with the gun.
 [[nodiscard]] sol::core::Quat fittingRotation(sol::core::Vec3 bearing, sol::core::Vec3 mountAim);
+
+// ⚑⚑⚑ HOW A FITTING THAT DOES NOT TRAVERSE STANDS IN ITS MOUNT (Phase 31
+// stage E2). Hull frame in, hull frame out, exactly like `fittingRotation` -
+// and it is a SECOND function rather than a second argument to that one because
+// the two pin different things:
+//
+//   a GUN's rotation is pinned by where it SHOOTS. Its -Z must be exactly the
+//   bearing `layGun` answered, or the drawn barrel and the bolt disagree, and
+//   the roll is whatever is left over.
+//
+//   a POD's rotation is pinned by where it is BOLTED. Its +Y must be exactly
+//   the mount's `aim` - the way out of the plating - or it floats off the hull
+//   or sinks into it, and the roll is whatever is left over.
+//
+// Same construction, opposite constraint, and neither can be expressed as the
+// other: swapping them would leave a nozzle's bell pointing up out of the deck
+// exactly when `aim` is the one direction (dead astern) an engine actually uses.
+//
+// ⚑ Every fitting mesh is authored the same way - mounting face at the origin,
+// body extending along +Y - so `aim` is the one key an author sets and the mesh
+// needs no per-kind convention. `reference` settles the roll: the hull's own
+// nose, so a hold pod lies fore-and-aft rather than across the belly.
+[[nodiscard]] sol::core::Quat mountRotation(sol::core::Vec3 aim, sol::core::Vec3 reference);
 
 // A live bolt: Transform carries the position, this the rest.
 struct Projectile

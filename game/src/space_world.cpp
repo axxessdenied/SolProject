@@ -68,7 +68,11 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // `ShipArmament` block is wider again. Component id 23 still, for C2's reason:
 // the component changed size, not identity, and the version check at the
 // header is what stops a v21 file being read into the new layout.
-constexpr std::uint32_t kSaveVersion = 22;
+//
+// v23 (Phase 31 stage E2): `ShipFittings` - what a hull carries on its outside
+// that is NOT a gun - under a NEW component id 24. New rather than grown,
+// because this is a different component and not a wider one.
+constexpr std::uint32_t kSaveVersion = 23;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -290,6 +294,12 @@ ecs::Snapshot makeSnapshotSchema()
     // the header, so no reader ever meets the old layout under this id. 18
     // was retired instead because the component behind it stopped existing.
     schema.component<ShipArmament>(23); // v19: what replaced 18
+    // ⚑ A NEW ID RATHER THAN A WIDER 23, because this is a different
+    // component and not a bigger one. 23 grew twice (C2's `aim`/`arc`, E1's
+    // model) and kept its id both times on the rule that an id promises a
+    // LAYOUT and the save version keeps the promise; adding a second, separate
+    // thing a ship carries is the case that rule does not cover.
+    schema.component<ShipFittings>(24); // v23: Phase 31 stage E2
     return schema;
 }
 
@@ -441,6 +451,7 @@ void SpaceWorld::spawn(std::uint64_t universeSeed)
     m_registry.emplace<ShipPower>(e);
     m_registry.emplace<ShipDefense>(e);
     m_registry.emplace<ShipArmament>(e);
+    m_registry.emplace<ShipFittings>(e);
 }
 
 bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
@@ -5590,6 +5601,51 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
         weapon.boltModel = modelOverrideOr(defs, weaponDef->boltModel, "weapon def", kRoleBolt, true);
         weapon.fittingModel = fittingModelOf(defs, weaponDef->model, "weapon def");
     }
+
+    // ⚑⚑ AND EVERYTHING ELSE BOLTED TO THE OUTSIDE (Phase 31 stage E2). The
+    // same walk, filtered the other way: a mount that does NOT take a weapon,
+    // that is EXTERNAL, and whose fitting names a mesh. Three conditions and
+    // each drops a different thing - a gun (it is in the armament above), an
+    // internal mount (`decisions/014` rule 2 says it is never drawn), and kit
+    // nobody has authored art for (which leaves the mount bare, exactly as an
+    // unarted gun does).
+    ShipFittings& fittings = m_registry.storage<ShipFittings>().get(entityIndex);
+    fittings = ShipFittings{};
+    for (std::uint32_t m = 0; m < def.mounts.size(); ++m) {
+        const assets::ShipMount& mount = def.mounts[m];
+        if (assets::mountTakesWeapon(mount.kind) || !mount.external || mount.fit.empty()) {
+            continue;
+        }
+        const assets::ComponentDef* component = defs.findComponent(mount.fit.c_str());
+        if (component == nullptr) {
+            SOL_LOG_WARN("ship '%s': mount '%s' names unknown component def '%s'",
+                         def.id.c_str(),
+                         mount.id.c_str(),
+                         mount.fit.c_str());
+            continue;
+        }
+        const ModelId model = fittingModelOf(defs, component->model, "component def");
+        if (model == kNoModel) {
+            continue; // authored without a mesh: the mount stays bare
+        }
+        if (fittings.count >= kMaxDrawnFittings) {
+            SOL_LOG_WARN("ship '%s': more than %u drawn external fittings; '%s' and any after it are "
+                         "fitted but will not be drawn",
+                         def.id.c_str(),
+                         kMaxDrawnFittings,
+                         mount.id.c_str());
+            break;
+        }
+        FittedPart& part = fittings.parts[fittings.count++];
+        part.mount = m;
+        part.at[0] = mount.at[0];
+        part.at[1] = mount.at[1];
+        part.at[2] = mount.at[2];
+        part.aim[0] = mount.aim[0];
+        part.aim[1] = mount.aim[1];
+        part.aim[2] = mount.aim[2];
+        part.model = model;
+    }
 }
 
 // ⚑⚑ WHERE A GUN POINTS, IN ONE PLACE (Phase 31 stage C2). Before this every
@@ -5687,6 +5743,43 @@ core::Quat fittingRotation(core::Vec3 bearing, core::Vec3 mountAim)
     const core::Vec3 current = rotate(aligned, core::Vec3{0.0f, 1.0f, 0.0f});
     const float roll = std::atan2(dot(cross(current, wanted), forward), dot(current, wanted));
     return core::fromAxisAngle(forward, roll) * aligned;
+}
+
+// ⚑⚑ THE SAME CONSTRUCTION WITH THE OPPOSITE CONSTRAINT (Phase 31 stage
+// E2). See the header for why a gun and a pod cannot share one function: a gun
+// pins its BARREL and takes what roll is left, a pod pins its MOUNTING FACE and
+// takes what roll is left. Here +Y goes exactly onto `aim` and -Z lands as near
+// `reference` as a right angle allows.
+core::Quat mountRotation(core::Vec3 aim, core::Vec3 reference)
+{
+    const float aimLength = length(aim);
+    if (aimLength < 1.0e-6f) {
+        return core::Quat::identity();
+    }
+    const core::Vec3 up = aim * (1.0f / aimLength);
+    // The shortest arc taking the model's +Y onto the way out of the plating.
+    const core::Vec3 from{0.0f, 1.0f, 0.0f};
+    const float alignment = core::clamp(dot(from, up), -1.0f, 1.0f);
+    core::Quat aligned = core::Quat::identity();
+    if (alignment < -0.9999f) {
+        // Straight down through the hull - a belly mount, which is half the
+        // shipped freighter. Any perpendicular axis does for the half turn.
+        aligned = core::fromAxisAngle({1.0f, 0.0f, 0.0f}, 3.14159265f);
+    } else if (alignment < 0.9999f) {
+        aligned = core::fromAxisAngle(normalize(cross(from, up)), std::acos(alignment));
+    }
+
+    // Then roll about `aim` until the model's nose is as near `reference` as it
+    // gets. Signed, for `fittingRotation`'s reason.
+    const core::Vec3 flattened = reference - up * dot(reference, up);
+    const float flattenedLength = length(flattened);
+    if (flattenedLength < 1.0e-4f) {
+        return aligned; // bolted facing the way the hull points: any roll does
+    }
+    const core::Vec3 wanted = flattened * (1.0f / flattenedLength);
+    const core::Vec3 current = rotate(aligned, core::Vec3{0.0f, 0.0f, -1.0f});
+    const float roll = std::atan2(dot(cross(current, wanted), up), dot(current, wanted));
+    return core::fromAxisAngle(up, roll) * aligned;
 }
 
 // ⚑⚑ WHO THE PLAYER IS AT WAR WITH, IN ONE PLACE (promoted out of
@@ -5912,6 +6005,7 @@ ecs::Entity SpaceWorld::spawnShipAt(const assets::ShipDef& def,
     m_registry.emplace<ShipPower>(e);
     m_registry.emplace<ShipDefense>(e);
     m_registry.emplace<ShipArmament>(e);
+    m_registry.emplace<ShipFittings>(e);
     applyShipDef(e.index, def, defs);
     std::string name = def.name;
     if (factionName != nullptr && factionName[0] != '\0') {
@@ -8522,9 +8616,49 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
 void SpaceWorld::appendFittingInstances(float alpha, std::vector<RenderInstance>& out) const
 {
     const ecs::Pool<ShipArmament>& armaments = m_registry.storage<ShipArmament>();
+    const ecs::Pool<ShipFittings>& fittings = m_registry.storage<ShipFittings>();
     const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
     const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
     const double alphaD = static_cast<double>(alpha);
+
+    // ⚑⚑ THE STILL HALF FIRST, AND IT NEEDS NO GUNNERY FRAME AT ALL. Nothing
+    // in this loop asks where a target is, because nothing in it moves: a hold
+    // pod is at its mount's `at` facing its mount's `aim` for the life of the
+    // fit. That is the whole reason `ShipFittings` is a second component rather
+    // than a wider `ShipArmament` - see its declaration.
+    const std::uint32_t fittedCount = static_cast<std::uint32_t>(fittings.size());
+    const std::uint32_t* fittedIndices = fittings.entityIndices().data();
+    const ShipFittings* fitted = fittings.values().data();
+    for (std::uint32_t i = 0; i < fittedCount; ++i) {
+        if (fitted[i].count == 0) {
+            continue;
+        }
+        const std::uint32_t entityIndex = fittedIndices[i];
+        const Transform* transform = transforms.tryGet(entityIndex);
+        const RenderShape* shape = shapes.tryGet(entityIndex);
+        if (transform == nullptr || shape == nullptr) {
+            continue;
+        }
+        const core::DVec3 hullPosition =
+            transform->previousPosition + (transform->position - transform->previousPosition) * alphaD;
+        const core::Quat hullRotation = nlerp(transform->previousOrientation, transform->orientation, alpha);
+        const float hullScale = shape->scale.x;
+        for (std::uint32_t f = 0; f < fitted[i].count; ++f) {
+            const FittedPart& part = fitted[i].parts[f];
+            const core::Vec3 offset{part.at[0] * hullScale, part.at[1] * hullScale, part.at[2] * hullScale};
+            out.push_back(RenderInstance{
+                .position = hullPosition + toDVec3(rotate(hullRotation, offset)),
+                // ⚑ The hull's own nose is the roll reference, so a pod lies
+                // fore-and-aft rather than across the belly at whatever angle
+                // the shortest arc happened to leave it.
+                .rotation = hullRotation *
+                            mountRotation({part.aim[0], part.aim[1], part.aim[2]}, {0.0f, 0.0f, -1.0f}),
+                .scale = {hullScale, hullScale, hullScale},
+                .model = part.model,
+                .key = kNoInstanceKey,
+            });
+        }
+    }
 
     const std::uint32_t count = static_cast<std::uint32_t>(armaments.size());
     const std::uint32_t* entityIndices = armaments.entityIndices().data();

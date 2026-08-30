@@ -31,6 +31,27 @@
 # ⚑ Was `modules.toml` and `[[module]]` until Phase 31 stage A1. The word
 # `module` is now reserved for a station's, which is the noun it fits
 # (gdd.md §12). The ids did not change, so a save that names one still loads.
+# ⚑⚑ A COMPONENT IS DRAWN ON THE HULL NOW (Phase 31 stage E2), and `model`
+# is what it is drawn as. It follows `weapons.toml`'s rule exactly: an EMPTY
+# `model` is a bare mount rather than a placeholder box, so a mod's component
+# written before this stage still fits and simply leaves the hardpoint clear; a
+# model naming something that does not exist falls back to the `fitting` role,
+# because that one is a mistake and should be visible.
+#
+# ⚑ A COMPONENT IN AN INTERNAL MOUNT IS NEVER DRAWN WHATEVER THIS SAYS. That is
+# `decisions/014` rule 2 and it belongs to the MOUNT, not to the kit: the same
+# shield booster is invisible in the shuttle's `shield_core` and would be drawn
+# on a hull that put a shield mount outside. Every component here names a mesh
+# for that reason - what is drawn is the mount's business, and a component that
+# declined to have a look would be one that could never be fitted externally.
+#
+# ⚑ THREE MESHES OVER TWELVE COMPONENTS, and the split is by what the kit IS
+# rather than by what it costs. A Mk2 shares its Mk1's shape because a tier is a
+# stat line the player reads on a screen, not a silhouette they read across
+# space; a dish and a container differ because the freighter's five utility
+# mounts are the trade stage B made visible, and a trade you cannot see from
+# outside the ship is one the outfitting screen has to explain instead.
+#
 # Modifiers: <stat>_add applies before <stat>_mul; component mass dilutes
 # accelerations (mass / (mass + fitted mass)); power_draw sums against the
 # ship's power_output. Edits hot-reload into a running dev build.
@@ -40,6 +61,7 @@ id = "sol.shield_booster_mk1"
 name = "Shield Booster Mk1"
 mount = "shield"
 size = "small"
+model = "pod"
 price = 800.0
 mass = 400.0
 power_draw = 2.0
@@ -50,6 +72,7 @@ id = "sol.shield_booster_mk2"
 name = "Shield Booster Mk2"
 mount = "shield"
 size = "small"
+model = "pod"
 price = 2400.0
 mass = 700.0
 power_draw = 3.0
@@ -62,6 +85,7 @@ id = "sol.engine_tuner_mk1"
 name = "Engine Tuner Mk1"
 mount = "engine"
 size = "small"
+model = "nozzle"
 price = 1000.0
 mass = 200.0
 power_draw = 1.5
@@ -73,6 +97,7 @@ id = "sol.engine_tuner_mk2"
 name = "Engine Tuner Mk2"
 mount = "engine"
 size = "small"
+model = "nozzle"
 price = 3000.0
 mass = 300.0
 power_draw = 2.5
@@ -85,6 +110,7 @@ id = "sol.cruise_charger"
 name = "Cruise Charger"
 mount = "engine"
 size = "small"
+model = "nozzle"
 price = 2000.0
 mass = 250.0
 power_draw = 2.0
@@ -95,6 +121,7 @@ id = "sol.cargo_pod_mk1"
 name = "Cargo Pod Mk1"
 mount = "utility"
 size = "small"
+model = "pod"
 price = 600.0
 mass = 800.0
 cargo_add = 25.0
@@ -104,6 +131,7 @@ id = "sol.cargo_pod_mk2"
 name = "Cargo Pod Mk2"
 mount = "utility"
 size = "small"
+model = "pod"
 price = 1800.0
 mass = 1400.0
 power_draw = 0.5
@@ -114,6 +142,7 @@ id = "sol.armor_plating"
 name = "Armor Plating"
 mount = "utility"
 size = "small"
+model = "pod"
 price = 1200.0
 mass = 1500.0
 armor_mul = 1.6
@@ -123,6 +152,7 @@ id = "sol.capacitor_bank"
 name = "Capacitor Bank"
 mount = "utility"
 size = "small"
+model = "pod"
 price = 900.0
 mass = 300.0
 power_draw = 1.5
@@ -133,6 +163,7 @@ id = "sol.survey_scanner_mk1"
 name = "Survey Scanner Mk1"
 mount = "utility"
 size = "small"
+model = "dish"
 price = 1500.0
 mass = 250.0
 power_draw = 1.5
@@ -144,6 +175,7 @@ id = "sol.survey_scanner_mk2"
 name = "Survey Scanner Mk2"
 mount = "utility"
 size = "small"
+model = "dish"
 price = 4500.0
 mass = 400.0
 power_draw = 2.5
@@ -158,6 +190,7 @@ id = "sol.collector_mk1"
 name = "Collector Rig Mk1"
 mount = "utility"
 size = "small"
+model = "dish"
 price = 1100.0
 mass = 350.0
 power_draw = 1.5
@@ -168,6 +201,7 @@ id = "sol.collector_mk2"
 name = "Wide-Field Collector"
 mount = "utility"
 size = "small"
+model = "dish"
 price = 3600.0
 mass = 550.0
 power_draw = 2.5
@@ -179,6 +213,7 @@ id = "sol.regen_amplifier"
 name = "Regen Amplifier"
 mount = "utility"
 size = "small"
+model = "pod"
 price = 1500.0
 mass = 200.0
 power_draw = 2.0

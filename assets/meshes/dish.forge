@@ -1,0 +1,53 @@
+# A sensor dish (engine plan Phase 31 stage E2) - what a survey scanner or a
+# collector rig is drawn as, against `pod.forge`'s cargo container.
+#
+# ⚑ TWO UTILITY MESHES RATHER THAN ONE, FOR `emitter.forge`'S REASON. The
+# freighter's five utility mounts are the trade the fit model made visible in
+# stage B - a hold pod and a survey scanner compete for the same place - and a
+# trade you cannot see from outside the ship is a trade the outfitting screen
+# has to explain. A dish and a container are that difference, at a glance.
+#
+# ⚑ Same contract as every fitting mesh: origin at the mount point, body along
+# **+Y**, which `mountRotation` puts on the mount's `aim`.
+#
+# ⚑ Authored at real size, drawn at the hull's scale: about 1 m across.
+name = "dish"
+
+[[part]]
+id = "base"
+type = "revolve"
+profile = [[0.0, 0.0], [0.3, 0.0], [0.3, 0.12], [0.0, 0.12]]
+segments = 16
+u_tiles = 2.0
+
+# The pintle the dish swings on. Short, because a tall one makes the whole
+# fitting read as an antenna rather than a dish.
+[[part]]
+id = "pintle"
+type = "beam"
+from = [0.0, 0.1, 0.0]
+to = [0.0, 0.42, 0.0]
+width = 0.16
+height = 0.16
+tile = 1.5
+
+# ⚑ THE DISH IS A REVOLVE WHOSE PROFILE COMES BACK IN, so it is a shallow bowl
+# rather than a cone: the rim is at the widest radius and the centre is lower
+# than the rim, which is the whole silhouette. `cap_ends` stays off - a dish is
+# a surface, and the back of it is the profile's other half.
+[[part]]
+id = "reflector"
+type = "revolve"
+profile = [[0.0, 0.42], [0.2, 0.46], [0.38, 0.56], [0.5, 0.72]]
+segments = 20
+u_tiles = 2.0
+
+# The feed horn at the focus, which is what says which way a dish is looking.
+[[part]]
+id = "feed"
+type = "beam"
+from = [0.0, 0.44, 0.0]
+to = [0.0, 0.78, 0.0]
+width = 0.09
+height = 0.09
+tile = 1.5

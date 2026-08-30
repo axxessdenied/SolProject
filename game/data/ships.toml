@@ -75,20 +75,30 @@
 # scanners stayed `utility` so that the player's starting shuttle did not lose
 # them. A mount waiting for content is the honest state of it.
 #
-# ⚑⚑ WHERE THE WEAPON MOUNTS MOVED IN STAGE C1, AND WHY THE OTHERS DID NOT.
-# Until C1 nothing read `at`, so the stage-A2 positions were placed INSIDE the
-# shared `ship` mesh - which spans z -7..+5, x +/-3.5, y -1.7..+2.0. That was
-# harmless while the muzzle was an invented point six metres off the nose, and
-# is not harmless now: `ship_camera.hpp` seats the eye at z = -5.0 and does NOT
-# scale it, so the shuttle's old `gun_nose` at z = -2.4 would have fired every
-# bolt two and a half metres BEHIND the player's head. The weapon mounts below
-# now sit on the hull's skin. The utility, engine and shield mounts are still
-# interior points, deliberately: nothing reads them until stage E draws a
-# fitting on the hull, and moving them now would be guessing at what that
-# stage needs to see.
+# ⚑⚑ EVERY EXTERNAL MOUNT IS ON THE SKIN NOW, AND STAGE E2 IS WHAT FINISHED
+# THE JOB C1 STARTED. Until C1 nothing read `at`, so the stage-A2 positions were
+# placed INSIDE the shared `ship` mesh - which spans z -7..+5, x +/-3.5,
+# y -1.7..+2.0. C1 moved the WEAPON mounts, because a mount is a muzzle and
+# `ship_camera.hpp` seats the eye at z = -5.0 without scaling it, so the
+# shuttle's old `gun_nose` at z = -2.4 would have fired every bolt two and a
+# half metres BEHIND the player's head. It left the utility and engine mounts
+# inside on purpose - nothing read them, and moving them would have been
+# guessing at what the drawing stage needed. E2 draws them, so E2 places them.
 #
-# The positions below are placed against the shared `ship` mesh's bounds and
-# are the first thing a real hull mesh will move (Phase 32).
+# ⚑⚑ AND `aim` MEANS SOMETHING ON A MOUNT THAT DOES NOT SHOOT: IT IS THE WAY
+# OUT OF THE PLATING. Every fitting mesh is authored with its mounting face at
+# the origin and its body along +Y, and `mountRotation` puts that +Y on `aim` -
+# so `[0, -1, 0]` hangs a hold pod under the belly, `[0, 1, 0]` stands a dish on
+# the deck, and `[0, 0, 1]` opens a drive bell dead astern. One key, one rule,
+# no per-kind branch anywhere in the code. A mount that authors none keeps the
+# nose default, which points the fitting FORWARD - fine for a gun and wrong for
+# anything bolted to a surface, so an external non-weapon mount should always
+# say.
+#
+# The positions below are measured against the shared `ship` mesh: the belly
+# runs y -1.3 at z = -1 to -1.7 at z = +5, the deck y +1.5 to +2.0 over the
+# same run, and the rear face is the z = +5 plane. They are the first thing a
+# real hull mesh will move (Phase 32).
 
 [[ship]]
 id = "sol.shuttle"           # the player's ship (game/src/space_world.hpp)
@@ -133,11 +143,13 @@ crew_berths = 1
   at = [0.0, -0.1, -6.6]
   fit = "sol.pulse_cannon"
 
+  # On the rear face (the z = +5 plane), aiming astern so the bell opens the
+  # way the thrust goes.
   [[ship.mount]]
   id = "drive_main"
   kind = "engine"
   size = "small"
-  at = [0.0, 0.0, 2.2]
+  at = [0.0, 0.15, 5.0]
   aim = [0.0, 0.0, 1.0]
 
   [[ship.mount]]
@@ -145,17 +157,21 @@ crew_berths = 1
   kind = "shield"
   size = "small"
 
+  # Underslung, either side of the keel. The belly at z = 0.6 is y = -1.41, and
+  # a pod is 0.9 m across, so +/-1.3 clears the centreline and the chine both.
   [[ship.mount]]
   id = "bay_port"
   kind = "utility"
   size = "small"
-  at = [-1.1, 0.0, 0.6]
+  at = [-1.3, -1.41, 0.6]
+  aim = [0.0, -1.0, 0.0]
 
   [[ship.mount]]
   id = "bay_starboard"
   kind = "utility"
   size = "small"
-  at = [1.1, 0.0, 0.6]
+  at = [1.3, -1.41, 0.6]
+  aim = [0.0, -1.0, 0.0]
 
 [[ship]]
 id = "sol.interceptor"
@@ -196,18 +212,20 @@ crew_berths = 1
   at = [0.0, -0.1, -6.6]
   fit = "sol.pulse_cannon"
 
+  # Both on the rear face, wide enough apart that the two bells do not touch -
+  # a nozzle is 1.04 m across the mouth and these are 3 m apart.
   [[ship.mount]]
   id = "drive_port"
   kind = "engine"
   size = "small"
-  at = [-0.7, 0.0, 1.8]
+  at = [-1.5, 0.15, 5.0]
   aim = [0.0, 0.0, 1.0]
 
   [[ship.mount]]
   id = "drive_starboard"
   kind = "engine"
   size = "small"
-  at = [0.7, 0.0, 1.8]
+  at = [1.5, 0.15, 5.0]
   aim = [0.0, 0.0, 1.0]
 
   [[ship.mount]]
@@ -215,11 +233,14 @@ crew_berths = 1
   kind = "shield"
   size = "small"
 
+  # On the dorsal deck, FORWARD of the fin - which stands on the centreline
+  # from z = 1.0 back, so anything racked behind this would be inside it.
   [[ship.mount]]
   id = "rack_spine"
   kind = "utility"
   size = "small"
-  at = [0.0, 0.5, 0.4]
+  at = [0.0, 1.62, 0.4]
+  aim = [0.0, 1.0, 0.0]
 
 [[ship]]
 id = "sol.freighter"
@@ -308,7 +329,7 @@ crew_berths = 2
   id = "drive_main"
   kind = "engine"
   size = "medium"
-  at = [0.0, 0.0, 2.6]
+  at = [0.0, 0.15, 5.0]
   aim = [0.0, 0.0, 1.0]
 
   [[ship.mount]]
@@ -320,29 +341,40 @@ crew_berths = 2
   # four utility mounts and the internal one below. A hold pod and a survey
   # scanner compete for the same place on this hull now, which is the merge the
   # header note names.
+  # ⚑ THE THREE HOLDS ARE 2.4 m APART BECAUSE A POD IS 2.4 m LONG. They ran
+  # 1.2 m apart while they were interior points and nothing was drawn at them;
+  # at that spacing the containers would now overlap each other by half their
+  # length. Spread to z = -1.0, 1.4 and 3.8 they sit end to end along the keel
+  # and the aftmost one finishes exactly at the tail.
   [[ship.mount]]
   id = "hold_forward"
   kind = "utility"
   size = "medium"
-  at = [0.0, -0.8, -1.2]
+  at = [0.0, -1.3, -1.0]
+  aim = [0.0, -1.0, 0.0]
 
   [[ship.mount]]
   id = "hold_mid"
   kind = "utility"
   size = "medium"
-  at = [0.0, -0.8, 0.0]
+  at = [0.0, -1.46, 1.4]
+  aim = [0.0, -1.0, 0.0]
 
   [[ship.mount]]
   id = "hold_aft"
   kind = "utility"
   size = "medium"
-  at = [0.0, -0.8, 1.2]
+  at = [0.0, -1.62, 3.8]
+  aim = [0.0, -1.0, 0.0]
 
+  # Off the centreline on the dorsal deck, so it clears both the fin and
+  # `turret_dorsal`'s ring.
   [[ship.mount]]
   id = "rack_port"
   kind = "utility"
   size = "small"
-  at = [-1.4, 0.2, 0.4]
+  at = [-1.1, 1.62, 0.4]
+  aim = [0.0, 1.0, 0.0]
 
   # Internal, and the only mount in this file that is: no `at`, so it is never
   # drawn and never aimed at. gdd.md §11.5's subsystems are where a hull's

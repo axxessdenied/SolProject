@@ -1,0 +1,49 @@
+# A hold pod (engine plan Phase 31 stage E2) - what a component in a `utility`
+# mount is drawn as, unless it is a sensor.
+#
+# ⚑ Same contract as every fitting mesh: the origin is the mount point on the
+# hull's skin and the body extends along **+Y**, which `mountRotation` puts on
+# the mount's `aim`. A belly mount aiming `[0, -1, 0]` therefore hangs this pod
+# under the hull with its mounting face against the plating, and the roll is
+# settled against the hull's own nose - which is why the long axis below is Z.
+#
+# ⚑ THE LONG AXIS IS Z AND THAT IS WHAT THE ROLL REFERENCE IS FOR. A pod is the
+# first fitting whose orientation about its own mounting axis is VISIBLE - a
+# gun's is hidden by its barrel and a nozzle's by being round - so a pod lying
+# across the belly rather than along it is the failure `mountRotation`'s second
+# argument exists to prevent.
+#
+# ⚑ Authored at real size, drawn at the hull's scale: 0.9 x 0.75 x 2.4 m, so
+# the freighter's holds read as 3.6 x 3 x 9.6 m containers.
+name = "pod"
+
+# The saddle the pod hangs from, flush with the plating.
+[[part]]
+id = "saddle"
+type = "box"
+center = [0.0, 0.09, 0.0]
+size = [0.5, 0.18, 1.4]
+tile = 0.9
+
+# The container. Offset down its own +Y so it clears the saddle.
+[[part]]
+id = "shell"
+type = "box"
+center = [0.0, 0.55, 0.0]
+size = [0.9, 0.72, 2.4]
+tile = 0.7
+
+# Two ribs, which is the whole of what stops a box reading as a box.
+[[part]]
+id = "rib_forward"
+type = "box"
+center = [0.0, 0.55, -0.7]
+size = [0.98, 0.8, 0.12]
+tile = 0.9
+
+[[part]]
+id = "rib_aft"
+type = "box"
+center = [0.0, 0.55, 0.7]
+size = [0.98, 0.8, 0.12]
+tile = 0.9

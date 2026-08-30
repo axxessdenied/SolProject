@@ -254,3 +254,39 @@ radius = 1.1268
 [[role]]
 id = "fitting"
 model = "cannon"
+
+# The three NON-WEAPON fitting meshes (Phase 31 stage E2). Same terms as the
+# two above them: authored at real size, drawn at the hull's scale, `radius` is
+# the mesh's own measured bounding radius, and nothing in the sim reads it.
+#
+# ⚑ THEY ARE AUTHORED ALONG +Y WHERE A GUN IS AUTHORED ALONG -Z, and that is the
+# one thing to know before editing them. A gun's -Z is the direction it SHOOTS,
+# which has to stay free to swing, so its mounting face is whatever is left over.
+# Nothing here swings, so the MOUNTING FACE is the axis: the origin sits on the
+# plating and the body rises along +Y, which `mountRotation` puts on the mount's
+# `aim`. That is what lets a `drive_main` aiming astern and a `hold_mid` aiming
+# down through the belly use one rule and no per-kind branch.
+#
+# ⚑ TWO UTILITY SHAPES, NOT ONE, and the reason is a mechanic rather than
+# decoration: the freighter's five utility mounts are the trade stage B made
+# visible - a hold pod and a survey scanner compete for the same place - and a
+# trade you cannot see from outside the ship is one the outfitting screen has to
+# explain instead.
+
+[[model]]
+id = "nozzle"
+mesh = "nozzle"
+texture = "hull"
+radius = 1.4001
+
+[[model]]
+id = "pod"
+mesh = "pod"
+texture = "hull"
+radius = 1.5718
+
+[[model]]
+id = "dish"
+mesh = "dish"
+texture = "hull"
+radius = 0.8766

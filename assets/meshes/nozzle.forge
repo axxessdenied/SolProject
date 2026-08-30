@@ -1,0 +1,57 @@
+# A drive nozzle (engine plan Phase 31 stage E2) - what a component in an
+# `engine` mount is drawn as.
+#
+# ⚑ SAME CONTRACT AS EVERY OTHER FITTING MESH, AND THE CONTRACT IS THE REASON
+# THERE IS NO PER-KIND CONVENTION IN THE CODE. The origin is the mount point on
+# the hull's skin and the body extends along **+Y**, which `mountRotation` puts
+# on the mount's `aim`. So `drive_main`'s `aim = [0, 0, 1]` opens this bell
+# dead astern without the engine being a special case anywhere.
+#
+# That is why a nozzle is authored along +Y and a gun is authored along -Z: a
+# gun's -Z is the direction it SHOOTS and has to stay free to swing, so its
+# mounting face is what is left. Here nothing swings, so the mounting face is
+# the axis and the shape is built up it.
+#
+# ⚑ Authored at real size and drawn at the hull's scale. About 1.1 m across and
+# 1.3 m deep, so the freighter's `scale = 4.0` drive reads as a 4.4 m bell.
+name = "nozzle"
+
+# The collar that stands on the plating, and the only part of this that is
+# flush with the hull.
+[[part]]
+id = "collar"
+type = "revolve"
+profile = [[0.0, 0.0], [0.42, 0.0], [0.42, 0.14], [0.0, 0.14]]
+segments = 16
+u_tiles = 2.0
+
+# ⚑ THE BELL IS ONE REVOLVE AND IT FLARES, which is what a nozzle IS - a
+# cylinder with a lip would read as a pipe. The profile walks the throat out to
+# the mouth in three steps rather than two so the flare is curved rather than
+# conical; `cap_ends` is off because the mouth is meant to be open.
+[[part]]
+id = "bell"
+type = "revolve"
+profile = [[0.3, 0.14], [0.26, 0.5], [0.34, 0.9], [0.52, 1.3]]
+segments = 16
+u_tiles = 2.0
+
+# The mounting struts, which are what stop the bell reading as a floating cone
+# at any distance where the flare itself has stopped resolving.
+[[part]]
+id = "strut_port"
+type = "beam"
+from = [-0.3, 0.1, 0.0]
+to = [-0.44, 1.2, 0.0]
+width = 0.07
+height = 0.07
+tile = 1.5
+
+[[part]]
+id = "strut_starboard"
+type = "beam"
+from = [0.3, 0.1, 0.0]
+to = [0.44, 1.2, 0.0]
+width = 0.07
+height = 0.07
+tile = 1.5

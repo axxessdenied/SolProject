@@ -43,7 +43,10 @@ constexpr const char* const kCommittedForgeAssets[] = {"cube",
                                                        "asteroid",
                                                        "gate_membrane",
                                                        "cannon",
-                                                       "emitter"};
+                                                       "emitter",
+                                                       "nozzle",
+                                                       "pod",
+                                                       "dish"};
 
 [[nodiscard]] bool parses(const std::string& text, ForgeDoc& out)
 {

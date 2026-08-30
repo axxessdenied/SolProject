@@ -76,6 +76,15 @@ mesh = "cube"
 texture = "hull"
 radius = 1.0
 
+# What a NON-weapon fitting is drawn as (Phase 31 stage E2), distinct from
+# `gun_body` so that "a pod was drawn" and "a gun was drawn" are different
+# answers.
+[[model]]
+id = "pod_body"
+mesh = "cube"
+texture = "hull"
+radius = 1.0
+
 [[role]]
 id = "fitting"
 model = "fallback_body"
@@ -154,6 +163,27 @@ range = 500.0
 projectile_speed = 600.0
 energy_cost = 10.0
 price = 300.0
+
+# ⚑⚑ SOMETHING THAT IS NOT A GUN, for Phase 31 stage E2. `sol.hold` names
+# a mesh and `sol.bare_rig` names none, which is the same pair of failure modes
+# the two guns below cover - asserted separately because a component resolves
+# through a different table and a different loop.
+[[component]]
+id = "sol.hold"
+name = "Hold Pod"
+mount = "utility"
+size = "small"
+model = "pod_body"
+price = 300.0
+mass = 100.0
+
+[[component]]
+id = "sol.bare_rig"
+name = "Bare Rig"
+mount = "utility"
+size = "small"
+price = 300.0
+mass = 100.0
 
 # ⚑⚑ TWO GUNS FOR THE TWO WAYS A FITTING CAN FAIL TO BE DRAWN (Phase 31
 # stage E), and they are separate weapons rather than edits to the ones above
@@ -270,6 +300,26 @@ weapon_capacitor = )") +
     stanza += aim;
     stanza += "\n  arc = ";
     stanza += std::to_string(arc);
+    stanza += "\n";
+    if (fit != nullptr) {
+        stanza += "  fit = \"";
+        stanza += fit;
+        stanza += "\"\n";
+    }
+    return stanza;
+}
+
+// One NON-weapon mount, as a `[[ship.mount]]` stanza (Phase 31 stage E2).
+// `aim` is the argument because on a mount that does not shoot it is the way
+// OUT of the plating, and that is the whole of the stage's orientation rule.
+[[nodiscard]] std::string utilityMount(const char* id, double y, const char* aim, const char* fit)
+{
+    std::string stanza = "\n  [[ship.mount]]\n  id = \"";
+    stanza += id;
+    stanza += "\"\n  kind = \"utility\"\n  size = \"small\"\n  at = [0.0, ";
+    stanza += std::to_string(y);
+    stanza += ", 0.0]\n  aim = ";
+    stanza += aim;
     stanza += "\n";
     if (fit != nullptr) {
         stanza += "  fit = \"";
@@ -1656,4 +1706,187 @@ SOL_TEST(a_bolt_is_drawn_as_its_own_model_and_not_as_its_gun)
         SOL_CHECK(game::modelIndex(shot.model) == bolt);
         SOL_CHECK(game::modelIndex(shot.model) != gun);
     }
+}
+
+// ===========================================================================
+// Phase 31 stage E2 - everything else bolted to the outside.
+// ===========================================================================
+
+// ⚑⚑ A FITTED COMPONENT IS DRAWN TOO, AND IT IS THE SECOND HALF OF
+// `decisions/014` RULE 2: `at` present means external, which means DRAWN. E1
+// honoured that for guns only, which left the rule true of a quarter of the
+// mount kinds and silent about the rest.
+SOL_TEST(a_fitted_component_is_drawn_standing_in_its_mount)
+{
+    Fixture fixture(hull(gunMount("gun_port", -3.0, "sol.left_gun") +
+                         utilityMount("hold_belly", -2.0, "[0.0, -1.0, 0.0]", "sol.hold")));
+
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_REQUIRE(fittings.size() == 2);
+
+    const std::uint32_t gun = fixture.defs.modelIndex("gun_body");
+    const std::uint32_t pod = fixture.defs.modelIndex("pod_body");
+    SOL_REQUIRE(pod != DefDatabase::kNoModel);
+    SOL_CHECK(gun != pod);
+
+    // The guns come first, then the still fittings - two loops over two pools,
+    // which is what the ordering says and all it says.
+    bool sawGun = false;
+    bool sawPod = false;
+    const sol::core::DVec3 hullAt = fixture.world.shipState().position;
+    for (const game::RenderInstance& fitting : fittings) {
+        if (game::modelIndex(fitting.model) == gun) {
+            sawGun = true;
+        } else if (game::modelIndex(fitting.model) == pod) {
+            sawPod = true;
+            // Authored at y = -2 on a hull drawn at scale 2, and this suite
+            // flies at identity: four metres under the keel.
+            SOL_CHECK(distance(fitting.position - hullAt, {0.0, -4.0, 0.0}) < 1e-4);
+            SOL_CHECK(std::abs(fitting.scale.x - 2.0f) < 1e-5f);
+        }
+    }
+    SOL_CHECK(sawGun);
+    SOL_CHECK(sawPod);
+}
+
+// ⚑ A component that names no mesh leaves its mount bare, on exactly the terms
+// a gun does - and the two are checked separately because they resolve through
+// different tables in different loops, so one can be right while the other is
+// not.
+SOL_TEST(a_component_that_names_no_mesh_leaves_the_mount_bare)
+{
+    Fixture fixture(hull(utilityMount("rig", -2.0, "[0.0, -1.0, 0.0]", "sol.bare_rig")));
+    SOL_CHECK(fixture.fittingsDrawn().empty());
+}
+
+// ⚑ An EMPTY mount draws nothing whatever its kind: `fit` is what puts
+// something in a place, and a place with nothing in it is not a thing to draw.
+SOL_TEST(a_bare_mount_draws_nothing_at_all)
+{
+    Fixture fixture(hull(utilityMount("rig", -2.0, "[0.0, -1.0, 0.0]", nullptr)));
+    SOL_CHECK(fixture.fittingsDrawn().empty());
+}
+
+// ⚑⚑⚑ A POD HANGS THE WAY ITS MOUNT AIMS, AND THAT IS A DIFFERENT
+// CONSTRAINT FROM A GUN'S. Every fitting mesh is authored with its mounting
+// face at the origin and its body along +Y, so what `mountRotation` has to
+// guarantee is that +Y lands EXACTLY on `aim` - a belly pod whose +Y went
+// anywhere else is a container floating beside the ship or buried in it.
+//
+// ⚑ The roll is the second half and it is just as visible: a pod is the first
+// fitting in this game whose orientation about its own mounting axis can be
+// seen, because a gun's is hidden behind its barrel and a nozzle's by being
+// round. -Z near the hull's nose is what makes a hold lie fore-and-aft.
+SOL_TEST(a_component_hangs_the_way_its_mount_aims)
+{
+    Fixture fixture(hull(utilityMount("hold_belly", -2.0, "[0.0, -1.0, 0.0]", "sol.hold") +
+                         utilityMount("rack_spine", 2.0, "[0.0, 1.0, 0.0]", "sol.hold")));
+
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_REQUIRE(fittings.size() == 2);
+
+    // Belly first, deck second - mount order, as everywhere else.
+    SOL_CHECK(topOf(fittings[0]).y < -0.999f); // hangs: its mounting face is UP
+    SOL_CHECK(topOf(fittings[1]).y > 0.999f);  // stands: mounting face DOWN
+
+    // And both lie along the hull, which is the roll rather than the aim.
+    SOL_CHECK(std::abs(barrelOf(fittings[0]).z + 1.0f) < 1e-3f);
+    SOL_CHECK(std::abs(barrelOf(fittings[1]).z + 1.0f) < 1e-3f);
+}
+
+// ⚑⚑ THE CASE THAT MADE `mountRotation` A SECOND FUNCTION RATHER THAN AN
+// ARGUMENT TO `fittingRotation`. An engine aims DEAD ASTERN, which is exactly
+// antiparallel to the hull's nose - so the roll reference is degenerate and
+// there is no "-Z near the nose" to be had. A gun's rule would have fallen back
+// to the shortest arc onto the BEARING and left the bell pointing up out of the
+// deck; this one pins +Y on `aim` first and lets the roll be arbitrary, which
+// is the right way round because a nozzle is round and its roll cannot be seen.
+SOL_TEST(a_drive_aiming_dead_astern_still_opens_astern)
+{
+    Fixture fixture(hull(utilityMount("drive", 0.0, "[0.0, 0.0, 1.0]", "sol.hold")));
+
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_REQUIRE(fittings.size() == 1);
+    SOL_CHECK(topOf(fittings[0]).z > 0.999f);
+
+    // Directly forward is the other end of the same degeneracy and is just as
+    // legal - a mount on the nose cap.
+    Fixture forward(hull(utilityMount("nose_rig", 0.0, "[0.0, 0.0, -1.0]", "sol.hold")));
+    const std::vector<game::RenderInstance> ahead = forward.fittingsDrawn();
+    SOL_REQUIRE(ahead.size() == 1);
+    SOL_CHECK(topOf(ahead[0]).z < -0.999f);
+}
+
+// ⚑⚑ AN INTERNAL MOUNT IS NEVER DRAWN, WHATEVER IS IN IT. That is
+// `decisions/014` rule 2 and it belongs to the MOUNT rather than to the kit:
+// the same component that hangs off a belly is invisible in a sealed bay. It is
+// asserted with a fitting that certainly HAS a mesh, so "not drawn" cannot be
+// confused with "nothing to draw".
+SOL_TEST(an_internal_mount_draws_nothing_however_it_is_fitted)
+{
+    const std::string mounts = "\n  [[ship.mount]]\n  id = \"core\"\n"
+                               "  kind = \"utility\"\n  size = \"small\"\n"
+                               "  fit = \"sol.hold\"\n";
+    Fixture fixture(hull(mounts));
+
+    // The fit really took - it is in the loadout, it just has nowhere to be.
+    const sol::assets::ShipDef* def = fixture.defs.findShip("sol.shuttle");
+    SOL_REQUIRE(def != nullptr);
+    const sol::assets::ShipMount* mount = def->findMount("core");
+    SOL_REQUIRE(mount != nullptr);
+    SOL_CHECK(!mount->external);
+    SOL_CHECK(mount->fit == "sol.hold");
+
+    SOL_CHECK(fixture.fittingsDrawn().empty());
+}
+
+// ⚑⚑⚑ THE SHIPPED HULLS, AGAINST THE COMMITTED FILES. Stage E2's whole
+// visible result is that the three base-game ships stopped being bare, and this
+// is the only thing standing between that and a `ships.toml` edit that puts the
+// mounts back inside the mesh where stage A2 first left them.
+SOL_TEST(every_shipped_external_mount_carries_a_fitting_that_can_be_drawn)
+{
+    DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(defs.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+
+    // Every component the base game ships names a mesh that exists, which is
+    // what makes "an empty model means bare" a rule about mods rather than a
+    // description of our own content.
+    SOL_REQUIRE(!defs.components().empty());
+    for (const sol::assets::ComponentDef& component : defs.components()) {
+        if (component.model.empty()) {
+            std::printf("  component '%s' names no model\n", component.id.c_str());
+        }
+        SOL_CHECK(!component.model.empty());
+        SOL_CHECK(defs.findModel(component.model.c_str()) != nullptr);
+    }
+
+    // ⚑ AND EVERY EXTERNAL NON-WEAPON MOUNT SAYS WHICH WAY IS OUT. The default
+    // `aim` is the ship's NOSE, which is right for a gun and wrong for anything
+    // bolted to a surface - a hold pod that kept it would be drawn lying on its
+    // side. There is no way to spot that from the geometry, so it is asserted
+    // as a rule about the FILE: an external mount that takes a component must
+    // author an `aim`, and the nose is what "did not" looks like.
+    std::uint32_t checked = 0;
+    for (const sol::assets::ShipDef& def : defs.ships()) {
+        for (const sol::assets::ShipMount& mount : def.mounts) {
+            if (!mount.external || sol::assets::mountTakesWeapon(mount.kind)) {
+                continue;
+            }
+            ++checked;
+            const bool authored = mount.aim[0] != 0.0f || mount.aim[1] != 0.0f || mount.aim[2] != -1.0f;
+            if (!authored) {
+                std::printf("  %s: external mount '%s' keeps the default nose `aim`\n",
+                            def.id.c_str(),
+                            mount.id.c_str());
+            }
+            SOL_CHECK(authored);
+        }
+    }
+    // Eleven across the three hulls - a drive and two bays on the shuttle, two
+    // drives and a spine rack on the interceptor, a drive and four holds on the
+    // freighter. The count is here so that a hull losing its mounts cannot pass
+    // this by having nothing left to check.
+    SOL_CHECK(checked == 11);
 }
