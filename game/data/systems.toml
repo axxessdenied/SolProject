@@ -27,7 +27,20 @@
 #                  it alone rather than handing it to whoever is nearest.
 #   primary_planet index into the [[system.planet]] rows below; the hub the
 #                  playfield is laid out around.
+#   security       how hard this place is held, 0 to 1. Omit it and the
+#                  generator's own curve decides, from region and how many
+#                  gate jumps the owner's seat of power is away. Write it and
+#                  a fortress can sit on the rim, or a core system can be one
+#                  nobody bothers to police any more.
 #   secret         a placement flag and nothing else yet.
+#
+# ⚑ `security` IS A MAGNITUDE AND THE SIGN IS NOT YOURS. The rating a player
+# reads is signed - `sol.security(i)` prints "+0.85" for a Navy core system and
+# "-0.75" for a pirate clan's home - because the sign says WHO polices the
+# place rather than how much. Who holds a system is the galaxy's business, so
+# the generator takes the sign from the owner and you write only the strength.
+# A negative here is refused by name. Zero is legal and means what it says on
+# the map: nobody comes, and you are on your own.
 #
 # Every field is optional except `id`. A row that names only a station and a
 # placement rule is legal and useful: what you leave out is filled in

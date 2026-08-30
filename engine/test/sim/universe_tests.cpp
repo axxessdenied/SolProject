@@ -1666,3 +1666,159 @@ SOL_TEST(universe_retuning_security_moves_security_and_nothing_else)
     // "nothing else moved" is trivially true of a pass that does nothing.
     SOL_CHECK(different > 0);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 30 stage E: an authored rating.
+// ---------------------------------------------------------------------------
+
+// The stage's own exit clause: an authored rating survives generation. It has
+// to be asserted against BOTH curves, because `assignSecurity` writes twice -
+// the major band and the clan band - and a skip point that only got in front of
+// one of them would be invisible for whichever half the test happened to miss.
+//
+// ⚑⚑⚑ AND THE SIGN IS THE GENERATOR'S, WHICH IS THE WHOLE RULING. The two
+// systems below are written with the SAME number, 0.9, and they come out at
+// +0.9 and -0.9 - because one is Navy and one was swallowed by a clan, and
+// which of those happened is not a thing the author of a file can know. A
+// signed authored value would let a file say "a clan holds this" about a system
+// the Navy holds, and stage D's readout would print it.
+SOL_TEST(universe_an_authored_rating_replaces_both_curves_and_the_owner_signs_it)
+{
+    GalaxyParams params = testParams(2024);
+    params.pirateTemplateCount = 2;
+    params.fringeLawlessChance = 1.0f; // every fringe system is clan country
+    // Held by a major, and deep in the fringe where the curve would have given
+    // it somewhere around +0.2. This is "a fortress out on the rim".
+    params.authoredSystems.push_back({.id = "test.fortress",
+                                      .region = Region::Fringe,
+                                      .hasRegion = true,
+                                      .factionIndex = 2,
+                                      .hasFaction = true,
+                                      .security = 0.9f,
+                                      .hasSecurity = true});
+    // Declares no owner at all, in fringe country every system of which is
+    // lawless - so `spawnClans` takes it, and the identical 0.9 has to come out
+    // the other way up.
+    params.authoredSystems.push_back({.id = "test.stronghold",
+                                      .region = Region::Fringe,
+                                      .hasRegion = true,
+                                      .security = 0.9f,
+                                      .hasSecurity = true});
+    const Galaxy galaxy = generateGalaxy(params);
+
+    const SystemSpec* fortress = findAuthored(galaxy, "test.fortress");
+    SOL_REQUIRE(fortress != nullptr);
+    SOL_CHECK(fortress->factionIndex == 2);
+    SOL_CHECK(fortress->security == 0.9f);
+
+    const SystemSpec* stronghold = findAuthored(galaxy, "test.stronghold");
+    SOL_REQUIRE(stronghold != nullptr);
+    // The sample must contain BOTH answers or the test cannot fail: a
+    // counterfactual that never signs anything is green against a galaxy where
+    // every authored system happened to land in a major's space.
+    SOL_REQUIRE(stronghold->factionIndex != kNoFaction && stronghold->factionIndex >= params.factionCount);
+    SOL_CHECK(stronghold->security == -0.9f);
+
+    // ⚑ And it beat the curve rather than agreeing with it by luck. A fringe
+    // system's own band is [0.18, 0.30] and a clan's is [-0.75, -0.30], so
+    // neither of these numbers is one this galaxy could have produced.
+    for (const SystemSpec& system : galaxy.systems) {
+        if (system.authoredId.empty()) {
+            SOL_CHECK(system.security != 0.9f && system.security != -0.9f);
+        }
+    }
+}
+
+// Zero is a value with a meaning rather than an unset marker, and an author may
+// write it: the flag flies and nobody comes. It is also the arm that carries
+// the negative-zero trap - `-0.0f` compares equal to zero everywhere and then
+// prints as "-0.00" in the readout stage D put in front of a player.
+SOL_TEST(universe_an_authored_zero_is_a_rating_and_has_no_sign)
+{
+    GalaxyParams params = testParams(2024);
+    params.pirateTemplateCount = 2;
+    params.fringeLawlessChance = 1.0f;
+    params.authoredSystems.push_back({.id = "test.abandoned",
+                                      .region = Region::Fringe,
+                                      .hasRegion = true,
+                                      .security = 0.0f,
+                                      .hasSecurity = true});
+    // A hand-built params can say what a file cannot: the def layer refuses
+    // `lawless` and `security` in one row, but the rule below it has to be
+    // total, because a galaxy with no clan templates leaves ordinary systems
+    // unowned too.
+    params.authoredSystems.push_back({.id = "test.nobodys",
+                                      .region = Region::Fringe,
+                                      .hasRegion = true,
+                                      .factionIndex = kNoFaction,
+                                      .hasFaction = true,
+                                      .security = 0.6f,
+                                      .hasSecurity = true});
+    const Galaxy galaxy = generateGalaxy(params);
+
+    const SystemSpec* abandoned = findAuthored(galaxy, "test.abandoned");
+    SOL_REQUIRE(abandoned != nullptr);
+    SOL_CHECK(abandoned->security == 0.0f);
+    SOL_CHECK(!std::signbit(abandoned->security)); // not -0.0f, whoever holds it
+
+    const SystemSpec* nobodys = findAuthored(galaxy, "test.nobodys");
+    SOL_REQUIRE(nobodys != nullptr);
+    SOL_REQUIRE(nobodys->factionIndex == kNoFaction);
+    // Nobody holds it, so nobody polices it, whatever the number said.
+    SOL_CHECK(nobodys->security == 0.0f);
+}
+
+// SKIP POINT PLACEMENT, made falsifiable. Every other authored field is written
+// in `applyAuthoredFields`, which runs in pass 2; `security` cannot be, because
+// `assignSecurity` runs last and opens by zeroing every system. This is the
+// assertion that catches the value being written in the natural-looking place
+// and then quietly erased - the galaxy would still generate, still place, still
+// name, and the rating would just be the curve's.
+SOL_TEST(universe_an_authored_rating_is_not_erased_by_the_pass_that_runs_last)
+{
+    GalaxyParams params = testParams(31337);
+    params.pirateTemplateCount = 2;
+    params.authoredSystems.push_back({.id = "test.capital",
+                                      .placement = sol::sim::Placement::AtSystem,
+                                      .atFactionCapital = 0,
+                                      .security = 0.11f,
+                                      .hasSecurity = true});
+    const Galaxy galaxy = generateGalaxy(params);
+
+    // A capital is where the curve is at its very strongest - zero hops from
+    // its own seat, in the core - so the value it would have written is about
+    // +0.85. Writing a WEAK number onto the strongest system in the galaxy is
+    // what makes "the curve ran afterwards" impossible to mistake for a pass.
+    const SystemSpec* capital = findAuthored(galaxy, "test.capital");
+    SOL_REQUIRE(capital != nullptr);
+    SOL_REQUIRE(capital->factionIndex == 0);
+    SOL_CHECK(capital->security == 0.11f);
+
+    // And the curve is alive around it: the other capitals still read high, so
+    // this is one system overridden rather than a pass that stopped running.
+    std::uint32_t strongCores = 0;
+    for (const SystemSpec& system : galaxy.systems) {
+        strongCores += system.security > 0.7f ? 1u : 0u;
+    }
+    SOL_CHECK(strongCores > 0);
+}
+
+// ⚑ The other half of the stage's exit: a galaxy nobody authored a rating into
+// is the galaxy stage A produced, bit for bit. The `game.unit` golden holds the
+// shipped seed to this; here it is held at test scale against the field itself,
+// which the golden is blind to by construction.
+SOL_TEST(universe_an_unauthored_rating_leaves_every_number_where_it_was)
+{
+    GalaxyParams params = testParams(31337);
+    params.pirateTemplateCount = 2;
+    const Galaxy before = generateGalaxy(params);
+
+    GalaxyParams authored = params;
+    authored.authoredSystems.push_back({.id = "test.quiet", .placement = sol::sim::Placement::Anywhere});
+    const Galaxy after = generateGalaxy(authored);
+
+    SOL_REQUIRE(after.systems.size() == before.systems.size() + 1);
+    for (std::size_t i = 0; i < before.systems.size(); ++i) {
+        SOL_CHECK(after.systems[i].security == before.systems[i].security);
+    }
+}

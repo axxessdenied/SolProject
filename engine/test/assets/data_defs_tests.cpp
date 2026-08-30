@@ -1415,6 +1415,11 @@ id = "campaign.bare"
     const sol::assets::SystemDef& bare = db.systems()[1];
     SOL_CHECK(!bare.hasName && !bare.hasRegion && !bare.hasFaction && !bare.hasPrimaryPlanet);
     SOL_CHECK(!bare.lawless && !bare.secret);
+    // ⚑ And `security` is the newest member of exactly that club (Phase 30
+    // stage E): 0.0 is a legal authored value MEANING "nobody comes", so the
+    // flag is the only thing separating it from a row that said nothing at all
+    // - and the generator's two behaviours are wholly different.
+    SOL_CHECK(!bare.hasSecurity && bare.security == 0.0f);
     SOL_CHECK(bare.planets.empty() && bare.stations.empty());
     SOL_CHECK(db.findSystem("campaign.bare") == &bare);
     SOL_CHECK(db.findSystem("campaign.nowhere") == nullptr);
@@ -1450,6 +1455,41 @@ lawless = true
                      "systems.toml",
                      &error));
     SOL_CHECK(error.find("say different things") != std::string::npos);
+}
+
+// ⚑ Both ends of the band an author may write, and the one in the middle that
+// is easy to read as "unset". Zero is a legal, meaningful rating - it is the
+// value `sol.lantern` has had since before the key existed - so it has to
+// arrive with its flag up.
+SOL_TEST(data_defs_system_security_is_a_magnitude_and_zero_is_a_value)
+{
+    DefDatabase db;
+    SOL_REQUIRE(merge(db, kSystemFixtureDeps, "deps.toml"));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[system]]
+id = "campaign.fortress"
+faction = "sol.navy"
+region = "fringe"
+security = 0.9
+
+[[system]]
+id = "campaign.forgotten"
+faction = "sol.navy"
+security = 0.0
+
+[[system]]
+id = "campaign.whole"
+faction = "sol.navy"
+security = 1
+)",
+                      "systems.toml"));
+    SOL_REQUIRE(db.systems().size() == 3);
+    SOL_CHECK(db.systems()[0].hasSecurity && db.systems()[0].security == 0.9f);
+    SOL_CHECK(db.systems()[1].hasSecurity && db.systems()[1].security == 0.0f);
+    // Written as a TOML integer, which is the spelling an author reaches for at
+    // the ends of a range - the reader takes either.
+    SOL_CHECK(db.systems()[2].hasSecurity && db.systems()[2].security == 1.0f);
 }
 
 // ⚑⚑ REFUSED, AND BY NAME - decision 3 and the `validateRoles` precedent. Every
@@ -1537,6 +1577,34 @@ id = "campaign.x"
 name = ""
 )",
             "must not be empty");
+    // ⚑⚑⚑ THE MISTAKE THE SIGNED READOUT INVITES (Phase 30 stage E). An author
+    // who has read "-0.75" off `sol.security` for a clan home will write -0.75
+    // here, and it has to be refused rather than honoured: the sign says WHO
+    // polices a place, and a negative on a system the Navy holds would put
+    // "Held by Solar Navy" on the map and leave the sky over it empty, because
+    // `patrolsFor` is zero below zero and `raidersFor` is only reached down the
+    // pirate branch. The message carries the reason, not just the range.
+    refused(R"(
+[[system]]
+id = "campaign.x"
+security = -0.6
+)",
+            "the SIGN is not yours");
+    refused(R"(
+[[system]]
+id = "campaign.x"
+security = 1.4
+)",
+            "from 0 to 1");
+    // The same shape as `faction` + `lawless` directly above it, and the same
+    // reason: two adjacent lines saying different things.
+    refused(R"(
+[[system]]
+id = "campaign.x"
+lawless = true
+security = 0.5
+)",
+            "say different things");
     refused(R"(
 [[system]]
 id = "campaign.x"
@@ -1902,6 +1970,7 @@ name = "Deadfall"
 faction = "sol.navy"
 secret = true
 primary_planet = 1
+security = 0.75
 
 [[constellation.system.planet]]
 name = "Deadfall I"
@@ -1948,6 +2017,12 @@ to = "campaign.deadfall_deep"
     SOL_CHECK(group.members[1].factionId == "sol.navy");
     SOL_CHECK(group.members[1].hasFaction);
     SOL_CHECK(group.members[1].secret);
+    // ⚑ Including the newest key, and this is the assertion that matters for
+    // it: `readSystemDef` is shared, so a member gets `security` for free - and
+    // "for free" is a claim worth holding, because the shipped example mod
+    // writes one on a constellation member rather than on a `[[system]]`.
+    SOL_CHECK(group.members[1].hasSecurity && group.members[1].security == 0.75f);
+    SOL_CHECK(!group.members[0].hasSecurity);
     SOL_CHECK(group.members[1].hasPrimaryPlanet);
     SOL_CHECK(group.members[1].primaryPlanet == 1);
     SOL_REQUIRE(group.members[1].planets.size() == 2);

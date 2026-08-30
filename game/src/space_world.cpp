@@ -99,6 +99,26 @@ constexpr std::uint32_t kSaveVersion = 17;
     seed = core::hashCombine(seed, authored.primaryPlanet);
     seed = core::hashCombine(seed, authored.hasPrimaryPlanet ? 1u : 0u);
     seed = core::hashCombine(seed, authored.secret ? 1u : 0u);
+    // ⚑⚑⚑⚑ FOLDED IN ONLY WHEN AN AUTHOR ACTUALLY WROTE ONE, AND THAT IS A
+    // RULE FOR EVERY FIELD ADDED TO AN AUTHORED ROW AFTER THIS - NOT A
+    // CONVENIENCE FOR THIS ONE. `security` is the first field to join
+    // `AuthoredSystem` since the digest was built, and hashing it
+    // unconditionally would move the digest of content NOBODY CHANGED: every
+    // save in existence would be refused, with a message saying a [[system]]
+    // was added, changed or removed, about a file that was not touched.
+    //
+    // The two halves of the bargain are stated at the top of this block and
+    // they draw the line exactly here: the DIGEST covers what an author wrote,
+    // and the save VERSION covers what the build changed. A field nobody wrote
+    // is a build change, so it belongs to the version - and a digest that
+    // reported it would be answering a question that is not its own, in words
+    // that are false. Skipping it is what keeps `kSaveVersion 17` honest
+    // through a stage that adds a key.
+    if (authored.hasSecurity) {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &authored.security, sizeof(bits));
+        seed = core::hashCombine(seed, bits);
+    }
     seed = core::hashCombine(seed, authored.planets.size());
     for (const sim::AuthoredPlanet& planet : authored.planets) {
         seed = core::fnv1a(planet.name, seed);
@@ -488,6 +508,10 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         authored.secret = def.secret;
         authored.primaryPlanet = def.primaryPlanet;
         authored.hasPrimaryPlanet = def.hasPrimaryPlanet;
+        // A magnitude on both sides of the seam; the generator signs it from
+        // whoever ends up holding the place (Phase 30 stage E).
+        authored.security = def.security;
+        authored.hasSecurity = def.hasSecurity;
         if (def.hasRegion) {
             authored.hasRegion = true;
             authored.region = def.region == "core"       ? sim::Region::Core

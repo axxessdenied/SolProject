@@ -7,7 +7,8 @@
 #
 # The base game's own `game/data/systems.toml` documents the `[[system]]`
 # schema field by field. What is demonstrated HERE is the other def kind and
-# the one thing it can do that a lone system cannot.
+# the one thing it can do that a lone system cannot - and, on two of the rows
+# below, both ends of `security =`.
 
 # ---------------------------------------------------------------------------
 # A CONSTELLATION IS A GROUP PLACED AS A UNIT, KEEPING THE LANES BETWEEN ITS
@@ -34,11 +35,23 @@
 id = "example.sable_chain"
 placement = "anywhere"
 
+# The mouth of the chain, and the one thing in this file that is not about
+# placement: `security` says how hard a place is held, and here it says the
+# Navy has decided this fringe system matters. The generator's own curve would
+# have given a fringe system somewhere between +0.18 and +0.30; +0.90 is a core
+# capital's worth of force parked on the rim, and the sky over Chainhead shows
+# it - patrol wings are a curve on this number, so four hulls fly here instead
+# of one, with no code anywhere knowing this system exists.
+#
+# ⚑ The SIGN is not written here and cannot be. It says who polices the place,
+# and the Navy owning this system is what makes the number positive; the same
+# 0.90 on a clan-held system would read -0.90 without anybody asking.
 [[constellation.system]]
 id = "example.sable_gate"
 name = "Sable Gate"
 region = "fringe"
 faction = "sol.navy"
+security = 0.9
 
 [[constellation.system.planet]]
 name = "Sable Gate I"
@@ -107,12 +120,19 @@ to = "example.sable_end"
 # range the game refuses to start and names the file, the id and the rule -
 # rather than dropping the system somewhere plausible and letting a campaign
 # begin in the wrong place.
+# ⚑ And the other end of the same key, because the low end is the half that is
+# easy to forget exists. The flag still flies over the Long Watch and nobody is
+# behind it: 0.04 is under the band below which a call for help is not answered
+# at all, so the map reads "NOBODY COMES - +0.04, Solar Navy" and a wing does
+# not come, in Navy space, three jumps from the chain's mouth. That is a whole
+# authored situation, written as one number.
 [[system]]
 id = "example.sable_watch"
 name = "Sable Watch"
 placement = "jumps_from"
 jumps_from = { system = "example.sable_gate", min = 1, max = 4 }
 faction = "sol.navy"
+security = 0.04
 
 [[system.station]]
 name = "The Long Watch"

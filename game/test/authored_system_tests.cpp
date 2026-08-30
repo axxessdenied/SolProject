@@ -744,6 +744,48 @@ SOL_TEST(the_example_mod_adds_places_without_touching_the_base_game)
     // writes BEFORE the [[system]] anchoring on it - which is legal only
     // because a group cannot fail to be placed and so resolves before any rule.
     SOL_CHECK(galaxy.systems[watch].name == "Sable Watch");
+
+    // ⚑⚑⚑ THE SHIPPED EXAMPLE'S TWO RATINGS, END TO END THROUGH THE REAL FILES
+    // (Phase 30 stage E). This is the one place in the suite where an authored
+    // `security =` crosses every seam it has - the TOML reader, the def
+    // database, the def-to-params translation and the generator's last pass -
+    // rather than being handed to `generateGalaxy` as a struct. It is also the
+    // regression net under the mod's own text: the README claims Sable Gate is
+    // a fringe system held like a capital and Sable Watch is Navy space nobody
+    // answers a call in, and both of those are now assertions.
+    const SystemSpec* sableGate = findAuthored(galaxy, "example.sable_gate");
+    SOL_REQUIRE(sableGate != nullptr);
+    SOL_CHECK(sableGate->security == 0.9f);
+    const SystemSpec* sableWatch = findAuthored(galaxy, "example.sable_watch");
+    SOL_REQUIRE(sableWatch != nullptr);
+    SOL_CHECK(sableWatch->security == 0.04f);
+    // ⚑ Both are POSITIVE because the Navy holds them, and that is the sign
+    // rule arriving from the owner rather than from the file - neither row
+    // writes a sign, and neither could.
+    SOL_CHECK(sableGate->factionIndex == majorIndexOf(defs, "sol.navy"));
+    SOL_CHECK(sableWatch->factionIndex == majorIndexOf(defs, "sol.navy"));
+    // ⚑⚑ AND THE NUMBERS ARE OUTSIDE THE CURVE'S OWN REACH, WHICH IS WHAT MAKES
+    // THIS AN OVERRIDE RATHER THAN A COINCIDENCE. A fringe system's generated
+    // band is [0.18, 0.30]: 0.90 is above every band this galaxy has and 0.04 is
+    // below every one of them, so no seed and no region could have produced
+    // either by itself.
+    for (const SystemSpec& system : galaxy.systems) {
+        if (system.authoredId != "example.sable_gate" && system.authoredId != "example.sable_watch") {
+            SOL_CHECK(system.security <= 0.86f);
+            SOL_CHECK(system.security == 0.0f || system.security < 0.0f || system.security >= 0.17f);
+        }
+    }
+    // ⚑ The low one is under the band below which a call for help is not
+    // answered at all, which is the whole point of putting it in the example:
+    // one number in one row, and the map says NOBODY COMES in Navy space.
+    SOL_CHECK(!game::securityAnswers(world.systemSecurity(indexOfAuthored(galaxy, "example.sable_watch"))));
+    SOL_CHECK(game::securityAnswers(world.systemSecurity(indexOfAuthored(galaxy, "example.sable_gate"))));
+
+    // ⚑⚑ AND `sol.lantern` IS UNTOUCHED AT EXACTLY ZERO. The base game's one
+    // authored place writes no rating and is authored-lawless, so it keeps the
+    // galaxy's only true zero - the value that means nobody comes - while a mod
+    // three files away fortifies a system to 0.90.
+    SOL_CHECK(lantern->security == 0.0f);
 }
 
 // ⚑⚑⚑ SATISFIABILITY IS A PER-SEED VERDICT AND NO LOAD-TIME CHECK CAN SETTLE

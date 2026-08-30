@@ -623,6 +623,20 @@ struct SystemDef
     bool lawless = false;
     std::uint32_t primaryPlanet = 0;
     bool hasPrimaryPlanet = false;
+    // How hard this place is held, from 0 to 1 (Phase 30 stage E). It replaces
+    // the generated baseline outright rather than nudging it: a fortress on the
+    // rim and a neglected core system are both things a campaign gets to state
+    // rather than argue for.
+    //
+    // ⚑⚑⚑ IT IS A MAGNITUDE, AND A SIGNED ONE IS REFUSED BY NAME. The rating a
+    // player reads is signed and `sol.security` prints it that way, so writing
+    // -0.6 here is the obvious mistake - and decisions/019 decision 2 says
+    // exactly why it cannot be allowed: THE SIGN IS NOT HOW MUCH, IT IS WHO
+    // POLICES THE PLACE. The generator takes it from the owner, where it is a
+    // fact rather than a choice, and a clan-held system therefore reads
+    // negative on its own.
+    float security = 0.0f;
+    bool hasSecurity = false;
     // A placement flag and nothing else in this phase: nothing hides a system
     // from the map yet, and the exploration payoff GDD §8 promises is a later
     // phase reading this.

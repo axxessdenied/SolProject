@@ -9,6 +9,14 @@ Read `systems.toml` itself — it is written to be read, and it documents the
 `[[constellation]]` def kind row by row. The `[[system]]` schema is documented
 the same way in `game/data/systems.toml`.
 
+It also carries the two ends of `security =` (Phase 30 stage E): **Sable Gate**
+is a fringe system the Navy holds at `0.9`, a core capital's worth of force
+parked on the rim, and **Sable Watch** is Navy space at `0.04` — under the band
+below which a call for help is not answered, so the map says `NOBODY COMES` and
+nobody does. Patrol strength and response are both curves on that number, so
+one key in one row changes what flies there and whether anyone comes when you
+shoot at it.
+
 ## It is in the repository and NOT in the shipped package
 
 Every first-level subdirectory of `game/mods/` is an **active layer** with no

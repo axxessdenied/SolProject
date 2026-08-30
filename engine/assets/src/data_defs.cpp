@@ -88,7 +88,7 @@ struct FieldReader
         }
     }
 
-    void optionalFloat(const char* key, float& out)
+    void optionalFloat(const char* key, float& out, bool* present = nullptr)
     {
         const TomlValue* value = table.find(key);
         if (value == nullptr) {
@@ -99,6 +99,9 @@ struct FieldReader
             return;
         }
         out = static_cast<float>(value->asFloat());
+        if (present != nullptr) {
+            *present = true;
+        }
     }
 
     // Metres, and a station or a planet radius is a number a float cannot hold
@@ -1054,6 +1057,7 @@ bool readSystemDef(const TomlValue& table,
     reader.optionalString("faction", def.factionId, &def.hasFaction);
     reader.optionalBool("lawless", def.lawless);
     reader.optionalUint("primary_planet", def.primaryPlanet, &def.hasPrimaryPlanet);
+    reader.optionalFloat("security", def.security, &def.hasSecurity);
     reader.optionalBool("secret", def.secret);
     reader.optionalString("at_system", def.atSystemFactionId);
     reader.rejectUnknownKeys({"id",
@@ -1065,6 +1069,7 @@ bool readSystemDef(const TomlValue& table,
                               "faction",
                               "lawless",
                               "primary_planet",
+                              "security",
                               "secret",
                               "planet",
                               "station"});
@@ -1212,6 +1217,30 @@ bool readSystemDef(const TomlValue& table,
     }
     if (!reader.failed && def.hasFaction && def.factionId.empty()) {
         reader.fail("'faction' must name a [[faction]] row; use lawless = true for no owner");
+    }
+    // ⚑⚑⚑ THE ONE MISTAKE THIS KEY INVITES, REFUSED WITH THE REASON IN IT. The
+    // rating a player reads is SIGNED and `sol.security` prints it signed, so
+    // an author who has seen a clan system read -0.75 will write -0.75 here.
+    // decisions/019 decision 2 is why that cannot be honoured: the sign is not
+    // "how much", it is WHO POLICES THIS PLACE, and it is a fact about the
+    // owner rather than a thing to choose. A negative on a system the Navy
+    // holds would put "Held by Solar Navy: -0.60" on the map - and worse,
+    // `patrolsFor` returns 0 below zero while `raidersFor` is only reached down
+    // the pirate branch, so the sky over that station would be EMPTY. Both are
+    // lies the generator cannot tell on its own, and stage D's whole promise is
+    // that a route planned off the map was planned off the truth.
+    if (!reader.failed && def.hasSecurity && (def.security < 0.0f || def.security > 1.0f)) {
+        reader.fail("'security' is how hard this place is held, from 0 to 1 - the SIGN is not yours to "
+                    "write: it says WHO holds it and the generator takes it from the owner, so a "
+                    "clan-held system reads negative on its own");
+    }
+    // Same shape as the `faction`/`lawless` pair above and the same reason: two
+    // adjacent lines saying different things. Nobody holds it, so there is no
+    // "how hard" - a system nobody holds is one nobody polices, which is what
+    // exactly zero already means.
+    if (!reader.failed && def.hasSecurity && def.lawless) {
+        reader.fail("'lawless' and 'security' say different things; a place nobody holds is one nobody "
+                    "polices, and it reads exactly zero without being told to");
     }
     if (!reader.failed && def.hasRegion && def.region != "core" && def.region != "frontier" &&
         def.region != "fringe") {

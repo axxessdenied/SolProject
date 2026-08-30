@@ -902,7 +902,10 @@ void spawnClans(const GalaxyParams& params,
 // band exists for is still sitting at `kNoFaction`, which is the value that
 // means the OPPOSITE thing (nobody comes at all). Writing security any earlier
 // puts every future pirate stronghold at exactly zero; the counterfactual was
-// run and it collapses 24 systems in the test galaxy alone.
+// run and it collapses 24 systems in the test galaxy alone. ⚑ Stage E gives
+// the same placement a second reason: an authored rating is a magnitude that
+// this pass SIGNS from the owner, and before `spawnClans` there is no owner to
+// sign it from.
 //
 // (2) AND IT TAKES NO DRAW. `claimTerritory` already runs a Dijkstra whose
 // `bestCost` is distance-from-capital and throws it away, which looks exactly
@@ -961,7 +964,8 @@ void assignSecurity(const GalaxyParams& params,
                     std::vector<SystemSpec>& systems,
                     const std::vector<GateLink>& links,
                     const std::vector<std::uint32_t>& capitals,
-                    const std::vector<ClanSpec>& clans)
+                    const std::vector<ClanSpec>& clans,
+                    const std::vector<const AuthoredSystem*>& authoredFor)
 {
     const std::uint32_t count = static_cast<std::uint32_t>(systems.size());
     // The default is EXACTLY ZERO and it is a value with a meaning rather than
@@ -1006,6 +1010,48 @@ void assignSecurity(const GalaxyParams& params,
                                               params.securityClanPerJump,
                                               params.securityClanMaxJumpPenalty,
                                               hops[i]);
+        }
+    }
+
+    // SKIP POINT (Phase 30 stage E): an author's number, written LAST and over
+    // the top of both curves.
+    //
+    // ⚑⚑⚑ IT CANNOT BE WRITTEN IN `applyAuthoredFields` LIKE EVERY OTHER
+    // AUTHORED FIELD, AND THAT IS THE ONE STRUCTURAL FACT OF THIS STAGE. That
+    // block is the last word on `region` precisely because it runs after
+    // `assignRegions`; this pass is the last of the galaxy-wide ones and its
+    // first act is to zero every system, so a value written there would be
+    // erased a few hundred lines later with nothing to show for it. The skip
+    // point has to live where the field is decided.
+    //
+    // ⚑⚑⚑⚑ AND THE GENERATOR SUPPLIES THE SIGN. What the author wrote is a
+    // magnitude; who holds the place is what makes it positive or negative,
+    // and that is settled by `claimTerritory` and `spawnClans` rather than by
+    // anybody's file. Signing it here rather than trusting a signed authored
+    // value is what makes "the map says a clan holds a system the Navy holds"
+    // an unwritable sentence instead of a refusal somebody has to remember.
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (authoredFor[i] == nullptr || !authoredFor[i]->hasSecurity) {
+            continue;
+        }
+        const float magnitude = core::clamp(authoredFor[i]->security, 0.0f, 1.0f);
+        const std::uint32_t owner = systems[i].factionIndex;
+        // ⚑ The zero arm is not redundant with the branches below it: negating
+        // a zero gives NEGATIVE zero, which compares equal everywhere and then
+        // prints as "-0.00" in the readout stage D put in front of a player.
+        // Zero means "nobody comes" and it has no sign - the same trap
+        // `SpaceWorld::systemSecurity` names.
+        if (magnitude == 0.0f || owner == kNoFaction) {
+            // Nobody holds it, so nobody polices it, whatever was written. This
+            // is reachable from a file only through a galaxy with no clan
+            // templates - the def layer refuses `lawless` and `security` in one
+            // row - but the rule has to be total, because a hand-built
+            // GalaxyParams means what a hand-written file means.
+            systems[i].security = 0.0f;
+        } else if (owner < params.factionCount) {
+            systems[i].security = magnitude; // a major holds it
+        } else {
+            systems[i].security = -magnitude; // a clan holds it
         }
     }
 }
@@ -1315,7 +1361,7 @@ Galaxy generateGalaxy(const GalaxyParams& params,
     // them: the region, the owner, the clan roster and the gate graph. It takes
     // no Rng, so it is placed by what it DEPENDS on rather than by what it
     // would perturb - by here there is nothing left to perturb.
-    assignSecurity(params, galaxy.systems, galaxy.links, capitals, galaxy.clans);
+    assignSecurity(params, galaxy.systems, galaxy.links, capitals, galaxy.clans, authoredFor);
 
     for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
         core::Rng contentRng(galaxy.systems[i].seed, kStreamContents);

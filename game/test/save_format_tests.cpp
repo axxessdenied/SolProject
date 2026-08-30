@@ -351,3 +351,77 @@ SOL_TEST(a_save_refuses_a_galaxy_whose_authored_content_was_removed_entirely)
 
     (void)deleteFile(path.c_str());
 }
+
+// ⚑⚑⚑⚑ THE DIGEST OF CONTENT NOBODY CHANGED, PINNED TO A LITERAL - AND THIS IS
+// A RULE FOR EVERY FIELD ADDED TO AN AUTHORED ROW FROM NOW ON, NOT A TEST OF
+// ONE STAGE'S ARITHMETIC.
+//
+// `security` (Phase 30 stage E) is the first field to join `AuthoredSystem`
+// since this digest was built, and folding it in the way every other field is
+// folded - unconditionally - would have moved this number. Nothing an author
+// wrote would have changed; every save in existence would simply have been
+// refused, and the message it printed would have said a `[[system]]` was added,
+// changed or removed, about files nobody touched.
+//
+// The line the digest draws is stated at `digestAuthoredSystem`: THE DIGEST
+// COVERS WHAT AN AUTHOR WROTE AND THE SAVE VERSION COVERS WHAT THE BUILD
+// CHANGED. A field no row carries is a build change, so it belongs to the
+// version - and a digest that reported it would be answering someone else's
+// question in words that are false.
+//
+// The constant below was read off the build BEFORE the field existed. A future
+// stage that legitimately changes what a digest means has to change it here and
+// bump `kSaveVersion` in the same commit, which is exactly the conversation
+// this literal exists to force.
+SOL_TEST(a_field_no_author_wrote_leaves_the_content_digest_where_it_was)
+{
+    constexpr std::uint64_t kDigestBeforeStageE = 0x667F40D19E4B5DF8ull;
+
+    AuthoredFixture here(kAuthoredHere);
+    if (here.world.authoredContentDigest() != kDigestBeforeStageE) {
+        std::printf("  authored content digest: got 0x%016llX, want 0x%016llX\n",
+                    static_cast<unsigned long long>(here.world.authoredContentDigest()),
+                    static_cast<unsigned long long>(kDigestBeforeStageE));
+    }
+    SOL_CHECK(here.world.authoredContentDigest() == kDigestBeforeStageE);
+}
+
+// ⚑ And the other direction, without which the test above is satisfied by a
+// digest that ignores the field entirely. A row that DOES write a rating is
+// different content, and a save made against one is refused by a galaxy made
+// against the other - which is what a player installing a mod that fortifies a
+// system has to be told.
+SOL_TEST(a_save_refuses_a_galaxy_whose_authored_rating_has_changed)
+{
+    const std::string path = scratchPath("authored_security.sav");
+    (void)deleteFile(path.c_str());
+
+    AuthoredFixture fortified(R"(
+[[system]]
+id = "test.waypoint"
+name = "Waypoint"
+placement = "anywhere"
+faction = "sol.navy"
+security = 0.9
+)");
+    SOL_REQUIRE(fortified.world.saveTo(path.c_str(), "Before the fortress"));
+
+    // The same row with the rating alone moved - not added, not removed.
+    AuthoredFixture thinned(R"(
+[[system]]
+id = "test.waypoint"
+name = "Waypoint"
+placement = "anywhere"
+faction = "sol.navy"
+security = 0.2
+)");
+    SOL_CHECK(fortified.world.authoredContentDigest() != thinned.world.authoredContentDigest());
+    SOL_CHECK(!thinned.world.loadFrom(path.c_str()));
+
+    // And the row with no rating at all is a third thing again: an unwritten
+    // field is not the same fact as a written one that happens to be weak.
+    AuthoredFixture unrated(kAuthoredHere);
+    SOL_CHECK(unrated.world.authoredContentDigest() != fortified.world.authoredContentDigest());
+
+    (void)deleteFile(path.c_str());
+}

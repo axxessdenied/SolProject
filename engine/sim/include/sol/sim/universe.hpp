@@ -130,6 +130,18 @@ struct AuthoredSystem
     bool hasFaction = false; // true for a named owner AND for authored lawlessness
     std::uint32_t primaryPlanet = 0;
     bool hasPrimaryPlanet = false;
+    // How hard this place is held, as a MAGNITUDE in [0, 1] (Phase 30 stage E).
+    // Present, it replaces whichever curve `assignSecurity` would have run.
+    //
+    // ⚑⚑ THE SIGN IS DELIBERATELY NOT HERE, AND THAT IS DECISION 2 BEING TAKEN
+    // SERIOUSLY RATHER THAN A SIMPLIFICATION. `SystemSpec::security` is signed
+    // and the sign names WHO polices the place; who holds a system is settled
+    // by `claimTerritory` and `spawnClans`, not by the author, so a signed
+    // authored value could contradict the galaxy it was written into. The
+    // generator signs the magnitude from the owner and the contradiction is
+    // not expressible.
+    float security = 0.0f;
+    bool hasSecurity = false;
     bool secret = false;
     std::vector<AuthoredPlanet> planets;
     std::vector<AuthoredStation> stations;
@@ -303,6 +315,10 @@ struct SystemSpec
     // (decisions/019 decision 2). Positive: a major holds it. Zero: nobody
     // comes, and you are on your own. Negative: a clan holds it and answers an
     // intrusion the way a navy does - the magnitude is how hard it will answer.
+    //
+    // ⚑ An author may replace it outright (Phase 30 stage E). What they write
+    // is a MAGNITUDE: the sign here is taken from whoever ended up holding the
+    // place, so an authored rating cannot contradict its own galaxy.
     //
     // ⚑⚑⚑ IT IS A PURE FUNCTION OF OWNER, REGION AND GATE DISTANCE, WITH NO
     // DRAW IN IT AT ALL. Every shared stream in this file is order-sensitive -
