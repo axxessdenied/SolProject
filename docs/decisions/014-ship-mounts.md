@@ -174,7 +174,7 @@ a dorsal turret — reads as 110 degrees either side under this rule.
 with `arc = 0` points where the mount says and fires whenever the trigger is
 down: that is the shuttle's nose gun and the player aims it by flying. A gun
 with an arc swings onto the ship the pilot has SELECTED, leads it with its own
-projectile speed, and follows the nose when there is no selection. Two limits
+projectile speed, and follows the nose when there is no selection. Three limits
 keep that from being a nuisance:
 
 - **Only a ship is a gunnery target.** A station, a planet, a gate and an ore
@@ -183,6 +183,22 @@ keep that from being a nuisance:
   shipped freighter stops being minable: its dorsal ring carries the mining
   laser, and a fighter selected three kilometres away would swing the beam off
   the rock in front of the pilot to track something it cannot touch.
+- **A ring opens only on someone the player is already at war with.** *Ruled by
+  the user after seeing C2 live, against the simpler alternative.* Laying on the
+  bare selection makes a trap the game had never had: hail a patrol, forget to
+  change the selection, hold the trigger to cut a rock, and a dorsal ring puts a
+  bolt into the police while your nose is on the asteroid. A ring is a gunner
+  and a gunner does not open on a neutral. What it buys is a shape as well as a
+  safety — **you open with the nose and the rings join once it is a fight**,
+  because the tier is read live and a neutral that starts shooting back is tier
+  0 within the tick. An NPC needs no such gate: its pilot's target *is* its
+  enemy, chosen by the brain that decided to attack.
+
+  The predicate is **`SpaceWorld::threatTier`**, promoted out of `contactOrder`
+  so the contact cycle's threat ranking and a turret's decision to fire are one
+  answer. Two would be a radar that paints a ship red beside a ring that will
+  not shoot it — the same "one predicate in one file" move Phase 30 stage D
+  made for `securityAnswers`.
 
 **3. A gun that cannot bear holds its fire.** It spends no charge and starts no
 cooldown — the same treatment stage C1 gave a gun the capacitor could not pay

@@ -5475,6 +5475,35 @@ bool layGun(const GunneryFrame& frame,
     return sim::layWithinArc(rest, sought, static_cast<double>(weapon.arc), outBearing);
 }
 
+// ⚑⚑ WHO THE PLAYER IS AT WAR WITH, IN ONE PLACE (promoted out of
+// `contactOrder` in Phase 31 stage C2). The contact cycle's threat ranking and
+// a turret's decision to open fire are the same question asked twice, and two
+// answers to it would be a radar that paints a ship red beside a ring that
+// will not shoot it - the "one predicate in one file" rule Phase 30 stage D
+// arrived at for `securityAnswers`.
+//
+// Lowest first: 0 is shooting at you RIGHT NOW, 1 is hostile by standing
+// policy, 2 is everybody else. Being shot at beats policy because a patrol
+// that has decided to kill you is more urgent than a hostile freighter minding
+// its own business three hundred kilometres out.
+int SpaceWorld::threatTier(std::uint32_t entityIndex) const
+{
+    const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
+    if (pilot == nullptr) {
+        return 2; // an inert console spawn: nobody is flying it, so it threatens nothing
+    }
+    if (pilot->state == PilotState::Attack && pilot->hasTarget != 0 &&
+        pilot->targetIndex == playerEntityIndex()) {
+        return 0;
+    }
+    // An unaffiliated console spawn has no faction to consult and Lua treats
+    // it as unconditionally player-hostile (the pre-8b rule).
+    if (pilot->factionIndex >= m_factionTable.size()) {
+        return kHostileThreatTier;
+    }
+    return m_factionSim.playerHostile(pilot->factionIndex) ? kHostileThreatTier : 2;
+}
+
 GunneryFrame SpaceWorld::gunneryFrame(std::uint32_t entityIndex) const
 {
     GunneryFrame frame;
@@ -5495,9 +5524,28 @@ GunneryFrame SpaceWorld::gunneryFrame(std::uint32_t entityIndex) const
     // has ever had. An NPC's follow its pilot's, which Lua chose. There is no
     // third case: a ship with neither has no target, and its turrets look down
     // the nose.
+    //
+    // ⚑⚑ AND THE PLAYER'S SELECTION HAS TO BE HOSTILE, WHICH IS A RULED
+    // DECISION AND NOT AN OBVIOUS ONE. Laying on the bare selection was the
+    // simpler rule and it makes a trap the game had never had: hail a patrol,
+    // forget to change the selection, hold the trigger to cut a rock, and a
+    // dorsal ring puts a bolt into the police while your nose is on the
+    // asteroid. A ring is a gunner, and a gunner does not open on someone you
+    // are not at war with.
+    //
+    // ⚑ What that buys is a shape rather than just a safety: you OPEN with the
+    // nose, and the rings join once it is a fight. `threatTier` is read live
+    // every tick, so the moment a neutral you shot at starts shooting back it
+    // is tier 0 and every ring on the hull comes round onto it.
+    //
+    // An NPC needs no such gate: its pilot's target IS its enemy, chosen by
+    // the Lua brain that decided to attack.
     std::uint32_t targetIndex = kNoIndex;
     if (entityIndex == playerEntityIndex()) {
         targetIndex = targetShipEntityIndex();
+        if (targetIndex != kNoIndex && threatTier(targetIndex) > kHostileThreatTier) {
+            targetIndex = kNoIndex;
+        }
     } else if (const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
                pilot != nullptr && pilot->hasTarget != 0) {
         targetIndex = pilot->targetIndex;
@@ -5984,26 +6032,11 @@ void SpaceWorld::contactOrder(std::vector<std::size_t>& out, std::vector<int>& t
         return;
     }
     const core::DVec3 playerPosition = m_registry.storage<Transform>().get(playerEntityIndex()).position;
-    const std::uint32_t player = playerEntityIndex();
 
-    // Threat tier, lowest first. Being shot at right now beats standing
-    // policy: a patrol that has decided to kill you is more urgent than a
-    // hostile freighter minding its own business three hundred klicks out.
-    auto tierOf = [&](const SpawnedShip& ship) {
-        const ShipPilot* pilot = m_registry.tryGet<ShipPilot>(ship.entity);
-        if (pilot == nullptr) {
-            return 2;
-        }
-        if (pilot->state == PilotState::Attack && pilot->hasTarget != 0 && pilot->targetIndex == player) {
-            return 0;
-        }
-        // An unaffiliated console spawn has no faction to consult and Lua
-        // treats it as unconditionally player-hostile (the pre-8b rule).
-        if (pilot->factionIndex >= m_factionTable.size()) {
-            return 1;
-        }
-        return m_factionSim.playerHostile(pilot->factionIndex) ? 1 : 2;
-    };
+    // The tiering moved out to `threatTier` in Phase 31 stage C2, because a
+    // turret asks the same question and two answers to it would be a radar
+    // painting a ship red beside a ring that will not shoot it.
+    auto tierOf = [&](const SpawnedShip& ship) { return threatTier(ship.entity.index); };
 
     struct Ranked
     {

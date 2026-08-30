@@ -246,13 +246,24 @@ struct Fixture
     // The warp is what makes this exact rather than approximate: it parks the
     // ship on a point, faces the nose the way it came, and zeroes the velocity,
     // so nothing drifts between the placement and the shot.
-    bool hulkAstern(double range)
+    //
+    // ⚑ THE HULK IS FLOWN BY AN UNAFFILIATED PILOT, and that is load-bearing
+    // rather than decoration: a ring only lays on a target the player is at
+    // war with, and an unaffiliated console spawn is unconditionally
+    // player-hostile (the pre-8b rule `threatTier` still honours). Spawn it
+    // with `spawnShipFromDef` instead - no pilot, no threat - and it is tier 2,
+    // which is what `a_ring_ignores_a_selection_that_is_not_hostile` asserts.
+    bool hulkAstern(double range, bool hostile = true)
     {
         const sol::assets::ShipDef* hulk = defs.findShip("sol.hulk");
         if (hulk == nullptr) {
             return false;
         }
-        (void)world.spawnShipFromDef(*hulk, defs);
+        if (hostile) {
+            (void)world.spawnPilotFromDef(*hulk, defs, game::PilotRole::Fighter);
+        } else {
+            (void)world.spawnShipFromDef(*hulk, defs);
+        }
         if (!world.targetShipByName("Hulk")) {
             return false;
         }
@@ -612,6 +623,30 @@ SOL_TEST(a_ring_with_no_target_follows_the_pilots_nose)
     // The half of the setup that makes this test a claim rather than an
     // accident: the hulk is there, and it is not what is selected.
     SOL_REQUIRE(!fixture.world.currentTargetInfo().isShip);
+
+    const std::vector<game::RenderInstance> bolts = fixture.fireOnceDrawn();
+    SOL_REQUIRE(bolts.size() == 2);
+    SOL_CHECK(firedForward(bolts[0]));
+    SOL_CHECK(firedForward(bolts[1]));
+}
+
+// ⚑⚑ A RING OPENS ONLY ON SOMEONE THE PLAYER IS ALREADY AT WAR WITH, which is
+// a RULED decision rather than the obvious one. Laying on the bare selection
+// was simpler and made a trap the game had never had: hail a patrol, forget to
+// change the selection, hold the trigger to cut a rock, and a dorsal ring puts
+// a bolt into the police while your nose is on the asteroid.
+//
+// The hulk here is spawned with NO pilot, which is what makes it tier 2 -
+// nobody is flying it, so it threatens nothing. Everything else about this
+// test is `a_ring_lays_itself_on_the_target_and_a_bolted_gun_does_not`: same
+// hull, same ring, same 1 km astern, same selection. The ring looks down the
+// nose instead, and both bolts go forward.
+SOL_TEST(a_ring_ignores_a_selection_that_is_not_hostile)
+{
+    Fixture fixture(boltedAndRing());
+    SOL_REQUIRE(fixture.hulkAstern(1000.0, /*hostile=*/false));
+    SOL_REQUIRE(fixture.selectHulk());
+    SOL_REQUIRE(fixture.world.currentTargetInfo().isShip);
 
     const std::vector<game::RenderInstance> bolts = fixture.fireOnceDrawn();
     SOL_REQUIRE(bolts.size() == 2);

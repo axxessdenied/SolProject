@@ -1819,6 +1819,17 @@ public:
     // index of the player's own ship is not something a caller should know.
     [[nodiscard]] GunneryFrame playerGunneryFrame() const { return gunneryFrame(playerEntityIndex()); }
 
+    // ⚑ WHO THE PLAYER IS AT WAR WITH, IN ONE PLACE (Phase 31 stage C2). The
+    // contact cycle's threat ranking and a turret's decision to open fire are
+    // the same question, and two answers to it would be a radar that paints a
+    // ship red beside a ring that will not shoot it.
+    //
+    // Lowest first: 0 is shooting at you right now, 1 is hostile by standing
+    // policy, 2 is everybody else. "Hostile" means `<= kHostileThreatTier`.
+    [[nodiscard]] int threatTier(std::uint32_t entityIndex) const;
+
+    static constexpr int kHostileThreatTier = 1;
+
     // The entity index of the SHIP the player has selected, or kNoIndex when
     // the selection is a station, a planet, an ore field or nothing at all
     // (Phase 31 stage C2). Every other reader of the selection wants a name, a

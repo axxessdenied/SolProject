@@ -38,10 +38,16 @@
 # is a balance fact and not just a schema one. A gun with `arc = 0` points
 # where it is aimed and the pilot aims it by flying. A gun with an arc is laid
 # by a gunner: it swings onto the SHIP the pilot has selected - leading it,
-# with its own projectile speed - and follows the nose when there is no target
-# or when the target is beyond that gun's own `range`. A gun that cannot reach
-# round far enough HOLDS ITS FIRE rather than shooting into its own stop, so it
-# spends no charge and starts no cooldown.
+# with its own projectile speed - and follows the nose when there is no target,
+# when the target is beyond that gun's own `range`, or WHEN THE TARGET IS NOT
+# HOSTILE. A gun that cannot reach round far enough HOLDS ITS FIRE rather than
+# shooting into its own stop, so it spends no charge and starts no cooldown.
+#
+# ⚑ THE HOSTILITY GATE IS WHY A RING IS SAFE TO LEAVE ARMED. A gunner does not
+# open on a neutral, so hailing a patrol and then firing at a rock does not put
+# a bolt into the police. You OPEN with the nose and the rings join once it is
+# a fight - the threat tier is read live, so a neutral that shoots back is a
+# hostile within the tick.
 #
 # ⚑ WHAT THE STAGE-B CONVERSION KEPT AND WHAT IT COST. The mount lists were
 # authored in stage A2 to reproduce each hull's capacity exactly, and stage B

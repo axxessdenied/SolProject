@@ -21,6 +21,15 @@ name = "Shuttle"
 model = "ship"
 max_speed = 220.0
 
+# A second hull purely so the two spawns land at DIFFERENT distances:
+# spawnShipFromDef places a ship 150 + 100 * scale metres ahead.
+[[ship]]
+id = "sol.hauler"
+name = "Hauler"
+model = "ship"
+scale = 3.0
+max_speed = 120.0
+
 [[faction]]
 id = "sol.navy"
 name = "Solar Navy"
@@ -161,4 +170,43 @@ SOL_TEST(the_two_reverse_actions_have_unique_default_bindings)
     // And the ids the settings file will carry, which are stable forever.
     SOL_CHECK(std::strcmp(game::actionId(game::Action::CycleNavTargetBack), "cycle_nav_target_back") == 0);
     SOL_CHECK(std::strcmp(game::actionId(game::Action::CycleContactBack), "cycle_contact_back") == 0);
+}
+
+// ⚑⚑ THE CYCLE RANKS BY THREAT BEFORE DISTANCE, AND UNTIL PHASE 31 STAGE C2
+// NOTHING MEASURED IT. The tiering was an anonymous lambda inside
+// `contactOrder`; C2 promoted it to `SpaceWorld::threatTier` so a turret's
+// decision to open fire and this ranking are one answer, and the counterfactual
+// that stubbed the lambda out to a constant turned NOTHING red - a gap found by
+// the move rather than caused by it.
+//
+// The discriminating half is the DISTANCE: the hostile is spawned on the bigger
+// hull, which `spawnShipFromDef` places further out, so a ranking that sorted on
+// range alone would put the neutral first. The neutral is spawned WITHOUT a
+// pilot, which is what makes it tier 2 - nobody is flying it, so it threatens
+// nothing.
+SOL_TEST(the_contact_cycle_puts_a_hostile_ahead_of_a_nearer_neutral)
+{
+    auto world = makeWorld();
+    const sol::assets::ShipDef* near_ = testDefs().findShip("sol.shuttle");
+    const sol::assets::ShipDef* far_ = testDefs().findShip("sol.hauler");
+    SOL_REQUIRE(near_ != nullptr && far_ != nullptr);
+
+    // Nearer, and inert: no pilot, so nothing is flying it.
+    (void)world->spawnShipFromDef(*near_, testDefs());
+    // Further out, and unaffiliated - which Lua has treated as unconditionally
+    // player-hostile since Phase 8b, and which `threatTier` still honours.
+    (void)world->spawnPilotFromDef(*far_, testDefs(), game::PilotRole::Fighter);
+
+    std::vector<std::size_t> order;
+    std::vector<int> tiers;
+    world->contactOrder(order, tiers);
+    SOL_REQUIRE(order.size() == 2);
+    SOL_CHECK(tiers[0] == game::SpaceWorld::kHostileThreatTier);
+    SOL_CHECK(tiers[1] == 2);
+    SOL_CHECK(order[0] == 1); // the hostile, spawned second and standing further off
+
+    // And the "jump to whatever is shooting at me" lever agrees with the
+    // ranking rather than keeping its own idea of hostile.
+    SOL_CHECK(world->selectNearestHostile());
+    SOL_CHECK(world->currentTargetIndex() == world->navTargets().size() + 1);
 }
