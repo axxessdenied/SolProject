@@ -117,10 +117,14 @@ weight_fringe = 0.5
 // It is also the hull that does the RAMMING at the bottom of this file, which is
 // what the two accelerations and `max_speed` are for - forward into a target to
 // take its own nose gun off, and backward into one to take its drive off.
-// `extraMounts` is appended verbatim, and exactly one caller uses it: the hull
-// that carries TWO drives, which is the only way to ask what a PARTIAL drive
-// does. One drive answers "none left" and nothing else.
-[[nodiscard]] std::string shooter(const char* extraMounts = "")
+//
+// ⚑ Both arguments have exactly one caller each. `extraMounts` is appended
+// verbatim, for the hull that carries TWO drives - the only way to ask what a
+// PARTIAL drive does, because one drive can only answer "none left". `hull` is
+// for the check that a DESTROYED ship wakes up whole: nine thousand points is
+// what keeps every other ram in this file survivable, which is the opposite of
+// what that one needs.
+[[nodiscard]] std::string shooter(const char* extraMounts = "", const char* hull = "9000.0")
 {
     return std::string(R"(
 [[ship]]
@@ -133,11 +137,12 @@ forward_accel = 200.0
 reverse_accel = 200.0
 shield_strength = 0.0
 armor = 0.0
-hull = 9000.0
 cargo = 50.0
 power_output = 6.0
 weapon_capacitor = 100.0
 weapon_recharge = 100.0
+hull = )") +
+           hull + R"(
 
   [[ship.mount]]
   id = "gun_nose"
@@ -158,7 +163,7 @@ weapon_recharge = 100.0
   size = "small"
   at = [0.0, 0.0, 5.0]
   aim = [0.0, 0.0, 1.0]
-)") + extraMounts;
+)" + extraMounts;
 }
 
 // ⚑ A SECOND DRIVE, HUNG WHERE A STERN RAM CANNOT REACH IT. Ninety degrees off
@@ -1023,6 +1028,49 @@ SOL_TEST(shields_already_up_do_not_evaporate_when_the_generator_goes)
     SOL_REQUIRE(mounts.size() == kMountCount);
     SOL_REQUIRE(mounts[kGuts].destroyed());
     SOL_CHECK(fixture.targetShieldFore() == 200.0f);
+}
+
+// ⚑⚑⚑ A DESTROYED SHIP WAKES UP WHOLE, AND THIS TEST EXISTS BECAUSE A DRIVE
+// FOUND THAT IT DID NOT. `decisions/007` is that death costs the cargo and an
+// insurance deductible and puts the player back in THE SAME SHIP AND FIT — and
+// a fit with a hole shot in it is not that fit. The respawn block resets the
+// transform, the body, the defences and the capacitor, which was everything the
+// damage model could leave broken until this phase; mount condition was simply
+// not on a list nobody had needed to revisit. Nothing in it was wrong, so
+// nothing looked wrong.
+//
+// Flying a hostile freighter into the player's face in the real game showed
+// `gun_nose 0/60 DESTROYED` and `shield_core 0/60 DESTROYED` STILL THERE two
+// respawns later — a player who had paid the deductible twice, flying a hull
+// with no gun and no shield generator, and no repair anywhere in the game.
+//
+// A ram does it deterministically here: one contact that takes the nose mount
+// off and takes the hull with it, against a shooter authored thin enough to die
+// of it.
+SOL_TEST(a_destroyed_ship_wakes_up_with_its_mounts_whole)
+{
+    Fixture fixture(target(), shooter("", "150.0"));
+    SOL_REQUIRE(fixture.spawnHulk());
+    const double before = fixture.world.playerCredits();
+
+    // Straight at it until something gives. The ram cannot be waited on by
+    // watching for a destroyed mount the way the others are — the repair is the
+    // thing under test, and it happens in the same tick as the destruction.
+    sol::sim::FlightInput input;
+    input.linear = {0.0f, 0.0f, -1.0f};
+    for (int tick = 0; tick < 600 && fixture.world.playerCredits() == before; ++tick) {
+        fixture.world.setShipInput(input);
+        fixture.world.tick(1.0 / 60.0);
+    }
+    // Credits fell, which on this hull can only be the insurance deductible.
+    SOL_REQUIRE(fixture.world.playerCredits() < before);
+
+    const std::vector<game::MountCondition> mounts = fixture.playerMounts();
+    SOL_REQUIRE(mounts.size() == 2);
+    for (const game::MountCondition& mount : mounts) {
+        SOL_CHECK(!mount.destroyed());
+        SOL_CHECK(mount.hp == mount.maxHp);
+    }
 }
 
 // ⚑ AND THE PLAYER CAN SEE IT. The ship readout is where a fit is read, so a

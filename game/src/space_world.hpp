@@ -345,6 +345,12 @@ struct ShipMounts
 // the same reading, and for the same reason, as `driveFraction`'s 1.0.
 [[nodiscard]] bool shieldsArePowered(const ShipMounts& mounts);
 
+// Puts every mount back to full without touching the list itself. The mounts a
+// hull has do not change - only how much of each is left - so this is what a
+// repair IS, and it is deliberately separate from `applyShipDef`'s rebuild:
+// that one is a refit and resets the defences and the guns with it.
+void repairMounts(ShipMounts& mounts);
+
 // ⚑ HOW WIDE A HIT HAS TO LAND TO COUNT AS HITTING A MOUNT (Phase 31 stage F),
 // as the cosine of the half-angle between where the shot arrived and where the
 // mount sits, both measured as bearings from the hull's centre.

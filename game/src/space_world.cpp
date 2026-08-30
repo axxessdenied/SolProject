@@ -5984,6 +5984,13 @@ float driveFraction(const ShipMounts& mounts)
     return total == 0 ? 1.0f : static_cast<float>(standing) / static_cast<float>(total);
 }
 
+void repairMounts(ShipMounts& mounts)
+{
+    for (std::uint32_t m = 0; m < mounts.count; ++m) {
+        mounts.mounts[m].hp = mounts.mounts[m].maxHp;
+    }
+}
+
 bool shieldsArePowered(const ShipMounts& mounts)
 {
     bool any = false;
@@ -8724,6 +8731,20 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
         sim::resetDefense(defense.state, defense.tuning);
         ShipPower& power = m_registry.storage<ShipPower>().get(entityIndex);
         power.state = sim::PowerState{.weaponCharge = power.tuning.weaponCapacitor};
+        // ⚑⚑ AND THE MOUNTS (Phase 31 stage F2). `decisions/007` is that death
+        // costs the cargo and an insurance deductible and puts you back in THE
+        // SAME SHIP AND FIT - and a fit with a hole shot in it is not that fit.
+        // Without this line a player pays the deductible and wakes up flying a
+        // hull whose gun and shield generator are permanently gone, with no
+        // repair anywhere in the game to put them back.
+        //
+        // ⚑ This block is the list of everything the old damage model could
+        // leave broken - transform, body, defences, capacitor - and mount
+        // condition is simply the newest member of it. That is why the omission
+        // was invisible: nothing here was wrong, something was missing.
+        if (ShipMounts* mounts = m_registry.tryGet<ShipMounts>(m_registry.entityFromIndex(entityIndex))) {
+            repairMounts(*mounts);
+        }
         return;
     }
 
