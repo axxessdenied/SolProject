@@ -717,54 +717,61 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     // own chatter, and because `--frames N` then answers the whole of stage A's
     // exit criterion without a GUI at all.
     {
-        double sum[3] = {0.0, 0.0, 0.0};
-        std::uint32_t seen[3] = {0, 0, 0};
-        float lowest[3] = {2.0f, 2.0f, 2.0f};
-        float highest[3] = {-2.0f, -2.0f, -2.0f};
-        std::uint32_t clanHeld = 0;
-        std::uint32_t unpoliced = 0;
-        float deepest = 0.0f;
-        for (const sim::SystemSpec& spec : m_galaxy.systems) {
-            if (spec.security < 0.0f) {
-                ++clanHeld;
-                deepest = std::min(deepest, spec.security);
-                continue;
-            }
-            if (spec.security == 0.0f) {
-                ++unpoliced;
-                continue;
-            }
-            const auto tier = static_cast<std::size_t>(spec.region);
-            sum[tier] += static_cast<double>(spec.security);
-            ++seen[tier];
-            lowest[tier] = std::min(lowest[tier], spec.security);
-            highest[tier] = std::max(highest[tier], spec.security);
-        }
-        for (std::size_t tier = 0; tier < 3; ++tier) {
-            if (seen[tier] == 0) {
-                lowest[tier] = 0.0f;
-                highest[tier] = 0.0f;
-            }
-        }
+        const SecurityHistogram gradient = securityHistogram();
         SOL_LOG_INFO("security: core %u [%.2f..%.2f] mean %.3f | frontier %u [%.2f..%.2f] mean %.3f "
                      "| fringe %u [%.2f..%.2f] mean %.3f | clan-held %u deepest %.2f | unpoliced %u",
-                     seen[0],
-                     static_cast<double>(lowest[0]),
-                     static_cast<double>(highest[0]),
-                     seen[0] > 0 ? sum[0] / seen[0] : 0.0,
-                     seen[1],
-                     static_cast<double>(lowest[1]),
-                     static_cast<double>(highest[1]),
-                     seen[1] > 0 ? sum[1] / seen[1] : 0.0,
-                     seen[2],
-                     static_cast<double>(lowest[2]),
-                     static_cast<double>(highest[2]),
-                     seen[2] > 0 ? sum[2] / seen[2] : 0.0,
-                     clanHeld,
-                     static_cast<double>(deepest),
-                     unpoliced);
+                     gradient.seen[0],
+                     static_cast<double>(gradient.lowest[0]),
+                     static_cast<double>(gradient.highest[0]),
+                     gradient.mean(0),
+                     gradient.seen[1],
+                     static_cast<double>(gradient.lowest[1]),
+                     static_cast<double>(gradient.highest[1]),
+                     gradient.mean(1),
+                     gradient.seen[2],
+                     static_cast<double>(gradient.lowest[2]),
+                     static_cast<double>(gradient.highest[2]),
+                     gradient.mean(2),
+                     gradient.clanHeld,
+                     static_cast<double>(gradient.deepest),
+                     gradient.unpoliced);
     }
     return true;
+}
+
+// ⚑⚑ COUNTED THROUGH THE ACCESSOR, NEVER OFF THE SPEC. Since stage F the
+// stored field is an unsigned magnitude and the sign - which is the whole shape
+// this reports - is a view over the CURRENT owner. Reading `spec.security` here
+// would file every clan neighbourhood under whichever region band it sits in
+// and report the galaxy as entirely policed.
+SpaceWorld::SecurityHistogram SpaceWorld::securityHistogram() const
+{
+    SecurityHistogram out;
+    float lowest[3] = {2.0f, 2.0f, 2.0f};
+    float highest[3] = {-2.0f, -2.0f, -2.0f};
+    for (std::uint32_t i = 0; i < m_galaxy.systems.size(); ++i) {
+        const float rating = systemSecurityBaseline(i);
+        if (rating < 0.0f) {
+            ++out.clanHeld;
+            out.clanSum += static_cast<double>(rating);
+            out.deepest = std::min(out.deepest, rating);
+            continue;
+        }
+        if (rating == 0.0f) {
+            ++out.unpoliced;
+            continue;
+        }
+        const auto tier = static_cast<std::size_t>(m_galaxy.systems[i].region);
+        out.sum[tier] += static_cast<double>(rating);
+        ++out.seen[tier];
+        lowest[tier] = std::min(lowest[tier], rating);
+        highest[tier] = std::max(highest[tier], rating);
+    }
+    for (std::size_t tier = 0; tier < 3; ++tier) {
+        out.lowest[tier] = out.seen[tier] > 0 ? lowest[tier] : 0.0f;
+        out.highest[tier] = out.seen[tier] > 0 ? highest[tier] : 0.0f;
+    }
+    return out;
 }
 
 void SpaceWorld::initializeFactions()

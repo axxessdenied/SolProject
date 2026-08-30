@@ -667,6 +667,7 @@ SOL_TEST(the_example_mod_adds_places_without_touching_the_base_game)
     SOL_REQUIRE(loadShippedDefs(base));
     game::SpaceWorld without;
     without.spawn(game::kDefaultUniverseSeed);
+    without.applyDefs(base);
     SOL_REQUIRE(without.generateUniverse(base));
 
     DefDatabase defs;
@@ -681,6 +682,13 @@ SOL_TEST(the_example_mod_adds_places_without_touching_the_base_game)
 
     game::SpaceWorld world;
     world.spawn(game::kDefaultUniverseSeed);
+    // ⚑⚑ `applyDefs` FIRST, AND SINCE STAGE F THAT IS LOAD-BEARING RATHER THAN
+    // TIDY. `generateUniverse` calls `initializeFactions`, which returns early
+    // on a null `m_defs`; `systemSecurityBaseline` now signs its answer from
+    // whoever HOLDS a system, so an empty faction table makes every rating in
+    // the galaxy read 0.00. The boot log says it twice - `0 faction(s)` and a
+    // security histogram of nothing but zeroes.
+    world.applyDefs(defs);
     SOL_REQUIRE(world.generateUniverse(defs));
     const Galaxy& galaxy = world.galaxy();
     std::printf(
@@ -807,6 +815,7 @@ SOL_TEST(the_authored_content_in_this_repository_places_at_every_seed_checked)
 
         game::SpaceWorld world;
         world.spawn(seed);
+        world.applyDefs(defs); // so the boot histogram this prints is real - see above
         const bool placed = world.generateUniverse(defs);
         std::printf("  seed %llu: %s, %zu systems\n",
                     static_cast<unsigned long long>(seed),

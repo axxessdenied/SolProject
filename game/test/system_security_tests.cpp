@@ -1,6 +1,7 @@
 #include "map_ui.hpp"
 #include "space_world.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
@@ -987,4 +988,251 @@ SOL_TEST(a_swamped_system_still_says_who_it_belongs_to)
     SOL_CHECK(mentions(map.panel.viewSecurity, "NOBODY COMES"));
     SOL_CHECK(!map.row(target).securityAnswers);
     SOL_CHECK(mentions(map.row(target).detail, "no response"));
+}
+
+// ---------------------------------------------------------------------------
+// Stage F: the sign is a view over the CURRENT owner, not a stored fact about
+// whoever founded the place.
+
+// ⚑⚑⚑⚑ THE TEST THE PHASE DID NOT KNOW IT NEEDED UNTIL A DRIVE HANDED IT OVER.
+// decisions/019 decision 2 says the sign names WHO POLICES THIS PLACE. Phase 8u
+// made ownership dynamic, and the shipped galaxy hands systems back and forth
+// several times a minute - the stage E drive's log read `[territory] Sable
+// Gate: Noryros Raiders takes the system from Solar Navy` four times in four
+// minutes. A sign written once at generation is therefore a fact about the
+// FOUNDING owner, and everything downstream that read it to describe the
+// current one was wrong the moment a system flipped:
+//
+//   - stage B sized the resident wing off it. `raidersFor` returns 0 above
+//     zero, so a clan that captured a core system garrisoned it with NOTHING,
+//     and the `else` branch that would have put patrols there is not taken for
+//     a pirate owner. The sky over a captured station was simply empty.
+//   - stage D took the readout's verb off it while taking the NAME from the
+//     live owner, so the map said `Policed by Norea Reavers: +0.85` - a pirate
+//     clan described as police, in the panel whose whole promise is that a
+//     route planned off it was planned off the truth.
+//
+// Both are one bug, so this is one test: flip a system and watch the rating,
+// the garrison and the word all turn over together.
+SOL_TEST(a_system_that_changes_hands_changes_who_the_rating_says_polices_it)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    // A major-held system with a real garrison, and a clan to take it from
+    // them. Chosen by ownership rather than by index so this survives content
+    // growing - the coupling Phase 29 stage D paid for.
+    const std::uint32_t held = systemInBand(world, 0.2f, 1.0f);
+    SOL_REQUIRE(held != sol::sim::kNoFaction);
+    std::uint32_t clan = sol::sim::kNoFaction;
+    for (std::uint32_t f = 0; f < world.factions().size(); ++f) {
+        if (world.factions()[f].pirate) {
+            clan = f;
+            break;
+        }
+    }
+    SOL_REQUIRE(clan != sol::sim::kNoFaction);
+
+    const float before = world.systemSecurityBaseline(held);
+    const std::uint32_t garrisonBefore = game::patrolsFor(before);
+    SOL_REQUIRE(before > 0.0f);
+    SOL_REQUIRE(garrisonBefore > 0u);
+    SOL_CHECK(game::raidersFor(before) == 0u); // no raiders while a major holds it
+
+    world.survey().setKnowledge(world.galaxy(), held, sol::sim::KnowledgeState::Visited);
+    MapFill map;
+    map.run(world, static_cast<int>(held));
+    std::printf("  before: %s, %+.3f, %u patrol(s) - %s\n",
+                world.galaxy().systems[held].name.c_str(),
+                static_cast<double>(before),
+                garrisonBefore,
+                map.panel.viewSecurity);
+    SOL_CHECK(mentions(map.panel.viewSecurity, "Policed by"));
+
+    SOL_REQUIRE(world.factionSim().flipSystem(held, clan));
+
+    const float after = world.systemSecurityBaseline(held);
+    map.run(world, static_cast<int>(held));
+    std::printf("  after : %s, %+.3f, %u raider(s) - %s\n",
+                world.galaxy().systems[held].name.c_str(),
+                static_cast<double>(after),
+                game::raidersFor(after),
+                map.panel.viewSecurity);
+
+    // The rating turned over: same magnitude, other side of zero. The MAGNITUDE
+    // is deliberately unchanged - how much force this place is worth is a fact
+    // about the place, and decision 1 keeps it static.
+    SOL_CHECK(after == -before);
+    // The clan actually garrisons what it took, which is the half no map shows.
+    SOL_CHECK(game::raidersFor(after) > 0u);
+    SOL_CHECK(game::patrolsFor(after) == 0u);
+    // And the map stops calling them police.
+    SOL_CHECK(mentions(map.panel.viewSecurity, "Held by"));
+    SOL_CHECK(!mentions(map.panel.viewSecurity, "Policed by"));
+    SOL_CHECK(mentions(map.panel.viewSecurity, world.factions()[clan].name.c_str()));
+    // The galaxy row agrees with the readout rather than lagging it: a player
+    // reading the list and a player reading the System tab must not be told two
+    // different things about one place.
+    SOL_CHECK(map.row(held).security < 0.0f);
+}
+
+// The other direction, and it is not symmetric decoration: `patrolsFor` and
+// `raidersFor` are two different curves, so a major taking a clan's home is a
+// second call site with a second way to return zero. Before stage F it did:
+// `patrolsFor(-0.75)` is 0, so a navy that took a stronghold held it with
+// nothing at all.
+SOL_TEST(a_major_that_takes_a_clan_stronghold_actually_garrisons_it)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    const std::uint32_t stronghold = systemInBand(world, -1.0f, -0.2f);
+    SOL_REQUIRE(stronghold != sol::sim::kNoFaction);
+    std::uint32_t major = sol::sim::kNoFaction;
+    for (std::uint32_t f = 0; f < world.factions().size(); ++f) {
+        if (!world.factions()[f].pirate) {
+            major = f;
+            break;
+        }
+    }
+    SOL_REQUIRE(major != sol::sim::kNoFaction);
+
+    const float before = world.systemSecurityBaseline(stronghold);
+    SOL_REQUIRE(before < 0.0f);
+    SOL_REQUIRE(game::raidersFor(before) > 0u);
+
+    SOL_REQUIRE(world.factionSim().flipSystem(stronghold, major));
+    const float after = world.systemSecurityBaseline(stronghold);
+    std::printf("  %s: %+.3f (%u raiders) -> %+.3f (%u patrols)\n",
+                world.galaxy().systems[stronghold].name.c_str(),
+                static_cast<double>(before),
+                game::raidersFor(before),
+                static_cast<double>(after),
+                game::patrolsFor(after));
+    SOL_CHECK(after == -before);
+    SOL_CHECK(game::patrolsFor(after) > 0u);
+    SOL_CHECK(game::raidersFor(after) == 0u);
+
+    world.survey().setKnowledge(world.galaxy(), stronghold, sol::sim::KnowledgeState::Visited);
+    MapFill map;
+    map.run(world, static_cast<int>(stronghold));
+    std::printf("  %s\n", map.panel.viewSecurity);
+    SOL_CHECK(mentions(map.panel.viewSecurity, "Policed by"));
+}
+
+// ⚑ A place nobody holds reads zero, and that is the one arm a magnitude can
+// answer on its own. `sol.lantern` is the shipped case: authored lawless, left
+// alone by `spawnClans`, and the galaxy's only true zero since before this
+// phase existed. It is here because the accessor gained an owner lookup in
+// stage F, and an owner lookup is a new way to get an unowned system wrong.
+SOL_TEST(the_one_place_nobody_holds_still_reads_exactly_zero)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    std::uint32_t unowned = sol::sim::kNoFaction;
+    for (std::uint32_t i = 0; i < world.galaxy().systems.size(); ++i) {
+        if (world.systemOwnerFaction(i) >= world.factions().size()) {
+            unowned = i;
+            break;
+        }
+    }
+    SOL_REQUIRE(unowned != sol::sim::kNoFaction);
+    std::printf("  %s is held by nobody\n", world.galaxy().systems[unowned].name.c_str());
+    const float rating = world.systemSecurityBaseline(unowned);
+    SOL_CHECK(rating == 0.0f);
+    SOL_CHECK(!std::signbit(rating)); // never -0.0f: zero has no sign
+    SOL_CHECK(game::patrolsFor(rating) == 0u);
+    SOL_CHECK(game::raidersFor(rating) == 0u);
+    // And a call for help there is not answered, which is what zero MEANS.
+    SOL_CHECK(!game::securityAnswers(world.systemSecurity(unowned)));
+
+    // ⚑⚑ NOW GIVE IT TO A CLAN, WHICH IS THE ONLY WAY TO REACH THE NEGATIVE-ZERO
+    // ARM FROM SHIPPED CONTENT. Magnitude zero under a pirate owner negates to
+    // `-0.0f`, which compares equal to zero everywhere - so every band check
+    // still passes - and then prints as "-0.00" in the readout a player reads.
+    // Without the guard this is the only visible symptom there is.
+    std::uint32_t clan = sol::sim::kNoFaction;
+    for (std::uint32_t f = 0; f < world.factions().size(); ++f) {
+        if (world.factions()[f].pirate) {
+            clan = f;
+            break;
+        }
+    }
+    SOL_REQUIRE(clan != sol::sim::kNoFaction);
+    SOL_REQUIRE(world.factionSim().flipSystem(unowned, clan));
+    const float taken = world.systemSecurityBaseline(unowned);
+    SOL_CHECK(taken == 0.0f);
+    SOL_CHECK(!std::signbit(taken));
+
+    world.survey().setKnowledge(world.galaxy(), unowned, sol::sim::KnowledgeState::Visited);
+    MapFill map;
+    map.run(world, static_cast<int>(unowned));
+    std::printf("  taken by a clan: %s\n", map.panel.viewSecurity);
+    SOL_CHECK(!mentions(map.panel.viewSecurity, "-0.00"));
+}
+
+// The gradient report, which is stage A's own exit criterion made runnable and
+// which the boot log prints at every launch - and which, until stage F, nothing
+// held to anything. The counterfactual is what found that: putting it back on
+// the raw spec turned every suite green while the report claimed a galaxy with
+// no clan space in it at all.
+SOL_TEST(the_security_histogram_counts_clan_space_as_clan_space)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    SOL_REQUIRE(standIn(world, defs, 0));
+
+    const game::SpaceWorld::SecurityHistogram before = world.securityHistogram();
+    std::printf("  core %u, frontier %u, fringe %u, clan-held %u (deepest %+.3f), unpoliced %u\n",
+                before.seen[0],
+                before.seen[1],
+                before.seen[2],
+                before.clanHeld,
+                static_cast<double>(before.deepest),
+                before.unpoliced);
+    // Every system falls in exactly one bucket, and every bucket a shipped
+    // galaxy has is populated - without which the counts below are vacuous.
+    SOL_CHECK(before.seen[0] + before.seen[1] + before.seen[2] + before.clanHeld + before.unpoliced ==
+              world.galaxy().systems.size());
+    SOL_CHECK(before.seen[0] > 0 && before.seen[1] > 0 && before.seen[2] > 0);
+    SOL_CHECK(before.clanHeld > 0);
+    SOL_CHECK(before.deepest < 0.0f);
+    SOL_CHECK(before.unpoliced > 0); // sol.lantern, and on a fresh galaxy only it
+
+    // It agrees with the accessor system by system rather than by construction:
+    // a second loop here would be a second implementation, so this counts the
+    // one thing the report is ABOUT and compares totals.
+    std::uint32_t clanHeld = 0;
+    for (std::uint32_t i = 0; i < world.galaxy().systems.size(); ++i) {
+        clanHeld += world.systemSecurityBaseline(i) < 0.0f ? 1u : 0u;
+    }
+    SOL_CHECK(clanHeld == before.clanHeld);
+
+    // And it MOVES when a system changes hands, which is the whole of stage F
+    // arriving in the one report a developer reads at every launch.
+    const std::uint32_t held = systemInBand(world, 0.2f, 1.0f);
+    SOL_REQUIRE(held != sol::sim::kNoFaction);
+    std::uint32_t clan = sol::sim::kNoFaction;
+    for (std::uint32_t f = 0; f < world.factions().size(); ++f) {
+        if (world.factions()[f].pirate) {
+            clan = f;
+            break;
+        }
+    }
+    SOL_REQUIRE(clan != sol::sim::kNoFaction);
+    const auto tier = static_cast<std::size_t>(world.galaxy().systems[held].region);
+    SOL_REQUIRE(world.factionSim().flipSystem(held, clan));
+
+    const game::SpaceWorld::SecurityHistogram after = world.securityHistogram();
+    SOL_CHECK(after.clanHeld == before.clanHeld + 1);
+    SOL_CHECK(after.seen[tier] == before.seen[tier] - 1);
+    SOL_CHECK(after.unpoliced == before.unpoliced);
 }

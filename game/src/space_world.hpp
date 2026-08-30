@@ -1069,12 +1069,64 @@ public:
 
     // --- System security (Phase 30 stage A, decisions/019) -----------------
     //
-    // The static half: how much force the owner keeps here, straight off the
-    // generated spec. Signed - see `SystemSpec::security`.
+    // The static half: how much force the owner keeps here, off the generated
+    // spec - and SIGNED HERE, by whoever holds the system now.
+    //
+    // ⚑⚑⚑⚑ THE SIGN IS COMPUTED RATHER THAN STORED, AND STAGE F LEARNED WHY
+    // FROM TWO SHIPPED BUGS OF ITS OWN PHASE. decisions/019 decision 2 says
+    // the sign names WHO POLICES THIS PLACE; `SystemSpec::security` is written
+    // at generation, and Phase 8u made ownership DYNAMIC - so a stored sign is
+    // a fact about whoever founded a system, and the galaxy hands systems back
+    // and forth several times a minute. Stage B sized the resident wing off it
+    // (`raidersFor(+0.85)` is ZERO, so a clan that took a core system garrisoned
+    // it with nothing at all) and stage D took the readout's verb from it (the
+    // map said "Policed by Norea Reavers"). One view, computed where both the
+    // magnitude and the current owner are in hand, makes both unrepresentable.
+    //
+    // ⚑ Zero has no sign, which is not pedantry: `-0.0f` compares equal to zero
+    // everywhere and then prints as "-0.00" in the readout a player reads.
+    // ⚑ A system nobody holds reads zero whatever magnitude it carries - that
+    // IS what "nobody comes" means, and it is the only reading a place with no
+    // owner can honestly be given.
     [[nodiscard]] float systemSecurityBaseline(std::uint32_t systemIndex) const
     {
-        return systemIndex < m_galaxy.systems.size() ? m_galaxy.systems[systemIndex].security : 0.0f;
+        if (systemIndex >= m_galaxy.systems.size()) {
+            return 0.0f;
+        }
+        const float magnitude = m_galaxy.systems[systemIndex].security;
+        const std::uint32_t owner = systemOwnerFaction(systemIndex);
+        if (magnitude == 0.0f || owner >= m_factionTable.size()) {
+            return 0.0f;
+        }
+        return m_factionTable[owner].pirate ? -magnitude : magnitude;
     }
+
+    // The galaxy's gradient, counted once (Phase 30 stage F). Two callers
+    // format it two different ways - the boot log's one-liner and
+    // `sol.security_map`'s table - and before this they COUNTED it twice as
+    // well, in two copies that a counterfactual proved neither of was tested.
+    // Both then read the raw spec, so both would have reported every clan
+    // neighbourhood inside whichever region band it sits in.
+    struct SecurityHistogram
+    {
+        std::uint32_t seen[3] = {0, 0, 0}; // core / frontier / fringe
+        double sum[3] = {0.0, 0.0, 0.0};
+        float lowest[3] = {0.0f, 0.0f, 0.0f};
+        float highest[3] = {0.0f, 0.0f, 0.0f};
+        std::uint32_t clanHeld = 0; // cuts across regions, so it is its own band
+        double clanSum = 0.0;
+        float deepest = 0.0f;
+        std::uint32_t unpoliced = 0; // exactly zero: nobody holds it
+
+        [[nodiscard]] double mean(std::size_t tier) const
+        {
+            return seen[tier] > 0 ? sum[tier] / seen[tier] : 0.0;
+        }
+
+        [[nodiscard]] double clanMean() const { return clanHeld > 0 ? clanSum / clanHeld : 0.0; }
+    };
+
+    [[nodiscard]] SecurityHistogram securityHistogram() const;
 
     // The live half: how safe the place actually is right now. This is the
     // number a consumer reads, and it joins the two halves nothing else can -

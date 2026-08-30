@@ -787,35 +787,13 @@ std::string dispatchResponse(GameContent& content, double x, double y, double z)
 // A claims is a property of the GENERATOR.
 std::string securityHistogram(GameContent& content)
 {
-    SpaceWorld& world = content.world();
-    const std::vector<sol::sim::SystemSpec>& systems = world.galaxy().systems;
-    // core / frontier / fringe, then the clan band, which cuts across regions.
-    double sum[3] = {0.0, 0.0, 0.0};
-    std::uint32_t seen[3] = {0, 0, 0};
-    float lowest[3] = {2.0f, 2.0f, 2.0f};
-    float highest[3] = {-2.0f, -2.0f, -2.0f};
-    double clanSum = 0.0;
-    std::uint32_t clanSeen = 0;
-    float clanDeepest = 0.0f;
-    std::uint32_t zeroes = 0;
-    for (std::uint32_t i = 0; i < systems.size(); ++i) {
-        const float value = systems[i].security;
-        if (value < 0.0f) {
-            clanSum += static_cast<double>(value);
-            ++clanSeen;
-            clanDeepest = std::min(clanDeepest, value);
-            continue;
-        }
-        if (value == 0.0f) {
-            ++zeroes;
-            continue;
-        }
-        const auto tier = static_cast<std::size_t>(systems[i].region);
-        sum[tier] += static_cast<double>(value);
-        ++seen[tier];
-        lowest[tier] = std::min(lowest[tier], value);
-        highest[tier] = std::max(highest[tier], value);
-    }
+    // ⚑ Counted by `SpaceWorld::securityHistogram` rather than here (stage F).
+    // This used to be a second copy of the same loop, and when the sign became
+    // a view over the current owner BOTH copies had to learn it - which is
+    // exactly the drift a duplicated report invites. The formatting stays here:
+    // a console table and a one-line boot log are two presentations of one
+    // count, not two counts.
+    const game::SpaceWorld::SecurityHistogram gradient = content.world().securityHistogram();
     std::string out;
     static constexpr const char* kTierNames[3] = {"core     ", "frontier ", "fringe   "};
     char buffer[192];
@@ -824,20 +802,20 @@ std::string securityHistogram(GameContent& content)
                       sizeof(buffer),
                       "%s %3u system(s)  mean %+.3f  [%+.3f .. %+.3f]\n",
                       kTierNames[tier],
-                      seen[tier],
-                      seen[tier] > 0 ? sum[tier] / seen[tier] : 0.0,
-                      seen[tier] > 0 ? static_cast<double>(lowest[tier]) : 0.0,
-                      seen[tier] > 0 ? static_cast<double>(highest[tier]) : 0.0);
+                      gradient.seen[tier],
+                      gradient.mean(tier),
+                      static_cast<double>(gradient.lowest[tier]),
+                      static_cast<double>(gradient.highest[tier]));
         out += buffer;
     }
     std::snprintf(buffer,
                   sizeof(buffer),
                   "clan-held %3u system(s)  mean %+.3f  deepest %+.3f\n"
                   "unpoliced %3u system(s) at exactly 0\n",
-                  clanSeen,
-                  clanSeen > 0 ? clanSum / clanSeen : 0.0,
-                  static_cast<double>(clanDeepest),
-                  zeroes);
+                  gradient.clanHeld,
+                  gradient.clanMean(),
+                  static_cast<double>(gradient.deepest),
+                  gradient.unpoliced);
     out += buffer;
     return out;
 }

@@ -305,20 +305,24 @@ struct SystemSpec
     // A placement flag and nothing else in this phase (Phase 29): nothing hides
     // a system from the map yet.
     bool secret = false;
-    // How well this place is policed, as a STATIC BASELINE (Phase 30 stage A):
-    // how much force the owner keeps here, before anything that has happened
-    // recently. What a consumer actually reads is the LIVE rating, which is
-    // this minus `FactionSim::danger` and lives on the game side because only
-    // it holds both halves - see `SpaceWorld::systemSecurity`.
+    // How much force this place is worth to whoever holds it, as a STATIC
+    // BASELINE and as a MAGNITUDE in [0, 1] (Phase 30 stage A; unsigned since
+    // stage F). Zero means nobody holds it, which is the one reading a
+    // magnitude can carry on its own.
     //
-    // ⚑⚑ THE SCALE IS SIGNED AND THE SIGN NAMES *WHO POLICES IT*, NOT HOW MUCH
-    // (decisions/019 decision 2). Positive: a major holds it. Zero: nobody
-    // comes, and you are on your own. Negative: a clan holds it and answers an
-    // intrusion the way a navy does - the magnitude is how hard it will answer.
+    // ⚑⚑⚑⚑ THE SIGN IS NOT STORED, AND STAGE F IS WHY. decisions/019 decision
+    // 2 says the sign names WHO POLICES THIS PLACE - and since Phase 8u who
+    // holds a system is dynamic, so a stored sign is a fact about whoever
+    // FOUNDED it. Stages B and D both read it to say something about the
+    // CURRENT owner and both were wrong the moment a system changed hands,
+    // which the shipped galaxy does several times a minute: a clan that took a
+    // core system garrisoned it with nothing, and the map called that clan
+    // "Policed by". So the sign is a VIEW, computed where both halves are in
+    // hand - `SpaceWorld::systemSecurityBaseline` - and the whole class of bug
+    // is unrepresentable rather than fixed twice.
     //
-    // ⚑ An author may replace it outright (Phase 30 stage E). What they write
-    // is a MAGNITUDE: the sign here is taken from whoever ended up holding the
-    // place, so an authored rating cannot contradict its own galaxy.
+    // ⚑ An author may replace it outright (Phase 30 stage E), and what they
+    // write is exactly this: how hard the place is held, never by whom.
     //
     // ⚑⚑⚑ IT IS A PURE FUNCTION OF OWNER, REGION AND GATE DISTANCE, WITH NO
     // DRAW IN IT AT ALL. Every shared stream in this file is order-sensitive -

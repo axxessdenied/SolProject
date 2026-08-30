@@ -100,6 +100,37 @@ with nothing in between.
 The accepted reading is the one that costs least, because **it names what the
 generator is already doing** rather than adding a mechanism.
 
+> **⚑⚑⚑⚑ AMENDED 2026-08-29 BY PHASE 30 STAGE F, AND THE AMENDMENT IS ABOUT
+> *WHERE* THE SIGN LIVES RATHER THAN WHAT IT MEANS.** The three readings above
+> stand exactly as written. What was wrong was storing the sign: stages A–E put
+> it on `SystemSpec::security` at generation, and **Phase 8u made ownership
+> dynamic**, so a stored sign is a fact about whoever *founded* a system. The
+> shipped galaxy hands systems back and forth several times a minute — a four
+> minute drive logged four captures — and both consumers of the sign were wrong
+> the moment one flipped:
+>
+> - **Stage B sized the resident wing off it.** `raidersFor` returns 0 above
+>   zero and the patrol branch is not taken for a pirate owner, so **a clan that
+>   captured a core system garrisoned it with nothing at all.** The sky over a
+>   captured station was empty.
+> - **Stage D took the readout's verb off it** while taking the NAME from the
+>   live owner, so the map said **`Policed by Norea Reavers: +0.85`** — a clan
+>   described as police, in the panel whose whole promise is that a route
+>   planned off it was planned off the truth.
+>
+> So `SystemSpec::security` stores a **magnitude**, and the sign is a **view**,
+> computed in `SpaceWorld::systemSecurityBaseline` where the magnitude and the
+> *current* owner are both in hand. Every consumer — the two curves, the map
+> verb, the map colour, `sol.security`, the gradient report — is then correct
+> without knowing this ruling exists, which is the difference between fixing two
+> instances and removing the class.
+>
+> ⚑ **Nothing in the suite could have caught it**: the counterfactual that
+> restores the founding-owner read turns *only* the two new tests red, because
+> every test before them read a galaxy in which nobody had changed hands yet.
+> A property that only appears after simulated time passes needs a test that
+> makes the time pass.
+
 ### 3. Divert first; spawn only when nobody is in range
 
 ~~`respondTo(position, cause)` redirects the nearest un-engaged patrol with

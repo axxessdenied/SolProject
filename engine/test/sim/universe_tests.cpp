@@ -1470,10 +1470,18 @@ std::vector<std::uint32_t> hopsFrom(const Galaxy& galaxy, std::uint32_t source)
 
 } // namespace
 
-// Decisions/019 decision 2, as an exhaustive partition: the SIGN says who
-// polices a place, so every system in the galaxy falls into exactly one of
-// three cases and there is no fourth.
-SOL_TEST(universe_security_is_signed_by_who_polices_the_place)
+// Decisions/019 decision 2, as an exhaustive partition - and note what it does
+// NOT say any more. This field is a MAGNITUDE since stage F: how much force the
+// place is worth to whoever holds it. Zero still means nobody holds it, and it
+// is still the only way a system reaches zero, which is what keeps the reading
+// legible rather than merely defined.
+//
+// ⚑⚑⚑ THE SIGN IS NOT ASSERTED HERE BECAUSE IT IS NOT WRITTEN HERE. Who
+// polices a place is dynamic (Phase 8u) and this pass runs once, at generation,
+// so a sign stored here would be a fact about whoever FOUNDED each system. The
+// claim decision 2 actually makes now lives in `game.unit` beside the owner -
+// see `a_system_that_changes_hands_changes_who_the_rating_says_polices_it`.
+SOL_TEST(universe_security_is_a_magnitude_and_zero_means_nobody_holds_it)
 {
     GalaxyParams params = testParams(31337);
     params.pirateTemplateCount = 2;
@@ -1482,16 +1490,14 @@ SOL_TEST(universe_security_is_signed_by_who_polices_the_place)
     std::uint32_t majors = 0;
     std::uint32_t clanHeld = 0;
     for (const SystemSpec& system : galaxy.systems) {
+        SOL_CHECK(system.security >= 0.0f && system.security <= 1.0f);
         if (system.factionIndex == kNoFaction) {
-            // Nobody claimed it, so nobody comes. Exactly zero - and it is the
-            // only way a system reaches zero, which is what makes the reading
-            // legible rather than merely defined.
             SOL_CHECK(system.security == 0.0f);
         } else if (system.factionIndex < params.factionCount) {
             SOL_CHECK(system.security > 0.0f);
             ++majors;
         } else {
-            SOL_CHECK(system.security < 0.0f);
+            SOL_CHECK(system.security > 0.0f);
             ++clanHeld;
         }
     }
@@ -1515,7 +1521,11 @@ SOL_TEST(universe_security_bands_do_not_overlap_so_a_number_names_its_region)
     float highest[3] = {-2.0f, -2.0f, -2.0f};
     std::uint32_t seen[3] = {0, 0, 0};
     for (const SystemSpec& system : galaxy.systems) {
-        if (system.security <= 0.0f) {
+        // ⚑ Clan space is skipped by WHO HOLDS IT, not by a sign: since stage F
+        // both bands are stored positive, so `security <= 0` would skip only
+        // the unowned systems and quietly fold every clan neighbourhood into
+        // whichever region band it sits in.
+        if (system.factionIndex == kNoFaction || system.factionIndex >= params.factionCount) {
             continue; // clan space and unpoliced space are their own bands
         }
         const auto tier = static_cast<std::size_t>(system.region);
@@ -1528,11 +1538,11 @@ SOL_TEST(universe_security_bands_do_not_overlap_so_a_number_names_its_region)
     }
     SOL_CHECK(lowest[0] > highest[1]); // every core system beats every frontier one
     SOL_CHECK(lowest[1] > highest[2]); // every frontier system beats every fringe one
-    // And clan space clears zero by a margin rather than merely sitting on the
-    // far side of it, so "negative" survives being read off a coloured map.
+    // And clan space clears zero by a margin rather than merely sitting beside
+    // it, so the reading survives being turned into a colour on a map.
     for (const SystemSpec& system : galaxy.systems) {
-        if (system.security < 0.0f) {
-            SOL_CHECK(system.security <= -0.25f);
+        if (system.factionIndex != kNoFaction && system.factionIndex >= params.factionCount) {
+            SOL_CHECK(system.security >= 0.25f);
         }
     }
 }
@@ -1559,22 +1569,21 @@ SOL_TEST(universe_security_never_rises_with_distance_from_its_seat)
     for (std::uint32_t c = 0; c < galaxy.clans.size(); ++c) {
         const std::uint32_t faction = params.factionCount + c;
         const std::vector<std::uint32_t> hops = hopsFrom(galaxy, galaxy.clans[c].homeSystem);
-        // The seat is the strongest grip the clan has anywhere, which on the
-        // negative side means the most negative number it holds.
+        // The seat is the strongest grip the clan has anywhere, and since
+        // stage F that is plainly the largest number it holds.
         const float atHome = galaxy.systems[galaxy.clans[c].homeSystem].security;
         for (std::uint32_t i = 0; i < galaxy.systems.size(); ++i) {
             if (galaxy.systems[i].factionIndex != faction) {
                 continue;
             }
-            SOL_CHECK(galaxy.systems[i].security >= atHome);
+            SOL_CHECK(galaxy.systems[i].security <= atHome);
             for (std::uint32_t j = 0; j < galaxy.systems.size(); ++j) {
                 if (galaxy.systems[j].factionIndex != faction || hops[i] >= hops[j]) {
                     continue;
                 }
                 // Same clan, i strictly nearer its home: its grip can never be
-                // the weaker of the two. Compared as magnitudes, so it reads
-                // the same way it would on the positive side.
-                SOL_CHECK(-galaxy.systems[i].security >= -galaxy.systems[j].security);
+                // the weaker of the two.
+                SOL_CHECK(galaxy.systems[i].security >= galaxy.systems[j].security);
                 ++compared;
                 varied += galaxy.systems[i].security != galaxy.systems[j].security ? 1u : 0u;
             }
@@ -1611,10 +1620,10 @@ SOL_TEST(universe_security_waits_for_the_clans_and_leaves_the_majors_alone)
     for (std::size_t i = 0; i < clanned.systems.size(); ++i) {
         if (lawless.systems[i].factionIndex == kNoFaction) {
             // Unclaimed without clans, clan-held with them: zero becomes a
-            // negative number, and nothing else in the pipeline could have
-            // made it negative.
+            // real number off the clan curve, and nothing else in the pipeline
+            // could have put one there.
             SOL_CHECK(lawless.systems[i].security == 0.0f);
-            SOL_CHECK(clanned.systems[i].security < 0.0f);
+            SOL_CHECK(clanned.systems[i].security > 0.0f);
             ++flipped;
         } else {
             SOL_CHECK(clanned.systems[i].security == lawless.systems[i].security);
@@ -1676,13 +1685,13 @@ SOL_TEST(universe_retuning_security_moves_security_and_nothing_else)
 // the major band and the clan band - and a skip point that only got in front of
 // one of them would be invisible for whichever half the test happened to miss.
 //
-// ⚑⚑⚑ AND THE SIGN IS THE GENERATOR'S, WHICH IS THE WHOLE RULING. The two
-// systems below are written with the SAME number, 0.9, and they come out at
-// +0.9 and -0.9 - because one is Navy and one was swallowed by a clan, and
-// which of those happened is not a thing the author of a file can know. A
-// signed authored value would let a file say "a clan holds this" about a system
-// the Navy holds, and stage D's readout would print it.
-SOL_TEST(universe_an_authored_rating_replaces_both_curves_and_the_owner_signs_it)
+// ⚑⚑ WHAT AN AUTHOR WRITES IS HOW HARD THE PLACE IS HELD AND NEVER BY WHOM, so
+// the two systems below are written with the SAME number and keep it, though
+// one is Navy and one was swallowed by a clan. Who polices them - and therefore
+// which way the rating reads to a player - is settled at read time against the
+// owner of the moment, which is `game.unit`'s
+// `a_system_that_changes_hands_changes_who_the_rating_says_polices_it`.
+SOL_TEST(universe_an_authored_rating_replaces_both_curves_whoever_ends_up_holding_it)
 {
     GalaxyParams params = testParams(2024);
     params.pirateTemplateCount = 2;
@@ -1717,23 +1726,23 @@ SOL_TEST(universe_an_authored_rating_replaces_both_curves_and_the_owner_signs_it
     // counterfactual that never signs anything is green against a galaxy where
     // every authored system happened to land in a major's space.
     SOL_REQUIRE(stronghold->factionIndex != kNoFaction && stronghold->factionIndex >= params.factionCount);
-    SOL_CHECK(stronghold->security == -0.9f);
+    SOL_CHECK(stronghold->security == 0.9f);
 
     // ⚑ And it beat the curve rather than agreeing with it by luck. A fringe
-    // system's own band is [0.18, 0.30] and a clan's is [-0.75, -0.30], so
-    // neither of these numbers is one this galaxy could have produced.
+    // system's own band is [0.18, 0.30] and a clan's is [0.30, 0.75], so 0.9 is
+    // not a number this galaxy could have produced for either of them.
     for (const SystemSpec& system : galaxy.systems) {
         if (system.authoredId.empty()) {
-            SOL_CHECK(system.security != 0.9f && system.security != -0.9f);
+            SOL_CHECK(system.security != 0.9f);
         }
     }
 }
 
 // Zero is a value with a meaning rather than an unset marker, and an author may
-// write it: the flag flies and nobody comes. It is also the arm that carries
-// the negative-zero trap - `-0.0f` compares equal to zero everywhere and then
-// prints as "-0.00" in the readout stage D put in front of a player.
-SOL_TEST(universe_an_authored_zero_is_a_rating_and_has_no_sign)
+// write it: the flag flies and nobody comes. It is the one reading a magnitude
+// carries on its own, and the reason `assignSecurity` may not treat "the author
+// wrote 0" as "the author wrote nothing".
+SOL_TEST(universe_an_authored_zero_is_a_rating_and_not_an_absence)
 {
     GalaxyParams params = testParams(2024);
     params.pirateTemplateCount = 2;
@@ -1743,29 +1752,16 @@ SOL_TEST(universe_an_authored_zero_is_a_rating_and_has_no_sign)
                                       .hasRegion = true,
                                       .security = 0.0f,
                                       .hasSecurity = true});
-    // A hand-built params can say what a file cannot: the def layer refuses
-    // `lawless` and `security` in one row, but the rule below it has to be
-    // total, because a galaxy with no clan templates leaves ordinary systems
-    // unowned too.
-    params.authoredSystems.push_back({.id = "test.nobodys",
-                                      .region = Region::Fringe,
-                                      .hasRegion = true,
-                                      .factionIndex = kNoFaction,
-                                      .hasFaction = true,
-                                      .security = 0.6f,
-                                      .hasSecurity = true});
     const Galaxy galaxy = generateGalaxy(params);
 
     const SystemSpec* abandoned = findAuthored(galaxy, "test.abandoned");
     SOL_REQUIRE(abandoned != nullptr);
+    // A clan swallowed it - the whole fringe is lawless here - so the curve
+    // would have written a real number onto it. The author's zero stands, and
+    // it means nobody comes.
+    SOL_REQUIRE(abandoned->factionIndex != kNoFaction && abandoned->factionIndex >= params.factionCount);
     SOL_CHECK(abandoned->security == 0.0f);
-    SOL_CHECK(!std::signbit(abandoned->security)); // not -0.0f, whoever holds it
-
-    const SystemSpec* nobodys = findAuthored(galaxy, "test.nobodys");
-    SOL_REQUIRE(nobodys != nullptr);
-    SOL_REQUIRE(nobodys->factionIndex == kNoFaction);
-    // Nobody holds it, so nobody polices it, whatever the number said.
-    SOL_CHECK(nobodys->security == 0.0f);
+    SOL_CHECK(!std::signbit(abandoned->security)); // never -0.0f: zero has no sign
 }
 
 // SKIP POINT PLACEMENT, made falsifiable. Every other authored field is written

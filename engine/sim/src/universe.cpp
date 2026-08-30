@@ -902,10 +902,10 @@ void spawnClans(const GalaxyParams& params,
 // band exists for is still sitting at `kNoFaction`, which is the value that
 // means the OPPOSITE thing (nobody comes at all). Writing security any earlier
 // puts every future pirate stronghold at exactly zero; the counterfactual was
-// run and it collapses 24 systems in the test galaxy alone. ⚑ Stage E gives
-// the same placement a second reason: an authored rating is a magnitude that
-// this pass SIGNS from the owner, and before `spawnClans` there is no owner to
-// sign it from.
+// run and it collapses 24 systems in the test galaxy alone. ⚑ The values are
+// MAGNITUDES since stage F, but the ordering claim is unchanged: which CURVE a
+// system gets is still decided by whether a clan holds it, and before
+// `spawnClans` no clan holds anything.
 //
 // (2) AND IT TAKES NO DRAW. `claimTerritory` already runs a Dijkstra whose
 // `bestCost` is distance-from-capital and throws it away, which looks exactly
@@ -998,7 +998,9 @@ void assignSecurity(const GalaxyParams& params,
     }
 
     // Clans, measured from the home system the component was seeded at - the
-    // clan's capital in all but name. Same curve, written negative.
+    // clan's capital in all but name. Same curve, its own numbers - and stored
+    // UNSIGNED like every other, because what makes a rating read negative is
+    // a clan holding the system NOW, which is not this pass's to know.
     for (std::uint32_t k = 0; k < clans.size(); ++k) {
         const std::uint32_t faction = params.factionCount + k;
         gateHopsFrom(adjacency, clans[k].homeSystem, hops);
@@ -1006,10 +1008,10 @@ void assignSecurity(const GalaxyParams& params,
             if (systems[i].factionIndex != faction) {
                 continue;
             }
-            systems[i].security = -reachAfter(params.securityClanHome,
-                                              params.securityClanPerJump,
-                                              params.securityClanMaxJumpPenalty,
-                                              hops[i]);
+            systems[i].security = reachAfter(params.securityClanHome,
+                                             params.securityClanPerJump,
+                                             params.securityClanMaxJumpPenalty,
+                                             hops[i]);
         }
     }
 
@@ -1024,35 +1026,17 @@ void assignSecurity(const GalaxyParams& params,
     // erased a few hundred lines later with nothing to show for it. The skip
     // point has to live where the field is decided.
     //
-    // ⚑⚑⚑⚑ AND THE GENERATOR SUPPLIES THE SIGN. What the author wrote is a
-    // magnitude; who holds the place is what makes it positive or negative,
-    // and that is settled by `claimTerritory` and `spawnClans` rather than by
-    // anybody's file. Signing it here rather than trusting a signed authored
-    // value is what makes "the map says a clan holds a system the Navy holds"
-    // an unwritable sentence instead of a refusal somebody has to remember.
+    // ⚑⚑⚑⚑ AND IT IS A STRAIGHT ASSIGNMENT BECAUSE THE SIGN IS NOBODY'S
+    // BUSINESS HERE. What the author wrote is how hard the place is held; who
+    // holds it is what makes a rating read positive or negative, and since
+    // stage F that is decided where the current owner is in hand rather than
+    // stored. So "the map says a clan holds a system the Navy holds" is an
+    // unwritable sentence rather than a refusal somebody has to remember.
     for (std::uint32_t i = 0; i < count; ++i) {
         if (authoredFor[i] == nullptr || !authoredFor[i]->hasSecurity) {
             continue;
         }
-        const float magnitude = core::clamp(authoredFor[i]->security, 0.0f, 1.0f);
-        const std::uint32_t owner = systems[i].factionIndex;
-        // ⚑ The zero arm is not redundant with the branches below it: negating
-        // a zero gives NEGATIVE zero, which compares equal everywhere and then
-        // prints as "-0.00" in the readout stage D put in front of a player.
-        // Zero means "nobody comes" and it has no sign - the same trap
-        // `SpaceWorld::systemSecurity` names.
-        if (magnitude == 0.0f || owner == kNoFaction) {
-            // Nobody holds it, so nobody polices it, whatever was written. This
-            // is reachable from a file only through a galaxy with no clan
-            // templates - the def layer refuses `lawless` and `security` in one
-            // row - but the rule has to be total, because a hand-built
-            // GalaxyParams means what a hand-written file means.
-            systems[i].security = 0.0f;
-        } else if (owner < params.factionCount) {
-            systems[i].security = magnitude; // a major holds it
-        } else {
-            systems[i].security = -magnitude; // a clan holds it
-        }
+        systems[i].security = core::clamp(authoredFor[i]->security, 0.0f, 1.0f);
     }
 }
 
