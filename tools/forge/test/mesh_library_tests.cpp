@@ -2038,6 +2038,22 @@ SOL_TEST(aDropAlreadyFiledInTheArchiveIsNotPending)
     // Matched as a directory prefix, not as a substring: a sibling whose name
     // merely starts the same way is still pending.
     SOL_CHECK(forge::forgeIsPendingDrop("C:/repo/blender-inbox/imported_backup/Hull.glb", kInbox));
+
+    // ⚑⚑⚑ THE SPELLING `listFiles` ACTUALLY PRODUCES, WHICH THE CASES ABOVE
+    // NEVER USED AND WHICH COST A USER THEIR WORK. Every assertion here so far
+    // varies the DIRECTORY argument; the defect was in the PATH. `listFiles`
+    // returns each entry "prefixed by `directory` exactly as given", and since
+    // Phase 24 stage V the Forge's inbox directory arrives with a trailing
+    // separator - so the archive really comes back as `blender-inbox//imported/
+    // Hull.glb`, the prefix test missed, and the tool re-imported the archived
+    // drop over the author's `.forge` about thirty times a minute.
+    SOL_CHECK(!forge::forgeIsPendingDrop("C:/repo/blender-inbox//imported/Hull.glb", kInbox));
+    SOL_CHECK(
+        !forge::forgeIsPendingDrop("C:/repo/blender-inbox//imported/Hull.glb", "C:/repo/blender-inbox/"));
+    SOL_CHECK(!forge::forgeIsPendingDrop("C:\\repo\\blender-inbox\\\\imported\\Hull.glb", kInbox));
+    // A real drop spelled the same way is still pending: the fix is about the
+    // separator, not about anything under the inbox becoming invisible.
+    SOL_CHECK(forge::forgeIsPendingDrop("C:/repo/blender-inbox//Hull.glb", kInbox));
     SOL_CHECK(forge::forgeIsPendingDrop("C:/repo/blender-inbox/reimported/Hull.glb", kInbox));
 }
 

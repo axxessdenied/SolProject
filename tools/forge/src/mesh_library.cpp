@@ -50,13 +50,32 @@ namespace {
 // comparison have to be normalised before they can be compared at all:
 // `listFiles` emits '/', but a directory handed in from a build definition or a
 // command line may carry '\' and a trailing separator.
+//
+// ⚑⚑⚑ AND A REPEATED SEPARATOR, WHICH IS THE THIRD TIME A TRAILING '/' ON A
+// DIRECTORY HAS COST THIS PROGRAMME A DEFECT AND THE FIRST TIME IT DESTROYED
+// SOMEBODY'S WORK. `listFiles` returns each path "prefixed by `directory`
+// exactly as given", so an inbox of `.../blender-inbox/` lists its archive as
+// `.../blender-inbox//imported/shuttle.glb` - and `forgeIsPendingDrop` then
+// compares that against an archive prefix that `normalisedDirectory` HAS
+// cleaned. The prefix does not match, the archived drop reads as pending, and
+// the tool re-imports it about thirty times a minute, overwriting the author's
+// `.forge` and every Forge-side edit in it. It is the same trap
+// `def_editor.cpp`'s `joinPath` names: since Phase 24 stage V, project
+// directories arrive with a trailing separator where `game/data` never had one.
+//
+// ⚑ A LEADING pair is kept, because `//server/share` is one path and not two.
+// Nothing here produces a UNC path today; collapsing it would be a rule that is
+// wrong the first time something does.
 [[nodiscard]] std::string normalisedPath(const std::string& path)
 {
-    std::string out = path;
-    for (char& c : out) {
-        if (c == '\\') {
-            c = '/';
+    std::string out;
+    out.reserve(path.size());
+    for (const char raw : path) {
+        const char c = raw == '\\' ? '/' : raw;
+        if (c == '/' && out.size() > 1 && out.back() == '/') {
+            continue;
         }
+        out.push_back(c);
     }
     return out;
 }
