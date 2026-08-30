@@ -69,12 +69,18 @@
 # ⚑⚑⚑ EVERY HULL IN THIS FILE DECLARES A `class` AND A `role` SINCE PHASE 32
 # STAGE A, AND EVERY ONE OF THEM IS OUT OF ITS OWN CLASS BAND ON PURPOSE. The
 # class is gdd.md §11.3's cell for that ship type - Shuttle and Interceptor in
-# Light (1), Freighter in Heavy (3) - and the LENGTH is whatever the shared
+# `light`, Freighter in `heavy` - and the LENGTH is whatever the shared
 # placeholder mesh happens to measure at this hull's `scale`:
 #
-#   sol.shuttle       12.0 m   declares class 1 (20-45 m)    measures class 0
-#   sol.interceptor    9.6 m   declares class 1 (20-45 m)    measures class 0
-#   sol.freighter     48.0 m   declares class 3 (120-300 m)  measures class 2
+#   sol.shuttle       12.0 m   declares light (20-45 m)     measures skiff
+#   sol.interceptor    9.6 m   declares light (20-45 m)     measures skiff
+#   sol.freighter     48.0 m   declares heavy (120-300 m)   measures medium
+#
+# ⚑ `class` IS A WORD AND NOT A NUMBER, decided at stage A's checkpoint: 11.1
+# numbers its rows, but a number in a file has no wrong spelling - `class = 9`
+# is a typo the schema catches and `class = 2` where the author meant 3 is not,
+# where `heavy` and `medium` cannot be confused by a slipped digit. It also
+# reads like every other enumerated key here: `kind`, `size`, `region`.
 #
 # The Forge's hull spine measures all three and says so. IT IS NOT A BUG LIST
 # TO SILENCE, IT IS THE ARTIST'S WORK QUEUE: one 12 m mesh does duty for three
@@ -121,7 +127,7 @@
 [[ship]]
 id = "sol.shuttle"           # the player's ship (game/src/space_world.hpp)
 name = "Shuttle"
-class = 1
+class = "light"
 role = "logistics"
 model = "ship"
 scale = 1.0
@@ -196,7 +202,7 @@ crew_berths = 1
 [[ship]]
 id = "sol.interceptor"
 name = "Interceptor"
-class = 1
+class = "light"
 role = "line"
 model = "ship"
 scale = 0.8
@@ -267,7 +273,7 @@ crew_berths = 1
 [[ship]]
 id = "sol.freighter"
 name = "Freighter"
-class = 3
+class = "heavy"
 role = "logistics"
 model = "ship"
 # ⚑ The first ship in this game to fly its own interior (Phase 19). The eye
@@ -304,7 +310,7 @@ crew_berths = 2
   # nose at a raider to shoot back is a freighter that cannot run away while
   # doing it - which is the whole of what a turret buys, and since stage C2 it
   # is what this hull actually does. Its size is `medium` because this hull
-  # DECLARES class 3 above, and a medium mount takes a small gun
+  # DECLARES `class = "heavy"` above, and a medium mount takes a small gun
   # (`mountAccepts`) so the `sol.mining_laser` below still fits without the
   # mount lying about the hull. The laser is authored `fixed`; the ring is what
   # makes it traverse.

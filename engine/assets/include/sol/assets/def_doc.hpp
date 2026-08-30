@@ -251,12 +251,4 @@ struct DefDoc
 [[nodiscard]] std::string defString(std::string_view value);
 [[nodiscard]] std::string defBool(bool value);
 
-// ⚑⚑ THE FIRST INTEGER WRITER IN THIS FILE, AND IT IS NEEDED RATHER THAN TIDY
-// (Phase 32 stage A). `defNumber` ALWAYS emits a `.`, on the argument above
-// that every number the def schema reads lands in a float - but two keys are
-// read with `optionalUint`, which checks `isInteger` and therefore REFUSES
-// `1.0`. A tool writing a hull class through `defNumber` would produce a file
-// its own validation pass rejects, one edit after the author touched a combo.
-[[nodiscard]] std::string defInteger(std::int64_t value);
-
 } // namespace sol::assets

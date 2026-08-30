@@ -574,9 +574,4 @@ std::string defBool(bool value)
     return value ? "true" : "false";
 }
 
-std::string defInteger(std::int64_t value)
-{
-    return std::to_string(value);
-}
-
 } // namespace sol::assets

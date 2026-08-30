@@ -402,20 +402,23 @@ bool parseShip(const TomlValue& table,
     reader.optionalString("cockpit", def.cockpit);
     reader.optionalFloat("scale", def.scale);
 
-    // ⚑ Phase 32 stage A. Both optional, both range-checked, NEITHER defaulted:
-    // a class this parser picked would be gdd.md 11.1's weight, mount budget
-    // and crew written on the author's behalf, and a role it picked would be
-    // 11.2's answer to what the ship is for. `present` is what says so, because
-    // class 0 and `line` are both real answers and cannot double as "unset".
-    reader.optionalUint("class", def.hullClass, &def.hasHullClass);
+    // ⚑ Phase 32 stage A. Both optional, both a WORD out of a closed set,
+    // NEITHER defaulted: a class this parser picked would be gdd.md 11.1's
+    // weight, mount budget and crew written on the author's behalf, and a role
+    // it picked would be 11.2's answer to what the ship is for. `present` is
+    // what says so, because `skiff` and `line` are both real answers and
+    // neither can double as "unset".
+    std::string classText;
     std::string roleText;
+    reader.optionalString("class", classText, &def.hasHullClass);
     reader.optionalString("role", roleText, &def.hasRole);
+    if (!reader.failed && def.hasHullClass && !parseHullClass(classText, def.hullClass)) {
+        reader.fail("'class' is not a hull class: '" + classText +
+                    "' (skiff, light, medium, heavy, cruiser, capital, supercapital, titan)");
+    }
     if (!reader.failed && def.hasRole && !parseHullRole(roleText, def.role)) {
         reader.fail("'role' is not a hull role: '" + roleText +
                     "' (line, carrier, logistics, support, covert, industrial)");
-    }
-    if (!reader.failed && def.hasHullClass && def.hullClass >= kHullClassCount) {
-        reader.fail("'class' must be 0-7 (gdd.md 11.1's hull classes)");
     }
 
     ShipFlightTuning& flight = def.flight;
@@ -1688,11 +1691,14 @@ static_assert(std::size(kHullRoleNames) == kHullRoleCount, "a hull role is missi
 // claim. The titan band has no top.
 constexpr float kHullClassBounds[] = {8.0f, 20.0f, 45.0f, 120.0f, 300.0f, 600.0f, 1200.0f, 3000.0f};
 
+// ⚑ One word each, lowercase, as every other enumerated def value in this game
+// is. 11.1 hyphenates "Super-capital" and this does not: a def spelling is a
+// token an author types, and the hyphen is typography.
 constexpr const char* kHullClassNames[] = {
-    "Skiff", "Light", "Medium", "Heavy", "Cruiser", "Capital", "Super-capital", "Titan"};
+    "skiff", "light", "medium", "heavy", "cruiser", "capital", "supercapital", "titan"};
 
 static_assert(std::size(kHullClassBounds) == kHullClassCount, "a hull class is missing its band");
-static_assert(std::size(kHullClassNames) == kHullClassCount, "a hull class is missing its name");
+static_assert(std::size(kHullClassNames) == kHullClassCount, "a hull class is missing its def spelling");
 
 } // namespace
 
@@ -1713,47 +1719,57 @@ bool parseHullRole(std::string_view text, HullRole& out)
     return false;
 }
 
-HullClassBand hullClassBand(std::uint32_t hullClass)
+const char* hullClassName(HullClass hullClass)
 {
-    if (hullClass >= kHullClassCount) {
-        return {};
-    }
-    HullClassBand band;
-    band.minLength = kHullClassBounds[hullClass];
-    // ⚑ The top of the last band is infinity rather than a big number, because
-    // a big number is a length a titan could be authored past. 11.1 writes it
-    // as "3 km+" and this is that plus sign.
-    band.maxLength = hullClass + 1 < kHullClassCount ? kHullClassBounds[hullClass + 1]
-                                                     : std::numeric_limits<float>::infinity();
-    return band;
+    const auto index = static_cast<std::size_t>(hullClass);
+    return index < kHullClassCount ? kHullClassNames[index] : "?";
 }
 
-const char* hullClassName(std::uint32_t hullClass)
+bool parseHullClass(std::string_view text, HullClass& out)
 {
-    return hullClass < kHullClassCount ? kHullClassNames[hullClass] : "?";
-}
-
-bool hullClassForLength(float metres, std::uint32_t& out)
-{
-    if (!(metres >= kHullClassBounds[0])) {
-        return false;
-    }
-    for (std::uint32_t i = kHullClassCount; i > 0; --i) {
-        if (metres >= kHullClassBounds[i - 1]) {
-            out = i - 1;
+    for (std::size_t i = 0; i < kHullClassCount; ++i) {
+        if (text == kHullClassNames[i]) {
+            out = static_cast<HullClass>(i);
             return true;
         }
     }
     return false;
 }
 
-bool hullLengthInBand(std::uint32_t hullClass, float metres)
+HullClassBand hullClassBand(HullClass hullClass)
 {
-    if (hullClass >= kHullClassCount) {
+    const auto index = static_cast<std::size_t>(hullClass);
+    if (index >= kHullClassCount) {
+        return {};
+    }
+    HullClassBand band;
+    band.minLength = kHullClassBounds[index];
+    // ⚑ The top of the last band is infinity rather than a big number, because
+    // a big number is a length a titan could be authored past. 11.1 writes it
+    // as "3 km+" and this is that plus sign.
+    band.maxLength =
+        index + 1 < kHullClassCount ? kHullClassBounds[index + 1] : std::numeric_limits<float>::infinity();
+    return band;
+}
+
+bool hullClassForLength(float metres, HullClass& out)
+{
+    if (!(metres >= kHullClassBounds[0])) {
         return false;
     }
+    for (std::size_t i = kHullClassCount; i > 0; --i) {
+        if (metres >= kHullClassBounds[i - 1]) {
+            out = static_cast<HullClass>(i - 1);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool hullLengthInBand(HullClass hullClass, float metres)
+{
     const HullClassBand band = hullClassBand(hullClass);
-    return metres >= band.minLength && metres < band.maxLength;
+    return band.maxLength > 0.0f && metres >= band.minLength && metres < band.maxLength;
 }
 
 const ShipMount* ShipDef::findMount(std::string_view mountId) const

@@ -873,31 +873,3 @@ SOL_TEST(defDocumentInsertLeavesEveryOtherByteAlone)
         reportFirstDifferingLine("ships.toml", source, without);
     }
 }
-
-// ⚑⚑ THE TRAP `defInteger` EXISTS FOR, WRITTEN DOWN AS A TEST (Phase 32 stage
-// A). Every numeric writer in this file emits a `.` on purpose - the def schema
-// reads every number into a float - but `class` and `crew_berths` are read with
-// `optionalUint`, which checks `isInteger` and therefore REFUSES `1.0`. So the
-// Forge writing a hull class through `defNumber` would produce a file that its
-// own validation pass rejects on the next keystroke, and the round trip below
-// is what says so. Both directions are asserted, because only the failing half
-// explains why the writer is here at all.
-SOL_TEST(defIntegerWritesAKeyTheStrictSchemaWillReadBack)
-{
-    const auto merges = [](const std::string& value, std::string& error) {
-        const std::string toml = "[[ship]]\nid = \"sol.probe\"\nname = \"Probe\"\nclass = " + value + "\n";
-        assets::DefDatabase db;
-        return db.mergeToml(toml.c_str(), toml.size(), "ships.toml", &error);
-    };
-
-    std::string error;
-    SOL_CHECK(merges(assets::defInteger(3), error));
-    SOL_CHECK(assets::defInteger(3) == "3");
-    SOL_CHECK(assets::defInteger(0) == "0");
-
-    // The counterfactual, and it is the whole reason for the function: the
-    // writer every other key in this tool uses would have written `3.0` here.
-    SOL_CHECK(assets::defNumber(3.0f) == "3.0");
-    SOL_CHECK(!merges(assets::defNumber(3.0f), error));
-    SOL_CHECK(error.find("'class'") != std::string::npos);
-}

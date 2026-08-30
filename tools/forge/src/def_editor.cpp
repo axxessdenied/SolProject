@@ -1110,44 +1110,39 @@ bool DefEditor::drawContentRow(DefRow& row, const std::vector<std::string>& mode
 
         // ⚑⚑ PHASE 32 STAGE A: WHAT THE HULL IS (gdd.md 11.1) AND WHAT IT IS
         // FOR (11.2). Both are combos with an explicit "(unset)" row, because
-        // ABSENT IS A REAL STATE and not a zero: class 0 is Skiff and the first
-        // role is `line`, so a widget that could not clear the key would make
-        // every hull this tool touched declare something its author never said.
-        const assets::DefKey* classKey = row.find("class");
-        const int declaredClass =
-            classKey != nullptr ? std::atoi(std::string(classKey->value()).c_str()) : -1;
-        char classLabel[48];
-        if (declaredClass < 0) {
-            std::snprintf(classLabel, sizeof(classLabel), "(unset)");
-        } else {
-            std::snprintf(classLabel,
-                          sizeof(classLabel),
-                          "%d %s",
-                          declaredClass,
-                          assets::hullClassName(static_cast<std::uint32_t>(declaredClass)));
-        }
+        // ABSENT IS A REAL STATE and not a blank: `skiff` and `line` are the
+        // first members of their sets, so a widget that could not clear the key
+        // would make every hull this tool touched declare something its author
+        // never said.
+        const std::string classText = stringOr(row, "class", "");
+        assets::HullClass declared = assets::HullClass::Skiff;
+        const bool hasClass = assets::parseHullClass(classText, declared);
         ImGui::SetNextItemWidth(180.0f);
-        if (ImGui::BeginCombo("class", classLabel)) {
-            if (ImGui::Selectable("(unset)", declaredClass < 0) && declaredClass >= 0) {
+        if (ImGui::BeginCombo("class", hasClass ? classText.c_str() : "(unset)")) {
+            if (ImGui::Selectable("(unset)", classText.empty()) && !classText.empty()) {
                 beginEdit("clear class");
                 row.remove("class");
                 changed = true;
             }
-            for (std::uint32_t candidate = 0; candidate < assets::kHullClassCount; ++candidate) {
-                char option[48];
+            for (std::size_t i = 0; i < assets::kHullClassCount; ++i) {
+                const auto candidate = static_cast<assets::HullClass>(i);
+                const assets::HullClassBand band = assets::hullClassBand(candidate);
+                // ⚑ The LABEL carries 11.1's row number and the band; the VALUE
+                // written is the word alone. An author reading the table thinks
+                // "class 3", and the option that says so is what stops them
+                // typing `class = 3` into a key that no longer takes one.
+                char option[64];
                 std::snprintf(option,
                               sizeof(option),
-                              "%u %s (%.0f-%.0f m)",
-                              candidate,
+                              "%s (class %zu, %.0f-%.0f m)",
                               assets::hullClassName(candidate),
-                              static_cast<double>(assets::hullClassBand(candidate).minLength),
-                              static_cast<double>(assets::hullClassBand(candidate).maxLength));
-                const bool selected = static_cast<int>(candidate) == declaredClass;
+                              i,
+                              static_cast<double>(band.minLength),
+                              static_cast<double>(band.maxLength));
+                const bool selected = hasClass && candidate == declared;
                 if (ImGui::Selectable(option, selected) && !selected) {
                     beginEdit("set class");
-                    // ⚑ `defInteger` and NOT `defNumber`: `class` is read with
-                    // `optionalUint`, which refuses `1.0`.
-                    row.set("class", assets::defInteger(candidate));
+                    row.set("class", assets::defString(assets::hullClassName(candidate)));
                     changed = true;
                 }
             }
@@ -1183,16 +1178,14 @@ bool DefEditor::drawContentRow(DefRow& row, const std::vector<std::string>& mode
         const float length = openMeshLength * scale;
         if (length > 0.0f) {
             ImGui::Text("  measures %.1f m", static_cast<double>(length));
-            if (declaredClass < 0) {
+            if (!hasClass) {
                 ImGui::TextDisabled("  no `class` authored: nothing for gdd.md 11.1 to check");
             } else {
-                const auto declared = static_cast<std::uint32_t>(declaredClass);
                 const assets::HullClassBand band = assets::hullClassBand(declared);
-                std::uint32_t measured = 0;
+                assets::HullClass measured = assets::HullClass::Skiff;
                 const bool classified = assets::hullClassForLength(length, measured);
                 if (assets::hullLengthInBand(declared, length)) {
-                    ImGui::TextDisabled("  in band: class %u %s is %.0f-%.0f m",
-                                        declared,
+                    ImGui::TextDisabled("  in band: %s is %.0f-%.0f m",
                                         assets::hullClassName(declared),
                                         static_cast<double>(band.minLength),
                                         static_cast<double>(band.maxLength));
@@ -1200,18 +1193,14 @@ bool DefEditor::drawContentRow(DefRow& row, const std::vector<std::string>& mode
                     ImGui::PushTextWrapPos(0.0f);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
                     if (classified) {
-                        ImGui::Text("  OUT OF BAND: class %u %s is %.0f-%.0f m, and this hull "
-                                    "measures class %u %s",
-                                    declared,
+                        ImGui::Text("  OUT OF BAND: %s is %.0f-%.0f m, and this hull measures %s",
                                     assets::hullClassName(declared),
                                     static_cast<double>(band.minLength),
                                     static_cast<double>(band.maxLength),
-                                    measured,
                                     assets::hullClassName(measured));
                     } else {
-                        ImGui::Text("  OUT OF BAND: class %u %s is %.0f-%.0f m, and this hull is "
-                                    "shorter than any class - 11.1 starts at 8 m",
-                                    declared,
+                        ImGui::Text("  OUT OF BAND: %s is %.0f-%.0f m, and this hull is shorter than "
+                                    "any class - 11.1 starts at 8 m",
                                     assets::hullClassName(declared),
                                     static_cast<double>(band.minLength),
                                     static_cast<double>(band.maxLength));
@@ -1277,19 +1266,15 @@ void drawHullSpine(const std::vector<HullBand>& bands)
             ++outOfBand;
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
             if (band.hasMeasuredClass) {
-                ImGui::Text("  class %u %s / %s - OUT OF BAND: that class is %.0f-%.0f m, and this "
-                            "measures class %u %s",
-                            band.declaredClass,
+                ImGui::Text("  %s / %s - OUT OF BAND: that class is %.0f-%.0f m, and this measures %s",
                             assets::hullClassName(band.declaredClass),
                             role,
                             static_cast<double>(want.minLength),
                             static_cast<double>(want.maxLength),
-                            band.measuredClass,
                             assets::hullClassName(band.measuredClass));
             } else {
-                ImGui::Text("  class %u %s / %s - OUT OF BAND: that class is %.0f-%.0f m, and this is "
-                            "shorter than any class",
-                            band.declaredClass,
+                ImGui::Text("  %s / %s - OUT OF BAND: that class is %.0f-%.0f m, and this is shorter "
+                            "than any class",
                             assets::hullClassName(band.declaredClass),
                             role,
                             static_cast<double>(want.minLength),
@@ -1298,8 +1283,7 @@ void drawHullSpine(const std::vector<HullBand>& bands)
             ImGui::PopStyleColor();
             break;
         case HullBand::Status::InBand:
-            ImGui::TextDisabled("  class %u %s / %s - in band (%.0f-%.0f m)",
-                                band.declaredClass,
+            ImGui::TextDisabled("  %s / %s - in band (%.0f-%.0f m)",
                                 assets::hullClassName(band.declaredClass),
                                 role,
                                 static_cast<double>(want.minLength),
@@ -1311,11 +1295,10 @@ void drawHullSpine(const std::vector<HullBand>& bands)
         case HullBand::Status::NoMesh:
             // ⚑ `NoMesh` is checked BEFORE `NoClass`, so a hull that declares
             // neither lands here - and printing `band.declaredClass` would say
-            // "class 0 Skiff" about a hull that has never said anything. The
-            // zero is the struct's initialiser, not an author's answer.
+            // "skiff" about a hull that has never said anything. `Skiff` is the
+            // struct's initialiser, not an author's answer.
             if (band.hasClass) {
-                ImGui::TextDisabled("  class %u %s / %s - no mesh to measure: [[model]] '%s'",
-                                    band.declaredClass,
+                ImGui::TextDisabled("  %s / %s - no mesh to measure: [[model]] '%s'",
                                     assets::hullClassName(band.declaredClass),
                                     role,
                                     band.model.c_str());

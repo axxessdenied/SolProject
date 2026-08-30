@@ -289,8 +289,41 @@ inline constexpr std::size_t kHullRoleCount = static_cast<std::size_t>(HullRole:
 [[nodiscard]] const char* hullRoleName(HullRole role);
 [[nodiscard]] bool parseHullRole(std::string_view text, HullRole& out);
 
-// gdd.md 11.1's eight classes, 0 (Skiff) through 7 (Titan).
-inline constexpr std::uint32_t kHullClassCount = 8;
+// What a hull WEIGHS (gdd.md 11.1): the scale band, the mount budget and
+// roughly what it costs to keep alive, in eight steps.
+//
+// ⚑⚑⚑ IT IS A WORD IN THE FILE AND NOT A NUMBER, WHICH IS THE CHECKPOINT
+// RULING ON STAGE A'S OWN VOCABULARY. 11.1 numbers its rows and the first cut
+// of this key was `class = 3`, which reads as a magic constant in a file whose
+// every other enumerated key is a word - `kind = "turret"`, `size = "medium"`,
+// `region = "core"`. A number also has no wrong spelling: `class = 9` is a
+// typo the schema can catch, but `class = 2` where the author meant 3 is not,
+// while `"heavy"` and `"medium"` cannot be confused by a slipped digit.
+//
+// ⚑⚑ THE DECLARATION ORDER IS THE SIZE ORDER AND EVERYTHING BELOW DEPENDS ON
+// IT - `hullClassBand` indexes the bound table by the ordinal, so moving a
+// member here re-bands every hull in the game. The ordinal IS 11.1's class
+// number, which is what lets the tool print "heavy (class 3)" and stay honest
+// about the table it came from.
+enum class HullClass : std::uint32_t
+{
+    Skiff = 0,    // 8-20 m
+    Light,        // 20-45 m
+    Medium,       // 45-120 m
+    Heavy,        // 120-300 m
+    Cruiser,      // 300-600 m
+    Capital,      // 600-1200 m
+    SuperCapital, // 1.2-3 km
+    Titan,        // 3 km+
+    Count,
+};
+
+inline constexpr std::size_t kHullClassCount = static_cast<std::size_t>(HullClass::Count);
+
+// The def spellings, and the only place they live - the same shape
+// `mountKindName`/`parseMountKind` has, for the same reason.
+[[nodiscard]] const char* hullClassName(HullClass hullClass);
+[[nodiscard]] bool parseHullClass(std::string_view text, HullClass& out);
 
 // ⚑⚑⚑ THE BAND IS A *LENGTH* BAND, AND THAT IS THE FINDING PHASE 32's RE-READ
 // TURNED ON: NOTHING IN A `ShipDef` IS A LENGTH. `model` names a mesh, `scale`
@@ -309,22 +342,18 @@ struct HullClassBand
 {
     float minLength = 0.0f; // metres, inclusive
     float maxLength = 0.0f; // metres, EXCLUSIVE - so the bands partition, and a
-                            // hull measuring exactly 20 m is class 1 not class 0
+                            // hull measuring exactly 20 m is Light, not Skiff
 };
 
-[[nodiscard]] HullClassBand hullClassBand(std::uint32_t hullClass);
-
-// "Skiff", "Light", ... "Titan"; "?" for a class outside 0-7.
-[[nodiscard]] const char* hullClassName(std::uint32_t hullClass);
+[[nodiscard]] HullClassBand hullClassBand(HullClass hullClass);
 
 // The class a measured length actually falls in. FALSE below the smallest band:
-// under 8 m is not a small ship, it is a fitting, and saying "class 0" about it
-// would be this function inventing the answer the bands decline to give.
-[[nodiscard]] bool hullClassForLength(float metres, std::uint32_t& out);
+// under 8 m is not a small ship, it is a fitting, and answering `Skiff` would
+// be this function inventing the answer the bands decline to give.
+[[nodiscard]] bool hullClassForLength(float metres, HullClass& out);
 
-// Whether a measured length sits inside the band a class declares. False for a
-// class outside 0-7, which has no band to sit inside.
-[[nodiscard]] bool hullLengthInBand(std::uint32_t hullClass, float metres);
+// Whether a measured length sits inside the band a class declares.
+[[nodiscard]] bool hullLengthInBand(HullClass hullClass, float metres);
 
 struct ShipDef
 {
@@ -340,8 +369,8 @@ struct ShipDef
     float scale = 1.0f;
     // ⚑⚑ WHAT THE HULL IS (gdd.md 11.1) AND WHAT IT IS FOR (11.2), BOTH
     // OPTIONAL AND BOTH WITH NO DEFAULT - which is the whole reason each
-    // carries a `has` flag rather than leaning on a sentinel. Class 0 is a real
-    // class (Skiff) and `Line` is a real role, so there is no spare value to
+    // carries a `has` flag rather than leaning on a sentinel. `Skiff` is a real
+    // class and `Line` is a real role, so there is no spare value to
     // mean "unset"; and a class this parser invented would be the schema
     // deciding a hull's weight, its mount budget and its crew, while a role it
     // invented would be the schema deciding what the ship is FOR. Absent means
@@ -351,7 +380,7 @@ struct ShipDef
     // vocabulary Phase 32's rosters and spawn tables are built on, and the only
     // consumer this stage ships is the Forge's band check - which is a
     // statement about content, not a rule the game enforces at runtime.
-    std::uint32_t hullClass = 0;
+    HullClass hullClass = HullClass::Skiff;
     bool hasHullClass = false;
     HullRole role = HullRole::Line;
     bool hasRole = false;

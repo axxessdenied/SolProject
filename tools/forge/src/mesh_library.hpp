@@ -496,13 +496,13 @@ struct HullBand
     float length = 0.0f;
     bool measured = false;
     bool hasClass = false;
-    std::uint32_t declaredClass = 0;
+    sol::assets::HullClass declaredClass = sol::assets::HullClass::Skiff;
     bool hasRole = false;
     sol::assets::HullRole role = sol::assets::HullRole::Line;
     // The class the GEOMETRY is. False when unmeasured, and false for a hull
     // shorter than the smallest band - under 8 m there is no class to name.
     bool hasMeasuredClass = false;
-    std::uint32_t measuredClass = 0;
+    sol::assets::HullClass measuredClass = sol::assets::HullClass::Skiff;
 
     enum class Status
     {

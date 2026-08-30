@@ -2866,7 +2866,7 @@ id = "sol.small"
 name = "Small"
 model = "hull"
 scale = 1.0
-class = 0
+class = "skiff"
 role = "line"
 
 [[ship]]
@@ -2874,7 +2874,7 @@ id = "sol.stretched"
 name = "Stretched"
 model = "hull"
 scale = 4.0
-class = 0
+class = "skiff"
 role = "logistics"
 
 [[ship]]
@@ -2888,7 +2888,7 @@ id = "sol.unmeasurable"
 name = "Unmeasurable"
 model = "unbuilt"
 scale = 1.0
-class = 3
+class = "heavy"
 )";
     sol::assets::DefDatabase defs;
     std::string error;
@@ -2909,13 +2909,13 @@ class = 3
     SOL_CHECK(std::fabs(bands[0].length - 12.0f) < 1e-4f);
     SOL_CHECK(bands[0].measured);
     SOL_CHECK(bands[0].hasMeasuredClass);
-    SOL_CHECK(bands[0].measuredClass == 0);
+    SOL_CHECK(bands[0].measuredClass == sol::assets::HullClass::Skiff);
     SOL_CHECK(bands[0].status() == forge::HullBand::Status::InBand);
 
     SOL_CHECK(bands[1].shipId == "sol.stretched");
     SOL_CHECK(bands[1].scale == 4.0f);
     SOL_CHECK(std::fabs(bands[1].length - 48.0f) < 1e-4f);
-    SOL_CHECK(bands[1].measuredClass == 2); // 45-120 m
+    SOL_CHECK(bands[1].measuredClass == sol::assets::HullClass::Medium); // 45-120 m
     SOL_CHECK(bands[1].status() == forge::HullBand::Status::OutOfBand);
     SOL_CHECK(bands[1].role == sol::assets::HullRole::Logistics);
 
@@ -2943,7 +2943,7 @@ class = 3
 id = "sol.orphan"
 name = "Orphan"
 model = "no_such_model"
-class = 1
+class = "light"
 )";
     SOL_REQUIRE(defs.mergeToml(orphan.c_str(), orphan.size(), "orphan.toml", &error));
     const std::vector<forge::HullBand> withOrphan = forge::hullBands(defs, lengths);
@@ -3003,9 +3003,9 @@ radius = 1.0
 // three ships and `scale` is the only thing telling them apart, so the numbers
 // below are geometry rather than opinion:
 //
-//   sol.shuttle      scale 1.0    12.0 m   declares class 1 (20-45 m)    is class 0
-//   sol.interceptor  scale 0.8     9.6 m   declares class 1 (20-45 m)    is class 0
-//   sol.freighter    scale 4.0    48.0 m   declares class 3 (120-300 m)  is class 2
+//   sol.shuttle      scale 1.0    12.0 m   declares light (20-45 m)     is skiff
+//   sol.interceptor  scale 0.8     9.6 m   declares light (20-45 m)     is skiff
+//   sol.freighter    scale 4.0    48.0 m   declares heavy (120-300 m)   is medium
 //
 // ⚑⚑ IT IS PINNED AS THE EXPECTED STATE, NOT AS A FAILURE. The user's ruling
 // is that the bands are right, the content is wrong, and the meshes are not
@@ -3026,19 +3026,21 @@ SOL_TEST(theThreeShippedHullsAreAllOutsideTheClassBandTheyDeclare)
     const std::vector<forge::HullBand> bands = forge::hullBands(defs, lengths);
     SOL_REQUIRE(bands.size() == 3);
 
+    using sol::assets::HullClass;
+
     struct Expected
     {
         const char* shipId;
         float length;
-        std::uint32_t declared;
-        std::uint32_t measured;
+        HullClass declared;
+        HullClass measured;
         sol::assets::HullRole role;
     };
 
     const Expected kHulls[3] = {
-        {"sol.shuttle", 12.0f, 1, 0, sol::assets::HullRole::Logistics},
-        {"sol.interceptor", 9.6f, 1, 0, sol::assets::HullRole::Line},
-        {"sol.freighter", 48.0f, 3, 2, sol::assets::HullRole::Logistics},
+        {"sol.shuttle", 12.0f, HullClass::Light, HullClass::Skiff, sol::assets::HullRole::Logistics},
+        {"sol.interceptor", 9.6f, HullClass::Light, HullClass::Skiff, sol::assets::HullRole::Line},
+        {"sol.freighter", 48.0f, HullClass::Heavy, HullClass::Medium, sol::assets::HullRole::Logistics},
     };
 
     for (std::size_t i = 0; i < 3; ++i) {
