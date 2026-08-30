@@ -205,11 +205,18 @@ public:
     // rather than being deleted with it - see `DefDoc::eraseRow`.
     [[nodiscard]] bool removeMount(const std::string& hullId, const std::string& mountId);
 
-    // Moves a mount's `at`. ⚑ NO UNDO ENTRY OF ITS OWN, because this is what a
-    // viewport DRAG calls sixty times a second - the caller pushes one entry
-    // when the gesture begins, exactly as `noteActivation` does for a slider.
+    // Writes one of a mount's vector keys - `at` or `aim`.
+    //
+    // ⚑ NO UNDO ENTRY OF ITS OWN, because this is what a viewport DRAG calls
+    // sixty times a second: the caller pushes one entry when the gesture
+    // begins, exactly as `noteActivation` does for a slider. The same reason
+    // covers `setMountNumber`, which is what an `arc` slider spends.
+    [[nodiscard]] bool setMountVector(const std::string& hullId,
+                                      const std::string& mountId,
+                                      const char* key,
+                                      const float (&value)[3]);
     [[nodiscard]] bool
-    setMountAt(const std::string& hullId, const std::string& mountId, const float (&at)[3]);
+    setMountNumber(const std::string& hullId, const std::string& mountId, const char* key, float value);
 
     // Sets or clears one key on one mount, by its authored text. One undo entry.
     // Clearing `at` is what makes a mount internal, which is why removing a key

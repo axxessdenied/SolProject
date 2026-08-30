@@ -117,6 +117,106 @@ void addMountMarker(renderer::DebugDrawRenderer& lines,
                color);
 }
 
+// The world-space length of the aim line and its handle, as a multiple of the
+// marker radius. ⚑ A MULTIPLE OF THE RADIUS AND NOT OF THE HULL, so the line is
+// the same length on screen at every zoom - a facing is a direction, and a line
+// whose length meant something would be a line an author reads a number off.
+constexpr float kAimLength = 4.0f;
+
+// A unit vector perpendicular to `v`. ⚑ Built off whichever world axis `v` is
+// LEAST aligned with, because crossing with a fixed axis degenerates to zero
+// exactly when the aim points along it - and `ships.toml` has three mounts
+// aiming down +Y and four down +Z, so the degenerate case is the common one.
+[[nodiscard]] core::Vec3 anyPerpendicular(core::Vec3 v)
+{
+    const core::Vec3 axis =
+        std::fabs(v.x) < std::fabs(v.y)
+            ? (std::fabs(v.x) < std::fabs(v.z) ? core::Vec3{1.0f, 0.0f, 0.0f} : core::Vec3{0.0f, 0.0f, 1.0f})
+            : (std::fabs(v.y) < std::fabs(v.z) ? core::Vec3{0.0f, 1.0f, 0.0f} : core::Vec3{0.0f, 0.0f, 1.0f});
+    return core::normalize(core::cross(v, axis));
+}
+
+// Pulls one world point onto the near overlay plane, the same uniform scale
+// about the eye `addMountMarker` uses. Returns the pulled point and the factor,
+// so a caller drawing a SHAPE can scale its extent by the same amount and keep
+// the picture pixel-identical.
+[[nodiscard]] core::Vec3 towardEye(const ViewportInput& viewport, core::Vec3 at, float& outScale)
+{
+    constexpr float kFrontDepth = 0.12f;
+    const float depth = -core::transformPoint(viewport.view, at).z;
+    if (depth <= kFrontDepth) {
+        outScale = 1.0f;
+        return at;
+    }
+    const core::Vec3 eye = cameraEye(viewport.view);
+    outScale = kFrontDepth / depth;
+    return {eye.x + (at.x - eye.x) * outScale,
+            eye.y + (at.y - eye.y) * outScale,
+            eye.z + (at.z - eye.z) * outScale};
+}
+
+// ⚑⚑⚑ WHERE A MOUNT POINTS AND HOW FAR IT CAN SWING, WHICH IS THE HALF OF THE
+// SCHEMA STAGE A2 AUTHORED AND NOBODY COULD SEE. `aim` and `arc` were written
+// into `ships.toml` in stage A2, read by nothing until C2, and are still the
+// only two mount keys whose value is a claim about the SHAPE of a ship that no
+// panel of numbers can check. A 270-degree ring on a dorsal turret either does
+// or does not clear the hull it is bolted to, and the way to find out is to
+// look at it.
+//
+// ⚑⚑ `arc` IS THE FULL CONE ANGLE CENTRED ON `aim`, NOT A HALF-ANGLE, so the
+// rim below stands at arc/2 either side. That reading is `ships.toml`'s,
+// gdd.md 11.5's and decisions/014's, and it is the one number in this schema
+// whose meaning a second author would most plausibly guess wrong - which is
+// exactly why drawing it is worth more than documenting it again.
+//
+// ⚑ A rim at a FIXED distance rather than a cone of a fixed radius: at 180
+// degrees a cone's radius is infinite and at 270 it is negative, and this
+// schema allows both. `at + L * (cos(half) * aim + sin(half) * perp)` is
+// well-defined for every angle from 0 to 360.
+void addAimCone(renderer::DebugDrawRenderer& lines,
+                const ViewportInput& viewport,
+                core::Vec3 at,
+                core::Vec3 aim,
+                float arcDegrees,
+                float length,
+                core::Vec4 color)
+{
+    float scale = 1.0f;
+    const core::Vec3 centre = towardEye(viewport, at, scale);
+    const float reach = length * scale;
+    const core::Vec3 tip{centre.x + aim.x * reach, centre.y + aim.y * reach, centre.z + aim.z * reach};
+    lines.line(centre, tip, color);
+    if (arcDegrees <= 0.0f) {
+        return; // bolted down: a direction and no ring to draw
+    }
+
+    const float half = core::radians(arcDegrees * 0.5f);
+    const core::Vec3 u = anyPerpendicular(aim);
+    const core::Vec3 v = core::cross(aim, u);
+    const float along = std::cos(half) * reach;
+    const float across = std::sin(half) * reach;
+
+    constexpr int kSegments = 16;
+    core::Vec3 previous{};
+    for (int i = 0; i <= kSegments; ++i) {
+        const float t = core::kTwoPi * static_cast<float>(i) / static_cast<float>(kSegments);
+        const float c = std::cos(t) * across;
+        const float d = std::sin(t) * across;
+        const core::Vec3 rim{centre.x + aim.x * along + u.x * c + v.x * d,
+                             centre.y + aim.y * along + u.y * c + v.y * d,
+                             centre.z + aim.z * along + u.z * c + v.z * d};
+        if (i > 0) {
+            lines.line(previous, rim, color);
+        }
+        // Four spokes, so the rim reads as the mouth of a cone rather than as a
+        // free-floating circle. Every fourth segment of sixteen.
+        if (i % 4 == 0) {
+            lines.line(centre, rim, color);
+        }
+        previous = rim;
+    }
+}
+
 // ⚑⚑⚑ IS THIS MUZZLE INSIDE THE HULL - THE ONE READING THAT WOULD HAVE CAUGHT
 // PHASE 31 STAGE C1's DEFECT BEFORE A PERSON FOUND IT BY HAND, and the reason
 // this file bothers with a second ray at all.
@@ -277,6 +377,8 @@ void MountTool::gatherMarkers(const DefEditor& editor, std::vector<Marker>& out)
         }
         out.push_back({mount.id,
                        {mount.at[0], mount.at[1], mount.at[2]},
+                       core::normalize(core::Vec3{mount.aim[0], mount.aim[1], mount.aim[2]}),
+                       mount.arc,
                        mount.kind,
                        assets::mountTakesWeapon(mount.kind)});
     }
@@ -303,6 +405,28 @@ int MountTool::pickMarker(const ViewportInput& viewport, std::span<const Marker>
         }
     }
     return best;
+}
+
+bool MountTool::aimHandle(const ViewportInput& viewport,
+                          std::span<const Marker> markers,
+                          core::Vec3& out) const
+{
+    if (m_selected.empty()) {
+        return false;
+    }
+    const auto found =
+        std::find_if(markers.begin(), markers.end(), [&](const Marker& m) { return m.id == m_selected; });
+    if (found == markers.end()) {
+        return false;
+    }
+    // The handle sits at the end of the aim line, in the world - the same place
+    // the line is drawn to before the overlay pull, so the pick and the picture
+    // agree by construction rather than by two expressions of one length.
+    const float reach = viewport.cameraDistance * 0.024f * kAimLength;
+    out = {found->at.x + found->aim.x * reach,
+           found->at.y + found->aim.y * reach,
+           found->at.z + found->aim.z * reach};
+    return true;
 }
 
 bool MountTool::pickSurface(const ViewportInput& viewport, core::Vec3& point, core::Vec3& normal) const
@@ -372,15 +496,41 @@ bool MountTool::update(const ViewportInput& viewport, DefEditor& editor)
         // nothing on the one click an author is most likely to aim at an
         // existing mount - beside the one they already have - and it would
         // cancel the arm with no message to say it had.
+        // ⚑⚑ THE AIM HANDLE IS OFFERED THE PRESS BEFORE THE RINGS, and the
+        // order is the whole of what makes it usable. The handle belongs to the
+        // SELECTED mount and stands a fixed distance from its ring, so on a
+        // dense hull it will often overlap a neighbour's ring - and a press
+        // that re-selected the neighbour instead of re-aiming the mount the
+        // author is working on is a handle that stops working exactly where a
+        // hull gets interesting. Position is the commoner gesture; aim is the
+        // one the author has already committed to by selecting.
+        core::Vec3 handle{};
+        const bool haveHandle = !m_placing && aimHandle(viewport, markers, handle);
+        if (haveHandle) {
+            const ui::ScreenPoint screen =
+                ui::screenPoint(core::transformPoint(viewport.view, handle), viewport.center, viewport.focal);
+            const float dx = screen.position.x - viewport.cursor.x;
+            const float dy = screen.position.y - viewport.cursor.y;
+            if (screen.inFront && std::sqrt((dx * dx) + (dy * dy)) < kGrabPixels) {
+                m_dragging = true;
+                m_grab = Grab::Aim;
+                m_refused = false;
+                m_dragAt = handle;
+                m_dragDepth = -core::transformPoint(viewport.view, handle).z;
+                editor.beginEdit("aim mount");
+                return false;
+            }
+        }
         const int hovered = m_placing ? -1 : pickMarker(viewport, markers);
         if (hovered >= 0) {
             const Marker& marker = markers[static_cast<std::size_t>(hovered)];
             m_selected = marker.id;
             m_dragging = true;
+            m_grab = Grab::Position;
             m_refused = false;
             m_dragAt = marker.at;
             m_dragDepth = -core::transformPoint(viewport.view, marker.at).z;
-            // ⚑ ONE UNDO ENTRY PER DRAG, not per frame. `setMountAt` pushes
+            // ⚑ ONE UNDO ENTRY PER DRAG, not per frame. `setMountVector` pushes
             // none of its own for exactly this reason - a drag writes the
             // document sixty times a second and sixty identical entries bury
             // the state the author actually wants back.
@@ -402,6 +552,22 @@ bool MountTool::update(const ViewportInput& viewport, DefEditor& editor)
             draft.at[0] = point.x;
             draft.at[1] = point.y;
             draft.at[2] = point.z;
+            // ⚑⚑ THE SURFACE'S OWN NORMAL, WHICH IS THE HALF OF A PLACEMENT
+            // THAT A POSITION ALONE CANNOT GIVE. A turret dropped on the dorsal
+            // hull faces up, one dropped on the flank faces out, and neither
+            // needs three numbers typed against a mesh nobody can measure.
+            //
+            // ⚑ Written only when it differs from the schema's default. A gun
+            // placed on the nose of a hull whose nose is -Z gets no `aim` key
+            // at all, which is what an author would have typed and what
+            // `writeMountDraft` refuses to invent.
+            constexpr float kNoseward = 0.9995f; // ~1.8 degrees off the default
+            const float alongNose = -normal.z;
+            draft.hasAim =
+                !(alongNose > kNoseward && std::fabs(normal.x) < 0.03f && std::fabs(normal.y) < 0.03f);
+            draft.aim[0] = normal.x;
+            draft.aim[1] = normal.y;
+            draft.aim[2] = normal.z;
             m_placing = false;
             if (!editor.addMount(m_hull, draft)) {
                 m_status = editor.error();
@@ -422,6 +588,7 @@ bool MountTool::update(const ViewportInput& viewport, DefEditor& editor)
 
     if (!viewport.leftDown) {
         m_dragging = false;
+        m_grab = Grab::None;
         m_refused = false;
         return false;
     }
@@ -439,8 +606,40 @@ bool MountTool::update(const ViewportInput& viewport, DefEditor& editor)
                                        viewport.height,
                                        viewport.axisLock);
     m_dragAt = {m_dragAt.x + delta.x, m_dragAt.y + delta.y, m_dragAt.z + delta.z};
+
+    if (m_grab == Grab::Aim) {
+        // ⚑ THE HANDLE MOVES FREELY AND ONLY ITS DIRECTION IS KEPT. `aim` is a
+        // facing, so how far the hand dragged is meaningless and only where it
+        // ended up matters - which also means the handle can be flung past the
+        // hull and the mount still ends up pointing sensibly.
+        //
+        // ⚑ A drag that lands exactly on the mount is REFUSED rather than
+        // normalised: the schema rejects a zero `aim` by name, and a facing of
+        // no length is not a direction an author can have meant.
+        std::vector<Marker> current;
+        gatherMarkers(editor, current);
+        const auto found =
+            std::find_if(current.begin(), current.end(), [&](const Marker& m) { return m.id == m_selected; });
+        if (found == current.end()) {
+            m_refused = true;
+            return false;
+        }
+        const core::Vec3 offset{m_dragAt.x - found->at.x, m_dragAt.y - found->at.y, m_dragAt.z - found->at.z};
+        const float length = std::sqrt((offset.x * offset.x) + (offset.y * offset.y) + (offset.z * offset.z));
+        if (length < 1e-4f) {
+            return false; // on top of the mount: no direction yet, and no error either
+        }
+        const float aim[3] = {offset.x / length, offset.y / length, offset.z / length};
+        if (!editor.setMountVector(m_hull, m_selected, "aim", aim)) {
+            m_status = editor.error();
+            m_refused = true;
+            return false;
+        }
+        return true;
+    }
+
     const float at[3] = {m_dragAt.x, m_dragAt.y, m_dragAt.z};
-    if (!editor.setMountAt(m_hull, m_selected, at)) {
+    if (!editor.setMountVector(m_hull, m_selected, "at", at)) {
         m_status = editor.error();
         m_refused = true;
         return false;
@@ -470,6 +669,26 @@ void MountTool::drawMarkers(renderer::DebugDrawRenderer& lines,
             color = kHoverColor;
         }
         addMountMarker(lines, viewport, marker.at, radius, color);
+
+        // ⚑⚑ ONLY THE SELECTED MOUNT SHOWS ITS FACING, AND THAT IS A BUDGET
+        // DECISION AS MUCH AS A DESIGN ONE. `DebugDrawRenderer` holds 8192
+        // vertices and drops lines SILENTLY once they are spent; a cone is a
+        // 16-segment rim plus four spokes plus the aim line - about 50 vertices
+        // - and the freighter has nine mounts. Nine cones over a grid, the
+        // scale references and nine rings is a picture nobody can read even
+        // when it fits. The facing of the mount you are working on is the
+        // question being asked.
+        if (marker.id != m_selected) {
+            continue;
+        }
+        const float length = radius * kAimLength;
+        addAimCone(lines, viewport, marker.at, marker.aim, marker.arc, length, color);
+        // The handle, at the end of the line, drawn as its own small ring so it
+        // is visibly a thing to grab rather than the end of a stroke.
+        const core::Vec3 handle{marker.at.x + marker.aim.x * length,
+                                marker.at.y + marker.aim.y * length,
+                                marker.at.z + marker.aim.z * length};
+        addMountMarker(lines, viewport, handle, radius * 0.45f, color);
     }
 }
 
@@ -749,7 +968,7 @@ bool MountTool::drawPanel(DefEditor& editor)
         float at[3] = {mount->at[0], mount->at[1], mount->at[2]};
         ImGui::SetNextItemWidth(240.0f);
         if (ImGui::DragFloat3("at", at, 0.01f, -1000.0f, 1000.0f, "%.4f")) {
-            if (editor.setMountAt(m_hull, m_selected, at)) {
+            if (editor.setMountVector(m_hull, m_selected, "at", at)) {
                 changed = true;
             } else {
                 m_status = editor.error();
@@ -757,6 +976,62 @@ bool MountTool::drawPanel(DefEditor& editor)
         }
         editor.noteActivation("set mount at");
         ImGui::TextDisabled("  metres, hull frame: +X right, +Y up, -Z forward");
+
+        // ---- where it points, and how far it can swing (stage D2) ---------
+        float aim[3] = {mount->aim[0], mount->aim[1], mount->aim[2]};
+        ImGui::SetNextItemWidth(240.0f);
+        if (ImGui::DragFloat3("aim", aim, 0.01f, -1.0f, 1.0f, "%.3f")) {
+            // ⚑ REFUSED AT ZERO RATHER THAN NORMALISED TO SOMETHING. The schema
+            // rejects a zero `aim` by name, and a slider dragged through zero
+            // that silently snapped to an axis would be the tool choosing a
+            // facing the author did not.
+            const float length = std::sqrt((aim[0] * aim[0]) + (aim[1] * aim[1]) + (aim[2] * aim[2]));
+            if (length > 1e-4f) {
+                const float unit[3] = {aim[0] / length, aim[1] / length, aim[2] / length};
+                if (editor.setMountVector(m_hull, m_selected, "aim", unit)) {
+                    changed = true;
+                } else {
+                    m_status = editor.error();
+                }
+            }
+        }
+        editor.noteActivation("set mount aim");
+        ImGui::TextDisabled("  where it rests; drag the small ring in the viewport");
+
+        // ⚑⚑ THE ONE SENTENCE THAT STOPS A SECOND AUTHOR GUESSING. `arc` is the
+        // FULL cone angle centred on `aim`, so 270 reaches 135 either side -
+        // read the other way, every shipped turret would be unable to go blind
+        // anywhere. gdd.md 11.5, `ships.toml`'s header and decisions/014 all say
+        // so; this is the fourth place, and the only one an author is looking at
+        // while they choose the number.
+        float arc = mount->arc;
+        ImGui::SetNextItemWidth(240.0f);
+        if (ImGui::DragFloat("arc", &arc, 0.5f, 0.0f, 360.0f, "%.1f deg")) {
+            if (editor.setMountNumber(m_hull, m_selected, "arc", arc)) {
+                changed = true;
+            } else {
+                m_status = editor.error();
+            }
+        }
+        editor.noteActivation("set mount arc");
+        if (arc <= 0.0f) {
+            ImGui::TextDisabled("  bolted down: it points where `aim` says and the pilot flies it");
+        } else if (arc >= 360.0f) {
+            ImGui::TextDisabled("  no stop at all: it bears on anything");
+        } else {
+            ImGui::TextDisabled("  the FULL cone, so %.1f deg either side of `aim`",
+                                static_cast<double>(arc * 0.5f));
+        }
+        // ⚑ A traverse on a mount no gun can go in is not an error and is
+        // almost certainly a mistake: `arc` is read by `layGun` and by nothing
+        // else, so a 270-degree cargo bay is a number that will never be
+        // consulted. Said once, quietly, rather than refused.
+        if (arc > 0.0f && !assets::mountTakesWeapon(kind)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+            ImGui::TextWrapped("  only a weapon mount traverses: nothing reads `arc` on a %s mount",
+                               kindLabel(kind));
+            ImGui::PopStyleColor();
+        }
 
         // ⚑⚑⚑ THE READING THIS WHOLE STAGE IS FOR. See
         // `surfaceDepthAlongBearing`: it is a bearing test, and it is scoped to
@@ -794,7 +1069,7 @@ bool MountTool::drawPanel(DefEditor& editor)
             // is NOT on a model authored off-centre.
             const float at[3] = {m_centre.x, m_centre.y, m_centre.z};
             editor.beginEdit("make mount external");
-            if (editor.setMountAt(m_hull, m_selected, at)) {
+            if (editor.setMountVector(m_hull, m_selected, "at", at)) {
                 changed = true;
                 m_status = "now external - drag it onto the skin";
             } else {

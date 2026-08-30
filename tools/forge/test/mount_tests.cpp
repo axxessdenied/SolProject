@@ -258,6 +258,113 @@ SOL_TEST(aHullWithNoMountsTakesItsFirstOneRightUnderItself)
                                         "  size = \"medium\"\n");
 }
 
+SOL_TEST(aPlacedMountCarriesTheFacingOfTheSurfaceAndNotTheSchemasDefault)
+{
+    DefDoc doc;
+    SOL_REQUIRE(parseShips(doc));
+    const std::size_t freighter = doc.indexOf("ship", "sol.freighter");
+    SOL_REQUIRE(freighter != DefDoc::kNoRow);
+
+    // A turret dropped on the dorsal hull faces up, because that is where the
+    // surface it was clicked on faces. The numbers are the ones the live drive
+    // produced against the shipped `ship` mesh.
+    forge::MountDraft dorsal;
+    dorsal.id = forge::uniqueMountId(doc, freighter, forge::mountIdStem(assets::MountKind::Turret));
+    dorsal.kind = assets::MountKind::Turret;
+    dorsal.size = assets::MountSize::Small;
+    dorsal.external = true;
+    // ⚑ VALUES THAT SPELL DIFFERENTLY AT THREE DECIMALS AND AT FOUR, which the
+    // first draft of this test did not have: `defNumber` trims to the shortest
+    // form that round-trips, so 0.997 comes out "0.997" at either precision and
+    // the assertion below agreed with both. A real mesh normal is not a round
+    // number; these are what the shipped `ship` mesh actually produced.
+    dorsal.at[0] = 0.45412f;
+    dorsal.at[1] = 1.63481f;
+    dorsal.at[2] = 0.61754f;
+    dorsal.hasAim = true;
+    dorsal.aim[0] = 0.0f;
+    dorsal.aim[1] = 0.997563f;
+    dorsal.aim[2] = -0.083149f;
+
+    DefRow& row = doc.insertAfter(forge::mountInsertPoint(doc, freighter), forge::kMountRowType, "  ");
+    forge::writeMountDraft(row, dorsal, 4);
+
+    const assets::DefKey* at = row.find("at");
+    const assets::DefKey* aim = row.find("aim");
+    SOL_REQUIRE(at != nullptr && aim != nullptr);
+    // ⚑ FOUR DECIMALS FOR A POSITION AND THREE FOR A FACING, ON THE SAME ROW,
+    // which is the whole reason the two constants are separate: `at` is metres
+    // on Phase 14's 0.1 mm grid, and `aim` is a unit direction whose components
+    // are fractions of one. Both spellings below change if either precision
+    // does, which is what makes this an assertion rather than a restatement.
+    SOL_CHECK(at->value() == "[0.4541, 1.6348, 0.6175]");
+    SOL_CHECK(aim->value() == "[0.0, 0.998, -0.083]");
+
+    std::string error;
+    SOL_CHECK(schemaAccepts(doc, error));
+    if (!error.empty()) {
+        std::printf("  schema refused: %s\n", error.c_str());
+    }
+
+    assets::DefDatabase defs;
+    const std::string written = assets::writeDefs(doc);
+    SOL_REQUIRE(defs.mergeToml(written.c_str(), written.size(), "candidate.toml", nullptr));
+    const assets::ShipDef* hull = defs.findShip("sol.freighter");
+    SOL_REQUIRE(hull != nullptr);
+    const assets::ShipMount* placed = hull->findMount(dorsal.id);
+    SOL_REQUIRE(placed != nullptr);
+    SOL_CHECK(near(placed->aim[1], 0.998f, 1e-4f));
+    SOL_CHECK(placed->arc == 0.0f); // a placement bolts it down; the arc is authored after
+}
+
+SOL_TEST(aMountFacingTheDefaultWritesNoAimAndAnInternalOneCannotCarryOne)
+{
+    // A gun placed on a nose that faces -Z is a gun facing the schema's own
+    // default, and a key at its default is a key an author would not have
+    // typed. `def_editor.cpp` follows the same rule for every other key.
+    DefDoc doc;
+    const std::string bareHull = "[[ship]]\nid = \"sol.bare\"\nname = \"Bare\"\n";
+    SOL_REQUIRE(assets::parseDefs(bareHull.c_str(), bareHull.size(), "ships.toml", doc, nullptr));
+    const std::size_t bare = doc.indexOf("ship", "sol.bare");
+    SOL_REQUIRE(bare != DefDoc::kNoRow);
+
+    forge::MountDraft nose;
+    nose.id = "gun";
+    nose.kind = assets::MountKind::Fixed;
+    nose.size = assets::MountSize::Small;
+    nose.external = true;
+    nose.at[2] = -6.6f;
+    nose.hasAim = false;
+    DefRow& first = doc.insertAfter(forge::mountInsertPoint(doc, bare), forge::kMountRowType, "  ");
+    forge::writeMountDraft(first, nose, 4);
+    SOL_CHECK(first.find("at") != nullptr);
+    SOL_CHECK(first.find("aim") == nullptr);
+
+    // ⚑⚑ AND AN INTERNAL MOUNT WRITES NEITHER, EVEN WHEN THE DRAFT CARRIES AN
+    // AIM. decisions/014 rule 2 read backwards: `parseShip` REFUSES `aim`
+    // without an `at`, by name, because a facing on something that is never
+    // drawn and never aimed at is a key an author would read as having been
+    // eaten. A draft that wrote the aim anyway would be a document the game
+    // will not load, produced by the button for adding an internal mount.
+    forge::MountDraft core;
+    core.id = "core";
+    core.kind = assets::MountKind::Subsystem;
+    core.size = assets::MountSize::Small;
+    core.external = false;
+    core.hasAim = true;
+    core.aim[1] = 1.0f;
+    DefRow& second = doc.insertAfter(forge::mountInsertPoint(doc, bare), forge::kMountRowType, "  ");
+    forge::writeMountDraft(second, core, 4);
+    SOL_CHECK(second.find("at") == nullptr);
+    SOL_CHECK(second.find("aim") == nullptr);
+
+    std::string error;
+    SOL_CHECK(schemaAccepts(doc, error));
+    if (!error.empty()) {
+        std::printf("  schema refused: %s\n", error.c_str());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The camera a drag is computed against
 // ---------------------------------------------------------------------------

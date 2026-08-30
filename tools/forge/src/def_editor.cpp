@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -1233,7 +1234,10 @@ bool DefEditor::removeMount(const std::string& hullId, const std::string& mountI
     return commitShips(std::move(candidate), "remove mount");
 }
 
-bool DefEditor::setMountAt(const std::string& hullId, const std::string& mountId, const float (&at)[3])
+bool DefEditor::setMountVector(const std::string& hullId,
+                               const std::string& mountId,
+                               const char* key,
+                               const float (&value)[3])
 {
     DefDoc candidate = m_docs[kShips].doc;
     const std::size_t hull = hullRow(candidate, hullId);
@@ -1242,8 +1246,28 @@ bool DefEditor::setMountAt(const std::string& hullId, const std::string& mountId
         m_error = "no mount '" + mountId + "' on " + hullId;
         return false;
     }
-    writeMountVector(candidate.rows[row], "at", at, kMetreDecimals);
+    // ⚑ A position is metres on Phase 14's grid and a facing is a unit
+    // direction; `mount_rows.hpp` says why they are written at different
+    // precisions rather than at one convenient one.
+    const int decimals = std::strcmp(key, "at") == 0 ? kMetreDecimals : kAimDecimals;
+    writeMountVector(candidate.rows[row], key, value, decimals);
     // ⚑ No label: this is the drag, and the entry was pushed when it started.
+    return commitShips(std::move(candidate), nullptr);
+}
+
+bool DefEditor::setMountNumber(const std::string& hullId,
+                               const std::string& mountId,
+                               const char* key,
+                               float value)
+{
+    DefDoc candidate = m_docs[kShips].doc;
+    const std::size_t hull = hullRow(candidate, hullId);
+    const std::size_t row = hull == DefDoc::kNoRow ? DefDoc::kNoRow : findMountRow(candidate, hull, mountId);
+    if (row == DefDoc::kNoRow) {
+        m_error = "no mount '" + mountId + "' on " + hullId;
+        return false;
+    }
+    candidate.rows[row].set(key, assets::defNumber(value, 1));
     return commitShips(std::move(candidate), nullptr);
 }
 

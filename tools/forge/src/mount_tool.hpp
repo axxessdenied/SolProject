@@ -94,14 +94,37 @@ private:
     {
         std::string id;
         sol::core::Vec3 at{};
+        // The mount's rest direction and its traverse, in the hull frame. Read
+        // straight off the validated `ShipMount`, so a mount that authored
+        // neither carries the schema's own defaults - the ship's nose, and no
+        // traverse at all - which is exactly what the game would fly.
+        sol::core::Vec3 aim{0.0f, 0.0f, -1.0f};
+        float arc = 0.0f;
         sol::assets::MountKind kind = sol::assets::MountKind::Utility;
         bool weapon = false;
+    };
+
+    // ⚑⚑ WHAT A LEFT-BUTTON DRAG IS HOLDING (stage D2). Before aim was editable
+    // there was one answer and a bool would have done; there are two now, and
+    // they move different keys of the same row. Held as an enum rather than as
+    // two bools because "both at once" is not a state - a press grabs one thing.
+    enum class Grab
+    {
+        None,
+        Position, // the ring: moves `at`
+        Aim,      // the handle at the end of the aim line: rewrites `aim`
     };
 
     // Every EXTERNAL mount of the open hull, in mount order.
     void gatherMarkers(const DefEditor& editor, std::vector<Marker>& out) const;
     // The nearest marker to the cursor within the grab radius, or -1.
     [[nodiscard]] int pickMarker(const ViewportInput& viewport, std::span<const Marker> markers) const;
+    // Where the SELECTED mount's aim handle sits in the world, and whether it
+    // has one at all. ⚑ Only the selected mount has a handle: nine hardpoints
+    // with nine handles is eighteen things competing for one cursor, and the
+    // handle is always the smaller and less obvious target of the pair.
+    [[nodiscard]] bool
+    aimHandle(const ViewportInput& viewport, std::span<const Marker> markers, sol::core::Vec3& out) const;
     // Where the cursor's ray enters the mesh, or false when it misses.
     [[nodiscard]] bool
     pickSurface(const ViewportInput& viewport, sol::core::Vec3& point, sol::core::Vec3& normal) const;
@@ -122,6 +145,7 @@ private:
     sol::assets::MountSize m_placeSize = sol::assets::MountSize::Small;
     bool m_placing = false;
     bool m_dragging = false;
+    Grab m_grab = Grab::None;
     bool m_refused = false;
     float m_dragDepth = 1.0f;
     // Where the drag has got to. ⚑ ACCUMULATED IN FLOATS HERE rather than read

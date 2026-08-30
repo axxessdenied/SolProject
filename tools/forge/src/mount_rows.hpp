@@ -50,6 +50,12 @@ inline constexpr const char* kMountKeys[] = {"id", "kind", "size", "at", "aim", 
 // `mountIndent` below is for.
 inline constexpr const char* kDefaultMountIndent = "  ";
 
+// Decimals for the two kinds of number a mount carries. ⚑ They differ because
+// the quantities do: `at` is metres on Phase 14's 0.1 mm grid, and `aim` is a
+// unit direction whose components are fractions of one. Writing a direction at
+// the metre grid spends four digits saying nothing.
+inline constexpr int kAimDecimals = 3;
+
 // The `[[ship.mount]]` rows under the hull row at `hull`, in file order.
 //
 // ⚑ IT STOPS AT THE FIRST ROW THAT IS NOT A MOUNT, which is the whole test. The
@@ -194,6 +200,21 @@ struct MountDraft
     // internal (decisions/014 rule 2).
     bool external = false;
     float at[3] = {0.0f, 0.0f, 0.0f};
+    // ⚑⚑ STAGE D2, AND IT IS WHY PLACEMENT IS WORTH MORE THAN A POSITION. The
+    // surface a mount was clicked on has a NORMAL, and that normal is what the
+    // mount should face: a turret dropped on the dorsal hull aims up, one
+    // dropped on the flank aims out. Authoring `aim` by hand is choosing three
+    // numbers against a mesh you are looking at but cannot measure - which is
+    // how `ships.toml` came to carry `aim = [0.0, 1.0, 0.0]` written from the
+    // shape of the sentence rather than from the shape of the hull.
+    //
+    // ⚑ Written only when it differs from the schema's default (the ship's
+    // nose), which is `def_editor.cpp`'s rule for every other key: a key
+    // appears in the file the moment an author changes it and not before. A
+    // `fixed` gun placed on the nose therefore writes no `aim` at all, which is
+    // both correct and what an author would have typed.
+    bool hasAim = false;
+    float aim[3] = {0.0f, 0.0f, -1.0f};
 };
 
 // Writes a draft into a fresh row, in the schema's key order.
@@ -208,8 +229,16 @@ inline void writeMountDraft(sol::assets::DefRow& row, const MountDraft& draft, i
     row.set("id", sol::assets::defString(draft.id));
     row.set("kind", sol::assets::defString(sol::assets::mountKindName(draft.kind)));
     row.set("size", sol::assets::defString(sol::assets::mountSizeName(draft.size)));
-    if (draft.external) {
-        writeMountVector(row, "at", draft.at, decimals);
+    if (!draft.external) {
+        return; // internal: no `at`, and the schema refuses `aim` without one
+    }
+    writeMountVector(row, "at", draft.at, decimals);
+    if (draft.hasAim) {
+        // ⚑ `kAimDecimals` rather than the metre grid: `aim` is a DIRECTION and
+        // its components are fractions of one, so 0.1 mm of precision is four
+        // digits spent on a unit vector. Three is a tenth of a degree at the
+        // steepest, which is finer than a mesh normal is meaningful to.
+        writeMountVector(row, "aim", draft.aim, kAimDecimals);
     }
 }
 
