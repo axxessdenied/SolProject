@@ -258,6 +258,7 @@ endif()
 # targeting, the map's rows - and NOT the renderer, which is still verified by
 # running the app.
 add_executable(sol_game_tests
+    test/armament_tests.cpp
     test/asset_paths_tests.cpp
     test/authored_system_tests.cpp
     test/autosave_settings_tests.cpp

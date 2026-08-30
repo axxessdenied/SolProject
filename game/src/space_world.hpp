@@ -100,7 +100,10 @@ enum class WeaponKind : std::uint32_t
     Hitscan,
 };
 
-// The ship's mounted weapon, flattened from its def (POD for the snapshot).
+// ONE gun as fitted to ONE mount, flattened from its def (POD for the
+// snapshot). Until Phase 31 stage C1 this WAS the ship's armament - singular,
+// because a hull had a single `weaponId`. It is now an element of
+// `ShipArmament` below, and the only field the change added is where it sits.
 struct ShipWeapon
 {
     WeaponKind kind = WeaponKind::None;
@@ -111,11 +114,70 @@ struct ShipWeapon
     float energyCost = 0.0f;      // capacitor draw per shot
     float cooldown = 0.0f;        // seconds until the next shot
     float miningPower = 0.0f;     // Phase 8f: yield units cut per second
+    // The muzzle: its mount's `at`, in the HULL FRAME AT SCALE 1, exactly as
+    // authored (Phase 31 stage C1). The firing pass multiplies by the hull's
+    // scale and rotates it, so a `scale = 4.0` freighter's turret sits four
+    // times as far off its centreline - the same rule every other authored
+    // length on a hull obeys.
+    //
+    // ⚑ It is stored here rather than looked up because this component is
+    // FLATTENED and keeps no def id - the same reason `boltModel` is here,
+    // and the same reason an NPC's guns survive a save with no def in sight.
+    float at[3] = {0.0f, 0.0f, 0.0f};
     // What its bolt draws as (Phase 19), resolved once when the loadout is
     // applied. It lives here rather than being looked up at the muzzle
     // because this component is FLATTENED from its def and keeps no def id -
     // which is exactly why the bolt was a hardcoded "cube" until now.
     ModelId boltModel = kNoModel;
+};
+
+// ⚑⚑ A HARD CEILING ON GUNS PER HULL, AND IT BUYS SOMETHING REAL. The ECS
+// snapshot stores components by memcpy (`snapshot.hpp` static_asserts it), so
+// a ship's guns are either a bounded array here or a set of separate entities
+// - and the entity shape is a trap this world is already shaped to spring:
+// `despawnSystem` destroys everything in the TRANSFORM pool, a gun entity has
+// no Transform, and `Registry::destroy` recycles indices. An orphaned gun
+// would therefore survive a jump and then re-attach itself to whatever spawned
+// into its owner's old slot. An array on the ship entity cannot outlive the
+// ship, which makes that whole class inexpressible rather than merely absent.
+//
+// Sixteen covers gdd.md 11.1's mount BUDGET through class 4 (14-22 mounts
+// total, guns a subset of that), which is the whole of Phase 32's hull spine.
+// A hull that declares more is not silently truncated - `applyShipDef` says
+// so, names the hull, and fits the first sixteen.
+inline constexpr std::uint32_t kMaxShipWeapons = 16;
+
+// What a ship has fitted, in the hull's own MOUNT ORDER (Phase 31 stage C1).
+//
+// ⚑ MOUNT ORDER IS FIRING PRIORITY, and that is the whole of "per-mount
+// capacitor draw". Each gun pays its own `energyCost` as it fires, so a ship
+// whose capacitor cannot cover a full salvo fires the guns the author listed
+// first and the rest simply do not go off that tick. The rule is authored,
+// visible in the def file, and needs no new key: the alternative - splitting
+// the charge evenly, or refusing the whole salvo - would make a second gun
+// make the first one WORSE, which is not what bolting a gun to a hull does.
+struct ShipArmament
+{
+    std::uint32_t count = 0;
+    ShipWeapon weapons[kMaxShipWeapons];
+};
+
+// What the rest of the game needs to know about a ship's guns without walking
+// them (Phase 31 stage C1). Every field answers exactly one question, and they
+// are deliberately not all about the same gun: the reach that decides where a
+// fight starts and the beam that decides whether a rock can be cut are
+// different facts, and a summary that conflated them would be the "check that
+// sums two alternatives" bug this project has now found twice.
+struct ArmamentSummary
+{
+    bool armed = false;    // anything at all fitted that can fire
+    float maxRange = 0.0f; // the longest gun's reach: where fighting becomes possible
+    // The first PROJECTILE gun's speed in mount order, for the lead solution.
+    // Zero when every fitted gun is hitscan, which the caller reads as
+    // "instant" - the same meaning the singular weapon gave it.
+    float leadSpeed = 0.0f;
+    bool canMine = false;     // any fitted beam with mining_power
+    float miningRange = 0.0f; // the furthest of THOSE, not of all guns
 };
 
 // A live bolt: Transform carries the position, this the rest.
@@ -1674,9 +1736,25 @@ public:
     // namePart (dev/console QoL; T-cycling is the player path).
     bool targetShipByName(const char* namePart);
 
-    [[nodiscard]] const ShipWeapon& playerWeapon() const
+    // What the player is flying WITH, reduced to the four facts anything
+    // outside the firing pass asks about (Phase 31 stage C1). This replaced
+    // `playerWeapon()`, which handed out a reference to the one gun: with
+    // guns plural there is no "the" weapon to return, and every caller of the
+    // old accessor turned out to want a summary rather than a gun anyway.
+    [[nodiscard]] ArmamentSummary playerArmament() const { return armamentSummary(playerEntityIndex()); }
+
+    // The same, for any entity that has an armament; all-zero for one that
+    // does not (a station, a rock, an unarmed hull).
+    [[nodiscard]] ArmamentSummary armamentSummary(std::uint32_t entityIndex) const;
+
+    // The player's guns as the SIM holds them, in mount order. A view of the
+    // live component rather than a copy, and the only way to see a gun the
+    // def named and the sim dropped - which is why the console probe reads
+    // this rather than the fleet entry.
+    [[nodiscard]] std::span<const ShipWeapon> playerGuns() const
     {
-        return m_registry.storage<ShipWeapon>().get(playerEntityIndex());
+        const ShipArmament& armament = m_registry.storage<ShipArmament>().get(playerEntityIndex());
+        return {armament.weapons, armament.count};
     }
 
     // 1 right after the player takes a hit, decaying to 0 (HUD flash).

@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <span>
 #include <utility>
 
 namespace game {
@@ -1137,6 +1138,49 @@ std::string listMounts(GameContent& content, const char* shipDefId)
         }
     }
     return lines;
+}
+
+// ⚑ THE ONLY VIEW OF THE GUNS AS THE SIM ACTUALLY HOLDS THEM (Phase 31 stage
+// C1). `sol.mounts()` reads a hull def and `sol.fit()` reads the player's
+// fleet entry; both describe what SHOULD be aboard. This reads the flattened
+// `ShipArmament` on the live entity - the thing that actually fires - so it
+// is the one probe that can show a gun the def named and the sim dropped,
+// and the one that can show more than one of them at all.
+//
+// One line per gun in MOUNT ORDER, which is also firing priority when the
+// capacitor runs short - so the charge is on the heading beside them. A
+// salvo that will not all go off is only legible next to what could not pay
+// for it. Sixty-odd characters a line, for the console panel's ~76.
+std::string gunInfo(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const game::ArmamentSummary summary = world.playerArmament();
+    const std::span<const game::ShipWeapon> guns = world.playerGuns();
+    char buffer[128];
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%zu gun(s), reach %.0f m, charge %.0f/%.0f",
+                  guns.size(),
+                  static_cast<double>(summary.maxRange),
+                  static_cast<double>(world.playerPower().weaponCharge),
+                  static_cast<double>(world.powerTuning().weaponCapacitor));
+    std::string info = buffer;
+    for (const game::ShipWeapon& gun : guns) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%-7s dmg %-5.1f %-4.1f/s %-6.0fm %-5.1f e at %g,%g,%g",
+                      gun.kind == game::WeaponKind::Hitscan ? "hitscan" : "bolt",
+                      static_cast<double>(gun.damage),
+                      static_cast<double>(gun.rateOfFire),
+                      static_cast<double>(gun.range),
+                      static_cast<double>(gun.energyCost),
+                      static_cast<double>(gun.at[0]),
+                      static_cast<double>(gun.at[1]),
+                      static_cast<double>(gun.at[2]));
+        info += "\n  ";
+        info += buffer;
+    }
+    return info;
 }
 
 std::string listCrewDefs(GameContent& content)
@@ -3402,6 +3446,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listMounts>("sol", "mounts", this);
     m_vm.registerFunction<&listCrewDefs>("sol", "crew_defs", this);
     m_vm.registerFunction<&fitInfo>("sol", "fit", this);
+    m_vm.registerFunction<&gunInfo>("sol", "guns", this);
     m_vm.registerFunction<&listFleet>("sol", "fleet", this);
     m_vm.registerFunction<&buyFitting>("sol", "buy_fitting", this);
     m_vm.registerFunction<&fitToMount>("sol", "fit_mount", this);

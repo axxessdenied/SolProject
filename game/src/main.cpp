@@ -1515,15 +1515,19 @@ int main(int argc, char** argv)
             hud.missionObjective = missionHudObjective.c_str();
             hud.missionDeadline = tracked.deadline;
         }
-        const game::ShipWeapon& playerWeapon = world.playerWeapon();
-        if (target.isShip && playerWeapon.kind == game::WeaponKind::Projectile &&
-            playerWeapon.projectileSpeed > 1.0f) {
+        // ⚑ ONE lead marker for a ship that may carry several guns (Phase 31
+        // stage C1). It is drawn for the FIRST projectile gun in mount order,
+        // because a marker per gun is four crosses on one target and a marker
+        // averaged across guns is a point at which none of them hits. An
+        // all-hitscan fit still shows none, exactly as before.
+        const game::ArmamentSummary playerArmament = world.playerArmament();
+        if (target.isShip && playerArmament.leadSpeed > 1.0f) {
             sol::core::DVec3 leadDirection;
             (void)sol::sim::computeInterceptDirection(shipState.position,
                                                       shipState.velocity,
                                                       target.nav.position,
                                                       target.velocity,
-                                                      static_cast<double>(playerWeapon.projectileSpeed),
+                                                      static_cast<double>(playerArmament.leadSpeed),
                                                       leadDirection);
             hud.leadDirectionCamera = rotate(conjugate(camera.orientation), toVec3(leadDirection));
             hud.hasLead = true;

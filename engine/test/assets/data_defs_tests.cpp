@@ -2643,10 +2643,17 @@ SOL_TEST(data_defs_shipped_hulls_carry_the_mounts_stage_a_gave_them)
     // it, so that stage B's swap is arithmetic. `slots_cargo` folds into the
     // last column because gdd.md 11.5 has no `cargo` kind - a cargo pod is a
     // utility fitting - and that merge is the one real change in this file.
+    //
+    // ⚑ THE FREIGHTER IS THE ONE ROW THAT NO LONGER REPRODUCES THE OLD
+    // CAPACITY, and that is Phase 31 stage C1 deliberately: it gained a second
+    // turret because until it had one, no hull in the base game could carry
+    // two guns and the phase's own exit criterion was unreachable in shipped
+    // content. The mount comes BARE, so what an NPC freighter flies is
+    // unchanged - which is the next test, not this one.
     constexpr Expected kHulls[3] = {
         {"sol.shuttle", 5, 1, 1, 1, 2},     // was weapon + 1/1/1/1
         {"sol.interceptor", 5, 1, 2, 1, 1}, // was weapon + 1/2/0/1
-        {"sol.freighter", 8, 1, 1, 1, 5},   // was weapon + 1/1/3/2
+        {"sol.freighter", 9, 2, 1, 1, 5},   // was weapon + 1/1/3/2, plus C1's turret
     };
 
     for (const Expected& expected : kHulls) {
@@ -2715,6 +2722,56 @@ SOL_TEST(data_defs_shipped_hulls_carry_the_mounts_stage_a_gave_them)
     SOL_REQUIRE(sensor != nullptr);
     SOL_CHECK(!sensor->external);
     SOL_CHECK(sensor->kind == sol::assets::MountKind::Subsystem);
+
+    // ⚑ AND THE SECOND GUN MOUNT, WHICH IS THE ONE PIECE OF CONTENT PHASE 31
+    // STAGE C1 ADDED. Both halves are asserted because either alone is
+    // satisfied by the wrong thing: that it EXISTS (without it nothing in the
+    // base game can carry two guns) and that it is BARE (with a `fit` it would
+    // have doubled every NPC freighter's firepower, a balance change nobody
+    // asked the stage to make).
+    const sol::assets::ShipMount* ventral = freighter->findMount("turret_ventral");
+    SOL_REQUIRE(ventral != nullptr);
+    SOL_CHECK(ventral->kind == sol::assets::MountKind::Turret);
+    SOL_CHECK(ventral->external);
+    SOL_CHECK(ventral->fit.empty());
+}
+
+// ⚑ A WEAPON MOUNT'S `at` IS A MUZZLE SINCE PHASE 31 STAGE C1, so a gun mount
+// left at the hull's origin now fires from inside the ship - and nothing else
+// about the def would look wrong. Stage A2 authored every position INSIDE the
+// shared `ship` mesh because nothing read them; the drive-visible half of that
+// (the shuttle's nose gun sat behind the pilot's seat) is a game-side fact and
+// is asserted there. What the def layer can say on its own is that somebody
+// placed the thing at all.
+SOL_TEST(data_defs_every_shipped_gun_mount_is_external_and_placed)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(db.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+    SOL_REQUIRE(!db.ships().empty());
+
+    std::uint32_t checked = 0;
+    for (const ShipDef& def : db.ships()) {
+        for (const sol::assets::ShipMount& mount : def.mounts) {
+            if (!sol::assets::mountTakesWeapon(mount.kind)) {
+                continue;
+            }
+            ++checked;
+            if (!mount.external) {
+                std::printf("  %s: gun mount '%s' has no `at`\n", def.id.c_str(), mount.id.c_str());
+            }
+            SOL_CHECK(mount.external);
+            const bool placed = mount.at[0] != 0.0f || mount.at[1] != 0.0f || mount.at[2] != 0.0f;
+            if (!placed) {
+                std::printf(
+                    "  %s: gun mount '%s' sits on the hull's origin\n", def.id.c_str(), mount.id.c_str());
+            }
+            SOL_CHECK(placed);
+        }
+    }
+    // Four gun mounts across three hulls; a hull whose mounts stopped parsing
+    // would pass every check above by having none to fail.
+    SOL_CHECK(checked == 4);
 }
 
 // ⚑ WHERE `weapon =` WENT (Phase 31 stage B). Each hull's gun is now a `fit`

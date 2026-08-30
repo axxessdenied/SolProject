@@ -52,7 +52,7 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // same precedent: a v15 save is rejected cleanly.
 //
 // v17 (Phase 29 stage D): the authored-content digest, beside the seed.
-constexpr std::uint32_t kSaveVersion = 18;
+constexpr std::uint32_t kSaveVersion = 19;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -261,11 +261,14 @@ ecs::Snapshot makeSnapshotSchema()
     schema.component<ShipPower>(15);
     schema.component<ShipDefense>(16);
     schema.component<Projectile>(17);
-    schema.component<ShipWeapon>(18);
+    // 18 was ShipWeapon, the ship's ONE gun, retired in Phase 31 stage C1
+    // when guns became plural. Retired rather than reused: the id is a
+    // promise about a layout, and 23 below is a different one.
     schema.component<ShipPilot>(19);
     schema.component<MineableRock>(20);
     schema.component<WreckMarker>(21);
     schema.component<OreChunk>(22);
+    schema.component<ShipArmament>(23); // v19: what replaced 18
     return schema;
 }
 
@@ -388,7 +391,7 @@ void SpaceWorld::spawn(std::uint64_t universeSeed)
     m_registry.emplace<ShipControl>(e);
     m_registry.emplace<ShipPower>(e);
     m_registry.emplace<ShipDefense>(e);
-    m_registry.emplace<ShipWeapon>(e);
+    m_registry.emplace<ShipArmament>(e);
 }
 
 bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
@@ -2173,8 +2176,11 @@ ProspectInfo SpaceWorld::prospectAhead() const
     info.valid = true;
     info.wreck = isWreck;
     info.distance = length(m_registry.storage<Transform>().get(entityIndex).position - shipState().position);
-    const ShipWeapon& weapon = playerWeapon();
-    info.inRange = weapon.miningPower > 0.0f && info.distance <= static_cast<double>(weapon.range);
+    // ⚑ The mining beams' reach, never the longest gun's (Phase 31 stage C1).
+    // A ship carrying a 3 km cannon beside an 800 m laser can cut at 800 m,
+    // and the readout used to be able to read the one gun there was.
+    const ArmamentSummary armament = playerArmament();
+    info.inRange = armament.canMine && info.distance <= static_cast<double>(armament.miningRange);
     if (isWreck) {
         const WreckMarker& marker = m_registry.storage<WreckMarker>().get(entityIndex);
         const sim::WreckRecord* wreck = m_mining.wreck(marker.id);
@@ -5329,13 +5335,14 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
     // the RESOLVED def - so this one path serves an NPC hull flying its
     // authored `fit` and the player's ship flying whatever they bought.
     //
-    // `ShipWeapon` is still singular, so the FIRST fitted weapon-taking mount
-    // in authored order wins and the rest are carried but not fired. That is
-    // stage C's whole subject (fire groups, per-mount draw, traverse); saying
-    // it here rather than picking a "best" gun keeps the choice visible
-    // instead of burying a heuristic nobody asked for.
-    ShipWeapon& weapon = m_registry.storage<ShipWeapon>().get(entityIndex);
-    weapon = ShipWeapon{};
+    // ⚑⚑ AND SINCE STAGE C1 IT IS EVERY GUN, NOT THE FIRST. Stage B fitted
+    // the first weapon-taking mount and carried the rest unfired, saying so
+    // out loud because a heuristic that picks a "best" gun is a design
+    // decision smuggled into a loop. There is no pick to make now: the hull's
+    // mount list IS the armament, in the order the author wrote it, and that
+    // order is what decides who fires first when the capacitor runs short.
+    ShipArmament& armament = m_registry.storage<ShipArmament>().get(entityIndex);
+    armament = ShipArmament{};
     for (const assets::ShipMount& mount : def.mounts) {
         if (!assets::mountTakesWeapon(mount.kind) || mount.fit.empty()) {
             continue;
@@ -5348,6 +5355,19 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
                          mount.fit.c_str());
             continue;
         }
+        if (armament.count >= kMaxShipWeapons) {
+            // Said once per hull and named, rather than truncated in silence:
+            // the ceiling is a fact about the save format (see
+            // `kMaxShipWeapons`), and a hull that hits it is content the
+            // format has to grow for, not an author's mistake to swallow.
+            SOL_LOG_WARN("ship '%s': more than %u fitted weapon mounts; '%s' and any after it are "
+                         "carried but will not fire",
+                         def.id.c_str(),
+                         kMaxShipWeapons,
+                         mount.id.c_str());
+            break;
+        }
+        ShipWeapon& weapon = armament.weapons[armament.count++];
         weapon.kind = weaponDef->kind == "hitscan" ? WeaponKind::Hitscan : WeaponKind::Projectile;
         weapon.damage = weaponDef->damage;
         weapon.rateOfFire = weaponDef->rateOfFire;
@@ -5355,11 +5375,59 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
         weapon.projectileSpeed = weaponDef->projectileSpeed;
         weapon.energyCost = weaponDef->energyCost;
         weapon.miningPower = weaponDef->miningPower;
+        // ⚑ WHERE THE GUN IS, copied at scale 1 and scaled at the muzzle. A
+        // mount with no `at` is INTERNAL (decisions/014 rule 2), which for a
+        // gun is a contradiction - you cannot shoot out of a sealed hull - so
+        // it keeps the zero default and fires from the hull's centre. That is
+        // survivable and visible rather than refused, because refusing it
+        // belongs at the def layer where an author can be told about it.
+        weapon.at[0] = mount.at[0];
+        weapon.at[1] = mount.at[1];
+        weapon.at[2] = mount.at[2];
+        if (!mount.external) {
+            SOL_LOG_WARN("ship '%s': weapon mount '%s' has no `at`, so its gun fires from the hull "
+                         "centre; an armed mount should be external",
+                         def.id.c_str(),
+                         mount.id.c_str());
+        }
         // Resolved here because this is the one place that holds the
         // WeaponDef; the muzzle only ever sees the flattened component.
         weapon.boltModel = modelOverrideOr(defs, weaponDef->model, "weapon def", kRoleBolt, true);
-        break;
     }
+}
+
+// ⚑ ONE WALK OF THE GUNS, and every caller outside the firing pass goes
+// through it (Phase 31 stage C1). The four questions it answers used to be
+// four reads of the single `ShipWeapon`, spread across the pilot brain, the
+// HUD's lead marker and the prospecting readout - and with guns plural each
+// of them has a different right answer, so leaving them to pick a gun each
+// would be three heuristics nobody wrote down.
+ArmamentSummary SpaceWorld::armamentSummary(std::uint32_t entityIndex) const
+{
+    ArmamentSummary summary;
+    const ShipArmament* armament = m_registry.storage<ShipArmament>().tryGet(entityIndex);
+    if (armament == nullptr) {
+        return summary;
+    }
+    for (std::uint32_t i = 0; i < armament->count; ++i) {
+        const ShipWeapon& weapon = armament->weapons[i];
+        if (weapon.kind == WeaponKind::None) {
+            continue;
+        }
+        summary.armed = true;
+        summary.maxRange = std::max(summary.maxRange, weapon.range);
+        if (summary.leadSpeed <= 0.0f && weapon.kind == WeaponKind::Projectile) {
+            summary.leadSpeed = weapon.projectileSpeed;
+        }
+        if (weapon.miningPower > 0.0f) {
+            summary.canMine = true;
+            // ⚑ The furthest MINING beam, which is not the furthest gun. A
+            // ship with a 3 km cannon and an 800 m laser can cut at 800 m,
+            // and a max taken over all guns would say 3 km.
+            summary.miningRange = std::max(summary.miningRange, weapon.range);
+        }
+    }
+    return summary;
 }
 
 ecs::Entity SpaceWorld::spawnShipAt(const assets::ShipDef& def,
@@ -5376,7 +5444,7 @@ ecs::Entity SpaceWorld::spawnShipAt(const assets::ShipDef& def,
     m_registry.emplace<ShipControl>(e);
     m_registry.emplace<ShipPower>(e);
     m_registry.emplace<ShipDefense>(e);
-    m_registry.emplace<ShipWeapon>(e);
+    m_registry.emplace<ShipArmament>(e);
     applyShipDef(e.index, def, defs);
     std::string name = def.name;
     if (factionName != nullptr && factionName[0] != '\0') {
@@ -6109,9 +6177,13 @@ bool SpaceWorld::pilotHuntTrader(ecs::Entity entity)
     // exactly this distance, so an intercept is a trade leg with a ship at the
     // end of it. Weapon range is the handover, because that is precisely where
     // flying stops being useful and fighting starts.
-    const ShipWeapon* weapon = m_registry.storage<ShipWeapon>().tryGet(entity.index);
-    const double engageRange = weapon != nullptr && weapon->kind != WeaponKind::None && weapon->range > 0.0f
-                                   ? static_cast<double>(weapon->range)
+    // ⚑ The LONGEST gun decides the handover (Phase 31 stage C1). Closing to
+    // the shortest would walk a ship past the range its best gun already
+    // reached; a gun that cannot reach from here simply misses, which costs
+    // charge and nothing else.
+    const ArmamentSummary armament = armamentSummary(entity.index);
+    const double engageRange = armament.armed && armament.maxRange > 0.0f
+                                   ? static_cast<double>(armament.maxRange)
                                    : kTraderArrivalRange;
     pilot->targetIndex = prey;
     pilot->hasTarget = 1;
@@ -6945,9 +7017,12 @@ void SpaceWorld::tick(double dt)
                 core::DVec3 desiredVelocity = targetBody->velocity + direction * ((distance - 250.0) * 0.5);
                 sim::avoidObstacles(desiredVelocity, self, scenery, 8.0);
 
-                const ShipWeapon* weapon = m_registry.storage<ShipWeapon>().tryGet(entityIndex);
-                const double projectileSpeed = weapon != nullptr && weapon->projectileSpeed > 1.0f
-                                                   ? static_cast<double>(weapon->projectileSpeed)
+                // The FIRST projectile gun in mount order supplies the lead, and
+                // an all-hitscan fit supplies none - which reads as instant, the
+                // meaning the single weapon gave a zero speed before it.
+                const ArmamentSummary armament = armamentSummary(entityIndex);
+                const double projectileSpeed = armament.leadSpeed > 1.0f
+                                                   ? static_cast<double>(armament.leadSpeed)
                                                    : 1.0e9; // hitscan: effectively instant
                 core::DVec3 aimDirection;
                 (void)sim::computeInterceptDirection(self.position,
@@ -6959,9 +7034,12 @@ void SpaceWorld::tick(double dt)
                 const core::DVec3 aimPoint =
                     self.position + aimDirection * (distance > 100.0 ? distance : 100.0);
                 input = sim::steerAimAndMove(self, control->tuning, aimPoint, desiredVelocity);
-                if (weapon != nullptr && weapon->kind != WeaponKind::None) {
+                if (armament.armed) {
+                    // One trigger, so the LONGEST gun decides when it is worth
+                    // pulling: a shorter gun firing early wastes charge, which
+                    // is a cost the capacitor already charges for.
                     input.trigger = sim::aimError(self, aimPoint) < 0.06 &&
-                                    distance < static_cast<double>(weapon->range) * 0.9;
+                                    distance < static_cast<double>(armament.maxRange) * 0.9;
                     // ⚑ A hauler with a fighter inside weapon range is under
                     // threat whether or not a shot has connected yet, and this
                     // is the tick-rate place that knows it (Phase 8x §D).
@@ -6977,7 +7055,8 @@ void SpaceWorld::tick(double dt)
                     // the ship knowing which way to run, and the reconcile
                     // leaving it alone instead of sending it back to its rock
                     // the moment Lua stops flying the fight.
-                    if (pilot.role == PilotRole::Fighter && distance < static_cast<double>(weapon->range) &&
+                    if (pilot.role == PilotRole::Fighter &&
+                        distance < static_cast<double>(armament.maxRange) &&
                         (m_registry.storage<TraderPuppet>().tryGet(pilot.targetIndex) != nullptr ||
                          m_registry.storage<MinerPuppet>().tryGet(pilot.targetIndex) != nullptr)) {
                         if (ShipPilot* hunted = m_registry.storage<ShipPilot>().tryGet(pilot.targetIndex)) {
@@ -7253,8 +7332,16 @@ void SpaceWorld::tick(double dt)
     // Weapons: tick cooldowns; a held trigger fires when charged and ready.
     // Hitscan pulses and mining beams resolve in here, and both sweep the same
     // body list the projectile loop does.
+    //
+    // ⚑ TWO LOOPS SINCE PHASE 31 STAGE C1: ships on the outside, one ship's
+    // guns on the inside. Everything that is a fact about the SHIP - where it
+    // is, which way it points, whether the trigger is down, what charge is
+    // left - is read once per ship, and the inner loop reads only what differs
+    // gun to gun. The capacitor is why the nesting has to be this way round:
+    // `drawWeaponCharge` spends one shared pool of energy, so a ship's guns
+    // have to be walked together and in a defined order.
     const std::uint32_t weaponZone = profiler.beginZone("sim.weapons");
-    ecs::Pool<ShipWeapon>& weapons = m_registry.storage<ShipWeapon>();
+    ecs::Pool<ShipArmament>& armaments = m_registry.storage<ShipArmament>();
 
     struct PendingBolt
     {
@@ -7280,131 +7367,159 @@ void SpaceWorld::tick(double dt)
     };
 
     std::vector<PendingCut> pendingCuts;
-    for (std::size_t w = 0; w < weapons.size(); ++w) {
-        ShipWeapon& weapon = weapons.values()[w];
-        const std::uint32_t entityIndex = weapons.entityIndices()[w];
-        if (weapon.cooldown > 0.0f) {
-            weapon.cooldown -= static_cast<float>(dt);
-        }
-        if (weapon.kind == WeaponKind::None || weapon.cooldown > 0.0f) {
-            continue;
-        }
+    for (std::size_t a = 0; a < armaments.size(); ++a) {
+        ShipArmament& armament = armaments.values()[a];
+        const std::uint32_t entityIndex = armaments.entityIndices()[a];
         const ShipControl* control = m_registry.storage<ShipControl>().tryGet(entityIndex);
-        if (control == nullptr || !control->input.trigger) {
-            continue;
-        }
-        if (ShipPower* power = powers.tryGet(entityIndex);
-            power != nullptr && !sim::drawWeaponCharge(power->state, weapon.energyCost)) {
-            continue;
-        }
-        weapon.cooldown = 1.0f / (weapon.rateOfFire > 0.01f ? weapon.rateOfFire : 0.01f);
-
+        // ⚑ The trigger is read out here and the cooldowns tick BELOW it, on
+        // every gun, whether or not it is down. A cooldown that only ran while
+        // the trigger was held would give every gun a free first shot after any
+        // pause - a rate of fire no def names.
+        const bool trigger = control != nullptr && control->input.trigger;
         const Transform& transform = transforms.get(entityIndex);
         const RenderShape& shape = m_registry.storage<RenderShape>().get(entityIndex);
         const core::Vec3 forward = rotate(transform.orientation, core::Vec3{0.0f, 0.0f, -1.0f});
         const core::DVec3 forwardD = toDVec3(forward);
-        const double noseOffset = modelBaseRadius(shape.model) * static_cast<double>(shape.scale.x) + 6.0;
-        const core::DVec3 muzzle = transform.position + forwardD * noseOffset;
+        const double hullScale = static_cast<double>(shape.scale.x);
+        ShipPower* power = powers.tryGet(entityIndex);
 
-        // A shot was definitely fired by here: the cooldown is reset and the
-        // capacitor is paid. The player's own gun is at the listener; every
-        // other ship's is out in the world.
-        if (m_audio != nullptr) {
-            if (entityIndex == playerEntityIndex()) {
-                m_audio->play2D(m_audio->cues().weaponFire);
-            } else {
-                m_audio->playAt(m_audio->cues().weaponFire, muzzle);
+        for (std::uint32_t g = 0; g < armament.count; ++g) {
+            ShipWeapon& weapon = armament.weapons[g];
+            if (weapon.cooldown > 0.0f) {
+                weapon.cooldown -= static_cast<float>(dt);
             }
-        }
+            if (weapon.kind == WeaponKind::None || weapon.cooldown > 0.0f || !trigger) {
+                continue;
+            }
+            // ⚑ PER-MOUNT CAPACITOR DRAW, and this `continue` is the whole of
+            // it. Each gun pays its own cost as it comes up, so a salvo the
+            // capacitor cannot cover fires the guns the author listed FIRST and
+            // leaves the rest holding. A starved gun does not reset its
+            // cooldown, so it goes off the moment the charge is back rather
+            // than sitting out a cycle it never spent.
+            if (power != nullptr && !sim::drawWeaponCharge(power->state, weapon.energyCost)) {
+                continue;
+            }
+            weapon.cooldown = 1.0f / (weapon.rateOfFire > 0.01f ? weapon.rateOfFire : 0.01f);
 
-        if (weapon.kind == WeaponKind::Hitscan) {
-            // Instant pulse along the boresight; first ship hit takes it.
-            const core::DVec3 beamEnd = muzzle + forwardD * static_cast<double>(weapon.range);
-            // A beam with mining_power cuts rock and hulls too (Phase 8f).
-            // Whichever is nearer along the beam is what it lands on, so you
-            // cannot mine through a fighter that flew into the line.
-            double miningT = 2.0;
-            std::uint32_t miningEntity = kNoIndex;
-            bool miningWreck = false;
-            if (weapon.miningPower > 0.0f && entityIndex == playerEntityIndex()) {
-                const ecs::Pool<MineableRock>& rockPool = m_registry.storage<MineableRock>();
-                const ecs::Pool<WreckMarker>& wreckPool = m_registry.storage<WreckMarker>();
-                const auto sweepCuttable = [&](std::uint32_t candidate, bool isWreck) {
-                    const RenderShape& candidateShape = m_registry.storage<RenderShape>().get(candidate);
-                    const double radius =
-                        modelBaseRadius(candidateShape.model) * static_cast<double>(candidateShape.scale.x);
+            // ⚑ THE MUZZLE IS THE MOUNT NOW (Phase 31 stage C1). It used to be
+            // one invented point on the boresight - the hull's collision radius
+            // plus six metres - because there was one gun and nowhere on the
+            // hull to say where it came from. `at` is authored at scale 1, so it
+            // is scaled by the hull and rotated into the world exactly like
+            // every other authored length on a ship.
+            //
+            // ⚑⚑ WHAT IT DELIBERATELY DOES NOT DO IS AIM. Every gun still fires
+            // along the SHIP'S boresight, which is what one gun did before it and
+            // is why a single-gun hull behaves identically. `aim` and `arc` are
+            // stage C2's subject, and honouring `aim` here without traverse would
+            // point the freighter's dorsal turret straight up and leave it unable
+            // to hit anything - a regression wearing progress's clothes.
+            const core::Vec3 offset{static_cast<float>(static_cast<double>(weapon.at[0]) * hullScale),
+                                    static_cast<float>(static_cast<double>(weapon.at[1]) * hullScale),
+                                    static_cast<float>(static_cast<double>(weapon.at[2]) * hullScale)};
+            const core::DVec3 muzzle = transform.position + toDVec3(rotate(transform.orientation, offset));
+
+            // A shot was definitely fired by here: the cooldown is reset and the
+            // capacitor is paid. The player's own gun is at the listener; every
+            // other ship's is out in the world.
+            if (m_audio != nullptr) {
+                if (entityIndex == playerEntityIndex()) {
+                    m_audio->play2D(m_audio->cues().weaponFire);
+                } else {
+                    m_audio->playAt(m_audio->cues().weaponFire, muzzle);
+                }
+            }
+
+            if (weapon.kind == WeaponKind::Hitscan) {
+                // Instant pulse along the boresight; first ship hit takes it.
+                const core::DVec3 beamEnd = muzzle + forwardD * static_cast<double>(weapon.range);
+                // A beam with mining_power cuts rock and hulls too (Phase 8f).
+                // Whichever is nearer along the beam is what it lands on, so you
+                // cannot mine through a fighter that flew into the line.
+                double miningT = 2.0;
+                std::uint32_t miningEntity = kNoIndex;
+                bool miningWreck = false;
+                if (weapon.miningPower > 0.0f && entityIndex == playerEntityIndex()) {
+                    const ecs::Pool<MineableRock>& rockPool = m_registry.storage<MineableRock>();
+                    const ecs::Pool<WreckMarker>& wreckPool = m_registry.storage<WreckMarker>();
+                    const auto sweepCuttable = [&](std::uint32_t candidate, bool isWreck) {
+                        const RenderShape& candidateShape = m_registry.storage<RenderShape>().get(candidate);
+                        const double radius = modelBaseRadius(candidateShape.model) *
+                                              static_cast<double>(candidateShape.scale.x);
+                        double hitT = 0.0;
+                        if (sim::segmentHitsSphere(
+                                muzzle, beamEnd, transforms.get(candidate).position, radius, hitT) &&
+                            hitT < miningT) {
+                            miningT = hitT;
+                            miningEntity = candidate;
+                            miningWreck = isWreck;
+                        }
+                    };
+                    for (std::size_t r = 0; r < rockPool.size(); ++r) {
+                        sweepCuttable(rockPool.entityIndices()[r], false);
+                    }
+                    for (std::size_t r = 0; r < wreckPool.size(); ++r) {
+                        sweepCuttable(wreckPool.entityIndices()[r], true);
+                    }
+                }
+                double bestT = 2.0;
+                std::uint32_t bestTarget = 0;
+                bool hit = false;
+                for (std::size_t slot = 0; slot < shipCount; ++slot) {
+                    const std::uint32_t targetIndex = m_collisionShipIndices[slot];
+                    if (targetIndex == entityIndex) {
+                        continue;
+                    }
                     double hitT = 0.0;
-                    if (sim::segmentHitsSphere(
-                            muzzle, beamEnd, transforms.get(candidate).position, radius, hitT) &&
-                        hitT < miningT) {
-                        miningT = hitT;
-                        miningEntity = candidate;
-                        miningWreck = isWreck;
-                    }
-                };
-                for (std::size_t r = 0; r < rockPool.size(); ++r) {
-                    sweepCuttable(rockPool.entityIndices()[r], false);
-                }
-                for (std::size_t r = 0; r < wreckPool.size(); ++r) {
-                    sweepCuttable(wreckPool.entityIndices()[r], true);
-                }
-            }
-            double bestT = 2.0;
-            std::uint32_t bestTarget = 0;
-            bool hit = false;
-            for (std::size_t slot = 0; slot < shipCount; ++slot) {
-                const std::uint32_t targetIndex = m_collisionShipIndices[slot];
-                if (targetIndex == entityIndex) {
-                    continue;
-                }
-                double hitT = 0.0;
-                if (sim::segmentHitsSphere(muzzle,
-                                           beamEnd,
-                                           m_collisionBodies[slot].position,
-                                           m_collisionBodies[slot].radius,
-                                           hitT) &&
-                    hitT < bestT) {
-                    bestT = hitT;
-                    bestTarget = targetIndex;
-                    hit = true;
-                }
-            }
-            if (miningEntity != kNoIndex && (!hit || miningT <= bestT)) {
-                // Per shot, so the yield works out to mining_power per second
-                // of held beam whatever the weapon's rate of fire is. The cut
-                // itself is deferred: it spawns chunk entities, and nothing
-                // may change a pool's shape while this loop walks one.
-                pendingCuts.push_back(
-                    {.entityIndex = miningEntity,
-                     .impact = muzzle + (beamEnd - muzzle) * miningT,
-                     .units = weapon.miningPower / (weapon.rateOfFire > 0.01f ? weapon.rateOfFire : 0.01f),
-                     .wreck = miningWreck});
-            } else if (hit) {
-                if (ShipDefense* defense = defenses.tryGet(bestTarget);
-                    defense != nullptr && defense->state.alive() && !isDamageImmune(bestTarget)) {
-                    const sim::ShieldFacing facing = sim::facingForHit(
-                        m_registry.storage<Transform>().get(bestTarget).orientation, forwardD * -1.0);
-                    const sim::DamageResult result =
-                        sim::applyDamage(defense->state, defense->tuning, facing, weapon.damage);
-                    noteDamage(bestTarget, muzzle + (beamEnd - muzzle) * bestT, result, entityIndex);
-                    if (result.destroyed) { // deferred: mid-iteration
-                        destroyedShips.push_back({.victim = bestTarget, .attacker = entityIndex});
+                    if (sim::segmentHitsSphere(muzzle,
+                                               beamEnd,
+                                               m_collisionBodies[slot].position,
+                                               m_collisionBodies[slot].radius,
+                                               hitT) &&
+                        hitT < bestT) {
+                        bestT = hitT;
+                        bestTarget = targetIndex;
+                        hit = true;
                     }
                 }
+                if (miningEntity != kNoIndex && (!hit || miningT <= bestT)) {
+                    // Per shot, so the yield works out to mining_power per second
+                    // of held beam whatever the weapon's rate of fire is. The cut
+                    // itself is deferred: it spawns chunk entities, and nothing
+                    // may change a pool's shape while this loop walks one.
+                    pendingCuts.push_back({.entityIndex = miningEntity,
+                                           .impact = muzzle + (beamEnd - muzzle) * miningT,
+                                           .units = weapon.miningPower /
+                                                    (weapon.rateOfFire > 0.01f ? weapon.rateOfFire : 0.01f),
+                                           .wreck = miningWreck});
+                } else if (hit) {
+                    if (ShipDefense* defense = defenses.tryGet(bestTarget);
+                        defense != nullptr && defense->state.alive() && !isDamageImmune(bestTarget)) {
+                        const sim::ShieldFacing facing = sim::facingForHit(
+                            m_registry.storage<Transform>().get(bestTarget).orientation, forwardD * -1.0);
+                        const sim::DamageResult result =
+                            sim::applyDamage(defense->state, defense->tuning, facing, weapon.damage);
+                        noteDamage(bestTarget, muzzle + (beamEnd - muzzle) * bestT, result, entityIndex);
+                        if (result.destroyed) { // deferred: mid-iteration
+                            destroyedShips.push_back({.victim = bestTarget, .attacker = entityIndex});
+                        }
+                    }
+                }
+            } else {
+                const FlightBody& body = bodies.get(entityIndex);
+                newBolts.push_back({
+                    .position = muzzle,
+                    .orientation = transform.orientation,
+                    .velocity = body.velocity + forwardD * static_cast<double>(weapon.projectileSpeed),
+                    .lifetime =
+                        static_cast<double>(weapon.range) /
+                        static_cast<double>(weapon.projectileSpeed > 1.0f ? weapon.projectileSpeed : 1.0f),
+                    .damage = weapon.damage,
+                    .shooterIndex = entityIndex,
+                    .model = weapon.boltModel,
+                });
             }
-        } else {
-            const FlightBody& body = bodies.get(entityIndex);
-            newBolts.push_back({
-                .position = muzzle,
-                .orientation = transform.orientation,
-                .velocity = body.velocity + forwardD * static_cast<double>(weapon.projectileSpeed),
-                .lifetime =
-                    static_cast<double>(weapon.range) /
-                    static_cast<double>(weapon.projectileSpeed > 1.0f ? weapon.projectileSpeed : 1.0f),
-                .damage = weapon.damage,
-                .shooterIndex = entityIndex,
-                .model = weapon.boltModel,
-            });
         }
     }
     for (const DestroyedShip& destroyed : destroyedShips) {

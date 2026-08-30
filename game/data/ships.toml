@@ -15,6 +15,9 @@
 #         `scale = 4.0` hull's mounts are multiplied like the rest of it.
 #         PRESENT means external - drawn, and shot at where it sits. ABSENT
 #         means internal: it exists, it can be destroyed, it is never drawn.
+#         ⚑ SINCE PHASE 31 STAGE C1 THIS IS ALSO THE MUZZLE: a fitted gun
+#         fires from its mount's `at`, so a weapon mount that is not on the
+#         hull's SURFACE puts its bolts inside the ship. See the note below.
 #   aim   facing, hull frame. Needs an `at`.
 #   arc   degrees of traverse. Needs an `at`. THE TRAVERSE BELONGS TO THE
 #         MOUNT, which is why a `fixed` gun fitted into a `turret` traverses
@@ -40,6 +43,18 @@
 # `components.toml` has no `subsystem` component, on purpose - the survey
 # scanners stayed `utility` so that the player's starting shuttle did not lose
 # them. A mount waiting for content is the honest state of it.
+#
+# ⚑⚑ WHERE THE WEAPON MOUNTS MOVED IN STAGE C1, AND WHY THE OTHERS DID NOT.
+# Until C1 nothing read `at`, so the stage-A2 positions were placed INSIDE the
+# shared `ship` mesh - which spans z -7..+5, x +/-3.5, y -1.7..+2.0. That was
+# harmless while the muzzle was an invented point six metres off the nose, and
+# is not harmless now: `ship_camera.hpp` seats the eye at z = -5.0 and does NOT
+# scale it, so the shuttle's old `gun_nose` at z = -2.4 would have fired every
+# bolt two and a half metres BEHIND the player's head. The weapon mounts below
+# now sit on the hull's skin. The utility, engine and shield mounts are still
+# interior points, deliberately: nothing reads them until stage E draws a
+# fitting on the hull, and moving them now would be guessing at what that
+# stage needs to see.
 #
 # The positions below are placed against the shared `ship` mesh's bounds and
 # are the first thing a real hull mesh will move (Phase 32).
@@ -77,11 +92,14 @@ crew_berths = 1
   # A class-1 hull with one gun and nothing spare: five smalls is the whole
   # budget, and the trade the player already makes - a cargo pod OR a scanner -
   # is the same trade with the mount named.
+  # On the chin at the very tip of the wedge (the mesh's nose point is
+  # 0, 0.3, -7.0), which is 1.6 m ahead of the seat rather than 2.6 m behind
+  # it. Stage C1 made this position the muzzle.
   [[ship.mount]]
   id = "gun_nose"
   kind = "fixed"
   size = "small"
-  at = [0.0, -0.2, -2.4]
+  at = [0.0, -0.1, -6.6]
   fit = "sol.pulse_cannon"
 
   [[ship.mount]]
@@ -144,7 +162,7 @@ crew_berths = 1
   id = "gun_nose"
   kind = "fixed"
   size = "small"
-  at = [0.0, -0.1, -2.0]
+  at = [0.0, -0.1, -6.6]
   fit = "sol.pulse_cannon"
 
   [[ship.mount]]
@@ -218,10 +236,34 @@ crew_berths = 2
   id = "turret_dorsal"
   kind = "turret"
   size = "medium"
-  at = [0.0, 0.9, -0.4]
+  at = [0.0, 1.6, -0.4]
   aim = [0.0, 1.0, 0.0]
   arc = 270.0
   fit = "sol.mining_laser"
+
+  # ⚑ THE SECOND WEAPON MOUNT IN THE GAME, AND IT COMES BARE (Phase 31 stage
+  # C1). Until this hull had two, nothing in the base game could fit two guns
+  # to one ship - so the phase's own exit criterion ("fire them
+  # independently") was unreachable in shipped content and only a fixture
+  # could see plural guns at all.
+  #
+  # It is on the FREIGHTER rather than the interceptor for two reasons and
+  # both are written down elsewhere in this file. A ninth mount sits inside
+  # gdd.md 11.1's class-3 budget of 8-14, where a sixth on a class-1 hull
+  # would deepen the 2-4 overrun the header already apologises for; and this
+  # is the hull that carries a ring rather than a bolted gun, so a dorsal and
+  # a ventral turret is what a turreted hull IS.
+  #
+  # ⚑ NO `fit`, ON PURPOSE. An NPC freighter still flies the one mining laser
+  # it flew before, so stage C1 changes the balance of nothing that already
+  # existed; the mount is somewhere for a PLAYER to put a second gun.
+  [[ship.mount]]
+  id = "turret_ventral"
+  kind = "turret"
+  size = "medium"
+  at = [0.0, -1.4, -0.4]
+  aim = [0.0, -1.0, 0.0]
+  arc = 270.0
 
   [[ship.mount]]
   id = "drive_main"
