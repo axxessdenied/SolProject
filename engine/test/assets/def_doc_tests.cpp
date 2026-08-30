@@ -180,9 +180,16 @@ SOL_TEST(defDocumentsKeepEveryRowAndKeyTheSchemaSees)
 // each is measured rather than imagined - so if somebody later "simplifies"
 // this document into a typed one, these are what fail.
 
-// 27 committed values are TOML INTEGERS, and `optionalUint` rejects a float.
-// This is a LOAD FAILURE rather than a cosmetic reformat, which is why it is
-// asserted against the schema and not only against the bytes.
+// Committed values in these files are TOML INTEGERS, and `optionalUint`
+// rejects a float. This is a LOAD FAILURE rather than a cosmetic reformat,
+// which is why it is asserted against the schema and not only against the
+// bytes.
+//
+// ⚑ The witness used to be `slots_engine`, which Phase 31 stage B deleted
+// along with the rest of the slot counts. `crew_berths` is the integer that
+// survived the mount conversion, and it is a better witness for the same
+// reason it survived: it is a property of the HULL rather than of the fit
+// model, so a phase that rewrites fitting again will not take it too.
 SOL_TEST(defDocumentKeepsAnIntegerAnInteger)
 {
     const std::string source = readWholeFile(defPath("ships"));
@@ -191,20 +198,20 @@ SOL_TEST(defDocumentKeepsAnIntegerAnInteger)
     SOL_REQUIRE(parses(source, doc));
     const DefRow* shuttle = doc.find("ship", "sol.shuttle");
     SOL_REQUIRE(shuttle != nullptr);
-    const assets::DefKey* slots = shuttle->find("slots_engine");
-    SOL_REQUIRE(slots != nullptr);
-    SOL_CHECK(slots->value() == "1");
-    SOL_CHECK(slots->value() != "1.0");
+    const assets::DefKey* berths = shuttle->find("crew_berths");
+    SOL_REQUIRE(berths != nullptr);
+    SOL_CHECK(berths->value() == "1");
+    SOL_CHECK(berths->value() != "1.0");
 
     // The proof that the distinction is load-bearing: spell it as a float and
     // the game's own schema refuses the file.
     std::string mangled = source;
-    const std::size_t at = mangled.find("slots_engine = 1");
+    const std::size_t at = mangled.find("crew_berths = 1");
     SOL_REQUIRE(at != std::string::npos);
-    mangled.replace(at, std::strlen("slots_engine = 1"), "slots_engine = 1.0");
+    mangled.replace(at, std::strlen("crew_berths = 1"), "crew_berths = 1.0");
     std::string error;
     SOL_CHECK(!schemaAccepts(mangled, error));
-    SOL_CHECK(error.find("slots_engine") != std::string::npos);
+    SOL_CHECK(error.find("crew_berths") != std::string::npos);
 
     // And the document as parsed still satisfies the schema, which is what the
     // tool relies on when it validates before writing.

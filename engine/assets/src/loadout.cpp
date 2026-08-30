@@ -129,33 +129,79 @@ void accumulate(Accumulated& acc, const StatModifiers& mods)
     }
 }
 
+[[nodiscard]] std::string describe(MountKind kind, MountSize size)
+{
+    return std::string(mountSizeName(size)) + " " + mountKindName(kind);
+}
+
 } // namespace
 
+const std::string* FittedMount::defId() const
+{
+    if (component != nullptr) {
+        return &component->id;
+    }
+    return weapon != nullptr ? &weapon->id : nullptr;
+}
+
+MountKind FittedMount::kind() const
+{
+    if (component != nullptr) {
+        return component->mount;
+    }
+    return weapon != nullptr ? weapon->mount : MountKind::Utility;
+}
+
+MountSize FittedMount::size() const
+{
+    if (component != nullptr) {
+        return component->size;
+    }
+    return weapon != nullptr ? weapon->size : MountSize::Small;
+}
+
 bool validateLoadout(const ShipDef& ship,
-                     std::span<const ComponentDef* const> components,
+                     std::span<const FittedMount> fittings,
                      std::span<const CrewDef* const> crew,
                      std::string* outError)
 {
-    std::array<std::uint32_t, kComponentSlotCount> used{};
     float powerDraw = 0.0f;
-    for (const ComponentDef* component : components) {
-        if (component == nullptr) {
-            continue;
-        }
-        ++used[static_cast<std::size_t>(component->slot)];
-        powerDraw += component->powerDraw;
-    }
-
-    const std::array<std::uint32_t, kComponentSlotCount> limits = {
-        ship.slotsShield, ship.slotsEngine, ship.slotsCargo, ship.slotsUtility};
-    constexpr const char* kSlotNames[kComponentSlotCount] = {"shield", "engine", "cargo", "utility"};
-    for (std::size_t i = 0; i < kComponentSlotCount; ++i) {
-        if (used[i] > limits[i]) {
+    for (std::size_t i = 0; i < fittings.size(); ++i) {
+        const FittedMount& fitting = fittings[i];
+        const std::string mountId(fitting.mountId);
+        const ShipMount* mount = ship.findMount(fitting.mountId);
+        if (mount == nullptr) {
             if (outError != nullptr) {
-                *outError = std::string("too many ") + kSlotNames[i] + " components (" +
-                            std::to_string(used[i]) + "/" + std::to_string(limits[i]) + ")";
+                *outError = "'" + ship.name + "' has no mount '" + mountId + "'";
             }
             return false;
+        }
+        // decisions/014 rule 1: exactly one fitting per mount. The check is
+        // against the fittings BEFORE this one, so the message can name the
+        // mount that is already taken rather than a count.
+        for (std::size_t j = 0; j < i; ++j) {
+            if (fittings[j].mountId == fitting.mountId) {
+                if (outError != nullptr) {
+                    *outError = "mount '" + mountId + "' is already fitted";
+                }
+                return false;
+            }
+        }
+        if (fitting.empty()) {
+            if (outError != nullptr) {
+                *outError = "mount '" + mountId + "' holds a fitting whose def is missing";
+            }
+            return false;
+        }
+        if (!mountAccepts(*mount, fitting.kind(), fitting.size())) {
+            if (outError != nullptr) {
+                *outError = "mount '" + mountId + "' is a " + describe(mount->kind, mount->size) +
+                            " and takes no " + describe(fitting.kind(), fitting.size());
+            }
+            return false;
+        }
+        if (fitting.component != nullptr) {
+            powerDraw += fitting.component->powerDraw;
         }
     }
 
@@ -184,14 +230,14 @@ bool validateLoadout(const ShipDef& ship,
 }
 
 ShipDef resolveLoadout(const ShipDef& base,
-                       std::span<const ComponentDef* const> components,
+                       std::span<const FittedMount> fittings,
                        std::span<const CrewDef* const> crew)
 {
     Accumulated acc;
-    for (const ComponentDef* component : components) {
-        if (component != nullptr) {
-            accumulate(acc, component->modifiers);
-            acc.componentMass += component->mass;
+    for (const FittedMount& fitting : fittings) {
+        if (fitting.component != nullptr) {
+            accumulate(acc, fitting.component->modifiers);
+            acc.componentMass += fitting.component->mass;
         }
     }
     for (const CrewDef* member : crew) {
@@ -201,6 +247,25 @@ ShipDef resolveLoadout(const ShipDef& base,
     }
 
     ShipDef def = base;
+    // The resolved def IS the ship as flown, mounts included: every consumer
+    // that used to read `ShipDef::weaponId` now reads a mount's `fit`, and
+    // giving the resolved def the player's fit rather than the hull's default
+    // is what lets ONE code path serve an NPC hull and the player's own.
+    for (ShipMount& mount : def.mounts) {
+        mount.fit.clear();
+    }
+    for (const FittedMount& fitting : fittings) {
+        const std::string* id = fitting.defId();
+        if (id == nullptr) {
+            continue;
+        }
+        for (ShipMount& mount : def.mounts) {
+            if (mount.id == fitting.mountId) {
+                mount.fit = *id;
+                break;
+            }
+        }
+    }
     for (std::size_t i = 0; i < kFitStatCount; ++i) {
         const auto stat = static_cast<FitStat>(i);
         if (stat == FitStat::TurnRate) {

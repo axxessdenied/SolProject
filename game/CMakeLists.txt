@@ -268,6 +268,7 @@ add_executable(sol_game_tests
     test/model_role_tests.cpp
     test/save_catalog_tests.cpp
     test/save_format_tests.cpp
+    test/ship_fit_tests.cpp
     test/system_security_tests.cpp
     test/target_cycle_tests.cpp
 )

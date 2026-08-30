@@ -1065,17 +1065,16 @@ std::string listComponents(GameContent& content)
         if (!lines.empty()) {
             lines += "\n";
         }
-        constexpr const char* kSlotNames[] = {"shield", "engine", "cargo", "utility"};
-        lines += def.id + " (" + kSlotNames[static_cast<std::size_t>(def.slot)] + ", " +
-                 std::to_string(static_cast<int>(def.price)) + " cr)";
+        lines += def.id + " (" + assets::mountSizeName(def.size) + " " + assets::mountKindName(def.mount) +
+                 ", " + std::to_string(static_cast<int>(def.price)) + " cr)";
     }
     return lines;
 }
 
-// A hull's mounts, the whole list (Phase 31 stage A2). Nothing fits into them
-// yet, so a probe is the ONLY way to see that the schema arrived and that the
-// three shipped hulls parsed the way their author meant - and the alternative,
-// waiting for stage B's screen, is how a schema ships with a typo in it.
+// A hull's mounts AS AUTHORED, for any ship def in the game (Phase 31 stage
+// A2). This reads `content.defs()` and knows nothing about the player, which
+// is what makes it answerable at the main menu with no campaign started -
+// `sol.fit()` is the one that reports the ship actually being flown.
 //
 // ⚑ It prints EXTERNAL-vs-internal as the position rather than as a word,
 // because that IS the distinction (decisions/014 rule 2): `at` is either there
@@ -1126,6 +1125,16 @@ std::string listMounts(GameContent& content, const char* shipDefId)
         }
         lines += "\n  ";
         lines += buffer;
+        // ⚑ The hull's own `fit` goes on its OWN line rather than into the
+        // row above (Phase 31 stage B). The row already measured out at close
+        // to the console panel's ~76 characters in stage A2 - that is what the
+        // re-wording there was for - and appending a namespaced def id to it
+        // would push `arc` back off the right edge for exactly the mounts that
+        // have one.
+        if (!mount.fit.empty()) {
+            lines += "\n      fit ";
+            lines += mount.fit;
+        }
     }
     return lines;
 }
@@ -1142,20 +1151,39 @@ std::string listCrewDefs(GameContent& content)
     return lines;
 }
 
-// The active ship's fit: def, weapon, components, crew, value, deductible.
+// The active ship's fit, MOUNT BY MOUNT (Phase 31 stage B). One line per
+// place on the hull in authored order, empties included, because "what is
+// free" is the question a refit starts from and a list of only what is fitted
+// cannot answer it.
+//
+// ⚑ Sixty-odd characters per line, deliberately: the dev console panel shows
+// about SEVENTY-SIX and scrolls the rest, which is the trap stage A2's probe
+// fell into and had to be re-worded out of. Mount id, then kind and size,
+// then what is in it - identity before contents, same order as the screen.
 std::string fitInfo(GameContent& content)
 {
     SpaceWorld& world = content.world();
     const game::OwnedShip& ship = world.activeShip();
-    std::string info = ship.defId + " | weapon: " + (ship.weaponId.empty() ? "-" : ship.weaponId);
-    info += " | components:";
-    if (ship.componentIds.empty()) {
-        info += " -";
+    const assets::ShipDef* base = content.defs().findShip(ship.defId.c_str());
+    if (base == nullptr) {
+        return "ship def '" + ship.defId + "' missing";
     }
-    for (const std::string& id : ship.componentIds) {
-        info += " " + id;
+    std::string info = base->name + " (" + ship.defId + "): " + std::to_string(ship.fittings.size()) + "/" +
+                       std::to_string(base->mounts.size()) + " mount(s) filled";
+    char buffer[128];
+    for (const assets::ShipMount& mount : base->mounts) {
+        const game::ShipFitting* fitted = ship.fittingAt(mount.id);
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%-15s %-9s %-6s %s",
+                      mount.id.c_str(),
+                      assets::mountKindName(mount.kind),
+                      assets::mountSizeName(mount.size),
+                      fitted != nullptr ? fitted->defId.c_str() : "-");
+        info += "\n  ";
+        info += buffer;
     }
-    info += " | crew:";
+    info += "\ncrew:";
     if (ship.crewIds.empty()) {
         info += " -";
     }
@@ -1189,19 +1217,24 @@ std::string listFleet(GameContent& content)
     return lines;
 }
 
-bool buyComponent(GameContent& content, const std::string& id)
+// ⚑ ONE VERB PAIR, because after Phase 31 stage B there is one thing to do:
+// put a fitting in a mount. `sol.buy_component`, `sol.sell_component` and
+// `sol.buy_weapon` are gone rather than aliased - a component and a weapon
+// differ in which table they are looked up in, and that is the MOUNT's
+// business, not the caller's.
+bool buyFitting(GameContent& content, const std::string& id)
 {
-    return content.world().buyComponent(id.c_str());
+    return content.world().buyFitting(id.c_str());
 }
 
-bool sellComponent(GameContent& content, const std::string& id)
+bool fitToMount(GameContent& content, const std::string& mountId, const std::string& id)
 {
-    return content.world().sellComponent(id.c_str());
+    return content.world().buyFitting(id.c_str(), mountId.c_str());
 }
 
-bool buyWeapon(GameContent& content, const std::string& id)
+bool sellFitting(GameContent& content, const std::string& mountId)
 {
-    return content.world().buyWeapon(id.c_str());
+    return content.world().sellFitting(mountId.c_str());
 }
 
 bool buyShip(GameContent& content, const std::string& id)
@@ -3370,9 +3403,9 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listCrewDefs>("sol", "crew_defs", this);
     m_vm.registerFunction<&fitInfo>("sol", "fit", this);
     m_vm.registerFunction<&listFleet>("sol", "fleet", this);
-    m_vm.registerFunction<&buyComponent>("sol", "buy_component", this);
-    m_vm.registerFunction<&sellComponent>("sol", "sell_component", this);
-    m_vm.registerFunction<&buyWeapon>("sol", "buy_weapon", this);
+    m_vm.registerFunction<&buyFitting>("sol", "buy_fitting", this);
+    m_vm.registerFunction<&fitToMount>("sol", "fit_mount", this);
+    m_vm.registerFunction<&sellFitting>("sol", "sell_fitting", this);
     m_vm.registerFunction<&buyShip>("sol", "buy_ship", this);
     m_vm.registerFunction<&sellShip>("sol", "sell_ship", this);
     m_vm.registerFunction<&selectShip>("sol", "select_ship", this);

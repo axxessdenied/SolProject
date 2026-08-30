@@ -9,11 +9,10 @@ using namespace sol;
 
 namespace {
 
-constexpr const char* kSlotNames[assets::kComponentSlotCount] = {"shield", "engine", "cargo", "utility"};
-
 [[nodiscard]] int fittedCount(const OwnedShip& ship, const std::string& id)
 {
-    return static_cast<int>(std::count(ship.componentIds.begin(), ship.componentIds.end(), id));
+    return static_cast<int>(std::count_if(
+        ship.fittings.begin(), ship.fittings.end(), [&](const ShipFitting& f) { return f.defId == id; }));
 }
 
 [[nodiscard]] const char* store(std::deque<std::string>& text, std::string value)
@@ -35,6 +34,7 @@ void fillStationOutfitting(const SpaceWorld& world,
                            const assets::DefDatabase& defs,
                            std::deque<std::string>& text,
                            ui::StationPanel& panel,
+                           std::vector<ui::MountRow>& mountRows,
                            std::vector<ui::OutfitRow>& componentRows,
                            std::vector<ui::OutfitRow>& weaponRows,
                            std::vector<ui::OutfitRow>& crewCatalogRows,
@@ -44,6 +44,7 @@ void fillStationOutfitting(const SpaceWorld& world,
                            std::vector<ui::FactionRow>& factionRows)
 {
     text.clear();
+    mountRows.clear();
     componentRows.clear();
     weaponRows.clear();
     crewCatalogRows.clear();
@@ -55,24 +56,42 @@ void fillStationOutfitting(const SpaceWorld& world,
     const OwnedShip& active = world.activeShip();
     const assets::ShipDef* base = defs.findShip(active.defId.c_str());
 
-    // Fit summary: slot and power budget usage on the active ship.
-    std::uint32_t slotsUsed[assets::kComponentSlotCount] = {};
+    // ⚑ WHERE A FIT LANDS, AND A SELECTION IS A FILTER RATHER THAN A HINT.
+    // With a mount selected, a row that mount does not accept gets NO target
+    // and the screen greys its button; it does not quietly land somewhere
+    // else. The alternative - fall back to auto-placement - was tried and
+    // rejected on the drive: it makes the greying unreachable while any mount
+    // anywhere is free, so the screen never once says "not here", and a player
+    // who aimed at the drive and got a shield in the shield mount has been
+    // answered by a screen that ignored them.
+    //
+    // With nothing selected the catalog behaves exactly as it always did.
+    const assets::ShipMount* selected =
+        base != nullptr && panel.selectedMount != nullptr ? base->findMount(panel.selectedMount) : nullptr;
+    const bool filtering = selected != nullptr;
+    const auto targetFor =
+        [&](const std::string& id, assets::MountKind kind, assets::MountSize size) -> std::string {
+        if (filtering) {
+            return assets::mountAccepts(*selected, kind, size) ? selected->id : std::string();
+        }
+        return world.firstFreeMountFor(id.c_str());
+    };
+
+    // Fit summary: mounts filled and power budget used on the active ship.
+    // ⚑ "mounts 3/8" replaced the four s:/e:/c:/u: fractions, and it says
+    // strictly less on purpose - WHICH mounts are free is the list below's
+    // job now, and repeating it in a header line was a summary that had to be
+    // re-read against the list to be believed.
     float powerUsed = 0.0f;
-    for (const std::string& id : active.componentIds) {
-        if (const assets::ComponentDef* component = defs.findComponent(id.c_str())) {
-            ++slotsUsed[static_cast<std::size_t>(component->slot)];
+    for (const ShipFitting& fitting : active.fittings) {
+        if (const assets::ComponentDef* component = defs.findComponent(fitting.defId.c_str())) {
             powerUsed += component->powerDraw;
         }
     }
     if (base != nullptr) {
-        const std::uint32_t slotLimits[assets::kComponentSlotCount] = {
-            base->slotsShield, base->slotsEngine, base->slotsCargo, base->slotsUtility};
-        std::string summary = base->name + " | power " + formatNumber(powerUsed) + "/" +
-                              formatNumber(base->powerOutput) + " | slots";
-        for (std::size_t i = 0; i < assets::kComponentSlotCount; ++i) {
-            summary += std::string(" ") + kSlotNames[i][0] + ":" + std::to_string(slotsUsed[i]) + "/" +
-                       std::to_string(slotLimits[i]);
-        }
+        std::string summary =
+            base->name + " | power " + formatNumber(powerUsed) + "/" + formatNumber(base->powerOutput) +
+            " | mounts " + std::to_string(active.fittings.size()) + "/" + std::to_string(base->mounts.size());
         summary +=
             " | berths " + std::to_string(active.crewIds.size()) + "/" + std::to_string(base->crewBerths);
         panel.fitSummary = store(text, std::move(summary));
@@ -81,6 +100,48 @@ void fillStationOutfitting(const SpaceWorld& world,
     }
     panel.deductible = world.insuranceDeductible();
 
+    // The hull's mounts, in AUTHORED order - the order the def file reads and
+    // the order the Forge's list will show, so the screen, the file and the
+    // tool all describe the ship the same way round.
+    if (base != nullptr) {
+        for (const assets::ShipMount& mount : base->mounts) {
+            ui::MountRow row{.id = mount.id.c_str(),
+                             .kind = assets::mountKindName(mount.kind),
+                             .size = assets::mountSizeName(mount.size),
+                             .external = mount.external};
+            const ShipFitting* fitted = active.fittingAt(mount.id);
+            if (fitted == nullptr) {
+                // An empty mount says what it WOULD take. A row that only said
+                // "empty" makes the player carry the accept rule in their head
+                // and check it against a catalog one section down.
+                row.detail = store(text,
+                                   std::string("empty - takes a ") + assets::mountSizeName(mount.size) + " " +
+                                       assets::mountKindName(mount.kind) + " fitting or smaller");
+            } else if (const assets::ComponentDef* component = defs.findComponent(fitted->defId.c_str())) {
+                row.fitted = component->name.c_str();
+                row.detail = store(text,
+                                   formatNumber(component->powerDraw) + " pwr, " +
+                                       formatNumber(component->mass) + " kg");
+                row.resale = static_cast<float>(SpaceWorld::kResaleRate) * component->price;
+            } else if (const assets::WeaponDef* weapon = defs.findWeapon(fitted->defId.c_str())) {
+                row.fitted = weapon->name.c_str();
+                std::string detail = weapon->kind + ", dmg " + formatNumber(weapon->damage) + " @ " +
+                                     formatNumber(weapon->rateOfFire) + "/s";
+                if (mount.arc > 0.0f) {
+                    detail += ", traverse " + formatNumber(mount.arc) + " deg";
+                }
+                row.detail = store(text, std::move(detail));
+                row.resale = static_cast<float>(SpaceWorld::kResaleRate) * weapon->price;
+            } else {
+                // The def is gone from under a save. Named, not hidden: the
+                // mount is occupied and the player has to be told by what.
+                row.fitted = fitted->defId.c_str();
+                row.detail = "def missing - remove to free the mount";
+            }
+            mountRows.push_back(row);
+        }
+    }
+
     for (const assets::ComponentDef& def : defs.components()) {
         if (!world.stationSells(def.gate)) {
             continue; // owner faction doesn't stock it (Phase 8b catalogs)
@@ -88,23 +149,28 @@ void fillStationOutfitting(const SpaceWorld& world,
         componentRows.push_back(
             {.id = def.id.c_str(),
              .name = def.name.c_str(),
-             .detail = store(text,
-                             std::string(kSlotNames[static_cast<std::size_t>(def.slot)]) + ", " +
-                                 formatNumber(def.powerDraw) + " pwr, " + formatNumber(def.mass) + " kg"),
+             .detail =
+                 store(text,
+                       std::string(assets::mountSizeName(def.size)) + " " + assets::mountKindName(def.mount) +
+                           ", " + formatNumber(def.powerDraw) + " pwr, " + formatNumber(def.mass) + " kg"),
              .price = def.price,
-             .fitted = fittedCount(active, def.id)});
+             .fitted = fittedCount(active, def.id),
+             .targetMount = store(text, targetFor(def.id, def.mount, def.size))});
     }
     for (const assets::WeaponDef& def : defs.weapons()) {
         if (!world.stationSells(def.gate)) {
             continue;
         }
-        weaponRows.push_back({.id = def.id.c_str(),
-                              .name = def.name.c_str(),
-                              .detail = store(text,
-                                              def.kind + ", dmg " + formatNumber(def.damage) + " @ " +
-                                                  formatNumber(def.rateOfFire) + "/s"),
-                              .price = def.price,
-                              .fitted = active.weaponId == def.id ? 1 : 0});
+        weaponRows.push_back(
+            {.id = def.id.c_str(),
+             .name = def.name.c_str(),
+             .detail =
+                 store(text,
+                       std::string(assets::mountSizeName(def.size)) + " " + assets::mountKindName(def.mount) +
+                           ", dmg " + formatNumber(def.damage) + " @ " + formatNumber(def.rateOfFire) + "/s"),
+             .price = def.price,
+             .fitted = fittedCount(active, def.id),
+             .targetMount = store(text, targetFor(def.id, def.mount, def.size))});
     }
     for (const assets::CrewDef& def : defs.crew()) {
         if (!world.stationSells(def.gate)) {
@@ -226,6 +292,7 @@ void fillStationOutfitting(const SpaceWorld& world,
     }
     panel.factionNotes = store(text, std::move(notes));
 
+    panel.mounts = mountRows;
     panel.components = componentRows;
     panel.weapons = weaponRows;
     panel.crewCatalog = crewCatalogRows;
@@ -333,14 +400,11 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
     switch (action.kind) {
     case Kind::None:
         break;
-    case Kind::BuyComponent:
-        (void)world.buyComponent(action.id);
+    case Kind::BuyFitting:
+        (void)world.buyFitting(action.id, action.mount);
         break;
-    case Kind::SellComponent:
-        (void)world.sellComponent(action.id);
-        break;
-    case Kind::BuyWeapon:
-        (void)world.buyWeapon(action.id);
+    case Kind::SellFitting:
+        (void)world.sellFitting(action.mount);
         break;
     case Kind::BuyShip:
         (void)world.buyShip(action.id);

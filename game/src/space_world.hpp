@@ -695,14 +695,27 @@ inline constexpr float kWreckOversize = 1.4f;
 
 // One ship the player owns (Phase 8a outfitting): its def, fit, crew, and —
 // unless it is the active ship — where it is stored.
+// One fitting on one hull (Phase 31 stage B, decisions/014 rule 1). A save
+// names a fitting BY THE MOUNT IT OCCUPIES and never by index, so an author
+// inserting a mount into a hull cannot silently rearrange every existing
+// player's ship - the worst kind of save bug, because it corrupts nothing and
+// looks like the player misremembering.
+struct ShipFitting
+{
+    std::string mountId; // a `[[ship.mount]]` id on this ship's def
+    std::string defId;   // component or weapon def id; the MOUNT says which
+};
+
 struct OwnedShip
 {
     std::string defId;
-    std::string weaponId;                      // fitted weapon; empty = unarmed mount
-    std::vector<std::string> componentIds;     // fitted components (order irrelevant)
+    std::vector<ShipFitting> fittings;         // what is in which mount
     std::vector<std::string> crewIds;          // hired crew aboard
     std::uint32_t storedSystem = 0xffff'ffffu; // active ship ignores these
     std::uint32_t storedStation = 0xffff'ffffu;
+
+    // What is in a mount, or null for a bare one.
+    [[nodiscard]] const ShipFitting* fittingAt(std::string_view mountId) const;
 };
 
 // What a per-def model OVERRIDE resolves to (Phase 19). An empty `name` means
@@ -1033,14 +1046,41 @@ public:
 
     [[nodiscard]] const OwnedShip& activeShip() const { return m_fleet[m_activeShip]; }
 
-    // Hull + fitted components + weapon at list price (crew hires excluded).
+    // Hull + everything in its mounts at list price (crew hires excluded).
     [[nodiscard]] double shipValue(const OwnedShip& ship) const;
 
     [[nodiscard]] double insuranceDeductible() const { return kInsuranceRate * shipValue(activeShip()); }
 
-    bool buyComponent(const char* componentId, std::string* outError = nullptr);
-    bool sellComponent(const char* componentId, std::string* outError = nullptr);
-    bool buyWeapon(const char* weaponId, std::string* outError = nullptr);
+    // Buy a component or weapon and put it in a mount (Phase 31 stage B).
+    // `mountId` empty or null picks the first EMPTY mount on the hull that
+    // accepts it, which is what a catalog "Buy" button means; a named mount
+    // that is already occupied swaps, selling the old fitting back at
+    // `kResaleRate` in the same transaction - the behaviour the single weapon
+    // mount used to have, generalised to every place on the ship.
+    bool buyFitting(const char* defId, const char* mountId = nullptr, std::string* outError = nullptr);
+
+    // Remove what is in a mount and refund it at `kResaleRate`.
+    bool sellFitting(const char* mountId, std::string* outError = nullptr);
+
+    // Which mount `buyFitting` would choose, or empty if the hull has no free
+    // place for it. Public because the outfitting screen has to grey a Buy
+    // button that would be refused, and duplicating the rule there is how the
+    // button and the transaction drift apart.
+    [[nodiscard]] std::string firstFreeMountFor(const char* defId) const;
+
+    // The ship's base def with its fit and crew resolved (Phase 8a); falls
+    // back to the base def when ids have gone missing from the data. Since
+    // Phase 31 stage B the returned def's MOUNTS carry what is actually in
+    // them, which is what makes it "the ship as flown" rather than "the hull
+    // with better numbers".
+    //
+    // ⚑ Public rather than private, and it is the same argument as
+    // `shipValue`'s beside it: this is a query about an OwnedShip anyone
+    // holding one can ask, and the answer is what every other screen's numbers
+    // are derived from. It is also the only way to ask what a fit resolves to
+    // WITHOUT being docked, which a test has to be able to do.
+    [[nodiscard]] sol::assets::ShipDef resolvedShipDef(const OwnedShip& ship) const;
+
     bool buyShip(const char* shipDefId, std::string* outError = nullptr);
     bool sellShip(std::size_t fleetIndex, std::string* outError = nullptr);
     bool switchShip(std::size_t fleetIndex, std::string* outError = nullptr);
@@ -1918,9 +1958,6 @@ private:
     void applyShipDef(std::uint32_t entityIndex,
                       const sol::assets::ShipDef& def,
                       const sol::assets::DefDatabase& defs);
-    // The ship's base def with its fit and crew resolved (Phase 8a); falls
-    // back to the base def when ids have gone missing from the data.
-    [[nodiscard]] sol::assets::ShipDef resolvedShipDef(const OwnedShip& ship) const;
     // Re-applies the active ship's resolved def to the player entity
     // (refit/switch/def-reload; resets defenses like any def application).
     void applyActiveLoadout();

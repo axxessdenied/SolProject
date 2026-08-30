@@ -11,8 +11,6 @@ namespace ui = sol::ui;
 
 namespace {
 
-constexpr const char* kSlotNames[sol::assets::kComponentSlotCount] = {"shield", "engine", "cargo", "utility"};
-
 [[nodiscard]] const char* store(std::deque<std::string>& text, std::string value)
 {
     text.push_back(std::move(value));
@@ -92,26 +90,20 @@ void fillShipInfoPanel(const SpaceWorld& world,
     panel.pipsShields = pips.pips.shields;
     panel.pipMax = power.maxPerSystem;
 
-    // Power and slot budget, in the same shape the Outfitting tab prints it so
-    // the two screens are recognisably describing one ship.
-    std::uint32_t slotsUsed[sol::assets::kComponentSlotCount] = {};
+    // Power and mount budget, in the same shape the Outfitting tab prints it
+    // so the two screens are recognisably describing one ship.
     float powerUsed = 0.0f;
     float componentMass = 0.0f;
-    for (const std::string& id : active.componentIds) {
-        if (const sol::assets::ComponentDef* component = defs.findComponent(id.c_str())) {
-            ++slotsUsed[static_cast<std::size_t>(component->slot)];
+    for (const ShipFitting& fitting : active.fittings) {
+        if (const sol::assets::ComponentDef* component = defs.findComponent(fitting.defId.c_str())) {
             powerUsed += component->powerDraw;
             componentMass += component->mass;
         }
     }
     if (base != nullptr) {
-        const std::uint32_t limits[sol::assets::kComponentSlotCount] = {
-            base->slotsShield, base->slotsEngine, base->slotsCargo, base->slotsUtility};
-        std::string summary = "power " + number(powerUsed) + "/" + number(base->powerOutput) + " | slots";
-        for (std::size_t i = 0; i < sol::assets::kComponentSlotCount; ++i) {
-            summary += std::string(" ") + kSlotNames[i][0] + ":" + std::to_string(slotsUsed[i]) + "/" +
-                       std::to_string(limits[i]);
-        }
+        std::string summary = "power " + number(powerUsed) + "/" + number(base->powerOutput) + " | mounts " +
+                              std::to_string(active.fittings.size()) + "/" +
+                              std::to_string(base->mounts.size());
         summary +=
             " | berths " + std::to_string(active.crewIds.size()) + "/" + std::to_string(base->crewBerths);
         panel.fitSummary = store(text, std::move(summary));
@@ -187,24 +179,45 @@ void fillShipInfoPanel(const SpaceWorld& world,
     utilityRows.push_back({"Scanner range", store(text, range(world.scanRange()))});
     utilityRows.push_back({"Collector range", store(text, range(world.collectorRange()))});
 
-    // --- Fit. Weapon first, because it is the one hardpoint.
-    if (const sol::assets::WeaponDef* weapon = defs.findWeapon(active.weaponId.c_str())) {
-        std::string detail = weapon->kind + ", " + number(weapon->damage, 0) + " dmg @ " +
-                             number(weapon->rateOfFire, 1) + "/s, " + range(weapon->range);
-        if (weapon->miningPower > 0.0f) {
-            detail += ", mining " + number(weapon->miningPower, 1);
-        }
-        fittedRows.push_back({"Weapon", weapon->name.c_str(), store(text, std::move(detail))});
-    } else {
-        fittedRows.push_back({"Weapon", "none", "unarmed mount"});
-    }
-    for (const std::string& id : active.componentIds) {
-        if (const sol::assets::ComponentDef* component = defs.findComponent(id.c_str())) {
-            fittedRows.push_back(
-                {store(text, std::string(kSlotNames[static_cast<std::size_t>(component->slot)])),
-                 component->name.c_str(),
-                 store(text,
-                       number(component->powerDraw, 1) + " pwr, " + number(component->mass, 0) + " kg")});
+    // --- Fit, walked in the hull's MOUNT order rather than the order things
+    // were bought (Phase 31 stage B). The weapon no longer has to be printed
+    // first to be found: it is wherever the author put its mount, and an empty
+    // mount is a row too - "what is missing" is half of what this screen is
+    // read for, and a list of only what is fitted cannot say it.
+    if (base != nullptr) {
+        for (const sol::assets::ShipMount& mount : base->mounts) {
+            // ⚑ THE MOUNT'S ID IS THE LABEL, not its kind and size. On a hull
+            // with four utility mounts "small utility" four times over says
+            // nothing about WHICH place a pod is in, and the id is the same
+            // name the def file, the outfitting screen and `sol.fit()` use -
+            // so all four describe one ship in one vocabulary.
+            const char* label = mount.id.c_str();
+            const ShipFitting* fitted = active.fittingAt(mount.id);
+            if (fitted == nullptr) {
+                fittedRows.push_back({label,
+                                      "empty",
+                                      store(text,
+                                            std::string("takes a ") + sol::assets::mountSizeName(mount.size) +
+                                                " " + sol::assets::mountKindName(mount.kind) + " fitting")});
+                continue;
+            }
+            if (const sol::assets::WeaponDef* weapon = defs.findWeapon(fitted->defId.c_str())) {
+                std::string detail = weapon->kind + ", " + number(weapon->damage, 0) + " dmg @ " +
+                                     number(weapon->rateOfFire, 1) + "/s, " + range(weapon->range);
+                if (weapon->miningPower > 0.0f) {
+                    detail += ", mining " + number(weapon->miningPower, 1);
+                }
+                fittedRows.push_back({label, weapon->name.c_str(), store(text, std::move(detail))});
+            } else if (const sol::assets::ComponentDef* component =
+                           defs.findComponent(fitted->defId.c_str())) {
+                fittedRows.push_back(
+                    {label,
+                     component->name.c_str(),
+                     store(text,
+                           number(component->powerDraw, 1) + " pwr, " + number(component->mass, 0) + " kg")});
+            } else {
+                fittedRows.push_back({label, fitted->defId.c_str(), "def missing"});
+            }
         }
     }
     for (const std::string& id : active.crewIds) {

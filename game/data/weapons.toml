@@ -1,9 +1,29 @@
 # Weapon defs. price is the shipyard cost (Phase 8a outfitting).
+#
+# ⚑ A WEAPON NAMES THE MOUNT IT GOES IN (Phase 31 stage B, `decisions/014`,
+# gdd.md §11.5). Two keys, and they are not the same word twice:
+#
+#   kind  = projectile | hitscan          how the shot TRAVELS
+#   mount = turret | fixed | launcher | bay    where the gun SITS
+#   size  = small | medium | large | xlarge    a mount takes its size or under
+#
+# All four guns below are `fixed` and `small`, and that is not laziness - it is
+# what `mountAcceptsKind` is for. A TURRET IS A RING WITH A MOTOR, so a fixed
+# gun bolted into one traverses; the `arc` is authored on the mount, never
+# here. That one asymmetry is why the freighter's `turret_dorsal` takes every
+# gun in this file without any of them being authored twice, and it is why
+# nothing a player could buy before mounts became unbuyable after them.
+#
+# ⚑ Sizing the heavier guns up - `sol.heavy_cannon` to `medium`, which would
+# put it on the freighter's turret and off the shuttle's nose - is a real
+# balance decision, and stage B deliberately does not make it in passing.
 
 [[weapon]]
 id = "sol.pulse_cannon"
 name = "Pulse Cannon"
 kind = "projectile"
+mount = "fixed"
+size = "small"
 damage = 12.0
 rate_of_fire = 4.0
 range = 2500.0
@@ -18,6 +38,8 @@ price = 1200.0
 id = "sol.mining_laser"
 name = "Mining Laser"
 kind = "hitscan"
+mount = "fixed"
+size = "small"
 damage = 3.0
 rate_of_fire = 10.0
 range = 800.0
@@ -29,6 +51,8 @@ price = 600.0
 id = "sol.mining_laser_mk2"
 name = "Deep Core Laser"
 kind = "hitscan"
+mount = "fixed"
+size = "small"
 damage = 4.0
 rate_of_fire = 10.0
 range = 1400.0
@@ -40,6 +64,8 @@ price = 3200.0
 id = "sol.heavy_cannon"
 name = "Heavy Cannon"
 kind = "projectile"
+mount = "fixed"
+size = "small"
 damage = 20.0
 rate_of_fire = 2.5
 range = 3000.0

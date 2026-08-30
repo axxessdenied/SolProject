@@ -52,7 +52,7 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // same precedent: a v15 save is rejected cleanly.
 //
 // v17 (Phase 29 stage D): the authored-content digest, beside the seed.
-constexpr std::uint32_t kSaveVersion = 17;
+constexpr std::uint32_t kSaveVersion = 18;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -1105,8 +1105,8 @@ namespace {
 
 // Defined with the outfitting helpers further down: salvaging a component runs
 // through the same fit validation a purchase does.
-[[nodiscard]] std::vector<const assets::ComponentDef*> fitComponents(const assets::DefDatabase& defs,
-                                                                     const OwnedShip& ship);
+[[nodiscard]] std::vector<sol::assets::FittedMount>
+fitMounts(const assets::DefDatabase& defs, const assets::ShipDef& base, const OwnedShip& ship);
 [[nodiscard]] std::vector<const assets::CrewDef*> fitCrew(const assets::DefDatabase& defs,
                                                           const OwnedShip& ship);
 
@@ -1888,12 +1888,27 @@ bool SpaceWorld::tryFitSalvagedComponent(const std::string& componentId, std::st
     if (component == nullptr || base == nullptr) {
         return true; // the def is gone; there is nothing left to salvage
     }
-    std::vector<const assets::ComponentDef*> components = fitComponents(*m_defs, m_fleet[m_activeShip]);
-    components.push_back(component);
-    if (!assets::validateLoadout(*base, components, fitCrew(*m_defs, m_fleet[m_activeShip]))) {
-        return false; // no legal slot, power, or mass for it: it stays put
+    // ⚑ Salvage takes the first EMPTY mount that accepts it and never swaps.
+    // Buying is a decision the player made; a component floating out of a
+    // wreck is not, and silently selling the shield booster they fitted to
+    // make room for one they found would be theft dressed as a convenience.
+    OwnedShip candidate = m_fleet[m_activeShip];
+    std::string target;
+    for (const assets::ShipMount& mount : base->mounts) {
+        if (candidate.fittingAt(mount.id) == nullptr &&
+            assets::mountAccepts(mount, component->mount, component->size)) {
+            target = mount.id;
+            break;
+        }
     }
-    m_fleet[m_activeShip].componentIds.push_back(component->id);
+    if (target.empty()) {
+        return false; // no free mount takes it: it stays in the wreck
+    }
+    candidate.fittings.push_back({.mountId = target, .defId = component->id});
+    if (!assets::validateLoadout(*base, fitMounts(*m_defs, *base, candidate), fitCrew(*m_defs, candidate))) {
+        return false; // over the power budget: it stays put
+    }
+    m_fleet[m_activeShip] = std::move(candidate);
     applyActiveLoadout();
     outName = component->name;
     return true;
@@ -2303,8 +2318,11 @@ sim::SignalLoot SpaceWorld::defaultWreckLoot(const assets::ShipDef* def, std::ui
     }
     loot.credits = 40.0 + 260.0 * rng.nextDouble01();
     // Its own hardware, at salvage odds: the gun or a component off its mounts.
-    if (def != nullptr && !def->weaponId.empty() && rng.nextFloat01() < 0.2f && m_defs != nullptr &&
-        !m_defs->components().empty()) {
+    const bool wasArmed =
+        def != nullptr && std::any_of(def->mounts.begin(), def->mounts.end(), [](const auto& mount) {
+            return assets::mountTakesWeapon(mount.kind) && !mount.fit.empty();
+        });
+    if (wasArmed && rng.nextFloat01() < 0.2f && m_defs != nullptr && !m_defs->components().empty()) {
         const std::vector<assets::ComponentDef>& components = m_defs->components();
         loot.componentId = components[rng.range(static_cast<std::uint32_t>(components.size()))].id;
     }
@@ -4806,19 +4824,55 @@ void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
 
 namespace {
 
-[[nodiscard]] std::vector<const assets::ComponentDef*> fitComponents(const assets::DefDatabase& defs,
-                                                                     const OwnedShip& ship)
+// The saved fit resolved against the hull's mounts (Phase 31 stage B). The
+// MOUNT decides which table an id is looked up in - `mountTakesWeapon` - so a
+// component id and a weapon id can never be confused for one another even if
+// somebody ships both under one name.
+//
+// A fitting naming a mount this hull does not have is DROPPED with a warning
+// rather than carried: the hull def changed under a save (a mod uninstalled,
+// an author renamed a mount), and there is nowhere to put it. Carrying it
+// would fail validation forever and make the ship unrefittable.
+[[nodiscard]] std::vector<assets::FittedMount>
+fitMounts(const assets::DefDatabase& defs, const assets::ShipDef& base, const OwnedShip& ship)
 {
-    std::vector<const assets::ComponentDef*> components;
-    components.reserve(ship.componentIds.size());
-    for (const std::string& id : ship.componentIds) {
-        const assets::ComponentDef* component = defs.findComponent(id.c_str());
-        if (component == nullptr) {
-            SOL_LOG_WARN("fit: component def '%s' missing; ignoring", id.c_str());
+    std::vector<assets::FittedMount> fittings;
+    fittings.reserve(ship.fittings.size());
+    for (const ShipFitting& fitted : ship.fittings) {
+        const assets::ShipMount* mount = base.findMount(fitted.mountId);
+        if (mount == nullptr) {
+            SOL_LOG_WARN("fit: '%s' has no mount '%s'; dropping '%s'",
+                         base.id.c_str(),
+                         fitted.mountId.c_str(),
+                         fitted.defId.c_str());
+            continue;
         }
-        components.push_back(component); // nulls are skipped by the loadout math
+        assets::FittedMount entry{.mountId = fitted.mountId};
+        if (assets::mountTakesWeapon(mount->kind)) {
+            entry.weapon = defs.findWeapon(fitted.defId.c_str());
+        } else {
+            entry.component = defs.findComponent(fitted.defId.c_str());
+        }
+        if (entry.empty()) {
+            SOL_LOG_WARN("fit: def '%s' missing; mount '%s' reads empty",
+                         fitted.defId.c_str(),
+                         fitted.mountId.c_str());
+        }
+        fittings.push_back(entry);
     }
-    return components;
+    return fittings;
+}
+
+// What a hull comes with: every mount whose def names a `fit`.
+[[nodiscard]] std::vector<ShipFitting> defaultFit(const assets::ShipDef& def)
+{
+    std::vector<ShipFitting> fittings;
+    for (const assets::ShipMount& mount : def.mounts) {
+        if (!mount.fit.empty()) {
+            fittings.push_back({.mountId = mount.id, .defId = mount.fit});
+        }
+    }
+    return fittings;
 }
 
 [[nodiscard]] std::vector<const assets::CrewDef*> fitCrew(const assets::DefDatabase& defs,
@@ -4845,7 +4899,7 @@ void SpaceWorld::resetFleetToStarter()
     OwnedShip starter{.defId = kPlayerShipDefId};
     if (m_defs != nullptr) {
         if (const assets::ShipDef* def = m_defs->findShip(kPlayerShipDefId)) {
-            starter.weaponId = def->weaponId;
+            starter.fittings = defaultFit(*def);
         }
     }
     m_fleet.push_back(std::move(starter));
@@ -4861,11 +4915,9 @@ assets::ShipDef SpaceWorld::resolvedShipDef(const OwnedShip& ship) const
         SOL_LOG_WARN("fleet: ship def '%s' missing; using defaults", ship.defId.c_str());
         return assets::ShipDef{.id = ship.defId};
     }
-    const std::vector<const assets::ComponentDef*> components = fitComponents(*m_defs, ship);
+    const std::vector<assets::FittedMount> fittings = fitMounts(*m_defs, *base, ship);
     const std::vector<const assets::CrewDef*> crew = fitCrew(*m_defs, ship);
-    assets::ShipDef effective = assets::resolveLoadout(*base, components, crew);
-    effective.weaponId = ship.weaponId;
-    return effective;
+    return assets::resolveLoadout(*base, fittings, crew);
 }
 
 void SpaceWorld::applyActiveLoadout()
@@ -4913,115 +4965,205 @@ double SpaceWorld::shipValue(const OwnedShip& ship) const
     if (m_defs == nullptr) {
         return 0.0;
     }
-    double value = 0.0;
-    if (const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str())) {
-        value += base->price;
+    const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
+    if (base == nullptr) {
+        return 0.0;
     }
-    for (const std::string& id : ship.componentIds) {
-        if (const assets::ComponentDef* component = m_defs->findComponent(id.c_str())) {
-            value += component->price;
-        }
-    }
-    if (!ship.weaponId.empty()) {
-        if (const assets::WeaponDef* weapon = m_defs->findWeapon(ship.weaponId.c_str())) {
-            value += weapon->price;
+    double value = base->price;
+    for (const assets::FittedMount& fitting : fitMounts(*m_defs, *base, ship)) {
+        if (fitting.component != nullptr) {
+            value += fitting.component->price;
+        } else if (fitting.weapon != nullptr) {
+            value += fitting.weapon->price;
         }
     }
     return value;
 }
 
-bool SpaceWorld::buyComponent(const char* componentId, std::string* outError)
+// --- Fitting, and the one place the mount rules are enforced --------------
+
+const ShipFitting* OwnedShip::fittingAt(std::string_view mountId) const
+{
+    for (const ShipFitting& fitting : fittings) {
+        if (fitting.mountId == mountId) {
+            return &fitting;
+        }
+    }
+    return nullptr;
+}
+
+namespace {
+
+// A def id resolved to whichever table holds it, with its mount vocabulary.
+// Components are searched first, and the ambiguity is documented rather than
+// designed away: nothing shipped collides, and the FIT path never comes
+// through here - it asks the mount which table to look in.
+struct CatalogItem
+{
+    const assets::ComponentDef* component = nullptr;
+    const assets::WeaponDef* weapon = nullptr;
+
+    [[nodiscard]] bool found() const { return component != nullptr || weapon != nullptr; }
+
+    [[nodiscard]] assets::MountKind mount() const
+    {
+        return component != nullptr ? component->mount : weapon->mount;
+    }
+
+    [[nodiscard]] assets::MountSize size() const
+    {
+        return component != nullptr ? component->size : weapon->size;
+    }
+
+    [[nodiscard]] const std::string& name() const
+    {
+        return component != nullptr ? component->name : weapon->name;
+    }
+
+    [[nodiscard]] const std::string& id() const { return component != nullptr ? component->id : weapon->id; }
+
+    [[nodiscard]] float price() const { return component != nullptr ? component->price : weapon->price; }
+
+    [[nodiscard]] const assets::CatalogGate& gate() const
+    {
+        return component != nullptr ? component->gate : weapon->gate;
+    }
+};
+
+[[nodiscard]] CatalogItem findFitting(const assets::DefDatabase& defs, const char* defId)
+{
+    CatalogItem item;
+    item.component = defs.findComponent(defId);
+    if (item.component == nullptr) {
+        item.weapon = defs.findWeapon(defId);
+    }
+    return item;
+}
+
+} // namespace
+
+std::string SpaceWorld::firstFreeMountFor(const char* defId) const
+{
+    if (m_defs == nullptr || m_fleet.empty() || defId == nullptr) {
+        return {};
+    }
+    const OwnedShip& ship = activeShip();
+    const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
+    const CatalogItem item = findFitting(*m_defs, defId);
+    if (base == nullptr || !item.found()) {
+        return {};
+    }
+    for (const assets::ShipMount& mount : base->mounts) {
+        if (ship.fittingAt(mount.id) == nullptr && assets::mountAccepts(mount, item.mount(), item.size())) {
+            return mount.id;
+        }
+    }
+    return {};
+}
+
+bool SpaceWorld::buyFitting(const char* defId, const char* mountId, std::string* outError)
 {
     if (!isDocked() || m_defs == nullptr || m_fleet.empty()) {
         return refuse("must be docked to refit", outError);
     }
-    const assets::ComponentDef* component = m_defs->findComponent(componentId);
-    if (component == nullptr) {
-        return refuse(std::string("no component def '") + componentId + "'", outError);
+    if (defId == nullptr) {
+        return refuse("no fitting named", outError);
     }
-    if (!stationSells(component->gate)) {
-        return refuse("'" + component->name + "' is not sold here (faction catalog)", outError);
+    const CatalogItem item = findFitting(*m_defs, defId);
+    if (!item.found()) {
+        return refuse(std::string("no component or weapon def '") + defId + "'", outError);
+    }
+    if (!stationSells(item.gate())) {
+        return refuse("'" + item.name() + "' is not sold here (faction catalog)", outError);
     }
     OwnedShip& ship = m_fleet[m_activeShip];
     const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
     if (base == nullptr) {
         return refuse("active ship def '" + ship.defId + "' missing", outError);
     }
-    std::vector<const assets::ComponentDef*> components = fitComponents(*m_defs, ship);
-    components.push_back(component);
+
+    // The mount is chosen before anything is charged, and an empty `mountId`
+    // is a REQUEST rather than a place: "put it wherever it goes" is what a
+    // catalog Buy button means, and a hull with no free place for it has to
+    // say so in different words than a named mount that is merely full.
+    const bool named = mountId != nullptr && mountId[0] != '\0';
+    const std::string target = named ? std::string(mountId) : firstFreeMountFor(defId);
+    if (target.empty()) {
+        return refuse("no free " + std::string(assets::mountKindName(item.mount())) + " mount on the " +
+                          base->name + " takes '" + item.name() + "'",
+                      outError);
+    }
+    if (base->findMount(target) == nullptr) {
+        return refuse("'" + base->name + "' has no mount '" + target + "'", outError);
+    }
+
+    // Swapping sells the old fitting back in the same transaction, which is
+    // what the one weapon mount always did and is now every mount's rule.
+    double resale = 0.0;
+    OwnedShip candidate = ship;
+    if (const ShipFitting* occupied = candidate.fittingAt(target); occupied != nullptr) {
+        if (occupied->defId == item.id()) {
+            return refuse("'" + item.name() + "' is already in mount '" + target + "'", outError);
+        }
+        const CatalogItem old = findFitting(*m_defs, occupied->defId.c_str());
+        if (old.found()) {
+            resale = kResaleRate * static_cast<double>(old.price());
+        }
+        candidate.fittings.erase(candidate.fittings.begin() + (occupied - candidate.fittings.data()));
+    }
+    candidate.fittings.push_back({.mountId = target, .defId = item.id()});
+
     std::string reason;
-    if (!assets::validateLoadout(*base, components, fitCrew(*m_defs, ship), &reason)) {
+    if (!assets::validateLoadout(
+            *base, fitMounts(*m_defs, *base, candidate), fitCrew(*m_defs, candidate), &reason)) {
         return refuse(reason, outError);
     }
-    if (m_playerCredits < component->price) {
+    if (m_playerCredits + resale < static_cast<double>(item.price())) {
         return refuse("insufficient credits", outError);
     }
-    m_playerCredits -= component->price;
-    ship.componentIds.push_back(component->id);
-    applyActiveLoadout();
-    SOL_LOG_INFO("fitted '%s' (-%.0f cr)", component->name.c_str(), static_cast<double>(component->price));
-    return true;
-}
-
-bool SpaceWorld::sellComponent(const char* componentId, std::string* outError)
-{
-    if (!isDocked() || m_fleet.empty()) {
-        return refuse("must be docked to refit", outError);
-    }
-    OwnedShip& ship = m_fleet[m_activeShip];
-    const auto it = std::find(ship.componentIds.begin(), ship.componentIds.end(), componentId);
-    if (it == ship.componentIds.end()) {
-        return refuse(std::string("component '") + componentId + "' is not fitted", outError);
-    }
-    // Refuse a removal that would strand cargo over the reduced capacity.
-    OwnedShip candidate = ship;
-    candidate.componentIds.erase(candidate.componentIds.begin() + (it - ship.componentIds.begin()));
+    // A swap that shrinks the hold must not strand cargo - the guard removing
+    // a component always had, which a swap can now trip too.
     if (resolvedShipDef(candidate).cargoCapacity < playerCargoTotal()) {
         return refuse("cargo hold would overflow; sell cargo first", outError);
     }
-    double refund = 0.0;
-    if (m_defs != nullptr) {
-        if (const assets::ComponentDef* component = m_defs->findComponent(componentId)) {
-            refund = kResaleRate * component->price;
-        }
-    }
-    ship.componentIds.erase(it);
-    m_playerCredits += refund;
+
+    m_playerCredits += resale - static_cast<double>(item.price());
+    ship = std::move(candidate);
     applyActiveLoadout();
-    SOL_LOG_INFO("removed '%s' (+%.0f cr)", componentId, refund);
+    SOL_LOG_INFO("fitted '%s' to '%s' (net %.0f cr)",
+                 item.name().c_str(),
+                 target.c_str(),
+                 resale - static_cast<double>(item.price()));
     return true;
 }
 
-bool SpaceWorld::buyWeapon(const char* weaponId, std::string* outError)
+bool SpaceWorld::sellFitting(const char* mountId, std::string* outError)
 {
     if (!isDocked() || m_defs == nullptr || m_fleet.empty()) {
         return refuse("must be docked to refit", outError);
     }
-    const assets::WeaponDef* weapon = m_defs->findWeapon(weaponId);
-    if (weapon == nullptr) {
-        return refuse(std::string("no weapon def '") + weaponId + "'", outError);
-    }
-    if (!stationSells(weapon->gate)) {
-        return refuse("'" + weapon->name + "' is not sold here (faction catalog)", outError);
+    if (mountId == nullptr) {
+        return refuse("no mount named", outError);
     }
     OwnedShip& ship = m_fleet[m_activeShip];
-    if (ship.weaponId == weaponId) {
-        return refuse("already fitted", outError);
+    const ShipFitting* fitted = ship.fittingAt(mountId);
+    if (fitted == nullptr) {
+        return refuse(std::string("mount '") + mountId + "' is empty", outError);
     }
-    // The old weapon sells back at the resale rate in the same transaction.
-    double resale = 0.0;
-    if (!ship.weaponId.empty()) {
-        if (const assets::WeaponDef* old = m_defs->findWeapon(ship.weaponId.c_str())) {
-            resale = kResaleRate * old->price;
-        }
+    const std::string removedId = fitted->defId;
+    OwnedShip candidate = ship;
+    candidate.fittings.erase(candidate.fittings.begin() + (fitted - ship.fittings.data()));
+    if (resolvedShipDef(candidate).cargoCapacity < playerCargoTotal()) {
+        return refuse("cargo hold would overflow; sell cargo first", outError);
     }
-    if (m_playerCredits + resale < weapon->price) {
-        return refuse("insufficient credits", outError);
+    double refund = 0.0;
+    if (const CatalogItem item = findFitting(*m_defs, removedId.c_str()); item.found()) {
+        refund = kResaleRate * static_cast<double>(item.price());
     }
-    m_playerCredits += resale - weapon->price;
-    ship.weaponId = weapon->id;
+    ship = std::move(candidate);
+    m_playerCredits += refund;
     applyActiveLoadout();
-    SOL_LOG_INFO("mounted '%s' (net %.0f cr)", weapon->name.c_str(), resale - weapon->price);
+    SOL_LOG_INFO("removed '%s' from '%s' (+%.0f cr)", removedId.c_str(), mountId, refund);
     return true;
 }
 
@@ -5042,7 +5184,7 @@ bool SpaceWorld::buyShip(const char* shipDefId, std::string* outError)
     }
     m_playerCredits -= def->price;
     m_fleet.push_back(OwnedShip{.defId = def->id,
-                                .weaponId = def->weaponId,
+                                .fittings = defaultFit(*def),
                                 .storedSystem = m_currentSystem,
                                 .storedStation = m_dockedStation});
     SOL_LOG_INFO("bought '%s' (-%.0f cr); stored at %s",
@@ -5120,7 +5262,7 @@ bool SpaceWorld::hireCrew(const char* crewId, std::string* outError)
     std::vector<const assets::CrewDef*> crew = fitCrew(*m_defs, ship);
     crew.push_back(member);
     std::string reason;
-    if (!assets::validateLoadout(*base, fitComponents(*m_defs, ship), crew, &reason)) {
+    if (!assets::validateLoadout(*base, fitMounts(*m_defs, *base, ship), crew, &reason)) {
         return refuse(reason, outError);
     }
     if (m_playerCredits < member->price) {
@@ -5183,23 +5325,40 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
                                         .hull = def.defense.hull};
     sim::resetDefense(defense.state, defense.tuning);
 
+    // ⚑ THE GUN COMES OFF THE MOUNTS NOW (Phase 31 stage B), and `def` here is
+    // the RESOLVED def - so this one path serves an NPC hull flying its
+    // authored `fit` and the player's ship flying whatever they bought.
+    //
+    // `ShipWeapon` is still singular, so the FIRST fitted weapon-taking mount
+    // in authored order wins and the rest are carried but not fired. That is
+    // stage C's whole subject (fire groups, per-mount draw, traverse); saying
+    // it here rather than picking a "best" gun keeps the choice visible
+    // instead of burying a heuristic nobody asked for.
     ShipWeapon& weapon = m_registry.storage<ShipWeapon>().get(entityIndex);
     weapon = ShipWeapon{};
-    if (!def.weaponId.empty()) {
-        if (const assets::WeaponDef* weaponDef = defs.findWeapon(def.weaponId.c_str())) {
-            weapon.kind = weaponDef->kind == "hitscan" ? WeaponKind::Hitscan : WeaponKind::Projectile;
-            weapon.damage = weaponDef->damage;
-            weapon.rateOfFire = weaponDef->rateOfFire;
-            weapon.range = weaponDef->range;
-            weapon.projectileSpeed = weaponDef->projectileSpeed;
-            weapon.energyCost = weaponDef->energyCost;
-            weapon.miningPower = weaponDef->miningPower;
-            // Resolved here because this is the one place that holds the
-            // WeaponDef; the muzzle only ever sees the flattened component.
-            weapon.boltModel = modelOverrideOr(defs, weaponDef->model, "weapon def", kRoleBolt, true);
-        } else {
-            SOL_LOG_WARN("ship '%s': unknown weapon def '%s'", def.id.c_str(), def.weaponId.c_str());
+    for (const assets::ShipMount& mount : def.mounts) {
+        if (!assets::mountTakesWeapon(mount.kind) || mount.fit.empty()) {
+            continue;
         }
+        const assets::WeaponDef* weaponDef = defs.findWeapon(mount.fit.c_str());
+        if (weaponDef == nullptr) {
+            SOL_LOG_WARN("ship '%s': mount '%s' names unknown weapon def '%s'",
+                         def.id.c_str(),
+                         mount.id.c_str(),
+                         mount.fit.c_str());
+            continue;
+        }
+        weapon.kind = weaponDef->kind == "hitscan" ? WeaponKind::Hitscan : WeaponKind::Projectile;
+        weapon.damage = weaponDef->damage;
+        weapon.rateOfFire = weaponDef->rateOfFire;
+        weapon.range = weaponDef->range;
+        weapon.projectileSpeed = weaponDef->projectileSpeed;
+        weapon.energyCost = weaponDef->energyCost;
+        weapon.miningPower = weaponDef->miningPower;
+        // Resolved here because this is the one place that holds the
+        // WeaponDef; the muzzle only ever sees the flattened component.
+        weapon.boltModel = modelOverrideOr(defs, weaponDef->model, "weapon def", kRoleBolt, true);
+        break;
     }
 }
 
@@ -7811,10 +7970,14 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
     writer.write(static_cast<std::uint32_t>(m_activeShip));
     for (const OwnedShip& ship : m_fleet) {
         writer.writeString(ship.defId);
-        writer.writeString(ship.weaponId);
-        writer.write(static_cast<std::uint32_t>(ship.componentIds.size()));
-        for (const std::string& id : ship.componentIds) {
-            writer.writeString(id);
+        // v18 (Phase 31 stage B): a fitting is named by the MOUNT it occupies,
+        // never by index, so an author inserting a mount cannot rearrange an
+        // existing player's ship. This is what replaced the weapon id and the
+        // flat component list, and it is why v17 saves are refused.
+        writer.write(static_cast<std::uint32_t>(ship.fittings.size()));
+        for (const ShipFitting& fitting : ship.fittings) {
+            writer.writeString(fitting.mountId);
+            writer.writeString(fitting.defId);
         }
         writer.write(static_cast<std::uint32_t>(ship.crewIds.size()));
         for (const std::string& id : ship.crewIds) {
@@ -7922,15 +8085,14 @@ bool SpaceWorld::loadFrom(const char* path)
     }
     std::vector<OwnedShip> fleet(fleetCount);
     for (OwnedShip& ship : fleet) {
-        std::uint32_t componentCount = 0;
+        std::uint32_t fittingCount = 0;
         std::uint32_t crewCount = 0;
-        if (!reader.readString(ship.defId) || !reader.readString(ship.weaponId) ||
-            !reader.read(componentCount)) {
+        if (!reader.readString(ship.defId) || !reader.read(fittingCount)) {
             return false;
         }
-        ship.componentIds.resize(componentCount);
-        for (std::string& id : ship.componentIds) {
-            if (!reader.readString(id)) {
+        ship.fittings.resize(fittingCount);
+        for (ShipFitting& fitting : ship.fittings) {
+            if (!reader.readString(fitting.mountId) || !reader.readString(fitting.defId)) {
                 return false;
             }
         }

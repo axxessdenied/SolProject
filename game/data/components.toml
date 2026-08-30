@@ -1,8 +1,36 @@
-# Outfitting components (Phase 8a). slot: shield | engine | cargo | utility.
-# ⚑ Was `modules.toml` and `[[module]]` until Phase 31 stage A1. A component
-# is a thing that occupies a MOUNT (`decisions/014`); the word `module` is now
-# reserved for a station's, which is the noun it fits (gdd.md §12). The ids did
-# not change, so a save that names one still loads.
+# Outfitting components (Phase 8a). A component occupies exactly one MOUNT on a
+# hull (`decisions/014`, gdd.md §11.5), and says which kind of mount and how
+# big a one it needs:
+#
+#   mount = engine | thruster | shield | armor | utility | subsystem | hangar |
+#           dock          (the four weapon-taking kinds belong to weapons.toml)
+#   size  = small | medium | large | xlarge   (a mount takes its size or under)
+#
+# ⚑ WHAT PHASE 31 STAGE B DID TO THIS FILE, AND WHAT IT DELIBERATELY DID NOT.
+# `slot` became `mount` + `size`, and the mapping REPRODUCES TODAY'S CAPABILITY
+# EXACTLY rather than re-balancing under cover of a schema change - the same
+# rule stage A2 followed for the hulls:
+#
+#   old slot "shield"  -> mount = "shield"
+#   old slot "engine"  -> mount = "engine"
+#   old slot "cargo"   -> mount = "utility"   (gdd.md §11.5 has no cargo kind)
+#   old slot "utility" -> mount = "utility"
+#
+# and EVERY fitting here is `small`, so every one of them still fits every
+# shipped hull exactly as it did before mounts. Sizing the Mk2 tier up to
+# `medium` - which would make the freighter the only hull that can carry it -
+# is a real balance decision and it is NOT this file's to make quietly.
+#
+# ⚑ Two kinds this content will grow into and has not yet. `sol.armor_plating`
+# is `utility` rather than `armor`, and the survey scanners are `utility`
+# rather than `subsystem`, because no shipped hull has an `armor` mount and
+# only the freighter has a `subsystem` one - moving them would take kit off the
+# player's starting shuttle to make a taxonomy tidier. Phase 32 authors the
+# hulls that earn those kinds.
+#
+# ⚑ Was `modules.toml` and `[[module]]` until Phase 31 stage A1. The word
+# `module` is now reserved for a station's, which is the noun it fits
+# (gdd.md §12). The ids did not change, so a save that names one still loads.
 # Modifiers: <stat>_add applies before <stat>_mul; component mass dilutes
 # accelerations (mass / (mass + fitted mass)); power_draw sums against the
 # ship's power_output. Edits hot-reload into a running dev build.
@@ -10,7 +38,8 @@
 [[component]]
 id = "sol.shield_booster_mk1"
 name = "Shield Booster Mk1"
-slot = "shield"
+mount = "shield"
+size = "small"
 price = 800.0
 mass = 400.0
 power_draw = 2.0
@@ -19,7 +48,8 @@ shield_strength_mul = 1.25
 [[component]]
 id = "sol.shield_booster_mk2"
 name = "Shield Booster Mk2"
-slot = "shield"
+mount = "shield"
+size = "small"
 price = 2400.0
 mass = 700.0
 power_draw = 3.0
@@ -30,7 +60,8 @@ min_rep = 10.0 # Phase 8b: any owner sells it, but only to known customers
 [[component]]
 id = "sol.engine_tuner_mk1"
 name = "Engine Tuner Mk1"
-slot = "engine"
+mount = "engine"
+size = "small"
 price = 1000.0
 mass = 200.0
 power_draw = 1.5
@@ -40,7 +71,8 @@ forward_accel_mul = 1.15
 [[component]]
 id = "sol.engine_tuner_mk2"
 name = "Engine Tuner Mk2"
-slot = "engine"
+mount = "engine"
+size = "small"
 price = 3000.0
 mass = 300.0
 power_draw = 2.5
@@ -51,7 +83,8 @@ turn_rate_mul = 1.1
 [[component]]
 id = "sol.cruise_charger"
 name = "Cruise Charger"
-slot = "engine"
+mount = "engine"
+size = "small"
 price = 2000.0
 mass = 250.0
 power_draw = 2.0
@@ -60,7 +93,8 @@ cruise_speed_scale_mul = 1.25
 [[component]]
 id = "sol.cargo_pod_mk1"
 name = "Cargo Pod Mk1"
-slot = "cargo"
+mount = "utility"
+size = "small"
 price = 600.0
 mass = 800.0
 cargo_add = 25.0
@@ -68,7 +102,8 @@ cargo_add = 25.0
 [[component]]
 id = "sol.cargo_pod_mk2"
 name = "Cargo Pod Mk2"
-slot = "cargo"
+mount = "utility"
+size = "small"
 price = 1800.0
 mass = 1400.0
 power_draw = 0.5
@@ -77,7 +112,8 @@ cargo_add = 60.0
 [[component]]
 id = "sol.armor_plating"
 name = "Armor Plating"
-slot = "utility"
+mount = "utility"
+size = "small"
 price = 1200.0
 mass = 1500.0
 armor_mul = 1.6
@@ -85,7 +121,8 @@ armor_mul = 1.6
 [[component]]
 id = "sol.capacitor_bank"
 name = "Capacitor Bank"
-slot = "utility"
+mount = "utility"
+size = "small"
 price = 900.0
 mass = 300.0
 power_draw = 1.5
@@ -94,7 +131,8 @@ weapon_capacitor_mul = 1.4
 [[component]]
 id = "sol.survey_scanner_mk1"
 name = "Survey Scanner Mk1"
-slot = "utility"
+mount = "utility"
+size = "small"
 price = 1500.0
 mass = 250.0
 power_draw = 1.5
@@ -104,7 +142,8 @@ scan_speed_mul = 1.25
 [[component]]
 id = "sol.survey_scanner_mk2"
 name = "Survey Scanner Mk2"
-slot = "utility"
+mount = "utility"
+size = "small"
 price = 4500.0
 mass = 400.0
 power_draw = 2.5
@@ -117,7 +156,8 @@ min_rep = 10.0
 [[component]]
 id = "sol.collector_mk1"
 name = "Collector Rig Mk1"
-slot = "utility"
+mount = "utility"
+size = "small"
 price = 1100.0
 mass = 350.0
 power_draw = 1.5
@@ -126,7 +166,8 @@ collector_range_mul = 2.5
 [[component]]
 id = "sol.collector_mk2"
 name = "Wide-Field Collector"
-slot = "utility"
+mount = "utility"
+size = "small"
 price = 3600.0
 mass = 550.0
 power_draw = 2.5
@@ -136,7 +177,8 @@ cargo_add = 10.0
 [[component]]
 id = "sol.regen_amplifier"
 name = "Regen Amplifier"
-slot = "utility"
+mount = "utility"
+size = "small"
 price = 1500.0
 mass = 200.0
 power_draw = 2.0

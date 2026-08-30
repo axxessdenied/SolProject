@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -87,6 +88,8 @@ SOL_TEST(data_defs_weapons_and_factions)
 id = "sol.pulse"
 name = "Pulse Cannon"
 kind = "projectile"
+mount = "fixed"
+size = "small"
 damage = 12.0
 rate_of_fire = 4.0
 range = 2500.0
@@ -133,7 +136,8 @@ name = "Freight Guild"
 [[component]]
 id = "sol.navy_shield"
 name = "Navy Shield"
-slot = "shield"
+mount = "shield"
+size = "small"
 factions = ["sol.navy"]
 min_rep = 20.0
 shield_strength_add = 50.0
@@ -190,7 +194,8 @@ shield_strength_add = 50.0
     SOL_CHECK(merge(
         db, "[[faction]]\nid = \"f2\"\nname = \"F2\"\nstation_bias = [\"sol.nope:2\"]\n", "ok.toml", &error));
     SOL_CHECK(!merge(db,
-                     "[[component]]\nid = \"m\"\nname = \"M\"\nslot = \"cargo\"\nmin_rep = 150\n",
+                     "[[component]]\nid = \"m\"\nname = \"M\"\nmount = \"utility\"\nsize = \"small\"\n"
+                     "min_rep = 150\n",
                      "bad.toml",
                      &error));
     SOL_CHECK(error.find("min_rep") != std::string::npos);
@@ -251,7 +256,11 @@ maxspeed = 100.0
 
     // Bad weapon kind.
     error.clear();
-    SOL_CHECK(!merge(db, "[[weapon]]\nid = \"w\"\nname = \"W\"\nkind = \"beam\"\n", "bad.toml", &error));
+    SOL_CHECK(!merge(db,
+                     "[[weapon]]\nid = \"w\"\nname = \"W\"\nkind = \"beam\"\n"
+                     "mount = \"fixed\"\nsize = \"small\"\n",
+                     "bad.toml",
+                     &error));
     SOL_CHECK(error.find("kind") != std::string::npos);
 
     // Unknown top-level array.
@@ -1149,11 +1158,15 @@ SOL_TEST(data_defs_parse_drawable_overrides)
 id = "w.plain"
 name = "Plain"
 kind = "projectile"
+mount = "fixed"
+size = "small"
 
 [[weapon]]
 id = "w.fancy"
 name = "Fancy"
 kind = "projectile"
+mount = "fixed"
+size = "small"
 model = "tracer"
 
 [[commodity]]
@@ -1187,7 +1200,7 @@ chunk_model = "ice_shard"
     SOL_CHECK(!merge(db, "[[commodity]]\nid = \"c\"\nname = \"C\"\nchunk = \"x\"\n", "d.toml", &error));
     SOL_CHECK(!merge(db,
                      "[[weapon]]\nid = \"w\"\nname = \"W\"\nkind = \"projectile\"\n"
-                     "bolt_model = \"x\"\n",
+                     "mount = \"fixed\"\nsize = \"small\"\nbolt_model = \"x\"\n",
                      "d.toml",
                      &error));
 }
@@ -1266,6 +1279,8 @@ refine_output = "sol.metal"
 id = "sol.mining_laser"
 name = "Mining Laser"
 kind = "hitscan"
+mount = "fixed"
+size = "small"
 damage = 3.0
 mining_power = 4.0
 )";
@@ -1298,6 +1313,8 @@ mining_power = 4.0
 id = "sol.pulse_cannon"
 name = "Pulse Cannon"
 kind = "projectile"
+mount = "fixed"
+size = "small"
 damage = 12.0
 )",
                       "guns.toml",
@@ -2412,18 +2429,20 @@ name = "Destroyer"
     SOL_CHECK(def->findMount("no_such_mount") == nullptr);
 }
 
-SOL_TEST(data_defs_ship_without_mounts_still_loads)
+// ⚑ AN EMPTY MOUNT LIST IS LEGAL AND NOW MEANS SOMETHING. Before stage B it
+// meant "the slot counts are still in charge"; after it, a hull with no mounts
+// fits nothing and flies unarmed. It still LOADS rather than refusing, which
+// is what a mod's ship def written before mounts existed needs - the def
+// layer's standing rule is that a missing key is a default, not an error.
+SOL_TEST(data_defs_ship_without_mounts_still_loads_and_fits_nothing)
 {
-    // Deliberate, and only until stage B. The four `slots_*` counts are what
-    // the fit model reads today, so a mod's ship def written before mounts
-    // existed still loads and still flies; stage B is where an empty list
-    // becomes a hull that can fit nothing.
     DefDatabase db;
     std::string error;
     SOL_REQUIRE(merge(db, kBaseShips, "ships.toml", &error));
     const ShipDef* def = db.findShip("sol.shuttle");
     SOL_REQUIRE(def != nullptr);
     SOL_CHECK(def->mounts.empty());
+    SOL_CHECK(def->findMount("anything") == nullptr);
 }
 
 SOL_TEST(data_defs_mount_kind_and_size_names_round_trip)
@@ -2600,9 +2619,9 @@ name = "X"
 
 // The shipped hulls, read out of the file a person actually wrote (Phase 31
 // stage A2). A fixture would agree with the parser by construction; what is
-// worth asserting is that `game/data/ships.toml` says what stage A2 claims it
-// says, because stage B's fit model is going to be built on exactly this data
-// and a typo here would arrive as a balance change nobody made.
+// worth asserting is that `game/data/ships.toml` says what stage A claims it
+// says, because the fit model is built on exactly this data and a typo here
+// arrives as a balance change nobody made.
 SOL_TEST(data_defs_shipped_hulls_carry_the_mounts_stage_a_gave_them)
 {
     DefDatabase db;
@@ -2696,4 +2715,122 @@ SOL_TEST(data_defs_shipped_hulls_carry_the_mounts_stage_a_gave_them)
     SOL_REQUIRE(sensor != nullptr);
     SOL_CHECK(!sensor->external);
     SOL_CHECK(sensor->kind == sol::assets::MountKind::Subsystem);
+}
+
+// ⚑ WHERE `weapon =` WENT (Phase 31 stage B). Each hull's gun is now a `fit`
+// on a mount, and this is the assertion that the deletion of the key did not
+// quietly disarm the base game - `applyShipDef` walks the mounts, so a hull
+// whose gun mount lost its `fit` flies unarmed and NOTHING ELSE CHANGES about
+// it, which is a defect no crash and no warning would announce.
+SOL_TEST(data_defs_shipped_hulls_come_fitted_with_the_gun_the_weapon_key_named)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(db.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+
+    struct Expected
+    {
+        const char* shipId;
+        const char* mountId;
+        const char* weaponId; // what `weapon =` said before stage B
+    };
+
+    constexpr Expected kArmed[3] = {
+        {"sol.shuttle", "gun_nose", "sol.pulse_cannon"},
+        {"sol.interceptor", "gun_nose", "sol.pulse_cannon"},
+        {"sol.freighter", "turret_dorsal", "sol.mining_laser"},
+    };
+
+    for (const Expected& expected : kArmed) {
+        const ShipDef* def = db.findShip(expected.shipId);
+        SOL_REQUIRE(def != nullptr);
+        const sol::assets::ShipMount* mount = def->findMount(expected.mountId);
+        SOL_REQUIRE(mount != nullptr);
+        if (mount->fit != expected.weaponId) {
+            std::printf("  %s mount '%s' fits '%s', expected '%s'\n",
+                        expected.shipId,
+                        expected.mountId,
+                        mount->fit.c_str(),
+                        expected.weaponId);
+        }
+        SOL_CHECK(mount->fit == expected.weaponId);
+
+        // And the gun the def names actually FITS the mount the def puts it in,
+        // which is the check that would catch an author moving a heavy gun onto
+        // a small hardpoint. The whole rule, kind and size together.
+        const sol::assets::WeaponDef* weapon = db.findWeapon(expected.weaponId);
+        SOL_REQUIRE(weapon != nullptr);
+        SOL_CHECK(sol::assets::mountAccepts(*mount, weapon->mount, weapon->size));
+    }
+
+    // ⚑ THE FREIGHTER IS THE ASYMMETRY, LIVE IN SHIPPED CONTENT: its mount is
+    // a `turret` and its gun is authored `fixed`. That pairing only works
+    // because a ring holds a bare gun, and it is why converting the hulls did
+    // not require authoring every weapon twice.
+    const sol::assets::WeaponDef* laser = db.findWeapon("sol.mining_laser");
+    SOL_REQUIRE(laser != nullptr);
+    SOL_CHECK(laser->mount == sol::assets::MountKind::Fixed);
+    SOL_CHECK(db.findShip("sol.freighter")->findMount("turret_dorsal")->kind ==
+              sol::assets::MountKind::Turret);
+
+    // ⚑ AND THE ONE THING THE BASE GAME CANNOT DO YET, PINNED SO THAT FILLING
+    // IT IS A DELIBERATE ACT. No shipped component is a `subsystem`, so the
+    // freighter's internal mount accepts nothing that exists. Phase 32 authors
+    // the kit; until then this is the honest state and the test says so.
+    const bool anySubsystemComponent =
+        std::any_of(db.components().begin(), db.components().end(), [](const auto& component) {
+            return component.mount == sol::assets::MountKind::Subsystem;
+        });
+    SOL_CHECK(!anySubsystemComponent);
+}
+
+// ⚑ EVERY SHIPPED FITTING STILL FITS THE HULL IT FITTED BEFORE MOUNTS. Stage
+// B's conversion promised not to re-balance under cover of a schema change,
+// and this is the promise stated as an assertion rather than as a comment in a
+// data file: every component in the catalog has a place on at least one of the
+// three hulls. A `medium` Mk2 tier - the balance change the file explicitly
+// declines to make in passing - turns this red on the shuttle-only kit.
+SOL_TEST(data_defs_every_shipped_component_fits_some_shipped_hull)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(db.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+    SOL_REQUIRE(!db.components().empty());
+
+    for (const sol::assets::ComponentDef& component : db.components()) {
+        bool fitsSomewhere = false;
+        for (const ShipDef& hull : db.ships()) {
+            for (const sol::assets::ShipMount& mount : hull.mounts) {
+                fitsSomewhere =
+                    fitsSomewhere || sol::assets::mountAccepts(mount, component.mount, component.size);
+            }
+        }
+        if (!fitsSomewhere) {
+            std::printf("  component '%s' (%s %s) fits no shipped hull\n",
+                        component.id.c_str(),
+                        sol::assets::mountSizeName(component.size),
+                        sol::assets::mountKindName(component.mount));
+        }
+        SOL_CHECK(fitsSomewhere);
+    }
+
+    // The shuttle is the one that matters, because it is what a new player
+    // flies: it must still take a shield, an engine tuner, a cargo pod and a
+    // survey scanner, which is exactly what its four non-gun mounts were
+    // converted from.
+    const ShipDef* shuttle = db.findShip("sol.shuttle");
+    SOL_REQUIRE(shuttle != nullptr);
+    for (const char* id :
+         {"sol.shield_booster_mk2", "sol.engine_tuner_mk2", "sol.cargo_pod_mk2", "sol.survey_scanner_mk2"}) {
+        const sol::assets::ComponentDef* component = db.findComponent(id);
+        SOL_REQUIRE(component != nullptr);
+        bool fits = false;
+        for (const sol::assets::ShipMount& mount : shuttle->mounts) {
+            fits = fits || sol::assets::mountAccepts(mount, component->mount, component->size);
+        }
+        if (!fits) {
+            std::printf("  the shuttle can no longer carry '%s'\n", id);
+        }
+        SOL_CHECK(fits);
+    }
 }

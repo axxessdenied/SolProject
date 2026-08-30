@@ -118,3 +118,40 @@ compromised.
 - **What it does not do**: it is not ship *construction*. An author places mounts;
   a player fills them. GDD §9's block-building non-goal is untouched, and the
   distinction is written into that non-goal so it is not re-litigated.
+
+## Amended by Phase 31 stage B (2026-08-29)
+
+Three things the fit model needed that the decision above did not name. Each is
+recorded here rather than only in a commit message, because each is a rule a
+later stage or a mod author has to obey.
+
+**1. A turret accepts a `fixed` fitting; the reverse is refused.** A weapon def
+names the mount kind it goes in, and `mountAcceptsKind` is equality plus that
+one asymmetry. A turret is a ring with a traverse motor: bolting a bare gun
+into one gives a gun that traverses, so **`arc` is authored on the mount and
+never on the weapon**, and none of the four shipped guns had to be authored
+twice for the freighter's `turret_dorsal` to take them. `launcher` and `bay`
+are left strict — nothing in the game carries ordnance yet, so a relaxation
+there would be written blind.
+
+**2. `weapon =` became `fit` on a mount.** Removing `ShipDef::weaponId` left
+nothing to say what a hull comes armed with, which an NPC spawn, the starter
+ship and a newly bought hull all need. `[[ship.mount]] fit = "<def id>"` is
+that, and it is on the mount because that is the only place that can say *which*
+gun goes *where*. `resolveLoadout` rewrites those fields to the player's actual
+fit, so the resolved def *is* the ship as flown and one code path serves an NPC
+hull and the player's own.
+
+**3. `slots_cargo` had nowhere to go, and the merge is a real content change.**
+gdd.md §11.5 has no `cargo` mount kind: a cargo pod is a `utility` fitting. On
+the freighter a hold pod and a survey scanner now compete for the same five
+places where they used to have three and two. Every shipped component was
+converted at `size = "small"` so that nothing a player could buy before mounts
+became unbuyable after them; **sizing the Mk2 tier up to `medium` is a separate
+balance decision and was deliberately not made in passing.**
+
+**And one consequence that is a content gap rather than a rule.** The
+freighter's `core_sensor` is the only `subsystem` mount in the base game and no
+shipped component is a `subsystem`, so it accepts nothing. Moving the survey
+scanners there would have taken them off the player's starting shuttle, which
+has no subsystem mount; Phase 32 authors the hulls and kit that earn the kind.

@@ -514,6 +514,7 @@ int main(int argc, char** argv)
     std::vector<game::ParticleInstance> particleInstances;
     game::SceneInfo sceneInfo;
     std::vector<sol::ui::TradeRow> tradeRows;
+    std::vector<sol::ui::MountRow> mountRows;
     std::vector<sol::ui::OutfitRow> componentRows;
     std::vector<sol::ui::OutfitRow> weaponRows;
     std::vector<sol::ui::OutfitRow> crewCatalogRows;
@@ -1567,10 +1568,16 @@ int main(int argc, char** argv)
             stationPanel.trade.intelPrice = world.intelPrice();
             stationPanel.trade.canBuyIntel =
                 stationPanel.trade.intelMarkets > 0 && world.playerCredits() >= stationPanel.trade.intelPrice;
+            // ⚑ IN before the fill, because the fill is what decides where a
+            // Fit would land and it has to know what the player has aimed at.
+            // An id that no longer names a mount on this hull resolves to
+            // nothing there and the catalogs fall back to auto-placement.
+            stationPanel.selectedMount = stationScreen.selectedMount.c_str();
             game::fillStationOutfitting(world,
                                         content.defs(),
                                         stationText,
                                         stationPanel,
+                                        mountRows,
                                         componentRows,
                                         weaponRows,
                                         crewCatalogRows,

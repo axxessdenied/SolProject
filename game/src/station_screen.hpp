@@ -3,6 +3,8 @@
 #include "sol/ui/context.hpp"
 #include "sol/ui/screens.hpp"
 
+#include <string>
+
 namespace game {
 
 // What the player has open on the station screen, and where each list is
@@ -26,6 +28,16 @@ struct StationScreenState
     int tab = Trade;
     float scroll[TabCount] = {}; // per tab, so switching back keeps your place
     int tradeAmount = 1;         // index into the 1/10/100 amounts: starts at 10
+    // Which mount the Outfitting tab's catalogs are aimed at, empty for "the
+    // first free one that takes it" (Phase 31 stage B). It lives here rather
+    // than in the panel because it is a thing the PLAYER is holding, not a
+    // thing the world knows - the same reason `tab` and `tradeAmount` do.
+    //
+    // ⚑ The mount's ID rather than its index, and for decisions/014 rule 1's
+    // own reason one layer up: an index is only meaningful against the list
+    // that produced it, and this one outlives a switch to a different ship. An
+    // id that no longer names a mount simply stops matching.
+    std::string selectedMount;
 };
 
 // The docked-station screen (engine plan Phase 8d), drawn on the in-repo UI

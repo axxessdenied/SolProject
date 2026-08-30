@@ -310,9 +310,30 @@ struct OutfitRow
 {
     const char* id = "";
     const char* name = "";
-    const char* detail = ""; // slot/kind/role + stat summary, prebuilt
+    const char* detail = ""; // mount kind/size, role + stat summary, prebuilt
     float price = 0.0f;
     int fitted = 0; // instances currently on the active ship (catalogs)
+    // Where a Fit would put it, empty when there is nowhere for it (Phase 31
+    // stage B). The GAME decides this - honouring `StationPanel::selectedMount`
+    // and otherwise running the same `firstFreeMountFor` the purchase uses - so
+    // the screen never re-implements the accept rule. Empty greys the button,
+    // which is the only reason a refusal would otherwise be invisible: the
+    // station action has no channel to report one back through.
+    const char* targetMount = "";
+};
+
+// One place on the active hull and what is in it (Phase 31 stage B). This is
+// the outfitting screen's spine: a ship is its mounts, so the screen is a list
+// of them rather than a list of things owned.
+struct MountRow
+{
+    const char* id = "";     // the def's mount id, and what an action names
+    const char* kind = "";   // "turret", "engine", ... (gdd.md 11.5)
+    const char* size = "";   // "small" | "medium" | "large" | "xlarge"
+    const char* fitted = ""; // display name of what is in it, "" = empty
+    const char* detail = ""; // stat summary of the fitting, or the mount's own
+    bool external = false;   // `at` present: drawn on the hull, shootable
+    float resale = 0.0f;     // what Remove refunds
 };
 
 struct FleetRow
@@ -632,9 +653,8 @@ struct StationAction
     enum class Kind : std::uint32_t
     {
         None = 0,
-        BuyComponent,
-        SellComponent,
-        BuyWeapon,
+        BuyFitting,  // id = component/weapon def, mount = where (empty = anywhere)
+        SellFitting, // mount = which place to strip
         BuyShip,
         SellShip,
         SwitchShip,
@@ -649,9 +669,10 @@ struct StationAction
         BuyMarketIntel, // Phase 8g: price lists for the markets in reach
     };
     Kind kind = Kind::None;
-    const char* id = ""; // def id (component/weapon/ship/crew actions)
-    int index = -1;      // fleet index, or mission offer/journal index
-    float units = 0.0f;  // refinery order size
+    const char* id = "";    // def id (component/weapon/ship/crew actions)
+    const char* mount = ""; // mount id (fitting actions, Phase 31 stage B)
+    int index = -1;         // fleet index, or mission offer/journal index
+    float units = 0.0f;     // refinery order size
 };
 
 // The docked station's refinery service (Phase 8f). Absent — refines false —
@@ -674,10 +695,17 @@ struct RefinePanel
 struct StationPanel
 {
     TradePanel trade;
-    const char* fitSummary = "";           // active ship fit + budgets, prebuilt
-    double deductible = 0.0;               // current insurance quote
+    const char* fitSummary = "";      // active ship fit + budgets, prebuilt
+    double deductible = 0.0;          // current insurance quote
+    std::span<const MountRow> mounts; // the active hull's places (31B)
+    // IN, not out: which mount the player has aimed the catalogs at, or empty
+    // for "wherever it goes". The screen owns the selection because it is a
+    // thing the player is holding rather than a thing the world knows, and it
+    // is handed back here so that ONE place - the fill - decides where a Fit
+    // would land.
+    const char* selectedMount = "";
     std::span<const OutfitRow> components; // catalog
-    std::span<const OutfitRow> weapons;    // catalog ("fitted" flags the mount)
+    std::span<const OutfitRow> weapons;    // catalog
     std::span<const OutfitRow> crewCatalog;
     std::span<const OutfitRow> crewAboard;
     std::span<const OutfitRow> shipCatalog;

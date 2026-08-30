@@ -2,34 +2,47 @@
 # keys fall back to engine defaults (see sol/assets/data_defs.hpp).
 # Edits hot-reload into a running dev build.
 #
-# ⚑ MOUNTS ARRIVED IN PHASE 31 STAGE A2 AND NOTHING FITS INTO THEM YET. A
-# `[[ship.mount]]` is a named, typed, sized place a fitting goes (gdd.md §11.5,
-# `decisions/014`); the four `slots_*` counts and `weapon` below are still what
-# the fit model actually reads, and stage B is where they go. The lists here
-# reproduce each hull's CURRENT capacity exactly, so that swap is arithmetic
-# rather than a re-balance:
+# ⚑ A SHIP IS ITS MOUNTS, AND SINCE PHASE 31 STAGE B THAT IS THE WHOLE OF THE
+# FIT MODEL. The four `slots_*` counts and the single `weapon =` key are gone;
+# a `[[ship.mount]]` is a named, typed, sized place where exactly one fitting
+# goes (gdd.md §11.5, `decisions/014`). A mount declares:
 #
-#   weapon         -> the one weapon mount        slots_shield -> shield mounts
-#   slots_engine   -> engine mounts               slots_utility-> utility mounts
-#   slots_cargo    -> utility mounts as well, because gdd.md §11.5 has no
-#                     `cargo` kind: a cargo pod is a utility fitting, and
-#                     merging the two counts is a real change stage B has to
-#                     make deliberately rather than inherit from this file.
+#   id    unique on this hull and STABLE - a save names a fitting by its mount
+#   kind  turret fixed launcher bay | engine thruster shield armor utility
+#         subsystem hangar dock
+#   size  small | medium | large | xlarge; a mount takes its size or smaller
+#   at    metres in the hull frame (+X right, +Y up, -Z fwd) at scale 1, so a
+#         `scale = 4.0` hull's mounts are multiplied like the rest of it.
+#         PRESENT means external - drawn, and shot at where it sits. ABSENT
+#         means internal: it exists, it can be destroyed, it is never drawn.
+#   aim   facing, hull frame. Needs an `at`.
+#   arc   degrees of traverse. Needs an `at`. THE TRAVERSE BELONGS TO THE
+#         MOUNT, which is why a `fixed` gun fitted into a `turret` traverses
+#         and no weapon def has to be authored twice.
+#   fit   what the hull SHIPS WITH - a component or weapon def id, empty for a
+#         mount that comes bare. This is where `weapon =` went. It is a
+#         default, not a constraint: an NPC flies it, a bought hull arrives
+#         with it, and the player refits from there.
 #
-# `at` present means EXTERNAL - drawn on the hull, shot at where it sits - and
-# absent means internal. Metres in the hull frame at scale 1 (+X right, +Y up,
-# -Z forward), so a `scale = 4.0` hull's mounts are multiplied like the rest of
-# it. The positions below are placed against the shared `ship` mesh's bounds and
+# ⚑ WHAT THE STAGE-B CONVERSION KEPT AND WHAT IT COST. The mount lists were
+# authored in stage A2 to reproduce each hull's capacity exactly, and stage B
+# only deleted the counts they were copied from - so nothing here is a
+# re-balance. The one real change is the one stage A2 warned about: gdd.md
+# §11.5 HAS NO `cargo` KIND, so `slots_cargo` and `slots_utility` are one
+# `utility` pool now. On the freighter a hold pod and a survey scanner compete
+# for the same five places where they used to have three and two.
+#
+# ⚑ AND TWO THINGS THAT COME OUT WRONG, SAID HERE RATHER THAN LEFT TO BE FOUND.
+# The shuttle and interceptor carry FIVE mounts against gdd.md §11.1's class-1
+# budget of 2-4; the band is a SOFT contract and Phase 32 stage A is the
+# content warning that will notice. And the freighter's `core_sensor` accepts
+# NOTHING the base game ships: it is the only `subsystem` mount in the file and
+# `components.toml` has no `subsystem` component, on purpose - the survey
+# scanners stayed `utility` so that the player's starting shuttle did not lose
+# them. A mount waiting for content is the honest state of it.
+#
+# The positions below are placed against the shared `ship` mesh's bounds and
 # are the first thing a real hull mesh will move (Phase 32).
-#
-# ⚑ AND THE ONE THING THAT COMES OUT WRONG, SAID HERE RATHER THAN LEFT TO BE
-# FOUND: the shuttle and the interceptor carry FIVE mounts each against gdd.md
-# §11.1's class-1 budget of 2-4, because reproducing today's capacity beat
-# re-balancing it in a schema stage. The freighter's eight land exactly on the
-# bottom of the class-3 band. Nothing checks any of this yet - the band is a
-# SOFT contract and a violation is a content warning the tools should raise,
-# which is Phase 32 stage A's job - and when that check arrives these two hulls
-# are the first thing it will have something to say about.
 
 [[ship]]
 id = "sol.shuttle"           # the player's ship (game/src/space_world.hpp)
@@ -54,19 +67,14 @@ armor = 50.0
 hull = 100.0
 weapon_capacitor = 100.0
 weapon_recharge = 15.0
-weapon = "sol.pulse_cannon"
 scan_range = 2.5e8   # pulse reach, meters (Phase 8e)
 scan_speed = 1.0     # target-scan rate multiplier
 price = 8000.0
 mass = 10000.0
 power_output = 6.0
-slots_shield = 1
-slots_engine = 1
-slots_cargo = 1
-slots_utility = 1
 crew_berths = 1
 
-  # A class-1 hull with one gun and nothing spare: four smalls is the whole
+  # A class-1 hull with one gun and nothing spare: five smalls is the whole
   # budget, and the trade the player already makes - a cargo pod OR a scanner -
   # is the same trade with the mount named.
   [[ship.mount]]
@@ -74,6 +82,7 @@ crew_berths = 1
   kind = "fixed"
   size = "small"
   at = [0.0, -0.2, -2.4]
+  fit = "sol.pulse_cannon"
 
   [[ship.mount]]
   id = "drive_main"
@@ -120,27 +129,23 @@ armor = 25.0
 hull = 60.0
 weapon_capacitor = 90.0
 weapon_recharge = 18.0
-weapon = "sol.pulse_cannon"
 scan_range = 2.0e8
 scan_speed = 1.2
 price = 24000.0
 mass = 8000.0
 power_output = 8.0
-slots_shield = 1
-slots_engine = 2
-slots_cargo = 0
-slots_utility = 1
 crew_berths = 1
 
   # Two drives and no hold: the interceptor spends its budget on getting there.
-  # `slots_cargo = 0` is why there is exactly one utility mount here and two on
-  # the shuttle, and it is the clearest thing in this file that a mount list
-  # says what a slot count could not.
+  # One utility mount here against the shuttle's two is what the old
+  # `slots_cargo = 0` said, and it is the clearest thing in this file that a
+  # mount list says what a slot count could not.
   [[ship.mount]]
   id = "gun_nose"
   kind = "fixed"
   size = "small"
   at = [0.0, -0.1, -2.0]
+  fit = "sol.pulse_cannon"
 
   [[ship.mount]]
   id = "drive_port"
@@ -192,17 +197,12 @@ armor = 140.0
 hull = 320.0
 weapon_capacitor = 60.0
 weapon_recharge = 8.0
-weapon = "sol.mining_laser"
 cargo = 200.0
 scan_range = 2.2e8
 scan_speed = 0.8
 price = 60000.0
 mass = 40000.0
 power_output = 10.0
-slots_shield = 1
-slots_engine = 1
-slots_cargo = 3
-slots_utility = 2
 crew_berths = 2
 
   # ⚑ The one hull whose mount list is worth reading twice. It carries a
@@ -211,8 +211,9 @@ crew_berths = 2
   # doing it - which is the whole of what a turret buys, and the first thing in
   # this file that stage C's traverse code will read. Its size is `medium`: at
   # `scale = 4.0` this is a class-3 hull by gdd.md §11.1's length band, and a
-  # medium mount takes a small gun (`mountAccepts`) so today's `sol.mining_laser`
-  # still fits without the mount lying about the hull.
+  # medium mount takes a small gun (`mountAccepts`) so the `sol.mining_laser`
+  # below still fits without the mount lying about the hull. The laser is
+  # authored `fixed`; the ring is what makes it traverse.
   [[ship.mount]]
   id = "turret_dorsal"
   kind = "turret"
@@ -220,6 +221,7 @@ crew_berths = 2
   at = [0.0, 0.9, -0.4]
   aim = [0.0, 1.0, 0.0]
   arc = 270.0
+  fit = "sol.mining_laser"
 
   [[ship.mount]]
   id = "drive_main"
@@ -236,7 +238,7 @@ crew_berths = 2
   # Five places where three `slots_cargo` and two `slots_utility` used to be -
   # four utility mounts and the internal one below. A hold pod and a survey
   # scanner compete for the same place on this hull now, which is the merge the
-  # header note warns stage B about.
+  # header note names.
   [[ship.mount]]
   id = "hold_forward"
   kind = "utility"
@@ -264,7 +266,9 @@ crew_berths = 2
   # Internal, and the only mount in this file that is: no `at`, so it is never
   # drawn and never aimed at. gdd.md §11.5's subsystems are where a hull's
   # character beyond its guns lives, and a freighter is the hull that most
-  # wants a better sensor package.
+  # wants a better sensor package - but nothing in `components.toml` is a
+  # `subsystem` yet, so this mount is empty and stays empty until Phase 32
+  # authors the kit that earns it.
   [[ship.mount]]
   id = "core_sensor"
   kind = "subsystem"

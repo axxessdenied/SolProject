@@ -15,10 +15,12 @@
 // STYLISTIC. Re-emitting them from a parsed `double`, which is what
 // `writeForge` safely does for a file the tool itself wrote, corrupts a
 // hand-authored one three different ways:
-//   - 27 values across the nine committed def files are TOML INTEGERS, and
-//     `optionalUint` requires `isInteger()` - so `slots_engine = 1` written
-//     back as `1.0` is a LOAD FAILURE, not a reformat. Fifteen of them are in
-//     `ships.toml`, which is a file this stage writes to.
+//   - values across the committed def files are TOML INTEGERS, and
+//     `optionalUint` requires `isInteger()` - so `crew_berths = 1` written
+//     back as `1.0` is a LOAD FAILURE, not a reformat. (The count was 27 when
+//     this was measured, of which fifteen were in `ships.toml`; Phase 31 stage
+//     B deleted the four `slots_*` keys per hull, which is why the witness
+//     `def_doc_tests` uses is `crew_berths` now. The hazard is unchanged.)
 //   - `scan_range = 2.5e8` expands to `250000000.0`, because `appendNumber`
 //     deliberately prefers a plain form while one round-trips - a rule that
 //     exists to stop `90` becoming `9e+01`, correct there and wrong here.

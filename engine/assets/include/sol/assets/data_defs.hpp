@@ -161,6 +161,35 @@ inline constexpr std::size_t kMountSizeCount = static_cast<std::size_t>(MountSiz
     return static_cast<std::uint32_t>(fitting) <= static_cast<std::uint32_t>(mount);
 }
 
+// Whether a mount of one kind takes a fitting of another (Phase 31 stage B).
+// The rule is EQUALITY plus exactly one asymmetry, and the asymmetry is the
+// difference between `turret` and `fixed` said in one line:
+//
+//   A turret is a ring with a traverse motor. Bolting a fixed gun into one
+//   gives you a gun that traverses, which is the whole of what the mount is
+//   FOR - so the traverse belongs to the mount (`arc` is authored there,
+//   never on the weapon) and a gun is just a gun. The reverse is refused: a
+//   hardpoint with no ring cannot hold what needs one.
+//
+// `launcher` and `bay` are deliberately left strict. A bay is a magazine that
+// opens rather than a bigger rail, and nothing in the game carries ordnance
+// yet - so there is no content for a relaxation to be right or wrong about,
+// and writing the rule now would be writing it blind.
+[[nodiscard]] constexpr bool mountAcceptsKind(MountKind mount, MountKind fitting)
+{
+    return mount == fitting || (mount == MountKind::Turret && fitting == MountKind::Fixed);
+}
+
+// Which mount kinds hold a `[[weapon]]` rather than a `[[component]]`. This is
+// what makes a fitting's def id unambiguous: the MOUNT decides which table an
+// id is looked up in, so a component and a weapon that shared an id could
+// still never be confused for one another.
+[[nodiscard]] constexpr bool mountTakesWeapon(MountKind kind)
+{
+    return kind == MountKind::Turret || kind == MountKind::Fixed || kind == MountKind::Launcher ||
+           kind == MountKind::Bay;
+}
+
 struct ShipMount
 {
     // Unique within the hull and STABLE: a save names a fitting by the mount it
@@ -177,7 +206,23 @@ struct ShipMount
     float at[3] = {0.0f, 0.0f, 0.0f};   // metres, hull frame (+X right, +Y up, -Z fwd)
     float aim[3] = {0.0f, 0.0f, -1.0f}; // facing, hull frame; defaults to the ship's
     float arc = 0.0f;                   // degrees of traverse; 0 = points where `aim` says
+    // What the hull SHIPS WITH (Phase 31 stage B): a component or weapon def
+    // id, empty for a mount that comes bare. This is where `ShipDef::weaponId`
+    // went - an NPC's gun, the starter shuttle's gun, and the fit a bought
+    // hull arrives with are all one key now, and it is on the mount because
+    // that is the only place that can say WHICH gun goes WHERE.
+    //
+    // It is a default, not a constraint: the player refits freely from here.
+    std::string fit;
 };
+
+// The whole fit rule for one place: kind first, then size. Both halves live in
+// their own function above so a test can turn one off and see which half the
+// refusal came from.
+[[nodiscard]] constexpr bool mountAccepts(const ShipMount& mount, MountKind kind, MountSize size)
+{
+    return mountAcceptsKind(mount.kind, kind) && mountAccepts(mount.size, size);
+}
 
 struct ShipDef
 {
@@ -194,7 +239,6 @@ struct ShipDef
     ShipFlightTuning flight;
     ShipDefenseTuning defense;
     ShipPowerTuning power;
-    std::string weaponId;        // weapon def id; empty = unarmed
     float cargoCapacity = 50.0f; // trade goods, units
     // Scanning (engine plan Phase 8e): how far a pulse reaches and how fast a
     // target scan resolves. Scanner components move both like any other stat.
@@ -209,19 +253,17 @@ struct ShipDef
     float price = 10'000.0f;
     float mass = 10'000.0f;    // kg; component mass dilutes accelerations
     float powerOutput = 10.0f; // fit budget: sum of component power_draw
-    std::uint32_t slotsShield = 1;
-    std::uint32_t slotsEngine = 1;
-    std::uint32_t slotsCargo = 1;
-    std::uint32_t slotsUtility = 1;
     std::uint32_t crewBerths = 1;
-    // Where fittings go (Phase 31 stage A2). Authored order, which is the
-    // order the outfitting screen and the Forge's list will show.
+    // Where fittings go, and since Phase 31 stage B the ONLY place they go.
+    // Authored order, which is the order the outfitting screen and the Forge's
+    // list show. The four `slots_*` counts and `weapon` that used to live here
+    // are gone: a count cannot say which KIND of kit a hull takes or how big,
+    // which is the whole of decisions/014.
     //
-    // EMPTY IS STILL LEGAL HERE, and only until stage B: the four `slots_*`
-    // counts above are what the fit model reads today, so a mod's ship def that
-    // has never heard of a mount still loads and still flies. Stage B is where
-    // an empty list becomes a hull that can fit nothing, and it is also where
-    // `weaponId` and the counts go.
+    // EMPTY IS LEGAL AND NOW MEANS SOMETHING: a hull with no mounts fits
+    // nothing and flies unarmed. That is a mod's ship def written before
+    // mounts existed, and it loads rather than refusing - the def layer's
+    // standing rule is that a missing key is a default, not an error.
     std::vector<ShipMount> mounts;
     CatalogGate gate;
     std::string source; // document that last defined this id (diagnostics)
@@ -232,24 +274,21 @@ struct ShipDef
     [[nodiscard]] const ShipMount* findMount(std::string_view mountId) const;
 };
 
-enum class ComponentSlot : std::uint32_t
-{
-    Shield = 0,
-    Engine,
-    Cargo,
-    Utility,
-    Count,
-};
-
-inline constexpr std::size_t kComponentSlotCount = static_cast<std::size_t>(ComponentSlot::Count);
-
-// An outfitting component: occupies one typed slot, costs power from the ship's
-// budget, adds mass, and modifies stats (engine plan Phase 8a).
+// An outfitting component: occupies one mount, costs power from the ship's
+// budget, adds mass, and modifies stats (engine plan Phase 8a; mounts in 31B).
+//
+// `mount` and `size` replaced the four-value `slot` enum, and the pair is what
+// a count could never say: WHICH kind of place this goes in and how big a one
+// it needs. Both are required of an author for the same reason a mount's are -
+// a kind this parser invented is kit silently accepted by a hull that never
+// said it takes it, and a size it invented is the fitting budget written by
+// the parser rather than by the person balancing the ship.
 struct ComponentDef
 {
     std::string id;
     std::string name;
-    ComponentSlot slot = ComponentSlot::Utility;
+    MountKind mount = MountKind::Utility;
+    MountSize size = MountSize::Small;
     float price = 100.0f;
     float mass = 0.0f;      // kg
     float powerDraw = 0.0f; // against ShipDef::powerOutput
@@ -276,7 +315,13 @@ struct WeaponDef
 {
     std::string id;
     std::string name;
-    std::string kind; // "projectile" | "hitscan"
+    std::string kind; // "projectile" | "hitscan" - how it TRAVELS, not where it sits
+    // Where it goes (Phase 31 stage B). `mount` must be one of the four
+    // weapon-taking kinds (`mountTakesWeapon`); a gun authored `fixed` also
+    // fits a `turret`, which is `mountAcceptsKind`'s one asymmetry and is why
+    // the four shipped guns did not have to be authored twice.
+    MountKind mount = MountKind::Fixed;
+    MountSize size = MountSize::Small;
     float damage = 0.0f;
     float rateOfFire = 1.0f;      // shots/s
     float range = 1'000.0f;       // meters

@@ -15,6 +15,7 @@ using sol::ui::FactionRow;
 using sol::ui::FleetRow;
 using sol::ui::inset;
 using sol::ui::MissionRow;
+using sol::ui::MountRow;
 using sol::ui::OutfitRow;
 using sol::ui::Rect;
 using sol::ui::rgba;
@@ -139,6 +140,10 @@ struct CatalogStyle
     const char* empty = "(nothing available)";
     bool showPrice = true;
     bool showCount = true;
+    // Phase 31 stage B: grey the primary button on a row with no `targetMount`.
+    // A station action carries no way to report a refusal back to the player,
+    // so a button that would be refused has to be a button that is not offered.
+    bool requireTargetMount = false;
 };
 
 struct CatalogClick
@@ -179,12 +184,76 @@ struct CatalogClick
             std::snprintf(buffer, sizeof(buffer), "%.0f cr", static_cast<double>(item.price));
             clipped(ui, cells.price, buffer, ui.theme().textPrimary, ui.theme().bodyStyle, TextAlign::Right);
         }
-        if (ui.button(inset(cells.primary, 2.0f), style.primary)) {
+        const bool enabled = !style.requireTargetMount || item.targetMount[0] != '\0';
+        if (ui.button(inset(cells.primary, 2.0f), style.primary, enabled)) {
             click = {.row = i, .secondary = false};
         }
         if (style.secondary != nullptr && item.fitted > 0 &&
             ui.button(inset(cells.secondary, 2.0f), style.secondary)) {
             click = {.row = i, .secondary = true};
+        }
+
+        ui.popId();
+    }
+    ui.popId();
+    return click;
+}
+
+// --- Mounts (Phase 31 stage B) ---
+
+// One row per place on the hull. Deliberately the SAME five-column shape the
+// catalogs use - name, detail, number, button - because a player reading down
+// this tab should not have to re-learn where the button is halfway through it.
+struct MountClick
+{
+    int row = -1;
+};
+
+[[nodiscard]] MountClick
+mountList(UiContext& ui, Column& column, std::span<const MountRow> rows, std::string_view selected)
+{
+    MountClick click;
+    if (rows.empty()) {
+        // A hull with no mounts fits nothing, and that is a legal def rather
+        // than an error - so it says so, instead of showing an empty box.
+        emptyNote(ui, column, "this hull has no mounts: nothing can be fitted to it");
+        return click;
+    }
+
+    ui.pushId("mounts");
+    char buffer[160] = {};
+    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+        const MountRow& mount = rows[static_cast<std::size_t>(i)];
+        const Rect row = column.row(kRowHeight);
+        rowBackground(ui, row, i);
+        const bool filled = mount.fitted[0] != '\0';
+        const CatalogCells cells = catalogCells(ui, row, /*showPrice=*/filled, /*reserveSecondary=*/false);
+        ui.pushId(i);
+
+        // The mount's own identity leads and what is in it follows, because
+        // the mount is the thing that does not change: an author's `id`, its
+        // kind and its size are what a save, a def file and the Forge all
+        // agree on, and the fitting is what the player is about to swap.
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%s%s  %s %s",
+                      mount.id == selected ? "> " : "  ",
+                      mount.id,
+                      mount.size,
+                      mount.kind);
+        clipped(ui, cells.name, buffer, ui.theme().textPrimary, ui.theme().strongStyle);
+        if (filled) {
+            std::snprintf(buffer, sizeof(buffer), "%s - %s", mount.fitted, mount.detail);
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "%s", mount.detail);
+        }
+        clipped(ui, cells.detail, buffer, filled ? ui.theme().textDim : ui.theme().textDisabled);
+        if (filled) {
+            std::snprintf(buffer, sizeof(buffer), "+%.0f cr", static_cast<double>(mount.resale));
+            clipped(ui, cells.price, buffer, ui.theme().textDim, ui.theme().bodyStyle, TextAlign::Right);
+        }
+        if (ui.button(inset(cells.primary, 2.0f), filled ? "Remove" : "Select")) {
+            click = {.row = i};
         }
 
         ui.popId();
@@ -351,34 +420,70 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
 void buildOutfittingTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
-    const float contentHeight = kRowHeight * 2.0f + theme.spacing * 2.0f +
-                                (kSectionHeight + theme.spacing) * 2.0f +
+    const float contentHeight = kRowHeight * 3.0f + theme.spacing * 3.0f +
+                                (kSectionHeight + theme.spacing) * 3.0f +
+                                listHeight(ui, std::max<std::size_t>(panel.mounts.size(), 1)) +
                                 listHeight(ui, std::max<std::size_t>(panel.components.size(), 1)) +
                                 listHeight(ui, std::max<std::size_t>(panel.weapons.size(), 1));
     const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Outfitting]);
     Column column(list, 0.0f, theme.spacing);
 
     clipped(ui, column.row(kRowHeight), panel.fitSummary, theme.textPrimary, theme.bodyStyle);
-    char buffer[96] = {};
+    char buffer[160] = {};
     std::snprintf(buffer, sizeof(buffer), "Insurance deductible at current fit: %.0f cr", panel.deductible);
     clipped(ui, column.row(kRowHeight), buffer, theme.textDim, theme.smallStyle);
 
-    sectionHeader(ui, column.row(kSectionHeight), "Components (Sell removes one fitted instance at resale)");
-    const CatalogClick component =
-        catalogList(ui, column, "components", panel.components, {.primary = "Buy", .secondary = "Sell"});
+    // ⚑ THE MOUNT LIST IS THE SCREEN NOW, and the catalogs are what fills it.
+    // A ship is its mounts (decisions/014), so the first thing this tab shows
+    // is the ship rather than the shop.
+    sectionHeader(ui, column.row(kSectionHeight), "Mounts (Select narrows the catalogs below to one place)");
+    const MountClick mount = mountList(ui, column, panel.mounts, state.selectedMount);
+    if (mount.row >= 0) {
+        const MountRow& row = panel.mounts[static_cast<std::size_t>(mount.row)];
+        if (row.fitted[0] != '\0') {
+            panel.action = {.kind = StationAction::Kind::SellFitting, .mount = row.id, .index = mount.row};
+        } else {
+            // Selecting the row already selected clears it, which is the only
+            // way back to "put it wherever it goes" without leaving the tab.
+            state.selectedMount = state.selectedMount == row.id ? std::string() : row.id;
+        }
+    }
+    if (!state.selectedMount.empty()) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "Showing only what '%s' takes. Select it again for every mount.",
+                      state.selectedMount.c_str());
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "Fitting goes to the first free mount that takes it.");
+    }
+    clipped(ui, column.row(kRowHeight), buffer, theme.textDim, theme.smallStyle);
+
+    // ⚑ A GREYED FIT IS THE REFUSAL, SAID BEFORE THE CLICK. `targetMount` is
+    // the game's own answer to "where would this go", so a row with none has
+    // no place on this hull - or none the selected mount allows. This matters
+    // more than it did before mounts: a station action has no channel to
+    // report a refusal back, so under the old slot counts a refused Buy simply
+    // did nothing, and a mis-aimed Fit is far easier to attempt.
+    sectionHeader(ui, column.row(kSectionHeight), "Components");
+    const CatalogClick component = catalogList(
+        ui, column, "components", panel.components, {.primary = "Fit", .requireTargetMount = true});
     if (component.row >= 0) {
-        panel.action = {component.secondary ? StationAction::Kind::SellComponent
-                                            : StationAction::Kind::BuyComponent,
-                        panel.components[static_cast<std::size_t>(component.row)].id,
-                        component.row};
+        const OutfitRow& row = panel.components[static_cast<std::size_t>(component.row)];
+        panel.action = {.kind = StationAction::Kind::BuyFitting,
+                        .id = row.id,
+                        .mount = row.targetMount,
+                        .index = component.row};
     }
 
-    sectionHeader(ui, column.row(kSectionHeight), "Weapon mount (swapping sells the old weapon at resale)");
-    const CatalogClick weapon = catalogList(ui, column, "weapons", panel.weapons, {.primary = "Mount"});
+    sectionHeader(ui, column.row(kSectionHeight), "Weapons (a swap sells the old one back at resale)");
+    const CatalogClick weapon =
+        catalogList(ui, column, "weapons", panel.weapons, {.primary = "Fit", .requireTargetMount = true});
     if (weapon.row >= 0) {
-        panel.action = {StationAction::Kind::BuyWeapon,
-                        panel.weapons[static_cast<std::size_t>(weapon.row)].id,
-                        weapon.row};
+        const OutfitRow& row = panel.weapons[static_cast<std::size_t>(weapon.row)];
+        panel.action = {.kind = StationAction::Kind::BuyFitting,
+                        .id = row.id,
+                        .mount = row.targetMount,
+                        .index = weapon.row};
     }
 
     ui.endScroll();
@@ -434,8 +539,9 @@ void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& st
     const CatalogClick ship =
         catalogList(ui, column, "ships", panel.shipCatalog, {.primary = "Buy", .showCount = false});
     if (ship.row >= 0) {
-        panel.action = {
-            StationAction::Kind::BuyShip, panel.shipCatalog[static_cast<std::size_t>(ship.row)].id, ship.row};
+        panel.action = {.kind = StationAction::Kind::BuyShip,
+                        .id = panel.shipCatalog[static_cast<std::size_t>(ship.row)].id,
+                        .index = ship.row};
     }
 
     ui.endScroll();
@@ -463,17 +569,17 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                                              .showPrice = false,
                                              .showCount = false});
     if (aboard.row >= 0) {
-        panel.action = {StationAction::Kind::FireCrew,
-                        panel.crewAboard[static_cast<std::size_t>(aboard.row)].id,
-                        aboard.row};
+        panel.action = {.kind = StationAction::Kind::FireCrew,
+                        .id = panel.crewAboard[static_cast<std::size_t>(aboard.row)].id,
+                        .index = aboard.row};
     }
 
     sectionHeader(ui, column.row(kSectionHeight), "For hire (one-time fee, no refund)");
     const CatalogClick hire = catalogList(ui, column, "hire", panel.crewCatalog, {.primary = "Hire"});
     if (hire.row >= 0) {
-        panel.action = {StationAction::Kind::HireCrew,
-                        panel.crewCatalog[static_cast<std::size_t>(hire.row)].id,
-                        hire.row};
+        panel.action = {.kind = StationAction::Kind::HireCrew,
+                        .id = panel.crewCatalog[static_cast<std::size_t>(hire.row)].id,
+                        .index = hire.row};
     }
 
     ui.endScroll();
@@ -847,7 +953,7 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
     // One line of context per tab, where a player would look for it.
     static constexpr const char* const kHints[StationScreenState::TabCount] = {
         "Prices move with stock; NPC traders share this market.",
-        "Fitting draws power and fills slots; selling refunds at resale value.",
+        "Fitting draws power and fills a mount; removing refunds at resale value.",
         "A ship you buy is stored here until you switch to it.",
         "Crew bonuses apply to the ship they are aboard.",
         "Standing moves with what you do in a faction's space.",

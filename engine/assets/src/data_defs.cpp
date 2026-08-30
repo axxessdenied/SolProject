@@ -205,6 +205,24 @@ struct FieldReader
         }
     }
 
+    // The mount vocabulary a FITTING declares (Phase 31 stage B): which kind
+    // of place it goes in and how big a one it needs. Required, both of them,
+    // and for the same reason `[[ship.mount]]` requires them - a kind or a
+    // size this parser invented is content it wrote on the author's behalf.
+    void requireMountFit(MountKind& kind, MountSize& size)
+    {
+        std::string kindText;
+        std::string sizeText;
+        requireString("mount", kindText);
+        requireString("size", sizeText);
+        if (!failed && !parseMountKind(kindText, kind)) {
+            fail("'mount' is not a mount kind: '" + kindText + "'");
+        }
+        if (!failed && !parseMountSize(sizeText, size)) {
+            fail("'size' must be \"small\", \"medium\", \"large\" or \"xlarge\", not \"" + sizeText + "\"");
+        }
+    }
+
     // "station_id:multiplier" strings, multiplier >= 0 (Phase 13). Zero is a
     // legal, deliberate "this faction never builds one" — which is why the
     // bound is >= 0 rather than > 0.
@@ -406,7 +424,6 @@ bool parseShip(const TomlValue& table,
     ShipPowerTuning& power = def.power;
     reader.optionalFloat("weapon_capacitor", power.weaponCapacitor);
     reader.optionalFloat("weapon_recharge", power.weaponRecharge);
-    reader.optionalString("weapon", def.weaponId);
     reader.optionalFloat("cargo", def.cargoCapacity);
     reader.optionalFloat("scan_range", def.scanRange);
     reader.optionalFloat("scan_speed", def.scanSpeed);
@@ -415,10 +432,6 @@ bool parseShip(const TomlValue& table,
     reader.optionalFloat("price", def.price);
     reader.optionalFloat("mass", def.mass);
     reader.optionalFloat("power_output", def.powerOutput);
-    reader.optionalUint("slots_shield", def.slotsShield);
-    reader.optionalUint("slots_engine", def.slotsEngine);
-    reader.optionalUint("slots_cargo", def.slotsCargo);
-    reader.optionalUint("slots_utility", def.slotsUtility);
     reader.optionalUint("crew_berths", def.crewBerths);
     reader.optionalGate(def.gate);
 
@@ -466,7 +479,8 @@ bool parseShip(const TomlValue& table,
             inner.optionalFloat3("at", mount.at, &mount.external);
             inner.optionalFloat3("aim", mount.aim, &hasAim);
             inner.optionalFloat("arc", mount.arc, &hasArc);
-            inner.rejectUnknownKeys({"id", "kind", "size", "at", "aim", "arc"});
+            inner.optionalString("fit", mount.fit);
+            inner.rejectUnknownKeys({"id", "kind", "size", "at", "aim", "arc", "fit"});
 
             // ⚑ REFUSED RATHER THAN IGNORED, and it is decisions/014 rule 2
             // read backwards. `at` is the ONE key that decides external, so a
@@ -527,7 +541,6 @@ bool parseShip(const TomlValue& table,
                               "hull",
                               "weapon_capacitor",
                               "weapon_recharge",
-                              "weapon",
                               "cargo",
                               "scan_range",
                               "scan_speed",
@@ -535,10 +548,6 @@ bool parseShip(const TomlValue& table,
                               "price",
                               "mass",
                               "power_output",
-                              "slots_shield",
-                              "slots_engine",
-                              "slots_cargo",
-                              "slots_utility",
                               "crew_berths",
                               "mount",
                               "factions",
@@ -571,6 +580,7 @@ bool parseWeapon(const TomlValue& table,
     }
     reader.requireString("name", def.name);
     reader.requireString("kind", def.kind);
+    reader.requireMountFit(def.mount, def.size);
     reader.optionalFloat("damage", def.damage);
     reader.optionalFloat("rate_of_fire", def.rateOfFire);
     reader.optionalFloat("range", def.range);
@@ -584,6 +594,8 @@ bool parseWeapon(const TomlValue& table,
     reader.rejectUnknownKeys({"id",
                               "name",
                               "kind",
+                              "mount",
+                              "size",
                               "damage",
                               "rate_of_fire",
                               "range",
@@ -596,6 +608,13 @@ bool parseWeapon(const TomlValue& table,
                               "min_rep"});
     if (!reader.failed && def.kind != "projectile" && def.kind != "hitscan") {
         reader.fail("'kind' must be \"projectile\" or \"hitscan\"");
+    }
+    // The mirror of the component check, and the same reason: a weapon in a
+    // shield mount is an id the fit model would look up in the wrong table.
+    if (!reader.failed && !mountTakesWeapon(def.mount)) {
+        reader.fail(std::string("'mount' is \"") + mountKindName(def.mount) +
+                    "\", which takes a [[component]]; a weapon goes in a turret, fixed, launcher or bay "
+                    "mount");
     }
     if (reader.failed) {
         return false;
@@ -1506,28 +1525,25 @@ bool parseComponent(const TomlValue& table,
         reader.context = std::string(sourceName) + ": component '" + def.id + "'";
     }
     reader.requireString("name", def.name);
-    std::string slot;
-    reader.requireString("slot", slot);
+    reader.requireMountFit(def.mount, def.size);
     reader.optionalFloat("price", def.price);
     reader.optionalFloat("mass", def.mass);
     reader.optionalFloat("power_draw", def.powerDraw);
     reader.optionalModifiers(def.modifiers);
     reader.optionalGate(def.gate);
 
-    reader.rejectUnknownKeys({"id", "name", "slot", "price", "mass", "power_draw", "factions", "min_rep"},
-                             /*allowModifiers=*/true);
-    if (!reader.failed) {
-        if (slot == "shield") {
-            def.slot = ComponentSlot::Shield;
-        } else if (slot == "engine") {
-            def.slot = ComponentSlot::Engine;
-        } else if (slot == "cargo") {
-            def.slot = ComponentSlot::Cargo;
-        } else if (slot == "utility") {
-            def.slot = ComponentSlot::Utility;
-        } else {
-            reader.fail("'slot' must be \"shield\", \"engine\", \"cargo\", or \"utility\"");
-        }
+    reader.rejectUnknownKeys(
+        {"id", "name", "mount", "size", "price", "mass", "power_draw", "factions", "min_rep"},
+        /*allowModifiers=*/true);
+    // ⚑ A component cannot claim a gun's mount. The four weapon-taking kinds
+    // hold a `[[weapon]]`, and that is what makes a mount's `fit` id
+    // unambiguous without the def having to say which table it came from -
+    // so a component authored `mount = "turret"` would be a fitting nothing
+    // could ever look up rather than a merely useless one.
+    if (!reader.failed && mountTakesWeapon(def.mount)) {
+        reader.fail(std::string("'mount' is \"") + mountKindName(def.mount) +
+                    "\", which takes a [[weapon]]; a component goes in an engine, thruster, shield, "
+                    "armor, utility, subsystem, hangar or dock mount");
     }
     if (!reader.failed && (def.mass < 0.0f || def.powerDraw < 0.0f)) {
         reader.fail("'mass' and 'power_draw' must be >= 0");
