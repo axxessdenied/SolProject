@@ -433,6 +433,96 @@ struct MissingModelRef
 
 [[nodiscard]] std::vector<MissingModelRef> missingModelRefs(const sol::assets::DefDatabase& defs);
 
+// --- the hull spine (engine plan Phase 32 stage A) ---------------------------
+//
+// ⚑⚑⚑ THIS IS IN THE FORGE BECAUSE THE CODE PUT IT HERE, NOT BECAUSE A TOOL IS
+// A NICE PLACE FOR A WARNING. gdd.md 11.1 keys a hull class on LENGTH IN
+// METRES, and nothing in the running game knows a hull's length: `ShipDef`
+// carries `model` and `scale`, `ModelDef::radius` is a hand-authored collision
+// sphere (the `ship` row says 8.0 against a mesh measuring 7.0064), and the
+// cooked `.smesh` header is `magic, version, vertexCount, indexCount` with no
+// bounds in it at all. The cooker has the mesh and no def dependency
+// whatsoever. So THE FORGE IS THE ONLY PLACE IN THIS PROJECT THAT HOLDS A MESH
+// AND A DEF AT THE SAME TIME - which is where the check has to live, beside
+// `ModelMatch`, for the same reason `ModelMatch` is there.
+
+// The number a class band is keyed on: the longest side of the bounding box.
+//
+// ⚑ THE LONGEST AXIS AND NOT THE Z EXTENT, though every hull in this game today
+// is longest along -Z. A hull authored down another axis would otherwise be
+// measured across its beam and quietly reported as two classes too small, and
+// the tool would be the thing that lied about it.
+[[nodiscard]] float meshLength(const MeshReport& report);
+
+// One mesh stem and what it measures, so the spine below can be arithmetic over
+// numbers rather than a thing that opens files.
+struct MeshLength
+{
+    std::string stem;
+    float length = 0.0f; // metres, the mesh as authored (scale 1)
+};
+
+// Measures every mesh a `[[model]]` row names, by opening it once each.
+//
+// ⚑ THE AUTHORED FILE WINS OVER THE COOKED ONE, which is `listMeshes`'s own
+// order and so costs nothing but a `find`: a `.forge` an author changed a
+// minute ago is the mesh the spine should be measuring, and the `.smesh` beside
+// the binary is a build behind it. A stem that fails to load is left out rather
+// than reported as zero metres - a hull with no measurement and a hull that is
+// nothing long are different findings.
+[[nodiscard]] std::vector<MeshLength> measureModelMeshes(const sol::assets::DefDatabase& defs,
+                                                         const std::vector<AssetEntry>& entries);
+
+// One hull, measured against the class it declares.
+//
+// ⚑⚑ FOUR ANSWERS AND NOT TWO, WHICH IS THE WHOLE SHAPE OF THE REPORT. A hull
+// can be out of band, in band, or UNANSWERABLE IN TWO DIFFERENT WAYS - and
+// neither unanswerable case is a violation. A hull that declares no class has
+// nothing to be measured against; a hull whose mesh cannot be found has nothing
+// to measure. Collapsing either into "out of band" would make the work queue
+// name hulls that do not belong on it.
+struct HullBand
+{
+    std::string shipId;
+    std::string model; // the [[model]] row the hull names
+    std::string mesh;  // the mesh stem that row names; empty when unresolved
+    // The multiplier that produced `length` below, kept because it is the key
+    // an author would reach for and the panel would otherwise send them to the
+    // file to find.
+    float scale = 1.0f;
+    // Metres: the mesh's longest axis TIMES the hull's `scale`, because that is
+    // the ship a player flies past. One 12 m mesh at `scale = 4.0` is a 48 m
+    // freighter, and 48 m is the number 11.1 has an opinion about.
+    float length = 0.0f;
+    bool measured = false;
+    bool hasClass = false;
+    std::uint32_t declaredClass = 0;
+    bool hasRole = false;
+    sol::assets::HullRole role = sol::assets::HullRole::Line;
+    // The class the GEOMETRY is. False when unmeasured, and false for a hull
+    // shorter than the smallest band - under 8 m there is no class to name.
+    bool hasMeasuredClass = false;
+    std::uint32_t measuredClass = 0;
+
+    enum class Status
+    {
+        NoMesh,   // the model or its mesh could not be found: nothing to measure
+        NoClass,  // nothing authored: nothing to measure AGAINST
+        InBand,   // the geometry is the class it says it is
+        OutOfBand // the finding this whole report exists to make
+    };
+
+    [[nodiscard]] Status status() const;
+};
+
+// Every `[[ship]]` in the database, in authored order, with its length measured
+// through its model to its mesh.
+//
+// ⚑ Headless on purpose, like `missingModelRefs`: the panel prints what this
+// returns and decides nothing, so the rule has a test and the widget has none.
+[[nodiscard]] std::vector<HullBand> hullBands(const sol::assets::DefDatabase& defs,
+                                              const std::vector<MeshLength>& lengths);
+
 // --- the texture preview's geometry (stage I) --------------------------------
 //
 // ⚑ Here rather than in `texture_editor.cpp` for the reason stage H finally

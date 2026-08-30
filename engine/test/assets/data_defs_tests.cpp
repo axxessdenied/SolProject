@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -2919,5 +2920,234 @@ SOL_TEST(data_defs_every_shipped_component_fits_some_shipped_hull)
             std::printf("  the shuttle can no longer carry '%s'\n", id);
         }
         SOL_CHECK(fits);
+    }
+}
+
+// --- the hull spine (Phase 32 stage A) ---------------------------------------
+
+SOL_TEST(data_defs_hull_role_names_round_trip)
+{
+    for (std::size_t i = 0; i < sol::assets::kHullRoleCount; ++i) {
+        const auto role = static_cast<sol::assets::HullRole>(i);
+        sol::assets::HullRole parsed{};
+        SOL_REQUIRE(sol::assets::parseHullRole(sol::assets::hullRoleName(role), parsed));
+        SOL_CHECK(parsed == role);
+    }
+    // ⚑ A round trip alone cannot see a ROTATED table - both directions read
+    // it, so shifting every entry by one agrees with itself perfectly. The two
+    // ends are pinned to the words gdd.md 11.2 actually uses.
+    SOL_CHECK(std::strcmp(sol::assets::hullRoleName(sol::assets::HullRole::Line), "line") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::hullRoleName(sol::assets::HullRole::Industrial), "industrial") == 0);
+
+    sol::assets::HullRole unused{};
+    SOL_CHECK(!sol::assets::parseHullRole("Line", unused));     // spellings are lowercase
+    SOL_CHECK(!sol::assets::parseHullRole("economic", unused)); // 11.2's parenthetical, not its name
+    SOL_CHECK(!sol::assets::parseHullRole("", unused));
+}
+
+// ⚑⚑ THE BANDS PARTITION THE NUMBER LINE FROM 8 m UP, AND THE BOUNDARIES ARE
+// WHAT THIS PINS. A value strictly inside a band agrees with an inclusive and
+// an exclusive top alike, so every case here is a bound EXACTLY: 20.0 m has to
+// be Light and cannot also be Skiff, or two classes claim one hull and the
+// warning fires on whichever the code happened to test first.
+SOL_TEST(data_defs_hull_class_bands_are_gdd_11_1_and_meet_without_overlapping)
+{
+    using sol::assets::hullClassBand;
+    using sol::assets::HullClassBand;
+
+    const float expected[8][2] = {{8.0f, 20.0f},
+                                  {20.0f, 45.0f},
+                                  {45.0f, 120.0f},
+                                  {120.0f, 300.0f},
+                                  {300.0f, 600.0f},
+                                  {600.0f, 1200.0f},
+                                  {1200.0f, 3000.0f},
+                                  {3000.0f, 0.0f}};
+    for (std::uint32_t i = 0; i < sol::assets::kHullClassCount; ++i) {
+        const HullClassBand band = hullClassBand(i);
+        SOL_CHECK(band.minLength == expected[i][0]);
+        if (i + 1 < sol::assets::kHullClassCount) {
+            SOL_CHECK(band.maxLength == expected[i][1]);
+            // Each band's top IS the next band's bottom: no gap, no overlap.
+            SOL_CHECK(band.maxLength == hullClassBand(i + 1).minLength);
+        }
+    }
+    // 11.1 writes the titan band as "3 km+", and a big number is a length a
+    // titan could be authored past.
+    SOL_CHECK(std::isinf(hullClassBand(7).maxLength));
+
+    // A class outside 0-7 has no band, and asking gives zeroes rather than a
+    // read off the end of the table.
+    SOL_CHECK(hullClassBand(8).minLength == 0.0f);
+    SOL_CHECK(hullClassBand(8).maxLength == 0.0f);
+
+    SOL_CHECK(std::strcmp(sol::assets::hullClassName(0), "Skiff") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::hullClassName(7), "Titan") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::hullClassName(8), "?") == 0);
+}
+
+SOL_TEST(data_defs_hull_class_for_length_lands_on_the_lower_side_of_every_bound)
+{
+    using sol::assets::hullClassForLength;
+    std::uint32_t found = 99;
+
+    // Every boundary, from the band it OPENS. Inclusive bottom, exclusive top.
+    const float bounds[8] = {8.0f, 20.0f, 45.0f, 120.0f, 300.0f, 600.0f, 1200.0f, 3000.0f};
+    for (std::uint32_t i = 0; i < 8; ++i) {
+        SOL_REQUIRE(hullClassForLength(bounds[i], found));
+        SOL_CHECK(found == i);
+    }
+    // And a hair under each one falls back a class.
+    for (std::uint32_t i = 1; i < 8; ++i) {
+        SOL_REQUIRE(hullClassForLength(std::nextafter(bounds[i], 0.0f), found));
+        SOL_CHECK(found == i - 1);
+    }
+
+    // ⚑ BELOW THE SMALLEST BAND THERE IS NO ANSWER, and saying "class 0" would
+    // be this function inventing one the table declines to give: under 8 m is
+    // not a small ship, it is a fitting. A cannon mesh measures about a metre.
+    SOL_CHECK(!hullClassForLength(7.99f, found));
+    SOL_CHECK(!hullClassForLength(0.0f, found));
+    SOL_CHECK(!hullClassForLength(-5.0f, found));
+
+    // A titan has no top: nothing is too long to have a class.
+    SOL_REQUIRE(hullClassForLength(50000.0f, found));
+    SOL_CHECK(found == 7);
+}
+
+SOL_TEST(data_defs_hull_length_in_band_agrees_with_the_class_a_length_measures)
+{
+    using sol::assets::hullClassForLength;
+    using sol::assets::hullLengthInBand;
+
+    // The two are one rule asked two ways, so they cannot be allowed to drift:
+    // a length is in class C's band exactly when it MEASURES class C.
+    const float lengths[] = {8.0f, 12.0f, 19.999f, 20.0f, 48.0f, 120.0f, 3000.0f, 9000.0f};
+    for (const float metres : lengths) {
+        std::uint32_t measured = 99;
+        SOL_REQUIRE(hullClassForLength(metres, measured));
+        for (std::uint32_t declared = 0; declared < sol::assets::kHullClassCount; ++declared) {
+            SOL_CHECK(hullLengthInBand(declared, metres) == (declared == measured));
+        }
+    }
+    // A length below every band is in no band at all.
+    for (std::uint32_t declared = 0; declared < sol::assets::kHullClassCount; ++declared) {
+        SOL_CHECK(!hullLengthInBand(declared, 4.0f));
+    }
+    // And a class outside 0-7 has nothing to be inside.
+    SOL_CHECK(!hullLengthInBand(8, 12.0f));
+}
+
+SOL_TEST(data_defs_ship_class_and_role_are_optional_and_record_that_they_were_authored)
+{
+    DefDatabase db;
+    std::string error;
+    const char* toml = R"(
+[[ship]]
+id = "sol.declared"
+name = "Declared"
+class = 3
+role = "logistics"
+
+[[ship]]
+id = "sol.silent"
+name = "Silent"
+)";
+    SOL_REQUIRE(merge(db, toml, "ships.toml", &error));
+    SOL_CHECK(error.empty());
+
+    const ShipDef* declared = db.findShip("sol.declared");
+    SOL_REQUIRE(declared != nullptr);
+    SOL_CHECK(declared->hasHullClass);
+    SOL_CHECK(declared->hullClass == 3);
+    SOL_CHECK(declared->hasRole);
+    SOL_CHECK(declared->role == sol::assets::HullRole::Logistics);
+
+    // ⚑ THE FLAGS ARE THE POINT AND A SENTINEL COULD NOT DO THIS JOB: class 0
+    // is Skiff and `Line` is a real role, so an unauthored hull reads as a
+    // perfectly ordinary skiff fighter unless it can say it never spoke.
+    const ShipDef* silent = db.findShip("sol.silent");
+    SOL_REQUIRE(silent != nullptr);
+    SOL_CHECK(!silent->hasHullClass);
+    SOL_CHECK(!silent->hasRole);
+    SOL_CHECK(silent->hullClass == 0);
+    SOL_CHECK(silent->role == sol::assets::HullRole::Line);
+}
+
+SOL_TEST(data_defs_ship_refuses_a_class_outside_the_bands_and_a_role_that_is_not_one)
+{
+    const auto refused = [](const char* keys, const char* expectedFragment) {
+        DefDatabase db;
+        std::string error;
+        const std::string toml = std::string("[[ship]]\nid = \"sol.x\"\nname = \"X\"\n") + keys;
+        if (db.mergeToml(toml.c_str(), toml.size(), "ships.toml", &error)) {
+            std::printf("  expected a refusal, got a load\n");
+            return false;
+        }
+        if (error.find(expectedFragment) == std::string::npos) {
+            std::printf("  error was '%s', expected to mention '%s'\n", error.c_str(), expectedFragment);
+            return false;
+        }
+        return true;
+    };
+
+    // 8 is one past Titan, and a class the parser accepted here would be a band
+    // `hullClassBand` cannot answer for.
+    SOL_CHECK(refused("class = 8\n", "'class' must be 0-7"));
+    SOL_CHECK(refused("class = -1\n", "non-negative"));
+    SOL_CHECK(refused("role = \"freighter\"\n", "not a hull role"));
+    // The word is in gdd.md 11.2 but it is the family's parenthetical, not its
+    // name - which is exactly the mistake an author makes reading that table.
+    SOL_CHECK(refused("role = \"economic\"\n", "not a hull role"));
+    // Wrong TYPE, not just a wrong word.
+    SOL_CHECK(refused("class = \"heavy\"\n", "'class'"));
+}
+
+// ⚑⚑⚑ THE SHIPPED CONTENT, AND IT IS OUT OF BAND ON PURPOSE - THIS TEST EXISTS
+// TO SAY SO OUT LOUD RATHER THAN LET A LATER SESSION "FIX" IT. Every hull in
+// this game shares one 12 m placeholder mesh stretched by `scale`, so the class
+// each one DECLARES is gdd.md 11.3's cell for that ship type while the geometry
+// is a stand-in. The user's ruling: the bands are right, the content is wrong,
+// and the meshes are not ready - so what is authored is the durable half.
+//
+// The LENGTH half of the claim is measured in `forge.unit`, which is the only
+// suite that can open a mesh; this one pins what the file says.
+SOL_TEST(data_defs_every_shipped_hull_declares_a_class_and_a_role)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(db.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+    SOL_CHECK(error.empty());
+    SOL_REQUIRE(!db.ships().empty());
+
+    struct Expected
+    {
+        const char* shipId;
+        std::uint32_t hullClass;
+        sol::assets::HullRole role;
+    };
+
+    const Expected kHulls[] = {
+        {"sol.shuttle", 1, sol::assets::HullRole::Logistics},   // 11.3: Light / Logistics
+        {"sol.interceptor", 1, sol::assets::HullRole::Line},    // 11.3: Light / Line
+        {"sol.freighter", 3, sol::assets::HullRole::Logistics}, // 11.3: Heavy / Logistics
+    };
+    for (const Expected& want : kHulls) {
+        const ShipDef* def = db.findShip(want.shipId);
+        SOL_REQUIRE(def != nullptr);
+        SOL_CHECK(def->hasHullClass);
+        SOL_CHECK(def->hullClass == want.hullClass);
+        SOL_CHECK(def->hasRole);
+        SOL_CHECK(def->role == want.role);
+    }
+
+    // Nothing in the base game may go unclassified: a hull with no class is one
+    // the spine cannot report on at all, which is worse than one out of band.
+    for (const ShipDef& def : db.ships()) {
+        if (!def.hasHullClass || !def.hasRole) {
+            std::printf("  '%s' declares no %s\n", def.id.c_str(), def.hasHullClass ? "role" : "class");
+        }
+        SOL_CHECK(def.hasHullClass);
+        SOL_CHECK(def.hasRole);
     }
 }

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <string_view>
 #include <utility>
 
@@ -401,6 +402,22 @@ bool parseShip(const TomlValue& table,
     reader.optionalString("cockpit", def.cockpit);
     reader.optionalFloat("scale", def.scale);
 
+    // ⚑ Phase 32 stage A. Both optional, both range-checked, NEITHER defaulted:
+    // a class this parser picked would be gdd.md 11.1's weight, mount budget
+    // and crew written on the author's behalf, and a role it picked would be
+    // 11.2's answer to what the ship is for. `present` is what says so, because
+    // class 0 and `line` are both real answers and cannot double as "unset".
+    reader.optionalUint("class", def.hullClass, &def.hasHullClass);
+    std::string roleText;
+    reader.optionalString("role", roleText, &def.hasRole);
+    if (!reader.failed && def.hasRole && !parseHullRole(roleText, def.role)) {
+        reader.fail("'role' is not a hull role: '" + roleText +
+                    "' (line, carrier, logistics, support, covert, industrial)");
+    }
+    if (!reader.failed && def.hasHullClass && def.hullClass >= kHullClassCount) {
+        reader.fail("'class' must be 0-7 (gdd.md 11.1's hull classes)");
+    }
+
     ShipFlightTuning& flight = def.flight;
     reader.optionalFloat("forward_accel", flight.forwardAccel);
     reader.optionalFloat("reverse_accel", flight.reverseAccel);
@@ -523,6 +540,8 @@ bool parseShip(const TomlValue& table,
                               "model",
                               "cockpit",
                               "scale",
+                              "class",
+                              "role",
                               "forward_accel",
                               "reverse_accel",
                               "lateral_accel",
@@ -1653,6 +1672,88 @@ bool parseMountSize(std::string_view text, MountSize& out)
         }
     }
     return false;
+}
+
+// --- the hull spine (Phase 32 stage A) ---------------------------------------
+
+namespace {
+
+constexpr const char* kHullRoleNames[] = {"line", "carrier", "logistics", "support", "covert", "industrial"};
+
+static_assert(std::size(kHullRoleNames) == kHullRoleCount, "a hull role is missing its def spelling");
+
+// gdd.md 11.1, copied straight out of the table and in its order. The upper
+// bound is EXCLUSIVE so the eight bands partition the number line from 8 m up:
+// exactly 20 m is Light, not Skiff, and there is no length two classes both
+// claim. The titan band has no top.
+constexpr float kHullClassBounds[] = {8.0f, 20.0f, 45.0f, 120.0f, 300.0f, 600.0f, 1200.0f, 3000.0f};
+
+constexpr const char* kHullClassNames[] = {
+    "Skiff", "Light", "Medium", "Heavy", "Cruiser", "Capital", "Super-capital", "Titan"};
+
+static_assert(std::size(kHullClassBounds) == kHullClassCount, "a hull class is missing its band");
+static_assert(std::size(kHullClassNames) == kHullClassCount, "a hull class is missing its name");
+
+} // namespace
+
+const char* hullRoleName(HullRole role)
+{
+    const auto index = static_cast<std::size_t>(role);
+    return index < kHullRoleCount ? kHullRoleNames[index] : "?";
+}
+
+bool parseHullRole(std::string_view text, HullRole& out)
+{
+    for (std::size_t i = 0; i < kHullRoleCount; ++i) {
+        if (text == kHullRoleNames[i]) {
+            out = static_cast<HullRole>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+HullClassBand hullClassBand(std::uint32_t hullClass)
+{
+    if (hullClass >= kHullClassCount) {
+        return {};
+    }
+    HullClassBand band;
+    band.minLength = kHullClassBounds[hullClass];
+    // ⚑ The top of the last band is infinity rather than a big number, because
+    // a big number is a length a titan could be authored past. 11.1 writes it
+    // as "3 km+" and this is that plus sign.
+    band.maxLength = hullClass + 1 < kHullClassCount ? kHullClassBounds[hullClass + 1]
+                                                     : std::numeric_limits<float>::infinity();
+    return band;
+}
+
+const char* hullClassName(std::uint32_t hullClass)
+{
+    return hullClass < kHullClassCount ? kHullClassNames[hullClass] : "?";
+}
+
+bool hullClassForLength(float metres, std::uint32_t& out)
+{
+    if (!(metres >= kHullClassBounds[0])) {
+        return false;
+    }
+    for (std::uint32_t i = kHullClassCount; i > 0; --i) {
+        if (metres >= kHullClassBounds[i - 1]) {
+            out = i - 1;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool hullLengthInBand(std::uint32_t hullClass, float metres)
+{
+    if (hullClass >= kHullClassCount) {
+        return false;
+    }
+    const HullClassBand band = hullClassBand(hullClass);
+    return metres >= band.minLength && metres < band.maxLength;
 }
 
 const ShipMount* ShipDef::findMount(std::string_view mountId) const

@@ -2817,3 +2817,258 @@ SOL_TEST(waveformEnvelopeDrawsEveryCommittedCue)
         SOL_CHECK(high >= report.peak - 0.0001f);
     }
 }
+
+// --- the hull spine (engine plan Phase 32 stage A) ---------------------------
+
+// ⚑⚑ THE LONGEST AXIS AND NOT THE Z EXTENT, AND THE FIXTURE IS DELIBERATELY NOT
+// A SHIP SHAPE. Every hull in this game today is longest along -Z, so measuring
+// `boundsMax.z - boundsMin.z` would pass every test written against the shipped
+// content and then report a hull authored down +X as two classes too small -
+// with the tool being the thing that lied about it.
+SOL_TEST(theMeasuredLengthIsTheLongestSideOfTheBoxWhicheverAxisThatIs)
+{
+    forge::MeshReport report;
+    report.boundsMin = {-1.0f, -20.0f, -3.0f};
+    report.boundsMax = {1.0f, 5.0f, 3.0f};
+    SOL_CHECK(std::fabs(forge::meshLength(report) - 25.0f) < 1e-5f); // y, not z
+    report.boundsMin = {-50.0f, -1.0f, -1.0f};
+    report.boundsMax = {50.0f, 1.0f, 1.0f};
+    SOL_CHECK(std::fabs(forge::meshLength(report) - 100.0f) < 1e-5f); // x
+    report.boundsMin = {0.0f, 0.0f, -7.0f};
+    report.boundsMax = {0.0f, 0.0f, 5.0f};
+    SOL_CHECK(std::fabs(forge::meshLength(report) - 12.0f) < 1e-5f); // z, the shipped case
+
+    // A mesh that measures nothing is a real thing to be handed - an empty
+    // document - and it must come back as zero rather than as a negative.
+    SOL_CHECK(forge::meshLength(forge::MeshReport{}) == 0.0f);
+}
+
+// ⚑⚑ FOUR OUTCOMES AND NOT TWO. A hull with no class and a hull with no mesh
+// are different gaps and neither is a violation, so collapsing either into
+// "out of band" would put hulls on the work queue that do not belong there.
+SOL_TEST(theHullSpineScalesTheMeshAndSeparatesAViolationFromAGap)
+{
+    const std::string toml = R"(
+[[model]]
+id = "hull"
+mesh = "cube"
+texture = "hull"
+radius = 1.0
+
+[[model]]
+id = "unbuilt"
+mesh = "nothing_on_disk"
+texture = "hull"
+radius = 1.0
+
+[[ship]]
+id = "sol.small"
+name = "Small"
+model = "hull"
+scale = 1.0
+class = 0
+role = "line"
+
+[[ship]]
+id = "sol.stretched"
+name = "Stretched"
+model = "hull"
+scale = 4.0
+class = 0
+role = "logistics"
+
+[[ship]]
+id = "sol.silent"
+name = "Silent"
+model = "hull"
+scale = 1.0
+
+[[ship]]
+id = "sol.unmeasurable"
+name = "Unmeasurable"
+model = "unbuilt"
+scale = 1.0
+class = 3
+)";
+    sol::assets::DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(defs.mergeToml(toml.c_str(), toml.size(), "test.toml", &error));
+    SOL_CHECK(error.empty());
+
+    // A 12 m mesh, so `scale` is the only thing separating the first two hulls.
+    const std::vector<forge::MeshLength> lengths = {{"cube", 12.0f}};
+
+    const std::vector<forge::HullBand> bands = forge::hullBands(defs, lengths);
+    SOL_REQUIRE(bands.size() == 4);
+
+    // ⚑ THE SCALE IS THE POINT: one mesh, two hulls, two different lengths and
+    // therefore two different classes. That is exactly what the shipped game
+    // does with `ship.forge`, and it is why a length cannot live on the mesh.
+    SOL_CHECK(bands[0].shipId == "sol.small");
+    SOL_CHECK(bands[0].mesh == "cube");
+    SOL_CHECK(std::fabs(bands[0].length - 12.0f) < 1e-4f);
+    SOL_CHECK(bands[0].measured);
+    SOL_CHECK(bands[0].hasMeasuredClass);
+    SOL_CHECK(bands[0].measuredClass == 0);
+    SOL_CHECK(bands[0].status() == forge::HullBand::Status::InBand);
+
+    SOL_CHECK(bands[1].shipId == "sol.stretched");
+    SOL_CHECK(bands[1].scale == 4.0f);
+    SOL_CHECK(std::fabs(bands[1].length - 48.0f) < 1e-4f);
+    SOL_CHECK(bands[1].measuredClass == 2); // 45-120 m
+    SOL_CHECK(bands[1].status() == forge::HullBand::Status::OutOfBand);
+    SOL_CHECK(bands[1].role == sol::assets::HullRole::Logistics);
+
+    // Measured, and measured perfectly well - there is simply nothing to check
+    // it against, which is a gap in the content rather than a fault in it.
+    SOL_CHECK(bands[2].shipId == "sol.silent");
+    SOL_CHECK(bands[2].measured);
+    SOL_CHECK(!bands[2].hasClass);
+    SOL_CHECK(bands[2].status() == forge::HullBand::Status::NoClass);
+
+    // Declares a class and names a model whose mesh nobody has measured: the
+    // opposite gap, and it must not read as a hull that is the wrong size.
+    SOL_CHECK(bands[3].shipId == "sol.unmeasurable");
+    SOL_CHECK(bands[3].mesh == "nothing_on_disk");
+    SOL_CHECK(!bands[3].measured);
+    SOL_CHECK(bands[3].hasClass);
+    SOL_CHECK(bands[3].status() == forge::HullBand::Status::NoMesh);
+
+    // ⚑ And a hull naming a model that does not exist at all - which is
+    // `missingModelRefs`'s finding, not restated here, but it must still leave
+    // this report with something to say rather than an empty mesh name and a
+    // silent zero.
+    const std::string orphan = R"(
+[[ship]]
+id = "sol.orphan"
+name = "Orphan"
+model = "no_such_model"
+class = 1
+)";
+    SOL_REQUIRE(defs.mergeToml(orphan.c_str(), orphan.size(), "orphan.toml", &error));
+    const std::vector<forge::HullBand> withOrphan = forge::hullBands(defs, lengths);
+    SOL_REQUIRE(withOrphan.size() == 5);
+    SOL_CHECK(withOrphan[4].mesh.empty());
+    SOL_CHECK(withOrphan[4].status() == forge::HullBand::Status::NoMesh);
+}
+
+// ⚑ A mesh is opened ONCE however many models name it - six `[[model]]` rows
+// already share five meshes in this game - and a stem with no file behind it is
+// left out rather than reported as zero metres long.
+SOL_TEST(everyMeshAModelNamesIsMeasuredOnceAndAMissingOneIsNotAZero)
+{
+    const std::string toml = R"(
+[[model]]
+id = "a"
+mesh = "ship"
+texture = "hull"
+radius = 8.0
+
+[[model]]
+id = "b"
+mesh = "ship"
+texture = "hull"
+radius = 8.0
+
+[[model]]
+id = "c"
+mesh = "cube"
+texture = "hull"
+radius = 1.0
+
+[[model]]
+id = "d"
+mesh = "not_a_file"
+texture = "hull"
+radius = 1.0
+)";
+    sol::assets::DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(defs.mergeToml(toml.c_str(), toml.size(), "test.toml", &error));
+
+    const std::vector<forge::AssetEntry> entries = forge::listMeshes(SOL_MESH_SOURCE_DIR, "");
+    SOL_REQUIRE(!entries.empty());
+
+    const std::vector<forge::MeshLength> lengths = forge::measureModelMeshes(defs, entries);
+    SOL_REQUIRE(lengths.size() == 2); // `ship` once despite two rows, `cube`, and not `not_a_file`
+    SOL_CHECK(lengths[0].stem == "ship");
+    SOL_CHECK(lengths[1].stem == "cube");
+    SOL_CHECK(lengths[0].length > 0.0f);
+    SOL_CHECK(lengths[1].length > 0.0f);
+}
+
+// ⚑⚑⚑ PHASE 32 STAGE A's EXIT, AND IT IS THE FINDING RATHER THAN A REGRESSION
+// GUARD: ALL THREE SHIPPED HULLS ARE OUTSIDE THE CLASS THEY DECLARE, MEASURED
+// AGAINST THE REAL MESH AND THE REAL DEFS. One 12 m placeholder does duty for
+// three ships and `scale` is the only thing telling them apart, so the numbers
+// below are geometry rather than opinion:
+//
+//   sol.shuttle      scale 1.0    12.0 m   declares class 1 (20-45 m)    is class 0
+//   sol.interceptor  scale 0.8     9.6 m   declares class 1 (20-45 m)    is class 0
+//   sol.freighter    scale 4.0    48.0 m   declares class 3 (120-300 m)  is class 2
+//
+// ⚑⚑ IT IS PINNED AS THE EXPECTED STATE, NOT AS A FAILURE. The user's ruling
+// is that the bands are right, the content is wrong, and the meshes are not
+// ready - so this is a modelling queue with a test around it, and the day a
+// real hull lands its row here changes to `InBand` on purpose. What the test
+// stops is somebody "fixing" the warning by re-tuning `scale` or re-declaring
+// the class, which would throw away 11.3's intent to flatter a placeholder.
+SOL_TEST(theThreeShippedHullsAreAllOutsideTheClassBandTheyDeclare)
+{
+    sol::assets::DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(forge::loadModelCatalog(SOL_MODEL_DATA_DIR, defs, &error));
+    SOL_CHECK(error.empty());
+    SOL_REQUIRE(defs.ships().size() == 3);
+
+    const std::vector<forge::AssetEntry> entries = forge::listMeshes(SOL_MESH_SOURCE_DIR, "");
+    const std::vector<forge::MeshLength> lengths = forge::measureModelMeshes(defs, entries);
+    const std::vector<forge::HullBand> bands = forge::hullBands(defs, lengths);
+    SOL_REQUIRE(bands.size() == 3);
+
+    struct Expected
+    {
+        const char* shipId;
+        float length;
+        std::uint32_t declared;
+        std::uint32_t measured;
+        sol::assets::HullRole role;
+    };
+
+    const Expected kHulls[3] = {
+        {"sol.shuttle", 12.0f, 1, 0, sol::assets::HullRole::Logistics},
+        {"sol.interceptor", 9.6f, 1, 0, sol::assets::HullRole::Line},
+        {"sol.freighter", 48.0f, 3, 2, sol::assets::HullRole::Logistics},
+    };
+
+    for (std::size_t i = 0; i < 3; ++i) {
+        const forge::HullBand& band = bands[i];
+        const Expected& want = kHulls[i];
+        if (band.shipId != want.shipId) {
+            std::printf("  hull %zu is '%s', expected '%s'\n", i, band.shipId.c_str(), want.shipId);
+        }
+        SOL_REQUIRE(band.shipId == want.shipId);
+        SOL_REQUIRE(band.measured);
+        if (std::fabs(band.length - want.length) > 0.05f) {
+            std::printf("  %s measures %.4f m, expected %.4f m\n",
+                        want.shipId,
+                        static_cast<double>(band.length),
+                        static_cast<double>(want.length));
+        }
+        SOL_CHECK(std::fabs(band.length - want.length) < 0.05f);
+        SOL_CHECK(band.hasClass);
+        SOL_CHECK(band.declaredClass == want.declared);
+        SOL_CHECK(band.hasRole);
+        SOL_CHECK(band.role == want.role);
+        SOL_CHECK(band.hasMeasuredClass);
+        SOL_CHECK(band.measuredClass == want.measured);
+        // The exit criterion, said once per hull.
+        SOL_CHECK(band.status() == forge::HullBand::Status::OutOfBand);
+    }
+
+    // ⚑ And all three share ONE mesh, which is the fact the whole phase is
+    // about: the spine is three rows over a single 12 m box.
+    SOL_CHECK(bands[0].mesh == bands[1].mesh);
+    SOL_CHECK(bands[1].mesh == bands[2].mesh);
+    SOL_CHECK(bands[0].mesh == "ship");
+}

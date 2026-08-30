@@ -806,6 +806,86 @@ matchModels(const assets::DefDatabase& defs, const AssetEntry& entry, const Mesh
     return matches;
 }
 
+// --- the hull spine (Phase 32 stage A) ---------------------------------------
+
+float meshLength(const MeshReport& report)
+{
+    const core::Vec3 size{report.boundsMax.x - report.boundsMin.x,
+                          report.boundsMax.y - report.boundsMin.y,
+                          report.boundsMax.z - report.boundsMin.z};
+    return std::max(size.x, std::max(size.y, size.z));
+}
+
+std::vector<MeshLength> measureModelMeshes(const assets::DefDatabase& defs,
+                                           const std::vector<AssetEntry>& entries)
+{
+    std::vector<MeshLength> lengths;
+    for (const assets::ModelDef& model : defs.models()) {
+        if (std::any_of(lengths.begin(), lengths.end(), [&](const MeshLength& done) {
+                return done.stem == model.mesh;
+            })) {
+            continue; // six models already share five meshes; open each once
+        }
+        const auto entry = std::find_if(entries.begin(), entries.end(), [&](const AssetEntry& candidate) {
+            return candidate.stem == model.mesh;
+        });
+        if (entry == entries.end()) {
+            continue;
+        }
+        assets::MeshData data;
+        if (!loadMesh(*entry, data)) {
+            continue; // unmeasured, which `hullBands` reports as such
+        }
+        lengths.push_back({model.mesh, meshLength(reportMesh(data))});
+    }
+    return lengths;
+}
+
+HullBand::Status HullBand::status() const
+{
+    if (!measured) {
+        return Status::NoMesh;
+    }
+    if (!hasClass) {
+        return Status::NoClass;
+    }
+    return assets::hullLengthInBand(declaredClass, length) ? Status::InBand : Status::OutOfBand;
+}
+
+std::vector<HullBand> hullBands(const assets::DefDatabase& defs, const std::vector<MeshLength>& lengths)
+{
+    std::vector<HullBand> bands;
+    bands.reserve(defs.ships().size());
+    for (const assets::ShipDef& ship : defs.ships()) {
+        HullBand band;
+        band.shipId = ship.id;
+        band.model = ship.model;
+        band.scale = ship.scale;
+        band.hasClass = ship.hasHullClass;
+        band.declaredClass = ship.hullClass;
+        band.hasRole = ship.hasRole;
+        band.role = ship.role;
+
+        // Ship -> model -> mesh, and either hop can come up empty. A hull
+        // naming a model that does not exist is `missingModelRefs`'s finding
+        // and is not restated here; what this reports is that there is nothing
+        // to measure, which is true either way.
+        if (const assets::ModelDef* model = defs.findModel(ship.model.c_str()); model != nullptr) {
+            band.mesh = model->mesh;
+            const auto found = std::find_if(lengths.begin(), lengths.end(), [&](const MeshLength& row) {
+                return row.stem == model->mesh;
+            });
+            if (found != lengths.end()) {
+                band.length = found->length * ship.scale;
+                band.measured = true;
+                band.hasMeasuredClass = assets::hullClassForLength(band.length, band.measuredClass);
+            }
+        }
+        bands.push_back(std::move(band));
+    }
+    return bands;
+}
+
 // --- the texture preview's geometry (stage I) --------------------------------
 
 int texturePreviewScale(int textureWidth, float availableWidth)

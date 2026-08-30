@@ -152,11 +152,19 @@ public:
     // Draws the `[[ship]]` and `[[station]]` rows that name any of those models
     // - the content that actually puts the mesh in front of a player - and can
     // make a new one. ⚑ Only the keys that are about the ASSET: id, name, model,
-    // scale. Flight tuning, defence, price and slots stay in a text editor,
-    // where the strict schema already makes them safe; a generated 33-key panel
-    // would answer "author a whole ship" literally and duplicate a surface that
-    // works, with no complaint behind it.
-    [[nodiscard]] bool drawContentRows();
+    // scale, and since Phase 32 stage A the hull's `class` and `role`. Flight
+    // tuning, defence, price and slots stay in a text editor, where the strict
+    // schema already makes them safe; a generated 33-key panel would answer
+    // "author a whole ship" literally and duplicate a surface that works, with
+    // no complaint behind it.
+    //
+    // ⚑⚑ `openMeshLength` IS THE LONGEST AXIS OF THE OPEN MESH IN METRES, and
+    // it is what makes the class check possible: every row shown here names the
+    // open model by construction, so that length times the row's own `scale` is
+    // the hull a player flies past - the one number gdd.md 11.1's class band is
+    // keyed on, and the one nothing in the running game can compute. Zero means
+    // unmeasured and the check is simply not drawn.
+    [[nodiscard]] bool drawContentRows(float openMeshLength);
 
     // ⚑⚑⚑ PHASE 31 STAGE D: THE MOUNT SURFACE. Everything above draws a panel;
     // these do not, and that is the point. A mount is placed by clicking a hull
@@ -345,7 +353,8 @@ private:
     [[nodiscard]] bool drawSlotTable(sol::assets::DefRow& row, const std::vector<std::string>& textureStems);
     [[nodiscard]] bool drawParamTable(sol::assets::DefRow& row);
     // One `[[ship]]`/`[[station]]` row's asset keys. Returns true when changed.
-    [[nodiscard]] bool drawContentRow(sol::assets::DefRow& row, const std::vector<std::string>& models);
+    [[nodiscard]] bool
+    drawContentRow(sol::assets::DefRow& row, const std::vector<std::string>& models, float openMeshLength);
 
     // ⚑ Stage D. Validates a candidate `ships.toml` against the game's schema
     // ALONGSIDE the other four documents, and keeps it only if every one of
@@ -369,5 +378,17 @@ private:
     std::string m_error;
     bool m_loaded = false;
 };
+
+// ⚑⚑ THE WHOLE SPINE, EVERY HULL AT ONCE (Phase 32 stage A) - and it is a free
+// function rather than a `DefEditor` method for the reason `drawHistoryButtons`
+// is one: it edits nothing. It prints what `hullBands` computed and decides no
+// part of it, which is what puts the rule in `forge.unit` and leaves the widget
+// with nothing worth testing.
+//
+// ⚑ It is deliberately NOT filtered to the open mesh, unlike every other panel
+// in this tool. The per-hull warning beside `class` answers "is the hull I am
+// looking at right"; this answers "what is left to model", which is a question
+// about the whole game and useless one row at a time.
+void drawHullSpine(const std::vector<HullBand>& bands);
 
 } // namespace forge

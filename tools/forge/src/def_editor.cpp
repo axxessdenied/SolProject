@@ -1049,7 +1049,7 @@ bool DefEditor::drawSoundRows(const AssetEntry& entry, Audition& audition)
     return changed;
 }
 
-bool DefEditor::drawContentRow(DefRow& row, const std::vector<std::string>& models)
+bool DefEditor::drawContentRow(DefRow& row, const std::vector<std::string>& models, float openMeshLength)
 {
     bool changed = false;
     const std::string id(row.id());
@@ -1107,10 +1107,242 @@ bool DefEditor::drawContentRow(DefRow& row, const std::vector<std::string>& mode
         }
         noteActivation("set scale");
         ImGui::TextDisabled("  the sim multiplies the model's radius by this");
+
+        // ⚑⚑ PHASE 32 STAGE A: WHAT THE HULL IS (gdd.md 11.1) AND WHAT IT IS
+        // FOR (11.2). Both are combos with an explicit "(unset)" row, because
+        // ABSENT IS A REAL STATE and not a zero: class 0 is Skiff and the first
+        // role is `line`, so a widget that could not clear the key would make
+        // every hull this tool touched declare something its author never said.
+        const assets::DefKey* classKey = row.find("class");
+        const int declaredClass =
+            classKey != nullptr ? std::atoi(std::string(classKey->value()).c_str()) : -1;
+        char classLabel[48];
+        if (declaredClass < 0) {
+            std::snprintf(classLabel, sizeof(classLabel), "(unset)");
+        } else {
+            std::snprintf(classLabel,
+                          sizeof(classLabel),
+                          "%d %s",
+                          declaredClass,
+                          assets::hullClassName(static_cast<std::uint32_t>(declaredClass)));
+        }
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::BeginCombo("class", classLabel)) {
+            if (ImGui::Selectable("(unset)", declaredClass < 0) && declaredClass >= 0) {
+                beginEdit("clear class");
+                row.remove("class");
+                changed = true;
+            }
+            for (std::uint32_t candidate = 0; candidate < assets::kHullClassCount; ++candidate) {
+                char option[48];
+                std::snprintf(option,
+                              sizeof(option),
+                              "%u %s (%.0f-%.0f m)",
+                              candidate,
+                              assets::hullClassName(candidate),
+                              static_cast<double>(assets::hullClassBand(candidate).minLength),
+                              static_cast<double>(assets::hullClassBand(candidate).maxLength));
+                const bool selected = static_cast<int>(candidate) == declaredClass;
+                if (ImGui::Selectable(option, selected) && !selected) {
+                    beginEdit("set class");
+                    // ⚑ `defInteger` and NOT `defNumber`: `class` is read with
+                    // `optionalUint`, which refuses `1.0`.
+                    row.set("class", assets::defInteger(candidate));
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        const std::string roleText = stringOr(row, "role", "");
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::BeginCombo("role", roleText.empty() ? "(unset)" : roleText.c_str())) {
+            if (ImGui::Selectable("(unset)", roleText.empty()) && !roleText.empty()) {
+                beginEdit("clear role");
+                row.remove("role");
+                changed = true;
+            }
+            for (std::size_t i = 0; i < assets::kHullRoleCount; ++i) {
+                const char* candidate = assets::hullRoleName(static_cast<assets::HullRole>(i));
+                const bool selected = roleText == candidate;
+                if (ImGui::Selectable(candidate, selected) && !selected) {
+                    beginEdit("set role");
+                    row.set("role", assets::defString(candidate));
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        // ⚑⚑⚑ AND THE MEASUREMENT, WHICH IS WHY THIS CHECK IS IN A TOOL AT ALL:
+        // the open mesh's longest axis times this hull's `scale` is the length
+        // gdd.md 11.1 keys a class on, and NOTHING IN THE RUNNING GAME KNOWS IT.
+        // `ModelDef::radius` is a hand-authored collision sphere and the cooked
+        // `.smesh` header carries no bounds, so this panel is the only place a
+        // mesh and a def are ever both in memory.
+        const float length = openMeshLength * scale;
+        if (length > 0.0f) {
+            ImGui::Text("  measures %.1f m", static_cast<double>(length));
+            if (declaredClass < 0) {
+                ImGui::TextDisabled("  no `class` authored: nothing for gdd.md 11.1 to check");
+            } else {
+                const auto declared = static_cast<std::uint32_t>(declaredClass);
+                const assets::HullClassBand band = assets::hullClassBand(declared);
+                std::uint32_t measured = 0;
+                const bool classified = assets::hullClassForLength(length, measured);
+                if (assets::hullLengthInBand(declared, length)) {
+                    ImGui::TextDisabled("  in band: class %u %s is %.0f-%.0f m",
+                                        declared,
+                                        assets::hullClassName(declared),
+                                        static_cast<double>(band.minLength),
+                                        static_cast<double>(band.maxLength));
+                } else {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+                    if (classified) {
+                        ImGui::Text("  OUT OF BAND: class %u %s is %.0f-%.0f m, and this hull "
+                                    "measures class %u %s",
+                                    declared,
+                                    assets::hullClassName(declared),
+                                    static_cast<double>(band.minLength),
+                                    static_cast<double>(band.maxLength),
+                                    measured,
+                                    assets::hullClassName(measured));
+                    } else {
+                        ImGui::Text("  OUT OF BAND: class %u %s is %.0f-%.0f m, and this hull is "
+                                    "shorter than any class - 11.1 starts at 8 m",
+                                    declared,
+                                    assets::hullClassName(declared),
+                                    static_cast<double>(band.minLength),
+                                    static_cast<double>(band.maxLength));
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::PopTextWrapPos();
+                    // ⚑⚑ AND DELIBERATELY NO "use measured class" BUTTON, WHICH
+                    // THE RADIUS WARNING ABOVE DOES OFFER. There the authored
+                    // number is the guess and the mesh is the truth. Here it is
+                    // the other way round: the class is 11.3's cell for the ship
+                    // type and the mesh is a placeholder, so a button that
+                    // agreed with the geometry would quietly delete the intent
+                    // and leave three hulls that are what they are by accident.
+                    // The fix is a mesh, and the fix is somebody else's.
+                    ImGui::TextDisabled("  the mesh is what moves, not the class");
+                }
+            }
+        }
     }
     ImGui::PopID();
     ImGui::Separator();
     return changed;
+}
+
+// ---------------------------------------------------------------------------
+// The hull spine (engine plan Phase 32 stage A). A free function because it
+// edits nothing: it prints what `hullBands` computed and decides no part of it,
+// which is what keeps the rule in a suite and the widget out of one.
+// ---------------------------------------------------------------------------
+
+void drawHullSpine(const std::vector<HullBand>& bands)
+{
+    if (bands.empty()) {
+        ImGui::TextDisabled("no [[ship]] rows in this project");
+        return;
+    }
+
+    // ⚑⚑ TWO WRAPPED LINES PER HULL RATHER THAN FOUR ALIGNED COLUMNS, AND THE
+    // PANEL WIDTH IS WHY - found by looking at it rather than by reasoning
+    // about it. This section docks into the ~360 px column beside the mesh
+    // report, where a fourth column runs off the right edge and takes the
+    // VERDICT with it: the list showed three hulls, three lengths, three
+    // classes and not one word about whether any of them was wrong, which is
+    // the only thing it exists to say. Wrapped text costs a line each and
+    // survives whatever width the author has dragged the panel to.
+    ImGui::PushTextWrapPos(0.0f);
+    std::size_t outOfBand = 0;
+    for (const HullBand& band : bands) {
+        if (band.measured) {
+            ImGui::Text("%s   %.1f m", band.shipId.c_str(), static_cast<double>(band.length));
+        } else {
+            ImGui::Text("%s   ? m", band.shipId.c_str());
+        }
+
+        const char* role = band.hasRole ? assets::hullRoleName(band.role) : "no role";
+        const assets::HullClassBand want = assets::hullClassBand(band.declaredClass);
+
+        // ⚑ Four outcomes and four lines, because the three that are not "out
+        // of band" are not each other either: a hull with no class and a hull
+        // with no mesh are different gaps, and neither is a violation.
+        switch (band.status()) {
+        case HullBand::Status::OutOfBand:
+            ++outOfBand;
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+            if (band.hasMeasuredClass) {
+                ImGui::Text("  class %u %s / %s - OUT OF BAND: that class is %.0f-%.0f m, and this "
+                            "measures class %u %s",
+                            band.declaredClass,
+                            assets::hullClassName(band.declaredClass),
+                            role,
+                            static_cast<double>(want.minLength),
+                            static_cast<double>(want.maxLength),
+                            band.measuredClass,
+                            assets::hullClassName(band.measuredClass));
+            } else {
+                ImGui::Text("  class %u %s / %s - OUT OF BAND: that class is %.0f-%.0f m, and this is "
+                            "shorter than any class",
+                            band.declaredClass,
+                            assets::hullClassName(band.declaredClass),
+                            role,
+                            static_cast<double>(want.minLength),
+                            static_cast<double>(want.maxLength));
+            }
+            ImGui::PopStyleColor();
+            break;
+        case HullBand::Status::InBand:
+            ImGui::TextDisabled("  class %u %s / %s - in band (%.0f-%.0f m)",
+                                band.declaredClass,
+                                assets::hullClassName(band.declaredClass),
+                                role,
+                                static_cast<double>(want.minLength),
+                                static_cast<double>(want.maxLength));
+            break;
+        case HullBand::Status::NoClass:
+            ImGui::TextDisabled("  no class authored - nothing for gdd.md 11.1 to check against");
+            break;
+        case HullBand::Status::NoMesh:
+            // ⚑ `NoMesh` is checked BEFORE `NoClass`, so a hull that declares
+            // neither lands here - and printing `band.declaredClass` would say
+            // "class 0 Skiff" about a hull that has never said anything. The
+            // zero is the struct's initialiser, not an author's answer.
+            if (band.hasClass) {
+                ImGui::TextDisabled("  class %u %s / %s - no mesh to measure: [[model]] '%s'",
+                                    band.declaredClass,
+                                    assets::hullClassName(band.declaredClass),
+                                    role,
+                                    band.model.c_str());
+            } else {
+                ImGui::TextDisabled("  no class authored, and no mesh to measure: [[model]] '%s'",
+                                    band.model.c_str());
+            }
+            break;
+        }
+    }
+
+    ImGui::Separator();
+    if (outOfBand == 0) {
+        ImGui::TextDisabled("every hull sits in the class band it declares");
+    } else {
+        // ⚑⚑ THE COUNT IS A WORK QUEUE AND IT IS SAID SO IN AS MANY WORDS,
+        // because the shipped game lights every row the day this panel exists
+        // and the next person to read it will otherwise take it for a bug. The
+        // bands are right; three ships share one 12 m placeholder mesh that
+        // `scale` stretches, and the hull that is wrong is the one nobody has
+        // modelled yet. gdd.md 11.1 says a violated band is "a content bug the
+        // tools should say so about", which is exactly this line.
+        ImGui::TextDisabled("%zu hull(s) out of band - a modelling queue, not a schema error: the "
+                            "class is what the ship IS and the mesh is what has to move",
+                            outOfBand);
+    }
+    ImGui::PopTextWrapPos();
 }
 
 // ---------------------------------------------------------------------------
@@ -1300,7 +1532,7 @@ bool DefEditor::clearMountKey(const std::string& hullId, const std::string& moun
     return commitShips(std::move(candidate), "clear mount key");
 }
 
-bool DefEditor::drawContentRows()
+bool DefEditor::drawContentRows(float openMeshLength)
 {
     if (!m_loaded) {
         return false;
@@ -1324,7 +1556,7 @@ bool DefEditor::drawContentRows()
                 continue;
             }
             ++shown;
-            if (drawContentRow(row, models)) {
+            if (drawContentRow(row, models, openMeshLength)) {
                 m_docs[document].dirty = true;
                 changed = true;
             }

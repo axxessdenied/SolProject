@@ -261,6 +261,71 @@ struct ShipMount
     return mountAcceptsKind(mount.kind, kind) && mountAccepts(mount.size, size);
 }
 
+// --- the hull spine (engine plan Phase 32 stage A) ---------------------------
+
+// What a hull is FOR (gdd.md 11.2). Six families; the grid in 11.3 is this
+// crossed with the class band below, and a named ship type is one cell of it.
+//
+// ⚑⚑ IT IS NOT `PilotRole` AND THE TWO ARE DELIBERATELY NOT UNIFIED. This says
+// what the HULL WAS BUILT TO DO; `PilotRole` says what THIS INSTANCE IS DOING,
+// which is why a freighter flown by a raider is a fighter in a logistics hull
+// rather than a contradiction. They are different questions asked of different
+// things, and Phase 32 stage D is where one is mapped onto the other.
+enum class HullRole : std::uint32_t
+{
+    Line = 0,   // shoots things and is shot at
+    Carrier,    // projects force it does not itself carry: hangars, drones
+    Logistics,  // moves matter: haulers, freighters, miners, salvagers
+    Support,    // makes other ships better or worse: repair, EW, command
+    Covert,     // operates where it should not be
+    Industrial, // builds and services
+    Count,
+};
+
+inline constexpr std::size_t kHullRoleCount = static_cast<std::size_t>(HullRole::Count);
+
+// The def spellings, and the only place they live - the same shape
+// `mountKindName`/`parseMountKind` has, for the same reason.
+[[nodiscard]] const char* hullRoleName(HullRole role);
+[[nodiscard]] bool parseHullRole(std::string_view text, HullRole& out);
+
+// gdd.md 11.1's eight classes, 0 (Skiff) through 7 (Titan).
+inline constexpr std::uint32_t kHullClassCount = 8;
+
+// ⚑⚑⚑ THE BAND IS A *LENGTH* BAND, AND THAT IS THE FINDING PHASE 32's RE-READ
+// TURNED ON: NOTHING IN A `ShipDef` IS A LENGTH. `model` names a mesh, `scale`
+// multiplies it, and `ModelDef::radius` is a hand-authored collision SPHERE
+// rather than a measurement - the shipped `ship` row says 8.0 against a mesh
+// that measures 7.0064. The cooked `.smesh` header carries no bounds at all, so
+// the game cannot read one either. Every number this table is compared against
+// therefore has to be MEASURED off geometry, which is why the check lives in
+// the Forge - the only place in this project that holds a mesh and a def at the
+// same time - and not in this parser.
+//
+// ⚑ The band is a SOFT contract, per 11.1 in as many words: a def that violates
+// its own class is "a content bug the tools should say so about, not a schema
+// error". So nothing below refuses anything; it only measures.
+struct HullClassBand
+{
+    float minLength = 0.0f; // metres, inclusive
+    float maxLength = 0.0f; // metres, EXCLUSIVE - so the bands partition, and a
+                            // hull measuring exactly 20 m is class 1 not class 0
+};
+
+[[nodiscard]] HullClassBand hullClassBand(std::uint32_t hullClass);
+
+// "Skiff", "Light", ... "Titan"; "?" for a class outside 0-7.
+[[nodiscard]] const char* hullClassName(std::uint32_t hullClass);
+
+// The class a measured length actually falls in. FALSE below the smallest band:
+// under 8 m is not a small ship, it is a fitting, and saying "class 0" about it
+// would be this function inventing the answer the bands decline to give.
+[[nodiscard]] bool hullClassForLength(float metres, std::uint32_t& out);
+
+// Whether a measured length sits inside the band a class declares. False for a
+// class outside 0-7, which has no band to sit inside.
+[[nodiscard]] bool hullLengthInBand(std::uint32_t hullClass, float metres);
+
 struct ShipDef
 {
     std::string id;   // stable, namespaced, e.g. "sol.shuttle"
@@ -273,6 +338,23 @@ struct ShipDef
     // player's active ship; an NPC has no seat.
     std::string cockpit;
     float scale = 1.0f;
+    // ⚑⚑ WHAT THE HULL IS (gdd.md 11.1) AND WHAT IT IS FOR (11.2), BOTH
+    // OPTIONAL AND BOTH WITH NO DEFAULT - which is the whole reason each
+    // carries a `has` flag rather than leaning on a sentinel. Class 0 is a real
+    // class (Skiff) and `Line` is a real role, so there is no spare value to
+    // mean "unset"; and a class this parser invented would be the schema
+    // deciding a hull's weight, its mount budget and its crew, while a role it
+    // invented would be the schema deciding what the ship is FOR. Absent means
+    // nobody has said, which the tools report as a gap rather than a violation.
+    //
+    // ⚑ Nothing in the engine reads either yet, deliberately. They are the
+    // vocabulary Phase 32's rosters and spawn tables are built on, and the only
+    // consumer this stage ships is the Forge's band check - which is a
+    // statement about content, not a rule the game enforces at runtime.
+    std::uint32_t hullClass = 0;
+    bool hasHullClass = false;
+    HullRole role = HullRole::Line;
+    bool hasRole = false;
     ShipFlightTuning flight;
     ShipDefenseTuning defense;
     ShipPowerTuning power;

@@ -683,6 +683,15 @@ int main(int argc, char** argv)
         SOL_LOG_INFO("forge: %zu [[model]] row(s) from %s", defs.models().size(), dataDirectory.c_str());
     }
 
+    // ⚑⚑ PHASE 32 STAGE A: EVERY MESH A `[[model]]` NAMES, MEASURED ONCE. The
+    // hull spine is the one panel in this tool that reads a mesh it does not
+    // have open, so the lengths cannot come from `report` - and re-opening
+    // fourteen files a frame to draw a list would be worse than not having it.
+    // Recomputed exactly where its two inputs change: the def catalog and the
+    // mesh listing.
+    std::vector<forge::MeshLength> meshLengths = forge::measureModelMeshes(defs, meshEntries);
+    const auto remeasureHulls = [&]() { meshLengths = forge::measureModelMeshes(defs, meshEntries); };
+
     // Stage H: the same rows as a DOCUMENT, so they can be written as well as
     // read. Two views of one file on purpose - `defs` is what the game would
     // load and `defEditor` is what an author is typing into - and the editor
@@ -1505,6 +1514,7 @@ int main(int argc, char** argv)
 
         // The list was read at startup and an import may have just added to it.
         meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
+        remeasureHulls();
 
         if (editingTarget) {
             // ⚑ ADOPTED RATHER THAN RE-OPENED. Re-reading the file would work
@@ -2184,6 +2194,7 @@ int main(int argc, char** argv)
                 // `Rescan` for the same reason.
                 meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
                 openIndex = -1;
+                remeasureHulls();
 
                 // ⚑ A sound has no GPU side at all, so `rebuild` is the whole of
                 // it - close the device, refill the bank, reopen.
@@ -2508,6 +2519,7 @@ int main(int argc, char** argv)
                         // list was read once at startup.
                         meshEntries = forge::listMeshes(assetsDirectory, cookedDirectory);
                         openIndex = -1;
+                        remeasureHulls();
                         status = std::to_string(meshEntries.size()) + " assets";
                     }
                     // ⚑ `status` was printed here until the undo message needed
@@ -2600,7 +2612,11 @@ int main(int argc, char** argv)
                     // because a ship row is a consequence of the model row above it,
                     // exactly as Points sits below Parts.
                     ImGui::SeparatorText("in the game");
-                    (void)defEditor.drawContentRows();
+                    // ⚑ Every row below names the OPEN model, so the open mesh's
+                    // longest axis times that row's `scale` is the hull's length
+                    // - which is the one thing gdd.md 11.1 keys a class on and
+                    // the one thing the running game cannot work out.
+                    (void)defEditor.drawContentRows(forge::meshLength(report));
                     if (ImGui::Button("save defs")) {
                         if (defEditor.save(defStatus)) {
                             // The boot catalog is what every other panel reads, so
@@ -2611,6 +2627,9 @@ int main(int argc, char** argv)
                             }
                             modelMatches = forge::matchModels(
                                 defs, meshEntries[static_cast<std::size_t>(openIndex)], report);
+                            // A saved `[[model]]` may name a different mesh, and
+                            // a saved `[[ship]]` a different model or scale.
+                            remeasureHulls();
                         }
                     }
                     ImGui::SameLine();
@@ -2621,6 +2640,17 @@ int main(int argc, char** argv)
                     ImGui::SameLine();
                     ImGui::TextDisabled("%s", defEditor.dirty() ? "* unsaved" : "saved");
                     ImGui::TextDisabled("%s", defStatus.c_str());
+                }
+
+                // ⚑⚑ THE HULL SPINE (Phase 32 stage A), AND IT IS THE ONE SECTION
+                // IN THIS WINDOW THAT IS NOT ABOUT THE OPEN MESH. Every other
+                // panel here answers a question about the file in front of the
+                // author; this one answers "which hulls are still the wrong size",
+                // which is a fact about the whole game and useless one row at a
+                // time. Collapsed by default for exactly that reason - it is a
+                // standing work queue, not a thing to read on every open.
+                if (ImGui::CollapsingHeader("Hull spine")) {
+                    forge::drawHullSpine(forge::hullBands(defs, meshLengths));
                 }
 
                 // Stage F. Below the Report because a level is a consequence of the

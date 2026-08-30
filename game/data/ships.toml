@@ -66,14 +66,32 @@
 # `utility` pool now. On the freighter a hold pod and a survey scanner compete
 # for the same five places where they used to have three and two.
 #
+# ⚑⚑⚑ EVERY HULL IN THIS FILE DECLARES A `class` AND A `role` SINCE PHASE 32
+# STAGE A, AND EVERY ONE OF THEM IS OUT OF ITS OWN CLASS BAND ON PURPOSE. The
+# class is gdd.md §11.3's cell for that ship type - Shuttle and Interceptor in
+# Light (1), Freighter in Heavy (3) - and the LENGTH is whatever the shared
+# placeholder mesh happens to measure at this hull's `scale`:
+#
+#   sol.shuttle       12.0 m   declares class 1 (20-45 m)    measures class 0
+#   sol.interceptor    9.6 m   declares class 1 (20-45 m)    measures class 0
+#   sol.freighter     48.0 m   declares class 3 (120-300 m)  measures class 2
+#
+# The Forge's hull spine measures all three and says so. IT IS NOT A BUG LIST
+# TO SILENCE, IT IS THE ARTIST'S WORK QUEUE: one 12 m mesh does duty for three
+# ships here, `scale` exists only to stretch it, and a real hull will be
+# authored at true length and want `scale = 1.0` - so any scale number tuned
+# now is thrown away the day the meshes land. The class is what survives, which
+# is why the class is what is authored and the geometry is what is wrong.
+#
 # ⚑ AND TWO THINGS THAT COME OUT WRONG, SAID HERE RATHER THAN LEFT TO BE FOUND.
 # The shuttle and interceptor carry FIVE mounts against gdd.md §11.1's class-1
-# budget of 2-4; the band is a SOFT contract and Phase 32 stage A is the
-# content warning that will notice. And the freighter's `core_sensor` accepts
-# NOTHING the base game ships: it is the only `subsystem` mount in the file and
-# `components.toml` has no `subsystem` component, on purpose - the survey
-# scanners stayed `utility` so that the player's starting shuttle did not lose
-# them. A mount waiting for content is the honest state of it.
+# budget of 2-4; the band is a SOFT contract, and stage A's warning measures
+# LENGTH rather than mount count, so this one is still only written down here.
+# And the freighter's `core_sensor` accepts NOTHING the base game ships: it is
+# the only `subsystem` mount in the file and `components.toml` has no
+# `subsystem` component, on purpose - the survey scanners stayed `utility` so
+# that the player's starting shuttle did not lose them. A mount waiting for
+# content is the honest state of it.
 #
 # ⚑⚑ EVERY EXTERNAL MOUNT IS ON THE SKIN NOW, AND STAGE E2 IS WHAT FINISHED
 # THE JOB C1 STARTED. Until C1 nothing read `at`, so the stage-A2 positions were
@@ -103,6 +121,8 @@
 [[ship]]
 id = "sol.shuttle"           # the player's ship (game/src/space_world.hpp)
 name = "Shuttle"
+class = 1
+role = "logistics"
 model = "ship"
 scale = 1.0
 forward_accel = 60.0
@@ -176,6 +196,8 @@ crew_berths = 1
 [[ship]]
 id = "sol.interceptor"
 name = "Interceptor"
+class = 1
+role = "line"
 model = "ship"
 scale = 0.8
 forward_accel = 110.0
@@ -245,6 +267,8 @@ crew_berths = 1
 [[ship]]
 id = "sol.freighter"
 name = "Freighter"
+class = 3
+role = "logistics"
 model = "ship"
 # ⚑ The first ship in this game to fly its own interior (Phase 19). The eye
 # does not move with `scale` - kCockpitOffset is a constant - so this is not a
@@ -279,11 +303,16 @@ crew_berths = 2
   # `turret` rather than a `fixed` gun because a freighter that has to point its
   # nose at a raider to shoot back is a freighter that cannot run away while
   # doing it - which is the whole of what a turret buys, and since stage C2 it
-  # is what this hull actually does. Its size is `medium`: at
-  # `scale = 4.0` this is a class-3 hull by gdd.md §11.1's length band, and a
-  # medium mount takes a small gun (`mountAccepts`) so the `sol.mining_laser`
-  # below still fits without the mount lying about the hull. The laser is
-  # authored `fixed`; the ring is what makes it traverse.
+  # is what this hull actually does. Its size is `medium` because this hull
+  # DECLARES class 3 above, and a medium mount takes a small gun
+  # (`mountAccepts`) so the `sol.mining_laser` below still fits without the
+  # mount lying about the hull. The laser is authored `fixed`; the ring is what
+  # makes it traverse.
+  # ⚑ THE OLD WORDING HERE SAID "at `scale = 4.0` this is a class-3 hull by
+  # gdd.md §11.1's length band", AND IT WAS FALSE: 4x a 12 m mesh is 48 m, and
+  # class 3 starts at 120. Phase 32 stage A measured it rather than asserting
+  # it. See the header note - the class is the intent and the geometry is the
+  # placeholder.
   [[ship.mount]]
   id = "turret_dorsal"
   kind = "turret"
