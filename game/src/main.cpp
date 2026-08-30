@@ -974,6 +974,14 @@ int main(int argc, char** argv)
             world.playerBalancePips();
         }
 
+        // Which trigger the guns answer to (Phase 31 stage C3). Cockpit-only,
+        // like the pips above it: it is a thing you do while flying, and the
+        // assignment that gives it something to step through is made on the
+        // ship readout.
+        if (gameplayPressed(game::Action::CycleFireGroup)) {
+            (void)world.cycleFireGroup();
+        }
+
         // In free-cam mode the mouse/keys drive the debug camera, not the ship.
         if (!keys.gameplay) {
             // The mapper reads the window directly, so it is skipped entirely
@@ -1380,6 +1388,11 @@ int main(int argc, char** argv)
         hud.pipsShields = power.pips.shields;
         hud.pipMax = world.powerTuning().maxPerSystem;
         hud.weaponCharge = power.weaponCharge / world.powerTuning().weaponCapacitor;
+        // Which trigger the guns are on, and which triggers have guns on them
+        // (Phase 31 stage C3). The panel draws the row only when the mask has
+        // more than one bit set, so an unsplit ship costs nothing.
+        hud.fireGroupsUsed = world.playerFireGroupsInUse();
+        hud.fireGroup = static_cast<int>(world.playerFireGroup());
         const game::ShipDefense& defense = world.playerDefense();
         hud.shieldFore = defense.tuning.shieldStrength > 0.0f
                              ? defense.state.shieldFore / defense.tuning.shieldStrength
@@ -1894,6 +1907,22 @@ int main(int argc, char** argv)
             case game::GameState::ShipInfo:
                 if (game::buildShipScreen(ui, shipPanel, shipScreen)) {
                     state = world.isDocked() ? game::GameState::Docked : game::GameState::Flying;
+                }
+                // The screen's one action (Phase 31 stage C3): a fitted gun's
+                // row button, whose action is the mount it sits in. Stepping
+                // the group happens HERE rather than in the screen because
+                // which groups exist is a fact about the ship, not about the
+                // widget - the same fill-then-execute seam the station screen
+                // draws.
+                if (shipPanel.action != nullptr && shipPanel.action[0] != '\0') {
+                    const game::OwnedShip& ship = world.activeShip();
+                    const game::ShipFitting* fitting = ship.fittingAt(shipPanel.action);
+                    const std::uint32_t next =
+                        fitting != nullptr ? (fitting->group % game::kFireGroupCount) + 1 : 1;
+                    std::string error;
+                    if (!world.setFireGroup(shipPanel.action, next, &error)) {
+                        SOL_LOG_WARN("fire group: %s", error.c_str());
+                    }
                 }
                 break;
             }

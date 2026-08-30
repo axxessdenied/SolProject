@@ -135,6 +135,25 @@ struct ShipWeapon
     // pointing forward - the pre-C2 rule, arrived at rather than special-cased.
     float aim[3] = {0.0f, 0.0f, -1.0f};
     float arc = 0.0f; // degrees of traverse; 0 = bolted down
+    // ⚑ WHICH TRIGGER THIS GUN ANSWERS TO (Phase 31 stage C3). 1-based, and
+    // ONE is the default for every gun on every hull, which is why a ship
+    // nobody has regrouped fires exactly as it did before C3 - including
+    // every NPC in the galaxy, which never touches its selection.
+    //
+    // ⚑⚑ IT IS NOT AN AUTHORED KEY AND `ships.toml` CANNOT SET IT. A fire
+    // group is the PILOT'S, not the hull's: a hull that shipped a gun in
+    // group 2 would be a hull whose gun an NPC never fires, because an NPC
+    // has no console to change the selection with. `applyShipDef` therefore
+    // gives every gun group 1 and `applyPilotFireGroups` - player only -
+    // overwrites from the saved fit.
+    std::uint32_t group = 1;
+    // Which of the hull's mounts this gun came out of: an index into
+    // `ShipDef::mounts`. It is here so that "which mount is this gun in" is a
+    // fact the gun carries rather than a walk two callers reproduce - the
+    // drift that a second copy of `applyShipDef`'s skip conditions would be.
+    // Stage C3 needs it to point a group change at one gun; stages E and F
+    // need it to draw a fitting and to damage one.
+    std::uint32_t mount = 0;
     // What its bolt draws as (Phase 19), resolved once when the loadout is
     // applied. It lives here rather than being looked up at the muzzle
     // because this component is FLATTENED from its def and keeps no def id -
@@ -158,6 +177,15 @@ struct ShipWeapon
 // so, names the hull, and fits the first sixteen.
 inline constexpr std::uint32_t kMaxShipWeapons = 16;
 
+// ⚑ HOW MANY TRIGGERS A SHIP HAS (Phase 31 stage C3). Four rather than one
+// per gun: a selection the player steps through with one key is only usable
+// while the cycle is short, and sixteen positions to walk past is a menu
+// pretending to be a control. Four is what gdd.md 11.1's mount budget through
+// class 4 can meaningfully split - a main battery, a secondary, ordnance and
+// the tools - and it is the same count as the power pips beside it on the
+// panel, which is not a coincidence a player has to be told about.
+inline constexpr std::uint32_t kFireGroupCount = 4;
+
 // What a ship has fitted, in the hull's own MOUNT ORDER (Phase 31 stage C1).
 //
 // ⚑ MOUNT ORDER IS FIRING PRIORITY, and that is the whole of "per-mount
@@ -170,8 +198,30 @@ inline constexpr std::uint32_t kMaxShipWeapons = 16;
 struct ShipArmament
 {
     std::uint32_t count = 0;
+    // ⚑ WHICH GROUP THE TRIGGER IS ON (Phase 31 stage C3), 1-based. A gun
+    // fires when its own `group` matches this and holds otherwise - it still
+    // ticks its cooldown, for the same reason a gun ticks it with the trigger
+    // up: a clock that only runs while a gun is selected would hand every
+    // group a free first shot on the frame you switched to it.
+    //
+    // ⚑ IT IS NEVER LEFT POINTING AT AN EMPTY GROUP. `normalizeFireGroup`
+    // moves it to the lowest group that has a gun in it, which is what stops a
+    // refit or a regroup from leaving the player holding a trigger that is
+    // wired to nothing and saying nothing about why.
+    std::uint32_t selectedGroup = 1;
     ShipWeapon weapons[kMaxShipWeapons];
 };
+
+// The groups this ship's guns actually occupy, as a bit per group: bit (n-1)
+// is set when at least one gun is in group n. Zero means nothing is fitted.
+// One bit set means there is no choice to make, which is what the HUD reads to
+// decide whether the fire-group row is a control or clutter.
+[[nodiscard]] std::uint32_t fireGroupsInUse(const ShipArmament& armament);
+
+// Points `selectedGroup` at a group that has a gun in it, leaving it alone
+// when it already does. Called after anything that can change which groups
+// exist: a refit, a regroup, a ship swap.
+void normalizeFireGroup(ShipArmament& armament);
 
 // What the rest of the game needs to know about a ship's guns without walking
 // them (Phase 31 stage C1). Every field answers exactly one question, and they
@@ -179,6 +229,14 @@ struct ShipArmament
 // fight starts and the beam that decides whether a rock can be cut are
 // different facts, and a summary that conflated them would be the "check that
 // sums two alternatives" bug this project has now found twice.
+//
+// ⚑⚑ SINCE STAGE C3 IT DESCRIBES THE SELECTED FIRE GROUP, NOT EVERY GUN
+// ABOARD, because every one of these fields is read to predict WHAT HAPPENS
+// WHEN THE TRIGGER GOES DOWN. A lead marker drawn for a cannon sitting in an
+// unselected group points at where a bolt that is not coming would have gone,
+// and a mining prompt lit by a beam the trigger is not wired to says the rock
+// can be cut when holding the trigger cuts nothing. Nothing changes for an
+// NPC: every gun it carries is in group 1 and group 1 is what it has selected.
 struct ArmamentSummary
 {
     bool armed = false;    // anything at all fitted that can fire
@@ -817,6 +875,12 @@ struct ShipFitting
 {
     std::string mountId; // a `[[ship.mount]]` id on this ship's def
     std::string defId;   // component or weapon def id; the MOUNT says which
+    // Which trigger a GUN in this mount answers to (Phase 31 stage C3),
+    // 1-based and meaningless on a mount holding anything else. It is saved
+    // here rather than left in the live `ShipArmament` because a refit rebuilds
+    // that from the def: without a durable copy, buying a cargo pod would put
+    // every gun back in group 1.
+    std::uint32_t group = 1;
 };
 
 struct OwnedShip
@@ -1819,6 +1883,34 @@ public:
     // index of the player's own ship is not something a caller should know.
     [[nodiscard]] GunneryFrame playerGunneryFrame() const { return gunneryFrame(playerEntityIndex()); }
 
+    // --- Fire groups (Phase 31 stage C3) ---
+    //
+    // ⚑ THE TWO HALVES ARE DELIBERATELY DIFFERENT ACTS IN DIFFERENT PLACES.
+    // Which trigger a gun answers to is SETUP - made once on the ship readout,
+    // saved with the fit, and worth thinking about. Which trigger you are
+    // holding is FLYING - one key, in the middle of a fight, with no screen
+    // between the decision and the shot.
+
+    // Which group the player's trigger is currently wired to, 1-based.
+    [[nodiscard]] std::uint32_t playerFireGroup() const;
+
+    // The groups the player's guns occupy, as a bit per group (see
+    // `fireGroupsInUse`). Zero when nothing is fitted.
+    [[nodiscard]] std::uint32_t playerFireGroupsInUse() const;
+
+    // Steps the selection to the next group that HAS a gun in it, wrapping.
+    // Returns the group it landed on - which is the one it started on when the
+    // ship's guns all sit in one group, because a cycle of length one is a key
+    // that correctly does nothing rather than a key that lies about it.
+    std::uint32_t cycleFireGroup();
+
+    // Puts the gun in `mountId` into `group`, on the active ship: writes the
+    // saved fit AND the live gun, because rebuilding the armament to carry one
+    // number across would refill the shields and clear every cooldown with it.
+    // False (with a reason) when the mount is not on this hull, holds no gun,
+    // or the group is outside 1..kFireGroupCount.
+    bool setFireGroup(const char* mountId, std::uint32_t group, std::string* outError = nullptr);
+
     // ⚑ WHO THE PLAYER IS AT WAR WITH, IN ONE PLACE (Phase 31 stage C2). The
     // contact cycle's threat ranking and a turret's decision to open fire are
     // the same question, and two answers to it would be a radar that paints a
@@ -2065,6 +2157,14 @@ private:
     [[nodiscard]] ModelId roleModel(const char* role) const;
     // Resolves the seat for a def just applied to the player's entity.
     void applyCockpitOf(const sol::assets::ShipDef& def);
+    // Lays the saved fit's fire groups over an armament `applyShipDef` has
+    // just rebuilt at group 1 (Phase 31 stage C3). PLAYER ONLY, and that is
+    // the rule rather than an omission: an NPC has no console to select a
+    // group with, so a gun it carried in group 2 would be a gun it never
+    // fired. Keeping the override out of `applyShipDef` is what makes that
+    // inexpressible instead of merely unlikely.
+    void
+    applyPilotFireGroups(std::uint32_t entityIndex, const sol::assets::ShipDef& def, const OwnedShip& ship);
 
     struct SpawnedShip
     {

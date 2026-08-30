@@ -250,6 +250,39 @@ SOL_TEST(a_save_round_trips_which_mount_holds_which_fitting)
     (void)deleteFile(path.c_str());
 }
 
+// ⚑ A FIRE GROUP IS PART OF THE FIT AND HAS TO SAVE WITH IT (Phase 31 stage
+// C3). It rides beside the def id on the fitting rather than in the live
+// `ShipArmament`, because that component is rebuilt from the hull every time
+// the player buys anything - so without this the first cargo pod bought after
+// a regroup would silently put every gun back on one trigger.
+//
+// The reload also has to LAND it on the gun: `applyPilotFireGroups` is what
+// turns the saved number back into something the firing pass reads, and a save
+// that round-tripped the fitting while leaving the gun at 1 would look correct
+// on every screen and fire wrongly.
+SOL_TEST(a_save_round_trips_which_trigger_a_gun_answers_to)
+{
+    const std::string path = scratchPath("fire_group_round_trip.sav");
+    (void)deleteFile(path.c_str());
+
+    Fixture writer;
+    SOL_REQUIRE(writer.world.setFireGroup("gun_nose", 3, nullptr));
+    SOL_REQUIRE(writer.world.saveTo(path.c_str(), "groups"));
+
+    Fixture reader;
+    SOL_REQUIRE(reader.world.loadFrom(path.c_str()));
+    const game::ShipFitting* gun = reader.world.activeShip().fittingAt("gun_nose");
+    SOL_REQUIRE(gun != nullptr);
+    SOL_CHECK(gun->group == 3);
+    SOL_REQUIRE(reader.world.playerGuns().size() == 1);
+    SOL_CHECK(reader.world.playerGuns()[0].group == 3);
+    // And the selection went with it, because a trigger wired to nothing is
+    // what a fresh world plus a group-3 gun would otherwise be.
+    SOL_CHECK(reader.world.playerFireGroup() == 3);
+
+    (void)deleteFile(path.c_str());
+}
+
 // ⚑ A HULL THAT LOST A MOUNT UNDER A SAVE. A mod is uninstalled, or an author
 // renames a mount: the fitting has nowhere to go. It is DROPPED rather than
 // carried, because a carried one fails validation forever and leaves the ship

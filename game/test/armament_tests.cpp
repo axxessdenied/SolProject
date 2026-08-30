@@ -924,3 +924,195 @@ SOL_TEST(a_gun_carries_the_facing_and_traverse_of_the_mount_it_sits_in)
     SOL_CHECK(guns[1].arc == 270.0f);
     SOL_CHECK(guns[1].aim[1] == 1.0f);
 }
+
+// --- Fire groups (Phase 31 stage C3) ----------------------------------------
+//
+// ⚑ THE ONE FACT EVERY TEST BELOW LEANS ON: the port gun sits at x = -3 and
+// the starboard gun at x = +3 on a `scale = 2.0` hull, so a single bolt's sign
+// says WHICH gun fired it. Counting bolts alone would not - "one bolt" is what
+// both "only the port gun fired" and "only the starboard gun fired" look like.
+
+// The default, and the reason nothing else in this suite had to change: every
+// gun on every hull comes out of `applyShipDef` in group 1 and the trigger is
+// on group 1, so a ship nobody has regrouped fires exactly as it did before
+// fire groups existed.
+SOL_TEST(every_gun_starts_in_group_one_with_the_trigger_on_it)
+{
+    Fixture fixture(twoGuns());
+    const std::span<const game::ShipWeapon> guns = fixture.world.playerGuns();
+    SOL_REQUIRE(guns.size() == 2);
+    SOL_CHECK(guns[0].group == 1);
+    SOL_CHECK(guns[1].group == 1);
+    SOL_CHECK(fixture.world.playerFireGroup() == 1);
+    SOL_CHECK(fixture.world.playerFireGroupsInUse() == 0x1u);
+    SOL_CHECK(fixture.fireOnce().size() == 2);
+}
+
+// ⚑⚑ THE PHASE'S OWN EXIT CRITERION: two different guns on two mounts of one
+// hull, fired INDEPENDENTLY. Both halves are checked by the x sign, because a
+// bolt count cannot tell "the port gun fired" from "the starboard gun fired".
+SOL_TEST(two_guns_in_two_groups_fire_one_at_a_time)
+{
+    Fixture fixture(twoGuns());
+    SOL_REQUIRE(fixture.world.setFireGroup("gun_starboard", 2, nullptr));
+    SOL_CHECK(fixture.world.playerFireGroupsInUse() == 0x3u);
+
+    const sol::core::DVec3 shipAt = fixture.world.shipState().position;
+    const std::vector<sol::core::DVec3> first = fixture.fireOnce();
+    SOL_REQUIRE(first.size() == 1);
+    SOL_CHECK(first[0].x < shipAt.x); // the port gun, alone
+
+    SOL_CHECK(fixture.world.cycleFireGroup() == 2);
+    const std::vector<sol::core::DVec3> second = fixture.fireOnce();
+    SOL_REQUIRE(second.size() == 1);
+    SOL_CHECK(second[0].x > shipAt.x); // and now the starboard one, alone
+}
+
+// ⚑ THE COUNTERFACTUAL: move the group check one line UP, above the cooldown
+// decrement, and this turns red. A clock that only runs while its group is
+// selected hands every group a free first shot on the frame you switch to it,
+// so a hull with its guns split fires faster than the same hull with them
+// together - a rate of fire no def names, bought by pressing one key.
+SOL_TEST(a_gun_in_an_unselected_group_still_runs_its_cooldown)
+{
+    Fixture fixture(twoGuns());
+    // Both on one trigger to start with, so BOTH guns owe a cooldown - the
+    // starboard one has to have a clock to run before the test can ask
+    // whether it runs.
+    SOL_REQUIRE(fixture.fireOnce().size() == 2);
+    SOL_REQUIRE(fixture.world.playerGuns()[1].cooldown > 0.0f);
+    SOL_REQUIRE(fixture.world.setFireGroup("gun_starboard", 2, nullptr));
+
+    // Trigger up for three quarters of a second, comfortably past the
+    // starboard gun's 0.33 s cycle. Exactly its cycle would fail on the float
+    // residue, which says nothing about the rule under test.
+    fixture.world.setShipInput(sol::sim::FlightInput{});
+    for (int i = 0; i < 45; ++i) {
+        fixture.world.tick(1.0 / 60.0);
+    }
+    SOL_CHECK(fixture.world.playerGuns()[1].cooldown <= 0.0f);
+
+    // And the consequence that makes it matter: switching to a group hands you
+    // guns that are READY, not guns that start owing a cycle from the moment
+    // you selected them.
+    SOL_CHECK(fixture.world.cycleFireGroup() == 2);
+    SOL_CHECK(fixture.fireOnce().size() == 1);
+}
+
+// A cycle that stepped through all four positions would spend three of them on
+// a trigger wired to nothing, which is a key the player learns not to press.
+SOL_TEST(the_cycle_visits_only_groups_that_have_a_gun_in_them)
+{
+    Fixture fixture(twoGuns());
+    SOL_REQUIRE(fixture.world.setFireGroup("gun_starboard", 4, nullptr));
+    SOL_CHECK(fixture.world.playerFireGroupsInUse() == 0x9u); // 1 and 4
+    SOL_CHECK(fixture.world.cycleFireGroup() == 4);
+    SOL_CHECK(fixture.world.cycleFireGroup() == 1);
+}
+
+// And the degenerate case that is every ship in the shipped game: one group,
+// so the key correctly does nothing rather than walking three empty positions.
+SOL_TEST(a_ship_with_one_group_has_a_cycle_of_length_one)
+{
+    Fixture fixture(twoGuns());
+    SOL_CHECK(fixture.world.cycleFireGroup() == 1);
+    SOL_CHECK(fixture.world.cycleFireGroup() == 1);
+}
+
+// ⚑ A SELECTION IS NEVER LEFT POINTING AT AN EMPTY GROUP. Moving the only gun
+// in the selected group out of it is the ordinary way to reach that state -
+// one click on the ship readout - and a trigger wired to nothing reads exactly
+// like a broken gun. Delete the `normalizeFireGroup` call in `setFireGroup`
+// and this fires zero bolts.
+SOL_TEST(a_selection_follows_the_last_gun_out_of_a_group)
+{
+    Fixture fixture(hull(gunMount("gun_port", -3.0, "sol.left_gun")));
+    SOL_REQUIRE(fixture.world.setFireGroup("gun_port", 3, nullptr));
+    SOL_CHECK(fixture.world.playerFireGroup() == 3);
+    SOL_CHECK(fixture.fireOnce().size() == 1);
+}
+
+// ⚑ THE SUMMARY DESCRIBES WHAT THE TRIGGER WILL DO, NOT WHAT IS BOLTED ON.
+// Every field it carries is read to PREDICT a shot: drop the group test from
+// `armamentSummary` and the HUD draws a lead marker for a bolt that is not
+// coming and lights the mining prompt for a beam the trigger is not wired to.
+//
+// The beam is deliberately the one with `mining_power`, so both halves of the
+// claim - reach, and whether a rock can be cut at all - move together.
+SOL_TEST(the_armament_summary_describes_the_selected_group)
+{
+    Fixture fixture(
+        hull(gunMount("gun_port", -3.0, "sol.right_gun") + gunMount("gun_starboard", 3.0, "sol.beam")));
+    const game::ArmamentSummary both = fixture.world.playerArmament();
+    SOL_CHECK(both.maxRange == 2500.0f); // the cannon's, and both are in group 1
+    SOL_CHECK(both.canMine);
+
+    SOL_REQUIRE(fixture.world.setFireGroup("gun_starboard", 2, nullptr));
+    const game::ArmamentSummary cannon = fixture.world.playerArmament();
+    SOL_CHECK(cannon.maxRange == 2500.0f);
+    SOL_CHECK(cannon.leadSpeed == 800.0f);
+    SOL_CHECK(!cannon.canMine); // the beam is not on this trigger
+
+    SOL_CHECK(fixture.world.cycleFireGroup() == 2);
+    const game::ArmamentSummary beam = fixture.world.playerArmament();
+    SOL_CHECK(beam.maxRange == 800.0f);
+    SOL_CHECK(beam.leadSpeed == 0.0f); // hitscan: instant
+    SOL_CHECK(beam.canMine);
+    SOL_CHECK(beam.miningRange == 800.0f);
+}
+
+// ⚑ A GROUP IS THE PILOT'S AND IT HAS TO SURVIVE THE HULL BEING RE-READ. A
+// def hot-reload runs `applyShipDef`, which rebuilds every gun at group 1 from
+// the mount list; without `applyPilotFireGroups` behind it, editing a TOML
+// file - or buying a cargo pod, which takes the same path - silently puts
+// every gun back on one trigger.
+SOL_TEST(a_fire_group_survives_the_hull_being_reapplied)
+{
+    Fixture fixture(twoGuns());
+    SOL_REQUIRE(fixture.world.setFireGroup("gun_starboard", 2, nullptr));
+    fixture.world.applyDefs(fixture.defs);
+    const std::span<const game::ShipWeapon> guns = fixture.world.playerGuns();
+    SOL_REQUIRE(guns.size() == 2);
+    SOL_CHECK(guns[0].group == 1);
+    SOL_CHECK(guns[1].group == 2);
+    SOL_CHECK(fixture.world.playerFireGroupsInUse() == 0x3u);
+}
+
+// ⚑⚑ AN NPC HAS NO CONSOLE, SO IT FIRES EVERYTHING IT CARRIES. This is why
+// `applyPilotFireGroups` is called from `applyActiveLoadout` and not from
+// `applyShipDef`: route it through the def instead - the tidier-looking
+// version - and the player's own regrouping reaches every hull of that type
+// in the system, whose pilots would then fly with half their guns switched
+// off and no way to switch them back.
+SOL_TEST(an_npc_fires_every_gun_whatever_the_player_has_regrouped)
+{
+    Fixture fixture(twoGuns());
+    SOL_REQUIRE(fixture.world.setFireGroup("gun_starboard", 2, nullptr));
+    SOL_CHECK(fixture.world.playerArmament().maxRange == 2000.0f); // the port gun alone
+
+    const sol::assets::ShipDef* gunboat = fixture.defs.findShip("sol.shuttle");
+    SOL_REQUIRE(gunboat != nullptr);
+    const sol::ecs::Entity npc =
+        fixture.world.spawnPilotFromDef(*gunboat, fixture.defs, game::PilotRole::Fighter);
+    // The longer gun is the starboard one the PLAYER moved to group 2; an NPC
+    // that had inherited the regroup would read 2000 here too.
+    SOL_CHECK(fixture.world.armamentSummary(npc.index).maxRange == 2500.0f);
+}
+
+// Which mount a gun came out of is recorded on the gun, because that loop is
+// the only walk that knows - and it is what lets one group change reach one
+// gun without rebuilding the armament (which would refill the shields with it).
+SOL_TEST(a_gun_remembers_which_mount_it_came_out_of)
+{
+    Fixture fixture(twoGuns());
+    const std::span<const game::ShipWeapon> guns = fixture.world.playerGuns();
+    SOL_REQUIRE(guns.size() == 2);
+    SOL_CHECK(guns[0].mount == 0);
+    SOL_CHECK(guns[1].mount == 1);
+
+    std::string error;
+    SOL_CHECK(!fixture.world.setFireGroup("no_such_mount", 2, &error));
+    SOL_CHECK(!error.empty());
+    SOL_CHECK(!fixture.world.setFireGroup("gun_port", 0, &error));
+    SOL_CHECK(!fixture.world.setFireGroup("gun_port", game::kFireGroupCount + 1, &error));
+}

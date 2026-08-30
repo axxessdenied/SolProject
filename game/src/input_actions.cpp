@@ -67,6 +67,16 @@ const ActionInfo kActions[] = {
      "Power to Shields",
      InputChord::ofKey(Key::Num3)},
     {Action::PipBalance, ActionGroup::Systems, "pip_balance", "Balance Power", InputChord::ofKey(Key::Num4)},
+    // Phase 31 stage C3. P is the last unbound letter in the shipped layout,
+    // which is the whole of why it is P; all three mouse buttons have been
+    // spoken for since 8j and the number row is the pips. It cycles rather
+    // than selecting, because four "select group N" rows would be four
+    // Controls entries to reach four positions one key already walks in order.
+    {Action::CycleFireGroup,
+     ActionGroup::Systems,
+     "cycle_fire_group",
+     "Cycle Fire Group",
+     InputChord::ofKey(Key::P)},
 
     {Action::CycleNavTarget,
      ActionGroup::Targeting,

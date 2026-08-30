@@ -207,7 +207,18 @@ void fillShipInfoPanel(const SpaceWorld& world,
                 if (weapon->miningPower > 0.0f) {
                     detail += ", mining " + number(weapon->miningPower, 1);
                 }
-                fittedRows.push_back({label, weapon->name.c_str(), store(text, std::move(detail))});
+                // ⚑ THE ONE CONTROL ON A SCREEN THAT IS OTHERWISE A REPORT
+                // (Phase 31 stage C3). It reads the group it is in and clicking
+                // it steps to the next, so the button is its own readout - a
+                // separate "group 2" column beside a "Change" button would be
+                // two things saying one thing. The action is the MOUNT ID,
+                // which is what `setFireGroup` takes and what every other
+                // screen in this game names a fitting by.
+                fittedRows.push_back({label,
+                                      weapon->name.c_str(),
+                                      store(text, std::move(detail)),
+                                      store(text, "GRP " + std::to_string(fitted->group)),
+                                      label});
             } else if (const sol::assets::ComponentDef* component =
                            defs.findComponent(fitted->defId.c_str())) {
                 fittedRows.push_back(
@@ -264,6 +275,14 @@ std::string shipInfoReport(const SpaceWorld& world, const DefDatabase& defs)
             out += std::string(row.label) + ": " + row.value;
             if (row.detail[0] != '\0') {
                 out += std::string(" (") + row.detail + ")";
+            }
+            // The row's button, which on this screen is a fitted gun's fire
+            // group (Phase 31 stage C3). It is printed because it is the one
+            // thing on the readout the player can CHANGE, and a text mirror
+            // that showed everything except the control would be a poor
+            // instrument for checking the screen without reading pixels.
+            if (row.button[0] != '\0') {
+                out += std::string(" [") + row.button + "]";
             }
             out += "\n";
         }

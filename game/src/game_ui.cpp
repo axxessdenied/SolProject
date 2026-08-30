@@ -43,6 +43,11 @@ constexpr Color kFriendly = rgba(0x59D966FFu);
 constexpr Color kNeutral = rgba(0xB4B4B4FFu);
 constexpr Color kWarning = rgba(0xE68C4DFFu);
 constexpr Color kPipWeapons = rgba(0xFF9973FFu);
+// A fire group that has guns in it but is not the one selected (Phase 31 stage
+// C3): the weapons colour at a third of its weight, so the row reads as three
+// states - the trigger you are holding, the triggers you can cycle to, and the
+// groups that are not in the cycle at all.
+constexpr Color kPipWeaponsIdle = rgba(0x5C3A2EFFu);
 constexpr Color kPipEngines = rgba(0x8CDCA0FFu);
 constexpr Color kPipShields = rgba(0x80BFFFFFu);
 
@@ -421,7 +426,13 @@ void drawFlightPanel(DrawList& list,
 // Pinned by its bottom-right corner, the mirror of the flight panel.
 void drawPowerPanel(DrawList& list, const Styles& styles, Vec2 anchor, const sol::ui::FlightHud& hud)
 {
-    const float rows = 4.0f; // WEP / ENG / SYS / CAP
+    // ⚑ THE FIFTH ROW IS CONDITIONAL (Phase 31 stage C3): a ship whose guns
+    // all answer to one trigger has nothing to choose between, and a GRP row
+    // reading "1" forever is a readout of a decision nobody made. Two bits or
+    // more in the mask means the player split them, and then it is the one
+    // thing on this panel they cannot work out by looking out of the window.
+    const bool showFireGroups = (hud.fireGroupsUsed & (hud.fireGroupsUsed - 1u)) != 0u;
+    const float rows = showFireGroups ? 5.0f : 4.0f; // WEP / ENG / SYS / CAP [/ GRP]
     const float height = kPadding + rows * 20.0f + kPadding * 0.5f;
     const Rect panel = {{anchor.x - kPowerPanelWidth, anchor.y - height}, {anchor.x, anchor.y}};
     list.addRoundedRect(panel, 8.0f, kPanel);
@@ -475,6 +486,35 @@ void drawPowerPanel(DrawList& list, const Styles& styles, Vec2 anchor, const sol
     std::snprintf(buffer, sizeof(buffer), "%.0f%%", static_cast<double>(clamp01(hud.weaponCharge) * 100.0f));
     list.addTextInBox(
         *styles.small, {{right - 40.0f, y}, {right, y + 20.0f}}, buffer, kTextDim, TextAlign::Right);
+    y += 20.0f;
+
+    // Fire groups, in the SAME cell language as the pips above rather than a
+    // number: the panel already teaches "count the lit cells", and which
+    // groups exist is exactly as much of the answer as which one is selected -
+    // a player who cannot see that group 3 is empty cannot predict what the
+    // key will do next.
+    if (showFireGroups) {
+        const Rect groupRow = {{left, y}, {right, y + 20.0f}};
+        list.addTextInBox(
+            *styles.small, {groupRow.min, {left + kLabelWidth, groupRow.max.y}}, "GRP", kTextDim);
+        constexpr int kGroups = 4; // game::kFireGroupCount; the HUD sees only the mask
+        const float cellsLeft = left + kLabelWidth + 4.0f;
+        const float spacing = 4.0f;
+        const float cellWidth =
+            ((right - cellsLeft) - spacing * static_cast<float>(kGroups - 1)) / static_cast<float>(kGroups);
+        const float cellTop = y + (20.0f - 12.0f) * 0.5f;
+        for (int group = 0; group < kGroups; ++group) {
+            const bool used = (hud.fireGroupsUsed & (1u << group)) != 0u;
+            const bool live = hud.fireGroup == group + 1;
+            const Rect cell = {
+                {cellsLeft + static_cast<float>(group) * (cellWidth + spacing), cellTop},
+                {cellsLeft + static_cast<float>(group) * (cellWidth + spacing) + cellWidth, cellTop + 12.0f}};
+            // Three states, not two: lit is the trigger you are holding, dim
+            // is a group with guns in it you can cycle to, and the bare track
+            // is a group that is not in the cycle at all.
+            list.addRoundedRect(cell, 2.0f, live ? kPipWeapons : (used ? kPipWeaponsIdle : kMeterTrack));
+        }
+    }
 
     list.popClip();
 }

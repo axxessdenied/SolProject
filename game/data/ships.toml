@@ -49,6 +49,15 @@
 # a fight - the threat tier is read live, so a neutral that shoots back is a
 # hostile within the tick.
 #
+# ⚑⚑ AND A KEY THAT IS DELIBERATELY NOT IN THIS FILE: A FIRE GROUP. Since
+# stage C3 every gun answers to one of four triggers and the pilot cycles
+# between them with one key, but WHICH group a gun is in is the PLAYER'S
+# setting - made on the ship readout and saved with their fit - and a mount
+# cannot declare one. A hull that shipped a gun in group 2 would be a hull
+# whose gun an NPC never fires, because an NPC has no console to change the
+# selection with. Every gun on every hull here is therefore in group 1, which
+# is also why nothing in this file had to change for C3.
+#
 # ⚑ WHAT THE STAGE-B CONVERSION KEPT AND WHAT IT COST. The mount lists were
 # authored in stage A2 to reproduce each hull's capacity exactly, and stage B
 # only deleted the counts they were copied from - so nothing here is a

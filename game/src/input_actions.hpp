@@ -36,6 +36,10 @@ enum class Action : std::uint32_t
     PipEngines,
     PipShields,
     PipBalance,
+    // Phase 31 stage C3. In Systems rather than Targeting because it is a
+    // setting on the ship's own console - the same kind of thing as the four
+    // pip rows above it - and not a way of choosing what to shoot at.
+    CycleFireGroup,
 
     // Targeting & navigation.
     //

@@ -151,6 +151,20 @@ struct FlightHud
     int pipMax = 4;
     float weaponCharge = 1.0f;
 
+    // Fire groups (Phase 31 stage C3). `fireGroupsUsed` is a bit per group -
+    // bit (n-1) set when at least one fitted gun answers to trigger n - and
+    // `fireGroup` is the one the trigger is on.
+    //
+    // ⚑ THE ROW IS DRAWN ONLY WHEN MORE THAN ONE BIT IS SET, which is the
+    // whole reason the mask is here rather than a count and a selection. A
+    // ship whose guns all sit in one group has no choice to make, and a
+    // permanent readout of a control that cannot do anything is the kind of
+    // clutter a cockpit HUD can least afford. It appears the moment the player
+    // splits their guns on the ship readout, which is where they learn the key
+    // exists at all.
+    unsigned fireGroupsUsed = 0;
+    int fireGroup = 1;
+
     // Defenses (decisions/002), all 0..1: fore/aft shield arcs around the
     // crosshair plus hull in the flight panel.
     float shieldFore = 1.0f;
@@ -383,12 +397,24 @@ struct InfoRow
     const char* label = "";
     const char* value = "";
     const char* detail = ""; // dim, optional
+    // An optional trailing button on the row (Phase 31 stage C3). `button` is
+    // what it says; `action` is the opaque id the screen writes back when it is
+    // clicked, and an EMPTY action is a row that is only text - which is every
+    // row every info section had before this. The screen never interprets
+    // either string: what a row's action means is the filler's business.
+    const char* button = "";
+    const char* action = "";
 };
 
-// Everything the ship screen draws. Read-only: refitting stays a station
-// activity, which is a design statement rather than a shortfall. What it adds
-// is being able to read the outfitting numbers WHILE their consequences are
-// happening, which the station pad by definition cannot do.
+// Everything the ship screen draws.
+//
+// ⚑ IT WAS READ-ONLY UNTIL PHASE 31 STAGE C3, and the design statement that
+// made it so still stands: REFITTING is a station activity, because unbolting a
+// gun in flight is not a thing. A FIRE GROUP is not a refit - it is which
+// trigger an already-bolted gun answers to, which is a console setting of
+// exactly the kind as the power pips this screen has always shown - so it is
+// the one thing here the player can change, and it is changed from the screen
+// that already lists their guns in mount order.
 struct ShipInfoPanel
 {
     const char* shipName = "";
@@ -411,6 +437,10 @@ struct ShipInfoPanel
     std::span<const InfoRow> utility; // scan, collector, cargo
     std::span<const InfoRow> fitted;  // weapon, components, crew
     std::span<const InfoRow> cargo;   // manifest, one line per commodity held
+    // Out: the `action` of whatever row button the player clicked this frame,
+    // empty otherwise - the same fill-then-execute seam `StationPanel::action`
+    // draws, and for the same reason: no gameplay logic moves into the UI.
+    const char* action = "";
 };
 
 // --- Bookmark naming overlay (Phase 8h) --------------------------------------

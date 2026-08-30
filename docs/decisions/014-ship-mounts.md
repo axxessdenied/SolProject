@@ -228,3 +228,69 @@ and coverage only goes one way. That is a hull-design fact rather than a player
 choice — an author places the mounts and a player fills them — but it is the
 pressure a traverse rate would relieve, and it is why the omission above is
 recorded as a decision rather than as an oversight.
+
+## Amended by Phase 31 stage C3 (2026-08-30)
+
+Stage C1 made a ship fire every gun it carries and stage C2 made each of them
+point somewhere real. What neither gave the player is a way to fire *some* of
+them, which is the phase's own exit criterion — and which the shipped freighter
+needs the moment it carries both of the guns the hull has mounts for: with a
+mining laser and a cannon on one trigger you cannot cut a rock without spraying
+bolts at it, and you cannot fight without a beam draining a 60-point capacitor.
+
+**1. A gun belongs to one of four fire groups; the trigger fires the selected
+one.** Groups are numbered 1..4 and every gun on every hull starts in group 1
+with the selection on group 1, so a ship nobody has set up behaves exactly as it
+did before C3. Four rather than one group per gun: a selection stepped through
+with one key is only usable while the cycle is short, and sixteen positions to
+walk past is a menu pretending to be a control. Four is also what gdd.md §11.1's
+mount budget through class 4 can meaningfully split — a main battery, a
+secondary, ordnance, and the tools.
+
+**2. It is not an authored key, and `ships.toml` cannot set one.** A fire group
+is the *pilot's*, not the hull's. A hull that shipped a gun in group 2 would be
+a hull whose gun an NPC never fires, because an NPC has no console to change the
+selection with — so the override lives on the saved fit and is laid over the
+armament by `applyPilotFireGroups`, which is called for the player's ship and
+nothing else. Routing it through `ShipDef` instead would have been tidier to
+read and would have made the player's own regrouping reach every hull of that
+type in the system.
+
+**3. Assigning is setup and cycling is flying, so they are two different acts in
+two different places.** Which trigger a gun answers to is decided on the **ship
+readout**, saved with the fit, and thought about once. Which trigger you are
+*holding* is one key in the middle of a fight. This is also the amendment to
+that screen's standing "read-only, because refitting is a station activity"
+rule: unbolting a gun in flight is not a thing, but deciding which trigger an
+already-bolted gun answers to is a console setting of exactly the same kind as
+the power pips the screen has always shown. It is the one control on it.
+
+**4. The cycle visits only groups that have a gun in them**, and a selection is
+never left pointing at an empty one. Both are the same concern from two sides: a
+trigger wired to nothing reads exactly like a broken gun, and the two ordinary
+ways to build one are a refit that removes the last gun in the selected group
+and a regroup that moves it out. `normalizeFireGroup` walks the selection back
+to the lowest populated group after either.
+
+**5. A gun in an unselected group still runs its cooldown.** Same rule, and the
+same reason, as a gun with the trigger up: a clock that only ran while its group
+was live would hand every group a free first shot on the frame you switched to
+it, so a hull with its guns split would out-shoot the same hull with them
+together — a rate of fire no def names, bought by pressing one key.
+
+**6. `ArmamentSummary` describes the selected group, not everything bolted on.**
+Every field it carries is read to predict what the trigger will do: a lead
+marker drawn for a cannon in an unselected group points where a bolt that is not
+coming would have gone, and a mining prompt lit by a beam the trigger is not
+wired to says a rock can be cut when holding the trigger cuts nothing. Nothing
+changes for an NPC, whose guns are all in group 1 and whose selection is 1.
+
+**A field that came along for the ride, deliberately: a gun now records which
+mount it came out of.** `ShipWeapon::mount` is an index into the hull's mount
+list, written by the one loop that knows — everything downstream sees a
+flattened component with no def id and no mount id. C3 needs it to point a group
+change at one gun without rebuilding the armament (which would refill the
+shields and clear every cooldown with it); **stage E needs it to draw a fitting
+where its mount is, and stage F needs it to damage one.** The alternative was a
+second copy of `applyShipDef`'s four skip conditions in every caller that wanted
+the answer.

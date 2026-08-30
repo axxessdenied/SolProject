@@ -1172,8 +1172,14 @@ std::string gunInfo(GameContent& content)
     char buffer[160];
     std::snprintf(buffer,
                   sizeof(buffer),
-                  "%zu gun(s), reach %.0f m, charge %.0f/%.0f%s",
+                  "%zu gun(s), group %u, reach %.0f m, charge %.0f/%.0f%s",
                   guns.size(),
+                  world.playerFireGroup(),
+                  // ⚑ THE SELECTED GROUP'S REACH, NOT THE SHIP'S (Phase 31
+                  // stage C3). `armamentSummary` describes what the trigger
+                  // will do, so a probe that printed the longest gun aboard
+                  // beside a group that gun is not in would be two numbers
+                  // about two different ships.
                   static_cast<double>(summary.maxRange),
                   static_cast<double>(world.playerPower().weaponCharge),
                   static_cast<double>(world.powerTuning().weaponCapacitor),
@@ -1199,7 +1205,8 @@ std::string gunInfo(GameContent& content)
         }
         std::snprintf(buffer,
                       sizeof(buffer),
-                      "%-7s dmg %.1f %.1f/s %.0fm %.1fe at %g,%g,%g %s",
+                      "g%u %-7s dmg %.1f %.1f/s %.0fm %.1fe at %g,%g,%g %s",
+                      gun.group,
                       gun.kind == game::WeaponKind::Hitscan ? "hitscan" : "bolt",
                       static_cast<double>(gun.damage),
                       static_cast<double>(gun.rateOfFire),
@@ -1269,6 +1276,37 @@ std::string fitInfo(GameContent& content)
     info += " | value " + std::to_string(static_cast<int>(world.shipValue(ship))) + " cr, deductible " +
             std::to_string(static_cast<int>(world.insuranceDeductible())) + " cr";
     return info;
+}
+
+// ⚑ THE TWO HALVES OF A FIRE GROUP, AS TWO VERBS, because they are two
+// different acts (Phase 31 stage C3). Assigning is setup and names a mount;
+// cycling is flying and names nothing. A single `sol.fire_group(mount, n)`
+// that also did the selection would hide the fact that one of them is saved
+// with the ship and the other is what the player is holding right now.
+std::string setFireGroup(GameContent& content, std::string mountId, double group)
+{
+    std::string error;
+    if (!content.world().setFireGroup(mountId.c_str(), static_cast<std::uint32_t>(group), &error)) {
+        return error;
+    }
+    return mountId + " -> group " + std::to_string(static_cast<int>(group));
+}
+
+std::string cycleFireGroup(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const std::uint32_t group = world.cycleFireGroup();
+    const std::uint32_t used = world.playerFireGroupsInUse();
+    std::string line = "group " + std::to_string(group) + " of";
+    if (used == 0) {
+        return line + " none (nothing fitted)";
+    }
+    for (std::uint32_t g = 1; g <= game::kFireGroupCount; ++g) {
+        if ((used & (1u << (g - 1))) != 0) {
+            line += " " + std::to_string(g);
+        }
+    }
+    return line;
 }
 
 // Fleet listing, 1-based to match the select_ship/sell_ship arguments.
@@ -3479,6 +3517,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listCrewDefs>("sol", "crew_defs", this);
     m_vm.registerFunction<&fitInfo>("sol", "fit", this);
     m_vm.registerFunction<&gunInfo>("sol", "guns", this);
+    m_vm.registerFunction<&setFireGroup>("sol", "set_fire_group", this);
+    m_vm.registerFunction<&cycleFireGroup>("sol", "cycle_fire_group", this);
     m_vm.registerFunction<&listFleet>("sol", "fleet", this);
     m_vm.registerFunction<&buyFitting>("sol", "buy_fitting", this);
     m_vm.registerFunction<&fitToMount>("sol", "fit_mount", this);

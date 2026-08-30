@@ -58,7 +58,12 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // `ShipArmament` block is wider. Same component id: the component did not
 // change identity, only size, and the version check is what stops a v19 file
 // being read into it.
-constexpr std::uint32_t kSaveVersion = 20;
+//
+// v21 (Phase 31 stage C3): fire groups. TWO blocks moved at once - a gun
+// carries the group it answers to and its mount index, and the fleet's saved
+// fittings carry the durable copy of that group beside the def id. The
+// component id is 23 still, for C2's reason.
+constexpr std::uint32_t kSaveVersion = 21;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -4944,7 +4949,128 @@ void SpaceWorld::applyActiveLoadout()
     }
     const assets::ShipDef def = resolvedShipDef(activeShip());
     applyShipDef(playerEntityIndex(), def, *m_defs);
+    // ⚑ ONLY THE PLAYER'S SHIP GETS THIS CALL, and this is the only place it
+    // is made (Phase 31 stage C3). The resolved def carries WHICH gun is in
+    // WHICH mount; the saved fit carries which trigger the pilot wired it to,
+    // and it is deliberately not routed through the def - a mount is a place on
+    // a hull, and a hull has no opinion about triggers.
+    applyPilotFireGroups(playerEntityIndex(), def, activeShip());
     applyCockpitOf(def);
+}
+
+void SpaceWorld::applyPilotFireGroups(std::uint32_t entityIndex,
+                                      const assets::ShipDef& def,
+                                      const OwnedShip& ship)
+{
+    ShipArmament* armament = m_registry.storage<ShipArmament>().tryGet(entityIndex);
+    if (armament == nullptr) {
+        return;
+    }
+    for (std::uint32_t i = 0; i < armament->count; ++i) {
+        ShipWeapon& weapon = armament->weapons[i];
+        if (weapon.mount >= def.mounts.size()) {
+            continue;
+        }
+        const ShipFitting* fitting = ship.fittingAt(def.mounts[weapon.mount].id);
+        if (fitting == nullptr || fitting->group < 1 || fitting->group > kFireGroupCount) {
+            continue;
+        }
+        weapon.group = fitting->group;
+    }
+    // A hull whose every gun sits in group 2 is a perfectly ordinary thing to
+    // fly, and a selection left at 1 would be a trigger wired to nothing.
+    normalizeFireGroup(*armament);
+}
+
+std::uint32_t SpaceWorld::playerFireGroup() const
+{
+    const ShipArmament* armament = m_registry.storage<ShipArmament>().tryGet(playerEntityIndex());
+    return armament != nullptr ? armament->selectedGroup : 1;
+}
+
+std::uint32_t SpaceWorld::playerFireGroupsInUse() const
+{
+    const ShipArmament* armament = m_registry.storage<ShipArmament>().tryGet(playerEntityIndex());
+    return armament != nullptr ? fireGroupsInUse(*armament) : 0;
+}
+
+// ⚑ THE CYCLE VISITS ONLY GROUPS THAT HAVE A GUN IN THEM, which is what keeps
+// one key usable on a hull carrying two guns in groups 1 and 4: the player
+// steps between the two things they set up rather than through two empty
+// positions that do nothing and say nothing. It is also why there is no
+// "select group N" binding - four more rows in the Controls screen to reach
+// four positions a single key already reaches in order.
+std::uint32_t SpaceWorld::cycleFireGroup()
+{
+    ShipArmament* armament = m_registry.storage<ShipArmament>().tryGet(playerEntityIndex());
+    if (armament == nullptr) {
+        return 1;
+    }
+    const std::uint32_t mask = fireGroupsInUse(*armament);
+    if (mask == 0) {
+        return armament->selectedGroup;
+    }
+    normalizeFireGroup(*armament);
+    for (std::uint32_t step = 1; step <= kFireGroupCount; ++step) {
+        const std::uint32_t candidate = ((armament->selectedGroup - 1 + step) % kFireGroupCount) + 1;
+        if ((mask & (1u << (candidate - 1))) != 0) {
+            armament->selectedGroup = candidate;
+            break;
+        }
+    }
+    return armament->selectedGroup;
+}
+
+// ⚑ BOTH COPIES, AND NEITHER IS OPTIONAL. The saved fit is what survives a
+// refit, a ship swap and a reload; the live gun is what the firing pass reads
+// this tick. Doing it by rebuilding the armament from the def - the obvious
+// one-line version - would run `applyShipDef`, which resets the DEFENCES to
+// full and clears every cooldown: a free heal and a free salvo, every time the
+// player changed which trigger a gun answers to.
+bool SpaceWorld::setFireGroup(const char* mountId, std::uint32_t group, std::string* outError)
+{
+    if (m_fleet.empty() || m_defs == nullptr) {
+        return refuse("no active ship", outError);
+    }
+    if (mountId == nullptr || mountId[0] == '\0') {
+        return refuse("no mount named", outError);
+    }
+    if (group < 1 || group > kFireGroupCount) {
+        return refuse("fire group must be 1.." + std::to_string(kFireGroupCount), outError);
+    }
+    OwnedShip& ship = m_fleet[m_activeShip];
+    const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
+    if (base == nullptr) {
+        return refuse("active ship def '" + ship.defId + "' missing", outError);
+    }
+    if (base->findMount(mountId) == nullptr) {
+        return refuse("'" + base->name + "' has no mount '" + mountId + "'", outError);
+    }
+    ShipArmament* armament = m_registry.storage<ShipArmament>().tryGet(playerEntityIndex());
+    ShipWeapon* gun = nullptr;
+    if (armament != nullptr) {
+        for (std::uint32_t i = 0; i < armament->count; ++i) {
+            ShipWeapon& weapon = armament->weapons[i];
+            if (weapon.mount < base->mounts.size() && base->mounts[weapon.mount].id == mountId) {
+                gun = &weapon;
+                break;
+            }
+        }
+    }
+    if (gun == nullptr) {
+        // Said in terms of the gun rather than the mount: a mount holding a
+        // cargo pod is not a mistake, it is simply not something a trigger can
+        // be wired to, and "mount is empty" would be wrong about half of them.
+        return refuse(std::string("mount '") + mountId + "' carries no gun", outError);
+    }
+    gun->group = group;
+    for (ShipFitting& fitting : ship.fittings) {
+        if (fitting.mountId == mountId) {
+            fitting.group = group;
+        }
+    }
+    normalizeFireGroup(*armament);
+    return true;
 }
 
 // Phase 19: the seat belongs to the ship, so it is resolved wherever a def is
@@ -5354,7 +5480,8 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
     // order is what decides who fires first when the capacitor runs short.
     ShipArmament& armament = m_registry.storage<ShipArmament>().get(entityIndex);
     armament = ShipArmament{};
-    for (const assets::ShipMount& mount : def.mounts) {
+    for (std::uint32_t m = 0; m < def.mounts.size(); ++m) {
+        const assets::ShipMount& mount = def.mounts[m];
         if (!assets::mountTakesWeapon(mount.kind) || mount.fit.empty()) {
             continue;
         }
@@ -5379,6 +5506,17 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
             break;
         }
         ShipWeapon& weapon = armament.weapons[armament.count++];
+        // ⚑ WHICH PLACE ON THE HULL THIS GUN CAME OUT OF (Phase 31 stage C3).
+        // Recorded here because here is the only walk that knows: everything
+        // downstream sees a flattened component with no def and no mount id,
+        // and a second walk to recover it would be a copy of the four skip
+        // conditions above waiting to disagree with them.
+        weapon.mount = m;
+        // ⚑ AND EVERY GUN COMES OUT OF THIS LOOP IN GROUP 1, on every hull,
+        // including the player's. A fire group is the pilot's choice, so the
+        // saved fit lays it over the top afterwards - see
+        // `applyPilotFireGroups`, and the field comment on `ShipWeapon::group`
+        // for why an NPC must never carry anything else.
         weapon.kind = weaponDef->kind == "hitscan" ? WeaponKind::Hitscan : WeaponKind::Projectile;
         weapon.damage = weaponDef->damage;
         weapon.rateOfFire = weaponDef->rateOfFire;
@@ -5581,6 +5719,43 @@ std::uint32_t SpaceWorld::targetShipEntityIndex() const
     return m_registry.isAlive(ship) ? ship.index : kNoIndex;
 }
 
+// Which triggers this ship's guns are spread across (Phase 31 stage C3).
+std::uint32_t fireGroupsInUse(const ShipArmament& armament)
+{
+    std::uint32_t mask = 0;
+    for (std::uint32_t i = 0; i < armament.count; ++i) {
+        const ShipWeapon& weapon = armament.weapons[i];
+        if (weapon.kind == WeaponKind::None || weapon.group < 1 || weapon.group > kFireGroupCount) {
+            continue;
+        }
+        mask |= 1u << (weapon.group - 1);
+    }
+    return mask;
+}
+
+// ⚑ A SELECTION THAT POINTS AT NOTHING IS THE ONE FAILURE THIS FEATURE CAN
+// PRODUCE ON ITS OWN, and it produces it two ways: a refit that removes the
+// last gun in the selected group, and a regroup that moves it out. Either
+// leaves a trigger wired to nothing, which reads exactly like a broken gun -
+// so the selection is walked back to the lowest group that has one.
+//
+// An unarmed ship keeps group 1: there is nothing to point at, and leaving the
+// number alone means fitting a gun later finds the selection where it was.
+void normalizeFireGroup(ShipArmament& armament)
+{
+    const std::uint32_t mask = fireGroupsInUse(armament);
+    if (mask == 0 || (armament.selectedGroup >= 1 && armament.selectedGroup <= kFireGroupCount &&
+                      (mask & (1u << (armament.selectedGroup - 1))) != 0)) {
+        return;
+    }
+    for (std::uint32_t group = 1; group <= kFireGroupCount; ++group) {
+        if ((mask & (1u << (group - 1))) != 0) {
+            armament.selectedGroup = group;
+            return;
+        }
+    }
+}
+
 // ⚑ ONE WALK OF THE GUNS, and every caller outside the firing pass goes
 // through it (Phase 31 stage C1). The four questions it answers used to be
 // four reads of the single `ShipWeapon`, spread across the pilot brain, the
@@ -5596,7 +5771,12 @@ ArmamentSummary SpaceWorld::armamentSummary(std::uint32_t entityIndex) const
     }
     for (std::uint32_t i = 0; i < armament->count; ++i) {
         const ShipWeapon& weapon = armament->weapons[i];
-        if (weapon.kind == WeaponKind::None) {
+        // ⚑ THE SELECTED GROUP ONLY (Phase 31 stage C3). Every field below is
+        // read to predict what the trigger will do, and a gun in an unselected
+        // group is not going to do anything - so counting its reach here would
+        // draw a lead marker for a bolt that is not coming and light a mining
+        // prompt for a beam the trigger is not wired to.
+        if (weapon.kind == WeaponKind::None || weapon.group != armament->selectedGroup) {
             continue;
         }
         summary.armed = true;
@@ -7572,7 +7752,14 @@ void SpaceWorld::tick(double dt)
             if (weapon.cooldown > 0.0f) {
                 weapon.cooldown -= static_cast<float>(dt);
             }
-            if (weapon.kind == WeaponKind::None || weapon.cooldown > 0.0f || !trigger) {
+            // ⚑ THE FIRE GROUP IS CHECKED HERE AND NOT ONE LINE HIGHER (Phase
+            // 31 stage C3), for exactly the reason the trigger is not: a gun
+            // in an unselected group has to keep ticking its clock. A cooldown
+            // that only ran while its group was live would give every group a
+            // free first shot on the frame you switched to it, and a hull with
+            // two groups would out-shoot the same guns in one.
+            if (weapon.kind == WeaponKind::None || weapon.group != armament.selectedGroup ||
+                weapon.cooldown > 0.0f || !trigger) {
                 continue;
             }
             // ⚑ THE MUZZLE IS THE MOUNT AND THE BEARING IS THE RING (Phase 31
@@ -8287,6 +8474,11 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         for (const ShipFitting& fitting : ship.fittings) {
             writer.writeString(fitting.mountId);
             writer.writeString(fitting.defId);
+            // v21: which trigger a gun in this mount answers to. Written for
+            // every fitting rather than only for guns - a cargo pod's 1 costs
+            // four bytes and a conditional field is a save format that has to
+            // be read twice to know how long it is.
+            writer.write(fitting.group);
         }
         writer.write(static_cast<std::uint32_t>(ship.crewIds.size()));
         for (const std::string& id : ship.crewIds) {
@@ -8401,7 +8593,8 @@ bool SpaceWorld::loadFrom(const char* path)
         }
         ship.fittings.resize(fittingCount);
         for (ShipFitting& fitting : ship.fittings) {
-            if (!reader.readString(fitting.mountId) || !reader.readString(fitting.defId)) {
+            if (!reader.readString(fitting.mountId) || !reader.readString(fitting.defId) ||
+                !reader.read(fitting.group)) {
                 return false;
             }
         }
