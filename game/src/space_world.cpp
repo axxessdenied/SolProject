@@ -73,12 +73,17 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // that is NOT a gun - under a NEW component id 24. New rather than grown,
 // because this is a different component and not a wider one.
 //
-// v24 (Phase 31 stage F): `ShipMounts` - every place on the hull and how much
+// v24 (Phase 31 stage F1): `ShipMounts` - every place on the hull and how much
 // of it is left - under a NEW component id 25, on E2's rule. It is a third
 // thing rather than a wider `ShipFittings` for a reason the two of them make
 // plain: `ShipFittings` holds only what is DRAWN, and a mount's condition is
 // about mounts nobody draws and mounts nothing is fitted to.
-constexpr std::uint32_t kSaveVersion = 24;
+//
+// v25 (Phase 31 stage F2): a mount carries its KIND, so the `ShipMounts` block
+// is wider. Component id 25 still, on C2's rule: the component changed size
+// and not identity, and the version check at the header is what stops a v24
+// file being read into the new layout.
+constexpr std::uint32_t kSaveVersion = 25;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -5567,6 +5572,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
         condition.at[1] = mount.at[1];
         condition.at[2] = mount.at[2];
         condition.external = mount.external;
+        condition.kind = mount.kind;
         condition.maxHp = assets::mountHitPoints(mount.size);
         condition.hp = condition.maxHp;
     }
@@ -5954,6 +5960,45 @@ std::uint32_t SpaceWorld::targetShipEntityIndex() const
 }
 
 // Which triggers this ship's guns are spread across (Phase 31 stage C3).
+// ⚑⚑⚑ "SHOOT A FREIGHTER'S DRIVE OFF AND WATCH IT STOP, STILL ALIVE" - Phase
+// 31's own exit criterion, and this counting loop is the half of it that says
+// what "off" means. The share of a hull's engine mounts still standing is what
+// its main drive can still push with, so one drive of two leaves half the
+// acceleration and the only drive there is leaves none.
+//
+// ⚑ IT IS A COUNT OF MOUNTS AND NOT OF FITTINGS. No `[[ship.mount]]` of kind
+// `engine` in this game carries a `fit` - a drive bell is part of the hull -
+// which is exactly why condition lives on the mount, and why this can be asked
+// of a hull nobody has outfitted.
+float driveFraction(const ShipMounts& mounts)
+{
+    std::uint32_t total = 0;
+    std::uint32_t standing = 0;
+    for (std::uint32_t m = 0; m < mounts.count; ++m) {
+        if (mounts.mounts[m].kind != assets::MountKind::Engine) {
+            continue;
+        }
+        ++total;
+        standing += mounts.mounts[m].destroyed() ? 0u : 1u;
+    }
+    return total == 0 ? 1.0f : static_cast<float>(standing) / static_cast<float>(total);
+}
+
+bool shieldsArePowered(const ShipMounts& mounts)
+{
+    bool any = false;
+    for (std::uint32_t m = 0; m < mounts.count; ++m) {
+        if (mounts.mounts[m].kind != assets::MountKind::Shield) {
+            continue;
+        }
+        if (!mounts.mounts[m].destroyed()) {
+            return true;
+        }
+        any = true;
+    }
+    return !any;
+}
+
 std::uint32_t fireGroupsInUse(const ShipArmament& armament)
 {
     std::uint32_t mask = 0;
@@ -7695,10 +7740,56 @@ void SpaceWorld::tick(double dt)
                     sim::stepPower(power->state, power->tuning, dt);
                     tuning = sim::applyEnginePips(control.tuning, power->state.pips, power->tuning);
                 }
+                // ⚑⚑⚑ AND THEN THE DRIVE ITSELF (Phase 31 stage F2). This sits
+                // exactly where the ENG pips already scale the envelope,
+                // because it is the same kind of fact - how much push the ship
+                // has this tick - and multiplying after the pips is what makes
+                // a half-drive ship on full ENG still a half-drive ship.
+                //
+                // ⚑ THE SPEED CAP SCALES WITH THE ACCELERATION, and that is
+                // deliberate rather than a double penalty: there is no drag out
+                // here, so `maxSpeed` is not a balance of thrust against
+                // resistance, it is the flight model's stand-in for what the
+                // drive can hold. A drive at half holds half. It is also what
+                // stops a freighter whose drive you shot off from CRUISING
+                // away, because cruise is a multiple of this same cap - and a
+                // ship that can still run is not one you have disabled.
+                //
+                // ⚑⚑ ANGULAR ACCELERATION AND TURN RATE ARE UNTOUCHED, ON
+                // PURPOSE. Engines push and thrusters turn - `MountKind` has
+                // both and gdd.md §11.5 separates them - so a hull with its
+                // drive shot off is dead in the water and still able to point
+                // itself, which is what lets a crippled freighter keep a turret
+                // on you. Shooting the turning out of a ship is what a
+                // `thruster` mount is for, and nothing in the game declares one
+                // yet.
+                const ShipMounts* condition = m_registry.tryGet<ShipMounts>(entity);
+                if (condition != nullptr) {
+                    const float drive = driveFraction(*condition);
+                    if (drive < 1.0f) {
+                        tuning.forwardAccel *= drive;
+                        tuning.reverseAccel *= drive;
+                        tuning.lateralAccel *= drive;
+                        tuning.verticalAccel *= drive;
+                        tuning.maxSpeed *= drive;
+                    }
+                }
                 if (ShipDefense* defense = defenses.tryGet(entity.index)) {
                     const ShipPower* power = powers.tryGet(entity.index);
-                    const float regenScale =
+                    float regenScale =
                         power != nullptr ? sim::shieldRegenScale(power->state.pips, power->tuning) : 1.0f;
+                    // ⚑⚑ A SHIELD GENERATOR THAT HAS BEEN SHOT OFF STOPS
+                    // REGENERATING THE FACINGS, AND DOES NOT COLLAPSE THEM
+                    // (Phase 31 stage F2). What is already in the envelope does
+                    // not evaporate because the machine that put it there is
+                    // gone; what stops is any more of it arriving. Collapsing
+                    // both facings instead would make one lucky shot a
+                    // 320-point swing on the shipped freighter - larger than
+                    // anything else in the damage model can do in one hit, and
+                    // a bigger effect than destroying the hull's own armour.
+                    if (condition != nullptr && !shieldsArePowered(*condition)) {
+                        regenScale = 0.0f;
+                    }
                     sim::stepDefense(defense->state, defense->tuning, regenScale, dt);
                     if (defense->playerAssist > 0.0) {
                         defense->playerAssist = std::max(0.0, defense->playerAssist - dt);
@@ -8385,14 +8476,17 @@ void SpaceWorld::damageMounts(std::uint32_t targetIndex,
         return;
     }
     const core::DVec3 offset = hitPosition - transform->position;
-    if (dot(offset, offset) <= 0.0) {
-        return; // a hit exactly at the hull's centre has no bearing to read
-    }
+    // ⚑ A hit exactly at the hull's centre has no bearing to read, so no
+    // EXTERNAL mount can be picked for it - but its hull damage still reaches
+    // the internals below, which is why this zeroes the arrival rather than
+    // returning. `normalize` gives a zero vector back, whose dot with every
+    // mount is 0 and therefore under the cone: no external mount wins, and the
+    // second pass still runs.
+    const core::DVec3 bearing = dot(offset, offset) > 0.0 ? normalize(offset) : core::DVec3{};
     // Into the hull's own frame, where `at` is written. The SIM orientation
     // rather than an interpolated one: this is the pose the damage was
     // resolved against a tick ago, the same reason `layGun` reads it.
-    const core::Vec3 arrival =
-        normalize(rotate(conjugate(transform->orientation), toVec3(normalize(offset))));
+    const core::Vec3 arrival = rotate(conjugate(transform->orientation), toVec3(bearing));
 
     // ⚑⚑ A MOUNT AT THE HULL'S OWN CENTRE IS EXCLUDED BY THE ARITHMETIC AND
     // NOT BY A BRANCH, and that is worth a compile-time promise rather than a
@@ -8424,32 +8518,89 @@ void SpaceWorld::damageMounts(std::uint32_t targetIndex,
             best = m;
         }
     }
-    if (best >= mounts->count) {
-        return; // the shot landed on plating, not on anything bolted to it
-    }
-    MountCondition& hit = mounts->mounts[best];
-    hit.hp -= reaching;
-    if (hit.hp > 0.0f) {
-        return;
-    }
-    hit.hp = 0.0f;
-    // A mount going is a visible event or it is nothing at all. The fireball
-    // is scaled off the hull so a freighter's drive going reads as bigger than
-    // a shuttle's nose gun, and it is spawned AT THE MOUNT rather than at the
-    // impact - the shot arrived on the sphere, the thing that blew up is on
-    // the hull.
+
+    // Spending a hit on one place, and announcing it if that finishes it. A
+    // lambda because there are two passes below and only one of them picks a
+    // mount by where the shot came in.
     const RenderShape* shape = m_registry.tryGet<RenderShape>(entity);
     const float hullScale = shape != nullptr ? shape->scale.x : 1.0f;
-    const core::Vec3 at{hit.at[0] * hullScale, hit.at[1] * hullScale, hit.at[2] * hullScale};
-    const core::DVec3 where = transform->position + toDVec3(rotate(transform->orientation, at));
-    m_combatEffects.spawnExplosion(where, hullScale * 0.5f);
-    if (m_audio != nullptr) {
-        if (targetIndex == playerEntityIndex()) {
-            m_audio->play2D(m_audio->cues().explosion);
-            m_audio->play2D(m_audio->cues().alarm);
-        } else {
-            m_audio->playAt(m_audio->cues().explosion, where);
+    auto spendOn = [&](MountCondition& mount, float amount) {
+        mount.hp -= amount;
+        if (mount.hp > 0.0f) {
+            return;
         }
+        mount.hp = 0.0f;
+        // A mount going is a visible event or it is nothing at all. The
+        // fireball is scaled off the hull so a freighter's drive going reads
+        // as bigger than a shuttle's nose gun, and it is spawned AT THE MOUNT
+        // rather than at the impact - the shot arrived on the collision
+        // sphere, the thing that blew up is on the hull. An INTERNAL mount is
+        // at the hull's own centre, which is exactly where a fireball for
+        // something deep inside the ship belongs.
+        const core::Vec3 at{mount.at[0] * hullScale, mount.at[1] * hullScale, mount.at[2] * hullScale};
+        const core::DVec3 where = transform->position + toDVec3(rotate(transform->orientation, at));
+        m_combatEffects.spawnExplosion(where, hullScale * 0.5f);
+        if (m_audio != nullptr) {
+            if (targetIndex == playerEntityIndex()) {
+                m_audio->play2D(m_audio->cues().explosion);
+                m_audio->play2D(m_audio->cues().alarm);
+            } else {
+                m_audio->playAt(m_audio->cues().explosion, where);
+            }
+        }
+    };
+
+    if (best < mounts->count) {
+        spendOn(mounts->mounts[best], reaching);
+    }
+
+    // ⚑⚑⚑ AND THE OTHER HALF OF `decisions/014` RULE 2: AN INTERNAL MOUNT IS
+    // REACHED ONCE THE ARMOUR IS GONE (Phase 31 stage F2). `hullDamage` is
+    // non-zero only after `applyDamage` has spent the shield facing AND the
+    // armour, so the doc's "reachable only once armour and hull are
+    // compromised" needs no new condition of its own - it is already the name
+    // of a field on the result.
+    //
+    // ⚑⚑ THE TWO PASSES ARE INDEPENDENT AND A HIT CAN COST BOTH. They are
+    // different mechanisms on one shot: an external mount is hit because it is
+    // physically in the way, an internal one because the plating over it has
+    // failed. A hull breach that spared the sensor suite because a cargo pod
+    // happened to be on the same bearing would be geometry deciding something
+    // it knows nothing about.
+    // ⚑ An early-out and not a second rule: what an internal mount is spent is
+    // `result.hullDamage` below, so a hit that never reached the hull would
+    // spend zero on it anyway. It is here because every hit in the game comes
+    // through this function, most of them are stopped by a shield or by
+    // plating, and walking the mount list to subtract nothing is a walk for
+    // nothing.
+    //
+    // ⚑⚑ WHICH MEANS THE GUARD AND THE AMOUNT ARE ONE RULE WRITTEN TWICE, and
+    // that is worth knowing before changing either: a counterfactual that
+    // widens only one of them comes back GREEN, because whichever half is left
+    // alone still enforces the rule. Both were tried, separately, and neither
+    // moved a test until both were changed together.
+    if (result.hullDamage <= 0.0f) {
+        return;
+    }
+    // ⚑ THE ONE WITH THE MOST LEFT TAKES IT, WHICH SPREADS THE DAMAGE EVENLY
+    // AND NEEDS NO RANDOMNESS. There is no geometry to tell one internal mount
+    // from another - that is what internal MEANS - so any pick is arbitrary,
+    // and the two arbitrary picks worth having are "always the same one" and
+    // "share it out". Sharing it out is the one that leaves a ship degrading
+    // rather than losing whole subsystems while others sit untouched, and it
+    // is deterministic, which a save format and a test both want.
+    std::uint32_t deepest = mounts->count;
+    for (std::uint32_t m = 0; m < mounts->count; ++m) {
+        const MountCondition& condition = mounts->mounts[m];
+        if (condition.external || condition.destroyed()) {
+            continue;
+        }
+        if (deepest >= mounts->count || condition.hp > mounts->mounts[deepest].hp) {
+            deepest = m;
+        }
+    }
+    if (deepest < mounts->count) {
+        spendOn(mounts->mounts[deepest], result.hullDamage);
     }
 }
 

@@ -298,6 +298,15 @@ struct MountCondition
     float at[3] = {0.0f, 0.0f, 0.0f};
     float hp = 0.0f;
     float maxHp = 0.0f;
+    // ⚑⚑ WHAT KIND OF PLACE THIS IS (Phase 31 stage F2), and the reason it is
+    // carried rather than looked up is the reason everything else here is: the
+    // component is FLATTENED and keeps no def id. Stage F1 did not need it
+    // because a destroyed mount only had to stop being drawn and stop firing,
+    // and the gun already knew which mount it was in. "A destroyed DRIVE stops
+    // the ship" is the first question that has to be asked of the mount list
+    // itself, with no fitting to ask on its behalf - and it has to be asked
+    // every tick, on the flight path, of every ship in the system.
+    sol::assets::MountKind kind = sol::assets::MountKind::Utility;
     // `decisions/014` rule 2, carried rather than inferred from `at`. A mount
     // authored at the hull's own centre is a legal external mount and an
     // internal one is not merely a mount at the origin - one is aimed at and
@@ -319,6 +328,22 @@ struct ShipMounts
     std::uint32_t count = 0;
     MountCondition mounts[kMaxShipMounts];
 };
+
+// ⚑⚑ HOW MUCH OF A HULL'S MAIN DRIVE IS STILL THERE (Phase 31 stage F2): the
+// share of its `engine` mounts that have not been shot off, and the whole of
+// "a destroyed drive that stops working".
+//
+// ⚑ A HULL THAT DECLARES NO ENGINE MOUNT FLIES EXACTLY AS IT ALWAYS DID, which
+// is what the 1.0 is for and is not a fallback so much as the rule read
+// carefully: a drive you cannot shoot off is a drive that cannot be missing.
+// Half this project's test hulls declare no engine mount, and neither does a
+// station, a rock or a wreck.
+[[nodiscard]] float driveFraction(const ShipMounts& mounts);
+
+// And whether its shield generators are still there. False ONLY for a hull
+// that declares `shield` mounts and has had every one of them destroyed - on
+// the same reading, and for the same reason, as `driveFraction`'s 1.0.
+[[nodiscard]] bool shieldsArePowered(const ShipMounts& mounts);
 
 // ⚑ HOW WIDE A HIT HAS TO LAND TO COUNT AS HITTING A MOUNT (Phase 31 stage F),
 // as the cosine of the half-angle between where the shot arrived and where the
@@ -1862,6 +1887,15 @@ public:
     [[nodiscard]] const ShipDefense& playerDefense() const
     {
         return m_registry.storage<ShipDefense>().get(playerEntityIndex());
+    }
+
+    // The same for ANY ship, or null for something that has no defences - a
+    // rock, a station, a bolt. `shipHullFraction` beside it answers one
+    // question off this and was the only way to ask any of them about a ship
+    // that is not the player's (Phase 31 stage F2 wanted the shields too).
+    [[nodiscard]] const ShipDefense* shipDefense(sol::ecs::Entity entity) const
+    {
+        return m_registry.tryGet<ShipDefense>(entity);
     }
 
     [[nodiscard]] const CelestialBody& sun() const { return m_star; }

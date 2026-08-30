@@ -185,7 +185,34 @@ void fillShipInfoPanel(const SpaceWorld& world,
     // mount is a row too - "what is missing" is half of what this screen is
     // read for, and a list of only what is fitted cannot say it.
     if (base != nullptr) {
-        for (const sol::assets::ShipMount& mount : base->mounts) {
+        // ⚑⚑ AND HOW MUCH OF EACH PLACE IS LEFT (Phase 31 stage F2). It goes on
+        // the front of the DETAIL rather than into a column of its own, because
+        // it is a fact about most mounts only some of the time: a fit that has
+        // not been shot at would carry a column of "100%" down every row, which
+        // is four characters of nothing repeated as many times as the hull has
+        // places. A row says something here only when there is something to
+        // say, and a destroyed mount says it first and in capitals.
+        //
+        // ⚑ The walk is indexed rather than ranged because `ShipMounts` is in
+        // the DEF'S mount order - that indexing is the contract every consumer
+        // of this component relies on, and pairing by position is what makes a
+        // row here and a row of `sol.mount_condition` the same mount.
+        const std::span<const MountCondition> condition = world.playerMounts();
+        const auto wear = [&](std::size_t index) -> std::string {
+            if (index >= condition.size() || condition[index].maxHp <= 0.0f) {
+                return {};
+            }
+            const MountCondition& mount = condition[index];
+            if (mount.destroyed()) {
+                return "DESTROYED - ";
+            }
+            if (mount.hp >= mount.maxHp) {
+                return {};
+            }
+            return number(100.0f * mount.hp / mount.maxHp, 0) + "% condition - ";
+        };
+        for (std::size_t m = 0; m < base->mounts.size(); ++m) {
+            const sol::assets::ShipMount& mount = base->mounts[m];
             // ⚑ THE MOUNT'S ID IS THE LABEL, not its kind and size. On a hull
             // with four utility mounts "small utility" four times over says
             // nothing about WHICH place a pod is in, and the id is the same
@@ -197,12 +224,12 @@ void fillShipInfoPanel(const SpaceWorld& world,
                 fittedRows.push_back({label,
                                       "empty",
                                       store(text,
-                                            std::string("takes a ") + sol::assets::mountSizeName(mount.size) +
+                                            wear(m) + "takes a " + sol::assets::mountSizeName(mount.size) +
                                                 " " + sol::assets::mountKindName(mount.kind) + " fitting")});
                 continue;
             }
             if (const sol::assets::WeaponDef* weapon = defs.findWeapon(fitted->defId.c_str())) {
-                std::string detail = weapon->kind + ", " + number(weapon->damage, 0) + " dmg @ " +
+                std::string detail = wear(m) + weapon->kind + ", " + number(weapon->damage, 0) + " dmg @ " +
                                      number(weapon->rateOfFire, 1) + "/s, " + range(weapon->range);
                 if (weapon->miningPower > 0.0f) {
                     detail += ", mining " + number(weapon->miningPower, 1);
@@ -221,11 +248,11 @@ void fillShipInfoPanel(const SpaceWorld& world,
                                       label});
             } else if (const sol::assets::ComponentDef* component =
                            defs.findComponent(fitted->defId.c_str())) {
-                fittedRows.push_back(
-                    {label,
-                     component->name.c_str(),
-                     store(text,
-                           number(component->powerDraw, 1) + " pwr, " + number(component->mass, 0) + " kg")});
+                fittedRows.push_back({label,
+                                      component->name.c_str(),
+                                      store(text,
+                                            wear(m) + number(component->powerDraw, 1) + " pwr, " +
+                                                number(component->mass, 0) + " kg")});
             } else {
                 fittedRows.push_back({label, fitted->defId.c_str(), "def missing"});
             }

@@ -15,6 +15,7 @@
 // there, and a fixture that set hit points directly would be measuring
 // arithmetic nobody performs.
 
+#include "ship_ui.hpp"
 #include "space_world.hpp"
 
 #include <cmath>
@@ -113,9 +114,15 @@ weight_fringe = 0.5
 // sphere rather than through its axis, and every bearing measured below would
 // be wrong by however far the gun sits off the keel.
 //
-// It is also the hull that does the RAMMING at the bottom of this file, which
-// is what `forward_accel` and `max_speed` are for.
-constexpr const char* kShooter = R"(
+// It is also the hull that does the RAMMING at the bottom of this file, which is
+// what the two accelerations and `max_speed` are for - forward into a target to
+// take its own nose gun off, and backward into one to take its drive off.
+// `extraMounts` is appended verbatim, and exactly one caller uses it: the hull
+// that carries TWO drives, which is the only way to ask what a PARTIAL drive
+// does. One drive answers "none left" and nothing else.
+[[nodiscard]] std::string shooter(const char* extraMounts = "")
+{
+    return std::string(R"(
 [[ship]]
 id = "sol.shuttle"
 name = "Gunboat"
@@ -123,6 +130,7 @@ model = "ship"
 scale = 1.0
 max_speed = 400.0
 forward_accel = 200.0
+reverse_accel = 200.0
 shield_strength = 0.0
 armor = 0.0
 hull = 9000.0
@@ -137,23 +145,57 @@ weapon_recharge = 100.0
   size = "small"
   at = [0.0, 0.0, -5.0]
   fit = "sol.beam"
+
+  # ⚑ DEAD ASTERN AND BARE, WHICH IS BOTH HALVES OF THE POINT (Phase 31 stage
+  # F2). Astern, so that backing into something takes it off and nothing
+  # arriving at the nose can; and bare, because no `engine` mount in the
+  # shipped game carries a `fit` either - a drive bell is part of the hull, and
+  # this stage's exit criterion is about shooting one off a hull nobody has
+  # outfitted.
+  [[ship.mount]]
+  id = "drive_main"
+  kind = "engine"
+  size = "small"
+  at = [0.0, 0.0, 5.0]
+  aim = [0.0, 0.0, 1.0]
+)") + extraMounts;
+}
+
+// ⚑ A SECOND DRIVE, HUNG WHERE A STERN RAM CANNOT REACH IT. Ninety degrees off
+// `drive_main`'s bearing is well outside the hit cone, so backing into
+// something takes one of the two and leaves the other — which is a half drive,
+// and the only reading that can tell "scaled by the share left" from "switched
+// off when the last one goes".
+constexpr const char* kVentralDrive = R"(
+  [[ship.mount]]
+  id = "drive_ventral"
+  kind = "engine"
+  size = "small"
+  at = [0.0, -5.0, 0.0]
+  aim = [0.0, -1.0, 0.0]
 )";
 
-// ⚑⚑ THE TARGET, AND ITS FOUR MOUNTS ARE THE WHOLE EXPERIMENT.
+// ⚑⚑ THE TARGET, AND ITS FIVE MOUNTS ARE THE WHOLE EXPERIMENT.
 //
 //   `tail`  external, dead astern       — what a shot from behind should find
 //   `nose`  external, dead ahead        — 180 degrees from `tail`
 //   `beam`  external, dead to starboard — 90 degrees from both of them
 //   `core`  INTERNAL (no `at`)          — never aimed at, whatever the bearing
+//   `guts`  INTERNAL, and a `shield`     — a second one, so that damage which
+//                                          reaches the inside can be seen to
+//                                          SPREAD rather than land twice in
+//                                          the same place
 //
 // `tail` is a `medium` where the rest are `small`, which makes "a bigger mount
 // takes more to knock out" answerable on one hull rather than by comparing two.
 // It is also the only one carrying a fitting, so "a destroyed mount stops being
 // drawn" has exactly one instance to count.
 //
-// The defence numbers are arguments because two of them are subjects in their
-// own right: a shield that eats the shot, and an armour layer that does not.
-[[nodiscard]] std::string target(const char* shield = "0.0", const char* armor = "0.0")
+// The defence numbers are arguments because three of them are subjects in their
+// own right: a shield that eats the shot, an armour layer that does not, and a
+// regeneration rate that stops when the generator that drives it is shot off.
+[[nodiscard]] std::string
+target(const char* shield = "0.0", const char* armor = "0.0", const char* regen = "0.0")
 {
     return std::string(R"(
 [[ship]]
@@ -165,9 +207,9 @@ max_speed = 100.0
 cargo = 10.0
 power_output = 1.0
 hull = 9000.0
-shield_regen = 0.0
+shield_regen_delay = 0.0
 shield_strength = )") +
-           shield + "\narmor = " + armor + R"(
+           shield + "\narmor = " + armor + "\nshield_regen = " + regen + R"(
 
   [[ship.mount]]
   id = "tail"
@@ -195,19 +237,26 @@ shield_strength = )") +
   id = "core"
   kind = "subsystem"
   size = "small"
+
+  [[ship.mount]]
+  id = "guts"
+  kind = "shield"
+  size = "small"
 )";
 }
 
 // Mount order on `sol.target`, which is `def.mounts` order and therefore the
 // order `ShipMounts` is indexed in. Named rather than counted at each use: that
 // indexing IS the contract between this component and the two that point into
-// it, so bare 0..3 would be silent about what it means.
+// it, so bare 0..4 would be silent about what it means.
 enum Mount : std::size_t
 {
     kTail = 0,
     kNose = 1,
     kBeam = 2,
     kCore = 3,
+    kGuts = 4,
+    kMountCount = 5,
 };
 
 struct Fixture
@@ -216,11 +265,13 @@ struct Fixture
     game::SpaceWorld world;
     sol::ecs::Entity mark{};
 
-    explicit Fixture(const std::string& targetToml = target(), std::uint64_t seed = 1701)
+    explicit Fixture(const std::string& targetToml = target(),
+                     const std::string& shooterToml = shooter(),
+                     std::uint64_t seed = 1701)
     {
         std::string error;
         SOL_CHECK(defs.mergeToml(kDefs, std::strlen(kDefs), "mount_defs.toml", &error));
-        const std::string hulls = std::string(kShooter) + targetToml;
+        const std::string hulls = shooterToml + targetToml;
         if (!defs.mergeToml(hulls.c_str(), hulls.size(), "mount_hulls.toml", &error)) {
             std::printf("  hulls did not parse: %s\n", error.c_str());
             SOL_CHECK(false);
@@ -362,6 +413,79 @@ struct Fixture
         }
         return false;
     }
+
+    // ⚑⚑ THE SAME TRICK RUN BACKWARDS, WHICH IS HOW THIS SUITE SHOOTS A DRIVE
+    // OFF. The player's drive is dead astern, so a contact has to arrive there
+    // - which means turning the ship around and holding full reverse. Warping
+    // to a point on the far side of where the ship already is leaves the nose
+    // pointing away from the target and the target squarely behind it.
+    bool ramAstern()
+    {
+        // ⚑ THE STANDOFF IS SET HERE RATHER THAN INHERITED, because a caller
+        // may have flown the ship somewhere first - the drive test holds full
+        // thrust for a second before it shoots anything off, and a run-up
+        // measured from wherever that left the ship is a run-up of unknown
+        // length. Park at 500 m facing the target, then flip: the ship ends up
+        // 1000 m out with the target dead astern.
+        if (!world.warpTo(targetPosition(), 500.0)) {
+            return false;
+        }
+        const sol::core::DVec3 here = world.shipState().position;
+        if (!world.warpTo(here + (here - targetPosition()), 0.0)) {
+            return false;
+        }
+        sol::sim::FlightInput input;
+        input.linear = {0.0f, 0.0f, 1.0f}; // full reverse
+        for (int tick = 0; tick < 900; ++tick) {
+            world.setShipInput(input);
+            world.tick(1.0 / 60.0);
+            const std::vector<game::MountCondition> mounts = playerMounts();
+            if (mounts.size() > 1 && mounts[1].destroyed()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Holds an input for `ticks` and answers how fast the ship ended up going.
+    // Speed rather than distance because a ship that has been rammed is already
+    // moving, and the question is whether the drive can change that.
+    double flyFor(int ticks, const sol::core::Vec3& linear, const sol::core::Vec3& angular = {})
+    {
+        sol::sim::FlightInput input;
+        input.linear = linear;
+        input.angular = angular;
+        for (int tick = 0; tick < ticks; ++tick) {
+            world.setShipInput(input);
+            world.tick(1.0 / 60.0);
+        }
+        return length(world.shipState().velocity);
+    }
+
+    // Parks the ship with its velocity zeroed, so an acceleration test starts
+    // from a standstill rather than from whatever the ram left behind.
+    //
+    // ⚑⚑ FIFTY KILOMETRES, AND THE NUMBER IS LOAD-BEARING. `warpTo` points the
+    // nose AT what it parks off, so a test that then holds full forward thrust
+    // is flying straight at the thing - and at 400 m/s, fifteen seconds of it
+    // covers six kilometres. At the four kilometres this used to say, the
+    // measurement ended in a collision and the speed being read was whatever
+    // the impact had left, which is not a fact about the drive at all.
+    bool comeToRest() { return world.warpTo(targetPosition(), 50'000.0); }
+
+    [[nodiscard]] float targetShieldFore() const
+    {
+        const game::ShipDefense* defense = world.shipDefense(mark);
+        return defense != nullptr ? defense->state.shieldFore : -1.0f;
+    }
+
+    [[nodiscard]] float targetShieldAft() const
+    {
+        const game::ShipDefense* defense = world.shipDefense(mark);
+        return defense != nullptr ? defense->state.shieldAft : -1.0f;
+    }
+
+    [[nodiscard]] double playerHullFraction() const { return world.playerDefense().state.hull; }
 };
 
 std::string scratchPath(const char* leaf)
@@ -382,7 +506,7 @@ SOL_TEST(every_mount_a_hull_declares_gets_a_condition_even_when_nothing_is_in_it
     Fixture fixture;
     SOL_REQUIRE(fixture.placeTargetAstern());
     const std::vector<game::MountCondition> mounts = fixture.targetMounts();
-    SOL_REQUIRE(mounts.size() == 4);
+    SOL_REQUIRE(mounts.size() == kMountCount);
     for (const game::MountCondition& mount : mounts) {
         SOL_CHECK(mount.maxHp > 0.0f);
         SOL_CHECK(mount.hp == mount.maxHp);
@@ -404,7 +528,7 @@ SOL_TEST(a_bigger_mount_takes_more_to_knock_out)
     Fixture fixture;
     SOL_REQUIRE(fixture.placeTargetAstern());
     const std::vector<game::MountCondition> mounts = fixture.targetMounts();
-    SOL_REQUIRE(mounts.size() == 4);
+    SOL_REQUIRE(mounts.size() == kMountCount);
     SOL_CHECK(mounts[kTail].maxHp == sol::assets::mountHitPoints(sol::assets::MountSize::Medium));
     SOL_CHECK(mounts[kNose].maxHp == sol::assets::mountHitPoints(sol::assets::MountSize::Small));
     SOL_CHECK(mounts[kTail].maxHp > mounts[kNose].maxHp);
@@ -439,7 +563,7 @@ SOL_TEST(armour_does_not_shelter_a_mount_the_way_a_shield_does)
     SOL_REQUIRE(fixture.placeTargetAstern());
     fixture.fire(4); // 100 points, all of it ablated
     const std::vector<game::MountCondition> mounts = fixture.targetMounts();
-    SOL_REQUIRE(mounts.size() == 4);
+    SOL_REQUIRE(mounts.size() == kMountCount);
     SOL_CHECK(fixture.world.shipHullFraction(fixture.mark) == 1.0);
     SOL_CHECK(mounts[kTail].hp < mounts[kTail].maxHp);
 }
@@ -452,15 +576,19 @@ SOL_TEST(armour_does_not_shelter_a_mount_the_way_a_shield_does)
 // exactly the mounts that must not have paid.
 SOL_TEST(a_shot_lands_on_the_mount_it_arrived_over)
 {
-    Fixture fixture;
+    // ⚑ ARMOURED, so the shot stops at the plating and the INTERNAL mounts stay
+    // out of it. What is under test here is which EXTERNAL mount a bearing
+    // picks; a bare-hulled target would have the hull-breach pass below
+    // spending the same shot on the inside as well, and a check that "nothing
+    // else paid" would be measuring two rules at once.
+    Fixture fixture(target("0.0", "4000.0"));
     SOL_REQUIRE(fixture.placeTargetAstern());
     fixture.fire(2); // 50 points, into a 150-point medium mount
     const std::vector<game::MountCondition> mounts = fixture.targetMounts();
-    SOL_REQUIRE(mounts.size() == 4);
+    SOL_REQUIRE(mounts.size() == kMountCount);
     SOL_CHECK(mounts[kTail].hp == mounts[kTail].maxHp - 50.0f);
     SOL_CHECK(mounts[kNose].hp == mounts[kNose].maxHp);
     SOL_CHECK(mounts[kBeam].hp == mounts[kBeam].maxHp);
-    SOL_CHECK(mounts[kCore].hp == mounts[kCore].maxHp);
 }
 
 // ⚑⚑ THE SAME HULL, THE SAME GUN, THE OTHER END — and the mounts that pay swap
@@ -473,29 +601,70 @@ SOL_TEST(the_same_hull_shot_from_ahead_loses_the_mount_at_the_other_end)
     SOL_REQUIRE(fixture.placeTargetAhead());
     fixture.fire(2);
     const std::vector<game::MountCondition> mounts = fixture.targetMounts();
-    SOL_REQUIRE(mounts.size() == 4);
+    SOL_REQUIRE(mounts.size() == kMountCount);
     SOL_CHECK(mounts[kNose].hp == mounts[kNose].maxHp - 50.0f);
     SOL_CHECK(mounts[kTail].hp == mounts[kTail].maxHp);
     SOL_CHECK(mounts[kBeam].hp == mounts[kBeam].maxHp);
 }
 
-// ⚑⚑ AN INTERNAL MOUNT IS NEVER THE ONE A HIT LANDS ON, whatever the bearing
-// and however long the shooting goes on — `decisions/014` rule 2, and the half
-// of it this stage implements. Reaching one is a different rule, about which of
-// several a hull hides behind its armour; this hull has one so that the absence
-// is measurable rather than assumed.
+// ⚑⚑ AN INTERNAL MOUNT IS NEVER AIMED AT, WHATEVER THE BEARING AND HOWEVER
+// LONG THE SHOOTING GOES ON — `decisions/014` rule 2. This hull's armour is
+// what holds it true: 4000 points of it, so a thousand rounds of beam never
+// reach the hull, and everything that lands is spent on the plating and on
+// whatever external mount was in the way.
 //
-// The counterfactual: drop the `external` check in `damageMounts` and `core`
-// starts paying, because an internal mount's `at` is the origin and a bearing
-// read off it is whatever `normalize` does with a zero vector.
-SOL_TEST(an_internal_mount_is_never_the_one_a_hit_lands_on)
+// The counterfactual is `damageMounts`' second pass keying on anything other
+// than `hullDamage` — sum in `armorAbsorbed` there, as the external pass
+// legitimately does, and the inside of an armoured ship starts failing while
+// the armour is still on it.
+SOL_TEST(an_internal_mount_is_untouched_while_the_armour_holds)
+{
+    Fixture fixture(target("0.0", "4000.0"));
+    SOL_REQUIRE(fixture.placeTargetAstern());
+    fixture.fire(40); // 1000 points, none of which reaches the hull
+    SOL_REQUIRE(fixture.world.shipHullFraction(fixture.mark) == 1.0);
+    const std::vector<game::MountCondition> mounts = fixture.targetMounts();
+    SOL_REQUIRE(mounts.size() == kMountCount);
+    SOL_CHECK(mounts[kCore].hp == mounts[kCore].maxHp);
+    SOL_CHECK(mounts[kGuts].hp == mounts[kGuts].maxHp);
+}
+
+// ⚑⚑⚑ AND THE OTHER HALF OF THE SAME RULE, WHICH IS THE ONE STAGE F2 ADDS: an
+// internal mount IS reached once the armour is gone. `hullDamage` is non-zero
+// only after `applyDamage` has spent the shield facing and then the armour, so
+// "reachable only once armour and hull are compromised" needed no condition of
+// its own — it is already the name of a field on the result.
+//
+// ⚑ THE DAMAGE SPREADS RATHER THAN PILING ONTO ONE PLACE. There is no geometry
+// to tell one internal mount from another, so the pick is arbitrary either way;
+// sharing it out is what leaves a ship degrading instead of losing whole
+// subsystems while others sit untouched. Take "the first internal mount" instead
+// and the second line here turns red.
+SOL_TEST(an_internal_mount_is_reached_once_the_armour_is_gone)
+{
+    Fixture fixture; // no armour at all: every point lands on the hull
+    SOL_REQUIRE(fixture.placeTargetAstern());
+    fixture.fire(4); // 100 points of hull damage across two internal mounts
+    const std::vector<game::MountCondition> mounts = fixture.targetMounts();
+    SOL_REQUIRE(mounts.size() == kMountCount);
+    SOL_CHECK(mounts[kCore].hp == mounts[kCore].maxHp - 50.0f);
+    SOL_CHECK(mounts[kGuts].hp == mounts[kGuts].maxHp - 50.0f);
+}
+
+// ⚑ AND THE TWO PASSES ARE INDEPENDENT: ONE SHOT CAN COST BOTH. They are
+// different mechanisms — an external mount is hit because it is physically in
+// the way, an internal one because the plating over it has failed — so a hull
+// breach that spared the sensor suite because a cargo pod happened to be on the
+// same bearing would be geometry deciding something it knows nothing about.
+SOL_TEST(one_shot_can_cost_an_external_mount_and_an_internal_one)
 {
     Fixture fixture;
     SOL_REQUIRE(fixture.placeTargetAstern());
-    fixture.fire(40); // 1000 points, several times what the whole mount list holds
+    fixture.fire(2); // 50 points
     const std::vector<game::MountCondition> mounts = fixture.targetMounts();
-    SOL_REQUIRE(mounts.size() == 4);
-    SOL_CHECK(mounts[kCore].hp == mounts[kCore].maxHp);
+    SOL_REQUIRE(mounts.size() == kMountCount);
+    SOL_CHECK(mounts[kTail].hp == mounts[kTail].maxHp - 50.0f); // the bearing
+    SOL_CHECK(mounts[kCore].hp < mounts[kCore].maxHp);          // and the breach
 }
 
 // ⚑ A SHOT THAT ARRIVES WHERE NOTHING IS BOLTED COSTS NOTHING, which is what
@@ -505,18 +674,18 @@ SOL_TEST(an_internal_mount_is_never_the_one_a_hit_lands_on)
 // `beam` starts absorbing shots fired at the far end of the ship.
 SOL_TEST(a_mount_ninety_degrees_off_the_shot_never_pays_for_it)
 {
-    Fixture astern;
+    Fixture astern(target("0.0", "4000.0"));
     SOL_REQUIRE(astern.placeTargetAstern());
     astern.fire(20);
     const std::vector<game::MountCondition> fromAstern = astern.targetMounts();
-    SOL_REQUIRE(fromAstern.size() == 4);
+    SOL_REQUIRE(fromAstern.size() == kMountCount);
     SOL_CHECK(fromAstern[kBeam].hp == fromAstern[kBeam].maxHp);
 
-    Fixture ahead;
+    Fixture ahead(target("0.0", "4000.0"));
     SOL_REQUIRE(ahead.placeTargetAhead());
     ahead.fire(20);
     const std::vector<game::MountCondition> fromAhead = ahead.targetMounts();
-    SOL_REQUIRE(fromAhead.size() == 4);
+    SOL_REQUIRE(fromAhead.size() == kMountCount);
     SOL_CHECK(fromAhead[kBeam].hp == fromAhead[kBeam].maxHp);
 }
 
@@ -537,12 +706,12 @@ SOL_TEST(a_mount_stops_at_zero_when_it_is_shot_off)
     SOL_REQUIRE(fixture.placeTargetAhead());
     fixture.fire(3); // 75 points into a 60-point small mount
     const std::vector<game::MountCondition> spent = fixture.targetMounts();
-    SOL_REQUIRE(spent.size() == 4);
+    SOL_REQUIRE(spent.size() == kMountCount);
     SOL_REQUIRE(spent[kNose].destroyed());
     SOL_CHECK(spent[kNose].hp == 0.0f);
     fixture.fire(20); // and 500 more into the same bearing
     const std::vector<game::MountCondition> after = fixture.targetMounts();
-    SOL_REQUIRE(after.size() == 4);
+    SOL_REQUIRE(after.size() == kMountCount);
     SOL_CHECK(after[kNose].hp == 0.0f);
     SOL_CHECK(after[kTail].hp == after[kTail].maxHp);
 }
@@ -558,7 +727,7 @@ SOL_TEST(the_hull_pays_the_hit_as_well_as_the_mount)
     SOL_REQUIRE(fixture.placeTargetAstern());
     fixture.fire(4); // 100 points
     const std::vector<game::MountCondition> mounts = fixture.targetMounts();
-    SOL_REQUIRE(mounts.size() == 4);
+    SOL_REQUIRE(mounts.size() == kMountCount);
     SOL_CHECK(mounts[kTail].hp == mounts[kTail].maxHp - 100.0f);
     // 9000 hull, no armour, so the fraction is the arithmetic said out loud.
     SOL_CHECK(std::abs(fixture.world.shipHullFraction(fixture.mark) - (8'900.0 / 9'000.0)) < 1.0e-6);
@@ -578,7 +747,7 @@ SOL_TEST(a_mount_that_has_been_shot_off_stops_being_drawn)
     SOL_REQUIRE(fixture.fittingsDrawn() == 2);
     fixture.fire(6);
     const std::vector<game::MountCondition> mounts = fixture.targetMounts();
-    SOL_REQUIRE(mounts.size() == 4);
+    SOL_REQUIRE(mounts.size() == kMountCount);
     SOL_REQUIRE(mounts[kTail].destroyed());
     SOL_CHECK(fixture.fittingsDrawn() == 1);
 }
@@ -598,7 +767,7 @@ SOL_TEST(a_gun_whose_mount_has_been_shot_off_does_not_fire)
     SOL_REQUIRE(fixture.placeTargetAstern());
     SOL_REQUIRE(fixture.damageDealtInOneTick() > 0.0); // it worked before the ram
     SOL_REQUIRE(fixture.ramTarget());
-    SOL_REQUIRE(fixture.playerMounts().size() == 1);
+    SOL_REQUIRE(fixture.playerMounts().size() == 2);
     SOL_REQUIRE(fixture.playerMounts()[0].destroyed());
     // Back off and line up again: the ram left the two hulls in contact, and a
     // shot fired from inside a collision would be measured against damage the
@@ -621,7 +790,7 @@ SOL_TEST(a_gun_whose_mount_has_been_shot_off_stops_being_drawn)
     SOL_REQUIRE(fixture.spawnHulk());
     SOL_REQUIRE(fixture.fittingsDrawn() == 1);
     SOL_REQUIRE(fixture.ramTarget());
-    SOL_REQUIRE(fixture.playerMounts().size() == 1);
+    SOL_REQUIRE(fixture.playerMounts().size() == 2);
     SOL_REQUIRE(fixture.playerMounts()[0].destroyed());
     SOL_CHECK(fixture.fittingsDrawn() == 0);
 }
@@ -634,13 +803,13 @@ SOL_TEST(a_shot_off_mount_survives_a_save_and_a_load)
     Fixture fixture;
     SOL_REQUIRE(fixture.spawnTarget());
     SOL_REQUIRE(fixture.ramTarget());
-    SOL_REQUIRE(fixture.playerMounts().size() == 1);
+    SOL_REQUIRE(fixture.playerMounts().size() == 2);
     SOL_REQUIRE(fixture.playerMounts()[0].destroyed());
 
     const std::string path = scratchPath("mount_condition.sav");
     SOL_REQUIRE(fixture.world.saveTo(path.c_str(), "Rammed"));
     SOL_REQUIRE(fixture.world.loadFrom(path.c_str()));
-    SOL_REQUIRE(fixture.playerMounts().size() == 1);
+    SOL_REQUIRE(fixture.playerMounts().size() == 2);
     SOL_CHECK(fixture.playerMounts()[0].destroyed());
 }
 
@@ -654,11 +823,220 @@ SOL_TEST(a_refit_makes_a_shot_off_mount_whole_again)
     Fixture fixture;
     SOL_REQUIRE(fixture.spawnTarget());
     SOL_REQUIRE(fixture.ramTarget());
-    SOL_REQUIRE(fixture.playerMounts().size() == 1);
+    SOL_REQUIRE(fixture.playerMounts().size() == 2);
     SOL_REQUIRE(fixture.playerMounts()[0].destroyed());
     fixture.world.applyDefs(fixture.defs);
     const std::vector<game::MountCondition> mounts = fixture.playerMounts();
-    SOL_REQUIRE(mounts.size() == 1);
+    SOL_REQUIRE(mounts.size() == 2);
     SOL_CHECK(!mounts[0].destroyed());
     SOL_CHECK(mounts[0].hp == mounts[0].maxHp);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 31 stage F2 — what a destroyed mount STOPS DOING.
+// ---------------------------------------------------------------------------
+
+// ⚑⚑⚑ PHASE 31'S OWN EXIT CRITERION, HALF OF IT: "shoot a freighter's drive off
+// and watch it stop, STILL ALIVE". The shooter's drive is its only one, so
+// taking it off leaves nothing to push with — and its hull is nowhere near
+// gone, which is the "still alive" the criterion insists on.
+//
+// The control is the first check: the same hull, the same input, the same
+// number of ticks, before anything has been shot off.
+SOL_TEST(a_hull_whose_only_drive_is_shot_off_cannot_accelerate)
+{
+    Fixture fixture;
+    SOL_REQUIRE(fixture.spawnHulk());
+    SOL_REQUIRE(fixture.comeToRest());
+    SOL_REQUIRE(fixture.flyFor(60, {0.0f, 0.0f, -1.0f}) > 100.0); // one second of drive
+
+    SOL_REQUIRE(fixture.ramAstern());
+    const std::vector<game::MountCondition> mounts = fixture.playerMounts();
+    SOL_REQUIRE(mounts.size() == 2);
+    SOL_REQUIRE(mounts[1].destroyed()); // `drive_main`
+    SOL_REQUIRE(fixture.playerHullFraction() > 0.0);
+
+    SOL_REQUIRE(fixture.comeToRest()); // and zero the velocity the ram left
+    SOL_CHECK(fixture.flyFor(60, {0.0f, 0.0f, -1.0f}) == 0.0);
+}
+
+// ⚑⚑ AND IT CAN STILL TURN, WHICH IS DELIBERATE AND IS WHY `MountKind` HAS BOTH
+// `engine` AND `thruster`. Engines push and thrusters turn — gdd.md §11.5 lists
+// them separately — so a hull with its drive shot off is dead in the water and
+// still able to point itself, which is what lets a crippled freighter keep a
+// turret on you. Scale the angular envelope by the drive too and this is the
+// test that says so.
+SOL_TEST(a_ship_with_its_drive_shot_off_can_still_turn)
+{
+    Fixture fixture;
+    SOL_REQUIRE(fixture.spawnHulk());
+    SOL_REQUIRE(fixture.ramAstern());
+    SOL_REQUIRE(fixture.comeToRest());
+    const sol::core::Quat before = fixture.world.shipState().orientation;
+    (void)fixture.flyFor(60, {}, {0.0f, 1.0f, 0.0f}); // a second of yaw
+    const sol::core::Quat after = fixture.world.shipState().orientation;
+    SOL_CHECK(std::abs(dot(before, after)) < 0.999f);
+}
+
+// ⚑ A DRIVE THAT IS GONE CANNOT CRUISE AWAY EITHER, and that is not a second
+// rule — cruise is a multiple of the same speed cap the drive scales. A
+// disabled ship that could still engage cruise is not a disabled ship, and it
+// is the whole reason `maxSpeed` scales beside the accelerations rather than
+// the accelerations alone.
+SOL_TEST(a_ship_with_its_drive_shot_off_cannot_cruise_away)
+{
+    Fixture fixture;
+    SOL_REQUIRE(fixture.spawnHulk());
+    SOL_REQUIRE(fixture.ramAstern());
+    SOL_REQUIRE(fixture.comeToRest());
+    sol::sim::FlightInput input;
+    input.linear = {0.0f, 0.0f, -1.0f};
+    input.cruise = true;
+    for (int tick = 0; tick < 120; ++tick) {
+        fixture.world.setShipInput(input);
+        fixture.world.tick(1.0 / 60.0);
+    }
+    SOL_CHECK(length(fixture.world.shipState().velocity) == 0.0);
+}
+
+// ⚑⚑ HALF A DRIVE IS HALF THE TOP SPEED, AND NOT MERELY A SLOWER CLIMB TO THE
+// SAME ONE. This is the check that makes `tuning.maxSpeed *= drive` a rule
+// rather than a line nobody would miss: with the accelerations scaled and the
+// cap left alone, a half-drive ship takes twice as long to get going and then
+// runs exactly as fast as it ever did — which is not a ship anybody would call
+// crippled, and which fifteen seconds of held thrust cannot tell from a whole
+// one.
+//
+// It needs a hull with TWO drives, because one drive can only answer "none
+// left". The second is hung on the belly, ninety degrees off the bearing a
+// stern ram arrives on, so the ram takes exactly one of the two.
+SOL_TEST(half_a_drive_is_half_the_top_speed)
+{
+    Fixture fixture(target(), shooter(kVentralDrive));
+    SOL_REQUIRE(fixture.spawnHulk());
+    SOL_REQUIRE(fixture.comeToRest());
+    const double whole = fixture.flyFor(900, {0.0f, 0.0f, -1.0f}); // fifteen seconds: terminal
+    SOL_REQUIRE(whole > 100.0);
+
+    SOL_REQUIRE(fixture.ramAstern());
+    const std::vector<game::MountCondition> mounts = fixture.playerMounts();
+    SOL_REQUIRE(mounts.size() == 3);
+    SOL_REQUIRE(mounts[1].destroyed());  // `drive_main`, on the bearing
+    SOL_REQUIRE(!mounts[2].destroyed()); // `drive_ventral`, ninety degrees off it
+
+    SOL_REQUIRE(fixture.comeToRest());
+    const double halved = fixture.flyFor(900, {0.0f, 0.0f, -1.0f});
+    SOL_CHECK(halved > whole * 0.4);
+    SOL_CHECK(halved < whole * 0.6);
+}
+
+// ⚑ HALF THE DRIVES IS HALF THE PUSH, and the readings either side of it are
+// what make this a proportion rather than a switch.
+//
+// ⚑⚑ THIS IS THE ONE CHECK IN THE FILE THAT BUILDS THE COMPONENT BY HAND, and
+// it is allowed to because `driveFraction` is a PURE FUNCTION OF IT. Everything
+// else here is a claim about how a mount came to be damaged, which only the real
+// damage path can make; this is a claim about arithmetic over a struct, and
+// routing it through a ram would only make it slower to read.
+SOL_TEST(a_hull_flies_on_the_share_of_its_drives_that_is_left)
+{
+    game::ShipMounts mounts;
+    mounts.count = 3;
+    mounts.mounts[0].kind = sol::assets::MountKind::Engine;
+    mounts.mounts[1].kind = sol::assets::MountKind::Engine;
+    mounts.mounts[2].kind = sol::assets::MountKind::Turret; // not a drive: never counted
+    for (std::uint32_t m = 0; m < mounts.count; ++m) {
+        mounts.mounts[m].maxHp = 60.0f;
+        mounts.mounts[m].hp = 60.0f;
+    }
+    SOL_CHECK(game::driveFraction(mounts) == 1.0f);
+    mounts.mounts[0].hp = 0.0f;
+    SOL_CHECK(game::driveFraction(mounts) == 0.5f);
+    mounts.mounts[1].hp = 0.0f;
+    SOL_CHECK(game::driveFraction(mounts) == 0.0f);
+    // ⚑ And shooting the turret off changes nothing about the drive, which is
+    // what keeps this from quietly becoming "how much of this ship is left".
+    mounts.mounts[2].hp = 0.0f;
+    SOL_CHECK(game::driveFraction(mounts) == 0.0f);
+}
+
+// ⚑⚑ A HULL THAT DECLARES NO ENGINE MOUNT FLIES EXACTLY AS IT ALWAYS DID, and
+// that is not a fallback so much as the rule read carefully: a drive you cannot
+// shoot off is a drive that cannot be missing. It matters because it is most of
+// the game — every test hull in `armament_tests`, every station, every rock, and
+// every ship built before this stage existed.
+SOL_TEST(a_hull_with_no_engine_mount_at_all_flies_as_it_always_did)
+{
+    game::ShipMounts none;
+    SOL_CHECK(game::driveFraction(none) == 1.0f);
+    SOL_CHECK(game::shieldsArePowered(none));
+
+    game::ShipMounts unarmed;
+    unarmed.count = 1;
+    unarmed.mounts[0].kind = sol::assets::MountKind::Utility;
+    unarmed.mounts[0].maxHp = 60.0f;
+    unarmed.mounts[0].hp = 0.0f; // shot off, and still not a drive
+    SOL_CHECK(game::driveFraction(unarmed) == 1.0f);
+    SOL_CHECK(game::shieldsArePowered(unarmed));
+}
+
+// ⚑⚑⚑ A SHIELD GENERATOR THAT HAS BEEN SHOT OFF STOPS THE FACINGS COMING BACK.
+// `guts` is a `shield` mount and it is INTERNAL, which is how all three shipped
+// hulls author theirs — so this is also the end-to-end proof that stage F2's two
+// halves meet: the shot has to get through the shield and then the armour to
+// reach the generator that is the reason the shield was there at all.
+SOL_TEST(a_shot_off_shield_generator_stops_the_facings_coming_back)
+{
+    // 200 per facing, no armour, and a regen fast enough to see inside a second.
+    Fixture fixture(target("200.0", "0.0", "50.0"));
+    SOL_REQUIRE(fixture.placeTargetAstern());
+    // The control first: dent the aft facing and watch it recover.
+    fixture.fire(4); // 100 points into a 200-point facing
+    const float dented = fixture.targetShieldAft();
+    SOL_REQUIRE(dented < 200.0f);
+    (void)fixture.flyFor(60, {});
+    SOL_REQUIRE(fixture.targetShieldAft() > dented);
+
+    // Now through the facing and into the hull until the generator itself goes.
+    fixture.fire(60);
+    const std::vector<game::MountCondition> mounts = fixture.targetMounts();
+    SOL_REQUIRE(mounts.size() == kMountCount);
+    SOL_REQUIRE(mounts[kGuts].destroyed());
+    const float stranded = fixture.targetShieldAft();
+    (void)fixture.flyFor(120, {});
+    SOL_CHECK(fixture.targetShieldAft() == stranded);
+}
+
+// ⚑ AND WHAT IS ALREADY IN THE ENVELOPE DOES NOT EVAPORATE WITH IT. Collapsing
+// both facings when the generator goes would make one lucky shot a larger swing
+// than anything else in the damage model can do in a single hit — larger than
+// destroying the hull's own armour — so a destroyed generator stops the supply
+// and takes nothing back.
+SOL_TEST(shields_already_up_do_not_evaporate_when_the_generator_goes)
+{
+    Fixture fixture(target("200.0", "0.0", "0.0"));
+    SOL_REQUIRE(fixture.placeTargetAstern());
+    // Every shot lands aft, so the FORE facing is untouched and still full at
+    // the moment the generator underneath it is destroyed.
+    fixture.fire(60);
+    const std::vector<game::MountCondition> mounts = fixture.targetMounts();
+    SOL_REQUIRE(mounts.size() == kMountCount);
+    SOL_REQUIRE(mounts[kGuts].destroyed());
+    SOL_CHECK(fixture.targetShieldFore() == 200.0f);
+}
+
+// ⚑ AND THE PLAYER CAN SEE IT. The ship readout is where a fit is read, so a
+// mount that has been shot off has to say so there or the only way to find out
+// is to notice the ship handling differently. `shipInfoReport` is the same text
+// the screen draws its rows from, which is how this is verified without reading
+// pixels.
+SOL_TEST(the_ship_readout_says_which_mount_has_been_shot_off)
+{
+    Fixture fixture;
+    SOL_REQUIRE(fixture.spawnHulk());
+    SOL_REQUIRE(game::shipInfoReport(fixture.world, fixture.defs).find("DESTROYED") == std::string::npos);
+    SOL_REQUIRE(fixture.ramAstern());
+    const std::string report = game::shipInfoReport(fixture.world, fixture.defs);
+    SOL_CHECK(report.find("drive_main") != std::string::npos);
+    SOL_CHECK(report.find("DESTROYED") != std::string::npos);
 }
