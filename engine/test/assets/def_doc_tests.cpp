@@ -632,3 +632,75 @@ SOL_TEST(defDocInlineTableScansAQuotedValueRatherThanSplittingOnItsComma)
     SOL_CHECK(textures->setInlineValue("glow", "\"checker\""));
     SOL_CHECK(textures->text == "textures = { odd = \"a,b\", glow = \"checker\" }");
 }
+
+// ⚑ THE FORGE OWNS `ships.toml`, AND PHASE 31 STAGE A2 PUT SUB-HEADERS INSIDE
+// IT. `[[ship.mount]]` is still a `[[table]]`, so `DefDoc` keeps it as a row of
+// its own with its header line raw - the same treatment `[[system.planet]]`
+// got in Phase 29 stage D, in a file the tool merely READ. This is the first
+// time a document the Forge WRITES has them, and the two claims that matter are
+// that a mount row is not mistaken for a ship and that editing a hull's key
+// does not disturb the mounts underneath it.
+SOL_TEST(defDocumentKeepsShipMountRowsSeparateFromShips)
+{
+    const std::string source = readWholeFile(defPath("ships"));
+    SOL_REQUIRE(!source.empty());
+    DefDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    // Three hulls, eighteen mounts, and `count("ship")` is not confused by the
+    // rows that merely start with the word.
+    SOL_CHECK(doc.count("ship") == 3);
+    SOL_CHECK(doc.count("ship.mount") == 18);
+    SOL_CHECK(doc.find("ship", "turret_dorsal") == nullptr);
+
+    // A mount row's `id` is readable as a row of its own, which is what the
+    // Forge's mount tool will pick one by.
+    std::size_t named = 0;
+    for (const assets::DefRow& row : doc.rows) {
+        if (row.type == "ship.mount" && row.id() == "turret_dorsal") {
+            ++named;
+            const assets::DefKey* kind = row.find("kind");
+            SOL_REQUIRE(kind != nullptr);
+            SOL_CHECK(kind->unquoted() == "turret");
+        }
+    }
+    SOL_CHECK(named == 1);
+}
+
+SOL_TEST(defDocumentEditOnAHullLeavesItsMountsAlone)
+{
+    const std::string source = readWholeFile(defPath("ships"));
+    SOL_REQUIRE(!source.empty());
+    DefDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+    DefRow* freighter = doc.find("ship", "sol.freighter");
+    SOL_REQUIRE(freighter != nullptr);
+
+    // ⚑ `set` APPENDS AT THE END OF THE ROW, which is now the line before the
+    // hull's first `[[ship.mount]]` header rather than the end of the file's
+    // stanza. That is still correct TOML - a key after a sub-header would
+    // belong to the MOUNT - and this is the assertion that says so, because
+    // getting it wrong moves a hull's key onto its turret.
+    freighter->set("crew_berths", "4");
+    const std::string written = assets::writeDefs(doc);
+
+    // The game's own schema is the arbiter, the same way the tool validates.
+    std::string error;
+    SOL_CHECK(schemaAccepts(written, error));
+    if (!error.empty()) {
+        std::printf("  schema refused the edited document: %s\n", error.c_str());
+    }
+
+    // And it landed on the hull rather than on a mount.
+    DefDoc reparsed;
+    SOL_REQUIRE(parses(written, reparsed));
+    const DefRow* again = reparsed.find("ship", "sol.freighter");
+    SOL_REQUIRE(again != nullptr);
+    const assets::DefKey* berths = again->find("crew_berths");
+    SOL_REQUIRE(berths != nullptr);
+    SOL_CHECK(berths->value() == "4");
+    SOL_CHECK(reparsed.count("ship.mount") == 18);
+    for (const assets::DefRow& row : reparsed.rows) {
+        SOL_CHECK(!(row.type == "ship.mount" && row.find("crew_berths") != nullptr));
+    }
+}

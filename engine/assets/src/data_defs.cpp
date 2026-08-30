@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <iterator>
 #include <string_view>
 #include <utility>
 
@@ -122,7 +123,11 @@ struct FieldReader
         }
     }
 
-    void optionalFloat3(const char* key, float (&out)[3])
+    // ⚑ `present` joined this one in Phase 31 stage A2 for the same reason it
+    // exists on the scalars: a mount's `at` decides EXTERNAL-or-internal by
+    // being written at all, and the origin is a position an author may well
+    // mean, so comparing against the default cannot tell unset from authored.
+    void optionalFloat3(const char* key, float (&out)[3], bool* present = nullptr)
     {
         const TomlValue* value = table.find(key);
         if (value == nullptr) {
@@ -139,6 +144,9 @@ struct FieldReader
                 return;
             }
             out[i] = static_cast<float>(element.asFloat());
+        }
+        if (present != nullptr) {
+            *present = true;
         }
     }
 
@@ -414,6 +422,88 @@ bool parseShip(const TomlValue& table,
     reader.optionalUint("crew_berths", def.crewBerths);
     reader.optionalGate(def.gate);
 
+    // Nested rows, by hand and in the shape `parseSystem` already uses for
+    // `[[system.planet]]` - the second def kind in the game to have any, and
+    // still not enough callers to be worth a shared helper.
+    if (const TomlValue* mounts = table.find("mount"); mounts != nullptr && !reader.failed) {
+        if (!mounts->isArray()) {
+            reader.fail("'mount' must be an array of tables ([[ship.mount]])");
+        }
+        for (std::size_t i = 0; !reader.failed && i < mounts->size(); ++i) {
+            const TomlValue& row = (*mounts)[i];
+            if (!row.isTable()) {
+                reader.fail("'mount' must be an array of tables ([[ship.mount]])");
+                break;
+            }
+            ShipMount mount;
+            FieldReader inner{.table = row,
+                              .context = reader.context + " mount " + std::to_string(i),
+                              .outError = outError};
+            inner.requireString("id", mount.id);
+            if (!inner.failed) {
+                inner.context = reader.context + " mount '" + mount.id + "'";
+            }
+
+            // ⚑ BOTH ARE REQUIRED, and neither gets a default. A `kind` this
+            // file invented would be a hull silently accepting kit its author
+            // never said it takes, and a `size` this file invented would be
+            // the hull's fitting BUDGET written by the parser - which is the
+            // one number gdd.md 11.1 makes a hull class mean.
+            std::string kindText;
+            std::string sizeText;
+            inner.requireString("kind", kindText);
+            inner.requireString("size", sizeText);
+            if (!inner.failed && !parseMountKind(kindText, mount.kind)) {
+                inner.fail("'kind' is not a mount kind: '" + kindText + "'");
+            }
+            if (!inner.failed && !parseMountSize(sizeText, mount.size)) {
+                inner.fail("'size' must be \"small\", \"medium\", \"large\" or \"xlarge\", not \"" +
+                           sizeText + "\"");
+            }
+
+            bool hasAim = false;
+            bool hasArc = false;
+            inner.optionalFloat3("at", mount.at, &mount.external);
+            inner.optionalFloat3("aim", mount.aim, &hasAim);
+            inner.optionalFloat("arc", mount.arc, &hasArc);
+            inner.rejectUnknownKeys({"id", "kind", "size", "at", "aim", "arc"});
+
+            // ⚑ REFUSED RATHER THAN IGNORED, and it is decisions/014 rule 2
+            // read backwards. `at` is the ONE key that decides external, so a
+            // row carrying `aim` or `arc` without it has written a facing and
+            // a traverse for something that is never drawn and never aimed -
+            // and silently dropping them reads to the author as a parser that
+            // ate their turret.
+            if (!inner.failed && !mount.external && hasAim) {
+                inner.fail("'aim' needs an 'at': a mount with no position is internal, and an internal "
+                           "mount has nothing to face");
+            }
+            if (!inner.failed && !mount.external && hasArc) {
+                inner.fail("'arc' needs an 'at': a mount with no position is internal, and an internal "
+                           "mount has nothing to traverse");
+            }
+            if (!inner.failed && hasAim && mount.aim[0] == 0.0f && mount.aim[1] == 0.0f &&
+                mount.aim[2] == 0.0f) {
+                inner.fail("'aim' must not be the zero vector");
+            }
+            if (!inner.failed && (mount.arc < 0.0f || mount.arc > 360.0f)) {
+                inner.fail("'arc' must be between 0 and 360 degrees");
+            }
+            // ⚑ decisions/014 rule 1 enforced where it can still be enforced.
+            // A save names a fitting by its mount id; two mounts sharing one id
+            // makes that name ambiguous, and the ambiguity would not surface
+            // until a player loaded a campaign.
+            if (!inner.failed && def.findMount(mount.id) != nullptr) {
+                inner.fail("duplicate mount id '" + mount.id + "' on this hull");
+            }
+            if (inner.failed) {
+                reader.failed = true;
+                break;
+            }
+            def.mounts.push_back(std::move(mount));
+        }
+    }
+
     reader.rejectUnknownKeys({"id",
                               "name",
                               "model",
@@ -450,6 +540,7 @@ bool parseShip(const TomlValue& table,
                               "slots_cargo",
                               "slots_utility",
                               "crew_berths",
+                              "mount",
                               "factions",
                               "min_rep"});
     if (!reader.failed && def.scale <= 0.0f) {
@@ -1477,6 +1568,80 @@ bool parseCrew(const TomlValue& table,
 }
 
 } // namespace
+
+// --- Mount vocabulary (Phase 31 stage A2) ---
+//
+// ⚑ The table is written ONCE and both directions read it, because a name list
+// and a parser that drift apart is a mount kind that loads and then prints as
+// something else. The order is `MountKind`'s, and the static_assert is what
+// says so when somebody adds a kind to the enum and not to the table.
+namespace {
+
+constexpr const char* kMountKindNames[] = {"turret",
+                                           "fixed",
+                                           "launcher",
+                                           "bay",
+                                           "engine",
+                                           "thruster",
+                                           "shield",
+                                           "armor",
+                                           "utility",
+                                           "subsystem",
+                                           "hangar",
+                                           "dock"};
+
+constexpr const char* kMountSizeNames[] = {"small", "medium", "large", "xlarge"};
+
+// ⚑ SIZED BY THE INITIALISER AND CHECKED AGAINST THE ENUM, rather than sized by
+// the enum. `[kMountKindCount]` would accept a SHORT list and leave a null at
+// the end, which `parseMountKind` then compares a `string_view` against -
+// undefined behaviour reached by adding a member to an enum, surfacing as a
+// crash inside somebody's def file rather than as a message about a table.
+static_assert(std::size(kMountKindNames) == kMountKindCount, "a mount kind is missing its def spelling");
+static_assert(std::size(kMountSizeNames) == kMountSizeCount, "a mount size is missing its def spelling");
+
+} // namespace
+
+const char* mountKindName(MountKind kind)
+{
+    const auto index = static_cast<std::size_t>(kind);
+    return index < kMountKindCount ? kMountKindNames[index] : "?";
+}
+
+bool parseMountKind(std::string_view text, MountKind& out)
+{
+    for (std::size_t i = 0; i < kMountKindCount; ++i) {
+        if (text == kMountKindNames[i]) {
+            out = static_cast<MountKind>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* mountSizeName(MountSize size)
+{
+    const auto index = static_cast<std::size_t>(size);
+    return index < kMountSizeCount ? kMountSizeNames[index] : "?";
+}
+
+bool parseMountSize(std::string_view text, MountSize& out)
+{
+    for (std::size_t i = 0; i < kMountSizeCount; ++i) {
+        if (text == kMountSizeNames[i]) {
+            out = static_cast<MountSize>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+const ShipMount* ShipDef::findMount(std::string_view mountId) const
+{
+    const auto it = std::find_if(
+        mounts.begin(), mounts.end(), [&](const ShipMount& mount) { return mount.id == mountId; });
+    return it != mounts.end() ? &*it : nullptr;
+}
 
 void DefDatabase::clear()
 {

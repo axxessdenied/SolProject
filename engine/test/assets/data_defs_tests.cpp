@@ -2351,3 +2351,349 @@ id = "campaign.c"
     SOL_REQUIRE(db.constellations()[0].members.size() == 3);
     SOL_CHECK(db.constellations()[0].members[0].name == "Modded A");
 }
+
+// --- Mounts (Phase 31 stage A2) ---
+
+SOL_TEST(data_defs_ship_parses_mounts)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[ship]]
+id = "sol.destroyer"
+name = "Destroyer"
+
+  [[ship.mount]]
+  id = "turret_dorsal_1"
+  kind = "turret"
+  size = "medium"
+  at = [0.0, 3.2, -1.5]
+  aim = [0.0, 1.0, 0.0]
+  arc = 220.0
+
+  [[ship.mount]]
+  id = "internal_reactor"
+  kind = "subsystem"
+  size = "large"
+)",
+                      "ships.toml",
+                      &error));
+    const ShipDef* def = db.findShip("sol.destroyer");
+    SOL_REQUIRE(def != nullptr);
+    SOL_REQUIRE(def->mounts.size() == 2);
+
+    // Authored order, because the outfitting screen and the Forge both show a
+    // list and an author who groups their turrets means it.
+    SOL_CHECK(def->mounts[0].id == "turret_dorsal_1");
+    SOL_CHECK(def->mounts[1].id == "internal_reactor");
+
+    const sol::assets::ShipMount* turret = def->findMount("turret_dorsal_1");
+    SOL_REQUIRE(turret != nullptr);
+    SOL_CHECK(turret->kind == sol::assets::MountKind::Turret);
+    SOL_CHECK(turret->size == sol::assets::MountSize::Medium);
+    SOL_CHECK(turret->arc == 220.0f);
+    SOL_CHECK(turret->at[1] == 3.2f);
+    SOL_CHECK(turret->aim[1] == 1.0f);
+    // decisions/014 rule 2: `at` present is the whole of "external".
+    SOL_CHECK(turret->external);
+
+    const sol::assets::ShipMount* reactor = def->findMount("internal_reactor");
+    SOL_REQUIRE(reactor != nullptr);
+    SOL_CHECK(reactor->kind == sol::assets::MountKind::Subsystem);
+    SOL_CHECK(reactor->size == sol::assets::MountSize::Large);
+    SOL_CHECK(!reactor->external);
+    // A default facing rather than a zeroed one: an internal mount points where
+    // the ship points. Nothing reads it, and a reader that starts to would
+    // otherwise get an aim of exactly nowhere.
+    SOL_CHECK(reactor->aim[2] == -1.0f);
+    SOL_CHECK(reactor->arc == 0.0f);
+
+    SOL_CHECK(def->findMount("no_such_mount") == nullptr);
+}
+
+SOL_TEST(data_defs_ship_without_mounts_still_loads)
+{
+    // Deliberate, and only until stage B. The four `slots_*` counts are what
+    // the fit model reads today, so a mod's ship def written before mounts
+    // existed still loads and still flies; stage B is where an empty list
+    // becomes a hull that can fit nothing.
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kBaseShips, "ships.toml", &error));
+    const ShipDef* def = db.findShip("sol.shuttle");
+    SOL_REQUIRE(def != nullptr);
+    SOL_CHECK(def->mounts.empty());
+}
+
+SOL_TEST(data_defs_mount_kind_and_size_names_round_trip)
+{
+    // The spelling table is written once and read in both directions; this is
+    // what says so when somebody adds a kind to the enum and not to the table.
+    for (std::size_t i = 0; i < sol::assets::kMountKindCount; ++i) {
+        const auto kind = static_cast<sol::assets::MountKind>(i);
+        sol::assets::MountKind parsed{};
+        SOL_REQUIRE(sol::assets::parseMountKind(sol::assets::mountKindName(kind), parsed));
+        SOL_CHECK(parsed == kind);
+    }
+    for (std::size_t i = 0; i < sol::assets::kMountSizeCount; ++i) {
+        const auto size = static_cast<sol::assets::MountSize>(i);
+        sol::assets::MountSize parsed{};
+        SOL_REQUIRE(sol::assets::parseMountSize(sol::assets::mountSizeName(size), parsed));
+        SOL_CHECK(parsed == size);
+    }
+    // ⚑ A ROUND TRIP ALONE CANNOT SEE A ROTATED TABLE - both directions read
+    // it, so shifting every entry by one agrees with itself perfectly. These
+    // pin the two ends to the words gdd.md 11.5 actually uses.
+    SOL_CHECK(std::strcmp(sol::assets::mountKindName(sol::assets::MountKind::Turret), "turret") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::mountKindName(sol::assets::MountKind::Dock), "dock") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::mountSizeName(sol::assets::MountSize::Small), "small") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::mountSizeName(sol::assets::MountSize::XLarge), "xlarge") == 0);
+
+    sol::assets::MountKind unused{};
+    SOL_CHECK(!sol::assets::parseMountKind("Turret", unused)); // spellings are lowercase
+    SOL_CHECK(!sol::assets::parseMountKind("cargo", unused));  // gdd.md 11.5 has no cargo kind
+    SOL_CHECK(!sol::assets::parseMountKind("", unused));
+}
+
+SOL_TEST(data_defs_mount_accepts_its_own_size_or_smaller)
+{
+    using sol::assets::mountAccepts;
+    using sol::assets::MountSize;
+    // decisions/014 rule 3, in both directions: a large mount takes small kit
+    // and wastes itself doing it, and a small mount refuses large kit.
+    SOL_CHECK(mountAccepts(MountSize::Large, MountSize::Small));
+    SOL_CHECK(mountAccepts(MountSize::Large, MountSize::Large));
+    SOL_CHECK(!mountAccepts(MountSize::Small, MountSize::Medium));
+    SOL_CHECK(!mountAccepts(MountSize::Large, MountSize::XLarge));
+    SOL_CHECK(mountAccepts(MountSize::XLarge, MountSize::Large));
+}
+
+SOL_TEST(data_defs_mount_errors_name_the_hull_and_the_mount)
+{
+    const auto refused = [](const char* mountRows, const char* expectedFragment) {
+        DefDatabase db;
+        std::string error;
+        const std::string toml = std::string("[[ship]]\nid = \"sol.x\"\nname = \"X\"\n") + mountRows;
+        if (db.mergeToml(toml.c_str(), toml.size(), "ships.toml", &error)) {
+            std::printf("  expected a refusal, got a load\n");
+            return false;
+        }
+        if (error.find(expectedFragment) == std::string::npos) {
+            std::printf("  error was: %s\n  expected to contain: %s\n", error.c_str(), expectedFragment);
+            return false;
+        }
+        // Every one of them says which file and which hull, because a mod's
+        // ship def is read by somebody who did not write it.
+        if (error.find("ships.toml") == std::string::npos || error.find("sol.x") == std::string::npos) {
+            std::printf("  error does not name the file and the hull: %s\n", error.c_str());
+            return false;
+        }
+        return true;
+    };
+
+    SOL_CHECK(refused("[[ship.mount]]\nkind = \"turret\"\nsize = \"small\"\n", "missing key 'id'"));
+    SOL_CHECK(refused("[[ship.mount]]\nid = \"a\"\nsize = \"small\"\n", "missing key 'kind'"));
+    SOL_CHECK(refused("[[ship.mount]]\nid = \"a\"\nkind = \"turret\"\n", "missing key 'size'"));
+    SOL_CHECK(
+        refused("[[ship.mount]]\nid = \"a\"\nkind = \"gun\"\nsize = \"small\"\n", "not a mount kind: 'gun'"));
+    SOL_CHECK(refused("[[ship.mount]]\nid = \"a\"\nkind = \"turret\"\nsize = \"huge\"\n", "\"xlarge\""));
+    SOL_CHECK(refused("[[ship.mount]]\nid = \"a\"\nkind = \"turret\"\nsize = \"small\"\nwidth = 2.0\n",
+                      "unknown key 'width'"));
+
+    // The mount id is in the message, not just the index: a hull with eight of
+    // these is read by a person who wrote them by name.
+    SOL_CHECK(refused("[[ship.mount]]\nid = \"a\"\nkind = \"turret\"\nsize = \"small\"\n"
+                      "[[ship.mount]]\nid = \"a\"\nkind = \"fixed\"\nsize = \"small\"\n",
+                      "duplicate mount id 'a'"));
+
+    // decisions/014 rule 2 read backwards: `aim` and `arc` are meaningless
+    // without a position, and dropping them silently reads as a parser that ate
+    // the author's turret.
+    SOL_CHECK(refused("[[ship.mount]]\nid = \"a\"\nkind = \"turret\"\nsize = \"small\"\naim = [0, 1, 0]\n",
+                      "'aim' needs an 'at'"));
+    SOL_CHECK(refused("[[ship.mount]]\nid = \"a\"\nkind = \"turret\"\nsize = \"small\"\narc = 90.0\n",
+                      "'arc' needs an 'at'"));
+    SOL_CHECK(refused("[[ship.mount]]\nid = \"a\"\nkind = \"turret\"\nsize = \"small\"\n"
+                      "at = [0, 1, 0]\naim = [0, 0, 0]\n",
+                      "'aim' must not be the zero vector"));
+    SOL_CHECK(refused("[[ship.mount]]\nid = \"a\"\nkind = \"turret\"\nsize = \"small\"\n"
+                      "at = [0, 1, 0]\narc = 400.0\n",
+                      "between 0 and 360"));
+    SOL_CHECK(refused("mount = 3\n", "array of tables ([[ship.mount]])"));
+}
+
+SOL_TEST(data_defs_mount_at_the_origin_is_still_external)
+{
+    // THE CASE THAT MOTIVATED `present` ON `optionalFloat3`. `at = [0, 0, 0]`
+    // is the hull's own origin, which is a place an author may well mean, and
+    // comparing the parsed vector against its default would read that mount as
+    // internal - never drawn, never shootable - with nothing said.
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[ship]]
+id = "sol.x"
+name = "X"
+
+  [[ship.mount]]
+  id = "core"
+  kind = "fixed"
+  size = "small"
+  at = [0.0, 0.0, 0.0]
+)",
+                      "ships.toml",
+                      &error));
+    const ShipDef* def = db.findShip("sol.x");
+    SOL_REQUIRE(def != nullptr);
+    SOL_REQUIRE(def->mounts.size() == 1);
+    SOL_CHECK(def->mounts[0].external);
+}
+
+SOL_TEST(data_defs_ship_overridden_by_a_later_layer_replaces_its_mounts)
+{
+    // A def re-using an id replaces it WHOLESALE, and a mount list is the first
+    // thing in a ship def where "wholesale" could plausibly have meant "merge".
+    // A mod that removes a hull's turret has to be able to say so.
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[ship]]
+id = "sol.x"
+name = "X"
+
+  [[ship.mount]]
+  id = "gun"
+  kind = "fixed"
+  size = "small"
+
+  [[ship.mount]]
+  id = "drive"
+  kind = "engine"
+  size = "small"
+)",
+                      "base/ships.toml",
+                      &error));
+    SOL_REQUIRE(merge(db,
+                      R"(
+[[ship]]
+id = "sol.x"
+name = "X"
+
+  [[ship.mount]]
+  id = "drive"
+  kind = "engine"
+  size = "large"
+)",
+                      "mods/x/ships.toml",
+                      &error));
+    SOL_REQUIRE(db.ships().size() == 1);
+    const ShipDef* def = db.findShip("sol.x");
+    SOL_REQUIRE(def != nullptr);
+    SOL_REQUIRE(def->mounts.size() == 1);
+    SOL_CHECK(def->findMount("gun") == nullptr);
+    SOL_REQUIRE(def->findMount("drive") != nullptr);
+    SOL_CHECK(def->findMount("drive")->size == sol::assets::MountSize::Large);
+}
+
+// The shipped hulls, read out of the file a person actually wrote (Phase 31
+// stage A2). A fixture would agree with the parser by construction; what is
+// worth asserting is that `game/data/ships.toml` says what stage A2 claims it
+// says, because stage B's fit model is going to be built on exactly this data
+// and a typo here would arrive as a balance change nobody made.
+SOL_TEST(data_defs_shipped_hulls_carry_the_mounts_stage_a_gave_them)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(db.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+
+    struct Expected
+    {
+        const char* shipId;
+        std::size_t mounts;
+        std::uint32_t weapons;  // turret + fixed: what `weapon` used to be
+        std::uint32_t engines;  // what `slots_engine` used to be
+        std::uint32_t shields;  // what `slots_shield` used to be
+        std::uint32_t fittings; // utility + subsystem: cargo + utility, merged
+    };
+
+    // ⚑ THE COUNTS ARE THE OLD ONES ON PURPOSE, and this table is the proof.
+    // Stage A reproduces each hull's CURRENT capacity rather than re-balancing
+    // it, so that stage B's swap is arithmetic. `slots_cargo` folds into the
+    // last column because gdd.md 11.5 has no `cargo` kind - a cargo pod is a
+    // utility fitting - and that merge is the one real change in this file.
+    constexpr Expected kHulls[3] = {
+        {"sol.shuttle", 5, 1, 1, 1, 2},     // was weapon + 1/1/1/1
+        {"sol.interceptor", 5, 1, 2, 1, 1}, // was weapon + 1/2/0/1
+        {"sol.freighter", 8, 1, 1, 1, 5},   // was weapon + 1/1/3/2
+    };
+
+    for (const Expected& expected : kHulls) {
+        const ShipDef* def = db.findShip(expected.shipId);
+        SOL_REQUIRE(def != nullptr);
+        if (def->mounts.size() != expected.mounts) {
+            std::printf(
+                "  %s has %zu mounts, expected %zu\n", expected.shipId, def->mounts.size(), expected.mounts);
+        }
+        SOL_CHECK(def->mounts.size() == expected.mounts);
+
+        std::uint32_t weapons = 0;
+        std::uint32_t engines = 0;
+        std::uint32_t shields = 0;
+        std::uint32_t fittings = 0;
+        for (const sol::assets::ShipMount& mount : def->mounts) {
+            switch (mount.kind) {
+            case sol::assets::MountKind::Turret:
+            case sol::assets::MountKind::Fixed:
+                ++weapons;
+                break;
+            case sol::assets::MountKind::Engine:
+                ++engines;
+                break;
+            case sol::assets::MountKind::Shield:
+                ++shields;
+                break;
+            case sol::assets::MountKind::Utility:
+            case sol::assets::MountKind::Subsystem:
+                ++fittings;
+                break;
+            default:
+                std::printf("  %s: unexpected mount kind '%s' on '%s'\n",
+                            expected.shipId,
+                            sol::assets::mountKindName(mount.kind),
+                            mount.id.c_str());
+                SOL_CHECK(false);
+                break;
+            }
+            // Every id in the shipped file is non-empty and unique - the parser
+            // enforces both, and this is the file it has to have enforced them
+            // on rather than a fixture.
+            SOL_CHECK(!mount.id.empty());
+        }
+        SOL_CHECK(weapons == expected.weapons);
+        SOL_CHECK(engines == expected.engines);
+        SOL_CHECK(shields == expected.shields);
+        SOL_CHECK(fittings == expected.fittings);
+    }
+
+    // The freighter is the hull that carries the file's two teaching cases: the
+    // only turret, and the only internal mount.
+    const ShipDef* freighter = db.findShip("sol.freighter");
+    SOL_REQUIRE(freighter != nullptr);
+    const sol::assets::ShipMount* turret = freighter->findMount("turret_dorsal");
+    SOL_REQUIRE(turret != nullptr);
+    SOL_CHECK(turret->kind == sol::assets::MountKind::Turret);
+    SOL_CHECK(turret->external);
+    SOL_CHECK(turret->arc > 0.0f);
+    // A medium mount still takes the small gun the hull flies with today, which
+    // is why converting the hull did not have to touch `weapon`.
+    SOL_CHECK(turret->size == sol::assets::MountSize::Medium);
+    SOL_CHECK(sol::assets::mountAccepts(turret->size, sol::assets::MountSize::Small));
+
+    const sol::assets::ShipMount* sensor = freighter->findMount("core_sensor");
+    SOL_REQUIRE(sensor != nullptr);
+    SOL_CHECK(!sensor->external);
+    SOL_CHECK(sensor->kind == sol::assets::MountKind::Subsystem);
+}

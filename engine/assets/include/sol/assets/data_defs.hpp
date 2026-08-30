@@ -1,8 +1,8 @@
 #pragma once
 
 // Human-authored game data definitions (engine plan Phase 5): ships, weapons,
-// factions, commodities, stations, components, and crew, parsed from TOML and validated
-// against a strict schema (unknown or mistyped keys are errors, so typos die
+// factions, commodities, stations, components, and crew, parsed from TOML and
+// validated against a strict schema (unknown or mistyped keys are errors, so typos die
 // at load time, not silently at play time). Documents merge in layer order —
 // a def re-using an earlier id replaces it wholesale, which is what gives mod
 // directory layering (base game = mod zero) its override semantics.
@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace sol::assets {
@@ -104,6 +105,80 @@ struct CatalogGate
     float minRep = -100.0f;            // owner-standing gate, -100..100
 };
 
+// --- Mounts (engine plan Phase 31, decisions/014, gdd.md 11.5) ---
+//
+// A mount is a named, typed, sized place on a hull where exactly one fitting
+// goes. The vocabulary below is gdd.md 11.5's list verbatim rather than a
+// convenient subset, because a hull def and a faction roster and the Forge's
+// mount tool all have to be describing the same thing, and a kind added later
+// is a kind every one of them has to learn.
+enum class MountKind : std::uint32_t
+{
+    Turret = 0, // a gun that traverses; `arc` is how far
+    Fixed,      // a gun bolted to the hull, aimed by flying the ship
+    Launcher,   // missiles
+    Bay,        // ordnance too large to rail-launch: torpedoes, bombs
+    Engine,     // main drive
+    Thruster,   // manoeuvring
+    Shield,
+    Armor,
+    Utility,   // external kit: scoops, collectors, pods
+    Subsystem, // internal: sensors, fire control, drive tuning, covert suites
+    Hangar,    // carries craft
+    Dock,      // carries something that docks TO it
+    Count,
+};
+
+inline constexpr std::size_t kMountKindCount = static_cast<std::size_t>(MountKind::Count);
+
+enum class MountSize : std::uint32_t
+{
+    Small = 0,
+    Medium,
+    Large,
+    XLarge,
+    Count,
+};
+
+inline constexpr std::size_t kMountSizeCount = static_cast<std::size_t>(MountSize::Count);
+
+// The def spellings, and the only place they live. Parse returns false on a
+// word that is not one of them; the caller decides whether that is an error.
+[[nodiscard]] const char* mountKindName(MountKind kind);
+[[nodiscard]] bool parseMountKind(std::string_view text, MountKind& out);
+[[nodiscard]] const char* mountSizeName(MountSize size);
+[[nodiscard]] bool parseMountSize(std::string_view text, MountSize& out);
+
+// decisions/014 rule 3: a mount accepts its own size or smaller. Fitting small
+// kit to a large mount WASTES the mount, and that waste is the player's trade
+// rather than an error - which is why this is an ordering and not an equality.
+//
+// The ordering is the enum's own, so `Small < Medium < Large < XLarge` is a
+// fact about the declaration order above and moving a member reorders the fit
+// rules with it.
+[[nodiscard]] constexpr bool mountAccepts(MountSize mount, MountSize fitting)
+{
+    return static_cast<std::uint32_t>(fitting) <= static_cast<std::uint32_t>(mount);
+}
+
+struct ShipMount
+{
+    // Unique within the hull and STABLE: a save names a fitting by the mount it
+    // occupies, never by index, so that an author inserting a mount does not
+    // silently rearrange every existing player's ship (decisions/014 rule 1).
+    std::string id;
+    MountKind kind = MountKind::Utility;
+    MountSize size = MountSize::Small;
+    // decisions/014 rule 2: `at` PRESENT means external - drawn on the hull and
+    // shootable where it sits - and ABSENT means internal. One authored key
+    // decides both, and nothing else needs a flag. An internal mount is still
+    // destructible; it is simply not aimed at.
+    bool external = false;
+    float at[3] = {0.0f, 0.0f, 0.0f};   // metres, hull frame (+X right, +Y up, -Z fwd)
+    float aim[3] = {0.0f, 0.0f, -1.0f}; // facing, hull frame; defaults to the ship's
+    float arc = 0.0f;                   // degrees of traverse; 0 = points where `aim` says
+};
+
 struct ShipDef
 {
     std::string id;   // stable, namespaced, e.g. "sol.shuttle"
@@ -139,8 +214,22 @@ struct ShipDef
     std::uint32_t slotsCargo = 1;
     std::uint32_t slotsUtility = 1;
     std::uint32_t crewBerths = 1;
+    // Where fittings go (Phase 31 stage A2). Authored order, which is the
+    // order the outfitting screen and the Forge's list will show.
+    //
+    // EMPTY IS STILL LEGAL HERE, and only until stage B: the four `slots_*`
+    // counts above are what the fit model reads today, so a mod's ship def that
+    // has never heard of a mount still loads and still flies. Stage B is where
+    // an empty list becomes a hull that can fit nothing, and it is also where
+    // `weaponId` and the counts go.
+    std::vector<ShipMount> mounts;
     CatalogGate gate;
     std::string source; // document that last defined this id (diagnostics)
+
+    // The mount an id names, or null. Linear over a list that is a dozen long
+    // at most - a hull with enough mounts for a map to pay off is a hull class
+    // gdd.md 11.1 does not have.
+    [[nodiscard]] const ShipMount* findMount(std::string_view mountId) const;
 };
 
 enum class ComponentSlot : std::uint32_t

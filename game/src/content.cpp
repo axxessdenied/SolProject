@@ -1072,6 +1072,64 @@ std::string listComponents(GameContent& content)
     return lines;
 }
 
+// A hull's mounts, the whole list (Phase 31 stage A2). Nothing fits into them
+// yet, so a probe is the ONLY way to see that the schema arrived and that the
+// three shipped hulls parsed the way their author meant - and the alternative,
+// waiting for stage B's screen, is how a schema ships with a typo in it.
+//
+// ⚑ It prints EXTERNAL-vs-internal as the position rather than as a word,
+// because that IS the distinction (decisions/014 rule 2): `at` is either there
+// or it is not, and a column saying "internal" beside a position would be two
+// spellings of one fact that can disagree.
+//
+// ⚑⚑ THE WIDTH IS NOT A STYLE CHOICE - IT WAS MEASURED, AND THE FIRST WORDING
+// FAILED. The dev console panel shows about SEVENTY-SIX characters and offers a
+// horizontal scrollbar for the rest, so the first attempt - bracketed vectors
+// at two decimals - ran to 91 and cut off `arc`, which is the one number that
+// distinguishes a turret from a fixed gun. Vectors are `%g` and unbracketed,
+// and `arc` sits with the kind and the size rather than after the geometry,
+// because what a mount IS comes before where it is. Same lesson as the map
+// row's in Phase 30 stage D: a surface that clips silently has to be measured.
+std::string listMounts(GameContent& content, const char* shipDefId)
+{
+    const assets::ShipDef* def = content.defs().findShip(shipDefId);
+    if (def == nullptr) {
+        return std::string("no ship def '") + (shipDefId != nullptr ? shipDefId : "") + "'";
+    }
+    if (def->mounts.empty()) {
+        return def->id + ": no mounts";
+    }
+    std::string lines = def->name + " (" + def->id + "): " + std::to_string(def->mounts.size()) + " mount(s)";
+    char buffer[192];
+    for (const assets::ShipMount& mount : def->mounts) {
+        if (mount.external) {
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%-15s %-9s %-6s arc %-3.0f at %g,%g,%g  aim %g,%g,%g",
+                          mount.id.c_str(),
+                          assets::mountKindName(mount.kind),
+                          assets::mountSizeName(mount.size),
+                          static_cast<double>(mount.arc),
+                          static_cast<double>(mount.at[0]),
+                          static_cast<double>(mount.at[1]),
+                          static_cast<double>(mount.at[2]),
+                          static_cast<double>(mount.aim[0]),
+                          static_cast<double>(mount.aim[1]),
+                          static_cast<double>(mount.aim[2]));
+        } else {
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%-15s %-9s %-6s INTERNAL",
+                          mount.id.c_str(),
+                          assets::mountKindName(mount.kind),
+                          assets::mountSizeName(mount.size));
+        }
+        lines += "\n  ";
+        lines += buffer;
+    }
+    return lines;
+}
+
 std::string listCrewDefs(GameContent& content)
 {
     std::string lines;
@@ -3308,6 +3366,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
     m_vm.registerFunction<&listComponents>("sol", "components", this);
+    m_vm.registerFunction<&listMounts>("sol", "mounts", this);
     m_vm.registerFunction<&listCrewDefs>("sol", "crew_defs", this);
     m_vm.registerFunction<&fitInfo>("sol", "fit", this);
     m_vm.registerFunction<&listFleet>("sol", "fleet", this);
