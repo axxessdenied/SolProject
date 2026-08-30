@@ -7,9 +7,9 @@
 #include <sol/assets/loadout.hpp>
 #include <sol/test/test.hpp>
 
+using sol::assets::ComponentDef;
 using sol::assets::CrewDef;
 using sol::assets::DefDatabase;
-using sol::assets::ModuleDef;
 using sol::assets::ShipDef;
 
 namespace {
@@ -41,7 +41,7 @@ slots_cargo = 2
 slots_utility = 1
 crew_berths = 1
 
-[[module]]
+[[component]]
 id = "sol.shield_mk1"
 name = "Shield Booster Mk1"
 slot = "shield"
@@ -51,7 +51,7 @@ power_draw = 2.0
 shield_strength_mul = 1.5
 shield_strength_add = 20.0
 
-[[module]]
+[[component]]
 id = "sol.cargo_pod"
 name = "Cargo Pod"
 slot = "cargo"
@@ -60,7 +60,7 @@ mass = 1000.0
 power_draw = 0.0
 cargo_add = 25.0
 
-[[module]]
+[[component]]
 id = "sol.hungry_reactor_sink"
 name = "Hungry Sink"
 slot = "utility"
@@ -76,20 +76,20 @@ shield_regen_mul = 1.1
 
 } // namespace
 
-SOL_TEST(loadout_parse_modules_and_crew)
+SOL_TEST(loadout_parse_components_and_crew)
 {
     DefDatabase db;
     std::string error;
     SOL_CHECK(merge(db, kOutfittingDefs, "outfit.toml", &error));
-    SOL_CHECK(db.modules().size() == 3);
+    SOL_CHECK(db.components().size() == 3);
     SOL_CHECK(db.crew().size() == 1);
 
-    const ModuleDef* shield = db.findModule("sol.shield_mk1");
+    const ComponentDef* shield = db.findComponent("sol.shield_mk1");
     SOL_CHECK(shield != nullptr);
     if (shield == nullptr) {
         return;
     }
-    SOL_CHECK(shield->slot == sol::assets::ModuleSlot::Shield);
+    SOL_CHECK(shield->slot == sol::assets::ComponentSlot::Shield);
     SOL_CHECK(shield->price == 500.0f);
     const auto statIdx = static_cast<std::size_t>(sol::assets::FitStat::ShieldStrength);
     SOL_CHECK(shield->modifiers.mul[statIdx] == 1.5f);
@@ -119,7 +119,7 @@ SOL_TEST(loadout_rejects_bad_slot_and_unknown_modifier)
     DefDatabase db;
     std::string error;
     const char* badSlot = R"(
-[[module]]
+[[component]]
 id = "sol.bad"
 name = "Bad"
 slot = "hyperdrive"
@@ -128,7 +128,7 @@ slot = "hyperdrive"
     SOL_CHECK(error.find("slot") != std::string::npos);
 
     const char* badKey = R"(
-[[module]]
+[[component]]
 id = "sol.bad2"
 name = "Bad2"
 slot = "utility"
@@ -144,14 +144,14 @@ SOL_TEST(loadout_resolve_adds_then_muls)
     std::string error;
     SOL_CHECK(merge(db, kOutfittingDefs, "outfit.toml", &error));
     const ShipDef* base = db.findShip("sol.testbed");
-    const ModuleDef* shield = db.findModule("sol.shield_mk1");
+    const ComponentDef* shield = db.findComponent("sol.shield_mk1");
     SOL_CHECK(base != nullptr && shield != nullptr);
     if (base == nullptr || shield == nullptr) {
         return;
     }
 
-    const ModuleDef* modules[] = {shield};
-    const ShipDef effective = sol::assets::resolveLoadout(*base, modules, {});
+    const ComponentDef* components[] = {shield};
+    const ShipDef effective = sol::assets::resolveLoadout(*base, components, {});
     // (100 + 20) * 1.5 — adds before muls.
     SOL_CHECK(nearlyEqual(effective.defense.shieldStrength, 180.0f));
     // Mass penalty: 10000 / 10500 on accelerations only.
@@ -166,15 +166,15 @@ SOL_TEST(loadout_resolve_is_order_independent)
     std::string error;
     SOL_CHECK(merge(db, kOutfittingDefs, "outfit.toml", &error));
     const ShipDef* base = db.findShip("sol.testbed");
-    const ModuleDef* shield = db.findModule("sol.shield_mk1");
-    const ModuleDef* pod = db.findModule("sol.cargo_pod");
+    const ComponentDef* shield = db.findComponent("sol.shield_mk1");
+    const ComponentDef* pod = db.findComponent("sol.cargo_pod");
     SOL_CHECK(base != nullptr && shield != nullptr && pod != nullptr);
     if (base == nullptr || shield == nullptr || pod == nullptr) {
         return;
     }
 
-    const ModuleDef* ab[] = {shield, pod};
-    const ModuleDef* ba[] = {pod, shield};
+    const ComponentDef* ab[] = {shield, pod};
+    const ComponentDef* ba[] = {pod, shield};
     const ShipDef first = sol::assets::resolveLoadout(*base, ab, {});
     const ShipDef second = sol::assets::resolveLoadout(*base, ba, {});
     SOL_CHECK(first.defense.shieldStrength == second.defense.shieldStrength);
@@ -189,9 +189,9 @@ SOL_TEST(loadout_validate_budgets)
     std::string error;
     SOL_CHECK(merge(db, kOutfittingDefs, "outfit.toml", &error));
     const ShipDef* ship = db.findShip("sol.testbed");
-    const ModuleDef* shield = db.findModule("sol.shield_mk1");
-    const ModuleDef* pod = db.findModule("sol.cargo_pod");
-    const ModuleDef* sink = db.findModule("sol.hungry_reactor_sink");
+    const ComponentDef* shield = db.findComponent("sol.shield_mk1");
+    const ComponentDef* pod = db.findComponent("sol.cargo_pod");
+    const ComponentDef* sink = db.findComponent("sol.hungry_reactor_sink");
     const CrewDef* kim = db.findCrew("sol.engineer_kim");
     SOL_CHECK(ship != nullptr && shield != nullptr && pod != nullptr && sink != nullptr && kim != nullptr);
     if (ship == nullptr || shield == nullptr || pod == nullptr || sink == nullptr || kim == nullptr) {
@@ -199,17 +199,17 @@ SOL_TEST(loadout_validate_budgets)
     }
 
     // A legal fit: 1 shield + 2 cargo pods, 2.0/6.0 power, 1 crew.
-    const ModuleDef* legal[] = {shield, pod, pod};
+    const ComponentDef* legal[] = {shield, pod, pod};
     const CrewDef* crew[] = {kim};
     SOL_CHECK(sol::assets::validateLoadout(*ship, legal, crew, &error));
 
-    // Slot overflow: two shield modules in one shield slot.
-    const ModuleDef* tooManyShields[] = {shield, shield};
+    // Slot overflow: two shield components in one shield slot.
+    const ComponentDef* tooManyShields[] = {shield, shield};
     SOL_CHECK(!sol::assets::validateLoadout(*ship, tooManyShields, {}, &error));
     SOL_CHECK(error.find("shield") != std::string::npos);
 
     // Power overflow.
-    const ModuleDef* tooHungry[] = {sink};
+    const ComponentDef* tooHungry[] = {sink};
     SOL_CHECK(!sol::assets::validateLoadout(*ship, tooHungry, {}, &error));
     SOL_CHECK(error.find("power") != std::string::npos);
 
@@ -219,7 +219,7 @@ SOL_TEST(loadout_validate_budgets)
     SOL_CHECK(error.find("berth") != std::string::npos);
 }
 
-SOL_TEST(loadout_scanner_modules_move_scan_stats)
+SOL_TEST(loadout_scanner_components_move_scan_stats)
 {
     constexpr const char* kScannerDefs = R"(
 [[ship]]
@@ -231,7 +231,7 @@ mass = 10000.0
 power_output = 6.0
 slots_utility = 2
 
-[[module]]
+[[component]]
 id = "sol.scanner_mk1"
 name = "Scanner Mk1"
 slot = "utility"
@@ -241,7 +241,7 @@ power_draw = 1.5
 scan_range_mul = 1.6
 scan_speed_mul = 1.25
 
-[[module]]
+[[component]]
 id = "sol.scanner_booster"
 name = "Scanner Booster"
 slot = "utility"
@@ -255,21 +255,21 @@ scan_range_add = 1.0e7
     SOL_REQUIRE(merge(db, kScannerDefs, "scanners.toml", &error));
 
     const ShipDef* ship = db.findShip("sol.surveyor");
-    const ModuleDef* scanner = db.findModule("sol.scanner_mk1");
-    const ModuleDef* booster = db.findModule("sol.scanner_booster");
+    const ComponentDef* scanner = db.findComponent("sol.scanner_mk1");
+    const ComponentDef* booster = db.findComponent("sol.scanner_booster");
     SOL_REQUIRE(ship != nullptr && scanner != nullptr && booster != nullptr);
     SOL_CHECK(nearlyEqual(ship->scanRange, 6.0e7f));
     SOL_CHECK(nearlyEqual(ship->scanSpeed, 1.0f));
 
     // Adds land before muls, the Phase 8a ordering rule, so the booster's
     // 10,000 km rides the scanner's multiplier: (6e7 + 1e7) * 1.6.
-    const ModuleDef* fit[] = {scanner, booster};
+    const ComponentDef* fit[] = {scanner, booster};
     const ShipDef resolved = sol::assets::resolveLoadout(*ship, fit, {});
     SOL_CHECK(std::fabs(resolved.scanRange - 1.12e8f) < 1.0e3f);
     SOL_CHECK(nearlyEqual(resolved.scanSpeed, 1.25f));
 
     // Order-independence: the same fit the other way round resolves equal.
-    const ModuleDef* swapped[] = {booster, scanner};
+    const ComponentDef* swapped[] = {booster, scanner};
     const ShipDef other = sol::assets::resolveLoadout(*ship, swapped, {});
     SOL_CHECK(other.scanRange == resolved.scanRange);
     SOL_CHECK(other.scanSpeed == resolved.scanSpeed);
@@ -286,7 +286,7 @@ mass = 10000.0
 power_output = 6.0
 slots_utility = 2
 
-[[module]]
+[[component]]
 id = "sol.collector_mk1"
 name = "Collector Rig Mk1"
 slot = "utility"
@@ -301,13 +301,13 @@ collector_range_mul = 3.0
     SOL_REQUIRE(merge(db, kMinerDefs, "miners.toml", &error));
 
     const ShipDef* ship = db.findShip("sol.prospector");
-    const ModuleDef* collector = db.findModule("sol.collector_mk1");
+    const ComponentDef* collector = db.findComponent("sol.collector_mk1");
     SOL_REQUIRE(ship != nullptr && collector != nullptr);
     SOL_CHECK(nearlyEqual(ship->collectorRange, 250.0f));
 
-    // A collector rig is an ordinary utility module: it moves collector_range
+    // A collector rig is an ordinary utility component: it moves collector_range
     // exactly the way a scanner moves scan_range.
-    const ModuleDef* fit[] = {collector};
+    const ComponentDef* fit[] = {collector};
     const ShipDef resolved = sol::assets::resolveLoadout(*ship, fit, {});
     SOL_CHECK(nearlyEqual(resolved.collectorRange, 750.0f));
 }

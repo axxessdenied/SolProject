@@ -699,7 +699,7 @@ struct OwnedShip
 {
     std::string defId;
     std::string weaponId;                      // fitted weapon; empty = unarmed mount
-    std::vector<std::string> moduleIds;        // fitted modules (order irrelevant)
+    std::vector<std::string> componentIds;     // fitted components (order irrelevant)
     std::vector<std::string> crewIds;          // hired crew aboard
     std::uint32_t storedSystem = 0xffff'ffffu; // active ship ignores these
     std::uint32_t storedStation = 0xffff'ffffu;
@@ -1033,13 +1033,13 @@ public:
 
     [[nodiscard]] const OwnedShip& activeShip() const { return m_fleet[m_activeShip]; }
 
-    // Hull + fitted modules + weapon at list price (crew hires excluded).
+    // Hull + fitted components + weapon at list price (crew hires excluded).
     [[nodiscard]] double shipValue(const OwnedShip& ship) const;
 
     [[nodiscard]] double insuranceDeductible() const { return kInsuranceRate * shipValue(activeShip()); }
 
-    bool buyModule(const char* moduleId, std::string* outError = nullptr);
-    bool sellModule(const char* moduleId, std::string* outError = nullptr);
+    bool buyComponent(const char* componentId, std::string* outError = nullptr);
+    bool sellComponent(const char* componentId, std::string* outError = nullptr);
     bool buyWeapon(const char* weaponId, std::string* outError = nullptr);
     bool buyShip(const char* shipDefId, std::string* outError = nullptr);
     bool sellShip(std::size_t fleetIndex, std::string* outError = nullptr);
@@ -1247,7 +1247,7 @@ public:
     // Nearest resolved, unemptied site within range, or a negative value.
     [[nodiscard]] double nearestSalvageDistance() const;
     // Empties the nearest site into the hold: cargo up to the space left, a
-    // module into a free slot, credits always. A partial take leaves the rest.
+    // component into a free slot, credits always. A partial take leaves the rest.
     bool trySalvageNearest(double range);
     // Sells the survey ledger at the docked station; returns the credits paid.
     double sellSurveyData();
@@ -2025,9 +2025,9 @@ private:
                        const sol::core::DVec3& velocity,
                        std::uint32_t commodity,
                        float units);
-    // Fits a salvaged module if it is legal on the active ship; used by both
+    // Fits a salvaged component if it is legal on the active ship; used by both
     // site salvage and wreck cutting.
-    bool tryFitSalvagedModule(const std::string& moduleId, std::string& outName);
+    bool tryFitSalvagedComponent(const std::string& componentId, std::string& outName);
     // The rock or wreck entity the boresight is on within `range`, or ~0u.
     [[nodiscard]] std::uint32_t entityAhead(double range, bool& outIsWreck) const;
     // Composes a wreck's contents from the victim's fit and cargo (the

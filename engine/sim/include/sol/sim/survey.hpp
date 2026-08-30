@@ -42,7 +42,7 @@ enum class KnowledgeState : std::uint8_t
 
 enum class SignalKind : std::uint32_t
 {
-    Derelict = 0, // a dead hull: cargo, sometimes a module
+    Derelict = 0, // a dead hull: cargo, sometimes a component
     Cache,        // a stash: cargo plus credits
     Count,
 };
@@ -92,7 +92,7 @@ struct SignalLoot
 {
     std::vector<SignalCargo> cargo;
     double credits = 0.0;
-    std::string moduleId; // empty = none
+    std::string componentId; // empty = none
 };
 
 // Shared loot validation: known commodities, positive unit amounts,

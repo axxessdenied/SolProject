@@ -17,7 +17,7 @@ using core::TomlValue;
 namespace {
 
 // TOML key stems for the FitStat enum, in enum order (Phase 8a modifiers:
-// "<stem>_add" / "<stem>_mul" on modules and crew).
+// "<stem>_add" / "<stem>_mul" on components and crew).
 constexpr const char* kFitStatKeys[kFitStatCount] = {
     "forward_accel",
     "reverse_accel",
@@ -1401,18 +1401,18 @@ bool parseConstellation(const TomlValue& table,
     return true;
 }
 
-bool parseModule(const TomlValue& table,
-                 const char* sourceName,
-                 std::vector<ModuleDef>& out,
-                 std::string* outError)
+bool parseComponent(const TomlValue& table,
+                    const char* sourceName,
+                    std::vector<ComponentDef>& out,
+                    std::string* outError)
 {
-    ModuleDef def;
+    ComponentDef def;
     def.source = sourceName;
 
     FieldReader reader{.table = table, .context = sourceName, .outError = outError};
     reader.requireString("id", def.id);
     if (!reader.failed) {
-        reader.context = std::string(sourceName) + ": module '" + def.id + "'";
+        reader.context = std::string(sourceName) + ": component '" + def.id + "'";
     }
     reader.requireString("name", def.name);
     std::string slot;
@@ -1427,13 +1427,13 @@ bool parseModule(const TomlValue& table,
                              /*allowModifiers=*/true);
     if (!reader.failed) {
         if (slot == "shield") {
-            def.slot = ModuleSlot::Shield;
+            def.slot = ComponentSlot::Shield;
         } else if (slot == "engine") {
-            def.slot = ModuleSlot::Engine;
+            def.slot = ComponentSlot::Engine;
         } else if (slot == "cargo") {
-            def.slot = ModuleSlot::Cargo;
+            def.slot = ComponentSlot::Cargo;
         } else if (slot == "utility") {
-            def.slot = ModuleSlot::Utility;
+            def.slot = ComponentSlot::Utility;
         } else {
             reader.fail("'slot' must be \"shield\", \"engine\", \"cargo\", or \"utility\"");
         }
@@ -1491,7 +1491,7 @@ void DefDatabase::clear()
     // left as a trap for the first caller.
     m_systems.clear();
     m_constellations.clear();
-    m_modules.clear();
+    m_components.clear();
     m_crew.clear();
     m_sounds.clear();
     m_models.clear();
@@ -1521,7 +1521,7 @@ bool DefDatabase::mergeToml(const char* text,
     std::vector<StationDef> stations = m_stations;
     std::vector<SystemDef> systems = m_systems;
     std::vector<ConstellationDef> constellations = m_constellations;
-    std::vector<ModuleDef> modules = m_modules;
+    std::vector<ComponentDef> components = m_components;
     std::vector<CrewDef> crew = m_crew;
     std::vector<SoundDef> sounds = m_sounds;
     std::vector<ModelDef> models = m_models;
@@ -1575,11 +1575,11 @@ bool DefDatabase::mergeToml(const char* text,
                 return parseConstellation(t, s, *static_cast<std::vector<ConstellationDef>*>(v), e);
             };
             target = &constellations;
-        } else if (key == "module") {
+        } else if (key == "component") {
             parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
-                return parseModule(t, s, *static_cast<std::vector<ModuleDef>*>(v), e);
+                return parseComponent(t, s, *static_cast<std::vector<ComponentDef>*>(v), e);
             };
-            target = &modules;
+            target = &components;
         } else if (key == "crew") {
             parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
                 return parseCrew(t, s, *static_cast<std::vector<CrewDef>*>(v), e);
@@ -1609,7 +1609,7 @@ bool DefDatabase::mergeToml(const char* text,
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
                             "' (expected ship, weapon, faction, commodity, station, system, "
-                            "constellation, module, crew, sound, model, material, or role)";
+                            "constellation, component, crew, sound, model, material, or role)";
             }
             return false;
         }
@@ -1635,7 +1635,7 @@ bool DefDatabase::mergeToml(const char* text,
     m_stations = std::move(stations);
     m_systems = std::move(systems);
     m_constellations = std::move(constellations);
-    m_modules = std::move(modules);
+    m_components = std::move(components);
     m_crew = std::move(crew);
     m_sounds = std::move(sounds);
     m_models = std::move(models);
@@ -2019,11 +2019,11 @@ const StationDef* DefDatabase::findStation(const char* id) const
     return it != m_stations.end() ? &*it : nullptr;
 }
 
-const ModuleDef* DefDatabase::findModule(const char* id) const
+const ComponentDef* DefDatabase::findComponent(const char* id) const
 {
-    const auto it =
-        std::find_if(m_modules.begin(), m_modules.end(), [&](const ModuleDef& d) { return d.id == id; });
-    return it != m_modules.end() ? &*it : nullptr;
+    const auto it = std::find_if(
+        m_components.begin(), m_components.end(), [&](const ComponentDef& d) { return d.id == id; });
+    return it != m_components.end() ? &*it : nullptr;
 }
 
 const CrewDef* DefDatabase::findCrew(const char* id) const

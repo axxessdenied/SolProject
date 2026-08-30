@@ -44,8 +44,15 @@ namespace {
 // assert something about the files that actually ship.
 [[nodiscard]] bool loadCommittedDefs(DefDatabase& db, std::string& error)
 {
-    for (const char* stem :
-         {"commodities", "crew", "factions", "models", "modules", "ships", "sounds", "stations", "weapons"}) {
+    for (const char* stem : {"commodities",
+                             "components",
+                             "crew",
+                             "factions",
+                             "models",
+                             "ships",
+                             "sounds",
+                             "stations",
+                             "weapons"}) {
         const std::string path = std::string(SOL_DEF_DATA_DIR) + "/" + stem + ".toml";
         const std::string text = readWholeFile(path);
         if (text.empty()) {

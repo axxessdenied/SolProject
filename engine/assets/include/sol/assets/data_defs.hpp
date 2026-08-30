@@ -1,7 +1,7 @@
 #pragma once
 
 // Human-authored game data definitions (engine plan Phase 5): ships, weapons,
-// factions, commodities, stations, modules, and crew, parsed from TOML and validated
+// factions, commodities, stations, components, and crew, parsed from TOML and validated
 // against a strict schema (unknown or mistyped keys are errors, so typos die
 // at load time, not silently at play time). Documents merge in layer order —
 // a def re-using an earlier id replaces it wholesale, which is what gives mod
@@ -45,7 +45,7 @@ enum class FitStat : std::uint32_t
 
 inline constexpr std::size_t kFitStatCount = static_cast<std::size_t>(FitStat::Count);
 
-// Shared modifier vocabulary for modules and crew ("<stat>_add"/"<stat>_mul"
+// Shared modifier vocabulary for components and crew ("<stat>_add"/"<stat>_mul"
 // def keys). Resolution is order-independent: adds sum onto the base stat,
 // then muls multiply the result (see loadout.hpp).
 struct StatModifiers
@@ -122,7 +122,7 @@ struct ShipDef
     std::string weaponId;        // weapon def id; empty = unarmed
     float cargoCapacity = 50.0f; // trade goods, units
     // Scanning (engine plan Phase 8e): how far a pulse reaches and how fast a
-    // target scan resolves. Scanner modules move both like any other stat.
+    // target scan resolves. Scanner components move both like any other stat.
     float scanRange = 2.5e8f; // meters
     float scanSpeed = 1.0f;   // target-scan progress multiplier
     // Mining (engine plan Phase 8f): how far loose ore is drawn in from.
@@ -132,8 +132,8 @@ struct ShipDef
     float collectorRange = 120.0f; // meters
     // Outfitting (engine plan Phase 8a): hull price, fitting budgets, slots.
     float price = 10'000.0f;
-    float mass = 10'000.0f;    // kg; module mass dilutes accelerations
-    float powerOutput = 10.0f; // fit budget: sum of module power_draw
+    float mass = 10'000.0f;    // kg; component mass dilutes accelerations
+    float powerOutput = 10.0f; // fit budget: sum of component power_draw
     std::uint32_t slotsShield = 1;
     std::uint32_t slotsEngine = 1;
     std::uint32_t slotsCargo = 1;
@@ -143,7 +143,7 @@ struct ShipDef
     std::string source; // document that last defined this id (diagnostics)
 };
 
-enum class ModuleSlot : std::uint32_t
+enum class ComponentSlot : std::uint32_t
 {
     Shield = 0,
     Engine,
@@ -152,15 +152,15 @@ enum class ModuleSlot : std::uint32_t
     Count,
 };
 
-inline constexpr std::size_t kModuleSlotCount = static_cast<std::size_t>(ModuleSlot::Count);
+inline constexpr std::size_t kComponentSlotCount = static_cast<std::size_t>(ComponentSlot::Count);
 
-// An outfitting module: occupies one typed slot, costs power from the ship's
+// An outfitting component: occupies one typed slot, costs power from the ship's
 // budget, adds mass, and modifies stats (engine plan Phase 8a).
-struct ModuleDef
+struct ComponentDef
 {
     std::string id;
     std::string name;
-    ModuleSlot slot = ModuleSlot::Utility;
+    ComponentSlot slot = ComponentSlot::Utility;
     float price = 100.0f;
     float mass = 0.0f;      // kg
     float powerDraw = 0.0f; // against ShipDef::powerOutput
@@ -170,7 +170,7 @@ struct ModuleDef
 };
 
 // A hireable crew member (decisions/006: trivial passive bonuses): occupies a
-// berth, costs a one-time hire fee, and modifies stats like a module without
+// berth, costs a one-time hire fee, and modifies stats like a component without
 // mass or power draw.
 struct CrewDef
 {
@@ -738,7 +738,7 @@ public:
     [[nodiscard]] const CommodityDef* findCommodity(const char* id) const;
     [[nodiscard]] const StationDef* findStation(const char* id) const;
     [[nodiscard]] const SystemDef* findSystem(const char* id) const;
-    [[nodiscard]] const ModuleDef* findModule(const char* id) const;
+    [[nodiscard]] const ComponentDef* findComponent(const char* id) const;
     [[nodiscard]] const CrewDef* findCrew(const char* id) const;
     [[nodiscard]] const SoundDef* findSound(const char* id) const;
     [[nodiscard]] const ModelDef* findModel(const char* id) const;
@@ -781,7 +781,7 @@ public:
     // `[[system]]` row holds for a `[[constellation.system]]` row as well.
     [[nodiscard]] const std::vector<ConstellationDef>& constellations() const { return m_constellations; }
 
-    [[nodiscard]] const std::vector<ModuleDef>& modules() const { return m_modules; }
+    [[nodiscard]] const std::vector<ComponentDef>& components() const { return m_components; }
 
     [[nodiscard]] const std::vector<CrewDef>& crew() const { return m_crew; }
 
@@ -804,7 +804,7 @@ private:
     std::vector<StationDef> m_stations;
     std::vector<SystemDef> m_systems;
     std::vector<ConstellationDef> m_constellations;
-    std::vector<ModuleDef> m_modules;
+    std::vector<ComponentDef> m_components;
     std::vector<CrewDef> m_crew;
     std::vector<SoundDef> m_sounds;
     std::vector<ModelDef> m_models;

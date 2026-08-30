@@ -514,7 +514,7 @@ int main(int argc, char** argv)
     std::vector<game::ParticleInstance> particleInstances;
     game::SceneInfo sceneInfo;
     std::vector<sol::ui::TradeRow> tradeRows;
-    std::vector<sol::ui::OutfitRow> moduleRows;
+    std::vector<sol::ui::OutfitRow> componentRows;
     std::vector<sol::ui::OutfitRow> weaponRows;
     std::vector<sol::ui::OutfitRow> crewCatalogRows;
     std::vector<sol::ui::OutfitRow> crewAboardRows;
@@ -1571,7 +1571,7 @@ int main(int argc, char** argv)
                                         content.defs(),
                                         stationText,
                                         stationPanel,
-                                        moduleRows,
+                                        componentRows,
                                         weaponRows,
                                         crewCatalogRows,
                                         crewAboardRows,

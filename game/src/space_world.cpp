@@ -1103,10 +1103,10 @@ void SpaceWorld::initializeSurvey()
 
 namespace {
 
-// Defined with the outfitting helpers further down: salvaging a module runs
+// Defined with the outfitting helpers further down: salvaging a component runs
 // through the same fit validation a purchase does.
-[[nodiscard]] std::vector<const assets::ModuleDef*> fitModules(const assets::DefDatabase& defs,
-                                                               const OwnedShip& ship);
+[[nodiscard]] std::vector<const assets::ComponentDef*> fitComponents(const assets::DefDatabase& defs,
+                                                                     const OwnedShip& ship);
 [[nodiscard]] std::vector<const assets::CrewDef*> fitCrew(const assets::DefDatabase& defs,
                                                           const OwnedShip& ship);
 
@@ -1728,9 +1728,9 @@ sim::SignalLoot SpaceWorld::defaultLoot(const SignalInstance& signal) const
     }
     if (signal.kind == sim::SignalKind::Cache) {
         loot.credits = 200.0 + 1'000.0 * rng.nextDouble01();
-    } else if (m_defs != nullptr && !m_defs->modules().empty() && rng.nextFloat01() < 0.25f) {
-        const std::vector<assets::ModuleDef>& modules = m_defs->modules();
-        loot.moduleId = modules[rng.range(static_cast<std::uint32_t>(modules.size()))].id;
+    } else if (m_defs != nullptr && !m_defs->components().empty() && rng.nextFloat01() < 0.25f) {
+        const std::vector<assets::ComponentDef>& components = m_defs->components();
+        loot.componentId = components[rng.range(static_cast<std::uint32_t>(components.size()))].id;
     }
     return loot;
 }
@@ -1810,12 +1810,12 @@ bool SpaceWorld::trySalvageNearest(double range)
     }
     remaining.cargo = std::move(left);
 
-    std::string moduleTaken;
-    if (tryFitSalvagedModule(remaining.moduleId, moduleTaken)) {
-        remaining.moduleId.clear();
+    std::string componentTaken;
+    if (tryFitSalvagedComponent(remaining.componentId, componentTaken)) {
+        remaining.componentId.clear();
     }
 
-    const bool empty = remaining.cargo.empty() && remaining.moduleId.empty();
+    const bool empty = remaining.cargo.empty() && remaining.componentId.empty();
     if (empty) {
         (void)m_survey.notifySignalEmptied(m_currentSystem, best->index);
     } else {
@@ -1826,8 +1826,8 @@ bool SpaceWorld::trySalvageNearest(double range)
                  sim::signalKindName(best->kind),
                  static_cast<double>(unitsTaken),
                  credits,
-                 moduleTaken.empty() ? "" : ", fitted ",
-                 moduleTaken.c_str());
+                 componentTaken.empty() ? "" : ", fitted ",
+                 componentTaken.c_str());
     if (!empty) {
         SOL_LOG_INFO("salvage: no room for the rest - it stays aboard the wreck");
     }
@@ -1877,25 +1877,25 @@ namespace {
 
 } // namespace
 
-bool SpaceWorld::tryFitSalvagedModule(const std::string& moduleId, std::string& outName)
+bool SpaceWorld::tryFitSalvagedComponent(const std::string& componentId, std::string& outName)
 {
     outName.clear();
-    if (moduleId.empty() || m_defs == nullptr || m_fleet.empty()) {
+    if (componentId.empty() || m_defs == nullptr || m_fleet.empty()) {
         return false;
     }
-    const assets::ModuleDef* module = m_defs->findModule(moduleId.c_str());
+    const assets::ComponentDef* component = m_defs->findComponent(componentId.c_str());
     const assets::ShipDef* base = m_defs->findShip(m_fleet[m_activeShip].defId.c_str());
-    if (module == nullptr || base == nullptr) {
+    if (component == nullptr || base == nullptr) {
         return true; // the def is gone; there is nothing left to salvage
     }
-    std::vector<const assets::ModuleDef*> modules = fitModules(*m_defs, m_fleet[m_activeShip]);
-    modules.push_back(module);
-    if (!assets::validateLoadout(*base, modules, fitCrew(*m_defs, m_fleet[m_activeShip]))) {
+    std::vector<const assets::ComponentDef*> components = fitComponents(*m_defs, m_fleet[m_activeShip]);
+    components.push_back(component);
+    if (!assets::validateLoadout(*base, components, fitCrew(*m_defs, m_fleet[m_activeShip]))) {
         return false; // no legal slot, power, or mass for it: it stays put
     }
-    m_fleet[m_activeShip].moduleIds.push_back(module->id);
+    m_fleet[m_activeShip].componentIds.push_back(component->id);
     applyActiveLoadout();
-    outName = module->name;
+    outName = component->name;
     return true;
 }
 
@@ -2087,23 +2087,23 @@ float SpaceWorld::cutWreck(std::uint32_t entityIndex, float units)
     }
 
     // Nothing left to cut loose: the hull gives up what it was carrying that
-    // does not float — credits and, if it fits, a module off its own mounts.
+    // does not float — credits and, if it fits, a component off its own mounts.
     const sim::WreckRecord* wreck = m_mining.wreck(marker->id);
     if (wreck == nullptr) {
         return 0.0f;
     }
     const double credits = wreck->contents.credits;
-    const std::string moduleId = wreck->contents.moduleId;
+    const std::string componentId = wreck->contents.componentId;
     const std::string name = wreck->name;
     m_playerCredits += credits;
-    std::string moduleTaken;
-    (void)tryFitSalvagedModule(moduleId, moduleTaken);
+    std::string componentTaken;
+    (void)tryFitSalvagedComponent(componentId, componentTaken);
     (void)m_mining.removeWreck(marker->id);
     SOL_LOG_INFO("cut open the wreck of %s: %.0f cr%s%s",
                  name.c_str(),
                  credits,
-                 moduleTaken.empty() ? "" : ", fitted ",
-                 moduleTaken.c_str());
+                 componentTaken.empty() ? "" : ", fitted ",
+                 componentTaken.c_str());
     return 0.0f;
 }
 
@@ -2302,11 +2302,11 @@ sim::SignalLoot SpaceWorld::defaultWreckLoot(const assets::ShipDef* def, std::ui
             {.commodity = rng.range(commodityCount), .units = static_cast<float>(3 + rng.range(15))});
     }
     loot.credits = 40.0 + 260.0 * rng.nextDouble01();
-    // Its own hardware, at salvage odds: the gun or a module off its mounts.
+    // Its own hardware, at salvage odds: the gun or a component off its mounts.
     if (def != nullptr && !def->weaponId.empty() && rng.nextFloat01() < 0.2f && m_defs != nullptr &&
-        !m_defs->modules().empty()) {
-        const std::vector<assets::ModuleDef>& modules = m_defs->modules();
-        loot.moduleId = modules[rng.range(static_cast<std::uint32_t>(modules.size()))].id;
+        !m_defs->components().empty()) {
+        const std::vector<assets::ComponentDef>& components = m_defs->components();
+        loot.componentId = components[rng.range(static_cast<std::uint32_t>(components.size()))].id;
     }
     return loot;
 }
@@ -4806,19 +4806,19 @@ void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
 
 namespace {
 
-[[nodiscard]] std::vector<const assets::ModuleDef*> fitModules(const assets::DefDatabase& defs,
-                                                               const OwnedShip& ship)
+[[nodiscard]] std::vector<const assets::ComponentDef*> fitComponents(const assets::DefDatabase& defs,
+                                                                     const OwnedShip& ship)
 {
-    std::vector<const assets::ModuleDef*> modules;
-    modules.reserve(ship.moduleIds.size());
-    for (const std::string& id : ship.moduleIds) {
-        const assets::ModuleDef* module = defs.findModule(id.c_str());
-        if (module == nullptr) {
-            SOL_LOG_WARN("fit: module def '%s' missing; ignoring", id.c_str());
+    std::vector<const assets::ComponentDef*> components;
+    components.reserve(ship.componentIds.size());
+    for (const std::string& id : ship.componentIds) {
+        const assets::ComponentDef* component = defs.findComponent(id.c_str());
+        if (component == nullptr) {
+            SOL_LOG_WARN("fit: component def '%s' missing; ignoring", id.c_str());
         }
-        modules.push_back(module); // nulls are skipped by the loadout math
+        components.push_back(component); // nulls are skipped by the loadout math
     }
-    return modules;
+    return components;
 }
 
 [[nodiscard]] std::vector<const assets::CrewDef*> fitCrew(const assets::DefDatabase& defs,
@@ -4861,9 +4861,9 @@ assets::ShipDef SpaceWorld::resolvedShipDef(const OwnedShip& ship) const
         SOL_LOG_WARN("fleet: ship def '%s' missing; using defaults", ship.defId.c_str());
         return assets::ShipDef{.id = ship.defId};
     }
-    const std::vector<const assets::ModuleDef*> modules = fitModules(*m_defs, ship);
+    const std::vector<const assets::ComponentDef*> components = fitComponents(*m_defs, ship);
     const std::vector<const assets::CrewDef*> crew = fitCrew(*m_defs, ship);
-    assets::ShipDef effective = assets::resolveLoadout(*base, modules, crew);
+    assets::ShipDef effective = assets::resolveLoadout(*base, components, crew);
     effective.weaponId = ship.weaponId;
     return effective;
 }
@@ -4917,9 +4917,9 @@ double SpaceWorld::shipValue(const OwnedShip& ship) const
     if (const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str())) {
         value += base->price;
     }
-    for (const std::string& id : ship.moduleIds) {
-        if (const assets::ModuleDef* module = m_defs->findModule(id.c_str())) {
-            value += module->price;
+    for (const std::string& id : ship.componentIds) {
+        if (const assets::ComponentDef* component = m_defs->findComponent(id.c_str())) {
+            value += component->price;
         }
     }
     if (!ship.weaponId.empty()) {
@@ -4930,65 +4930,65 @@ double SpaceWorld::shipValue(const OwnedShip& ship) const
     return value;
 }
 
-bool SpaceWorld::buyModule(const char* moduleId, std::string* outError)
+bool SpaceWorld::buyComponent(const char* componentId, std::string* outError)
 {
     if (!isDocked() || m_defs == nullptr || m_fleet.empty()) {
         return refuse("must be docked to refit", outError);
     }
-    const assets::ModuleDef* module = m_defs->findModule(moduleId);
-    if (module == nullptr) {
-        return refuse(std::string("no module def '") + moduleId + "'", outError);
+    const assets::ComponentDef* component = m_defs->findComponent(componentId);
+    if (component == nullptr) {
+        return refuse(std::string("no component def '") + componentId + "'", outError);
     }
-    if (!stationSells(module->gate)) {
-        return refuse("'" + module->name + "' is not sold here (faction catalog)", outError);
+    if (!stationSells(component->gate)) {
+        return refuse("'" + component->name + "' is not sold here (faction catalog)", outError);
     }
     OwnedShip& ship = m_fleet[m_activeShip];
     const assets::ShipDef* base = m_defs->findShip(ship.defId.c_str());
     if (base == nullptr) {
         return refuse("active ship def '" + ship.defId + "' missing", outError);
     }
-    std::vector<const assets::ModuleDef*> modules = fitModules(*m_defs, ship);
-    modules.push_back(module);
+    std::vector<const assets::ComponentDef*> components = fitComponents(*m_defs, ship);
+    components.push_back(component);
     std::string reason;
-    if (!assets::validateLoadout(*base, modules, fitCrew(*m_defs, ship), &reason)) {
+    if (!assets::validateLoadout(*base, components, fitCrew(*m_defs, ship), &reason)) {
         return refuse(reason, outError);
     }
-    if (m_playerCredits < module->price) {
+    if (m_playerCredits < component->price) {
         return refuse("insufficient credits", outError);
     }
-    m_playerCredits -= module->price;
-    ship.moduleIds.push_back(module->id);
+    m_playerCredits -= component->price;
+    ship.componentIds.push_back(component->id);
     applyActiveLoadout();
-    SOL_LOG_INFO("fitted '%s' (-%.0f cr)", module->name.c_str(), static_cast<double>(module->price));
+    SOL_LOG_INFO("fitted '%s' (-%.0f cr)", component->name.c_str(), static_cast<double>(component->price));
     return true;
 }
 
-bool SpaceWorld::sellModule(const char* moduleId, std::string* outError)
+bool SpaceWorld::sellComponent(const char* componentId, std::string* outError)
 {
     if (!isDocked() || m_fleet.empty()) {
         return refuse("must be docked to refit", outError);
     }
     OwnedShip& ship = m_fleet[m_activeShip];
-    const auto it = std::find(ship.moduleIds.begin(), ship.moduleIds.end(), moduleId);
-    if (it == ship.moduleIds.end()) {
-        return refuse(std::string("module '") + moduleId + "' is not fitted", outError);
+    const auto it = std::find(ship.componentIds.begin(), ship.componentIds.end(), componentId);
+    if (it == ship.componentIds.end()) {
+        return refuse(std::string("component '") + componentId + "' is not fitted", outError);
     }
     // Refuse a removal that would strand cargo over the reduced capacity.
     OwnedShip candidate = ship;
-    candidate.moduleIds.erase(candidate.moduleIds.begin() + (it - ship.moduleIds.begin()));
+    candidate.componentIds.erase(candidate.componentIds.begin() + (it - ship.componentIds.begin()));
     if (resolvedShipDef(candidate).cargoCapacity < playerCargoTotal()) {
         return refuse("cargo hold would overflow; sell cargo first", outError);
     }
     double refund = 0.0;
     if (m_defs != nullptr) {
-        if (const assets::ModuleDef* module = m_defs->findModule(moduleId)) {
-            refund = kResaleRate * module->price;
+        if (const assets::ComponentDef* component = m_defs->findComponent(componentId)) {
+            refund = kResaleRate * component->price;
         }
     }
-    ship.moduleIds.erase(it);
+    ship.componentIds.erase(it);
     m_playerCredits += refund;
     applyActiveLoadout();
-    SOL_LOG_INFO("removed '%s' (+%.0f cr)", moduleId, refund);
+    SOL_LOG_INFO("removed '%s' (+%.0f cr)", componentId, refund);
     return true;
 }
 
@@ -5120,7 +5120,7 @@ bool SpaceWorld::hireCrew(const char* crewId, std::string* outError)
     std::vector<const assets::CrewDef*> crew = fitCrew(*m_defs, ship);
     crew.push_back(member);
     std::string reason;
-    if (!assets::validateLoadout(*base, fitModules(*m_defs, ship), crew, &reason)) {
+    if (!assets::validateLoadout(*base, fitComponents(*m_defs, ship), crew, &reason)) {
         return refuse(reason, outError);
     }
     if (m_playerCredits < member->price) {
@@ -7812,8 +7812,8 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
     for (const OwnedShip& ship : m_fleet) {
         writer.writeString(ship.defId);
         writer.writeString(ship.weaponId);
-        writer.write(static_cast<std::uint32_t>(ship.moduleIds.size()));
-        for (const std::string& id : ship.moduleIds) {
+        writer.write(static_cast<std::uint32_t>(ship.componentIds.size()));
+        for (const std::string& id : ship.componentIds) {
             writer.writeString(id);
         }
         writer.write(static_cast<std::uint32_t>(ship.crewIds.size()));
@@ -7922,14 +7922,14 @@ bool SpaceWorld::loadFrom(const char* path)
     }
     std::vector<OwnedShip> fleet(fleetCount);
     for (OwnedShip& ship : fleet) {
-        std::uint32_t moduleCount = 0;
+        std::uint32_t componentCount = 0;
         std::uint32_t crewCount = 0;
         if (!reader.readString(ship.defId) || !reader.readString(ship.weaponId) ||
-            !reader.read(moduleCount)) {
+            !reader.read(componentCount)) {
             return false;
         }
-        ship.moduleIds.resize(moduleCount);
-        for (std::string& id : ship.moduleIds) {
+        ship.componentIds.resize(componentCount);
+        for (std::string& id : ship.componentIds) {
             if (!reader.readString(id)) {
                 return false;
             }

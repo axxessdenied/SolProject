@@ -9,11 +9,11 @@ using namespace sol;
 
 namespace {
 
-constexpr const char* kSlotNames[assets::kModuleSlotCount] = {"shield", "engine", "cargo", "utility"};
+constexpr const char* kSlotNames[assets::kComponentSlotCount] = {"shield", "engine", "cargo", "utility"};
 
 [[nodiscard]] int fittedCount(const OwnedShip& ship, const std::string& id)
 {
-    return static_cast<int>(std::count(ship.moduleIds.begin(), ship.moduleIds.end(), id));
+    return static_cast<int>(std::count(ship.componentIds.begin(), ship.componentIds.end(), id));
 }
 
 [[nodiscard]] const char* store(std::deque<std::string>& text, std::string value)
@@ -35,7 +35,7 @@ void fillStationOutfitting(const SpaceWorld& world,
                            const assets::DefDatabase& defs,
                            std::deque<std::string>& text,
                            ui::StationPanel& panel,
-                           std::vector<ui::OutfitRow>& moduleRows,
+                           std::vector<ui::OutfitRow>& componentRows,
                            std::vector<ui::OutfitRow>& weaponRows,
                            std::vector<ui::OutfitRow>& crewCatalogRows,
                            std::vector<ui::OutfitRow>& crewAboardRows,
@@ -44,7 +44,7 @@ void fillStationOutfitting(const SpaceWorld& world,
                            std::vector<ui::FactionRow>& factionRows)
 {
     text.clear();
-    moduleRows.clear();
+    componentRows.clear();
     weaponRows.clear();
     crewCatalogRows.clear();
     crewAboardRows.clear();
@@ -56,20 +56,20 @@ void fillStationOutfitting(const SpaceWorld& world,
     const assets::ShipDef* base = defs.findShip(active.defId.c_str());
 
     // Fit summary: slot and power budget usage on the active ship.
-    std::uint32_t slotsUsed[assets::kModuleSlotCount] = {};
+    std::uint32_t slotsUsed[assets::kComponentSlotCount] = {};
     float powerUsed = 0.0f;
-    for (const std::string& id : active.moduleIds) {
-        if (const assets::ModuleDef* module = defs.findModule(id.c_str())) {
-            ++slotsUsed[static_cast<std::size_t>(module->slot)];
-            powerUsed += module->powerDraw;
+    for (const std::string& id : active.componentIds) {
+        if (const assets::ComponentDef* component = defs.findComponent(id.c_str())) {
+            ++slotsUsed[static_cast<std::size_t>(component->slot)];
+            powerUsed += component->powerDraw;
         }
     }
     if (base != nullptr) {
-        const std::uint32_t slotLimits[assets::kModuleSlotCount] = {
+        const std::uint32_t slotLimits[assets::kComponentSlotCount] = {
             base->slotsShield, base->slotsEngine, base->slotsCargo, base->slotsUtility};
         std::string summary = base->name + " | power " + formatNumber(powerUsed) + "/" +
                               formatNumber(base->powerOutput) + " | slots";
-        for (std::size_t i = 0; i < assets::kModuleSlotCount; ++i) {
+        for (std::size_t i = 0; i < assets::kComponentSlotCount; ++i) {
             summary += std::string(" ") + kSlotNames[i][0] + ":" + std::to_string(slotsUsed[i]) + "/" +
                        std::to_string(slotLimits[i]);
         }
@@ -81,11 +81,11 @@ void fillStationOutfitting(const SpaceWorld& world,
     }
     panel.deductible = world.insuranceDeductible();
 
-    for (const assets::ModuleDef& def : defs.modules()) {
+    for (const assets::ComponentDef& def : defs.components()) {
         if (!world.stationSells(def.gate)) {
             continue; // owner faction doesn't stock it (Phase 8b catalogs)
         }
-        moduleRows.push_back(
+        componentRows.push_back(
             {.id = def.id.c_str(),
              .name = def.name.c_str(),
              .detail = store(text,
@@ -226,7 +226,7 @@ void fillStationOutfitting(const SpaceWorld& world,
     }
     panel.factionNotes = store(text, std::move(notes));
 
-    panel.modules = moduleRows;
+    panel.components = componentRows;
     panel.weapons = weaponRows;
     panel.crewCatalog = crewCatalogRows;
     panel.crewAboard = crewAboardRows;
@@ -333,11 +333,11 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
     switch (action.kind) {
     case Kind::None:
         break;
-    case Kind::BuyModule:
-        (void)world.buyModule(action.id);
+    case Kind::BuyComponent:
+        (void)world.buyComponent(action.id);
         break;
-    case Kind::SellModule:
-        (void)world.sellModule(action.id);
+    case Kind::SellComponent:
+        (void)world.sellComponent(action.id);
         break;
     case Kind::BuyWeapon:
         (void)world.buyWeapon(action.id);

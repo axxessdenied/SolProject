@@ -388,7 +388,7 @@ struct ShipInfoPanel
     std::span<const InfoRow> flight;  // thrust, speed, turn rates
     std::span<const InfoRow> defence; // shields, armor, hull, weapon
     std::span<const InfoRow> utility; // scan, collector, cargo
-    std::span<const InfoRow> fitted;  // weapon, modules, crew
+    std::span<const InfoRow> fitted;  // weapon, components, crew
     std::span<const InfoRow> cargo;   // manifest, one line per commodity held
 };
 
@@ -632,8 +632,8 @@ struct StationAction
     enum class Kind : std::uint32_t
     {
         None = 0,
-        BuyModule,
-        SellModule,
+        BuyComponent,
+        SellComponent,
         BuyWeapon,
         BuyShip,
         SellShip,
@@ -649,7 +649,7 @@ struct StationAction
         BuyMarketIntel, // Phase 8g: price lists for the markets in reach
     };
     Kind kind = Kind::None;
-    const char* id = ""; // def id (module/weapon/ship/crew actions)
+    const char* id = ""; // def id (component/weapon/ship/crew actions)
     int index = -1;      // fleet index, or mission offer/journal index
     float units = 0.0f;  // refinery order size
 };
@@ -674,10 +674,10 @@ struct RefinePanel
 struct StationPanel
 {
     TradePanel trade;
-    const char* fitSummary = "";        // active ship fit + budgets, prebuilt
-    double deductible = 0.0;            // current insurance quote
-    std::span<const OutfitRow> modules; // catalog
-    std::span<const OutfitRow> weapons; // catalog ("fitted" flags the mount)
+    const char* fitSummary = "";           // active ship fit + budgets, prebuilt
+    double deductible = 0.0;               // current insurance quote
+    std::span<const OutfitRow> components; // catalog
+    std::span<const OutfitRow> weapons;    // catalog ("fitted" flags the mount)
     std::span<const OutfitRow> crewCatalog;
     std::span<const OutfitRow> crewAboard;
     std::span<const OutfitRow> shipCatalog;

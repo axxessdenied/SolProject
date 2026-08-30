@@ -98,7 +98,7 @@ void emptyNote(UiContext& ui, Column& column, std::string_view text)
     return contentHeight > view.height() ? ui.theme().scrollbarWidth + ui.theme().spacing : 0.0f;
 }
 
-// --- Catalog lists (modules, weapons, ships, crew) ---
+// --- Catalog lists (components, weapons, ships, crew) ---
 
 struct CatalogCells
 {
@@ -126,7 +126,7 @@ catalogCells(const UiContext& ui, const Rect& row, bool showPrice, bool reserveS
     const Rect rest = cursor.remaining();
     Row split(rest, ui.theme().spacing);
     // Detail gets the larger share: it is what actually differs between two
-    // modules of the same slot.
+    // components of the same slot.
     cells.name = split.cell(rest.width() * 0.38f);
     cells.detail = split.remaining();
     return cells;
@@ -353,7 +353,7 @@ void buildOutfittingTab(UiContext& ui, StationPanel& panel, StationScreenState& 
     const auto& theme = ui.theme();
     const float contentHeight = kRowHeight * 2.0f + theme.spacing * 2.0f +
                                 (kSectionHeight + theme.spacing) * 2.0f +
-                                listHeight(ui, std::max<std::size_t>(panel.modules.size(), 1)) +
+                                listHeight(ui, std::max<std::size_t>(panel.components.size(), 1)) +
                                 listHeight(ui, std::max<std::size_t>(panel.weapons.size(), 1));
     const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Outfitting]);
     Column column(list, 0.0f, theme.spacing);
@@ -363,13 +363,14 @@ void buildOutfittingTab(UiContext& ui, StationPanel& panel, StationScreenState& 
     std::snprintf(buffer, sizeof(buffer), "Insurance deductible at current fit: %.0f cr", panel.deductible);
     clipped(ui, column.row(kRowHeight), buffer, theme.textDim, theme.smallStyle);
 
-    sectionHeader(ui, column.row(kSectionHeight), "Modules (Sell removes one fitted instance at resale)");
-    const CatalogClick module =
-        catalogList(ui, column, "modules", panel.modules, {.primary = "Buy", .secondary = "Sell"});
-    if (module.row >= 0) {
-        panel.action = {module.secondary ? StationAction::Kind::SellModule : StationAction::Kind::BuyModule,
-                        panel.modules[static_cast<std::size_t>(module.row)].id,
-                        module.row};
+    sectionHeader(ui, column.row(kSectionHeight), "Components (Sell removes one fitted instance at resale)");
+    const CatalogClick component =
+        catalogList(ui, column, "components", panel.components, {.primary = "Buy", .secondary = "Sell"});
+    if (component.row >= 0) {
+        panel.action = {component.secondary ? StationAction::Kind::SellComponent
+                                            : StationAction::Kind::BuyComponent,
+                        panel.components[static_cast<std::size_t>(component.row)].id,
+                        component.row};
     }
 
     sectionHeader(ui, column.row(kSectionHeight), "Weapon mount (swapping sells the old weapon at resale)");

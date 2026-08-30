@@ -118,7 +118,7 @@ struct Accumulated
 {
     std::array<float, kFitStatCount> add{};
     std::array<float, kFitStatCount> mul = StatModifiers::ones();
-    float moduleMass = 0.0f;
+    float componentMass = 0.0f;
 };
 
 void accumulate(Accumulated& acc, const StatModifiers& mods)
@@ -132,27 +132,27 @@ void accumulate(Accumulated& acc, const StatModifiers& mods)
 } // namespace
 
 bool validateLoadout(const ShipDef& ship,
-                     std::span<const ModuleDef* const> modules,
+                     std::span<const ComponentDef* const> components,
                      std::span<const CrewDef* const> crew,
                      std::string* outError)
 {
-    std::array<std::uint32_t, kModuleSlotCount> used{};
+    std::array<std::uint32_t, kComponentSlotCount> used{};
     float powerDraw = 0.0f;
-    for (const ModuleDef* module : modules) {
-        if (module == nullptr) {
+    for (const ComponentDef* component : components) {
+        if (component == nullptr) {
             continue;
         }
-        ++used[static_cast<std::size_t>(module->slot)];
-        powerDraw += module->powerDraw;
+        ++used[static_cast<std::size_t>(component->slot)];
+        powerDraw += component->powerDraw;
     }
 
-    const std::array<std::uint32_t, kModuleSlotCount> limits = {
+    const std::array<std::uint32_t, kComponentSlotCount> limits = {
         ship.slotsShield, ship.slotsEngine, ship.slotsCargo, ship.slotsUtility};
-    constexpr const char* kSlotNames[kModuleSlotCount] = {"shield", "engine", "cargo", "utility"};
-    for (std::size_t i = 0; i < kModuleSlotCount; ++i) {
+    constexpr const char* kSlotNames[kComponentSlotCount] = {"shield", "engine", "cargo", "utility"};
+    for (std::size_t i = 0; i < kComponentSlotCount; ++i) {
         if (used[i] > limits[i]) {
             if (outError != nullptr) {
-                *outError = std::string("too many ") + kSlotNames[i] + " modules (" +
+                *outError = std::string("too many ") + kSlotNames[i] + " components (" +
                             std::to_string(used[i]) + "/" + std::to_string(limits[i]) + ")";
             }
             return false;
@@ -184,14 +184,14 @@ bool validateLoadout(const ShipDef& ship,
 }
 
 ShipDef resolveLoadout(const ShipDef& base,
-                       std::span<const ModuleDef* const> modules,
+                       std::span<const ComponentDef* const> components,
                        std::span<const CrewDef* const> crew)
 {
     Accumulated acc;
-    for (const ModuleDef* module : modules) {
-        if (module != nullptr) {
-            accumulate(acc, module->modifiers);
-            acc.moduleMass += module->mass;
+    for (const ComponentDef* component : components) {
+        if (component != nullptr) {
+            accumulate(acc, component->modifiers);
+            acc.componentMass += component->mass;
         }
     }
     for (const CrewDef* member : crew) {
@@ -216,8 +216,8 @@ ShipDef resolveLoadout(const ShipDef& base,
         def.flight.maxTurnRate[axis] = (base.flight.maxTurnRate[axis] + acc.add[turn]) * acc.mul[turn];
     }
 
-    // Mass penalty: module mass dilutes linear and angular acceleration.
-    const float massFactor = base.mass / (base.mass + acc.moduleMass);
+    // Mass penalty: component mass dilutes linear and angular acceleration.
+    const float massFactor = base.mass / (base.mass + acc.componentMass);
     def.flight.forwardAccel *= massFactor;
     def.flight.reverseAccel *= massFactor;
     def.flight.lateralAccel *= massFactor;

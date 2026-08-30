@@ -407,7 +407,7 @@ SOL_TEST(survey_save_load_round_trips)
     SignalLoot loot;
     loot.cargo.push_back({.commodity = 0, .units = 7.5f});
     loot.credits = 120.0;
-    loot.moduleId = "sol.scanner_mk2";
+    loot.componentId = "sol.scanner_mk2";
     SOL_CHECK(survey.setLoot(2, 0, loot));
     survey.setRoute({2, 1, 0});
     survey.recordMarket(3, {11.0f, 42.0f}, 640.0);
@@ -446,7 +446,7 @@ SOL_TEST(survey_save_load_round_trips)
     }
     SOL_REQUIRE(restored.loot(2, 0) != nullptr);
     SOL_CHECK(restored.loot(2, 0)->credits == 120.0);
-    SOL_CHECK(restored.loot(2, 0)->moduleId == "sol.scanner_mk2");
+    SOL_CHECK(restored.loot(2, 0)->componentId == "sol.scanner_mk2");
     SOL_REQUIRE(restored.loot(2, 0)->cargo.size() == 1);
     SOL_CHECK(restored.loot(2, 0)->cargo[0].units == 7.5f);
     SOL_REQUIRE(restored.route().size() == 3);

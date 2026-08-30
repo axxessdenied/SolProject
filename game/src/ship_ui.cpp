@@ -11,7 +11,7 @@ namespace ui = sol::ui;
 
 namespace {
 
-constexpr const char* kSlotNames[sol::assets::kModuleSlotCount] = {"shield", "engine", "cargo", "utility"};
+constexpr const char* kSlotNames[sol::assets::kComponentSlotCount] = {"shield", "engine", "cargo", "utility"};
 
 [[nodiscard]] const char* store(std::deque<std::string>& text, std::string value)
 {
@@ -94,21 +94,21 @@ void fillShipInfoPanel(const SpaceWorld& world,
 
     // Power and slot budget, in the same shape the Outfitting tab prints it so
     // the two screens are recognisably describing one ship.
-    std::uint32_t slotsUsed[sol::assets::kModuleSlotCount] = {};
+    std::uint32_t slotsUsed[sol::assets::kComponentSlotCount] = {};
     float powerUsed = 0.0f;
-    float moduleMass = 0.0f;
-    for (const std::string& id : active.moduleIds) {
-        if (const sol::assets::ModuleDef* module = defs.findModule(id.c_str())) {
-            ++slotsUsed[static_cast<std::size_t>(module->slot)];
-            powerUsed += module->powerDraw;
-            moduleMass += module->mass;
+    float componentMass = 0.0f;
+    for (const std::string& id : active.componentIds) {
+        if (const sol::assets::ComponentDef* component = defs.findComponent(id.c_str())) {
+            ++slotsUsed[static_cast<std::size_t>(component->slot)];
+            powerUsed += component->powerDraw;
+            componentMass += component->mass;
         }
     }
     if (base != nullptr) {
-        const std::uint32_t limits[sol::assets::kModuleSlotCount] = {
+        const std::uint32_t limits[sol::assets::kComponentSlotCount] = {
             base->slotsShield, base->slotsEngine, base->slotsCargo, base->slotsUtility};
         std::string summary = "power " + number(powerUsed) + "/" + number(base->powerOutput) + " | slots";
-        for (std::size_t i = 0; i < sol::assets::kModuleSlotCount; ++i) {
+        for (std::size_t i = 0; i < sol::assets::kComponentSlotCount; ++i) {
             summary += std::string(" ") + kSlotNames[i][0] + ":" + std::to_string(slotsUsed[i]) + "/" +
                        std::to_string(limits[i]);
         }
@@ -143,8 +143,8 @@ void fillShipInfoPanel(const SpaceWorld& world,
     if (base != nullptr) {
         flightRows.push_back(
             {"Mass",
-             store(text, withUnit(base->mass + moduleMass, "kg", 0)),
-             store(text, "hull " + number(base->mass, 0) + " + fit " + number(moduleMass, 0))});
+             store(text, withUnit(base->mass + componentMass, "kg", 0)),
+             store(text, "hull " + number(base->mass, 0) + " + fit " + number(componentMass, 0))});
     }
 
     // --- Defence.
@@ -198,12 +198,13 @@ void fillShipInfoPanel(const SpaceWorld& world,
     } else {
         fittedRows.push_back({"Weapon", "none", "unarmed mount"});
     }
-    for (const std::string& id : active.moduleIds) {
-        if (const sol::assets::ModuleDef* module = defs.findModule(id.c_str())) {
+    for (const std::string& id : active.componentIds) {
+        if (const sol::assets::ComponentDef* component = defs.findComponent(id.c_str())) {
             fittedRows.push_back(
-                {store(text, std::string(kSlotNames[static_cast<std::size_t>(module->slot)])),
-                 module->name.c_str(),
-                 store(text, number(module->powerDraw, 1) + " pwr, " + number(module->mass, 0) + " kg")});
+                {store(text, std::string(kSlotNames[static_cast<std::size_t>(component->slot)])),
+                 component->name.c_str(),
+                 store(text,
+                       number(component->powerDraw, 1) + " pwr, " + number(component->mass, 0) + " kg")});
         }
     }
     for (const std::string& id : active.crewIds) {

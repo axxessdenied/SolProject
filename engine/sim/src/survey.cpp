@@ -688,7 +688,7 @@ void SurveySim::save(core::BinaryWriter& writer) const
             writer.write(cargo.units);
         }
         writer.write(record.loot.credits);
-        writer.writeString(record.loot.moduleId);
+        writer.writeString(record.loot.componentId);
     }
     writer.write(static_cast<std::uint32_t>(m_marketMemory.size()));
     for (const MarketMemory& memory : m_marketMemory) {
@@ -772,7 +772,7 @@ bool SurveySim::load(core::BinaryReader& reader)
                 return false;
             }
         }
-        if (!reader.read(record.loot.credits) || !reader.readString(record.loot.moduleId)) {
+        if (!reader.read(record.loot.credits) || !reader.readString(record.loot.componentId)) {
             return false;
         }
     }

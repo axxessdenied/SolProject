@@ -130,7 +130,7 @@ relations = ["sol.navy:-60"]
 id = "sol.guild"
 name = "Freight Guild"
 
-[[module]]
+[[component]]
 id = "sol.navy_shield"
 name = "Navy Shield"
 slot = "shield"
@@ -163,7 +163,7 @@ shield_strength_add = 50.0
     // A faction with no character says nothing, and that is the default.
     SOL_CHECK(db.findFaction("sol.guild")->stationBias.empty());
 
-    const sol::assets::ModuleDef* gated = db.findModule("sol.navy_shield");
+    const sol::assets::ComponentDef* gated = db.findComponent("sol.navy_shield");
     SOL_CHECK(gated != nullptr);
     SOL_CHECK(gated->gate.factions.size() == 1 && gated->gate.factions[0] == "sol.navy");
     SOL_CHECK(gated->gate.minRep == 20.0f);
@@ -189,8 +189,10 @@ shield_strength_add = 50.0
         db, "[[faction]]\nid = \"f\"\nname = \"F\"\nstation_bias = [\"sol.st:-1\"]\n", "bad.toml", &error));
     SOL_CHECK(merge(
         db, "[[faction]]\nid = \"f2\"\nname = \"F2\"\nstation_bias = [\"sol.nope:2\"]\n", "ok.toml", &error));
-    SOL_CHECK(!merge(
-        db, "[[module]]\nid = \"m\"\nname = \"M\"\nslot = \"cargo\"\nmin_rep = 150\n", "bad.toml", &error));
+    SOL_CHECK(!merge(db,
+                     "[[component]]\nid = \"m\"\nname = \"M\"\nslot = \"cargo\"\nmin_rep = 150\n",
+                     "bad.toml",
+                     &error));
     SOL_CHECK(error.find("min_rep") != std::string::npos);
 }
 

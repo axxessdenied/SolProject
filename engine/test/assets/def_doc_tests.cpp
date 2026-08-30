@@ -88,10 +88,10 @@ void reportFirstDifferingLine(const char* name, const std::string& expected, con
     // header line raw, which round-trips. A plain `[a.b]` is what it refuses,
     // and no def kind in this game uses one.
     return {"commodities",
+            "components",
             "crew",
             "factions",
             "models",
-            "modules",
             "ships",
             "sounds",
             "stations",

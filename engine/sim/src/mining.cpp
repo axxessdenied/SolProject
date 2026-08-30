@@ -645,7 +645,7 @@ void MiningSim::save(core::BinaryWriter& writer) const
             writer.write(cargo.units);
         }
         writer.write(record.contents.credits);
-        writer.writeString(record.contents.moduleId);
+        writer.writeString(record.contents.componentId);
     }
     writer.write(static_cast<std::uint32_t>(m_refineJobs.size()));
     for (const RefineJob& job : m_refineJobs) {
@@ -708,7 +708,7 @@ bool MiningSim::load(core::BinaryReader& reader)
                 return false;
             }
         }
-        if (!reader.read(record.contents.credits) || !reader.readString(record.contents.moduleId)) {
+        if (!reader.read(record.contents.credits) || !reader.readString(record.contents.componentId)) {
             return false;
         }
     }

@@ -29,7 +29,7 @@
 --   sol.salvage()                   empty the nearest resolved site in range
 --   sol.survey_ledger() / sol.sell_survey()   unsold scan data / sell it here
 --   sol.route(systemName) / sol.chart(systemName)  plot a route / dev cheat
---   sol.set_loot(cargo, credits, module)      inside signal_loot / wreck_loot
+--   sol.set_loot(cargo, credits, component)      inside signal_loot / wreck_loot
 --   sol.fields() / sol.rocks(n)     asteroid fields here / one field's rocks (Phase 8f)
 --   sol.wrecks() / sol.mine()       known wrecks / cut what the nose is on (dev)
 --   sol.target(namePart)            select any nav target by name
@@ -386,7 +386,7 @@ print("init.lua ready - ships: " .. sol.ships())
 -- Exploration (Phase 8e). C++ resolves a site and fills in a default table
 -- first, then calls this with the site's own seeded roll — the only entropy,
 -- so what a wreck holds is fixed by the world seed rather than by when you
--- happened to scan it. sol.set_loot(cargo, credits, module) replaces the
+-- happened to scan it. sol.set_loot(cargo, credits, component) replaces the
 -- default; returning without calling it keeps the C++ table.
 local derelictCargo = {"sol.machinery", "sol.ore", "sol.machinery"}
 local cacheCargo = {"sol.machinery", "sol.food"}
@@ -401,7 +401,7 @@ function signal_loot(kind, system, region, roll)
     else
         local commodity = derelictCargo[1 + math.floor(roll * #derelictCargo) % #derelictCargo]
         local units = math.floor((8 + 18 * roll) * depth)
-        -- A quarter of derelicts in real frontier space still have a module
+        -- A quarter of derelicts in real frontier space still have a component
         -- bolted on; the scanner is the one worth flying out for.
         local salvage = (roll > 0.75 and region ~= "core") and "sol.survey_scanner_mk1" or ""
         sol.set_loot(string.format("%s:%d", commodity, units), 0, salvage)

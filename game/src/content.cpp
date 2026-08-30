@@ -1058,10 +1058,10 @@ double playerCargo(GameContent& content, const std::string& id)
 
 // --- Outfitting & fleet (Phase 8a; all mutations require being docked) ---
 
-std::string listModules(GameContent& content)
+std::string listComponents(GameContent& content)
 {
     std::string lines;
-    for (const assets::ModuleDef& def : content.defs().modules()) {
+    for (const assets::ComponentDef& def : content.defs().components()) {
         if (!lines.empty()) {
             lines += "\n";
         }
@@ -1084,17 +1084,17 @@ std::string listCrewDefs(GameContent& content)
     return lines;
 }
 
-// The active ship's fit: def, weapon, modules, crew, value, deductible.
+// The active ship's fit: def, weapon, components, crew, value, deductible.
 std::string fitInfo(GameContent& content)
 {
     SpaceWorld& world = content.world();
     const game::OwnedShip& ship = world.activeShip();
     std::string info = ship.defId + " | weapon: " + (ship.weaponId.empty() ? "-" : ship.weaponId);
-    info += " | modules:";
-    if (ship.moduleIds.empty()) {
+    info += " | components:";
+    if (ship.componentIds.empty()) {
         info += " -";
     }
-    for (const std::string& id : ship.moduleIds) {
+    for (const std::string& id : ship.componentIds) {
         info += " " + id;
     }
     info += " | crew:";
@@ -1131,14 +1131,14 @@ std::string listFleet(GameContent& content)
     return lines;
 }
 
-bool buyModule(GameContent& content, const std::string& id)
+bool buyComponent(GameContent& content, const std::string& id)
 {
-    return content.world().buyModule(id.c_str());
+    return content.world().buyComponent(id.c_str());
 }
 
-bool sellModule(GameContent& content, const std::string& id)
+bool sellComponent(GameContent& content, const std::string& id)
 {
-    return content.world().sellModule(id.c_str());
+    return content.world().sellComponent(id.c_str());
 }
 
 bool buyWeapon(GameContent& content, const std::string& id)
@@ -2158,7 +2158,7 @@ std::string listWrecks(GameContent& content)
                           : "?",
                       static_cast<double>(cargo),
                       wreck.contents.credits,
-                      wreck.contents.moduleId.empty() ? "" : ", module",
+                      wreck.contents.componentId.empty() ? "" : ", component",
                       wreck.decayRemaining);
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
@@ -2612,9 +2612,9 @@ bool chartSystem(GameContent& content, const char* systemName)
 }
 
 // The signal_loot hook's builder: "commodityId:units,commodityId:units" plus
-// credits and an optional module id. Validated here against the defs and the
+// credits and an optional component id. Validated here against the defs and the
 // sim's caps - a script cannot invent a commodity or overfill a wreck.
-bool setSignalLoot(GameContent& content, const char* cargoSpec, double credits, const char* moduleId)
+bool setSignalLoot(GameContent& content, const char* cargoSpec, double credits, const char* componentId)
 {
     if (content.lootSignal() == 0xffff'ffffu && content.lootWreck() == 0) {
         SOL_LOG_WARN("set_loot: only valid inside signal_loot or wreck_loot");
@@ -2645,12 +2645,12 @@ bool setSignalLoot(GameContent& content, const char* cargoSpec, double credits, 
         }
         spec.remove_prefix(comma + 1);
     }
-    if (moduleId != nullptr && moduleId[0] != '\0') {
-        if (content.defs().findModule(moduleId) == nullptr) {
-            SOL_LOG_WARN("set_loot: unknown module '%s'", moduleId);
+    if (componentId != nullptr && componentId[0] != '\0') {
+        if (content.defs().findComponent(componentId) == nullptr) {
+            SOL_LOG_WARN("set_loot: unknown component '%s'", componentId);
             return false;
         }
-        loot.moduleId = moduleId;
+        loot.componentId = componentId;
     }
     if (content.lootWreck() != 0) {
         return world.applyWreckLoot(content.lootWreck(), std::move(loot));
@@ -3307,12 +3307,12 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&killMiner>("sol", "miner_kill", this);
     m_vm.registerFunction<&autopilotEngage>("sol", "autopilot", this);
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
-    m_vm.registerFunction<&listModules>("sol", "modules", this);
+    m_vm.registerFunction<&listComponents>("sol", "components", this);
     m_vm.registerFunction<&listCrewDefs>("sol", "crew_defs", this);
     m_vm.registerFunction<&fitInfo>("sol", "fit", this);
     m_vm.registerFunction<&listFleet>("sol", "fleet", this);
-    m_vm.registerFunction<&buyModule>("sol", "buy_module", this);
-    m_vm.registerFunction<&sellModule>("sol", "sell_module", this);
+    m_vm.registerFunction<&buyComponent>("sol", "buy_component", this);
+    m_vm.registerFunction<&sellComponent>("sol", "sell_component", this);
     m_vm.registerFunction<&buyWeapon>("sol", "buy_weapon", this);
     m_vm.registerFunction<&buyShip>("sol", "buy_ship", this);
     m_vm.registerFunction<&sellShip>("sol", "sell_ship", this);

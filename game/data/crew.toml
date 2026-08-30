@@ -1,6 +1,6 @@
 # Hireable crew (decisions/006: trivial passive bonuses). One-time hire fee;
 # bonuses apply while aboard; each occupies one berth. Same modifier keys as
-# modules, but no mass or power_draw.
+# components, but no mass or power_draw.
 
 [[crew]]
 id = "sol.crew_engineer"

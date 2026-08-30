@@ -330,7 +330,7 @@ SOL_TEST(mining_wrecks_hold_validated_loot_and_decay)
     SignalLoot good;
     good.cargo.push_back(SignalCargo{.commodity = 1, .units = 6.0f});
     good.credits = 120.0;
-    good.moduleId = "sol.shield_mk1";
+    good.componentId = "sol.shield_mk1";
     SOL_CHECK(mining.setWreckContents(id, good));
     SOL_CHECK(mining.wreck(id)->contentsSet);
     SOL_CHECK(mining.wreck(id)->contents.credits == 120.0);
@@ -462,7 +462,7 @@ SOL_TEST(mining_save_load_restores_depletion_wrecks_and_jobs)
     SignalLoot loot;
     loot.cargo.push_back(SignalCargo{.commodity = 1, .units = 6.0f});
     loot.credits = 120.0;
-    loot.moduleId = "sol.shield_mk1";
+    loot.componentId = "sol.shield_mk1";
     SOL_REQUIRE(mining.setWreckContents(id, loot));
     SOL_REQUIRE(mining.startRefineJob(4, 1, 20.0f, 2));
     mining.tick(30.0);
@@ -489,7 +489,7 @@ SOL_TEST(mining_save_load_restores_depletion_wrecks_and_jobs)
     SOL_CHECK(restored.wreck(id)->contents.credits == 120.0);
     SOL_REQUIRE(restored.wreck(id)->contents.cargo.size() == 1);
     SOL_CHECK(restored.wreck(id)->contents.cargo[0].units == 6.0f);
-    SOL_CHECK(restored.wreck(id)->contents.moduleId == "sol.shield_mk1");
+    SOL_CHECK(restored.wreck(id)->contents.componentId == "sol.shield_mk1");
     SOL_REQUIRE(restored.refineJobs().size() == 1);
     SOL_CHECK(restored.refineJobs()[0].secondsRemaining == mining.refineJobs()[0].secondsRemaining);
     SOL_CHECK(restored.refineJobs()[0].outputUnits == mining.refineJobs()[0].outputUnits);
