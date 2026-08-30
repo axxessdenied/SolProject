@@ -159,6 +159,17 @@ struct ShipWeapon
     // because this component is FLATTENED from its def and keeps no def id -
     // which is exactly why the bolt was a hardcoded "cube" until now.
     ModelId boltModel = kNoModel;
+    // ⚑⚑ WHAT THE GUN ITSELF DRAWS AS, STANDING IN ITS MOUNT (Phase 31 stage
+    // E). `kNoModel` means it is not drawn, which is what every gun in the
+    // game did before this stage - so a weapon def naming no mesh still fits
+    // and still fires and simply leaves the hardpoint bare.
+    //
+    // ⚑ It is beside `boltModel` for the same reason `at` and `aim` are here:
+    // the component is flattened and keeps no def id, so anything the draw
+    // needs has to be resolved at `applyShipDef` and carried. That is also why
+    // this is the field that made `ShipArmament` wider again, and why
+    // `kSaveVersion` moved with it.
+    ModelId fittingModel = kNoModel;
 };
 
 // ⚑⚑ A HARD CEILING ON GUNS PER HULL, AND IT BUYS SOMETHING REAL. The ECS
@@ -288,6 +299,32 @@ struct GunneryFrame
                           const ShipWeapon& weapon,
                           sol::core::DVec3& outMuzzle,
                           sol::core::DVec3& outBearing);
+
+// ⚑⚑ HOW A FITTING STANDS IN ITS MOUNT (Phase 31 stage E). Both arguments
+// are in the HULL's frame and so is the answer, which is what keeps a drawn
+// gun rigidly attached to the hull: the traverse comes off the sim tick and
+// the hull's own pose comes off the interpolated render transform, and mixing
+// the two frames is how a turret ends up swimming across its own ship at low
+// tick rates.
+//
+// TWO vectors rather than one, because a shortest-arc rotation onto the
+// bearing leaves the ROLL free and a gun is not rotationally symmetric about
+// its barrel:
+//
+//   -Z of the model goes onto `bearing`, wherever the gunner has laid it;
+//   +Y of the model goes as near `mountAim` as a right angle allows.
+//
+// `mountAim` is the mount's own `aim` - which for an external mount points out
+// of the hull - so the gun's base plate sits flat against the plating and a
+// VENTRAL ring hangs upside down from it rather than standing on its head.
+// That case is not hypothetical: it is the shipped freighter's `turret_ventral`
+// exactly, and it is the whole reason the roll is not left free.
+//
+// ⚑ A bearing parallel to the aim leaves no roll to choose and any answer is
+// as good as another - a gun laid straight up out of its own ring. The
+// shortest arc is returned rather than a refusal, because there is nothing
+// wrong with the gun.
+[[nodiscard]] sol::core::Quat fittingRotation(sol::core::Vec3 bearing, sol::core::Vec3 mountAim);
 
 // A live bolt: Transform carries the position, this the rest.
 struct Projectile
@@ -1937,6 +1974,16 @@ public:
 
     // One instance per RenderShape entity, interpolated; ship excluded when
     // includeShip is false (first-person view).
+    //
+    // ⚑⚑ SINCE PHASE 31 STAGE E IT ALSO APPENDS WHAT IS BOLTED TO THOSE
+    // HULLS: one more instance per fitted, external, modelled mount, hung off
+    // its owner's transform. A fitting is not an entity and deliberately never
+    // becomes one (see `kMaxShipWeapons`), so it has no RenderShape of its own
+    // and this is the only place it can be drawn from.
+    //
+    // ⚑ A fitting follows its hull in and out of the list: hidden from the
+    // seat exactly as the hull is, because half a ship drawn around a hull
+    // that is not there reads worse than none.
     void buildRenderInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const;
 
     // The interior to draw when the player is in the seat (Phase 19), from the
@@ -2212,6 +2259,11 @@ private:
                     const sol::core::DVec3& hitPosition,
                     const sol::sim::DamageResult& result,
                     std::uint32_t attackerIndex = kNoIndex);
+
+    // The fitting half of `buildRenderInstances`, split out because it walks a
+    // different pool under a different rule and because "which pose is this
+    // in" has to be answerable about it on its own - see the definition.
+    void appendFittingInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const;
 
     void applyShipDef(std::uint32_t entityIndex,
                       const sol::assets::ShipDef& def,

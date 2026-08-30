@@ -57,21 +57,38 @@ inline constexpr const char* kRoleShip = "ship";
 // to, so the site is data-driven whether or not that stage happens.
 inline constexpr const char* kRoleWreck = "wreck";
 
+// ⚑⚑ WHAT A FITTING STANDING IN A MOUNT IS DRAWN AS WHEN ITS OWN DEF NAMES
+// A MODEL THAT DOES NOT EXIST (Phase 31 stage E). A FALLBACK, like the three
+// above it and unlike the roles above those - and the distinction is the whole
+// of how a fitting is resolved:
+//
+//   a def that names NOTHING draws nothing, because a bare hardpoint is the
+//   honest picture of a weapon nobody has authored a mesh for, and a fallback
+//   box sprouting on somebody else's ship is not;
+//   a def that names something BROKEN draws this, because that is an author's
+//   mistake and a mistake should be visible.
+//
+// ⚑ It is therefore NOT under the unit-radius contract. A fitting is drawn at
+// the HULL's scale, which is the scale `at` is already multiplied by, so its
+// mesh is authored at real size exactly as the gate and the cockpit are.
+inline constexpr const char* kRoleFitting = "fitting";
+
 // The vocabulary `DefDatabase::validateRoles` is checked against, in both
 // directions: a missing row is a refusal, and so is a row naming a role that
 // is not in here.
 //
 // ⚑ A real static array rather than a returned `std::initializer_list`, whose
 // backing store would not outlive the return statement.
-inline constexpr std::array<const char* const, 9> kModelRoles = {kRoleGate,
-                                                                 kRoleGateMembrane,
-                                                                 kRoleRock,
-                                                                 kRoleOreChunk,
-                                                                 kRoleBolt,
-                                                                 kRoleCockpit,
-                                                                 kRoleStation,
-                                                                 kRoleShip,
-                                                                 kRoleWreck};
+inline constexpr std::array<const char* const, 10> kModelRoles = {kRoleGate,
+                                                                  kRoleGateMembrane,
+                                                                  kRoleRock,
+                                                                  kRoleOreChunk,
+                                                                  kRoleBolt,
+                                                                  kRoleCockpit,
+                                                                  kRoleStation,
+                                                                  kRoleShip,
+                                                                  kRoleWreck,
+                                                                  kRoleFitting};
 
 // The roles above whose instance scale carries meaning, so the model filling
 // them must be authored at radius 1.0. Named here rather than in the test so

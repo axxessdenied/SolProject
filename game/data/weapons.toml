@@ -17,6 +17,37 @@
 # ⚑ Sizing the heavier guns up - `sol.heavy_cannon` to `medium`, which would
 # put it on the freighter's turret and off the shuttle's nose - is a real
 # balance decision, and stage B deliberately does not make it in passing.
+#
+# ⚑⚑ A GUN IS DRAWN ON THE HULL NOW (Phase 31 stage E), and it takes TWO
+# model keys that are not the same word twice:
+#
+#   model       the gun itself, standing in its mount
+#   bolt_model  what its shot is drawn as; a hitscan weapon has none
+#
+# `bolt_model` was spelled `model` until this stage and moved to make room,
+# following the spelling `commodities.toml` already uses: `model` is the thing
+# itself and `<derived>_model` is what it produces. No weapon here had set it,
+# so the rename cost nothing.
+#
+# ⚑ AN EMPTY `model` IS A GUN THAT IS NOT DRAWN, not a gun that gets a
+# placeholder box - so a mod's weapon written before this stage still fits and
+# still fires, and simply leaves the hardpoint bare. A `model` naming something
+# that does not exist is a different case and falls back to the `fitting` role,
+# because that one is a mistake and should be visible.
+#
+# ⚑⚑ THE TWO MESHES SPLIT BY WHAT THE GUN IS FOR RATHER THAN BY WHAT IT
+# COSTS, and that is the whole reason there are two. A hull carrying a cannon
+# and a beam is the case fire groups exist for, so which of a freighter's two
+# rings holds the laser has to be answerable by LOOKING at the ship and not
+# only from the outfitting screen. The Mk2s share their Mk1's mesh: a tier is a
+# stat line, and inventing a second silhouette for it would say the player can
+# see the difference across space, which they cannot.
+#
+# ⚑ NEITHER MESH IS A TURRET RING, and that is `mountAcceptsKind`'s asymmetry
+# arriving in the art. THE TRAVERSE BELONGS TO THE MOUNT, so one Pulse Cannon is
+# bolted to a shuttle's nose and swings on a freighter's ring without being
+# authored twice - and a gun mesh that carried its own ring would make the nose
+# rail a lie. The ring itself is the MOUNT's to draw.
 
 [[weapon]]
 id = "sol.pulse_cannon"
@@ -30,6 +61,7 @@ range = 2500.0
 projectile_speed = 900.0
 energy_cost = 8.0
 price = 1200.0
+model = "cannon"
 
 # mining_power (Phase 8f) is yield units cut per second of held beam. A
 # mining laser is a poor gun that pays for itself on rock and wrecks; the
@@ -46,6 +78,7 @@ range = 800.0
 energy_cost = 2.0
 mining_power = 4.0
 price = 600.0
+model = "emitter"
 
 [[weapon]]
 id = "sol.mining_laser_mk2"
@@ -59,6 +92,7 @@ range = 1400.0
 energy_cost = 3.0
 mining_power = 9.0
 price = 3200.0
+model = "emitter"
 
 [[weapon]]
 id = "sol.heavy_cannon"
@@ -72,6 +106,7 @@ range = 3000.0
 projectile_speed = 850.0
 energy_cost = 14.0
 price = 4000.0
+model = "cannon"
 # Military hardware (Phase 8b): only navy/hegemony arsenals stock it, and
 # they want to know you. Pirate fences ignore min_rep.
 factions = ["sol.navy", "sol.hegemony", "sol.corsairs", "sol.reavers"]

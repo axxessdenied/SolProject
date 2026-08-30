@@ -289,6 +289,12 @@ struct ComponentDef
     std::string name;
     MountKind mount = MountKind::Utility;
     MountSize size = MountSize::Small;
+    // What it is drawn as standing in an EXTERNAL mount (Phase 31 stage E), on
+    // the same terms as `WeaponDef::model`: empty means not drawn, and the mesh
+    // is authored at real size and drawn at the hull's scale. An internal mount
+    // draws nothing whatever this says - that is `decisions/014` rule 2, and it
+    // is the MOUNT's decision rather than the kit's.
+    std::string model;
     float price = 100.0f;
     float mass = 0.0f;      // kg
     float powerDraw = 0.0f; // against ShipDef::powerOutput
@@ -332,13 +338,31 @@ struct WeaponDef
     // an ordinary hardpoint choice, not a mode.
     float miningPower = 0.0f;
     float price = 500.0f; // shipyard price (Phase 8a outfitting)
-    // What its bolt is drawn as (Phase 19). Empty means the `bolt` role, so
-    // adding this key changed nothing for the four shipped weapons. A hitscan
-    // weapon spawns no projectile and ignores it.
+    // ⚑⚑ WHAT THE GUN ITSELF IS DRAWN AS, STANDING IN ITS MOUNT (Phase 31
+    // stage E). Empty means it is NOT drawn, which is what every weapon in this
+    // game did before the key existed - so a mod's gun that names no mesh still
+    // fits and still fires, and leaves the hardpoint bare rather than sprouting
+    // a fallback box on somebody else's ship. A name that resolves to nothing
+    // is a different case and falls back to the `fitting` role, because that
+    // one is an author's mistake and should be visible.
+    //
+    // ⚑ IT IS AUTHORED AT REAL SIZE AND DRAWN AT THE HULL'S SCALE, exactly as
+    // `at` is - so one turret mesh reads as a light ring on a shuttle and a
+    // heavy one on a `scale = 4.0` freighter. The mount's `size` does NOT
+    // multiply it: a size-to-metres table would be a second opinion about how
+    // big a `medium` gun is, and the mesh is already the first one.
+    std::string model;
+    // What its BOLT is drawn as (Phase 19). Empty means the `bolt` role. A
+    // hitscan weapon spawns no projectile and ignores it.
+    //
+    // ⚑ IT WAS SPELLED `model` UNTIL PHASE 31 STAGE E, and moved to make room
+    // for the key above under the spelling `CommodityDef` already uses for the
+    // same shape: `model` is the thing itself, `<derived>_model` is what it
+    // produces. No shipped weapon set it, so the rename cost no content.
     //
     // ⚑ Under the unit-radius contract: a bolt is drawn at 0.3 x 0.3 x 4 m,
     // so the model must be authored at radius 1.
-    std::string model;
+    std::string boltModel;
     CatalogGate gate;
     std::string source;
 };

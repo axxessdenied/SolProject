@@ -212,3 +212,45 @@ mesh = "freighter_cockpit"
 material = "sol.cockpit"
 radius = 7.4173
 solid = false
+
+# ---------------------------------------------------------------------------
+# Fittings (Phase 31 stage E): what a gun standing in a mount is drawn as.
+#
+# ⚑ THESE ARE THE FIRST MODELS IN THIS FILE THAT ARE NOT A WORLD OBJECT. A gate,
+# a rock and a hull each have an entity behind them; a fitting has none - it is
+# drawn hanging off its owner's transform, the way the cockpit is, because a
+# gun that could outlive its ship is exactly the entity trap `kMaxShipWeapons`
+# exists to make inexpressible.
+#
+# ⚑ AUTHORED AT REAL SIZE AND DRAWN AT THE HULL'S SCALE, so `radius` here is the
+# mesh's own measured bounding radius rather than a unit figure. Nothing in the
+# sim reads it: a fitting is in no collision, avoidance or mining set, and the
+# gun's reach comes from its weapon def. It feeds LOD selection, and both meshes
+# are under the cooker's 256-triangle floor so neither has a chain to select
+# from - which is why the numbers can be exact rather than tuned.
+#
+# ⚑ `solid` is left at its default TRUE and it costs nothing, because the sets
+# that read it iterate entities and a fitting is not one. Writing `solid = false`
+# here would look like a decision about whether you can hit a turret, and mount
+# condition (stage F) is where that question actually gets answered.
+
+[[model]]
+id = "cannon"
+mesh = "cannon"
+texture = "hull"
+radius = 1.6707
+
+[[model]]
+id = "emitter"
+mesh = "emitter"
+texture = "hull"
+radius = 1.1268
+
+# ⚑ A FALLBACK, NOT AN ANSWER. A weapon or component def that names NO model
+# draws nothing at all - a bare hardpoint, which is the honest picture of kit
+# nobody has authored a mesh for. This row is only reached when a def names a
+# model that does not exist, which is a mistake and should be visible. See
+# game/src/model_roles.hpp, where that split is written down.
+[[role]]
+id = "fitting"
+model = "cannon"

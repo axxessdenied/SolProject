@@ -16,6 +16,7 @@
 
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <sol/assets/data_defs.hpp>
@@ -39,6 +40,50 @@ id = "sol.food"
 name = "Foodstuffs"
 base_price = 8.0
 
+# ⚑⚑ THREE DRAWABLES THAT ONLY PHASE 31 STAGE E NEEDS, and they have to be
+# real `[[model]]` rows rather than names: a fitting whose model does not
+# RESOLVE is not drawn, so a fixture that named meshes it never declared would
+# assert the stage does nothing and pass. The mesh stems are the unit cube's
+# because nothing here renders - what is under test is which model id an
+# instance carries and where it is put, not what it looks like.
+[[model]]
+id = "gun_body"
+mesh = "cube"
+texture = "hull"
+radius = 1.0
+
+[[model]]
+id = "beam_body"
+mesh = "cube"
+texture = "hull"
+radius = 1.0
+
+# The shape a BROKEN name falls back to. Deliberately a third model rather
+# than one of the two above, so "fell back" and "resolved correctly" are
+# distinguishable answers.
+[[model]]
+id = "fallback_body"
+mesh = "cube"
+texture = "hull"
+radius = 1.0
+
+# What a BOLT is drawn as, which nothing in this suite declared until Phase 31
+# stage E needed to prove that a gun's mesh and its shot's mesh are two
+# different answers. See `a_bolt_is_drawn_as_its_own_model_and_not_as_its_gun`.
+[[model]]
+id = "bolt_body"
+mesh = "cube"
+texture = "hull"
+radius = 1.0
+
+[[role]]
+id = "fitting"
+model = "fallback_body"
+
+[[role]]
+id = "bolt"
+model = "bolt_body"
+
 [[weapon]]
 id = "sol.left_gun"
 name = "Left Gun"
@@ -51,6 +96,7 @@ range = 2000.0
 projectile_speed = 600.0
 energy_cost = 10.0
 price = 400.0
+model = "gun_body"
 
 [[weapon]]
 id = "sol.right_gun"
@@ -64,6 +110,7 @@ range = 2500.0
 projectile_speed = 800.0
 energy_cost = 10.0
 price = 500.0
+model = "gun_body"
 
 [[weapon]]
 id = "sol.beam"
@@ -77,6 +124,7 @@ range = 800.0
 energy_cost = 1.0
 mining_power = 4.0
 price = 600.0
+model = "beam_body"
 
 # A beam that does NOT cut rock (Phase 31 stage C2). The shield-facing test
 # below needs a hitscan shot that certainly lands on a hull, and a beam with
@@ -106,6 +154,40 @@ range = 500.0
 projectile_speed = 600.0
 energy_cost = 10.0
 price = 300.0
+
+# ⚑⚑ TWO GUNS FOR THE TWO WAYS A FITTING CAN FAIL TO BE DRAWN (Phase 31
+# stage E), and they are separate weapons rather than edits to the ones above
+# because the difference between them is the whole rule. A weapon that names
+# NO model is not drawn - a bare hardpoint, which is what every gun in this
+# game looked like before stage E and what a mod's unarted gun still looks
+# like. A weapon that names a model which does not EXIST is an author's
+# mistake, and falls back to the `fitting` role so the mistake is visible.
+[[weapon]]
+id = "sol.unseen_gun"
+name = "Unseen Gun"
+kind = "projectile"
+mount = "fixed"
+size = "small"
+damage = 3.0
+rate_of_fire = 2.0
+range = 2000.0
+projectile_speed = 600.0
+energy_cost = 10.0
+price = 400.0
+
+[[weapon]]
+id = "sol.typo_gun"
+name = "Typo Gun"
+kind = "projectile"
+mount = "fixed"
+size = "small"
+damage = 3.0
+rate_of_fire = 2.0
+range = 2000.0
+projectile_speed = 600.0
+energy_cost = 10.0
+price = 400.0
+model = "no_such_mesh"
 
 # Something to shoot AT (Phase 31 stage C2): a hull with no mounts at all, so
 # it never fires back and never adds a bolt to the frame being differenced.
@@ -309,6 +391,36 @@ struct Fixture
             }
         }
         return fresh;
+    }
+
+    // ⚑⚑ EVERYTHING THE RENDERER WOULD DRAW WITH NO ENTITY BEHIND IT, which
+    // since Phase 31 stage E is exactly the fittings. The cockpit is the only
+    // other keyless instance in the game and `main.cpp` pushes it, not the
+    // world - so inside this suite "no key" and "a fitting" are the same set.
+    //
+    // Read back through `buildRenderInstances` rather than off the armament
+    // deliberately: what is asserted is what would be on screen, including the
+    // interpolation and the hull's own pose, and not what a component happens
+    // to hold.
+    std::vector<game::RenderInstance> fittingsDrawn(bool includeShip = true)
+    {
+        std::vector<game::RenderInstance> all;
+        world.buildRenderInstances(1.0f, includeShip, all);
+        std::vector<game::RenderInstance> fittings;
+        for (const game::RenderInstance& instance : all) {
+            if (instance.key == game::kNoInstanceKey) {
+                fittings.push_back(instance);
+            }
+        }
+        return fittings;
+    }
+
+    // Turns the hull to face `direction` and parks it, both ends of the tick
+    // written - which is what `warpTo` does and what keeps the nlerp from
+    // swinging the ship through the whole turn on the frame under test.
+    bool faceAlong(const sol::core::DVec3& direction)
+    {
+        return world.warpTo(world.shipState().position + direction, 0.0);
     }
 
     // The same, reduced to where each bolt appeared.
@@ -1115,4 +1227,423 @@ SOL_TEST(a_gun_remembers_which_mount_it_came_out_of)
     SOL_CHECK(!error.empty());
     SOL_CHECK(!fixture.world.setFireGroup("gun_port", 0, &error));
     SOL_CHECK(!fixture.world.setFireGroup("gun_port", game::kFireGroupCount + 1, &error));
+}
+
+// ===========================================================================
+// Phase 31 stage E - what is bolted to a hull, drawn where it is bolted.
+//
+// ⚑ These read the fittings back through `buildRenderInstances`, which is the
+// renderer's own entry point, so what they assert is what would be on screen:
+// the hull's pose, its scale, the mount's `at` and the gunner's answer all
+// composed the way the frame composes them. Asserting off `ShipArmament`
+// instead would test that a field was copied.
+// ===========================================================================
+
+namespace {
+
+// The model's own axes, once its drawn rotation is applied: -Z is the barrel
+// and +Y is the top of the gun. Both are the contract `fittingRotation`
+// promises and both are load-bearing - a gun is not symmetric about its
+// barrel, so the roll is as much a claim as the bearing.
+[[nodiscard]] sol::core::Vec3 barrelOf(const game::RenderInstance& fitting)
+{
+    return rotate(fitting.rotation, sol::core::Vec3{0.0f, 0.0f, -1.0f});
+}
+
+[[nodiscard]] sol::core::Vec3 topOf(const game::RenderInstance& fitting)
+{
+    return rotate(fitting.rotation, sol::core::Vec3{0.0f, 1.0f, 0.0f});
+}
+
+// One fitting hull: a bolted gun to port with a mesh and a second mount whose
+// gun is whatever the caller wants to see fail to be drawn.
+[[nodiscard]] std::string drawnAnd(const char* otherFit)
+{
+    return hull(gunMount("gun_port", -3.0, "sol.left_gun") + gunMount("gun_starboard", 3.0, otherFit));
+}
+
+} // namespace
+
+// ⚑⚑ THE STAGE, IN ONE TEST. Two fitted mounts become two drawn fittings,
+// each standing at its own mount's `at` - scaled by the hull, which is the
+// half that a fitting drawn straight off the authored numbers would get wrong
+// and only be wrong about by a factor. `scale = 2.0` is what makes that
+// measurable and is why this fixture has carried it since C1.
+SOL_TEST(a_fitted_gun_is_drawn_standing_in_its_mount)
+{
+    Fixture fixture(twoGuns());
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_REQUIRE(fittings.size() == 2);
+
+    const sol::core::DVec3 hull = fixture.world.shipState().position;
+    const std::uint32_t body = fixture.defs.modelIndex("gun_body");
+    SOL_REQUIRE(body != DefDatabase::kNoModel);
+
+    // Authored at (-3, 0, -5) and (3, 0, -5) on a hull drawn at scale 2, and
+    // this suite flies at identity orientation - so the offsets are the
+    // authored numbers doubled, in world axes.
+    const sol::core::DVec3 port = fittings[0].position - hull;
+    const sol::core::DVec3 starboard = fittings[1].position - hull;
+    SOL_CHECK(distance(port, {-6.0, 0.0, -10.0}) < 1e-4);
+    SOL_CHECK(distance(starboard, {6.0, 0.0, -10.0}) < 1e-4);
+
+    for (const game::RenderInstance& fitting : fittings) {
+        SOL_CHECK(game::modelIndex(fitting.model) == body);
+        // ⚑ A FITTING IS DRAWN AT THE HULL'S SCALE, not at the mount's `size`
+        // and not at 1. Its mesh is authored at real size, exactly as `at` is,
+        // so one turret reads as a light ring on a shuttle and a heavy one on
+        // a freighter without a second asset or a size-to-metres table.
+        SOL_CHECK(std::abs(fitting.scale.x - 2.0f) < 1e-5f);
+        SOL_CHECK(std::abs(fitting.scale.y - 2.0f) < 1e-5f);
+        SOL_CHECK(std::abs(fitting.scale.z - 2.0f) < 1e-5f);
+    }
+}
+
+// ⚑⚑ AN EMPTY MODEL IS A BARE HARDPOINT, NOT A PLACEHOLDER BOX, and this is
+// the rule that keeps the stage from changing somebody else's ship. Every
+// weapon in this game named no mesh until stage E filled `weapons.toml` in,
+// and a mod's gun written before it still names none - so a fallback here
+// would put a grey crate on their hull, chosen by our default rather than by
+// their file. The gun still fits and still fires; there is simply nothing to
+// see.
+SOL_TEST(a_gun_whose_weapon_names_no_mesh_leaves_the_hardpoint_bare)
+{
+    Fixture fixture(drawnAnd("sol.unseen_gun"));
+    SOL_REQUIRE(fixture.world.playerGuns().size() == 2);
+
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_CHECK(fittings.size() == 1);
+
+    // And the one that IS drawn is the port gun, so this is about the model
+    // and not about the second mount having quietly stopped existing.
+    SOL_REQUIRE(fittings.size() == 1);
+    SOL_CHECK((fittings[0].position - fixture.world.shipState().position).x < 0.0);
+}
+
+// ⚑⚑ AND THE OTHER FAILURE IS NOT THE SAME FAILURE. A name that does not
+// resolve is an author's mistake rather than an author's choice, so it falls
+// back to the `fitting` role and is visible - the same warn-and-draw-something
+// treatment a ship def's broken model already gets. Silence would leave a
+// typo in a weapon def indistinguishable from a deliberately unarted gun.
+SOL_TEST(a_gun_whose_model_name_is_broken_falls_back_rather_than_vanishing)
+{
+    Fixture fixture(drawnAnd("sol.typo_gun"));
+
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_REQUIRE(fittings.size() == 2);
+
+    const std::uint32_t body = fixture.defs.modelIndex("gun_body");
+    const std::uint32_t fallback = fixture.defs.modelIndex("fallback_body");
+    SOL_REQUIRE(fallback != DefDatabase::kNoModel);
+    SOL_CHECK(body != fallback); // the fixture's two answers are distinguishable
+    SOL_CHECK(game::modelIndex(fittings[0].model) == body);
+    SOL_CHECK(game::modelIndex(fittings[1].model) == fallback);
+}
+
+// ⚑⚑⚑ THE PAYOFF OF THE WHOLE STAGE: A RING IS DRAWN WHERE THE GUNNER IS
+// LOOKING, AND A BOLTED GUN IS NOT. Same hull, same frame, same target - the
+// nose gun stares down the hull's own axis while the dorsal ring has come
+// round onto a hulk sitting astern. That difference has existed in the sim
+// since C2 and has been invisible from outside the ship until now.
+//
+// ⚑ It is read WITHOUT firing. A turret is laid by a gunner whether or not the
+// trigger is down - the firing pass merely happens to be the only thing that
+// asked before this stage - so a ring that only came round while shooting
+// would be a ring that snapped to its target the instant you opened fire.
+SOL_TEST(a_drawn_ring_follows_the_gun_it_lays_and_a_bolted_one_does_not)
+{
+    Fixture fixture(boltedAndRing());
+    SOL_REQUIRE(fixture.hulkAstern(1000.0));
+    SOL_REQUIRE(fixture.selectHulk());
+
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_REQUIRE(fittings.size() == 2);
+
+    // `gun_port` is authored first, so it is first in mount order and first
+    // out of the draw - the same order every other assertion in this file
+    // relies on.
+    SOL_CHECK(barrelOf(fittings[0]).z < -0.99f); // bolted: down the nose
+    SOL_CHECK(barrelOf(fittings[1]).z > 0.99f);  // the ring: astern, onto the hulk
+}
+
+// ⚑⚑ A GUN THAT CANNOT BEAR IS STILL DRAWN, AT ITS STOP - which is the one
+// picture a pilot needs when their shots are not going off. `layGun` sets the
+// bearing on a refusal too, and this asserts the draw uses it rather than
+// falling back to the rest direction or dropping the instance.
+//
+// A 30-degree ring aimed straight up reaches 15 degrees either side of up, and
+// the hulk is dead astern: 90 degrees away, so the gun is hard against its
+// stop and firing is refused.
+SOL_TEST(a_ring_that_cannot_bear_is_drawn_straining_at_its_stop)
+{
+    Fixture fixture(boltedAndRing("sol.left_gun", 30.0));
+    SOL_REQUIRE(fixture.hulkAstern(1000.0));
+    SOL_REQUIRE(fixture.selectHulk());
+
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_REQUIRE(fittings.size() == 2);
+    const sol::core::Vec3 barrel = barrelOf(fittings[1]);
+
+    // Not on the target - it cannot reach - and not at rest either: it has
+    // come the fifteen degrees it has, toward the hulk rather than away.
+    SOL_CHECK(barrel.z < 0.99f);
+    SOL_CHECK(barrel.y > 0.9f);  // still essentially up, which is where the stop is
+    SOL_CHECK(barrel.z > 0.01f); // and leaning astern, not forward
+
+    // The stop really is 15 degrees off the aim, half of the full cone.
+    const float offAim = std::acos(sol::core::clamp(barrel.y, -1.0f, 1.0f));
+    SOL_CHECK(std::abs(offAim - sol::core::radians(15.0f)) < 1e-3f);
+}
+
+// ⚑⚑ A VENTRAL RING HANGS FROM THE HULL RATHER THAN STANDING ON ITS HEAD,
+// and this is the whole reason `fittingRotation` takes two vectors instead of
+// one. A shortest-arc rotation onto the bearing leaves the ROLL free; a gun is
+// not symmetric about its own barrel, so free means arbitrary. The mount's
+// `aim` is what settles it - which for an external mount points out of the
+// plating, so the base plate ends up flat against the hull either way up.
+//
+// The shipped freighter is exactly this case: `turret_dorsal` aims +Y and
+// `turret_ventral` aims -Y, and before this rule both would have been drawn
+// the same way up.
+SOL_TEST(a_ventral_ring_hangs_under_the_hull_and_a_dorsal_one_stands_on_it)
+{
+    Fixture fixture(hull(turretMount("ring_dorsal", -3.0, "[0.0, 1.0, 0.0]", 270.0, "sol.left_gun") +
+                         turretMount("ring_ventral", 3.0, "[0.0, -1.0, 0.0]", 270.0, "sol.left_gun")));
+
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_REQUIRE(fittings.size() == 2);
+
+    // Nothing selected, so both rings follow the nose and the BEARINGS are
+    // identical - which is precisely what makes this a test about the roll.
+    SOL_CHECK(barrelOf(fittings[0]).z < -0.99f);
+    SOL_CHECK(barrelOf(fittings[1]).z < -0.99f);
+
+    SOL_CHECK(topOf(fittings[0]).y > 0.99f);  // dorsal: upright
+    SOL_CHECK(topOf(fittings[1]).y < -0.99f); // ventral: inverted, base still on the hull
+}
+
+// ⚑⚑ IT IS BOLTED TO THE HULL, NOT PARKED BESIDE IT. Every world-level test
+// in this suite flies at identity orientation, which is exactly the pose that
+// cannot tell a hull-frame offset from a world-frame one - so this one turns
+// the ship ninety degrees first. A fitting placed in world axes stays where it
+// was; a fitting bolted to the hull swings round with it.
+//
+// ⚑ The BEARING is checked with it. `layGun` answers in world space off the
+// sim pose, and the draw brings that answer back into the hull's frame before
+// hanging it off the render pose - so a rotation composed the other way round
+// would put the barrel through the hull here and nowhere else.
+SOL_TEST(a_fitting_turns_with_the_hull_it_is_bolted_to)
+{
+    Fixture fixture(twoGuns());
+    SOL_REQUIRE(fixture.faceAlong({1000.0, 0.0, 0.0})); // nose onto +X
+
+    const std::vector<game::RenderInstance> fittings = fixture.fittingsDrawn();
+    SOL_REQUIRE(fittings.size() == 2);
+    const sol::core::DVec3 hull = fixture.world.shipState().position;
+
+    // The port mount is (-3, 0, -5) at scale 2, so (-6, 0, -10) in the hull's
+    // frame. Yawing the nose from -Z onto +X takes hull -Z to world +X and
+    // hull +X to world +Z, so both guns end up 10 m along +X - ahead of the
+    // ship, which is where a nose gun belongs whichever way the ship is
+    // pointing - and the port/starboard split lands on world Z.
+    SOL_CHECK(distance(fittings[0].position - hull, {10.0, 0.0, -6.0}) < 1e-3);
+    SOL_CHECK(distance(fittings[1].position - hull, {10.0, 0.0, 6.0}) < 1e-3);
+
+    // And both barrels went with it: bolted guns aiming down a nose that is
+    // now on +X.
+    SOL_CHECK(barrelOf(fittings[0]).x > 0.99f);
+    SOL_CHECK(barrelOf(fittings[1]).x > 0.99f);
+}
+
+// ⚑⚑⚑ A FITTING IS DRAWN AT THE POSE ITS HULL IS DRAWN AT, WHICH IS NOT
+// THE POSE THE GUNNER ANSWERED IN. The hull is nlerped between the last two
+// ticks; `layGun` works off the sim transform, because that is the pose the
+// gunnery question is about. Taking `layGun`'s muzzle as the instance position
+// - which is right there, already computed, and correct at the tick boundary -
+// would slide every fitting off its own ship by whatever the hull travelled
+// that tick, and it would do it ONLY between ticks, which is the hardest kind
+// of wrong to see and the easiest to blame on the mount.
+//
+// ⚑ It is measured against the HULL INSTANCE from the same list rather than
+// against `shipState()`, and that is the whole method: `shipState` is the sim
+// pose, so comparing to it would agree with the bug. Two instances drawn in
+// one frame have to agree with EACH OTHER.
+SOL_TEST(a_fitting_is_drawn_at_the_same_interpolated_pose_as_its_hull)
+{
+    Fixture fixture(twoGuns());
+
+    // Get the ship moving, so the two ends of the tick are different places.
+    sol::sim::FlightInput input;
+    input.linear = {0.0f, 0.0f, -1.0f}; // full forward
+    fixture.world.setShipInput(input);
+    for (int i = 0; i < 30; ++i) {
+        fixture.world.tick(1.0 / 60.0);
+    }
+
+    // The hull is the keyed instance beside the fittings; the fittings are the
+    // keyless ones. One list, one alpha, two readings.
+    struct Frame
+    {
+        bool found = false;
+        sol::core::DVec3 hull;
+        std::vector<sol::core::DVec3> fittings;
+    };
+
+    const auto sample = [&fixture](float alpha) -> Frame {
+        std::vector<game::RenderInstance> all;
+        fixture.world.buildRenderInstances(alpha, true, all);
+        Frame frame;
+        for (const game::RenderInstance& instance : all) {
+            if (instance.key == game::kNoInstanceKey) {
+                frame.fittings.push_back(instance.position);
+            } else if (std::abs(instance.scale.x - 2.0f) < 1e-5f) {
+                // The gunboat: nothing else in this system is drawn at scale 2.
+                frame.hull = instance.position;
+                frame.found = true;
+            }
+        }
+        return frame;
+    };
+
+    const Frame start = sample(0.0f);
+    const Frame end = sample(1.0f);
+    SOL_REQUIRE(start.found && end.found);
+    SOL_REQUIRE(start.fittings.size() == 2 && end.fittings.size() == 2);
+
+    // The tick really did move the ship, so the two alphas are two places -
+    // without this the whole test would agree with a fitting nailed to the sim
+    // pose, which is exactly the bug it is here to catch.
+    SOL_REQUIRE(length(end.hull - start.hull) > 0.01);
+
+    // And at BOTH ends the guns sit exactly where the mounts put them,
+    // measured from the hull as it is drawn at that same alpha.
+    for (std::size_t i = 0; i < 2; ++i) {
+        const sol::core::DVec3 expected{i == 0 ? -6.0 : 6.0, 0.0, -10.0};
+        SOL_CHECK(distance(start.fittings[i] - start.hull, expected) < 1e-4);
+        SOL_CHECK(distance(end.fittings[i] - end.hull, expected) < 1e-4);
+    }
+}
+
+// ⚑ A fitting follows its hull in and out of the frame. The hull is hidden
+// from the seat because the eye sits inside it; guns left behind would be two
+// turrets flying in formation with nothing between them, which on the shipped
+// freighter - rings above and below the canopy - is exactly what you would
+// see.
+SOL_TEST(a_fitting_is_hidden_from_the_seat_with_the_hull_it_is_bolted_to)
+{
+    Fixture fixture(twoGuns());
+    SOL_CHECK(fixture.fittingsDrawn(true).size() == 2);
+    SOL_CHECK(fixture.fittingsDrawn(false).empty());
+}
+
+// ⚑⚑ THE ROLL RULE ON ITS OWN, because the world-level tests above cannot
+// reach its degenerate end: a gun laid straight out along its own mount's aim
+// has no roll left to choose, and there is nothing wrong with such a gun. The
+// shortest arc stands rather than a refusal or a NaN out of a normalize.
+SOL_TEST(a_fitting_laid_along_its_own_aim_still_has_a_rotation)
+{
+    // Aim and bearing the same axis: the ring is pointing straight up out of
+    // itself, which a 360 mount really can do.
+    const sol::core::Quat straightUp = game::fittingRotation({0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+    const sol::core::Vec3 barrel = rotate(straightUp, sol::core::Vec3{0.0f, 0.0f, -1.0f});
+    SOL_CHECK(barrel.y > 0.99f);
+    SOL_CHECK(std::abs(length(barrel) - 1.0f) < 1e-4f);
+
+    // Directly opposed is the other end of the same case and is just as legal:
+    // a 360 ring laid straight down through its own mounting.
+    const sol::core::Quat straightDown = game::fittingRotation({0.0f, -1.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+    SOL_CHECK(rotate(straightDown, sol::core::Vec3{0.0f, 0.0f, -1.0f}).y < -0.99f);
+
+    // And a zero bearing - which nothing produces, but which a mount whose
+    // `aim` and `arc` conspired could - is identity rather than a NaN.
+    SOL_CHECK(game::fittingRotation({0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}) == sol::core::Quat::identity());
+}
+
+// ⚑⚑⚑ THE SHIPPED HULLS, ASSERTED AGAINST THE COMMITTED FILES. The tests
+// above fly a fixture; this one flies what the player flies, and it is the
+// only thing standing between the stage and a `weapons.toml` edit that leaves
+// the game with nothing drawn on any hardpoint in the galaxy.
+SOL_TEST(the_shipped_shuttle_draws_the_gun_it_starts_the_game_with)
+{
+    DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(defs.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+
+    game::SpaceWorld world;
+    world.spawn(1701);
+    world.applyDefs(defs);
+    SOL_REQUIRE(world.generateUniverse(defs));
+
+    std::vector<game::RenderInstance> all;
+    world.buildRenderInstances(1.0f, true, all);
+    std::vector<game::RenderInstance> fittings;
+    for (const game::RenderInstance& instance : all) {
+        if (instance.key == game::kNoInstanceKey) {
+            fittings.push_back(instance);
+        }
+    }
+
+    // ⚑⚑ NOT THE ONLY ONE IN THE FRAME, WHICH IS ITSELF THE POINT. The
+    // starting system has NPC wings in it and every armed hull among them
+    // draws its guns too - so the player's own is picked out by proximity
+    // rather than by being the only thing on the list. A stage that drew only
+    // the player's fittings would pass a count of one and be wrong about the
+    // whole galaxy.
+    // Eight of them at this seed and one of those is ours. The number is not
+    // asserted - it is a fact about where the generator put a wing - but that
+    // there is MORE THAN ONE is the claim, and it is the difference between a
+    // stage that drew the player's guns and a stage that drew everybody's.
+    SOL_CHECK(fittings.size() > 1);
+    SOL_REQUIRE(!fittings.empty());
+    const game::RenderInstance* ours = nullptr;
+    std::uint32_t onOurHull = 0;
+    for (const game::RenderInstance& fitting : fittings) {
+        // The shuttle is an 8 m hull; nothing else is within twenty of it.
+        if (length(fitting.position - world.shipState().position) < 20.0) {
+            ours = &fitting;
+            ++onOurHull;
+        }
+    }
+    // One gun on the starter hull: `gun_nose`, holding a Pulse Cannon.
+    SOL_REQUIRE(onOurHull == 1);
+    SOL_REQUIRE(ours != nullptr);
+    SOL_CHECK(game::modelIndex(ours->model) == defs.modelIndex("cannon"));
+
+    // ⚑ AT THE TIP OF THE WEDGE, WHICH IS THE NUMBER STAGE C1 MOVED AND THE
+    // ONE STAGE E MAKES VISIBLE. `gun_nose` is at (0, -0.1, -6.6) on a hull
+    // drawn at scale 1, which is 1.6 m AHEAD of the seat rather than the
+    // 2.5 m behind it that the stage-A2 position would have put it.
+    const sol::core::DVec3 offset = ours->position - world.shipState().position;
+    SOL_CHECK(distance(offset, {0.0, -0.1, -6.6}) < 1e-4);
+}
+
+// ⚑⚑⚑ A GUN'S MESH AND ITS SHOT'S MESH ARE TWO ANSWERS, AND UNTIL THIS
+// TEST NOTHING IN THE PROJECT SAID SO. Phase 31 stage E split `WeaponDef`'s one
+// `model` key into `model` (the gun on the hull) and `bolt_model` (the shot) -
+// and the counterfactual that points the BOLT at the gun's key came back green
+// against every suite. That is the shape of bug the split invites: it compiles,
+// it resolves, it draws a turret where each bolt should be, and no assertion
+// anywhere had an opinion.
+//
+// ⚑ The fixture's guns name a mesh and leave `bolt_model` unset, which is
+// exactly what all four shipped weapons do - so what this pins is the FALLBACK
+// path: an unset bolt override resolves to the `bolt` role, and never to the
+// gun standing beside it.
+SOL_TEST(a_bolt_is_drawn_as_its_own_model_and_not_as_its_gun)
+{
+    Fixture fixture(twoGuns());
+
+    const std::vector<game::RenderInstance> bolts = fixture.fireOnceDrawn();
+    SOL_REQUIRE(bolts.size() == 2);
+
+    const std::uint32_t bolt = fixture.defs.modelIndex("bolt_body");
+    const std::uint32_t gun = fixture.defs.modelIndex("gun_body");
+    SOL_REQUIRE(bolt != DefDatabase::kNoModel);
+    SOL_REQUIRE(gun != DefDatabase::kNoModel);
+    SOL_CHECK(bolt != gun);
+
+    for (const game::RenderInstance& shot : bolts) {
+        SOL_CHECK(game::modelIndex(shot.model) == bolt);
+        SOL_CHECK(game::modelIndex(shot.model) != gun);
+    }
 }

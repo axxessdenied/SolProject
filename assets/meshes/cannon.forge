@@ -1,0 +1,89 @@
+# A twin-barrel autocannon, standing in its mount (engine plan Phase 31 stage
+# E) - the first asset in this game that is a FITTING rather than a hull, a
+# static or an interior.
+#
+# ⚑ THE ORIGIN IS THE MOUNT POINT, NOT THE CENTRE OF THE GUN, and everything
+# below is placed against that. `ships.toml`'s `at` is a point on the hull's
+# SKIN and is also the muzzle a bolt leaves from, so a gun authored around its
+# own centre would sink half its breech into the plating.
+#
+# ⚑ THE AXES ARE THE ENGINE'S, WHICH IS WHAT LETS THE GAME PLACE THIS WITHOUT
+# ASKING THE ASSET ANYTHING. It is drawn with its -Z on the direction the gun
+# BEARS and its +Y as near the mount's own `aim` as a right angle allows (see
+# `fittingRotation`), so:
+#
+#   -Z  down the barrels, wherever the gunner has laid them
+#   +Y  up out of the hull, which is what the base plate sits flat against
+#
+# A gun with `arc = 0` therefore stands still and one on a ring swings, and the
+# asset says nothing about which - the MOUNT owns the traverse (gdd.md §11.5),
+# which is the same asymmetry that lets one `fixed` weapon def fly on a nose
+# rail and on a freighter's turret without being authored twice.
+#
+# ⚑ IT IS AUTHORED AT REAL SIZE AND DRAWN AT THE HULL'S SCALE. About 1.1 m
+# across and 2.1 m long, so it reads as a light autocannon on the shuttle and
+# as a 4x heavier one on the `scale = 4.0` freighter. The mount's `size` does
+# not multiply it: a size-to-metres table would be a second opinion about how
+# big a `medium` gun is, and this mesh is already the first one.
+name = "cannon"
+
+# The base plate the gun turns on. A revolve sweeps about +Y, which is already
+# the axis a plate on the hull wants, so this one needs no rotation - unlike
+# the gate's ring, which had to be stood up in its lane.
+#
+# The profile is (radius, height) and returns to the axis at both ends, so the
+# disc is closed top and bottom without `cap_ends`.
+[[part]]
+id = "collar"
+type = "revolve"
+profile = [[0.0, 0.0], [0.44, 0.0], [0.44, 0.13], [0.0, 0.13]]
+segments = 16
+u_tiles = 2.0
+
+# The breech housing: the mass of the gun, sitting on the collar.
+[[part]]
+id = "breech"
+type = "box"
+center = [0.0, 0.34, 0.14]
+size = [0.72, 0.44, 0.78]
+tile = 0.9
+
+# The trunnions the barrels ride in. Two boxes rather than one wide one so the
+# gap between the barrels reads at distance.
+[[part]]
+id = "trunnion_port"
+type = "box"
+center = [-0.3, 0.36, -0.3]
+size = [0.14, 0.36, 0.42]
+tile = 0.9
+
+[[part]]
+id = "trunnion_starboard"
+type = "box"
+center = [0.3, 0.36, -0.3]
+size = [0.14, 0.36, 0.42]
+tile = 0.9
+
+# ⚑ THE BARRELS REACH TO z = -1.6 AND THE BOLT STILL LEAVES FROM z = 0. A shot
+# spawns at the mount's `at` - `layGun` says so and the firing pass has fired
+# from there since stage C1 - which is the breech rather than the muzzle. At
+# 900 m/s that is under two milliseconds of a bolt's life and is invisible;
+# moving the spawn down the barrel would put it a metre off the hull on a
+# freighter, where the same offset is 6.4 m and is not.
+[[part]]
+id = "barrel_port"
+type = "beam"
+from = [-0.16, 0.36, -0.34]
+to = [-0.16, 0.36, -1.6]
+width = 0.13
+height = 0.13
+tile = 1.5
+
+[[part]]
+id = "barrel_starboard"
+type = "beam"
+from = [0.16, 0.36, -0.34]
+to = [0.16, 0.36, -1.6]
+width = 0.13
+height = 0.13
+tile = 1.5

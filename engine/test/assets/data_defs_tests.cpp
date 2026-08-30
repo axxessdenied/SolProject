@@ -1148,6 +1148,17 @@ model = "gate"
 // the only reason adding the keys is a no-op. Resolution (empty means "the
 // role") is game-side and tested in `game.unit`; what belongs here is that the
 // schema takes them and still refuses everything else.
+//
+// ⚑⚑ PHASE 31 STAGE E SPLIT THE WEAPON'S ONE KEY INTO TWO, and the shape of
+// that split is exactly what this test was already about. `model` is the GUN
+// standing in its mount; `bolt_model` is what its shot is drawn as, and it was
+// spelled `model` until the gun needed the word. They are two keys for the
+// same reason a commodity's rock and chunk are: two drawables, at two places,
+// at two scales.
+//
+// ⚑ The near-miss below used to BE `bolt_model` - the test guessed it as a
+// plausible spelling of something that did not exist, and this stage made it
+// real. It is `bolt` now, which is the other plausible spelling.
 SOL_TEST(data_defs_parse_drawable_overrides)
 {
     DefDatabase db;
@@ -1167,7 +1178,8 @@ name = "Fancy"
 kind = "projectile"
 mount = "fixed"
 size = "small"
-model = "tracer"
+model = "big_gun"
+bolt_model = "tracer"
 
 [[commodity]]
 id = "c.plain"
@@ -1185,7 +1197,12 @@ chunk_model = "ice_shard"
     // Absent is EMPTY, not a name - the fallback is a decision the game makes
     // at resolve time, so the parser must not invent one here.
     SOL_CHECK(db.findWeapon("w.plain")->model.empty());
-    SOL_CHECK(db.findWeapon("w.fancy")->model == "tracer");
+    SOL_CHECK(db.findWeapon("w.plain")->boltModel.empty());
+    SOL_CHECK(db.findWeapon("w.fancy")->model == "big_gun");
+    SOL_CHECK(db.findWeapon("w.fancy")->boltModel == "tracer");
+    // The gun and its shot are separate drawables, exactly as the rock and
+    // its chunk are - so a def naming one must not be read as naming both.
+    SOL_CHECK(db.findWeapon("w.fancy")->model != db.findWeapon("w.fancy")->boltModel);
     SOL_CHECK(db.findCommodity("c.plain")->model.empty());
     SOL_CHECK(db.findCommodity("c.plain")->chunkModel.empty());
     SOL_CHECK(db.findCommodity("c.ice")->model == "ice_rock");
@@ -1200,7 +1217,20 @@ chunk_model = "ice_shard"
     SOL_CHECK(!merge(db, "[[commodity]]\nid = \"c\"\nname = \"C\"\nchunk = \"x\"\n", "d.toml", &error));
     SOL_CHECK(!merge(db,
                      "[[weapon]]\nid = \"w\"\nname = \"W\"\nkind = \"projectile\"\n"
-                     "mount = \"fixed\"\nsize = \"small\"\nbolt_model = \"x\"\n",
+                     "mount = \"fixed\"\nsize = \"small\"\nbolt = \"x\"\n",
+                     "d.toml",
+                     &error));
+    // A component may name its model too since stage E, on the same terms -
+    // and the near-miss is refused there as well.
+    SOL_REQUIRE(merge(db,
+                      "[[component]]\nid = \"k.pod\"\nname = \"Pod\"\n"
+                      "mount = \"utility\"\nsize = \"small\"\nmodel = \"pod\"\n",
+                      "d.toml",
+                      &error));
+    SOL_CHECK(db.findComponent("k.pod")->model == "pod");
+    SOL_CHECK(!merge(db,
+                     "[[component]]\nid = \"k\"\nname = \"K\"\n"
+                     "mount = \"utility\"\nsize = \"small\"\nmesh = \"x\"\n",
                      "d.toml",
                      &error));
 }

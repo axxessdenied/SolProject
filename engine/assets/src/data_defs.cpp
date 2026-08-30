@@ -589,6 +589,7 @@ bool parseWeapon(const TomlValue& table,
     reader.optionalFloat("mining_power", def.miningPower);
     reader.optionalFloat("price", def.price);
     reader.optionalString("model", def.model);
+    reader.optionalString("bolt_model", def.boltModel);
     reader.optionalGate(def.gate);
 
     reader.rejectUnknownKeys({"id",
@@ -604,6 +605,7 @@ bool parseWeapon(const TomlValue& table,
                               "mining_power",
                               "price",
                               "model",
+                              "bolt_model",
                               "factions",
                               "min_rep"});
     if (!reader.failed && def.kind != "projectile" && def.kind != "hitscan") {
@@ -1526,6 +1528,7 @@ bool parseComponent(const TomlValue& table,
     }
     reader.requireString("name", def.name);
     reader.requireMountFit(def.mount, def.size);
+    reader.optionalString("model", def.model);
     reader.optionalFloat("price", def.price);
     reader.optionalFloat("mass", def.mass);
     reader.optionalFloat("power_draw", def.powerDraw);
@@ -1533,7 +1536,7 @@ bool parseComponent(const TomlValue& table,
     reader.optionalGate(def.gate);
 
     reader.rejectUnknownKeys(
-        {"id", "name", "mount", "size", "price", "mass", "power_draw", "factions", "min_rep"},
+        {"id", "name", "mount", "size", "model", "price", "mass", "power_draw", "factions", "min_rep"},
         /*allowModifiers=*/true);
     // ⚑ A component cannot claim a gun's mount. The four weapon-taking kinds
     // hold a `[[weapon]]`, and that is what makes a mount's `fit` id

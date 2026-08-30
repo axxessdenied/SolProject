@@ -24,6 +24,27 @@ using assets::ForgeValue;
 
 namespace {
 
+// ⚑⚑ EVERY `.forge` SOURCE THIS REPO COMMITS, IN ONE PLACE. Seven tests
+// below say "every committed asset" in their names and each used to carry its
+// own copy of the list - which is how `freighter_cockpit.forge` came to be
+// committed in Phase 19 and covered by none of them, and how the two fitting
+// meshes Phase 31 stage E adds would have gone the same way.
+//
+// ⚑ A NEW ASSET BELONGS HERE THE DAY IT IS COMMITTED. These are the writer's
+// only real net: they are hand-written text, and a round trip that reformatted
+// anything at all would rewrite the whole file the first time somebody nudged
+// a vertex in the tool and bury the one line that changed.
+constexpr const char* const kCommittedForgeAssets[] = {"cube",
+                                                       "gate",
+                                                       "ship",
+                                                       "station",
+                                                       "cockpit",
+                                                       "freighter_cockpit",
+                                                       "asteroid",
+                                                       "gate_membrane",
+                                                       "cannon",
+                                                       "emitter"};
+
 [[nodiscard]] bool parses(const std::string& text, ForgeDoc& out)
 {
     return assets::parseForge(text.c_str(), text.size(), "test.forge", out, nullptr);
@@ -704,7 +725,7 @@ segments_u = 2
 // first time somebody nudged a vertex and bury the one line that changed.
 SOL_TEST(everyCommittedForgeSourceRoundTripsByteForByte)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
+    const auto& names = kCommittedForgeAssets;
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -887,7 +908,7 @@ pointAt(const std::vector<assets::ForgePoint>& points, assets::BuildPoint p, dou
 // two-implementations trap this programme has already paid for twice.
 SOL_TEST(forgePartRangesPartitionTheBuiltMeshExactly)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
+    const auto& names = kCommittedForgeAssets;
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -1061,7 +1082,7 @@ SOL_TEST(movingOnePointWritesEveryPartStandingAtItAndMovesNothingElse)
 // file on a click-and-release, so a write of no distance is not performed.
 SOL_TEST(aMoveOfZeroDistanceLeavesTheFileByteForByteIdentical)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
+    const auto& names = kCommittedForgeAssets;
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -1849,7 +1870,7 @@ SOL_TEST(everyCommittedAssetButTheTwoTorusesIsNowFullyMovable)
 // time anyone touches a vertex on it.
 SOL_TEST(bakingAnyPartOfAnyCommittedAssetLeavesTheBuiltMeshUnchanged)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
+    const auto& names = kCommittedForgeAssets;
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -2073,7 +2094,7 @@ SOL_TEST(bakingRefusesAGroupAndAPartThatIsNotThere)
 // index spaces are the same integers.
 SOL_TEST(everyCommittedAssetsEdgesAgreeWithAdjacencyAboutTheTopology)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
+    const auto& names = kCommittedForgeAssets;
     for (const char* name : names) {
         const std::string path = std::string(SOL_MESH_SOURCE_DIR) + "/" + name + ".forge";
         const std::string source = readWholeFile(path);
@@ -2637,7 +2658,7 @@ SOL_TEST(aBoxFacePulledOffItsNormalDropsThatComponentAndSaysSo)
 // rule that caught `cube.forge` materialising `center` and `size` on a click.
 SOL_TEST(aZeroDistanceFaceDragLeavesEveryCommittedFileByteIdentical)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
+    const auto& names = kCommittedForgeAssets;
     for (const char* const name : names) {
         ForgeDoc doc = openTopologyAsset(name);
         SOL_REQUIRE(!doc.parts.empty());
@@ -2907,7 +2928,7 @@ SOL_TEST(movingTwoCornersOfABeamsCapMovesThatEndOnlyOnce)
 // releases it must leave the file exactly as it found it.
 SOL_TEST(aZeroDistanceSetMoveLeavesEveryCommittedFileByteIdentical)
 {
-    const char* const names[] = {"cube", "gate", "ship", "station", "cockpit", "asteroid", "gate_membrane"};
+    const auto& names = kCommittedForgeAssets;
     for (const char* name : names) {
         ForgeDoc doc = openAsset(name);
         SOL_REQUIRE(!doc.parts.empty());

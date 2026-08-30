@@ -63,7 +63,12 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // carries the group it answers to and its mount index, and the fleet's saved
 // fittings carry the durable copy of that group beside the def id. The
 // component id is 23 still, for C2's reason.
-constexpr std::uint32_t kSaveVersion = 21;
+//
+// v22 (Phase 31 stage E): a gun carries the model it is DRAWN as, so the
+// `ShipArmament` block is wider again. Component id 23 still, for C2's reason:
+// the component changed size, not identity, and the version check at the
+// header is what stops a v21 file being read into the new layout.
+constexpr std::uint32_t kSaveVersion = 22;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -319,6 +324,34 @@ ModelId modelIdFromName(const assets::DefDatabase& defs,
     const std::uint32_t fallback = defs.roleModelIndex(fallbackRole);
     SOL_LOG_WARN("unknown model '%s' in %s; using the '%s' role", name.c_str(), context, fallbackRole);
     return fallback == assets::DefDatabase::kNoModel ? kNoModel : static_cast<ModelId>(fallback);
+}
+
+// ⚑⚑ WHAT A FITTING IS DRAWN AS, AND THE ONE PLACE THE EMPTY CASE IS
+// DECIDED (Phase 31 stage E). It is deliberately NOT `modelOverrideOr`, and
+// the difference is the whole rule: an unset OVERRIDE means "whatever the role
+// says", because a rock with no override is still a rock and has to be drawn
+// as something. An unset fitting model means NOT DRAWN.
+//
+// A bare hardpoint is the honest picture of kit nobody has authored a mesh
+// for, and it is what every gun in this game looked like before this stage. A
+// fallback box would put a grey crate on every NPC freighter in the galaxy the
+// moment somebody shipped a mod weapon without art - which is a change to
+// their ship made by our default, not by their file.
+//
+// ⚑ A name that resolves to NOTHING is the other case and does fall back, to
+// the `fitting` role, because that one is an author's mistake and a mistake
+// should be visible. `modelIdFromName` warns and names the def.
+//
+// ⚑ No unit-radius check: a fitting is drawn at the HULL's scale, which is the
+// scale `at` is already multiplied by, so its mesh is authored at real size
+// exactly as the gate and the cockpit are.
+[[nodiscard]] ModelId
+fittingModelOf(const assets::DefDatabase& defs, const std::string& name, const char* context)
+{
+    if (name.empty()) {
+        return kNoModel;
+    }
+    return modelIdFromName(defs, name, context, kRoleFitting);
 }
 
 // An optional per-def model override, or the role that backs it (Phase 19).
@@ -5550,7 +5583,12 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
         }
         // Resolved here because this is the one place that holds the
         // WeaponDef; the muzzle only ever sees the flattened component.
-        weapon.boltModel = modelOverrideOr(defs, weaponDef->model, "weapon def", kRoleBolt, true);
+        //
+        // ⚑ TWO MODELS SINCE PHASE 31 STAGE E, and they resolve under
+        // different rules on purpose - see `fittingModelOf` for why an unset
+        // bolt falls back to its role and an unset gun draws nothing.
+        weapon.boltModel = modelOverrideOr(defs, weaponDef->boltModel, "weapon def", kRoleBolt, true);
+        weapon.fittingModel = fittingModelOf(defs, weaponDef->model, "weapon def");
     }
 }
 
@@ -5613,6 +5651,44 @@ bool layGun(const GunneryFrame& frame,
     return sim::layWithinArc(rest, sought, static_cast<double>(weapon.arc), outBearing);
 }
 
+// ⚑⚑ HOW A FITTING STANDS IN ITS MOUNT (Phase 31 stage E). See the header
+// for the contract; what is here is the two-step that satisfies it.
+//
+// `lookAlong` puts the model's nose on the bearing by the SHORTEST arc, which
+// leaves the roll about that bearing entirely unconstrained - and a gun is not
+// rotationally symmetric about its own barrel. So the second step rolls it
+// until the model's +Y is as near the mount's `aim` as it can be, which is
+// what stands a dorsal turret up and hangs a ventral one upside down without
+// either being authored differently.
+//
+// ⚑ THE ROLL IS SIGNED AND MEASURED IN THE PLANE PERPENDICULAR TO THE BARREL,
+// which is why the angle comes out of an `atan2` of a triple product rather
+// than an `acos` of a dot. An unsigned angle would roll a turret the short way
+// round exactly half the time and the wrong way the rest.
+core::Quat fittingRotation(core::Vec3 bearing, core::Vec3 mountAim)
+{
+    const float bearingLength = length(bearing);
+    if (bearingLength < 1.0e-6f) {
+        return core::Quat::identity();
+    }
+    const core::Vec3 forward = bearing * (1.0f / bearingLength);
+    const core::Quat aligned = lookAlong(toDVec3(forward));
+
+    // What is left of the mount's own facing once the part along the barrel is
+    // taken out: the piece of it a roll can actually reach.
+    const core::Vec3 flattened = mountAim - forward * dot(mountAim, forward);
+    const float flattenedLength = length(flattened);
+    if (flattenedLength < 1.0e-4f) {
+        // Laid straight out of its own ring, so there is no roll to choose and
+        // every answer is as good as the next. The shortest arc stands.
+        return aligned;
+    }
+    const core::Vec3 wanted = flattened * (1.0f / flattenedLength);
+    const core::Vec3 current = rotate(aligned, core::Vec3{0.0f, 1.0f, 0.0f});
+    const float roll = std::atan2(dot(cross(current, wanted), forward), dot(current, wanted));
+    return core::fromAxisAngle(forward, roll) * aligned;
+}
+
 // ⚑⚑ WHO THE PLAYER IS AT WAR WITH, IN ONE PLACE (promoted out of
 // `contactOrder` in Phase 31 stage C2). The contact cycle's threat ranking and
 // a turret's decision to open fire are the same question asked twice, and two
@@ -5626,7 +5702,21 @@ bool layGun(const GunneryFrame& frame,
 // its own business three hundred kilometres out.
 int SpaceWorld::threatTier(std::uint32_t entityIndex) const
 {
-    const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
+    // ⚑⚑ THROUGH THE REGISTRY RATHER THAN THROUGH THE POOL, AND THAT IS NOT A
+    // STYLE PREFERENCE. `Registry::storage<T>() const` ASSERTS the pool exists,
+    // and a pool exists only once something has been emplaced into it - so a
+    // bubble with no piloted ship in it has no `ShipPilot` pool to ask, and
+    // asking is a hard assert rather than a null. `Registry::tryGet` answers
+    // null for a missing pool, which is the same answer it already gives for a
+    // ship that simply has no pilot, so the branch below covers both.
+    //
+    // ⚑ IT WENT UNREACHED FOR THREE STAGES BECAUSE OF WHEN IT WAS CALLED, NOT
+    // BECAUSE IT WAS SAFE. C2 asks this during the firing pass, and by then the
+    // pilot system has already created the pool with its own non-const
+    // `storage<ShipPilot>()`. Phase 31 stage E asks it while BUILDING A FRAME -
+    // which happens before the first tick of a fresh world - and a fixture
+    // whose only other ship is a pilotless console spawn takes it down.
+    const ShipPilot* pilot = m_registry.tryGet<ShipPilot>(m_registry.entityFromIndex(entityIndex));
     if (pilot == nullptr) {
         return 2; // an inert console spawn: nobody is flying it, so it threatens nothing
     }
@@ -5684,7 +5774,9 @@ GunneryFrame SpaceWorld::gunneryFrame(std::uint32_t entityIndex) const
         if (targetIndex != kNoIndex && threatTier(targetIndex) > kHostileThreatTier) {
             targetIndex = kNoIndex;
         }
-    } else if (const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
+        // Through the registry rather than through the pool - see `threatTier`
+        // for why a const reader of this pool must tolerate its absence.
+    } else if (const ShipPilot* pilot = m_registry.tryGet<ShipPilot>(m_registry.entityFromIndex(entityIndex));
                pilot != nullptr && pilot->hasTarget != 0) {
         targetIndex = pilot->targetIndex;
     }
@@ -8374,6 +8466,114 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
             .model = shape[i].model,
             .key = makeInstanceKey(entity.index, entity.generation),
         });
+    }
+    appendFittingInstances(alpha, includeShip, out);
+}
+
+// ⚑⚑⚑ WHAT IS BOLTED TO A HULL, DRAWN WHERE IT IS BOLTED (Phase 31 stage
+// E). A fitting is not an entity and must not become one: `despawnSystem`
+// destroys everything in the TRANSFORM pool, a gun has none, and
+// `Registry::destroy` recycles indices - so an orphaned turret would survive a
+// jump and re-attach itself to whatever spawned into its owner's old slot.
+// That is the same trap `kMaxShipWeapons` was chosen to make inexpressible in
+// stage C1, and it is why this is a draw-time append off the owner's transform
+// rather than a second entity riding along.
+//
+// ⚑⚑ TWO FRAMES MEET HERE AND ONLY ONE OF THEM IS INTERPOLATED, WHICH IS THE
+// WHOLE REASON THIS IS NOT THREE LINES INSIDE THE LOOP ABOVE. The hull is
+// DRAWN at the nlerped render transform; a turret is LAID by `layGun` off the
+// sim transform, because that is the pose the gunnery answer is about. Taking
+// the world bearing straight from `layGun` and hanging it off the render pose
+// would make every turret swim across its own ship by whatever the hull turned
+// through this tick - visible at once on a hull that turns fast and mistakable
+// for a loose mount. So the bearing is brought back into the HULL's frame,
+// where it is a fact about the gun and not about the moment, and the render
+// pose puts it back into the world.
+//
+// ⚑ A gun that CANNOT BEAR is still drawn, at its stop. `layGun` sets the
+// bearing on a refusal too - the ring swung as far round as it goes - and a
+// turret straining against its own limit is exactly the picture a pilot needs
+// when their shots are not going off.
+//
+// ⚑ `kNoInstanceKey`, so a fitting gets no LOD memory and answers statelessly.
+// The cockpit was the only instance without an identity until now; a fitting is
+// the second, and it costs nothing real for the same reason - both meshes are
+// under the cooker's triangle floor and have no chain to remember a level in.
+// The alternative would be packing a mount index into a key whose upper half
+// is already the entity generation, which is a save-format-shaped change for a
+// LOD chain that does not exist.
+void SpaceWorld::appendFittingInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const
+{
+    const ecs::Pool<ShipArmament>& armaments = m_registry.storage<ShipArmament>();
+    const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
+    const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
+    const std::uint32_t shipIndex = playerEntityIndex();
+    const double alphaD = static_cast<double>(alpha);
+
+    const std::uint32_t count = static_cast<std::uint32_t>(armaments.size());
+    const std::uint32_t* entityIndices = armaments.entityIndices().data();
+    const ShipArmament* armaments_ = armaments.values().data();
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const std::uint32_t entityIndex = entityIndices[i];
+        // The hull is hidden from the seat because the eye sits inside it, and
+        // its guns go with it. Half a ship drawn around a hull that is not
+        // there reads worse than none - and on the freighter, whose rings sit
+        // above and below the canopy, it would be two turrets floating in
+        // formation with nothing between them.
+        if (!includeShip && entityIndex == shipIndex) {
+            continue;
+        }
+        const ShipArmament& armament = armaments_[i];
+        // ⚑ Asked before the frame is built, not after. `gunneryFrame` walks the
+        // selection and a target's transform, and every NPC in this galaxy
+        // whose weapon def names no mesh - which is every one of them until an
+        // author writes a name in - would pay for an answer nothing reads.
+        bool anyDrawn = false;
+        for (std::uint32_t g = 0; g < armament.count && !anyDrawn; ++g) {
+            anyDrawn = armament.weapons[g].fittingModel != kNoModel;
+        }
+        if (!anyDrawn) {
+            continue;
+        }
+        const Transform* transform = transforms.tryGet(entityIndex);
+        const RenderShape* shape = shapes.tryGet(entityIndex);
+        if (transform == nullptr || shape == nullptr) {
+            continue;
+        }
+
+        const GunneryFrame frame = gunneryFrame(entityIndex);
+        const core::DVec3 hullPosition =
+            transform->previousPosition + (transform->position - transform->previousPosition) * alphaD;
+        const core::Quat hullRotation = nlerp(transform->previousOrientation, transform->orientation, alpha);
+        // The sim pose `layGun` answered in, so its world bearing can be
+        // brought back to the hull's own frame.
+        const core::Quat intoHull = conjugate(transform->orientation);
+        const float hullScale = shape->scale.x;
+
+        for (std::uint32_t g = 0; g < armament.count; ++g) {
+            const ShipWeapon& weapon = armament.weapons[g];
+            if (weapon.fittingModel == kNoModel) {
+                continue;
+            }
+            core::DVec3 muzzle;
+            core::DVec3 bearing;
+            (void)layGun(frame, weapon, muzzle, bearing);
+            // ⚑ The mount's `at` scaled by the hull and rotated by it - the same
+            // arithmetic `layGun` does for the muzzle, deliberately repeated
+            // against the RENDER pose rather than reusing `muzzle`, which is
+            // the sim pose's answer.
+            const core::Vec3 offset{
+                weapon.at[0] * hullScale, weapon.at[1] * hullScale, weapon.at[2] * hullScale};
+            out.push_back(RenderInstance{
+                .position = hullPosition + toDVec3(rotate(hullRotation, offset)),
+                .rotation =
+                    hullRotation * fittingRotation(rotate(intoHull, toVec3(bearing)),
+                                                   core::Vec3{weapon.aim[0], weapon.aim[1], weapon.aim[2]}),
+                .scale = {hullScale, hullScale, hullScale},
+                .model = weapon.fittingModel,
+                .key = kNoInstanceKey,
+            });
+        }
     }
 }
 

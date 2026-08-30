@@ -1,0 +1,54 @@
+# A beam emitter, standing in its mount (engine plan Phase 31 stage E) - what
+# the two mining lasers are drawn as, against `cannon.forge`'s two guns.
+#
+# ⚑ TWO FITTING MESHES RATHER THAN ONE, AND THE REASON IS A MECHANIC AND NOT A
+# DECORATION. A hull carrying a cannon and a beam is the case fire groups exist
+# for (gdd.md §11.5: "cut a rock without spraying bolts at it"), so which of a
+# freighter's two rings is the laser has to be answerable from OUTSIDE the
+# ship - by looking at it - and not only from the outfitting screen.
+#
+# Same contract as `cannon.forge`, which is the file to read for why: the
+# origin is the mount point on the hull's skin, -Z is the direction the gun
+# bears, +Y is out of the hull, and it is authored at real size and drawn at
+# the hull's scale.
+name = "emitter"
+
+[[part]]
+id = "collar"
+type = "revolve"
+profile = [[0.0, 0.0], [0.4, 0.0], [0.4, 0.13], [0.0, 0.13]]
+segments = 16
+u_tiles = 2.0
+
+# Squat and wide where the cannon is long and narrow: a beam weapon is mostly
+# capacitor, and the silhouette is the whole point of the second mesh.
+[[part]]
+id = "housing"
+type = "box"
+center = [0.0, 0.33, 0.1]
+size = [0.66, 0.42, 0.72]
+tile = 0.9
+
+# The lens barrel - one stub, not two, and it stops less than a metre out.
+[[part]]
+id = "snout"
+type = "beam"
+from = [0.0, 0.34, -0.24]
+to = [0.0, 0.34, -0.92]
+width = 0.26
+height = 0.26
+tile = 1.5
+
+# The focusing ring at the aperture. A torus sweeps about +Y like a revolve
+# does, so it is stood on edge to face down the beam - the same quarter turn
+# `gate.forge` gives its ring, and for the same reason.
+[[part]]
+id = "aperture"
+type = "torus"
+position = [0.0, 0.34, -0.92]
+rotation = [90.0, 0.0, 0.0]
+major_radius = 0.2
+tube_radius = 0.06
+segments_u = 12
+segments_v = 6
+u_tiles = 2.0

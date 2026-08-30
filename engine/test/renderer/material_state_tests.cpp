@@ -132,18 +132,25 @@ SOL_TEST(materialStateKeepsFirstUseOrder)
     SOL_CHECK(again.materialState[3] == 0);
 }
 
-// ⚑⚑ THE SHIPPED SET, AND THE NUMBER THIS PHASE IS MEASURED BY. The five
+// ⚑⚑ THE SHIPPED SET, AND THE NUMBER THIS PHASE IS MEASURED BY. The seven
 // derived materials all ask for the stock lambert pair under Phase 12's opaque
 // state; the membrane brings its own fragment stage and blends; the cockpit
-// brings its own fragment stage and its own declared interface. Seven rows,
+// brings its own fragment stage and its own declared interface. Nine rows,
 // three pipelines - and a regression here is a pipeline count that grows with
 // the catalog, which nothing else would notice.
 //
-// ⚑ THESE NUMBERS ARE SUPPOSED TO MOVE WHEN THE CATALOG DOES. Stage B asserted
+// ⚑ THESE NUMBERS ARE SUPPOSED TO MOVE WHEN THE CATALOG DOES, AND THE ROW
+// COUNT IS SUPPOSED TO MOVE MORE EASILY THAN THE STATE COUNT. Stage B asserted
 // eight rows and two states; stage C made the two cockpits share one material
-// and gave it a third state, so this now reads seven and three. A failure here
-// is a question - "did the catalog change, or did sharing break?" - and the
-// checks below are what tell the two apart.
+// and gave it a third state, reading seven and three; Phase 31 stage E added
+// the cannon and the emitter - the first two models in this game that are
+// FITTINGS - and each names a texture rather than a material, so each derives
+// one. NINE and still THREE is the shape to want: the catalog grew and the
+// pipeline count did not, because a gun's surface is the same lambert hull
+// plating everything else opaque already wears.
+//
+// A failure here is a question - "did the catalog change, or did sharing
+// break?" - and the checks below are what tell the two apart.
 SOL_TEST(materialStateShippedCatalogNeedsThreePipelines)
 {
     sol::assets::DefDatabase db;
@@ -152,8 +159,19 @@ SOL_TEST(materialStateShippedCatalogNeedsThreePipelines)
     SOL_REQUIRE(db.validateMaterials(&error));
 
     const MaterialStateGrouping grouping = groupMaterialsByState(db.materials());
-    SOL_CHECK(db.materials().size() == 7);
+    SOL_CHECK(db.materials().size() == 9);
     SOL_CHECK(grouping.states.size() == 3);
+
+    // ⚑ THE TWO FITTINGS COST NO PIPELINE, which is the half of the count that
+    // matters. Asserted against the hull's state by name rather than left to
+    // the total above, so a fitting that quietly acquired its own blend or its
+    // own shader would fail HERE, saying which model did it, instead of only
+    // moving a number.
+    for (const char* fitting : {"sol.auto.cannon", "sol.auto.emitter"}) {
+        const std::uint32_t index = db.materialIndex(fitting);
+        SOL_REQUIRE(index != sol::assets::kNoMaterial);
+        SOL_CHECK(grouping.materialState[index] == grouping.materialState[db.materialIndex("sol.auto.ship")]);
+    }
 
     // The membrane is on its own because of its SHADER as much as its blend.
     const std::uint32_t membrane = db.materialIndex("sol.gate_membrane");

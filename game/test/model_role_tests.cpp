@@ -152,8 +152,18 @@ SOL_TEST(an_unset_model_override_resolves_to_its_role)
 
     // Every weapon and commodity the base game ships leaves these unset, which
     // is what makes stage C invisible in play until somebody writes a name.
+    //
+    // ⚑⚑ IT IS `boltModel` NOW, AND THE WEAPON'S `model` IS DELIBERATELY NOT
+    // IN THIS LOOP. Phase 31 stage E split the one key in two and filled the
+    // new half in `weapons.toml` - a gun IS drawn on the hull, which is the
+    // whole of that stage - so a check that every weapon's `model` is empty
+    // would now be asserting that stage E did not ship.
+    //
+    // The BOLT override is still unset on all four, so Phase 19's claim about
+    // itself is untouched and still measurable, which is exactly why the two
+    // had to become two keys rather than one key with two meanings.
     for (const sol::assets::WeaponDef& weapon : db.weapons()) {
-        SOL_CHECK(weapon.model.empty());
+        SOL_CHECK(weapon.boltModel.empty());
     }
     for (const sol::assets::CommodityDef& commodity : db.commodities()) {
         SOL_CHECK(commodity.model.empty());
@@ -380,4 +390,50 @@ SOL_TEST(a_set_model_override_wins_and_a_broken_one_falls_back)
     // unfilled role is the game having no answer at all.
     const game::ModelId broken = game::modelOverrideOr(db, "no_such_model", "test", game::kRoleRock, true);
     SOL_CHECK(game::modelIndex(broken) == db.roleModelIndex(game::kRoleRock));
+}
+
+// ⚑⚑⚑ THE OTHER HALF OF THE SAME SPLIT (Phase 31 stage E), AND IT IS A
+// CLAIM ABOUT SHIPPED CONTENT RATHER THAN ABOUT CODE. A gun's `model` resolves
+// under a DIFFERENT rule to every override above it: empty means NOT DRAWN,
+// not "whatever the role says". That rule makes it possible to ship a weapon
+// nobody can see, silently, and the only thing standing between this stage and
+// that is the four names in `weapons.toml`.
+//
+// ⚑ It also pins the pairing rather than only the presence. Both mining lasers
+// wear the emitter and both cannons wear the cannon, which is what makes a
+// freighter's two rings tell you WHICH one holds the beam from outside the
+// ship - the reason there are two meshes at all.
+SOL_TEST(every_shipped_gun_names_a_model_that_exists)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(loadCommittedDefs(db, error));
+
+    SOL_REQUIRE(!db.weapons().empty());
+    for (const sol::assets::WeaponDef& weapon : db.weapons()) {
+        if (weapon.model.empty()) {
+            std::printf("  weapon '%s' names no model, so it would not be drawn\n", weapon.id.c_str());
+        }
+        SOL_CHECK(!weapon.model.empty());
+        SOL_CHECK(db.findModel(weapon.model.c_str()) != nullptr);
+    }
+
+    SOL_CHECK(db.findWeapon("sol.pulse_cannon")->model == "cannon");
+    SOL_CHECK(db.findWeapon("sol.heavy_cannon")->model == "cannon");
+    SOL_CHECK(db.findWeapon("sol.mining_laser")->model == "emitter");
+    SOL_CHECK(db.findWeapon("sol.mining_laser_mk2")->model == "emitter");
+
+    // ⚑ A FITTING IS NOT UNDER THE UNIT-RADIUS CONTRACT and must not drift into
+    // it. It is drawn at the HULL's scale - the same multiplier the mount's
+    // `at` already carries - so its mesh is authored at real size, exactly as
+    // the gate and the cockpit are. A gun authored at radius 1 would be a
+    // metre-wide barrel on a shuttle and four on a freighter, which is a size
+    // nobody chose.
+    SOL_CHECK(db.findModel("cannon")->radius > 1.0f);
+    SOL_CHECK(db.findModel("emitter")->radius > 1.0f);
+    bool fittingIsUnderContract = false;
+    for (const char* role : game::unitRadiusRoles()) {
+        fittingIsUnderContract = fittingIsUnderContract || std::string(role) == game::kRoleFitting;
+    }
+    SOL_CHECK(!fittingIsUnderContract);
 }
