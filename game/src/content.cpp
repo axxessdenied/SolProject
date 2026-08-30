@@ -1222,6 +1222,37 @@ std::string gunInfo(GameContent& content)
     return info;
 }
 
+// ⚑ THE ACTIVE SHIP'S MOUNTS AND HOW MUCH OF EACH IS LEFT (Phase 31 stage F).
+// One line per place on the hull in authored order, which is `ShipMounts`'
+// own indexing - so a row here and a row of `sol.fit` are the same mount, and
+// the pair reads as "what is in it" beside "how much of it is there".
+//
+// It prints the def's mount id rather than an index, because an index is the
+// one thing a player never sees; the walk pairs the live component with the
+// def by position, which is exactly the promise `ShipWeapon::mount` relies on.
+std::string mountCondition(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const std::span<const game::MountCondition> mounts = world.playerMounts();
+    const assets::ShipDef* def = content.defs().findShip(world.activeShip().defId.c_str());
+    std::string info = std::to_string(mounts.size()) + " mount(s)";
+    for (std::size_t m = 0; m < mounts.size(); ++m) {
+        const game::MountCondition& mount = mounts[m];
+        char buffer[160];
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%-14s %-8s %5.0f/%-5.0f%s",
+                      def != nullptr && m < def->mounts.size() ? def->mounts[m].id.c_str() : "?",
+                      mount.external ? "external" : "internal",
+                      static_cast<double>(mount.hp),
+                      static_cast<double>(mount.maxHp),
+                      mount.destroyed() ? "  DESTROYED" : "");
+        info += "\n  ";
+        info += buffer;
+    }
+    return info;
+}
+
 std::string listCrewDefs(GameContent& content)
 {
     std::string lines;
@@ -3517,6 +3548,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listCrewDefs>("sol", "crew_defs", this);
     m_vm.registerFunction<&fitInfo>("sol", "fit", this);
     m_vm.registerFunction<&gunInfo>("sol", "guns", this);
+    m_vm.registerFunction<&mountCondition>("sol", "mount_condition", this);
     m_vm.registerFunction<&setFireGroup>("sol", "set_fire_group", this);
     m_vm.registerFunction<&cycleFireGroup>("sol", "cycle_fire_group", this);
     m_vm.registerFunction<&listFleet>("sol", "fleet", this);

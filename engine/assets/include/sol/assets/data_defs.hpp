@@ -161,6 +161,43 @@ inline constexpr std::size_t kMountSizeCount = static_cast<std::size_t>(MountSiz
     return static_cast<std::uint32_t>(fitting) <= static_cast<std::uint32_t>(mount);
 }
 
+// What it takes to knock a mount out (Phase 31 stage F, decisions/014's
+// "each mount carries hit points"). It is a pool of its own beside the hull's,
+// not a slice of it: a mount is a thing bolted to a ship that can be shot off
+// while the ship keeps flying, which is the whole of GDD 5's systems-damage
+// promise and the difference between disabling a freighter and killing it.
+//
+// ⚑⚑ IT IS DERIVED FROM `size` AND THERE IS DELIBERATELY NO AUTHORED KEY.
+// Size is the only thing a mount already declares about how much kit it holds,
+// and it is declared on every one of the twenty mounts in this game - so this
+// rule needs no content edit, no parser key, no writer key, and no new field in
+// the Forge's mount tool. The alternative is asking an author for a number per
+// mount that nothing in the shape of a hull tells them how to pick. Phase 32
+// authors the hull spine, and a hull that genuinely needs an armoured drive
+// bell is where an `hp` override earns its key - against real content, rather
+// than blind and in advance.
+//
+// The steps are ~2.5x, which prices a mount against the hull class that
+// carries it: the shipped freighter is 460 of armour and hull and its drive is
+// a `medium`, so taking its engine costs roughly a quarter of what killing it
+// costs - and only from astern, where the drive actually is.
+[[nodiscard]] constexpr float mountHitPoints(MountSize size)
+{
+    switch (size) {
+    case MountSize::Small:
+        return 60.0f;
+    case MountSize::Medium:
+        return 150.0f;
+    case MountSize::Large:
+        return 375.0f;
+    case MountSize::XLarge:
+        return 900.0f;
+    case MountSize::Count:
+        break;
+    }
+    return 60.0f;
+}
+
 // Whether a mount of one kind takes a fitting of another (Phase 31 stage B).
 // The rule is EQUALITY plus exactly one asymmetry, and the asymmetry is the
 // difference between `turret` and `fixed` said in one line:

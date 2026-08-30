@@ -267,6 +267,77 @@ struct ShipFittings
     FittedPart parts[kMaxDrawnFittings];
 };
 
+// ⚑⚑ EVERY PLACE ON THIS HULL AND HOW MUCH OF IT IS LEFT (Phase 31 stage F).
+// Thirty-two rather than sixteen because this one is EVERY mount, not the guns
+// or the drawn kit: gdd.md §11.1 budgets 14-22 through class 4 and a hull is
+// free to spend that on subsystems nobody draws and no trigger reaches.
+inline constexpr std::uint32_t kMaxShipMounts = 32;
+
+// One place on the hull, and what it would take to knock it out.
+//
+// ⚑⚑ CONDITION BELONGS TO THE MOUNT AND NOT TO WHAT IS IN IT, and the shipped
+// content is what settles that rather than taste. Not one `[[ship.mount]]` of
+// kind `engine` in this game carries a `fit` - the shuttle's `drive_main`, the
+// interceptor's pair and the freighter's are all bare mounts - so a condition
+// that lived on the FITTING would leave Phase 31's own exit criterion ("shoot
+// a freighter's drive off and watch it stop") unreachable in shipped content.
+// It is also what `decisions/014` says in as many words: *each mount carries
+// hit points*. A drive bell is part of the hull, and an empty turret ring is
+// still a ring somebody can shoot away.
+struct MountCondition
+{
+    // Hull frame at scale 1, exactly as authored - the same copy `ShipWeapon`
+    // and `FittedPart` make, and for the same reason: this component is
+    // FLATTENED and keeps no def id, so a hit arriving in world space has
+    // nothing else to resolve itself against.
+    //
+    // ⚑ Only the BEARING of this is ever read, never its length, which is why
+    // the hull's scale never enters the hit test: a mount is four times
+    // further out on a `scale = 4.0` freighter and sits on exactly the same
+    // line from the hull's centre.
+    float at[3] = {0.0f, 0.0f, 0.0f};
+    float hp = 0.0f;
+    float maxHp = 0.0f;
+    // `decisions/014` rule 2, carried rather than inferred from `at`. A mount
+    // authored at the hull's own centre is a legal external mount and an
+    // internal one is not merely a mount at the origin - one is aimed at and
+    // the other is reached through the armour.
+    bool external = false;
+
+    [[nodiscard]] bool destroyed() const { return maxHp > 0.0f && hp <= 0.0f; }
+};
+
+// ⚑⚑ INDEXED THE SAME WAY `def.mounts` IS, WHICH IS THE WHOLE POINT. Both
+// `ShipWeapon::mount` and `FittedPart::mount` are indices into the hull's mount
+// list, so a gun or a drawn pod reaches its own condition without a search and
+// without a second copy of `applyShipDef`'s skip conditions. A hull declaring
+// more than `kMaxShipMounts` is warned by name and its overflow mounts are
+// indestructible rather than silently reindexed - anything else would point a
+// gun at somebody else's condition.
+struct ShipMounts
+{
+    std::uint32_t count = 0;
+    MountCondition mounts[kMaxShipMounts];
+};
+
+// ⚑ HOW WIDE A HIT HAS TO LAND TO COUNT AS HITTING A MOUNT (Phase 31 stage F),
+// as the cosine of the half-angle between where the shot arrived and where the
+// mount sits, both measured as bearings from the hull's centre.
+//
+// A bearing rather than a distance because a hit position is a point on the
+// ship's COLLISION SPHERE, which is a good deal bigger than the mesh inside it
+// (the shuttle's sphere is 8 m and its hull is a 12 m wedge) - so how far the
+// impact is from a mount is mostly a fact about the sphere, while which way it
+// came in is the question a player is actually asking when they line up on a
+// freighter's tail.
+//
+// Thirty degrees is measured against the shipped freighter, whose mounts are
+// the closest together in the game: its aftmost cargo pod and its drive are 25
+// degrees apart, so a cone this wide has them overlapping and the NEAREST
+// bearing wins - which is the behaviour worth having, because a shot into the
+// tail should take the drive rather than nothing.
+inline constexpr float kMountHitCosine = 0.866f; // cos(30 degrees)
+
 // The groups this ship's guns actually occupy, as a bit per group: bit (n-1)
 // is set when at least one gun is in group n. Zero means nothing is fitted.
 // One bit set means there is no choice to make, which is what the HUD reads to
@@ -1976,6 +2047,27 @@ public:
         return {armament.weapons, armament.count};
     }
 
+    // Every place on that hull and how much of it is left, in the hull's own
+    // MOUNT ORDER (Phase 31 stage F) - so `ShipWeapon::mount` and
+    // `FittedPart::mount` index straight into it. Empty for an entity with no
+    // mounts, which is a rock, a station, or a ship built before the pool
+    // existed.
+    //
+    // ⚑ `tryGet`, not `storage<T>().get`: this is asked while a frame is being
+    // built and `Registry::storage<T>() const` ASSERTS the pool exists - the
+    // latent trap stage E was the first to spring.
+    [[nodiscard]] std::span<const MountCondition> shipMounts(std::uint32_t entityIndex) const
+    {
+        const ShipMounts* mounts = m_registry.tryGet<ShipMounts>(m_registry.entityFromIndex(entityIndex));
+        return mounts != nullptr ? std::span<const MountCondition>{mounts->mounts, mounts->count}
+                                 : std::span<const MountCondition>{};
+    }
+
+    [[nodiscard]] std::span<const MountCondition> playerMounts() const
+    {
+        return shipMounts(playerEntityIndex());
+    }
+
     // What that ship's guns are laid against, read once per ship (Phase 31
     // stage C2). Public because the console probe reports a gun's live bearing
     // and stage E will draw one: `layGun` is the only definition of where a
@@ -2328,6 +2420,21 @@ private:
                     const sol::core::DVec3& hitPosition,
                     const sol::sim::DamageResult& result,
                     std::uint32_t attackerIndex = kNoIndex);
+
+    // ⚑⚑ WHICH PLACE ON THE HULL THE HIT LANDED ON, AND WHAT IT COST IT
+    // (Phase 31 stage F). Called from `noteDamage` because that is the one
+    // funnel every hit in the game passes through carrying all three facts
+    // this needs - who was hit, WHERE, and how much got past what. The three
+    // damage sites (a ram, a bolt, a beam) each compute an impact point
+    // already and each would otherwise grow its own copy of this.
+    //
+    // ⚑ EXTERNAL MOUNTS ONLY, which is `decisions/014` rule 2 and the
+    // roadmap's own wording for this stage: *external hits resolved against
+    // `at`*. An internal mount is reached through armour rather than aimed at,
+    // and picking WHICH of several a hull hides is a rule this does not have.
+    void damageMounts(std::uint32_t targetIndex,
+                      const sol::core::DVec3& hitPosition,
+                      const sol::sim::DamageResult& result);
 
     // The fitting half of `buildRenderInstances`, split out because it walks a
     // different pool under a different rule and because "which pose is this

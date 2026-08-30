@@ -267,6 +267,7 @@ add_executable(sol_game_tests
     test/keyboard_routing_tests.cpp
     test/map_row_tests.cpp
     test/model_role_tests.cpp
+    test/mount_condition_tests.cpp
     test/save_catalog_tests.cpp
     test/save_format_tests.cpp
     test/ship_fit_tests.cpp

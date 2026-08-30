@@ -72,7 +72,13 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // v23 (Phase 31 stage E2): `ShipFittings` - what a hull carries on its outside
 // that is NOT a gun - under a NEW component id 24. New rather than grown,
 // because this is a different component and not a wider one.
-constexpr std::uint32_t kSaveVersion = 23;
+//
+// v24 (Phase 31 stage F): `ShipMounts` - every place on the hull and how much
+// of it is left - under a NEW component id 25, on E2's rule. It is a third
+// thing rather than a wider `ShipFittings` for a reason the two of them make
+// plain: `ShipFittings` holds only what is DRAWN, and a mount's condition is
+// about mounts nobody draws and mounts nothing is fitted to.
+constexpr std::uint32_t kSaveVersion = 24;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -300,6 +306,11 @@ ecs::Snapshot makeSnapshotSchema()
     // LAYOUT and the save version keeps the promise; adding a second, separate
     // thing a ship carries is the case that rule does not cover.
     schema.component<ShipFittings>(24); // v23: Phase 31 stage E2
+    // ⚑ AND A THIRD, for the same reason 24 was not a wider 23. Condition is
+    // about every mount a hull declares - including the ones nothing is fitted
+    // to and the ones nothing is drawn at - so it cannot ride either of the
+    // two components above, both of which are lists of what a hull CARRIES.
+    schema.component<ShipMounts>(25); // v24: Phase 31 stage F
     return schema;
 }
 
@@ -452,6 +463,7 @@ void SpaceWorld::spawn(std::uint64_t universeSeed)
     m_registry.emplace<ShipDefense>(e);
     m_registry.emplace<ShipArmament>(e);
     m_registry.emplace<ShipFittings>(e);
+    m_registry.emplace<ShipMounts>(e);
 }
 
 bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
@@ -5522,6 +5534,43 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
     // decision smuggled into a loop. There is no pick to make now: the hull's
     // mount list IS the armament, in the order the author wrote it, and that
     // order is what decides who fires first when the capacitor runs short.
+    // ⚑⚑ EVERY PLACE ON THE HULL FIRST (Phase 31 stage F), because condition
+    // is a fact about the MOUNT and not about what is in it - so unlike the
+    // two walks below this one skips nothing. An empty engine mount, an
+    // internal subsystem bay nobody has authored kit for, a turret ring with
+    // no gun on it: each is a piece of ship somebody can shoot at, and each
+    // gets an entry here.
+    //
+    // ⚑ AND IT RESETS TO FULL, exactly as the defences three lines up do and
+    // for the same reason - this runs on a refit, a ship swap and a def
+    // hot-reload, and a player who has just paid a shipyard for a new fitting
+    // has been to a shipyard. That is the repair rule this stage arrives at
+    // rather than invents: the game already healed a hull at a refit and this
+    // heals the mounts with it.
+    ShipMounts& mounts = m_registry.storage<ShipMounts>().get(entityIndex);
+    mounts = ShipMounts{};
+    for (const assets::ShipMount& mount : def.mounts) {
+        if (mounts.count >= kMaxShipMounts) {
+            // Named rather than truncated in silence, on `kMaxShipWeapons`'
+            // rule - but the consequence here is different and worth saying
+            // out loud: an overflow mount is INDESTRUCTIBLE, because the only
+            // alternative that fits in the array would be to reindex, and
+            // `ShipWeapon::mount` is an index into the DEF's list.
+            SOL_LOG_WARN("ship '%s': more than %u mounts; '%s' and any after it cannot be damaged",
+                         def.id.c_str(),
+                         kMaxShipMounts,
+                         mount.id.c_str());
+            break;
+        }
+        MountCondition& condition = mounts.mounts[mounts.count++];
+        condition.at[0] = mount.at[0];
+        condition.at[1] = mount.at[1];
+        condition.at[2] = mount.at[2];
+        condition.external = mount.external;
+        condition.maxHp = assets::mountHitPoints(mount.size);
+        condition.hp = condition.maxHp;
+    }
+
     ShipArmament& armament = m_registry.storage<ShipArmament>().get(entityIndex);
     armament = ShipArmament{};
     for (std::uint32_t m = 0; m < def.mounts.size(); ++m) {
@@ -6006,6 +6055,7 @@ ecs::Entity SpaceWorld::spawnShipAt(const assets::ShipDef& def,
     m_registry.emplace<ShipDefense>(e);
     m_registry.emplace<ShipArmament>(e);
     m_registry.emplace<ShipFittings>(e);
+    m_registry.emplace<ShipMounts>(e);
     applyShipDef(e.index, def, defs);
     std::string name = def.name;
     if (factionName != nullptr && factionName[0] != '\0') {
@@ -7932,6 +7982,10 @@ void SpaceWorld::tick(double dt)
         // every tick - most of which are not shooting at any given moment.
         const GunneryFrame frame = trigger ? gunneryFrame(entityIndex) : GunneryFrame{};
         ShipPower* power = powers.tryGet(entityIndex);
+        // ⚑ ONE READ PER SHIP, on the same rule as the frame above: which
+        // mounts are still there is a fact about the SHIP, and the inner loop
+        // only needs to index it (Phase 31 stage F).
+        const ShipMounts* mounts = m_registry.tryGet<ShipMounts>(m_registry.entityFromIndex(entityIndex));
 
         for (std::uint32_t g = 0; g < armament.count; ++g) {
             ShipWeapon& weapon = armament.weapons[g];
@@ -7946,6 +8000,18 @@ void SpaceWorld::tick(double dt)
             // two groups would out-shoot the same guns in one.
             if (weapon.kind == WeaponKind::None || weapon.group != armament.selectedGroup ||
                 weapon.cooldown > 0.0f || !trigger) {
+                continue;
+            }
+            // ⚑⚑ A GUN WHOSE MOUNT HAS BEEN SHOT OFF DOES NOT FIRE (Phase 31
+            // stage F) - "a destroyed turret that stops working", and the
+            // whole of it, because a gun IS its ring. It is checked here,
+            // below the cooldown tick and above everything that costs
+            // something, for the reason the arc check below is: a gun that did
+            // not fire must not pay the capacitor or reset its clock. A
+            // destroyed mount does keep ticking its cooldown, which costs
+            // nothing and means a repair does not hand back a free salvo.
+            if (mounts != nullptr && weapon.mount < mounts->count &&
+                mounts->mounts[weapon.mount].destroyed()) {
                 continue;
             }
             // ⚑ THE MUZZLE IS THE MOUNT AND THE BEARING IS THE RING (Phase 31
@@ -8281,11 +8347,126 @@ void SpaceWorld::tick(double dt)
     }
 }
 
+// ⚑⚑⚑ WHERE ON THE SHIP THE SHOT LANDED, AND WHAT IT COST THAT PLACE (Phase
+// 31 stage F). Two rules, and neither invents a number:
+//
+//   1. WHAT REACHES A MOUNT is what got past the shields - `armorAbsorbed +
+//      hullDamage`. A shield is a bubble around the whole hull, so a facing
+//      that ate the shot ate it on behalf of everything bolted underneath;
+//      that is `decisions/014`'s "external mounts resolve hits against `at`,
+//      internal mounts are reachable only once armour and hull are
+//      compromised", with the external half read off the damage layering the
+//      game already has rather than off a new fraction.
+//
+//   2. WHICH MOUNT is the one whose BEARING from the hull's centre is nearest
+//      the bearing the hit arrived on, within `kMountHitCosine`. A bearing and
+//      not a distance because a hit position sits on the collision SPHERE,
+//      which is bigger than the mesh inside it - so distance-to-mount is
+//      mostly a fact about the sphere while direction is the question the
+//      player is answering when they line up on a tail.
+//
+// ⚑ The mount's own damage is NOT taken off the hull. A mount is a separate
+// pool bolted to the outside of the ship, which is the whole of what makes
+// disabling a distinct act from killing: a freighter whose drive you shot off
+// is still a whole freighter, and one you shot to pieces has an intact drive
+// in the wreck. Spending one hit twice is the point.
+void SpaceWorld::damageMounts(std::uint32_t targetIndex,
+                              const core::DVec3& hitPosition,
+                              const sim::DamageResult& result)
+{
+    const float reaching = result.armorAbsorbed + result.hullDamage;
+    if (reaching <= 0.0f) {
+        return; // the facing held; nothing under it was touched
+    }
+    const ecs::Entity entity = m_registry.entityFromIndex(targetIndex);
+    ShipMounts* mounts = m_registry.tryGet<ShipMounts>(entity);
+    const Transform* transform = m_registry.tryGet<Transform>(entity);
+    if (mounts == nullptr || transform == nullptr || mounts->count == 0) {
+        return;
+    }
+    const core::DVec3 offset = hitPosition - transform->position;
+    if (dot(offset, offset) <= 0.0) {
+        return; // a hit exactly at the hull's centre has no bearing to read
+    }
+    // Into the hull's own frame, where `at` is written. The SIM orientation
+    // rather than an interpolated one: this is the pose the damage was
+    // resolved against a tick ago, the same reason `layGun` reads it.
+    const core::Vec3 arrival =
+        normalize(rotate(conjugate(transform->orientation), toVec3(normalize(offset))));
+
+    // ⚑⚑ A MOUNT AT THE HULL'S OWN CENTRE IS EXCLUDED BY THE ARITHMETIC AND
+    // NOT BY A BRANCH, and that is worth a compile-time promise rather than a
+    // comment: `normalize` returns a zero vector for one, whose dot with any
+    // arrival is exactly 0, so it loses to every cone narrower than a
+    // hemisphere.
+    //
+    // ⚑ WHICH MAKES THE `external` CHECK BELOW BELT-AND-BRACES, AND IT IS KEPT
+    // ANYWAY. An internal mount is exactly one with no `at` (that is what the
+    // parser means by the flag), so its `at` IS the origin and this assert
+    // already excludes it - turning the flag off changes no test in the suite,
+    // which was checked rather than assumed. It stays because it is
+    // `decisions/014` rule 2 said where a reader looks for it, and because
+    // widening the cone past a hemisphere would otherwise silently make every
+    // internal mount shootable.
+    static_assert(kMountHitCosine > 0.0f,
+                  "a mount at the hull centre has a zero bearing, excluded only by a positive cone");
+    std::uint32_t best = mounts->count;
+    float bestAlignment = kMountHitCosine;
+    for (std::uint32_t m = 0; m < mounts->count; ++m) {
+        const MountCondition& condition = mounts->mounts[m];
+        if (!condition.external || condition.destroyed()) {
+            continue;
+        }
+        const core::Vec3 at{condition.at[0], condition.at[1], condition.at[2]};
+        const float alignment = dot(arrival, normalize(at));
+        if (alignment > bestAlignment) {
+            bestAlignment = alignment;
+            best = m;
+        }
+    }
+    if (best >= mounts->count) {
+        return; // the shot landed on plating, not on anything bolted to it
+    }
+    MountCondition& hit = mounts->mounts[best];
+    hit.hp -= reaching;
+    if (hit.hp > 0.0f) {
+        return;
+    }
+    hit.hp = 0.0f;
+    // A mount going is a visible event or it is nothing at all. The fireball
+    // is scaled off the hull so a freighter's drive going reads as bigger than
+    // a shuttle's nose gun, and it is spawned AT THE MOUNT rather than at the
+    // impact - the shot arrived on the sphere, the thing that blew up is on
+    // the hull.
+    const RenderShape* shape = m_registry.tryGet<RenderShape>(entity);
+    const float hullScale = shape != nullptr ? shape->scale.x : 1.0f;
+    const core::Vec3 at{hit.at[0] * hullScale, hit.at[1] * hullScale, hit.at[2] * hullScale};
+    const core::DVec3 where = transform->position + toDVec3(rotate(transform->orientation, at));
+    m_combatEffects.spawnExplosion(where, hullScale * 0.5f);
+    if (m_audio != nullptr) {
+        if (targetIndex == playerEntityIndex()) {
+            m_audio->play2D(m_audio->cues().explosion);
+            m_audio->play2D(m_audio->cues().alarm);
+        } else {
+            m_audio->playAt(m_audio->cues().explosion, where);
+        }
+    }
+}
+
 void SpaceWorld::noteDamage(std::uint32_t targetIndex,
                             const core::DVec3& hitPosition,
                             const sim::DamageResult& result,
                             std::uint32_t attackerIndex)
 {
+    // ⚑⚑ FIRST, AND ABOVE THE PLAYER EARLY-OUT BELOW (Phase 31 stage F). It
+    // is in this function because this is the one funnel every hit in the game
+    // passes through carrying all three facts it needs - who was hit, where,
+    // and how much got past what - and it is FIRST because the early return
+    // twenty lines down is about who gets a bounty assist. The player's own
+    // mounts are shot off exactly like everybody else's, and hanging this off
+    // the bottom of the function is how they would not be.
+    damageMounts(targetIndex, hitPosition, result);
+
     const bool shieldHit = result.shieldAbsorbed >= result.armorAbsorbed + result.hullDamage;
     m_combatEffects.spawnImpact(hitPosition, shieldHit);
     if (m_audio != nullptr) {
@@ -8621,6 +8802,16 @@ void SpaceWorld::appendFittingInstances(float alpha, std::vector<RenderInstance>
     const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
     const double alphaD = static_cast<double>(alpha);
 
+    // ⚑⚑ AND NOTHING IS DRAWN AT A MOUNT THAT HAS BEEN SHOT OFF (Phase 31
+    // stage F). Both loops below check it, because a gun and a pod go the same
+    // way: the ring is gone, so what stood in it is gone. That absence IS the
+    // stage's feedback - a freighter you have worked over reads as a freighter
+    // missing its drive bell from across the fight, with no icon to consult.
+    const auto mountAlive = [this](std::uint32_t entityIndex, std::uint32_t mount) {
+        const ShipMounts* condition = m_registry.tryGet<ShipMounts>(m_registry.entityFromIndex(entityIndex));
+        return condition == nullptr || mount >= condition->count || !condition->mounts[mount].destroyed();
+    };
+
     // ⚑⚑ THE STILL HALF FIRST, AND IT NEEDS NO GUNNERY FRAME AT ALL. Nothing
     // in this loop asks where a target is, because nothing in it moves: a hold
     // pod is at its mount's `at` facing its mount's `aim` for the life of the
@@ -8645,6 +8836,9 @@ void SpaceWorld::appendFittingInstances(float alpha, std::vector<RenderInstance>
         const float hullScale = shape->scale.x;
         for (std::uint32_t f = 0; f < fitted[i].count; ++f) {
             const FittedPart& part = fitted[i].parts[f];
+            if (!mountAlive(entityIndex, part.mount)) {
+                continue;
+            }
             const core::Vec3 offset{part.at[0] * hullScale, part.at[1] * hullScale, part.at[2] * hullScale};
             out.push_back(RenderInstance{
                 .position = hullPosition + toDVec3(rotate(hullRotation, offset)),
@@ -8694,7 +8888,7 @@ void SpaceWorld::appendFittingInstances(float alpha, std::vector<RenderInstance>
 
         for (std::uint32_t g = 0; g < armament.count; ++g) {
             const ShipWeapon& weapon = armament.weapons[g];
-            if (weapon.fittingModel == kNoModel) {
+            if (weapon.fittingModel == kNoModel || !mountAlive(entityIndex, weapon.mount)) {
                 continue;
             }
             core::DVec3 muzzle;
