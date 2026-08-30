@@ -107,6 +107,16 @@ struct DefRow
     std::string leading; // trivia above the `[[type]]` line
     std::string type;    // "model", "ship", "station", ... without the brackets
     std::string header;  // the `[[type]]` line itself, verbatim
+    // The whitespace this row's header line opens with, and the prefix put on
+    // any line the TOOL writes into it (Phase 31 stage D).
+    //
+    // ⚑ It exists because of nested rows. `ships.toml` indents every
+    // `[[ship.mount]]` and its keys two spaces to show which hull they belong
+    // to, and a mount the Forge creates has to look like the nineteen an author
+    // wrote beside it - a flush-left row among indented siblings is valid TOML
+    // and reads as damage. Existing lines are untouched either way: their text
+    // is verbatim and already carries whatever indent it had.
+    std::string indent;
     std::vector<DefKey> keys;
 
     [[nodiscard]] const DefKey* find(std::string_view name) const;
@@ -163,6 +173,39 @@ struct DefDoc
     [[nodiscard]] std::size_t count(std::string_view type) const;
     // A new row at the END of the document, with one blank line before it.
     DefRow& append(std::string_view type);
+
+    // No such row. Distinct from index 0, which is a real row.
+    static constexpr std::size_t kNoRow = static_cast<std::size_t>(-1);
+
+    // Where a row sits, so a caller that has to reason about ORDER can. Every
+    // reader before Phase 31 stage D wanted a row by name and nothing else.
+    [[nodiscard]] std::size_t indexOf(std::string_view type, std::string_view id) const;
+
+    // ⚑⚑ A NEW ROW IMMEDIATELY AFTER `index`, WHICH IS WHAT A NESTED ROW
+    // NEEDS AND `append` CANNOT GIVE IT (Phase 31 stage D). A `[[ship.mount]]`
+    // belongs to the `[[ship]]` above it, so a mount appended at the end of
+    // `ships.toml` is a mount on the LAST hull in the file whatever the tool
+    // meant - silently, and only visible after a reload.
+    //
+    // ⚑ It takes the new row's `indent` explicitly rather than copying the
+    // neighbour's, because the two differ exactly where this is used: a mount
+    // inserted after its HULL row (the hull has none) is the first mount on
+    // that hull, and it still has to be indented like the ones on every other.
+    DefRow& insertAfter(std::size_t index, std::string_view type, std::string_view indent = {});
+
+    // Removes one row. ⚑ Its trivia moves DOWN to the row that inherits its
+    // place, the same rule `DefRow::remove` applies to a key and for the same
+    // reason - a comment above a row is about the file at that point. Removing
+    // the LAST row leaves the trivia in the document's trailer.
+    //
+    // ⚑⚑ SO A NOTE CAN END UP OVER SOMETHING IT IS NOT ABOUT, AND THAT IS THE
+    // DELIBERATE HALF. `ships.toml` explains most of its mounts in several lines
+    // above the header, and deleting the mount is not the author saying to
+    // delete the paragraph - the alternative loses their reasoning byte-exactly
+    // and unrecoverably in a gesture that looked like removing one hardpoint. A
+    // note left standing over the wrong row is visible and fixable; a note eaten
+    // is neither. Same ruling as `def_surface.hpp`'s on a moved key's trivia.
+    void eraseRow(std::size_t index);
 };
 
 // Parses a def document. Fails only on a line that is neither trivia, a table

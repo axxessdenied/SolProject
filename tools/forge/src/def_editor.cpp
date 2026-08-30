@@ -107,6 +107,8 @@ void DefEditor::load(const std::string& dataDirectory)
     m_docs[kStations] = Document{.file = "stations.toml"};
     m_docs[kSounds] = Document{.file = "sounds.toml"};
     m_docs[kMaterials] = Document{.file = "materials.toml"};
+    m_docs[kWeapons] = Document{.file = "weapons.toml"};
+    m_docs[kComponents] = Document{.file = "components.toml"};
     if (dataDirectory.empty()) {
         m_error = "no data directory";
         return;
@@ -1108,6 +1110,170 @@ bool DefEditor::drawContentRow(DefRow& row, const std::vector<std::string>& mode
     ImGui::PopID();
     ImGui::Separator();
     return changed;
+}
+
+// ---------------------------------------------------------------------------
+// The mount surface (engine plan Phase 31 stage D). No ImGui below this line:
+// the gesture is `MountTool`'s and the document is this file's.
+// ---------------------------------------------------------------------------
+
+std::size_t DefEditor::hullRow(const DefDoc& doc, const std::string& hullId)
+{
+    return doc.indexOf("ship", hullId);
+}
+
+bool DefEditor::commitShips(DefDoc&& candidate, const char* label)
+{
+    if (!m_loaded) {
+        m_error = "nothing loaded";
+        return false;
+    }
+    // ⚑ THE WHOLE SET, not just the candidate. A mount can only be refused by
+    // `ships.toml`'s own reading today, but `mergeToml` is layered - the
+    // documents are merged in order into one database - and validating one file
+    // alone would be a second, narrower schema. Running all five is what makes
+    // "the tool cannot write a file the game rejects" true rather than likely.
+    assets::DefDatabase probe;
+    for (std::size_t i = 0; i < kDocumentCount; ++i) {
+        const std::string text = assets::writeDefs(i == kShips ? candidate : m_docs[i].doc);
+        std::string error;
+        if (!probe.mergeToml(text.c_str(), text.size(), m_docs[i].file, &error)) {
+            m_error = error;
+            return false;
+        }
+    }
+    // Accepted, so the edit is going to land and the undo entry is worth
+    // pushing. ⚑ An empty label means the caller already pushed one for the
+    // whole gesture - a viewport drag, which arrives here every frame.
+    if (label != nullptr) {
+        beginEdit(label);
+    }
+    m_docs[kShips].doc = std::move(candidate);
+    m_docs[kShips].dirty = true;
+    m_defs = std::move(probe);
+    m_error.clear();
+    return true;
+}
+
+std::vector<std::string> DefEditor::hullsOnOpenModel() const
+{
+    std::vector<std::string> hulls;
+    if (!m_loaded || m_openModels.empty()) {
+        return hulls;
+    }
+    for (const DefRow& row : m_docs[kShips].doc.rows) {
+        if (row.type != "ship") {
+            continue;
+        }
+        const std::string model = stringOr(row, "model", "ship");
+        if (std::find(m_openModels.begin(), m_openModels.end(), model) == m_openModels.end()) {
+            continue;
+        }
+        if (!row.id().empty()) {
+            hulls.emplace_back(row.id());
+        }
+    }
+    return hulls;
+}
+
+const assets::ShipDef* DefEditor::hull(const std::string& hullId) const
+{
+    return hullId.empty() ? nullptr : m_defs.findShip(hullId.c_str());
+}
+
+std::vector<DefEditor::Fitting> DefEditor::fittingsFor(assets::MountKind kind) const
+{
+    std::vector<Fitting> fittings;
+    if (assets::mountTakesWeapon(kind)) {
+        for (const assets::WeaponDef& weapon : m_defs.weapons()) {
+            fittings.push_back({weapon.id, weapon.name, weapon.mount, weapon.size});
+        }
+        return fittings;
+    }
+    for (const assets::ComponentDef& component : m_defs.components()) {
+        fittings.push_back({component.id, component.name, component.mount, component.size});
+    }
+    return fittings;
+}
+
+bool DefEditor::addMount(const std::string& hullId, const MountDraft& draft)
+{
+    DefDoc candidate = m_docs[kShips].doc;
+    const std::size_t hull = hullRow(candidate, hullId);
+    if (hull == DefDoc::kNoRow) {
+        m_error = "no [[ship]] row named '" + hullId + "'";
+        return false;
+    }
+    MountDraft placed = draft;
+    // ⚑ The id is made unique HERE rather than trusted from the caller, so the
+    // create button can never be the thing that produces a duplicate. A rename
+    // the author types is a different gesture and IS allowed to be refused -
+    // they can see what they typed and change it.
+    placed.id = uniqueMountId(candidate, hull, draft.id);
+    DefRow& row =
+        candidate.insertAfter(mountInsertPoint(candidate, hull), kMountRowType, mountIndent(candidate, hull));
+    writeMountDraft(row, placed, kMetreDecimals);
+    return commitShips(std::move(candidate), "add mount");
+}
+
+bool DefEditor::removeMount(const std::string& hullId, const std::string& mountId)
+{
+    DefDoc candidate = m_docs[kShips].doc;
+    const std::size_t hull = hullRow(candidate, hullId);
+    if (hull == DefDoc::kNoRow) {
+        m_error = "no [[ship]] row named '" + hullId + "'";
+        return false;
+    }
+    const std::size_t row = findMountRow(candidate, hull, mountId);
+    if (row == DefDoc::kNoRow) {
+        m_error = "no mount '" + mountId + "' on " + hullId;
+        return false;
+    }
+    candidate.eraseRow(row);
+    return commitShips(std::move(candidate), "remove mount");
+}
+
+bool DefEditor::setMountAt(const std::string& hullId, const std::string& mountId, const float (&at)[3])
+{
+    DefDoc candidate = m_docs[kShips].doc;
+    const std::size_t hull = hullRow(candidate, hullId);
+    const std::size_t row = hull == DefDoc::kNoRow ? DefDoc::kNoRow : findMountRow(candidate, hull, mountId);
+    if (row == DefDoc::kNoRow) {
+        m_error = "no mount '" + mountId + "' on " + hullId;
+        return false;
+    }
+    writeMountVector(candidate.rows[row], "at", at, kMetreDecimals);
+    // ⚑ No label: this is the drag, and the entry was pushed when it started.
+    return commitShips(std::move(candidate), nullptr);
+}
+
+bool DefEditor::setMountKey(const std::string& hullId,
+                            const std::string& mountId,
+                            const char* key,
+                            std::string_view value)
+{
+    DefDoc candidate = m_docs[kShips].doc;
+    const std::size_t hull = hullRow(candidate, hullId);
+    const std::size_t row = hull == DefDoc::kNoRow ? DefDoc::kNoRow : findMountRow(candidate, hull, mountId);
+    if (row == DefDoc::kNoRow) {
+        m_error = "no mount '" + mountId + "' on " + hullId;
+        return false;
+    }
+    candidate.rows[row].set(key, value);
+    return commitShips(std::move(candidate), "set mount key");
+}
+
+bool DefEditor::clearMountKey(const std::string& hullId, const std::string& mountId, const char* key)
+{
+    DefDoc candidate = m_docs[kShips].doc;
+    const std::size_t hull = hullRow(candidate, hullId);
+    const std::size_t row = hull == DefDoc::kNoRow ? DefDoc::kNoRow : findMountRow(candidate, hull, mountId);
+    if (row == DefDoc::kNoRow) {
+        m_error = "no mount '" + mountId + "' on " + hullId;
+        return false;
+    }
+    candidate.rows[row].remove(key);
+    return commitShips(std::move(candidate), "clear mount key");
 }
 
 bool DefEditor::drawContentRows()

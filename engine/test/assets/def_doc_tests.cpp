@@ -713,3 +713,163 @@ SOL_TEST(defDocumentEditOnAHullLeavesItsMountsAlone)
         SOL_CHECK(!(row.type == "ship.mount" && row.find("crew_berths") != nullptr));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Inserting and erasing a row (Phase 31 stage D). Everything above adds at the
+// END of a document, which is the only place a top-level row can go and the one
+// place a NESTED row must not.
+// ---------------------------------------------------------------------------
+
+SOL_TEST(defDocumentInsertsAMountOnTheHullItWasAskedFor)
+{
+    const std::string source = readWholeFile(defPath("ships"));
+    SOL_REQUIRE(!source.empty());
+    DefDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    // ⚑ THE SHUTTLE IS THE FIRST HULL IN THE FILE AND THE FREIGHTER IS THE
+    // LAST, which is what makes this able to fail: a row appended at the end of
+    // the document lands on the freighter, and the assertion below would then
+    // find the mount on a hull nobody named while the schema accepted the file
+    // and the count came out right.
+    const std::size_t shuttle = doc.indexOf("ship", "sol.shuttle");
+    SOL_REQUIRE(shuttle != DefDoc::kNoRow);
+    std::size_t last = shuttle;
+    for (std::size_t i = shuttle + 1; i < doc.rows.size() && doc.rows[i].type == "ship.mount"; ++i) {
+        last = i;
+    }
+    SOL_CHECK(last > shuttle); // the shuttle has mounts; the insert goes after them
+
+    DefRow& mount = doc.insertAfter(last, "ship.mount", "  ");
+    mount.set("id", assets::defString("rack_dorsal"));
+    mount.set("kind", assets::defString("utility"));
+    mount.set("size", assets::defString("small"));
+
+    const std::string written = assets::writeDefs(doc);
+    std::string error;
+    SOL_CHECK(schemaAccepts(written, error));
+    if (!error.empty()) {
+        std::printf("  schema refused the edited document: %s\n", error.c_str());
+    }
+
+    assets::DefDatabase defs;
+    SOL_REQUIRE(defs.mergeToml(written.c_str(), written.size(), "candidate.toml", nullptr));
+    const assets::ShipDef* shuttleDef = defs.findShip("sol.shuttle");
+    SOL_REQUIRE(shuttleDef != nullptr);
+    SOL_CHECK(shuttleDef->mounts.size() == 6);
+    SOL_REQUIRE(shuttleDef->findMount("rack_dorsal") != nullptr);
+    SOL_CHECK(shuttleDef->findMount("rack_dorsal")->kind == assets::MountKind::Utility);
+
+    // And on NO other hull, which is the half an append would have got wrong.
+    const assets::ShipDef* freighter = defs.findShip("sol.freighter");
+    SOL_REQUIRE(freighter != nullptr);
+    SOL_CHECK(freighter->findMount("rack_dorsal") == nullptr);
+    SOL_CHECK(freighter->mounts.size() == 9);
+}
+
+SOL_TEST(defDocumentIndentsARowItCreatedLikeTheOnesBesideIt)
+{
+    const std::string source = readWholeFile(defPath("ships"));
+    SOL_REQUIRE(!source.empty());
+    DefDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    // The committed mounts are indented two spaces, and that is read off the
+    // file rather than assumed here.
+    const std::size_t dorsal = doc.indexOf("ship.mount", "turret_dorsal");
+    SOL_REQUIRE(dorsal != DefDoc::kNoRow);
+    SOL_CHECK(doc.rows[dorsal].indent == "  ");
+    const std::size_t shuttle = doc.indexOf("ship", "sol.shuttle");
+    SOL_REQUIRE(shuttle != DefDoc::kNoRow);
+    SOL_CHECK(doc.rows[shuttle].indent.empty()); // a top-level row opens at column 0
+
+    DefRow& mount = doc.insertAfter(dorsal, "ship.mount", doc.rows[dorsal].indent);
+    mount.set("id", assets::defString("turret_test"));
+    mount.set("kind", assets::defString("turret"));
+
+    SOL_CHECK(mount.header == "  [[ship.mount]]");
+    SOL_REQUIRE(mount.keys.size() == 2);
+    SOL_CHECK(mount.keys[0].text == "  id = \"turret_test\"");
+    SOL_CHECK(mount.keys[1].text == "  kind = \"turret\"");
+    // The indent is part of the LINE, so the value range has to have moved with
+    // it - a splice that ignored the prefix would rewrite the key name.
+    SOL_CHECK(mount.keys[0].value() == "\"turret_test\"");
+    mount.set("kind", assets::defString("fixed"));
+    SOL_CHECK(mount.keys[1].text == "  kind = \"fixed\"");
+}
+
+SOL_TEST(defDocumentEraseMovesTheNoteAboveTheRowDownToItsSuccessor)
+{
+    const std::string source = "[[ship]]\n"
+                               "id = \"a\"\n"
+                               "\n"
+                               "  # why the second mount is where it is\n"
+                               "  [[ship.mount]]\n"
+                               "  id = \"one\"\n"
+                               "\n"
+                               "  [[ship.mount]]\n"
+                               "  id = \"two\"\n";
+    DefDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+    SOL_CHECK(doc.count("ship.mount") == 2);
+
+    const std::size_t one = doc.indexOf("ship.mount", "one");
+    SOL_REQUIRE(one != DefDoc::kNoRow);
+    doc.eraseRow(one);
+
+    // ⚑ The removed row's trivia and the successor's own CONCATENATE, which is
+    // why the blank line survives: the note belonged to the file at that point
+    // and the blank line was the second mount's separator. Both were written by
+    // the author, so both stand. A rule that dropped either would delete
+    // somebody's reasoning as a side effect of deleting a mount - and a note
+    // left standing over the wrong mount is visible and fixable, where a note
+    // silently eaten is neither.
+    const std::string written = assets::writeDefs(doc);
+    SOL_CHECK(written == "[[ship]]\n"
+                         "id = \"a\"\n"
+                         "\n"
+                         "  # why the second mount is where it is\n"
+                         "\n"
+                         "  [[ship.mount]]\n"
+                         "  id = \"two\"\n");
+
+    // The last row has nothing below it, so its trivia lands in the trailer -
+    // where trivia with no successor already lives.
+    DefDoc again;
+    SOL_REQUIRE(parses(written, again));
+    again.eraseRow(again.indexOf("ship.mount", "two"));
+    SOL_CHECK(assets::writeDefs(again) == "[[ship]]\n"
+                                          "id = \"a\"\n"
+                                          "\n"
+                                          "  # why the second mount is where it is\n"
+                                          "\n");
+}
+
+SOL_TEST(defDocumentInsertLeavesEveryOtherByteAlone)
+{
+    const std::string source = readWholeFile(defPath("ships"));
+    SOL_REQUIRE(!source.empty());
+    DefDoc doc;
+    SOL_REQUIRE(parses(source, doc));
+
+    const std::size_t interceptor = doc.indexOf("ship", "sol.interceptor");
+    SOL_REQUIRE(interceptor != DefDoc::kNoRow);
+    DefRow& mount = doc.insertAfter(interceptor, "ship.mount", "  ");
+    mount.set("id", assets::defString("probe"));
+    mount.set("kind", assets::defString("subsystem"));
+    mount.set("size", assets::defString("small"));
+
+    // Exactly four lines added - a blank separator and three keys plus the
+    // header - and every other byte of a 380-line file untouched.
+    const std::string written = assets::writeDefs(doc);
+    const std::string expected =
+        "\n  [[ship.mount]]\n  id = \"probe\"\n  kind = \"subsystem\"\n  size = \"small\"\n";
+    const std::size_t at = written.find(expected);
+    SOL_REQUIRE(at != std::string::npos);
+    std::string without = written;
+    without.erase(at, expected.size());
+    SOL_CHECK(without == source);
+    if (without != source) {
+        reportFirstDifferingLine("ships.toml", source, without);
+    }
+}

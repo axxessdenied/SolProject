@@ -244,8 +244,12 @@ void DefRow::set(std::string_view name, std::string_view value)
     }
     DefKey key;
     key.name = std::string(name);
-    key.text = std::string(name) + " = " + std::string(value);
-    key.valueBegin = static_cast<std::uint32_t>(name.size() + 3);
+    // ⚑ The row's own indentation, which is empty for every top-level row
+    // and two spaces for a `[[ship.mount]]`. Existing keys are untouched - they
+    // carry their line verbatim - so this only decides how a line the TOOL
+    // creates lines up with the ones beside it.
+    key.text = indent + std::string(name) + " = " + std::string(value);
+    key.valueBegin = static_cast<std::uint32_t>(indent.size() + name.size() + 3);
     key.valueEnd = static_cast<std::uint32_t>(key.text.size());
     keys.push_back(std::move(key));
 }
@@ -308,6 +312,52 @@ DefRow& DefDoc::append(std::string_view type)
     return rows.back();
 }
 
+std::size_t DefDoc::indexOf(std::string_view type, std::string_view id) const
+{
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].type == type && rows[i].id() == id) {
+            return i;
+        }
+    }
+    return kNoRow;
+}
+
+DefRow& DefDoc::insertAfter(std::size_t index, std::string_view type, std::string_view indent)
+{
+    DefRow row;
+    row.type = std::string(type);
+    row.indent = std::string(indent);
+    row.header = row.indent + "[[" + std::string(type) + "]]";
+    // ⚑ NO TRIVIA IS MOVED, unlike `append`. The row this one is going after
+    // keeps standing where it stood and the row BELOW keeps the comment that
+    // was written above it - which is the whole difference between inserting
+    // into a document and adding to the end of one. `separatorFor` gives the
+    // new row a blank line of its own, because its `leading` is empty.
+    const std::size_t at = index == kNoRow || index + 1 >= rows.size() ? rows.size() : index + 1;
+    return *rows.insert(rows.begin() + static_cast<std::ptrdiff_t>(at), std::move(row));
+}
+
+void DefDoc::eraseRow(std::size_t index)
+{
+    if (index >= rows.size()) {
+        return;
+    }
+    std::string leading = std::move(rows[index].leading);
+    rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(index));
+    if (leading.empty()) {
+        return;
+    }
+    // ⚑ The same rule `DefRow::remove` applies one level down: trivia attaches
+    // to what is BELOW it, so a heading written above the removed row is about
+    // the row that now stands in its place. At the end of the document there is
+    // no such row and the trailer is where trivia with nothing below it lives.
+    if (index < rows.size()) {
+        rows[index].leading = leading + rows[index].leading;
+    } else {
+        trailer = leading + trailer;
+    }
+}
+
 bool parseDefs(const char* text, std::size_t length, const char* sourceName, DefDoc& out, std::string* error)
 {
     DefDoc doc;
@@ -368,6 +418,10 @@ bool parseDefs(const char* text, std::size_t length, const char* sourceName, Def
             // harmless and eats the '\r' of a CRLF file, which turns every row
             // header in the document into a line ending the author did not write.
             row.header = std::string(line);
+            // What the header opened with, which is what a line this row gains
+            // later will open with too. Read off the source rather than guessed,
+            // so a file indenting its nested rows four spaces keeps four.
+            row.indent = std::string(line.substr(0, line.size() - body.size()));
             if (row.type.empty()) {
                 return fail("empty table header", lineNumber);
             }

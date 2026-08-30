@@ -1,6 +1,7 @@
 #include "point_tool.hpp"
 
 #include "part_editor.hpp"
+#include "viewport_pick.hpp"
 
 #include "sol/ui/pick.hpp"
 
@@ -22,46 +23,12 @@ using assets::ForgePointWrite;
 
 namespace {
 
-// ⚑ The camera basis, read out of the VIEW matrix rather than rebuilt from the
-// orbit camera's yaw and pitch. Two expressions of one thing is how a drag ends
-// up going somewhere other than where the cursor went, and this file already
-// depends on the view matrix for the projection - so it may as well depend on
-// it for the drag.
-//
-// The view matrix takes world to camera, so its rotation ROWS are the camera's
-// axes in world space. Column-major storage (`m[column * 4 + row]`) puts row 0
-// at m[0], m[4], m[8].
-[[nodiscard]] core::Vec3 cameraRight(const core::Mat4& view)
-{
-    return {view.m[0], view.m[4], view.m[8]};
-}
-
-[[nodiscard]] core::Vec3 cameraUp(const core::Mat4& view)
-{
-    return {view.m[1], view.m[5], view.m[9]};
-}
-
-// ⚑ Row 2 is the camera's BACKWARD axis, not its forward one - the camera looks
-// down -Z, so +Z_camera points at the viewer. Adding a little of it to a world
-// point pulls that point toward the camera, which is what the edge overlay
-// needs and the reason this is not simply `-cameraForward`.
-[[nodiscard]] core::Vec3 cameraBackward(const core::Mat4& view)
-{
-    return {view.m[2], view.m[6], view.m[10]};
-}
-
-// The camera's world-space eye. The view matrix maps world to camera as
-// `R * (p - eye)` with the rotation stored by rows, so the translation column
-// holds `-R * eye` and the eye comes back by applying R's transpose.
-[[nodiscard]] core::Vec3 cameraEye(const core::Mat4& view)
-{
-    const core::Vec3 right = cameraRight(view);
-    const core::Vec3 up = cameraUp(view);
-    const core::Vec3 backward = cameraBackward(view);
-    return {-((view.m[12] * right.x) + (view.m[13] * up.x) + (view.m[14] * backward.x)),
-            -((view.m[12] * right.y) + (view.m[13] * up.y) + (view.m[14] * backward.y)),
-            -((view.m[12] * right.z) + (view.m[13] * up.z) + (view.m[14] * backward.z))};
-}
+// ⚑⚑ THE CAMERA BASIS MOVED TO `viewport_pick.hpp` AT PHASE 31 STAGE D, and
+// nothing about it changed. It lived here for eleven stages because there was
+// one tool that pointed at the viewport; the mount tool is the second, and the
+// warning this file already carried - two expressions of one thing is how a
+// drag ends up going somewhere other than where the cursor went - applies
+// across two files exactly as it did within one.
 
 [[nodiscard]] core::Vec3 asVec3(const assets::BuildPoint& p)
 {
@@ -151,29 +118,6 @@ void addBox(renderer::DebugDrawRenderer& lines,
         lines.line(corner[i + 4], corner[((i + 1) % 4) + 4], color);
         lines.line(corner[i], corner[i + 4], color);
     }
-}
-
-// Distance in pixels from `cursor` to the segment [a, b].
-//
-// ⚑ This is the whole edge hit test, and it is why edge picking did NOT need
-// Moller-Trumbore: an edge is a segment on screen once both ends are projected,
-// so the test is two dimensional. Faces are what need the ray, at E4d.
-//
-// A segment whose ends project to one pixel degenerates to a point, which is
-// the answer rather than a division by zero.
-[[nodiscard]] float distanceToSegment(core::Vec2 a, core::Vec2 b, core::Vec2 cursor)
-{
-    const float runX = b.x - a.x;
-    const float runY = b.y - a.y;
-    const float lengthSquared = runX * runX + runY * runY;
-    float along = 0.0f;
-    if (lengthSquared > 1e-6f) {
-        along = ((cursor.x - a.x) * runX + (cursor.y - a.y) * runY) / lengthSquared;
-        along = along < 0.0f ? 0.0f : (along > 1.0f ? 1.0f : along);
-    }
-    const float dx = cursor.x - (a.x + runX * along);
-    const float dy = cursor.y - (a.y + runY * along);
-    return std::sqrt(dx * dx + dy * dy);
 }
 
 // A modeller aiming at a vertex is aiming precisely, so the point grab is
@@ -420,19 +364,12 @@ std::size_t PointTool::pickRawFaceAt(const Viewport& viewport) const
     if (m_faces.empty()) {
         return kNone;
     }
-    // ⚑ A RAY, not a projection - and `rayDirectionCamera` is the one place in
-    // this programme that runs a projection backwards. It is allowed because a
-    // pixel names a DIRECTION exactly; what `pick.hpp` forbids is inverting to
-    // recover a position, which would need a depth nobody has. `ui.unit` pins
-    // the round trip against `screenPoint` so neither sign is trusted alone.
-    const core::Vec3 local = ui::rayDirectionCamera(viewport.cursor, viewport.center, viewport.focal);
-    const core::Vec3 right = cameraRight(viewport.view);
-    const core::Vec3 up = cameraUp(viewport.view);
-    const core::Vec3 backward = cameraBackward(viewport.view);
-    // local.z is exactly -1, so this is `u*right + v*up - backward`.
-    const core::Vec3 direction{(local.x * right.x) + (local.y * up.x) + (local.z * backward.x),
-                               (local.x * right.y) + (local.y * up.y) + (local.z * backward.y),
-                               (local.x * right.z) + (local.y * up.z) + (local.z * backward.z)};
+    // ⚑ A RAY, not a projection - and `cameraRay` is the one place in this
+    // programme that runs a projection backwards. It is allowed because a pixel
+    // names a DIRECTION exactly; what `pick.hpp` forbids is inverting to recover
+    // a position, which would need a depth nobody has. `ui.unit` pins the round
+    // trip against `screenPoint` so neither sign is trusted alone.
+    const core::Vec3 direction = cameraRay(viewport.view, viewport.cursor, viewport.center, viewport.focal);
     const core::Vec3 eye = cameraEye(viewport.view);
 
     std::size_t face = 0;
@@ -678,24 +615,15 @@ bool PointTool::update(const Viewport& viewport, PartEditor& editor)
     }
 
     // Pixels to metres at the grabbed point's own depth, so the point stays
-    // under the cursor. Same expression as OrbitCamera::pan, at a different
-    // depth - the camera pans at its target's, a drag moves at the point's.
-    const float depth = m_dragDepth > 0.001f ? m_dragDepth : 0.001f;
-    const float metresPerPixel = 2.0f * depth * std::tan(viewport.verticalFov * 0.5f) / viewport.height;
-    const core::Vec3 right = cameraRight(viewport.view);
-    const core::Vec3 up = cameraUp(viewport.view);
-    // Screen Y grows downward and world up is up, hence the sign on the second.
-    core::Vec3 delta = (right * (viewport.cursorDelta.x * metresPerPixel)) -
-                       (up * (viewport.cursorDelta.y * metresPerPixel));
-
-    if (viewport.axisLock >= 0 && viewport.axisLock <= 2) {
-        // Project onto the locked world axis: the hand still moves in the view
-        // plane and the point moves only along the axis it was told to.
-        const float along = viewport.axisLock == 0 ? delta.x : viewport.axisLock == 1 ? delta.y : delta.z;
-        delta = {viewport.axisLock == 0 ? along : 0.0f,
-                 viewport.axisLock == 1 ? along : 0.0f,
-                 viewport.axisLock == 2 ? along : 0.0f};
-    }
+    // under the cursor, and the axis lock projected onto its world axis. Both
+    // are `viewport_pick.hpp`'s since stage D, because the mount tool drags
+    // through the same pixels and must move by the same amount.
+    const core::Vec3 delta = dragDelta(viewport.view,
+                                       viewport.cursorDelta,
+                                       m_dragDepth,
+                                       viewport.verticalFov,
+                                       viewport.height,
+                                       viewport.axisLock);
 
     const assets::BuildPoint move{delta.x, delta.y, delta.z};
     // ⚑ ONE call for one point and for two, rather than a branch here. The set

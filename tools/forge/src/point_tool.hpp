@@ -33,6 +33,7 @@
 // drew and the reason the geometry suite can prove this at all.
 
 #include "part_pick.hpp"
+#include "viewport_pick.hpp"
 
 #include "sol/assets/forge_doc.hpp"
 #include "sol/core/math/math.hpp"
@@ -95,29 +96,12 @@ public:
         Part,
     };
 
-    struct Viewport
-    {
-        sol::core::Vec2 cursor{};      // window pixels
-        sol::core::Vec2 cursorDelta{}; // this frame's mouse movement, pixels
-        sol::core::Vec2 center{};      // window centre, pixels
-        float focal = 1.0f;            // pick.hpp's focalLength for this window
-        float height = 1.0f;           // viewport height in pixels
-        float verticalFov = 1.0f;      // radians
-        float cameraDistance = 1.0f;   // for sizing the markers
-        sol::core::Mat4 view = sol::core::Mat4::identity();
-        bool leftPressed = false; // went down this frame
-        bool leftDown = false;
-        // ⚑ Stage O2. Raw input like the two above, carried because the MIDDLE
-        // button pans and a pan moves the eye exactly as an orbit does - so a
-        // hover frozen only for LMB would still skip parts under a middle drag.
-        // Deliberately NOT gated on `previewLevel` the way the left button is:
-        // that gate exists to withhold a PRESS from the tool, and this is not a
-        // press, it is "the camera is moving".
-        bool middleDown = false;
-        bool uiCaptured = false; // ImGui wants the mouse: the viewport gets nothing
-        // -1 free in the view plane, 0/1/2 to lock the drag to world X/Y/Z.
-        int axisLock = -1;
-    };
+    // ⚑ THE VIEWPORT STRUCT MOVED TO `viewport_pick.hpp` AT PHASE 31 STAGE D
+    // and is unchanged. `main.cpp` fills exactly one of these per frame and
+    // hands it to both tools, which is what keeps the mount tool and the point
+    // tool picking against the same camera, the same cursor and the same
+    // arbitration about who owns the left button.
+    using Viewport = ViewportInput;
 
     // Recomputed from the document after every rebuild. Keeps the selection
     // when the point count is unchanged, because a drag rebuilds continuously

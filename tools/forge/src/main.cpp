@@ -15,6 +15,7 @@
 #include "history_buttons.hpp"
 #include "list_layout_style.hpp"
 #include "mesh_library.hpp"
+#include "mount_tool.hpp"
 #include "orbit_camera.hpp"
 #include "part_editor.hpp"
 #include "point_tool.hpp"
@@ -161,7 +162,7 @@ struct PanelToggle
 
 struct PanelToggles
 {
-    PanelToggle items[6];
+    PanelToggle items[7];
 
     [[nodiscard]] bool* find(const char* name) const
     {
@@ -969,6 +970,7 @@ int main(int argc, char** argv)
     bool showSound = true;
     bool showMaterial = true;
     bool showView = true;
+    bool showMounts = true;
     bool resetLayout = false;
     bool focusMeshPending = false;
     // ⚑⚑⚑ THE CASE THE DEFAULT LAYOUT CANNOT COVER: A SAVED LAYOUT THAT
@@ -989,6 +991,9 @@ int main(int argc, char** argv)
     // having solved it once. Every author who has arranged this tool has an ini
     // that has never heard of `Material`.
     bool adoptMaterialPanel = true;
+    // ⚑ Phase 31 stage D, the third. Docked beside `Report`, because a mount is
+    // a fact about a `[[ship]]` row and that is the panel the ship rows live in.
+    bool adoptMountsPanel = true;
 
     // ⚑ Registered here rather than inside the host, because WHICH panels exist
     // is the Forge's business and the host is shared with the game.
@@ -997,13 +1002,14 @@ int main(int argc, char** argv)
                                   {"Texture", &showTexture},
                                   {"Sound", &showSound},
                                   {"Material", &showMaterial},
-                                  {"View", &showView}}};
+                                  {"View", &showView},
+                                  {"Mounts", &showMounts}}};
     // ⚑ ImGui only rewrites the ini when something MARKS it dirty, and it has no
     // idea these bools exist - so a toggle would be forgotten unless the change
     // is reported. Compared per frame rather than at each of the several places
     // a panel can close (menu item, window X, `Reset layout`), because a rule
     // spread over three call sites is a rule that gets missed at one of them.
-    bool wasShown[6] = {showMesh, showReport, showTexture, showSound, showMaterial, showView};
+    bool wasShown[7] = {showMesh, showReport, showTexture, showSound, showMaterial, showView, showMounts};
     {
         ImGuiSettingsHandler handler;
         handler.TypeName = "ForgePanels";
@@ -1033,6 +1039,13 @@ int main(int argc, char** argv)
 
     forge::PartEditor editor;
     forge::PointTool points;
+    // ⚑⚑ THE SECOND TOOL IN THIS VIEWPORT (Phase 31 stage D), and the two are
+    // MUTUALLY EXCLUSIVE rather than layered: `mountMode` below decides which
+    // of them the left button belongs to. They edit two different documents
+    // through the same pixels, and a click whose meaning depends on which
+    // marker happened to be nearer is a click an author cannot aim.
+    forge::MountTool mounts;
+    bool mountMode = false;
 
     // ⚑⚑ STAGE Q: ONE HISTORY FOR THE WHOLE TOOL. It is declared here, beside
     // the editors it orders, and handed to each of them - `Ctrl+Z` undoes the
@@ -1106,6 +1119,11 @@ int main(int argc, char** argv)
         // they are re-resolved wherever it is rebuilt - which is on every
         // accepted edit, including each frame of a drag.
         points.refresh(editor.doc());
+        // ⚑ And so is the mount tool's copy of the surface. It picks against
+        // the mesh the author is looking at, so a mesh edit that moves the skin
+        // has to move the surface the next mount lands on - one call, from the
+        // one place that knows the document changed.
+        mounts.refresh(editor.doc());
     };
 
     // Points the flat preview at whichever texture is currently shading the
@@ -1290,11 +1308,13 @@ int main(int argc, char** argv)
         // A `.forge` is a SOURCE, so opening one loads the tree behind the
         // mesh as well; everything else is triangles that can only be looked at.
         points.close();
+        mounts.close();
         if (forge::isPartSource(meshEntries[index])) {
             std::string openStatus;
             if (editor.openFile(meshEntries[index].path, openStatus)) {
                 status = openStatus;
                 points.refresh(editor.doc());
+                mounts.refresh(editor.doc());
             } else {
                 status = openStatus;
             }
@@ -1493,6 +1513,7 @@ int main(int argc, char** argv)
             // import the one edit in this tool a person cannot take back.
             editor.adoptDoc(std::move(doc));
             points.refresh(editor.doc());
+            mounts.refresh(editor.doc());
             rebuildFromEditor(/*reframe=*/false);
         } else {
             for (std::size_t i = 0; i < meshEntries.size(); ++i) {
@@ -1751,8 +1772,34 @@ int main(int argc, char** argv)
                 // edits - see PointTool::Mode for why it is a mode at all.
                 points.setMode(forge::PointTool::Mode::Part);
             }
+            // ⚑⚑ PHASE 31 STAGE D. The fifth digit is the first that leaves the
+            // MESH document entirely - it edits `ships.toml` - which is exactly
+            // why it belongs on the same row of keys: an author is choosing what
+            // the left button means, and there is one answer at a time. Any of
+            // 1-4 comes back out of it, so the way out is the way in.
+            if (window.isKeyDown(platform::Key::Num5)) {
+                mountMode = true;
+            } else if (window.isKeyDown(platform::Key::Num1) || window.isKeyDown(platform::Key::Num2) ||
+                       window.isKeyDown(platform::Key::Num3) || window.isKeyDown(platform::Key::Num4)) {
+                mountMode = false;
+            }
         }
-        if (points.update(viewport, editor)) {
+        // ⚑⚑ THE MOUNT TOOL IS OFFERED THE PRESS FIRST AND THE POINT TOOL IS
+        // THEN OFFERED NONE. This is stage E1's arbitration with one more
+        // claimant: the press goes to the tool the author has selected, and the
+        // camera gets whatever neither of them took. Suppressing the button
+        // rather than skipping `points.update` entirely is deliberate - the
+        // point tool still clears its hover and releases a drag it was holding,
+        // which is what stops a highlight surviving into a mode nobody is in.
+        if (mountMode && mounts.update(viewport, defEditor)) {
+            defStatus = "mounts: ships.toml edited";
+        }
+        forge::PointTool::Viewport meshView = viewport;
+        if (mountMode) {
+            meshView.leftPressed = false;
+            meshView.leftDown = false;
+        }
+        if (points.update(meshView, editor)) {
             rebuildFromEditor(/*reframe=*/false);
         }
 
@@ -1930,11 +1977,12 @@ int main(int argc, char** argv)
         if (!leftDown && !middleDown) {
             dragOrbit = false;
             dragPan = false;
-        } else if (!dragOrbit && !dragPan && !imguiHost.wantsMouseCapture() && !points.dragging()) {
+        } else if (!dragOrbit && !dragPan && !imguiHost.wantsMouseCapture() && !points.dragging() &&
+                   !mounts.dragging()) {
             dragPan = middleDown || (leftDown && shiftDown);
             dragOrbit = !dragPan;
         }
-        if (points.dragging()) {
+        if (points.dragging() || mounts.dragging()) {
             dragOrbit = false;
             dragPan = false;
         }
@@ -1998,6 +2046,7 @@ int main(int argc, char** argv)
                 ImGui::MenuItem("Sound", nullptr, &showSound);
                 ImGui::MenuItem("Material", nullptr, &showMaterial);
                 ImGui::MenuItem("View", nullptr, &showView);
+                ImGui::MenuItem("Mounts", nullptr, &showMounts);
                 ImGui::EndMenu();
             }
             // ⚑ The bridge gets a menu rather than a button because it is
@@ -2052,7 +2101,8 @@ int main(int argc, char** argv)
                 // been told about.
                 if (ImGui::MenuItem("Reset layout")) {
                     resetLayout = true;
-                    showMesh = showReport = showTexture = showSound = showMaterial = showView = true;
+                    showMesh = showReport = showTexture = showSound = showMaterial = showView = showMounts =
+                        true;
                 }
                 ImGui::EndMenu();
             }
@@ -2375,6 +2425,10 @@ int main(int argc, char** argv)
             ImGui::DockBuilderDockWindow("Material", rightId);
             ImGui::DockBuilderDockWindow("View", leftId);
             ImGui::DockBuilderDockWindow("Report", rightId);
+            // Beside `Report` and `Material`, for the reason `adoptMountsPanel`
+            // gives: a mount is a fact about a `[[ship]]` row, and the ship rows
+            // are drawn in `Report`.
+            ImGui::DockBuilderDockWindow("Mounts", rightId);
             ImGui::DockBuilderFinish(dockspaceId);
             focusMeshPending = true;
         }
@@ -2984,6 +3038,69 @@ int main(int argc, char** argv)
             ImGui::End();
         }
 
+        // ⚑⚑⚑ PHASE 31 STAGE D: WHERE A HULL'S HARDPOINTS ARE. It is the first
+        // panel in this tool whose subject is not the open FILE - a mount is a
+        // row in `ships.toml` - and it is here anyway, because the question it
+        // answers is geometric: is that turret on the skin, and is that muzzle
+        // ahead of the canopy. Stage C1 answered both by reading bounds out of
+        // the Report panel and comparing them by hand to numbers in a text
+        // editor, and got the shuttle's nose gun wrong for three stages.
+        if (showMounts) {
+            if (adoptMountsPanel) {
+                // Stage U1's fix, third customer. See `adoptSoundPanel`.
+                const ImGuiWindow* mountsWindow = ImGui::FindWindowByName("Mounts");
+                const ImGuiWindow* reportWindow = ImGui::FindWindowByName("Report");
+                if (mountsWindow != nullptr && mountsWindow->DockId != 0) {
+                    adoptMountsPanel = false;
+                } else if (reportWindow != nullptr && reportWindow->DockId != 0) {
+                    ImGui::SetNextWindowDockID(reportWindow->DockId, ImGuiCond_Always);
+                    ImGui::MarkIniSettingsDirty();
+                    adoptMountsPanel = false;
+                }
+            }
+            if (ImGui::Begin("Mounts", &showMounts, kPanelFlags)) {
+                if (ImGui::CollapsingHeader("Mounts", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    // ⚑ THE MODE IS SHOWN AND SETTABLE HERE AS WELL AS ON `5`,
+                    // because a viewport whose left button means something other
+                    // than what it meant a moment ago must say so somewhere a
+                    // person is looking. The key is for the hand; this is for
+                    // the eye.
+                    if (ImGui::Checkbox("edit mounts in the viewport (5)", &mountMode)) {
+                        ImGui::MarkIniSettingsDirty();
+                    }
+                    if (mountMode) {
+                        ImGui::TextDisabled("the point tool has the button back on 1-4");
+                    } else {
+                        ImGui::TextDisabled("the viewport is still editing the MESH");
+                    }
+                    ImGui::Separator();
+                    if (mounts.drawPanel(defEditor)) {
+                        defStatus = "mounts: ships.toml edited";
+                    }
+                    ImGui::Separator();
+                    // ⚑ The same pair every other def surface in this tool has,
+                    // meaning the same thing - `save defs` writes only the
+                    // documents that changed, and the history is the tool's one
+                    // undo stack rather than this panel's.
+                    if (ImGui::Button("save defs##mounts")) {
+                        if (!defEditor.save(defStatus)) {
+                            // `save` sets the message either way.
+                        }
+                    }
+                    ImGui::SameLine();
+                    forge::drawHistoryButtons(history);
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", defEditor.dirty() ? "* unsaved" : "saved");
+                    if (!defEditor.error().empty()) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+                        ImGui::TextWrapped("%s", defEditor.error().c_str());
+                        ImGui::PopStyleColor();
+                    }
+                }
+            }
+            ImGui::End();
+        }
+
         // ⚑⚑ STAGE Q, AND IT IS THE SAME "ONE PLACE NOTICES" IDIOM AS THE BLOCK
         // BELOW. A new edit ends the forward branch, and the entries it discards
         // can name a DIFFERENT editor from the one being edited - so the editor
@@ -3001,8 +3118,9 @@ int main(int argc, char** argv)
         // three routes did it. Without this the toggle is real for the session
         // and gone on the next launch, which is exactly what was reported.
         {
-            const bool shown[6] = {showMesh, showReport, showTexture, showSound, showMaterial, showView};
-            for (int i = 0; i < 6; ++i) {
+            const bool shown[7] = {
+                showMesh, showReport, showTexture, showSound, showMaterial, showView, showMounts};
+            for (int i = 0; i < 7; ++i) {
                 if (shown[i] != wasShown[i]) {
                     wasShown[i] = shown[i];
                     ImGui::MarkIniSettingsDirty();
@@ -3061,7 +3179,15 @@ int main(int argc, char** argv)
         // what it actually guards is the producer not running at all.
         const std::size_t rowHoverPart = editor.takeHoveredPart();
         if (showPoints && editor.isOpen() && previewLevel == 0) {
-            points.drawMarkers(view.debugDraw(), overlay, editor.selectedPart(), rowHoverPart);
+            // ⚑ One set of markers or the other, never both. Two overlays over
+            // one mesh is two answers to "what am I about to click", and the
+            // mount rings would sit among a cross on every vertex of the hull
+            // they are supposed to be read against.
+            if (mountMode) {
+                mounts.drawMarkers(view.debugDraw(), overlay, defEditor);
+            } else {
+                points.drawMarkers(view.debugDraw(), overlay, editor.selectedPart(), rowHoverPart);
+            }
         }
 
         // --- draw ---

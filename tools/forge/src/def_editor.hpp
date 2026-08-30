@@ -33,6 +33,7 @@
 
 #include "edit_history.hpp"
 #include "mesh_library.hpp"
+#include "mount_rows.hpp"
 
 #include "sol/assets/data_defs.hpp"
 #include "sol/assets/def_doc.hpp"
@@ -157,6 +158,68 @@ public:
     // works, with no complaint behind it.
     [[nodiscard]] bool drawContentRows();
 
+    // ⚑⚑⚑ PHASE 31 STAGE D: THE MOUNT SURFACE. Everything above draws a panel;
+    // these do not, and that is the point. A mount is placed by clicking a hull
+    // in the VIEWPORT, so the gesture belongs to `MountTool` and only the
+    // document mechanics belong here - which keeps the one thing that must not
+    // be duplicated in one place: the write goes through the same `DefDoc`,
+    // the same undo stack and the same `DefDatabase::mergeToml` validation as
+    // every other edit this tool makes.
+    //
+    // ⚑⚑ AND THEY VALIDATE BEFORE THEY MUTATE, WHICH THE PANELS ABOVE DO NOT.
+    // A panel edit that the schema refuses leaves the bad value on screen for
+    // the author to fix and `save` refuses until they do - fine for a number in
+    // a field they are looking at. A mount edit is STRUCTURAL: a duplicate id
+    // or an `aim` on an internal mount would leave a document nothing can save
+    // and no widget showing the offending text. So the candidate is built,
+    // handed to the schema, and only kept if it is accepted.
+
+    // The `[[ship]]` ids that fly the open mesh's model, in file order. Empty
+    // until `drawModelRows` has said which models those are.
+    [[nodiscard]] std::vector<std::string> hullsOnOpenModel() const;
+
+    // One hull as the GAME reads it - the validated database, not the text - so
+    // the tool draws the mounts the game would load and never a second parse of
+    // the same file. Null when no such hull exists.
+    [[nodiscard]] const sol::assets::ShipDef* hull(const std::string& hullId) const;
+
+    // What a mount of this kind can be given, as (id, name) pairs in file
+    // order: the weapon catalog for a gun mount, the component catalog for
+    // everything else. `mountTakesWeapon` decides, which is the same function
+    // the sim uses to look the id up.
+    struct Fitting
+    {
+        std::string id;
+        std::string name;
+        sol::assets::MountKind kind = sol::assets::MountKind::Utility;
+        sol::assets::MountSize size = sol::assets::MountSize::Small;
+    };
+
+    [[nodiscard]] std::vector<Fitting> fittingsFor(sol::assets::MountKind kind) const;
+
+    // Adds a mount to a hull. One undo entry; false with `error()` set and the
+    // document untouched when the schema refuses.
+    [[nodiscard]] bool addMount(const std::string& hullId, const MountDraft& draft);
+
+    // Removes one. ⚑ The comment above the row moves DOWN to the next mount
+    // rather than being deleted with it - see `DefDoc::eraseRow`.
+    [[nodiscard]] bool removeMount(const std::string& hullId, const std::string& mountId);
+
+    // Moves a mount's `at`. ⚑ NO UNDO ENTRY OF ITS OWN, because this is what a
+    // viewport DRAG calls sixty times a second - the caller pushes one entry
+    // when the gesture begins, exactly as `noteActivation` does for a slider.
+    [[nodiscard]] bool
+    setMountAt(const std::string& hullId, const std::string& mountId, const float (&at)[3]);
+
+    // Sets or clears one key on one mount, by its authored text. One undo entry.
+    // Clearing `at` is what makes a mount internal, which is why removing a key
+    // is an operation rather than an omission.
+    [[nodiscard]] bool setMountKey(const std::string& hullId,
+                                   const std::string& mountId,
+                                   const char* key,
+                                   std::string_view value);
+    [[nodiscard]] bool clearMountKey(const std::string& hullId, const std::string& mountId, const char* key);
+
     // Writes every dirty document back. Validated first, so a refusal leaves
     // the files exactly as they were.
     [[nodiscard]] bool save(std::string& status);
@@ -218,7 +281,21 @@ private:
     // call the game makes and this editor did not - so until this document was
     // here, the tool could write that dangling reference and not know.
     static constexpr std::size_t kMaterials = 4;
-    static constexpr std::size_t kDocumentCount = 5;
+    // ⚑⚑ STAGE 31-D JOINED THE TWO FITTING CATALOGS, AND FOR THE REASON
+    // `drawContentRow` ALREADY GIVES FOR `model`: a `[[ship.mount]]`'s `fit`
+    // key is read with `optionalString` and never resolved, so a typo parses
+    // clean and turns up at spawn as one log warning behind a mount that simply
+    // comes bare. This stage exists to WRITE that key, so it owes the check the
+    // schema does not do - and a combo over the ids that exist is what makes the
+    // mistake unspellable.
+    //
+    // ⚑ Which of the two a mount draws from is `mountTakesWeapon`, the same
+    // function that decides which table the GAME looks an id up in. One rule,
+    // one place; the tool cannot offer a component for a gun mount because the
+    // sim would not find it there either.
+    static constexpr std::size_t kWeapons = 5;
+    static constexpr std::size_t kComponents = 6;
+    static constexpr std::size_t kDocumentCount = 7;
     static constexpr std::size_t kUndoDepth = 64;
 
     // ⚑⚑⚑ STAGE 25-D MADE THIS A SNAPSHOT OF EVERY DOCUMENT RATHER THAN OF
@@ -262,6 +339,13 @@ private:
     [[nodiscard]] bool drawParamTable(sol::assets::DefRow& row);
     // One `[[ship]]`/`[[station]]` row's asset keys. Returns true when changed.
     [[nodiscard]] bool drawContentRow(sol::assets::DefRow& row, const std::vector<std::string>& models);
+
+    // ⚑ Stage D. Validates a candidate `ships.toml` against the game's schema
+    // ALONGSIDE the other four documents, and keeps it only if every one of
+    // them still loads. `label` empty means "no undo entry" - the drag case.
+    [[nodiscard]] bool commitShips(sol::assets::DefDoc&& candidate, const char* label);
+    // The hull row for an id, in a document the caller is about to edit.
+    [[nodiscard]] static std::size_t hullRow(const sol::assets::DefDoc& doc, const std::string& hullId);
 
     Document m_docs[kDocumentCount];
     std::vector<UndoEntry> m_undo;

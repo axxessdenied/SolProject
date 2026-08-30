@@ -7,6 +7,7 @@ add_executable(sol_forge
     src/forge_view.cpp
     src/main.cpp
     src/mesh_library.cpp
+    src/mount_tool.cpp
     src/part_editor.cpp
     src/point_tool.cpp
     src/project_paths.cpp
@@ -94,13 +95,28 @@ set_tests_properties(forge.smoke PROPERTIES LABELS gpu)
 # up with 21,000 untested lines - so this compiles `mesh_library.cpp` alone,
 # which pulls in no ImGui, no device and no window. What it buys is the radius
 # tolerance, which the D checkpoint flagged as a real decision in untested code.
+# ⚑⚑ PHASE 31 STAGE D ADDED A SECOND FILE AND NO SECOND LIBRARY, WHICH IS THE
+# WHOLE TEST OF WHETHER THE STAGE PUT ITS RULES IN THE RIGHT PLACE. The mount
+# tool is a viewport tool, so most of it is unreachable here by design - but
+# `mount_rows.hpp` (where a `[[ship.mount]]` goes) and `viewport_pick.hpp` (the
+# camera a drag is computed against) are pure functions over `sol::assets` and
+# `sol::core`, and both fail SILENTLY: a mount appended to the wrong hull still
+# loads, and a drag against a wrong basis still moves something.
 add_executable(sol_forge_tests
     src/mesh_library.cpp
     src/project_paths.cpp
     src/waveform.cpp
     test/mesh_library_tests.cpp
+    test/mount_tests.cpp
 )
 target_include_directories(sol_forge_tests PRIVATE src)
+# ⚑ `sol/ui/pick.hpp` IS HEADER-ONLY OVER `sol/core/math/vec.hpp`, so the
+# include path is all it needs and `sol::ui` is deliberately NOT linked: that
+# target is PUBLIC on `sol::renderer` and `imgui`, and this suite's entire
+# premise (see the note above it) is that it pulls in no ImGui, no device and
+# no window. An include directory is not a dependency when nothing is compiled
+# into the library it points at.
+target_include_directories(sol_forge_tests PRIVATE ${CMAKE_SOURCE_DIR}/engine/ui/include)
 target_link_libraries(sol_forge_tests PRIVATE
     sol::test
     sol::core
