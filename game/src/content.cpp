@@ -1151,24 +1151,55 @@ std::string listMounts(GameContent& content, const char* shipDefId)
 // capacitor runs short - so the charge is on the heading beside them. A
 // salvo that will not all go off is only legible next to what could not pay
 // for it. Sixty-odd characters a line, for the console panel's ~76.
+//
+// ⚑ AND SINCE STAGE C2 EACH LINE ENDS IN WHERE THE GUN IS ACTUALLY POINTING,
+// which is the one fact about a turret that nothing else in the game can be
+// asked for: `sol.mounts` has the authored `arc` but no target, and the HUD
+// draws bolts far too fast to read a bearing off. The three endings are the
+// three states a gun can be in - `fixed` (bolted down, no ring to report),
+// `arc N off D` (laid, D degrees round from the nose) and `arc N blind` (the
+// target is outside the ring, so this gun is holding its fire).
+//
+// The angle is measured off the NOSE rather than off the mount's own `aim`
+// because the nose is what the pilot can see. `off 0` is a gun shooting where
+// the player is looking and `off 180` is one shooting over their shoulder.
 std::string gunInfo(GameContent& content)
 {
     SpaceWorld& world = content.world();
     const game::ArmamentSummary summary = world.playerArmament();
     const std::span<const game::ShipWeapon> guns = world.playerGuns();
-    char buffer[128];
+    const game::GunneryFrame frame = world.playerGunneryFrame();
+    char buffer[160];
     std::snprintf(buffer,
                   sizeof(buffer),
-                  "%zu gun(s), reach %.0f m, charge %.0f/%.0f",
+                  "%zu gun(s), reach %.0f m, charge %.0f/%.0f%s",
                   guns.size(),
                   static_cast<double>(summary.maxRange),
                   static_cast<double>(world.playerPower().weaponCharge),
-                  static_cast<double>(world.powerTuning().weaponCapacitor));
+                  static_cast<double>(world.powerTuning().weaponCapacitor),
+                  // ⚑ "SELECTED", NOT "LAID ON": this is the frame's flag, and
+                  // a ring only actually follows a selection that is inside
+                  // its own reach. Saying "laid on target" here read as a
+                  // promise the per-gun `off` beside it then contradicted.
+                  frame.hasTarget ? ", target selected" : ", no target");
     std::string info = buffer;
     for (const game::ShipWeapon& gun : guns) {
+        sol::core::DVec3 muzzle;
+        sol::core::DVec3 bearing;
+        const bool bears = game::layGun(frame, gun, muzzle, bearing);
+        char traverse[32];
+        if (gun.arc <= 0.0f) {
+            std::snprintf(traverse, sizeof(traverse), "fixed");
+        } else if (!bears) {
+            std::snprintf(traverse, sizeof(traverse), "arc %g blind", static_cast<double>(gun.arc));
+        } else {
+            const double off = std::acos(sol::core::clamp(dot(bearing, frame.forward), -1.0, 1.0)) *
+                               (180.0 / sol::core::kPiD);
+            std::snprintf(traverse, sizeof(traverse), "arc %g off %.0f", static_cast<double>(gun.arc), off);
+        }
         std::snprintf(buffer,
                       sizeof(buffer),
-                      "%-7s dmg %-5.1f %-4.1f/s %-6.0fm %-5.1f e at %g,%g,%g",
+                      "%-7s dmg %.1f %.1f/s %.0fm %.1fe at %g,%g,%g %s",
                       gun.kind == game::WeaponKind::Hitscan ? "hitscan" : "bolt",
                       static_cast<double>(gun.damage),
                       static_cast<double>(gun.rateOfFire),
@@ -1176,7 +1207,8 @@ std::string gunInfo(GameContent& content)
                       static_cast<double>(gun.energyCost),
                       static_cast<double>(gun.at[0]),
                       static_cast<double>(gun.at[1]),
-                      static_cast<double>(gun.at[2]));
+                      static_cast<double>(gun.at[2]),
+                      traverse);
         info += "\n  ";
         info += buffer;
     }

@@ -78,6 +78,45 @@ energy_cost = 1.0
 mining_power = 4.0
 price = 600.0
 
+# A beam that does NOT cut rock (Phase 31 stage C2). The shield-facing test
+# below needs a hitscan shot that certainly lands on a hull, and a beam with
+# `mining_power` sweeps rocks first - so an asteroid drifting into the line
+# would turn a damage assertion into a mining one.
+[[weapon]]
+id = "sol.pulse_beam"
+name = "Pulse Beam"
+kind = "hitscan"
+mount = "fixed"
+size = "small"
+damage = 6.0
+rate_of_fire = 4.0
+range = 2000.0
+energy_cost = 2.0
+price = 700.0
+
+[[weapon]]
+id = "sol.short_gun"
+name = "Short Gun"
+kind = "projectile"
+mount = "fixed"
+size = "small"
+damage = 4.0
+rate_of_fire = 2.0
+range = 500.0
+projectile_speed = 600.0
+energy_cost = 10.0
+price = 300.0
+
+# Something to shoot AT (Phase 31 stage C2): a hull with no mounts at all, so
+# it never fires back and never adds a bolt to the frame being differenced.
+[[ship]]
+id = "sol.hulk"
+name = "Hulk"
+model = "ship"
+max_speed = 100.0
+cargo = 10.0
+power_output = 1.0
+
 [[faction]]
 id = "sol.navy"
 name = "Solar Navy"
@@ -134,6 +173,43 @@ weapon_capacitor = )") +
     return stanza;
 }
 
+// One RING, as a `[[ship.mount]]` stanza (Phase 31 stage C2). `aim` and `arc`
+// are the two keys the stage exists to read, so both are arguments; `at` is
+// deliberately small and on the centreline, because where the muzzle sits is
+// C1's subject and a big offset here would only blur the direction a bolt
+// leaves in.
+[[nodiscard]] std::string turretMount(const char* id, double x, const char* aim, double arc, const char* fit)
+{
+    std::string stanza = "\n  [[ship.mount]]\n  id = \"";
+    stanza += id;
+    stanza += "\"\n  kind = \"turret\"\n  size = \"small\"\n  at = [";
+    stanza += std::to_string(x);
+    stanza += ", 0.0, 0.0]\n  aim = ";
+    stanza += aim;
+    stanza += "\n  arc = ";
+    stanza += std::to_string(arc);
+    stanza += "\n";
+    if (fit != nullptr) {
+        stanza += "  fit = \"";
+        stanza += fit;
+        stanza += "\"\n";
+    }
+    return stanza;
+}
+
+// A bolted nose gun to port and a dorsal ring to starboard - the pair every
+// traverse test below flies, because the whole subject is the DIFFERENCE
+// between a gun the pilot aims and a gun that aims itself.
+//
+// The ring's `aim` is straight up with a 270-degree arc, which is the shipped
+// freighter's dorsal turret exactly: 135 degrees either side of up reaches
+// ahead, astern and to both beams, and is blind only through the hull.
+[[nodiscard]] std::string boltedAndRing(const char* ringFit = "sol.left_gun", double arc = 270.0)
+{
+    return hull(gunMount("gun_port", -3.0, "sol.left_gun") +
+                turretMount("turret_dorsal", 3.0, "[0.0, 1.0, 0.0]", arc, ringFit));
+}
+
 // The two-wing-gun hull every test that does not say otherwise flies.
 [[nodiscard]] std::string twoGuns()
 {
@@ -159,12 +235,45 @@ struct Fixture
         SOL_CHECK(world.generateUniverse(defs));
     }
 
-    // One tick with the trigger held, and the bolts it produced. A bolt is
-    // identified by DIFFERENCE rather than by its model or its scale: whatever
-    // is drawn after the tick that was not drawn before it came out of a
-    // muzzle, which keeps the test from encoding what a bolt happens to look
-    // like this month.
-    std::vector<sol::core::DVec3> fireOnce(double dt = 1.0 / 60.0)
+    // ⚑ SOMETHING TO SHOOT AT, PUT WHERE THE NOSE IS NOT (Phase 31 stage C2).
+    // A hulk spawns ahead of the player, and then the player is warped a
+    // kilometre PAST it - so it ends up directly astern with the nose still
+    // pointing the way it was. Astern is the discriminating bearing: it is 90
+    // degrees from a dorsal ring's `aim` (inside a 270 arc) and 180 degrees
+    // from the nose, so a gun that lays itself and a gun that does not fire in
+    // visibly opposite directions.
+    //
+    // The warp is what makes this exact rather than approximate: it parks the
+    // ship on a point, faces the nose the way it came, and zeroes the velocity,
+    // so nothing drifts between the placement and the shot.
+    bool hulkAstern(double range)
+    {
+        const sol::assets::ShipDef* hulk = defs.findShip("sol.hulk");
+        if (hulk == nullptr) {
+            return false;
+        }
+        (void)world.spawnShipFromDef(*hulk, defs);
+        if (!world.targetShipByName("Hulk")) {
+            return false;
+        }
+        const sol::core::DVec3 at = world.currentTargetInfo().nav.position;
+        const sol::core::DVec3 nose =
+            toDVec3(rotate(world.shipState().orientation, sol::core::Vec3{0.0f, 0.0f, -1.0f}));
+        const bool warped = world.warpTo(at + nose * range, 0.0);
+        // Selecting is a SEPARATE step: half these tests want the hulk sitting
+        // there unselected, because "a turret with no target follows the nose"
+        // is only a claim if the target it is not following is really present.
+        world.selectTarget(0);
+        return warped;
+    }
+
+    bool selectHulk() { return world.targetShipByName("Hulk"); }
+
+    // One tick with the trigger held, and everything it drew that was not
+    // drawn before it: a bolt is identified by DIFFERENCE rather than by its
+    // model or its scale, which keeps the test from encoding what a bolt
+    // happens to look like this month.
+    std::vector<game::RenderInstance> fireOnceDrawn(double dt = 1.0 / 60.0)
     {
         std::vector<game::RenderInstance> before;
         world.buildRenderInstances(1.0f, true, before);
@@ -175,7 +284,7 @@ struct Fixture
         std::vector<game::RenderInstance> after;
         world.buildRenderInstances(1.0f, true, after);
 
-        std::vector<sol::core::DVec3> fresh;
+        std::vector<game::RenderInstance> fresh;
         for (const game::RenderInstance& instance : after) {
             bool seen = false;
             for (const game::RenderInstance& old : before) {
@@ -185,10 +294,20 @@ struct Fixture
                 }
             }
             if (!seen) {
-                fresh.push_back(instance.position);
+                fresh.push_back(instance);
             }
         }
         return fresh;
+    }
+
+    // The same, reduced to where each bolt appeared.
+    std::vector<sol::core::DVec3> fireOnce(double dt = 1.0 / 60.0)
+    {
+        std::vector<sol::core::DVec3> positions;
+        for (const game::RenderInstance& instance : fireOnceDrawn(dt)) {
+            positions.push_back(instance.position);
+        }
+        return positions;
     }
 };
 
@@ -414,4 +533,359 @@ SOL_TEST(a_shipped_fixed_gun_mount_sits_ahead_of_the_pilots_seat)
     // Two shipped hulls carry a fixed gun; a parse that produced no mounts
     // would satisfy the loop above by never entering it.
     SOL_CHECK(checked == 2);
+}
+
+// --- Traverse (Phase 31 stage C2) -------------------------------------------
+//
+// Most tests below fly `boltedAndRing()`: a bolted nose gun to port and a
+// dorsal ring to starboard, with a hulk a kilometre directly astern. The port
+// gun therefore fires FORWARD in every one of them, and the whole subject is
+// what the starboard one does.
+
+namespace {
+
+// ⚑ WHICH WAY A BOLT WENT, READ OFF THE BOLT. A shot's position is its
+// MUZZLE - the projectile pass has already run by the time the weapon pass
+// spawns it - so where a bolt appears says where the gun is, not where it is
+// pointing. Its drawn rotation is the bearing: the mesh is long on +Z and
+// `facingRotation` puts that axis on the line of flight.
+//
+// The two are only the same claim because stage C2 made them so, which is why
+// `a_bolt_is_drawn_along_the_way_it_was_fired` below checks the drawn axis
+// against a second tick of actual travel rather than trusting this.
+[[nodiscard]] sol::core::DVec3 bearingOf(const game::RenderInstance& bolt)
+{
+    const sol::core::Vec3 axis = rotate(bolt.rotation, sol::core::Vec3{0.0f, 0.0f, 1.0f});
+    return {static_cast<double>(axis.x), static_cast<double>(axis.y), static_cast<double>(axis.z)};
+}
+
+[[nodiscard]] bool firedForward(const game::RenderInstance& bolt)
+{
+    return bearingOf(bolt).z < -0.9;
+}
+
+[[nodiscard]] bool firedAstern(const game::RenderInstance& bolt)
+{
+    return bearingOf(bolt).z > 0.9;
+}
+
+} // namespace
+
+// ⚑ THE STAGE IN ONE TEST. Both guns fire on the same held trigger and they
+// fire in OPPOSITE DIRECTIONS: the bolted gun down the nose because that is
+// where it is bolted, the ring aft because that is where the target is.
+//
+// The counterfactual that turns it red is the pre-C2 firing pass - every gun
+// down the hull's boresight - and so is its opposite, a pass that lets a gun
+// with no ring seek the target too: `arc = 0` refuses any bearing but its own,
+// so the nose gun would hold its fire and only one bolt would leave.
+SOL_TEST(a_ring_lays_itself_on_the_target_and_a_bolted_gun_does_not)
+{
+    Fixture fixture(boltedAndRing());
+    SOL_REQUIRE(fixture.hulkAstern(1000.0));
+    SOL_REQUIRE(fixture.selectHulk());
+
+    const std::vector<game::RenderInstance> bolts = fixture.fireOnceDrawn();
+    SOL_REQUIRE(bolts.size() == 2);
+
+    int forward = 0;
+    int astern = 0;
+    for (const game::RenderInstance& bolt : bolts) {
+        forward += firedForward(bolt) ? 1 : 0;
+        astern += firedAstern(bolt) ? 1 : 0;
+    }
+    if (forward != 1 || astern != 1) {
+        std::printf("  bearings: %.3f and %.3f on z\n", bearingOf(bolts[0]).z, bearingOf(bolts[1]).z);
+    }
+    SOL_CHECK(forward == 1);
+    SOL_CHECK(astern == 1);
+}
+
+// ⚑ AND WITH NOTHING SELECTED THE RING FOLLOWS THE PILOT. The hulk is sitting
+// in exactly the same place; the only difference is that nobody laid the gun
+// on it. Both guns fire forward, which is what every gun in the game did
+// before this stage and what a trigger held in empty space still has to do.
+SOL_TEST(a_ring_with_no_target_follows_the_pilots_nose)
+{
+    Fixture fixture(boltedAndRing());
+    SOL_REQUIRE(fixture.hulkAstern(1000.0));
+    // The half of the setup that makes this test a claim rather than an
+    // accident: the hulk is there, and it is not what is selected.
+    SOL_REQUIRE(!fixture.world.currentTargetInfo().isShip);
+
+    const std::vector<game::RenderInstance> bolts = fixture.fireOnceDrawn();
+    SOL_REQUIRE(bolts.size() == 2);
+    SOL_CHECK(firedForward(bolts[0]));
+    SOL_CHECK(firedForward(bolts[1]));
+}
+
+// ⚑ A GUN THAT CANNOT BEAR HOLDS, AND HOLDS FOR FREE. The ring here aims
+// forward with a 90-degree arc, so it reaches 45 degrees either side of the
+// nose and the hulk astern is well outside it. What makes this more than a
+// shot count is the second half: the held gun's cooldown is still zero and the
+// capacitor is down by exactly ONE gun's cost. A pass that fired into its own
+// stop, or that charged for a shot it then refused, is red here and green on
+// the bolt count alone.
+SOL_TEST(a_ring_that_cannot_reach_the_target_holds_its_fire_and_pays_nothing)
+{
+    Fixture fixture(hull(gunMount("gun_port", -3.0, "sol.left_gun") +
+                         turretMount("turret_nose", 3.0, "[0.0, 0.0, -1.0]", 90.0, "sol.left_gun")));
+    SOL_REQUIRE(fixture.hulkAstern(1000.0));
+    SOL_REQUIRE(fixture.selectHulk());
+
+    const float charged = fixture.world.playerPower().weaponCharge;
+    const std::vector<game::RenderInstance> bolts = fixture.fireOnceDrawn();
+    SOL_REQUIRE(bolts.size() == 1);
+    SOL_CHECK(firedForward(bolts[0]));
+
+    const std::span<const game::ShipWeapon> guns = fixture.world.playerGuns();
+    SOL_REQUIRE(guns.size() == 2);
+    SOL_CHECK(guns[0].cooldown > 0.0f);  // the bolted gun fired
+    SOL_CHECK(guns[1].cooldown == 0.0f); // the ring never came up
+    SOL_CHECK(charged - fixture.world.playerPower().weaponCharge == 10.0f);
+}
+
+// ⚑ A TARGET IT COULD NOT HIT ANYWAY IS NOT A TARGET. Two rings, same arc,
+// same hull, and the only difference is reach: the 2000 m gun lays itself on
+// the hulk 1000 m astern and the 500 m gun keeps looking down the nose.
+//
+// This is the rule that keeps the shipped freighter minable. Its dorsal ring
+// carries the mining laser, and without the reach gate a fighter selected
+// three kilometres away would swing the beam off the rock in front of it.
+SOL_TEST(a_ring_ignores_a_target_beyond_its_own_reach)
+{
+    Fixture fixture(hull(turretMount("turret_long", -3.0, "[0.0, 1.0, 0.0]", 270.0, "sol.left_gun") +
+                         turretMount("turret_short", 3.0, "[0.0, 1.0, 0.0]", 270.0, "sol.short_gun")));
+    SOL_REQUIRE(fixture.hulkAstern(1000.0));
+    SOL_REQUIRE(fixture.selectHulk());
+
+    const std::vector<game::RenderInstance> bolts = fixture.fireOnceDrawn();
+    SOL_REQUIRE(bolts.size() == 2);
+    int forward = 0;
+    int astern = 0;
+    for (const game::RenderInstance& bolt : bolts) {
+        forward += firedForward(bolt) ? 1 : 0;
+        astern += firedAstern(bolt) ? 1 : 0;
+    }
+    SOL_CHECK(forward == 1); // the short gun, still looking where the pilot is
+    SOL_CHECK(astern == 1);  // the long one, laid on the hulk
+}
+
+// ⚑ A BOLT IS DRAWN THE WAY IT WAS FIRED, and this is the one test that does
+// not take the drawn axis on trust: it fires, steps one more tick with the
+// trigger up, and compares where each bolt actually TRAVELLED against the
+// direction it is drawn along.
+//
+// A bolt is a long thin box, so while every gun shot down the boresight the
+// hull's own orientation was indistinguishable from the right answer - the
+// first shot to leave a ring at an angle is the first one that could be drawn
+// sideways to its own flight.
+SOL_TEST(a_bolt_is_drawn_along_the_way_it_was_fired)
+{
+    Fixture fixture(boltedAndRing());
+    SOL_REQUIRE(fixture.hulkAstern(1000.0));
+    SOL_REQUIRE(fixture.selectHulk());
+
+    const std::vector<game::RenderInstance> bolts = fixture.fireOnceDrawn();
+    SOL_REQUIRE(bolts.size() == 2);
+
+    fixture.world.setShipInput(sol::sim::FlightInput{});
+    fixture.world.tick(1.0 / 60.0);
+    std::vector<game::RenderInstance> after;
+    fixture.world.buildRenderInstances(1.0f, true, after);
+
+    std::uint32_t matched = 0;
+    for (const game::RenderInstance& bolt : bolts) {
+        for (const game::RenderInstance& moved : after) {
+            if (moved.key != bolt.key) {
+                continue;
+            }
+            ++matched;
+            const sol::core::DVec3 travelled = moved.position - bolt.position;
+            SOL_CHECK(length(travelled) > 1.0); // it really went somewhere
+            SOL_CHECK(dot(normalize(travelled), bearingOf(bolt)) > 0.999);
+        }
+    }
+    SOL_CHECK(matched == 2);
+}
+
+// ⚑ THE LEAD MARKER FOLLOWS A GUN THE PILOT HAS TO AIM. The ring is listed
+// FIRST and is the faster of the two, so a summary that still took "the first
+// projectile gun" - stage C1's rule, and the one this narrows - would read 800
+// here. The marker's whole job is to say where to point the nose, and a ring
+// does not care where the nose points.
+SOL_TEST(the_lead_marker_skips_a_gun_that_lays_itself)
+{
+    Fixture fixture(hull(turretMount("turret_dorsal", -3.0, "[0.0, 1.0, 0.0]", 270.0, "sol.right_gun") +
+                         gunMount("gun_nose", 3.0, "sol.left_gun")));
+    const game::ArmamentSummary summary = fixture.world.playerArmament();
+    SOL_CHECK(summary.armed);
+    SOL_CHECK(summary.maxRange == 2500.0f); // still the longest gun, ring or not
+    SOL_CHECK(summary.leadSpeed == 600.0f); // the bolted gun's, not the ring's 800
+
+    // And a hull whose every gun lays itself offers no marker at all, which is
+    // the honest answer rather than a gap: there is nothing the pilot could do
+    // with one.
+    Fixture rings(hull(turretMount("turret_dorsal", -3.0, "[0.0, 1.0, 0.0]", 270.0, "sol.right_gun") +
+                       turretMount("turret_ventral", 3.0, "[0.0, -1.0, 0.0]", 270.0, "sol.left_gun")));
+    SOL_CHECK(rings.world.playerArmament().armed);
+    SOL_CHECK(rings.world.playerArmament().leadSpeed == 0.0f);
+}
+
+// ⚑ THE RING LEADS, AND IT LEADS WITH ITS OWN SPEED. Driven through `layGun`
+// directly rather than through a world, because a moving target is one line
+// here and a whole flight rig there.
+//
+// A bolt gun is laid AHEAD of a crossing target and a beam is laid straight at
+// it - the same split `computeInterceptDirection` has always made for the
+// pilot brain, made per gun rather than per ship. A ring taking the summary's
+// `leadSpeed` would hand the beam the bolt gun's lead and miss with something
+// that cannot miss.
+SOL_TEST(a_ring_leads_a_crossing_target_with_its_own_projectile_speed)
+{
+    game::GunneryFrame frame;
+    frame.forward = {0.0, 0.0, -1.0};
+    frame.hasTarget = true;
+    frame.targetPosition = {0.0, 0.0, -1000.0};
+    frame.targetVelocity = {200.0, 0.0, 0.0};
+
+    game::ShipWeapon ring;
+    ring.kind = game::WeaponKind::Projectile;
+    ring.projectileSpeed = 600.0f;
+    ring.range = 2000.0f;
+    ring.arc = 360.0f;
+
+    sol::core::DVec3 muzzle;
+    sol::core::DVec3 bearing;
+    SOL_CHECK(game::layGun(frame, ring, muzzle, bearing));
+    SOL_CHECK(bearing.x > 0.1); // out into the target's path
+
+    game::ShipWeapon beam = ring;
+    beam.kind = game::WeaponKind::Hitscan;
+    beam.projectileSpeed = 0.0f;
+    sol::core::DVec3 beamBearing;
+    SOL_CHECK(game::layGun(frame, beam, muzzle, beamBearing));
+    SOL_CHECK(std::abs(beamBearing.x) < 1e-6); // straight at it: nothing to lead
+}
+
+// ⚑ A MOUNT'S `aim` IS IN THE HULL FRAME, AND THE GAP THIS CLOSES IS THAT
+// EVERY OTHER TEST IN THIS FILE FLIES AT IDENTITY. The world starts the player
+// unrotated and the warp that places the hulk faces the nose the way it
+// already pointed, so a firing pass that treated an authored `aim` as a WORLD
+// direction - never rotating it at all - would be green everywhere above.
+//
+// The hull here is yawed 90 degrees, which puts its own starboard (+X) along
+// world -Z and its own nose along world -X. A gun bolted to starboard
+// therefore shoots along world -Z, and its muzzle five metres up the hull's
+// nose sits five metres along world -X.
+SOL_TEST(a_guns_rest_direction_and_muzzle_turn_with_the_hull)
+{
+    game::GunneryFrame frame;
+    frame.orientation = sol::core::fromAxisAngle({0.0f, 1.0f, 0.0f}, sol::core::kHalfPi);
+    frame.forward = toDVec3(rotate(frame.orientation, sol::core::Vec3{0.0f, 0.0f, -1.0f}));
+
+    game::ShipWeapon gun;
+    gun.kind = game::WeaponKind::Projectile;
+    gun.aim[0] = 1.0f; // bolted to starboard
+    gun.aim[1] = 0.0f;
+    gun.aim[2] = 0.0f;
+    gun.at[2] = -5.0f; // five metres up the nose
+
+    sol::core::DVec3 muzzle;
+    sol::core::DVec3 bearing;
+    SOL_CHECK(game::layGun(frame, gun, muzzle, bearing));
+    SOL_CHECK(length(bearing - sol::core::DVec3{0.0, 0.0, -1.0}) < 1e-6);
+    SOL_CHECK(length(muzzle - sol::core::DVec3{-5.0, 0.0, 0.0}) < 1e-5);
+    // And the nose really did move, so the check above is about the ring
+    // rather than about an orientation that happened to be identity.
+    SOL_CHECK(frame.forward.x < -0.99);
+}
+
+// ⚑ THE FREIGHTER'S TWO RINGS LEAVE NO BLIND BEARING, asserted against the
+// SHIPPED file rather than a fixture. That pair is the reason `turret_ventral`
+// was authored in stage C1 - a dorsal ring alone is blind through its own hull
+// - and it is a claim about the HULL rather than about how it happens to be
+// fitted: the ventral mount ships bare, and what this says is that a player
+// who arms it can shoot in any direction at all.
+SOL_TEST(the_shipped_freighter_can_be_armed_to_cover_every_bearing)
+{
+    DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(defs.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+    const sol::assets::ShipDef* freighter = defs.findShip("sol.freighter");
+    SOL_REQUIRE(freighter != nullptr);
+
+    // A spiral of directions over the whole sphere - dense enough that a gap
+    // the size of the one a single 270 ring leaves cannot slip between them.
+    constexpr int kSamples = 2000;
+    int covered = 0;
+    for (int i = 0; i < kSamples; ++i) {
+        const double z = 1.0 - 2.0 * (static_cast<double>(i) + 0.5) / kSamples;
+        const double radius = std::sqrt(z * z < 1.0 ? 1.0 - z * z : 0.0);
+        const double theta = 2.399963229728653 * static_cast<double>(i); // golden angle
+        const sol::core::DVec3 direction{radius * std::cos(theta), radius * std::sin(theta), z};
+
+        bool reached = false;
+        for (const sol::assets::ShipMount& mount : freighter->mounts) {
+            if (!sol::assets::mountTakesWeapon(mount.kind)) {
+                continue;
+            }
+            sol::core::DVec3 bearing;
+            if (sol::sim::layWithinArc({mount.aim[0], mount.aim[1], mount.aim[2]},
+                                       direction,
+                                       static_cast<double>(mount.arc),
+                                       bearing)) {
+                reached = true;
+                break;
+            }
+        }
+        covered += reached ? 1 : 0;
+    }
+    if (covered != kSamples) {
+        std::printf("  %d of %d bearings are blind\n", kSamples - covered, kSamples);
+    }
+    SOL_CHECK(covered == kSamples);
+}
+
+// ⚑ A HIT ARRIVES FROM WHERE THE SHOT CAME FROM, NOT FROM WHERE THE SHOOTER'S
+// NOSE HAPPENS TO POINT. `facingForHit` decides which of the target's shields
+// eats a beam, and while every gun fired down the boresight those two were the
+// same vector - so this is a claim only a ring can be wrong about.
+//
+// The geometry: the hulk is spawned facing the way the player was, then the
+// player warps a kilometre PAST it, so the two ships are nose to tail and the
+// player is squarely in front of the hulk. A dorsal ring firing astern
+// therefore lands on the hulk's FORE shield. Take the facing off the shooter's
+// nose instead - the pre-C2 line - and it lands on the aft one.
+SOL_TEST(a_beam_lands_on_the_shield_facing_the_beam)
+{
+    Fixture fixture(hull(turretMount("turret_dorsal", 0.0, "[0.0, 1.0, 0.0]", 270.0, "sol.pulse_beam")));
+    SOL_REQUIRE(fixture.hulkAstern(500.0));
+    SOL_REQUIRE(fixture.selectHulk());
+    SOL_REQUIRE(fixture.world.currentTargetInfo().isShip);
+    SOL_REQUIRE(fixture.world.currentTargetInfo().shieldFore == 1.0f);
+
+    (void)fixture.fireOnceDrawn(); // a beam leaves no bolt; the damage is the record
+    const game::TargetInfo hit = fixture.world.currentTargetInfo();
+    if (hit.shieldFore >= 1.0f || hit.shieldAft < 1.0f) {
+        std::printf("  hulk shields: fore %.3f aft %.3f\n",
+                    static_cast<double>(hit.shieldFore),
+                    static_cast<double>(hit.shieldAft));
+    }
+    SOL_CHECK(hit.shieldFore < 1.0f); // the side the shot came from
+    SOL_CHECK(hit.shieldAft == 1.0f); // and not the side the shooter's nose is on
+}
+
+// A gun carries its mount's facing and traverse for the same reason it carries
+// its mount's position: the component is flattened and keeps no def id, so
+// nothing downstream can go back and ask.
+SOL_TEST(a_gun_carries_the_facing_and_traverse_of_the_mount_it_sits_in)
+{
+    Fixture fixture(boltedAndRing());
+    const std::span<const game::ShipWeapon> guns = fixture.world.playerGuns();
+    SOL_REQUIRE(guns.size() == 2);
+    SOL_CHECK(guns[0].arc == 0.0f); // the bolted gun, which authored neither key
+    SOL_CHECK(guns[0].aim[2] == -1.0f);
+    SOL_CHECK(guns[1].arc == 270.0f);
+    SOL_CHECK(guns[1].aim[1] == 1.0f);
 }

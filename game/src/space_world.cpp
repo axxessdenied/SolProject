@@ -52,7 +52,13 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // same precedent: a v15 save is rejected cleanly.
 //
 // v17 (Phase 29 stage D): the authored-content digest, beside the seed.
-constexpr std::uint32_t kSaveVersion = 19;
+// v19 (Phase 31 stage C1): guns became plural - `ShipArmament` replaced the
+// single `ShipWeapon`, under a new component id.
+// v20 (Phase 31 stage C2): a gun carries its mount's `aim` and `arc`, so the
+// `ShipArmament` block is wider. Same component id: the component did not
+// change identity, only size, and the version check is what stops a v19 file
+// being read into it.
+constexpr std::uint32_t kSaveVersion = 20;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -268,6 +274,11 @@ ecs::Snapshot makeSnapshotSchema()
     schema.component<MineableRock>(20);
     schema.component<WreckMarker>(21);
     schema.component<OreChunk>(22);
+    // 23 stays 23 through v20, which GREW `ShipWeapon` (`aim` and `arc`)
+    // rather than replacing it. An id is a promise about a layout and the
+    // save VERSION is what keeps that promise: a v19 file is refused whole at
+    // the header, so no reader ever meets the old layout under this id. 18
+    // was retired instead because the component behind it stopped existing.
     schema.component<ShipArmament>(23); // v19: what replaced 18
     return schema;
 }
@@ -5384,6 +5395,15 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
         weapon.at[0] = mount.at[0];
         weapon.at[1] = mount.at[1];
         weapon.at[2] = mount.at[2];
+        // ⚑ AND WHICH WAY IT LOOKS (Phase 31 stage C2). Both come off the
+        // MOUNT and never off the weapon def, which is what lets one Pulse
+        // Cannon be a bolted nose gun on a shuttle and a traversing ring on a
+        // freighter without being authored twice - the asymmetry stage B put
+        // into `mountAcceptsKind`, now with something reading it.
+        weapon.aim[0] = mount.aim[0];
+        weapon.aim[1] = mount.aim[1];
+        weapon.aim[2] = mount.aim[2];
+        weapon.arc = mount.arc;
         if (!mount.external) {
             SOL_LOG_WARN("ship '%s': weapon mount '%s' has no `at`, so its gun fires from the hull "
                          "centre; an armed mount should be external",
@@ -5394,6 +5414,123 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
         // WeaponDef; the muzzle only ever sees the flattened component.
         weapon.boltModel = modelOverrideOr(defs, weaponDef->model, "weapon def", kRoleBolt, true);
     }
+}
+
+// ⚑⚑ WHERE A GUN POINTS, IN ONE PLACE (Phase 31 stage C2). Before this every
+// gun on every ship fired down the hull's boresight, which is what one nose
+// gun did and what `aim` and `arc` sat in the def file unread for two stages
+// waiting to change.
+//
+// The rule, in the order it is applied:
+//
+//   1. A gun's REST direction is its mount's `aim`, rotated by the hull. The
+//      default `aim` is the ship's own nose, so a hull that authored neither
+//      key behaves exactly as it did before C2.
+//   2. A gun with no ring (`arc` 0) seeks nothing: it points where it is
+//      bolted and fires whenever the trigger is down. That is the shuttle's
+//      and the interceptor's nose gun, and the pilot aims it by flying.
+//   3. A gun WITH a ring is laid by a gunner. It seeks the ship's target,
+//      leading it with its OWN projectile speed - which is not the summary's
+//      `leadSpeed`, because that answers a different question for the HUD.
+//      With no target it follows the nose, so a trigger held in empty space
+//      still fires forward.
+//   4. A target it could not reach anyway is not sought. A gun laid on
+//      something outside its own range would take a mining beam off the rock
+//      in front of it to track a fighter three kilometres away that it cannot
+//      touch, and reach is the one fact a gun has about what it can hit.
+//   5. Whatever it sought is clamped into the ring, and a gun that cannot
+//      bear HOLDS ITS FIRE. Firing into the stop would spend a shot and a
+//      slice of capacitor on a bolt that leaves at an angle nobody chose.
+bool layGun(const GunneryFrame& frame,
+            const ShipWeapon& weapon,
+            core::DVec3& outMuzzle,
+            core::DVec3& outBearing)
+{
+    // The muzzle first, because the lead solution is fired FROM it: on a
+    // `scale = 4.0` hull a dorsal ring stands six metres off the centreline,
+    // and the intercept a turret flies is its own, not the hull's.
+    const core::Vec3 offset{static_cast<float>(static_cast<double>(weapon.at[0]) * frame.hullScale),
+                            static_cast<float>(static_cast<double>(weapon.at[1]) * frame.hullScale),
+                            static_cast<float>(static_cast<double>(weapon.at[2]) * frame.hullScale)};
+    outMuzzle = frame.position + toDVec3(rotate(frame.orientation, offset));
+
+    const core::DVec3 rest =
+        toDVec3(rotate(frame.orientation, core::Vec3{weapon.aim[0], weapon.aim[1], weapon.aim[2]}));
+    if (weapon.arc <= 0.0f) {
+        return sim::layWithinArc(rest, rest, 0.0, outBearing);
+    }
+
+    core::DVec3 sought = frame.forward;
+    if (frame.hasTarget && length(frame.targetPosition - outMuzzle) <= static_cast<double>(weapon.range)) {
+        // Hitscan arrives the instant it is fired, so it is laid straight at
+        // the target; a bolt is laid where the target is going to be. Passing
+        // an enormous speed for the first is what `computeInterceptDirection`
+        // already means by instant, and is what the pilot brain does with it.
+        const double projectileSpeed = weapon.kind == WeaponKind::Projectile && weapon.projectileSpeed > 1.0f
+                                           ? static_cast<double>(weapon.projectileSpeed)
+                                           : 1.0e9;
+        (void)sim::computeInterceptDirection(
+            outMuzzle, frame.velocity, frame.targetPosition, frame.targetVelocity, projectileSpeed, sought);
+    }
+    return sim::layWithinArc(rest, sought, static_cast<double>(weapon.arc), outBearing);
+}
+
+GunneryFrame SpaceWorld::gunneryFrame(std::uint32_t entityIndex) const
+{
+    GunneryFrame frame;
+    const Transform& transform = m_registry.storage<Transform>().get(entityIndex);
+    frame.position = transform.position;
+    frame.orientation = transform.orientation;
+    frame.forward = toDVec3(rotate(transform.orientation, core::Vec3{0.0f, 0.0f, -1.0f}));
+    if (const FlightBody* body = m_registry.storage<FlightBody>().tryGet(entityIndex); body != nullptr) {
+        frame.velocity = body->velocity;
+    }
+    if (const RenderShape* shape = m_registry.storage<RenderShape>().tryGet(entityIndex); shape != nullptr) {
+        frame.hullScale = static_cast<double>(shape->scale.x);
+    }
+
+    // ⚑ WHOSE TARGET, AND THE TWO ANSWERS ARE DELIBERATELY DIFFERENT SOURCES.
+    // The player's guns follow the SELECTION - the thing the HUD is showing a
+    // shield readout for, which is the only "what am I shooting at" this game
+    // has ever had. An NPC's follow its pilot's, which Lua chose. There is no
+    // third case: a ship with neither has no target, and its turrets look down
+    // the nose.
+    std::uint32_t targetIndex = kNoIndex;
+    if (entityIndex == playerEntityIndex()) {
+        targetIndex = targetShipEntityIndex();
+    } else if (const ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(entityIndex);
+               pilot != nullptr && pilot->hasTarget != 0) {
+        targetIndex = pilot->targetIndex;
+    }
+    if (targetIndex == kNoIndex) {
+        return frame;
+    }
+    const Transform* targetTransform = m_registry.storage<Transform>().tryGet(targetIndex);
+    if (targetTransform == nullptr) {
+        return frame;
+    }
+    frame.hasTarget = true;
+    frame.targetPosition = targetTransform->position;
+    if (const FlightBody* body = m_registry.storage<FlightBody>().tryGet(targetIndex); body != nullptr) {
+        frame.targetVelocity = body->velocity;
+    }
+    return frame;
+}
+
+std::uint32_t SpaceWorld::targetShipEntityIndex() const
+{
+    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    if (total == 0) {
+        return kNoIndex;
+    }
+    // The same wrap every other reader of the selection applies, because a
+    // targeted ship can die out from under m_targetIndex.
+    const std::size_t index = m_targetIndex % total;
+    if (index < m_targets.size()) {
+        return kNoIndex; // a station, a planet, a gate, a field: not a gunnery target
+    }
+    const ecs::Entity ship = m_spawnedShips[index - m_targets.size()].entity;
+    return m_registry.isAlive(ship) ? ship.index : kNoIndex;
 }
 
 // ⚑ ONE WALK OF THE GUNS, and every caller outside the firing pass goes
@@ -5416,7 +5553,17 @@ ArmamentSummary SpaceWorld::armamentSummary(std::uint32_t entityIndex) const
         }
         summary.armed = true;
         summary.maxRange = std::max(summary.maxRange, weapon.range);
-        if (summary.leadSpeed <= 0.0f && weapon.kind == WeaponKind::Projectile) {
+        // ⚑ THE FIRST PROJECTILE GUN THE PILOT HAS TO AIM (Phase 31 stage
+        // C2 narrowed this from stage C1's "the first projectile gun"). The
+        // lead marker's whole job is to say where to point the NOSE, and a
+        // turret does not care where the nose points - it lays itself, with
+        // its own speed, on the same target. A marker taken off a ring is
+        // therefore an instruction about a gun that was never listening.
+        //
+        // A hull whose every projectile gun traverses has no marker at all,
+        // and that is the honest answer rather than a gap: there is nothing
+        // the pilot could do with one.
+        if (summary.leadSpeed <= 0.0f && weapon.kind == WeaponKind::Projectile && weapon.arc <= 0.0f) {
             summary.leadSpeed = weapon.projectileSpeed;
         }
         if (weapon.miningPower > 0.0f) {
@@ -7376,11 +7523,15 @@ void SpaceWorld::tick(double dt)
         // the trigger was held would give every gun a free first shot after any
         // pause - a rate of fire no def names.
         const bool trigger = control != nullptr && control->input.trigger;
-        const Transform& transform = transforms.get(entityIndex);
-        const RenderShape& shape = m_registry.storage<RenderShape>().get(entityIndex);
-        const core::Vec3 forward = rotate(transform.orientation, core::Vec3{0.0f, 0.0f, -1.0f});
-        const core::DVec3 forwardD = toDVec3(forward);
-        const double hullScale = static_cast<double>(shape.scale.x);
+        // ⚑ ONE READ OF THE SHIP, INCLUDING WHAT IT HAS LAID ITS GUNS ON
+        // (Phase 31 stage C2). Where the hull is, which way it points and who
+        // it is shooting at are facts about the SHIP; `layGun` below turns
+        // them into a bearing per gun.
+        //
+        // Only while the trigger is down, because nothing below the trigger
+        // check reads it and this runs for every armed ship in the system
+        // every tick - most of which are not shooting at any given moment.
+        const GunneryFrame frame = trigger ? gunneryFrame(entityIndex) : GunneryFrame{};
         ShipPower* power = powers.tryGet(entityIndex);
 
         for (std::uint32_t g = 0; g < armament.count; ++g) {
@@ -7391,6 +7542,23 @@ void SpaceWorld::tick(double dt)
             if (weapon.kind == WeaponKind::None || weapon.cooldown > 0.0f || !trigger) {
                 continue;
             }
+            // ⚑ THE MUZZLE IS THE MOUNT AND THE BEARING IS THE RING (Phase 31
+            // stages C1 and C2). The muzzle used to be one invented point on
+            // the boresight - the hull's collision radius plus six metres -
+            // and the bearing used to BE the boresight, because there was one
+            // gun, nowhere on the hull to say where it came from, and nothing
+            // reading the `aim` and `arc` sat in the def file.
+            //
+            // ⚑⚑ AND THE ORDER MATTERS: a gun that cannot bear is refused
+            // BEFORE it draws charge and before its cooldown resets, exactly
+            // like a starved one. A turret whose target is round the far side
+            // of its own hull has not fired, so it must not pay as if it had.
+            core::DVec3 muzzle;
+            core::DVec3 bearing;
+            if (!layGun(frame, weapon, muzzle, bearing)) {
+                continue;
+            }
+
             // ⚑ PER-MOUNT CAPACITOR DRAW, and this `continue` is the whole of
             // it. Each gun pays its own cost as it comes up, so a salvo the
             // capacitor cannot cover fires the guns the author listed FIRST and
@@ -7401,24 +7569,6 @@ void SpaceWorld::tick(double dt)
                 continue;
             }
             weapon.cooldown = 1.0f / (weapon.rateOfFire > 0.01f ? weapon.rateOfFire : 0.01f);
-
-            // ⚑ THE MUZZLE IS THE MOUNT NOW (Phase 31 stage C1). It used to be
-            // one invented point on the boresight - the hull's collision radius
-            // plus six metres - because there was one gun and nowhere on the
-            // hull to say where it came from. `at` is authored at scale 1, so it
-            // is scaled by the hull and rotated into the world exactly like
-            // every other authored length on a ship.
-            //
-            // ⚑⚑ WHAT IT DELIBERATELY DOES NOT DO IS AIM. Every gun still fires
-            // along the SHIP'S boresight, which is what one gun did before it and
-            // is why a single-gun hull behaves identically. `aim` and `arc` are
-            // stage C2's subject, and honouring `aim` here without traverse would
-            // point the freighter's dorsal turret straight up and leave it unable
-            // to hit anything - a regression wearing progress's clothes.
-            const core::Vec3 offset{static_cast<float>(static_cast<double>(weapon.at[0]) * hullScale),
-                                    static_cast<float>(static_cast<double>(weapon.at[1]) * hullScale),
-                                    static_cast<float>(static_cast<double>(weapon.at[2]) * hullScale)};
-            const core::DVec3 muzzle = transform.position + toDVec3(rotate(transform.orientation, offset));
 
             // A shot was definitely fired by here: the cooldown is reset and the
             // capacitor is paid. The player's own gun is at the listener; every
@@ -7432,8 +7582,10 @@ void SpaceWorld::tick(double dt)
             }
 
             if (weapon.kind == WeaponKind::Hitscan) {
-                // Instant pulse along the boresight; first ship hit takes it.
-                const core::DVec3 beamEnd = muzzle + forwardD * static_cast<double>(weapon.range);
+                // Instant pulse along the gun's own bearing; first ship hit
+                // takes it. That bearing was the hull's boresight for every gun
+                // in the game until stage C2 gave the ring a say.
+                const core::DVec3 beamEnd = muzzle + bearing * static_cast<double>(weapon.range);
                 // A beam with mining_power cuts rock and hulls too (Phase 8f).
                 // Whichever is nearer along the beam is what it lands on, so you
                 // cannot mine through a fighter that flew into the line.
@@ -7496,8 +7648,12 @@ void SpaceWorld::tick(double dt)
                 } else if (hit) {
                     if (ShipDefense* defense = defenses.tryGet(bestTarget);
                         defense != nullptr && defense->state.alive() && !isDamageImmune(bestTarget)) {
+                        // Which of the target's shields eats it: the arrival
+                        // direction is the BEAM's, not the shooter's nose, so a
+                        // turret firing aft off a fleeing freighter lands on the
+                        // shield actually facing it.
                         const sim::ShieldFacing facing = sim::facingForHit(
-                            m_registry.storage<Transform>().get(bestTarget).orientation, forwardD * -1.0);
+                            m_registry.storage<Transform>().get(bestTarget).orientation, bearing * -1.0);
                         const sim::DamageResult result =
                             sim::applyDamage(defense->state, defense->tuning, facing, weapon.damage);
                         noteDamage(bestTarget, muzzle + (beamEnd - muzzle) * bestT, result, entityIndex);
@@ -7507,11 +7663,16 @@ void SpaceWorld::tick(double dt)
                     }
                 }
             } else {
-                const FlightBody& body = bodies.get(entityIndex);
                 newBolts.push_back({
                     .position = muzzle,
-                    .orientation = transform.orientation,
-                    .velocity = body.velocity + forwardD * static_cast<double>(weapon.projectileSpeed),
+                    // ⚑ DRAWN THE WAY IT WAS FIRED, not the way the hull faces
+                    // (Phase 31 stage C2). A bolt is a long thin box, so while
+                    // every gun shot down the boresight the hull's own
+                    // orientation was indistinguishable from the right answer;
+                    // the first shot to leave a ring at an angle would have
+                    // been drawn sideways to its own flight.
+                    .orientation = facingRotation(bearing),
+                    .velocity = frame.velocity + bearing * static_cast<double>(weapon.projectileSpeed),
                     .lifetime =
                         static_cast<double>(weapon.range) /
                         static_cast<double>(weapon.projectileSpeed > 1.0f ? weapon.projectileSpeed : 1.0f),

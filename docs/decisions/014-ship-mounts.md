@@ -155,3 +155,60 @@ freighter's `core_sensor` is the only `subsystem` mount in the base game and no
 shipped component is a `subsystem`, so it accepts nothing. Moving the survey
 scanners there would have taken them off the player's starting shuttle, which
 has no subsystem mount; Phase 32 authors the hulls and kit that earn the kind.
+
+## Amended by Phase 31 stage C2 (2026-08-30)
+
+`aim` and `arc` were authored in stage A2 and read by nothing for three
+stages. Making a gun fire down them turned out to need four rules that the
+decision above does not name, and each is a rule a later stage, a mod author
+or a balance pass has to obey.
+
+**1. `arc` is the FULL cone angle centred on `aim`, not a half-angle.** A 270
+ring reaches 135 degrees either side, which is exactly what makes the
+freighter's dorsal turret able to fire ahead, astern and to both beams and
+blind only straight down through its own hull. Zero is a gun bolted down;
+360 has no stop. The example in the Decision section above — `arc = 220.0` on
+a dorsal turret — reads as 110 degrees either side under this rule.
+
+**2. A ring is laid by a GUNNER; a bolted gun is aimed by the PILOT.** A gun
+with `arc = 0` points where the mount says and fires whenever the trigger is
+down: that is the shuttle's nose gun and the player aims it by flying. A gun
+with an arc swings onto the ship the pilot has SELECTED, leads it with its own
+projectile speed, and follows the nose when there is no selection. Two limits
+keep that from being a nuisance:
+
+- **Only a ship is a gunnery target.** A station, a planet, a gate and an ore
+  field are all selectable and none of them is something a gun can be laid on.
+- **A target beyond that gun's own `range` is not sought.** Without this, the
+  shipped freighter stops being minable: its dorsal ring carries the mining
+  laser, and a fighter selected three kilometres away would swing the beam off
+  the rock in front of the pilot to track something it cannot touch.
+
+**3. A gun that cannot bear holds its fire.** It spends no charge and starts no
+cooldown — the same treatment stage C1 gave a gun the capacitor could not pay
+for, and for the same reason: it did not fire. The ring still turns as far as
+it goes toward what it was laid on, so it is already round the right way the
+moment the target crosses into its arc.
+
+**4. The lead marker follows a gun the pilot has to aim.** Stage C1 pointed it
+at the first projectile gun; C2 narrows that to the first projectile gun with
+no traverse. The marker's whole job is to say where to point the nose, and a
+ring does not care where the nose points. A hull whose every projectile gun
+traverses shows no marker at all, which is the honest answer rather than a gap.
+
+**What was deliberately NOT added: a traverse RATE.** gdd.md §11.5's mount
+vocabulary is `at`, `aim` and `arc`, and `arc` is the traverse it names; a
+slew rate is a fourth key no design document asks for. It is also unobservable
+until a turret is drawn (stage E) or an NPC flies one (Phase 32), so authoring
+the number now would be balance written blind — the same call stage B made
+about sizing the Mk2 tier. Nothing here has to be undone if it arrives: a gun's
+bearing is a pure function of the hull's orientation, its mount and its target
+(`game::layGun`), so stage E can draw a turret down the same function C2 fires
+along, and a rate would turn that function's result into state at that point.
+
+**A consequence worth writing down: a ring is currently a strict upgrade on a
+bolted mount.** With no slew rate the only thing separating them is coverage,
+and coverage only goes one way. That is a hull-design fact rather than a player
+choice — an author places the mounts and a player fills them — but it is the
+pressure a traverse rate would relieve, and it is why the omission above is
+recorded as a decision rather than as an oversight.

@@ -124,6 +124,17 @@ struct ShipWeapon
     // FLATTENED and keeps no def id - the same reason `boltModel` is here,
     // and the same reason an NPC's guns survive a save with no def in sight.
     float at[3] = {0.0f, 0.0f, 0.0f};
+    // Where the mount points with nothing laid on it, and how far round it
+    // will go (Phase 31 stage C2). Hull frame, and copied from the mount for
+    // the same reason `at` is: this component is flattened and keeps no def id.
+    //
+    // ⚑ THE DEFAULT IS THE SHIP'S OWN NOSE, which is why every gun in the game
+    // before C2 kept firing exactly where it did. `arc` is the FULL cone angle
+    // centred on `aim` (see `sim::layWithinArc`), so zero is a gun bolted down
+    // and a hull that authors neither key has a gun that is bolted down
+    // pointing forward - the pre-C2 rule, arrived at rather than special-cased.
+    float aim[3] = {0.0f, 0.0f, -1.0f};
+    float arc = 0.0f; // degrees of traverse; 0 = bolted down
     // What its bolt draws as (Phase 19), resolved once when the loadout is
     // applied. It lives here rather than being looked up at the muzzle
     // because this component is FLATTENED from its def and keeps no def id -
@@ -179,6 +190,46 @@ struct ArmamentSummary
     bool canMine = false;     // any fitted beam with mining_power
     float miningRange = 0.0f; // the furthest of THOSE, not of all guns
 };
+
+// Everything a gun needs to know about the SHIP carrying it, read once
+// (Phase 31 stage C2). The firing pass builds one of these per ship and then
+// walks that ship's guns against it, which is the nesting the capacitor forced
+// in C1 and which C2 leans on again: where the hull is, which way it points
+// and what it has laid its guns on are facts about the ship, and only `aim`,
+// `arc` and reach differ gun to gun.
+struct GunneryFrame
+{
+    sol::core::DVec3 position;
+    sol::core::Quat orientation;
+    sol::core::DVec3 velocity;
+    // The pilot's nose. A turret with nothing to shoot at follows it, so a
+    // ship with no target fires exactly where it did before C2.
+    sol::core::DVec3 forward{0.0, 0.0, -1.0};
+    double hullScale = 1.0;
+
+    // ⚑ THE ONE THING A GUN CAN BE LAID ON IS A SHIP. A station, a planet, a
+    // gate and an ore field are all things this game lets you SELECT, and none
+    // of them is a gunnery target - so a turret ignores them and keeps looking
+    // down the nose. That is not a nicety: the only turret in the shipped game
+    // carries the mining laser, and a ring that swung to the station in the
+    // distance would take the beam off the rock the pilot is pointing at.
+    bool hasTarget = false;
+    sol::core::DVec3 targetPosition;
+    sol::core::DVec3 targetVelocity;
+};
+
+// Where one gun points, and whether it can point there (Phase 31 stage C2).
+// The ONE definition of a gun's bearing: the firing pass fires along it, the
+// console probe reports it, and stage E will draw the turret down it.
+//
+// `outMuzzle` is always set. `outBearing` is set even on a refusal, where it
+// is the gun swung as far round as its ring goes - see `sim::layWithinArc`.
+// The return is whether the gun BEARS, and a gun that does not bear holds its
+// fire rather than spending a shot it cannot land.
+[[nodiscard]] bool layGun(const GunneryFrame& frame,
+                          const ShipWeapon& weapon,
+                          sol::core::DVec3& outMuzzle,
+                          sol::core::DVec3& outBearing);
 
 // A live bolt: Transform carries the position, this the rest.
 struct Projectile
@@ -1756,6 +1807,24 @@ public:
         const ShipArmament& armament = m_registry.storage<ShipArmament>().get(playerEntityIndex());
         return {armament.weapons, armament.count};
     }
+
+    // What that ship's guns are laid against, read once per ship (Phase 31
+    // stage C2). Public because the console probe reports a gun's live bearing
+    // and stage E will draw one: `layGun` is the only definition of where a
+    // gun points, and it needs this to be reachable from outside the tick.
+    [[nodiscard]] GunneryFrame gunneryFrame(std::uint32_t entityIndex) const;
+
+    // The player's, which is the one the console probe asks for - the same
+    // shape as `playerGuns()` beside it, and for the same reason: the entity
+    // index of the player's own ship is not something a caller should know.
+    [[nodiscard]] GunneryFrame playerGunneryFrame() const { return gunneryFrame(playerEntityIndex()); }
+
+    // The entity index of the SHIP the player has selected, or kNoIndex when
+    // the selection is a station, a planet, an ore field or nothing at all
+    // (Phase 31 stage C2). Every other reader of the selection wants a name, a
+    // distance or a shield readout; a turret wants the entity, because the
+    // lead solution needs its velocity.
+    [[nodiscard]] std::uint32_t targetShipEntityIndex() const;
 
     // 1 right after the player takes a hit, decaying to 0 (HUD flash).
     [[nodiscard]] float playerDamageFlash() const

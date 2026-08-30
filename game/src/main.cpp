@@ -1520,6 +1520,12 @@ int main(int argc, char** argv)
         // because a marker per gun is four crosses on one target and a marker
         // averaged across guns is a point at which none of them hits. An
         // all-hitscan fit still shows none, exactly as before.
+        //
+        // ⚑⚑ AND SINCE STAGE C2 IT IS THE FIRST GUN THE PILOT HAS TO AIM. A
+        // ring lays itself on the target with its own lead, so telling the
+        // pilot where to point the nose on its behalf is an instruction about
+        // a gun that was never listening. A hull whose every projectile gun
+        // traverses shows no marker - see `armamentSummary`.
         const game::ArmamentSummary playerArmament = world.playerArmament();
         if (target.isShip && playerArmament.leadSpeed > 1.0f) {
             sol::core::DVec3 leadDirection;

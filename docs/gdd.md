@@ -209,7 +209,9 @@ A mount declares:
 - **`id`** — unique within the hull, and stable: a save refers to a fitting by the mount it sits in.
 - **`kind`** — what may be fitted: `turret`, `fixed`, `launcher`, `bay`, `engine`, `thruster`, `shield`, `armor`, `utility`, `subsystem`, `hangar`, `dock`.
 - **`size`** — `small` | `medium` | `large` | `xlarge`. A mount accepts its own size or smaller; fitting small kit to a big mount wastes the mount, which is the trade the player is making.
-- **`at` / `aim` / `arc`** — position in metres in the hull frame, facing, and traverse. **Present means external**: the fitting is drawn on the hull and can be shot at where it sits. **Absent means internal**: it exists, it can be destroyed by damage that reaches it, and it is never drawn.
+- **`at` / `aim` / `arc`** — position in metres in the hull frame, facing, and traverse. **Present means external**: the fitting is drawn on the hull and can be shot at where it sits. **Absent means internal**: it exists, it can be destroyed by damage that reaches it, and it is never drawn. **`arc` is the full cone angle centred on `aim`**, so a `270` ring reaches 135° either side and is blind only through the hull it is bolted to; `0` is a gun bolted down, aimed by flying the ship.
+
+A gun with an arc is **laid by a gunner**: it swings onto the ship the pilot has selected, leads it with its own projectile speed, and follows the nose when there is nothing selected or the selection is out of that gun's reach. A gun that cannot reach round far enough **holds its fire** rather than shooting into its own stop. That is what makes a turreted hauler a different thing to fly from a fighter with a nose gun, and it is why mount layout is a hull's character rather than a stat block.
 
 **Subsystems** are internal mounts, and they are where a ship's *character* beyond its guns lives: sensors and data gathering, mining rigs, fire control, drive tuning, automated flight control (which is what makes §14's standing orders and later a captain possible), science, comms, and covert suites (§13). A hull that cannot take a covert suite cannot be a smuggler, however it is flown.
 

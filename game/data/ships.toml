@@ -18,14 +18,30 @@
 #         ⚑ SINCE PHASE 31 STAGE C1 THIS IS ALSO THE MUZZLE: a fitted gun
 #         fires from its mount's `at`, so a weapon mount that is not on the
 #         hull's SURFACE puts its bolts inside the ship. See the note below.
-#   aim   facing, hull frame. Needs an `at`.
+#   aim   facing, hull frame. Needs an `at`. Defaults to the SHIP'S NOSE, so a
+#         gun mount that authors nothing here is a gun that shoots forward.
+#         ⚑ SINCE PHASE 31 STAGE C2 A GUN REALLY FIRES DOWN THIS.
 #   arc   degrees of traverse. Needs an `at`. THE TRAVERSE BELONGS TO THE
 #         MOUNT, which is why a `fixed` gun fitted into a `turret` traverses
 #         and no weapon def has to be authored twice.
+#         ⚑ IT IS THE FULL CONE ANGLE CENTRED ON `aim`, NOT A HALF-ANGLE: a
+#         270 ring reaches 135 degrees either side, which is what lets a
+#         dorsal turret fire ahead, astern and to both beams and go blind only
+#         through the hull it is bolted to. 0 is a gun bolted down; 360 has no
+#         stop at all.
 #   fit   what the hull SHIPS WITH - a component or weapon def id, empty for a
 #         mount that comes bare. This is where `weapon =` went. It is a
 #         default, not a constraint: an NPC flies it, a bought hull arrives
 #         with it, and the player refits from there.
+#
+# ⚑⚑ WHAT A GUN ACTUALLY DOES WITH `aim` AND `arc`, SINCE STAGE C2, because it
+# is a balance fact and not just a schema one. A gun with `arc = 0` points
+# where it is aimed and the pilot aims it by flying. A gun with an arc is laid
+# by a gunner: it swings onto the SHIP the pilot has selected - leading it,
+# with its own projectile speed - and follows the nose when there is no target
+# or when the target is beyond that gun's own `range`. A gun that cannot reach
+# round far enough HOLDS ITS FIRE rather than shooting into its own stop, so it
+# spends no charge and starts no cooldown.
 #
 # ⚑ WHAT THE STAGE-B CONVERSION KEPT AND WHAT IT COST. The mount lists were
 # authored in stage A2 to reproduce each hull's capacity exactly, and stage B
@@ -226,8 +242,8 @@ crew_berths = 2
   # ⚑ The one hull whose mount list is worth reading twice. It carries a
   # `turret` rather than a `fixed` gun because a freighter that has to point its
   # nose at a raider to shoot back is a freighter that cannot run away while
-  # doing it - which is the whole of what a turret buys, and the first thing in
-  # this file that stage C's traverse code will read. Its size is `medium`: at
+  # doing it - which is the whole of what a turret buys, and since stage C2 it
+  # is what this hull actually does. Its size is `medium`: at
   # `scale = 4.0` this is a class-3 hull by gdd.md §11.1's length band, and a
   # medium mount takes a small gun (`mountAccepts`) so the `sol.mining_laser`
   # below still fits without the mount lying about the hull. The laser is
@@ -257,6 +273,14 @@ crew_berths = 2
   # ⚑ NO `fit`, ON PURPOSE. An NPC freighter still flies the one mining laser
   # it flew before, so stage C1 changes the balance of nothing that already
   # existed; the mount is somewhere for a PLAYER to put a second gun.
+  #
+  # ⚑⚑ AND SINCE STAGE C2 THE PAIR MEANS SOMETHING GEOMETRIC: dorsal and
+  # ventral, each with 135 degrees either side of its own aim, leave this hull
+  # NO BLIND BEARING - a player who arms both can answer fire from any
+  # direction without turning the ship. That is the claim
+  # `the_shipped_freighter_can_be_armed_to_cover_every_bearing` measures over
+  # the whole sphere, and it is why the second ring points the opposite way
+  # rather than sitting beside the first.
   [[ship.mount]]
   id = "turret_ventral"
   kind = "turret"
