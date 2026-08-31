@@ -355,11 +355,24 @@ refine_output = "sol.alloy"
 # the game builds; these two rows then moved that galaxy again:
 #
 #   stage E base   agri 19  mine 14  refinery 13  factory 17  ferrous 14  foundry 16  fabworks 13  breaker  9  plant 10
-#   shipped        agri 17  mine 15  refinery 12  factory 10  ferrous 10  foundry 11  fabworks 13  breaker 11  plant 12  + 6 assembly, 8 shipyard
+#   stage E ship'd agri 17  mine 15  refinery 12  factory 10  ferrous 10  foundry 11  fabworks 13  breaker 11  plant 12  + 6 assembly, 8 shipyard
+#   TODAY          agri 17  mine 15  refinery 12  factory 12  ferrous 11  foundry 13  fabworks 12  breaker 11  plant 11  + 6 assembly, 5 shipyard
 #
 # The FABRICATOR YARD lost seven stations, 17 to 10, to two archetypes weighted
 # like the Fabrication Works and not like it. The Reclamation Plant went UP
 # again. There is still no argument that gets from a weight to a count.
+#
+# ⚑⚑⚑ AND THAT `shipped` ROW THEN WENT STALE ONE COMMIT LATER - THE WARNING
+# BELOW HAPPENING TO THIS COMMENT. The Hegemony bloc re-searched both T3 weight
+# triples (1.6/0.6/0.2 -> 1.3/0.45/0.2) so that the shipped galaxy and the
+# `economy_tests.cpp` mirror would agree on the Assembly/Shipyard split, and
+# that resampled SIX of the eleven counts - the Shipyard from 8 to 5, the
+# Fabricator Yard back UP from 10 to 12 - while leaving the total at 125, which
+# is exactly why nobody noticed. The TODAY row is the measured one: it
+# reproduces the ratios that commit recorded (1.04-1.39 across all nine goods),
+# while the stage E row puts `sol.hull_section` at 0.694, under the guard's 0.85
+# floor. ⚑ A count sheet in a comment is a measurement with no test behind it;
+# the ones with a test behind them are in `economy_content_tests.cpp`.
 #
 # The weights below are a design statement in their SHAPE and a search result in
 # their MAGNITUDE, exactly as stage C's were: an Assembly Yard belongs where the
