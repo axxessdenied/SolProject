@@ -107,7 +107,15 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // that are now doing a different job. The galaxy is the same place - the golden
 // geometry digests are untouched - but which building is a Refinery has moved,
 // which is precisely the thing a save cannot be migrated through.
-constexpr std::uint32_t kSaveVersion = 28;
+// v29 (the Hegemony bloc): no new commodity, and the bump is entirely about
+// the RESAMPLE. Seven authored systems changed hands and the T3 weights moved
+// with them, so a v28 save's market indices name stations now doing a
+// different job - the same reason v28 gave, arrived at from content rather
+// than from an archetype. ⚑ `authoredContentDigest` would refuse those saves
+// anyway, because `[[system]]` rows are exactly what it hashes; the version is
+// bumped regardless, because relying on a second guard that happens to fire is
+// weaker than stating the rule that made the break.
+constexpr std::uint32_t kSaveVersion = 29;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES

@@ -397,8 +397,8 @@ refine_output = "sol.alloy"
 [[station]]
 id = "sol.station_assembly"
 name = "Assembly Yard"
-weight_core = 1.6
-weight_frontier = 0.6
+weight_core = 1.3
+weight_frontier = 0.45
 weight_fringe = 0.2
 produces = ["sol.hull_section:0.025"]
 feedstock = ["sol.machinery:0.030", "sol.hull_plate:0.035"]
@@ -413,9 +413,9 @@ stock_capacity = 2500
 [[station]]
 id = "sol.station_shipyard"
 name = "Shipyard"
-weight_core = 1.6
-weight_frontier = 0.6
+weight_core = 1.3
+weight_frontier = 0.45
 weight_fringe = 0.2
-feedstock = ["sol.hull_section:0.0175"]
+feedstock = ["sol.hull_section:0.027"]
 consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500

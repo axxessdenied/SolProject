@@ -789,6 +789,18 @@ void claimTerritory(const GalaxyParams& params,
     using Entry = std::pair<float, std::uint32_t>;
     std::priority_queue<Entry, std::vector<Entry>, std::greater<>> queue;
     std::vector<float> bestCost(count, std::numeric_limits<float>::max());
+    // ⚑⚑⚑⚑ WHICH CAPITAL A SYSTEM IS NEAREST TO, CARRIED SEPARATELY FROM WHO
+    // HOLDS IT, AND THE TWO ARE NOT THE SAME THING ONCE AN AUTHOR HAS SPOKEN.
+    // This used to be read straight off `systems[index].factionIndex` while
+    // walking, which is the standard multi-source-Dijkstra trick and is exactly
+    // right while every node on a shortest path belongs to its source. An
+    // authored owner breaks that invariant, and the breakage COMPOUNDS: the
+    // authored node's neighbours were painted with the AUTHOR'S faction, and
+    // each of them then relayed it onward. Seven authored systems around one
+    // capital handed that faction FORTY-NINE of eighty-one systems, and the
+    // three majors downstream of them vanished from the galaxy entirely.
+    // Measured, with the same seven rows, on two different faction ids.
+    std::vector<std::uint32_t> nearestCapitalFaction(count, kNoFaction);
     for (std::uint32_t f = 0; f < capitals.size(); ++f) {
         const std::uint32_t capital = capitals[f];
         // ⚑ GUARD 1 OF 5. An authored owner outranks a capital: the
@@ -798,6 +810,10 @@ void claimTerritory(const GalaxyParams& params,
         if (!hasAuthoredFaction(authoredFor, capital)) {
             systems[capital].factionIndex = f;
         }
+        // ⚑ Seeded with `f` whether or not the author took the flag, which is
+        // what the guard above already promises in words: "the capital still
+        // seeds the search from here, so territory still spreads outward".
+        nearestCapitalFaction[capital] = f;
         bestCost[capital] = 0.0f;
         queue.push({0.0f, capital});
     }
@@ -811,11 +827,15 @@ void claimTerritory(const GalaxyParams& params,
             const float next = cost + mapDistance(systems[index], systems[neighbor]);
             if (next < bestCost[neighbor]) {
                 bestCost[neighbor] = next;
+                nearestCapitalFaction[neighbor] = nearestCapitalFaction[index];
                 // ⚑ GUARD 2 OF 5. The search still walks THROUGH an
-                // authored system - its neighbours are claimed normally - it
-                // just does not repaint it on the way past.
+                // authored system - its neighbours are claimed normally, by the
+                // CAPITAL the path came from - and it is not repainted on the
+                // way past. "Claimed normally" is what the propagation above
+                // now actually does; before it, an authored system was a second
+                // capital that nobody had declared.
                 if (!hasAuthoredFaction(authoredFor, neighbor)) {
-                    systems[neighbor].factionIndex = systems[index].factionIndex;
+                    systems[neighbor].factionIndex = nearestCapitalFaction[neighbor];
                 }
                 queue.push({next, neighbor});
             }

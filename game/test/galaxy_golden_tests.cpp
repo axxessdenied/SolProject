@@ -281,7 +281,16 @@ constexpr std::size_t kGoldenClanCount = 10;
 // worth stating: it re-tuned nine production rates across the whole economy and
 // did NOT move this number, because it touched no placement weight. A digest
 // that had moved there would have been the bug.
-constexpr std::uint64_t kGoldenStructure = 0x64EF583821E22A71ull;
+// ⚑⚑⚑ RE-RECORDED AGAIN BY THE HEGEMONY BLOC (Phase 33 follow-up), AND
+// NOT FOR THE REASON IT LOOKS LIKE. This test STRIPS authored content, so the
+// seven new `[[system]]` rows are not what moved it - the Assembly Yard and
+// Shipyard weights did (1.6/0.6/0.2 to 1.3/0.45/0.2), searched so that the
+// shipped galaxy and the mirror `economy_tests.cpp` builds agree on the T3
+// split instead of differing by three stations. Old: 0x64EF583821E22A71ull.
+// ⚑ The generator change that shipped beside it - an authored owner no
+// longer relaying its faction to everything downstream - moved this number by
+// NOTHING, which was measured before and after rather than assumed.
+constexpr std::uint64_t kGoldenStructure = 0x054ECEEFDAECC620ull;
 
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine

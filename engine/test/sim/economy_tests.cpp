@@ -859,8 +859,8 @@ enum Archetype : std::uint32_t
         {{1.2f, 0.6f, 0.2f}},   // fabrication works: near the hardpoints
         {{0.2f, 0.6f, 0.7f}},   // breaker yard: out where the hulls die
         {{1.1f, 0.9f, 0.3f}},   // reclamation plant: near the alloy's customer
-        {{1.6f, 0.6f, 0.2f}},   // assembly yard: where the components are
-        {{1.6f, 0.6f, 0.2f}},   // shipyard: beside it, because a section is bulk
+        {{1.3f, 0.45f, 0.2f}},  // assembly yard: where the components are
+        {{1.3f, 0.45f, 0.2f}},  // shipyard: beside it, because a section is bulk
     };
     // ⚑⚑⚑⚑ PHASE 33 STAGE E, AND IT IS THE MOST EXPENSIVE LINE THIS FILE HAS
     // EVER BEEN MISSING. Without these rows this galaxy is not the one the game
@@ -987,7 +987,7 @@ enum Archetype : std::uint32_t
     params.archetypes[Assembly] = archetype(
         {0, 0, 0, 0, 0, 0, 0, 0, 0.025f}, {F}, {0, 0, 0, 0.030f, 0, 0, 0.035f}, false);
     params.archetypes[Shipyard] =
-        archetype({}, {F, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0, 0, 0, 0, 0.0175f}, false);
+        archetype({}, {F, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0, 0, 0, 0, 0.027f}, false);
     return params;
 }
 
