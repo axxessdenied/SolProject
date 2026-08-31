@@ -22,6 +22,45 @@
 # glutts, its output stops, the next link starves, and it never recovers.
 # Surplus means gluts are just cheap goods, which is what a trader wants
 # anyway.
+#
+# ---------------------------------------------------------------------------
+# ⚑⚑⚑⚑ THE OLD CHAIN'S THROUGHPUT WAS SIZED AGAINST A STATION MIX THAT DOES
+# NOT EXIST, AND EVERY INSTRUMENT IN THIS PROJECT AGREED WITH IT (Phase 33
+# stage E). `economy_no_commodity_is_made_much_faster_than_it_is_burnt` counts
+# stations in a galaxy built from THIS FILE'S WEIGHTS AND NOTHING ELSE. The
+# game does not build that galaxy. Since Phase 13 `factions.toml` carries
+# `station_bias`, a per-faction multiplier on the region weight below - up to
+# x2.8 - and the generator applies it wherever a faction holds territory. So
+# the mix the guard scores and the mix a player flies through are two different
+# galaxies, and stages B and C both tuned this file against the wrong one.
+#
+#   guard's galaxy   agri 15  mine 16  refinery 18  factory 13  ferrous 13  foundry 15  fabworks 13  breaker 10  plant 11
+#   the real one     agri 19  mine 14  refinery 13  factory 17  ferrous 14  foundry 16  fabworks 13  breaker  9  plant 10
+#
+# ⚑⚑⚑ THE HEGEMONY BUILDS FACTORIES AT x2.6 AND THE ASCENDANCY AT x2.8, AND
+# NOBODY BIASES A REFINERY UP - so the real galaxy runs 17 Fabricator Yards
+# against 13 Refineries where the guard's runs 13 against 18. Metal came out at
+# 0.561 made-to-burnt in the shipped galaxy: every Fabricator Yard in the game
+# permanently feedstock-throttled, machinery behind it, and NO TEST IN THE
+# REPOSITORY COULD SEE IT. Food (1.683) and raw ore (1.774) were over the
+# ceiling for the mirror of the same reason.
+#
+# ⚑⚑ WHY IT HID FOR TWO STAGES: THE MIRROR WAS KEPT IN STEP WITH THE FILES IT
+# IS A MIRROR OF. `economy_tests.cpp` transcribes `commodities.toml` and this
+# file by hand, and it was faithfully updated by both stages. `station_bias`
+# lives in NEITHER of them - it is a third file that moves the same numbers, and
+# nothing ever said so. ⚑ *A hand-kept mirror is only as wide as the list of
+# files somebody remembered to mirror.*
+#
+# ⚑⚑ WHAT CHANGED HERE IS THROUGHPUT ONLY. Every conversion ratio and every
+# value margin in `commodities.toml` is preserved to the digit - the Refinery
+# still turns ore into metal at 0.65 and clears +72%, the Fabricator Yard still
+# runs at 0.80 and clears +30% - because the ratios were never what was wrong.
+# What was wrong is how MUCH each station moves, and that was sized per station
+# against a count that is off by four stations in both directions. Placement
+# weights are untouched, so the galaxy is the same place and the golden
+# structure digest does not move.
+# ---------------------------------------------------------------------------
 
 [[station]]
 id = "sol.station_agri"
@@ -30,7 +69,7 @@ weight_core = 1.0
 weight_frontier = 1.5
 weight_fringe = 0.5
 produces = ["sol.food:0.26"]
-consumes = ["sol.machinery:0.11"]
+consumes = ["sol.machinery:0.075"]
 stock_capacity = 2500
 
 [[station]]
@@ -39,7 +78,7 @@ name = "Mining Outpost"
 weight_core = 0.5
 weight_frontier = 1.5
 weight_fringe = 2.0
-produces = ["sol.ore:0.28"]
+produces = ["sol.ore:0.345"]
 produces_from = "field"
 consumes = ["sol.food:0.05", "sol.hull_plate:0.013"]
 stock_capacity = 2500
@@ -55,8 +94,8 @@ name = "Refinery"
 weight_core = 0.4
 weight_frontier = 1.6
 weight_fringe = 1.7
-produces = ["sol.metal:0.11"]
-feedstock = ["sol.ore:0.17"]
+produces = ["sol.metal:0.20"]
+feedstock = ["sol.ore:0.31"]
 consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 refine_input = "sol.ore"
@@ -68,8 +107,8 @@ name = "Fabricator Yard"
 weight_core = 2.0
 weight_frontier = 1.0
 weight_fringe = 0.3
-produces = ["sol.machinery:0.12"]
-feedstock = ["sol.metal:0.15"]
+produces = ["sol.machinery:0.10"]
+feedstock = ["sol.metal:0.125"]
 consumes = ["sol.food:0.05", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 
@@ -106,6 +145,15 @@ stock_capacity = 2500
 # that came out of that run: it counts stations and multiplies, and it would
 # have found in milliseconds what ten minutes of simulation had to show.
 #
+# ⚑⚑⚑ STAGE E: THE 0.90x IN THAT PARAGRAPH IS A NUMBER ABOUT THE WRONG GALAXY,
+# AND SO IS THE NINETY-SIX-HOUR RUN UNDER IT. Both were measured on the mirror
+# `economy_tests.cpp` builds, which applies no `station_bias` - see the header.
+# In the galaxy the game generates the same cut was 0.561, and the run that was
+# supposed to find where metal stops was watching a different economy stop.
+# ⚑ *The measurement discipline was followed exactly and produced a confident
+# number about somewhere else, which is the same shape as stage A's `listFiles`
+# returning 168 meshes from a directory holding 14.*
+#
 # ⚑⚑ THE ONE PLACE THAT DOES NOT COVER, AND IT IS AN UPKEEP LINE ON EACH OF
 # THE OLD ROWS: hull plate has to be BURNT by somebody or a Fabrication Works
 # gluts and stops, and the honest consumer of structural plate is heavy industry
@@ -119,6 +167,15 @@ stock_capacity = 2500
 # a table where the number of farms went DOWN. At the old rate the food surplus
 # fell from 1.55x to 1.12x, which is inside the band and outside the margin the
 # header calls stability rather than waste.
+#
+# ⚑⚑⚑ STAGE E RAISED THEM TO 0.035 AND THE PARAGRAPH ABOVE IS WHY. The number
+# of farms did not go down. It went UP - 15 to 19 - because the Compact biases
+# agriculture x2.4 and the Free Compact x1.6, and the mirror those five archetypes
+# were sized against knows nothing about either. A discount computed to protect a
+# shrinking food supply was applied to a growing one, and food came out at 1.683
+# in the shipped galaxy. At 0.035 - the Refinery's rate, the lighter of the two
+# the old rows use - it is 1.183. ⚑ *The reasoning in that paragraph is sound and
+# every number it rests on was measured somewhere else.*
 # ---------------------------------------------------------------------------
 
 # Sited outward, like the Mining Outpost and further: ferrous rock is scarce in
@@ -135,7 +192,7 @@ weight_frontier = 0.9
 weight_fringe = 1.2
 produces = ["sol.ore_ferrous:0.20"]
 produces_from = "field"
-consumes = ["sol.food:0.015", "sol.hull_plate:0.013"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 
 # Smelt at the pit, exactly as the Refinery does and for the identical reason:
@@ -149,7 +206,7 @@ weight_frontier = 1.0
 weight_fringe = 1.0
 produces = ["sol.alloy:0.085"]
 feedstock = ["sol.ore_ferrous:0.13"]
-consumes = ["sol.food:0.015", "sol.hull_plate:0.013"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 
 # Core-weighted like the Fabricator Yard: the last industrial step wants to be
@@ -164,7 +221,7 @@ weight_frontier = 0.6
 weight_fringe = 0.2
 produces = ["sol.hull_plate:0.12"]
 feedstock = ["sol.alloy:0.15"]
-consumes = ["sol.food:0.015"]
+consumes = ["sol.food:0.035"]
 stock_capacity = 2500
 
 # ---------------------------------------------------------------------------
@@ -244,7 +301,7 @@ weight_core = 0.2
 weight_frontier = 0.6
 weight_fringe = 0.7
 produces = ["sol.salvage:0.17"]
-consumes = ["sol.food:0.015", "sol.hull_plate:0.013"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 
 # Core-leaning, because its output is alloy and alloy's customer is the
@@ -260,7 +317,7 @@ weight_frontier = 0.9
 weight_fringe = 0.3
 produces = ["sol.alloy:0.085"]
 feedstock = ["sol.salvage:0.13"]
-consumes = ["sol.food:0.015", "sol.hull_plate:0.013"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 refine_input = "sol.salvage"
 refine_output = "sol.alloy"

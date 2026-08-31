@@ -802,6 +802,47 @@ enum Archetype : std::uint32_t
         {{0.2f, 0.6f, 0.7f}},   // breaker yard: out where the hulls die
         {{1.1f, 0.9f, 0.3f}},   // reclamation plant: near the alloy's customer
     };
+    // ⚑⚑⚑⚑ PHASE 33 STAGE E, AND IT IS THE MOST EXPENSIVE LINE THIS FILE HAS
+    // EVER BEEN MISSING. Without these rows this galaxy is not the one the game
+    // generates and never has been: `factions.toml` has carried `station_bias`
+    // since Phase 13, `SpaceWorld::generateUniverse` hands it to the generator,
+    // and it multiplies the region weight above wherever a faction holds
+    // territory. Measured at seed 1701, this file WITHOUT the rows against the
+    // game WITH them:
+    //
+    //   here    agri 15  mine 16  refinery 18  factory 13  ferrous 13  foundry 15  fabworks 13  breaker 10  plant 11
+    //   game    agri 19  mine 14  refinery 13  factory 17  ferrous 14  foundry 16  fabworks 13  breaker  9  plant 10
+    //
+    // Four stations either way on the metal chain, and `stations.toml` was
+    // tuned per station against the left-hand row. In the right-hand one
+    // refined metal ran at 0.561 made-to-burnt - every Fabricator Yard in the
+    // shipped galaxy permanently feedstock-throttled - with food at 1.683 and
+    // raw ore at 1.774, three of eight commodities outside the band the guard
+    // below enforces, and nothing anywhere able to report it.
+    //
+    // ⚑⚑⚑ WHY TWO STAGES OF CAREFUL MEASUREMENT WALKED PAST IT: THIS FILE IS A
+    // HAND-KEPT MIRROR AND IT WAS KEPT IN STEP WITH THE FILES IT IS A MIRROR OF.
+    // Stage B and stage C both transcribed every rate they touched out of
+    // `commodities.toml` and `stations.toml`, faithfully. `station_bias` is in
+    // NEITHER - it is a third file that moves the same numbers, and the mirror's
+    // own contract never named it. ⚑ *A hand-kept mirror is only as wide as the
+    // list of files somebody remembered to mirror, and that list is not written
+    // down anywhere until it is wrong.*
+    //
+    // ⚑⚑ ROWS, NOT A LOOP OVER DEFS: `sim.unit` links `sol::sim` alone and
+    // cannot see `game/data` at all - which is the whole reason this mirror
+    // exists and the whole reason it can drift. Majors in def order (the order
+    // `claimTerritory` hands out), pirate templates deliberately absent because
+    // the game gives them no row either. Measured: adding the pirate count on
+    // top of these rows changes not one station.
+    //                        agri  mine   ref   fac  ferr  fnd   fab   brk  recyc
+    params.factionStationBias = {
+        {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // navy: no character authored
+        {1.6f, 1.0f, 0.7f, 1.3f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // guild
+        {0.4f, 1.5f, 2.2f, 2.6f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // hegemony
+        {2.4f, 1.6f, 1.0f, 0.3f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // compact
+        {1.0f, 0.35f, 0.8f, 2.8f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},  // ascendancy
+    };
     return sol::sim::generateGalaxy(params);
 }
 
@@ -838,27 +879,32 @@ enum Archetype : std::uint32_t
     };
     params.archetypes.resize(9);
     // Indices, in the order of the enum above:
+    // ⚑⚑⚑ THE METAL CHAIN'S THROUGHPUT AND THE NEW ROWS' FOOD UPKEEP ARE PHASE
+    // 33 STAGE E's, AND THEY MOVED BECAUSE THE GALAXY ABOVE DID. Every
+    // conversion ratio is untouched - the Refinery still runs 0.65 and the
+    // Fabricator Yard 0.80, clearing the same margins `commodities.toml`
+    // argues - because the ratios were never what was wrong. What was wrong is
+    // how much each station moves, sized per station against a count that is
+    // four out in both directions on the metal chain.
     //                            food   ore  metal  mach  ferr alloy plate  salv
     constexpr float P = 0.013f; // the hull-plate upkeep heavy industry burns
-    params.archetypes[Agri] = archetype({0.26f}, {0, 0, 0, 0.11f}, {}, false);
-    params.archetypes[Mine] = archetype({0, 0.28f}, {0.05f, 0, 0, 0, 0, 0, P}, {}, true);
-    params.archetypes[Refinery] =
-        archetype({0, 0, 0.11f}, {0.035f, 0, 0, 0, 0, 0, P}, {0, 0.17f}, false);
+    constexpr float F = 0.035f; // the food upkeep of a station that is not a mine
+    params.archetypes[Agri] = archetype({0.26f}, {0, 0, 0, 0.075f}, {}, false);
+    params.archetypes[Mine] = archetype({0, 0.345f}, {0.05f, 0, 0, 0, 0, 0, P}, {}, true);
+    params.archetypes[Refinery] = archetype({0, 0, 0.20f}, {F, 0, 0, 0, 0, 0, P}, {0, 0.31f}, false);
     params.archetypes[Factory] =
-        archetype({0, 0, 0, 0.12f}, {0.05f, 0, 0, 0, 0, 0, P}, {0, 0, 0.15f}, false);
-    params.archetypes[FerrousMine] =
-        archetype({0, 0, 0, 0, 0.20f}, {0.015f, 0, 0, 0, 0, 0, P}, {}, true);
+        archetype({0, 0, 0, 0.10f}, {0.05f, 0, 0, 0, 0, 0, P}, {0, 0, 0.125f}, false);
+    params.archetypes[FerrousMine] = archetype({0, 0, 0, 0, 0.20f}, {F, 0, 0, 0, 0, 0, P}, {}, true);
     params.archetypes[Foundry] =
-        archetype({0, 0, 0, 0, 0, 0.085f}, {0.015f, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0.13f}, false);
-    params.archetypes[FabWorks] =
-        archetype({0, 0, 0, 0, 0, 0, 0.12f}, {0.015f}, {0, 0, 0, 0, 0, 0.15f}, false);
+        archetype({0, 0, 0, 0, 0, 0.085f}, {F, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0.13f}, false);
+    params.archetypes[FabWorks] = archetype({0, 0, 0, 0, 0, 0, 0.12f}, {F}, {0, 0, 0, 0, 0, 0.15f}, false);
     // The salvage leg. A Breaker Yard produces out of nothing, exactly as the
     // Agricultural Station does - `extracts` is false because salvage is not in
     // the rock, and the hulls it cuts up are not a good this economy models.
     params.archetypes[Breaker] =
-        archetype({0, 0, 0, 0, 0, 0, 0, 0.17f}, {0.015f, 0, 0, 0, 0, 0, P}, {}, false);
-    params.archetypes[Recycler] = archetype(
-        {0, 0, 0, 0, 0, 0.085f}, {0.015f, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0, 0, 0, 0.13f}, false);
+        archetype({0, 0, 0, 0, 0, 0, 0, 0.17f}, {F, 0, 0, 0, 0, 0, P}, {}, false);
+    params.archetypes[Recycler] =
+        archetype({0, 0, 0, 0, 0, 0.085f}, {F, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0, 0, 0, 0.13f}, false);
     return params;
 }
 
@@ -1371,6 +1417,16 @@ SOL_TEST(economy_every_commodity_is_made_and_burnt_somewhere)
 // test above passed that same first cut without a murmur. ⚑ *A guard that runs
 // no simulation is not a weaker version of one that does - it is a different
 // instrument, and it is the one you can tune against.*
+//
+// ⚑⚑⚑⚑ AND STAGE E IS WHERE IT TURNED OUT TO HAVE BEEN SCORING THE WRONG
+// GALAXY THE WHOLE TIME. Everything above is true and every number in it was
+// measured against a `shippedGalaxy()` that applied no `station_bias` - so the
+// instrument two stages tuned against was counting stations in a galaxy the
+// game does not build. The rows are there now, and the first thing they said is
+// that refined metal had been running at 0.561 in the shipped galaxy while this
+// test read 1.015 and passed. ⚑ *An instrument you can tune against is worth
+// exactly what its input is worth, and this one's input is a hand transcription
+// whose scope nobody had ever written down.*
 SOL_TEST(economy_no_commodity_is_made_much_faster_than_it_is_burnt)
 {
     const Galaxy galaxy = shippedGalaxy();

@@ -21,6 +21,24 @@
 # its bias to match. Pirate clans have no bias - they are raiders, and their
 # faction indices do not exist until the galaxy is generated.
 #
+# ⚑⚑⚑ THIS KEY MOVES THE ECONOMY AND NOTHING SAID SO FOR TWENTY PHASES (found
+# by Phase 33 stage E). A multiplier here changes how many of an archetype the
+# galaxy contains, which changes how much of a commodity is made against how
+# much is burnt - so an edit in THIS file re-tunes `stations.toml`, and until
+# stage E `economy_tests.cpp` mirrored `stations.toml` and `commodities.toml`
+# and had never heard of this one. The Hegemony's x2.6 factory and x2.2 refinery
+# are why the shipped galaxy runs 17 Fabricator Yards against 13 Refineries.
+# **Change a bias and re-run `economy_no_commodity_is_made_much_faster_than_it_
+# is_burnt`, which now counts the galaxy these rows build.**
+#
+# ⚑⚑ AND THE ROWS BELOW NAME FOUR ARCHETYPES WHERE `stations.toml` HAS NINE.
+# The five added by Phase 33 - Ferrous Mine, Foundry, Fabrication Works, Breaker
+# Yard, Reclamation Plant - take 1.0 from every faction, so the whole ferrous
+# chain and the whole salvage leg are faction-neutral scenery while the metal
+# chain carries every faction's character. Recorded rather than fixed: giving
+# five archetypes a character across five factions is a design pass with its own
+# re-tune behind it, not a line in somebody else's stage.
+#
 # ⚑⚑ builds_no is the roster's version of that "0" (Phase 32 stage C): a list of
 # the cells - patrol, raider, trader - this faction fields NOTHING for. It is a
 # key rather than an empty list because an empty list already meant four other
