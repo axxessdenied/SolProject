@@ -43,7 +43,16 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
             StationMarket market;
             market.systemIndex = s;
             market.stationIndex = i;
-            market.archetype = system.stations[i].archetype;
+            // ⚑⚑ THE COMPOSITION WHEN THERE IS ONE, THE ARCHETYPE OTHERWISE
+            // (Phase 34 stage B). A composed station IS a generated archetype -
+            // the generator rolls a module list and the game reduces it to the
+            // same three rate lists an archetype has - so everything downstream
+            // of here reads one index and never learns which kind it was. A
+            // `[[station]]` with no recipe, and every galaxy this suite builds
+            // without a game around it, keeps its archetype's rates.
+            const StationSpec& spec = system.stations[i];
+            market.archetype =
+                spec.composition != kNoComposition ? spec.composition : spec.archetype;
             // Start at half capacity: prices open neutral and drift from
             // production/consumption immediately.
             const float capacity = market.archetype < m_params.archetypes.size()

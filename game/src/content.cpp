@@ -3828,6 +3828,14 @@ bool GameContent::reloadDefs()
         SOL_LOG_ERROR("data defs: %s", error.c_str());
         return false;
     }
+    // Phase 34 stage B, and it refuses for the same reason the six above do: a
+    // recipe line that resolves to nothing is a production line missing from
+    // every station of that archetype in the galaxy, which reads as an economy
+    // that does not balance rather than as a typo in one file.
+    if (!fresh.validateStationRecipes(&error)) {
+        SOL_LOG_ERROR("data defs: %s", error.c_str());
+        return false;
+    }
     m_defs = std::move(fresh);
     logRosters();
     // Cue tuning follows the defs (Phase 8t): gain, jitter, rolloff and caps

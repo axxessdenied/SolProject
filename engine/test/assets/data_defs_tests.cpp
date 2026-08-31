@@ -3889,20 +3889,41 @@ SOL_TEST(data_defs_shipped_modules_cover_every_family_gdd_12_names)
     SOL_CHECK(ore->refineInput == "sol.ore" && ore->refineOutput == "sol.metal");
     SOL_CHECK(salvage->refineInput == "sol.salvage" && salvage->refineOutput == "sol.alloy");
 
-    // ⚑⚑ AND THE RATE LISTS ARE EMPTY ON PURPOSE, WHICH IS WORTH A FAILING TEST
-    // RATHER THAN A COMMENT. Stage B's constraint is that the EXPECTED
-    // composition reproduces today's archetype rate lists, and that cannot be
-    // satisfied one module at a time - so a rate authored here before the
-    // recipes exist is a number nobody searched. When stage B lands, this
-    // assertion is what it deletes, deliberately.
+    // ⚑⚑⚑ THE ASSERTION STAGE B DELETED, AND WHAT IT LEFT BEHIND. Stage A
+    // shipped this file with every rate list EMPTY and a check that said so,
+    // because a rate authored before the recipes exist is a number nobody
+    // searched. Stage B authored the recipes and the rates together, so the
+    // emptiness check is gone as designed - and what replaces it is the shape
+    // that survives: only INDUSTRY and HABITAT touch the economy. Industry is
+    // the production graph of gdd.md §6; habitat is the food line, by the
+    // ruling. A market floor that quietly consumed something, or a casino that
+    // produced it, would be an economy nobody could find by reading
+    // `stations.toml` - which is exactly what the decomposition must not cost.
     for (const sol::assets::ModuleDef& module : db.modules()) {
-        if (!module.produces.empty() || !module.consumes.empty() || !module.feedstock.empty()) {
-            std::printf("  module '%s' carries a rate line, which is stage B's to author\n",
-                        module.id.c_str());
+        const bool hasRates =
+            !module.produces.empty() || !module.consumes.empty() || !module.feedstock.empty();
+        const bool mayHaveRates = module.family == sol::assets::ModuleFamily::Industry ||
+                                  module.family == sol::assets::ModuleFamily::Habitat;
+        if (hasRates && !mayHaveRates) {
+            std::printf("  '%s' is %s and carries a rate line; only industry and habitat may\n",
+                        module.id.c_str(),
+                        sol::assets::moduleFamilyName(module.family));
         }
-        SOL_CHECK(module.produces.empty());
-        SOL_CHECK(module.consumes.empty());
-        SOL_CHECK(module.feedstock.empty());
+        SOL_CHECK(!hasRates || mayHaveRates);
+    }
+    // And the other direction, which is the half that catches a module falling
+    // out of a recipe rather than one appearing in it: an industry module with
+    // no rates at all is a production line that produces nothing. The Drydock is
+    // the one deliberate exception - it repairs, it does not make - so it is
+    // named here rather than left to weaken the rule for everybody.
+    for (const sol::assets::ModuleDef& module : db.modules()) {
+        if (module.family != sol::assets::ModuleFamily::Industry || module.id == "sol.mod_drydock") {
+            continue;
+        }
+        if (module.produces.empty() && module.feedstock.empty()) {
+            std::printf("  industry module '%s' neither makes nor consumes anything\n", module.id.c_str());
+        }
+        SOL_CHECK(!module.produces.empty() || !module.feedstock.empty());
     }
 
     // Every power figure is somebody's design statement, but a station that

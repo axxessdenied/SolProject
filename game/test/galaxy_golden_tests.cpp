@@ -143,6 +143,15 @@ struct Digests
         for (const sol::sim::StationSpec& station : system.stations) {
             d.structure = combineText(d.structure, station.name);
             d.structure = hashCombine(d.structure, station.archetype);
+            // ⚑⚑⚑ AND ITS COMPOSITION (Phase 34 stage B), OR THIS DIGEST GOES
+            // BLIND TO THE ONLY THING THAT PHASE CHANGES. Three times in three
+            // stages of Phase 33 this number was the only instrument that
+            // reported a station mix moving; after stage B what a station DOES
+            // is no longer its archetype but the module list rolled for it, and
+            // a digest that hashed only the archetype would have agreed
+            // perfectly with itself while every station in the galaxy was
+            // recomposed underneath it.
+            d.structure = hashCombine(d.structure, station.composition);
             d.systemGeometry = combineVec(d.systemGeometry, station.position);
         }
         for (const sol::sim::GateSpec& gate : system.gates) {
@@ -290,7 +299,15 @@ constexpr std::size_t kGoldenClanCount = 10;
 // ⚑ The generator change that shipped beside it - an authored owner no
 // longer relaying its faction to everything downstream - moved this number by
 // NOTHING, which was measured before and after rather than assumed.
-constexpr std::uint64_t kGoldenStructure = 0x054ECEEFDAECC620ull;
+// ⚑⚑⚑⚑ RE-RECORDED BY PHASE 34 STAGE B, AND THIS TIME THE PAIR OF NUMBERS IS
+// THE WHOLE ARGUMENT. Every station in the galaxy now carries a COMPOSITION -
+// a module list rolled for it - and the digest hashes it, so this number had to
+// move. What did NOT move is both geometry digests, and that is the evidence
+// for the one claim the stage rests on: the composer runs after `generateGalaxy`
+// out of a stream of its own, so not one station, planet or gate shifted by a
+// metre. A composition pass that had taken its draws inside `populateSystem`
+// would have moved all three. Old: 0x054ECEEFDAECC620ull.
+constexpr std::uint64_t kGoldenStructure = 0x06BC021EC816F5E8ull;
 
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine

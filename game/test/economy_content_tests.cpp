@@ -32,6 +32,7 @@
 
 #include "space_world.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -66,9 +67,8 @@ struct Mix
     std::size_t stations = 0;
 };
 
-[[nodiscard]] Mix shippedMix(const DefDatabase& defs)
+[[nodiscard]] Mix shippedMix(const DefDatabase& defs, game::SpaceWorld& world)
 {
-    game::SpaceWorld world;
     world.spawn(game::kDefaultUniverseSeed);
     // ⚑ Before `generateUniverse`, which is the order the game boots in and is
     // load-bearing: `initializeFactions` returns immediately when there is no
@@ -109,7 +109,10 @@ struct Flow
     double burnt = 0.0;
 };
 
-[[nodiscard]] Flow flowOf(const DefDatabase& defs, const Mix& mix, const std::string& commodityId)
+// What the ARCHETYPES say the galaxy does: one count times one rate list, which
+// is what this file measured before Phase 34 stage B and is now the DECLARED
+// half of the comparison rather than the answer.
+[[nodiscard]] Flow declaredFlowOf(const DefDatabase& defs, const Mix& mix, const std::string& commodityId)
 {
     Flow flow;
     for (std::size_t a = 0; a < defs.stations().size(); ++a) {
@@ -120,6 +123,29 @@ struct Flow
         // whether they gate production, not in whether the units go away.
         flow.burnt += count * (rateOf(station.feedstock, commodityId) +
                                rateOf(station.consumes, commodityId));
+    }
+    return flow;
+}
+
+// ⚑⚑⚑ WHAT THE GALAXY ACTUALLY DOES, WHICH SINCE PHASE 34 STAGE B IS NOT THE
+// SAME QUESTION. Every station is composed of modules and runs on the rates its
+// own module list adds up to, so an archetype-level sum is an EXPECTATION and
+// this is the sample that was drawn. `station_composition_tests.cpp` proves the
+// two agree in the arithmetic; this walks the markets the sim will actually
+// tick and adds up what they will actually do.
+[[nodiscard]] Flow composedFlowOf(const game::SpaceWorld& world, std::uint32_t commodity)
+{
+    Flow flow;
+    const std::vector<sol::sim::EconomyArchetype>& rates = world.economy().params().archetypes;
+    for (const sol::sim::StationMarket& market : world.economy().markets()) {
+        if (market.archetype >= rates.size()) {
+            continue;
+        }
+        const sol::sim::EconomyArchetype& row = rates[market.archetype];
+        if (commodity < row.production.size()) {
+            flow.made += row.production[commodity];
+            flow.burnt += row.feedstock[commodity] + row.consumption[commodity];
+        }
     }
     return flow;
 }
@@ -135,12 +161,14 @@ SOL_TEST(shipped_content_makes_and_burns_every_commodity_somewhere)
 {
     DefDatabase defs;
     SOL_REQUIRE(loadShippedDefs(defs));
-    const Mix mix = shippedMix(defs);
+    game::SpaceWorld world;
+    const Mix mix = shippedMix(defs, world);
     SOL_REQUIRE(mix.stations > 0);
     SOL_REQUIRE(!defs.commodities().empty());
 
-    for (const sol::assets::CommodityDef& commodity : defs.commodities()) {
-        const Flow flow = flowOf(defs, mix, commodity.id);
+    for (std::uint32_t c = 0; c < defs.commodities().size(); ++c) {
+        const sol::assets::CommodityDef& commodity = defs.commodities()[c];
+        const Flow flow = composedFlowOf(world, c);
         if (flow.made <= 0.0 || flow.burnt <= 0.0) {
             std::printf("  %s is %s and %s\n",
                         commodity.id.c_str(),
@@ -167,12 +195,14 @@ SOL_TEST(shipped_content_makes_no_commodity_much_faster_than_it_is_burnt)
 {
     DefDatabase defs;
     SOL_REQUIRE(loadShippedDefs(defs));
-    const Mix mix = shippedMix(defs);
+    game::SpaceWorld world;
+    const Mix mix = shippedMix(defs, world);
     SOL_REQUIRE(mix.stations > 0);
 
     bool anyOutOfBand = false;
-    for (const sol::assets::CommodityDef& commodity : defs.commodities()) {
-        const Flow flow = flowOf(defs, mix, commodity.id);
+    for (std::uint32_t c = 0; c < defs.commodities().size(); ++c) {
+        const sol::assets::CommodityDef& commodity = defs.commodities()[c];
+        const Flow flow = composedFlowOf(world, c);
         SOL_REQUIRE(flow.burnt > 0.0); // the test above already said somebody burns it
         const double ratio = flow.made / flow.burnt;
         if (ratio <= 0.85 || ratio >= 1.6) {
@@ -185,6 +215,28 @@ SOL_TEST(shipped_content_makes_no_commodity_much_faster_than_it_is_burnt)
         }
         SOL_CHECK(ratio > 0.85);
         SOL_CHECK(ratio < 1.6);
+
+        // ⚑⚑ AND THE SAMPLE AGAINST ITS OWN EXPECTATION (Phase 34 stage B). The
+        // archetype rate lists are what the recipes were authored to reproduce,
+        // so a composed galaxy that drifts far from them is a recipe bug rather
+        // than a balance decision - and it would otherwise hide inside a band
+        // wide enough to swallow it. Five percent is generous for the hundred and
+        // twenty-five draws a galaxy takes, and still catches a whole module
+        // sitting in the wrong recipe.
+        const Flow declared = declaredFlowOf(defs, mix, commodity.id);
+        for (int half = 0; half < 2; ++half) {
+            const double sampled = half == 0 ? flow.made : flow.burnt;
+            const double expected = half == 0 ? declared.made : declared.burnt;
+            if (expected > 0.0 && std::abs(sampled - expected) > expected * 0.05) {
+                std::printf("  %s %s: the composed galaxy does %.4f/s against an expected %.4f/s\n",
+                            commodity.id.c_str(),
+                            half == 0 ? "made" : "burnt",
+                            sampled,
+                            expected);
+                anyOutOfBand = true;
+            }
+            SOL_CHECK(expected <= 0.0 || std::abs(sampled - expected) <= expected * 0.05);
+        }
     }
     if (anyOutOfBand) {
         std::printf("  the mix that produced those numbers (%zu stations):\n   ", mix.stations);

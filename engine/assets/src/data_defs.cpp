@@ -186,6 +186,62 @@ struct FieldReader
         }
     }
 
+    // "module_id" or "module_id:chance" strings, e.g.
+    // modules = ["sol.mod_market_floor:0.8"] (Phase 34 stage B). A bare id is
+    // chance 1.0 - the common case is a module every station of the archetype
+    // has, and writing ":1.0" on every one of those would bury the rows that
+    // actually vary.
+    void optionalRecipeList(const char* key, std::vector<StationModuleEntry>& out)
+    {
+        const TomlValue* value = table.find(key);
+        if (value == nullptr) {
+            return;
+        }
+        if (!value->isArray()) {
+            fail(std::string("key '") + key + "' must be an array of \"id\" or \"id:chance\" strings");
+            return;
+        }
+        for (std::size_t i = 0; i < value->size(); ++i) {
+            const TomlValue& element = (*value)[i];
+            if (!element.isString()) {
+                fail(std::string("key '") + key + "' must be an array of \"id\" or \"id:chance\" strings");
+                return;
+            }
+            const std::string& text = element.asString();
+            StationModuleEntry entry;
+            const std::size_t colon = text.rfind(':');
+            if (colon == std::string::npos) {
+                entry.moduleId = text;
+            } else {
+                if (colon == 0 || colon + 1 >= text.size()) {
+                    fail(std::string("'") + key + "' entry '" + text + "' is not \"id\" or \"id:chance\"");
+                    return;
+                }
+                entry.moduleId = text.substr(0, colon);
+                char* end = nullptr;
+                entry.chance = std::strtof(text.c_str() + colon + 1, &end);
+                if (end != text.c_str() + text.size() || !(entry.chance > 0.0f) || entry.chance > 1.0f) {
+                    fail(std::string("'") + key + "' entry '" + text + "' needs a chance in (0, 1]");
+                    return;
+                }
+            }
+            if (entry.moduleId.empty()) {
+                fail(std::string("'") + key + "' entry '" + text + "' names no module");
+                return;
+            }
+            // ⚑ One line per module. Two lines for one id would be two chances
+            // for one thing, which has no reading the composer could honour -
+            // and a module that belongs twice says so in its own numbers.
+            for (const StationModuleEntry& seen : out) {
+                if (seen.moduleId == entry.moduleId) {
+                    fail(std::string("'") + key + "' names '" + entry.moduleId + "' twice");
+                    return;
+                }
+            }
+            out.push_back(std::move(entry));
+        }
+    }
+
     // "class:capacity" strings, e.g. stores = ["bulk:1200"] (Phase 34 stage A).
     // Sibling of `optionalRateList` above and deliberately the same shape: an
     // author who can read one list can read the other.
@@ -1258,6 +1314,7 @@ bool parseStation(const TomlValue& table,
     reader.optionalFloat("stock_capacity", def.stockCapacity);
     reader.optionalString("refine_input", def.refineInput);
     reader.optionalString("refine_output", def.refineOutput);
+    reader.optionalRecipeList("modules", def.modules);
 
     reader.rejectUnknownKeys({"id",
                               "name",
@@ -1271,7 +1328,8 @@ bool parseStation(const TomlValue& table,
                               "produces_from",
                               "stock_capacity",
                               "refine_input",
-                              "refine_output"});
+                              "refine_output",
+                              "modules"});
     if (!reader.failed && def.model.empty()) {
         reader.fail("'model' must name a [[model]] row when given");
     }
@@ -2539,6 +2597,36 @@ bool DefDatabase::validateLegality(std::string* outError) const
                 if (outError != nullptr) {
                     *outError = faction.source + ": faction '" + faction.id + "' lists '" + id +
                                 "' as " + list.key + ", which no [[commodity]] row defines";
+                }
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool DefDatabase::validateStationRecipes(std::string* outError) const
+{
+    for (const StationDef& station : m_stations) {
+        for (const StationModuleEntry& entry : station.modules) {
+            const ModuleDef* module = findModule(entry.moduleId.c_str());
+            if (module == nullptr) {
+                if (outError != nullptr) {
+                    *outError = station.source + ": station '" + station.id + "' is composed of '" +
+                                entry.moduleId + "', which no [[module]] row defines";
+                }
+                return false;
+            }
+            // ⚑⚑ POWER IS DERIVED, NOT AUTHORED, AND REFUSING IT HERE IS HOW AN
+            // AUTHOR FINDS THAT OUT. The composer fits a plant to the draw a
+            // recipe rolls, so a plant written into the recipe would be a
+            // second plant nobody asked for - and the author who wrote it was
+            // expecting a rule this game does not have.
+            if (module->family == ModuleFamily::Power) {
+                if (outError != nullptr) {
+                    *outError = station.source + ": station '" + station.id + "' names the power module '" +
+                                entry.moduleId +
+                                "'; power is fitted to the composed draw, never authored into a recipe";
                 }
                 return false;
             }

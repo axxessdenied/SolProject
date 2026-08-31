@@ -273,10 +273,31 @@ struct PlanetSpec
     double radius = 0.0;  // meters
 };
 
+// A station with no composition: its rates are its archetype's, which is what
+// every station was before Phase 34 stage B and what a `[[station]]` with no
+// recipe still is.
+inline constexpr std::uint32_t kNoComposition = 0xFFFF'FFFFu;
+
 struct StationSpec
 {
     std::string name;
     std::uint32_t archetype = 0; // index into GalaxyParams::stationRules
+    // Which composed rate list this station runs on (Phase 34 stage B), or
+    // `kNoComposition`.
+    //
+    // ⚑⚑⚑ THE SECOND INDEX, AND THE WHOLE REASON IT EXISTS: `archetype` is one
+    // integer doing three jobs - it is the placement rule, it is every rate the
+    // station runs at, and it is what the golden structure digest hashes - so
+    // two stations of one archetype were NECESSARILY identical, being the same
+    // row of the same table. A composition is a generated archetype: the
+    // generator rolls a module list per station, the game reduces it to rate
+    // lists, and `Economy::initialize` reads THIS index instead when it is set.
+    //
+    // ⚑⚑ NOTHING IN `sol::sim` WRITES IT AND NOTHING HERE KNOWS WHAT A MODULE
+    // IS. `generateGalaxy` leaves it `kNoComposition`; the game composes after
+    // the galaxy is built, out of its own Rng stream, so no draw in this file
+    // moves and no station, planet or gate shifts by a metre.
+    std::uint32_t composition = kNoComposition;
     core::DVec3 position;
 };
 

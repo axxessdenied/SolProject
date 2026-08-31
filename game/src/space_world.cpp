@@ -115,7 +115,16 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // anyway, because `[[system]]` rows are exactly what it hashes; the version is
 // bumped regardless, because relying on a second guard that happens to fire is
 // weaker than stating the rule that made the break.
-constexpr std::uint32_t kSaveVersion = 29;
+// v30 (Phase 34 stage B): station COMPOSITIONS. Every station in the galaxy now
+// runs on the rates its own rolled module list adds up to rather than on its
+// archetype's, so a v29 save's market indices name stations doing a different
+// job for a third distinct reason - not a wider row, not a resampled mix, but
+// the same station composed. ⚑⚑ THE COMPOSITION ITSELF IS NOT IN THE FILE AND
+// MUST NOT BE: the galaxy is regenerated from the seed on load and the
+// composer runs again with it, which is the same bargain `initializeFactions`
+// and the economy layout already make. What breaks a v29 save is that its stock
+// row per market was recorded against a market whose rates no longer exist.
+constexpr std::uint32_t kSaveVersion = 30;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -777,6 +786,71 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         archetype.extracts = station.producesFrom == "field";
         m_economyParams.archetypes.push_back(std::move(archetype));
     }
+    m_baseArchetypeCount = static_cast<std::uint32_t>(m_economyParams.archetypes.size());
+
+    // What each `[[module]]` does, cached in def order (Phase 34 stage B). The
+    // same `applyRates` rule as the archetypes above, including the warning: an
+    // unknown commodity on a module is a mod's business and not a refusal.
+    m_modules.clear();
+    m_modules.reserve(defs.modules().size());
+    m_powerModules.clear();
+    for (const assets::ModuleDef& module : defs.modules()) {
+        ModuleRuntime runtime;
+        runtime.production.assign(commodityCount, 0.0f);
+        runtime.consumption.assign(commodityCount, 0.0f);
+        runtime.feedstock.assign(commodityCount, 0.0f);
+        const auto applyModuleRates = [&](const std::vector<assets::StationRate>& rates,
+                                          std::vector<float>& out) {
+            for (const assets::StationRate& rate : rates) {
+                const std::uint32_t index = commodityIndex(rate.commodityId.c_str());
+                if (index < commodityCount) {
+                    out[index] += rate.rate;
+                } else {
+                    SOL_LOG_WARN(
+                        "module '%s': unknown commodity '%s'", module.id.c_str(), rate.commodityId.c_str());
+                }
+            }
+        };
+        applyModuleRates(module.produces, runtime.production);
+        applyModuleRates(module.consumes, runtime.consumption);
+        applyModuleRates(module.feedstock, runtime.feedstock);
+        runtime.powerOutput = module.powerOutput;
+        runtime.powerDraw = module.powerDraw;
+        if (module.family == assets::ModuleFamily::Power && module.powerOutput > 0.0f) {
+            m_powerModules.push_back(static_cast<std::uint32_t>(m_modules.size()));
+        }
+        m_modules.push_back(std::move(runtime));
+    }
+    // Ascending by output, which is what lets the composer take the FIRST plant
+    // that covers a draw and know it is the smallest one that does.
+    std::sort(m_powerModules.begin(), m_powerModules.end(), [this](std::uint32_t a, std::uint32_t b) {
+        return m_modules[a].powerOutput < m_modules[b].powerOutput;
+    });
+
+    // The recipes, with every module id resolved to an index once. An id that
+    // names nothing is refused at load by `validateStationRecipes`, so reaching
+    // the warning below means a caller skipped that check (a test, a tool).
+    m_recipes.assign(defs.stations().size(), {});
+    for (std::size_t s = 0; s < defs.stations().size(); ++s) {
+        for (const assets::StationModuleEntry& entry : defs.stations()[s].modules) {
+            std::uint32_t index = static_cast<std::uint32_t>(defs.modules().size());
+            for (std::uint32_t m = 0; m < defs.modules().size(); ++m) {
+                if (defs.modules()[m].id == entry.moduleId) {
+                    index = m;
+                    break;
+                }
+            }
+            if (index >= defs.modules().size()) {
+                SOL_LOG_WARN("station '%s': unknown module '%s'",
+                             defs.stations()[s].id.c_str(),
+                             entry.moduleId.c_str());
+                continue;
+            }
+            m_recipes[s].push_back({.module = index, .chance = entry.chance});
+        }
+    }
+    composeStations();
+
     if (!m_economyParams.commodities.empty()) {
         m_economy.initialize(m_galaxy, m_economyParams, m_universeSeed);
     }
@@ -884,6 +958,143 @@ SpaceWorld::SecurityHistogram SpaceWorld::securityHistogram() const
         out.highest[tier] = out.seen[tier] > 0 ? highest[tier] : 0.0f;
     }
     return out;
+}
+
+// The stream the composition roll comes out of (Phase 34 stage B), chosen the
+// way `universe.cpp`'s `kStreamAuthored` was and for the same reason: the
+// generator's per-system streams are `kStreamContents + systemIndex`, so they
+// run off the end of that enum and over anything sitting above it. A number no
+// system index can reach is not elegant, it is the only thing that is true.
+constexpr std::uint64_t kCompositionStream = 2'000'000;
+
+void SpaceWorld::composeStations()
+{
+    // Everything composed is derived, never saved, so a re-compose starts by
+    // throwing the last one away - `loadFrom` calls this against a galaxy that
+    // was regenerated under a different seed.
+    m_compositions.clear();
+    if (m_economyParams.archetypes.size() > m_baseArchetypeCount) {
+        m_economyParams.archetypes.resize(m_baseArchetypeCount);
+    }
+    for (sim::SystemSpec& system : m_galaxy.systems) {
+        for (sim::StationSpec& station : system.stations) {
+            station.composition = sim::kNoComposition;
+        }
+    }
+    if (m_recipes.empty() || m_modules.empty()) {
+        return; // no `[[module]]` content: every station keeps its archetype
+    }
+
+    const std::uint32_t commodityCount = static_cast<std::uint32_t>(m_commodityIds.size());
+    core::Rng rng;
+    rng.seed(m_universeSeed, kCompositionStream);
+
+    std::vector<std::uint32_t> rolled;
+    for (sim::SystemSpec& system : m_galaxy.systems) {
+        for (sim::StationSpec& station : system.stations) {
+            if (station.archetype >= m_recipes.size() || m_recipes[station.archetype].empty()) {
+                continue; // an archetype with no recipe runs on its own rates
+            }
+            rolled.clear();
+            float draw = 0.0f;
+            // ⚑ THE ROLL IS TAKEN FOR EVERY LINE, INCLUDING THE CERTAIN ONES.
+            // A recipe is mostly chance-1.0 rows, and skipping their draw would
+            // make the stream depend on how many certainties an archetype
+            // happens to have - so editing an unrelated recipe would re-roll
+            // every station after it. Drawing unconditionally costs nothing and
+            // keeps one station's composition a function of its own line.
+            for (const RecipeEntry& entry : m_recipes[station.archetype]) {
+                const float roll = rng.nextFloat01();
+                if (entry.chance < 1.0f && roll >= entry.chance) {
+                    continue;
+                }
+                rolled.push_back(entry.module);
+                draw += m_modules[entry.module].powerDraw;
+            }
+            // ⚑⚑ POWER IS FITTED, NOT ROLLED, WHICH IS HOW THE RULING IS
+            // SATISFIED BY CONSTRUCTION RATHER THAN BY REJECTION. The spec said
+            // the composer "rejects or re-draws" a composition whose draw is not
+            // covered; selecting the smallest plant that covers it is the same
+            // rule with no unbounded loop in it, and it makes the plant a
+            // consequence of the station: an outpost gets a solar array and a
+            // shipyard gets a fusion plant, visibly, without anyone authoring
+            // either one.
+            float output = 0.0f;
+            for (const std::uint32_t module : rolled) {
+                output += m_modules[module].powerOutput; // a recipe may not name one; belt and braces
+            }
+            while (output < draw && !m_powerModules.empty()) {
+                std::uint32_t chosen = m_powerModules.back(); // the largest, if nothing else covers
+                for (const std::uint32_t candidate : m_powerModules) {
+                    if (m_modules[candidate].powerOutput >= draw - output) {
+                        chosen = candidate;
+                        break; // ascending by output, so the first that covers is the smallest
+                    }
+                }
+                rolled.push_back(chosen);
+                output += m_modules[chosen].powerOutput;
+                draw += m_modules[chosen].powerDraw; // a plant of its own runs on something
+            }
+
+            // Identical stations share a row: a composition is (archetype,
+            // module list), and the archetype is part of it because extraction
+            // and capacity still come from there.
+            std::uint32_t index = static_cast<std::uint32_t>(m_compositions.size());
+            for (std::uint32_t i = 0; i < m_compositions.size(); ++i) {
+                if (m_compositions[i].archetype == station.archetype && m_compositions[i].modules == rolled) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index == m_compositions.size()) {
+                m_compositions.push_back({.archetype = station.archetype, .modules = rolled});
+            }
+            station.composition = m_baseArchetypeCount + index;
+        }
+    }
+
+    // Each composition becomes a row of `EconomyParams::archetypes`, which is
+    // what `Economy::initialize` will index for every market that has one.
+    for (const StationComposition& composition : m_compositions) {
+        sim::EconomyArchetype archetype;
+        archetype.production.assign(commodityCount, 0.0f);
+        archetype.consumption.assign(commodityCount, 0.0f);
+        archetype.feedstock.assign(commodityCount, 0.0f);
+        for (const std::uint32_t module : composition.modules) {
+            const ModuleRuntime& runtime = m_modules[module];
+            for (std::uint32_t c = 0; c < commodityCount; ++c) {
+                archetype.production[c] += runtime.production[c];
+                archetype.consumption[c] += runtime.consumption[c];
+                archetype.feedstock[c] += runtime.feedstock[c];
+            }
+        }
+        // ⚑ EXTRACTION AND CAPACITY STAY WITH THE ARCHETYPE, AND NEITHER IS AN
+        // OVERSIGHT. `produces_from = "field"` is also the PLACEMENT veto ("a
+        // system with no rock supports no mine"), so splitting it across two
+        // files would be saying one fact twice; and per-commodity capacity is
+        // stage D's whole subject - moving it here early would change every
+        // price in the galaxy, since a price is stock over capacity.
+        const sim::EconomyArchetype& base = m_economyParams.archetypes[composition.archetype];
+        archetype.extracts = base.extracts;
+        archetype.stockCapacity = base.stockCapacity;
+        m_economyParams.archetypes.push_back(std::move(archetype));
+    }
+}
+
+std::span<const std::uint32_t> SpaceWorld::stationModules(std::uint32_t system, std::uint32_t station) const
+{
+    if (system >= m_galaxy.systems.size()) {
+        return {};
+    }
+    const std::vector<sim::StationSpec>& stations = m_galaxy.systems[system].stations;
+    if (station >= stations.size()) {
+        return {};
+    }
+    const std::uint32_t composition = stations[station].composition;
+    if (composition < m_baseArchetypeCount || composition - m_baseArchetypeCount >= m_compositions.size()) {
+        return {};
+    }
+    return m_compositions[composition - m_baseArchetypeCount].modules;
 }
 
 void SpaceWorld::initializeFactions()
@@ -9629,6 +9840,12 @@ bool SpaceWorld::loadFrom(const char* path)
         // created the save, and a load would silently describe another world.
         buildMiningParams();
         m_galaxy = sim::generateGalaxy(m_galaxyParams, &m_miningParams);
+        // ⚑⚑ AND THE COMPOSITIONS WITH IT (Phase 34 stage B). They are derived
+        // from the seed and never serialized - the same bargain the galaxy
+        // itself makes - so a regenerated galaxy that skipped this would leave
+        // every station on its archetype's rates and quietly describe a
+        // DIFFERENT economy than the one the save was made in.
+        composeStations();
     }
     if (systemIndex >= m_galaxy.systems.size()) {
         return false;

@@ -974,6 +974,22 @@ struct StationRate
     float rate = 0.0f; // units/s
 };
 
+// One line of a station's recipe ("sol.mod_bar:0.4" in TOML): a module, and
+// the chance a composed station has it (Phase 34 stage B).
+//
+// ⚑⚑ A CHANCE RATHER THAN A COUNT, AND THE ARITHMETIC IS WHY. The composer has
+// to reproduce the archetype's authored rate lists IN EXPECTATION - that is the
+// whole contract of the decomposition - and expectation over a chance is one
+// multiplication: a module rated 0.05 at chance 0.7 contributes 0.035, which is
+// checkable against `stations.toml`'s own number by a test rather than by an
+// argument. A module that wants to be there twice says so in its own rates, the
+// same rule `stores` follows.
+struct StationModuleEntry
+{
+    std::string moduleId;
+    float chance = 1.0f; // (0, 1]; 1.0 means every station of this archetype
+};
+
 // A station archetype: how often the galaxy generator places it per region
 // tier, and what its market produces/consumes (Phase 7 economy).
 struct StationDef
@@ -1016,6 +1032,11 @@ struct StationDef
     // default — means the station refines nothing.
     std::string refineInput;
     std::string refineOutput;
+    // The recipe: which modules this archetype is composed of, and how often
+    // (Phase 34 stage B). Empty - the default - means the archetype's own rate
+    // lists above are what its stations run on, which is what every station in
+    // the galaxy was before stage B and what a mod's archetype still is.
+    std::vector<StationModuleEntry> modules;
     std::string source;
 };
 
@@ -1378,6 +1399,15 @@ public:
     // hides an item, and a law that can never fire looks exactly like a
     // patrol deciding to let you off.
     [[nodiscard]] bool validateLegality(std::string* outError = nullptr) const;
+
+    // Phase 34 stage B: every module a `[[station]]` recipe names exists, and
+    // no recipe names a POWER module. Refuses for `validateCatalogGates`'s
+    // reason and one of its own: a recipe line that resolves to nothing is a
+    // production line missing from every station of that archetype in the
+    // galaxy, which reads as an economy that does not balance rather than as a
+    // typo - and power is DERIVED (the composer fits a plant to the draw), so a
+    // hand-placed plant is an author expecting a rule that does not exist.
+    [[nodiscard]] bool validateStationRecipes(std::string* outError = nullptr) const;
 
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;

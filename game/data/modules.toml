@@ -20,14 +20,23 @@
 #   stage D  the market reads `stores`, which is what lets a station be unable
 #            to hold contraband
 #
-# ⚑⚑⚑ AND THAT IS WHY THERE ARE NO RATE LINES IN THIS FILE. `produces`,
-# `consumes` and `feedstock` parse on every row here and not one row uses them,
-# because a rate authored before the recipe exists is a number nobody searched.
-# `stations.toml` documents at length what its eleven archetypes' rates are
-# tuned against, and three separate stages of Phase 33 had to SEARCH the mix
-# rather than argue it. Stage B's constraint is that the EXPECTED composition
-# reproduces today's archetype rate list — which cannot be satisfied one module
-# at a time, so it is not attempted one module at a time.
+# ⚑⚑⚑⚑ THE RATE LINES ARRIVED IN STAGE B, AND EVERY ONE OF THEM IS DERIVED FROM
+# `stations.toml` RATHER THAN INVENTED. Stage A shipped this file with no rates
+# at all and a test that failed if one appeared, because a rate authored before
+# the recipe exists is a number nobody searched. The recipes exist now, and the
+# constraint they are authored under is exact: **the EXPECTED composition of an
+# archetype reproduces that archetype's own rate list**, which
+# `station_composition_tests.cpp` checks line by line against the numbers three
+# stages of Phase 33 searched for. So `stations.toml` still holds the tuned
+# economy; this file holds the same economy taken apart.
+#
+# ⚑⚑ PRODUCTION IS DETERMINISTIC AND APPETITE IS NOT, WHICH IS THE WHOLE SHAPE
+# OF THE DECOMPOSITION. Every industry module sits in its archetype's recipe at
+# chance 1.0 carrying exactly that archetype's `produces`/`feedstock`/plate
+# upkeep, so no station in the galaxy makes or burns one unit differently than
+# it did before stage B. What varies is HABITAT — the food line, per the ruling
+# — and everything with no economy attached to it at all: which holds, which
+# screens, which people.
 #
 # ⚑⚑ POWER IS THE EXCEPTION AND IT IS AN EXCEPTION FOR A REASON: RULED
 # 2026-08-31, POWER IS THE CONSTRAINT THE COMPOSER SATISFIES. A composition is
@@ -38,13 +47,22 @@
 # same terms as every placement weight in `stations.toml`. The scale is the
 # ship system's, one order up: a hull makes 6–10 and a fitting draws 0.5–3.
 #
-# ⚑⚑ HABITAT OWNS THE FOOD LINE, RULED THE SAME DAY. Today every archetype
-# burns `sol.food` at a flat 0.035–0.05; after stage B that upkeep comes from
-# habitat modules, so food demand is POPULATION — two stations of one archetype
-# eat differently and a station with no habitat eats nothing. Food is the most
-# load-bearing number in this economy (seventeen agricultural stations exist to
-# feed it), so this is where stage B's expectation rule binds hardest: the
-# galaxy's total food upkeep has to come out where it is now.
+# ⚑⚑ HABITAT OWNS THE FOOD LINE, RULED THE SAME DAY AND BUILT IN STAGE B. Food
+# upkeep is no longer a flat archetype line: it is the sum of what a station's
+# habitat modules eat, so two stations of one archetype eat differently and a
+# station with no habitat eats nothing. The three rows below are rated 0.05 /
+# 0.02 / 0.01 and every archetype's chances are chosen so that the EXPECTED sum
+# is exactly the flat number it used to carry — 0.035 for most, 0.05 for the
+# mine and the fabricator yard. That arithmetic is a test, not a claim.
+#
+# ⚑⚑⚑ AND THE FARM IS THE ONE PLACE THE RULING COSTS SOMETHING, SO IT IS PAID
+# OUT LOUD: an Agricultural Station burnt NO food before stage B, and a farm
+# with nobody on it is a worse world than a slightly different number. The dome
+# below therefore produces GROSS — 0.32 — and the farm's own habitat eats 0.06
+# of it in expectation, leaving the 0.26 net that `stations.toml` has always
+# said. Net food per farm is unchanged to the digit; the galaxy's food MADE and
+# BURNT both rise by about 1.0/s, which moves the made-to-burnt ratio from 1.056
+# to about 1.045 and is measured rather than asserted.
 # ---------------------------------------------------------------------------
 #
 # Three rows here are vocabulary whose reader is a LATER PHASE rather than a
@@ -95,18 +113,21 @@ family = "power"
 id = "sol.mod_habitat_ring"
 name = "Habitat Ring"
 family = "habitat"
+consumes = ["sol.food:0.05"]
 power_draw = 6.0
 
 [[module]]
 id = "sol.mod_barracks"
 name = "Barracks"
 family = "habitat"
+consumes = ["sol.food:0.02"]
 power_draw = 3.0
 
 [[module]]
 id = "sol.mod_medical_bay"
 name = "Medical Bay"
 family = "habitat"
+consumes = ["sol.food:0.01"]
 power_draw = 2.0
 
 # ---------------------------------------------------------------------------
@@ -144,50 +165,153 @@ stores = ["hazardous:400"]
 power_draw = 4.0
 
 # ---------------------------------------------------------------------------
-# Industry — the production chains of gdd.md §6. These are the rows stage B
-# decomposes `stations.toml` into, and the ones whose rate lines are absent on
-# purpose. The archetype each is expected to end up in is noted as a HINT for
-# that stage and not as a claim: the composer is what decides, and Phase 33
-# resampled its own station mix three stages running.
+# Industry — the production chains of gdd.md §6, and this is where
+# `stations.toml`'s eleven archetypes were taken apart in stage B.
+#
+# ⚑⚑⚑ EVERY RATE BELOW IS ITS ARCHETYPE'S OWN, COPIED RATHER THAN RE-DERIVED,
+# AND EVERY ONE OF THESE ROWS SITS IN EXACTLY ONE RECIPE AT CHANCE 1.0. That is
+# what makes the decomposition free: a Refinery still turns 0.31 ore into 0.20
+# metal because its refinery line IS those numbers and every Refinery has one.
+# The economy did not move, and `station_composition_tests.cpp` is what says so
+# rather than this comment.
+#
+# ⚑⚑ THE PLATE UPKEEP LANDED HERE AND IT FITS BETTER THAN IT DID ON THE
+# ARCHETYPE. `stations.toml` carries `sol.hull_plate:0.013` on eight of eleven
+# archetypes and pointedly not on the other three - the Fabrication Works
+# because "a station consuming its own output is a feedback loop", the Assembly
+# Yard because its plate line is feedstock already, and the farm because it is
+# not heavy industry. Those are statements about the MACHINE, so the line moved
+# onto the machine, and the three that do not burn plate are simply the three
+# rows below with no `consumes`.
+#
+# ⚑ gdd.md §12's family list names six industry modules. It is a sketch rather
+# than a row list (the refining service was already two rows for the same
+# reason), and a production graph needs one row per conversion: the six below
+# are eleven because a farm, two kinds of mine, a breaker line, a reclaimer and
+# an assembly line are all industry and none of them is a "fabricator".
 # ---------------------------------------------------------------------------
 
-# Hint: the Refinery and the Reclamation Plant.
+# The Agricultural Station. Produces GROSS - see the header: the farm's own
+# habitat eats 0.06 of this in expectation and `stations.toml`'s 0.26 is what is
+# left. Its machinery upkeep is the tractor bill and belongs to the dome.
+[[module]]
+id = "sol.mod_agri_dome"
+name = "Agricultural Dome"
+family = "industry"
+produces = ["sol.food:0.32"]
+consumes = ["sol.machinery:0.075"]
+power_draw = 6.0
+
+# The Mining Outpost. Its output comes out of the ground rather than off
+# anyone's dock, which is `produces_from = "field"` on the ARCHETYPE and stays
+# there: the same key is also the placement veto ("a system with no rock
+# supports no mine"), and splitting one fact across two files to say it twice
+# would be worse than leaving it where the generator already reads it.
+[[module]]
+id = "sol.mod_ore_extractor"
+name = "Ore Extractor"
+family = "industry"
+produces = ["sol.ore:0.345"]
+consumes = ["sol.hull_plate:0.013"]
+power_draw = 9.0
+
+# The Ferrous Mine, and the same note about the ground applies.
+[[module]]
+id = "sol.mod_ferrous_extractor"
+name = "Ferrous Extractor"
+family = "industry"
+produces = ["sol.ore_ferrous:0.20"]
+consumes = ["sol.hull_plate:0.013"]
+power_draw = 9.0
+
+# The Refinery: smelt at the pit, ship the metal.
 [[module]]
 id = "sol.mod_refinery"
 name = "Refinery Line"
 family = "industry"
+produces = ["sol.metal:0.20"]
+feedstock = ["sol.ore:0.31"]
+consumes = ["sol.hull_plate:0.013"]
 power_draw = 12.0
 
-# Hint: the Foundry. A smelter takes ferrous ore where the refinery takes ore.
+# The Foundry. A smelter takes ferrous ore where the refinery takes ore.
 [[module]]
 id = "sol.mod_smelter"
 name = "Smelter"
 family = "industry"
+produces = ["sol.alloy:0.085"]
+feedstock = ["sol.ore_ferrous:0.13"]
+consumes = ["sol.hull_plate:0.013"]
 power_draw = 12.0
 
-# Hint: the Fabricator Yard.
+# The Fabricator Yard - refined metal's only consumer and machinery's only
+# producer, which is why Phase 33 stage E moved these two numbers twice.
 [[module]]
 id = "sol.mod_fabricator"
 name = "Fabricator"
 family = "industry"
+produces = ["sol.machinery:0.152"]
+feedstock = ["sol.metal:0.19"]
+consumes = ["sol.hull_plate:0.013"]
 power_draw = 10.0
 
-# Hint: the Fabrication Works — the last industrial step before a hardpoint.
+# The Fabrication Works - the last industrial step before a hardpoint. Burns no
+# plate: it makes the stuff.
 [[module]]
 id = "sol.mod_component_works"
 name = "Component Works"
 family = "industry"
+produces = ["sol.hull_plate:0.12"]
+feedstock = ["sol.alloy:0.15"]
 power_draw = 8.0
 
-# Hint: the Assembly Yard and the Shipyard, which are the construction tier
-# Phase 33 stage E shipped. A Shipyard produces nothing — its output is ships,
-# which fly away — and that is the honest shape rather than a gap.
+# The Breaker Yard. Produces out of nothing, exactly as the dome does: its input
+# is the derelict hulls towed in, and neither sunlight nor a dead ship is a good
+# this economy models.
+[[module]]
+id = "sol.mod_breaker_line"
+name = "Breaker Line"
+family = "industry"
+produces = ["sol.salvage:0.17"]
+consumes = ["sol.hull_plate:0.013"]
+power_draw = 7.0
+
+# The Reclamation Plant. Makes `sol.alloy` and not a reclaimed variant of it,
+# which is Phase 33 stage C's one real design decision and is unchanged here.
+[[module]]
+id = "sol.mod_reclaimer"
+name = "Reclamation Line"
+family = "industry"
+produces = ["sol.alloy:0.085"]
+feedstock = ["sol.salvage:0.13"]
+consumes = ["sol.hull_plate:0.013"]
+power_draw = 10.0
+
+# The Assembly Yard - the first station in the game with two feedstocks, and the
+# first place a shortage on the metal chain is felt on the ferrous one. Its
+# plate line is feedstock, so it has no plate upkeep.
+[[module]]
+id = "sol.mod_assembly_line"
+name = "Assembly Line"
+family = "industry"
+produces = ["sol.hull_section:0.025"]
+feedstock = ["sol.machinery:0.030", "sol.hull_plate:0.035"]
+power_draw = 16.0
+
+# The Shipyard, which PRODUCES NOTHING and is the honest shape rather than a
+# gap: its output is ships, which leave the economy under their own power and
+# are not a commodity. T3 is where the tree stops.
 [[module]]
 id = "sol.mod_shipyard"
-name = "Shipyard"
+name = "Ship Berth"
 family = "industry"
+feedstock = ["sol.hull_section:0.027"]
+consumes = ["sol.hull_plate:0.013"]
 power_draw = 20.0
 
+# Repair and refit rather than construction, so it has no rates at all - it is
+# in the recipes of the two construction archetypes for the variety and the
+# power bill, and Phase 35's people will find it a reason to exist.
 [[module]]
 id = "sol.mod_drydock"
 name = "Drydock"

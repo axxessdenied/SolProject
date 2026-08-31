@@ -1527,6 +1527,19 @@ public:
 
     [[nodiscard]] const std::vector<std::string>& commodityIds() const { return m_commodityIds; }
 
+    // The modules one station is composed of, as indices into `defs.modules()`,
+    // or empty when it has no composition (Phase 34 stage B). This is the read
+    // path stage C's screens and stage D's holds are built on, and the one the
+    // guards use to score the galaxy the game actually generates.
+    [[nodiscard]] std::span<const std::uint32_t> stationModules(std::uint32_t system,
+                                                                std::uint32_t station) const;
+
+    // How many distinct compositions the galaxy needed. One per station is the
+    // worst case and roughly what a galaxy of optional modules produces; the
+    // number is worth reporting because it is the size of the table every
+    // market indexes into.
+    [[nodiscard]] std::size_t compositionCount() const { return m_compositions.size(); }
+
     [[nodiscard]] std::uint32_t commodityIndex(const char* id) const;
 
     [[nodiscard]] double playerCredits() const { return m_playerCredits; }
@@ -2725,6 +2738,18 @@ private:
     // galaxy; called by generateUniverse and by loadFrom after a galaxy
     // regeneration.
     void initializeFactions();
+    // Rolls a module list for every station in the galaxy and turns each one
+    // into an economy archetype of its own (Phase 34 stage B). Called by
+    // generateUniverse and by loadFrom after a galaxy regeneration, for
+    // `initializeFactions`'s reason: the layout re-derives, it is never saved.
+    //
+    // ⚑⚑⚑ IT RUNS AFTER `generateGalaxy` AND OUT OF ITS OWN Rng STREAM, WHICH IS
+    // THE WHOLE REASON THE GALAXY DID NOT MOVE. `populateSystem` draws archetype
+    // -> name -> distance -> direction per station out of that system's stream,
+    // so a draw taken inside it would shift every station position and gate in
+    // the galaxy and both geometry digests with them. Composing afterwards, from
+    // a stream nothing else uses, cannot.
+    void composeStations();
     // Hands player cargo to any active Deliver objective at the docked
     // station: cargo leaves the hold, the market stock refills (the contract
     // literally fills the shortage it advertised).
@@ -3062,6 +3087,42 @@ private:
     sol::sim::GalaxyParams m_galaxyParams; // kept for regeneration on load
     sol::sim::Economy m_economy;
     sol::sim::EconomyParams m_economyParams; // kept for re-init on load
+    // What a `[[module]]` does, in def order, reduced to the same three rate
+    // lists an archetype has plus its power figures (Phase 34 stage B). Cached
+    // off the defs at `generateUniverse` so that `composeStations` needs no def
+    // database - which is what lets `loadFrom` re-compose a regenerated galaxy.
+    struct ModuleRuntime
+    {
+        std::vector<float> production;  // per commodity
+        std::vector<float> consumption; // per commodity
+        std::vector<float> feedstock;   // per commodity
+        float powerOutput = 0.0f;
+        float powerDraw = 0.0f;
+    };
+    // One line of a recipe with its module resolved to an index.
+    struct RecipeEntry
+    {
+        std::uint32_t module = 0;
+        float chance = 1.0f;
+    };
+    // What one composed station is made of. The ARCHETYPE is part of the
+    // identity and not just provenance: two archetypes can roll the same module
+    // list and still differ in what the rest of the game asks of them - whether
+    // they extract, and how much they can hold - so sharing a row between them
+    // would be a bug waiting for stage D.
+    struct StationComposition
+    {
+        std::uint32_t archetype = 0;
+        std::vector<std::uint32_t> modules; // def order indices, recipe order
+    };
+    std::vector<ModuleRuntime> m_modules;
+    std::vector<std::vector<RecipeEntry>> m_recipes; // per station archetype
+    std::vector<std::uint32_t> m_powerModules;       // by ascending output
+    std::vector<StationComposition> m_compositions;
+    // Where the composed rows start in `m_economyParams.archetypes`. Below it
+    // are the authored archetypes, which are still what a `[[station]]` with no
+    // recipe runs on.
+    std::uint32_t m_baseArchetypeCount = 0;
     MiningFeedstock m_feedstock;
     std::vector<GameFaction> m_factionTable; // majors + clans, sim order
     sol::sim::FactionSim m_factionSim;

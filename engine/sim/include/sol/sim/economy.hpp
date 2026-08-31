@@ -115,6 +115,11 @@ struct StationMarket
 {
     std::uint32_t systemIndex = 0;
     std::uint32_t stationIndex = 0;
+    // Which row of `EconomyParams::archetypes` this market's rates come from -
+    // the station's COMPOSITION when the generator composed one and its
+    // archetype otherwise (Phase 34 stage B). The name survives the change
+    // because a composition is a generated archetype and nothing downstream of
+    // `initialize` needs to know which kind it got.
     std::uint32_t archetype = 0;
     std::vector<float> stock; // per commodity
 };

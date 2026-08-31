@@ -62,15 +62,41 @@
 # structure digest does not move.
 # ---------------------------------------------------------------------------
 
+# ⚑⚑⚑ THE ONE ROW PHASE 34 STAGE B RE-STATED RATHER THAN LEFT ALONE, AND THE
+# CHANGE IS GROSS-FOR-NET WITH THE SAME FARM AT THE END OF IT. This archetype
+# read `produces 0.26, consumes nothing` because food upkeep was a flat
+# per-station line and a farm was exempt from it. Habitat modules own that line
+# now (ruled 2026-08-31), and a farm with nobody living on it is a worse world
+# than a different number - so the dome produces 0.32 GROSS and the station's own
+# habitat eats 0.06 of it in expectation, leaving the 0.26 net this row has
+# always meant. NET food per farm is identical to the digit; the galaxy's food
+# MADE and BURNT each rise by about 1.0/s, which moves the made-to-burnt ratio
+# from 1.056 to about 1.045 - measured, in band, and printed by the content
+# guard rather than argued here.
 [[station]]
 id = "sol.station_agri"
 name = "Agricultural Station"
 weight_core = 1.0
 weight_frontier = 1.5
 weight_fringe = 0.5
-produces = ["sol.food:0.26"]
-consumes = ["sol.machinery:0.075"]
+produces = ["sol.food:0.32"]
+consumes = ["sol.machinery:0.075", "sol.food:0.06"]
 stock_capacity = 2500
+modules = [
+    "sol.mod_agri_dome",
+    "sol.mod_habitat_ring",
+    "sol.mod_barracks:0.5",
+    "sol.mod_cryo_hold",
+    "sol.mod_bulk_hold:0.5",
+    "sol.mod_docking_control",
+    "sol.mod_market_floor:0.9",
+    "sol.mod_mission_board:0.5",
+    "sol.mod_crew_hall:0.35",
+    "sol.mod_bar:0.5",
+    "sol.mod_restaurant:0.3",
+    "sol.mod_outfitter:0.2",
+    "sol.mod_ship_sales:0.05",
+]
 
 [[station]]
 id = "sol.station_mine"
@@ -82,6 +108,22 @@ produces = ["sol.ore:0.345"]
 produces_from = "field"
 consumes = ["sol.food:0.05", "sol.hull_plate:0.013"]
 stock_capacity = 2500
+modules = [
+    "sol.mod_ore_extractor",
+    "sol.mod_habitat_ring:0.6",
+    "sol.mod_barracks",
+    "sol.mod_bulk_hold",
+    "sol.mod_hazmat_hold:0.3",
+    "sol.mod_docking_control",
+    "sol.mod_market_floor:0.6",
+    "sol.mod_mission_board:0.6",
+    "sol.mod_crew_hall:0.4",
+    "sol.mod_bar:0.55",
+    "sol.mod_outfitter:0.15",
+    "sol.mod_ship_sales:0.05",
+    "sol.mod_fence:0.08",
+    "sol.mod_ghost_dock:0.05",
+]
 
 # Sited where the rock is, not where the customers are: raw ore is bulk and
 # cheap, so hauling it to the core costs more than it is worth, and the whole
@@ -100,6 +142,23 @@ consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 refine_input = "sol.ore"
 refine_output = "sol.metal"
+modules = [
+    "sol.mod_refinery",
+    "sol.mod_habitat_ring:0.5",
+    "sol.mod_barracks:0.5",
+    "sol.mod_bulk_hold",
+    "sol.mod_hazmat_hold:0.5",
+    "sol.mod_docking_control",
+    "sol.mod_refinery_service:0.85",
+    "sol.mod_market_floor:0.8",
+    "sol.mod_brokerage:0.2",
+    "sol.mod_mission_board:0.5",
+    "sol.mod_crew_hall:0.3",
+    "sol.mod_bar:0.45",
+    "sol.mod_outfitter:0.25",
+    "sol.mod_ship_sales:0.05",
+    "sol.mod_fence:0.06",
+]
 
 [[station]]
 id = "sol.station_factory"
@@ -111,6 +170,23 @@ produces = ["sol.machinery:0.152"]
 feedstock = ["sol.metal:0.19"]
 consumes = ["sol.food:0.05", "sol.hull_plate:0.013"]
 stock_capacity = 2500
+modules = [
+    "sol.mod_fabricator",
+    "sol.mod_habitat_ring:0.8",
+    "sol.mod_medical_bay",
+    "sol.mod_bulk_hold",
+    "sol.mod_docking_control",
+    "sol.mod_market_floor:0.9",
+    "sol.mod_brokerage:0.35",
+    "sol.mod_outfitter:0.6",
+    "sol.mod_ship_sales:0.2",
+    "sol.mod_mission_board:0.7",
+    "sol.mod_crew_hall:0.5",
+    "sol.mod_bar:0.5",
+    "sol.mod_restaurant:0.35",
+    "sol.mod_concourse:0.2",
+    "sol.mod_drydock:0.15",
+]
 
 # ---------------------------------------------------------------------------
 # The ferrous chain (Phase 33 stage B): ferrous ore -> structural alloy ->
@@ -194,6 +270,19 @@ produces = ["sol.ore_ferrous:0.20"]
 produces_from = "field"
 consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
+modules = [
+    "sol.mod_ferrous_extractor",
+    "sol.mod_habitat_ring:0.5",
+    "sol.mod_barracks:0.5",
+    "sol.mod_bulk_hold",
+    "sol.mod_docking_control",
+    "sol.mod_market_floor:0.55",
+    "sol.mod_mission_board:0.55",
+    "sol.mod_crew_hall:0.35",
+    "sol.mod_bar:0.5",
+    "sol.mod_outfitter:0.15",
+    "sol.mod_fence:0.08",
+]
 
 # Smelt at the pit, exactly as the Refinery does and for the identical reason:
 # ferrous ore is bulk and cheap, alloy is compact and valuable, and the leg that
@@ -208,6 +297,20 @@ produces = ["sol.alloy:0.085"]
 feedstock = ["sol.ore_ferrous:0.13"]
 consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
+modules = [
+    "sol.mod_smelter",
+    "sol.mod_habitat_ring:0.3",
+    "sol.mod_barracks",
+    "sol.mod_bulk_hold",
+    "sol.mod_hazmat_hold:0.4",
+    "sol.mod_docking_control",
+    "sol.mod_market_floor:0.7",
+    "sol.mod_mission_board:0.5",
+    "sol.mod_crew_hall:0.3",
+    "sol.mod_bar:0.45",
+    "sol.mod_outfitter:0.2",
+    "sol.mod_ship_sales:0.05",
+]
 
 # Core-weighted like the Fabricator Yard: the last industrial step wants to be
 # near the customers, and for this chain the customer is a hardpoint on a ship.
@@ -223,6 +326,21 @@ produces = ["sol.hull_plate:0.12"]
 feedstock = ["sol.alloy:0.15"]
 consumes = ["sol.food:0.035"]
 stock_capacity = 2500
+modules = [
+    "sol.mod_component_works",
+    "sol.mod_habitat_ring:0.5",
+    "sol.mod_barracks:0.5",
+    "sol.mod_bulk_hold",
+    "sol.mod_docking_control",
+    "sol.mod_market_floor:0.85",
+    "sol.mod_outfitter:0.7",
+    "sol.mod_ship_sales:0.2",
+    "sol.mod_brokerage:0.3",
+    "sol.mod_mission_board:0.6",
+    "sol.mod_crew_hall:0.45",
+    "sol.mod_bar:0.5",
+    "sol.mod_restaurant:0.3",
+]
 
 # ---------------------------------------------------------------------------
 # The salvage leg (Phase 33 stage C): a dead hull -> salvage -> structural
@@ -303,6 +421,22 @@ weight_fringe = 0.7
 produces = ["sol.salvage:0.17"]
 consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
+modules = [
+    "sol.mod_breaker_line",
+    "sol.mod_habitat_ring:0.3",
+    "sol.mod_barracks",
+    "sol.mod_bulk_hold",
+    "sol.mod_hazmat_hold:0.5",
+    "sol.mod_docking_control",
+    "sol.mod_market_floor:0.5",
+    "sol.mod_mission_board:0.5",
+    "sol.mod_crew_hall:0.3",
+    "sol.mod_bar:0.5",
+    "sol.mod_outfitter:0.2",
+    "sol.mod_fence:0.15",
+    "sol.mod_ghost_dock:0.1",
+    "sol.mod_black_clinic:0.08",
+]
 
 # Core-leaning, because its output is alloy and alloy's customer is the
 # Fabrication Works - the same argument that sites the Foundry at the pit sites
@@ -321,6 +455,21 @@ consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 refine_input = "sol.salvage"
 refine_output = "sol.alloy"
+modules = [
+    "sol.mod_reclaimer",
+    "sol.mod_habitat_ring:0.5",
+    "sol.mod_barracks:0.5",
+    "sol.mod_bulk_hold",
+    "sol.mod_hazmat_hold:0.6",
+    "sol.mod_docking_control",
+    "sol.mod_reclaim_service:0.85",
+    "sol.mod_market_floor:0.75",
+    "sol.mod_mission_board:0.5",
+    "sol.mod_crew_hall:0.35",
+    "sol.mod_bar:0.45",
+    "sol.mod_outfitter:0.25",
+    "sol.mod_fence:0.1",
+]
 
 # ---------------------------------------------------------------------------
 # T3, the construction tier (Phase 33 stage E): machinery + hull plate -> a hull
@@ -417,6 +566,22 @@ produces = ["sol.hull_section:0.025"]
 feedstock = ["sol.machinery:0.030", "sol.hull_plate:0.035"]
 consumes = ["sol.food:0.035"]
 stock_capacity = 2500
+modules = [
+    "sol.mod_assembly_line",
+    "sol.mod_habitat_ring:0.5",
+    "sol.mod_barracks:0.5",
+    "sol.mod_bulk_hold",
+    "sol.mod_docking_control",
+    "sol.mod_market_floor:0.8",
+    "sol.mod_outfitter:0.5",
+    "sol.mod_ship_sales:0.35",
+    "sol.mod_drydock:0.4",
+    "sol.mod_mission_board:0.6",
+    "sol.mod_crew_hall:0.5",
+    "sol.mod_bar:0.45",
+    "sol.mod_restaurant:0.25",
+    "sol.mod_brokerage:0.25",
+]
 
 # Beside the Assembly Yard rather than out where the ships are needed, because a
 # hull section is the bulkiest thing this economy moves and a finished ship
@@ -432,3 +597,22 @@ weight_fringe = 0.2
 feedstock = ["sol.hull_section:0.027"]
 consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
+modules = [
+    "sol.mod_shipyard",
+    "sol.mod_habitat_ring:0.4",
+    "sol.mod_barracks:0.5",
+    "sol.mod_medical_bay:0.5",
+    "sol.mod_bulk_hold",
+    "sol.mod_docking_control",
+    "sol.mod_ship_sales:0.95",
+    "sol.mod_outfitter:0.8",
+    "sol.mod_drydock:0.7",
+    "sol.mod_market_floor:0.6",
+    "sol.mod_mission_board:0.7",
+    "sol.mod_crew_hall:0.6",
+    "sol.mod_bar:0.55",
+    "sol.mod_restaurant:0.4",
+    "sol.mod_concourse:0.3",
+    "sol.mod_casino:0.1",
+    "sol.mod_brokerage:0.3",
+]
