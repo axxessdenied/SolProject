@@ -261,20 +261,27 @@ bool checkDigest(const char* layer, std::uint64_t actual, std::uint64_t expected
 constexpr std::size_t kGoldenSystemCount = 80;
 constexpr std::size_t kGoldenLinkCount = 158;
 constexpr std::size_t kGoldenClanCount = 10;
-// ⚑⚑⚑ RE-RECORDED BY PHASE 33 STAGE C, FOR STAGE B's REASON ONE STAGE ON.
-// `stations.toml` gained two more archetypes - Breaker Yard and Reclamation
-// Plant - so the generator now picks from nine rules where it picked from
-// seven, and this digest hashes `station.archetype` for every station in the
-// galaxy. Old: 0xBC19DD29982F8D89ull (stage B, seven rules), and
-// 0x51F04FE42530B01Aull before that (four rules).
+// ⚑⚑⚑ RE-RECORDED BY PHASE 33 STAGE E, FOR THE THIRD TIME IN ONE PHASE AND
+// ALWAYS FOR THE SAME REASON. `stations.toml` gained the construction tier's
+// two archetypes - Assembly Yard and Shipyard - so the generator now picks from
+// eleven rules where it picked from nine, and this digest hashes
+// `station.archetype` for every station in the galaxy. Old:
+// 0xA57E01F0BEB11451ull (stage C, nine rules), 0xBC19DD29982F8D89ull (stage B,
+// seven), and 0x51F04FE42530B01Aull before that (four).
 //
 // ⚑⚑ WHAT DID NOT MOVE IS THE EVIDENCE THAT THIS IS THE CHANGE IT LOOKS
 // LIKE. 80 systems, 158 links and 10 clans are unchanged, and BOTH geometry
 // digests below are untouched on both recorded libms - so not one station,
 // planet or gate moved a metre. The galaxy is the same place; some of its
-// stations now do a different job. Twice in two stages this digest has been the
-// only thing that reported a station mix moving, and twice it has been right.
-constexpr std::uint64_t kGoldenStructure = 0xA57E01F0BEB11451ull;
+// stations now do a different job. Three times in three stages this digest has
+// been the only thing that reported a station mix moving, and three times it
+// has been right.
+//
+// ⚑ Stage E's prerequisite commit is the counter-example that makes the rule
+// worth stating: it re-tuned nine production rates across the whole economy and
+// did NOT move this number, because it touched no placement weight. A digest
+// that had moved there would have been the bug.
+constexpr std::uint64_t kGoldenStructure = 0x64EF583821E22A71ull;
 
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine

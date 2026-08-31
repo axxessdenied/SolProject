@@ -58,10 +58,13 @@ base_price = 32.0
 # clear the step by MORE, not less. Left as a caution: an arithmetic argument in
 # a comment is only as good as the last time somebody re-read the file it cites.
 #
-# ⚑⚑ AND STAGE E MOVED THEM AGAIN, 0.15/0.12 TO 0.125/0.10 - a THROUGHPUT cut,
-# not a conversion one. The step is still 0.80 in and clears the same +30% it
-# always did; there are simply four more Fabricator Yards in the real galaxy
-# than the file was tuned for. See `stations.toml`'s header.
+# ⚑⚑ AND STAGE E MOVED THEM TWICE IN TWO COMMITS - 0.15/0.12 to 0.125/0.10 when
+# the guard learned to count the real galaxy, then to 0.19/0.152 when this
+# stage's two archetypes resampled it again. Both are THROUGHPUT changes, not
+# conversion ones: the step is still 0.80 in and clears the same +30% it always
+# did. The Fabricator Yard absorbs both corrections because it is the only
+# consumer of refined metal and the only producer of machinery, so one number
+# moves both ratios. See `stations.toml`'s headers.
 [[commodity]]
 id = "sol.machinery"
 name = "Machinery"
@@ -156,3 +159,41 @@ id = "sol.salvage"
 name = "Salvage"
 tier = "raw"
 base_price = 11.0
+
+# ---------------------------------------------------------------------------
+# T3, the construction tier (Phase 33 stage E), and it is ONE good for a reason
+# the roadmap did not anticipate.
+#
+# ⚑⚑⚑⚑ gdd.md 6 LISTS "ship module kits, station module kits (12), hull and
+# drive sections" AND THE FIRST OF THOSE HAS NO CONSUMER IN THIS GAME. T3 is
+# named in the arc as "the construction tier Phases 34 and 41 spend" - but 34
+# builds the MODULE VOCABULARY and never buys a kit, and 41, which is the phase
+# where a player actually hauls station module kits and assembles a station, is
+# v2. A good whose only consumer is a phase that has not been written is a good
+# that sits at exactly half capacity forever, which is dead centre of every band
+# the four-hour steady-state test checks - the precise defect stage A found and
+# the precise thing `economy_every_commodity_is_made_and_burnt_somewhere` exists
+# to refuse. So the tier ships as the half of gdd.md 6's list that somebody
+# burns TODAY: a hull section, and a Shipyard that turns it into ships.
+#
+# ⚑⚑⚑ IT IS THE FIRST GOOD IN THIS GAME MADE OF TWO OTHER GOODS, AND THAT IS
+# WHAT T3 IS FOR. The metal chain (ore -> metal -> machinery) and the ferrous
+# chain (ferrous -> alloy -> plate) have run side by side since stage B without
+# ever touching. An Assembly Yard takes machinery off one and hull plate off the
+# other, which is the first place in the tree where two chains MERGE rather than
+# fork - and `Economy::produce` has always throttled a station by its scarcest
+# feedstock ("a production line runs or it doesn't"), a branch no shipped
+# archetype had ever reached.
+#
+# ⚑⚑ PRICED OFF BOTH ITS INPUTS. An Assembly Yard turns 0.030 machinery and
+# 0.035 hull plate into 0.025 hull sections: at base prices 1.56 + 2.24 = 3.80
+# cr of input for 5.00 cr of output, +32%, which is the same margin the
+# Fabricator Yard and the Fabrication Works clear on their single-input steps.
+# Below about 150 the step destroys value and nobody assembles anything.
+# ---------------------------------------------------------------------------
+
+[[commodity]]
+id = "sol.hull_section"
+name = "Hull Section"
+tier = "assembly"
+base_price = 200.0

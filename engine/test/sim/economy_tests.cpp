@@ -622,6 +622,59 @@ SOL_TEST(economy_feedstock_gates_production_and_upkeep_does_not)
     SOL_CHECK(hungry.satisfaction(0) == 1.0f);
 }
 
+// ⚑⚑⚑ THE BRANCH PHASE 8g WROTE AND NOTHING REACHED UNTIL PHASE 33 STAGE E.
+// `Economy::produce` has always taken the MINIMUM over every feedstock - "the
+// scarcest feedstock (a station with none runs flat out)... because a production
+// line runs or it doesn't" - and until the Assembly Yard, every shipped
+// archetype had exactly one. A loop over one element is the same code as a loop
+// over none, so the sentence in that comment was an intention rather than a
+// tested claim for twenty-five phases.
+//
+// ⚑⚑ THE SECOND HALF IS THE HALF THAT COULD HAVE BEEN WRONG. That the scarcer
+// input throttles is the easy direction; that the OTHER input is then spent in
+// proportion rather than at its full rate is what stops a two-input station
+// quietly draining the chain it is not short of. A station at 25% must burn 25%
+// of both.
+SOL_TEST(economy_a_two_feedstock_station_burns_both_at_the_scarcer_ones_rate)
+{
+    const Galaxy galaxy = tinyGalaxy();
+    EconomyParams params;
+    params.commodities = {EconomyCommodity{.basePrice = 10.0f},
+                          EconomyCommodity{.basePrice = 30.0f},
+                          EconomyCommodity{.basePrice = 90.0f}};
+    EconomyArchetype idle; // market 0 is not what this test is about
+    idle.stockCapacity = 1'000.0f;
+    EconomyArchetype assembly;
+    assembly.production = {0.0f, 0.0f, 1.0f};
+    assembly.feedstock = {2.0f, 4.0f, 0.0f};
+    assembly.stockCapacity = 1'000.0f;
+    params.archetypes = {idle, assembly};
+    params.traderCount = 0;
+
+    Economy economy;
+    economy.initialize(galaxy, params, 3);
+    // Strip both inputs, then hand back a quarter of a second's worth of the
+    // one and a full second's of the other.
+    (void)economy.buy(1, 0, 1.0e9f);
+    (void)economy.buy(1, 1, 1.0e9f);
+    (void)economy.sell(1, 0, 2.0f); // a full second of appetite
+    (void)economy.sell(1, 1, 1.0f); // a quarter of one
+    const float madeBefore = economy.stock(1, 2);
+
+    economy.tick(galaxy, 1.0);
+
+    // Throttled to 25% by commodity 1, and it says so.
+    SOL_CHECK(std::abs(economy.satisfaction(1) - 0.25f) < 1.0e-3f);
+    SOL_CHECK(economy.limitingCommodity(1) == 1);
+    SOL_CHECK(std::abs(economy.stock(1, 2) - (madeBefore + 0.25f)) < 1.0e-3f);
+    // The scarce input is emptied...
+    SOL_CHECK(economy.stock(1, 1) < 1.0e-3f);
+    // ...and the plentiful one gave up a quarter of its rate, not all of it.
+    // Without the `* ratio` on the feedstock spend this reads 0.0 and an
+    // Assembly Yard short of machinery would eat hull plate for nothing.
+    SOL_CHECK(std::abs(economy.stock(1, 0) - 1.5f) < 1.0e-3f);
+}
+
 SOL_TEST(economy_shortage_propagates_down_the_chain)
 {
     // Cutting the refinery's ore off has to show up in its metal output, not
@@ -724,6 +777,8 @@ constexpr float kAlloyPrice = 38.0f;
 constexpr float kHullPlatePrice = 64.0f;
 // Phase 33 stage C's salvage leg.
 constexpr float kSalvagePrice = 11.0f;
+// Phase 33 stage E's construction tier.
+constexpr float kHullSectionPrice = 200.0f;
 
 // ⚑⚑ THE ORDER IS `commodities.toml`'S ORDER AND HAS TO STAY THAT WAY. The sim
 // knows a commodity only as an index into the table the game built by walking
@@ -740,6 +795,7 @@ enum Commodity : std::uint32_t
     Alloy,
     HullPlate,
     Salvage,
+    HullSection,
     CommodityCount,
 };
 
@@ -756,6 +812,8 @@ enum Archetype : std::uint32_t
     FabWorks,
     Breaker,
     Recycler,
+    Assembly,
+    Shipyard,
 };
 
 [[nodiscard]] Galaxy shippedGalaxy()
@@ -801,6 +859,8 @@ enum Archetype : std::uint32_t
         {{1.2f, 0.6f, 0.2f}},   // fabrication works: near the hardpoints
         {{0.2f, 0.6f, 0.7f}},   // breaker yard: out where the hulls die
         {{1.1f, 0.9f, 0.3f}},   // reclamation plant: near the alloy's customer
+        {{1.6f, 0.6f, 0.2f}},   // assembly yard: where the components are
+        {{1.6f, 0.6f, 0.2f}},   // shipyard: beside it, because a section is bulk
     };
     // ⚑⚑⚑⚑ PHASE 33 STAGE E, AND IT IS THE MOST EXPENSIVE LINE THIS FILE HAS
     // EVER BEEN MISSING. Without these rows this galaxy is not the one the game
@@ -835,13 +895,18 @@ enum Archetype : std::uint32_t
     // `claimTerritory` hands out), pirate templates deliberately absent because
     // the game gives them no row either. Measured: adding the pirate count on
     // top of these rows changes not one station.
-    //                        agri  mine   ref   fac  ferr  fnd   fab   brk  recyc
+    // ⚑ The trailing 1.0s are not padding, they are the content: `factions.toml`
+    // biases FOUR archetypes and `stations.toml` has eleven, so the whole
+    // ferrous chain, the salvage leg and the construction tier are
+    // faction-neutral while the metal chain carries every faction's character.
+    // Recorded in `factions.toml` as a gap rather than filled in here.
+    //                        agri  mine   ref   fac  ferr  fnd   fab   brk  recyc  asm  yard
     params.factionStationBias = {
-        {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // navy: no character authored
-        {1.6f, 1.0f, 0.7f, 1.3f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // guild
-        {0.4f, 1.5f, 2.2f, 2.6f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // hegemony
-        {2.4f, 1.6f, 1.0f, 0.3f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // compact
-        {1.0f, 0.35f, 0.8f, 2.8f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},  // ascendancy
+        {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // navy: none authored
+        {1.6f, 1.0f, 0.7f, 1.3f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // guild
+        {0.4f, 1.5f, 2.2f, 2.6f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // hegemony
+        {2.4f, 1.6f, 1.0f, 0.3f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},   // compact
+        {1.0f, 0.35f, 0.8f, 2.8f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},  // ascendancy
     };
     return sol::sim::generateGalaxy(params);
 }
@@ -858,6 +923,7 @@ enum Archetype : std::uint32_t
     params.commodities[Alloy].basePrice = kAlloyPrice;
     params.commodities[HullPlate].basePrice = kHullPlatePrice;
     params.commodities[Salvage].basePrice = kSalvagePrice;
+    params.commodities[HullSection].basePrice = kHullSectionPrice;
 
     const auto archetype = [](std::initializer_list<float> production,
                               std::initializer_list<float> consumption,
@@ -877,7 +943,7 @@ enum Archetype : std::uint32_t
         out.stockCapacity = 2'500.0f;
         return out;
     };
-    params.archetypes.resize(9);
+    params.archetypes.resize(11);
     // Indices, in the order of the enum above:
     // ⚑⚑⚑ THE METAL CHAIN'S THROUGHPUT AND THE NEW ROWS' FOOD UPKEEP ARE PHASE
     // 33 STAGE E's, AND THEY MOVED BECAUSE THE GALAXY ABOVE DID. Every
@@ -886,14 +952,19 @@ enum Archetype : std::uint32_t
     // argues - because the ratios were never what was wrong. What was wrong is
     // how much each station moves, sized per station against a count that is
     // four out in both directions on the metal chain.
-    //                            food   ore  metal  mach  ferr alloy plate  salv
+    //                            food   ore  metal  mach  ferr alloy plate  salv  sect
     constexpr float P = 0.013f; // the hull-plate upkeep heavy industry burns
     constexpr float F = 0.035f; // the food upkeep of a station that is not a mine
     params.archetypes[Agri] = archetype({0.26f}, {0, 0, 0, 0.075f}, {}, false);
     params.archetypes[Mine] = archetype({0, 0.345f}, {0.05f, 0, 0, 0, 0, 0, P}, {}, true);
     params.archetypes[Refinery] = archetype({0, 0, 0.20f}, {F, 0, 0, 0, 0, 0, P}, {0, 0.31f}, false);
+    // ⚑ Moved twice inside stage E: 0.125/0.10 when the guard above learned to
+    // count the real galaxy, then 0.19/0.152 when the two rows below resampled
+    // it again. The Fabricator Yard is refined metal's only consumer and
+    // machinery's only producer, so it is the one station that can absorb an
+    // error in both directions with one number.
     params.archetypes[Factory] =
-        archetype({0, 0, 0, 0.10f}, {0.05f, 0, 0, 0, 0, 0, P}, {0, 0, 0.125f}, false);
+        archetype({0, 0, 0, 0.152f}, {0.05f, 0, 0, 0, 0, 0, P}, {0, 0, 0.19f}, false);
     params.archetypes[FerrousMine] = archetype({0, 0, 0, 0, 0.20f}, {F, 0, 0, 0, 0, 0, P}, {}, true);
     params.archetypes[Foundry] =
         archetype({0, 0, 0, 0, 0, 0.085f}, {F, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0.13f}, false);
@@ -905,6 +976,18 @@ enum Archetype : std::uint32_t
         archetype({0, 0, 0, 0, 0, 0, 0, 0.17f}, {F, 0, 0, 0, 0, 0, P}, {}, false);
     params.archetypes[Recycler] =
         archetype({0, 0, 0, 0, 0, 0.085f}, {F, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0, 0, 0, 0.13f}, false);
+    // ⚑⚑ THE CONSTRUCTION TIER, AND THE TWO ROWS ARE UNLIKE ANYTHING ABOVE THEM.
+    // The Assembly Yard is the first archetype in this game with TWO feedstocks,
+    // so it is the first to reach `Economy::produce`'s "scarcest feedstock"
+    // minimum - a branch written in Phase 8g that no shipped content had ever
+    // taken. The Shipyard PRODUCES NOTHING: its output is ships, which fly away
+    // and are not a commodity, exactly as the Agricultural Station's input is
+    // sunlight and the Breaker Yard's is derelict hulls. T3 is where the tree
+    // stops, because what the construction tier constructs is not tradeable.
+    params.archetypes[Assembly] = archetype(
+        {0, 0, 0, 0, 0, 0, 0, 0, 0.025f}, {F}, {0, 0, 0, 0.030f, 0, 0, 0.035f}, false);
+    params.archetypes[Shipyard] =
+        archetype({}, {F, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0, 0, 0, 0, 0.0175f}, false);
     return params;
 }
 

@@ -304,6 +304,24 @@ price = 60000.0
 mass = 40000.0
 power_output = 10.0
 crew_berths = 2
+# ⚑⚑⚑ THE FIRST SHIP IN THIS GAME THAT IS MADE OF SOMETHING (Phase 33 stage E),
+# and the T3 half of the claim stage B made at T2. `CatalogGate::requires` has
+# always sat on the SHARED gate - its own comment reads "a ship, a weapon or a
+# crew member could take one; nothing does" - and this is that sentence
+# executed. A hull section is welded out of machinery and hull plate at an
+# Assembly Yard, which is two chains and six steps upstream of this line, so the
+# Shipyard tab is now SHORTER at a station with no sections in stock. gdd.md 6
+# says the gun you buy was manufactured somewhere by somebody; a 40-tonne hull
+# is the thing that claim is most obviously true of.
+#
+# ⚑⚑ THE HEAVY HULL AND ONLY THE HEAVY HULL. The Shuttle and the Interceptor
+# stay ungated, so a player is never stranded without something to fly - which
+# is the same restraint stage B showed in gating one fitting rather than
+# sweeping the catalogue. It is also the hull the loot bound is drawn against:
+# 40 t is the one shipped ship heavy enough to be carrying a hull section when
+# it dies (see `haulWeight`), so the ship you cannot buy without sections is the
+# ship whose wreck can pay you in them.
+requires = "sol.hull_section"
 
   # ⚑ The one hull whose mount list is worth reading twice. It carries a
   # `turret` rather than a `fixed` gun because a freighter that has to point its

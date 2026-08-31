@@ -107,8 +107,8 @@ name = "Fabricator Yard"
 weight_core = 2.0
 weight_frontier = 1.0
 weight_fringe = 0.3
-produces = ["sol.machinery:0.10"]
-feedstock = ["sol.metal:0.125"]
+produces = ["sol.machinery:0.152"]
+feedstock = ["sol.metal:0.19"]
 consumes = ["sol.food:0.05", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 
@@ -321,3 +321,101 @@ consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 refine_input = "sol.salvage"
 refine_output = "sol.alloy"
+
+# ---------------------------------------------------------------------------
+# T3, the construction tier (Phase 33 stage E): machinery + hull plate -> a hull
+# section -> a ship somebody flies away in. Two archetypes, and the second one
+# is the unusual one.
+#
+# ⚑⚑⚑⚑ THE SHIPYARD PRODUCES NOTHING, AND THAT IS THE HONEST SHAPE RATHER THAN
+# A GAP. A farm's input is sunlight and a Breaker Yard's is the derelict hulls
+# towed in, and this file already says neither is a good this economy models -
+# both produce out of nothing. A Shipyard is the same statement at the other
+# end: its output is SHIPS, which leave the economy under their own power and
+# are not a commodity either. T3 is where the tree stops, because what the
+# construction tier constructs is not tradeable - and a tier that terminates in
+# a warehouse would not have been a construction tier at all.
+#
+# ⚑ `Economy::produce` handles it without a special case: `ratio` is set by the
+# scarcest feedstock whether or not anything is produced, and feedstock is spent
+# in proportion to it, so a Shipyard short of sections simply builds fewer
+# ships. Nothing else in the sim reads an archetype's production - traders route
+# on price and stock - so a pure sink is a station like any other.
+#
+# ⚑⚑ THE ASSEMBLY YARD IS THE FIRST STATION IN THE GAME WITH TWO FEEDSTOCKS,
+# which is what makes this T3 rather than a second T2. `Economy::produce` has
+# taken the minimum over every feedstock since Phase 8g - "the scarcest
+# feedstock (a station with none runs flat out)" - and no shipped archetype had
+# ever reached that branch. An Assembly Yard is throttled by whichever of
+# machinery and hull plate is shorter, so it is the first place a shortage on
+# the metal chain can be felt on the ferrous one.
+#
+# ⚑⚑⚑ AND THE MIX RESAMPLED AGAIN, FOR THE THIRD STAGE RUNNING, THIS TIME OFF A
+# CORRECTED BASE. The prerequisite commit taught the guards to count the galaxy
+# the game builds; these two rows then moved that galaxy again:
+#
+#   stage E base   agri 19  mine 14  refinery 13  factory 17  ferrous 14  foundry 16  fabworks 13  breaker  9  plant 10
+#   shipped        agri 17  mine 15  refinery 12  factory 10  ferrous 10  foundry 11  fabworks 13  breaker 11  plant 12  + 6 assembly, 8 shipyard
+#
+# The FABRICATOR YARD lost seven stations, 17 to 10, to two archetypes weighted
+# like the Fabrication Works and not like it. The Reclamation Plant went UP
+# again. There is still no argument that gets from a weight to a count.
+#
+# The weights below are a design statement in their SHAPE and a search result in
+# their MAGNITUDE, exactly as stage C's were: an Assembly Yard belongs where the
+# components are, which is inward, and a Shipyard belongs beside it, because a
+# hull section is the bulkiest thing in the game and the leg that should be
+# short is that one. Which inward, out of the triples that satisfy it, was
+# picked by generating the shipped galaxy for each candidate and keeping the mix
+# that leaves every commodity nearest the middle of the guard's band.
+#
+# ⚑⚑⚑⚑ AND THE SEARCH SAID SOMETHING NO EARLIER STAGE'S DID: AT THE FIRST CUT'S
+# RATES, THE ONLY IN-BAND GALAXIES WERE THE ONES WITH ALMOST NO T3 IN THEM. A
+# sweep over the whole weight grid returned exactly three candidates that put
+# every commodity in band, and all three placed ONE Assembly Yard - the tier
+# could exist only by barely existing. That is not a weight problem and no
+# weight could have fixed it: taking ten stations out of an eleven-archetype
+# galaxy left refined metal at 1.745 (twelve Refineries against ten Fabricator
+# Yards) and machinery at 0.772 in the same breath, one over the ceiling and one
+# under the floor, on the chain this stage does not touch.
+#
+# ⚑⚑⚑ SO THE FABRICATOR YARD'S THROUGHPUT MOVED AGAIN, ONE COMMIT AFTER THE
+# PREREQUISITE SET IT - 0.125 metal / 0.10 machinery to 0.19 / 0.152, the 0.80
+# conversion and the +30% margin preserved as before. It is the same station
+# absorbing both errors because it sits between them: it is refined metal's only
+# consumer and machinery's only producer, so widening it lowers one ratio and
+# raises the other with one number. ⚑ *A rate is not tuned once. It is tuned per
+# station count, and the station count is resampled by every archetype anybody
+# adds - which is exactly what the prerequisite commit's guard now measures.*
+# ---------------------------------------------------------------------------
+
+# Where the components are: machinery comes off a Fabricator Yard and hull plate
+# off a Fabrication Works, and both of those are core-weighted. An Assembly Yard
+# put in the fringe would be hauling two feedstocks the length of the galaxy to
+# make one output - the exact inversion of the argument that smelts ore at the
+# pit.
+[[station]]
+id = "sol.station_assembly"
+name = "Assembly Yard"
+weight_core = 1.6
+weight_frontier = 0.6
+weight_fringe = 0.2
+produces = ["sol.hull_section:0.025"]
+feedstock = ["sol.machinery:0.030", "sol.hull_plate:0.035"]
+consumes = ["sol.food:0.035"]
+stock_capacity = 2500
+
+# Beside the Assembly Yard rather than out where the ships are needed, because a
+# hull section is the bulkiest thing this economy moves and a finished ship
+# moves itself. It burns hull plate as upkeep like the rest of heavy industry
+# and unlike the Assembly Yard, whose plate line is feedstock already - a
+# station cannot sensibly have the same good on both lists.
+[[station]]
+id = "sol.station_shipyard"
+name = "Shipyard"
+weight_core = 1.6
+weight_frontier = 0.6
+weight_fringe = 0.2
+feedstock = ["sol.hull_section:0.0175"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
+stock_capacity = 2500

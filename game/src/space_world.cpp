@@ -100,7 +100,14 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // a saved signal still holds a commodity drawn from a uniform roll, both of
 // which are indices into a table that has grown. There is nothing to migrate
 // them to that would be truer than a fresh galaxy.
-constexpr std::uint32_t kSaveVersion = 27;
+// v28 (Phase 33 stage E): a ninth good, `sol.hull_section`, and the same flat
+// market block one float wider again. ⚑ This bump carries something the width
+// alone does not: two new archetypes were added and the generator RESAMPLED
+// every station in the galaxy, so a v27 save's market indices name stations
+// that are now doing a different job. The galaxy is the same place - the golden
+// geometry digests are untouched - but which building is a Refinery has moved,
+// which is precisely the thing a save cannot be migrated through.
+constexpr std::uint32_t kSaveVersion = 28;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
