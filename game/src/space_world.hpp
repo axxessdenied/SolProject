@@ -7,6 +7,7 @@
 
 #include "sol/assets/data_defs.hpp"
 #include "sol/core/math/math.hpp"
+#include "sol/core/random.hpp"
 #include "sol/ecs/ecs.hpp"
 #include "sol/sim/collision.hpp"
 #include "sol/sim/damage.hpp"
@@ -1861,6 +1862,16 @@ public:
     // approaching from wherever it already is, with the nose on it.
     bool warpTo(const sol::core::DVec3& target, double standoff);
 
+    // Composes a wreck's contents from the victim's fit and cargo (the
+    // scriptless default; the Lua hook may replace it before it is cut).
+    //
+    // ⚑ PUBLIC SINCE PHASE 33 STAGE C, and only so that a test can ask it what
+    // a given hull drops without killing a ship to find out. It is already a
+    // pure function of a `ShipDef` and a seed - it reads no world state beyond
+    // the def database - and it is already exposed to content through the
+    // `wreck_loot` Lua hook, so this widens who can call it and not what it is.
+    [[nodiscard]] sol::sim::SignalLoot defaultWreckLoot(const sol::assets::ShipDef* def,
+                                                        std::uint64_t seed) const;
     // Wreck loot composed by the Lua hook (validated in MiningSim).
     bool applyWreckLoot(std::uint32_t id, sol::sim::SignalLoot loot);
     void takeWreckEvents(std::vector<WreckEvent>& out);
@@ -2754,10 +2765,11 @@ private:
     bool tryFitSalvagedComponent(const std::string& componentId, std::string& outName);
     // The rock or wreck entity the boresight is on within `range`, or ~0u.
     [[nodiscard]] std::uint32_t entityAhead(double range, bool& outIsWreck) const;
-    // Composes a wreck's contents from the victim's fit and cargo (the
-    // scriptless default; the Lua hook may replace it before it is cut).
-    [[nodiscard]] sol::sim::SignalLoot defaultWreckLoot(const sol::assets::ShipDef* def,
-                                                        std::uint64_t seed) const;
+    // One commodity out of the table, weighted by what a hull that size would
+    // plausibly have been carrying (Phase 33 stage C). `kNoIndex` when there is
+    // no commodity table at all, or when every good in it is a module kit and
+    // the hull is too small to have had one. Both loot composers use it.
+    [[nodiscard]] std::uint32_t rollHauledCommodity(sol::core::Rng& rng, bool canCarryAssemblies) const;
     // The docked station archetype's refinery pair, resolved from the defs.
     bool dockedRefinePair(std::uint32_t& input, std::uint32_t& output) const;
     // Creates the mining component pools up front. Const storage<T>() asserts

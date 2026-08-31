@@ -722,6 +722,8 @@ constexpr float kMachineryPrice = 52.0f;
 constexpr float kFerrousPrice = 14.0f;
 constexpr float kAlloyPrice = 38.0f;
 constexpr float kHullPlatePrice = 64.0f;
+// Phase 33 stage C's salvage leg.
+constexpr float kSalvagePrice = 11.0f;
 
 // ⚑⚑ THE ORDER IS `commodities.toml`'S ORDER AND HAS TO STAY THAT WAY. The sim
 // knows a commodity only as an index into the table the game built by walking
@@ -737,6 +739,7 @@ enum Commodity : std::uint32_t
     OreFerrous,
     Alloy,
     HullPlate,
+    Salvage,
     CommodityCount,
 };
 
@@ -751,6 +754,8 @@ enum Archetype : std::uint32_t
     FerrousMine,
     Foundry,
     FabWorks,
+    Breaker,
+    Recycler,
 };
 
 [[nodiscard]] Galaxy shippedGalaxy()
@@ -760,14 +765,25 @@ enum Archetype : std::uint32_t
     params.factionCount = 5;
     // ⚑⚑⚑ THE FIRST FOUR WEIGHTS ARE UNTOUCHED BY PHASE 33, AND THAT IS NOT
     // THE SAME THING AS THE OLD MIX SURVIVING. Station COUNT is fixed by the
-    // generator at 124 whatever this list says, so three new archetypes take
-    // stations away from the old four. Leaving those four weights alone keeps
-    // their proportions PER REGION TIER - and the aggregate still moved, because
-    // the three new rows sit outward rather than evenly: 22:33:43:26 became
-    // 18:17:22:18, measured. Touching one of the old four would re-tune the
-    // whole galaxy on top of that, which is why none of them is touched; what
-    // holds the result together is
-    // `economy_no_commodity_is_made_much_faster_than_it_is_burnt` below.
+    // generator at 124 whatever this list says, so every archetype added takes
+    // stations away from the ones already here. Leaving a row's weight alone
+    // keeps its proportion PER REGION TIER and does nothing for it in aggregate.
+    //
+    // ⚑⚑⚑⚑ STAGE B FOUND THAT AND STAGE C FOUND THE STRONGER VERSION OF IT:
+    // THE OLD ROWS ARE NOT SCALED, THEY ARE RESAMPLED. Adding stage C's two
+    // archetypes moved the Mining Outpost UP, 17 stations to 19, while the
+    // Refinery it feeds fell 22 to 17 - so raw ore's made-to-burnt ratio went to
+    // 1.84 with nothing about ore having changed at all. There is no argument
+    // that gets from a weight to a count here; the generator draws station by
+    // station out of a per-system roll and a tenth of a point on a new row moves
+    // an unrelated old row by several stations. The two new rows' SHAPE is a
+    // design statement (a breaker yard outward, a reclamation plant inward) and
+    // their magnitudes were searched against the guard below, which is the only
+    // instrument in this file that can answer the question at all.
+    //
+    // Touching one of the old rows would re-tune the whole galaxy on top of
+    // that, which is why none of them is touched; what holds the result together
+    // is `economy_no_commodity_is_made_much_faster_than_it_is_burnt` below.
     //
     // ⚑ `requiresField` is left false here as it always has been, so this galaxy
     // sites extractors over rockless systems where the game's would not (Phase 13
@@ -783,6 +799,8 @@ enum Archetype : std::uint32_t
         {{0.3f, 0.9f, 1.2f}},   // ferrous mine: further out still
         {{0.25f, 1.0f, 1.0f}},  // foundry: smelt at the pit
         {{1.2f, 0.6f, 0.2f}},   // fabrication works: near the hardpoints
+        {{0.2f, 0.6f, 0.7f}},   // breaker yard: out where the hulls die
+        {{1.1f, 0.9f, 0.3f}},   // reclamation plant: near the alloy's customer
     };
     return sol::sim::generateGalaxy(params);
 }
@@ -798,6 +816,7 @@ enum Archetype : std::uint32_t
     params.commodities[OreFerrous].basePrice = kFerrousPrice;
     params.commodities[Alloy].basePrice = kAlloyPrice;
     params.commodities[HullPlate].basePrice = kHullPlatePrice;
+    params.commodities[Salvage].basePrice = kSalvagePrice;
 
     const auto archetype = [](std::initializer_list<float> production,
                               std::initializer_list<float> consumption,
@@ -817,9 +836,9 @@ enum Archetype : std::uint32_t
         out.stockCapacity = 2'500.0f;
         return out;
     };
-    params.archetypes.resize(7);
+    params.archetypes.resize(9);
     // Indices, in the order of the enum above:
-    //                            food   ore  metal  mach  ferr alloy plate
+    //                            food   ore  metal  mach  ferr alloy plate  salv
     constexpr float P = 0.013f; // the hull-plate upkeep heavy industry burns
     params.archetypes[Agri] = archetype({0.26f}, {0, 0, 0, 0.11f}, {}, false);
     params.archetypes[Mine] = archetype({0, 0.28f}, {0.05f, 0, 0, 0, 0, 0, P}, {}, true);
@@ -833,6 +852,13 @@ enum Archetype : std::uint32_t
         archetype({0, 0, 0, 0, 0, 0.085f}, {0.015f, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0.13f}, false);
     params.archetypes[FabWorks] =
         archetype({0, 0, 0, 0, 0, 0, 0.12f}, {0.015f}, {0, 0, 0, 0, 0, 0.15f}, false);
+    // The salvage leg. A Breaker Yard produces out of nothing, exactly as the
+    // Agricultural Station does - `extracts` is false because salvage is not in
+    // the rock, and the hulls it cuts up are not a good this economy models.
+    params.archetypes[Breaker] =
+        archetype({0, 0, 0, 0, 0, 0, 0, 0.17f}, {0.015f, 0, 0, 0, 0, 0, P}, {}, false);
+    params.archetypes[Recycler] = archetype(
+        {0, 0, 0, 0, 0, 0.085f}, {0.015f, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0, 0, 0, 0.13f}, false);
     return params;
 }
 
@@ -1061,6 +1087,35 @@ SOL_TEST(economy_shipped_rates_hold_a_steady_state)
                     works,
                     worksSatisfaction / works,
                     static_cast<double>(alloyAtWorks));
+    }
+
+    // ⚑⚑⚑ AND THE SALVAGE LEG (Phase 33 stage C) ON THE IDENTICAL ARGUMENT,
+    // BECAUSE IT IS A LEG THAT COULD SO EASILY HAVE BEEN SCENERY. Nothing in
+    // this test kills a ship, so no unit of salvage here came off a wreck: the
+    // whole flow is Breaker Yards producing it and traders carrying it to
+    // Reclamation Plants, which is exactly the half of the leg the ECONOMY owns.
+    // A plant produces no salvage and burns 0.13/s of it, which over 14,400
+    // seconds is 1,872 units against a 1,250-unit start - so a plant with ANY
+    // salvage left has been delivered some, and reclaimed alloy exists only
+    // where that happened.
+    float salvageAtPlants = 0.0f;
+    double plantSatisfaction = 0.0;
+    std::uint32_t plants = 0;
+    for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+        if (economy.markets()[m].archetype == Recycler) {
+            salvageAtPlants += economy.stock(m, Salvage);
+            plantSatisfaction += economy.satisfaction(m);
+            ++plants;
+        }
+    }
+    SOL_REQUIRE(plants > 0);
+    SOL_CHECK(salvageAtPlants > 0.0f);
+    SOL_CHECK(plantSatisfaction / plants > 0.5);
+    if (salvageAtPlants <= 0.0f || plantSatisfaction / plants <= 0.5) {
+        std::printf("  salvage leg: %u plants at %.3f, salvage at plants %.1f\n",
+                    plants,
+                    plantSatisfaction / plants,
+                    static_cast<double>(salvageAtPlants));
     }
 
     // And the rock is still there: an hour of NPC mining must not strip the
@@ -1307,6 +1362,15 @@ SOL_TEST(economy_every_commodity_is_made_and_burnt_somewhere)
 // archetypes would keep their proportions when three more were added, because
 // their weights were untouched - and they did not, because the new rows are not
 // spread evenly across the three region tiers. 22:33:43:26 became 18:17:22:18.
+//
+// ⚑⚑⚑ AND STAGE C IS WHERE IT PAID FOR ITSELF. The salvage leg's first cut
+// failed THREE commodities and two of them were on the old metal chain it never
+// touched - raw ore at 1.84 and hull plate at 0.83, both of them the station mix
+// resampling underneath. This test found all three in milliseconds, off a count
+// sheet, before a single second of economy had been simulated; the four-hour
+// test above passed that same first cut without a murmur. ⚑ *A guard that runs
+// no simulation is not a weaker version of one that does - it is a different
+// instrument, and it is the one you can tune against.*
 SOL_TEST(economy_no_commodity_is_made_much_faster_than_it_is_burnt)
 {
     const Galaxy galaxy = shippedGalaxy();

@@ -277,6 +277,7 @@ add_executable(sol_game_tests
     test/system_security_tests.cpp
     test/target_cycle_tests.cpp
     test/wing_hull_tests.cpp
+    test/wreck_loot_tests.cpp
 )
 target_link_libraries(sol_game_tests PRIVATE sol::test sol_game_lib)
 # Phase 19. The role contract is a statement about THIS game's committed data

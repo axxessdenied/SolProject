@@ -419,10 +419,16 @@ end
 function wreck_loot(shipDef, system, faction, roll)
     -- Pirates carry what they took; everyone else carries what they were
     -- hauling. Scrap is the hull, and C++ has already valued that.
+    --
+    -- The scrap line is "sol.salvage" since Phase 33 stage C, and it had to move
+    -- with the C++ default rather than after it: this hook REPLACES the whole
+    -- table for four faction wrecks in ten, so a re-point that changed only
+    -- defaultWreckLoot would have left 40% of the galaxy's kills still paying
+    -- out raw ore - the bug looking exactly like a rounding difference.
     local pirateHaul = {"sol.metal", "sol.machinery"}
     if faction ~= "" and roll > 0.6 then
         local commodity = pirateHaul[1 + math.floor(roll * #pirateHaul) % #pirateHaul]
-        sol.set_loot(string.format("sol.ore:%d,%s:%d", math.floor(6 + 10 * roll),
+        sol.set_loot(string.format("sol.salvage:%d,%s:%d", math.floor(6 + 10 * roll),
                                    commodity, math.floor(2 + 8 * roll)),
                      math.floor(80 + 400 * roll), "")
     end

@@ -92,7 +92,15 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // and carries on. The version check at the header is the ONLY thing between a
 // player and a galaxy of nonsense here, which is exactly the case standing risk
 // 1 predicted this arc would hit six times.
-constexpr std::uint32_t kSaveVersion = 26;
+// v27 (Phase 33 stage C): an eighth good, `sol.salvage`, so every
+// `StationMarket::stock` row is one float wider again - v26's note applies
+// unchanged and is the reason this is a version bump rather than a migration.
+// ⚑ The wreck and signal loot tables in a v26 save are ALSO wrong now and not
+// because of their width: a saved wreck still names `sol.ore` as its scrap and
+// a saved signal still holds a commodity drawn from a uniform roll, both of
+// which are indices into a table that has grown. There is nothing to migrate
+// them to that would be truer than a fresh galaxy.
+constexpr std::uint32_t kSaveVersion = 27;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -1852,8 +1860,18 @@ sim::SignalLoot SpaceWorld::defaultLoot(const SignalInstance& signal) const
     core::Rng rng(signal.seed, 7);
     const std::uint32_t stacks = signal.kind == sim::SignalKind::Derelict ? 1 + rng.range(2) : 1;
     for (std::uint32_t i = 0; i < stacks; ++i) {
-        loot.cargo.push_back(
-            {.commodity = rng.range(commodityCount), .units = static_cast<float>(5 + rng.range(21))});
+        // ⚑⚑ THE SPEC NAMED ONE SITE OF THE UNIFORM ROLL AND THERE WERE TWO.
+        // This one is 600 lines up and has the identical defect, so it gets the
+        // identical fix - with the assembly bound OPEN, which is the one place
+        // the two composers differ and it is a difference about what the thing
+        // is: a derelict is a large abandoned ship and a cache is somebody's
+        // stash, and a module kit is a believable thing to find in either. A
+        // wreck has a hull to be measured against; a signal does not.
+        const std::uint32_t hauled = rollHauledCommodity(rng, /*canCarryAssemblies=*/true);
+        if (hauled >= commodityCount) {
+            continue;
+        }
+        loot.cargo.push_back({.commodity = hauled, .units = static_cast<float>(5 + rng.range(21))});
     }
     if (signal.kind == sim::SignalKind::Cache) {
         loot.credits = 200.0 + 1'000.0 * rng.nextDouble01();
@@ -2430,6 +2448,109 @@ void SpaceWorld::takeRockEvents(std::vector<RockEvent>& out)
     m_rockEvents.clear();
 }
 
+namespace {
+
+// ⚑⚑⚑⚑ WHAT A DEAD SHIP TURNS OUT TO HAVE BEEN CARRYING (Phase 33 stage C),
+// AND IT IS THE FIRST THING IN THE SIM THAT READS `CommodityDef::tier`.
+//
+// Both loot composers used to roll `rng.range(commodityCount)` - a uniform pick
+// over the entire commodity table. At four goods that reads as "a hauler's
+// cargo" and nobody ever noticed; the material tree is what turns it into a
+// defect, because a uniform pick over gdd.md §6's forty goods is an interceptor
+// wreck yielding station module kits one time in forty. ⚑ *The roll did not
+// break. The table grew underneath it, and nothing was watching the join.*
+//
+// ⚑⚑ THE WEIGHTS ARE A STATEMENT ABOUT FREIGHT, NOT ABOUT THE TREE. Raw and
+// consumer goods are bulk: they move constantly, in quantity, on every hull in
+// the galaxy, and they are what most ships are carrying most of the time.
+// Refined goods move less and are worth more; components move less again. That
+// ordering is deliberately NOT `tier`'s ordinal - `CommodityTier` ships no band
+// table on purpose because `consumer` is a branch rather than a fifth step, and
+// this table is exactly the kind of thing that would have gone quietly wrong if
+// it had leaned on `<`. It is written out, one tier at a time, so that adding a
+// tier is a compile error rather than a silent zero.
+//
+// ⚑⚑ AN UNSTATED TIER IS NOT A ZERO. `tier` is optional and carries `hasTier`
+// for `ShipDef::hullClass`'s reason, so a mod's commodity that says nothing
+// about itself must not silently vanish from every wreck in the galaxy; it
+// weighs what the rarest stated tier does, which is the old uniform behaviour's
+// footing rather than an opinion this table invented on the author's behalf.
+[[nodiscard]] float haulWeight(const assets::CommodityDef& commodity, bool canCarryAssemblies)
+{
+    if (!commodity.hasTier) {
+        return 1.0f;
+    }
+    switch (commodity.tier) {
+    case assets::CommodityTier::Raw:
+        return 4.0f;
+    case assets::CommodityTier::Consumer:
+        return 3.0f;
+    case assets::CommodityTier::Refined:
+        return 2.0f;
+    case assets::CommodityTier::Component:
+        return 1.0f;
+    // ⚑⚑ THE ONE HARD BOUND, AND IT IS THE DEFECT THE SPEC ACTUALLY NAMED. A
+    // ship-or-station module kit is freight for a hull built to carry freight;
+    // no weighting makes it merely rare on a fighter, it has to be impossible.
+    case assets::CommodityTier::Assembly:
+        return canCarryAssemblies ? 1.0f : 0.0f;
+    case assets::CommodityTier::Count:
+        break;
+    }
+    return 1.0f;
+}
+
+// ⚑⚑⚑ THE BOUND IS READ OFF `mass`, AND THE FIELD THAT LOOKS RIGHT IS THE ONE
+// THAT IS NOT SAFE TO USE. `ShipDef::cargoCapacity` is what a hull can hold and
+// is the obvious input here - but `ships.toml` authors it on exactly ONE of the
+// three shipped hulls, so the interceptor whose own comment reads "two drives
+// and no hold" carries the struct default of 50 units as far as any code that
+// reads the field is concerned, and a rule keyed on it would make that hull a
+// hauler. `hull_class` would be better still and appears in no shipped ship at
+// all. `mass` is authored on all three (8 t, 10 t, 40 t) and is already this
+// function's own vocabulary - `defaultWreckLoot` values the scrap by it.
+//
+// ⚑ 25 t sits between the freighter and everything else this project ships,
+// which is the honest place for it: the galaxy's hauler can have been carrying
+// a module kit and its escort cannot. Nothing reaches this today because no T3
+// good exists until stage E - it is the guard being in place BEFORE the tier it
+// guards, which is the only order in which it was ever going to be written.
+constexpr float kAssemblyHaulMassKg = 25'000.0f;
+
+} // namespace
+
+// One commodity, drawn from what a hull is plausibly carrying rather than from
+// the whole table. Falls back to the old uniform pick when there is nothing to
+// read a tier off - a def database that has gone away, or a commodity table
+// wider than the defs behind it - because a loot roll that returns nothing is a
+// wreck that is empty for a reason no player can see.
+std::uint32_t SpaceWorld::rollHauledCommodity(core::Rng& rng, bool canCarryAssemblies) const
+{
+    const std::uint32_t commodityCount = static_cast<std::uint32_t>(m_commodityIds.size());
+    if (commodityCount == 0) {
+        return kNoIndex;
+    }
+    if (m_defs == nullptr || m_defs->commodities().size() < commodityCount) {
+        return rng.range(commodityCount);
+    }
+    const std::vector<assets::CommodityDef>& commodities = m_defs->commodities();
+    float total = 0.0f;
+    for (std::uint32_t c = 0; c < commodityCount; ++c) {
+        total += haulWeight(commodities[c], canCarryAssemblies);
+    }
+    if (total <= 0.0f) {
+        return kNoIndex; // a table of nothing but module kits, on a hull too small
+    }
+    float pick = rng.nextFloat01() * total;
+    for (std::uint32_t c = 0; c < commodityCount; ++c) {
+        pick -= haulWeight(commodities[c], canCarryAssemblies);
+        if (pick < 0.0f) {
+            return c;
+        }
+    }
+    return commodityCount - 1; // only reachable if the float sum rounded short
+}
+
 sim::SignalLoot SpaceWorld::defaultWreckLoot(const assets::ShipDef* def, std::uint64_t seed) const
 {
     sim::SignalLoot loot;
@@ -2438,15 +2559,27 @@ sim::SignalLoot SpaceWorld::defaultWreckLoot(const assets::ShipDef* def, std::ui
         return loot;
     }
     core::Rng rng(seed, 11);
-    // Scrap: the hull itself, as ore, scaled by how big the ship was.
+    // ⚑⚑⚑ SCRAP IS THE HULL ITSELF AND SINCE PHASE 33 STAGE C IT IS `sol.salvage`
+    // RATHER THAN `sol.ore`. The line was always right about what it was doing -
+    // its own comment read "the hull itself, as ore" - and wrong about what to
+    // call it, because before this stage there was no T0 good that came off a
+    // ship rather than out of a rock. Nothing else in the function moves: the
+    // mass scaling and the spread are unchanged, and `commodities.toml` prices
+    // salvage within a credit of raw ore so a kill is worth what it was.
     const float hullScrap = def != nullptr ? std::max(4.0f, def->mass * 0.0016f) : 8.0f;
-    const std::uint32_t ore = commodityIndex("sol.ore");
-    loot.cargo.push_back({.commodity = ore < commodityCount ? ore : 0,
+    const std::uint32_t salvage = commodityIndex("sol.salvage");
+    loot.cargo.push_back({.commodity = salvage < commodityCount ? salvage : 0,
                           .units = hullScrap * (0.7f + 0.6f * rng.nextFloat01())});
-    // Whatever it was hauling, sometimes.
+    // Whatever it was hauling, sometimes — weighted by what a hull that size
+    // would plausibly have had in the hold rather than picked off the whole
+    // table (see `haulWeight` above).
     if (rng.nextFloat01() < 0.5f) {
-        loot.cargo.push_back(
-            {.commodity = rng.range(commodityCount), .units = static_cast<float>(3 + rng.range(15))});
+        const bool heavyEnoughForAKit = def != nullptr && def->mass >= kAssemblyHaulMassKg;
+        const std::uint32_t hauled = rollHauledCommodity(rng, heavyEnoughForAKit);
+        if (hauled < commodityCount) {
+            loot.cargo.push_back(
+                {.commodity = hauled, .units = static_cast<float>(3 + rng.range(15))});
+        }
     }
     loot.credits = 40.0 + 260.0 * rng.nextDouble01();
     // Its own hardware, at salvage odds: the gun or a component off its mounts.
@@ -2666,7 +2799,16 @@ bool SpaceWorld::orderRefine(float units, std::string* outError)
     const float available = playerCargo(input);
     const float order = std::min(units, available);
     if (!(order > 0.0f)) {
-        return refuse("no ore aboard to refine", outError);
+        // ⚑ Named rather than "no ore", since Phase 33 stage C: the Reclamation
+        // Plant refines SALVAGE, and a station telling a pilot who is holding
+        // salvage that they have no ore is a station describing a different
+        // game. `refine_input` has always been per archetype; this message was
+        // the last place that assumed there was only ever one of them.
+        const std::string& inputId = m_commodityIds[input];
+        return refuse("no " +
+                          (m_defs != nullptr ? commodityDisplayName(*m_defs, inputId) : inputId) +
+                          " aboard to refine",
+                      outError);
     }
     const double fee = m_mining.refineFee(order);
     if (fee > m_playerCredits) {

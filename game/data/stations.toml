@@ -166,3 +166,101 @@ produces = ["sol.hull_plate:0.12"]
 feedstock = ["sol.alloy:0.15"]
 consumes = ["sol.food:0.015"]
 stock_capacity = 2500
+
+# ---------------------------------------------------------------------------
+# The salvage leg (Phase 33 stage C): a dead hull -> salvage -> structural
+# alloy, which is the alloy the Fabrication Works already turns into plate. Two
+# archetypes, and they are deliberately a MINOR leg - twelve or so stations
+# between them against the ferrous chain's fifty.
+#
+# ⚑⚑⚑ THE RECLAMATION PLANT MAKES `sol.alloy` AND NOT A `sol.alloy_reclaimed`,
+# AND THAT IS THE STAGE'S ONE REAL DESIGN DECISION. A reclaimed good that cannot
+# stand in for the original is not recycling, it is a parallel economy with its
+# own dead end - and the exit this stage is written against is "a wreck's
+# salvage RE-ENTERS INDUSTRY", which is a claim about the good it becomes. The
+# cost of the decision is that alloy now has two producers and has to be tuned
+# as one supply; the benefit is that a wreck cut in the fringe ends up as plate
+# on somebody's hull without a second chain being invented to carry it.
+#
+# ⚑⚑ A BREAKER YARD PRODUCES OUT OF NOTHING, EXACTLY AS THE AGRICULTURAL
+# STATION DOES, and that is honest rather than a shortcut: a farm's input is
+# sunlight and a breaker yard's is the derelict hulls that are towed in, and
+# neither is a good this economy models. What would be dishonest is
+# `produces_from = "field"`, which means "out of the rock in this system" and is
+# read by the generator as a siting requirement - salvage is not in the rock.
+#
+# ⚑ THE PLAYER MEETS THIS LEG THROUGH THE RECLAMATION PLANT'S REFINING SERVICE,
+# not through its market. `refine_input`/`refine_output` is the one mechanism in
+# the game that takes a commodity off the player's hands and hands back another,
+# so a pilot who cut up what they killed can walk it in and get alloy for it.
+# That is the whole chain in one dock, and it is the first thing to fly.
+#
+# ⚑⚑⚑⚑ STAGE B MEASURED THE MIX SHIFT AND ACCEPTED IT. STAGE C MEASURED IT
+# AGAIN AND FOUND IT IS NOT A SHIFT, IT IS CHAOS - AND THE DIFFERENCE MATTERS.
+# Stage B's note above reasons that adding archetypes shrinks the old rows by a
+# common factor per region tier, and corrects itself to "not in aggregate,
+# because the new rows sit outward". Both halves of that are still true and
+# neither is enough: adding these two archetypes moved the MINING OUTPOST UP,
+# from 17 stations to 19, while the Refinery it feeds fell from 22 to 17.
+#
+#   stage B          agri 18  mine 17  refinery 22  factory 18  ferrous 18  foundry 20  fabworks 11
+#   first cut here   agri 15  mine 19  refinery 17  factory 13  ferrous 16  foundry 21  fabworks  9  + 10 breakers,  4 plants
+#   shipped          agri 15  mine 16  refinery 18  factory 13  ferrous 13  foundry 15  fabworks 13  + 10 breakers, 11 plants
+#
+# The generator places station by station out of a per-system draw, so two new
+# rows do not scale the old ones - they RESAMPLE them, and a tenth of a point on
+# a new row's weight moves an unrelated old row by several stations. There is no
+# argument that gets from a weight to a count here. There is only running it.
+#
+# ⚑⚑⚑ WHICH IS WHY THE FIRST CUT AT THIS FILE FAILED THREE RATIOS AND TWO OF
+# THEM WERE ON THE OLD CHAIN THIS STAGE NEVER TOUCHED. Raw ore came out at 1.84
+# made-to-burnt (19 mines feeding 17 refineries) and hull plate at 0.83 (9
+# Fabrication Works against a hundred stations' upkeep) - both of them purely
+# because the station mix resampled, and neither of them anything to do with
+# salvage. `economy_no_commodity_is_made_much_faster_than_it_is_burnt` printed
+# all three in milliseconds. Stage B wrote that guard after ten minutes of
+# simulation had to show it what a count sheet says instantly; this is the stage
+# where it paid for itself, and it is now the thing this file is tuned AGAINST
+# rather than a check run afterwards.
+#
+# ⚑⚑ SO THE SHAPE OF THESE TWO ROWS IS A DESIGN STATEMENT AND THEIR MAGNITUDES
+# ARE A SEARCH RESULT, AND SAYING SO IS MORE HONEST THAN PRETENDING OTHERWISE. A
+# breaker yard belongs outward and a reclamation plant belongs inward - that is
+# fiction, it is argued above, and the search was constrained to obey it. Which
+# outward and which inward, out of the hundreds of triples that satisfy it, was
+# picked by generating the galaxy for each and keeping the one whose station
+# counts leave every commodity in the galaxy nearest the middle of the guard's
+# band. Nobody has an independent opinion about 0.6 against 0.5, and inventing
+# one would have been the same mistake stage B made with a comment.
+# ---------------------------------------------------------------------------
+
+# Sited outward, where the hulls actually die: the fringe is where raiding and
+# contested space are, and nobody puts a scrapyard in a core system if they can
+# help it.
+[[station]]
+id = "sol.station_breaker"
+name = "Breaker Yard"
+weight_core = 0.2
+weight_frontier = 0.6
+weight_fringe = 0.7
+produces = ["sol.salvage:0.17"]
+consumes = ["sol.food:0.015", "sol.hull_plate:0.013"]
+stock_capacity = 2500
+
+# Core-leaning, because its output is alloy and alloy's customer is the
+# Fabrication Works - the same argument that sites the Foundry at the pit sites
+# this one at the customer, and for the opposite reason: salvage is bulk, but a
+# breaker yard is where the bulk already is, and what has to cross the galaxy is
+# whichever leg is shorter to move. Reclaimed alloy is compact.
+[[station]]
+id = "sol.station_recycler"
+name = "Reclamation Plant"
+weight_core = 1.1
+weight_frontier = 0.9
+weight_fringe = 0.3
+produces = ["sol.alloy:0.085"]
+feedstock = ["sol.salvage:0.13"]
+consumes = ["sol.food:0.015", "sol.hull_plate:0.013"]
+stock_capacity = 2500
+refine_input = "sol.salvage"
+refine_output = "sol.alloy"

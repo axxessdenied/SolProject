@@ -117,3 +117,26 @@ id = "sol.hull_plate"
 name = "Hull Plate"
 tier = "component"
 base_price = 64.0
+
+# ---------------------------------------------------------------------------
+# The salvage leg (Phase 33 stage C), and it is the first good in this file
+# that is NOT made by anybody's production line in the first instance.
+#
+# ⚑⚑⚑ IT IS T0 AND IT COMES OFF A HULL, WHICH IS THE CASE THE TIER VALIDATOR
+# WAS WRITTEN AROUND. `data_defs.cpp` enforces "an ore weight requires `raw`"
+# and deliberately not the converse, with salvage named as the reason - so this
+# row is `raw` with no ore weights at all, and a Ferrous Mine will never draw a
+# unit of it out of a rock.
+#
+# ⚑⚑ PRICED JUST UNDER RAW ORE ON PURPOSE. Scrap is metal somebody has already
+# smelted once, so per unit it is worth more to a foundry than dirt is; what
+# takes it back below `sol.ore` is that it arrives mixed, cut and contaminated
+# and has to be sorted before it is worth anything. Keeping it within a credit
+# of raw ore also keeps a kill worth about what it was worth before this stage,
+# because `defaultWreckLoot` used to pay a hull out AS `sol.ore` and now pays it
+# out as this.
+[[commodity]]
+id = "sol.salvage"
+name = "Salvage"
+tier = "raw"
+base_price = 11.0
