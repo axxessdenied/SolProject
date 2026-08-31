@@ -1090,6 +1090,33 @@ std::string listComponents(GameContent& content)
 // and `arc` sits with the kind and the size rather than after the geometry,
 // because what a mount IS comes before where it is. Same lesson as the map
 // row's in Phase 30 stage D: a surface that clips silently has to be measured.
+// ⚑⚑⚑ WHAT EVERY FACTION FIELDS, AND — THE POINT OF THE STAGE — WHAT IT SAYS IT
+// FIELDS NOTHING FOR (Phase 32 stage C). Three states per cell and they used to
+// be two: a list of hulls, `-` for a cell the faction DECLARED it does not
+// build, and `(unset)` for one nobody has decided about. Before `builds_no`
+// only the first was expressible; the other two were the same empty vector,
+// which four call sites each quietly substituted a different roster for.
+//
+// ⚑⚑ A PROBE THAT READS ONLY `content.defs()` NEEDS NO CAMPAIGN, so this
+// answers at the main menu with no save written — the cheapest and safest
+// reading this game offers, and the reason it is a console probe rather than a
+// panel. The Forge was the obvious home by stage A's example and it is the
+// WRONG one: stage A put the hull spine there because the Forge is the only
+// place a MESH and a def meet, and a roster has no mesh. The Forge cannot edit
+// a faction, so a roster table in it would be a read-only curiosity in a tool
+// nobody opens factions.toml beside.
+std::string listRosters(GameContent& content)
+{
+    std::string text;
+    for (const std::string& line : rosterLines(content.defs())) {
+        if (!text.empty()) {
+            text += '\n';
+        }
+        text += line;
+    }
+    return text;
+}
+
 std::string listMounts(GameContent& content, const char* shipDefId)
 {
     const assets::ShipDef* def = content.defs().findShip(shipDefId);
@@ -3545,6 +3572,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&autopilotOff>("sol", "autopilot_off", this);
     m_vm.registerFunction<&listComponents>("sol", "components", this);
     m_vm.registerFunction<&listMounts>("sol", "mounts", this);
+    m_vm.registerFunction<&listRosters>("sol", "rosters", this);
     m_vm.registerFunction<&listCrewDefs>("sol", "crew_defs", this);
     m_vm.registerFunction<&fitInfo>("sol", "fit", this);
     m_vm.registerFunction<&gunInfo>("sol", "guns", this);
@@ -3724,7 +3752,17 @@ bool GameContent::reloadDefs()
         SOL_LOG_ERROR("data defs: %s", error.c_str());
         return false;
     }
+    // Phase 32 stage C, and it refuses for the same reason the three above do:
+    // a roster naming a ship that does not exist has no fallback that is not a
+    // lie about who holds the sky. `spawnWing` used to find this at spawn time,
+    // warn, and abandon the whole wing - a patrol that silently never appeared,
+    // in a system a player might never fly to.
+    if (!fresh.validateRosters(&error)) {
+        SOL_LOG_ERROR("data defs: %s", error.c_str());
+        return false;
+    }
     m_defs = std::move(fresh);
+    logRosters();
     // Cue tuning follows the defs (Phase 8t): gain, jitter, rolloff and caps
     // are re-read, the cooked samples are not - retuning a cue is a file save,
     // recooking one is a build.
@@ -3732,6 +3770,94 @@ bool GameContent::reloadDefs()
         m_audio->reloadDefs(m_defs);
     }
     return true;
+}
+
+// The cell's contents as one field: a list of hulls, `-` for a cell the author
+// declared this faction fields nothing for, or `(unset)` for one nobody has
+// decided about. The three are the whole subject of stage C.
+namespace {
+
+std::string rosterCellText(const assets::FactionDef& faction, std::size_t index)
+{
+    const std::vector<std::string>* rosters[assets::kRosterCellCount] = {
+        &faction.shipsPatrol, &faction.shipsRaider, &faction.shipsTrader};
+    if (faction.buildsNo[index]) {
+        // A mark rather than a word, because a reader scanning seven factions
+        // is looking for the cells that are NOT a list of hulls.
+        return "-";
+    }
+    if (rosters[index]->empty()) {
+        return "(unset)";
+    }
+    std::string text;
+    for (std::size_t i = 0; i < rosters[index]->size(); ++i) {
+        text += (i == 0 ? "" : ",");
+        text += (*rosters[index])[i];
+    }
+    return text;
+}
+
+} // namespace
+
+std::vector<std::string> rosterLines(const assets::DefDatabase& defs)
+{
+    std::vector<std::string> lines;
+    for (const assets::FactionDef& faction : defs.factions()) {
+        std::string head = faction.id;
+        head += " patrol ";
+        head += rosterCellText(faction, static_cast<std::size_t>(assets::RosterCell::Patrol));
+        head += " | raider ";
+        head += rosterCellText(faction, static_cast<std::size_t>(assets::RosterCell::Raider));
+        lines.push_back(std::move(head));
+        std::string tail = "  trader ";
+        tail += rosterCellText(faction, static_cast<std::size_t>(assets::RosterCell::Trader));
+        lines.push_back(std::move(tail));
+    }
+    return lines;
+}
+
+void GameContent::logRosters() const
+{
+    // ⚑⚑ THE LOG REPORTS THE EXCEPTIONS; `sol.rosters()` PRINTS THE TABLE. The
+    // first version logged one line per faction and it was both boot spam and
+    // too wide for the console panel it lands in - seven near-identical lines
+    // saying the majors all field the same three hulls, which is the one thing
+    // nobody needs telling. What a load has to say is how many factions
+    // declared a cell they field nothing for, and which.
+    std::uint32_t declaring = 0;
+    for (const assets::FactionDef& faction : m_defs.factions()) {
+        std::string cells;
+        for (std::size_t i = 0; i < assets::kRosterCellCount; ++i) {
+            if (!faction.buildsNo[i]) {
+                continue;
+            }
+            cells += cells.empty() ? "no " : ", no ";
+            cells += assets::rosterCellName(static_cast<assets::RosterCell>(i));
+        }
+        if (!cells.empty()) {
+            ++declaring;
+            SOL_LOG_INFO("roster: %s fields %s", faction.id.c_str(), cells.c_str());
+        }
+        for (std::size_t i = 0; i < assets::kRosterCellCount; ++i) {
+            const std::vector<std::string>* rosters[assets::kRosterCellCount] = {
+                &faction.shipsPatrol, &faction.shipsRaider, &faction.shipsTrader};
+            if (faction.buildsNo[i] || !rosters[i]->empty()) {
+                continue;
+            }
+            // ⚑ NOT AN ERROR, AND THAT IS THE WHOLE POINT OF THE STAGE. An unset
+            // cell is legal and every site's own substitution rule still
+            // applies to it - what it is not is a STATEMENT. This is the line
+            // that asks the author to make one, and it is the difference
+            // between "this faction fields nothing here" and "nobody has
+            // decided yet", which were the same silence before this pass.
+            SOL_LOG_WARN("roster: %s leaves its %s cell unset - say `builds_no` if it fields none",
+                         faction.id.c_str(),
+                         assets::rosterCellName(static_cast<assets::RosterCell>(i)));
+        }
+    }
+    SOL_LOG_INFO("rosters: %zu faction(s), %u declaring a cell they do not field",
+                 m_defs.factions().size(),
+                 declaring);
 }
 
 void GameContent::runBootScripts()

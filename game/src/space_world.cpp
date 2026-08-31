@@ -875,7 +875,8 @@ void SpaceWorld::initializeFactions()
                                   .forgiveness = def.forgiveness,
                                   .shipsPatrol = def.shipsPatrol,
                                   .shipsRaider = def.shipsRaider,
-                                  .shipsTrader = def.shipsTrader});
+                                  .shipsTrader = def.shipsTrader,
+                                  .buildsNo = {def.buildsNo[0], def.buildsNo[1], def.buildsNo[2]}});
     }
     const std::size_t majorCount = m_factionTable.size();
     for (const sim::ClanSpec& clan : m_galaxy.clans) {
@@ -900,7 +901,8 @@ void SpaceWorld::initializeFactions()
                                   .forgiveness = jitterWeight(base.forgiveness),
                                   .shipsPatrol = base.shipsPatrol,
                                   .shipsRaider = base.shipsRaider,
-                                  .shipsTrader = base.shipsTrader});
+                                  .shipsTrader = base.shipsTrader,
+                                  .buildsNo = {base.buildsNo[0], base.buildsNo[1], base.buildsNo[2]}});
     }
 
     // FactionSim params: authored relations resolve def ids to table
@@ -2806,8 +2808,37 @@ void SpaceWorld::tickMining(double dt)
 // for and is exactly the trap decisions/019 warned this stage about - a
 // response wing built on it materialises in the offender's face, which is the
 // precise opposite of what a response time is for.
+std::span<const std::string>
+factionRoster(const GameFaction& faction, assets::RosterCell cell, assets::RosterCell fallback)
+{
+    const std::vector<std::string>* rosters[assets::kRosterCellCount] = {
+        &faction.shipsPatrol, &faction.shipsRaider, &faction.shipsTrader};
+    const auto index = static_cast<std::size_t>(cell);
+    if (index >= assets::kRosterCellCount) {
+        return {};
+    }
+    // ⚑ THE DECLARATION IS CHECKED BEFORE THE LIST, which is what makes it a
+    // declaration rather than a comment. A faction that says it fields none
+    // gets none, and no substitute is looked for - the empty answer IS the
+    // authored one.
+    if (faction.buildsNo[index]) {
+        return {};
+    }
+    if (!rosters[index]->empty()) {
+        return *rosters[index];
+    }
+    // Unspecified, so this site's own substitution applies. `Count` is how a
+    // site says it has none, which is what both ambient spawns have always
+    // said by not writing a ternary.
+    const auto fallbackIndex = static_cast<std::size_t>(fallback);
+    if (fallbackIndex >= assets::kRosterCellCount || faction.buildsNo[fallbackIndex]) {
+        return {};
+    }
+    return *rosters[fallbackIndex];
+}
+
 void SpaceWorld::spawnWing(std::uint32_t faction,
-                           const std::vector<std::string>& roster,
+                           std::span<const std::string> roster,
                            PilotRole role,
                            std::uint32_t count,
                            const core::DVec3& anchor,
@@ -2860,11 +2891,22 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
     if (owner < m_factionTable.size()) {
         const GameFaction& faction = m_factionTable[owner];
         if (faction.pirate) {
-            spawnWing(
-                owner, faction.shipsRaider, PilotRole::Fighter, raidersFor(baselineSecurity), anchor, 900.0);
+            // ⚑ `RosterCell::Count` as the fallback is this site saying it has
+            // never had one, which is what reading `faction.shipsRaider` bare
+            // used to say by omission.
+            spawnWing(owner,
+                      factionRoster(faction, assets::RosterCell::Raider, assets::RosterCell::Count),
+                      PilotRole::Fighter,
+                      raidersFor(baselineSecurity),
+                      anchor,
+                      900.0);
         } else {
-            spawnWing(
-                owner, faction.shipsPatrol, PilotRole::Patrol, patrolsFor(baselineSecurity), anchor, 700.0);
+            spawnWing(owner,
+                      factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Count),
+                      PilotRole::Patrol,
+                      patrolsFor(baselineSecurity),
+                      anchor,
+                      700.0);
 
             // Civilian traffic (Phase 13, note 5b). Before this, everything in
             // the sky over a station was military: three interceptors in a core
@@ -2883,7 +2925,7 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             // flies a two-leg station circuit, and PilotRole::Trader,
             // PilotState::Travel and shipsTrader all predate this.
             spawnWing(owner,
-                      faction.shipsTrader,
+                      factionRoster(faction, assets::RosterCell::Trader, assets::RosterCell::Count),
                       PilotRole::Trader,
                       civiliansFor(baselineSecurity),
                       anchor,
@@ -2901,8 +2943,8 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
     const bool contested = m_factionSim.contested(systemIndex);
     if (contested && contest.attacker < m_factionTable.size() && contest.attacker != owner) {
         const GameFaction& attacker = m_factionTable[contest.attacker];
-        const std::vector<std::string>& roster =
-            attacker.shipsRaider.empty() ? attacker.shipsPatrol : attacker.shipsRaider;
+        const std::span<const std::string> roster =
+            factionRoster(attacker, assets::RosterCell::Raider, assets::RosterCell::Patrol);
         const std::uint32_t count = std::clamp(static_cast<std::uint32_t>(contest.pressure * 4.0f), 1u, 4u);
         spawnWing(contest.attacker,
                   roster,
@@ -2911,12 +2953,13 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
                   anchor + core::DVec3{9'000.0, 1'500.0, 6'000.0},
                   1'200.0);
         if (owner < m_factionTable.size()) {
-            spawnWing(owner,
-                      m_factionTable[owner].shipsPatrol,
-                      PilotRole::Patrol,
-                      2,
-                      anchor + core::DVec3{-4'000.0, 800.0, 2'000.0},
-                      700.0);
+            spawnWing(
+                owner,
+                factionRoster(m_factionTable[owner], assets::RosterCell::Patrol, assets::RosterCell::Count),
+                PilotRole::Patrol,
+                2,
+                anchor + core::DVec3{-4'000.0, 800.0, 2'000.0},
+                700.0);
         }
     } else {
         // Raid incursion: the last raider keeps ships in-system while the
@@ -2925,12 +2968,13 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
         const std::uint32_t raider = m_factionSim.lastRaider(systemIndex);
         if (intensity >= 0.5f && raider < m_factionTable.size() && raider != owner) {
             const std::uint32_t count = std::min(3u, static_cast<std::uint32_t>(intensity + 0.5f));
-            spawnWing(raider,
-                      m_factionTable[raider].shipsRaider,
-                      PilotRole::Fighter,
-                      count,
-                      anchor + core::DVec3{9'000.0, 1'500.0, 6'000.0},
-                      1'200.0);
+            spawnWing(
+                raider,
+                factionRoster(m_factionTable[raider], assets::RosterCell::Raider, assets::RosterCell::Count),
+                PilotRole::Fighter,
+                count,
+                anchor + core::DVec3{9'000.0, 1'500.0, 6'000.0},
+                1'200.0);
         }
     }
 }
@@ -3110,8 +3154,8 @@ void SpaceWorld::syncTraderPuppets()
             faction = 0;
         }
         const GameFaction& owner = m_factionTable[faction];
-        const std::vector<std::string>& roster =
-            owner.shipsTrader.empty() ? owner.shipsPatrol : owner.shipsTrader;
+        const std::span<const std::string> roster =
+            factionRoster(owner, assets::RosterCell::Trader, assets::RosterCell::Patrol);
         if (roster.empty()) {
             continue;
         }
@@ -3358,8 +3402,8 @@ void SpaceWorld::syncMinerPuppets(double dt)
             faction = 0;
         }
         const GameFaction& owner = m_factionTable[faction];
-        const std::vector<std::string>& roster =
-            owner.shipsTrader.empty() ? owner.shipsPatrol : owner.shipsTrader;
+        const std::span<const std::string> roster =
+            factionRoster(owner, assets::RosterCell::Trader, assets::RosterCell::Patrol);
         if (roster.empty()) {
             continue;
         }
@@ -7070,9 +7114,9 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
         }
     }
     const GameFaction& faction = m_factionTable[owner];
-    const std::vector<std::string>& roster =
-        faction.pirate ? faction.shipsRaider
-                       : (faction.shipsPatrol.empty() ? faction.shipsRaider : faction.shipsPatrol);
+    const std::span<const std::string> roster =
+        faction.pirate ? factionRoster(faction, assets::RosterCell::Raider, assets::RosterCell::Count)
+                       : factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Raider);
     const std::size_t before = m_registry.storage<ShipPilot>().size();
     spawnWing(owner,
               roster,

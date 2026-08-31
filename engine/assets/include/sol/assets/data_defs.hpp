@@ -544,6 +544,43 @@ struct StationBias
     float weight = 1.0f;
 };
 
+// ⚑⚑⚑⚑ THE THREE ROSTER CELLS, AS A VOCABULARY (Phase 32 stage C), AND THE
+// REASON THEY NEEDED ONE IS THAT AN EMPTY CELL ALREADY MEANT SOMETHING - FOUR
+// SOMETHINGS. Before this stage `ships_raider = []` meant "fly the patrol
+// roster instead" where a contested system spawns an attacker, `ships_trader =
+// []` meant "haul in the patrol roster instead" at both trader sites, and
+// `ships_patrol = []` meant "fly the raider roster" for a response wing - while
+// everywhere else it meant "spawn nothing, silently". So the format had no way
+// to say *we build none of those*: every spelling of it was already taken by a
+// substitution rule written out by hand at each site.
+//
+// ⚑⚑ AND IT IS A SEPARATE KEY RATHER THAN AN EMPTY LIST, WHICH IS STAGE A's
+// RULING APPLIED AGAIN. There the class became a WORD because a number in a
+// file has no wrong spelling; here "we build none" becomes a THING THE AUTHOR
+// WRITES, because deleting a line and emptying a list are a one-character
+// difference in meaning that no schema can catch and no reader can see. The
+// same file already says this about stations, in its own header: for
+// `station_bias`, "0 means this faction never builds one at all". A roster had
+// no equivalent until now.
+//
+// ⚑ A cell named here AND populated is refused at parse rather than resolved by
+// precedence, the same bargain a `[[model]]` carrying both a material and the
+// four surface keys makes.
+enum class RosterCell : std::uint32_t
+{
+    Patrol = 0, // ships_patrol - what this faction polices its space with
+    Raider,     // ships_raider - what it sends to take someone else's
+    Trader,     // ships_trader - what its haulers fly
+    Count,
+};
+
+inline constexpr std::size_t kRosterCellCount = static_cast<std::size_t>(RosterCell::Count);
+
+// The def spellings, and the only place they live - the same shape
+// `hullClassName`/`parseHullClass` has, for the same reason.
+[[nodiscard]] const char* rosterCellName(RosterCell cell);
+[[nodiscard]] bool parseRosterCell(std::string_view text, RosterCell& out);
+
 struct FactionDef
 {
     std::string id;
@@ -562,6 +599,13 @@ struct FactionDef
     // for a coarse EconomyTrader, and it needs a roster for the same reason a
     // patrol wing does: the def decides what the player sees coming.
     std::vector<std::string> shipsTrader;
+    // ⚑⚑ THE CELLS THIS FACTION DECLARES IT BUILDS NOTHING FOR (Phase 32 stage
+    // C): `builds_no = ["trader"]`. An unset bit is NOT the same as an empty
+    // roster - see `RosterCell` above. Unset means "unspecified", and every
+    // site's own substitution rule still applies to it; set means the author
+    // said so, and nothing is ever substituted for a cell a faction declared it
+    // does not field.
+    bool buildsNo[kRosterCellCount] = {false, false, false};
     // What this faction BUILDS where it holds territory (Phase 13). Empty —
     // the default — means it builds to the region's baseline like everyone
     // else, which is what every faction did before this existed.
@@ -1037,6 +1081,18 @@ public:
     // `validateMaterials` is - a faction may legitimately live in an earlier or
     // a later layer than the system that names it.
     [[nodiscard]] bool validateSystems(std::string* outError = nullptr) const;
+
+    // ⚑⚑ EVERY SHIP ID IN EVERY FACTION ROSTER NAMES A `[[ship]]` THAT EXISTS
+    // (Phase 32 stage C), AND IT REFUSES. Until this pass a roster entry with a
+    // stale id was found by `spawnWing` at spawn time, which warned and then
+    // ABANDONED THE WHOLE WING - so one wrong character meant a patrol that
+    // silently never appeared, in a system a player might never visit. That is
+    // the "broken" this stage has to be distinguishable from, and the cheapest
+    // way to distinguish it is to make it impossible: a roster that cannot fly
+    // has no fallback that is not a lie about who holds the sky. Separate from
+    // the parse for the same reason `validateMaterials` is - a ship def may
+    // legitimately live in an earlier or a later layer than the faction.
+    [[nodiscard]] bool validateRosters(std::string* outError = nullptr) const;
 
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;

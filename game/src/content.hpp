@@ -26,6 +26,25 @@ namespace game {
 // same layer list lives in `asset_paths.hpp` and is consumed by the renderer
 // and the audio bank. Two readers of one list, deliberately not merged: this
 // one reloads at runtime, and that one is fixed once at startup.
+// ⚑⚑⚑ THE ROSTER TABLE, AS TEXT, AND IT IS A FREE FUNCTION SO A TEST CAN
+// MEASURE IT (Phase 32 stage C). `sol.rosters()` prints this into a console
+// panel about 76 columns wide, and the first version ran to 88 on every major
+// - the two-hull trader cell fell off the right edge, and NOTHING said so.
+// Only the screenshot caught it, which is the second time in this phase alone
+// (stage A's hull spine lost its verdict column the same way) and the third
+// time in this project. So the width is a claim `game.unit` checks against
+// shipped content rather than a sentence in a comment.
+//
+// One faction per PAIR of lines: id, patrol and raider on the first, trader
+// indented under it. The split is measured rather than arbitrary - trader is
+// the only cell any shipped faction fills with more than one hull.
+[[nodiscard]] std::vector<std::string> rosterLines(const sol::assets::DefDatabase& defs);
+
+// The console panel's usable width. `sol.mounts` measured the same number in
+// Phase 31 stage B1 and wrote it in a comment; this is that number with a test
+// behind it.
+inline constexpr std::size_t kConsoleColumns = 76;
+
 class GameContent
 {
 public:
@@ -114,6 +133,14 @@ private:
     };
 
     [[nodiscard]] bool reloadDefs();
+    // ⚑⚑ WHAT EACH FACTION FIELDS, SAID OUT LOUD ONCE PER LOAD (Phase 32 stage
+    // C). This is the half of the stage that makes an absence legible: a cell
+    // a faction DECLARED it builds nothing for prints as `-`, and a cell that
+    // is merely empty prints as `(unset)` and carries a warning, because those
+    // are two different states and until this stage both of them were silence.
+    // It runs on the hot-reload path too, so emptying a roster in a text editor
+    // says so on the next save rather than at the next system load.
+    void logRosters() const;
     void runBootScripts();
     void rebuildWatchList();
     void registerBindings();

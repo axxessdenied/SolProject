@@ -701,7 +701,35 @@ struct GameFaction
     std::vector<std::string> shipsPatrol;
     std::vector<std::string> shipsRaider;
     std::vector<std::string> shipsTrader; // Phase 8x: hulls its haulers fly
+    // Phase 32 stage C: the cells this faction declared it fields nothing for.
+    // Carried onto the clan copy as well as the major, because a clan stamped
+    // from a pirate template inherits what that template says it does not
+    // build - it is the same faction's character, jittered.
+    bool buildsNo[sol::assets::kRosterCellCount] = {false, false, false};
 };
+
+// ⚑⚑⚑ THE ROSTER A FACTION ACTUALLY FLIES FOR A CELL, AND THE ONE PLACE THE
+// SUBSTITUTION RULES LIVE (Phase 32 stage C). Six call sites used to read a
+// roster off `GameFaction` directly, four of them with their own hand-written
+// `x.empty() ? y : x` - so "what does an empty cell mean" had four answers in
+// this file and none of them was written down anywhere a seventh site would
+// find it.
+//
+// ⚑⚑ `fallback` IS PASSED IN RATHER THAN TABULATED, ON PURPOSE. The four
+// substitutions genuinely differ - a contested attacker with no raiders flies
+// its patrol hulls, a response wing with no patrol flies its raiders, and the
+// two AMBIENT sites substitute NOTHING at all. Tabulating one answer per cell
+// would silently give ambient spawning a fallback it has never had, which is a
+// behaviour change this stage has no mandate for. `RosterCell::Count` means
+// "no substitute", and it is the argument the ambient sites pass.
+//
+// ⚑⚑ WHAT IS NEW IS THE FIRST LINE: A DECLARED CELL IS NEVER SUBSTITUTED FOR.
+// That is the whole difference between "unspecified" and "we build none", and
+// it is visible in shipped content - the two pirate clans declare `builds_no =
+// ["trader"]`, and before this stage emptying that list would have made them
+// haul in INTERCEPTORS rather than not haul at all.
+[[nodiscard]] std::span<const std::string>
+factionRoster(const GameFaction& faction, sol::assets::RosterCell cell, sol::assets::RosterCell fallback);
 
 // --- Response (Phase 30 stage C) -------------------------------------------
 //
@@ -2663,8 +2691,12 @@ private:
     // and the lambda captured nothing but members, so the lift is a move with
     // an empty capture list rather than the refactor it was priced as.
     // "Send a wing later" is callable now, which is the whole point.
+    // ⚑ Takes a SPAN since Phase 32 stage C, because `factionRoster` answers
+    // with one - and because the empty answer it gives for a declared cell is
+    // the same empty answer this already returned on, so a faction that fields
+    // none needs no branch at any call site.
     void spawnWing(std::uint32_t faction,
-                   const std::vector<std::string>& roster,
+                   std::span<const std::string> roster,
                    PilotRole role,
                    std::uint32_t count,
                    const sol::core::DVec3& anchor,

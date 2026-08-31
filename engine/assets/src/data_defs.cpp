@@ -671,6 +671,20 @@ bool parseFaction(const TomlValue& table,
     reader.optionalStringList("ships_patrol", def.shipsPatrol);
     reader.optionalStringList("ships_raider", def.shipsRaider);
     reader.optionalStringList("ships_trader", def.shipsTrader);
+    // Phase 32 stage C. Read as words and refused as words, so `builds_no =
+    // ["trade"]` is a parse error rather than a cell nobody notices is unset.
+    {
+        std::vector<std::string> cells;
+        reader.optionalStringList("builds_no", cells);
+        for (const std::string& text : cells) {
+            RosterCell cell = RosterCell::Patrol;
+            if (!parseRosterCell(text, cell)) {
+                reader.fail("'builds_no' entry '" + text + "' is not a roster cell (patrol, raider, trader)");
+                break;
+            }
+            def.buildsNo[static_cast<std::size_t>(cell)] = true;
+        }
+    }
     reader.optionalBiasList("station_bias", def.stationBias);
 
     reader.rejectUnknownKeys({"id",
@@ -684,6 +698,7 @@ bool parseFaction(const TomlValue& table,
                               "ships_patrol",
                               "ships_raider",
                               "ships_trader",
+                              "builds_no",
                               "station_bias"});
     if (!reader.failed) {
         if (kind == "major") {
@@ -697,6 +712,25 @@ bool parseFaction(const TomlValue& table,
     if (!reader.failed && (def.aggression < 0.0f || def.aggression > 1.0f || def.forgiveness < 0.0f ||
                            def.forgiveness > 1.0f)) {
         reader.fail("'aggression' and 'forgiveness' must be in [0, 1]");
+    }
+    // ⚑⚑ SAYING BOTH IS REFUSED RATHER THAN RESOLVED, and this is the check
+    // that makes `builds_no` mean one thing. A row declaring `builds_no =
+    // ["trader"]` beside a populated `ships_trader` is not a precedence puzzle
+    // for the loader to settle quietly - it is an author who changed their mind
+    // in one place and not the other, and the two halves are 40 lines apart in
+    // a file where every faction looks like every other. Same bargain a
+    // `[[model]]` naming a material AND carrying the four surface keys makes.
+    if (!reader.failed) {
+        const std::vector<std::string>* rosters[kRosterCellCount] = {
+            &def.shipsPatrol, &def.shipsRaider, &def.shipsTrader};
+        for (std::size_t i = 0; i < kRosterCellCount; ++i) {
+            if (def.buildsNo[i] && !rosters[i]->empty()) {
+                reader.fail(std::string("declares 'builds_no' for the ") +
+                            rosterCellName(static_cast<RosterCell>(i)) + " cell and also lists ships_" +
+                            rosterCellName(static_cast<RosterCell>(i)) + " hulls");
+                break;
+            }
+        }
     }
     if (reader.failed) {
         return false;
@@ -1700,7 +1734,31 @@ constexpr const char* kHullClassNames[] = {
 static_assert(std::size(kHullClassBounds) == kHullClassCount, "a hull class is missing its band");
 static_assert(std::size(kHullClassNames) == kHullClassCount, "a hull class is missing its def spelling");
 
+// ⚑ The word WITHOUT its `ships_` prefix, so `builds_no = ["trader"]` reads as
+// a sentence rather than as a list of key names. The prefix is how the roster
+// is spelled; the cell is what it is called.
+constexpr const char* kRosterCellNames[] = {"patrol", "raider", "trader"};
+
+static_assert(std::size(kRosterCellNames) == kRosterCellCount, "a roster cell is missing its spelling");
+
 } // namespace
+
+const char* rosterCellName(RosterCell cell)
+{
+    const auto index = static_cast<std::size_t>(cell);
+    return index < kRosterCellCount ? kRosterCellNames[index] : "?";
+}
+
+bool parseRosterCell(std::string_view text, RosterCell& out)
+{
+    for (std::size_t i = 0; i < kRosterCellCount; ++i) {
+        if (text == kRosterCellNames[i]) {
+            out = static_cast<RosterCell>(i);
+            return true;
+        }
+    }
+    return false;
+}
 
 const char* hullRoleName(HullRole role)
 {
@@ -2043,6 +2101,28 @@ bool DefDatabase::validateFactions(std::string* outError) const
                     }
                     return false;
                 }
+            }
+        }
+    }
+    return true;
+}
+
+bool DefDatabase::validateRosters(std::string* outError) const
+{
+    for (const FactionDef& faction : m_factions) {
+        const std::vector<std::string>* rosters[kRosterCellCount] = {
+            &faction.shipsPatrol, &faction.shipsRaider, &faction.shipsTrader};
+        for (std::size_t i = 0; i < kRosterCellCount; ++i) {
+            for (const std::string& id : *rosters[i]) {
+                if (findShip(id.c_str()) != nullptr) {
+                    continue;
+                }
+                if (outError != nullptr) {
+                    *outError = faction.source + ": faction '" + faction.id + "' fields '" + id +
+                                "' in its " + rosterCellName(static_cast<RosterCell>(i)) +
+                                " roster, which no [[ship]] row defines";
+                }
+                return false;
             }
         }
     }

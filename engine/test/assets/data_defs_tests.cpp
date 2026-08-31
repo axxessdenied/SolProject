@@ -229,6 +229,160 @@ relations = ["sol.a:-10"]
     SOL_CHECK(oneSided.validateFactions(&error));
 }
 
+// ⚑⚑⚑ THE THREE STATES A ROSTER CELL CAN BE IN (Phase 32 stage C), AND UNTIL
+// THIS STAGE THERE WERE TWO. A cell with hulls, a cell the faction DECLARED it
+// fields nothing for, and a cell nobody has decided about - the last two were
+// the same empty vector, and four call sites in the game each substituted a
+// different roster for it. The whole point of the key is that `buildsNo` and
+// `empty()` are now different questions.
+SOL_TEST(data_defs_faction_declares_a_cell_it_builds_nothing_for)
+{
+    DefDatabase db;
+    std::string error;
+    const char* doc = R"(
+[[faction]]
+id = "sol.clan"
+name = "Clan"
+kind = "pirate"
+ships_raider = ["sol.shuttle"]
+builds_no = ["patrol", "trader"]
+
+[[faction]]
+id = "sol.undecided"
+name = "Undecided"
+ships_raider = ["sol.shuttle"]
+)";
+    SOL_CHECK(merge(db, doc, "factions.toml", &error));
+
+    const sol::assets::FactionDef* clan = db.findFaction("sol.clan");
+    SOL_REQUIRE(clan != nullptr);
+    SOL_CHECK(clan->buildsNo[static_cast<std::size_t>(sol::assets::RosterCell::Patrol)]);
+    SOL_CHECK(clan->buildsNo[static_cast<std::size_t>(sol::assets::RosterCell::Trader)]);
+    // The cell it DOES field is untouched, which is what makes this a
+    // per-cell declaration rather than a flag on the faction.
+    SOL_CHECK(!clan->buildsNo[static_cast<std::size_t>(sol::assets::RosterCell::Raider)]);
+    SOL_CHECK(clan->shipsRaider.size() == 1);
+
+    // ⚑ The discriminating pair: this faction's patrol cell is EMPTY exactly
+    // like the clan's, and it has declared nothing. A reader that only asked
+    // `shipsPatrol.empty()` could not tell these two apart - which is the bug
+    // the key exists to fix, so the test asserts both halves of it.
+    const sol::assets::FactionDef* undecided = db.findFaction("sol.undecided");
+    SOL_REQUIRE(undecided != nullptr);
+    SOL_CHECK(undecided->shipsPatrol.empty() && clan->shipsPatrol.empty());
+    SOL_CHECK(!undecided->buildsNo[static_cast<std::size_t>(sol::assets::RosterCell::Patrol)]);
+
+    // Nothing declared is the default, and a faction that says nothing about
+    // any cell is every faction that shipped before this stage.
+    for (std::size_t i = 0; i < sol::assets::kRosterCellCount; ++i) {
+        SOL_CHECK(!undecided->buildsNo[i]);
+    }
+}
+
+// A cell named in `builds_no` AND listed is refused rather than resolved, and
+// a cell name that is not one of the three is refused too. Both are stage A's
+// ruling in another place: the vocabulary is words so that a wrong one has a
+// wrong spelling, and a contradiction is an author who changed their mind in
+// one place of two.
+SOL_TEST(data_defs_faction_cannot_both_field_and_refuse_a_cell)
+{
+    DefDatabase both;
+    std::string error;
+    SOL_CHECK(!merge(both,
+                     R"(
+[[faction]]
+id = "sol.a"
+name = "A"
+ships_trader = ["sol.freighter"]
+builds_no = ["trader"]
+)",
+                     "factions.toml",
+                     &error));
+    SOL_CHECK(error.find("builds_no") != std::string::npos);
+
+    // The same row without the contradiction parses, so the refusal above is
+    // about the pair and not about either key on its own.
+    DefDatabase one;
+    SOL_CHECK(merge(one,
+                    R"(
+[[faction]]
+id = "sol.a"
+name = "A"
+builds_no = ["trader"]
+)",
+                    "factions.toml",
+                    &error));
+
+    DefDatabase typo;
+    SOL_CHECK(!merge(typo,
+                     R"(
+[[faction]]
+id = "sol.a"
+name = "A"
+builds_no = ["trade"]
+)",
+                     "factions.toml",
+                     &error));
+    SOL_CHECK(error.find("roster cell") != std::string::npos);
+}
+
+// ⚑⚑ A ROSTER NAMING A SHIP THAT DOES NOT EXIST REFUSES THE LOAD, and it has
+// to be a separate pass for the same reason `validateMaterials` is: the ship
+// may legitimately arrive in a later layer. Before this, `spawnWing` found it
+// at spawn time, warned, and abandoned the whole wing - so one wrong character
+// was a patrol that silently never appeared in a system nobody might visit.
+SOL_TEST(data_defs_faction_roster_must_name_ships_that_exist)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db, kBaseShips, "ships.toml"));
+    SOL_CHECK(merge(db,
+                    R"(
+[[faction]]
+id = "sol.a"
+name = "A"
+ships_patrol = ["sol.shuttle"]
+)",
+                    "factions.toml",
+                    &error));
+    SOL_CHECK(db.validateRosters(&error));
+
+    // The layering half: a roster naming a ship no layer defines is what the
+    // pass exists to catch, and the message names the faction, the cell and
+    // the id, because a validation error a modder cannot act on is a crash
+    // with better manners.
+    DefDatabase stale;
+    SOL_CHECK(merge(stale, kBaseShips, "ships.toml"));
+    SOL_CHECK(merge(stale,
+                    R"(
+[[faction]]
+id = "sol.a"
+name = "A"
+ships_raider = ["sol.gunship"]
+)",
+                    "factions.toml",
+                    &error));
+    SOL_CHECK(!stale.validateRosters(&error));
+    SOL_CHECK(error.find("sol.gunship") != std::string::npos);
+    SOL_CHECK(error.find("raider") != std::string::npos);
+
+    // ⚑ A DECLARED-EMPTY CELL IS NOT A BROKEN ONE, which is this stage's whole
+    // exit criterion stated as a test: the faction below fields nothing at all
+    // and validates, while the one above names one wrong hull and does not.
+    DefDatabase none;
+    SOL_CHECK(merge(none, kBaseShips, "ships.toml"));
+    SOL_CHECK(merge(none,
+                    R"(
+[[faction]]
+id = "sol.a"
+name = "A"
+builds_no = ["patrol", "raider", "trader"]
+)",
+                    "factions.toml",
+                    &error));
+    SOL_CHECK(none.validateRosters(&error));
+}
+
 SOL_TEST(data_defs_validation_errors)
 {
     DefDatabase db;

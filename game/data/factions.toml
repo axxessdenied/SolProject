@@ -20,6 +20,18 @@
 # the prose, not the other way round: if you change what a faction IS, change
 # its bias to match. Pirate clans have no bias - they are raiders, and their
 # faction indices do not exist until the galaxy is generated.
+#
+# ⚑⚑ builds_no is the roster's version of that "0" (Phase 32 stage C): a list of
+# the cells - patrol, raider, trader - this faction fields NOTHING for. It is a
+# key rather than an empty list because an empty list already meant four other
+# things: until this stage a bare `ships_trader` made a faction haul in its
+# PATROL hulls, and a bare `ships_raider` made a contested attacker fly its
+# patrol hulls, both by a rule written out by hand at the call site. A cell
+# named here must not also be listed, and saying both is refused at load.
+#
+# ⚑ A cell that is neither listed nor declared is UNSPECIFIED, which is legal
+# and warns at load. That warning is the point: "this faction fields none" and
+# "nobody has decided yet" were the same silence before this pass.
 
 [[faction]]
 id = "sol.navy"
@@ -113,9 +125,21 @@ color = [0.9, 0.2, 0.15]
 kind = "pirate"
 aggression = 0.8
 forgiveness = 0.2
-ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
-ships_trader = ["sol.freighter", "sol.shuttle"]
+# ⚑⚑ THE FIRST TWO DECLARED-EMPTY CELLS IN THIS GAME (Phase 32 stage C), and
+# they are what the description above has said since 8b: clans working the
+# edges of the shipping lanes do not run scheduled freight and do not police
+# anybody's space. Both cells were populated with the majors' own hulls until
+# this stage - byte-identical to the Solar Navy's - so a clan-held system grew
+# civilian freighter traffic on a schedule, which is the one thing a lawless
+# fringe is not supposed to have.
+#
+# ⚑ Deleting the two lines would NOT have done this. An empty `ships_trader`
+# fell back to `ships_patrol`, so the clans would have hauled in INTERCEPTORS
+# rather than not hauled at all - and an empty `ships_patrol` is read by a
+# response wing, which for a pirate is not read at all. That is the ambiguity
+# `builds_no` exists to remove.
+builds_no = ["patrol", "trader"]
 
 [[faction]]
 id = "sol.reavers"
@@ -125,6 +149,7 @@ color = [0.95, 0.5, 0.1]
 kind = "pirate"
 aggression = 0.95
 forgiveness = 0.1
-ships_patrol = ["sol.interceptor"]
 ships_raider = ["sol.interceptor"]
-ships_trader = ["sol.freighter", "sol.shuttle"]
+# Same declaration as the Corsairs above, for the same reason: raiders who
+# treat wrecks as a harvest neither haul nor patrol.
+builds_no = ["patrol", "trader"]
