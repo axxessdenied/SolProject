@@ -2,7 +2,9 @@
 #include "sol/platform/platform.hpp"
 #include "sol/platform/time.hpp"
 
+#include <cstdint>
 #include <ctime>
+#include <limits>
 
 // ⚑ clang-format off, and it is load-bearing: `IncludeBlocks: Regroup` sorts
 // across blank lines, and <shlobj.h> sorts ABOVE <windows.h> alphabetically -
@@ -53,6 +55,18 @@ std::uint64_t wallClockSeconds()
 
 bool localCalendarTime(std::uint64_t unixSeconds, CalendarTime& out)
 {
+    // ⚑⚑⚑ A VALUE THAT WRAPS NEGATIVE IS NOT REPRESENTABLE, AND SAYING SO HERE IS
+    // WHAT MAKES THE TWO PLATFORMS AGREE. The input is UNSIGNED seconds since the
+    // epoch, so it can never legitimately mean an instant before it - but the
+    // platform's `time_t` is SIGNED, and a large enough value arrives at the C
+    // library as a negative number rather than as a refusal. Win32's
+    // `_localtime64_s` rejects that; glibc's `localtime_r` cheerfully answers
+    // 1969, so the same call returned false on one platform and a date in the
+    // wrong century on the other. Phase 33 stage A found the divergence through a
+    // test that had only ever run on Windows.
+    if (unixSeconds > static_cast<std::uint64_t>((std::numeric_limits<__time64_t>::max)())) {
+        return false;
+    }
     // _localtime64_s over the CRT's own 64-bit time_t, so this does not stop
     // working in 2038 the way the 32-bit variant would.
     const __time64_t stamp = static_cast<__time64_t>(unixSeconds);

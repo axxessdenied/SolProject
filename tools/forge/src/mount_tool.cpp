@@ -31,11 +31,6 @@ constexpr core::Vec4 kSelectedColor = {0.30f, 0.95f, 0.45f, 1.0f};
 // at (`def_editor.cpp`'s `kMetreDecimals`, Phase 14's grid).
 constexpr int kMetreDecimals = 4;
 
-[[nodiscard]] core::Vec3 asVec3(const assets::BuildPoint& p)
-{
-    return {static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z)};
-}
-
 // ⚑⚑ A RING AND A CROSS, NOT THE POINT TOOL'S BARE CROSS, AND THE DIFFERENCE IS
 // NOT DECORATION. Both tools draw markers into the same viewport over the same
 // mesh; if a mount looked like a vertex, the one question this tool exists to

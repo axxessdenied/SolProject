@@ -463,6 +463,15 @@ SOL_TEST(localCalendarTimeBreaksDownAStampAndReportsItsOwnFailure)
     // chance to be wrong, so both are pinned above rather than assumed.
     const sol::platform::CalendarTime untouched;
     sol::platform::CalendarTime out;
-    SOL_CHECK(!sol::platform::localCalendarTime(~0ull, out)); // not representable
+    // ⚑⚑ THIS ASSERTION WAS TRUE BY ACCIDENT UNTIL PHASE 33 STAGE A RAN IT ON
+    // LINUX. `~0ull` is not a huge time, it is -1 once the platform's SIGNED
+    // `time_t` has it: Win32 refused it and glibc answered 1969-12-31. The
+    // implementations now both reject anything that will not survive the trip,
+    // because an UNSIGNED seconds-since-epoch can never mean a pre-epoch instant.
+    SOL_CHECK(!sol::platform::localCalendarTime(~0ull, out)); // wraps negative
     SOL_CHECK(out.year == untouched.year);                    // left alone, as promised
+    // The other end, which the C library rejects rather than the guard: a year
+    // no `tm_year` can hold. Both refusals have to leave `out` alone.
+    SOL_CHECK(!sol::platform::localCalendarTime(1ull << 62, out));
+    SOL_CHECK(out.year == untouched.year);
 }

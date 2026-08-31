@@ -13,8 +13,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
+#include <limits>
 #include <system_error>
 #include <thread>
 
@@ -53,6 +55,18 @@ std::uint64_t wallClockSeconds()
 
 bool localCalendarTime(std::uint64_t unixSeconds, CalendarTime& out)
 {
+    // ⚑⚑⚑ A VALUE THAT WRAPS NEGATIVE IS NOT REPRESENTABLE, AND SAYING SO HERE IS
+    // WHAT MAKES THE TWO PLATFORMS AGREE. The input is UNSIGNED seconds since the
+    // epoch, so it can never legitimately mean an instant before it - but the
+    // platform's `time_t` is SIGNED, and a large enough value arrives at the C
+    // library as a negative number rather than as a refusal. Win32's
+    // `_localtime64_s` rejects that; glibc's `localtime_r` cheerfully answers
+    // 1969, so the same call returned false on one platform and a date in the
+    // wrong century on the other. Phase 33 stage A found the divergence through a
+    // test that had only ever run on Windows; this side is the one that was wrong.
+    if (unixSeconds > static_cast<std::uint64_t>(std::numeric_limits<std::time_t>::max())) {
+        return false;
+    }
     // localtime_r rather than localtime: the reentrant form has no shared
     // buffer to be overwritten by another caller between the call and the read.
     const std::time_t stamp = static_cast<std::time_t>(unixSeconds);
