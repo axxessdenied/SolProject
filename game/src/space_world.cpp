@@ -3870,6 +3870,16 @@ double SpaceWorld::modelBaseRadius(ModelId model) const
     return def != nullptr ? static_cast<double>(def->radius) : 8.0;
 }
 
+double SpaceWorld::hullRadius(std::uint32_t entityIndex) const
+{
+    const RenderShape* shape = m_registry.tryGet<RenderShape>(m_registry.entityFromIndex(entityIndex));
+    // Nothing drawn is nothing measured; the 8 m fallback above is the same
+    // answer `modelBaseRadius` gives a model it does not know, and it is the
+    // reference hull, so a camera keyed on it is exactly unchanged.
+    return shape == nullptr ? modelBaseRadius(kNoModel)
+                            : modelBaseRadius(shape->model) * static_cast<double>(shape->scale.x);
+}
+
 double SpaceWorld::modelAvoidRadius(ModelId model) const
 {
     const assets::ModelDef* def = modelDef(model);
@@ -8914,7 +8924,7 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
             .key = makeInstanceKey(entity.index, entity.generation),
         });
     }
-    appendFittingInstances(alpha, out);
+    appendFittingInstances(alpha, includeShip, out);
 }
 
 // ⚑⚑⚑ WHAT IS BOLTED TO A HULL, DRAWN WHERE IT IS BOLTED (Phase 31 stage
@@ -8952,12 +8962,13 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
 // actually played in. The freighter loses nothing either way: both its rings
 // are behind the eye, above and below the canopy.
 //
-// ⚑ WHAT IT COSTS is a hull nobody has authored yet - one with a fitting
+// ⚑ WHAT IT COST was a hull nobody had authored yet - one with a fitting
 // forward of `kCockpitOffset` and off the centreline, which would be drawn
-// hanging in space with no hull behind it. That is a real cost and it is
-// accepted deliberately: the alternative is a third rule about which fittings
-// are cockpit-visible, and a special case is how "where a fitting is drawn"
-// stops having one answer.
+// hanging in space with no hull behind it. E1 accepted that deliberately
+// rather than take a third rule about which fittings are cockpit-visible.
+// ⚑⚑ PHASE 32 STAGE B PAID IT, and it is a rule about the HULL rather than
+// about a fitting, so "where a fitting is drawn" still has one answer: see
+// `hideSeatFittings` in the body below.
 //
 // ⚑ `kNoInstanceKey`, so a fitting gets no LOD memory and answers statelessly.
 // The cockpit was the only instance without an identity until now; a fitting is
@@ -8966,13 +8977,42 @@ void SpaceWorld::buildRenderInstances(float alpha, bool includeShip, std::vector
 // The alternative would be packing a mount index into a key whose upper half
 // is already the entity generation, which is a save-format-shaped change for a
 // LOD chain that does not exist.
-void SpaceWorld::appendFittingInstances(float alpha, std::vector<RenderInstance>& out) const
+void SpaceWorld::appendFittingInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const
 {
     const ecs::Pool<ShipArmament>& armaments = m_registry.storage<ShipArmament>();
     const ecs::Pool<ShipFittings>& fittings = m_registry.storage<ShipFittings>();
     const ecs::Pool<Transform>& transforms = m_registry.storage<Transform>();
     const ecs::Pool<RenderShape>& shapes = m_registry.storage<RenderShape>();
     const double alphaD = static_cast<double>(alpha);
+
+    // ⚑⚑⚑ WHAT E1's COCKPIT RULING LEFT OPEN, ANSWERED (Phase 32 stage B):
+    // FROM THE SEAT YOU SEE YOUR OWN FITTINGS ONLY WHILE THE CABIN IS AS BIG AS
+    // THE SHIP. E1 ruled that a fitting is drawn whether or not its hull is,
+    // and named the cost in the block above - a hull long enough that a fitting
+    // ends up "drawn hanging in space with no hull behind it". Hanging in space
+    // is precisely "with nothing drawn behind it", and in the cockpit exactly
+    // one thing is drawn around the eye: `cockpit.forge`, whose authored radius
+    // models.toml says is measured from the SHIP ORIGIN and "comes out just
+    // inside the ship's own 8 m". So the cabin's reach against the hull's is
+    // the whole question, and both numbers are already authored.
+    //
+    // ⚑⚑ ONE COMPARISON PER HULL RATHER THAN ONE PER FITTING, AND THE SHIPPED
+    // FREIGHTER IS WHY. Cut fitting-by-fitting on the same 8 m, its three hold
+    // pods land at 6.6, 8.1 and 16.5 m - so a player would watch one container
+    // drawn and the next, 2.4 m further aft, gone, with the cut falling
+    // 0.09 m from a boundary nothing in the file knows about. A hull is either
+    // small enough for its kit to read as bolted to the cabin or it is not.
+    //
+    // ⚑ THE SHIP THE GAME IS PLAYED IN IS UNCHANGED, WHICH IS THE POINT: the
+    // shuttle's hull radius is the 8 m the cockpit was authored around, so the
+    // nose gun 1.6 m ahead of the pilot - the thing E1's ruling exists for - is
+    // still drawn, and so is the interceptor's at 6.4 m. What the freighter
+    // loses is what E1 measured it as gaining: "both its rings are behind the
+    // eye, above and below the canopy", i.e. nothing. `game.unit` asserts that
+    // covering relation against the committed defs, so re-measuring either mesh
+    // fails a test instead of silently deleting a pilot's own gun.
+    const std::uint32_t seatIndex = playerEntityIndex();
+    const bool hideSeatFittings = !includeShip && hullRadius(seatIndex) > modelBaseRadius(cockpitModel());
 
     // ⚑⚑ AND NOTHING IS DRAWN AT A MOUNT THAT HAS BEEN SHOT OFF (Phase 31
     // stage F). Both loops below check it, because a gun and a pod go the same
@@ -8997,6 +9037,9 @@ void SpaceWorld::appendFittingInstances(float alpha, std::vector<RenderInstance>
             continue;
         }
         const std::uint32_t entityIndex = fittedIndices[i];
+        if (hideSeatFittings && entityIndex == seatIndex) {
+            continue;
+        }
         const Transform* transform = transforms.tryGet(entityIndex);
         const RenderShape* shape = shapes.tryGet(entityIndex);
         if (transform == nullptr || shape == nullptr) {
@@ -9031,6 +9074,9 @@ void SpaceWorld::appendFittingInstances(float alpha, std::vector<RenderInstance>
     const ShipArmament* armaments_ = armaments.values().data();
     for (std::uint32_t i = 0; i < count; ++i) {
         const std::uint32_t entityIndex = entityIndices[i];
+        if (hideSeatFittings && entityIndex == seatIndex) {
+            continue;
+        }
         const ShipArmament& armament = armaments_[i];
         // ⚑ Asked before the frame is built, not after. `gunneryFrame` walks the
         // selection and a target's transform, and every NPC in this galaxy

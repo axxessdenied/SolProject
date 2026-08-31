@@ -1865,6 +1865,23 @@ public:
 
     // Interpolated blend of previous->current tick state at alpha.
     [[nodiscard]] Transform shipRenderTransform(float alpha) const;
+
+    // ⚑⚑ HOW BIG A HULL ACTUALLY IS, IN WORLD METRES (Phase 32 stage B). The
+    // authored `radius` of the model it draws, times the instance scale it
+    // draws at - the same product collision, avoidance, docking stand-off and
+    // the salvage sweep have all read for phases, promoted here because the
+    // chase camera needs it and nothing outside this class could reach
+    // `modelBaseRadius`.
+    //
+    // ⚑ This is the ONLY notion of a hull's size the running game has. The
+    // cooked `.smesh` header carries no bounds (`formats.hpp`), so nothing here
+    // can measure a mesh; only the Forge can, which is why stage A's band check
+    // lives there. A hand-authored collision sphere is therefore what the
+    // camera frames, and it is authored generously on purpose.
+    [[nodiscard]] double hullRadius(std::uint32_t entityIndex) const;
+
+    [[nodiscard]] double playerHullRadius() const { return hullRadius(playerEntityIndex()); }
+
     [[nodiscard]] sol::sim::ShipState shipState() const;
 
     [[nodiscard]] const sol::sim::ShipTuning& shipTuning() const
@@ -2479,7 +2496,7 @@ private:
     // The fitting half of `buildRenderInstances`, split out because it walks a
     // different pool under a different rule and because "which pose is this
     // in" has to be answerable about it on its own - see the definition.
-    void appendFittingInstances(float alpha, std::vector<RenderInstance>& out) const;
+    void appendFittingInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const;
 
     void applyShipDef(std::uint32_t entityIndex,
                       const sol::assets::ShipDef& def,

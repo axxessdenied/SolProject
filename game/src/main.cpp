@@ -756,8 +756,11 @@ int main(int argc, char** argv)
                 break;
             case game::CameraMode::ThirdPerson:
                 cameraMode = game::CameraMode::Free;
-                freeCamera.setPosition(
-                    shipCamera.thirdPerson(world.shipRenderTransform(simLoop.alpha()), 0.0f).position);
+                freeCamera.setPosition(shipCamera
+                                           .thirdPerson(world.shipRenderTransform(simLoop.alpha()),
+                                                        static_cast<float>(world.playerHullRadius()),
+                                                        0.0f)
+                                           .position);
                 break;
             case game::CameraMode::Free:
                 cameraMode = game::CameraMode::Cockpit;
@@ -1047,7 +1050,11 @@ int main(int argc, char** argv)
             camera = shipCamera.cockpit(shipTransform);
             break;
         case game::CameraMode::ThirdPerson:
-            camera = shipCamera.thirdPerson(shipTransform, deltaSeconds);
+            // ⚑ The stand-off scales with the hull (Phase 32 stage B), so a
+            // freighter is framed like a freighter rather than filling the
+            // frame from ten metres off its own tail.
+            camera = shipCamera.thirdPerson(
+                shipTransform, static_cast<float>(world.playerHullRadius()), deltaSeconds);
             break;
         case game::CameraMode::Free:
             camera = freeCamera.frame();

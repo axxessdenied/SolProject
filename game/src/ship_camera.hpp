@@ -82,11 +82,41 @@ public:
         };
     }
 
-    [[nodiscard]] CameraFrame thirdPerson(const Transform& ship, float deltaSeconds)
+    // ⚑⚑⚑ THE CHASE RIG STANDS OFF BY THE SIZE OF WHAT IT IS CHASING (Phase 32
+    // stage B), AND THE NUMBER IT SCALES BY IS THE HULL'S RADIUS IN METRES -
+    // NOT ITS `scale`. The two are the same figure on every hull shipped today,
+    // because all three share one mesh with one authored radius, so no test
+    // against committed content can tell them apart. They come apart on the
+    // very day this phase exists for: a real mesh is authored at true length
+    // and flies at `scale = 1.0` with its size in `models.toml`, and a rig
+    // keyed on `scale` would frame a 45 m hull exactly like the 12 m one.
+    // `ShipDef::scale` is the placeholder stretcher that makes one mesh do duty
+    // for three ships; the radius survives it.
+    //
+    // ⚑⚑ AND IT IS THE MEASURED GEOMETRY RATHER THAN THE AUTHORED `class`,
+    // which is the exact inverse of stage A's ruling and for the same reason.
+    // There the class is the intent and the mesh the placeholder, so no button
+    // rewrites a class to agree with a stand-in. Here the camera has to frame
+    // WHAT IS ACTUALLY DRAWN: the shuttle declares `class = "light"` (20-45 m)
+    // and measures 12, so framing it by its class would leave the ship the game
+    // opens in as a speck a hundred metres off.
+    //
+    // ⚑ Linear in the radius, so the hull subtends the same slice of the frame
+    // at any size - which is what "framed like a class-3 hull" means. The
+    // reference is the shuttle's own 8 m, so that hull's view is unchanged to
+    // the bit, and a hull with no model def at all takes the same 8 m fallback
+    // `modelBaseRadius` hands out and is therefore also unchanged.
+    [[nodiscard]] static sol::core::Vec3 chaseOffset(float hullRadius)
+    {
+        const float k = hullRadius > 0.0f ? hullRadius / kChaseReferenceRadius : 1.0f;
+        return kChaseOffset * k;
+    }
+
+    [[nodiscard]] CameraFrame thirdPerson(const Transform& ship, float hullRadius, float deltaSeconds)
     {
         const float t = 1.0f - std::exp(-kChaseRate * deltaSeconds);
         m_chaseOrientation = slerp(m_chaseOrientation, ship.orientation, t);
-        const sol::core::Vec3 offset = rotate(m_chaseOrientation, kChaseOffset);
+        const sol::core::Vec3 offset = rotate(m_chaseOrientation, chaseOffset(hullRadius));
         return {
             .position = ship.position + sol::core::toDVec3(offset),
             .orientation = m_chaseOrientation * sol::core::fromAxisAngle({1.0f, 0.0f, 0.0f}, kChasePitch),
@@ -101,9 +131,21 @@ public:
     // own canopy.
     static constexpr sol::core::Vec3 kCockpitOffset = {0.0f, 0.8f, -5.0f};
 
-private:
+    // The rig, as tuned for the shuttle. `kChaseOffset` is the stand-off at
+    // `kChaseReferenceRadius`; `chaseOffset()` above is the only thing that
+    // should read it. Public because the framing they produce is a claim worth
+    // asserting - `game.unit` checks every shipped hull fits inside
+    // `kCameraVerticalFov` from where these put the eye.
     static constexpr sol::core::Vec3 kChaseOffset = {0.0f, 8.0f, 30.0f};
     static constexpr float kChasePitch = -0.16f;
+    // The shuttle's `ship` model radius from models.toml. ⚑ It is a hand-authored
+    // COLLISION sphere rather than a measurement - deliberately a little larger
+    // than the mesh, since "larger than what you can hit is safe" - and that is
+    // the harmless direction here too: a generous sphere stands the camera off
+    // slightly further than it strictly needs to.
+    static constexpr float kChaseReferenceRadius = 8.0f;
+
+private:
     static constexpr float kChaseRate = 6.0f;
     // Matched to the flight stick's own sensitivity so the two mouse modes
     // feel like the same mouse; the settings multiplier applies to both.

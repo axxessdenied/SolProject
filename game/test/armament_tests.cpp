@@ -85,6 +85,30 @@ mesh = "cube"
 texture = "hull"
 radius = 1.0
 
+# ⚑⚑ AN INTERIOR, WHICH THIS FIXTURE ACQUIRED IN PHASE 32 STAGE B AND HAD NO
+# NEED OF BEFORE. From the seat a hull draws exactly one thing around the eye -
+# its cabin - and stage B's rule is that a pilot sees their own fittings only
+# while that cabin reaches as far as the hull does. A synthetic ship with no
+# interior at all is a configuration this game does not ship and cannot answer
+# the question about, so the fixture grew one.
+#
+# `radius` is 16.0 because the hull below is drawn at `scale = 2.0` against
+# `modelBaseRadius`'s 8 m fallback - a cabin that covers it exactly, the way
+# models.toml authors the real one to come out "just inside the ship's own 8 m".
+# `small_cabin` is that same hull with an interior too small for it, which is
+# the only way to see the rule bite.
+[[model]]
+id = "cabin"
+mesh = "cube"
+texture = "hull"
+radius = 16.0
+
+[[model]]
+id = "small_cabin"
+mesh = "cube"
+texture = "hull"
+radius = 4.0
+
 [[role]]
 id = "fitting"
 model = "fallback_body"
@@ -253,8 +277,10 @@ weight_fringe = 0.5
 // discriminating, because a firing pass that used a mount's `at` raw rather
 // than scaling it by the hull would still put two bolts in two places and only
 // be wrong about how far apart.
-[[nodiscard]] std::string
-hull(const std::string& mounts, const char* capacitor = "100.0", const char* recharge = "15.0")
+[[nodiscard]] std::string hull(const std::string& mounts,
+                               const char* capacitor = "100.0",
+                               const char* recharge = "15.0",
+                               const char* cockpit = "cabin")
 {
     return std::string(R"(
 [[ship]]
@@ -262,10 +288,12 @@ id = "sol.shuttle"
 name = "Gunboat"
 model = "ship"
 scale = 2.0
+cockpit = ")") +
+           cockpit + R"("
 max_speed = 220.0
 cargo = 50.0
 power_output = 6.0
-weapon_capacitor = )") +
+weapon_capacitor = )" +
            capacitor + "\nweapon_recharge = " + recharge + "\n" + mounts;
 }
 
@@ -356,7 +384,10 @@ struct Fixture
     explicit Fixture(const std::string& shipToml, std::uint64_t seed = 1701)
     {
         std::string error;
-        SOL_CHECK(defs.mergeToml(kDefs, std::strlen(kDefs), "gun_defs.toml", &error));
+        if (!defs.mergeToml(kDefs, std::strlen(kDefs), "gun_defs.toml", &error)) {
+            std::printf("  defs did not parse: %s\n", error.c_str());
+            SOL_CHECK(false);
+        }
         const std::string full = shipToml;
         if (!defs.mergeToml(full.c_str(), full.size(), "gun_hull.toml", &error)) {
             std::printf("  hull did not parse: %s\n", error.c_str());
@@ -1594,6 +1625,30 @@ SOL_TEST(a_pilot_sees_their_own_guns_from_the_seat)
     // opinion about where what is bolted to it sits.
     const sol::core::DVec3 hull = fixture.world.shipState().position;
     SOL_CHECK(distance(fromTheSeat[0].position - hull, {-6.0, 0.0, -10.0}) < 1e-4);
+}
+
+// ⚑⚑⚑ AND THE LIMIT OF THAT RULING, WHICH IS PHASE 32 STAGE B's ANSWER TO THE
+// ONE THING E1 LEFT OPEN. E1 accepted, in as many words, that a hull long
+// enough would draw a fitting "hanging in space with no hull behind it", and
+// declined to take a third rule about which fittings are cockpit-visible to
+// avoid it. Stage B pays that cost with a rule about the HULL instead: from the
+// seat you see your own kit only while the cabin reaches as far as the ship
+// does, because the cabin is the only thing drawn for it to be attached to.
+//
+// ⚑ The two hulls here differ in NOTHING but their interior - same mounts, same
+// guns, same scale - so what this measures is the covering relation and not the
+// size of anything. The 4 m cabin cannot cover a 16 m hull, and both guns go.
+// From OUTSIDE they are drawn either way: the rule is about the seat, not about
+// the ship.
+SOL_TEST(a_hull_that_outgrew_its_cabin_shows_the_seat_none_of_its_own_kit)
+{
+    Fixture fixture(
+        hull(gunMount("gun_port", -3.0, "sol.left_gun") + gunMount("gun_starboard", 3.0, "sol.right_gun"),
+             "100.0",
+             "15.0",
+             "small_cabin"));
+    SOL_CHECK(fixture.fittingsDrawn(true).size() == 2);
+    SOL_CHECK(fixture.fittingsDrawn(false).empty());
 }
 
 // ⚑⚑ THE ROLL RULE ON ITS OWN, because the world-level tests above cannot
