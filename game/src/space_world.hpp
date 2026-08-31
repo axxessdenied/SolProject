@@ -1652,8 +1652,31 @@ public:
     [[nodiscard]] sol::assets::Legality commodityLegality(std::uint32_t systemIndex,
                                                           std::uint32_t commodity) const;
     // The faction whose law applies in a system, or nullptr where nobody holds
-    // it. The name is what a screen shows; the def is what carries the table.
+    // it. This is the TABLE and only the table - for what to print, ask
+    // `jurisdictionName` below, because for a clan the two are different
+    // factions and the def is the wrong one to show.
     [[nodiscard]] const sol::assets::FactionDef* jurisdictionOf(std::uint32_t systemIndex) const;
+
+    // ⚑⚑⚑ WHO HOLDS THE SYSTEM, WHICH IS NOT WHOSE TABLE APPLIES. A generated
+    // clan carries its TEMPLATE's def id, so `jurisdictionOf` correctly returns
+    // one shared Reaver Kindred table for all ten Reaver clans - and equally
+    // correctly returns the wrong NAME, because the clan holding the place is
+    // called `Queunth Corsairs` and appears under that name in `sol.territory`,
+    // the raid log, the map and every hail. Printing the template put a faction
+    // name on a third of the galaxy's docks that exists nowhere else in the
+    // game, and a player had no way to connect the two.
+    //
+    // ⚑⚑ THE SUFFIX MAKES IT WORSE RATHER THAN HINTING AT IT: a clan is named
+    // `<system> <random suffix>` and the suffix list CONTAINS both template
+    // names, so `Queunth Corsairs` reads as the Corsairs and is governed by the
+    // Reaver Kindred table. The two draws are independent by design
+    // (`spawnClans`), so the name has never carried the template and cannot be
+    // read as if it did.
+    //
+    // ⚑ Empty exactly where `jurisdictionOf` is null - nobody holds the place.
+    // Callers key the "no jurisdiction" wording off the DEF, because that is
+    // what makes a legality answerable; this only supplies the words.
+    [[nodiscard]] const char* jurisdictionName(std::uint32_t systemIndex) const;
 
     // --- System security (Phase 30 stage A, decisions/019) -----------------
     //

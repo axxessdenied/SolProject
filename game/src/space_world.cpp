@@ -2625,6 +2625,19 @@ const assets::FactionDef* SpaceWorld::jurisdictionOf(std::uint32_t systemIndex) 
     return m_defs->findFaction(m_factionTable[owner].defId.c_str());
 }
 
+const char* SpaceWorld::jurisdictionName(std::uint32_t systemIndex) const
+{
+    const std::uint32_t owner = systemOwnerFaction(systemIndex);
+    if (owner >= m_factionTable.size()) {
+        return ""; // nobody holds this place; the caller says so in its own words
+    }
+    // ⚑ The LIVE faction table rather than the def, which is the whole point:
+    // `GameFaction::name` is the generated clan's name where `defId` is only
+    // its template's. For a major the two are the same string, so nothing about
+    // Navy or Hegemony space moves.
+    return m_factionTable[owner].name.c_str();
+}
+
 assets::Legality SpaceWorld::commodityLegality(std::uint32_t systemIndex, std::uint32_t commodity) const
 {
     const assets::FactionDef* holder = jurisdictionOf(systemIndex);

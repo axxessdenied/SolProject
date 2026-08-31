@@ -299,3 +299,82 @@ SOL_TEST(the_shipped_galaxy_has_somewhere_salvage_is_a_crime_and_one_place_nobod
     }
     SOL_CHECK(plateRestrictedSomewhere);
 }
+
+// ⚑⚑⚑ THE NAME ON THE DOCK IS THE HOLDER'S, AND THE TABLE IS ITS TEMPLATE'S -
+// TWO DIFFERENT FACTIONS FOR A THIRD OF THE GALAXY (found by the Phase 33 exit
+// flight). `jurisdictionOf` returns the def, which for a generated clan is the
+// pirate TEMPLATE it was rolled from, and the trade panel printed that def's
+// name: a dock held by `Queunth Corsairs` announced itself as being under
+// `Reaver Kindred` law, a faction that appears under that name nowhere else in
+// the game - not in `sol.territory`, not in the raid log, not on the map.
+//
+// ⚑⚑ AND THE NAME CANNOT BE READ AS A HINT AT THE TEMPLATE, BECAUSE THE TWO
+// DRAWS ARE INDEPENDENT. `spawnClans` names a clan `<system> <random suffix>`
+// and picks its template with a separate `rng.range` - and the suffix list
+// contains BOTH template names, so a clan called "... Corsairs" being governed
+// by the Reaver Kindred table is ordinary rather than a mix-up.
+//
+// The law lookup is unchanged and deliberately so: ten Reaver clans consult one
+// Reaver Kindred table, which `jurisdictionOf` says of itself. Only the words
+// moved.
+SOL_TEST(a_clan_dock_names_the_clan_that_holds_it_and_not_the_template_it_rolled)
+{
+    DefDatabase defs;
+    std::string error;
+    SOL_REQUIRE(defs.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+
+    game::SpaceWorld world;
+    world.spawn(1701);
+    world.applyDefs(defs);
+    SOL_REQUIRE(world.generateUniverse(defs));
+
+    std::uint32_t clanSystems = 0;
+    std::uint32_t namedAfterTemplate = 0;
+    const char* firstClan = nullptr;
+    const char* firstTemplate = nullptr;
+    for (std::uint32_t i = 0; i < world.galaxy().systems.size(); ++i) {
+        const sol::assets::FactionDef* law = world.jurisdictionOf(i);
+        if (law == nullptr || law->kind != sol::assets::FactionKind::Pirate) {
+            continue;
+        }
+        ++clanSystems;
+        const char* shown = world.jurisdictionName(i);
+        SOL_REQUIRE(shown != nullptr);
+        // The holder is a generated clan, so the panel must not be showing the
+        // template's name. `Corsairs` / `Reaver Kindred` are the two templates.
+        if (law->name == shown) {
+            ++namedAfterTemplate;
+        }
+        if (firstClan == nullptr) {
+            firstClan = shown;
+            firstTemplate = law->name.c_str();
+        }
+    }
+    if (clanSystems == 0 || namedAfterTemplate != 0) {
+        std::printf("  %u clan system(s), %u still showing the template name\n",
+                    clanSystems,
+                    namedAfterTemplate);
+    }
+    // Clans hold a large minority of the shipped galaxy; if that ever stops
+    // being true this test is measuring nothing and should say so.
+    SOL_REQUIRE(clanSystems > 10);
+    SOL_CHECK(namedAfterTemplate == 0);
+    if (firstClan != nullptr) {
+        std::printf("  a clan dock reads '%s' where the table is '%s'\n", firstClan, firstTemplate);
+    }
+
+    // ⚑ And a MAJOR is untouched: for a faction that is its own def, the holder
+    // and the table are the same string, so nothing about Navy or Hegemony
+    // space moved. This is the half that would break if `jurisdictionName` had
+    // been keyed on something other than the live faction table.
+    std::uint32_t majorSystems = 0;
+    for (std::uint32_t i = 0; i < world.galaxy().systems.size(); ++i) {
+        const sol::assets::FactionDef* law = world.jurisdictionOf(i);
+        if (law == nullptr || law->kind == sol::assets::FactionKind::Pirate) {
+            continue;
+        }
+        ++majorSystems;
+        SOL_CHECK(law->name == world.jurisdictionName(i));
+    }
+    SOL_REQUIRE(majorSystems > 10);
+}

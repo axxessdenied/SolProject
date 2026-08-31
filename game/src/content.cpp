@@ -2609,7 +2609,8 @@ std::string listLegality(GameContent& content, double system)
                   sizeof(head),
                   "%s: %s",
                   world.galaxy().systems[index].name.c_str(),
-                  law != nullptr ? law->name.c_str() : "no jurisdiction - nobody polices this system");
+                  law != nullptr ? world.jurisdictionName(index)
+                                 : "no jurisdiction - nobody polices this system");
     std::string lines = head;
     for (std::uint32_t c = 0; c < static_cast<std::uint32_t>(world.commodityIds().size()); ++c) {
         const sol::assets::Legality verdict = world.commodityLegality(index, c);

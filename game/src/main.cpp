@@ -1605,8 +1605,12 @@ int main(int argc, char** argv)
                 tradeRows.push_back(row);
             }
             stationPanel.trade.stationName = world.dockedStationName();
+            // ⚑ The DEF decides whether there is a jurisdiction at all - that is
+            // what carries the table - and the HOLDER supplies the name, which
+            // for a clan is not the same faction. See `jurisdictionName`.
             const sol::assets::FactionDef* law = world.jurisdictionOf(world.currentSystemIndex());
-            stationPanel.trade.jurisdiction = law != nullptr ? law->name.c_str() : "";
+            stationPanel.trade.jurisdiction =
+                law != nullptr ? world.jurisdictionName(world.currentSystemIndex()) : "";
             stationPanel.trade.credits = world.playerCredits();
             stationPanel.trade.cargoUsed = world.playerCargoTotal();
             stationPanel.trade.cargoCapacity = world.playerCargoCapacity();
