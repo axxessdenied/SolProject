@@ -1020,6 +1020,157 @@ struct StationDef
 };
 
 // ---------------------------------------------------------------------------
+// Station modules (Phase 34 stage A). gdd.md §12: a station is a list of
+// modules, and what it produces, holds, offers and eventually looks like all
+// follow from that list. The generator composes NPC stations from this
+// vocabulary in v1 (`decisions/016`); the player builds from the same words in
+// v2.
+//
+// ⚑⚑⚑ NOTHING IN THE ENGINE READS A MODULE YET, AND THAT IS THE STAGE, NOT AN
+// OVERSIGHT. Stage A writes the vocabulary down and stops. Its readers arrive
+// in order: the composer reads `powerOutput`/`powerDraw` and the rate lists in
+// stage B, the dock screen reads `screens` in stage C, and the market reads
+// `stores` in stage D. ⚑ The precedent that makes naming this worth it is
+// Phase 32's `role` (vocabulary with no engine reader, deliberate and
+// recorded) and Phase 33 stage A's inert commodity, which sat at exactly half
+// capacity forever and passed every band the economy's own exit test checks.
+// A word with no reader is only honest while somebody has written down when
+// its reader arrives.
+// ---------------------------------------------------------------------------
+
+// gdd.md §12's eight families. The family is what a module is FOR, and it is
+// the only field of a module that another module's validity depends on: a
+// composition is legal only when its draw is covered by its own `Power` rows.
+enum class ModuleFamily : std::uint32_t
+{
+    Power = 0,  // solar, fission, fusion, capacitors - the budget
+    Habitat,    // rings, barracks, medical - population, and therefore appetite
+    Storage,    // holds, per goods class
+    Industry,   // the production chains of gdd.md §6
+    Commerce,   // the Trade, Outfitting and Shipyard screens
+    Recreation, // where people are, which is where rumours are (Phase 35)
+    Services,   // the remaining dock screens
+    Shadow,     // black-market services, on stations of ANY owner (Phase 37)
+    Count,
+};
+
+inline constexpr std::size_t kModuleFamilyCount = static_cast<std::size_t>(ModuleFamily::Count);
+
+// The def spellings, and the only place they live - the shape
+// `commodityTierName`/`parseCommodityTier` already has.
+[[nodiscard]] const char* moduleFamilyName(ModuleFamily family);
+[[nodiscard]] bool parseModuleFamily(std::string_view text, ModuleFamily& out);
+
+// A dock screen a module offers. gdd.md §12's dividend - "a mining outpost with
+// no market floor has no Trade tab" - is a union over the modules a station
+// has, so two modules naming the same screen is an ordinary composition and
+// never a conflict.
+//
+// ⚑⚑ THIS IS THE SECOND HALF OF A PARALLEL PAIR AND SAYING SO NOW IS THE POINT.
+// `game::StationScreenState::Tab` is the other half, and Phase 34's own risk
+// register names "two tables silently parallel" as the defect this phase
+// produces if it produces one. They are deliberately NOT one enum: this layer
+// must not learn what a tab is, and the game layer must not learn what a def
+// is. Stage C owns the mapping between them and owes it a static assertion on
+// the counts, not a comment.
+//
+// ⚑ Two screens on the list have no module that offers them and that is a
+// question rather than a gap: `Factions` is standings, which are a fact about
+// the galaxy rather than a facility, and `Survey` sells scan data - whose own
+// hint text says it "sells anywhere". Stage C rules on whether they are
+// unconditional; the vocabulary is complete either way so that the ruling has
+// somewhere to land.
+enum class StationScreen : std::uint32_t
+{
+    Trade = 0,
+    Outfitting,
+    Shipyard,
+    Crew,
+    Factions,
+    Missions,
+    Survey,
+    Refinery,
+    Count,
+};
+
+inline constexpr std::size_t kStationScreenCount = static_cast<std::size_t>(StationScreen::Count);
+
+[[nodiscard]] const char* stationScreenName(StationScreen screen);
+[[nodiscard]] bool parseStationScreen(std::string_view text, StationScreen& out);
+
+// What a hold can hold (gdd.md §12's Storage family: bulk, cryo, hazardous).
+//
+// ⚑⚑ A GOODS CLASS IS NOT A MATERIAL TIER AND THE TWO MUST NOT BE MERGED.
+// `CommodityTier` says where a good sits in the tree that MAKES it; a goods
+// class says what it takes to keep it in one place. Ore and hull plate are
+// different tiers and the same bulk problem. ⚑ Which class each commodity is
+// does not exist yet: it is a key on `[[commodity]]` and it belongs to stage D,
+// where the class is first read - "a station cannot hold what it has no hold
+// for, including contraband".
+enum class GoodsClass : std::uint32_t
+{
+    Bulk = 0,   // ore, plate, sections: cheap, heavy, wants volume
+    Cryo,       // foodstuffs and anything that spoils
+    Hazardous,  // reactive, radioactive, or the sort of thing a patrol asks about
+    Count,
+};
+
+inline constexpr std::size_t kGoodsClassCount = static_cast<std::size_t>(GoodsClass::Count);
+
+[[nodiscard]] const char* goodsClassName(GoodsClass goods);
+[[nodiscard]] bool parseGoodsClass(std::string_view text, GoodsClass& out);
+
+// One hold line on a module ("bulk:1200" in TOML): units of stock capacity, per
+// commodity, for goods of that class. The same shape `StationRate` has, and for
+// the same reason - a list of "id:number" strings reads as a sentence and
+// parses in one place.
+struct ModuleStorage
+{
+    GoodsClass goods = GoodsClass::Bulk;
+    float capacity = 0.0f; // units per commodity of this class
+};
+
+// One module. A station is a list of these (v1: composed by the generator).
+struct ModuleDef
+{
+    std::string id;
+    std::string name;
+    // Required, so the default below is never the answer to anything. There is
+    // no "unset" family for the reason `CommodityTier` has no default: every
+    // value is a real answer, so a parser that picked one would be answering
+    // gdd.md §12 on the author's behalf.
+    ModuleFamily family = ModuleFamily::Power;
+    // The same three lists a station archetype carries, and deliberately the
+    // same vocabulary: a composed station's rates are the SUM of its modules'
+    // (stage B), so anything that cannot be said here cannot survive the
+    // decomposition of `stations.toml`.
+    std::vector<StationRate> produces;
+    std::vector<StationRate> consumes;
+    std::vector<StationRate> feedstock;
+    std::vector<ModuleStorage> stores;
+    // The budget, in the ship system's own terms (`ComponentDef::powerDraw`
+    // against `ShipDef::powerOutput`) because gdd.md §12 asks for exactly that
+    // analogy: "a station is power-limited exactly as a ship is".
+    //
+    // ⚑⚑ RULED 2026-08-31: POWER IS THE CONSTRAINT THE COMPOSER SATISFIES, so
+    // this figure has exactly one reader and it is the generator - a
+    // composition is valid only when its draw is covered by its own output.
+    // That is what stops a "weighted recipe" being a bag of modules with a
+    // weight on it.
+    float powerOutput = 0.0f; // Power family only, refused elsewhere
+    float powerDraw = 0.0f;
+    std::vector<StationScreen> screens;
+    // The player-facing refining service (Phase 8f), which is a SERVICE rather
+    // than a production line: it takes `refineInput` off the player's hands and
+    // hands back `refineOutput` later. Both empty - the default - means the
+    // module offers no service. Kept separate from `feedstock`/`produces` for
+    // the reason `StationDef` keeps them separate, one layer down.
+    std::string refineInput;
+    std::string refineOutput;
+    std::string source;
+};
+
+// ---------------------------------------------------------------------------
 // Authored systems (Phase 29). A `[[system]]` row is a place somebody PUT
 // somewhere, as opposed to the eighty the seed produces, and the campaign can
 // name it because its id is invented here rather than rolled.
@@ -1233,6 +1384,7 @@ public:
     [[nodiscard]] const FactionDef* findFaction(const char* id) const;
     [[nodiscard]] const CommodityDef* findCommodity(const char* id) const;
     [[nodiscard]] const StationDef* findStation(const char* id) const;
+    [[nodiscard]] const ModuleDef* findModule(const char* id) const;
     [[nodiscard]] const SystemDef* findSystem(const char* id) const;
     [[nodiscard]] const ComponentDef* findComponent(const char* id) const;
     [[nodiscard]] const CrewDef* findCrew(const char* id) const;
@@ -1268,6 +1420,9 @@ public:
 
     [[nodiscard]] const std::vector<StationDef>& stations() const { return m_stations; }
 
+    // gdd.md §12's vocabulary, in first-definition order (Phase 34 stage A).
+    [[nodiscard]] const std::vector<ModuleDef>& modules() const { return m_modules; }
+
     // Authored systems in first-definition order, which is the order their
     // placement rules resolve in (decision 4).
     [[nodiscard]] const std::vector<SystemDef>& systems() const { return m_systems; }
@@ -1298,6 +1453,7 @@ private:
     std::vector<FactionDef> m_factions;
     std::vector<CommodityDef> m_commodities;
     std::vector<StationDef> m_stations;
+    std::vector<ModuleDef> m_modules;
     std::vector<SystemDef> m_systems;
     std::vector<ConstellationDef> m_constellations;
     std::vector<ComponentDef> m_components;

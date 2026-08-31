@@ -1,7 +1,9 @@
 #include "sol/assets/data_defs.hpp"
 #include "sol/assets/def_doc.hpp"
+#include "sol/platform/file_io.hpp"
 #include "sol/test/test.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -75,28 +77,52 @@ void reportFirstDifferingLine(const char* name, const std::string& expected, con
                 actual.size());
 }
 
-// Every def file the base game ships. The list is spelled out rather than
-// globbed so that a file DISAPPEARING is a failure rather than a shorter loop.
+// Every def file the base game ships, READ FROM THE DIRECTORY rather than
+// spelled out.
+//
+// ⚑⚑⚑ IT WAS A HAND-KEPT LIST UNTIL PHASE 34 STAGE A, AND IT HAD ALREADY
+// DRIFTED. Its own comment argued the case for spelling it out - "so that a
+// file DISAPPEARING is a failure rather than a shorter loop" - which is true
+// and is not the failure that happened: `materials.toml` shipped in Phase 25
+// and was never added, so the one test that proves the Forge can rewrite a
+// hand-written def file byte-for-byte had never once looked at it. Stage A
+// then added `modules.toml` and would have repeated it exactly.
+//
+// ⚑⚑ This is standing risk 6 in one function - *a hand-kept mirror is only as
+// wide as the list of files somebody remembered to mirror, and that list is
+// written down nowhere until it is wrong.* The glob covers a file being ADDED,
+// which is the failure that actually occurs; the anchors below cover a file
+// being DELETED, which is what the old comment was protecting and is worth
+// keeping. Both, cheaply, instead of one argued well.
+//
+// ⚑ `systems.toml` is the first committed def file with a NESTED
+// array-of-tables header in it (`[[system.planet]]`). Phase 25 stage A cost a
+// session to a sub-header that parsed fine for the game and broke this document
+// model, so the question got asked before that file shipped: `[[a.b]]` is still
+// a `[[table]]`, and DefDoc keeps it as a row of its own with its header line
+// raw, which round-trips. A plain `[a.b]` is what it refuses, and no def kind in
+// this game uses one.
 [[nodiscard]] std::vector<std::string> committedDefs()
 {
-    // ⚑ `systems` joined this list in Phase 29 stage D, and it is the first
-    // committed def file with a NESTED array-of-tables header in it
-    // (`[[system.planet]]`). Phase 25 stage A cost a session to a sub-header
-    // that parsed fine for the game and broke this document model - so the
-    // question got asked before the file shipped rather than after: `[[a.b]]`
-    // is still a `[[table]]`, and DefDoc keeps it as a row of its own with its
-    // header line raw, which round-trips. A plain `[a.b]` is what it refuses,
-    // and no def kind in this game uses one.
-    return {"commodities",
-            "components",
-            "crew",
-            "factions",
-            "models",
-            "ships",
-            "sounds",
-            "stations",
-            "systems",
-            "weapons"};
+    const std::string prefix = std::string(SOL_DEF_DATA_DIR) + "/";
+    std::vector<std::string> stems;
+    for (const std::string& path : platform::listFiles(SOL_DEF_DATA_DIR)) {
+        if (path.size() <= prefix.size() + 5 || path.compare(0, prefix.size(), prefix) != 0 ||
+            path.compare(path.size() - 5, 5, ".toml") != 0) {
+            continue;
+        }
+        const std::string relative = path.substr(prefix.size(), path.size() - prefix.size() - 5);
+        // ⚑ `listFiles` is RECURSIVE, and `defPath` below rebuilds a path from a
+        // stem - so a def in a subdirectory would be looked for in the wrong
+        // place. There is none today (`game/data/scripts` holds Lua), and this
+        // is the line that says so out loud rather than producing a confusing
+        // "file is empty" failure the day there is.
+        if (relative.find('/') == std::string::npos) {
+            stems.push_back(relative);
+        }
+    }
+    std::sort(stems.begin(), stems.end());
+    return stems;
 }
 
 [[nodiscard]] std::string defPath(const std::string& stem)
@@ -118,7 +144,19 @@ void reportFirstDifferingLine(const char* name, const std::string& expected, con
 // that can tell the difference between "parses" and "preserves".
 SOL_TEST(defDocumentsRoundTripTheCommittedFilesByteForByte)
 {
-    for (const std::string& stem : committedDefs()) {
+    const std::vector<std::string> stems = committedDefs();
+    // The disappearance guard the hand-kept list used to be. These three are the
+    // files the game cannot boot without, so a rename or a deletion has to fail
+    // here rather than quietly shorten the loop below.
+    for (const char* anchor : {"commodities", "ships", "stations"}) {
+        if (std::find(stems.begin(), stems.end(), anchor) == stems.end()) {
+            std::printf("  %s.toml is not in %s\n", anchor, SOL_DEF_DATA_DIR);
+        }
+        SOL_REQUIRE(std::find(stems.begin(), stems.end(), anchor) != stems.end());
+    }
+    std::printf("  %zu committed def file(s)\n", stems.size());
+
+    for (const std::string& stem : stems) {
         const std::string source = readWholeFile(defPath(stem));
         SOL_REQUIRE(!source.empty());
         DefDoc doc;

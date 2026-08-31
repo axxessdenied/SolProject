@@ -3647,3 +3647,273 @@ SOL_TEST(data_defs_every_shipped_hull_declares_a_class_and_a_role)
         SOL_CHECK(def.hasRole);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Station modules (Phase 34 stage A). The vocabulary gdd.md §12 asks for, with
+// no engine reader yet - so these tests ARE the reader until stage B arrives,
+// and every rule the parser enforces is a rule somebody wrote down on purpose.
+// ---------------------------------------------------------------------------
+
+SOL_TEST(data_defs_module_family_screen_and_goods_class_names_round_trip)
+{
+    for (std::size_t i = 0; i < sol::assets::kModuleFamilyCount; ++i) {
+        const auto family = static_cast<sol::assets::ModuleFamily>(i);
+        sol::assets::ModuleFamily parsed{};
+        SOL_REQUIRE(sol::assets::parseModuleFamily(sol::assets::moduleFamilyName(family), parsed));
+        SOL_CHECK(parsed == family);
+    }
+    for (std::size_t i = 0; i < sol::assets::kStationScreenCount; ++i) {
+        const auto screen = static_cast<sol::assets::StationScreen>(i);
+        sol::assets::StationScreen parsed{};
+        SOL_REQUIRE(sol::assets::parseStationScreen(sol::assets::stationScreenName(screen), parsed));
+        SOL_CHECK(parsed == screen);
+    }
+    for (std::size_t i = 0; i < sol::assets::kGoodsClassCount; ++i) {
+        const auto goods = static_cast<sol::assets::GoodsClass>(i);
+        sol::assets::GoodsClass parsed{};
+        SOL_REQUIRE(sol::assets::parseGoodsClass(sol::assets::goodsClassName(goods), parsed));
+        SOL_CHECK(parsed == goods);
+    }
+
+    // ⚑ A round trip alone cannot see a ROTATED table - both directions read
+    // it, so shifting every entry by one agrees with itself perfectly. Both
+    // ends of each list are pinned to gdd.md §12's own words.
+    using sol::assets::GoodsClass;
+    using sol::assets::ModuleFamily;
+    using sol::assets::StationScreen;
+    SOL_CHECK(std::strcmp(sol::assets::moduleFamilyName(ModuleFamily::Power), "power") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::moduleFamilyName(ModuleFamily::Shadow), "shadow") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::stationScreenName(StationScreen::Trade), "trade") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::stationScreenName(StationScreen::Refinery), "refinery") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::goodsClassName(GoodsClass::Bulk), "bulk") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::goodsClassName(GoodsClass::Hazardous), "hazardous") == 0);
+    SOL_CHECK(std::strcmp(sol::assets::moduleFamilyName(ModuleFamily::Count), "?") == 0);
+
+    // ⚑⚑ THE SCREEN NAMES ARE HALF OF A PARALLEL PAIR AND THIS IS WHERE THAT
+    // IS PINNED FROM THIS SIDE. `game::StationScreenState::Tab` is the other
+    // half and stage C owns the mapping; what this layer can promise is that
+    // the vocabulary has exactly the eight entries that tab strip has, in the
+    // order the strip draws them - so a mapping written in stage C has
+    // something to be checked against.
+    SOL_CHECK(sol::assets::kStationScreenCount == 8);
+    SOL_CHECK(static_cast<std::uint32_t>(StationScreen::Outfitting) == 1);
+    SOL_CHECK(static_cast<std::uint32_t>(StationScreen::Survey) == 6);
+
+    sol::assets::ModuleFamily family{};
+    SOL_CHECK(!sol::assets::parseModuleFamily("Power", family)); // spellings are lowercase
+    SOL_CHECK(!sol::assets::parseModuleFamily("service", family)); // §12's heading is plural
+    SOL_CHECK(!sol::assets::parseModuleFamily("", family));
+    sol::assets::GoodsClass goods{};
+    SOL_CHECK(!sol::assets::parseGoodsClass("hazmat", goods)); // the id is short, the class is not
+}
+
+SOL_TEST(data_defs_module_reads_every_key_gdd_12_asks_for)
+{
+    DefDatabase db;
+    std::string error;
+    const char* toml = R"(
+[[module]]
+id = "sol.mod_test_works"
+name = "Test Works"
+family = "industry"
+produces = ["sol.metal:0.2"]
+feedstock = ["sol.ore:0.31"]
+consumes = ["sol.food:0.035"]
+stores = ["bulk:1200", "hazardous:400"]
+power_output = 0.0
+power_draw = 12.5
+screens = ["trade", "refinery"]
+refine_input = "sol.ore"
+refine_output = "sol.metal"
+
+[[module]]
+id = "sol.mod_test_plant"
+name = "Test Plant"
+family = "power"
+power_output = 30.0
+power_draw = 1.0
+)";
+    SOL_REQUIRE(merge(db, toml, "modules.toml", &error));
+    SOL_CHECK(error.empty());
+
+    const sol::assets::ModuleDef* works = db.findModule("sol.mod_test_works");
+    SOL_REQUIRE(works != nullptr);
+    SOL_CHECK(works->family == sol::assets::ModuleFamily::Industry);
+    SOL_REQUIRE(works->produces.size() == 1);
+    SOL_CHECK(works->produces[0].commodityId == "sol.metal");
+    SOL_CHECK(works->produces[0].rate == 0.2f);
+    SOL_REQUIRE(works->feedstock.size() == 1);
+    SOL_CHECK(works->feedstock[0].commodityId == "sol.ore");
+    SOL_REQUIRE(works->consumes.size() == 1);
+    SOL_CHECK(works->consumes[0].commodityId == "sol.food");
+    SOL_REQUIRE(works->stores.size() == 2);
+    SOL_CHECK(works->stores[0].goods == sol::assets::GoodsClass::Bulk);
+    SOL_CHECK(works->stores[0].capacity == 1200.0f);
+    SOL_CHECK(works->stores[1].goods == sol::assets::GoodsClass::Hazardous);
+    SOL_CHECK(works->stores[1].capacity == 400.0f);
+    SOL_CHECK(works->powerDraw == 12.5f);
+    SOL_REQUIRE(works->screens.size() == 2);
+    SOL_CHECK(works->screens[0] == sol::assets::StationScreen::Trade);
+    SOL_CHECK(works->screens[1] == sol::assets::StationScreen::Refinery);
+    SOL_CHECK(works->refineInput == "sol.ore");
+    SOL_CHECK(works->refineOutput == "sol.metal");
+
+    const sol::assets::ModuleDef* plant = db.findModule("sol.mod_test_plant");
+    SOL_REQUIRE(plant != nullptr);
+    SOL_CHECK(plant->family == sol::assets::ModuleFamily::Power);
+    SOL_CHECK(plant->powerOutput == 30.0f);
+    // A module that says nothing about a list has an empty one - there is no
+    // default hold, no default screen and no default rate, because a module
+    // that quietly held something would compose a station nobody authored.
+    SOL_CHECK(plant->stores.empty());
+    SOL_CHECK(plant->screens.empty());
+    SOL_CHECK(plant->produces.empty());
+    SOL_CHECK(plant->refineInput.empty());
+
+    // A later layer replaces a row in place, exactly as every other def kind
+    // does - a mod re-points a module the way it re-points a ship.
+    const char* mod = R"(
+[[module]]
+id = "sol.mod_test_plant"
+name = "Test Plant II"
+family = "power"
+power_output = 45.0
+)";
+    SOL_REQUIRE(merge(db, mod, "mod.toml", &error));
+    SOL_REQUIRE(db.modules().size() == 2); // replaced, not appended
+    plant = db.findModule("sol.mod_test_plant");
+    SOL_REQUIRE(plant != nullptr);
+    SOL_CHECK(plant->name == "Test Plant II");
+    SOL_CHECK(plant->powerOutput == 45.0f);
+}
+
+SOL_TEST(data_defs_module_refuses_what_the_composer_would_have_to_believe)
+{
+    const auto refused = [](const char* keys, const char* expectedFragment) {
+        DefDatabase db;
+        std::string error;
+        const std::string toml = std::string("[[module]]\nid = \"sol.mod_x\"\nname = \"X\"\n") + keys;
+        if (db.mergeToml(toml.c_str(), toml.size(), "modules.toml", &error)) {
+            std::printf("  expected a refusal, got a load\n");
+            return false;
+        }
+        if (error.find(expectedFragment) == std::string::npos) {
+            std::printf("  error was '%s', expected to mention '%s'\n", error.c_str(), expectedFragment);
+            return false;
+        }
+        return true;
+    };
+
+    // ⚑ The family is REQUIRED, not optional-with-a-default: every family is a
+    // real answer, so there is no spelling left to mean "nobody said".
+    SOL_CHECK(refused("power_draw = 1.0\n", "family"));
+    SOL_CHECK(refused("family = \"industrial\"\n", "not a module family"));
+    SOL_CHECK(refused("family = 3\n", "'family'"));
+
+    // ⚑⚑ THE RULING, ENFORCED WHERE AN AUTHOR MEETS IT: power is the composer's
+    // constraint, so a habitat ring that made its own power would satisfy stage
+    // B's validity check by opting out of it.
+    SOL_CHECK(refused("family = \"habitat\"\npower_output = 5.0\n", "only the power family makes power"));
+    SOL_CHECK(refused("family = \"power\"\npower_output = -1.0\n", ">= 0"));
+    SOL_CHECK(refused("family = \"storage\"\npower_draw = -0.5\n", ">= 0"));
+
+    SOL_CHECK(refused("family = \"storage\"\nstores = [\"bulk\"]\n", "class:capacity"));
+    SOL_CHECK(refused("family = \"storage\"\nstores = [\"vault:100\"]\n", "no goods class"));
+    SOL_CHECK(refused("family = \"storage\"\nstores = [\"bulk:0\"]\n", "capacity > 0"));
+    // Two holds of one class on ONE module is a typo; across a station they add
+    // up, and that sum is stage D's arithmetic rather than the parser's.
+    SOL_CHECK(refused("family = \"storage\"\nstores = [\"bulk:100\", \"bulk:200\"]\n", "twice"));
+
+    SOL_CHECK(refused("family = \"commerce\"\nscreens = [\"market\"]\n", "no dock screen"));
+    SOL_CHECK(refused("family = \"commerce\"\nscreens = [\"trade\", \"trade\"]\n", "twice"));
+
+    // Half a refining service is a station that takes your ore and hands back
+    // nothing, which is the same rule `[[station]]` has carried since Phase 8f.
+    SOL_CHECK(refused("family = \"services\"\nrefine_input = \"sol.ore\"\n", "must be given together"));
+    SOL_CHECK(refused("family = \"services\"\nrefine_output = \"sol.metal\"\n", "must be given together"));
+
+    SOL_CHECK(refused("family = \"power\"\nreactor = 4\n", "reactor"));
+}
+
+// ⚑⚑⚑ THE SHIPPED VOCABULARY, AND THIS TEST IS THE ONLY READER IT HAS UNTIL
+// STAGE B. A file nobody reads cannot go wrong loudly, so what is pinned here
+// is exactly what the later stages will lean on: all eight of gdd.md §12's
+// families are represented, every screen a module offers is one a station
+// actually draws, and the two refining services name the pairs the shipped
+// archetypes already offer.
+SOL_TEST(data_defs_shipped_modules_cover_every_family_gdd_12_names)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(db.mergeDirectory(SOL_DEF_DATA_DIR, &error));
+    SOL_CHECK(error.empty());
+    SOL_REQUIRE(!db.modules().empty());
+
+    bool seen[sol::assets::kModuleFamilyCount] = {};
+    for (const sol::assets::ModuleDef& module : db.modules()) {
+        seen[static_cast<std::size_t>(module.family)] = true;
+    }
+    for (std::size_t i = 0; i < sol::assets::kModuleFamilyCount; ++i) {
+        if (!seen[i]) {
+            std::printf("  no shipped module is '%s'\n",
+                        sol::assets::moduleFamilyName(static_cast<sol::assets::ModuleFamily>(i)));
+        }
+        SOL_CHECK(seen[i]);
+    }
+
+    // ⚑ Every screen offered by a module, and every refining pair, names
+    // something real. Nothing enforces this at load - an unknown commodity id
+    // is a downstream warning by this project's standing rule - so the shipped
+    // content is checked here instead, where a typo is a failing test rather
+    // than a service that silently refines nothing.
+    for (const sol::assets::ModuleDef& module : db.modules()) {
+        if (!module.refineInput.empty()) {
+            if (db.findCommodity(module.refineInput.c_str()) == nullptr ||
+                db.findCommodity(module.refineOutput.c_str()) == nullptr) {
+                std::printf("  module '%s' refines '%s' -> '%s', and one of those is not a commodity\n",
+                            module.id.c_str(),
+                            module.refineInput.c_str(),
+                            module.refineOutput.c_str());
+            }
+            SOL_CHECK(db.findCommodity(module.refineInput.c_str()) != nullptr);
+            SOL_CHECK(db.findCommodity(module.refineOutput.c_str()) != nullptr);
+        }
+    }
+
+    // The two services the shipped archetypes already offer (Phase 8f's ore ->
+    // metal, Phase 33 stage C's salvage -> alloy), which is why gdd.md §12's
+    // single "refinery service" line is two rows in `modules.toml`.
+    const sol::assets::ModuleDef* ore = db.findModule("sol.mod_refinery_service");
+    const sol::assets::ModuleDef* salvage = db.findModule("sol.mod_reclaim_service");
+    SOL_REQUIRE(ore != nullptr && salvage != nullptr);
+    SOL_CHECK(ore->refineInput == "sol.ore" && ore->refineOutput == "sol.metal");
+    SOL_CHECK(salvage->refineInput == "sol.salvage" && salvage->refineOutput == "sol.alloy");
+
+    // ⚑⚑ AND THE RATE LISTS ARE EMPTY ON PURPOSE, WHICH IS WORTH A FAILING TEST
+    // RATHER THAN A COMMENT. Stage B's constraint is that the EXPECTED
+    // composition reproduces today's archetype rate lists, and that cannot be
+    // satisfied one module at a time - so a rate authored here before the
+    // recipes exist is a number nobody searched. When stage B lands, this
+    // assertion is what it deletes, deliberately.
+    for (const sol::assets::ModuleDef& module : db.modules()) {
+        if (!module.produces.empty() || !module.consumes.empty() || !module.feedstock.empty()) {
+            std::printf("  module '%s' carries a rate line, which is stage B's to author\n",
+                        module.id.c_str());
+        }
+        SOL_CHECK(module.produces.empty());
+        SOL_CHECK(module.consumes.empty());
+        SOL_CHECK(module.feedstock.empty());
+    }
+
+    // Every power figure is somebody's design statement, but a station that
+    // cannot be built out of these at all would be a vocabulary with no legal
+    // sentence in it: the largest single draw has to be coverable by the
+    // largest single plant, or stage B's composer can never satisfy its rule.
+    float biggestDraw = 0.0f;
+    float biggestOutput = 0.0f;
+    for (const sol::assets::ModuleDef& module : db.modules()) {
+        biggestDraw = std::max(biggestDraw, module.powerDraw);
+        biggestOutput = std::max(biggestOutput, module.powerOutput);
+    }
+    SOL_CHECK(biggestOutput > biggestDraw);
+}

@@ -186,6 +186,57 @@ struct FieldReader
         }
     }
 
+    // "class:capacity" strings, e.g. stores = ["bulk:1200"] (Phase 34 stage A).
+    // Sibling of `optionalRateList` above and deliberately the same shape: an
+    // author who can read one list can read the other.
+    void optionalStorageList(const char* key, std::vector<ModuleStorage>& out)
+    {
+        const TomlValue* value = table.find(key);
+        if (value == nullptr) {
+            return;
+        }
+        if (!value->isArray()) {
+            fail(std::string("key '") + key + "' must be an array of \"class:capacity\" strings");
+            return;
+        }
+        for (std::size_t i = 0; i < value->size(); ++i) {
+            const TomlValue& element = (*value)[i];
+            if (!element.isString()) {
+                fail(std::string("key '") + key + "' must be an array of \"class:capacity\" strings");
+                return;
+            }
+            const std::string& text = element.asString();
+            const std::size_t colon = text.rfind(':');
+            if (colon == std::string::npos || colon == 0 || colon + 1 >= text.size()) {
+                fail(std::string("'") + key + "' entry '" + text + "' is not \"class:capacity\"");
+                return;
+            }
+            ModuleStorage store;
+            if (!parseGoodsClass(std::string_view(text).substr(0, colon), store.goods)) {
+                fail(std::string("'") + key + "' entry '" + text +
+                     "' names no goods class (bulk, cryo, hazardous)");
+                return;
+            }
+            char* end = nullptr;
+            store.capacity = std::strtof(text.c_str() + colon + 1, &end);
+            if (end != text.c_str() + text.size() || store.capacity <= 0.0f) {
+                fail(std::string("'") + key + "' entry '" + text + "' needs a capacity > 0");
+                return;
+            }
+            // ⚑ Two holds of one class on ONE module is an authoring slip: a
+            // module with more bulk capacity says so in its number. Across a
+            // station they add up, and that sum is stage D's arithmetic.
+            for (const ModuleStorage& seen : out) {
+                if (seen.goods == store.goods) {
+                    fail(std::string("'") + key + "' names the '" + goodsClassName(store.goods) +
+                         "' class twice");
+                    return;
+                }
+            }
+            out.push_back(store);
+        }
+    }
+
     void optionalStringList(const char* key, std::vector<std::string>& out)
     {
         const TomlValue* value = table.find(key);
@@ -1240,6 +1291,100 @@ bool parseStation(const TomlValue& table,
     return true;
 }
 
+// One `[[module]]`: a thing a station is built out of (Phase 34 stage A).
+//
+// ⚑ The noun was ship outfitting until Phase 31 stage A1 renamed it
+// `[[component]]` for exactly this, which is why this parser can have the word
+// without a migration - see `components.toml`.
+bool parseModule(const TomlValue& table, const char* sourceName, std::vector<ModuleDef>& out, std::string* outError)
+{
+    ModuleDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": module '" + def.id + "'";
+    }
+    reader.requireString("name", def.name);
+
+    // ⚑ REQUIRED, not optional-with-a-default: every family is a real answer,
+    // so there is no spelling left over to mean "nobody said". The same
+    // argument `CommodityTier` makes, reached from the other direction - a tier
+    // is optional because a commodity can decline to answer, and a module
+    // cannot: what it is FOR is the only thing the composer sorts it by.
+    std::string familyText;
+    reader.requireString("family", familyText);
+    if (!reader.failed && !parseModuleFamily(familyText, def.family)) {
+        reader.fail("'family' is not a module family: '" + familyText +
+                    "' (power, habitat, storage, industry, commerce, recreation, services, shadow)");
+    }
+
+    reader.optionalRateList("produces", def.produces);
+    reader.optionalRateList("consumes", def.consumes);
+    reader.optionalRateList("feedstock", def.feedstock);
+    reader.optionalStorageList("stores", def.stores);
+    reader.optionalFloat("power_output", def.powerOutput);
+    reader.optionalFloat("power_draw", def.powerDraw);
+    reader.optionalString("refine_input", def.refineInput);
+    reader.optionalString("refine_output", def.refineOutput);
+
+    std::vector<std::string> screenNames;
+    reader.optionalStringList("screens", screenNames);
+    for (const std::string& text : screenNames) {
+        StationScreen screen = StationScreen::Trade;
+        if (!parseStationScreen(text, screen)) {
+            reader.fail("'screens' names no dock screen: '" + text +
+                        "' (trade, outfitting, shipyard, crew, factions, missions, survey, refinery)");
+            break;
+        }
+        // ⚑ A duplicate is refused rather than folded, because a screen list is
+        // a union across the whole station: two MODULES offering `trade` is an
+        // ordinary composition, and one module saying it twice is a typo that
+        // would otherwise never be seen again.
+        if (std::find(def.screens.begin(), def.screens.end(), screen) != def.screens.end()) {
+            reader.fail(std::string("'screens' names '") + stationScreenName(screen) + "' twice");
+            break;
+        }
+        def.screens.push_back(screen);
+    }
+
+    reader.rejectUnknownKeys({"id",
+                              "name",
+                              "family",
+                              "produces",
+                              "consumes",
+                              "feedstock",
+                              "stores",
+                              "power_output",
+                              "power_draw",
+                              "screens",
+                              "refine_input",
+                              "refine_output"});
+
+    if (!reader.failed && (def.powerOutput < 0.0f || def.powerDraw < 0.0f)) {
+        reader.fail("'power_output' and 'power_draw' must be >= 0");
+    }
+    // ⚑⚑ THE ONE CROSS-FIELD RULE, AND IT IS THE COMPOSER'S CONSTRAINT WRITTEN
+    // WHERE AN AUTHOR MEETS IT. gdd.md §12 gives the budget to the Power family
+    // and every other family draws against it, so a habitat ring that quietly
+    // makes its own power would satisfy stage B's validity check by opting out
+    // of it. Drawing power is unrestricted: everything draws, including a
+    // reactor running its own coolant.
+    if (!reader.failed && def.powerOutput > 0.0f && def.family != ModuleFamily::Power) {
+        reader.fail(std::string("family '") + moduleFamilyName(def.family) +
+                    "' carries a 'power_output', but only the power family makes power");
+    }
+    if (!reader.failed && def.refineInput.empty() != def.refineOutput.empty()) {
+        reader.fail("'refine_input' and 'refine_output' must be given together");
+    }
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
 // One `[[system]]`: a place somebody put somewhere (Phase 29).
 //
 // ⚑⚑ THE NESTED ROWS NEEDED NO PARSER WORK, WHICH WAS NOT OBVIOUS AND WAS
@@ -1800,6 +1945,27 @@ constexpr const char* kCommodityTierNames[] = {"raw", "refined", "component", "a
 static_assert(std::size(kCommodityTierNames) == kCommodityTierCount,
               "a commodity tier is missing its def spelling");
 
+// gdd.md §12's eight families, one lowercase word each (Phase 34 stage A), and
+// the same singular rule the tier names follow: a def value names what ONE
+// module is for.
+constexpr const char* kModuleFamilyNames[] = {
+    "power", "habitat", "storage", "industry", "commerce", "recreation", "services", "shadow"};
+
+static_assert(std::size(kModuleFamilyNames) == kModuleFamilyCount,
+              "a module family is missing its def spelling");
+
+// The dock screens a module can offer. Lowercase for the same reason every
+// other def value is: these are tokens an author types, not headings.
+constexpr const char* kStationScreenNames[] = {
+    "trade", "outfitting", "shipyard", "crew", "factions", "missions", "survey", "refinery"};
+
+static_assert(std::size(kStationScreenNames) == kStationScreenCount,
+              "a station screen is missing its def spelling");
+
+constexpr const char* kGoodsClassNames[] = {"bulk", "cryo", "hazardous"};
+
+static_assert(std::size(kGoodsClassNames) == kGoodsClassCount, "a goods class is missing its def spelling");
+
 } // namespace
 
 const char* commodityTierName(CommodityTier tier)
@@ -1813,6 +1979,60 @@ bool parseCommodityTier(std::string_view text, CommodityTier& out)
     for (std::size_t i = 0; i < kCommodityTierCount; ++i) {
         if (text == kCommodityTierNames[i]) {
             out = static_cast<CommodityTier>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+// The three vocabularies Phase 34 stage A adds, all three the same shape as the
+// commodity tier above: one table, one lookup each way, and a static assertion
+// that the table has not fallen behind its enum.
+const char* moduleFamilyName(ModuleFamily family)
+{
+    const auto index = static_cast<std::size_t>(family);
+    return index < kModuleFamilyCount ? kModuleFamilyNames[index] : "?";
+}
+
+bool parseModuleFamily(std::string_view text, ModuleFamily& out)
+{
+    for (std::size_t i = 0; i < kModuleFamilyCount; ++i) {
+        if (text == kModuleFamilyNames[i]) {
+            out = static_cast<ModuleFamily>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* stationScreenName(StationScreen screen)
+{
+    const auto index = static_cast<std::size_t>(screen);
+    return index < kStationScreenCount ? kStationScreenNames[index] : "?";
+}
+
+bool parseStationScreen(std::string_view text, StationScreen& out)
+{
+    for (std::size_t i = 0; i < kStationScreenCount; ++i) {
+        if (text == kStationScreenNames[i]) {
+            out = static_cast<StationScreen>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* goodsClassName(GoodsClass goods)
+{
+    const auto index = static_cast<std::size_t>(goods);
+    return index < kGoodsClassCount ? kGoodsClassNames[index] : "?";
+}
+
+bool parseGoodsClass(std::string_view text, GoodsClass& out)
+{
+    for (std::size_t i = 0; i < kGoodsClassCount; ++i) {
+        if (text == kGoodsClassNames[i]) {
+            out = static_cast<GoodsClass>(i);
             return true;
         }
     }
@@ -1959,6 +2179,7 @@ void DefDatabase::clear()
     m_factions.clear();
     m_commodities.clear();
     m_stations.clear();
+    m_modules.clear();
     // ⚑ `m_systems` was missed when stage A added it, and `m_constellations`
     // would have been missed the same way. Nothing calls `clear()` today, which
     // is exactly why the omission was invisible - so it is fixed rather than
@@ -1993,6 +2214,7 @@ bool DefDatabase::mergeToml(const char* text,
     std::vector<FactionDef> factions = m_factions;
     std::vector<CommodityDef> commodities = m_commodities;
     std::vector<StationDef> stations = m_stations;
+    std::vector<ModuleDef> modules = m_modules;
     std::vector<SystemDef> systems = m_systems;
     std::vector<ConstellationDef> constellations = m_constellations;
     std::vector<ComponentDef> components = m_components;
@@ -2039,6 +2261,11 @@ bool DefDatabase::mergeToml(const char* text,
                 return parseStation(t, s, *static_cast<std::vector<StationDef>*>(v), e);
             };
             target = &stations;
+        } else if (key == "module") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseModule(t, s, *static_cast<std::vector<ModuleDef>*>(v), e);
+            };
+            target = &modules;
         } else if (key == "system") {
             parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
                 return parseSystem(t, s, *static_cast<std::vector<SystemDef>*>(v), e);
@@ -2082,7 +2309,7 @@ bool DefDatabase::mergeToml(const char* text,
         } else {
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
-                            "' (expected ship, weapon, faction, commodity, station, system, "
+                            "' (expected ship, weapon, faction, commodity, station, module, system, "
                             "constellation, component, crew, sound, model, material, or role)";
             }
             return false;
@@ -2107,6 +2334,7 @@ bool DefDatabase::mergeToml(const char* text,
     m_factions = std::move(factions);
     m_commodities = std::move(commodities);
     m_stations = std::move(stations);
+    m_modules = std::move(modules);
     m_systems = std::move(systems);
     m_constellations = std::move(constellations);
     m_components = std::move(components);
@@ -2588,6 +2816,13 @@ const StationDef* DefDatabase::findStation(const char* id) const
     const auto it =
         std::find_if(m_stations.begin(), m_stations.end(), [&](const StationDef& d) { return d.id == id; });
     return it != m_stations.end() ? &*it : nullptr;
+}
+
+const ModuleDef* DefDatabase::findModule(const char* id) const
+{
+    const auto it =
+        std::find_if(m_modules.begin(), m_modules.end(), [&](const ModuleDef& d) { return d.id == id; });
+    return it != m_modules.end() ? &*it : nullptr;
 }
 
 const ComponentDef* DefDatabase::findComponent(const char* id) const

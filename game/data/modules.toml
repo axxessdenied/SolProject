@@ -1,0 +1,360 @@
+# Station modules (engine plan Phase 34 stage A) — gdd.md §12's vocabulary.
+#
+# A station is a list of modules, and what it produces, what it can hold, which
+# screens it offers when you dock and eventually what it looks like all follow
+# from that list. In v1 the galaxy generator composes every NPC station from
+# these rows; in v2 the player builds from the same words (decisions/016).
+#
+# ---------------------------------------------------------------------------
+# ⚑⚑⚑⚑ NOTHING READS A MODULE YET, AND THE ORDER ITS READERS ARRIVE IN IS THE
+# ONLY THING THAT MAKES THIS FILE HONEST RATHER THAN DECORATIVE. This project
+# has twice shipped a word with no reader — Phase 32's ship `role` (deliberate,
+# recorded, and the gap named) and Phase 33 stage A's inert commodity, which sat
+# at exactly half capacity forever and passed every band the economy's own exit
+# test checks. So, written down before anybody can forget it:
+#
+#   stage B  the composer reads `family`, `power_output`/`power_draw` and the
+#            rate lists — it composes archetypes out of these and must satisfy
+#            the power rule below
+#   stage C  the dock screen reads `screens`
+#   stage D  the market reads `stores`, which is what lets a station be unable
+#            to hold contraband
+#
+# ⚑⚑⚑ AND THAT IS WHY THERE ARE NO RATE LINES IN THIS FILE. `produces`,
+# `consumes` and `feedstock` parse on every row here and not one row uses them,
+# because a rate authored before the recipe exists is a number nobody searched.
+# `stations.toml` documents at length what its eleven archetypes' rates are
+# tuned against, and three separate stages of Phase 33 had to SEARCH the mix
+# rather than argue it. Stage B's constraint is that the EXPECTED composition
+# reproduces today's archetype rate list — which cannot be satisfied one module
+# at a time, so it is not attempted one module at a time.
+#
+# ⚑⚑ POWER IS THE EXCEPTION AND IT IS AN EXCEPTION FOR A REASON: RULED
+# 2026-08-31, POWER IS THE CONSTRAINT THE COMPOSER SATISFIES. A composition is
+# valid only when its draw is covered by its own power family, so these figures
+# have exactly one reader and it is the generator. Their SHAPE is a design
+# statement — a fusion plant is worth several solar arrays, a shipyard costs
+# more than a mission board — and their MAGNITUDE is stage B's to move, on the
+# same terms as every placement weight in `stations.toml`. The scale is the
+# ship system's, one order up: a hull makes 6–10 and a fitting draws 0.5–3.
+#
+# ⚑⚑ HABITAT OWNS THE FOOD LINE, RULED THE SAME DAY. Today every archetype
+# burns `sol.food` at a flat 0.035–0.05; after stage B that upkeep comes from
+# habitat modules, so food demand is POPULATION — two stations of one archetype
+# eat differently and a station with no habitat eats nothing. Food is the most
+# load-bearing number in this economy (seventeen agricultural stations exist to
+# feed it), so this is where stage B's expectation rule binds hardest: the
+# galaxy's total food upkeep has to come out where it is now.
+# ---------------------------------------------------------------------------
+#
+# Three rows here are vocabulary whose reader is a LATER PHASE rather than a
+# later stage, and saying which is cheaper than wondering later: the recreation
+# family is Phase 35's bar and the people in it, the shadow family is Phase 37's
+# black market (present on stations of any owner, which is how a faction with no
+# territory operates), and the capacitor bank is the one module in this file
+# with nothing to say to anybody yet — it buffers a budget that no phase models
+# over time. It is here because gdd.md §12 lists it and leaving it out would be
+# a quieter lie than including it with this sentence attached.
+
+# ---------------------------------------------------------------------------
+# Power — the budget every other module draws against.
+# ---------------------------------------------------------------------------
+
+[[module]]
+id = "sol.mod_solar_array"
+name = "Solar Array"
+family = "power"
+power_output = 8.0
+
+[[module]]
+id = "sol.mod_fission_plant"
+name = "Fission Plant"
+family = "power"
+power_output = 30.0
+power_draw = 1.0
+
+[[module]]
+id = "sol.mod_fusion_plant"
+name = "Fusion Plant"
+family = "power"
+power_output = 80.0
+power_draw = 3.0
+
+# Draws nothing, makes nothing, and stores what a station is not yet modelled as
+# having: a budget over time. See the header — kept as vocabulary, named as one.
+[[module]]
+id = "sol.mod_capacitor_bank"
+name = "Capacitor Bank"
+family = "power"
+
+# ---------------------------------------------------------------------------
+# Habitat — population, which is appetite (the food line) and crew.
+# ---------------------------------------------------------------------------
+
+[[module]]
+id = "sol.mod_habitat_ring"
+name = "Habitat Ring"
+family = "habitat"
+power_draw = 6.0
+
+[[module]]
+id = "sol.mod_barracks"
+name = "Barracks"
+family = "habitat"
+power_draw = 3.0
+
+[[module]]
+id = "sol.mod_medical_bay"
+name = "Medical Bay"
+family = "habitat"
+power_draw = 2.0
+
+# ---------------------------------------------------------------------------
+# Storage — stock capacity, per goods class. A station cannot hold what it has
+# no hold for, which is the mechanism behind gdd.md §13's contraband as well as
+# the plain fact that an outpost cannot warehouse the galaxy.
+#
+# ⚑ Capacity is per commodity of that class, which is the unit
+# `StationDef::stock_capacity` already uses (2500 today, one number for
+# everything). Which class a given commodity IS does not exist yet: it is a key
+# on `[[commodity]]` and it belongs to stage D, where it is first read.
+# ---------------------------------------------------------------------------
+
+[[module]]
+id = "sol.mod_bulk_hold"
+name = "Bulk Hold"
+family = "storage"
+stores = ["bulk:1200"]
+power_draw = 1.0
+
+# Refrigeration is why this one costs more to run than a hold four times its
+# size: what is in it would otherwise spoil.
+[[module]]
+id = "sol.mod_cryo_hold"
+name = "Cryogenic Hold"
+family = "storage"
+stores = ["cryo:800"]
+power_draw = 3.0
+
+[[module]]
+id = "sol.mod_hazmat_hold"
+name = "Hazardous Hold"
+family = "storage"
+stores = ["hazardous:400"]
+power_draw = 4.0
+
+# ---------------------------------------------------------------------------
+# Industry — the production chains of gdd.md §6. These are the rows stage B
+# decomposes `stations.toml` into, and the ones whose rate lines are absent on
+# purpose. The archetype each is expected to end up in is noted as a HINT for
+# that stage and not as a claim: the composer is what decides, and Phase 33
+# resampled its own station mix three stages running.
+# ---------------------------------------------------------------------------
+
+# Hint: the Refinery and the Reclamation Plant.
+[[module]]
+id = "sol.mod_refinery"
+name = "Refinery Line"
+family = "industry"
+power_draw = 12.0
+
+# Hint: the Foundry. A smelter takes ferrous ore where the refinery takes ore.
+[[module]]
+id = "sol.mod_smelter"
+name = "Smelter"
+family = "industry"
+power_draw = 12.0
+
+# Hint: the Fabricator Yard.
+[[module]]
+id = "sol.mod_fabricator"
+name = "Fabricator"
+family = "industry"
+power_draw = 10.0
+
+# Hint: the Fabrication Works — the last industrial step before a hardpoint.
+[[module]]
+id = "sol.mod_component_works"
+name = "Component Works"
+family = "industry"
+power_draw = 8.0
+
+# Hint: the Assembly Yard and the Shipyard, which are the construction tier
+# Phase 33 stage E shipped. A Shipyard produces nothing — its output is ships,
+# which fly away — and that is the honest shape rather than a gap.
+[[module]]
+id = "sol.mod_shipyard"
+name = "Shipyard"
+family = "industry"
+power_draw = 20.0
+
+[[module]]
+id = "sol.mod_drydock"
+name = "Drydock"
+family = "industry"
+power_draw = 14.0
+
+# ---------------------------------------------------------------------------
+# Commerce — the Trade, Outfitting and Shipyard screens. This family is where
+# gdd.md §12's dividend lives: "a mining outpost with no market floor has no
+# Trade tab, and finding one that does is worth flying to."
+#
+# ⚑ A station's screen list is a UNION over its modules, so two rows naming the
+# same screen is an ordinary composition rather than a conflict — a brokerage
+# on a station with no floor still trades, it just trades through a broker.
+# ---------------------------------------------------------------------------
+
+[[module]]
+id = "sol.mod_market_floor"
+name = "Market Floor"
+family = "commerce"
+screens = ["trade"]
+power_draw = 3.0
+
+[[module]]
+id = "sol.mod_brokerage"
+name = "Brokerage"
+family = "commerce"
+screens = ["trade"]
+power_draw = 1.0
+
+[[module]]
+id = "sol.mod_outfitter"
+name = "Outfitter"
+family = "commerce"
+screens = ["outfitting"]
+power_draw = 2.0
+
+[[module]]
+id = "sol.mod_ship_sales"
+name = "Ship Sales"
+family = "commerce"
+screens = ["shipyard"]
+power_draw = 2.0
+
+# ---------------------------------------------------------------------------
+# Recreation — where the people are, which is where the rumours are (Phase 35).
+# No screens yet: the Bar screen does not exist, and naming one here would be
+# a def pointing at nothing.
+# ---------------------------------------------------------------------------
+
+[[module]]
+id = "sol.mod_bar"
+name = "Bar"
+family = "recreation"
+power_draw = 2.0
+
+[[module]]
+id = "sol.mod_restaurant"
+name = "Restaurant"
+family = "recreation"
+power_draw = 3.0
+
+[[module]]
+id = "sol.mod_concourse"
+name = "Concourse"
+family = "recreation"
+power_draw = 4.0
+
+[[module]]
+id = "sol.mod_casino"
+name = "Casino"
+family = "recreation"
+power_draw = 5.0
+
+[[module]]
+id = "sol.mod_resort"
+name = "Resort"
+family = "recreation"
+power_draw = 8.0
+
+# ---------------------------------------------------------------------------
+# Services — the remaining dock screens.
+#
+# ⚑⚑ THE REFINING SERVICE IS TWO ROWS BECAUSE THE PAIR IT OFFERS IS PART OF
+# WHAT IT IS. `refine_input`/`refine_output` name the commodities a station
+# takes off your hands and hands back later (Phase 8f), and today the Refinery
+# offers ore → metal while the Reclamation Plant offers salvage → alloy. One
+# "refinery service" row could only carry one of them, so gdd.md §12's single
+# line becomes two rows here — the family is a sketch, not a row list.
+# ---------------------------------------------------------------------------
+
+[[module]]
+id = "sol.mod_docking_control"
+name = "Docking Control"
+family = "services"
+power_draw = 4.0
+
+[[module]]
+id = "sol.mod_refinery_service"
+name = "Refining Service"
+family = "services"
+screens = ["refinery"]
+refine_input = "sol.ore"
+refine_output = "sol.metal"
+power_draw = 6.0
+
+[[module]]
+id = "sol.mod_reclaim_service"
+name = "Reclamation Service"
+family = "services"
+screens = ["refinery"]
+refine_input = "sol.salvage"
+refine_output = "sol.alloy"
+power_draw = 6.0
+
+[[module]]
+id = "sol.mod_insurance_office"
+name = "Insurance Office"
+family = "services"
+power_draw = 1.0
+
+[[module]]
+id = "sol.mod_crew_hall"
+name = "Crew Hall"
+family = "services"
+screens = ["crew"]
+power_draw = 2.0
+
+[[module]]
+id = "sol.mod_mission_board"
+name = "Mission Board"
+family = "services"
+screens = ["missions"]
+power_draw = 1.0
+
+# ---------------------------------------------------------------------------
+# Shadow — black-market services (gdd.md §7, §13), present on stations of ANY
+# owner, which is the whole mechanism that lets Phase 37's shadow faction
+# operate without holding a single system. No screens: the fence's own screen
+# arrives with the faction that runs it.
+#
+# ⚑ The fence carries a hazardous hold of its own, which is not decoration: a
+# station cannot stock what it has no hold for, so a fence that could not hold
+# the goods it fences would be a shopfront with no back room.
+# ---------------------------------------------------------------------------
+
+[[module]]
+id = "sol.mod_fence"
+name = "Fence"
+family = "shadow"
+stores = ["hazardous:250"]
+power_draw = 2.0
+
+[[module]]
+id = "sol.mod_black_clinic"
+name = "Unlicensed Clinic"
+family = "shadow"
+power_draw = 3.0
+
+[[module]]
+id = "sol.mod_ghost_dock"
+name = "Ghost Dock"
+family = "shadow"
+power_draw = 5.0
+
+[[module]]
+id = "sol.mod_data_haven"
+name = "Data Haven"
+family = "shadow"
+power_draw = 4.0
