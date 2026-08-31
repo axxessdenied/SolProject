@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <span>
 
@@ -717,22 +718,39 @@ constexpr float kFoodPrice = 8.0f;
 constexpr float kOrePrice = 12.0f;
 constexpr float kMetalPrice = 32.0f;
 constexpr float kMachineryPrice = 52.0f;
+// Phase 33 stage B's ferrous chain.
+constexpr float kFerrousPrice = 14.0f;
+constexpr float kAlloyPrice = 38.0f;
+constexpr float kHullPlatePrice = 64.0f;
 
+// ⚑⚑ THE ORDER IS `commodities.toml`'S ORDER AND HAS TO STAY THAT WAY. The sim
+// knows a commodity only as an index into the table the game built by walking
+// that file top to bottom, so a row inserted anywhere but the end renumbers
+// every good after it - and this mirror would then be tuning a different
+// economy from the one that ships while agreeing with it perfectly by name.
 enum Commodity : std::uint32_t
 {
     Food = 0,
     Ore,
     Metal,
     Machinery,
+    OreFerrous,
+    Alloy,
+    HullPlate,
     CommodityCount,
 };
 
+// Likewise `stations.toml`'s order, for `stationRules` below as much as for
+// this: the generator picks an archetype by index into that list.
 enum Archetype : std::uint32_t
 {
     Agri = 0,
     Mine,
     Refinery,
     Factory,
+    FerrousMine,
+    Foundry,
+    FabWorks,
 };
 
 [[nodiscard]] Galaxy shippedGalaxy()
@@ -740,11 +758,31 @@ enum Archetype : std::uint32_t
     sol::sim::GalaxyParams params;
     params.seed = 1701; // the seed every phase has been verified against
     params.factionCount = 5;
+    // ⚑⚑⚑ THE FIRST FOUR WEIGHTS ARE UNTOUCHED BY PHASE 33, AND THAT IS NOT
+    // THE SAME THING AS THE OLD MIX SURVIVING. Station COUNT is fixed by the
+    // generator at 124 whatever this list says, so three new archetypes take
+    // stations away from the old four. Leaving those four weights alone keeps
+    // their proportions PER REGION TIER - and the aggregate still moved, because
+    // the three new rows sit outward rather than evenly: 22:33:43:26 became
+    // 18:17:22:18, measured. Touching one of the old four would re-tune the
+    // whole galaxy on top of that, which is why none of them is touched; what
+    // holds the result together is
+    // `economy_no_commodity_is_made_much_faster_than_it_is_burnt` below.
+    //
+    // ⚑ `requiresField` is left false here as it always has been, so this galaxy
+    // sites extractors over rockless systems where the game's would not (Phase 13
+    // set the flag from `produces_from = "field"`). It makes the test HARDER than
+    // the game - some mines draw from nothing - which is the safe direction for a
+    // stability check, and it is a difference from the shipped galaxy worth
+    // knowing about rather than a mirror error to fix under cover of this stage.
     params.stationRules = {
-        {{1.0f, 1.5f, 0.5f}}, // agri
-        {{0.5f, 1.5f, 2.0f}}, // mine
-        {{0.4f, 1.6f, 1.7f}}, // refinery: sited out where the rock is
-        {{2.0f, 1.0f, 0.3f}}, // factory
+        {{1.0f, 1.5f, 0.5f}},   // agri
+        {{0.5f, 1.5f, 2.0f}},   // mine
+        {{0.4f, 1.6f, 1.7f}},   // refinery: sited out where the rock is
+        {{2.0f, 1.0f, 0.3f}},   // factory
+        {{0.3f, 0.9f, 1.2f}},   // ferrous mine: further out still
+        {{0.25f, 1.0f, 1.0f}},  // foundry: smelt at the pit
+        {{1.2f, 0.6f, 0.2f}},   // fabrication works: near the hardpoints
     };
     return sol::sim::generateGalaxy(params);
 }
@@ -757,6 +795,9 @@ enum Archetype : std::uint32_t
     params.commodities[Ore].basePrice = kOrePrice;
     params.commodities[Metal].basePrice = kMetalPrice;
     params.commodities[Machinery].basePrice = kMachineryPrice;
+    params.commodities[OreFerrous].basePrice = kFerrousPrice;
+    params.commodities[Alloy].basePrice = kAlloyPrice;
+    params.commodities[HullPlate].basePrice = kHullPlatePrice;
 
     const auto archetype = [](std::initializer_list<float> production,
                               std::initializer_list<float> consumption,
@@ -776,12 +817,22 @@ enum Archetype : std::uint32_t
         out.stockCapacity = 2'500.0f;
         return out;
     };
-    params.archetypes.resize(4);
-    //                            food   ore  metal  mach
-    params.archetypes[Agri] = archetype({0.26f, 0, 0, 0}, {0, 0, 0, 0.11f}, {}, false);
-    params.archetypes[Mine] = archetype({0, 0.28f, 0, 0}, {0.05f, 0, 0, 0}, {}, true);
-    params.archetypes[Refinery] = archetype({0, 0, 0.11f, 0}, {0.035f, 0, 0, 0}, {0, 0.17f, 0, 0}, false);
-    params.archetypes[Factory] = archetype({0, 0, 0, 0.12f}, {0.05f, 0, 0, 0}, {0, 0, 0.15f, 0}, false);
+    params.archetypes.resize(7);
+    // Indices, in the order of the enum above:
+    //                            food   ore  metal  mach  ferr alloy plate
+    constexpr float P = 0.013f; // the hull-plate upkeep heavy industry burns
+    params.archetypes[Agri] = archetype({0.26f}, {0, 0, 0, 0.11f}, {}, false);
+    params.archetypes[Mine] = archetype({0, 0.28f}, {0.05f, 0, 0, 0, 0, 0, P}, {}, true);
+    params.archetypes[Refinery] =
+        archetype({0, 0, 0.11f}, {0.035f, 0, 0, 0, 0, 0, P}, {0, 0.17f}, false);
+    params.archetypes[Factory] =
+        archetype({0, 0, 0, 0.12f}, {0.05f, 0, 0, 0, 0, 0, P}, {0, 0, 0.15f}, false);
+    params.archetypes[FerrousMine] =
+        archetype({0, 0, 0, 0, 0.20f}, {0.015f, 0, 0, 0, 0, 0, P}, {}, true);
+    params.archetypes[Foundry] =
+        archetype({0, 0, 0, 0, 0, 0.085f}, {0.015f, 0, 0, 0, 0, 0, P}, {0, 0, 0, 0, 0.13f}, false);
+    params.archetypes[FabWorks] =
+        archetype({0, 0, 0, 0, 0, 0, 0.12f}, {0.015f}, {0, 0, 0, 0, 0, 0.15f}, false);
     return params;
 }
 
@@ -854,7 +905,8 @@ SOL_TEST(economy_shipped_rates_hold_a_steady_state)
     economy.initialize(galaxy, params, 1701);
 
     sol::sim::MiningParams miningParams;
-    miningParams.ores = {sol::sim::OreEntry{.commodity = Ore, .weight = {1.0f, 1.0f, 1.0f}}};
+    miningParams.ores = {sol::sim::OreEntry{.commodity = Ore, .weight = {1.0f, 1.0f, 1.0f}},
+                         sol::sim::OreEntry{.commodity = OreFerrous, .weight = {0.35f, 1.0f, 1.6f}}};
     sol::sim::MiningSim mining;
     mining.initialize(galaxy, miningParams, CommodityCount, 1701);
 
@@ -921,6 +973,21 @@ SOL_TEST(economy_shipped_rates_hold_a_steady_state)
             glutted += produces && units >= cap * 0.99f ? 1u : 0u;
         }
         const double fill = capacity > 0.0 ? stock / capacity : 0.0;
+        // ⚑⚑ THE ROW IS PRINTED WHENEVER ONE OF THE FOUR BOUNDS BREAKS, BECAUSE
+        // A BARE `fill > 0.15` TELLS YOU NOTHING ABOUT WHICH GOOD OR WHY. Seven
+        // commodities across four checks is twenty-eight ways for this test to
+        // say "the economy is broken" and no way to say where, which is the
+        // difference between a failure you can act on and one you re-run.
+        const bool ok = fill > 0.15 && fill < 0.85 && starved <= wants / 4 && glutted <= makes / 4;
+        if (!ok) {
+            std::printf("  commodity %u: fill %.3f, starved %u/%u, glutted %u/%u\n",
+                        c,
+                        fill,
+                        starved,
+                        wants,
+                        glutted,
+                        makes);
+        }
         SOL_CHECK(fill > 0.15);
         SOL_CHECK(fill < 0.85);
         // Local extremes are the economy working; most of the galaxy at a
@@ -945,6 +1012,56 @@ SOL_TEST(economy_shipped_rates_hold_a_steady_state)
     }
     SOL_CHECK(metal > 0.0);
     SOL_CHECK(machinery > 0.0);
+
+    // ⚑⚑⚑ AND THE FERROUS CHAIN THE SAME WAY, BUT PROVED RATHER THAN
+    // ASSERTED - BECAUSE PHASE 33 STAGE A SHOWED "IT EXISTS" IS NOT EVIDENCE.
+    // Every market is stocked at half capacity by `initialize`, so a good that
+    // is never made and never moved still reads a comfortable 1250 units four
+    // hours later. `metal > 0` above has that weakness and is kept only for
+    // continuity; the two checks below do not have it.
+    //
+    // A Fabrication Works produces no alloy and burns 0.15/s of it, which over
+    // 14,400 seconds is 2,160 units against a 1,250-unit start. So a Works with
+    // ANY alloy left has been delivered some - and alloy exists only where a
+    // Foundry smelted ferrous ore, which exists only where a Ferrous Mine drew
+    // it out of real rock. One non-zero number, the whole chain behind it.
+    float alloyAtWorks = 0.0f;
+    double worksSatisfaction = 0.0;
+    double foundrySatisfaction = 0.0;
+    std::uint32_t works = 0;
+    std::uint32_t foundries = 0;
+    for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
+        const std::uint32_t which = economy.markets()[m].archetype;
+        if (which == FabWorks) {
+            alloyAtWorks += economy.stock(m, Alloy);
+            worksSatisfaction += economy.satisfaction(m);
+            ++works;
+        } else if (which == Foundry) {
+            foundrySatisfaction += economy.satisfaction(m);
+            ++foundries;
+        }
+    }
+    SOL_REQUIRE(works > 0);
+    SOL_REQUIRE(foundries > 0);
+    SOL_CHECK(alloyAtWorks > 0.0f);
+
+    // ⚑⚑ THE SECOND HALF, AND IT IS THE ONE THAT WOULD CATCH A CHAIN THAT
+    // TRICKLES. Satisfaction IS the production ratio the sim throttled the
+    // station to, so a Works averaging near zero is a Works standing idle beside
+    // a full warehouse of nothing. Half is a low bar deliberately - this is not
+    // a tuning target, it is the line between "the chain runs" and "the chain is
+    // a diagram" - and the same is asked of the Foundries one step upstream, so
+    // a failure says WHICH link went.
+    SOL_CHECK(worksSatisfaction / works > 0.5);
+    SOL_CHECK(foundrySatisfaction / foundries > 0.5);
+    if (worksSatisfaction / works <= 0.5 || foundrySatisfaction / foundries <= 0.5) {
+        std::printf("  ferrous chain: %u foundries at %.3f, %u works at %.3f, alloy at works %.1f\n",
+                    foundries,
+                    foundrySatisfaction / foundries,
+                    works,
+                    worksSatisfaction / works,
+                    static_cast<double>(alloyAtWorks));
+    }
 
     // And the rock is still there: an hour of NPC mining must not strip the
     // galaxy, which is what regrowth is for.
@@ -1113,6 +1230,114 @@ SOL_TEST(economy_initialize_scatters_the_fleet_instead_of_starting_it_in_step)
     SOL_CHECK(cargo == 0.0);
 }
 
+// ⚑⚑⚑⚑ THE GUARD PHASE 33 STAGE A's MEASUREMENT ASKED FOR, AND IT COSTS
+// NOTHING BECAUSE IT RUNS NO SIM AT ALL.
+//
+// Stage A padded this economy out to forty commodities to price the material
+// tree and found something worse than a slow test: `economy_shipped_rates_hold_
+// a_steady_state` CANNOT TELL A MATERIAL TREE FROM SCENERY. `Economy::initialize`
+// stocks every market with half a warehouse of every good that exists, so a
+// commodity nobody produces and nobody consumes sits at exactly 0.500 fill
+// forever - dead centre of that test's own 0.15/0.85 band - while its `starved`
+// and `glutted` counts are zero BECAUSE its `wants` and `makes` are zero. Thirty
+// six inert goods would have passed the economy's exit criterion as comfortably
+// as four working ones, and the only thing that would ever have noticed is a
+// player wondering why nothing is ever short of anything.
+//
+// ⚑⚑ SO THE RULE IS STATED HERE INSTEAD OF BEING LEFT TO A FOUR-HOUR SIM: a
+// good in this game is MADE by somebody and BURNT by somebody. Feedstock and
+// upkeep both count as burning it - they differ in whether they gate production
+// (see `EconomyArchetype`), not in whether the units go away. Anything that
+// cannot answer both halves is decoration, and Phase 33 stage B is the phase
+// where this file learns to grow.
+//
+// ⚑ It asserts against `shippedParams()`, which is this file's hand-kept mirror
+// of `commodities.toml` and `stations.toml` - so it catches a good added to the
+// game with nowhere to go only once somebody mirrors it here, which is the same
+// contract every other assertion in this file has had since 8g.
+SOL_TEST(economy_every_commodity_is_made_and_burnt_somewhere)
+{
+    const EconomyParams params = shippedParams();
+    SOL_REQUIRE(params.commodities.size() == CommodityCount);
+
+    for (std::uint32_t c = 0; c < CommodityCount; ++c) {
+        bool made = false;
+        bool burnt = false;
+        for (const EconomyArchetype& archetype : params.archetypes) {
+            made = made || (c < archetype.production.size() && archetype.production[c] > 0.0f);
+            burnt = burnt || (c < archetype.feedstock.size() && archetype.feedstock[c] > 0.0f) ||
+                    (c < archetype.consumption.size() && archetype.consumption[c] > 0.0f);
+        }
+        if (!made || !burnt) {
+            std::printf("  commodity %u is %s and %s\n",
+                        c,
+                        made ? "made" : "MADE BY NOBODY",
+                        burnt ? "burnt" : "BURNT BY NOBODY");
+        }
+        SOL_CHECK(made);
+        SOL_CHECK(burnt);
+    }
+}
+
+// ⚑⚑⚑⚑ AND THE SECOND HALF OF THAT RULE, WHICH IS THE ONE STAGE B ACTUALLY
+// NEEDED: MADE AND BURNT IS NOT ENOUGH - IT HAS TO BE MADE AT ABOUT THE RATE IT
+// IS BURNT. A commodity produced half again as fast as it is consumed does not
+// fail the four-hour test; it drifts, and four hours is not long enough to see
+// it. Phase 33 stage B measured its own first cut over NINETY-SIX sim hours and
+// watched structural alloy climb from 0.494 to 0.645 fill while every assertion
+// in the test above stayed comfortably green.
+//
+// ⚑⚑⚑ IT RUNS NO ECONOMY AT ALL - IT COUNTS STATIONS AND MULTIPLIES. The
+// galaxy generator is deterministic at seed 1701, so how many of each archetype
+// exist is a fact available in milliseconds, and the aggregate flow of a good is
+// just (stations x rate) summed. That is the whole diagnosis the ninety-six-hour
+// run produced, for none of its ten minutes.
+//
+// ⚑⚑ THE BAND IS WIDE AND ASYMMETRIC ON PURPOSE. `stations.toml` runs every
+// producer deliberately ahead of its customers - "that slack is not waste, it is
+// stability" - so a ratio comfortably above 1 is the design and not a defect;
+// what the ceiling catches is a surplus so large that warehouses fill faster
+// than the output taper can absorb. Below 1 is survivable too, because feedstock
+// gating throttles the consumer rather than letting it drain to nothing - that
+// is what `satisfaction` is for - but not by much, and refined metal at 0.90 is
+// the tightest thing this galaxy ships.
+//
+// ⚑ Station COUNTS, not weights: a weight is an intention and a count is what
+// the generator actually did with it. Phase 33 stage B assumed the four existing
+// archetypes would keep their proportions when three more were added, because
+// their weights were untouched - and they did not, because the new rows are not
+// spread evenly across the three region tiers. 22:33:43:26 became 18:17:22:18.
+SOL_TEST(economy_no_commodity_is_made_much_faster_than_it_is_burnt)
+{
+    const Galaxy galaxy = shippedGalaxy();
+    const EconomyParams params = shippedParams();
+    std::vector<std::uint32_t> stations(params.archetypes.size(), 0);
+    for (const SystemSpec& system : galaxy.systems) {
+        for (const StationSpec& station : system.stations) {
+            SOL_REQUIRE(station.archetype < stations.size());
+            ++stations[station.archetype];
+        }
+    }
+
+    for (std::uint32_t c = 0; c < CommodityCount; ++c) {
+        double made = 0.0;
+        double burnt = 0.0;
+        for (std::size_t a = 0; a < params.archetypes.size(); ++a) {
+            const EconomyArchetype& archetype = params.archetypes[a];
+            const double count = stations[a];
+            made += count * archetype.production[c];
+            burnt += count * (archetype.feedstock[c] + archetype.consumption[c]);
+        }
+        SOL_REQUIRE(burnt > 0.0); // the test above already said somebody burns it
+        const double ratio = made / burnt;
+        if (ratio < 0.85 || ratio > 1.6) {
+            std::printf("  commodity %u: %.3f/s made, %.3f/s burnt, ratio %.2f\n", c, made, burnt, ratio);
+        }
+        SOL_CHECK(ratio > 0.85);
+        SOL_CHECK(ratio < 1.6);
+    }
+}
+
 SOL_TEST(economy_holds_a_steady_state_while_losing_traders)
 {
     // ⚑ The guard rail Phase 8x's spec names for the whole item. 8g tuned the
@@ -1133,7 +1358,8 @@ SOL_TEST(economy_holds_a_steady_state_while_losing_traders)
     economy.initialize(galaxy, params, 1701);
 
     sol::sim::MiningParams miningParams;
-    miningParams.ores = {sol::sim::OreEntry{.commodity = Ore, .weight = {1.0f, 1.0f, 1.0f}}};
+    miningParams.ores = {sol::sim::OreEntry{.commodity = Ore, .weight = {1.0f, 1.0f, 1.0f}},
+                         sol::sim::OreEntry{.commodity = OreFerrous, .weight = {0.35f, 1.0f, 1.6f}}};
     sol::sim::MiningSim mining;
     mining.initialize(galaxy, miningParams, CommodityCount, 1701);
 

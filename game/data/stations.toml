@@ -41,7 +41,7 @@ weight_frontier = 1.5
 weight_fringe = 2.0
 produces = ["sol.ore:0.28"]
 produces_from = "field"
-consumes = ["sol.food:0.05"]
+consumes = ["sol.food:0.05", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 
 # Sited where the rock is, not where the customers are: raw ore is bulk and
@@ -57,7 +57,7 @@ weight_frontier = 1.6
 weight_fringe = 1.7
 produces = ["sol.metal:0.11"]
 feedstock = ["sol.ore:0.17"]
-consumes = ["sol.food:0.035"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
 stock_capacity = 2500
 refine_input = "sol.ore"
 refine_output = "sol.metal"
@@ -70,5 +70,99 @@ weight_frontier = 1.0
 weight_fringe = 0.3
 produces = ["sol.machinery:0.12"]
 feedstock = ["sol.metal:0.15"]
-consumes = ["sol.food:0.05"]
+consumes = ["sol.food:0.05", "sol.hull_plate:0.013"]
+stock_capacity = 2500
+
+# ---------------------------------------------------------------------------
+# The ferrous chain (Phase 33 stage B): ferrous ore -> structural alloy ->
+# hull plate -> a fitting somebody bolts to a ship. Three archetypes, laid out
+# to mirror the three that already make the metal chain, because that shape is
+# TUNED and copying it is cheaper than re-deriving it.
+#
+# ⚑⚑⚑ STATION COUNT IS FIXED AT 124 WHATEVER THIS FILE SAYS, SO THREE NEW
+# ARCHETYPES TAKE STATIONS AWAY FROM THE OLD FOUR - AND THE MIX SHIFTS EVEN
+# THOUGH NOT ONE OF THEIR WEIGHTS WAS TOUCHED. Measured at seed 1701:
+#
+#   before   agri 22   mine 33   refinery 43   factory 26
+#   after    agri 18   mine 17   refinery 22   factory 18   + 18 / 20 / 11 new
+#
+# ⚑⚑ THE OBVIOUS REASONING FOR WHY THAT WOULD BE SAFE IS WRONG, AND IT WAS
+# WRITTEN HERE BEFORE IT WAS MEASURED. The generator picks by RELATIVE weight
+# within a region tier, so leaving the old four alone does shrink them by a
+# common factor - PER TIER. It does not do so in aggregate, because the three
+# new rows are not spread evenly across core, frontier and fringe: they sit
+# outward, where the Mining Outpost and the Refinery live, so those two lost
+# half their stations while the core-weighted Fabricator Yard lost a third.
+#
+# ⚑⚑ WHAT THAT COSTS IS ONE RATIO, AND IT IS MEASURED RATHER THAN ARGUED.
+# Refined metal is now made at 0.90x the rate it is burnt where it was 1.21x, so
+# it settles lower and Fabricator Yards run slightly feedstock-throttled - which
+# is what `satisfaction` is for and what `feedstock` gating exists to do. Ninety
+# six sim hours were run to find out where it stops: metal falls from 0.478 to
+# 0.246 fill and is still decelerating, no commodity is starved at any station
+# at any point, and every bound `economy_shipped_rates_hold_a_steady_state`
+# checks holds at twenty-four times its own horizon.
+# `economy_no_commodity_is_made_much_faster_than_it_is_burnt` is the cheap guard
+# that came out of that run: it counts stations and multiplies, and it would
+# have found in milliseconds what ten minutes of simulation had to show.
+#
+# ⚑⚑ THE ONE PLACE THAT DOES NOT COVER, AND IT IS AN UPKEEP LINE ON EACH OF
+# THE OLD ROWS: hull plate has to be BURNT by somebody or a Fabrication Works
+# gluts and stops, and the honest consumer of structural plate is heavy industry
+# maintaining itself. Mining Outpost, Refinery and Fabricator Yard each burn
+# 0.013/s of it; the Agricultural Station does not, because a farm is not a
+# machine shop. Upkeep never gates production (see the header), so the worst a
+# plate shortage can do is leave a station hungry - it cannot seize the chain.
+#
+# ⚑ AND THE NEW ROWS EAT LESS FOOD THAN THE OLD ONES (0.015 against 0.05). Not
+# thrift: with 124 stations fixed, three new archetypes are three new mouths at
+# a table where the number of farms went DOWN. At the old rate the food surplus
+# fell from 1.55x to 1.12x, which is inside the band and outside the margin the
+# header calls stability rather than waste.
+# ---------------------------------------------------------------------------
+
+# Sited outward, like the Mining Outpost and further: ferrous rock is scarce in
+# the core by `commodities.toml`'s ore weights, so a mine put there would draw
+# against a field that mostly is not ferrous and produce a fraction of its rate
+# however hard it worked. The weights and the ore weights say the same thing
+# twice, on purpose - one decides where the stations go, the other decides
+# whether there is anything under them.
+[[station]]
+id = "sol.station_ferrous"
+name = "Ferrous Mine"
+weight_core = 0.3
+weight_frontier = 0.9
+weight_fringe = 1.2
+produces = ["sol.ore_ferrous:0.20"]
+produces_from = "field"
+consumes = ["sol.food:0.015", "sol.hull_plate:0.013"]
+stock_capacity = 2500
+
+# Smelt at the pit, exactly as the Refinery does and for the identical reason:
+# ferrous ore is bulk and cheap, alloy is compact and valuable, and the leg that
+# should cross the galaxy is the second one.
+[[station]]
+id = "sol.station_foundry"
+name = "Foundry"
+weight_core = 0.25
+weight_frontier = 1.0
+weight_fringe = 1.0
+produces = ["sol.alloy:0.085"]
+feedstock = ["sol.ore_ferrous:0.13"]
+consumes = ["sol.food:0.015", "sol.hull_plate:0.013"]
+stock_capacity = 2500
+
+# Core-weighted like the Fabricator Yard: the last industrial step wants to be
+# near the customers, and for this chain the customer is a hardpoint on a ship.
+# It burns no hull plate of its own - a station consuming its own output is a
+# feedback loop, not an upkeep line.
+[[station]]
+id = "sol.station_fabworks"
+name = "Fabrication Works"
+weight_core = 1.2
+weight_frontier = 0.6
+weight_fringe = 0.2
+produces = ["sol.hull_plate:0.12"]
+feedstock = ["sol.alloy:0.15"]
+consumes = ["sol.food:0.015"]
 stock_capacity = 2500

@@ -137,6 +137,24 @@ mass = 1400.0
 power_draw = 0.5
 cargo_add = 60.0
 
+# ⚑⚑⚑ THE FIRST FITTING IN THIS GAME THAT IS MADE OF SOMETHING (Phase 33
+# stage B). `requires` names a commodity the docked station must actually have
+# in stock before it will sell this - and hull plate exists only where a
+# Fabrication Works turned structural alloy into it, which exists only where a
+# Foundry smelted ferrous ore, which exists only where a Ferrous Mine drew it
+# out of real rock. So the outfitting list at a frontier depot is now SHORTER
+# than the one at an industrial station, and the reason is four jumps upstream.
+#
+# ⚑⚑ ARMOR PLATING RATHER THAN A NEW KIT, because gdd.md 6's claim is that
+# the things you already buy are made of things somebody mined - not that a
+# special "crafted" tier exists beside the normal one. Making up a new component
+# to carry the key would have proved the mechanism and dodged the point. Armour
+# is also the one fitting on this list that is OBVIOUSLY plate, which is what
+# makes the requirement read as sense rather than as a rule.
+#
+# ⚑ It is the ONLY def that carries `requires` today. The key is on the shared
+# `CatalogGate`, so a ship, a weapon or a crew member could take one; nothing
+# does, and one working example is what a phase owes rather than a sweep.
 [[component]]
 id = "sol.armor_plating"
 name = "Armor Plating"
@@ -146,6 +164,7 @@ model = "pod"
 price = 1200.0
 mass = 1500.0
 armor_mul = 1.6
+requires = "sol.hull_plate"
 
 [[component]]
 id = "sol.capacitor_bank"

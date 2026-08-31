@@ -2,15 +2,39 @@
 # stock; live prices swing between 0.5x (glut) and 2x (scarcity).
 # ore_weight_* (Phase 8f) is how often an asteroid in that region tier is
 # made of this; all zero means it is not something you mine.
+#
+# tier (Phase 33 stage B) is where the good sits in gdd.md 6's material tree:
+#   raw       T0  out of the ground, off a wreck, or out of a gas envelope
+#   refined   T1  what a refinery or foundry turns T0 into
+#   component T2  what a mount fitting is made of (gdd.md 11.5)
+#   assembly  T3  the construction tier - ship and station module kits
+#   consumer      food, medicine, textiles, luxuries: a BRANCH, not a step
+#
+# ⚑⚑ TIER IS A LABEL, NOT A RULE. What a good is actually made FROM is the
+# production graph in stations.toml - `feedstock` on the archetype that makes
+# it - and nothing derives one from the other. The only thing the schema
+# enforces is that a good carrying an ore_weight is `raw`, because nothing but
+# a T0 good is ever dug out of a rock. (The converse is deliberately not
+# enforced: salvage will be T0 and comes off a hull.)
+#
+# ⚑⚑⚑ EVERY GOOD IN THIS FILE IS MADE BY SOMEBODY AND BURNT BY SOMEBODY, AND
+# THAT IS ENFORCED BY A TEST. Phase 33 stage A found that a commodity nobody
+# produces and nobody consumes sits at exactly half capacity forever, which is
+# dead centre of the band `economy_shipped_rates_hold_a_steady_state` checks -
+# so thirty-six pieces of scenery would have passed the economy's own exit
+# criterion as comfortably as four working goods. `economy_every_commodity_is_
+# made_and_burnt_somewhere` is what stops this file growing a decoration.
 
 [[commodity]]
 id = "sol.food"
 name = "Foodstuffs"
+tier = "consumer"
 base_price = 8.0
 
 [[commodity]]
 id = "sol.ore"
 name = "Raw Ore"
+tier = "raw"
 base_price = 12.0
 ore_weight_core = 1.0
 ore_weight_frontier = 1.0
@@ -19,14 +43,77 @@ ore_weight_fringe = 1.0
 [[commodity]]
 id = "sol.metal"
 name = "Refined Metal"
+tier = "refined"
 base_price = 32.0
 
 # Machinery is one step further down the chain than it was before Phase 8f
 # (ore -> metal -> machinery), so it prices off refined metal, not raw ore.
-# The tier has to clear the step that makes it: a Fabricator Yard turns 0.26
-# metal into 0.18 machinery, so at base prices that is 8.3 cr of input for
-# 9.4 cr of output. Below about 50 the last link of the chain destroys value.
+# The tier has to clear the step that makes it: a Fabricator Yard turns 0.15
+# metal into 0.12 machinery, so at base prices that is 4.8 cr of input for
+# 6.2 cr of output. Below about 40 the last link of the chain destroys value.
+#
+# ⚑ THE RATES IN THAT SENTENCE WERE STALE AND ARE CORRECTED HERE (Phase 33
+# stage B). It read "0.26 metal into 0.18 machinery", which `stations.toml` has
+# not said for a long time; the conclusion survived because the real numbers
+# clear the step by MORE, not less. Left as a caution: an arithmetic argument in
+# a comment is only as good as the last time somebody re-read the file it cites.
 [[commodity]]
 id = "sol.machinery"
 name = "Machinery"
+tier = "component"
 base_price = 52.0
+
+# ---------------------------------------------------------------------------
+# The ferrous chain (Phase 33 stage B), and it is ONE chain on purpose.
+#
+# ⚑⚑⚑ IT EXISTS TO REACH SOMEWHERE THE OLD CHAIN NEVER DID: A FITTING.
+# food -> ore -> metal -> machinery -> food is a closed cycle that ends in a
+# warehouse, and gdd.md 6 says what T2 is actually for - "these are what a
+# mount fitting is made of (11), which is what finally ties outfitting to the
+# economy: the gun you buy was manufactured somewhere by somebody out of things
+# somebody mined." `sol.hull_plate` is the first good in this game that a
+# `[[component]]` requires to be in stock before a station will sell it
+# (CatalogGate::requires), so the last hop of this chain is a hardpoint.
+#
+# ⚑⚑ THREE GOODS, NOT THIRTY-NINE, AND THE REASON IS STAGE A'S FINDING. The
+# whole gdd.md 6 tree is affordable - measured at +11% on the four-sim-hour
+# economy for a 10x wider table - but every good added has to be MADE and BURNT
+# by somebody or it is scenery the exit-criterion test cannot see. Breadth is
+# data and can land any time; a chain that runs end to end is what the phase
+# owes.
+# ---------------------------------------------------------------------------
+
+# ⚑⚑ ITS ORE WEIGHTS ARE THE MIRROR OF `sol.ore`'S FLAT ONES, AND THAT IS THE
+# REGION GRADIENT FALLING OUT FOR FREE. A Ferrous Mine's output is limited by
+# what is actually left in the rock it draws from (`Economy::produce`'s extract
+# path), and a rock is made of a commodity in proportion to these numbers - so a
+# core system simply has less ferrous rock in it, and a mine sited there
+# produces less however hard it works. Nothing in the sim knows the words "core"
+# or "fringe" for this; the gradient is the weights.
+[[commodity]]
+id = "sol.ore_ferrous"
+name = "Ferrous Ore"
+tier = "raw"
+base_price = 14.0
+ore_weight_core = 0.35
+ore_weight_frontier = 1.0
+ore_weight_fringe = 1.6
+
+# A Foundry turns 0.17 ferrous into 0.11 alloy, so at base prices that is
+# 2.4 cr of input for 4.2 cr of output - the same shape as the ore -> metal
+# step one file over, and for the same reason: below about 30 the step
+# destroys value and no trader would ever carry the input.
+[[commodity]]
+id = "sol.alloy"
+name = "Structural Alloy"
+tier = "refined"
+base_price = 38.0
+
+# The end of the chain and the only good with a consumer outside the economy:
+# a Fabrication Works turns 0.15 alloy into 0.12 plate (5.7 cr in, 7.7 cr out),
+# and every station in the galaxy burns a little of it keeping itself standing.
+[[commodity]]
+id = "sol.hull_plate"
+name = "Hull Plate"
+tier = "component"
+base_price = 64.0

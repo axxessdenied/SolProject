@@ -3761,6 +3761,14 @@ bool GameContent::reloadDefs()
         SOL_LOG_ERROR("data defs: %s", error.c_str());
         return false;
     }
+    // Phase 33 stage B, and it refuses for the same reason the four above do:
+    // a `requires` naming a commodity no [[commodity]] row defines is a gate
+    // that can never open, so the item is invisible at every station in the
+    // galaxy and nothing anywhere says why.
+    if (!fresh.validateCatalogGates(&error)) {
+        SOL_LOG_ERROR("data defs: %s", error.c_str());
+        return false;
+    }
     m_defs = std::move(fresh);
     logRosters();
     // Cue tuning follows the defs (Phase 8t): gain, jitter, rolloff and caps

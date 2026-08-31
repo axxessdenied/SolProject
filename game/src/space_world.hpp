@@ -1731,6 +1731,10 @@ public:
     // Whether the docked station's owner stocks a gated def (Phase 8a caveat
     // fix: catalogs are the owner faction's; pirates fence past min_rep).
     [[nodiscard]] bool stationSells(const sol::assets::CatalogGate& gate) const;
+    // The commodity half of the gate (Phase 33 stage B): a station will not
+    // sell a fitting it has none of the material for. Called by `stationSells`
+    // rather than beside it, so no caller can ask half the question.
+    [[nodiscard]] bool stationStocksRequirement(const sol::assets::CatalogGate& gate) const;
     // Lua-chosen raid (sol.faction_raid); validates via the sim's candidates.
     bool commitFactionRaid(std::uint32_t faction, std::uint32_t targetSystem);
 

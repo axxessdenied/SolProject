@@ -103,6 +103,33 @@ struct CatalogGate
 {
     std::vector<std::string> factions; // seller allowlist of faction ids
     float minRep = -100.0f;            // owner-standing gate, -100..100
+    // A commodity the docked station must actually have in stock before it will
+    // sell this (Phase 33 stage B). Empty - the default - means no such
+    // requirement, so every def written before this key behaves exactly as it
+    // did.
+    //
+    // ⚑⚑⚑ THIS IS THE LAST HOP OF THE MATERIAL TREE AND THE ONLY REASON THE
+    // TREE IS IN THE GAME RATHER THAN IN A SPREADSHEET. gdd.md 6 says what T2
+    // components are for: "these are what a mount fitting is made of (11), which
+    // is what finally ties outfitting to the economy - the gun you buy was
+    // manufactured somewhere by somebody out of things somebody mined." Before
+    // this key an economy could run its whole chain and a player would never
+    // meet it; a fitting was for sale everywhere its faction and standing gates
+    // allowed, whatever the galaxy had actually built.
+    //
+    // ⚑⚑ IT GATES AVAILABILITY, NOT PRICE, AND THAT IS DELIBERATE. A price
+    // that moved with local stock would be the same idea expressed as a number
+    // nobody reads; an outfitting list that is SHORTER at a frontier station
+    // than at a Fabrication Works is the same idea expressed as an absence the
+    // player can see. Price is stage D's business, where it says something
+    // different (what a jurisdiction thinks of the crate).
+    //
+    // ⚑ It sits on the shared gate rather than on `ComponentDef` because a
+    // weapon is made of the same things - `WeaponDef`, `ShipDef` and `CrewDef`
+    // all carry a `CatalogGate` and all four are things a station sells. What a
+    // crew member would require is a question for whoever wants one; nothing
+    // shipped uses it outside components.
+    std::string requiresCommodity;
 };
 
 // --- Mounts (engine plan Phase 31, decisions/014, gdd.md 11.5) ---
@@ -618,6 +645,43 @@ struct FactionDef
     std::string source;
 };
 
+// Where a good sits in the material tree (gdd.md 6, Phase 33 stage B).
+//
+// ⚑⚑⚑ A WORD IN THE FILE, NOT A NUMBER, WHICH IS PHASE 32 STAGE A'S CHECKPOINT
+// RULING APPLIED TO THE SECOND VOCABULARY THAT ASKED FOR IT. gdd.md 6 numbers
+// its rows T0..T3 and `tier = 2` would read as a magic constant in a file whose
+// every other enumerated key is a word - and, worse, a slipped digit between
+// `1` and `2` is a typo no schema can catch while `refined` and `component`
+// cannot be confused.
+//
+// ⚑⚑⚑ AND UNLIKE `HullClass`, THE ORDINAL IS NOT AN ORDER. The first four ARE
+// the T0..T3 steps and each is made from the one before it, but `Consumer` is
+// not a fifth step: foodstuffs and medical supplies are made from organics at
+// T0, and nothing is ever built out of them. Anything that compares two tiers
+// with `<` is therefore wrong about consumer goods, which is why this enum has
+// no band table, no bounds and no `tierBelow` - it says what a good IS, and the
+// production graph in `stations.toml` says what it comes from.
+//
+// ⚑ Contraband is deliberately absent. gdd.md 13: "Contraband is not a tier;
+// it is a LEGALITY, and the same crate is cargo in one jurisdiction and a crime
+// in the next." That lives on a faction (Phase 33 stage D), never on the good.
+enum class CommodityTier : std::uint32_t
+{
+    Raw = 0,   // T0: ores, ices, gases, silicates, organics, and salvage
+    Refined,   // T1: alloys, concentrates, fuel, polymers, reclaimed alloy
+    Component, // T2: what a mount fitting is made of (gdd.md 11.5)
+    Assembly,  // T3: ship and station module kits, hull and drive sections
+    Consumer,  // food, medicine, textiles, luxuries - a branch, not a step
+    Count,
+};
+
+inline constexpr std::size_t kCommodityTierCount = static_cast<std::size_t>(CommodityTier::Count);
+
+// The def spellings, and the only place they live - the same shape
+// `hullClassName`/`parseHullClass` has, for the same reason.
+[[nodiscard]] const char* commodityTierName(CommodityTier tier);
+[[nodiscard]] bool parseCommodityTier(std::string_view text, CommodityTier& out);
+
 struct CommodityDef
 {
     std::string id;
@@ -638,6 +702,18 @@ struct CommodityDef
     // other radius silently resizes every instance AND its mining hit sphere.
     std::string model;
     std::string chunkModel;
+    // Which tier of the material tree this good is (Phase 33 stage B).
+    //
+    // ⚑⚑ OPTIONAL AND NOT DEFAULTED, for `ShipDef::hullClass`'s reason: `Raw`
+    // is a real answer and cannot double as "nobody said". A parser that
+    // picked one would be answering gdd.md 6 on the author's behalf, and the
+    // whole value of the key is that somebody decided.
+    //
+    // ⚑ Nothing in the sim reads it yet, deliberately - it is vocabulary for
+    // the salvage roll (stage C) and the legality table (stage D), and the only
+    // thing that reads it in stage B is the validator below.
+    CommodityTier tier = CommodityTier::Raw;
+    bool hasTier = false;
     std::string source;
 };
 
@@ -1093,6 +1169,12 @@ public:
     // the parse for the same reason `validateMaterials` is - a ship def may
     // legitimately live in an earlier or a later layer than the faction.
     [[nodiscard]] bool validateRosters(std::string* outError = nullptr) const;
+
+    // Phase 33 stage B: a `requires` on any sellable def names a commodity that
+    // exists. Refuses for `validateRosters`'s reason - a gate keyed on a good
+    // no `[[commodity]]` row defines can never open, so the item is invisible
+    // in every station in the galaxy and nothing ever says why.
+    [[nodiscard]] bool validateCatalogGates(std::string* outError = nullptr) const;
 
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;

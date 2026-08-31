@@ -83,7 +83,16 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // is wider. Component id 25 still, on C2's rule: the component changed size
 // and not identity, and the version check at the header is what stops a v24
 // file being read into the new layout.
-constexpr std::uint32_t kSaveVersion = 25;
+//
+// v26 (Phase 33 stage B): the commodity table went from four goods to seven,
+// so every `StationMarket::stock` row in the save is three floats wider. ⚑⚑ The
+// block is written FLAT - a market count and then every market's stock run
+// back to back, with no per-market length - so a v25 file read at the new
+// width does not fail, it silently reads market 1's food as market 0's alloy
+// and carries on. The version check at the header is the ONLY thing between a
+// player and a galaxy of nonsense here, which is exactly the case standing risk
+// 1 predicted this arc would hit six times.
+constexpr std::uint32_t kSaveVersion = 26;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -981,6 +990,14 @@ bool SpaceWorld::stationSells(const assets::CatalogGate& gate) const
     if (!isDocked()) {
         return false;
     }
+    // ⚑⚑ FOLDED IN HERE RATHER THAN ASKED BESIDE IT AT EIGHT CALL SITES, which
+    // is Phase 32 stage D's finding turned round: a condition every caller has to
+    // remember is a condition one of them will eventually forget, and the one
+    // that forgets would be a shop window listing something the counter refuses
+    // to sell. "Will this station sell me this" is one question.
+    if (!stationStocksRequirement(gate)) {
+        return false;
+    }
     const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
     if (owner >= m_factionTable.size()) {
         return true; // ownerless station: open market
@@ -993,6 +1010,36 @@ bool SpaceWorld::stationSells(const assets::CatalogGate& gate) const
     // Pirate stations fence anything their defs allow, standing be damned
     // (docking already required non-hostile standing).
     return faction.pirate || m_factionSim.standing(owner) >= gate.minRep;
+}
+
+bool SpaceWorld::stationStocksRequirement(const assets::CatalogGate& gate) const
+{
+    // ⚑⚑⚑ PHASE 33 STAGE B, AND IT IS THE LAST HOP OF THE MATERIAL TREE.
+    // gdd.md 6 puts T2 components in the tree because "the gun you buy was
+    // manufactured somewhere by somebody out of things somebody mined" - and
+    // until this check existed the whole chain could run from the rock to a
+    // warehouse and a player would never once meet it, because the outfitting
+    // list was the same at every station their standing let them dock at.
+    //
+    // ⚑⚑ IN STOCK AT ALL, NOT A THRESHOLD. A station that has run out of hull
+    // plate stops offering hull plating; the moment a hauler arrives, it offers
+    // it again. A quantity here would be a second tuning surface with no
+    // authored home, and 'any' is the only reading that needs no number.
+    if (gate.requiresCommodity.empty()) {
+        return true;
+    }
+    if (!isDocked()) {
+        return false;
+    }
+    const std::uint32_t commodity = commodityIndex(gate.requiresCommodity.c_str());
+    if (commodity == kNoIndex) {
+        // `DefDatabase::validateCatalogGates` refuses this at load, so reaching
+        // it means the commodity table and the defs came apart underneath a
+        // running game. Refusing to sell is the honest answer: the requirement
+        // was written and cannot be met.
+        return false;
+    }
+    return m_economy.stock(dockedMarket(), commodity) > 0.0f;
 }
 
 bool SpaceWorld::commitFactionRaid(std::uint32_t faction, std::uint32_t targetSystem)

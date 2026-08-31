@@ -261,7 +261,18 @@ bool checkDigest(const char* layer, std::uint64_t actual, std::uint64_t expected
 constexpr std::size_t kGoldenSystemCount = 80;
 constexpr std::size_t kGoldenLinkCount = 158;
 constexpr std::size_t kGoldenClanCount = 10;
-constexpr std::uint64_t kGoldenStructure = 0x51F04FE42530B01Aull;
+// ⚑⚑⚑ RE-RECORDED BY PHASE 33 STAGE B, AND THIS IS THE "WHY" THE COMMENT
+// ABOVE ASKS FOR. `stations.toml` gained three archetypes - Ferrous Mine,
+// Foundry, Fabrication Works - so the generator now picks from seven rules
+// where it picked from four, and this digest hashes `station.archetype` for
+// every station in the galaxy. Old: 0x51F04FE42530B01Aull.
+//
+// ⚑⚑ WHAT DID NOT MOVE IS THE EVIDENCE THAT THIS IS THE CHANGE IT LOOKS
+// LIKE. 80 systems, 158 links and 10 clans are unchanged, and BOTH geometry
+// digests below are untouched on both recorded libms - so not one station,
+// planet or gate moved a metre. The galaxy is the same place; some of its
+// stations now do a different job.
+constexpr std::uint64_t kGoldenStructure = 0xBC19DD29982F8D89ull;
 
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine

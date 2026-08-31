@@ -307,6 +307,11 @@ struct FieldReader
         if (!failed && (out.minRep < -100.0f || out.minRep > 100.0f)) {
             fail("'min_rep' must be in [-100, 100]");
         }
+        // Phase 33 stage B. Not resolved to an index here for the reason every
+        // id in this file is left a string: a def layer may name a commodity a
+        // later layer defines, so the check is `validateCatalogGates`'s once
+        // every layer has merged.
+        optionalString("requires", out.requiresCommodity);
     }
 
     void optionalBool(const char* key, bool& out, bool* present = nullptr)
@@ -573,7 +578,8 @@ bool parseShip(const TomlValue& table,
                               "crew_berths",
                               "mount",
                               "factions",
-                              "min_rep"});
+                              "min_rep",
+                              "requires"});
     if (!reader.failed && def.scale <= 0.0f) {
         reader.fail("'scale' must be > 0");
     }
@@ -629,7 +635,8 @@ bool parseWeapon(const TomlValue& table,
                               "model",
                               "bolt_model",
                               "factions",
-                              "min_rep"});
+                              "min_rep",
+                              "requires"});
     if (!reader.failed && def.kind != "projectile" && def.kind != "hitscan") {
         reader.fail("'kind' must be \"projectile\" or \"hitscan\"");
     }
@@ -760,6 +767,15 @@ bool parseCommodity(const TomlValue& table,
     reader.optionalString("model", def.model);
     reader.optionalString("chunk_model", def.chunkModel);
 
+    // ⚑ Phase 33 stage B. Optional and NOT defaulted, exactly as `class` is on
+    // a hull: `raw` is a real tier, so it cannot double as "unset".
+    std::string tierText;
+    reader.optionalString("tier", tierText, &def.hasTier);
+    if (!reader.failed && def.hasTier && !parseCommodityTier(tierText, def.tier)) {
+        reader.fail("'tier' is not a material tier: '" + tierText +
+                    "' (raw, refined, component, assembly, consumer)");
+    }
+
     reader.rejectUnknownKeys({"id",
                               "name",
                               "base_price",
@@ -767,13 +783,24 @@ bool parseCommodity(const TomlValue& table,
                               "ore_weight_frontier",
                               "ore_weight_fringe",
                               "model",
-                              "chunk_model"});
+                              "chunk_model",
+                              "tier"});
     if (!reader.failed && def.basePrice <= 0.0f) {
         reader.fail("'base_price' must be > 0");
     }
     if (!reader.failed &&
         (def.oreWeightCore < 0.0f || def.oreWeightFrontier < 0.0f || def.oreWeightFringe < 0.0f)) {
         reader.fail("'ore_weight_*' must be >= 0");
+    }
+    // ⚑⚑ A GOOD YOU DIG OUT OF A ROCK IS T0, AND THIS IS THE ONE DIRECTION THAT
+    // HOLDS. gdd.md 6 puts ores, ices, gases, silicates and organics at T0 and
+    // nothing else is ever mined, so an ore weight on a `refined` or `component`
+    // row is an authoring slip rather than a design. The converse is NOT checked
+    // and must not be: salvage is T0 and comes off a wreck, not out of the ground.
+    if (!reader.failed && def.hasTier && def.tier != CommodityTier::Raw &&
+        (def.oreWeightCore > 0.0f || def.oreWeightFrontier > 0.0f || def.oreWeightFringe > 0.0f)) {
+        reader.fail(std::string("tier '") + commodityTierName(def.tier) +
+                    "' carries an ore weight, but only a 'raw' good is mined");
     }
     if (reader.failed) {
         return false;
@@ -1592,7 +1619,8 @@ bool parseComponent(const TomlValue& table,
     reader.optionalGate(def.gate);
 
     reader.rejectUnknownKeys(
-        {"id", "name", "mount", "size", "model", "price", "mass", "power_draw", "factions", "min_rep"},
+        {"id", "name", "mount", "size", "model", "price", "mass", "power_draw", "factions", "min_rep",
+         "requires"},
         /*allowModifiers=*/true);
     // ⚑ A component cannot claim a gun's mount. The four weapon-taking kinds
     // hold a `[[weapon]]`, and that is what makes a mount's `fit` id
@@ -1633,7 +1661,7 @@ bool parseCrew(const TomlValue& table,
     reader.optionalModifiers(def.modifiers);
     reader.optionalGate(def.gate);
 
-    reader.rejectUnknownKeys({"id", "name", "role", "price", "factions", "min_rep"},
+    reader.rejectUnknownKeys({"id", "name", "role", "price", "factions", "min_rep", "requires"},
                              /*allowModifiers=*/true);
     if (reader.failed) {
         return false;
@@ -1741,7 +1769,32 @@ constexpr const char* kRosterCellNames[] = {"patrol", "raider", "trader"};
 
 static_assert(std::size(kRosterCellNames) == kRosterCellCount, "a roster cell is missing its spelling");
 
+// gdd.md 6's tiers, one lowercase word each. `component` and `assembly` are
+// singular where the GDD's headings are plural, because a def value names what
+// ONE good is - the same reason `size = "small"` is not `"smalls"`.
+constexpr const char* kCommodityTierNames[] = {"raw", "refined", "component", "assembly", "consumer"};
+
+static_assert(std::size(kCommodityTierNames) == kCommodityTierCount,
+              "a commodity tier is missing its def spelling");
+
 } // namespace
+
+const char* commodityTierName(CommodityTier tier)
+{
+    const auto index = static_cast<std::size_t>(tier);
+    return index < kCommodityTierCount ? kCommodityTierNames[index] : "?";
+}
+
+bool parseCommodityTier(std::string_view text, CommodityTier& out)
+{
+    for (std::size_t i = 0; i < kCommodityTierCount; ++i) {
+        if (text == kCommodityTierNames[i]) {
+            out = static_cast<CommodityTier>(i);
+            return true;
+        }
+    }
+    return false;
+}
 
 const char* rosterCellName(RosterCell cell)
 {
@@ -2125,6 +2178,46 @@ bool DefDatabase::validateRosters(std::string* outError) const
                 return false;
             }
         }
+    }
+    return true;
+}
+
+bool DefDatabase::validateCatalogGates(std::string* outError) const
+{
+    // ⚑⚑ ALL FOUR SELLABLE KINDS, NOT JUST COMPONENTS. `requires` lives on the
+    // shared `CatalogGate`, so a ship, a weapon, a component and a crew member
+    // can all carry one - and a validator that checked only the kind that
+    // happens to use it today would be a validator that stops working the first
+    // time somebody authors the obvious second use.
+    struct Row
+    {
+        const char* kind;
+        const std::string& id;
+        const std::string& requires_;
+        const std::string& source;
+    };
+    std::vector<Row> rows;
+    for (const ShipDef& def : m_ships) {
+        rows.push_back({"ship", def.id, def.gate.requiresCommodity, def.source});
+    }
+    for (const WeaponDef& def : m_weapons) {
+        rows.push_back({"weapon", def.id, def.gate.requiresCommodity, def.source});
+    }
+    for (const ComponentDef& def : m_components) {
+        rows.push_back({"component", def.id, def.gate.requiresCommodity, def.source});
+    }
+    for (const CrewDef& def : m_crew) {
+        rows.push_back({"crew", def.id, def.gate.requiresCommodity, def.source});
+    }
+    for (const Row& row : rows) {
+        if (row.requires_.empty() || findCommodity(row.requires_.c_str()) != nullptr) {
+            continue;
+        }
+        if (outError != nullptr) {
+            *outError = row.source + ": " + row.kind + " '" + row.id + "' requires '" + row.requires_ +
+                        "' to be in stock, which no [[commodity]] row defines";
+        }
+        return false;
     }
     return true;
 }

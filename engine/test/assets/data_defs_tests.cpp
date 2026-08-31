@@ -383,6 +383,179 @@ builds_no = ["patrol", "raider", "trader"]
     SOL_CHECK(none.validateRosters(&error));
 }
 
+// --- Phase 33 stage B: the material tree's vocabulary ------------------------
+
+// ⚑⚑ A WORD, NOT A NUMBER, AND THE ROUND TRIP IS WHAT SAYS SO. Same shape as
+// `HullClass` and `MountKind` before it, and for the reason Phase 32 stage A's
+// checkpoint settled: gdd.md 6 numbers its tiers T0..T3, and a `tier = 2` where
+// the author meant 3 is a typo no schema can ever catch while `refined` and
+// `component` cannot be confused by a slipped digit.
+SOL_TEST(data_defs_commodity_tier_is_a_word_and_round_trips)
+{
+    for (std::size_t i = 0; i < sol::assets::kCommodityTierCount; ++i) {
+        const auto tier = static_cast<sol::assets::CommodityTier>(i);
+        sol::assets::CommodityTier parsed{};
+        SOL_CHECK(sol::assets::parseCommodityTier(sol::assets::commodityTierName(tier), parsed));
+        SOL_CHECK(parsed == tier);
+    }
+    sol::assets::CommodityTier ignored{};
+    SOL_CHECK(!sol::assets::parseCommodityTier("t2", ignored));
+    SOL_CHECK(!sol::assets::parseCommodityTier("components", ignored)); // singular, as authored
+    SOL_CHECK(!sol::assets::parseCommodityTier("", ignored));
+
+    // Absent is its own state rather than a default, exactly as `class` is on a
+    // hull: `raw` is a real answer and cannot double as "nobody said".
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db,
+                    R"(
+[[commodity]]
+id = "sol.silent"
+name = "Silent"
+
+[[commodity]]
+id = "sol.spoken"
+name = "Spoken"
+tier = "component"
+)",
+                    "commodities.toml",
+                    &error));
+    const sol::assets::CommodityDef* silent = db.findCommodity("sol.silent");
+    const sol::assets::CommodityDef* spoken = db.findCommodity("sol.spoken");
+    SOL_REQUIRE(silent != nullptr && spoken != nullptr);
+    SOL_CHECK(!silent->hasTier);
+    SOL_CHECK(spoken->hasTier);
+    SOL_CHECK(spoken->tier == sol::assets::CommodityTier::Component);
+
+    DefDatabase bad;
+    SOL_CHECK(!merge(bad,
+                     R"(
+[[commodity]]
+id = "sol.wrong"
+name = "Wrong"
+tier = "t1"
+)",
+                     "commodities.toml",
+                     &error));
+    SOL_CHECK(error.find("t1") != std::string::npos);
+}
+
+// ⚑⚑ ONE DIRECTION ONLY, AND THE CONVERSE IS ASSERTED TO STAY UNCHECKED.
+// gdd.md 6 puts everything that comes out of a rock at T0, so an ore weight on a
+// `refined` row is an authoring slip. But T0 is wider than mining - salvage is
+// raw and comes off a hull, ices and gases are raw and come out of an envelope -
+// so a raw good with NO ore weight has to stay legal, and the second half of
+// this test is what stops somebody "completing" the rule.
+SOL_TEST(data_defs_only_a_raw_commodity_can_be_mined)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db,
+                    R"(
+[[commodity]]
+id = "sol.rock"
+name = "Rock"
+tier = "raw"
+ore_weight_fringe = 1.0
+
+[[commodity]]
+id = "sol.scrap"
+name = "Scrap"
+tier = "raw"
+)",
+                    "commodities.toml",
+                    &error));
+
+    DefDatabase bad;
+    SOL_CHECK(!merge(bad,
+                     R"(
+[[commodity]]
+id = "sol.alloy"
+name = "Alloy"
+tier = "refined"
+ore_weight_core = 0.5
+)",
+                     "commodities.toml",
+                     &error));
+    SOL_CHECK(error.find("raw") != std::string::npos);
+
+    // An untiered commodity with an ore weight is what every shipped def looked
+    // like before this key existed, and it still loads.
+    DefDatabase legacy;
+    SOL_CHECK(merge(legacy,
+                    R"(
+[[commodity]]
+id = "sol.ore"
+name = "Ore"
+ore_weight_core = 1.0
+)",
+                    "commodities.toml",
+                    &error));
+}
+
+// ⚑⚑⚑ A GATE THAT CAN NEVER OPEN IS THE WORST SHAPE A CONTENT ERROR TAKES,
+// which is `validateRosters`'s finding one phase over: the item is simply absent
+// from every station in the galaxy and nothing anywhere says why. A player would
+// read it as the economy working.
+SOL_TEST(data_defs_a_catalog_requirement_names_a_real_commodity)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db,
+                    R"(
+[[commodity]]
+id = "sol.plate"
+name = "Plate"
+tier = "component"
+
+[[component]]
+id = "sol.armor"
+name = "Armor"
+mount = "utility"
+size = "small"
+requires = "sol.plate"
+)",
+                    "defs.toml",
+                    &error));
+    SOL_CHECK(db.validateCatalogGates(&error));
+    const sol::assets::ComponentDef* armor = db.findComponent("sol.armor");
+    SOL_REQUIRE(armor != nullptr);
+    SOL_CHECK(armor->gate.requiresCommodity == "sol.plate");
+
+    DefDatabase stale;
+    SOL_CHECK(merge(stale,
+                    R"(
+[[component]]
+id = "sol.armor"
+name = "Armor"
+mount = "utility"
+size = "small"
+requires = "sol.plate"
+)",
+                    "components.toml",
+                    &error));
+    SOL_CHECK(!stale.validateCatalogGates(&error));
+    SOL_CHECK(error.find("sol.plate") != std::string::npos);
+    SOL_CHECK(error.find("component") != std::string::npos);
+
+    // ⚑ And an ungated def is not a broken one: the key is optional, and every
+    // def written before this stage carries no requirement at all.
+    DefDatabase plain;
+    SOL_CHECK(merge(plain,
+                    R"(
+[[component]]
+id = "sol.armor"
+name = "Armor"
+mount = "utility"
+size = "small"
+)",
+                    "components.toml",
+                    &error));
+    SOL_CHECK(plain.validateCatalogGates(&error));
+    SOL_REQUIRE(plain.findComponent("sol.armor") != nullptr);
+    SOL_CHECK(plain.findComponent("sol.armor")->gate.requiresCommodity.empty());
+}
+
 SOL_TEST(data_defs_validation_errors)
 {
     DefDatabase db;
