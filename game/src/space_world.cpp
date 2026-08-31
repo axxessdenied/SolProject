@@ -2838,8 +2838,9 @@ factionRoster(const GameFaction& faction, assets::RosterCell cell, assets::Roste
 }
 
 void SpaceWorld::spawnWing(std::uint32_t faction,
+                           assets::RosterCell cell,
                            std::span<const std::string> roster,
-                           PilotRole role,
+                           float baselineSecurity,
                            std::uint32_t count,
                            const core::DVec3& anchor,
                            double spread,
@@ -2849,10 +2850,27 @@ void SpaceWorld::spawnWing(std::uint32_t faction,
     if (roster.empty() || m_defs == nullptr || faction >= m_factionTable.size()) {
         return;
     }
+    // ⚑ The classes the pick ranks against, read once for the whole wing
+    // rather than per slot - the roster does not change between them, and this
+    // is the same scratch-member arrangement `m_rosterCapacities` uses for the
+    // hauler pick a few hundred lines down.
+    m_rosterClasses.clear();
+    for (const std::string& id : roster) {
+        const assets::ShipDef* candidate = m_defs->findShip(id.c_str());
+        m_rosterClasses.push_back(candidate != nullptr && candidate->hasHullClass
+                                      ? static_cast<std::uint32_t>(candidate->hullClass)
+                                      : static_cast<std::uint32_t>(assets::kHullClassCount));
+    }
+    // The job is the cell's, not a caller's opinion of it - and it is the cell
+    // ASKED for, so a wing flying a substituted roster is still doing what it
+    // was sent to do.
+    const PilotRole role = pilotRoleFor(cell);
     for (std::uint32_t i = 0; i < count; ++i) {
-        const assets::ShipDef* def = m_defs->findShip(roster[i % roster.size()].c_str());
+        const std::uint32_t pick =
+            chooseWingHull(std::span<const std::uint32_t>(m_rosterClasses), baselineSecurity, i, count);
+        const assets::ShipDef* def = m_defs->findShip(roster[pick].c_str());
         if (def == nullptr) {
-            SOL_LOG_WARN("wing: no ship def '%s'", roster[i % roster.size()].c_str());
+            SOL_LOG_WARN("wing: no ship def '%s'", roster[pick].c_str());
             return;
         }
         const core::DVec3 position =
@@ -2895,15 +2913,17 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             // never had one, which is what reading `faction.shipsRaider` bare
             // used to say by omission.
             spawnWing(owner,
+                      assets::RosterCell::Raider,
                       factionRoster(faction, assets::RosterCell::Raider, assets::RosterCell::Count),
-                      PilotRole::Fighter,
+                      baselineSecurity,
                       raidersFor(baselineSecurity),
                       anchor,
                       900.0);
         } else {
             spawnWing(owner,
+                      assets::RosterCell::Patrol,
                       factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Count),
-                      PilotRole::Patrol,
+                      baselineSecurity,
                       patrolsFor(baselineSecurity),
                       anchor,
                       700.0);
@@ -2925,8 +2945,9 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             // flies a two-leg station circuit, and PilotRole::Trader,
             // PilotState::Travel and shipsTrader all predate this.
             spawnWing(owner,
+                      assets::RosterCell::Trader,
                       factionRoster(faction, assets::RosterCell::Trader, assets::RosterCell::Count),
-                      PilotRole::Trader,
+                      baselineSecurity,
                       civiliansFor(baselineSecurity),
                       anchor,
                       1'500.0);
@@ -2947,16 +2968,18 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             factionRoster(attacker, assets::RosterCell::Raider, assets::RosterCell::Patrol);
         const std::uint32_t count = std::clamp(static_cast<std::uint32_t>(contest.pressure * 4.0f), 1u, 4u);
         spawnWing(contest.attacker,
+                  assets::RosterCell::Raider,
                   roster,
-                  PilotRole::Fighter,
+                  baselineSecurity,
                   count,
                   anchor + core::DVec3{9'000.0, 1'500.0, 6'000.0},
                   1'200.0);
         if (owner < m_factionTable.size()) {
             spawnWing(
                 owner,
+                assets::RosterCell::Patrol,
                 factionRoster(m_factionTable[owner], assets::RosterCell::Patrol, assets::RosterCell::Count),
-                PilotRole::Patrol,
+                baselineSecurity,
                 2,
                 anchor + core::DVec3{-4'000.0, 800.0, 2'000.0},
                 700.0);
@@ -2970,8 +2993,9 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             const std::uint32_t count = std::min(3u, static_cast<std::uint32_t>(intensity + 0.5f));
             spawnWing(
                 raider,
+                assets::RosterCell::Raider,
                 factionRoster(m_factionTable[raider], assets::RosterCell::Raider, assets::RosterCell::Count),
-                PilotRole::Fighter,
+                baselineSecurity,
                 count,
                 anchor + core::DVec3{9'000.0, 1'500.0, 6'000.0},
                 1'200.0);
@@ -7119,8 +7143,9 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
                        : factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Raider);
     const std::size_t before = m_registry.storage<ShipPilot>().size();
     spawnWing(owner,
+              faction.pirate ? assets::RosterCell::Raider : assets::RosterCell::Patrol,
               roster,
-              faction.pirate ? PilotRole::Fighter : PilotRole::Patrol,
+              baseline,
               shortfall,
               origin,
               700.0,

@@ -829,6 +829,118 @@ enum class ResponseCause : std::uint32_t
     return count < 1u ? 1u : count;
 }
 
+// ⚑⚑⚑⚑ WHICH HULL A WING'S SLOT FLIES, AND IT IS THE FOURTH FUNCTION OF
+// `baselineSecurity` IN THIS BLOCK (Phase 32 stage D). The three above decide
+// HOW MANY ships a place gets; this decides WHICH, out of the cell's roster
+// ranked by the `class` stage A authored. Strongly-held space fields the heavy
+// end of what a faction builds and the margins field the light end - a core
+// system's civilian traffic is freighters, a fringe system's is shuttles, from
+// the same roster and the same faction.
+//
+// ⚑⚑⚑ IT IS THE MAGNITUDE, NOT THE SIGN, AND THAT IS WHAT MAKES IT ONE RULE
+// RATHER THAN TWO. `baselineSecurity` is positive where a major polices and
+// negative where a clan holds, and `patrolsFor`/`raidersFor` already split on
+// that sign to decide the count. What this asks is *how firmly is this place
+// held*, which is the same question either way round: a clan's home system
+// fields its heaviest raiders for exactly the reason a core system fields its
+// heaviest patrols. The shipped galaxy runs +0.85 down to -0.75, so one scale
+// covers both.
+//
+// ⚑⚑⚑ THE WING IS SPREAD ACROSS THE RANGE RATHER THAN BEING N COPIES OF ONE
+// HULL. Slot `i` of a wing of `count` sits at `(i + 0.5) / count` through it,
+// and the window is centred on how firmly the place is held - so a core system
+// at 0.85 with four civilians gets three freighters and one shuttle, a
+// frontier at 0.49 with three gets one and two, and a fringe at 0.20 with one
+// gets the shuttle. That proportion IS the readout: "mostly freighters" and
+// "mostly shuttles" survive a player only ever seeing part of the sky, where
+// a hard switch at some threshold would put half the galaxy on a coin flip.
+//
+// ⚑⚑ AND IT FALLS BACK TO THE ROUND-ROBIN IT REPLACED WHENEVER THE CONTENT HAS
+// NOT SPOKEN. `class` is optional with no default (stage A: "an invented class
+// is the parser deciding what a hull IS"), so a cell where any hull declares
+// none - or where every hull declares the SAME one - ranks into nothing, and
+// the answer is `slot % size`, exactly what shipped before this stage. That is
+// also `chooseTraderHull`'s rule for equal capacities and for the same reason:
+// a roster of same-sized hulls should be a mixed sky, not one repeated ship.
+//
+// `classes` is in ROSTER order with `assets::kHullClassCount` for a hull that
+// declares none, and the answer is a roster index - the same shape
+// `chooseTraderHull` has, so the caller extracts the numbers and this decides
+// nothing about defs.
+[[nodiscard]] inline std::uint32_t chooseWingHull(std::span<const std::uint32_t> classes,
+                                                  float baselineSecurity,
+                                                  std::uint32_t slot,
+                                                  std::uint32_t count)
+{
+    const auto size = static_cast<std::uint32_t>(classes.size());
+    if (size == 0) {
+        return 0;
+    }
+    bool ranked = false;
+    for (std::uint32_t i = 0; i < size; ++i) {
+        if (classes[i] >= sol::assets::kHullClassCount) {
+            return slot % size; // one hull has not said, so the cell has not
+        }
+        ranked = ranked || classes[i] != classes[0];
+    }
+    if (!ranked) {
+        return slot % size; // every hull the same class: nothing to rank by
+    }
+
+    const float held = std::min(std::abs(baselineSecurity), 1.0f);
+    const float through = count > 0 ? (static_cast<float>(slot) + 0.5f) / static_cast<float>(count) : 0.5f;
+    const float position = sol::core::clamp(held + through - 0.5f, 0.0f, 1.0f);
+    const auto wanted = static_cast<std::uint32_t>(std::lround(position * static_cast<float>(size - 1)));
+
+    // The `wanted`-th lightest hull, ties broken by authored order. Counted
+    // rather than sorted because a roster is three hulls, not a fleet, and a
+    // sort would need a scratch buffer this has no business owning.
+    for (std::uint32_t i = 0; i < size; ++i) {
+        std::uint32_t lighter = 0;
+        for (std::uint32_t j = 0; j < size; ++j) {
+            if (classes[j] < classes[i] || (classes[j] == classes[i] && j < i)) {
+                ++lighter;
+            }
+        }
+        if (lighter == wanted) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+// ⚑⚑⚑ WHAT A SPAWNED PILOT IS DOING COMES FROM THE ROSTER CELL IT WAS DRAWN
+// OUT OF (Phase 32 stage D), AND IT WAS A HAND-PASSED ARGUMENT AT SEVEN CALL
+// SITES BEFORE THIS. All seven already agreed with this table - raider cells
+// spawned Fighters, patrol cells Patrols, the trader cell Traders - so the
+// parameter carried no information and could only ever disagree.
+//
+// ⚑⚑ IT IS THE CELL *ASKED FOR*, NOT THE ONE DELIVERED, which matters exactly
+// where stage C's substitutions fire: a contested attacker with no raider
+// roster flies its patrol HULLS on a raid, and it is still raiding.
+//
+// ⚑⚑ AND §11.2's SIX ROLE FAMILIES ARE DELIBERATELY NOT READ HERE, WHICH IS A
+// DEPARTURE FROM THE PHASE SPEC AND THE REASON IS THAT THEY ANSWER A DIFFERENT
+// QUESTION. `HullRole` says what a hull is FOR; the cell says what this faction
+// is fielding it AS, and a faction is entitled to put a `logistics` hull on
+// patrol - a militia freighter is a real thing and not a content error. Joining
+// them would make the def decide the job, which is the one thing the roster is
+// for. `role` stays vocabulary, and Phase 34's covert pilots are what will read
+// it.
+[[nodiscard]] inline PilotRole pilotRoleFor(sol::assets::RosterCell cell)
+{
+    switch (cell) {
+    case sol::assets::RosterCell::Raider:
+        return PilotRole::Fighter;
+    case sol::assets::RosterCell::Trader:
+        return PilotRole::Trader;
+    case sol::assets::RosterCell::Patrol:
+    case sol::assets::RosterCell::Count:
+        break;
+    }
+    return PilotRole::Patrol;
+}
+
 struct RenderShape
 {
     sol::core::Vec3 scale = {1.0f, 1.0f, 1.0f};
@@ -2695,9 +2807,16 @@ private:
     // with one - and because the empty answer it gives for a declared cell is
     // the same empty answer this already returned on, so a faction that fields
     // none needs no branch at any call site.
+    //
+    // ⚑⚑ SINCE STAGE D IT TAKES THE CELL AND THE SECURITY RATHER THAN A
+    // `PilotRole`. The cell is what the job comes from (`pilotRoleFor`) and it
+    // is the cell ASKED FOR, so a substituted roster still flies the asked-for
+    // job; the security is what `chooseWingHull` ranks the roster against.
+    // Every one of the seven call sites already had both in hand.
     void spawnWing(std::uint32_t faction,
+                   sol::assets::RosterCell cell,
                    std::span<const std::string> roster,
-                   PilotRole role,
+                   float baselineSecurity,
                    std::uint32_t count,
                    const sol::core::DVec3& anchor,
                    double spread,
@@ -2801,6 +2920,10 @@ private:
     // Cargo capacities of a faction's hauler roster, rebuilt per spawn so the
     // hull can be chosen against the load rather than against an index.
     std::vector<float> m_rosterCapacities;
+    // Hull classes of the roster a wing is being drawn from (Phase 32 stage D),
+    // in roster order, `kHullClassCount` where a hull declares none. Same
+    // arrangement and same reason as the capacities above.
+    std::vector<std::uint32_t> m_rosterClasses;
     // Scratch for pilotHuntTrader (Phase 8x): the haulers in the sky and the
     // hunter's hostility row. Members for the reconcile's reason - hunting is
     // a per-think decision and every raider in the system makes it.
