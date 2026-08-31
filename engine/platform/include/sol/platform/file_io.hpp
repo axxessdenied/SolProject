@@ -61,6 +61,16 @@ namespace sol::platform {
 [[nodiscard]] std::uint64_t fileModificationTime(const char* path);
 
 // Full paths of all regular files under directory (recursive). '/' separators.
+//
+// ⚑⚑⚑ AN EMPTY OR NULL DIRECTORY NAME YIELDS AN EMPTY LIST, AND SAYING SO IS
+// PHASE 33 STAGE A's, BECAUSE WIN32 USED TO ANSWER WITH THE WHOLE DRIVE. Both
+// listings there built a `directory + "\\*"` pattern, so an unnamed directory
+// became `"\*"` - the root of the current drive - and this one is recursive:
+// measured at 1,503,635 files in 26 seconds. It never threw and never crashed,
+// it simply returned a plausible answer to a question about somewhere else,
+// which is why it sat undetected in two Forge tests worth a third of the whole
+// `ctest --preset dev` runtime. Passing "" for "I have no such directory" is a
+// reasonable thing for a caller to do and both platforms now honour it.
 [[nodiscard]] std::vector<std::string> listFiles(const char* directory);
 
 // Full paths of the IMMEDIATE subdirectories of `directory`. '/' separators,
@@ -74,6 +84,10 @@ namespace sol::platform {
 // see a folder that has nothing in it yet. `game/mods/` documents the same
 // trap from the other side: it ships empty-but-present precisely because
 // listFiles cannot tell a missing directory from an empty one.
+//
+// ⚑ The unnamed-directory rule above applies here too, for the same reason and
+// with the same fix - one level deep made it far less expensive to get wrong,
+// not any less wrong.
 [[nodiscard]] std::vector<std::string> listDirectories(const char* directory);
 
 // Creates the directory and any missing parents; true if it exists afterwards.

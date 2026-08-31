@@ -136,9 +136,42 @@ std::uint64_t fileModificationTime(const char* path)
            attributes.ftLastWriteTime.dwLowDateTime;
 }
 
+// ⚑⚑⚑ AN EMPTY DIRECTORY NAME IS NOT THE ROOT OF THE CURRENT DRIVE, AND ON
+// WIN32 IT WAS. Both listings below build their pattern as `directory + "\\*"`,
+// so an empty name became `"\*"` — which Windows resolves against the root of
+// the current drive. `listFiles` is RECURSIVE, so `listFiles("")` walked the
+// whole of C: and came back with **1,503,635 files in 26 seconds**, measured.
+//
+// ⚑⚑ IT WAS NEVER A CRASH, WHICH IS WHY IT SURVIVED: it returns plausible
+// data. Phase 33 stage A found it as a *runtime* — two Forge tests calling
+// `listMeshes(meshDir, /*cooked=*/"")` were 59 s of a 171 s `ctest --preset
+// dev`, a third of the whole suite, both of them scanning the drive — and the
+// correctness half is the worse one. That call came back with 168 mesh entries
+// where the directory holds 14, the other 154 being every `.smesh` anywhere on
+// the machine, and `measureModelMeshes` resolves a model's mesh stem against
+// exactly that list. A def naming a mesh this project does not ship would bind
+// to whatever file of that name happened to be on the developer's disk.
+//
+// ⚑ THE LINUX SIDE HAS ALWAYS ANSWERED CORRECTLY, so this is the two platforms
+// being made to agree rather than a new rule: `recursive_directory_iterator("")`
+// sets an error and yields nothing. The header's promise — "a missing directory
+// yields an empty list rather than an error" — is what both now keep, and an
+// unnamed directory is at least as missing as a named one that is not there.
+namespace {
+
+[[nodiscard]] bool isUnnamed(const char* directory)
+{
+    return directory == nullptr || *directory == '\0';
+}
+
+} // namespace
+
 std::vector<std::string> listFiles(const char* directory)
 {
     std::vector<std::string> files;
+    if (isUnnamed(directory)) {
+        return files;
+    }
     listFilesRecursive(utf8ToWide(directory), files);
     return files;
 }
@@ -146,6 +179,9 @@ std::vector<std::string> listFiles(const char* directory)
 std::vector<std::string> listDirectories(const char* directory)
 {
     std::vector<std::string> directories;
+    if (isUnnamed(directory)) {
+        return directories;
+    }
     const std::wstring wideDirectory = utf8ToWide(directory);
     WIN32_FIND_DATAW findData = {};
     HANDLE find = FindFirstFileW((wideDirectory + L"\\*").c_str(), &findData);

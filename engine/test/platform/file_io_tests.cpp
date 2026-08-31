@@ -280,6 +280,46 @@ SOL_TEST(copyFileIfAbsentSeedsAnEmptyDestinationAndNeverOverwritesALiveOne)
     (void)deleteFile(fresh.c_str());
 }
 
+// --- Phase 33 stage A: the unnamed directory --------------------------------
+
+// ⚑⚑⚑ THE ONE THAT WAS A THIRD OF `ctest --preset dev` AND NOBODY KNEW.
+// Win32 built both listings' search pattern as `directory + "\\*"`, so an unnamed
+// directory became `"\*"` - the root of the current drive - and `listFiles` is
+// RECURSIVE. `listFiles("")` walked the whole of C: and came back with
+// 1,503,635 files in 26 seconds. Two Forge tests call
+// `listMeshes(meshDirectory, /*cooked=*/"")` because a test has no cooked
+// directory, and between them they were 59 s of a 171 s suite.
+//
+// ⚑⚑ AND THE RUNTIME IS THE CHEAP HALF. That call returned 168 mesh entries
+// from a directory holding 14, the other 154 being every `.smesh` anywhere on
+// the machine, and `measureModelMeshes` resolves a model's mesh stem against
+// exactly that list - so a def naming a mesh this project does not ship would
+// have bound to whatever file of that name sat on the developer's disk. The
+// failure had no symptom: no throw, no empty result, just a confident answer
+// about somewhere else.
+//
+// ⚑ Asserted for BOTH functions and for null as well as empty, because the
+// two platforms arrived at this from opposite ends - libstdc++ set an error and
+// yielded nothing, Win32 enumerated a disk - and only a test keeps them agreed.
+SOL_TEST(anUnnamedDirectoryIsEmptyRatherThanTheRootOfTheDrive)
+{
+    SOL_CHECK(listFiles("").empty());
+    SOL_CHECK(listDirectories("").empty());
+    SOL_CHECK(listFiles(nullptr).empty());
+    SOL_CHECK(listDirectories(nullptr).empty());
+
+    // The contrast that makes the above a rule rather than a coincidence: a
+    // named directory that is really there still answers with its contents.
+    const std::string dir = scratchRoot() + "/unnamed";
+    (void)deleteDirectory(dir.c_str());
+    SOL_REQUIRE(createDirectories((dir + "/child").c_str()));
+    SOL_REQUIRE(writeText(dir + "/there.txt", "x"));
+    SOL_CHECK(listFiles(dir.c_str()).size() == 1);
+    SOL_CHECK(listDirectories(dir.c_str()).size() == 1);
+
+    (void)deleteDirectory(dir.c_str());
+}
+
 // --- Phase 27: the directory half of this surface ---------------------------
 
 SOL_TEST(listDirectoriesSeesAnEmptyDirectoryThatListFilesCannot)

@@ -103,6 +103,21 @@ std::uint64_t fileModificationTime(const char* path)
     return stamp != 0 ? stamp : 1;
 }
 
+namespace {
+
+// ⚑⚑ AN UNNAMED DIRECTORY IS EMPTY, NOT THE ROOT OF ANYTHING. This side has
+// always answered that way by accident - `recursive_directory_iterator("")` sets
+// an error and yields nothing - and the Win32 side answered with the whole of
+// C: until Phase 33 stage A measured it. Stated here rather than inherited from
+// libstdc++ so the two platforms keep the same promise on purpose, and so a
+// null pointer is a refusal instead of a `std::filesystem::path` built from one.
+[[nodiscard]] bool isUnnamed(const char* directory)
+{
+    return directory == nullptr || *directory == '\0';
+}
+
+} // namespace
+
 std::vector<std::string> listFiles(const char* directory)
 {
     // ⚑ RECURSIVE, and that is load-bearing rather than incidental: stage L
@@ -115,6 +130,9 @@ std::vector<std::string> listFiles(const char* directory)
     // produce. `generic_string` keeps that true if a caller ever passes a path
     // with a backslash in it.
     std::vector<std::string> files;
+    if (isUnnamed(directory)) {
+        return files;
+    }
     std::error_code error;
     std::filesystem::recursive_directory_iterator it(directory, error);
     if (error) {
@@ -139,6 +157,9 @@ std::vector<std::string> listDirectories(const char* directory)
     // above, which is recursive and files only. Same forward-slashed,
     // caller-prefixed paths, and the same "missing is empty, not an error".
     std::vector<std::string> directories;
+    if (isUnnamed(directory)) {
+        return directories;
+    }
     std::error_code error;
     std::filesystem::directory_iterator it(directory, error);
     if (error) {
