@@ -268,10 +268,26 @@ mountList(UiContext& ui, Column& column, std::span<const MountRow> rows, std::st
 // Width of the "best price seen elsewhere" column (Phase 8g). It carries a
 // price, a system name, and an age, so it needs more room than a number.
 constexpr float kElsewhereWidth = 190.0f;
-// Wide enough for CONTRABAND in the small style with room to spare, taken
-// out of the commodity-name cell and only on the rows that carry a tag
-// (Phase 33 stage D). An unmarked row is laid out exactly as it was.
-constexpr float kLegalityWidth = 96.0f;
+// Wide enough for CONTRABAND in the small style, taken out of the commodity-name
+// cell and only on the rows that carry a tag (Phase 33 stage D). An unmarked row
+// is laid out exactly as it was.
+//
+// ⚑⚑⚑⚑ 96 UNTIL THE PHASE 33 EXIT FLIGHT, WHERE IT DREW "ONTRABAND". The value
+// was an estimate and its comment claimed "with room to spare"; the shipped font
+// renders this style at about 10.6 px a glyph, so ten glyphs need ~106 px and
+// both words lost their first letter off the left edge - the tag is drawn
+// right-aligned, so an overflow eats the START of the word. RESTRICTED was
+// clipped too and looked merely close.
+//
+// ⚑⚑⚑ NO TEST COULD HAVE CAUGHT IT, AND THAT IS THE POINT WORTH KEEPING. The
+// synthetic test font ships only `hud` and `heading` styles, so a width
+// assertion in `ui.unit` would be measuring a different font from the one the
+// game draws - which is this phase's own lesson (a fixture that stands in for
+// shipped content is only as good as the part of it that it mirrors). The
+// instrument here is a screenshot, and 116 is measured off one rather than
+// guessed a second time: it clears the widest word by ~10 px and takes 20 px
+// from a name cell whose longest tagged entry is "Hull Plate".
+constexpr float kLegalityWidth = 116.0f;
 
 struct TradeCells
 {
