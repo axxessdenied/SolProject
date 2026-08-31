@@ -119,14 +119,21 @@ struct Fixture
         std::string error;
         SOL_CHECK(defs.mergeToml(kDefs, std::strlen(kDefs), "test_defs.toml", &error));
         world.spawn(1701);
-        SOL_CHECK(world.generateUniverse(defs));
         // ⚑ `generateUniverse` builds the commodity TABLE but does not hand the
         // world its def database - `applyDefs` is what does that, and the loot
         // roll reads a commodity's tier off the defs rather than off the table.
-        // Without this the roll takes its own nullptr fallback and answers the
+        // Without it the roll takes its own nullptr fallback and answers the
         // uniform draw this stage exists to replace, which is a test that
         // asserts the old behaviour while looking like it asserts the new one.
+        //
+        // ⚑⚑ AND IT GOES FIRST, WHICH IS THE ORDER THE GAME BOOTS IN
+        // (`content.cpp`) AND IS LOAD-BEARING RATHER THAN TIDY: this call after
+        // `generateUniverse` still fixes the loot roll, but `initializeFactions`
+        // has already run and found no defs, so the faction table is empty and
+        // every system in the galaxy is unowned. Stage D found that the hard
+        // way one test file over.
         world.applyDefs(defs);
+        SOL_CHECK(world.generateUniverse(defs));
     }
 };
 

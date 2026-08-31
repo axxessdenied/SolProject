@@ -1631,6 +1631,30 @@ public:
         return systemIndex < m_galaxy.systems.size() ? m_factionSim.systemOwner(systemIndex) : kNoIndex;
     }
 
+    // --- Law and legality (Phase 33 stage D, gdd.md 13) --------------------
+    //
+    // ⚑⚑⚑⚑ IT READS `systemOwnerFaction`, NOT `SystemSpec::factionIndex`, AND
+    // THE PHASE SPEC NAMED THE SECOND. `factionIndex` is the FOUNDING CLAIM and
+    // never moves; Phase 8u made ownership dynamic in `FactionSim`, and the
+    // galaxy hands systems back and forth several times a minute. A legality
+    // table keyed on the founding claim would tell a player that a system taken
+    // by the Hegemony this morning still runs Compact law - and no test that
+    // never transfers a system could see it, because at t=0 the two fields
+    // agree. `systemOwnerFaction`'s own comment already said "every consumer of
+    // ownership in this game reads it through here"; this is a consumer.
+    //
+    // ⚑⚑ A PIRATE CLAN IS A JURISDICTION. It holds the space and it stops
+    // ships; it simply has no table, so nothing you carry is contraband to it.
+    // That falls out of the mechanism rather than being a case, and it is why
+    // clan space is where a smuggler breathes out. `Unpoliced` is reserved for
+    // a system with no holder at all, which in the shipped galaxy is exactly
+    // one dock (`sol.lantern`).
+    [[nodiscard]] sol::assets::Legality commodityLegality(std::uint32_t systemIndex,
+                                                          std::uint32_t commodity) const;
+    // The faction whose law applies in a system, or nullptr where nobody holds
+    // it. The name is what a screen shows; the def is what carries the table.
+    [[nodiscard]] const sol::assets::FactionDef* jurisdictionOf(std::uint32_t systemIndex) const;
+
     // --- System security (Phase 30 stage A, decisions/019) -----------------
     //
     // The static half: how much force the owner keeps here, off the generated

@@ -280,6 +280,18 @@ struct FlightHud
 
 // One commodity line on the station's Trade tab. The game fills rows from the
 // docked market; a clicked button reports back through `action`.
+// What the jurisdiction the player is standing in says about a good on the
+// market floor (Phase 33 stage D). ⚑ There is no `Unpoliced` here on purpose:
+// "nobody holds this place" is a fact about the SYSTEM and belongs on the
+// panel, not repeated down every row - and repeating it per row would say the
+// station has an opinion about each good, which is the opposite of the truth.
+enum class TradeLegality : std::uint32_t
+{
+    Legal = 0,
+    Restricted, // licensed: carriable, papers wanted
+    Contraband, // forbidden here
+};
+
 struct TradeRow
 {
     const char* name = "";
@@ -295,6 +307,9 @@ struct TradeRow
     const char* elsewhereName = ""; // system the reading came from
     const char* elsewhereAge = "";  // prebuilt, e.g. "12m ago"
     bool elsewhereStale = false;    // past the staleness threshold: shown dim
+    // Under whose law you are standing, not what the good IS (Phase 33 stage
+    // D). The same crate is `Legal` one jump away.
+    TradeLegality legality = TradeLegality::Legal;
 };
 
 struct TradeAction
@@ -317,6 +332,12 @@ struct TradePanel
     double intelPrice = 0.0;
     std::uint32_t intelMarkets = 0;
     bool canBuyIntel = false;
+    // Whose law applies here (Phase 33 stage D), or empty where nobody holds
+    // the system. ⚑ EMPTY IS NOT "NO LAW WORTH MENTIONING" - it is the whole
+    // second half of the feature. A jurisdiction that lists nothing and a
+    // system with no jurisdiction both leave every row unmarked, and this line
+    // is the only thing that tells them apart on the screen.
+    const char* jurisdiction = "";
 };
 
 // Catalog/inventory row for the outfitting, shipyard, and crew tabs (Phase 8a).

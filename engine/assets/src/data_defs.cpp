@@ -693,6 +693,11 @@ bool parseFaction(const TomlValue& table,
         }
     }
     reader.optionalBiasList("station_bias", def.stationBias);
+    // Phase 33 stage D. Commodity ids, checked for existence by
+    // `validateLegality` once every layer has merged - a mod may add the good
+    // in one file and the law about it in another.
+    reader.optionalStringList("contraband", def.contraband);
+    reader.optionalStringList("restricted", def.restricted);
 
     reader.rejectUnknownKeys({"id",
                               "name",
@@ -706,7 +711,9 @@ bool parseFaction(const TomlValue& table,
                               "ships_raider",
                               "ships_trader",
                               "builds_no",
-                              "station_bias"});
+                              "station_bias",
+                              "contraband",
+                              "restricted"});
     if (!reader.failed) {
         if (kind == "major") {
             def.kind = FactionKind::Major;
@@ -735,6 +742,22 @@ bool parseFaction(const TomlValue& table,
                 reader.fail(std::string("declares 'builds_no' for the ") +
                             rosterCellName(static_cast<RosterCell>(i)) + " cell and also lists ships_" +
                             rosterCellName(static_cast<RosterCell>(i)) + " hulls");
+                break;
+            }
+        }
+    }
+    // ⚑⚑ A GOOD CANNOT BE BOTH FORBIDDEN AND LICENSED, AND THAT IS REFUSED
+    // RATHER THAN RESOLVED - the same bargain `builds_no` makes ten lines up.
+    // A faction listing one commodity under both keys is an author who changed
+    // their mind in one place, and picking a winner quietly would make the
+    // difference between "ten years in a labour camp" and "show me the paper"
+    // depend on which loop runs first.
+    if (!reader.failed) {
+        for (const std::string& id : def.contraband) {
+            const bool alsoRestricted =
+                std::find(def.restricted.begin(), def.restricted.end(), id) != def.restricted.end();
+            if (alsoRestricted) {
+                reader.fail("lists '" + id + "' as both 'contraband' and 'restricted'");
                 break;
             }
         }
@@ -1796,6 +1819,45 @@ bool parseCommodityTier(std::string_view text, CommodityTier& out)
     return false;
 }
 
+// ⚑ Written out rather than tabulated, because unlike the tier and roster-cell
+// names these are NOT def spellings - no author ever types "contraband" as a
+// value - so there is no parse function to keep them honest. They are display
+// strings and a log's vocabulary, and the switch is what makes adding a state a
+// compile error.
+const char* legalityName(Legality legality)
+{
+    switch (legality) {
+    case Legality::Unpoliced:
+        return "unpoliced";
+    case Legality::Legal:
+        return "legal";
+    case Legality::Restricted:
+        return "restricted";
+    case Legality::Contraband:
+        return "contraband";
+    }
+    return "?";
+}
+
+Legality factionLegalityOf(const FactionDef& faction, std::string_view commodityId)
+{
+    // ⚑ Contraband first, and the parser refuses a good that is on both lists,
+    // so the order is belt and braces rather than a precedence rule. If the two
+    // ever could overlap, the forbidding one has to win - a licence that
+    // overrode a ban would be a bug you only find by being shot.
+    for (const std::string& id : faction.contraband) {
+        if (id == commodityId) {
+            return Legality::Contraband;
+        }
+    }
+    for (const std::string& id : faction.restricted) {
+        if (id == commodityId) {
+            return Legality::Restricted;
+        }
+    }
+    return Legality::Legal;
+}
+
 const char* rosterCellName(RosterCell cell)
 {
     const auto index = static_cast<std::size_t>(cell);
@@ -2218,6 +2280,41 @@ bool DefDatabase::validateCatalogGates(std::string* outError) const
                         "' to be in stock, which no [[commodity]] row defines";
         }
         return false;
+    }
+    return true;
+}
+
+// ⚑⚑ THE EXISTENCE HALF OF THE LEGALITY TABLE (Phase 33 stage D), and it is a
+// database check rather than a parse one for `validateCatalogGates`'s reason: a
+// mod may add a commodity in one file and the faction that outlaws it in
+// another, so the only moment at which "does this good exist" has a true answer
+// is after every layer has merged.
+//
+// ⚑ A law about a good that does not exist is not harmless the way an unused
+// key is. It is a rule that can never fire, in a system whose whole job is to
+// change what happens when a patrol looks in your hold - and the failure looks
+// exactly like a patrol deciding to let you off.
+bool DefDatabase::validateLegality(std::string* outError) const
+{
+    for (const FactionDef& faction : m_factions) {
+        struct List
+        {
+            const char* key;
+            const std::vector<std::string>& ids;
+        };
+        const List lists[] = {{"contraband", faction.contraband}, {"restricted", faction.restricted}};
+        for (const List& list : lists) {
+            for (const std::string& id : list.ids) {
+                if (findCommodity(id.c_str()) != nullptr) {
+                    continue;
+                }
+                if (outError != nullptr) {
+                    *outError = faction.source + ": faction '" + faction.id + "' lists '" + id +
+                                "' as " + list.key + ", which no [[commodity]] row defines";
+                }
+                return false;
+            }
+        }
     }
     return true;
 }

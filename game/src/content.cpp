@@ -2580,6 +2580,53 @@ std::string listRefineJobs(GameContent& content)
     return lines.empty() ? std::string("(no refinery orders)") : lines;
 }
 
+// The whole legality table for one system, as one line per good (Phase 33
+// stage D). It takes the system rather than assuming the player's, which is
+// what makes "the same crate, two jurisdictions" a single command instead of
+// two flights:
+//
+//     sol.legality(sol.system_index())              -- where you are standing
+//     sol.legality(sol.system_by_id("sol.lantern")) -- the one unpoliced dock
+//
+// ⚑ REQUIRED RATHER THAN DEFAULTED, because the binding checks arity exactly
+// and a sentinel like -1 for "here" would be a magic number in a console that
+// already ships `sol.system_index()`. Composing the two existing verbs beats
+// inventing a third meaning for an argument.
+//
+// ⚑⚑ It prints the HOLDER as well as the verdicts, because "nothing is listed"
+// and "nobody is asking" produce identical verdict lines and are the two states
+// the feature exists to distinguish.
+std::string listLegality(GameContent& content, double system)
+{
+    SpaceWorld& world = content.world();
+    const auto index = static_cast<std::uint32_t>(system < 0.0 ? 0.0 : system);
+    if (index >= world.galaxy().systems.size()) {
+        return "no such system";
+    }
+    const sol::assets::FactionDef* law = world.jurisdictionOf(index);
+    char head[192];
+    std::snprintf(head,
+                  sizeof(head),
+                  "%s: %s",
+                  world.galaxy().systems[index].name.c_str(),
+                  law != nullptr ? law->name.c_str() : "no jurisdiction - nobody polices this system");
+    std::string lines = head;
+    for (std::uint32_t c = 0; c < static_cast<std::uint32_t>(world.commodityIds().size()); ++c) {
+        const sol::assets::Legality verdict = world.commodityLegality(index, c);
+        if (verdict == sol::assets::Legality::Legal || verdict == sol::assets::Legality::Unpoliced) {
+            continue; // the interesting rows are the ones somebody objects to
+        }
+        char buffer[160];
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "\n  %s: %s",
+                      world.commodityIds()[c].c_str(),
+                      sol::assets::legalityName(verdict));
+        lines += buffer;
+    }
+    return lines;
+}
+
 // --- Economy coherence (Phase 8g) ---
 
 // The galaxy's books on one screen. The exit criteria for this phase are
@@ -3700,6 +3747,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&orderRefine>("sol", "refine", this);
     m_vm.registerFunction<&collectRefined>("sol", "collect", this);
     m_vm.registerFunction<&listRefineJobs>("sol", "refine_jobs", this);
+    // Law (Phase 33 stage D): whose it is here, and what they object to.
+    m_vm.registerFunction<&listLegality>("sol", "legality", this);
     // Economy coherence (Phase 8g): the report the exit criteria are stated
     // against, plus the read-outs that explain a station's or a system's
     // books when the report says something is wrong.
@@ -3766,6 +3815,15 @@ bool GameContent::reloadDefs()
     // that can never open, so the item is invisible at every station in the
     // galaxy and nothing anywhere says why.
     if (!fresh.validateCatalogGates(&error)) {
+        SOL_LOG_ERROR("data defs: %s", error.c_str());
+        return false;
+    }
+    // Phase 33 stage D, and it refuses for the same reason the five above do,
+    // with one difference worth naming: a gate that can never open hides an
+    // item and a player eventually notices, while a law that can never fire
+    // looks exactly like a patrol deciding to let you off. Nothing about a
+    // silently missing legality rule is ever visible from inside the game.
+    if (!fresh.validateLegality(&error)) {
         SOL_LOG_ERROR("data defs: %s", error.c_str());
         return false;
     }

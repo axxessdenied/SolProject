@@ -23,6 +23,7 @@ using sol::ui::Row;
 using sol::ui::StationAction;
 using sol::ui::StationPanel;
 using sol::ui::TextAlign;
+using sol::ui::TradeLegality;
 using sol::ui::TradeRow;
 using sol::ui::UiContext;
 
@@ -267,6 +268,10 @@ mountList(UiContext& ui, Column& column, std::span<const MountRow> rows, std::st
 // Width of the "best price seen elsewhere" column (Phase 8g). It carries a
 // price, a system name, and an age, so it needs more room than a number.
 constexpr float kElsewhereWidth = 190.0f;
+// Wide enough for CONTRABAND in the small style with room to spare, taken
+// out of the commodity-name cell and only on the rows that carry a tag
+// (Phase 33 stage D). An unmarked row is laid out exactly as it was.
+constexpr float kLegalityWidth = 96.0f;
 
 struct TradeCells
 {
@@ -311,7 +316,21 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
             }
         }
         ui.popId();
-        ui.label(cursor.remaining(), "Units per trade", theme.textDim, theme.bodyStyle, TextAlign::Right);
+        const Rect rest = cursor.remaining();
+        ui.label(rest, "Units per trade", theme.textDim, theme.bodyStyle, TextAlign::Right);
+        // ⚑⚑ WHOSE LAW YOU ARE STANDING IN (Phase 33 stage D), on the left of a
+        // row whose own label is right-aligned, so it costs no height. It is
+        // the ONLY thing on this screen that separates "the holder has no
+        // opinion about any of this" from "nobody holds this place at all" -
+        // both of which leave every row below unmarked - and gdd.md §13 turns
+        // on that difference.
+        char lawBuffer[96] = {};
+        if (panel.trade.jurisdiction[0] != '\0') {
+            std::snprintf(lawBuffer, sizeof(lawBuffer), "Under %s law", panel.trade.jurisdiction);
+        } else {
+            std::snprintf(lawBuffer, sizeof(lawBuffer), "No jurisdiction - nobody polices this system");
+        }
+        clipped(ui, rest, lawBuffer, theme.textDim, theme.smallStyle);
     }
 
     // The market report (Phase 8g). 8e sells the player's survey data to the
@@ -362,7 +381,30 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
         const TradeCells cells = tradeCells(ui, row);
         ui.pushId(i);
 
-        clipped(ui, cells.name, goods.name, theme.textPrimary, theme.strongStyle);
+        // ⚑⚑ THE TAG TAKES ITS SPACE OUT OF THE NAME CELL AND IS DRAWN FIRST,
+        // so a long commodity name elides and the word CONTRABAND never does.
+        // That ordering is the whole reason this is not one formatted string:
+        // the tag is the only part of the row a player can be arrested over.
+        //
+        // ⚑ No new theme colour. `negative` for forbidden and `accent` for
+        // licensed are the two the theme already has, and they happen to say
+        // the right things - danger and information - while the WORD carries
+        // the meaning either way. A third severity colour would be a change to
+        // every screen in the game for one column.
+        Rect nameCell = cells.name;
+        if (goods.legality != TradeLegality::Legal) {
+            const bool forbidden = goods.legality == TradeLegality::Contraband;
+            Row nameCursor(cells.name, theme.spacing);
+            const Rect tag = nameCursor.cellFromRight(kLegalityWidth);
+            nameCell = nameCursor.remaining();
+            clipped(ui,
+                    tag,
+                    forbidden ? "CONTRABAND" : "RESTRICTED",
+                    forbidden ? theme.negative : theme.accent,
+                    theme.smallStyle,
+                    TextAlign::Right);
+        }
+        clipped(ui, nameCell, goods.name, theme.textPrimary, theme.strongStyle);
         std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(goods.price));
         clipped(ui, cells.price, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
 

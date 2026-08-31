@@ -1575,6 +1575,21 @@ int main(int argc, char** argv)
                     .stock = world.economy().stock(market, i),
                     .cargo = world.playerCargo(i),
                 };
+                // What the holder of THIS system says about the good (Phase 33
+                // stage D). `Unpoliced` never reaches a row - it is a fact
+                // about the system and is shown once, on the panel.
+                switch (world.commodityLegality(world.currentSystemIndex(), i)) {
+                case sol::assets::Legality::Contraband:
+                    row.legality = sol::ui::TradeLegality::Contraband;
+                    break;
+                case sol::assets::Legality::Restricted:
+                    row.legality = sol::ui::TradeLegality::Restricted;
+                    break;
+                case sol::assets::Legality::Unpoliced:
+                case sol::assets::Legality::Legal:
+                    row.legality = sol::ui::TradeLegality::Legal;
+                    break;
+                }
                 // Market intel (Phase 8g): the best price this commodity has
                 // been seen at anywhere else, and how old that reading is.
                 std::uint32_t system = 0;
@@ -1590,6 +1605,8 @@ int main(int argc, char** argv)
                 tradeRows.push_back(row);
             }
             stationPanel.trade.stationName = world.dockedStationName();
+            const sol::assets::FactionDef* law = world.jurisdictionOf(world.currentSystemIndex());
+            stationPanel.trade.jurisdiction = law != nullptr ? law->name.c_str() : "";
             stationPanel.trade.credits = world.playerCredits();
             stationPanel.trade.cargoUsed = world.playerCargoTotal();
             stationPanel.trade.cargoCapacity = world.playerCargoCapacity();

@@ -2594,6 +2594,34 @@ sim::SignalLoot SpaceWorld::defaultWreckLoot(const assets::ShipDef* def, std::ui
     return loot;
 }
 
+const assets::FactionDef* SpaceWorld::jurisdictionOf(std::uint32_t systemIndex) const
+{
+    if (m_defs == nullptr) {
+        return nullptr;
+    }
+    const std::uint32_t owner = systemOwnerFaction(systemIndex);
+    if (owner >= m_factionTable.size()) {
+        return nullptr; // nobody holds this place
+    }
+    // ⚑ A clan carries its TEMPLATE's def id (`GameFaction::defId`), so ten
+    // Reaver clans all consult the one Reaver Kindred table. That is the right
+    // answer and not an approximation: a clan is that faction's character
+    // jittered, and its law is that faction's law.
+    return m_defs->findFaction(m_factionTable[owner].defId.c_str());
+}
+
+assets::Legality SpaceWorld::commodityLegality(std::uint32_t systemIndex, std::uint32_t commodity) const
+{
+    const assets::FactionDef* holder = jurisdictionOf(systemIndex);
+    if (holder == nullptr) {
+        return assets::Legality::Unpoliced;
+    }
+    if (commodity >= m_commodityIds.size()) {
+        return assets::Legality::Legal; // a good this galaxy does not have
+    }
+    return assets::factionLegalityOf(*holder, m_commodityIds[commodity]);
+}
+
 bool SpaceWorld::dockedRefinePair(std::uint32_t& input, std::uint32_t& output) const
 {
     input = kNoIndex;

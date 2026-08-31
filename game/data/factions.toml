@@ -33,6 +33,36 @@
 # and warns at load. That warning is the point: "this faction fields none" and
 # "nobody has decided yet" were the same silence before this pass.
 
+#
+# ⚑⚑⚑⚑ contraband AND restricted ARE THIS FACTION'S LAW (Phase 33 stage D,
+# gdd.md §13). Commodity ids: `contraband` is forbidden outright, `restricted`
+# is licensed - you may carry it, and a patrol will want to see the paperwork.
+# Saying both about one good is refused at load.
+#
+# ⚑⚑⚑ THE LISTS ARE HERE AND NOT ON A COMMODITY, WHICH IS THE ENTIRE POINT.
+# gdd.md §13: "Cargo is never intrinsically illegal; jurisdictions are." A
+# `contraband = true` on a good would have been the schema deciding that a crate
+# means the same thing everywhere, which is exactly what this game is about not
+# being true - and it is why `CommodityTier` deliberately ships no such value.
+#
+# ⚑⚑⚑ TWO MAJORS DECLARE NOTHING AND THAT IS AN ANSWER, NOT A GAP. The Freight
+# Guild owns most stations and hates disruption; the Frontier Compact holds the
+# frontier together with sealant and spite. Neither has any interest in telling
+# a hauler what may be in the hold, and a faction with jurisdiction and no
+# opinion is a state the query answers as `legal` - which is a different fact
+# from the `unpoliced` that comes back where nobody holds the space at all.
+#
+# ⚑⚑ AND THERE IS EXACTLY ONE DOCK IN THE GALAXY WHERE `unpoliced` COMES BACK:
+# `sol.lantern`, the authored `lawless = true` system in systems.toml. Every
+# other unclaimed neighbourhood is swept up by `spawnClans`, and a pirate clan
+# IS a jurisdiction - it holds the space and it stops ships, it simply has no
+# table. That is why clan space is where a smuggler breathes out, and it falls
+# out of the mechanism rather than being written anywhere as a case.
+#
+# ⚑ Pirate templates carry no lists, so every clan stamped from one answers
+# `legal` for everything. If a clan should ever outlaw something, put it on the
+# template: a clan consults its template's table (`GameFaction::defId`).
+
 [[faction]]
 id = "sol.navy"
 name = "Solar Navy"
@@ -48,6 +78,11 @@ ships_trader = ["sol.freighter", "sol.shuttle"]
 # "System security": the Navy garrisons lanes, it does not run an economy, so
 # it is deliberately left NEUTRAL. Keeping one major unbiased means the
 # fall-through path stays covered by a shipped asset rather than only by a test.
+#
+# Law: a hull that has been cut up is evidence before it is cargo, and the Navy
+# wants to know whose it was. Licensed, not forbidden - the fleet has no quarrel
+# with the breaking trade, only with not knowing.
+restricted = ["sol.salvage"]
 
 [[faction]]
 id = "sol.guild"
@@ -83,6 +118,17 @@ ships_trader = ["sol.freighter", "sol.shuttle"]
 # smelts, it fabricates - and it does not feed itself if it can help it.
 station_bias = ["sol.station_factory:2.6", "sol.station_refinery:2.2",
                 "sol.station_mine:1.5", "sol.station_agri:0.4"]
+# Law, and it follows the same prose the bias does. The Ironstar built the hulls
+# and it intends to be the one who breaks them: trading in ship remains without
+# its licence is theft of its property, and it is the only faction that says so
+# outright. Hull plate is materiel and moves under permit.
+#
+# ⚑ This is the one that makes the feature a feature rather than a table.
+# Salvage is what a wreck pays out (Phase 33 stage C), so a pilot who lives by
+# killing things earns a hold full of the one good the most heavily policed
+# space in the galaxy will not have. That is a route decision, not a rule.
+contraband = ["sol.salvage"]
+restricted = ["sol.hull_plate"]
 
 [[faction]]
 id = "sol.compact"
@@ -116,6 +162,10 @@ ships_trader = ["sol.freighter", "sol.shuttle"]
 # materials rather than scraping them out of its own systems.
 station_bias = ["sol.station_factory:2.8", "sol.station_mine:0.35",
                 "sol.station_refinery:0.8"]
+# Law: an enclave that trades knowledge for distance would rather know exactly
+# what mass is arriving. Salvage is uncatalogued mass by definition, so it comes
+# in under permit or not at all.
+restricted = ["sol.salvage"]
 
 [[faction]]
 id = "sol.corsairs"

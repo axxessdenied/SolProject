@@ -642,8 +642,53 @@ struct FactionDef
     // militias" — and the galaxy generator read none of it. This is the key
     // that turns that prose into a number.
     std::vector<StationBias> stationBias;
+    // ⚑⚑⚑ WHAT THIS FACTION'S LAW SAYS ABOUT WHAT YOU ARE CARRYING (gdd.md 13,
+    // Phase 33 stage D). Commodity ids: `contraband` is forbidden outright,
+    // `restricted` is licensed - carriable, and a thing a patrol will want to
+    // see papers for. Both empty - the default - is a jurisdiction with no
+    // opinion, which is a REAL answer and not a missing one: gdd.md 13 says
+    // "the same crate of stims is ordinary medicine in the Compact", and the
+    // way a def says that is by not mentioning it.
+    //
+    // ⚑⚑ THE LISTS LIVE HERE AND NOT ON `CommodityDef`, WHICH IS THE WHOLE
+    // POINT OF THE FEATURE. "Cargo is never intrinsically illegal;
+    // jurisdictions are." A `contraband = true` on a good would have been the
+    // schema deciding that a crate means the same thing everywhere, which is
+    // exactly the thing this game is about not being true. `CommodityTier`
+    // records the absence for the same reason.
+    std::vector<std::string> contraband;
+    std::vector<std::string> restricted;
     std::string source;
 };
+
+// What a jurisdiction says about one good (Phase 33 stage D).
+//
+// ⚑⚑⚑ `Unpoliced` IS NOT `Legal`, AND KEEPING THEM APART IS THE POINT. A
+// system nobody holds has no legality TABLE - not an empty one - so the honest
+// answer there is "nobody here has an opinion", which is a different fact from
+// "the faction that holds this place has considered it and does not mind".
+// Phase 37's shadow faction needs exactly that difference, and a bool would
+// have thrown it away before anybody noticed it was there.
+//
+// ⚑ In the shipped galaxy that answer is reachable at exactly ONE dock. Every
+// procedurally lawless neighbourhood is swept up by `spawnClans`, so the only
+// system nobody owns is the authored `sol.lantern` - and a pirate clan holding
+// a system IS a jurisdiction, one that happens to have no table, which is why
+// clan space is where a smuggler breathes out.
+enum class Legality : std::uint32_t
+{
+    Unpoliced = 0, // nobody holds this place; there is no table to consult
+    Legal,         // the holder has a table and this is not on it
+    Restricted,    // licensed: carriable, and a patrol will want papers
+    Contraband,    // forbidden outright
+};
+
+[[nodiscard]] const char* legalityName(Legality legality);
+
+// What one faction's law says about one commodity id. Never answers
+// `Unpoliced` - that is a fact about a SYSTEM, not about a faction, and the
+// caller who knows which system is the one that can say it.
+[[nodiscard]] Legality factionLegalityOf(const FactionDef& faction, std::string_view commodityId);
 
 // Where a good sits in the material tree (gdd.md 6, Phase 33 stage B).
 //
@@ -1175,6 +1220,13 @@ public:
     // no `[[commodity]]` row defines can never open, so the item is invisible
     // in every station in the galaxy and nothing ever says why.
     [[nodiscard]] bool validateCatalogGates(std::string* outError = nullptr) const;
+
+    // Phase 33 stage D: every id a faction lists as contraband or restricted
+    // names a real commodity. Same shape and same reason as the gate check
+    // above, with one difference worth stating - a gate that can never open
+    // hides an item, and a law that can never fire looks exactly like a
+    // patrol deciding to let you off.
+    [[nodiscard]] bool validateLegality(std::string* outError = nullptr) const;
 
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;

@@ -8,6 +8,8 @@
 #include <sol/test/test.hpp>
 
 using sol::assets::DefDatabase;
+using sol::assets::factionLegalityOf;
+using sol::assets::Legality;
 using sol::assets::ShipDef;
 
 namespace {
@@ -554,6 +556,140 @@ size = "small"
     SOL_CHECK(plain.validateCatalogGates(&error));
     SOL_REQUIRE(plain.findComponent("sol.armor") != nullptr);
     SOL_CHECK(plain.findComponent("sol.armor")->gate.requiresCommodity.empty());
+}
+
+// ⚑⚑⚑ THE LISTS LIVE ON THE FACTION AND THAT IS THE FEATURE, NOT AN
+// IMPLEMENTATION CHOICE (gdd.md §13: "Cargo is never intrinsically illegal;
+// jurisdictions are"). The assertion worth making at this layer is therefore
+// not "the key parses" but "the SAME id gets two different answers out of two
+// different factions", which is the whole sentence the phase exits on.
+SOL_TEST(data_defs_the_same_good_is_contraband_to_one_faction_and_licensed_to_another)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db,
+                    R"(
+[[commodity]]
+id = "sol.salvage"
+name = "Salvage"
+tier = "raw"
+
+[[faction]]
+id = "sol.hegemony"
+name = "Ironstar Hegemony"
+kind = "major"
+contraband = ["sol.salvage"]
+
+[[faction]]
+id = "sol.navy"
+name = "Solar Navy"
+kind = "major"
+restricted = ["sol.salvage"]
+
+[[faction]]
+id = "sol.compact"
+name = "Frontier Compact"
+kind = "major"
+)",
+                    "defs.toml",
+                    &error));
+    SOL_CHECK(db.validateLegality(&error));
+
+    const sol::assets::FactionDef* hegemony = db.findFaction("sol.hegemony");
+    const sol::assets::FactionDef* navy = db.findFaction("sol.navy");
+    const sol::assets::FactionDef* compact = db.findFaction("sol.compact");
+    SOL_REQUIRE(hegemony != nullptr && navy != nullptr && compact != nullptr);
+
+    SOL_CHECK(factionLegalityOf(*hegemony, "sol.salvage") == Legality::Contraband);
+    SOL_CHECK(factionLegalityOf(*navy, "sol.salvage") == Legality::Restricted);
+    // ⚑ A faction that declares nothing answers `Legal`, and that is a real
+    // answer rather than a missing one - it is how a def says "we do not mind".
+    // The absence that means something else, `Unpoliced`, is a fact about a
+    // system and this layer deliberately cannot produce it.
+    SOL_CHECK(factionLegalityOf(*compact, "sol.salvage") == Legality::Legal);
+    SOL_CHECK(factionLegalityOf(*hegemony, "sol.food") == Legality::Legal);
+}
+
+// The same shape as `data_defs_a_catalog_requirement_names_a_real_commodity`,
+// and it refuses for a worse reason: a gate that can never open hides an item
+// and a player eventually notices the shelf, while a law that can never fire
+// looks exactly like a patrol deciding to let you off.
+SOL_TEST(data_defs_a_legality_list_names_a_real_commodity)
+{
+    DefDatabase stale;
+    std::string error;
+    SOL_CHECK(merge(stale,
+                    R"(
+[[faction]]
+id = "sol.hegemony"
+name = "Ironstar Hegemony"
+kind = "major"
+contraband = ["sol.stims"]
+)",
+                    "factions.toml",
+                    &error));
+    SOL_CHECK(!stale.validateLegality(&error));
+    SOL_CHECK(error.find("sol.stims") != std::string::npos);
+    SOL_CHECK(error.find("contraband") != std::string::npos);
+
+    // The restricted list is checked too, and says which key it was.
+    DefDatabase other;
+    SOL_CHECK(merge(other,
+                    R"(
+[[faction]]
+id = "sol.navy"
+name = "Solar Navy"
+kind = "major"
+restricted = ["sol.stims"]
+)",
+                    "factions.toml",
+                    &error));
+    SOL_CHECK(!other.validateLegality(&error));
+    SOL_CHECK(error.find("restricted") != std::string::npos);
+
+    // ⚑ And a faction with no lists at all is not a broken one. Both keys are
+    // optional and every faction written before this stage carries neither.
+    DefDatabase plain;
+    SOL_CHECK(merge(plain,
+                    R"(
+[[faction]]
+id = "sol.guild"
+name = "Freight Guild"
+kind = "major"
+)",
+                    "factions.toml",
+                    &error));
+    SOL_CHECK(plain.validateLegality(&error));
+    SOL_REQUIRE(plain.findFaction("sol.guild") != nullptr);
+    SOL_CHECK(plain.findFaction("sol.guild")->contraband.empty());
+    SOL_CHECK(plain.findFaction("sol.guild")->restricted.empty());
+}
+
+// ⚑⚑ REFUSED RATHER THAN RESOLVED, the same bargain `builds_no` makes. Picking
+// a winner quietly would make the difference between "ten years in a labour
+// camp" and "show me the paper" depend on which loop in the loader runs first.
+SOL_TEST(data_defs_a_good_cannot_be_both_contraband_and_licensed)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(!merge(db,
+                     R"(
+[[commodity]]
+id = "sol.salvage"
+name = "Salvage"
+tier = "raw"
+
+[[faction]]
+id = "sol.hegemony"
+name = "Ironstar Hegemony"
+kind = "major"
+contraband = ["sol.salvage"]
+restricted = ["sol.salvage"]
+)",
+                     "factions.toml",
+                     &error));
+    SOL_CHECK(error.find("sol.salvage") != std::string::npos);
+    SOL_CHECK(error.find("contraband") != std::string::npos);
 }
 
 SOL_TEST(data_defs_validation_errors)
