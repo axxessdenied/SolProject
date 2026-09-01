@@ -138,7 +138,16 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // station that no longer does a job the save is MID-WAY THROUGH, not only by
 // one whose rates changed; that is a fourth distinct reason for a bump and the
 // first that is about an outstanding order rather than about a market row.
-constexpr std::uint32_t kSaveVersion = 31;
+// v32 (Phase 34 stage D): stock capacity is PER COMMODITY. Every saved market
+// row is a float count of units, and what those units meant was a fraction of
+// one number that every station shared; now it is a fraction of whatever holds
+// that station was composed with, and for two goods of the nine it can be a
+// fraction of nothing at all. ⚑⚑ A v31 save restored into this build would put
+// stock into markets that have no room for it - 16 stations hold no food and 82
+// hold no salvage - and the first tick would clamp it away, silently, as though
+// the galaxy had been robbed. ⚑ The capacities are NOT in the file and must not
+// be: they are derived from the composition, which is derived from the seed.
+constexpr std::uint32_t kSaveVersion = 32;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -742,9 +751,15 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     // galaxy, so this is a reordering rather than a change.
     m_economyParams = sim::EconomyParams{};
     m_commodityIds.clear();
+    m_commodityClass.clear();
     for (const assets::CommodityDef& commodity : defs.commodities()) {
         m_economyParams.commodities.push_back({.basePrice = commodity.basePrice});
         m_commodityIds.push_back(commodity.id);
+        // ⚑ `goodsClass` is already `Bulk` when the author said nothing, so the
+        // default is taken here by simply not asking. See `CommodityDef`: a
+        // good outside the material tree is a real state and `hasTier` keeps
+        // it, but a good nobody can warehouse anywhere is not.
+        m_commodityClass.push_back(commodity.goodsClass);
     }
     const std::uint32_t commodityCount = static_cast<std::uint32_t>(m_commodityIds.size());
 
@@ -779,7 +794,7 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         archetype.production.assign(commodityCount, 0.0f);
         archetype.consumption.assign(commodityCount, 0.0f);
         archetype.feedstock.assign(commodityCount, 0.0f);
-        archetype.stockCapacity = station.stockCapacity;
+        archetype.setUniformCapacity(commodityCount, station.stockCapacity);
         const auto applyRates = [&](const std::vector<assets::StationRate>& rates, std::vector<float>& out) {
             for (const assets::StationRate& rate : rates) {
                 const std::uint32_t index = commodityIndex(rate.commodityId.c_str());
@@ -832,6 +847,19 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         runtime.powerDraw = module.powerDraw;
         for (const assets::StationScreen screen : module.screens) {
             runtime.screens |= 1u << static_cast<std::uint32_t>(screen);
+        }
+        // What this module can WAREHOUSE, resolved from a goods class to the
+        // commodities in that class once, here (Phase 34 stage D). A hold line
+        // is "units per commodity of this class", so a bulk hold of 1200 gives
+        // 1200 of ore AND 1200 of plate - it is a statement about the kind of
+        // space, not a shared pool.
+        runtime.storage.assign(commodityCount, 0.0f);
+        for (const assets::ModuleStorage& hold : module.stores) {
+            for (std::uint32_t c = 0; c < commodityCount; ++c) {
+                if (m_commodityClass[c] == hold.goods) {
+                    runtime.storage[c] += hold.capacity;
+                }
+            }
         }
         // Both or neither: `parseModule` refuses a module that names one without
         // the other, and refuses a `refinery` screen with no pair behind it.
@@ -1091,15 +1119,27 @@ void SpaceWorld::composeStations()
                 archetype.feedstock[c] += runtime.feedstock[c];
             }
         }
-        // ⚑ EXTRACTION AND CAPACITY STAY WITH THE ARCHETYPE, AND NEITHER IS AN
-        // OVERSIGHT. `produces_from = "field"` is also the PLACEMENT veto ("a
-        // system with no rock supports no mine"), so splitting it across two
-        // files would be saying one fact twice; and per-commodity capacity is
-        // stage D's whole subject - moving it here early would change every
-        // price in the galaxy, since a price is stock over capacity.
+        // ⚑ EXTRACTION STAYS WITH THE ARCHETYPE AND THAT IS NOT AN OVERSIGHT.
+        // `produces_from = "field"` is also the PLACEMENT veto ("a system with
+        // no rock supports no mine"), so splitting it across two files would be
+        // saying one fact twice.
+        //
+        // ⚑⚑ CAPACITY NO LONGER DOES, WHICH IS THE WHOLE OF STAGE D. Stage B
+        // left it here on purpose - "moving it here early would change every
+        // price in the galaxy, since a price is stock over capacity" - and this
+        // is the stage that was told to move it. A composed station warehouses
+        // exactly what its holds add up to, per commodity, and a good no hold
+        // admits sits at a capacity of zero: it cannot be stocked, delivered,
+        // produced or sold there at all.
         const sim::EconomyArchetype& base = m_economyParams.archetypes[composition.archetype];
         archetype.extracts = base.extracts;
-        archetype.stockCapacity = base.stockCapacity;
+        archetype.stockCapacity.assign(commodityCount, 0.0f);
+        for (const std::uint32_t module : composition.modules) {
+            const ModuleRuntime& runtime = m_modules[module];
+            for (std::uint32_t c = 0; c < commodityCount; ++c) {
+                archetype.stockCapacity[c] += runtime.storage[c];
+            }
+        }
         m_economyParams.archetypes.push_back(std::move(archetype));
     }
 }
@@ -1140,6 +1180,18 @@ std::uint32_t SpaceWorld::dockedStationScreens() const
         return 0;
     }
     return stationScreens(m_currentSystem, m_dockedStation);
+}
+
+bool SpaceWorld::dockedStationStocks(std::uint32_t commodity) const
+{
+    if (!isDocked()) {
+        return false;
+    }
+    const std::uint32_t market = dockedMarket();
+    if (market >= m_economy.markets().size()) {
+        return false;
+    }
+    return m_economy.capacityOf(market, commodity) > 0.0f;
 }
 
 void SpaceWorld::initializeFactions()

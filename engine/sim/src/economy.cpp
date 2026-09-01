@@ -55,10 +55,23 @@ void Economy::initialize(const Galaxy& galaxy, const EconomyParams& params, std:
                 spec.composition != kNoComposition ? spec.composition : spec.archetype;
             // Start at half capacity: prices open neutral and drift from
             // production/consumption immediately.
-            const float capacity = market.archetype < m_params.archetypes.size()
-                                       ? m_params.archetypes[market.archetype].stockCapacity
-                                       : 0.0f;
-            market.stock.assign(commodityCount, capacity * 0.5f);
+            //
+            // ⚑⚑ AND HALF OF NOTHING IS NOTHING, WHICH IS THE LINE THE EXIT
+            // FLIGHT ASKED FOR. Until Phase 34 stage D this assigned one
+            // capacity to every commodity, so every market in a fresh galaxy
+            // opened holding every good that existed - and Phase 33's
+            // catalogue gates refused nothing until the economy had drained
+            // for ten minutes. A station with no hold for a good now opens at
+            // zero and stays there, because nothing can deliver into it either.
+            const EconomyArchetype* archetype = market.archetype < m_params.archetypes.size()
+                                                    ? &m_params.archetypes[market.archetype]
+                                                    : nullptr;
+            market.stock.assign(commodityCount, 0.0f);
+            if (archetype != nullptr) {
+                for (std::uint32_t c = 0; c < commodityCount; ++c) {
+                    market.stock[c] = archetype->capacityFor(c) * 0.5f;
+                }
+            }
             m_markets.push_back(std::move(market));
         }
     }
@@ -208,8 +221,14 @@ float Economy::priceAtStock(std::uint32_t market, std::uint32_t commodity, float
     }
     const StationMarket& station = m_markets[market];
     const float capacity = station.archetype < m_params.archetypes.size()
-                               ? m_params.archetypes[station.archetype].stockCapacity
+                               ? m_params.archetypes[station.archetype].capacityFor(commodity)
                                : 0.0f;
+    // A good this station has no hold for reads as a full warehouse, which is
+    // the glut price, and that is DELIBERATELY not corrected here: a price is
+    // still a price, and the only honest answer to "what would you pay for a
+    // crate you cannot put anywhere" is "nothing I would call a market". The
+    // refusal belongs one layer up, where the row is left off the board
+    // entirely - see `SpaceWorld::stationStocks` and the trade fill.
     const float fraction = capacity > 0.0f ? core::clamp(stockUnits / capacity, 0.0f, 1.0f) : 1.0f;
     const float scale = core::lerp(m_params.maxPriceScale, m_params.minPriceScale, fraction);
     return m_params.commodities[commodity].basePrice * scale;
@@ -241,13 +260,14 @@ float Economy::stock(std::uint32_t market, std::uint32_t commodity) const
     return m_markets[market].stock[commodity];
 }
 
-float Economy::capacityOf(std::uint32_t market) const
+float Economy::capacityOf(std::uint32_t market, std::uint32_t commodity) const
 {
     if (market >= m_markets.size()) {
         return 0.0f;
     }
     const std::uint32_t archetype = m_markets[market].archetype;
-    return archetype < m_params.archetypes.size() ? m_params.archetypes[archetype].stockCapacity : 0.0f;
+    return archetype < m_params.archetypes.size() ? m_params.archetypes[archetype].capacityFor(commodity)
+                                                  : 0.0f;
 }
 
 float Economy::satisfaction(std::uint32_t market) const
@@ -324,7 +344,7 @@ TradeResult Economy::sell(std::uint32_t market, std::uint32_t commodity, float u
     }
     StationMarket& station = m_markets[market];
     const float capacity = station.archetype < m_params.archetypes.size()
-                               ? m_params.archetypes[station.archetype].stockCapacity
+                               ? m_params.archetypes[station.archetype].capacityFor(commodity)
                                : 0.0f;
     result.units = std::min(units, std::max(0.0f, capacity - station.stock[commodity]));
     result.credits = result.units *
@@ -341,7 +361,7 @@ void Economy::deliver(std::uint32_t market, std::uint32_t commodity, float units
     }
     StationMarket& station = m_markets[market];
     const float capacity = station.archetype < m_params.archetypes.size()
-                               ? m_params.archetypes[station.archetype].stockCapacity
+                               ? m_params.archetypes[station.archetype].capacityFor(commodity)
                                : 0.0f;
     station.stock[commodity] = std::min(station.stock[commodity] + units, capacity);
 }
@@ -455,10 +475,17 @@ void Economy::produce(double dt, FeedstockSource* source)
             }
             const float makes = rateAt(archetype.production, c) * step;
             if (makes > 0.0f) {
-                const float headroom = std::max(0.0f, archetype.stockCapacity - market.stock[c]);
+                // ⚑ A station with no hold for what it makes has zero headroom
+                // and taper 0/0, so `room` falls to 0 and it produces nothing.
+                // That is correct and is why stage D pinned a hold onto every
+                // module that touches a good: a breaker line with nowhere to put
+                // salvage is a line that cannot run, not one that runs into the
+                // void.
+                const float capacity = archetype.capacityFor(c);
+                const float headroom = std::max(0.0f, capacity - market.stock[c]);
                 // Ease off across the top of the warehouse rather than
                 // slamming shut when it is exactly full.
-                const float band = archetype.stockCapacity * m_params.outputTaperFraction;
+                const float band = capacity * m_params.outputTaperFraction;
                 const float room =
                     band > 0.0f ? core::clamp(headroom / band, 0.0f, 1.0f) : std::min(1.0f, headroom / makes);
                 if (room < ratio) {
@@ -497,7 +524,7 @@ void Economy::produce(double dt, FeedstockSource* source)
             // runs out when it runs out (the clamp below).
             delta -= rateAt(archetype.consumption, c) * step;
 
-            market.stock[c] = core::clamp(market.stock[c] + delta, 0.0f, archetype.stockCapacity);
+            market.stock[c] = core::clamp(market.stock[c] + delta, 0.0f, archetype.capacityFor(c));
         }
 
         m_satisfaction[m] = ratio;
@@ -617,12 +644,15 @@ void Economy::traderThink(const Galaxy& galaxy, EconomyTrader& trader)
         }
         const double travelSeconds =
             m_params.traderLegSeconds * 2.0 + static_cast<double>(hops) * m_params.jumpSeconds;
-        const float destinationCapacity = capacityOf(m);
         for (std::uint32_t c = 0; c < m_params.commodities.size(); ++c) {
             const float available = std::min(m_params.traderCargo, here.stock[c]);
             if (available <= 1.0f) {
                 continue;
             }
+            // ⚑ Per commodity since stage D, which also makes this the place a
+            // hauler learns not to fly salvage to a station with no hazardous
+            // hold: `room` is negative there and the leg is never scored.
+            const float destinationCapacity = capacityOf(m, c);
             // Room for this load once everything already flying there has
             // landed. Without this the whole fleet answers the same shortage
             // at once and most of them arrive to a warehouse that filled up

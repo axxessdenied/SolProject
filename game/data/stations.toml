@@ -73,6 +73,11 @@
 # MADE and BURNT each rise by about 1.0/s, which moves the made-to-burnt ratio
 # from 1.056 to about 1.045 - measured, in band, and printed by the content
 # guard rather than argued here.
+# ⚑ Its bulk hold was pinned to certainty by Phase 34 stage D. The dome's
+# tractor bill is `sol.machinery`, which is bulk, and at chance 0.5 half of the
+# galaxy's seventeen farms burnt a good they had no warehouse for. A station has
+# to be able to hold what its own modules touch — the cryo hold below is the
+# farm's surplus, and the larder its people eat out of rides on the habitat.
 [[station]]
 id = "sol.station_agri"
 name = "Agricultural Station"
@@ -87,7 +92,7 @@ modules = [
     "sol.mod_habitat_ring",
     "sol.mod_barracks:0.5",
     "sol.mod_cryo_hold",
-    "sol.mod_bulk_hold:0.5",
+    "sol.mod_bulk_hold",
     "sol.mod_docking_control",
     "sol.mod_market_floor:0.9",
     "sol.mod_mission_board:0.5",

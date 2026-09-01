@@ -17,6 +17,28 @@
 # a T0 good is ever dug out of a rock. (The converse is deliberately not
 # enforced: salvage will be T0 and comes off a hull.)
 #
+#
+# goods_class (Phase 34 stage D) is what it takes to KEEP a good, as opposed to
+# what made it, and it is the half of the storage mechanism that lives here:
+#   bulk       cheap, heavy, wants volume - ore, metal, plate, sections
+#   cryo       foodstuffs and anything else that spoils
+#   hazardous  reactive, radioactive, or the sort of thing a patrol asks about
+#
+# ⚑⚑ A CLASS IS NOT A TIER AND THE FILE PUTS THEM ON ADJACENT LINES SO THE
+# DIFFERENCE IS UNAVOIDABLE. Raw Ore and Hull Section are four tiers apart and
+# the same bulk problem; Foodstuffs and Salvage are both T0-adjacent and could
+# not be less alike to warehouse. A station stocks a good only if it has a hold
+# of that good's class, so this key decides WHERE in the galaxy a good can exist
+# at all - which is why only one of the nine is hazardous and only one is cryo.
+#
+# ⚑⚑⚑ THE ASYMMETRY IS THE CONTENT, NOT AN OVERSIGHT. Seven bulk goods share
+# the warehouse every station has; Foodstuffs needs the larder that comes with a
+# habitat, so the ~14 stations with nobody living on them can neither hold food
+# nor eat it; and Salvage needs a hazardous hold, which about seventy percent of
+# the galaxy does not have. That last one is gdd.md 13's contraband mechanism
+# arriving as a warehouse fact rather than as a law - the Ironstar Hegemony bans
+# salvage, and most stations could not have stocked it anyway.
+#
 # ⚑⚑⚑ EVERY GOOD IN THIS FILE IS MADE BY SOMEBODY AND BURNT BY SOMEBODY, AND
 # THAT IS ENFORCED BY A TEST. Phase 33 stage A found that a commodity nobody
 # produces and nobody consumes sits at exactly half capacity forever, which is
@@ -29,12 +51,14 @@
 id = "sol.food"
 name = "Foodstuffs"
 tier = "consumer"
+goods_class = "cryo"
 base_price = 8.0
 
 [[commodity]]
 id = "sol.ore"
 name = "Raw Ore"
 tier = "raw"
+goods_class = "bulk"
 base_price = 12.0
 ore_weight_core = 1.0
 ore_weight_frontier = 1.0
@@ -44,6 +68,7 @@ ore_weight_fringe = 1.0
 id = "sol.metal"
 name = "Refined Metal"
 tier = "refined"
+goods_class = "bulk"
 base_price = 32.0
 
 # Machinery is one step further down the chain than it was before Phase 8f
@@ -69,6 +94,7 @@ base_price = 32.0
 id = "sol.machinery"
 name = "Machinery"
 tier = "component"
+goods_class = "bulk"
 base_price = 52.0
 
 # ---------------------------------------------------------------------------
@@ -102,6 +128,7 @@ base_price = 52.0
 id = "sol.ore_ferrous"
 name = "Ferrous Ore"
 tier = "raw"
+goods_class = "bulk"
 base_price = 14.0
 ore_weight_core = 0.35
 ore_weight_frontier = 1.0
@@ -126,6 +153,7 @@ ore_weight_fringe = 1.6
 id = "sol.alloy"
 name = "Structural Alloy"
 tier = "refined"
+goods_class = "bulk"
 base_price = 38.0
 
 # The end of the chain and the only good with a consumer outside the economy:
@@ -135,6 +163,7 @@ base_price = 38.0
 id = "sol.hull_plate"
 name = "Hull Plate"
 tier = "component"
+goods_class = "bulk"
 base_price = 64.0
 
 # ---------------------------------------------------------------------------
@@ -158,6 +187,7 @@ base_price = 64.0
 id = "sol.salvage"
 name = "Salvage"
 tier = "raw"
+goods_class = "hazardous"
 base_price = 11.0
 
 # ---------------------------------------------------------------------------
@@ -196,4 +226,5 @@ base_price = 11.0
 id = "sol.hull_section"
 name = "Hull Section"
 tier = "assembly"
+goods_class = "bulk"
 base_price = 200.0

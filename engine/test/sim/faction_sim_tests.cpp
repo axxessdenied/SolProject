@@ -77,7 +77,7 @@ EconomyParams oneCommodityParams()
     params.commodities = {EconomyCommodity{.basePrice = 10.0f}};
     EconomyArchetype archetype;
     archetype.production = {1.0f};
-    archetype.stockCapacity = 1'000.0f;
+    archetype.setUniformCapacity(params.commodities.size(), 1'000.0f);
     params.archetypes = {archetype};
     params.traderCount = 1;
     return params;

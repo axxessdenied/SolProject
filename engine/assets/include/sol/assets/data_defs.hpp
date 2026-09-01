@@ -690,6 +690,34 @@ enum class Legality : std::uint32_t
 // caller who knows which system is the one that can say it.
 [[nodiscard]] Legality factionLegalityOf(const FactionDef& faction, std::string_view commodityId);
 
+// What a hold can hold (gdd.md §12's Storage family: bulk, cryo, hazardous).
+//
+// ⚑⚑ A GOODS CLASS IS NOT A MATERIAL TIER AND THE TWO MUST NOT BE MERGED.
+// `CommodityTier` says where a good sits in the tree that MAKES it; a goods
+// class says what it takes to keep it in one place. Ore and hull plate are
+// different tiers and the same bulk problem.
+//
+// ⚑⚑ STAGE D SUPPLIED THE OTHER HALF AND THAT IS WHY THIS ENUM SITS HERE RATHER
+// THAN DOWN WITH THE MODULES IT ARRIVED WITH. Stage A wrote "which class each
+// commodity is does not exist yet: it is a key on `[[commodity]]` and it belongs
+// to stage D, where the class is first read". It exists now, so the enum has two
+// clients on opposite sides of the file - `CommodityDef::goodsClass` says which
+// class a good IS, `ModuleStorage` says how much of that class a hold takes -
+// and the pair of them is the whole mechanism: **a station cannot hold what it
+// has no hold for, including contraband.**
+enum class GoodsClass : std::uint32_t
+{
+    Bulk = 0,   // ore, plate, sections: cheap, heavy, wants volume
+    Cryo,       // foodstuffs and anything that spoils
+    Hazardous,  // reactive, radioactive, or the sort of thing a patrol asks about
+    Count,
+};
+
+inline constexpr std::size_t kGoodsClassCount = static_cast<std::size_t>(GoodsClass::Count);
+
+[[nodiscard]] const char* goodsClassName(GoodsClass goods);
+[[nodiscard]] bool parseGoodsClass(std::string_view text, GoodsClass& out);
+
 // Where a good sits in the material tree (gdd.md 6, Phase 33 stage B).
 //
 // ⚑⚑⚑ A WORD IN THE FILE, NOT A NUMBER, WHICH IS PHASE 32 STAGE A'S CHECKPOINT
@@ -759,6 +787,27 @@ struct CommodityDef
     // thing that reads it in stage B is the validator below.
     CommodityTier tier = CommodityTier::Raw;
     bool hasTier = false;
+    // What it takes to keep this good in one place (Phase 34 stage D), and the
+    // half of `GoodsClass` that did not exist when the enum was written: stage A
+    // said in as many words that "which class each commodity is does not exist
+    // yet: it is a key on `[[commodity]]` and it belongs to stage D, where the
+    // class is first read". This is that key.
+    //
+    // ⚑⚑ OPTIONAL, AND UNLIKE `tier` IT IS READ AS A DEFAULT RATHER THAN LEFT
+    // UNANSWERED — the two differ because "unsaid" means something different in
+    // each. A good can genuinely sit outside the material tree, so `hasTier`
+    // stays a real third state; but every physical good has to be kept
+    // SOMEWHERE, so there is no station behaviour that "nobody said" could
+    // describe. The composer reads an unclassed good as `Bulk`, which is the
+    // class that means "the warehouse", and the flag is kept so that a reader
+    // which wants to know whether an author decided still can.
+    //
+    // ⚑ Bulk rather than nothing, deliberately: a good no hold admits would
+    // vanish from every market in the galaxy, which is the silent-disappearance
+    // failure this project has now named three times. A mod author who forgets
+    // the key gets a good that is stocked everywhere — visible, and harmless.
+    GoodsClass goodsClass = GoodsClass::Bulk;
+    bool hasGoodsClass = false;
     std::string source;
 };
 
@@ -1118,28 +1167,6 @@ inline constexpr std::size_t kStationScreenCount = static_cast<std::size_t>(Stat
 
 [[nodiscard]] const char* stationScreenName(StationScreen screen);
 [[nodiscard]] bool parseStationScreen(std::string_view text, StationScreen& out);
-
-// What a hold can hold (gdd.md §12's Storage family: bulk, cryo, hazardous).
-//
-// ⚑⚑ A GOODS CLASS IS NOT A MATERIAL TIER AND THE TWO MUST NOT BE MERGED.
-// `CommodityTier` says where a good sits in the tree that MAKES it; a goods
-// class says what it takes to keep it in one place. Ore and hull plate are
-// different tiers and the same bulk problem. ⚑ Which class each commodity is
-// does not exist yet: it is a key on `[[commodity]]` and it belongs to stage D,
-// where the class is first read - "a station cannot hold what it has no hold
-// for, including contraband".
-enum class GoodsClass : std::uint32_t
-{
-    Bulk = 0,   // ore, plate, sections: cheap, heavy, wants volume
-    Cryo,       // foodstuffs and anything that spoils
-    Hazardous,  // reactive, radioactive, or the sort of thing a patrol asks about
-    Count,
-};
-
-inline constexpr std::size_t kGoodsClassCount = static_cast<std::size_t>(GoodsClass::Count);
-
-[[nodiscard]] const char* goodsClassName(GoodsClass goods);
-[[nodiscard]] bool parseGoodsClass(std::string_view text, GoodsClass& out);
 
 // One hold line on a module ("bulk:1200" in TOML): units of stock capacity, per
 // commodity, for goods of that class. The same shape `StationRate` has, and for

@@ -108,12 +108,29 @@ family = "power"
 # ---------------------------------------------------------------------------
 # Habitat — population, which is appetite (the food line) and crew.
 # ---------------------------------------------------------------------------
+#
+# ⚑⚑⚑ THE LARDER RIDES WITH THE PEOPLE, AND STAGE D IS WHERE THAT BECAME
+# FORCED RATHER THAN TIDY. Stage B ruled that habitat modules own the food line;
+# stage D says a station stocks a good only if it has a hold of that good's
+# class, and Foodstuffs is the only `cryo` good in the game. Those two together
+# have exactly one consistent answer: whatever eats food must be able to keep
+# it. Left on the `storage` family alone, only the Agricultural Station has a
+# cryogenic hold and 108 stations of 125 would burn a good they could not
+# stock. So the cryo line is on these three rows, and the invariant is exact -
+# **a station can hold precisely the food it has people to eat**, and the ~14
+# stations composed with nobody living on them hold none and eat none.
+#
+# ⚑ `stores` is not restricted to the storage family and never was: stage A
+# put a hazardous hold on the fence for the same kind of reason, because a fence
+# with no back room is a shopfront. The storage family is the general warehouse;
+# a specialised hold belongs to the thing that needs it.
 
 [[module]]
 id = "sol.mod_habitat_ring"
 name = "Habitat Ring"
 family = "habitat"
 consumes = ["sol.food:0.05"]
+stores = ["cryo:1400"]
 power_draw = 6.0
 
 [[module]]
@@ -121,6 +138,7 @@ id = "sol.mod_barracks"
 name = "Barracks"
 family = "habitat"
 consumes = ["sol.food:0.02"]
+stores = ["cryo:700"]
 power_draw = 3.0
 
 [[module]]
@@ -128,6 +146,7 @@ id = "sol.mod_medical_bay"
 name = "Medical Bay"
 family = "habitat"
 consumes = ["sol.food:0.01"]
+stores = ["cryo:400"]
 power_draw = 2.0
 
 # ---------------------------------------------------------------------------
@@ -268,12 +287,21 @@ power_draw = 8.0
 # The Breaker Yard. Produces out of nothing, exactly as the dome does: its input
 # is the derelict hulls towed in, and neither sunlight nor a dead ship is a good
 # this economy models.
+# ⚑⚑ THE BREAKER LINE AND THE RECLAIMER CARRY THEIR OWN HAZARDOUS HOLD, FOR
+# THE SAME REASON THE HABITAT CARRIES A LARDER. A breaker line PRODUCES salvage
+# and a reclaimer eats it, and salvage is the only `hazardous` good in the game;
+# left to the optional `sol.mod_hazmat_hold` alone, about 4.7 breaker yards and
+# 4.0 reclamation plants of the shipped galaxy would have made or burnt a good
+# they had nowhere to put. The standalone hold stays what it was - the optional
+# extra that lets a mine, a refinery or a foundry stock salvage it does not
+# handle itself, which is most of what makes ~88 stations of 125 refuse it.
 [[module]]
 id = "sol.mod_breaker_line"
 name = "Breaker Line"
 family = "industry"
 produces = ["sol.salvage:0.17"]
 consumes = ["sol.hull_plate:0.013"]
+stores = ["hazardous:500"]
 power_draw = 7.0
 
 # The Reclamation Plant. Makes `sol.alloy` and not a reclaimed variant of it,
@@ -285,6 +313,7 @@ family = "industry"
 produces = ["sol.alloy:0.085"]
 feedstock = ["sol.salvage:0.13"]
 consumes = ["sol.hull_plate:0.013"]
+stores = ["hazardous:500"]
 power_draw = 10.0
 
 # The Assembly Yard - the first station in the game with two feedstocks, and the

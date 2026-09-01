@@ -1561,6 +1561,25 @@ public:
     // The same, for the station the player is docked at. Zero when not docked.
     [[nodiscard]] std::uint32_t dockedStationScreens() const;
 
+    // Whether the station the player is docked at has any hold for this good
+    // (Phase 34 stage D). False is a REFUSAL rather than an empty shelf: the
+    // market has no capacity for it, so it cannot be bought, sold or delivered
+    // there, and the trade board leaves the row off entirely.
+    //
+    // ⚑⚑ THE FILL HAS TO ASK, BECAUSE THE PRICE CANNOT SAY. `priceAtStock`
+    // reads a zero-capacity market as a FULL one - fraction 1.0 - and returns
+    // the glut price, so a good a station cannot hold would otherwise list at a
+    // flat half-price and read as the bargain of the galaxy. The sim already
+    // refuses the trade; this is what stops the board offering it.
+    [[nodiscard]] bool dockedStationStocks(std::uint32_t commodity) const;
+
+    // What goods class a commodity is, for the readouts that say so.
+    [[nodiscard]] sol::assets::GoodsClass commodityClass(std::uint32_t commodity) const
+    {
+        return commodity < m_commodityClass.size() ? m_commodityClass[commodity]
+                                                   : sol::assets::GoodsClass::Bulk;
+    }
+
     [[nodiscard]] std::uint32_t commodityIndex(const char* id) const;
 
     [[nodiscard]] double playerCredits() const { return m_playerCredits; }
@@ -3131,6 +3150,12 @@ private:
         // `kNoIndex` in both when the module offers no service.
         std::uint32_t refineInput = kNoIndex;
         std::uint32_t refineOutput = kNoIndex;
+        // What this module can warehouse, per commodity (Phase 34 stage D).
+        // Resolved from `ModuleStorage`'s goods class through
+        // `m_commodityClass` at cache time, for the same reason every other
+        // figure on this struct is: `composeStations` runs with no def
+        // database in reach.
+        std::vector<float> storage;
     };
     // One line of a recipe with its module resolved to an index.
     struct RecipeEntry
@@ -3149,6 +3174,16 @@ private:
         std::vector<std::uint32_t> modules; // def order indices, recipe order
     };
     std::vector<ModuleRuntime> m_modules;
+    // Which goods class each commodity is, in commodity-index order (Phase 34
+    // stage D). Cached beside the modules and for the same reason - it is read
+    // per module per commodity while the holds are resolved, and by the fill
+    // every frame the player is docked.
+    //
+    // ⚑ A commodity that declares no class is `Bulk` here, which is where that
+    // default is APPLIED rather than merely documented; `CommodityDef` says
+    // why. Bulk is the class that means "the warehouse", so a good nobody
+    // classified is stocked wherever there is one.
+    std::vector<sol::assets::GoodsClass> m_commodityClass;
     std::vector<std::vector<RecipeEntry>> m_recipes; // per station archetype
     std::vector<std::uint32_t> m_powerModules;       // by ascending output
     std::vector<StationComposition> m_compositions;

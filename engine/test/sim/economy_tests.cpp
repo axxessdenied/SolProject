@@ -68,10 +68,10 @@ EconomyParams tinyParams()
     params.commodities = {EconomyCommodity{.basePrice = 10.0f}};
     EconomyArchetype producer;
     producer.production = {2.0f};
-    producer.stockCapacity = 1'000.0f;
+    producer.setUniformCapacity(1, 1'000.0f);
     EconomyArchetype consumer;
     consumer.consumption = {2.0f};
-    consumer.stockCapacity = 1'000.0f;
+    consumer.setUniformCapacity(1, 1'000.0f);
     params.archetypes = {producer, consumer};
     params.traderCount = 1;
     params.traderCargo = 50.0f;
@@ -104,6 +104,59 @@ SOL_TEST(economy_markets_match_galaxy_and_seed_is_deterministic)
         SOL_CHECK(first.markets()[m].stock[0] == second.markets()[m].stock[0]);
     }
     SOL_CHECK(first.traders()[0].market == second.traders()[0].market);
+}
+
+// ⚑⚑⚑ ZERO CAPACITY IS A REFUSAL AT EVERY DOOR INTO A MARKET, NOT ONLY AT THE
+// ONE THE PLAYER SEES (Phase 34 stage D). A station warehouses only the goods
+// classes its modules give it, so "no hold for this" went from impossible to
+// ordinary in one stage - and every path that can put units into a market has to
+// mean it, or "cannot stock contraband" is a label on a board that still trades.
+//
+// ⚑⚑ `priceAtStock` IS THE DELIBERATE EXCEPTION AND IT IS PINNED HERE SO THE
+// REASON SURVIVES. It reads no capacity as a FULL warehouse - fraction 1.0 - and
+// returns the glut price, because the only alternative is inventing a price for
+// a crate nobody can accept. The refusal lives one layer up, where the game
+// leaves the row off the trade board entirely; this test is what says that is a
+// choice rather than an oversight.
+SOL_TEST(economy_a_market_with_no_hold_never_stocks_accepts_or_sells)
+{
+    const Galaxy galaxy = tinyGalaxy();
+    EconomyParams params = tinyParams();
+    // Market 0's archetype keeps a hold; market 1's has none at all.
+    params.archetypes[1].setUniformCapacity(1, 0.0f);
+
+    Economy economy;
+    economy.initialize(galaxy, params, 1);
+    SOL_REQUIRE(economy.markets().size() == 2);
+    SOL_CHECK(economy.capacityOf(0, 0) > 0.0f);
+    SOL_CHECK(economy.capacityOf(1, 0) == 0.0f);
+
+    // It opens empty: half of nothing. Before this stage every market in every
+    // galaxy opened holding half a warehouse of every good that existed.
+    SOL_CHECK(economy.stock(1, 0) == 0.0f);
+    SOL_CHECK(economy.stock(0, 0) > 0.0f);
+
+    // A hauler cannot land a load there.
+    economy.deliver(1, 0, 100.0f);
+    SOL_CHECK(economy.stock(1, 0) == 0.0f);
+
+    // Nor can a player sell into it: the headroom is zero, so nothing moves and
+    // nothing is paid. A sale that moved no units but paid credits would be the
+    // worst version of this bug.
+    const TradeResult sold = economy.sell(1, 0, 100.0f);
+    SOL_CHECK(sold.units == 0.0f);
+    SOL_CHECK(sold.credits == 0.0);
+    SOL_CHECK(economy.stock(1, 0) == 0.0f);
+
+    // And nothing accumulates by running: production clamps to the same zero.
+    for (int i = 0; i < 200; ++i) {
+        economy.tick(galaxy, 1.0);
+    }
+    SOL_CHECK(economy.stock(1, 0) == 0.0f);
+
+    // The exception, stated: a price still comes back, and it is the glut price.
+    SOL_CHECK(economy.price(1, 0) > 0.0f);
+    SOL_CHECK(economy.price(1, 0) < economy.price(0, 0));
 }
 
 SOL_TEST(economy_price_falls_as_stock_rises)
@@ -552,11 +605,11 @@ EconomyParams chainParams()
     params.commodities = {EconomyCommodity{.basePrice = 10.0f}, EconomyCommodity{.basePrice = 30.0f}};
     EconomyArchetype mine;
     mine.production = {1.0f, 0.0f};
-    mine.stockCapacity = 1'000.0f;
+    mine.setUniformCapacity(2, 1'000.0f);
     EconomyArchetype refinery;
     refinery.production = {0.0f, 1.0f};
     refinery.feedstock = {2.0f, 0.0f};
-    refinery.stockCapacity = 1'000.0f;
+    refinery.setUniformCapacity(2, 1'000.0f);
     params.archetypes = {mine, refinery};
     params.traderCount = 0;
     return params;
@@ -643,11 +696,11 @@ SOL_TEST(economy_a_two_feedstock_station_burns_both_at_the_scarcer_ones_rate)
                           EconomyCommodity{.basePrice = 30.0f},
                           EconomyCommodity{.basePrice = 90.0f}};
     EconomyArchetype idle; // market 0 is not what this test is about
-    idle.stockCapacity = 1'000.0f;
+    idle.setUniformCapacity(3, 1'000.0f);
     EconomyArchetype assembly;
     assembly.production = {0.0f, 0.0f, 1.0f};
     assembly.feedstock = {2.0f, 4.0f, 0.0f};
-    assembly.stockCapacity = 1'000.0f;
+    assembly.setUniformCapacity(3, 1'000.0f);
     params.archetypes = {idle, assembly};
     params.traderCount = 0;
 
@@ -940,7 +993,7 @@ enum Archetype : std::uint32_t
         out.consumption.resize(CommodityCount, 0.0f);
         out.feedstock.resize(CommodityCount, 0.0f);
         out.extracts = extracts;
-        out.stockCapacity = 2'500.0f;
+        out.setUniformCapacity(CommodityCount, 2'500.0f);
         return out;
     };
     params.archetypes.resize(11);
@@ -1116,7 +1169,7 @@ SOL_TEST(economy_shipped_rates_hold_a_steady_state)
         std::uint32_t makes = 0;
         for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
             const float units = economy.stock(m, c);
-            const float cap = economy.capacityOf(m);
+            const float cap = economy.capacityOf(m, c);
             stock += units;
             capacity += cap;
             const EconomyArchetype& archetype = params.archetypes[economy.markets()[m].archetype];
@@ -1624,7 +1677,7 @@ SOL_TEST(economy_holds_a_steady_state_while_losing_traders)
         std::uint32_t makes = 0;
         for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
             const float units = economy.stock(m, c);
-            const float cap = economy.capacityOf(m);
+            const float cap = economy.capacityOf(m, c);
             stock += units;
             capacity += cap;
             const EconomyArchetype& archetype = params.archetypes[economy.markets()[m].archetype];

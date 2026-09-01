@@ -143,14 +143,26 @@ struct Digests
         for (const sol::sim::StationSpec& station : system.stations) {
             d.structure = combineText(d.structure, station.name);
             d.structure = hashCombine(d.structure, station.archetype);
-            // ⚑⚑⚑ AND ITS COMPOSITION (Phase 34 stage B), OR THIS DIGEST GOES
-            // BLIND TO THE ONLY THING THAT PHASE CHANGES. Three times in three
-            // stages of Phase 33 this number was the only instrument that
-            // reported a station mix moving; after stage B what a station DOES
-            // is no longer its archetype but the module list rolled for it, and
-            // a digest that hashed only the archetype would have agreed
-            // perfectly with itself while every station in the galaxy was
-            // recomposed underneath it.
+            // ⚑⚑⚑⚑ THIS LINE WAS ADDED BY STAGE B TO STOP THE DIGEST GOING BLIND
+            // TO COMPOSITIONS, AND STAGE D MEASURED THAT IT NEVER SAW ONE.
+            // `generateWithoutAuthoredContent` calls `sol::sim::generateGalaxy`
+            // directly and digests THAT galaxy; `composeStations` is a
+            // `SpaceWorld` pass over `SpaceWorld`'s own `m_galaxy`, and
+            // `universe.cpp` does not contain the word `composition`. So every
+            // station reaching this line carries `kNoComposition` - measured, 0
+            // composed stations here against 125 in `world.galaxy()` - and the
+            // field is a constant. Stage B's digest DID move, which is why
+            // nobody looked again: it moved because the hash gained a field, not
+            // because it saw a module list.
+            //
+            // ⚑⚑ THE LINE STAYS, because it is right for any caller that hands
+            // this a composed galaxy, and `composed_shipped_galaxy_keeps_its_
+            // recorded_composition` below is the instrument that actually
+            // watches compositions - over `world.galaxy()`, with a guard that
+            // there is something there to watch. Phase 34's own risk register
+            // names this exact failure: "a stage that adds a reader of one and
+            // forgets the other is the defect this phase produces if it
+            // produces one."
             d.structure = hashCombine(d.structure, station.composition);
             d.systemGeometry = combineVec(d.systemGeometry, station.position);
         }
@@ -309,6 +321,15 @@ constexpr std::size_t kGoldenClanCount = 10;
 // would have moved all three. Old: 0x054ECEEFDAECC620ull.
 constexpr std::uint64_t kGoldenStructure = 0x06BC021EC816F5E8ull;
 
+// ⚑⚑⚑⚑ RECORDED BY PHASE 34 STAGE D, AND IT IS A NEW INSTRUMENT RATHER THAN A
+// RE-RECORDING. The number above cannot see a composition (see `digestOf`), so
+// this one is taken over the composed galaxy and hashes the module IDS rolled
+// for every station. Structure is about where the generator PUT things;
+// composition is about what it made them OF, and Phase 34 is entirely the
+// second. ⚑ It moves when a recipe, a chance or a module id moves, and - unlike
+// the structure digest - when `systems.toml` gains a station too.
+constexpr std::uint64_t kGoldenComposition = 0x7FD34958D6FDA639ull;
+
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine
 // this project has never measured, and the structure digest above still holds
@@ -370,6 +391,69 @@ SOL_TEST(shipped_seed_galaxy_keeps_its_recorded_structure)
     SOL_CHECK(galaxy.clans.size() == kGoldenClanCount);
 
     SOL_CHECK(checkDigest("structure", digestOf(galaxy).structure, kGoldenStructure));
+}
+
+// ⚑⚑⚑⚑ THE INSTRUMENT THE STRUCTURE DIGEST ABOVE CANNOT BE, AND STAGE D FOUND
+// OUT BY MEASURING RATHER THAN BY READING. The digest above is taken on a galaxy
+// straight out of `sol::sim::generateGalaxy`, which has never heard of a
+// composition; this one is taken on `world.galaxy()`, which the composer has
+// actually run over. It is the only thing in the repository that would notice
+// every station in the galaxy being recomposed.
+//
+// ⚑⚑ IT HASHES MODULE IDS, NOT MODULE INDICES, AND THAT IS DELIBERATE. An index
+// into `defs.modules()` moves when anybody inserts a row into `modules.toml`, so
+// an index-based digest would fail on an edit that changed no station at all -
+// the loudest possible false positive, and the reason a golden gets ignored.
+// Hashing the id means this number moves when a RECIPE moves, which is what it
+// is for.
+//
+// ⚑ Unlike the structure digest this one does NOT strip authored content:
+// compositions only exist on the world's own galaxy, and the world is where
+// `systems.toml` has already been applied. So a new `[[system]]` row moves this
+// number and not the one above. That is a difference in scope, not a defect, and
+// `m_authoredDigest` is what tells the two causes apart when it fails.
+SOL_TEST(composed_shipped_galaxy_keeps_its_recorded_composition)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    world.applyDefs(defs);
+    SOL_REQUIRE(world.generateUniverse(defs));
+
+    std::uint64_t digest = sol::core::kFnvOffsetBasis;
+    std::size_t composed = 0;
+    std::size_t stations = 0;
+    for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+        const sol::sim::SystemSpec& system = world.galaxy().systems[s];
+        for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
+            ++stations;
+            digest = combineText(digest, system.stations[t].name);
+            digest = hashCombine(digest, system.stations[t].archetype);
+            const std::span<const std::uint32_t> modules = world.stationModules(s, t);
+            composed += modules.empty() ? 0 : 1;
+            digest = hashCombine(digest, modules.size());
+            for (const std::uint32_t module : modules) {
+                SOL_REQUIRE(module < defs.modules().size());
+                digest = combineText(digest, defs.modules()[module].id);
+            }
+        }
+    }
+
+    // ⚑⚑⚑ THE ANTI-VACUITY GUARD, WHICH IS THE HALF THIS FILE WAS MISSING. A
+    // digest over a galaxy with no compositions in it is a stable number that
+    // proves nothing, and it passed for a whole stage. If this ever reads zero
+    // again, the digest below is measuring the absence of the feature.
+    std::printf("  %zu station(s), %zu composed, %zu distinct composition(s)\n",
+                stations,
+                composed,
+                world.compositionCount());
+    SOL_REQUIRE(composed > 0);
+    SOL_CHECK(composed == stations);
+    SOL_CHECK(world.compositionCount() > 1);
+
+    SOL_CHECK(checkDigest("composition", digest, kGoldenComposition));
 }
 
 // The other half, scoped to the toolchain it is true of.

@@ -392,6 +392,77 @@ builds_no = ["patrol", "raider", "trader"]
 // checkpoint settled: gdd.md 6 numbers its tiers T0..T3, and a `tier = 2` where
 // the author meant 3 is a typo no schema can ever catch while `refined` and
 // `component` cannot be confused by a slipped digit.
+// ⚑⚑⚑ THE OTHER HALF OF THE STORAGE MECHANISM (Phase 34 stage D). Stage A wrote
+// the `GoodsClass` enum and said in as many words that "which class each
+// commodity is does not exist yet: it is a key on `[[commodity]]` and it belongs
+// to stage D". This is that key, and the thing worth pinning is the ONE place it
+// deliberately differs from `tier` beside it: an unsaid tier is a third state, an
+// unsaid class is `bulk`. A good outside the material tree is a real answer; a
+// good nobody can warehouse anywhere is not - it would vanish from every market
+// in the galaxy, which is the silent-disappearance failure this project has now
+// named three times.
+SOL_TEST(data_defs_commodity_goods_class_defaults_to_the_warehouse)
+{
+    DefDatabase db;
+    std::string error;
+    SOL_CHECK(merge(db,
+                    R"(
+[[commodity]]
+id = "sol.unsaid"
+name = "Unsaid"
+
+[[commodity]]
+id = "sol.chilled"
+name = "Chilled"
+tier = "consumer"
+goods_class = "cryo"
+
+[[commodity]]
+id = "sol.nasty"
+name = "Nasty"
+goods_class = "hazardous"
+)",
+                    "commodities.toml",
+                    &error));
+    const sol::assets::CommodityDef* unsaid = db.findCommodity("sol.unsaid");
+    const sol::assets::CommodityDef* chilled = db.findCommodity("sol.chilled");
+    const sol::assets::CommodityDef* nasty = db.findCommodity("sol.nasty");
+    SOL_REQUIRE(unsaid != nullptr && chilled != nullptr && nasty != nullptr);
+
+    // Unsaid is bulk AND says nobody said so - both halves matter, because the
+    // flag is what a later reader would use to tell a decision from a default.
+    SOL_CHECK(!unsaid->hasGoodsClass);
+    SOL_CHECK(unsaid->goodsClass == sol::assets::GoodsClass::Bulk);
+    SOL_CHECK(chilled->hasGoodsClass);
+    SOL_CHECK(chilled->goodsClass == sol::assets::GoodsClass::Cryo);
+    SOL_CHECK(nasty->goodsClass == sol::assets::GoodsClass::Hazardous);
+    // A class is not a tier: `nasty` declared one and not the other.
+    SOL_CHECK(!nasty->hasTier);
+
+    DefDatabase bad;
+    SOL_CHECK(!merge(bad,
+                     R"(
+[[commodity]]
+id = "sol.x"
+name = "X"
+goods_class = "volatile"
+)",
+                     "commodities.toml",
+                     &error));
+    SOL_CHECK(error.find("not a goods class") != std::string::npos);
+    // The classes are the module vocabulary's, spelled the same way.
+    DefDatabase mixed;
+    SOL_CHECK(!merge(mixed,
+                     R"(
+[[commodity]]
+id = "sol.y"
+name = "Y"
+goods_class = "raw"
+)",
+                     "commodities.toml",
+                     &error));
+}
+
 SOL_TEST(data_defs_commodity_tier_is_a_word_and_round_trips)
 {
     for (std::size_t i = 0; i < sol::assets::kCommodityTierCount; ++i) {

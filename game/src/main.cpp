@@ -514,6 +514,12 @@ int main(int argc, char** argv)
     std::vector<game::ParticleInstance> particleInstances;
     game::SceneInfo sceneInfo;
     std::vector<sol::ui::TradeRow> tradeRows;
+    // Which commodity each trade row is (Phase 34 stage D). The row index WAS
+    // the commodity index, because the fill ran over every commodity in the
+    // galaxy in order; a station that stocks only what it has a hold for breaks
+    // that silently and in the worst possible way - the player clicks Buy on
+    // one good and receives another. One vector, filled beside the rows.
+    std::vector<std::uint32_t> tradeCommodity;
     std::vector<sol::ui::MountRow> mountRows;
     std::vector<sol::ui::OutfitRow> componentRows;
     std::vector<sol::ui::OutfitRow> weaponRows;
@@ -1565,8 +1571,21 @@ int main(int argc, char** argv)
         if (showStation) {
             const std::uint32_t market = world.dockedMarket();
             tradeRows.clear();
+            tradeCommodity.clear();
             tradeText.clear();
             for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(world.commodityIds().size()); ++i) {
+                // ⚑⚑ A GOOD THIS STATION HAS NO HOLD FOR IS NOT ON THE BOARD AT
+                // ALL (Phase 34 stage D). This loop ran over every commodity in
+                // the galaxy unconditionally, which was fine while every market
+                // stocked everything; now a station warehouses only the classes
+                // its modules give it, and a row with zero capacity would price
+                // at a flat glut (`priceAtStock` reads no capacity as a full
+                // warehouse) while every trade against it silently moved zero
+                // units. Leaving it off is the honest reading: there is no
+                // market here for this.
+                if (!world.dockedStationStocks(i)) {
+                    continue;
+                }
                 const sol::assets::CommodityDef* def =
                     content.defs().findCommodity(world.commodityIds()[i].c_str());
                 sol::ui::TradeRow row{
@@ -1603,6 +1622,7 @@ int main(int argc, char** argv)
                     row.elsewhereAge = tradeText.back().c_str();
                 }
                 tradeRows.push_back(row);
+                tradeCommodity.push_back(i);
             }
             stationPanel.trade.stationName = world.dockedStationName();
             // What this station is EQUIPPED to do (Phase 34 stage C), as the
@@ -2245,8 +2265,11 @@ int main(int argc, char** argv)
             imguiHost.beginFrame();
             devUi.build(stats);
         }
-        if (showStation && stationPanel.trade.action.row >= 0) {
-            const std::uint32_t commodity = static_cast<std::uint32_t>(stationPanel.trade.action.row);
+        if (showStation && stationPanel.trade.action.row >= 0 &&
+            static_cast<std::size_t>(stationPanel.trade.action.row) < tradeCommodity.size()) {
+            // ⚑ Through the map, never the index. See `tradeCommodity`.
+            const std::uint32_t commodity =
+                tradeCommodity[static_cast<std::size_t>(stationPanel.trade.action.row)];
             if (stationPanel.trade.action.isBuy) {
                 (void)world.playerBuy(commodity, stationPanel.trade.action.units);
             } else {

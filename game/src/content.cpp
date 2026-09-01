@@ -2649,11 +2649,16 @@ std::string economyReport(GameContent& content)
     std::vector<std::uint32_t> starved(commodities, 0);
     std::vector<std::uint32_t> empty(commodities, 0);
     std::vector<std::uint32_t> full(commodities, 0);
+    // Markets with no hold for this good at all (Phase 34 stage D). Counted
+    // apart from `empty` because they are not the same thing and reading them
+    // as one would make the whole report lie: a station with a hazardous hold
+    // and no salvage in it is a shortage, and a station with no hazardous hold
+    // is not a salvage market.
+    std::vector<std::uint32_t> noHold(commodities, 0);
     std::uint32_t throttled = 0;
 
     for (std::uint32_t m = 0; m < economy.markets().size(); ++m) {
         const sol::sim::StationMarket& market = economy.markets()[m];
-        const float cap = economy.capacityOf(m);
         if (economy.satisfaction(m) < 0.99f) {
             ++throttled;
         }
@@ -2661,10 +2666,13 @@ std::string economyReport(GameContent& content)
                                                           ? &economy.params().archetypes[market.archetype]
                                                           : nullptr;
         for (std::uint32_t c = 0; c < commodities; ++c) {
+            const float cap = economy.capacityOf(m, c);
             const float units = economy.stock(m, c);
             stock[c] += units;
             capacity[c] += cap;
-            if (units <= cap * 0.01f) {
+            if (cap <= 0.0f) {
+                ++noHold[c];
+            } else if (units <= cap * 0.01f) {
                 ++empty[c];
             } else if (units >= cap * 0.99f) {
                 ++full[c];
@@ -2693,14 +2701,15 @@ std::string economyReport(GameContent& content)
         std::snprintf(buffer,
                       sizeof(buffer),
                       "%-14s %5.1f%% full  prod %6.2f  use %6.2f  (%u empty, %u full, "
-                      "%u starved on it)",
+                      "%u starved on it, %u no hold)",
                       world.commodityIds()[c].c_str(),
                       fill,
                       production[c],
                       consumption[c],
                       empty[c],
                       full[c],
-                      starved[c]);
+                      starved[c],
+                      noHold[c]);
         lines += (lines.empty() ? "" : "\n") + std::string(buffer);
     }
     std::snprintf(buffer,

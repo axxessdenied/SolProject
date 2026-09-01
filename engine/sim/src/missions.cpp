@@ -121,13 +121,23 @@ void MissionSim::haulCandidates(const Galaxy& galaxy,
         if (market.systemIndex == fromSystem && market.stationIndex == fromStation) {
             continue; // hauling to where you already stand is no contract
         }
-        const float capacity = market.archetype < economy.params().archetypes.size()
-                                   ? economy.params().archetypes[market.archetype].stockCapacity
-                                   : 0.0f;
-        if (capacity <= 0.0f) {
+        const EconomyArchetype* archetype = market.archetype < economy.params().archetypes.size()
+                                                ? &economy.params().archetypes[market.archetype]
+                                                : nullptr;
+        if (archetype == nullptr) {
             continue;
         }
         for (std::uint32_t c = 0; c < m_commodityCount; ++c) {
+            // ⚑⚑ PER COMMODITY SINCE PHASE 34 STAGE D, AND THE SKIP MOVED INSIDE
+            // THE LOOP WITH IT. A station with no hold for a good is not SHORT
+            // of it - it is a station that good has no business at - so posting
+            // a haul there would send the player across the galaxy to a dock
+            // that will refuse the crate on arrival. Zero capacity used to be
+            // impossible here; now it is the ordinary case for salvage.
+            const float capacity = archetype->capacityFor(c);
+            if (capacity <= 0.0f) {
+                continue;
+            }
             const float stock = economy.stock(marketIndex, c);
             if (stock >= m_params.shortageThreshold * capacity) {
                 continue;

@@ -86,7 +86,7 @@ EconomyParams oneCommodityParams()
     params.commodities = {EconomyCommodity{.basePrice = 10.0f}};
     EconomyArchetype archetype;
     archetype.production = {0.0f}; // static stocks: shortages come from raids
-    archetype.stockCapacity = 1'000.0f;
+    archetype.setUniformCapacity(params.commodities.size(), 1'000.0f);
     params.archetypes = {archetype};
     params.traderCount = 0;
     return params;
@@ -224,10 +224,10 @@ EconomyParams tradeParams()
     params.commodities = {EconomyCommodity{.basePrice = 10.0f}};
     EconomyArchetype producer;
     producer.production = {2.0f};
-    producer.stockCapacity = 1'000.0f;
+    producer.setUniformCapacity(params.commodities.size(), 1'000.0f);
     EconomyArchetype consumer;
     consumer.consumption = {2.0f};
-    consumer.stockCapacity = 1'000.0f;
+    consumer.setUniformCapacity(params.commodities.size(), 1'000.0f);
     params.archetypes = {producer, consumer};
     params.traderCount = 1;
     params.traderCargo = 50.0f;

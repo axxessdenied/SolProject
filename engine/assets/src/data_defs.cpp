@@ -906,6 +906,17 @@ bool parseCommodity(const TomlValue& table,
                     "' (raw, refined, component, assembly, consumer)");
     }
 
+    // ⚑ Phase 34 stage D. What it takes to KEEP this good, as opposed to what
+    // made it. Optional, and read as `bulk` when unsaid - see the note on
+    // `CommodityDef::goodsClass` for why this one defaults where `tier` does
+    // not: a good outside the material tree is a real state, a good nobody can
+    // warehouse anywhere is not.
+    std::string goodsText;
+    reader.optionalString("goods_class", goodsText, &def.hasGoodsClass);
+    if (!reader.failed && def.hasGoodsClass && !parseGoodsClass(goodsText, def.goodsClass)) {
+        reader.fail("'goods_class' is not a goods class: '" + goodsText + "' (bulk, cryo, hazardous)");
+    }
+
     reader.rejectUnknownKeys({"id",
                               "name",
                               "base_price",
@@ -914,7 +925,8 @@ bool parseCommodity(const TomlValue& table,
                               "ore_weight_fringe",
                               "model",
                               "chunk_model",
-                              "tier"});
+                              "tier",
+                              "goods_class"});
     if (!reader.failed && def.basePrice <= 0.0f) {
         reader.fail("'base_price' must be > 0");
     }

@@ -49,7 +49,36 @@ struct EconomyArchetype
     // installed; without one an extractor produces freely, which is what
     // keeps this change invisible to sim tests that don't care about it.
     bool extracts = false;
-    float stockCapacity = 1'000.0f; // per commodity
+    // How much of each commodity this station can warehouse, per commodity
+    // (Phase 34 stage D). It was one scalar until the holds a station is
+    // composed of started deciding it.
+    //
+    // ⚑⚑⚑ ZERO IS A REAL ANSWER AND IT IS THE WHOLE POINT: it means *this
+    // station has no hold for that good*, which is what makes gdd.md §13's
+    // contraband a warehouse fact rather than a label. Every reader below has
+    // to mean it - a market at zero capacity never opens with stock, never
+    // accepts a delivery, and refuses a sale outright. ⚑ It is NOT "no market":
+    // `priceAtStock` still has to answer for the commodity, and the row is
+    // filtered out one layer up rather than priced at a phantom glut.
+    //
+    // ⚑ An EMPTY vector is zero for everything, deliberately. A galaxy without
+    // `[[module]]` content builds these from `StationDef::stock_capacity`
+    // through `setUniformCapacity`, so an archetype that reaches the sim empty
+    // is one nobody filled in, and a station that stocks nothing is a far
+    // louder failure than one that silently stocks 1000 of everything.
+    std::vector<float> stockCapacity;
+
+    [[nodiscard]] float capacityFor(std::uint32_t commodity) const
+    {
+        return commodity < stockCapacity.size() ? stockCapacity[commodity] : 0.0f;
+    }
+
+    // The same number for every good, which is what every station had before
+    // this stage and what a `[[station]]` with no recipe still gets.
+    void setUniformCapacity(std::size_t commodityCount, float capacity)
+    {
+        stockCapacity.assign(commodityCount, capacity);
+    }
 };
 
 // Where an extracting station's output actually comes from. The game
@@ -243,7 +272,10 @@ public:
     [[nodiscard]] float buyPrice(std::uint32_t market, std::uint32_t commodity) const;
     [[nodiscard]] float sellPrice(std::uint32_t market, std::uint32_t commodity) const;
     [[nodiscard]] float stock(std::uint32_t market, std::uint32_t commodity) const;
-    [[nodiscard]] float capacityOf(std::uint32_t market) const;
+    // How much of one good this market can warehouse; 0 when it has no hold
+    // for it (Phase 34 stage D took the commodity argument, because a station
+    // no longer has one capacity).
+    [[nodiscard]] float capacityOf(std::uint32_t market, std::uint32_t commodity) const;
 
     // How much of its nominal output a station managed on the last tick, in
     // [0,1], and the commodity that held it back (kNoCommodity when nothing
