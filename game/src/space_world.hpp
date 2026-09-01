@@ -567,6 +567,13 @@ enum class PilotState : std::uint32_t
     // the cruise envelope crosses in a sane time. This is the same
     // steerTravel the player's autopilot flies.
     Travel,
+    // Running an inspection on the player (Phase 36 stage C): nose held on
+    // them, closing to a standoff, not shooting. A STATE rather than a flag on
+    // `ShipPilot` because a flag would be a new FIELD on snapshot component 19
+    // and that is a save-format promise; a new enum VALUE in a field that is
+    // already a uint32 is not. A pilot loaded back in this state with no hold
+    // record behind it is put back on its beat by `tickInspection`.
+    Inspect,
 };
 
 // An NPC pilot: Lua's pilot_think picks the state (strategy); C++ steering
@@ -2856,7 +2863,8 @@ public:
         // and not the entities themselves, and every other consumer in this file
         // (`handleShipDestroyed`, `noteDamage`) is written against the index too.
         std::uint32_t pilotIndex = 0;
-        sol::core::DVec3 post; // the station or gate it holds
+        sol::core::DVec3 position; // where the hull actually is
+        sol::core::DVec3 post;     // the station or gate it holds
         double distanceToPost = 0.0;
         // ⚑⚑ WHERE ITS WAYPOINT IS, WHICH IS THE ONLY THING THAT PROVES THE
         // ANCHOR FIX. Spawn position alone cannot: a picket spawned at a gate
@@ -2864,8 +2872,19 @@ public:
         // identical until the first think has run. This is what the flown state
         // reports, so a test can tick the world and ask.
         double waypointDistanceToPost = 0.0;
+        // What it is DOING, which is a different question from where it is and
+        // became a live one in stage C: a patrol running an inspection is off
+        // its beat, and `Inspect` is the only state that says so.
+        PilotState state = PilotState::Idle;
         bool atGate = false; // false = the station approach posture
         std::uint32_t factionIndex = 0xffff'ffffu;
+        // ⚑ How far this hull is from the PLAYER (Phase 36 stage C), and it is
+        // the number the whole stage turns on: how much warning a stop gives
+        // you is how far off the patrol was when it opened one. Reported here
+        // rather than derived by the caller because `ecs::Pool` hands out
+        // entity INDICES and the registry is private, so nothing outside this
+        // class can turn one back into a position.
+        double distanceToPlayer = 0.0;
     };
 
     void patrolPosts(std::vector<PatrolPost>& out) const;
@@ -2941,6 +2960,135 @@ public:
     // Dev/test lever: clears the cooldown so a drive does not have to wait 90 s
     // between attempts.
     void clearNoticeCooldown() { m_noticeCooldown = 0.0; }
+
+    // --- The stop (Phase 36 stage C) ---------------------------------------
+    //
+    // ⚑⚑⚑⚑ THE HOLD IS MODELLED ON `DockClearance` AND NOT ON THE HAIL, WHICH
+    // IS WHAT THE SPEC ASKED FOR AND ALSO WHAT THE SAVE FORMAT ALLOWS. A hail
+    // is a one-shot request/reply with no duration at all; a timed, revocable
+    // grant is structurally what "hold station while I scan you" IS. And the
+    // shape has a second dividend the spec did not name: `m_clearance` has
+    // never been serialised, so a hold that lives beside it costs no save bump
+    // - where "per-patrol scan state" written as a FIELD ON `ShipPilot` would
+    // have cost one, because `ShipPilot` is snapshot component 19 and an id in
+    // that schema is a promise about a LAYOUT.
+    //
+    // ⚑⚑ ONE HOLD AT A TIME, WHICH IS WHAT "PER-PATROL" MEANS HERE. The scan
+    // belongs to the patrol running it rather than to the player's reticle -
+    // that is the reversal the spec named - but only one patrol is ever running
+    // one, because notice is throttled to one stop per system per cooldown. A
+    // vector of holds would be a second copy of that guarantee.
+    enum class InspectionOutcome : std::uint32_t
+    {
+        None = 0,
+        Complied, // the scan finished; stage D is what turns it into a verdict
+        Ran,      // left the envelope, jumped, or docked out from under it
+        Lapsed,   // the grant timed out with the scan unfinished
+        Lost,     // the patrol died, left, or found something better to do
+    };
+
+    [[nodiscard]] static const char* inspectionOutcomeName(InspectionOutcome outcome);
+
+    struct InspectionHold
+    {
+        std::uint32_t patrolIndex = kNoIndex; // entity index, as `PatrolPost` is
+        std::uint32_t factionIndex = kNoIndex;
+        NoticeReason reason = NoticeReason::None;
+        double secondsLeft = 0.0; // the grant's clock; 0 = no hold
+        // 0..1, and it RESETS rather than pauses when the patrol's nose comes
+        // off you - which is `tickScanning`'s own rule for the player's scan,
+        // mirrored deliberately so the two read the same from the cockpit.
+        float scanProgress = 0.0f;
+        // How far the patrol is, refreshed every tick. Held on the record
+        // rather than recomputed by each reader because the drive lock below is
+        // read from `tick`'s input pass, which runs BEFORE `tickInspection`.
+        double distance = 0.0;
+    };
+
+    // ⚑⚑⚑⚑ HOW CLOSE A PATROL HAS TO BE TO READ YOUR HOLD, AND IT IS DERIVED
+    // FROM TWO NUMBERS THAT ALREADY EXIST RATHER THAN CHOSEN. The player's own
+    // scanner is already built out of exactly this pair - a pulse that reaches
+    // `m_scanRange` and a target scan that works at `kTargetScanRangeFraction`
+    // of it - and `space_world.hpp` says why in its own words: "A target scan
+    // works far closer than a pulse reaches: you find a contact from across the
+    // playfield, then fly to it to learn what it is." A patrol NOTICES you at
+    // 80 km and has to CLOSE to read you, through the same 2%: 1.6 km.
+    //
+    // ⚑⚑⚑ AND THIS IS THE NUMBER THAT MAKES RUNNING POSSIBLE AT ALL, WHICH WAS
+    // MEASURED RATHER THAN ASSUMED. Six manoeuvres were flown against a held
+    // inspection - sitting still, full burn, boost, hard strafe, a barrel and a
+    // hard pitch - and ALL SIX complied: a 340 m/s interceptor tracks a 220 m/s
+    // shuttle inside a 20 degree cone without ever losing it, so with the cone
+    // as the only way out the stop was unescapable and "interruptible by flying
+    // away" was false. What the range restores is a WARNING PROPORTIONAL TO
+    // DISTANCE: a picket that meets you 700 m off a gate has you before you can
+    // react, and a patrol that spots you 40 km out across a station approach
+    // has to spend two minutes closing while your drive is still yours.
+    [[nodiscard]] double inspectionScanRange() const
+    {
+        return m_noticeParams.range * kTargetScanRangeFraction;
+    }
+
+    // ⚑⚑ WHAT THE CRUISE LOCK ACTUALLY REACHES (the user's stage C ruling,
+    // 2026-09-01: "the hold cuts cruise"). Close enough for them to read you is
+    // close enough for them to hold you - ONE rule, on the range and not on the
+    // cone, because a cone that flickers for a frame would hand out escapes
+    // nobody could aim for.
+    [[nodiscard]] bool driveLockedByInspection() const
+    {
+        return heldForInspection() && m_inspection.distance <= inspectionScanRange();
+    }
+
+    struct InspectionParams
+    {
+        // Longer than the player's 5 s target scan (`kTargetScanSeconds`),
+        // because this one is being done TO you and the waiting is the beat.
+        double scanSeconds = 12.0;
+        // The ceiling on the whole thing. A patrol that cannot get its nose on
+        // you inside a minute has lost you, and a cruise drive locked for
+        // longer than that stops reading as a stop and starts reading as a bug.
+        double holdSeconds = 60.0;
+        // Where the patrol settles. The attack case holds at 250 m; an
+        // inspection stands off further because nobody is shooting.
+        double standoff = 500.0;
+    };
+
+    [[nodiscard]] const InspectionParams& inspectionParams() const { return m_inspectionParams; }
+
+    void setInspectionParams(const InspectionParams& params) { m_inspectionParams = params; }
+
+    [[nodiscard]] const InspectionHold& inspection() const { return m_inspection; }
+
+    [[nodiscard]] bool heldForInspection() const { return m_inspection.patrolIndex != kNoIndex; }
+
+    // What the last stop came to, and how many of each there have been. The
+    // probe's half of the stage: an outcome nobody can count is an outcome
+    // nobody can tune.
+    struct InspectionReport
+    {
+        InspectionOutcome outcome = InspectionOutcome::None;
+        NoticeReason reason = NoticeReason::None;
+        std::uint32_t factionIndex = kNoIndex;
+        double atWorldSeconds = 0.0;
+        float progressAtEnd = 0.0f;
+        std::uint32_t opened = 0;
+        std::uint32_t complied = 0;
+        std::uint32_t ran = 0;
+    };
+
+    [[nodiscard]] const InspectionReport& lastInspection() const { return m_lastInspection; }
+
+    // ⚑⚑ PUBLIC FOR THE SAME REASON `considerNotice` AND `considerResponse`
+    // ARE: whether a stop can be opened at all is a rule, and a scripted drive
+    // cannot promise a random roll will fire. Refuses when one is already in
+    // flight, when the pilot is not a live patrol, and when the owning faction
+    // is already hostile - a faction that has decided to shoot you does not
+    // stop to check your papers first.
+    bool beginInspection(std::uint32_t patrolIndex, NoticeReason reason);
+
+    // Ends whatever is in flight, says why, and records the outcome. Safe to
+    // call with no hold.
+    void endInspection(InspectionOutcome outcome, const char* reason);
 
     // What state a pilot is in. Small, but it is what lets a test state the
     // difference between `pilotPatrolTo` and `pilotTravelTo` in one line -
@@ -3266,6 +3414,13 @@ private:
     // Clearance countdown, comms fade, and the arrival test that turns flying
     // into a berth into being docked (Phase 8r).
     void tickDocking(double dt);
+    // The stop's clock, its scan, and every way out of it (Phase 36 stage C).
+    // Runs after `tickDocking` for the same reason that one runs where it does:
+    // the positions it reads have to be this frame's.
+    void tickInspection(double dt);
+    // Who is doing the stopping, for the four lines that name them. The
+    // faction's display name, or "Patrol" for an unaffiliated console spawn.
+    [[nodiscard]] std::string inspectorName() const;
     // Arms a jump when the player's path this tick went through a gate's
     // opening (Phase 8v/8w). The sibling of tickDocking's berth arrival test.
     void tickGateCrossing();
@@ -3729,6 +3884,16 @@ private:
     // Session state, not saved - the same footing `m_responseCooldown` is on.
     // Seeded off the universe so two runs of the same galaxy roll alike.
     sol::core::Rng m_noticeRng{0x36'0b'11'ceull, 0x9e37'79b9'7f4a'7c15ull};
+    // The stop (Phase 36 stage C). Transient, like `m_clearance` beside it and
+    // for the same reason: a grant in flight belongs to a moment, not to a
+    // save file - see the note on `InspectionHold`.
+    InspectionHold m_inspection;
+    InspectionParams m_inspectionParams;
+    InspectionReport m_lastInspection;
+    // Throttles "you are not cleared to run" so a held finger on the cruise key
+    // does not fill the panel. Same shape as `m_berthRefusalTimer`, which
+    // exists because a refusal that only reaches the log is not a refusal.
+    double m_holdRefusalTimer = 0.0;
     // ⚑ What a ship must not fly into (Phase 8y), rebuilt every tick from the
     // SAME pass and the same exclusions as m_collisionBodies — so the set you
     // avoid and the set you can hit cannot drift apart, which is the whole

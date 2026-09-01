@@ -454,6 +454,32 @@ bool dockNearest(GameContent& content)
     return content.world().tryDockNearestStation(1.0e30);
 }
 
+// ⚑⚑ DEV LEVER (Phase 36 stage C): be stopped, now, by the nearest patrol that
+// polices this system. Notice is a per-second rate, so without this the only
+// way to look at a stop in the cockpit is to loiter dark beside a picket and
+// wait for a roll - and stage A's sharpest lesson was that the live drive finds
+// what no test in the tree can, which is only true if the drive can reach the
+// thing. It goes through `beginInspection`, so every refusal the real road
+// obeys is obeyed here: a hold already up, a hostile owner, a docked ship.
+bool inspectMe(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::vector<SpaceWorld::PatrolPost> posts;
+    world.patrolPosts(posts);
+    const SpaceWorld::PatrolPost* nearest = nullptr;
+    for (const SpaceWorld::PatrolPost& post : posts) {
+        if (nearest == nullptr || post.distanceToPlayer < nearest->distanceToPlayer) {
+            nearest = &post;
+        }
+    }
+    if (nearest == nullptr) {
+        SOL_LOG_WARN("inspect_me: no patrol in this system");
+        return false;
+    }
+    SOL_LOG_INFO("inspect_me: nearest patrol is %.0f m out", nearest->distanceToPlayer);
+    return world.beginInspection(nearest->pilotIndex, SpaceWorld::NoticeReason::Dark);
+}
+
 // The real thing: hail the nearest station and let the dispatcher answer.
 bool requestDock(GameContent& content)
 {
@@ -3837,6 +3863,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&jumpState>("sol", "jump_state", this);
     m_vm.registerFunction<&gateDistance>("sol", "gate_distance", this);
     m_vm.registerFunction<&dockNearest>("sol", "dock", this);
+    m_vm.registerFunction<&inspectMe>("sol", "inspect_me", this);
     m_vm.registerFunction<&undock>("sol", "undock", this);
     m_vm.registerFunction<&dockedAt>("sol", "docked_at", this);
     m_vm.registerFunction<&listCommodities>("sol", "commodities", this);

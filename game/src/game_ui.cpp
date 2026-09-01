@@ -408,6 +408,13 @@ void drawFlightPanel(DrawList& list,
         // beside CRUISE for that reason. Conditional, so it is furniture-free
         // in the 99% of play where the transponder is simply on.
         {"DARK", kWarning, hud.runningDark},
+        // Phase 36 stage C. Beside DARK because they are the same kind of fact
+        // - a state with a cost attached - and because being held is the one
+        // state in this row the player did not choose. Two entries and never
+        // both: HAILED is the window in which the cruise drive is still yours,
+        // HELD is after they have closed and it is not.
+        {"HAILED", kWarning, hud.heldForInspection && !hud.inspectionDriveLocked},
+        {"HELD", kWarning, hud.inspectionDriveLocked},
         // Names the mode rather than lighting a lamp: with seven of them, "AUTO"
         // would be true of six things the ship does very differently.
         {hud.commandLabel, rgba(0xCC99FFFFu), hud.commandLabel[0] != '\0'},
@@ -864,13 +871,16 @@ void drawScannerPanel(DrawList& list,
     // Prospecting (Phase 8f): what the nose is on, and what is still in it.
     const bool prospecting = has(hud.prospectName);
     const bool collecting = hud.collectedUnits > 0.0f;
-    if (!scanning && !contacts && !prospecting && !collecting && hud.pulseCharge >= 1.0f &&
+    // Being scanned (Phase 36 stage C) is sensor information like everything
+    // else in this block; it is the only row here about somebody else's sensors.
+    const bool inspected = hud.heldForInspection;
+    if (!scanning && !contacts && !prospecting && !collecting && !inspected && hud.pulseCharge >= 1.0f &&
         !has(hud.routeNextHop)) {
         return; // nothing to say: keep the view clear
     }
     constexpr float kWidth = 268.0f;
     const float rows = 1.0f + (scanning ? 1.0f : 0.0f) + (contacts ? 1.0f : 0.0f) +
-                       (prospecting ? 2.0f : 0.0f) + (collecting ? 1.0f : 0.0f) +
+                       (prospecting ? 2.0f : 0.0f) + (collecting ? 1.0f : 0.0f) + (inspected ? 1.0f : 0.0f) +
                        (has(hud.routeNextHop) ? 1.0f : 0.0f);
     const float height = kPadding + rows * 20.0f + kPadding * 0.5f;
     const float top = targetPanel.max.y + (targetPanel.height() > 0.0f ? 8.0f : 0.0f);
@@ -900,6 +910,17 @@ void drawScannerPanel(DrawList& list,
               ready ? kAccent : kTextDim);
     y += 20.0f;
 
+    // ⚑ ABOVE the player's own scan, because a scan being run ON you outranks
+    // one you are running, and in kWarning because the pilot did not ask for it.
+    if (inspected) {
+        list.addTextInBox(*styles.small, {{left, y}, {right - 46.0f, y + 20.0f}}, "HELD FOR SCAN", kWarning);
+        char buffer[32] = {};
+        std::snprintf(
+            buffer, sizeof(buffer), "%.0f%%", static_cast<double>(clamp01(hud.inspectionProgress) * 100.0f));
+        list.addTextInBox(
+            *styles.small, {{right - 44.0f, y}, {right, y + 20.0f}}, buffer, kWarning, TextAlign::Right);
+        y += 20.0f;
+    }
     if (scanning) {
         list.addTextInBox(
             *styles.small, {{left, y}, {right - 46.0f, y + 20.0f}}, hud.scanTarget, kTextPrimary);

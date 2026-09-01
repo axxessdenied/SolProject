@@ -123,6 +123,18 @@ struct FlightHud
     // is on for the whole of ordinary play, so a lamp that is lit 99% of the
     // time is furniture. This lights only when the ship is running dark.
     bool runningDark = false;
+    // Phase 36 stage C: somebody else is running a scan on this ship and it is
+    // not cleared to light the cruise drive until they are done. Two readouts
+    // for one state on purpose - the chip is the glance ("am I held"), the
+    // scanner row is the clock ("how much longer"), and DARK above proves the
+    // chip row is where a player already looks for what their ship is doing.
+    bool heldForInspection = false;
+    // ⚑ The two states are DIFFERENT and the player has to be able to tell them
+    // apart, because one of them is the window to leave: hailed but out of
+    // their scanning range means the drive is still yours, and locked means it
+    // is not. One chip, two words.
+    bool inspectionDriveLocked = false;
+    float inspectionProgress = 0.0f; // 0..1, and it RESETS when the cone breaks
     // What the ship has been told to do for itself, or "" when it is being
     // flown by hand (Phase 28). Was `bool autopilot`, and the widening is the
     // same one the game layer made: with seven modes instead of one, a lit

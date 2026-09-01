@@ -41,6 +41,7 @@
 --   sol.clearance() / sol.berths(i) what you are cleared for / a station's ports
 --   sol.grant_docking(berth, msg) / sol.deny_docking(msg)   inside dock_request
 --   sol.dock()                      dev: dock at once, asking nobody
+--   sol.inspect_me()                dev: be stopped now by the nearest patrol
 --   sol.hail() / sol.hail_target(namePart)   talk to a ship (Phase 8s)
 --   sol.tips()                      rumours and remembered prices, with ages
 --   sol.hail_reply(msg) / sol.hail_tip_market(msg) / sol.hail_tip_place(msg)

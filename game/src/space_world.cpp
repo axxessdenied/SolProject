@@ -4795,7 +4795,7 @@ bool SpaceWorld::keepTraderOnSchedule(ecs::Entity entity, const TraderLegPlaceme
 
 void SpaceWorld::traderPuppetInfo(std::vector<TraderPuppetInfo>& out)
 {
-    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel"};
+    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel", "inspect"};
     out.clear();
     const core::DVec3 eye = m_registry.storage<Transform>().get(playerEntityIndex()).position;
     ecs::Pool<TraderPuppet>& puppets = m_registry.storage<TraderPuppet>();
@@ -4844,6 +4844,10 @@ void SpaceWorld::patrolPosts(std::vector<PatrolPost>& out) const
         }
         PatrolPost info;
         info.pilotIndex = index;
+        info.position = transform->position;
+        info.state = pilot.state;
+        info.distanceToPlayer =
+            length(transform->position - m_registry.storage<Transform>().get(playerEntityIndex()).position);
         info.post = nearestPost(transform->position);
         info.distanceToPost = length(info.post - transform->position);
         info.waypointDistanceToPost = length(info.post - pilot.waypoint);
@@ -4910,7 +4914,7 @@ bool SpaceWorld::enterSystem(std::uint32_t systemIndex)
 
 void SpaceWorld::hunterInfo(std::vector<HunterInfo>& out)
 {
-    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel"};
+    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel", "inspect"};
     out.clear();
     const ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
     const ecs::Pool<TraderPuppet>& puppets = m_registry.storage<TraderPuppet>();
@@ -5286,6 +5290,12 @@ void SpaceWorld::rebuildAvoidance()
 
 void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
 {
+    // ⚑ Jumping out from under a hold is running, and it is recorded as such
+    // BEFORE the patrol that opened it stops existing (Phase 36 stage C). This
+    // is the site rather than `despawnSystem` for the reason Phase 35 stage D
+    // recorded: state is dropped where the thing that invalidates it HAPPENS.
+    // Nothing is said - the ship that would say it is a system away.
+    endInspection(InspectionOutcome::Ran, nullptr);
     despawnSystem();
     m_currentSystem = systemIndex;
     // Knowledge (Phase 8e): being here is what makes a system known, and a
@@ -8024,6 +8034,10 @@ sim::PowerPips pipsForPilot(PilotState state)
     case PilotState::Idle:
     case PilotState::Patrol:
     case PilotState::Travel:
+    // An inspection is not a fight and must not read as the run-up to one:
+    // shifting to weapons pips would light the target's threat readout on a
+    // ship that has come to look at your cargo.
+    case PilotState::Inspect:
         break;
     }
     return {2, 2, 2};
@@ -8590,6 +8604,225 @@ SpaceWorld::NoticeReason SpaceWorld::considerNotice(double dt)
     return reason;
 }
 
+const char* SpaceWorld::inspectionOutcomeName(InspectionOutcome outcome)
+{
+    switch (outcome) {
+    case InspectionOutcome::Complied:
+        return "complied";
+    case InspectionOutcome::Ran:
+        return "ran";
+    case InspectionOutcome::Lapsed:
+        return "lapsed";
+    case InspectionOutcome::Lost:
+        return "lost";
+    case InspectionOutcome::None:
+        break;
+    }
+    return "none";
+}
+
+std::string SpaceWorld::inspectorName() const
+{
+    return m_inspection.factionIndex < m_factionTable.size() ? m_factionTable[m_inspection.factionIndex].name
+                                                             : std::string("Patrol");
+}
+
+bool SpaceWorld::beginInspection(std::uint32_t patrolIndex, NoticeReason reason)
+{
+    if (heldForInspection() || isDocked() || reason == NoticeReason::None) {
+        return false;
+    }
+    ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(patrolIndex);
+    if (pilot == nullptr || pilot->role != PilotRole::Patrol) {
+        return false;
+    }
+    // ⚑⚑ A FACTION THAT HAS DECIDED TO SHOOT YOU DOES NOT STOP TO CHECK YOUR
+    // PAPERS FIRST. The same reading of `playerHostile` that `tickDocking`
+    // already uses to revoke a clearance - and without it the stop cancels
+    // itself one frame after it opens, because Lua's patrol branch calls
+    // `pilot_engage_enemy` on every think while not attacking and a hostile
+    // player is exactly what that finds. A mechanic that visibly starts and
+    // then aborts reads as a bug; one that never starts reads as a rule.
+    if (pilot->factionIndex < m_factionTable.size() && m_factionSim.playerHostile(pilot->factionIndex)) {
+        return false;
+    }
+    pilot->state = PilotState::Inspect;
+    pilot->targetIndex = playerEntityIndex();
+    pilot->hasTarget = 1;
+    const Transform* patrolAt = m_registry.storage<Transform>().tryGet(patrolIndex);
+    const Transform* playerAt = m_registry.storage<Transform>().tryGet(playerEntityIndex());
+    m_inspection = {.patrolIndex = patrolIndex,
+                    .factionIndex = pilot->factionIndex,
+                    .reason = reason,
+                    .secondsLeft = m_inspectionParams.holdSeconds,
+                    .scanProgress = 0.0f,
+                    // Seeded here rather than left at zero, or the drive would
+                    // read as locked for the one frame before `tickInspection`
+                    // first runs - which at 5,500 km/s is not a rounding error.
+                    .distance = patrolAt != nullptr && playerAt != nullptr
+                                    ? length(patrolAt->position - playerAt->position)
+                                    : m_noticeParams.range};
+    ++m_lastInspection.opened;
+
+    // ⚑ THE DEMAND, AND IT SAYS WHY. Stage B spoke one line for all three
+    // reasons because there was nothing hanging off it yet; a stop that always
+    // opens with the same sentence teaches the player that the reason does not
+    // matter, which is the opposite of what this phase is for. All three are
+    // under the comms panel's measured ~50-character budget, counted before
+    // they were drawn - stage A shipped 58 and it reached the player clipped.
+    const char* demand = "Routine check. Hold your heading."; // 33
+    switch (reason) {
+    case NoticeReason::Dark:
+        demand = "Unidentified contact. Hold for scan."; // 36
+        break;
+    case NoticeReason::Wanted:
+        demand = "There is a price on you. Hold position."; // 39
+        break;
+    case NoticeReason::RandomCheck:
+    case NoticeReason::None:
+        break;
+    }
+    say(inspectorName(), demand);
+    SOL_LOG_INFO("inspection: opened (%s) by %s", noticeReasonName(reason), inspectorName().c_str());
+    return true;
+}
+
+void SpaceWorld::endInspection(InspectionOutcome outcome, const char* reason)
+{
+    if (!heldForInspection()) {
+        return;
+    }
+    // Hand the patrol back to its own business. Idle rather than Patrol for the
+    // reason a finished responder goes Idle (Phase 30 stage C): `pilot_think`
+    // is what knows where this pilot's next leg is, and Idle is what asks it.
+    if (ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(m_inspection.patrolIndex);
+        pilot != nullptr && pilot->state == PilotState::Inspect) {
+        pilot->state = PilotState::Idle;
+        pilot->hasTarget = 0;
+    }
+    if (reason != nullptr) {
+        say(inspectorName(), reason);
+    }
+    SOL_LOG_INFO("inspection: %s at %.0f%% (%s)",
+                 inspectionOutcomeName(outcome),
+                 static_cast<double>(m_inspection.scanProgress) * 100.0,
+                 noticeReasonName(m_inspection.reason));
+    m_lastInspection = {.outcome = outcome,
+                        .reason = m_inspection.reason,
+                        .factionIndex = m_inspection.factionIndex,
+                        .atWorldSeconds = m_worldSeconds,
+                        .progressAtEnd = m_inspection.scanProgress,
+                        .opened = m_lastInspection.opened,
+                        .complied =
+                            m_lastInspection.complied + (outcome == InspectionOutcome::Complied ? 1u : 0u),
+                        .ran = m_lastInspection.ran + (outcome == InspectionOutcome::Ran ? 1u : 0u)};
+    m_inspection = InspectionHold{};
+    m_holdRefusalTimer = 0.0;
+    // ⚑⚑ THE COOLDOWN STARTS WHEN THE STOP ENDS, NOT WHEN IT OPENED. A hold can
+    // run for a minute, so charging the 90 s against the moment of notice would
+    // let the next patrol open one the instant this one let go - and a second
+    // checkpoint immediately after the first is the tax `017` names, arriving
+    // through a clock rather than through a rate.
+    m_noticeCooldown = m_noticeParams.cooldownSeconds;
+}
+
+void SpaceWorld::tickInspection(double dt)
+{
+    m_holdRefusalTimer = std::max(0.0, m_holdRefusalTimer - dt);
+    if (!heldForInspection()) {
+        return;
+    }
+    // ⚑ Docking out from under a hold IS running, and it is the one way out
+    // that does not involve flying anywhere: you were told to hold station and
+    // you went inside instead.
+    if (isDocked()) {
+        endInspection(InspectionOutcome::Ran, "You docked out on us. Noted.");
+        return;
+    }
+    ShipPilot* pilot = m_registry.storage<ShipPilot>().tryGet(m_inspection.patrolIndex);
+    const Transform* patrol = m_registry.storage<Transform>().tryGet(m_inspection.patrolIndex);
+    if (pilot == nullptr || patrol == nullptr) {
+        endInspection(InspectionOutcome::Lost, nullptr); // dead: nobody left to speak
+        return;
+    }
+    // ⚑⚑ PULLED OFF BY ITS OWN THINK, AND IT SAYS SO. Lua's patrol branch calls
+    // `pilot_engage_enemy` on every think while not attacking, so a war enemy
+    // wandering into sensor range outranks a paperwork check - which is right,
+    // and happened in ONE of the six manoeuvres flown against a live hold. What
+    // would be wrong is it happening in silence: a HELD chip that vanishes with
+    // no line is a glitch, and the same beat with a sentence on it is a patrol
+    // that had something better to do.
+    if (pilot->state != PilotState::Inspect) {
+        endInspection(InspectionOutcome::Lost, "Break off. We have other business.");
+        return;
+    }
+    const Transform* player = m_registry.storage<Transform>().tryGet(playerEntityIndex());
+    if (player == nullptr) {
+        endInspection(InspectionOutcome::Lost, nullptr);
+        return;
+    }
+
+    // ⚑⚑ THE SAME 80 km NOTICE USES, AND DELIBERATELY NOT A NUMBER OF ITS OWN.
+    // A player who has learned "that ship can see me from 80 km" has learned
+    // the whole geometry of this phase; a scan that broke at some other radius
+    // would be a second rule to discover by dying to it.
+    const core::DVec3 toPlayer = player->position - patrol->position;
+    const double distance = length(toPlayer);
+    m_inspection.distance = distance;
+    if (distance > m_noticeParams.range) {
+        endInspection(InspectionOutcome::Ran, "You are running. That is noted.");
+        return;
+    }
+
+    m_inspection.secondsLeft -= dt;
+    if (m_inspection.secondsLeft <= 0.0) {
+        // ⚑ The clock running out is not the same as leaving: it is the pilot
+        // who kept their distance until the patrol gave up. Kept as its own
+        // outcome rather than folded into `Ran` because stage D may well want
+        // to price "would not come in" differently from "left".
+        endInspection(InspectionOutcome::Lapsed, "Lost your signal. Move along.");
+        return;
+    }
+
+    // ⚑⚑⚑ THE SCAN NEEDS THE PATROL CLOSE, AND THAT IS WHAT MAKES RUNNING A
+    // REAL CHOICE. See `inspectionScanRange` for the measurement: with the cone
+    // as the only way out, six flown manoeuvres all complied. Out here the
+    // demand has been made and nothing else is happening yet - which is the
+    // warning a pilot spotted from 40 km gets and a pilot met at a gate does not.
+    if (distance > inspectionScanRange()) {
+        m_inspection.scanProgress = 0.0f;
+        return;
+    }
+
+    // ⚑⚑⚑ THE PLAYER'S OWN CONE RULE, POINTED THE OTHER WAY. `tickScanning`'s
+    // comment is "scanning is a held aim, not a checkbox", and this is that
+    // same sentence with the patrol holding the aim. It RESETS rather than
+    // pauses, which is `stopScan`'s behaviour verbatim - so breaking the cone
+    // costs the whole scan, and the two scans in this game read identically
+    // from the cockpit whichever end of one you are on.
+    if (distance > 1.0) {
+        const core::Vec3 forward = rotate(patrol->orientation, core::Vec3{0.0f, 0.0f, -1.0f});
+        const core::DVec3 direction = toPlayer * (1.0 / distance);
+        const double aim = static_cast<double>(forward.x) * direction.x +
+                           static_cast<double>(forward.y) * direction.y +
+                           static_cast<double>(forward.z) * direction.z;
+        if (aim < kScanConeCosine) {
+            m_inspection.scanProgress = 0.0f;
+            return;
+        }
+    }
+
+    const double seconds = std::max(m_inspectionParams.scanSeconds, 1.0e-3);
+    m_inspection.scanProgress += static_cast<float>(dt / seconds);
+    if (m_inspection.scanProgress >= 1.0f) {
+        m_inspection.scanProgress = 1.0f;
+        // ⚑ Stage C ends here ON PURPOSE. What was in the hold is stage D's
+        // question, and `commodityLegality` is already sitting there waiting to
+        // be asked it - see the phase spec's "judgement is a function call".
+        endInspection(InspectionOutcome::Complied, "Scan complete. On your way.");
+    }
+}
+
 void SpaceWorld::considerResponse(std::uint32_t targetIndex, std::uint32_t attackerIndex, core::DVec3 at)
 {
     if (m_responseCooldown > 0.0 || attackerIndex == kNoIndex || attackerIndex == targetIndex) {
@@ -8639,7 +8872,7 @@ double SpaceWorld::shipHullFraction(ecs::Entity entity) const
 
 void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
 {
-    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel"};
+    static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel", "inspect"};
     constexpr float kThinkInterval = 0.5f; // 2 Hz strategy; steering runs at 60
 
     // The dispatch throttle ages with the pilots it throttles (Phase 30 stage
@@ -8650,23 +8883,25 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
     // Notice (Phase 36 stage B) rides the same pass and for the same reason:
     // it needs a dt, it needs every pilot visited once, and it is throttled.
     // ⚑ Stage C is what hangs a hail off this; stage B says the line and stops.
-    if (const NoticeReason noticed = considerNotice(dt); noticed != NoticeReason::None) {
-        const std::string who = m_lastNotice.factionIndex < m_factionTable.size()
-                                    ? m_factionTable[m_lastNotice.factionIndex].name
-                                    : std::string("Patrol");
-        // Under 50 characters, which is the comms panel's measured budget -
-        // stage A shipped a 58-character line and it reached the player clipped.
-        // ⚑ Spoken by the PATROL'S faction, not Fleetcom: the sender column
-        // already carries the name, so the message does not have to - and "A "
-        // + a faction name + " patrol is running your registry." is 51
-        // characters against a ~50 budget AND reads "A Ironstar". Stage A
-        // shipped a 58-character line and it reached the player clipped; this
-        // one was caught before it was drawn.
-        say(who, "Stand by. Running your registry.");
-        SOL_LOG_INFO("notice: %s at %.0f km (%s)",
-                     noticeReasonName(noticed),
-                     m_lastNotice.distance / 1000.0,
-                     who.c_str());
+    // ⚑⚑ NOT ASKED WHILE A STOP IS ALREADY IN FLIGHT. `considerNotice` ages
+    // its own cooldown, so skipping the call also FREEZES that clock for the
+    // length of the hold - which is what `endInspection` then restarts, so the
+    // quiet 90 s is measured from the end of the stop rather than from its
+    // start. A hold that runs for a minute would otherwise eat most of it.
+    if (!heldForInspection()) {
+        if (const NoticeReason noticed = considerNotice(dt); noticed != NoticeReason::None) {
+            SOL_LOG_INFO("notice: %s at %.0f km", noticeReasonName(noticed), m_lastNotice.distance / 1000.0);
+            // ⚑⚑⚑ STAGE B SAID A LINE AND STOPPED, AND ITS OWN COMMENT SAID SO.
+            // The demand, the hold and the scan hang off this call now, and the
+            // placeholder sentence stage B spoke here is gone rather than kept
+            // beside them: two patrol lines in one frame is how a stop that
+            // works ends up reading like a stop that stuttered.
+            //
+            // ⚑ The stop can still be REFUSED - a hostile owner does not check
+            // papers - and when it is, nothing is said at all. Notice is a
+            // decision; whether it becomes an event is this call's answer.
+            (void)beginInspection(m_lastNotice.patrolIndex, noticed);
+        }
     }
 
     ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
@@ -9101,6 +9336,31 @@ void SpaceWorld::tick(double dt)
         m_registry.storage<FlightBody>().get(playerIndex) = FlightBody{};
     } else {
         m_appliedInput = m_commandMode != CommandMode::None ? commandInput() : m_shipInput;
+        // ⚑⚑⚑⚑ THE HOLD HAS TEETH, AND THAT IS THE USER'S RULING FOR STAGE C
+        // (2026-09-01). Cruise is 25,000x the assist cap - 220 m/s becomes
+        // 5,500 km/s - so a ship on cruise crosses the 80 km notice envelope in
+        // 0.029 s, and a hold anybody can light the drive out of is not a hold
+        // at all, it is a message.
+        //
+        // ⚑⚑⚑ IT REACHES AS FAR AS THE SCAN DOES AND NO FURTHER, WHICH IS THE
+        // MEASUREMENT TALKING. Locked on the HOLD rather than on the range, the
+        // stop was unescapable: six flown manoeuvres, six compliances, because
+        // an interceptor tracks a shuttle inside a 20 degree cone indefinitely.
+        // See `inspectionScanRange`. Running is still `017`'s "interruptible by
+        // flying away" - it is just that what you flee is the CLOSING, and how
+        // much warning you get is how far off they spotted you.
+        //
+        // ⚑ Written as a refusal rather than as a dead key, which is stage A's
+        // lesson: `guardManualCruise` below already owns the same lever
+        // (`m_appliedInput.cruise = false`) for the proximity cut, and it says
+        // so out loud when it uses it.
+        if (driveLockedByInspection() && m_appliedInput.cruise) {
+            m_appliedInput.cruise = false;
+            if (m_holdRefusalTimer <= 0.0) {
+                say(inspectorName(), "Cut that drive. You are not clear to run.");
+                m_holdRefusalTimer = kCommsMessageSeconds;
+            }
+        }
         // The manual-cruise guard is about a cruise burn the PLAYER lit, so it
         // asks whether the ship is flying itself, not whether it is on
         // autopilot specifically.
@@ -9189,6 +9449,31 @@ void SpaceWorld::tick(double dt)
                 input = sim::steerTravel(
                     self, control->tuning, pilot.waypoint, {}, kTraderArrivalRange, obstacles, entityIndex);
                 break;
+            case PilotState::Inspect: {
+                // ⚑⚑ THE ATTACK CASE WITH THE GUNS TAKEN OUT (Phase 36 stage
+                // C). `steerAimAndMove` is what holds a nose on something while
+                // flying somewhere else, and holding the nose on you is the
+                // whole mechanic: `tickInspection`'s cone rule is measured off
+                // this pilot's orientation, so the scan only advances while the
+                // steering below is succeeding. `input.trigger` is never
+                // written, which is the difference between an inspection and an
+                // execution.
+                const Transform* held = m_registry.storage<Transform>().tryGet(pilot.targetIndex);
+                const FlightBody* heldBody = m_registry.storage<FlightBody>().tryGet(pilot.targetIndex);
+                if (pilot.hasTarget == 0 || held == nullptr || heldBody == nullptr) {
+                    pilot.state = PilotState::Idle; // tickInspection ends the hold next frame
+                    break;
+                }
+                const core::DVec3 toHeld = held->position - self.position;
+                const double heldDistance = length(toHeld);
+                const core::DVec3 heldDirection =
+                    heldDistance > 1.0 ? toHeld * (1.0 / heldDistance) : core::DVec3{0.0, 0.0, -1.0};
+                core::DVec3 closing =
+                    heldBody->velocity + heldDirection * ((heldDistance - m_inspectionParams.standoff) * 0.5);
+                sim::avoidObstacles(closing, self, scenery, 8.0);
+                input = sim::steerAimAndMove(self, control->tuning, held->position, closing);
+                break;
+            }
             case PilotState::Attack: {
                 const Transform* targetTransform = m_registry.storage<Transform>().tryGet(pilot.targetIndex);
                 const FlightBody* targetBody = m_registry.storage<FlightBody>().tryGet(pilot.targetIndex);
@@ -9947,6 +10232,12 @@ void SpaceWorld::tick(double dt)
     {
         const std::uint32_t zone = profiler.beginZone("sim.docking");
         tickDocking(dt);
+        // The stop (Phase 36 stage C) rides the same zone and sits directly
+        // after the clearance countdown because it is the same kind of thing:
+        // a timed, revocable grant with an arrival test on the end of it. It
+        // runs AFTER the flight step above, so the two positions its cone rule
+        // compares are both this frame's.
+        tickInspection(dt);
         profiler.endZone(zone);
     }
 
@@ -11047,6 +11338,12 @@ bool SpaceWorld::loadFrom(const char* path)
     // the comms log go for the same reason.
     m_dockedBerth = kNoIndex;
     m_clearance = DockClearance{};
+    // And a stop in flight, for exactly the reason the clearance above goes
+    // (Phase 36 stage C): it names an entity index in the run being replaced.
+    // Assigned rather than ended - there is no outcome to record for a stop
+    // that belonged to a different game.
+    m_inspection = InspectionHold{};
+    m_holdRefusalTimer = 0.0;
     m_pendingDockRequest = kNoIndex;
     m_berthRefusalTimer = 0.0;
     m_comms.clear();

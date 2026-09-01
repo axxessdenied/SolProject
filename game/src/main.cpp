@@ -1366,6 +1366,9 @@ int main(int argc, char** argv)
         hud.boost = world.shipInput().boost;
         hud.cruise = world.shipInput().cruise;
         hud.runningDark = world.runningDark();
+        hud.heldForInspection = world.heldForInspection();
+        hud.inspectionDriveLocked = world.driveLockedByInspection();
+        hud.inspectionProgress = world.inspection().scanProgress;
         hud.commandLabel = game::commandModeChip(world.commandMode());
         switch (cameraMode) {
         case game::CameraMode::Cockpit:
