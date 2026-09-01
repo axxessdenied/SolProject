@@ -328,7 +328,15 @@ constexpr std::uint64_t kGoldenStructure = 0x06BC021EC816F5E8ull;
 // composition is about what it made them OF, and Phase 34 is entirely the
 // second. ⚑ It moves when a recipe, a chance or a module id moves, and - unlike
 // the structure digest - when `systems.toml` gains a station too.
-constexpr std::uint64_t kGoldenComposition = 0x7FD34958D6FDA639ull;
+//
+// ⚑⚑⚑ MOVED BY STAGE E, WHICH FOLDED `StationSpec::shadowOwner` IN - and the
+// two goldens that did NOT move are the evidence the stage is what it claims.
+// The shadow pass draws from `kShadowStream`, a third stream nothing else
+// touches, so both geometry digests are untouched; and the STRUCTURE digest is
+// untouched too, because it reads a galaxy `assignShadowOwners` never saw. Only
+// the digest taken over the composed galaxy could move, and it did.
+// Old: 0x7FD34958D6FDA639ull.
+constexpr std::uint64_t kGoldenComposition = 0x64A186F7FAD64160ull;
 
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine
@@ -425,6 +433,7 @@ SOL_TEST(composed_shipped_galaxy_keeps_its_recorded_composition)
     std::uint64_t digest = sol::core::kFnvOffsetBasis;
     std::size_t composed = 0;
     std::size_t stations = 0;
+    std::size_t shadowed = 0;
     for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
         const sol::sim::SystemSpec& system = world.galaxy().systems[s];
         for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
@@ -438,6 +447,24 @@ SOL_TEST(composed_shipped_galaxy_keeps_its_recorded_composition)
                 SOL_REQUIRE(module < defs.modules().size());
                 digest = combineText(digest, defs.modules()[module].id);
             }
+            // ⚑⚑⚑ STAGE E, AND IT GOES *HERE* RATHER THAN IN `digestOf` ABOVE
+            // BECAUSE OF WHAT STAGE D FOUND ONE STAGE AGO. The structure digest
+            // runs over a galaxy straight out of `sol::sim::generateGalaxy`,
+            // which no game-side pass has touched - so a `shadowOwner` folded
+            // into it would hash `kNoFaction` 125 times and move the golden
+            // exactly once, for the field's existence rather than its contents.
+            // That is precisely how stage B's composition line went blind for a
+            // whole stage. This digest reads the world's own composed galaxy,
+            // which is the only place an operator is ever written.
+            //
+            // ⚑ An INDEX rather than a name, unlike the module ids beside it,
+            // and the difference is not an oversight: a faction index is what
+            // the structure digest already hashes for `system.factionIndex`, and
+            // it is stable under def edits in a way a module index would not be
+            // - majors come from def order and clans from galaxy order, so this
+            // number moving means the galaxy moved.
+            digest = hashCombine(digest, system.stations[t].shadowOwner);
+            shadowed += system.stations[t].shadowOwner != sol::sim::kNoFaction ? 1 : 0;
         }
     }
 
@@ -452,6 +479,16 @@ SOL_TEST(composed_shipped_galaxy_keeps_its_recorded_composition)
     SOL_REQUIRE(composed > 0);
     SOL_CHECK(composed == stations);
     SOL_CHECK(world.compositionCount() > 1);
+
+    // ⚑⚑⚑ THE SAME GUARD AGAIN, FOR THE FIELD STAGE E ADDED, AND IT LIVES HERE
+    // RATHER THAN IN `station_shadow_tests.cpp` DELIBERATELY. Stage D's finding
+    // was not "the composition digest was wrong" - it was that the anti-vacuity
+    // check lived in a different file from the hash, so the hash could be
+    // measuring an empty galaxy while a green suite elsewhere measured a full
+    // one. A digest and the proof that it read something belong in one place.
+    std::printf("  %zu station(s) name a shadow operator\n", shadowed);
+    SOL_REQUIRE(shadowed > 0);
+    SOL_CHECK(shadowed < stations); // and the field is not simply set everywhere
 
     SOL_CHECK(checkDigest("composition", digest, kGoldenComposition));
 }

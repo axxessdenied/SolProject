@@ -1573,6 +1573,48 @@ public:
     // refuses the trade; this is what stops the board offering it.
     [[nodiscard]] bool dockedStationStocks(std::uint32_t commodity) const;
 
+    // Who runs the black-market module on this dock (Phase 34 stage E), as a
+    // faction table index, or `kNoFaction` where nobody does. A STORED fact
+    // about the station: the operator does not change when the border does.
+    [[nodiscard]] std::uint32_t stationShadowOwner(std::uint32_t system, std::uint32_t station) const;
+
+    // Whether that operator is somebody other than the law here - which is what
+    // makes it a SHADOW presence rather than a facility.
+    //
+    // ⚑⚑⚑⚑ DERIVED PER CALL AND NEVER STORED, AND THIS IS THE WHOLE POINT OF
+    // THE STAGE. It reads `systemOwnerFaction`, which is the LIVE holder, not
+    // `SystemSpec::factionIndex`, which is the founding claim - the same
+    // distinction `commodityLegality` was corrected to in Phase 33 stage D and
+    // the same one the garrison sign records in `universe.hpp`. Ownership has
+    // been dynamic since Phase 8u and the shipped galaxy changes hands several
+    // times a minute, so a stored answer here would be right at t=0 and wrong
+    // for the rest of the session - and every test written at t=0 would agree
+    // with it, because that is the one moment the two fields cannot disagree.
+    //
+    // ⚑⚑ SO THE CLAN THAT TAKES A SYSTEM INHERITS ITS OWN FENCE, and the fence
+    // stops being a shadow presence at the moment it does. Nothing has to
+    // notice; the comparison simply stops being true. Phase 37, whose shadow
+    // faction claims no territory at all, is the reader this is built for.
+    [[nodiscard]] bool stationHasShadowPresence(std::uint32_t system, std::uint32_t station) const;
+
+    // The picking rule itself, given one roll in [0, clanCount) and the faction
+    // that founded the place: the clan that roll names, stepped on by one if
+    // that clan is the founder, or `kNoFaction` when there is no other clan to
+    // step to. `clanBase` is where clan indices start (`factionCount`).
+    //
+    // ⚑⚑⚑ IT IS A NAMED FUNCTION RATHER THAN FOUR LINES INSIDE THE LOOP FOR ONE
+    // MEASURED REASON: THE SHIPPED SEED DOES NOT EXERCISE THE SKIP. Ten shadow
+    // stations, ten clans, and at seed 1701 no roll lands on its own founder -
+    // so a galaxy-level test of "nobody fences for the clan that founded them"
+    // is VACUOUSLY TRUE, and deleting the skip entirely was measured to leave
+    // the whole suite green. The rule needs somewhere a test can hand it the
+    // case the galaxy declines to produce, which is what stage C did for
+    // `stationTabOnStrip` and for the same reason.
+    [[nodiscard]] static std::uint32_t shadowOperatorFor(std::uint32_t roll,
+                                                         std::uint32_t clanBase,
+                                                         std::uint32_t clanCount,
+                                                         std::uint32_t founder);
+
     // What goods class a commodity is, for the readouts that say so.
     [[nodiscard]] sol::assets::GoodsClass commodityClass(std::uint32_t commodity) const
     {
@@ -2790,6 +2832,11 @@ private:
     // the galaxy and both geometry digests with them. Composing afterwards, from
     // a stream nothing else uses, cannot.
     void composeStations();
+    // Names the clan running each composed station's black-market module (Phase
+    // 34 stage E), out of its own stream again so that composing and staffing
+    // are independent edits. Called at the tail of `composeStations`, which is
+    // also what makes `loadFrom`'s re-compose cover it.
+    void assignShadowOwners();
     // Hands player cargo to any active Deliver objective at the docked
     // station: cargo leaves the hold, the market stock refills (the contract
     // literally fills the shortage it advertised).
@@ -3156,6 +3203,14 @@ private:
         // figure on this struct is: `composeStations` runs with no def
         // database in reach.
         std::vector<float> storage;
+        // Is this one of gdd.md §7/§13's black-market services (Phase 34 stage
+        // E)? The FAMILY, cached as a bool for the same reason `screens` is
+        // cached as a mask: `assignShadowOwners` runs inside `composeStations`,
+        // which has no def database in reach. A bool rather than the family
+        // enum because exactly one family has a consequence here, and a stored
+        // enum would invite a second reader to switch on it without the
+        // resolution step that made it correct.
+        bool shadow = false;
     };
     // One line of a recipe with its module resolved to an index.
     struct RecipeEntry

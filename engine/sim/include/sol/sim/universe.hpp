@@ -298,6 +298,34 @@ struct StationSpec
     // the galaxy is built, out of its own Rng stream, so no draw in this file
     // moves and no station, planet or gate shifts by a metre.
     std::uint32_t composition = kNoComposition;
+    // Who runs the black-market module on this dock (Phase 34 stage E), in the
+    // faction index space `SystemSpec::factionIndex` already uses, or
+    // `kNoFaction` where nobody does. Written by the same game-side pass that
+    // composes, out of its own stream, and never serialized.
+    //
+    // ⚑⚑⚑⚑ IT STORES *WHO*, NOT *WHETHER IT IS A SHADOW PRESENCE*, AND THAT
+    // DISTINCTION IS THE WHOLE STAGE. The plan's phrasing is "a module present
+    // on a station whose owner is not the station's owner" - a comparison, and
+    // its right-hand side MOVES: since Phase 8u who holds a system is dynamic
+    // (`FactionSim::systemOwner`), and the shipped galaxy changes hands several
+    // times a minute. A stored "this is shadow" bit would be a fact about the
+    // FOUNDING claim, would rot inside a minute of play, and **no test could
+    // see it, because at t=0 the founding claim and the current owner agree**.
+    // This project has already met that trap twice - the garrison sign three
+    // fields down ("the sign is not stored, and stage F is why") and the
+    // legality table Phase 33 stage D had to re-point at the live owner. So the
+    // operator is stored and the shadowness is DERIVED, per read, against
+    // whoever holds the place now.
+    //
+    // ⚑⚑ THE CONSEQUENCE IS CONTENT RATHER THAN BOOKKEEPING: when the clan that
+    // runs a station's fence takes the system it sits in, the fence stops being
+    // a shadow presence and becomes the local boss's own shop. Nothing has to
+    // notice for that to be true - it falls out of the comparison.
+    //
+    // ⚑ NOTHING IN `sol::sim` WRITES IT, for the reason `composition` above is
+    // not written here either: this layer does not know what a module is, and
+    // the Shadow family is a `[[module]]` fact.
+    std::uint32_t shadowOwner = kNoFaction;
     core::DVec3 position;
 };
 

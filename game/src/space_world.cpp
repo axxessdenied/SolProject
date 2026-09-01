@@ -870,6 +870,7 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         if (module.family == assets::ModuleFamily::Power && module.powerOutput > 0.0f) {
             m_powerModules.push_back(static_cast<std::uint32_t>(m_modules.size()));
         }
+        runtime.shadow = module.family == assets::ModuleFamily::Shadow;
         m_modules.push_back(std::move(runtime));
     }
     // Ascending by output, which is what lets the composer take the FIRST plant
@@ -1018,6 +1019,13 @@ SpaceWorld::SecurityHistogram SpaceWorld::securityHistogram() const
 // system index can reach is not elegant, it is the only thing that is true.
 constexpr std::uint64_t kCompositionStream = 2'000'000;
 
+// And the one the shadow operator comes out of (Phase 34 stage E). A SECOND
+// stream rather than a continuation of the first, for the reason the first one
+// exists at all: composing and staffing are independent edits, and sharing a
+// stream would make re-tuning one recipe's fence chance re-roll who runs every
+// other fence in the galaxy.
+constexpr std::uint64_t kShadowStream = 3'000'000;
+
 void SpaceWorld::composeStations()
 {
     // Everything composed is derived, never saved, so a re-compose starts by
@@ -1030,6 +1038,7 @@ void SpaceWorld::composeStations()
     for (sim::SystemSpec& system : m_galaxy.systems) {
         for (sim::StationSpec& station : system.stations) {
             station.composition = sim::kNoComposition;
+            station.shadowOwner = sim::kNoFaction;
         }
     }
     if (m_recipes.empty() || m_modules.empty()) {
@@ -1142,6 +1151,112 @@ void SpaceWorld::composeStations()
         }
         m_economyParams.archetypes.push_back(std::move(archetype));
     }
+
+    assignShadowOwners();
+}
+
+// ⚑⚑⚑⚑ THE STAGE, AND IT IS ONE FIELD BECAUSE THE OTHER HALF WAS ALREADY
+// THERE. gdd.md §12's Shadow family has been rolling onto stations since stage
+// B - `stations.toml` carries `sol.mod_fence:0.08` and friends, and the shipped
+// galaxy composes ten of them - so a station's shadow PRESENCE has had
+// somewhere to live all along, in the composition. What has had nowhere to live
+// is WHOSE it is, and that is what this pass writes.
+//
+// ⚑⚑⚑ THE OPERATOR IS A PIRATE CLAN (ruled 2026-08-31). Phase 37's shadow
+// faction - the one that claims nothing and lives inside other people's
+// stations - has not shipped, so pointing the field at it today would leave a
+// null column on all 125 stations and call it vocabulary. A clan is a criminal
+// organisation that already exists, already has a reputation axis, and already
+// fences past `min_rep`; Phase 37 stage A re-points the picker at `kind =
+// "shadow"` and nothing else about this field moves.
+//
+// ⚑⚑ AND IT IS NEVER THE CLAN THAT FOUNDED THE PLACE, which is the one rule
+// that makes the field mean something: a fence the local boss runs is his own
+// shop, not a shadow presence. The skip is against the FOUNDING claim because
+// that is all this pass can see - `initializeFactions` has not run yet and
+// `m_factionTable` is empty here - and the live comparison lives in
+// `stationHasShadowPresence`, which is the half that has to stay honest as
+// borders move.
+std::uint32_t SpaceWorld::shadowOperatorFor(std::uint32_t roll,
+                                            std::uint32_t clanBase,
+                                            std::uint32_t clanCount,
+                                            std::uint32_t founder)
+{
+    if (clanCount == 0) {
+        return sim::kNoFaction;
+    }
+    std::uint32_t owner = clanBase + roll % clanCount;
+    if (owner == founder) {
+        // One step is enough, and cyclic so it terminates: there is only ever
+        // one faction to avoid, so the next clan along is by definition not it -
+        // unless it is the same clan, which is the single-clan galaxy below.
+        owner = clanBase + (roll + 1) % clanCount;
+    }
+    // A galaxy with one clan that founded this system: nobody else can run the
+    // fence, so nobody does. Returning the founder would say the local boss
+    // fences against himself, which is the one answer that is never true.
+    return owner == founder ? sim::kNoFaction : owner;
+}
+
+void SpaceWorld::assignShadowOwners()
+{
+    const std::size_t clanCount = m_galaxy.clans.size();
+    if (clanCount == 0) {
+        return; // no clans: nobody to run a fence, and the field stays kNoFaction
+    }
+    // Clan faction indices continue past the majors - `spawnClans` writes
+    // `params.factionCount + clanIndex` - and `initializeFactions` builds the
+    // runtime table in exactly that order, majors in def order then clans in
+    // galaxy order. So the arithmetic is the table lookup, without the table.
+    const std::uint32_t clanBase = m_galaxyParams.factionCount;
+    core::Rng rng;
+    rng.seed(m_universeSeed, kShadowStream);
+
+    for (std::uint32_t s = 0; s < m_galaxy.systems.size(); ++s) {
+        sim::SystemSpec& system = m_galaxy.systems[s];
+        for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
+            // ⚑ THE ROLL IS TAKEN FOR EVERY STATION, INCLUDING THE ONES WITH NO
+            // SHADOW MODULE - the same rule the composition loop above follows,
+            // for the same reason. Drawing only where a fence landed would make
+            // the stream depend on WHICH stations rolled one, so nudging a
+            // single recipe's fence chance would re-staff every fence after it
+            // in galaxy order. One wasted roll per station buys a station's
+            // operator being a function of its own position and nothing else.
+            const std::uint32_t roll = rng.range(static_cast<std::uint32_t>(clanCount));
+            bool shadow = false;
+            for (const std::uint32_t module : stationModules(s, t)) {
+                if (m_modules[module].shadow) {
+                    shadow = true;
+                    break;
+                }
+            }
+            if (!shadow) {
+                continue;
+            }
+            system.stations[t].shadowOwner =
+                shadowOperatorFor(roll, clanBase, static_cast<std::uint32_t>(clanCount), system.factionIndex);
+        }
+    }
+}
+
+std::uint32_t SpaceWorld::stationShadowOwner(std::uint32_t system, std::uint32_t station) const
+{
+    if (system >= m_galaxy.systems.size()) {
+        return sim::kNoFaction;
+    }
+    const std::vector<sim::StationSpec>& stations = m_galaxy.systems[system].stations;
+    return station < stations.size() ? stations[station].shadowOwner : sim::kNoFaction;
+}
+
+bool SpaceWorld::stationHasShadowPresence(std::uint32_t system, std::uint32_t station) const
+{
+    const std::uint32_t owner = stationShadowOwner(system, station);
+    if (owner == sim::kNoFaction) {
+        return false;
+    }
+    // The LIVE holder. See the header: the founding claim is what this pass
+    // avoided at generation time, and it is the wrong thing to ask now.
+    return owner != systemOwnerFaction(system);
 }
 
 std::span<const std::uint32_t> SpaceWorld::stationModules(std::uint32_t system, std::uint32_t station) const
