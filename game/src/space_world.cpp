@@ -6910,6 +6910,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
         m_scanRange = def.scanRange > 0.0f ? def.scanRange : 1.0f;
         m_scanSpeed = def.scanSpeed > 0.0f ? def.scanSpeed : 1.0f;
         m_collectorRange = def.collectorRange > 0.0f ? def.collectorRange : 1.0f;
+        m_signature = std::max(def.signature, kMinSignature);
     }
 
     ShipPower& power = m_registry.storage<ShipPower>().get(entityIndex);
@@ -8607,6 +8608,17 @@ SpaceWorld::NoticeReason SpaceWorld::considerNotice(double dt)
         return NoticeReason::None;
     }
 
+    // ⚑⚑⚑⚑ AND THIS IS WHERE A FIT GETS TO ARGUE WITH IT (Phase 36 stage E).
+    // `signature` multiplies whichever rate the reason above chose, rather than
+    // only the dark one: a dampener is a fact about the hull and not about why
+    // somebody is looking, so it quietens a random check and a posted price by
+    // exactly as much. ⚑ It is applied to the RATE and never to `range` two
+    // lines down - see `kMinSignature` for the measurement that ruled the
+    // envelope out, and note that shrinking it would also move the line at
+    // which `tickInspection` calls you a runner, which is an OFFENCE. A
+    // countermeasure that made it easier to commit one would be a trap.
+    perSecond *= static_cast<double>(m_signature);
+
     // ⚑⚑ A RATE PER SECOND, CONVERTED HERE AND NOWHERE ELSE. The tick is 60 Hz
     // today; expressing this per call would silently retune the whole phase the
     // day that changes, and the balance is the phase.
@@ -8890,7 +8902,17 @@ void SpaceWorld::tickInspection(double dt)
         }
     }
 
-    const double seconds = std::max(m_inspectionParams.scanSeconds, 1.0e-3);
+    // ⚑⚑⚑⚑ THE HALF OF THE COUNTERMEASURE THAT IS A TACTIC RATHER THAN A
+    // STAT (Phase 36 stage E). `017` rejected detection-and-consequence-only
+    // because "with no stop to survive, a signature dampener is a bigger number
+    // and nothing else" - so the kit has to change the stop, and this is where
+    // it does. A quieter hull takes LONGER to read: 12 s at 1.0, 24 s at 0.5,
+    // 34 s at the floor. What does NOT move is `holdSeconds`, and that is the
+    // whole mechanic - the 60 s grant is a fixed budget, so stretching the read
+    // is what turns a `Complied` into a `Lapsed`, and stage D prices a lapse at
+    // nothing while it prices running at 400 credits and 8 standing.
+    const double loudness = std::max(static_cast<double>(m_signature), 1.0e-3);
+    const double seconds = std::max(m_inspectionParams.scanSeconds / loudness, 1.0e-3);
     m_inspection.scanProgress += static_cast<float>(dt / seconds);
     if (m_inspection.scanProgress >= 1.0f) {
         m_inspection.scanProgress = 1.0f;
@@ -11653,6 +11675,7 @@ bool SpaceWorld::loadFrom(const char* path)
         m_scanRange = resolved.scanRange > 0.0f ? resolved.scanRange : 1.0f;
         m_scanSpeed = resolved.scanSpeed > 0.0f ? resolved.scanSpeed : 1.0f;
         m_collectorRange = resolved.collectorRange > 0.0f ? resolved.collectorRange : 1.0f;
+        m_signature = std::max(resolved.signature, kMinSignature);
     }
 
     // The snapshot carries the system's statics; only the non-ECS side data

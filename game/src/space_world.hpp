@@ -3302,6 +3302,49 @@ public:
     // errors, and this is the rule the phase is for.
     void applyDefaultVerdict(const PendingVerdict& pending);
 
+    // --- Countermeasures (Phase 36 stage E) --------------------------------
+    //
+    // ⚑⚑⚑⚑ WHAT THE FIT MAKES OF YOU, AND `017` IS WHY IT IS NOT A DETECTION
+    // ROLL. That record turned down detection-and-consequence-only because
+    // "with no stop to survive, a signature dampener is a bigger number and
+    // nothing else" - so the stat has to move the STOP and not only the odds
+    // of one. It moves two things, and the user's ruling (2026-09-01) is which
+    // two:
+    //
+    //   1. THE NOTICE RATE. `considerNotice`'s per-second chance is multiplied
+    //      by this, whatever the reason - a dampener is a fact about the hull,
+    //      not about why somebody is looking. Dark inside a patrol's envelope
+    //      is a stop every 33 s at 1.0 and every 67 s at 0.5.
+    //   2. THE SCAN CLOCK. `tickInspection` divides its progress rate by this,
+    //      so a 12 s read becomes 24 s at 0.5 - against a 60 s hold that does
+    //      NOT move. That is the half that is a tactic: the outcome flips from
+    //      `Complied` to `Lapsed`, and stage D prices a lapse at nothing.
+    //
+    // ⚑⚑⚑⚑ AND THE OBVIOUS THIRD THING IS DELIBERATELY NOT MOVED: THE RANGE
+    // THEY READ YOU AT. It was priced before a line was written and it is the
+    // worst curve in the phase. `inspectionScanRange` is 1.6 km, the patrol's
+    // steering settles at `InspectionParams::standoff` = 500 m, and it closes
+    // at 340 m/s - so scaling the read range moves the lapse threshold from
+    // 17.9 km to 17.1 km at 0.5 (4%, invisible) and then, below 0.31, puts the
+    // read range INSIDE the standoff, where the patrol parks short of its own
+    // scanner and can never finish. Flat, and then an I-win button. ⚑ The
+    // cliff is worth carrying on its own: a constant in `InspectionParams`
+    // silently bounds what a stat in `FitStat` is allowed to be, and nothing
+    // in either place says so.
+    //
+    // ⚑⚑ CLAMPED, BECAUSE `signature_add` EXISTS AND ZERO IS A DIFFERENT KIND
+    // OF ANSWER. The def loader refuses a HULL whose own `signature` is <= 0,
+    // but `resolveLoadout` adds and multiplies whatever a component asks for,
+    // so a `signature_mul = 0` or a negative `signature_add` reaches the reader
+    // as "never noticed, and a scan clock divided by nothing". The floor is
+    // enforced where the value is READ so that no fit, authored or modded, can
+    // switch the phase off from a data file. At the floor a dampened ship is
+    // still stopped - about a third as often, with a 34 s read - which is the
+    // strongest a countermeasure gets to be while the mechanic still exists.
+    static constexpr float kMinSignature = 0.35f;
+
+    [[nodiscard]] float signature() const { return m_signature; }
+
     // What state a pilot is in. Small, but it is what lets a test state the
     // difference between `pilotPatrolTo` and `pilotTravelTo` in one line -
     // and that difference is the whole of decisions/019 §3's correction.
@@ -4080,6 +4123,11 @@ private:
     std::size_t m_starTargetIndex = 0;
     float m_scanRange = 6.0e7f; // from the active fit; see applyShipDef
     float m_scanSpeed = 1.0f;
+    // ⚑ From the active fit too, and it rides with the scan stats rather than
+    // with the phase-36 state on purpose: it is not a fact about a stop, it is
+    // a fact about the ship, and it has to be refreshed everywhere the other
+    // three are or a refit changes the readout and not the mechanic.
+    float m_signature = 1.0f;
     double m_pulseCooldown = 0.0;
     float m_scanProgress = 0.0f;
     std::size_t m_scanTarget = 0; // target index the scan is running on

@@ -20,7 +20,15 @@ namespace {
 
 // TOML key stems for the FitStat enum, in enum order (Phase 8a modifiers:
 // "<stem>_add" / "<stem>_mul" on components and crew).
-constexpr const char* kFitStatKeys[kFitStatCount] = {
+//
+// ⚑⚑ SIZED BY THE INITIALISER AND CHECKED AGAINST THE ENUM, which is the rule
+// `kMountKindNames` already wrote down further down this file and which this
+// table was NOT obeying. `[kFitStatCount]` accepts a SHORT list and leaves a
+// null pointer at the end - and every reader below does `std::string(key) +
+// "_add"`, so adding a member to `FitStat` and forgetting its spelling was
+// undefined behaviour reached through an enum edit. Phase 36 stage E is the
+// first entry added since Phase 8f and it found the shape rather than the bug.
+constexpr const char* kFitStatKeys[] = {
     "forward_accel",
     "reverse_accel",
     "lateral_accel",
@@ -38,7 +46,10 @@ constexpr const char* kFitStatKeys[kFitStatCount] = {
     "scan_range",
     "scan_speed",
     "collector_range",
+    "signature",
 };
+
+static_assert(std::size(kFitStatKeys) == kFitStatCount, "a fit stat is missing its def spelling");
 
 // Accumulates the first error and short-circuits later reads.
 struct FieldReader
@@ -560,6 +571,7 @@ bool parseShip(const TomlValue& table,
     reader.optionalFloat("scan_range", def.scanRange);
     reader.optionalFloat("scan_speed", def.scanSpeed);
     reader.optionalFloat("collector_range", def.collectorRange);
+    reader.optionalFloat("signature", def.signature);
 
     reader.optionalFloat("price", def.price);
     reader.optionalFloat("mass", def.mass);
@@ -679,6 +691,7 @@ bool parseShip(const TomlValue& table,
                               "scan_range",
                               "scan_speed",
                               "collector_range",
+                              "signature",
                               "price",
                               "mass",
                               "power_output",
@@ -692,6 +705,13 @@ bool parseShip(const TomlValue& table,
     }
     if (!reader.failed && def.mass <= 0.0f) {
         reader.fail("'mass' must be > 0");
+    }
+    // ⚑ A hull that is silent to everybody is not a covert hull, it is the
+    // inspection mechanic switched off in a data file - and zero would also
+    // divide the scan clock by nothing. Refused at the DEF, where the author
+    // finds out, rather than clamped at the consumer where they never would.
+    if (!reader.failed && def.signature <= 0.0f) {
+        reader.fail("'signature' must be > 0");
     }
     if (reader.failed) {
         return false;

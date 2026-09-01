@@ -3395,15 +3395,34 @@ SOL_TEST(data_defs_shipped_hulls_come_fitted_with_the_gun_the_weapon_key_named)
     SOL_CHECK(db.findShip("sol.freighter")->findMount("turret_dorsal")->kind ==
               sol::assets::MountKind::Turret);
 
-    // ⚑ AND THE ONE THING THE BASE GAME CANNOT DO YET, PINNED SO THAT FILLING
-    // IT IS A DELIBERATE ACT. No shipped component is a `subsystem`, so the
-    // freighter's internal mount accepts nothing that exists. Phase 32 authors
-    // the kit; until then this is the honest state and the test says so.
+    // ⚑⚑⚑ THE DELIBERATE ACT HAPPENED, AND THIS IS THE ASSERTION THAT WAS
+    // WAITING FOR IT. Until Phase 36 stage E this read `SOL_CHECK(!anySubsystem
+    // Component)` - "no shipped component is a `subsystem`, so the freighter's
+    // internal mount accepts nothing that exists, and Phase 32 authors the kit"
+    // - pinned so that filling the gap could not happen by accident. Phase 32
+    // did not author it; stage E did, because `017`'s covert family is the half
+    // that record bought the expensive shape for. The check is INVERTED rather
+    // than deleted: an empty `subsystem` catalogue is now a regression, and the
+    // freighter's `core_sensor` finally has something to hold.
     const bool anySubsystemComponent =
         std::any_of(db.components().begin(), db.components().end(), [](const auto& component) {
             return component.mount == sol::assets::MountKind::Subsystem;
         });
-    SOL_CHECK(!anySubsystemComponent);
+    SOL_CHECK(anySubsystemComponent);
+
+    // ⚑⚑ AND THE HULL THE GAME OPENS IN IS THE ONE THAT HAS TO BE ABLE TO
+    // HOLD IT. The phase's exit criterion is "fit a dampener ON THE SHUTTLE and
+    // get through", and the spec named the missing row in as many words: "there
+    // is exactly one `Subsystem` mount in the whole game and the player's ship
+    // does not have it". A covert catalogue reachable only by the freighter
+    // would pass every check above and fly none of the criterion.
+    const sol::assets::ShipDef* shuttle = db.findShip("sol.shuttle");
+    SOL_REQUIRE(shuttle != nullptr);
+    const sol::assets::ShipMount* covert = shuttle->findMount("covert_bay");
+    SOL_REQUIRE(covert != nullptr);
+    SOL_CHECK(covert->kind == sol::assets::MountKind::Subsystem);
+    // Internal, which `decisions/014` rule 2 decides by the ABSENCE of `at`.
+    SOL_CHECK(!covert->external);
 }
 
 // ⚑ EVERY SHIPPED FITTING STILL FITS THE HULL IT FITTED BEFORE MOUNTS. Stage
@@ -3667,6 +3686,17 @@ SOL_TEST(data_defs_ship_refuses_a_class_outside_the_bands_and_a_role_that_is_not
     // The word is in gdd.md 11.2 but it is the family's parenthetical, not its
     // name - which is exactly the mistake an author makes reading that table.
     SOL_CHECK(refused("role = \"economic\"\n", "not a hull role"));
+
+    // ⚑⚑⚑ AND A HULL NOBODY CAN HEAR IS NOT A COVERT HULL, IT IS THE
+    // INSPECTION MECHANIC SWITCHED OFF FROM A DATA FILE (Phase 36 stage E).
+    // `signature` multiplies a notice rate and divides a scan clock, so zero is
+    // "never stopped, and read in infinite time" and a negative is worse. It is
+    // refused at the DEF, where the author is told, rather than clamped at the
+    // consumer where they would never find out - which is the opposite call
+    // from the one the COMPONENT side takes, and deliberately so: a modifier
+    // composes with other modifiers and cannot be judged on its own.
+    SOL_CHECK(refused("signature = 0.0\n", "'signature' must be > 0"));
+    SOL_CHECK(refused("signature = -1.0\n", "'signature' must be > 0"));
 }
 
 // ⚑⚑⚑ THE SHIPPED CONTENT, AND IT IS OUT OF BAND ON PURPOSE - THIS TEST EXISTS

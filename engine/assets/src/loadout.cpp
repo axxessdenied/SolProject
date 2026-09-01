@@ -50,6 +50,8 @@ float statValue(const ShipDef& def, FitStat stat)
         return def.scanSpeed;
     case FitStat::CollectorRange:
         return def.collectorRange;
+    case FitStat::Signature:
+        return def.signature;
     case FitStat::Count:
         break;
     }
@@ -108,6 +110,9 @@ void setStatValue(ShipDef& def, FitStat stat, float value)
         return;
     case FitStat::CollectorRange:
         def.collectorRange = value;
+        return;
+    case FitStat::Signature:
+        def.signature = value;
         return;
     case FitStat::Count:
         break;

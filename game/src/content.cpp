@@ -670,6 +670,34 @@ std::string describeInspection(GameContent& content)
     return buffer;
 }
 
+// ⚑⚑ HOW LOUD THE SHIP IS AND WHAT THAT BUYS, IN THE UNITS THE PLAYER MEETS
+// (Phase 36 stage E). A bare multiplier is not a lever a drive can assert
+// against: the stat moves a per-second rate and a scan clock, and the second
+// one is the whole design, so this prints both in seconds and stops rather
+// than making a reader do the arithmetic the header does.
+std::string describeSignature(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const double quiet = static_cast<double>(world.signature());
+    const SpaceWorld::NoticeParams& notice = world.noticeParams();
+    const SpaceWorld::InspectionParams& stop = world.inspectionParams();
+    const double darkRate = notice.darkPerSecond * quiet;
+    char buffer[320] = {};
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "signature x%.2f%s\n"
+                  "  read in %.1f s against a %.0f s hold\n"
+                  "  dark: one look every %.0f s inside %.0f km; clean: every %.0f s",
+                  quiet,
+                  quiet <= static_cast<double>(SpaceWorld::kMinSignature) ? " (floor)" : "",
+                  stop.scanSeconds / quiet,
+                  stop.holdSeconds,
+                  darkRate > 0.0 ? 1.0 / darkRate : 0.0,
+                  notice.range / 1000.0,
+                  notice.cleanPerSecond * quiet > 0.0 ? 1.0 / (notice.cleanPerSecond * quiet) : 0.0);
+    return buffer;
+}
+
 // What the law under the player's feet says about what is actually in the hold
 // right now - judgement without a patrol, so a pilot can check before they fly
 // and a test can state the rule in one line.
@@ -4127,6 +4155,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&inspectionSeize>("sol", "inspection_seize", this);
     m_vm.registerFunction<&describeInspection>("sol", "inspection", this);
     m_vm.registerFunction<&describeHold>("sol", "hold", this);
+    m_vm.registerFunction<&describeSignature>("sol", "signature", this);
     m_vm.registerFunction<&grantDocking>("sol", "grant_docking", this);
     m_vm.registerFunction<&denyDocking>("sol", "deny_docking", this);
     // Pilot comms (Phase 8s). sol.hail_reply / sol.hail_tip_market /

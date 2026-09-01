@@ -282,6 +282,7 @@ add_executable(sol_game_tests
     test/inspection_tests.cpp
     test/notice_tests.cpp
     test/verdict_tests.cpp
+    test/countermeasure_tests.cpp
     test/station_lead_tests.cpp
     test/station_cast_tests.cpp
     test/station_composition_tests.cpp

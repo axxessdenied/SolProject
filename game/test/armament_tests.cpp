@@ -1939,9 +1939,17 @@ SOL_TEST(every_shipped_external_mount_carries_a_fitting_that_can_be_drawn)
             SOL_CHECK(authored);
         }
     }
-    // Eleven across the three hulls - a drive and two bays on the shuttle, two
+    // Ten across the three hulls - a drive and ONE bay on the shuttle, two
     // drives and a spine rack on the interceptor, a drive and four holds on the
     // freighter. The count is here so that a hull losing its mounts cannot pass
     // this by having nothing left to check.
-    SOL_CHECK(checked == 11);
+    //
+    // ⚑⚑ IT WAS ELEVEN UNTIL PHASE 36 STAGE E, AND THE DROP IS THE RULING.
+    // The shuttle's `bay_starboard` became an internal `covert_bay`, so it is
+    // no longer an external mount and is no longer counted here - the hull did
+    // not lose a mount, it lost a mount ON ITS SKIN. `017`'s "mounts that are
+    // not carrying guns; that trade is the design" is a sentence about a
+    // conversion, and this number going DOWN by exactly one is what says the
+    // conversion happened rather than a sixth mount being handed out.
+    SOL_CHECK(checked == 10);
 }

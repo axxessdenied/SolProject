@@ -178,6 +178,21 @@ void fillShipInfoPanel(const SpaceWorld& world,
                number(world.playerCargoTotal()) + " / " + number(world.playerCargoCapacity()) + " units")});
     utilityRows.push_back({"Scanner range", store(text, range(world.scanRange()))});
     utilityRows.push_back({"Collector range", store(text, range(world.collectorRange()))});
+    // ⚑⚑ THE ONLY ROW ON THIS SCREEN THAT IS BETTER LOW (Phase 36 stage E), so
+    // it says what it DOES rather than only what it is. A bare "0.50x" against
+    // a column of ranges and rates reads as half of something good; the detail
+    // is the two sentences the stat actually means, in the order a smuggler
+    // meets them. ⚑ The row is drawn at 1.00x too - "nobody has quietened this
+    // ship" is the answer a player needs before they go looking for kit, and a
+    // row that appeared only once you owned a dampener could not give it.
+    utilityRows.push_back({"Signature",
+                           store(text, "x" + number(world.signature(), 2)),
+                           store(text,
+                                 "noticed at x" + number(world.signature(), 2) + " rate, read in " +
+                                     number(static_cast<float>(world.inspectionParams().scanSeconds /
+                                                               static_cast<double>(world.signature())),
+                                            0) +
+                                     " s")});
 
     // --- Fit, walked in the hull's MOUNT order rather than the order things
     // were bought (Phase 31 stage B). The weapon no longer has to be printed

@@ -540,3 +540,83 @@ collector_range_mul = 3.0
     const ShipDef resolved = sol::assets::resolveLoadout(*ship, fit, {});
     SOL_CHECK(nearlyEqual(resolved.collectorRange, 750.0f));
 }
+
+// ⚑⚑ THE ONLY STAT IN THE VOCABULARY THAT IS BETTER LOW (engine plan Phase 36
+// stage E). It resolves through exactly the same two-step the other sixteen do
+// - adds sum onto the base, then muls multiply the result - which is the whole
+// point of it being a `FitStat` at all rather than a field somebody special-
+// cased into the inspection code.
+SOL_TEST(loadout_dampeners_move_signature_like_any_other_stat)
+{
+    constexpr const char* kCovertDefs = R"(
+[[ship]]
+id = "sol.smuggler"
+name = "Smuggler"
+signature = 0.8
+mass = 10000.0
+power_output = 8.0
+
+  [[ship.mount]]
+  id = "covert_a"
+  kind = "subsystem"
+  size = "small"
+
+  [[ship.mount]]
+  id = "covert_b"
+  kind = "subsystem"
+  size = "small"
+
+[[component]]
+id = "sol.dampener"
+name = "Dampener"
+mount = "subsystem"
+size = "small"
+price = 3200.0
+mass = 0.0
+power_draw = 2.0
+signature_mul = 0.5
+
+[[component]]
+id = "sol.loud_box"
+name = "Loud Box"
+mount = "subsystem"
+size = "small"
+price = 100.0
+mass = 0.0
+power_draw = 0.5
+signature_add = 1.0
+)";
+
+    DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(merge(db, kCovertDefs, "covert.toml", &error));
+
+    const ShipDef* ship = db.findShip("sol.smuggler");
+    const ComponentDef* dampener = db.findComponent("sol.dampener");
+    const ComponentDef* loud = db.findComponent("sol.loud_box");
+    SOL_REQUIRE(ship != nullptr && dampener != nullptr && loud != nullptr);
+
+    // ⚑⚑⚑ THE HULL IS 0.8 AND NOT 1.0, AND THAT IS THE WHOLE REASON THIS TEST
+    // CAN SEE THE READ SIDE. A base equal to the stat's identity value makes
+    // `statValue(def, Signature)` and `return 1.0f` the same function: the
+    // first cut of this test authored 1.0 and a mutation that replaced the read
+    // with a constant survived every assertion below. A test of a multiplier
+    // has to be given a base the multiplier can be distinguished from.
+    SOL_CHECK(nearlyEqual(ship->signature, 0.8f));
+
+    const FittedMount quiet[] = {at("covert_a", dampener)};
+    SOL_CHECK(nearlyEqual(sol::assets::resolveLoadout(*ship, quiet, {}).signature, 0.4f));
+
+    // Two of them multiply, which is what makes the game-side floor load-bearing
+    // rather than decorative: nothing in the def layer stops a fit stacking its
+    // way to silence, and `SpaceWorld::kMinSignature` is where that is refused.
+    const FittedMount quieter[] = {at("covert_a", dampener), at("covert_b", dampener)};
+    SOL_CHECK(nearlyEqual(sol::assets::resolveLoadout(*ship, quieter, {}).signature, 0.2f));
+
+    // ⚑ AND THE STAT RUNS BOTH WAYS. `signature_add` is the add half of the
+    // shared vocabulary and it makes a ship LOUDER - a hull that is worse at
+    // something is authorable here exactly as one that is better is, and the
+    // add lands before the mul the way every other stat's does: (0.8 + 1) * 0.5.
+    const FittedMount mixed[] = {at("covert_a", dampener), at("covert_b", loud)};
+    SOL_CHECK(nearlyEqual(sol::assets::resolveLoadout(*ship, mixed, {}).signature, 0.9f));
+}

@@ -93,11 +93,13 @@
 # The shuttle and interceptor carry FIVE mounts against gdd.md §11.1's class-1
 # budget of 2-4; the band is a SOFT contract, and stage A's warning measures
 # LENGTH rather than mount count, so this one is still only written down here.
-# And the freighter's `core_sensor` accepts NOTHING the base game ships: it is
-# the only `subsystem` mount in the file and `components.toml` has no
-# `subsystem` component, on purpose - the survey scanners stayed `utility` so
-# that the player's starting shuttle did not lose them. A mount waiting for
-# content is the honest state of it.
+# And the freighter's `core_sensor` WAS the only `subsystem` mount in the file
+# and accepted nothing the base game shipped - "a mount waiting for content is
+# the honest state of it". Phase 36 stage E is the content: `components.toml`
+# now has a covert family, and the shuttle carries a `covert_bay` of its own so
+# that the phase's exit can be flown in the hull the game opens in. The survey
+# scanners are still `utility`, which is now a choice about where a dish goes
+# rather than a hedge against the shuttle losing them.
 #
 # ⚑⚑ EVERY EXTERNAL MOUNT IS ON THE SKIN NOW, AND STAGE E2 IS WHAT FINISHED
 # THE JOB C1 STARTED. Until C1 nothing read `at`, so the stage-A2 positions were
@@ -159,6 +161,10 @@ crew_berths = 1
   # A class-1 hull with one gun and nothing spare: five smalls is the whole
   # budget, and the trade the player already makes - a cargo pod OR a scanner -
   # is the same trade with the mount named.
+  #
+  # ⚑ Since Phase 36 stage E that trade is THREE-WAY and one leg of it is not
+  # a utility mount at all: `bay_port` still takes a pod or a dish, and
+  # `covert_bay` takes the kit that keeps a patrol from reading either.
   # On the chin at the very tip of the wedge (the mesh's nose point is
   # 0, 0.3, -7.0), which is 1.6 m ahead of the seat rather than 2.6 m behind
   # it. Stage C1 made this position the muzzle.
@@ -192,12 +198,29 @@ crew_berths = 1
   at = [-1.3, -1.41, 0.6]
   aim = [0.0, -1.0, 0.0]
 
+  # ⚑⚑⚑⚑ THE SECOND HOLD BAY BECAME A COVERT BAY (Phase 36 stage E,
+  # the user's ruling of 2026-09-01), and the point of the ruling is that it is
+  # a CONVERSION and not a sixth mount. `017` says what the covert subsystem
+  # family is for in one sentence - "dampeners, spoofers, shielded holds and
+  # early-warning sensors are mounts that are not carrying guns. That trade is
+  # the design" - and a mount handed out for free is that sentence with the
+  # trade taken out of it. On this hull the trade is sharp and it is aimed at
+  # exactly the pilot the phase is about: quieten the ship and you give up a
+  # cargo pod, so the smuggler carries LESS of the thing they are smuggling.
+  #
+  # ⚑⚑ IT IS INTERNAL, WHICH IS WHY `at` AND `aim` ARE GONE RATHER THAN
+  # EDITED. `decisions/014` rule 2: an `at` PRESENT means external, drawn on
+  # the hull and shot at where it sits. A signature dampener is a box in the
+  # avionics bay, and the parser refuses an `aim` without an `at` - so the two
+  # keys the old pod row carried are not merely unused here, they would fail
+  # to load. It is still destructible; it is simply never aimed at.
+  #
+  # ⚑ The class-1 mount budget note at the top of this file is unaffected: the
+  # shuttle still carries five.
   [[ship.mount]]
-  id = "bay_starboard"
-  kind = "utility"
+  id = "covert_bay"
+  kind = "subsystem"
   size = "small"
-  at = [1.3, -1.41, 0.6]
-  aim = [0.0, -1.0, 0.0]
 
 [[ship]]
 id = "sol.interceptor"

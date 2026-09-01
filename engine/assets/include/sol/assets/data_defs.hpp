@@ -41,6 +41,13 @@ enum class FitStat : std::uint32_t
     ScanRange,      // Phase 8e: pulse/target-scan reach
     ScanSpeed,      // Phase 8e: target-scan progress rate
     CollectorRange, // Phase 8f: how far mined ore is drawn in from
+    // Phase 36 stage E: how loud this ship is to somebody else's sensors. The
+    // only stat here that is better LOW, and the first one that exists to be
+    // read by an NPC rather than by the player - which is why it has no unit:
+    // it is a multiplier on two things a patrol does, not a quantity the ship
+    // has. See `SpaceWorld::signature` for what it moves and why the two things
+    // it moves are those two and not the obvious third.
+    Signature,
     Count,
 };
 
@@ -424,6 +431,14 @@ struct ShipDef
     // has to fly in and scoop what it cut; a collector rig is what buys the
     // right to sit still and mine.
     float collectorRange = 120.0f; // meters
+    // ⚑⚑ HOW LOUD THIS HULL IS (engine plan Phase 36 stage E), and 1.0 is
+    // "ordinary" rather than "none": every stat above is a quantity a ship has
+    // and this is a RATIO against the hull nobody has tuned. It is authorable
+    // so that a covert hull can be quiet before a single component is bought -
+    // no shipped hull uses that, deliberately (Phase 32 ruling 11 left
+    // `HullRole` unread vocabulary and this phase ships covert COMPONENTS, not
+    // covert hulls), but the key is what makes the eventual family a data pass.
+    float signature = 1.0f;
     // Outfitting (engine plan Phase 8a): hull price, fitting budgets, slots.
     float price = 10'000.0f;
     float mass = 10'000.0f;    // kg; component mass dilutes accelerations

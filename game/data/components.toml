@@ -21,12 +21,13 @@
 # `medium` - which would make the freighter the only hull that can carry it -
 # is a real balance decision and it is NOT this file's to make quietly.
 #
-# ⚑ Two kinds this content will grow into and has not yet. `sol.armor_plating`
-# is `utility` rather than `armor`, and the survey scanners are `utility`
-# rather than `subsystem`, because no shipped hull has an `armor` mount and
-# only the freighter has a `subsystem` one - moving them would take kit off the
-# player's starting shuttle to make a taxonomy tidier. Phase 32 authors the
-# hulls that earn those kinds.
+# ⚑ ONE kind this content will grow into and has not yet, and it was two.
+# `sol.armor_plating` is `utility` rather than `armor` because no shipped hull
+# has an `armor` mount. The `subsystem` half of that note is spent: Phase 36
+# stage E converted the shuttle's `bay_starboard` into a `covert_bay` and
+# authored the family at the bottom of this file. The survey scanners stayed
+# `utility` anyway - moving THEM would have taken kit off the starting shuttle
+# to make a taxonomy tidier, which is the same reason as before.
 #
 # ⚑ Was `modules.toml` and `[[module]]` until Phase 31 stage A1. The word
 # `module` is now reserved for a station's, which is the noun it fits
@@ -45,7 +46,7 @@
 # for that reason - what is drawn is the mount's business, and a component that
 # declined to have a look would be one that could never be fitted externally.
 #
-# ⚑ THREE MESHES OVER TWELVE COMPONENTS, and the split is by what the kit IS
+# ⚑ THREE MESHES OVER SEVENTEEN COMPONENTS, and the split is by what the kit IS
 # rather than by what it costs. A Mk2 shares its Mk1's shape because a tier is a
 # stat line the player reads on a screen, not a silhouette they read across
 # space; a dish and a container differ because the freighter's five utility
@@ -237,3 +238,89 @@ price = 1500.0
 mass = 200.0
 power_draw = 2.0
 shield_regen_mul = 1.5
+
+# --- The covert family (Phase 36 stage E) ------------------------------------
+#
+# ⚑⚑⚑⚑ THE FIRST `subsystem` COMPONENTS IN THE GAME, AND THE HALF `017`
+# BOUGHT THE EXPENSIVE SHAPE FOR. That record rejected detection-and-
+# consequence-only because "with no stop to survive, a signature dampener is a
+# bigger number and nothing else" - so the phase built the stop first (stage C)
+# and the verdict second (stage D), and this is the kit that argues with both.
+# `signature` multiplies the rate a patrol takes an interest AND divides the
+# speed it can read your hold, against a 60 s grant that does not move: a
+# dampener does not hide you, it makes them run out of time.
+#
+# ⚑⚑ COVERT COMPONENTS, NOT COVERT HULLS, AND THE SPEC SAYS SO IN AS MANY
+# WORDS. Phase 32 ruling 11 left `HullRole` deliberately unread vocabulary and
+# nothing here changes that. `ShipDef::signature` is authorable so a covert
+# hull family can be quiet before a component is bought; no shipped hull uses
+# it, and the day one does it is a data pass rather than a phase.
+#
+# ⚑ WHY THESE ARE NOT `utility`. Every other fitting in this file is, because
+# no shipped hull had a `subsystem` mount worth the name (see ships.toml's own
+# note). Stage E converted the shuttle's `bay_starboard` into a `covert_bay`
+# for exactly this content, which is what makes the kind a real place rather
+# than a taxonomy: a dampener is not competing with a cargo pod for a hull's
+# skin, it is competing with it for the hull.
+#
+# ⚑ Models are named though a subsystem is NEVER DRAWN (`decisions/014` rule 2
+# - what is drawn is the mount's business, not the kit's). The file's rule is
+# that every component names a mesh it could be drawn as, so that one authored
+# externally on somebody's mod hull is a fitting and not a bare mount.
+
+[[component]]
+id = "sol.signature_dampener_mk1"
+name = "Signature Dampener Mk1"
+mount = "subsystem"
+size = "small"
+model = "pod"
+price = 3200.0
+mass = 300.0
+power_draw = 2.0
+signature_mul = 0.6
+
+# ⚑⚑ THE FLOOR IS 0.35 AND THIS IS IT, WHICH IS DELIBERATE AND IS NOT A
+# CEILING WORTH RAISING. `SpaceWorld::kMinSignature` clamps what any fit can
+# reach, because a signature of zero is the inspection mechanic switched off
+# from a data file. At 0.35 a dark ship inside a patrol's envelope is still
+# stopped - roughly every 95 s instead of every 33 - and the read takes 34 s
+# against a 60 s hold, so the stop is survivable rather than absent.
+#
+# ⚑ `min_rep` rather than a `factions` allowlist. Anyone will sell you a
+# dampener; not everyone will sell you the good one. A fence that stocks what
+# no lawful outfitter will is Phase 37's whole subject, and pre-empting it here
+# with a clan-only key would be this phase authoring that one's content.
+[[component]]
+id = "sol.signature_dampener_mk2"
+name = "Null Signature Suite"
+mount = "subsystem"
+size = "small"
+model = "pod"
+price = 11000.0
+mass = 520.0
+power_draw = 3.5
+signature_mul = 0.35
+min_rep = 25.0
+
+# ⚑⚑ THE THIRD LEG OF THE TRADE, AND IT MOVES NO NEW STAT. A `covert_bay` that
+# only ever held a dampener would be a slot with one right answer; this makes
+# the choice a real one for a pilot who does not smuggle - it is the survey
+# scanner's stat line moved indoors, so an explorer spends the same mount on
+# reaching further instead of on being read slower.
+#
+# ⚑ It is the "early-warning sensor" of `017`'s covert family, named for what
+# it does with the machinery this game has: a longer pulse is how you see a
+# picket before it sees you, and `NoticeParams::range` is 80 km against a pulse
+# measured in hundreds of thousands. Nothing new was needed for that to be
+# true, which is why it is data.
+[[component]]
+id = "sol.threat_scanner"
+name = "Threat Scanner"
+mount = "subsystem"
+size = "small"
+model = "dish"
+price = 2600.0
+mass = 260.0
+power_draw = 2.0
+scan_range_mul = 1.5
+scan_speed_mul = 1.2
