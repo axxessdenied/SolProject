@@ -125,6 +125,15 @@ public:
 
     void noteDockAnswered() { m_dockAnswered = true; }
 
+    // Whether an inspection_verdict hook is running right now (Phase 36 stage
+    // D), so the three answers can only ever rule on the stop they were called
+    // about - the same guard dockRequestStation() is, and for the same reason:
+    // a script that could seize its own cargo from on_tick would be a script
+    // that could seize somebody's cargo for no reason at all.
+    [[nodiscard]] bool judgingInspection() const { return m_judgingInspection; }
+
+    void noteVerdictAnswered() { m_verdictAnswered = true; }
+
     // What the house is saying at the dock the player is standing on (Phase 35
     // stage B), composed once per dock and read by the Bar tab's presenter.
     // Empty when undocked or when the station has no room.
@@ -318,6 +327,16 @@ private:
     bool m_dockAnswered = false;
     bool m_hasDockRequestHook = false;
     bool m_dockRequestHookFailed = false;
+    // Inspection verdict hook (Phase 36 stage D), and the same three-flag
+    // shape the docking pair above uses. A bool rather than an index because
+    // the thing being ruled on is not addressable: exactly one stop is ever in
+    // flight (SpaceWorld's own "one hold at a time" guarantee, which notice's
+    // cooldown is what actually enforces), so "is a ruling open" is the whole
+    // of the context a builder needs.
+    bool m_judgingInspection = false;
+    bool m_verdictAnswered = false;
+    bool m_hasVerdictHook = false;
+    bool m_verdictHookFailed = false;
     // Pilot comms hook (Phase 8s). No station index to hold here: whether a
     // hail is being answered is SpaceWorld::answeringHail(), which closes
     // itself on the first answer, so the "exactly one reply" rule and the

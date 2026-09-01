@@ -766,11 +766,39 @@ inline constexpr float kResponseSilenceBand = 0.08f;
     return std::abs(liveSecurity) >= kResponseSilenceBand;
 }
 
-// Why a responder was called. Phase 36 is where this grows a legal meaning; for
-// now it only distinguishes the two things that already happen in the world.
+// Why a responder was called, and since Phase 36 stage D the cause is READ
+// rather than accepted and ignored.
+//
+// ⚑⚑⚑ THE SPEC SAID "FIRED ON IS `respondTo` WITH A NEW CAUSE AND NOTHING
+// ELSE", AND CHECKING THAT IS WHAT SHAPED THE STAGE, BECAUSE IT IS FALSE.
+// `respondTo` dispatches hulls to a PLACE, in `PilotState::Travel`. What makes
+// any of them shoot the player is `pilotEngageEnemy`, and that only considers
+// the player when `playerHostile` - standing below `hostileThreshold`, -30. So
+// a dispatch with no standing behind it sends ships to fly to where you were
+// and then go back to their beat. Being fired on is a STANDING consequence
+// with a dispatch on top of it.
+//
+// ⚑⚑ AND THE OBVIOUS COROLLARY IS FALSE, WHICH MUTATION TESTING IS WHAT SAID
+// SO. The first version of this note claimed the standing had to be spent
+// BEFORE the dispatch or the arriving hulls would find nobody they had a
+// quarrel with. `respondTo` never consults standing at all - it reads the
+// system owner, the security rating and pilot states, and nothing else - and
+// what turns a diverted hull into a shooter is `pilotEngageEnemy` on its next
+// think, which is a later frame than either. Swapping the two lines is an
+// equivalent mutant, and a test was written that could not tell them apart.
+// The claim that survives is the one that matters: spend the standing at ALL,
+// because the dispatch on its own is a taxi service.
+//
+// ⚑⚑ AND THE CAUSE CHANGES WHAT A RESPONSE IS ALLOWED TO DO. Weapons fire is
+// somebody dying, so the law tops the answer up from the nearest station when
+// the local wing is short. A pilot who declined a paperwork check is not worth
+// launching hulls over: that one DIVERTS ONLY. Without the split, running from
+// a stop would materialise a wing out of nothing 600,000 km from anywhere,
+// which is the tax `017` warns about arriving through a side door.
 enum class ResponseCause : std::uint32_t
 {
     WeaponsFire = 0, // somebody shot somebody the local law protects
+    FledInspection,  // a stop was opened and the ship left instead of holding
 };
 
 // --- Ambient presence, as curves on the security baseline (Phase 30 stage B) --
@@ -1824,6 +1852,18 @@ public:
     {
         m_playerCredits = m_playerCredits + amount > 0.0 ? m_playerCredits + amount : 0.0;
     }
+
+    // Dev-console cheat and test lever (sol.add_cargo), clamped to the hold's
+    // free space; returns what actually went in. Negative takes units out.
+    //
+    // ⚑ IT EXISTS BECAUSE PHASE 36 STAGE D CANNOT BE REACHED WITHOUT IT.
+    // Every other road into `m_playerCargo` is a trade at a market, a mined
+    // rock or a salvaged wreck - so putting one crate of `sol.salvage` in the
+    // hold and flying it into Hegemony space, which is this phase's own exit
+    // criterion, is an hour of play or a lever. Stage A's sharpest lesson was
+    // that the live drive finds defects no test can, and that only holds if
+    // the drive can reach the thing it is meant to look at.
+    float addPlayerCargo(std::uint32_t commodity, float units);
 
     [[nodiscard]] float playerCargo(std::uint32_t commodity) const
     {
@@ -3061,6 +3101,111 @@ public:
 
     [[nodiscard]] bool heldForInspection() const { return m_inspection.patrolIndex != kNoIndex; }
 
+    // --- The verdict (Phase 36 stage D) ------------------------------------
+    //
+    // ⚑⚑⚑⚑ JUDGEMENT IS A FUNCTION CALL AND CONSEQUENCE IS THE STAGE, WHICH
+    // IS THE ONE THING THE SPEC GOT EXACTLY RIGHT ABOUT THIS STAGE. Phase 33
+    // stage D shipped `commodityLegality`, `jurisdictionOf` and a validated
+    // table on every faction def eleven days before this phase was written, so
+    // "what is in the hold and who objects to it" is one walk of
+    // `m_playerCargo` against a function that already exists. What was never
+    // built is what HAPPENS next, and that is everything below.
+    enum class InspectionVerdict : std::uint32_t
+    {
+        None = 0,
+        Clean,   // a table was consulted and nothing in the hold is on it
+        NoLaw,   // the holder keeps no table: stopped by somebody with nothing to charge you with
+        Duty,    // restricted goods: licensed, so it is a bill and the hold stays yours
+        Seizure, // contraband: taken, priced, and remembered
+        Fled,    // the hold never reached a verdict, and leaving is its own offence
+    };
+
+    [[nodiscard]] static const char* inspectionVerdictName(InspectionVerdict verdict);
+
+    // What one walk of the hold found. `worst` is the highest legality any
+    // non-zero entry answered; `commodity` names the first entry that answered
+    // it, in commodity order, so a stop's sentence is stable across frames;
+    // `units` is how much of that tier is aboard in TOTAL, because a fine on
+    // one crate of a hold carrying five is a fine somebody would take.
+    struct HoldJudgement
+    {
+        sol::assets::Legality worst = sol::assets::Legality::Legal;
+        std::uint32_t commodity = kNoIndex;
+        float units = 0.0f;
+        double value = 0.0; // base-price worth of those units
+        // ⚑⚑ WITHOUT THIS, "YOUR HOLD IS CLEAN" AND "WE HAVE NO OPINION ABOUT
+        // YOUR HOLD" ARE THE SAME ANSWER, AND THEY ARE THE TWO HALVES OF WHAT
+        // THIS PHASE IS ABOUT. `factionLegalityOf` returns `Legal` both for a
+        // good a jurisdiction has considered and permitted and for one it has
+        // never thought about, because a faction with no table has no way to
+        // say either. The Freight Guild holds 25 of 85 systems and declares
+        // nothing illegal, so this distinction covers a quarter of the galaxy.
+        bool holderHasTable = false;
+    };
+
+    // ⚑ PUBLIC AND CONST, so a test can state what the law says about a hold
+    // without opening a stop and the console can print it. The jurisdiction is
+    // whoever holds the system RIGHT NOW - Phase 33 stage D's ruling, and the
+    // reason you can clear a gate legal and reach the station a criminal with
+    // nothing in the hold having moved.
+    [[nodiscard]] HoldJudgement judgeHold() const;
+
+    // ⚑⚑⚑⚑ THE PRICES, WHICH ARE THE USER'S THREE STAGE-D RULINGS
+    // (2026-09-01) WRITTEN AS NUMBERS.
+    //
+    //   1. CONTRABAND: TAKE IT, POST A PRICE, DO NOT SHOOT. The crate is
+    //      seized, a bounty goes up with that faction, standing is spent - and
+    //      `contrabandStanding` is set so one stop can never cross the hostile
+    //      threshold on its own. See the note on it: the ladder is real and
+    //      nothing here authors it.
+    //   2. RUNNING IS THE CRIME; LAPSING IS NOT. Leaving the envelope is an
+    //      offence whatever was aboard, because fleeing tells them everything.
+    //      A hold that timed out because the patrol never closed costs nothing:
+    //      from their side they simply lost you, and stage C measured that the
+    //      only pilots who CAN lapse are the ones spotted from 20 km out.
+    //   3. RESTRICTED IS A BILL, NOT A SEIZURE. `Legality::Restricted`'s own
+    //      comment is "licensed: carriable, and a patrol will want papers" -
+    //      and there is no licence anywhere in this game to want. So a patrol
+    //      charges duty on it instead: credits only, hold intact, nothing
+    //      posted and nothing remembered.
+    struct VerdictParams
+    {
+        // Of the goods' base value, charged on restricted cargo. A FRACTION
+        // rather than a per-unit fee because the shipped galaxy's two
+        // restricted goods are worth 64 and 11 credits a unit: one flat number
+        // is a formality on hull plate and worse than confiscation on salvage.
+        float dutyRate = 0.30f;
+        // Credits posted per unit of contraband seized, with a floor so a
+        // single crate still puts a price on you. Deliberately NOT derived
+        // from what the goods are worth: a jurisdiction posts a price for the
+        // OFFENCE, and salvage being cheap is not a reason to overlook it.
+        float bountyPerUnit = 25.0f;
+        float bountyFloor = 250.0f;
+        // What running costs, flat. One offence, and the hold it was hiding is
+        // exactly what nobody got to look at.
+        float fledBounty = 400.0f;
+        // ⚑⚑⚑⚑ THE LADDER IS EMERGENT, NOT AUTHORED, AND THESE TWO NUMBERS
+        // ARE THE WHOLE OF IT. Player standing NEVER DRIFTS - `FactionSim`
+        // touches `m_standings` only from an explicit call, so nothing here is
+        // forgiven by waiting - a major starts you at 0 and `hostileThreshold`
+        // is -30. So the THIRD seizure puts you under it, and at that point
+        // `beginInspection` refuses to open a stop at all (stage C's "a faction
+        // already shooting at you does not check your papers") while
+        // `pilotEngageEnemy` starts picking you as a target. The fourth crate
+        // is not inspected. It is met. Nothing in this file says that; it falls
+        // out of two numbers that were already here.
+        //
+        // ⚑ And the way back is trade, at `commerceRate` 0.001 standing per
+        // credit: 12 points of standing is 12,000 credits of honest business,
+        // which is the phase's answer to "can I ever fly here again".
+        float contrabandStanding = -12.0f;
+        float fledStanding = -8.0f;
+    };
+
+    [[nodiscard]] const VerdictParams& verdictParams() const { return m_verdictParams; }
+
+    void setVerdictParams(const VerdictParams& params) { m_verdictParams = params; }
+
     // What the last stop came to, and how many of each there have been. The
     // probe's half of the stage: an outcome nobody can count is an outcome
     // nobody can tune.
@@ -3074,6 +3219,15 @@ public:
         std::uint32_t opened = 0;
         std::uint32_t complied = 0;
         std::uint32_t ran = 0;
+        // Phase 36 stage D: what it came to and what it cost. Zero on every
+        // one of these is a real answer rather than a missing one - it is
+        // precisely what a clean hold in front of an honest patrol looks like.
+        InspectionVerdict verdict = InspectionVerdict::None;
+        double creditsTaken = 0.0;
+        float unitsSeized = 0.0f;
+        float bountyPosted = 0.0f;
+        float standingSpent = 0.0f;
+        std::uint32_t seizures = 0; // this session
     };
 
     [[nodiscard]] const InspectionReport& lastInspection() const { return m_lastInspection; }
@@ -3089,6 +3243,64 @@ public:
     // Ends whatever is in flight, says why, and records the outcome. Safe to
     // call with no hold.
     void endInspection(InspectionOutcome outcome, const char* reason);
+
+    // --- The verdict hook (Phase 36 stage D) -------------------------------
+    //
+    // ⚑⚑ STAGE C HELD THE HOOK BACK ON PURPOSE - "the demand is one sentence
+    // with no policy in it" - and this is the stage where there is finally a
+    // decision worth authoring. The shape is `dock_request`'s, verbatim,
+    // because it is the shape every hook in this game that answers a player
+    // action already uses: the WORLD decides what was found and queues it,
+    // `GameContent` drains the queue and asks `inspection_verdict` what to do
+    // about it, and the three answers below validate what comes back. A mod
+    // can write a Navy that fines where the Hegemony seizes, or a station whose
+    // patrols wave a friend through, without touching a line of C++ - and the
+    // scriptless default enforces the same law with no scripts loaded at all.
+    //
+    // ⚑ Queued only for `Complied` and `Ran`. `Lapsed` and `Lost` reach no
+    // verdict by construction: nobody read the hold, so there is nothing to
+    // rule on, which is ruling 2 ("running is the crime; lapsing is not")
+    // being a fact about the queue rather than a branch inside it.
+    struct PendingVerdict
+    {
+        std::uint32_t factionIndex = kNoIndex;
+        NoticeReason reason = NoticeReason::None;
+        InspectionOutcome outcome = InspectionOutcome::None;
+        HoldJudgement found;
+        double roll = 0.0; // the hook's only entropy, as dock_request's is
+    };
+
+    [[nodiscard]] bool takeInspectionVerdict(PendingVerdict& out);
+
+    // The three answers, exactly one of which a hook should call.
+    //
+    // ⚑⚑ `inspectionSeize` SPENDS THE STANDING AND THE OTHER TWO DO NOT, AND
+    // THAT IS NOT SCRIPTABLE ON PURPOSE. The standing cost is the whole ladder
+    // - three seizures is what stops you being inspected and starts you being
+    // shot at - so a hook that could pass its own number could enforce the law
+    // in words while deleting its teeth, and the difference would be invisible
+    // from the cockpit. Credits and the posted price are policy; what a
+    // faction THINKS of a smuggler is a consequence.
+    void inspectionPass(const std::string& message);
+    // Capped at what the player actually has: a duty is a transaction, and a
+    // transaction against an empty account is an empty account. Deliberately
+    // no debt and no fallback seizure - ruling 3 says the hold stays yours.
+    void inspectionFine(double credits, const std::string& message);
+    // Takes every commodity the local table calls contraband, posts `bounty`,
+    // and spends `contrabandStanding`. On a `Ran` outcome it takes nothing -
+    // a patrol cannot lift a crate off a ship that is not there - so the same
+    // answer means "post the price and remember it" for a runner.
+    void inspectionSeize(double bounty, const std::string& message);
+
+    // ⚑⚑ THE SCRIPTLESS HALF, AND IT LIVES HERE RATHER THAN IN `GameContent`
+    // WHERE `dock_request`'s DEFAULT DOES. That one is four interchangeable
+    // integers and a refusal; this one is the phase's whole price list, and
+    // the numbers are in `VerdictParams` two screens up. Splitting the law
+    // from its prices to match another hook's file layout would be tidiness
+    // buying nothing. ⚑ It exists at all for stage A's reason: a rule that
+    // lives only inside `init.lua` vanishes the moment somebody's script
+    // errors, and this is the rule the phase is for.
+    void applyDefaultVerdict(const PendingVerdict& pending);
 
     // What state a pilot is in. Small, but it is what lets a test state the
     // difference between `pilotPatrolTo` and `pilotTravelTo` in one line -
@@ -3421,6 +3633,22 @@ private:
     // Who is doing the stopping, for the four lines that name them. The
     // faction's display name, or "Patrol" for an unaffiliated console spawn.
     [[nodiscard]] std::string inspectorName() const;
+    // Queues a stop's outcome for the verdict hook (Phase 36 stage D). Called
+    // from `endInspection` for `Complied` and `Ran` and from nowhere else, so
+    // the two outcomes nobody read a hold for cannot reach a ruling.
+    void queueVerdict(InspectionOutcome outcome);
+    // Empties every hold entry the local table calls contraband. Returns the
+    // units taken. The only writer of `m_playerCargo` in the game that is
+    // neither a trade, a take, nor death.
+    float seizeContraband();
+    // Records what an answer came to, says the line, and closes the ruling.
+    // One choke point so `m_lastInspection` cannot be written three ways.
+    void settleVerdict(InspectionVerdict verdict,
+                       double credits,
+                       float units,
+                       float bounty,
+                       float standing,
+                       const std::string& message);
     // Arms a jump when the player's path this tick went through a gate's
     // opening (Phase 8v/8w). The sibling of tickDocking's berth arrival test.
     void tickGateCrossing();
@@ -3890,6 +4118,18 @@ private:
     InspectionHold m_inspection;
     InspectionParams m_inspectionParams;
     InspectionReport m_lastInspection;
+    // The verdict (Phase 36 stage D). Transient for the same reason the hold
+    // above it is: a ruling in flight lasts one frame, and the consequences it
+    // hands out - credits, cargo, a bounty, standing - are all saved already by
+    // whoever owns them.
+    VerdictParams m_verdictParams;
+    PendingVerdict m_pendingVerdict;
+    bool m_hasPendingVerdict = false;
+    // Which faction the answer applies to, latched while a ruling is pending
+    // so the three answer functions cannot be aimed at somebody else by a hook
+    // that calls one out of turn. kNoIndex means "no ruling is open", and all
+    // three answers refuse on it.
+    std::uint32_t m_verdictFaction = kNoIndex;
     // Throttles "you are not cleared to run" so a held finger on the cruise key
     // does not fill the panel. Same shape as `m_berthRefusalTimer`, which
     // exists because a refusal that only reaches the log is not a refusal.

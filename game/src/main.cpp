@@ -1369,6 +1369,7 @@ int main(int argc, char** argv)
         hud.heldForInspection = world.heldForInspection();
         hud.inspectionDriveLocked = world.driveLockedByInspection();
         hud.inspectionProgress = world.inspection().scanProgress;
+        hud.wanted = world.factionSim().wanted();
         hud.commandLabel = game::commandModeChip(world.commandMode());
         switch (cameraMode) {
         case game::CameraMode::Cockpit:

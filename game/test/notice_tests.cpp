@@ -98,6 +98,43 @@ std::uint32_t stopsOver(game::SpaceWorld& world, int minutes)
     return world.lastNotice().count - before;
 }
 
+// The same, but counting WHY (Phase 36 stage D). A count alone cannot tell a
+// jurisdiction that stopped you for your transponder from one that stopped you
+// because a checkpoint checks people, and after stage D that difference is the
+// whole rule in table-less space.
+struct StopTally
+{
+    std::uint32_t total = 0;
+    std::uint32_t random = 0;
+    std::uint32_t dark = 0;
+    std::uint32_t wanted = 0;
+};
+
+StopTally tallyOver(game::SpaceWorld& world, int minutes)
+{
+    StopTally out;
+    constexpr double kStep = 1.0 / 60.0;
+    for (int i = 0; i < minutes * 60 * 60; ++i) {
+        switch (world.considerNotice(kStep)) {
+        case Notice::RandomCheck:
+            ++out.random;
+            ++out.total;
+            break;
+        case Notice::Dark:
+            ++out.dark;
+            ++out.total;
+            break;
+        case Notice::Wanted:
+            ++out.wanted;
+            ++out.total;
+            break;
+        case Notice::None:
+            break;
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 // ⚑⚑⚑⚑ BOTH POSTURES EXIST AND NEITHER EMPTIED THE OTHER. The station keeps at
@@ -196,13 +233,26 @@ SOL_TEST(a_picket_holds_its_gate_and_not_the_station)
     SOL_CHECK(sawGate); // anti-vacuity: a gate posture existed to be re-aimed
 }
 
-// ⚑⚑⚑⚑ WHERE THE LAW HAS NOTHING TO SAY, NOBODY IS STOPPED. Measured: only 26
-// of 85 systems are held by a faction with a non-empty table. The Freight Guild
-// holds 25 and declares nothing illegal, and 29 more are clan-held. Stopping a
-// pilot for a jurisdiction that cannot charge them with anything is exactly the
-// tax `017` names, so it does not happen — and this is the half of the balance
-// that a frequency test alone would miss entirely.
-SOL_TEST(a_jurisdiction_with_no_table_does_not_stop_anybody)
+// ⚑⚑⚑⚑ WHERE THE LAW HAS NOTHING TO SAY IT STILL CHECKS PAPERS, BUT NEVER
+// FOR A TRANSPONDER — AND THIS TEST IS A STAGE-B RULING NARROWED BY STAGE D
+// RATHER THAN A NEW ONE. Stage B refused EVERY stop a table-less jurisdiction
+// could make, on the argument that stopping a pilot nobody can charge with
+// anything is exactly the tax `017` names, and it proved it by parking a DARK
+// pilot on a patrol for thirty minutes and asserting zero. That measurement is
+// against the 0.03/s dark rate. The tax argument is about the ESCALATION, not
+// about the stop existing: a random check is 0.0008/s, 37 times rarer.
+//
+// ⚑⚑⚑ AND THE PHASE'S OWN EXIT CRITERION NEEDS THE STOP THAT STAGE B REFUSED —
+// "be stopped by somebody with nothing to charge you with" — which no lever in
+// the game could reach. Not through notice, and not through `sol.inspect_me()`
+// either: clan systems field RAIDERS, not patrols (`spawnAmbientPilots`
+// branches on `faction.pirate`), and every road to a stop requires
+// `PilotRole::Patrol`. The Freight Guild is what makes it flyable: 25 of 85
+// systems, real patrols, and no table at all.
+//
+// So: papers, yes. Transponder, no. And a posted price is checked ANYWHERE,
+// because a bounty is that faction's own money rather than its cargo law.
+SOL_TEST(a_jurisdiction_with_no_table_checks_papers_but_never_a_transponder)
 {
     Galaxy g;
     const std::uint32_t tableless = g.tablelessSystem();
@@ -211,12 +261,37 @@ SOL_TEST(a_jurisdiction_with_no_table_does_not_stop_anybody)
 
     std::vector<Post> posts;
     g.world.patrolPosts(posts);
-    SOL_REQUIRE(!posts.empty()); // there ARE patrols here; they just do not ask
+    SOL_REQUIRE(!posts.empty()); // there ARE patrols here, and now they do ask
     SOL_REQUIRE(g.world.warpTo(posts[0].post, 2'000.0));
     SOL_REQUIRE(g.world.setTransponder(false)); // the loudest a pilot can be
     g.world.clearNoticeCooldown();
 
-    SOL_CHECK(stopsOver(g.world, 30) == 0);
+    // Two hours dark on top of a patrol who has no law to enforce.
+    const StopTally dark = tallyOver(g.world, 120);
+    SOL_CHECK(dark.dark == 0);   // THE RULE: the transponder is not their business
+    SOL_CHECK(dark.wanted == 0); // nobody has posted anything on this pilot
+    SOL_CHECK(dark.random > 0);  // anti-vacuity: the mechanic exists here at all
+    // ⚑ The rate is the CLEAN one, and the ceiling is what says so. The 90 s
+    // cooldown caps two hours near 80; the dark rate would fill it. Anything
+    // under a couple of dozen is the 0.0008/s pass.
+    SOL_CHECK(dark.random < 24);
+
+    // ⚑⚑ THE CONTROL, AND WITHOUT IT THE CEILING ABOVE PROVES NOTHING: the same
+    // ship, the same two hours, the same 2 km, in a system whose holder DOES
+    // keep a table. If that one is not far busier, the ceiling was measuring a
+    // notice rule that had stopped working rather than a jurisdiction with no
+    // opinion.
+    const std::uint32_t lawful = g.lawfulSystem();
+    SOL_REQUIRE(lawful != 0xffff'ffffu);
+    SOL_REQUIRE(g.world.enterSystem(lawful));
+    g.world.patrolPosts(posts);
+    SOL_REQUIRE(!posts.empty());
+    SOL_REQUIRE(g.world.warpTo(posts[0].post, 2'000.0));
+    g.world.clearNoticeCooldown();
+
+    const StopTally policed = tallyOver(g.world, 120);
+    SOL_CHECK(policed.dark > 0);
+    SOL_CHECK(policed.total > dark.total * 3);
 }
 
 // ⚑⚑⚑⚑ THE PHASE'S WHOLE BALANCE, AND BOTH HALVES ARE REQUIREMENTS. `017`:

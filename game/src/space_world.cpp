@@ -8345,7 +8345,15 @@ namespace {
 
 std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offenderIndex, ResponseCause cause)
 {
-    (void)cause; // one cause so far; Phase 36 is where this branches
+    // ⚑⚑ THE CAUSE IS READ SINCE PHASE 36 STAGE D, AND WHAT IT DECIDES IS
+    // WHETHER THE LAW IS ALLOWED TO CONJURE HULLS. Weapons fire is somebody
+    // dying, so a short-handed garrison tops itself up from the nearest
+    // station - that is step 2 below and it exists because a raided system's
+    // reach shrinks. A pilot who declined a paperwork check is not worth
+    // launching a wing over: that dispatch DIVERTS ONLY. Without the split,
+    // running from a stop would materialise ships out of nothing at the far
+    // end of a 600,000 km lane, which is `017`'s tax arriving by a side door.
+    const bool topUp = cause == ResponseCause::WeaponsFire;
     m_lastResponse = ResponseReport{};
     const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
     if (owner >= m_factionTable.size() || m_defs == nullptr) {
@@ -8424,7 +8432,7 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
                      reach / 1000.0,
                      candidates.front().distance / 1000.0);
     }
-    if (m_lastResponse.diverted >= wanted) {
+    if (m_lastResponse.diverted >= wanted || !topUp) {
         return m_lastResponse.diverted;
     }
 
@@ -8521,10 +8529,24 @@ SpaceWorld::NoticeReason SpaceWorld::considerNotice(double dt)
     if (owner >= m_factionTable.size()) {
         return NoticeReason::None;
     }
+    // ⚑⚑⚑⚑ A HOLDER IS REQUIRED; A TABLE IS NOT, AND THAT IS PHASE 36 STAGE D
+    // NARROWING A STAGE B RULING RATHER THAN REVERSING IT. Stage B refused
+    // every stop a table-less jurisdiction could make, on the sound argument
+    // that stopping a pilot nobody can charge with anything is exactly the tax
+    // `017` names - and its test proved it by parking a DARK pilot on a patrol
+    // for thirty minutes. That is the 0.03/s rate. The tax argument is about
+    // the ESCALATION, not about the stop existing: a random check is 0.0008/s,
+    // 37 times rarer, and it is the only way the phase's own exit criterion -
+    // "be stopped by somebody with nothing to charge you with" - can ever be
+    // flown. The Freight Guild holds 25 of 85 systems and declares no law.
+    //
+    // ⚑ Nobody at all still means nobody: `law == nullptr` is a system no
+    // faction holds, and there is no one there to ask.
     const assets::FactionDef* law = jurisdictionOf(m_currentSystem);
-    if (law == nullptr || (law->contraband.empty() && law->restricted.empty())) {
+    if (law == nullptr) {
         return NoticeReason::None;
     }
+    const bool hasTable = !law->contraband.empty() || !law->restricted.empty();
     // ⚑ And the place has to be policed at all. `securityAnswers` is Phase 30's
     // silence band, read here rather than re-derived: a system whose live rating
     // has been ground to nothing by raiding is one where nobody is checking
@@ -8545,7 +8567,14 @@ SpaceWorld::NoticeReason SpaceWorld::considerNotice(double dt)
     // different game rather than a busier one.
     NoticeReason reason = NoticeReason::RandomCheck;
     double perSecond = m_noticeParams.cleanPerSecond;
-    if (runningDark()) {
+    // ⚑⚑ A TRANSPONDER CHECK IS A LAW CHECK, AND A POSTED PRICE IS NOT. A
+    // jurisdiction with no table has no opinion about who you say you are -
+    // which is why `hasTable` gates `Dark` and deliberately does not gate
+    // `Wanted`: a bounty is that faction's OWN money, and the Guild will stop
+    // a pilot it has put a price on whatever its cargo law says. (A station
+    // still refuses a dark ship a berth anywhere, stage A - docking is
+    // consent, and patrolling is law. They are different questions.)
+    if (runningDark() && hasTable) {
         reason = NoticeReason::Dark;
         perSecond = m_noticeParams.darkPerSecond;
     } else if (m_factionSim.bounty(owner) > 0.0f) {
@@ -8621,6 +8650,25 @@ const char* SpaceWorld::inspectionOutcomeName(InspectionOutcome outcome)
     return "none";
 }
 
+const char* SpaceWorld::inspectionVerdictName(InspectionVerdict verdict)
+{
+    switch (verdict) {
+    case InspectionVerdict::Clean:
+        return "clean";
+    case InspectionVerdict::NoLaw:
+        return "no law";
+    case InspectionVerdict::Duty:
+        return "duty";
+    case InspectionVerdict::Seizure:
+        return "seizure";
+    case InspectionVerdict::Fled:
+        return "fled";
+    case InspectionVerdict::None:
+        break;
+    }
+    return "none";
+}
+
 std::string SpaceWorld::inspectorName() const
 {
     return m_inspection.factionIndex < m_factionTable.size() ? m_factionTable[m_inspection.factionIndex].name
@@ -8646,11 +8694,30 @@ bool SpaceWorld::beginInspection(std::uint32_t patrolIndex, NoticeReason reason)
     if (pilot->factionIndex < m_factionTable.size() && m_factionSim.playerHostile(pilot->factionIndex)) {
         return false;
     }
+    // ⚑⚑⚑⚑ A STOP CANNOT BE OPENED FROM OUTSIDE THE ENVELOPE, AND THE LIVE
+    // DRIVE IS WHAT FOUND THAT THIS NEEDED SAYING HERE. `considerNotice` has
+    // always required the patrol to be within `range`, so the ordinary road
+    // could not do it - but `sol.inspect_me()` picks the NEAREST patrol with
+    // no range test of its own, and in a system whose nearest hull is a gate
+    // picket that is 600,000 km. The hold opened and `tickInspection` ended it
+    // as `Ran` on the very next frame, at 0% progress.
+    //
+    // ⚑⚑⚑ HARMLESS UNTIL STAGE D, AND A REAL BUG THE MOMENT RUNNING HAD A
+    // PRICE: the drive was charged 400 credits of bounty and 8 standing for
+    // fleeing a patrol that was never within a hundred thousand kilometres of
+    // it. So the check goes at the CHOKE POINT rather than in the lever -
+    // every road in, scripted or not, now refuses a stop nobody could have
+    // complied with, which is the same "put the rule where it cannot be gone
+    // around" argument stage A's dark refusal was written under.
+    const Transform* patrolNow = m_registry.storage<Transform>().tryGet(patrolIndex);
+    const Transform* playerNow = m_registry.storage<Transform>().tryGet(playerEntityIndex());
+    if (patrolNow == nullptr || playerNow == nullptr ||
+        length(patrolNow->position - playerNow->position) > m_noticeParams.range) {
+        return false;
+    }
     pilot->state = PilotState::Inspect;
     pilot->targetIndex = playerEntityIndex();
     pilot->hasTarget = 1;
-    const Transform* patrolAt = m_registry.storage<Transform>().tryGet(patrolIndex);
-    const Transform* playerAt = m_registry.storage<Transform>().tryGet(playerEntityIndex());
     m_inspection = {.patrolIndex = patrolIndex,
                     .factionIndex = pilot->factionIndex,
                     .reason = reason,
@@ -8659,9 +8726,7 @@ bool SpaceWorld::beginInspection(std::uint32_t patrolIndex, NoticeReason reason)
                     // Seeded here rather than left at zero, or the drive would
                     // read as locked for the one frame before `tickInspection`
                     // first runs - which at 5,500 km/s is not a rounding error.
-                    .distance = patrolAt != nullptr && playerAt != nullptr
-                                    ? length(patrolAt->position - playerAt->position)
-                                    : m_noticeParams.range};
+                    .distance = length(patrolNow->position - playerNow->position)};
     ++m_lastInspection.opened;
 
     // ⚑ THE DEMAND, AND IT SAYS WHY. Stage B spoke one line for all three
@@ -8715,7 +8780,20 @@ void SpaceWorld::endInspection(InspectionOutcome outcome, const char* reason)
                         .opened = m_lastInspection.opened,
                         .complied =
                             m_lastInspection.complied + (outcome == InspectionOutcome::Complied ? 1u : 0u),
-                        .ran = m_lastInspection.ran + (outcome == InspectionOutcome::Ran ? 1u : 0u)};
+                        .ran = m_lastInspection.ran + (outcome == InspectionOutcome::Ran ? 1u : 0u),
+                        // ⚑ The verdict fields are left at their defaults on
+                        // purpose: this stop has not been ruled on yet, and the
+                        // ruling lands next frame through the hook. What must
+                        // NOT reset is the session tally beside them - a
+                        // designated initialiser writes every field, so an
+                        // omitted `seizures` would silently zero the count the
+                        // moment a clean pilot was waved through once.
+                        .seizures = m_lastInspection.seizures};
+    // ⚑⚑ QUEUED BEFORE THE HOLD IS CLEARED, because the ruling is about who
+    // stopped you and why, and both of those live on the record that is about
+    // to be thrown away. Phase 35 stage D's rule - record the fact where the
+    // thing that invalidates it happens - applied rather than rediscovered.
+    queueVerdict(outcome);
     m_inspection = InspectionHold{};
     m_holdRefusalTimer = 0.0;
     // ⚑⚑ THE COOLDOWN STARTS WHEN THE STOP ENDS, NOT WHEN IT OPENED. A hold can
@@ -8821,6 +8899,266 @@ void SpaceWorld::tickInspection(double dt)
         // be asked it - see the phase spec's "judgement is a function call".
         endInspection(InspectionOutcome::Complied, "Scan complete. On your way.");
     }
+}
+
+float SpaceWorld::addPlayerCargo(std::uint32_t commodity, float units)
+{
+    if (commodity >= m_playerCargo.size()) {
+        return 0.0f;
+    }
+    const float moved = units >= 0.0f ? std::min(units, m_playerCargoCapacity - playerCargoTotal())
+                                      : std::max(units, -m_playerCargo[commodity]);
+    m_playerCargo[commodity] += moved;
+    return moved;
+}
+
+SpaceWorld::HoldJudgement SpaceWorld::judgeHold() const
+{
+    HoldJudgement found;
+    const assets::FactionDef* law = jurisdictionOf(m_currentSystem);
+    if (law == nullptr) {
+        // Nobody holds this place at all. In the shipped galaxy that is
+        // exactly one dock (`sol.lantern`, the authored lawless system), and
+        // it is a different answer from "the holder has no opinion" below.
+        found.worst = assets::Legality::Unpoliced;
+        return found;
+    }
+    found.holderHasTable = !law->contraband.empty() || !law->restricted.empty();
+
+    const std::vector<sim::EconomyCommodity>& priced = m_economy.params().commodities;
+    for (std::uint32_t c = 0; c < static_cast<std::uint32_t>(m_playerCargo.size()); ++c) {
+        const float units = m_playerCargo[c];
+        if (units <= 0.0f) {
+            continue;
+        }
+        // ⚑ The jurisdiction that holds the system RIGHT NOW, which is Phase 33
+        // stage D's ruling and not an approximation: `commodityLegality` reads
+        // `systemOwnerFaction` rather than the founding claim, so a border that
+        // moved while you were in the lane moves the law with it. You can clear
+        // a gate legal and be read as a criminal at the station without a crate
+        // in the hold having moved.
+        const assets::Legality verdict = commodityLegality(m_currentSystem, c);
+        const double worth =
+            static_cast<double>(units) * (c < priced.size() ? static_cast<double>(priced[c].basePrice) : 0.0);
+        if (verdict > found.worst) {
+            found.worst = verdict;
+            found.commodity = c;
+            found.units = units;
+            found.value = worth;
+        } else if (verdict == found.worst && found.commodity != kNoIndex) {
+            // Same tier, so it is the same offence: a fine on one crate of a
+            // hold carrying five is a fine somebody would happily take.
+            found.units += units;
+            found.value += worth;
+        }
+    }
+    return found;
+}
+
+float SpaceWorld::seizeContraband()
+{
+    float taken = 0.0f;
+    for (std::uint32_t c = 0; c < static_cast<std::uint32_t>(m_playerCargo.size()); ++c) {
+        if (m_playerCargo[c] <= 0.0f ||
+            commodityLegality(m_currentSystem, c) != assets::Legality::Contraband) {
+            continue;
+        }
+        taken += m_playerCargo[c];
+        m_playerCargo[c] = 0.0f;
+    }
+    return taken;
+}
+
+void SpaceWorld::queueVerdict(InspectionOutcome outcome)
+{
+    // ⚑⚑ ONLY THE TWO OUTCOMES SOMEBODY READ A HOLD FOR, AND THAT IS THE
+    // USER'S SECOND RULING EXPRESSED AS A QUEUE RATHER THAN AS A BRANCH.
+    // `Lapsed` is the patrol that never closed and `Lost` is the patrol that
+    // found something better to do; in neither case did anyone look at
+    // anything, so there is nothing to rule on and no line to say. Writing it
+    // here rather than inside the ruling means no future answer can charge for
+    // a scan that never happened.
+    if (outcome != InspectionOutcome::Complied && outcome != InspectionOutcome::Ran) {
+        return;
+    }
+    m_pendingVerdict = {.factionIndex = m_inspection.factionIndex,
+                        .reason = m_inspection.reason,
+                        .outcome = outcome,
+                        .found = judgeHold(),
+                        // The hook's only entropy, drawn from the same member
+                        // Rng notice rolls off - which advances. Stage B's
+                        // sharpest lesson was a roll seeded from the clock at a
+                        // per-frame site, and this is a per-event site, but the
+                        // advancing generator is right at both.
+                        .roll = static_cast<double>(m_noticeRng.nextU32()) * 0x1.0p-32};
+    m_hasPendingVerdict = true;
+    m_verdictFaction = m_inspection.factionIndex;
+}
+
+bool SpaceWorld::takeInspectionVerdict(PendingVerdict& out)
+{
+    if (!m_hasPendingVerdict) {
+        return false;
+    }
+    out = m_pendingVerdict;
+    m_hasPendingVerdict = false;
+    return true;
+}
+
+void SpaceWorld::settleVerdict(InspectionVerdict verdict,
+                               double credits,
+                               float units,
+                               float bounty,
+                               float standing,
+                               const std::string& message)
+{
+    if (!message.empty()) {
+        say(m_verdictFaction < m_factionTable.size() ? m_factionTable[m_verdictFaction].name
+                                                     : std::string("Patrol"),
+            message);
+    }
+    m_lastInspection.verdict = verdict;
+    m_lastInspection.creditsTaken = credits;
+    m_lastInspection.unitsSeized = units;
+    m_lastInspection.bountyPosted = bounty;
+    m_lastInspection.standingSpent = standing;
+    if (verdict == InspectionVerdict::Seizure) {
+        ++m_lastInspection.seizures;
+    }
+    SOL_LOG_INFO("verdict: %s - %.0f cr, %.1f units, %.0f cr posted, %+.0f standing",
+                 inspectionVerdictName(verdict),
+                 credits,
+                 static_cast<double>(units),
+                 static_cast<double>(bounty),
+                 static_cast<double>(standing));
+
+    // ⚑⚑⚑ THE LAW GOES AND LOOKS, AND ONLY IF IT DECIDED THIS COST SOMETHING.
+    // A jurisdiction (or a mod) that waves a runner through has decided not to
+    // care, and dispatching anyway would make the pass a lie told with a
+    // straight face.
+    //
+    // ⚑⚑ WHAT THIS CALL DOES NOT DO IS MAKE ANYBODY SHOOT, WHICH IS THE SPEC'S
+    // "fired on is `respondTo` with a new cause and nothing else" corrected.
+    // It sends hulls to a PLACE in `PilotState::Travel`; the shooting is
+    // `pilotEngageEnemy` picking the player up on a later think, and that reads
+    // `playerHostile` - standing. The dispatch decides WHO IS NEARBY when the
+    // number crosses; the number is what decides that anything happens at all.
+    // ⚑ The two are independent: `respondTo` never consults standing, so the
+    // order they are done in here is free. That was worth checking rather than
+    // asserting - an earlier version of this comment claimed the opposite.
+    const bool charged = credits > 0.0 || bounty > 0.0f || standing < 0.0f;
+    if (verdict == InspectionVerdict::Fled && charged) {
+        if (const Transform* player = m_registry.storage<Transform>().tryGet(playerEntityIndex());
+            player != nullptr) {
+            (void)respondTo(player->position, playerEntityIndex(), ResponseCause::FledInspection);
+        }
+    }
+    m_verdictFaction = kNoIndex;
+}
+
+void SpaceWorld::inspectionPass(const std::string& message)
+{
+    if (m_verdictFaction == kNoIndex) {
+        return;
+    }
+    // ⚑ Three verdicts share one answer, and the difference between them is
+    // not what happened - it is what the player is being told about the
+    // galaxy. "Your hold is clean" is a jurisdiction that looked; "nothing
+    // here we care about" is a jurisdiction that has no table to look at, and
+    // that is the phase's best single demonstration that law is a property of
+    // a place rather than of a crate.
+    const InspectionVerdict verdict = m_pendingVerdict.outcome == InspectionOutcome::Ran
+                                          ? InspectionVerdict::Fled
+                                      : m_pendingVerdict.found.holderHasTable ? InspectionVerdict::Clean
+                                                                              : InspectionVerdict::NoLaw;
+    settleVerdict(verdict, 0.0, 0.0f, 0.0f, 0.0f, message);
+}
+
+void SpaceWorld::inspectionFine(double credits, const std::string& message)
+{
+    if (m_verdictFaction == kNoIndex) {
+        return;
+    }
+    // ⚑⚑ CAPPED AT THE PURSE, WITH NO DEBT AND NO FALLBACK SEIZURE, WHICH IS
+    // THE USER'S THIRD RULING MEANT LITERALLY: restricted goods are licensed,
+    // so this is a bill and the hold stays yours. A pilot with twenty credits
+    // pays twenty. That leaves a broke smuggler carrying licensed cargo for
+    // very little, and it is the right place for the softness - the phase's
+    // teeth are in the seizure, which is a different tier of the same table.
+    const double taken = std::max(0.0, std::min(credits, m_playerCredits));
+    m_playerCredits -= taken;
+    const InspectionVerdict verdict = m_pendingVerdict.outcome == InspectionOutcome::Ran
+                                          ? InspectionVerdict::Fled
+                                          : InspectionVerdict::Duty;
+    settleVerdict(verdict, taken, 0.0f, 0.0f, 0.0f, message);
+}
+
+void SpaceWorld::inspectionSeize(double bounty, const std::string& message)
+{
+    if (m_verdictFaction == kNoIndex) {
+        return;
+    }
+    // ⚑ A patrol cannot lift a crate off a ship that is not there. The same
+    // answer therefore means two things depending on how the stop ended, and
+    // both are what a faction would do: take it and post you, or - with you
+    // already gone - just post you.
+    const bool present = m_pendingVerdict.outcome == InspectionOutcome::Complied;
+    const float units = present ? seizeContraband() : 0.0f;
+    const float posted = static_cast<float>(std::max(0.0, bounty));
+    const float standing = present ? m_verdictParams.contrabandStanding : m_verdictParams.fledStanding;
+    // ⚑ Spending the standing is the consequence with teeth; see
+    // `settleVerdict` for why the dispatch beneath it is not, and why the
+    // order of the two turned out not to matter.
+    m_factionSim.addStanding(m_verdictFaction, standing);
+    m_factionSim.addBounty(m_verdictFaction, posted);
+    settleVerdict(present ? InspectionVerdict::Seizure : InspectionVerdict::Fled,
+                  0.0,
+                  units,
+                  posted,
+                  standing,
+                  message);
+}
+
+void SpaceWorld::applyDefaultVerdict(const PendingVerdict& pending)
+{
+    if (m_verdictFaction == kNoIndex) {
+        return;
+    }
+    char line[128] = {};
+    // ⚑⚑ EVERY LINE HERE IS COUNTED AGAINST THE COMMS PANEL'S ~50 CHARACTERS
+    // BEFORE IT IS WRITTEN, not after. Stage A shipped a 58-character refusal
+    // and it reached the player as "Squawk your transponder or s" - nothing in
+    // this project measures a string against a panel, so the only defence is
+    // counting, and the test asserts the lengths as well as the wording.
+    if (pending.outcome == InspectionOutcome::Ran) {
+        inspectionSeize(static_cast<double>(m_verdictParams.fledBounty),
+                        "You ran. There's a price on you now."); // 36
+        return;
+    }
+    switch (pending.found.worst) {
+    case assets::Legality::Contraband: {
+        const double posted = std::max(static_cast<double>(m_verdictParams.bountyFloor),
+                                       static_cast<double>(m_verdictParams.bountyPerUnit) *
+                                           static_cast<double>(pending.found.units));
+        inspectionSeize(posted, "Contraband. We're seizing it, and posting you."); // 46
+        return;
+    }
+    case assets::Legality::Restricted: {
+        const double duty = static_cast<double>(m_verdictParams.dutyRate) * pending.found.value;
+        if (m_playerCredits + 0.5 < duty) {
+            inspectionFine(duty, "Licensed cargo. We'll take what you have."); // 41
+            return;
+        }
+        std::snprintf(line, sizeof(line), "Licensed cargo. Duty is %.0f credits.", duty); // <= 41
+        inspectionFine(duty, line);
+        return;
+    }
+    case assets::Legality::Unpoliced:
+    case assets::Legality::Legal:
+        break;
+    }
+    inspectionPass(pending.found.holderHasTable ? "Hold's clean. Safe flying."            // 26
+                                                : "Nothing here we care about. Fly on."); // 35
 }
 
 void SpaceWorld::considerResponse(std::uint32_t targetIndex, std::uint32_t attackerIndex, core::DVec3 at)

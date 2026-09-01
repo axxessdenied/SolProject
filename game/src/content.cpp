@@ -476,8 +476,26 @@ bool inspectMe(GameContent& content)
         SOL_LOG_WARN("inspect_me: no patrol in this system");
         return false;
     }
-    SOL_LOG_INFO("inspect_me: nearest patrol is %.0f m out", nearest->distanceToPlayer);
-    return world.beginInspection(nearest->pilotIndex, SpaceWorld::NoticeReason::Dark);
+    SOL_LOG_INFO("inspect_me: nearest patrol is %.0f m out (envelope %.0f m)",
+                 nearest->distanceToPlayer,
+                 world.noticeParams().range);
+    // ⚑⚑ THE REASON IS THE ONE THAT ACTUALLY APPLIES, NOT ALWAYS `Dark`. The
+    // lever hardcoded `Dark` while it only had to open a hold, and the drive
+    // caught it lying: a lit, clean pilot was told "Unidentified contact" and
+    // the stage D report then read `running dark -> seizure`. Stage C's whole
+    // point was that the demand says WHY, so a probe that fakes the why is a
+    // probe that cannot check the thing it exists to look at. Same order
+    // `considerNotice` uses, for the same reasons.
+    const std::uint32_t owner = world.systemOwnerFaction(world.currentSystemIndex());
+    const sol::assets::FactionDef* law = world.jurisdictionOf(world.currentSystemIndex());
+    const bool hasTable = law != nullptr && (!law->contraband.empty() || !law->restricted.empty());
+    SpaceWorld::NoticeReason reason = SpaceWorld::NoticeReason::RandomCheck;
+    if (world.runningDark() && hasTable) {
+        reason = SpaceWorld::NoticeReason::Dark;
+    } else if (owner < world.factions().size() && world.factionSim().bounty(owner) > 0.0f) {
+        reason = SpaceWorld::NoticeReason::Wanted;
+    }
+    return world.beginInspection(nearest->pilotIndex, reason);
 }
 
 // The real thing: hail the nearest station and let the dispatcher answer.
@@ -561,6 +579,123 @@ bool denyDocking(GameContent& content, const char* message)
     content.noteDockAnswered();
     content.world().denyDocking(station, message != nullptr ? message : "Clearance denied.");
     return true;
+}
+
+// Dev lever (Phase 36 stage D): put a crate of something in the hold, by
+// commodity id, so this phase's exit criterion can be flown rather than
+// shopped for. Negative units take them back out.
+double addCargo(GameContent& content, const char* commodityId, double units)
+{
+    SpaceWorld& world = content.world();
+    const std::uint32_t commodity = world.commodityIndex(commodityId != nullptr ? commodityId : "");
+    if (commodity == 0xffff'ffffu) {
+        SOL_LOG_WARN("add_cargo: no such commodity '%s'", commodityId != nullptr ? commodityId : "");
+        return 0.0;
+    }
+    return static_cast<double>(world.addPlayerCargo(commodity, static_cast<float>(units)));
+}
+
+// The inspection_verdict hook's three builders (Phase 36 stage D). Same guard
+// as the docking pair above, and the same "answer with exactly one" contract.
+//
+// ⚑⚑ NOTE WHAT IS AND IS NOT PASSABLE FROM LUA HERE: credits and the posted
+// price are, and the STANDING cost is not. That asymmetry is deliberate and it
+// is the phase's teeth - three seizures put a pilot under the hostile
+// threshold, which is what stops them being inspected and starts them being
+// shot at. A hook that could pass its own standing number could enforce the
+// law in words while deleting the ladder, and nothing in the cockpit would
+// show the difference.
+bool inspectionPass(GameContent& content, const char* message)
+{
+    if (!content.judgingInspection()) {
+        SOL_LOG_WARN("inspection_pass: only valid inside inspection_verdict");
+        return false;
+    }
+    content.noteVerdictAnswered();
+    content.world().inspectionPass(message != nullptr ? message : "On your way.");
+    return true;
+}
+
+bool inspectionFine(GameContent& content, double credits, const char* message)
+{
+    if (!content.judgingInspection()) {
+        SOL_LOG_WARN("inspection_fine: only valid inside inspection_verdict");
+        return false;
+    }
+    content.noteVerdictAnswered();
+    content.world().inspectionFine(credits, message != nullptr ? message : "That will cost you.");
+    return true;
+}
+
+bool inspectionSeize(GameContent& content, double bounty, const char* message)
+{
+    if (!content.judgingInspection()) {
+        SOL_LOG_WARN("inspection_seize: only valid inside inspection_verdict");
+        return false;
+    }
+    content.noteVerdictAnswered();
+    content.world().inspectionSeize(bounty, message != nullptr ? message : "We're taking that.");
+    return true;
+}
+
+// What the last stop came to, for the console and for a drive that has to
+// assert the ruling rather than read a pixel (Phase 36 stage D).
+std::string describeInspection(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const SpaceWorld::InspectionReport& report = world.lastInspection();
+    if (report.outcome == SpaceWorld::InspectionOutcome::None) {
+        return "no stop yet";
+    }
+    const std::vector<game::GameFaction>& factions = world.factions();
+    char buffer[320] = {};
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s: %s -> %s at %.0f%%\n"
+                  "  %.0f cr taken, %.1f units seized, %.0f cr posted, %+.0f standing\n"
+                  "  %u opened / %u complied / %u ran / %u seized this session",
+                  report.factionIndex < factions.size() ? factions[report.factionIndex].name.c_str()
+                                                        : "Patrol",
+                  SpaceWorld::noticeReasonName(report.reason),
+                  SpaceWorld::inspectionVerdictName(report.verdict),
+                  static_cast<double>(report.progressAtEnd) * 100.0,
+                  report.creditsTaken,
+                  static_cast<double>(report.unitsSeized),
+                  static_cast<double>(report.bountyPosted),
+                  static_cast<double>(report.standingSpent),
+                  report.opened,
+                  report.complied,
+                  report.ran,
+                  report.seizures);
+    return buffer;
+}
+
+// What the law under the player's feet says about what is actually in the hold
+// right now - judgement without a patrol, so a pilot can check before they fly
+// and a test can state the rule in one line.
+std::string describeHold(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    const SpaceWorld::HoldJudgement found = world.judgeHold();
+    const char* where = world.jurisdictionName(world.currentSystemIndex());
+    char buffer[256] = {};
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s: %s%s",
+                  where[0] != '\0' ? where : "nobody",
+                  sol::assets::legalityName(found.worst),
+                  found.holderHasTable ? "" : " (no table: nothing to charge you with)");
+    std::string out = buffer;
+    if (found.commodity != 0xffff'ffffu) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "\n  %.1f units of %s aboard, worth %.0f cr",
+                      static_cast<double>(found.units),
+                      world.commodityIds()[found.commodity].c_str(),
+                      found.value);
+        out += buffer;
+    }
+    return out;
 }
 
 // The pilot_hail hook's three builders (Phase 8s). All three refuse outside
@@ -3986,6 +4121,12 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&requestDock>("sol", "request_dock", this);
     m_vm.registerFunction<&describeClearance>("sol", "clearance", this);
     m_vm.registerFunction<&listBerths>("sol", "berths", this);
+    m_vm.registerFunction<&addCargo>("sol", "add_cargo", this);
+    m_vm.registerFunction<&inspectionPass>("sol", "inspection_pass", this);
+    m_vm.registerFunction<&inspectionFine>("sol", "inspection_fine", this);
+    m_vm.registerFunction<&inspectionSeize>("sol", "inspection_seize", this);
+    m_vm.registerFunction<&describeInspection>("sol", "inspection", this);
+    m_vm.registerFunction<&describeHold>("sol", "hold", this);
     m_vm.registerFunction<&grantDocking>("sol", "grant_docking", this);
     m_vm.registerFunction<&denyDocking>("sol", "deny_docking", this);
     // Pilot comms (Phase 8s). sol.hail_reply / sol.hail_tip_market /
@@ -4302,6 +4443,10 @@ void GameContent::runBootScripts()
     m_hasDockRequestHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_dockRequestHookFailed = false;
+    lua_getglobal(state, "inspection_verdict");
+    m_hasVerdictHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_verdictHookFailed = false;
     lua_getglobal(state, "pilot_hail");
     m_hasPilotHailHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
@@ -4551,6 +4696,57 @@ void GameContent::tick(double dt)
     } else if (dockEvent || m_barSystem != m_world->currentSystemIndex() ||
                m_barStation != m_world->dockedStationIndex()) {
         runBarTalk();
+    }
+
+    // The verdict (Phase 36 stage D): the world decides what was FOUND and
+    // queues it, and this decides what is DONE about it. Same shape as the
+    // docking hail below, one stage later in the same phase - and stage C held
+    // the hook back until there was a decision worth authoring, which is what
+    // "the demand is one sentence with no policy in it" meant.
+    SpaceWorld::PendingVerdict verdict;
+    if (m_world->takeInspectionVerdict(verdict)) {
+        const std::vector<game::GameFaction>& factions = m_world->factions();
+        const bool known = verdict.factionIndex < factions.size();
+        m_verdictAnswered = false;
+        if (m_hasVerdictHook && !m_verdictHookFailed) {
+            m_judgingInspection = true;
+            std::string error;
+            if (!m_vm.callGlobal(
+                    "inspection_verdict",
+                    &error,
+                    known ? factions[verdict.factionIndex].name.c_str() : "Patrol",
+                    SpaceWorld::noticeReasonName(verdict.reason),
+                    SpaceWorld::inspectionOutcomeName(verdict.outcome),
+                    // ⚑ The legality as a WORD, not as a number. Every other
+                    // hook in this file is handed strings for engine enums
+                    // (`role`, `state`, `attitude`), and a script comparing
+                    // against 3 is a script that breaks silently the day
+                    // somebody puts a tier in the middle of the enum.
+                    sol::assets::legalityName(verdict.found.worst),
+                    verdict.found.commodity < m_world->commodityIds().size()
+                        ? m_world->commodityIds()[verdict.found.commodity].c_str()
+                        : "",
+                    static_cast<double>(verdict.found.units),
+                    verdict.found.value,
+                    verdict.found.holderHasTable,
+                    known ? static_cast<double>(m_world->factionSim().standing(verdict.factionIndex)) : 0.0,
+                    m_world->playerCredits(),
+                    verdict.roll)) {
+                SOL_LOG_ERROR("inspection_verdict disabled until scripts reload: %s", error.c_str());
+                m_verdictHookFailed = true;
+            }
+            m_judgingInspection = false;
+        }
+        if (!m_verdictAnswered) {
+            // ⚑⚑ THE LAW IS IN BOTH PLACES ON PURPOSE, WHICH IS STAGE A'S
+            // RULING APPLIED A SECOND TIME. The hook owns the policy so a mod
+            // can write a Navy that fines where the Hegemony seizes; the
+            // default owns the same law so the game still enforces it with no
+            // scripts loaded at all. A phase whose consequences live only
+            // inside `init.lua` is a phase that evaporates the first time
+            // somebody's script throws.
+            m_world->applyDefaultVerdict(verdict);
+        }
     }
 
     // Docking clearance (Phase 8r): the world queues a hail, the dispatcher

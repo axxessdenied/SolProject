@@ -415,6 +415,11 @@ void drawFlightPanel(DrawList& list,
         // HELD is after they have closed and it is not.
         {"HAILED", kWarning, hud.heldForInspection && !hud.inspectionDriveLocked},
         {"HELD", kWarning, hud.inspectionDriveLocked},
+        // Phase 36 stage D. Last of the warning chips because it is the only
+        // one that is not about this second: DARK, HAILED and HELD are states
+        // the player can leave by flying; WANTED is a fact about the galaxy
+        // that follows them through a gate.
+        {"WANTED", kWarning, hud.wanted},
         // Names the mode rather than lighting a lamp: with seven of them, "AUTO"
         // would be true of six things the ship does very differently.
         {hud.commandLabel, rgba(0xCC99FFFFu), hud.commandLabel[0] != '\0'},

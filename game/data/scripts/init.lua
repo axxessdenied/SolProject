@@ -42,6 +42,11 @@
 --   sol.grant_docking(berth, msg) / sol.deny_docking(msg)   inside dock_request
 --   sol.dock()                      dev: dock at once, asking nobody
 --   sol.inspect_me()                dev: be stopped now by the nearest patrol
+--   sol.add_cargo(id, units)        dev: put a crate in the hold (negative removes)
+--   sol.inspection() / sol.hold()   the last stop's ruling / what the law here
+--                                   says about what is actually in your hold
+--   sol.inspection_pass(msg) / sol.inspection_fine(cr, msg)
+--   sol.inspection_seize(bounty, msg)        inside inspection_verdict
 --   sol.hail() / sol.hail_target(namePart)   talk to a ship (Phase 8s)
 --   sol.tips()                      rumours and remembered prices, with ages
 --   sol.hail_reply(msg) / sol.hail_tip_market(msg) / sol.hail_tip_place(msg)
@@ -482,6 +487,70 @@ function dock_request(station, owner, standing, berths, hostile, roll, dark)
         sol.grant_docking(berth, string.format(
             "Cleared for berth %d. Mind your approach.", berth))
     end
+end
+
+-- The verdict (Phase 36 stage D). A patrol has finished reading your hold - or
+-- you left before it could - and this decides what the local law does about it.
+-- C++ hands over everything the officer can know and this rules. Answer with
+-- exactly one of:
+--
+--   sol.inspection_pass(message)           waved on, nothing taken
+--   sol.inspection_fine(credits, message)  a bill, capped at what you have
+--   sol.inspection_seize(bounty, message)  take the contraband, post that price
+--
+-- Say nothing and C++ falls back to its own law, which is the same law: seize
+-- and post contraband, charge duty on restricted, wave a clean hold through,
+-- and put a price on anybody who ran. Deleting this function does not make the
+-- galaxy lawless - it makes it less talkative.
+--
+-- ⚑⚑ `legality` is one of "unpoliced" / "legal" / "restricted" / "contraband",
+-- and it is the WORST thing aboard rather than a list: `units` and `value` are
+-- how much of THAT tier is in the hold. `hasLaw` is false when this jurisdiction
+-- keeps no table at all - the Freight Guild holds a quarter of the galaxy and
+-- declares nothing illegal - which is a different fact from a clean hold and is
+-- the one line most worth writing differently.
+--
+-- ⚑ `outcome` is "complied" or "ran", and nothing else ever reaches here: a
+-- stop that lapsed or was broken off never read anything, so there is nothing
+-- to rule on. A seizure on a "ran" takes no cargo - the ship is gone - and
+-- means "post the price anyway", which is the design: running is its own
+-- offence whatever was in the hold.
+--
+-- Keep every line short for the reason dock_request does: the comms panel clips
+-- at about fifty characters and the sender column is already spending some.
+function inspection_verdict(who, reason, outcome, legality, commodity, units,
+                            value, hasLaw, standing, credits, roll)
+    if outcome == "ran" then
+        sol.inspection_seize(400, "You ran. There's a price on you now.")
+        return
+    end
+    if legality == "contraband" then
+        -- A regular does not get a discount on this, and that is the point:
+        -- the seizure is what the phase is FOR. What standing buys is the
+        -- wording, which is all a faction has left to offer once it has taken
+        -- your cargo.
+        if standing >= 25 then
+            sol.inspection_seize(math.max(250, 25 * units),
+                "Sorry. That has to come off, and it's on record.")
+        else
+            sol.inspection_seize(math.max(250, 25 * units),
+                "Contraband. We're seizing it, and posting you.")
+        end
+        return
+    end
+    if legality == "restricted" then
+        sol.inspection_fine(0.30 * value,
+            string.format("Licensed cargo. Duty is %.0f credits.", 0.30 * value))
+        return
+    end
+    if not hasLaw then
+        -- ⚑ THE LINE THAT SAYS WHAT THIS PHASE IS ABOUT. Somebody with
+        -- jurisdiction, patrols and a scanner stopped you, read your hold, and
+        -- has no opinion about any of it. Law is a property of a PLACE.
+        sol.inspection_pass("Nothing here we care about. Fly on.")
+        return
+    end
+    sol.inspection_pass("Hold's clean. Safe flying.")
 end
 
 -- Pilot comms (Phase 8s). Somebody hailed on the open channel and this decides

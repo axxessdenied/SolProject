@@ -135,6 +135,16 @@ struct FlightHud
     // is not. One chip, two words.
     bool inspectionDriveLocked = false;
     float inspectionProgress = 0.0f; // 0..1, and it RESETS when the cone breaks
+    // Phase 36 stage D: somebody, somewhere, has posted a price. Drawn for the
+    // same reason DARK is - it is the negative state, so it is furniture only
+    // when it is lit - and it is what makes the seizure ladder visible: the
+    // chip appears the first time a patrol takes a crate off you, and nothing
+    // in the game takes it down but paying or trading the standing back.
+    //
+    // ⚑ A lamp, not a number. WHICH faction and HOW MUCH is a question with
+    // seven answers and the chip row has room for one word; the console's
+    // `sol.rep()` and the bounty vector behind it are where the figures live.
+    bool wanted = false;
     // What the ship has been told to do for itself, or "" when it is being
     // flown by hand (Phase 28). Was `bool autopilot`, and the widening is the
     // same one the game layer made: with seven modes instead of one, a lit
