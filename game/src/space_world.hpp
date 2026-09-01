@@ -1571,6 +1571,12 @@ public:
     // the glut price, so a good a station cannot hold would otherwise list at a
     // flat half-price and read as the bargain of the galaxy. The sim already
     // refuses the trade; this is what stops the board offering it.
+    // Whether a station has a hold for a good at all (Phase 34 stage D, opened
+    // to any station by 35 stage B). ⚑ Not the same question as "is any in
+    // stock": a station with no hold for salvage never gets a trade row for it,
+    // and the Bar is where the player finds out why.
+    [[nodiscard]] bool
+    stationStocks(std::uint32_t system, std::uint32_t station, std::uint32_t commodity) const;
     [[nodiscard]] bool dockedStationStocks(std::uint32_t commodity) const;
 
     // Who runs the black-market module on this dock (Phase 34 stage E), as a

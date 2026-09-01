@@ -407,52 +407,51 @@ const assets::ModuleDef* stationRoom(const SpaceWorld& world,
     return best;
 }
 
-void fillStationBar(const SpaceWorld& world,
-                    const assets::DefDatabase& defs,
-                    std::deque<std::string>& text,
-                    ui::StationPanel& panel,
-                    std::vector<ui::InfoRow>& talkRows)
+int roomTalkLines(const assets::ModuleDef& room)
 {
-    talkRows.clear();
-    panel.barRoom = "";
-    panel.barTalk = {};
-    if (!world.isDocked()) {
-        return;
-    }
-    const std::uint32_t system = world.currentSystemIndex();
-    const std::uint32_t station = world.dockedStationIndex();
+    // ⚑ One constant, and the ladder is read from the authored number rather
+    // than from a table repeating it. bar 2 and restaurant 3 give one line,
+    // concourse 4 and casino 5 give two, resort 8 gives three.
+    return std::clamp(1 + static_cast<int>(room.powerDraw) / 4, 1, 4);
+}
+
+void composeRoomLine(const SpaceWorld& world,
+                     const assets::DefDatabase& defs,
+                     std::uint32_t system,
+                     std::uint32_t station,
+                     std::vector<BarLine>& out)
+{
     const assets::ModuleDef* room = stationRoom(world, defs, system, station);
     if (room == nullptr) {
-        // The strip does not offer this tab without a recreation module, so
-        // this is the panel and the strip disagreeing rather than a station
-        // with a quiet night. Same shape as the Refining tab's guard.
         return;
     }
-    panel.barRoom = room->name.c_str();
-
-    // --- The room itself. What else is in here is a fact about the dock's
-    // size, and it is the only line that is about the station rather than
-    // about the galaxy around it.
-    {
-        std::string line = room->name;
-        int others = 0;
-        for (const std::uint32_t index : world.stationModules(system, station)) {
-            if (index < defs.modules().size() &&
-                defs.modules()[index].family == assets::ModuleFamily::Recreation &&
-                &defs.modules()[index] != room) {
-                ++others;
-            }
+    // What else is in here is a fact about the dock's size, and it is the only
+    // line that is about the station rather than about the galaxy around it.
+    std::string line = room->name;
+    int others = 0;
+    for (const std::uint32_t index : world.stationModules(system, station)) {
+        if (index < defs.modules().size() &&
+            defs.modules()[index].family == assets::ModuleFamily::Recreation &&
+            &defs.modules()[index] != room) {
+            ++others;
         }
-        if (others == 1) {
-            line += ", and one other room on this dock";
-        } else if (others > 1) {
-            line += ", and " + std::to_string(others) + " other rooms on this dock";
-        } else {
-            line += ", and it is the only room on this dock";
-        }
-        talkRows.push_back({.label = "The room", .value = store(text, std::move(line))});
     }
+    if (others == 1) {
+        line += ", and one other room on this dock";
+    } else if (others > 1) {
+        line += ", and " + std::to_string(others) + " other rooms on this dock";
+    } else {
+        line += ", and it is the only room on this dock";
+    }
+    out.push_back({.topic = "The room", .text = std::move(line)});
+}
 
+void composeHouseTalk(const SpaceWorld& world,
+                      const assets::DefDatabase& defs,
+                      std::uint32_t system,
+                      std::uint32_t station,
+                      std::vector<BarLine>& out)
+{
     // --- Whose law reaches here, and how far. The SIGN is who polices the
     // place and the magnitude is how much, which is the distinction
     // `systemSecurity` exists to keep - so the sentence is built from both.
@@ -470,7 +469,7 @@ void fillStationBar(const SpaceWorld& world,
         } else {
             line = "Nobody's law reaches this system. Whatever happens out there stays out there.";
         }
-        talkRows.push_back({.label = "The law", .value = store(text, std::move(line))});
+        out.push_back({.topic = "The law", .text = std::move(line)});
     }
 
     // --- What the house cannot take (Phase 34 stage D). A REFUSAL rather than
@@ -481,7 +480,7 @@ void fillStationBar(const SpaceWorld& world,
         std::string refused;
         int count = 0;
         for (std::uint32_t c = 0; c < world.commodityIds().size(); ++c) {
-            if (world.dockedStationStocks(c)) {
+            if (world.stationStocks(system, station, c)) {
                 continue;
             }
             ++count;
@@ -501,7 +500,7 @@ void fillStationBar(const SpaceWorld& world,
             }
             line += " - do not bring it, they cannot take it.";
         }
-        talkRows.push_back({.label = "The warehouse", .value = store(text, std::move(line))});
+        out.push_back({.topic = "The warehouse", .text = std::move(line)});
     }
 
     // --- What it runs on (Phase 34 stage B). The composer FITS the smallest
@@ -521,9 +520,8 @@ void fillStationBar(const SpaceWorld& world,
             }
         }
         if (plant != nullptr) {
-            talkRows.push_back(
-                {.label = "The lights",
-                 .value = store(text, "Everything in here runs off the " + plant->name + ".")});
+            out.push_back(
+                {.topic = "The lights", .text = "Everything in here runs off the " + plant->name + "."});
         }
     }
 
@@ -534,14 +532,26 @@ void fillStationBar(const SpaceWorld& world,
     if (world.stationHasShadowPresence(system, station)) {
         const std::uint32_t operator_ = world.stationShadowOwner(system, station);
         if (operator_ < world.factions().size()) {
-            talkRows.push_back({.label = "Word is",
-                                .value = store(text,
-                                               world.factions()[operator_].name +
-                                                   " keep a back room on this dock, and the people who "
-                                                   "hold this system are not asking about it.")});
+            out.push_back({.topic = "Word is",
+                           .text = world.factions()[operator_].name +
+                                   " keep a back room on this dock, and the people who "
+                                   "hold this system are not asking about it."});
         }
     }
+}
 
+void fillStationBar(std::span<const BarLine> talk,
+                    const char* room,
+                    std::deque<std::string>& text,
+                    ui::StationPanel& panel,
+                    std::vector<ui::InfoRow>& talkRows)
+{
+    talkRows.clear();
+    panel.barRoom = room != nullptr ? room : "";
+    panel.barTalk = {};
+    for (const BarLine& line : talk) {
+        talkRows.push_back({.label = store(text, line.topic), .value = store(text, line.text)});
+    }
     panel.barTalk = talkRows;
 }
 

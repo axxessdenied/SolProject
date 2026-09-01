@@ -13,6 +13,7 @@
 #include "sol/platform/file_io.hpp"
 #include "sol/platform/time.hpp"
 #include "sol/sim/collision.hpp"
+#include "sol/sim/pilot_tips.hpp"
 #include "sol/sim/predation.hpp"
 #include "sol/sim/steering.hpp"
 #include "sol/sim/trade_route.hpp"
@@ -1295,6 +1296,15 @@ std::uint32_t SpaceWorld::dockedStationScreens() const
         return 0;
     }
     return stationScreens(m_currentSystem, m_dockedStation);
+}
+
+bool SpaceWorld::stationStocks(std::uint32_t system, std::uint32_t station, std::uint32_t commodity) const
+{
+    std::uint32_t market = 0;
+    if (!sim::marketAt(m_economy.markets(), system, station, &market)) {
+        return false;
+    }
+    return m_economy.capacityOf(market, commodity) > 0.0f;
 }
 
 bool SpaceWorld::dockedStationStocks(std::uint32_t commodity) const

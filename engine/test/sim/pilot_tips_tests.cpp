@@ -1,13 +1,22 @@
 #include <cstdint>
+#include <cstdio>
 #include <vector>
 
 #include <sol/sim/pilot_tips.hpp>
 #include <sol/test/test.hpp>
 
 using sol::core::DVec3;
+using sol::sim::BountyCandidate;
+using sol::sim::chooseFrontTalk;
+using sol::sim::chooseHaulerTalk;
 using sol::sim::chooseMarketTip;
 using sol::sim::choosePlaceTip;
+using sol::sim::chooseRaidTalk;
+using sol::sim::chooseShortageTalk;
+using sol::sim::ContestCandidate;
+using sol::sim::EscortCandidate;
 using sol::sim::Galaxy;
+using sol::sim::HaulCandidate;
 using sol::sim::KnowledgeState;
 using sol::sim::kTipDuplicateRange;
 using sol::sim::Region;
@@ -263,4 +272,181 @@ SOL_TEST(pilot_tips_place_runs_out_when_the_neighbourhood_is_known)
         }
     }
     SOL_CHECK(!choosePlaceTip(galaxy, survey, hops, kMaxHops, scratch, &site));
+}
+
+// ---------------------------------------------------------------------------
+// Bar talk (Phase 35 stage B). Which one of a room's many true facts is worth
+// a sentence.
+//
+// ⚑⚑⚑ THE PREFERENCES ARE THE PHASE, SO THEY ARE STATED HERE RATHER THAN
+// SAMPLED FROM THE GALAXY. Measured over the 62 rooms at seed 1701, a mature
+// bar stands on up to 219 live candidates: any rule at all produces a line, and
+// a bad one produces a line that is true, irrelevant, and indistinguishable
+// from a good one. So every check below hands a rule the case it must get
+// right, including the cases the shipped galaxy declines to produce.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] HaulCandidate haul(std::uint32_t system, float severity, std::uint32_t jumps)
+{
+    return {
+        .system = system, .station = 0, .commodity = 0, .units = 10.0f, .severity = severity, .jumps = jumps};
+}
+
+} // namespace
+
+// The two filters, and the second is what stops this reading as a random-fact
+// generator: a shortage at a dock whose prices the player is already carrying
+// is not news. Both are `chooseMarketTip`'s rules restated rather than new ones.
+SOL_TEST(bar_talk_shortage_skips_this_system_and_a_dock_you_already_priced)
+{
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey;
+    survey.initialize(galaxy, lineParams(), kCommodities, 11);
+    const std::vector<StationMarket> markets = lineMarkets();
+    std::uint32_t pick = 0xffff'ffffu;
+
+    // Only a shortage in the system you are standing in: nothing to say. You
+    // can fly across the system and read that board yourself.
+    const std::vector<HaulCandidate> here{haul(0, 0.9f, 0)};
+    SOL_CHECK(!chooseShortageTalk(here, markets, survey, 0.0, &pick));
+
+    // One jump out is worth mentioning, even though it is milder.
+    const std::vector<HaulCandidate> out{haul(0, 0.9f, 0), haul(1, 0.5f, 1)};
+    SOL_REQUIRE(chooseShortageTalk(out, markets, survey, 0.0, &pick));
+    SOL_CHECK(pick == 1);
+
+    // Now the player holds fresh prices for market 1. A fresh memory is not
+    // worth a conversation, so the rule falls through to the milder shortage
+    // it has nothing on - which is the whole point of consulting the player.
+    survey.recordMarket(1, flatPrices(10.0f), 100.0);
+    const std::vector<HaulCandidate> two{haul(1, 0.9f, 1), haul(2, 0.5f, 2)};
+    SOL_REQUIRE(chooseShortageTalk(two, markets, survey, 100.0, &pick));
+    SOL_CHECK(pick == 1);
+
+    // ...and once that memory goes stale it is fair game again, and it is by
+    // far the worse of the two. A stale memory and no memory are both news.
+    const double later = 100.0 + survey.params().intelStaleSeconds + 100.0;
+    SOL_REQUIRE(chooseShortageTalk(two, markets, survey, later, &pick));
+    SOL_CHECK(pick == 0);
+}
+
+// Severity first, then distance: a barely-short market is not worth a sentence,
+// and severity is also what makes the trip pay.
+SOL_TEST(bar_talk_shortage_names_the_worst_one_and_breaks_ties_on_distance)
+{
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey;
+    survey.initialize(galaxy, lineParams(), kCommodities, 11);
+    const std::vector<StationMarket> markets = lineMarkets();
+    std::uint32_t pick = 0xffff'ffffu;
+
+    const std::vector<HaulCandidate> spread{haul(1, 0.30f, 1), haul(3, 0.90f, 3), haul(2, 0.60f, 2)};
+    SOL_REQUIRE(chooseShortageTalk(spread, markets, survey, 0.0, &pick));
+    SOL_CHECK(pick == 1); // three jumps out, and by far the worst
+
+    const std::vector<HaulCandidate> tied{haul(3, 0.60f, 3), haul(1, 0.60f, 1), haul(2, 0.60f, 2)};
+    SOL_REQUIRE(chooseShortageTalk(tied, markets, survey, 0.0, &pick));
+    SOL_CHECK(pick == 1); // equally short everywhere: the nearest
+
+    SOL_CHECK(!chooseShortageTalk({}, markets, survey, 0.0, &pick));
+}
+
+// ⚑⚑⚑⚑ THE MEASUREMENT THAT CHANGED THIS RULE, WRITTEN DOWN AS A TEST. The
+// obvious move is to copy `choosePlaceTip` and REFUSE a system the player
+// cannot place. Built that way it was MEASURED over the 62 rooms of the shipped
+// galaxy: the raid line sayable at 21 rooms against 55-62 ungated, and the war
+// line below at ZERO rooms against 19-37. Phase 8z is why - arrival stopped
+// charting the neighbours, so a player knows only the systems whose gates they
+// have identified, and a war happens where a faction is pushing rather than
+// where the player has been.
+//
+// `choosePlaceTip` earns its refusal by WRITING A BOOKMARK, and a marker you
+// cannot place is one you cannot navigate to. A sentence writes nothing. So it
+// is a TIER and not a gate, and both halves are pinned here: placeable wins
+// when there is one, and an unplaceable system is still named when there is not.
+SOL_TEST(bar_talk_raid_prefers_a_system_you_can_place_and_still_names_one_you_cannot)
+{
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey;
+    survey.initialize(galaxy, lineParams(), kCommodities, 11);
+    SOL_REQUIRE(survey.knowledge(1) == KnowledgeState::Unknown);
+    SOL_REQUIRE(survey.knowledge(2) == KnowledgeState::Unknown);
+
+    const std::vector<BountyCandidate> raids{{.system = 1, .clan = 1, .intensity = 0.9f, .jumps = 1},
+                                             {.system = 2, .clan = 2, .intensity = 0.5f, .jumps = 2}};
+    std::uint32_t pick = 0xffff'ffffu;
+
+    // Nothing placeable at all: the warmest wins, and it is still SAID. A
+    // refusal here is what silenced the war line outright.
+    SOL_REQUIRE(chooseRaidTalk(raids, survey, &pick));
+    SOL_CHECK(pick == 0);
+
+    // The cooler raid is somewhere the player can find. It displaces the
+    // warmer one they cannot.
+    survey.setKnowledge(galaxy, 2, KnowledgeState::Charted);
+    SOL_REQUIRE(chooseRaidTalk(raids, survey, &pick));
+    SOL_CHECK(pick == 1);
+
+    // Within the placeable tier it is intensity again, not list order.
+    survey.setKnowledge(galaxy, 1, KnowledgeState::Charted);
+    SOL_REQUIRE(chooseRaidTalk(raids, survey, &pick));
+    SOL_CHECK(pick == 0);
+
+    SOL_CHECK(!chooseRaidTalk({}, survey, &pick));
+}
+
+// The same tier on the war front - the line the refusal would have silenced
+// completely - and it is the one thing a bar can say that a mission board
+// structurally cannot, because `contestCandidates` is gated on the board's
+// owner being a party to the fight and `frontCandidates` is not.
+SOL_TEST(bar_talk_front_names_the_heaviest_war_and_prefers_one_you_can_place)
+{
+    const Galaxy galaxy = lineGalaxy();
+    SurveySim survey;
+    survey.initialize(galaxy, lineParams(), kCommodities, 11);
+
+    const std::vector<ContestCandidate> fronts{
+        {.system = 1, .owner = 1, .attacker = 2, .pressure = 0.8f, .jumps = 1},
+        {.system = 2, .owner = 2, .attacker = 3, .pressure = 0.4f, .jumps = 2}};
+    std::uint32_t pick = 0xffff'ffffu;
+    SOL_REQUIRE(chooseFrontTalk(fronts, survey, &pick));
+    SOL_CHECK(pick == 0); // nothing placeable: the heaviest
+
+    survey.setKnowledge(galaxy, 2, KnowledgeState::Charted);
+    SOL_REQUIRE(chooseFrontTalk(fronts, survey, &pick));
+    SOL_CHECK(pick == 1); // lighter, but the player can find it
+
+    SOL_CHECK(!chooseFrontTalk({}, survey, &pick));
+}
+
+// ⚑⚑ LADEN IS A PREFERENCE AND NOT A REQUIREMENT, AND THAT DIFFERENCE IS WHAT
+// KEEPS A BRAND-NEW GAME FROM BEING MUTE. MEASURED at t=0 on the shipped
+// galaxy: 64 escort candidates exist, they are the ONLY live source with
+// anything at all, and NOT ONE of them is carrying cargo - the economy has not
+// run long enough for a hauler to have loaded. Required rather than preferred,
+// this rule would have returned false at every room in the galaxy on the day it
+// opens, which is the exact failure stage A shipped its house lines to avoid.
+SOL_TEST(bar_talk_hauler_prefers_a_loaded_run_and_still_mentions_an_empty_one)
+{
+    const std::vector<EscortCandidate> deadheads{
+        {.trader = 0, .system = 1, .station = 0, .commodity = 0, .cargo = 0.0f, .danger = 0.2f, .jumps = 1},
+        {.trader = 1, .system = 2, .station = 0, .commodity = 0, .cargo = 0.0f, .danger = 0.7f, .jumps = 2}};
+    std::uint32_t pick = 0xffff'ffffu;
+    SOL_REQUIRE(chooseHaulerTalk(deadheads, &pick));
+    SOL_CHECK(pick == 1); // nothing loaded anywhere: the most dangerous run
+
+    std::vector<EscortCandidate> mixed = deadheads;
+    mixed.push_back(
+        {.trader = 2, .system = 3, .station = 0, .commodity = 1, .cargo = 12.0f, .danger = 0.1f, .jumps = 1});
+    SOL_REQUIRE(chooseHaulerTalk(mixed, &pick));
+    SOL_CHECK(pick == 2); // a loaded run displaces a far more dangerous empty one
+
+    mixed.push_back(
+        {.trader = 3, .system = 1, .station = 0, .commodity = 1, .cargo = 5.0f, .danger = 0.6f, .jumps = 1});
+    SOL_REQUIRE(chooseHaulerTalk(mixed, &pick));
+    SOL_CHECK(pick == 3); // and inside the loaded tier it is danger again
+
+    SOL_CHECK(!chooseHaulerTalk({}, &pick));
 }

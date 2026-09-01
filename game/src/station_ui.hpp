@@ -6,6 +6,7 @@
 #include "sol/ui/screens.hpp"
 
 #include <deque>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -59,21 +60,88 @@ void fillStationMissions(const SpaceWorld& world,
                                                         std::uint32_t system,
                                                         std::uint32_t station);
 
-// Fills the Bar tab (Phase 35 stage A): the room the player is standing in and
-// what the house has to say about the dock it is standing on.
+// How many lines about the wider galaxy this room is worth (Phase 35 stage B),
+// derived from the same `power_draw` ladder `stationRoom` ranks by.
 //
-// ⚑⚑ EVERY LINE IS TRUE AT t=0, WHICH IS THE WHOLE REASON THIS SOURCE SHIPS
+// ⚑⚑⚑ THE LADDER BUYS SENTENCES, NOT DISTANCE, AND THAT IS A CORRECTION TO
+// STAGE A'S OWN NOTE. Stage A wrote that stage B would derive "how far the talk
+// reaches" from this number. It cannot: `MissionParams::candidateReach` caps
+// every candidate enumerator at THREE JUMPS for the mission board's reasons, so
+// a five-rung ladder mapped onto distance would have to be crushed into three
+// rungs and could not widen past the cap without moving a number the board also
+// reads. What the ladder can buy without touching anything is how much gets
+// SAID - which is also the lever this phase actually needs, because the problem
+// is never generation. MEASURED: at two sim hours the median room stands on 155
+// live candidates and the busiest on 219.
+//
+// ⚑ THE SHIPPED GALAXY BARELY EXERCISES IT, AND THE HONEST NUMBER IS HERE
+// RATHER THAN IN A COMMIT MESSAGE: 60 of the 62 rooms are a bar or a restaurant
+// and get one line, one concourse gets two and one resort gets three. Any
+// monotone ladder starting at one does that, because 60 of 62 rooms sit on the
+// bottom two rungs of an authored ladder this galaxy did not roll the top of.
+[[nodiscard]] int roomTalkLines(const sol::assets::ModuleDef& room);
+
+// One thing said in a room: the topic column and the sentence.
+//
+// ⚑⚑ THE TOPIC IS ALWAYS WRITTEN BY C++, NEVER BY THE `bar_talk` HOOK, AND
+// THAT IS NOT THE SAME RULE AS "the engine picks the fact". It is the narrower
+// one that the tab draws topics into a fixed 150px column: a closed vocabulary
+// is what keeps five sentences of very different lengths reading as a list
+// rather than as a paragraph, and a hook free to write it would be free to
+// overflow it. The SENTENCE is the hook's, and the fact inside the sentence is
+// the engine's.
+struct BarLine
+{
+    std::string topic;
+    std::string text;
+};
+
+// What the house itself has to say about the dock it is standing on (Phase 35
+// stage A): the room, then whose law reaches here, what the house has no hold
+// for, what the lights run off, and who keeps a back room. `composeRoomLine`
+// is separate because it is the establishing line and the talk about the wider
+// galaxy is inserted between the two.
+//
+// ⚑⚑ EVERY LINE IS TRUE AT t=0, WHICH IS THE WHOLE REASON THIS SOURCE SHIPPED
 // BEFORE THE LIVE-GALAXY ONE. Measured over two sim hours, the mission sim's
 // shortage, raid and contest enumerators are all EMPTY at t=0 - a fresh galaxy
-// stocks every market at half capacity and nobody has raided anybody - so a bar
-// built only on stage B's sources would be silent at exactly the moment a new
-// player first walks into one.
+// stocks every market at half capacity and nobody has raided anybody - and even
+// with stage B's four sources in, 23 of the 62 rooms have nothing live to say
+// the moment a new player first walks into one.
 //
 // ⚑ It is also the first surface any of Phase 34's composition has ever had:
 // what a station cannot hold, what plant it was fitted with, and who runs its
 // fence were all measurable and all invisible.
-void fillStationBar(const SpaceWorld& world,
-                    const sol::assets::DefDatabase& defs,
+//
+// ⚑ PURE, AND CALLED ONCE PER DOCK RATHER THAN PER FRAME (stage B). Both
+// halves matter: pure so a test can read the sentences without a screenshot,
+// and once per dock because the talk beside it comes from a Lua hook and no
+// hook in this game has ever run from a fill.
+void composeRoomLine(const SpaceWorld& world,
+                     const sol::assets::DefDatabase& defs,
+                     std::uint32_t system,
+                     std::uint32_t station,
+                     std::vector<BarLine>& out);
+void composeHouseTalk(const SpaceWorld& world,
+                      const sol::assets::DefDatabase& defs,
+                      std::uint32_t system,
+                      std::uint32_t station,
+                      std::vector<BarLine>& out);
+
+// Draws the Bar tab from talk already composed (Phase 35 stage B).
+//
+// ⚑⚑ A PRESENTER, NOT A FILL, AND THE SEAM MOVED IN STAGE B FOR A REASON THE
+// SPEC HAD NOT COUNTED. Every other tab is filled from live world state on
+// every frame the panel is drawn, which is correct for a readout and wrong for
+// a conversation - and impossible for this one, because `bar_talk` is a Lua
+// hook and `GameContent::tick` is the only place this game runs one. RULED BY
+// THE USER, 2026-09-01: what the house says is decided WHEN YOU WALK IN and
+// does not move until you undock, which is `m_hails`' rule for a pilot who
+// repeats themselves. The stated cost is that a system changing hands mid-dock
+// leaves the law line and the back-room line stale while the Trade tab's
+// jurisdiction header updates live.
+void fillStationBar(std::span<const BarLine> talk,
+                    const char* room,
                     std::deque<std::string>& text,
                     sol::ui::StationPanel& panel,
                     std::vector<sol::ui::InfoRow>& talkRows);

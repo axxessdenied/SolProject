@@ -177,15 +177,13 @@ void MissionSim::bountyCandidates(const Galaxy& galaxy,
     }
 }
 
-void MissionSim::contestCandidates(const Galaxy& galaxy,
-                                   const FactionSim& factions,
-                                   std::uint32_t fromSystem,
-                                   std::uint32_t boardOwner,
-                                   std::vector<ContestCandidate>& out) const
+void MissionSim::frontCandidates(const Galaxy& galaxy,
+                                 const FactionSim& factions,
+                                 std::uint32_t fromSystem,
+                                 std::vector<ContestCandidate>& out) const
 {
     out.clear();
-    if (galaxy.systems.size() != m_systemCount || fromSystem >= m_systemCount ||
-        boardOwner >= m_factionCount) {
+    if (galaxy.systems.size() != m_systemCount || fromSystem >= m_systemCount) {
         return;
     }
     std::vector<std::uint8_t> depth;
@@ -199,17 +197,36 @@ void MissionSim::contestCandidates(const Galaxy& galaxy,
         if (owner >= m_factionCount || contest.attacker >= m_factionCount) {
             continue;
         }
-        // A station only posts about a fight it is in. It will not pay a
-        // pilot to help the faction taking its own system.
-        if (owner != boardOwner && contest.attacker != boardOwner) {
-            continue;
-        }
         out.push_back({.system = s,
                        .owner = owner,
                        .attacker = contest.attacker,
                        .pressure = contest.pressure,
                        .jumps = depth[s]});
     }
+}
+
+void MissionSim::contestCandidates(const Galaxy& galaxy,
+                                   const FactionSim& factions,
+                                   std::uint32_t fromSystem,
+                                   std::uint32_t boardOwner,
+                                   std::vector<ContestCandidate>& out) const
+{
+    // ⚑ The ownerless-board early return is kept AHEAD of the enumeration
+    // rather than folded into the filter below, because `kNoFaction` reaching
+    // that filter would drop every row anyway and the two would be
+    // indistinguishable in a profile - and because the header promises it.
+    out.clear();
+    if (boardOwner >= m_factionCount) {
+        return;
+    }
+    frontCandidates(galaxy, factions, fromSystem, out);
+    // A station only posts about a fight it is in. It will not pay a pilot to
+    // help the faction taking its own system. Phase 35 stage B split this out:
+    // it is a rule about who will PAY, and a barkeep two jumps from a war does
+    // not need anybody's permission to mention it.
+    std::erase_if(out, [boardOwner](const ContestCandidate& c) {
+        return c.owner != boardOwner && c.attacker != boardOwner;
+    });
 }
 
 void MissionSim::escortCandidates(const Galaxy& galaxy,

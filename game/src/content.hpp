@@ -2,6 +2,7 @@
 
 #include "input_actions.hpp"
 #include "space_world.hpp"
+#include "station_ui.hpp"
 
 #include "sol/assets/data_defs.hpp"
 #include "sol/platform/input_bindings.hpp"
@@ -124,6 +125,29 @@ public:
 
     void noteDockAnswered() { m_dockAnswered = true; }
 
+    // What the house is saying at the dock the player is standing on (Phase 35
+    // stage B), composed once per dock and read by the Bar tab's presenter.
+    // Empty when undocked or when the station has no room.
+    [[nodiscard]] std::span<const BarLine> barTalk() const { return m_barTalk; }
+
+    [[nodiscard]] const char* barRoom() const { return m_barRoom.c_str(); }
+
+    // The `bar_talk` hook's five builders, in the shape the pilot_hail trio
+    // has: each spends one of the room's lines, appends the fact C++ picked,
+    // and refuses outside the hook. `kind` is which fact to append.
+    enum class BarFact : std::uint32_t
+    {
+        None = 0, // words only
+        Shortage,
+        Raid,
+        Front,
+        Hauler,
+    };
+
+    [[nodiscard]] bool sayBarLine(BarFact kind, const char* message);
+
+    [[nodiscard]] bool composingBarTalk() const { return m_barLinesLeft > 0; }
+
 private:
     struct WatchedFile
     {
@@ -147,6 +171,12 @@ private:
     // Re-opens the docked station's board and runs Lua mission_board over
     // freshly enumerated candidates (scriptless fallback: an empty board).
     void runMissionBoard();
+    // Composes the docked station's bar talk: the house's own lines, then up to
+    // `roomTalkLines` lines about the wider galaxy chosen by C++ and worded by
+    // Lua's bar_talk hook (scriptless fallback: C++ words them too).
+    void runBarTalk();
+    // The scriptless default, and the order it spends lines in.
+    void defaultBarTalk();
 
     static constexpr double kPollIntervalSeconds = 0.5;
 
@@ -165,6 +195,26 @@ private:
     std::vector<sol::sim::EscortCandidate> m_escortCandidates;   // Phase 8x
     std::vector<sol::sim::MissionEvent> m_missionEvents;         // per-tick scratch
     sol::sim::Mission m_missionDraft;
+    // Bar talk (Phase 35 stage B). The cache is BOUND TO A DOCK rather than
+    // driven by the dock event alone, and that is not tidiness: a docked LOAD
+    // deliberately clears m_dockEventPending so board offers are not re-rolled
+    // (`space_world.cpp`, loadFrom), so an event-only rule would have left
+    // every loaded save opening on an empty room. Binding self-heals that and
+    // every other path that forgets to raise the event.
+    std::vector<BarLine> m_barTalk;
+    std::string m_barRoom;
+    std::uint32_t m_barSystem = 0xffff'ffffu;
+    std::uint32_t m_barStation = 0xffff'ffffu;
+    std::uint32_t m_barVisits = 0;
+    // The facts C++ picked this visit, already worded. The hook chooses which
+    // to spend and on what words; it never gets to name a place.
+    std::string m_barShortage;
+    std::string m_barRaid;
+    std::string m_barFront;
+    std::string m_barHauler;
+    int m_barLinesLeft = 0; // > 0 only while bar_talk runs: the "inside the hook" guard
+    bool m_hasBarTalkHook = false;
+    bool m_barTalkHookFailed = false;
     bool m_missionDraftOpen = false;
     double m_lastPollTime = -1.0;
     bool m_hasTickHook = false;

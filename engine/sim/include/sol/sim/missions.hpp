@@ -197,6 +197,20 @@ public:
                           const FactionSim& factions,
                           std::uint32_t fromSystem,
                           std::vector<BountyCandidate>& out) const;
+    // Every contest in reach, with no gate at all (Phase 35 stage B).
+    //
+    // ⚑⚑ THE BOARD'S OWNER GATE IS A RULE ABOUT WHO WILL PAY, NOT ABOUT WHAT
+    // IS TRUE, and until this stage the two were the same function so there was
+    // no way to ask the second question. A station will not pay a pilot to help
+    // the faction taking its own system - but a war two jumps out is a fact
+    // whether or not the house has a stake in it, and a room full of people who
+    // have just flown in from there is exactly where you would hear about it.
+    // `contestCandidates` is now this list plus that gate, so there is still one
+    // definition of "a contest in reach" and the gate is visible AS a gate.
+    void frontCandidates(const Galaxy& galaxy,
+                         const FactionSim& factions,
+                         std::uint32_t fromSystem,
+                         std::vector<ContestCandidate>& out) const;
     // Contests in reach that `boardOwner` is a party to (Phase 8u). Pass
     // kNoFaction for an ownerless board, which enumerates nothing.
     void contestCandidates(const Galaxy& galaxy,

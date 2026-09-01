@@ -528,3 +528,67 @@ function pilot_hail(name, role, faction, attitude, standing, hostile, canMarket,
         sol.hail_reply("Nothing for you. Channel's clear.")
     end
 end
+
+-- What is being said in the room (Phase 35 stage B). The player docked at a
+-- station with a bar, a restaurant, a concourse, a casino or a resort, and this
+-- decides what they overhear. Spend up to `lines` of these:
+--
+--   sol.bar_says(message)      words only, no fact appended
+--   sol.bar_shortage(message)  words, then C++ names the good and the dock
+--   sol.bar_raid(message)      words, then C++ names the clan and the system
+--   sol.bar_front(message)     words, then C++ names both sides and the system
+--   sol.bar_hauler(message)    words, then C++ names where the run ends
+--
+-- ⚑ THE MESSAGE IS THE SENTIMENT ONLY, the same split pilot_hail lives under
+-- and for the same reason: a rumour is a claim about the galaxy, and a hook
+-- allowed to name the place could name one that is not there, with the player
+-- unable to tell a bug from a barfly talking nonsense. So write a line that
+-- ENDS pointing somewhere ("They're short of") and let C++ finish it.
+--
+-- `canShortage`/`canRaid`/`canFront`/`canHauler` say whether a fact of that
+-- kind exists right now; spending a line on one that does not gets the line
+-- dropped, because the words were written on a premise that turned out false.
+-- `lines` is how much this room is worth - a bar says one thing, a resort says
+-- three - and it is derived from the room's own power draw.
+--
+-- ⚑ AT t=0 THREE OF THE FOUR ARE EMPTY GALAXY-WIDE and only the departing
+-- hauler is ever available, which is measured rather than assumed: a fresh
+-- galaxy stocks every market at half capacity so nothing is short, and nobody
+-- has raided anybody yet. Say nothing at all and C++ falls back to its own
+-- wording; the house's own lines about this dock are added either way, so the
+-- room is never silent.
+function bar_talk(room, lines, canShortage, canRaid, canFront, canHauler, roll)
+    local spent = 0
+    -- Scarcity first: a war is the thing fewest rooms in the galaxy can tell
+    -- you about, and a shortage is the thing almost all of them can.
+    if canFront and spent < lines then
+        if roll > 0.5 then
+            sol.bar_front("Two of the big names are going at it over")
+        else
+            sol.bar_front("Nobody here will fly through")
+        end
+        spent = spent + 1
+    end
+    if canHauler and spent < lines then
+        sol.bar_hauler("That crew in the corner are taking")
+        spent = spent + 1
+    end
+    if canRaid and spent < lines then
+        if roll > 0.65 then
+            sol.bar_raid("Everyone's still talking about how")
+        else
+            sol.bar_raid("Word came down the lane that")
+        end
+        spent = spent + 1
+    end
+    if canShortage and spent < lines then
+        sol.bar_shortage("A hauler in last night said they're crying out for")
+        spent = spent + 1
+    end
+    if spent == 0 then
+        -- Nothing happening anywhere in reach. A galaxy where the bar always
+        -- has news is a galaxy where news means nothing, so a quiet night is a
+        -- real answer - and the house still has its own lines below this one.
+        sol.bar_says("Quiet night. Nobody's come through with anything worth repeating.")
+    end
+end

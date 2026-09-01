@@ -558,6 +558,41 @@ bool hailTipPlace(GameContent& content, const char* message)
     return content.world().tipPlace(message != nullptr ? message : "Saw something unclaimed out in");
 }
 
+// The bar_talk hook's five builders (Phase 35 stage B). Same shape as the trio
+// above and the same two refusals: outside the hook there is nothing to answer,
+// and a kind the hook was told was unavailable has no fact to point at, so its
+// words are dropped rather than left dangling. GameContent::sayBarLine holds
+// both, because for a room "am I inside the hook" and "have I any lines left"
+// are one number.
+bool barSays(GameContent& content, const char* message)
+{
+    return content.sayBarLine(GameContent::BarFact::None,
+                              message != nullptr ? message : "Quiet in here tonight.");
+}
+
+bool barShortage(GameContent& content, const char* message)
+{
+    return content.sayBarLine(GameContent::BarFact::Shortage,
+                              message != nullptr ? message : "They're short of");
+}
+
+bool barRaid(GameContent& content, const char* message)
+{
+    return content.sayBarLine(GameContent::BarFact::Raid, message != nullptr ? message : "Word came in that");
+}
+
+bool barFront(GameContent& content, const char* message)
+{
+    return content.sayBarLine(GameContent::BarFact::Front,
+                              message != nullptr ? message : "There's fighting over");
+}
+
+bool barHauler(GameContent& content, const char* message)
+{
+    return content.sayBarLine(GameContent::BarFact::Hauler,
+                              message != nullptr ? message : "Somebody's taking");
+}
+
 bool undock(GameContent& content)
 {
     return content.world().undock();
@@ -3726,6 +3761,15 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&hailReply>("sol", "hail_reply", this);
     m_vm.registerFunction<&hailTipMarket>("sol", "hail_tip_market", this);
     m_vm.registerFunction<&hailTipPlace>("sol", "hail_tip_place", this);
+    // Bar talk (Phase 35 stage B). The bar_talk hook's builders: sol.bar_says
+    // is words only, the other four append the fact C++ picked. There is no
+    // player-facing action to pair them with - walking into the room IS the
+    // action - which is why sol.hail has a sibling above and these do not.
+    m_vm.registerFunction<&barSays>("sol", "bar_says", this);
+    m_vm.registerFunction<&barShortage>("sol", "bar_shortage", this);
+    m_vm.registerFunction<&barRaid>("sol", "bar_raid", this);
+    m_vm.registerFunction<&barFront>("sol", "bar_front", this);
+    m_vm.registerFunction<&barHauler>("sol", "bar_hauler", this);
     // Mission objectives and threat selection (Phase 8i).
     m_vm.registerFunction<&describeObjective>("sol", "objective", this);
     m_vm.registerFunction<&targetNearestHostile>("sol", "target_hostile", this);
@@ -4014,6 +4058,10 @@ void GameContent::runBootScripts()
     m_hasPilotHailHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_pilotHailHookFailed = false;
+    lua_getglobal(state, "bar_talk");
+    m_hasBarTalkHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_barTalkHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -4232,6 +4280,23 @@ void GameContent::tick(double dt)
         runMissionBoard();
     }
 
+    // The room, composed once per dock (Phase 35 stage B). ⚑⚑ NOT ON THE
+    // BOARD'S REFRESH CADENCE, which is the difference between a readout and a
+    // conversation and is the user's ruling: what the house says is decided
+    // when you walk in. ⚑ The BINDING, not the event, is what arms it - a
+    // docked load clears m_dockEventPending on purpose so board offers are not
+    // re-rolled, and an event-only rule would have opened every loaded save on
+    // an empty room. Undocking unbinds, so walking out and back in is a new
+    // visit and does re-roll.
+    if (!m_world->isDocked()) {
+        if (m_barSystem != 0xffff'ffffu) {
+            runBarTalk(); // clears it, and unbinds
+        }
+    } else if (dockEvent || m_barSystem != m_world->currentSystemIndex() ||
+               m_barStation != m_world->dockedStationIndex()) {
+        runBarTalk();
+    }
+
     // Docking clearance (Phase 8r): the world queues a hail, the dispatcher
     // answers it. Same shape as the board and the loot hooks — C++ enumerates,
     // Lua composes, C++ validates — so a refusal can be written by a faction
@@ -4409,6 +4474,219 @@ void GameContent::tick(double dt)
             m_rockMinedHookFailed = true;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Bar talk (Phase 35 stage B).
+//
+// ⚑⚑⚑⚑ THIS RUNS FROM tick(), NOT FROM THE FILL, AND THAT IS THE FINDING THE
+// STAGE WAS RE-PRICED ON. The spec said "a `bar_talk` hook in `init.lua` picks
+// the words ... exactly as `pilot_hail` does", which is true of the split and
+// false of the site: `fillStationBar` runs on EVERY FRAME the panel is drawn,
+// and there is no hook in this game that runs from a fill. `pilot_hail` fires
+// on a player action and `mission_board` on a dock event; both are here.
+//
+// ⚑⚑ RULED BY THE USER, 2026-09-01: composed WHEN YOU WALK IN, for the whole
+// screen including stage A's house lines, and not moved again until you
+// undock. That is `m_hails`' rule - a pilot repeats themselves - and it is what
+// stops re-opening the tab being a re-roll. Undocking and docking again IS a
+// new visit and does re-roll, which is the mission board's behaviour too.
+// ---------------------------------------------------------------------------
+void GameContent::runBarTalk()
+{
+    SpaceWorld& world = *m_world;
+    m_barTalk.clear();
+    m_barRoom.clear();
+    m_barShortage.clear();
+    m_barRaid.clear();
+    m_barFront.clear();
+    m_barHauler.clear();
+    m_barLinesLeft = 0;
+    if (!world.isDocked()) {
+        m_barSystem = 0xffff'ffffu;
+        m_barStation = 0xffff'ffffu;
+        return;
+    }
+    const std::uint32_t system = world.currentSystemIndex();
+    const std::uint32_t station = world.dockedStationIndex();
+    m_barSystem = system;
+    m_barStation = station;
+    ++m_barVisits;
+
+    const sol::assets::ModuleDef* room = game::stationRoom(world, m_defs, system, station);
+    if (room == nullptr) {
+        return; // no recreation module: the strip does not offer the tab either
+    }
+    m_barRoom = room->name;
+    game::composeRoomLine(world, m_defs, system, station, m_barTalk);
+
+    // --- The facts, picked by C++ over the live galaxy. Which KIND gets spent
+    // and in what words is the hook's; naming the place is not, for the reason
+    // pilot_tips.hpp states in its header.
+    const sol::sim::MissionSim& missions = world.missionSim();
+    const sol::sim::Galaxy& galaxy = world.galaxy();
+    std::uint32_t pick = 0;
+
+    missions.haulCandidates(galaxy, world.economy(), system, station, m_haulCandidates);
+    if (sol::sim::chooseShortageTalk(
+            m_haulCandidates, world.economy().markets(), world.survey(), world.worldSeconds(), &pick)) {
+        const sol::sim::HaulCandidate& haul = m_haulCandidates[pick];
+        const sol::sim::SystemSpec& spec = galaxy.systems[haul.system];
+        const sol::assets::CommodityDef* good =
+            haul.commodity < world.commodityIds().size()
+                ? m_defs.findCommodity(world.commodityIds()[haul.commodity].c_str())
+                : nullptr;
+        m_barShortage = (good != nullptr ? good->name : std::string("cargo")) + " at " +
+                        spec.stations[haul.station].name + ", " + spec.name;
+    }
+
+    missions.bountyCandidates(galaxy, world.factionSim(), system, m_bountyCandidates);
+    if (sol::sim::chooseRaidTalk(m_bountyCandidates, world.survey(), &pick)) {
+        const sol::sim::BountyCandidate& raid = m_bountyCandidates[pick];
+        if (raid.clan < world.factions().size()) {
+            m_barRaid = world.factions()[raid.clan].name + " hit " + galaxy.systems[raid.system].name;
+        }
+    }
+
+    // ⚑⚑ frontCandidates, NOT contestCandidates. The second is gated on the
+    // board's owner being a party to the fight - a rule about who will PAY -
+    // and this is the one thing a bar can say that a board structurally
+    // cannot. MEASURED on the shipped galaxy: 9 to 16 rooms can name a war the
+    // board beside them would have gated away.
+    missions.frontCandidates(galaxy, world.factionSim(), system, m_contestCandidates);
+    if (sol::sim::chooseFrontTalk(m_contestCandidates, world.survey(), &pick)) {
+        const sol::sim::ContestCandidate& front = m_contestCandidates[pick];
+        if (front.owner < world.factions().size() && front.attacker < world.factions().size()) {
+            m_barFront = world.factions()[front.attacker].name + " is pressing " +
+                         world.factions()[front.owner].name + " at " + galaxy.systems[front.system].name;
+        }
+    }
+
+    missions.escortCandidates(galaxy, world.economy(), world.factionSim(), system, m_escortCandidates);
+    if (sol::sim::chooseHaulerTalk(m_escortCandidates, &pick)) {
+        const sol::sim::EscortCandidate& run = m_escortCandidates[pick];
+        if (run.system < galaxy.systems.size() && run.station < galaxy.systems[run.system].stations.size()) {
+            const sol::sim::SystemSpec& spec = galaxy.systems[run.system];
+            // ⚑ Laden or not is written by C++ rather than handed to the hook,
+            // because a deadheading hauler's `commodity` stays set from its last
+            // run and a script told "it is carrying something" would name the
+            // wrong crate - the trap sol.traders() fell into.
+            m_barHauler = std::string(run.cargo > 0.0f ? "a loaded run out to " : "a run out to ") +
+                          spec.stations[run.station].name + ", " + spec.name;
+        }
+    }
+
+    // --- The words. The hook may spend up to this many lines; the budget and
+    // the "inside the hook" guard are ONE number, the way answeringHail() is
+    // one bool.
+    m_barLinesLeft = game::roomTalkLines(*room);
+    const std::size_t before = m_barTalk.size();
+    if (m_hasBarTalkHook && !m_barTalkHookFailed) {
+        sol::core::Rng rng(galaxy.seed ^ (static_cast<std::uint64_t>(system) << 32u),
+                           (static_cast<std::uint64_t>(station) << 20u) | m_barVisits);
+        const double roll = static_cast<double>(rng.nextU32()) * 0x1.0p-32;
+        std::string error;
+        if (!m_vm.callGlobal("bar_talk",
+                             &error,
+                             m_barRoom.c_str(),
+                             static_cast<double>(m_barLinesLeft),
+                             !m_barShortage.empty(),
+                             !m_barRaid.empty(),
+                             !m_barFront.empty(),
+                             !m_barHauler.empty(),
+                             roll)) {
+            SOL_LOG_ERROR("bar_talk disabled until scripts reload: %s", error.c_str());
+            m_barTalkHookFailed = true;
+        }
+    }
+    if (m_barTalk.size() == before) {
+        // Said nothing, or there is no hook at all. A room that has something
+        // true to say and says nothing is worse than a plainly worded room, so
+        // C++ words it - the same fallback shape dock_request and pilot_hail
+        // both have.
+        defaultBarTalk();
+    }
+    m_barLinesLeft = 0;
+    game::composeHouseTalk(world, m_defs, system, station, m_barTalk);
+}
+
+// ⚑⚑ THE ORDER IS SCARCITY, AND IT IS A CLAIM WITH A NUMBER BEHIND IT: spend
+// the line on the thing FEWEST ROOMS CAN TELL YOU. Measured over the 62 rooms
+// between five minutes and two sim hours, a war front is sayable at 19-37 of
+// them, a departing hauler at 14-39, a raid at 55-62 and a shortage at 57-62 -
+// so a bar that led with the shortage would say the least surprising thing it
+// knows in nine rooms out of ten. The hook is where a designer varies this; a
+// default should be defensible rather than various.
+void GameContent::defaultBarTalk()
+{
+    if (!m_barFront.empty() && sayBarLine(BarFact::Front, "There's fighting over")) {
+        return;
+    }
+    if (!m_barHauler.empty() && sayBarLine(BarFact::Hauler, "Somebody's taking")) {
+        return;
+    }
+    if (!m_barRaid.empty() && sayBarLine(BarFact::Raid, "Word came in that")) {
+        return;
+    }
+    if (!m_barShortage.empty()) {
+        (void)sayBarLine(BarFact::Shortage, "They're short of");
+    }
+}
+
+bool GameContent::sayBarLine(BarFact kind, const char* message)
+{
+    if (m_barLinesLeft <= 0) {
+        // Outside the hook, or the room's lines are spent. One number answers
+        // both, which is why there is no second "are we inside it" flag: a room
+        // that has said its piece and a script talking from on_tick are the
+        // same refusal.
+        SOL_LOG_WARN("bar line: only valid inside bar_talk, and only while the room has lines left");
+        return false;
+    }
+    const char* topic = "Talk";
+    const std::string* fact = nullptr;
+    switch (kind) {
+    case BarFact::None:
+        break;
+    case BarFact::Shortage:
+        topic = "Short";
+        fact = &m_barShortage;
+        break;
+    case BarFact::Raid:
+        topic = "Trouble";
+        fact = &m_barRaid;
+        break;
+    case BarFact::Front:
+        topic = "The war";
+        fact = &m_barFront;
+        break;
+    case BarFact::Hauler:
+        topic = "Leaving";
+        fact = &m_barHauler;
+        break;
+    }
+    std::string text = message != nullptr ? message : "";
+    if (fact != nullptr) {
+        if (fact->empty()) {
+            // The hook was told this kind was unavailable and spent a line on
+            // it anyway. Its words were written on the premise of a fact, so
+            // they are dropped rather than left pointing at nothing - the same
+            // ruling tipMarket makes, and the reason canShortage and the rest
+            // are passed at all.
+            return false;
+        }
+        if (!text.empty() && text.back() != ' ') {
+            text += ' ';
+        }
+        text += *fact;
+        text += '.';
+    }
+    if (text.empty()) {
+        return false;
+    }
+    --m_barLinesLeft;
+    m_barTalk.push_back({.topic = topic, .text = std::move(text)});
+    return true;
 }
 
 void GameContent::runMissionBoard()
