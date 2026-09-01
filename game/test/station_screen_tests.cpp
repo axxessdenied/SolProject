@@ -270,7 +270,58 @@ SOL_TEST(a_stations_screen_mask_is_the_union_of_its_modules_screen_lists)
 // as rates. Stage B proved it of the rate lists; until this stage every dock in
 // the galaxy drew the same eight tabs, including a Shipyard tab on a mining
 // outpost, which is the thing gdd.md §12 asks to be got rid of.
-SOL_TEST(two_stations_of_one_archetype_offer_different_screens)
+// ⚑⚑⚑⚑ THIS TEST USED TO ASSERT THE RULE ON THE GALAXY AND WAS REWRITTEN
+// IN PHASE 35 STAGE A, BECAUSE THE GALAXY IS A SAMPLE AND THE RULE IS ABOUT THE
+// RECIPES. It read: *for every archetype with two or more stations, two of them
+// offer different screens* - and its own comment named the real claim, "every
+// recipe carries at least one screen-bearing module below chance 1.0". Those are
+// not the same statement. The first is the second plus a coin toss, and the
+// smallest archetypes toss the fewest coins: `sol.station_shipyard` places 5
+// stations and `sol.station_assembly` 6.
+//
+// ⚑⚑⚑ IT WAS NOT A HYPOTHETICAL. Stage A added ONE recipe row - a resort,
+// so that a module with no placement anywhere in the tree could appear at all -
+// and a recipe row adds a draw, so every station composed after it re-rolled.
+// On the resampled galaxy BOTH of those archetypes came out uniform, with the
+// recipes completely unchanged. MEASURED, not reasoned: reverting the stage's
+// screen lists and leaving the resampled recipes still failed both, which is
+// what proves it was the resample and not the new screen.
+//
+// So the rule is asserted where the rule lives, and the galaxy is measured
+// beside it as a consequence with a band rather than as the claim itself. Same
+// move stage 34-E made for `shadowOperatorFor` and stage 34-C for
+// `stationTabOnStrip`: *a galaxy-level assertion is only a guard for the cases
+// that galaxy actually contains.*
+SOL_TEST(every_archetype_recipe_can_produce_two_stations_with_different_screens)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+
+    // The rule, on the defs: an archetype can differ only if it has a recipe
+    // row that offers a screen and does not always land.
+    int archetypesChecked = 0;
+    for (const sol::assets::StationDef& station : defs.stations()) {
+        bool canVary = false;
+        for (const sol::assets::StationModuleEntry& entry : station.modules) {
+            const ModuleDef* module = defs.findModule(entry.moduleId.c_str());
+            if (module != nullptr && !module->screens.empty() && entry.chance < 1.0f) {
+                canVary = true;
+                break;
+            }
+        }
+        if (!canVary) {
+            std::printf("  '%s' has no screen-bearing module below chance 1.0\n", station.id.c_str());
+        }
+        SOL_CHECK(canVary);
+        ++archetypesChecked;
+    }
+    SOL_CHECK(archetypesChecked == 11);
+}
+
+// And the consequence, measured on the galaxy the rule produces. A BAND, because
+// which archetypes happen to vary is resampled by every recipe row anybody adds -
+// which is exactly how the version of this test that pinned all eleven broke.
+SOL_TEST(most_archetypes_do_produce_different_screens_in_the_shipped_galaxy)
 {
     DefDatabase defs;
     SOL_REQUIRE(loadShippedDefs(defs));
@@ -285,23 +336,28 @@ SOL_TEST(two_stations_of_one_archetype_offer_different_screens)
         }
     });
 
+    int withStations = 0;
     int archetypesThatVary = 0;
     for (std::size_t a = 0; a < seen.size(); ++a) {
         std::vector<std::uint32_t> masks = seen[a];
         if (masks.size() < 2) {
             continue;
         }
+        ++withStations;
         std::sort(masks.begin(), masks.end());
         const bool varies = std::unique(masks.begin(), masks.end()) != masks.end();
-        if (!varies) {
-            std::printf("  every '%s' offers the same screens\n", defs.stations()[a].id.c_str());
-        }
-        SOL_CHECK(varies);
-        ++archetypesThatVary;
+        std::printf("  %-24s %2zu station(s), screens %s\n",
+                    defs.stations()[a].id.c_str(),
+                    masks.size(),
+                    varies ? "VARY" : "all identical");
+        archetypesThatVary += varies ? 1 : 0;
     }
-    // All eleven, and none of them by accident: every recipe carries at least
-    // one screen-bearing module below chance 1.0.
-    SOL_CHECK(archetypesThatVary == 11);
+    SOL_CHECK(withStations == 11);
+    // The dividend has to be visible, not merely possible: most of the galaxy's
+    // archetypes place two docks that offer different things. The floor is what
+    // makes this a guard - if a resample ever drops it here, the recipes have
+    // stopped carrying enough optional screens and the test above will say so.
+    SOL_CHECK(archetypesThatVary >= 8);
 }
 
 // ⚑⚑⚑ TEST 4 MEASURES THE GALAXY THE RULING PRODUCES, BECAUSE A FILTER THAT IS
@@ -354,13 +410,22 @@ SOL_TEST(the_shipped_galaxy_offers_screens_that_are_worth_flying_to)
     SOL_CHECK(offering[static_cast<std::size_t>(StationScreen::Refinery)] <= 40);
     SOL_CHECK(offering[static_cast<std::size_t>(StationScreen::Outfitting)] >= 15);
     SOL_CHECK(offering[static_cast<std::size_t>(StationScreen::Outfitting)] <= 75);
+    // ⚑⚑ THE BAR (Phase 35 stage A), AND ITS BAND IS WIDE ON PURPOSE. Every
+    // one of the eleven recipes carries a bar between 0.45 and 0.55, so about
+    // half the galaxy has a room - common enough that a player meets one early,
+    // scarce enough that a dock without one is a different kind of place. The
+    // band is not a count sheet: five recreation rows roll independently and
+    // the mix is resampled by every recipe row anybody adds.
+    SOL_CHECK(offering[static_cast<std::size_t>(StationScreen::Bar)] >= 40);
+    SOL_CHECK(offering[static_cast<std::size_t>(StationScreen::Bar)] <= 100);
     // Neither is universal, or the filter has stopped filtering.
     for (const StationScreen screen : {StationScreen::Trade,
                                        StationScreen::Outfitting,
                                        StationScreen::Shipyard,
                                        StationScreen::Crew,
                                        StationScreen::Missions,
-                                       StationScreen::Refinery}) {
+                                       StationScreen::Refinery,
+                                       StationScreen::Bar}) {
         SOL_CHECK(offering[static_cast<std::size_t>(screen)] < total);
     }
     // Nothing composes these two, which is what the ruling is FOR.
@@ -369,8 +434,17 @@ SOL_TEST(the_shipped_galaxy_offers_screens_that_are_worth_flying_to)
 
     // ⚑⚑ AND THE REASON THE RULING IS NOT A MATTER OF TASTE: a plain union
     // leaves stations equipped for nothing at all. Measured rather than argued
-    // - about six of 125 at these weights - and every one of them is a dock
-    // that would open on an empty strip if Factions and Survey were gated too.
+    // and every one of them is a dock that would open on an empty strip if
+    // Factions and Survey were gated too.
+    //
+    // ⚑⚑⚑ PHASE 35 STAGE A HALVED THIS FIGURE AND THAT IS THE POINT OF IT.
+    // A room is equipment, so a dock that was equipped for nothing but happens
+    // to have a bar is now equipped for something: measured, the count fell
+    // from about six of 125 to about three. The Bar is the single biggest
+    // widener of the NARROWEST strips in the galaxy - two-tab docks fall from
+    // five to two and three-tab docks from thirty to twelve - which is a
+    // partial answer to the question Phase 34's exit flight is still owed,
+    // whether a three-tab dock reads as a small station or as a broken one.
     std::printf("  a plain union would leave %d of %d docks with no tabs\n", bareStations, total);
     SOL_CHECK(bareStations > 0);
     // Every station still has a strip, because two tabs are never withheld.

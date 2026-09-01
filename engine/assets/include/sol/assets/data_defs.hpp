@@ -1160,6 +1160,13 @@ enum class StationScreen : std::uint32_t
     Missions,
     Survey,
     Refinery,
+    // Phase 35 stage A. APPENDED rather than slotted beside Missions, and the
+    // reason is worth a line: the strip draws in enum order, so the position of
+    // a value here is a UI decision made in an assets header. Appending keeps
+    // every existing number where it was and puts the new tab at the end, which
+    // is where a room you go to for gossip belongs relative to eight tabs you go
+    // to for business.
+    Bar,
     Count,
 };
 

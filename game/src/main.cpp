@@ -531,6 +531,7 @@ int main(int argc, char** argv)
     std::vector<sol::ui::MissionRow> missionOfferRows;
     std::vector<sol::ui::MissionRow> missionJournalRows;
     std::vector<sol::ui::SurveyRow> surveyRows;
+    std::vector<sol::ui::InfoRow> barTalkRows;
     std::vector<sol::ui::MapSystemRow> mapSystemRows;
     std::vector<sol::ui::MapLaneRow> mapLaneRows;
     std::vector<sol::ui::MapMarkerRow> mapMarkerRows;
@@ -1667,6 +1668,11 @@ int main(int argc, char** argv)
                                       stationPanel,
                                       missionOfferRows,
                                       missionJournalRows); // after: shares stationText
+            // The room, and what the house has to say about this dock (Phase 35
+            // stage A). Shares `stationText` with the two fills above, which is
+            // why it runs after them rather than beside the trade rows: that
+            // deque is cleared by fillStationOutfitting.
+            game::fillStationBar(world, content.defs(), stationText, stationPanel, barTalkRows);
             // Survey ledger (Phase 8e): sellable at any station, whole.
             surveyRows.clear();
             for (const sol::sim::SurveyEntry& entry : world.survey().ledger()) {

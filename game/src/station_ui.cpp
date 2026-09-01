@@ -380,6 +380,171 @@ void fillStationMissions(const SpaceWorld& world,
     panel.missionJournal = journalRows;
 }
 
+// ⚑⚑⚑ THE ROOM IS THE RECREATION MODULE WITH THE LARGEST `power_draw`, AND
+// THAT IS DELIBERATELY NOT A NEW FIELD. The family already ships a size ladder -
+// bar 2, restaurant 3, concourse 4, casino 5, resort 8 - which is authored, is
+// already load-bearing for the composer's power rule, and orders exactly the way
+// a room list should. A second number saying the same thing in a different unit
+// is how two tables start disagreeing, and this project has paid for that twice.
+const assets::ModuleDef* stationRoom(const SpaceWorld& world,
+                                     const assets::DefDatabase& defs,
+                                     std::uint32_t system,
+                                     std::uint32_t station)
+{
+    const assets::ModuleDef* best = nullptr;
+    for (const std::uint32_t index : world.stationModules(system, station)) {
+        if (index >= defs.modules().size()) {
+            continue;
+        }
+        const assets::ModuleDef& def = defs.modules()[index];
+        if (def.family != assets::ModuleFamily::Recreation) {
+            continue;
+        }
+        if (best == nullptr || def.powerDraw > best->powerDraw) {
+            best = &def;
+        }
+    }
+    return best;
+}
+
+void fillStationBar(const SpaceWorld& world,
+                    const assets::DefDatabase& defs,
+                    std::deque<std::string>& text,
+                    ui::StationPanel& panel,
+                    std::vector<ui::InfoRow>& talkRows)
+{
+    talkRows.clear();
+    panel.barRoom = "";
+    panel.barTalk = {};
+    if (!world.isDocked()) {
+        return;
+    }
+    const std::uint32_t system = world.currentSystemIndex();
+    const std::uint32_t station = world.dockedStationIndex();
+    const assets::ModuleDef* room = stationRoom(world, defs, system, station);
+    if (room == nullptr) {
+        // The strip does not offer this tab without a recreation module, so
+        // this is the panel and the strip disagreeing rather than a station
+        // with a quiet night. Same shape as the Refining tab's guard.
+        return;
+    }
+    panel.barRoom = room->name.c_str();
+
+    // --- The room itself. What else is in here is a fact about the dock's
+    // size, and it is the only line that is about the station rather than
+    // about the galaxy around it.
+    {
+        std::string line = room->name;
+        int others = 0;
+        for (const std::uint32_t index : world.stationModules(system, station)) {
+            if (index < defs.modules().size() &&
+                defs.modules()[index].family == assets::ModuleFamily::Recreation &&
+                &defs.modules()[index] != room) {
+                ++others;
+            }
+        }
+        if (others == 1) {
+            line += ", and one other room on this dock";
+        } else if (others > 1) {
+            line += ", and " + std::to_string(others) + " other rooms on this dock";
+        } else {
+            line += ", and it is the only room on this dock";
+        }
+        talkRows.push_back({.label = "The room", .value = store(text, std::move(line))});
+    }
+
+    // --- Whose law reaches here, and how far. The SIGN is who polices the
+    // place and the magnitude is how much, which is the distinction
+    // `systemSecurity` exists to keep - so the sentence is built from both.
+    {
+        const float security = world.systemSecurity(system);
+        const std::uint32_t owner = world.systemOwnerFaction(system);
+        const char* held = owner < world.factions().size() ? world.factions()[owner].name.c_str() : nullptr;
+        char number[32] = {};
+        std::snprintf(number, sizeof(number), "%+.2f", static_cast<double>(security));
+        std::string line;
+        if (security > 0.0f && held != nullptr) {
+            line = std::string(held) + " polices this system (" + number + ").";
+        } else if (security < 0.0f && held != nullptr) {
+            line = std::string(held) + " runs this system (" + number + "), and there is no other law here.";
+        } else {
+            line = "Nobody's law reaches this system. Whatever happens out there stays out there.";
+        }
+        talkRows.push_back({.label = "The law", .value = store(text, std::move(line))});
+    }
+
+    // --- What the house cannot take (Phase 34 stage D). A REFUSAL rather than
+    // an empty shelf: the station has no hold for it, so the trade board leaves
+    // the row off entirely and a player who hauled it here has no way at all to
+    // find out why. This is that answer.
+    {
+        std::string refused;
+        int count = 0;
+        for (std::uint32_t c = 0; c < world.commodityIds().size(); ++c) {
+            if (world.dockedStationStocks(c)) {
+                continue;
+            }
+            ++count;
+            const assets::CommodityDef* def = defs.findCommodity(world.commodityIds()[c].c_str());
+            const std::string name = def != nullptr ? def->name : world.commodityIds()[c];
+            if (count <= 3) {
+                refused += (refused.empty() ? "" : ", ") + name;
+            }
+        }
+        std::string line;
+        if (count == 0) {
+            line = "This dock has a hold for everything anybody hauls.";
+        } else {
+            line = "No hold here for " + refused;
+            if (count > 3) {
+                line += " and " + std::to_string(count - 3) + " more";
+            }
+            line += " - do not bring it, they cannot take it.";
+        }
+        talkRows.push_back({.label = "The warehouse", .value = store(text, std::move(line))});
+    }
+
+    // --- What it runs on (Phase 34 stage B). The composer FITS the smallest
+    // plant that covers the draw rather than rolling one, so the plant is a
+    // consequence of the station and reads as one: an outpost got an array and
+    // a shipyard got a fusion plant, and nobody authored either.
+    {
+        const assets::ModuleDef* plant = nullptr;
+        for (const std::uint32_t index : world.stationModules(system, station)) {
+            if (index >= defs.modules().size()) {
+                continue;
+            }
+            const assets::ModuleDef& def = defs.modules()[index];
+            if (def.family == assets::ModuleFamily::Power &&
+                (plant == nullptr || def.powerOutput > plant->powerOutput)) {
+                plant = &def;
+            }
+        }
+        if (plant != nullptr) {
+            talkRows.push_back(
+                {.label = "The lights",
+                 .value = store(text, "Everything in here runs off the " + plant->name + ".")});
+        }
+    }
+
+    // --- And who else is trading on this dock (Phase 34 stage E). DERIVED, not
+    // stored: `stationHasShadowPresence` compares the operator against the LIVE
+    // holder, so the day a clan takes this system its own fence stops being a
+    // shadow presence and this line stops being said. Nothing has to notice.
+    if (world.stationHasShadowPresence(system, station)) {
+        const std::uint32_t operator_ = world.stationShadowOwner(system, station);
+        if (operator_ < world.factions().size()) {
+            talkRows.push_back({.label = "Word is",
+                                .value = store(text,
+                                               world.factions()[operator_].name +
+                                                   " keep a back room on this dock, and the people who "
+                                                   "hold this system are not asking about it.")});
+        }
+    }
+
+    panel.barTalk = talkRows;
+}
+
 std::string formatAge(double seconds)
 {
     char buffer[32];

@@ -335,8 +335,26 @@ constexpr std::uint64_t kGoldenStructure = 0x06BC021EC816F5E8ull;
 // touches, so both geometry digests are untouched; and the STRUCTURE digest is
 // untouched too, because it reads a galaxy `assignShadowOwners` never saw. Only
 // the digest taken over the composed galaxy could move, and it did.
-// Old: 0x7FD34958D6FDA639ull.
-constexpr std::uint64_t kGoldenComposition = 0x64A186F7FAD64160ull;
+// Old: 0x7FD34958D6FDA639ull, then 0x64A186F7FAD64160ull.
+//
+// ⚑⚑⚑⚑ PHASE 35 STAGE A MOVED IT AGAIN, AND FOR A REASON WORTH READING BEFORE
+// ANYBODY ACCEPTS THE NEXT MOVE. The stage added `screens = ["bar"]` to five
+// modules, which this digest CANNOT SEE - it hashes module IDS and the list a
+// station was composed from, so what a module OFFERS is invisible to it by
+// design. What moved the number is one line in `stations.toml`: a recipe row
+// for `sol.mod_resort`, a module that had no placement anywhere in the tree and
+// could not appear at any seed.
+//
+// ⚑⚑⚑ A RECIPE *ROW* IS NOT A LOCAL EDIT, AND `composeStations` SAYS THE
+// OPPOSITE IN CAPITALS ABOUT THE CASE IT DOES COVER. It walks ONE
+// `kCompositionStream` Rng across every station in galaxy order and draws once
+// per recipe entry, unconditionally - which makes a *chance* edit local and does
+// NOT make an *added row* local. One row on the Shipyard therefore re-rolled
+// every station composed after it: 120 distinct compositions became 119, the
+// shadow operators fell from 10 to 6, and the fitted plants from 134 to 130.
+// Nothing about the composer changed. Same shape as *adding an archetype
+// resamples the mix*, one layer down.
+constexpr std::uint64_t kGoldenComposition = 0x7A589D140D59CB6Cull;
 
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine

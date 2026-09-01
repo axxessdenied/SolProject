@@ -386,9 +386,28 @@ screens = ["shipyard"]
 power_draw = 2.0
 
 # ---------------------------------------------------------------------------
-# Recreation — where the people are, which is where the rumours are (Phase 35).
-# No screens yet: the Bar screen does not exist, and naming one here would be
-# a def pointing at nothing.
+# Recreation — a room with people in it, which is where the rumours are.
+#
+# ⚑⚑ THE WHOLE FAMILY OFFERS `bar`, RULED 2026-08-31, AND THE ALTERNATIVE WAS
+# WORSE IN A WAY THIS FILE HAS ALREADY PAID FOR ONCE. Only `sol.mod_bar` offering
+# the screen would have left four rows as vocabulary with no reader — the exact
+# failure the header above warns about in capitals — while a station with a
+# casino and no bar would have had a room full of people and no way into it.
+#
+# ⚑⚑⚑ AND THE SIZE ORDER IS `power_draw`, WHICH IS WHY NO NEW NUMBER IS
+# AUTHORED HERE. The station's ROOM is whichever of these it has with the largest
+# draw — 2, 3, 4, 5, 8 is already a size ladder, it is already load-bearing for
+# the composer, and a second field saying the same thing in a different unit is
+# how two tables start disagreeing. Phase 35 stage B derives how far the talk
+# reaches from the same ladder, so that number is authored where its reader is,
+# per the rule stage 34-A set: a figure written before its reader is a figure
+# nobody searched.
+#
+# ⚑ NOTE WHAT IS *NOT* HERE: population. That is `habitat`, and it is rolled
+# independently — measured, 46 stations have people and no room to drink in, and
+# 9 have a room with nobody living on the station. What a row below puts on a
+# dock is a ROOM, not residents; the people in a bar on a mining outpost are
+# mostly off the ships that are passing through.
 # ---------------------------------------------------------------------------
 
 [[module]]
@@ -396,30 +415,35 @@ id = "sol.mod_bar"
 name = "Bar"
 family = "recreation"
 power_draw = 2.0
+screens = ["bar"]
 
 [[module]]
 id = "sol.mod_restaurant"
 name = "Restaurant"
 family = "recreation"
 power_draw = 3.0
+screens = ["bar"]
 
 [[module]]
 id = "sol.mod_concourse"
 name = "Concourse"
 family = "recreation"
 power_draw = 4.0
+screens = ["bar"]
 
 [[module]]
 id = "sol.mod_casino"
 name = "Casino"
 family = "recreation"
 power_draw = 5.0
+screens = ["bar"]
 
 [[module]]
 id = "sol.mod_resort"
 name = "Resort"
 family = "recreation"
 power_draw = 8.0
+screens = ["bar"]
 
 # ---------------------------------------------------------------------------
 # Services — the remaining dock screens.

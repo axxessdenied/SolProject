@@ -3762,13 +3762,26 @@ SOL_TEST(data_defs_module_family_screen_and_goods_class_names_round_trip)
 
     // ⚑⚑ THE SCREEN NAMES ARE HALF OF A PARALLEL PAIR AND THIS IS WHERE THAT
     // IS PINNED FROM THIS SIDE. `game::StationScreenState::Tab` is the other
-    // half and stage C owns the mapping; what this layer can promise is that
-    // the vocabulary has exactly the eight entries that tab strip has, in the
-    // order the strip draws them - so a mapping written in stage C has
-    // something to be checked against.
-    SOL_CHECK(sol::assets::kStationScreenCount == 8);
+    // half and Phase 34 stage C owns the mapping; what this layer can promise is
+    // that the vocabulary has exactly the entries that tab strip has, in the
+    // order the strip draws them - so a mapping written there has something to
+    // be checked against.
+    //
+    // ⚑⚑⚑ NINE SINCE PHASE 35 STAGE A, AND THE COUNT IS PINNED RATHER THAN
+    // DERIVED ON PURPOSE. `kStationScreenCount` is `StationScreen::Count`, so a
+    // test written as "the count equals the count" would pass on the day
+    // somebody adds a screen here and forgets the strip, the label, the hint and
+    // the `static_assert` in `station_screen.cpp` that ties the two enums
+    // together. A literal is the only form of this check that can fail.
+    SOL_CHECK(sol::assets::kStationScreenCount == 9);
     SOL_CHECK(static_cast<std::uint32_t>(StationScreen::Outfitting) == 1);
     SOL_CHECK(static_cast<std::uint32_t>(StationScreen::Survey) == 6);
+    // Appended rather than slotted in beside Missions, which is what kept every
+    // number above where it was.
+    SOL_CHECK(static_cast<std::uint32_t>(StationScreen::Bar) == 8);
+    SOL_CHECK(std::strcmp(sol::assets::stationScreenName(StationScreen::Bar), "bar") == 0);
+    StationScreen screen{};
+    SOL_CHECK(sol::assets::parseStationScreen("bar", screen) && screen == StationScreen::Bar);
 
     sol::assets::ModuleFamily family{};
     SOL_CHECK(!sol::assets::parseModuleFamily("Power", family)); // spellings are lowercase

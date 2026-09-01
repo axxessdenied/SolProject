@@ -768,6 +768,19 @@ struct StationPanel
     std::span<const SurveyRow> surveyData;      // unsold ledger (Phase 8e)
     double surveyValue = 0.0;                   // what the ledger pays today
     RefinePanel refinery;                       // refining service (Phase 8f)
+    // The room the player is standing in, and what it has to say (Phase 35
+    // stage A). `barRoom` is the largest recreation module the station has -
+    // "Bar", "Concourse", "Resort" - because the ROOM is what the heading of a
+    // screen about a room should name.
+    //
+    // ⚑ `InfoRow` rather than a row type of its own, for the reason that
+    // struct was written: "a dozen small tables and inventing a row type per
+    // table would be a dozen structs that all say the same thing". It already
+    // carries the optional trailing button and the opaque action string that
+    // Phase 35 stage D needs for a lead you can take, so nothing here has to
+    // move when talk stops being only about this dock.
+    const char* barRoom = "";
+    std::span<const InfoRow> barTalk;
     // Which tabs this station offers (Phase 34 stage C): bit `i` set means the
     // screen the GAME layer numbers `i` belongs on the strip.
     //

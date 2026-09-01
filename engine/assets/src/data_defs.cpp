@@ -1405,7 +1405,8 @@ bool parseModule(const TomlValue& table, const char* sourceName, std::vector<Mod
         StationScreen screen = StationScreen::Trade;
         if (!parseStationScreen(text, screen)) {
             reader.fail("'screens' names no dock screen: '" + text +
-                        "' (trade, outfitting, shipyard, crew, factions, missions, survey, refinery)");
+                        "' (trade, outfitting, shipyard, crew, factions, missions, survey, "
+                        "refinery, bar)");
             break;
         }
         // ⚑ A duplicate is refused rather than folded, because a screen list is
@@ -2043,7 +2044,7 @@ static_assert(std::size(kModuleFamilyNames) == kModuleFamilyCount,
 // The dock screens a module can offer. Lowercase for the same reason every
 // other def value is: these are tokens an author types, not headings.
 constexpr const char* kStationScreenNames[] = {
-    "trade", "outfitting", "shipyard", "crew", "factions", "missions", "survey", "refinery"};
+    "trade", "outfitting", "shipyard", "crew", "factions", "missions", "survey", "refinery", "bar"};
 
 static_assert(std::size(kStationScreenNames) == kStationScreenCount,
               "a station screen is missing its def spelling");

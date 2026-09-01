@@ -42,7 +42,7 @@ constexpr float kNumberWidth = 82.0f;
 constexpr Color kCampaign = rgba(0xF2CC59FFu);
 
 constexpr const char* const kTabLabels[StationScreenState::TabCount] = {
-    "Trade", "Outfitting", "Shipyard", "Crew", "Factions", "Missions", "Survey", "Refinery"};
+    "Trade", "Outfitting", "Shipyard", "Crew", "Factions", "Missions", "Survey", "Refinery", "Bar"};
 
 // ---------------------------------------------------------------------------
 // The tab strip is a filter over what the station is made of (Phase 34 stage C).
@@ -77,6 +77,7 @@ static_assert(static_cast<int>(StationScreenState::Survey) ==
               static_cast<int>(sol::assets::StationScreen::Survey));
 static_assert(static_cast<int>(StationScreenState::Refinery) ==
               static_cast<int>(sol::assets::StationScreen::Refinery));
+static_assert(static_cast<int>(StationScreenState::Bar) == static_cast<int>(sol::assets::StationScreen::Bar));
 
 // The identity mapping above is what lets one bit index serve both, so
 // `panel.screens` is read here with the tab's own number.
@@ -1061,6 +1062,60 @@ void buildRefineryTab(UiContext& ui, StationPanel& panel, StationScreenState& st
     ui.endScroll();
 }
 
+// --- The Bar (Phase 35 stage A) ---
+
+// ⚑⚑⚑⚑ THE ROOM HAS TO HAVE SOMETHING TO SAY ON THE DAY IT SHIPS, AND THAT IS
+// A RULING RATHER THAN A FLOURISH. Stage B is where a barkeep reads the live
+// galaxy - shortages, raids, fronts - and MEASURED, at t=0 the galaxy has none
+// of them: every market opens at half capacity so nothing is short, nobody has
+// raided so no intensity is warm, and 18 of the 64 docks with a room would open
+// on an empty screen. t=0 is exactly when a new player first docks. So the
+// source that ships FIRST is the one that is never empty: the dock you are
+// standing on. Everything below is true the instant the galaxy exists.
+//
+// ⚑⚑ IT IS ALSO THE FIRST TIME A PLAYER CAN SEE ANY OF IT. Phase 34 composed
+// 125 stations out of modules and left three of its own findings owed to a
+// human for want of a surface: what a station cannot hold (stage D), what plant
+// it was fitted with (stage B), and who runs its fence (stage E). A bar is
+// where you would hear all three.
+//
+// ⚑ AND THE LINE THIS TAB MUST NOT CROSS: it is not a second ship screen.
+// "What the house cannot take" is content because it is scarce and it changes
+// what you fly here with; a readout of every module on the station is a data
+// dump wearing a room's name.
+void buildBarTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
+{
+    const auto& theme = ui.theme();
+    const std::size_t rows = std::max<std::size_t>(panel.barTalk.size(), 1);
+    const float contentHeight = kSectionHeight + theme.spacing + listHeight(ui, rows);
+    const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Bar]);
+    Column column(list, 0.0f, theme.spacing);
+
+    sectionHeader(ui, column.row(kSectionHeight), panel.barRoom[0] != '\0' ? panel.barRoom : "The room");
+    if (panel.barTalk.empty()) {
+        // Unreachable on the shipped galaxy - the house facts below are never
+        // all absent - and kept because a tab that draws nothing at all is
+        // worse than one that says so. See the note on the strip: the tab is
+        // only ever here because a module put a room on this station.
+        emptyNote(ui, column, "(nobody is saying anything)");
+    }
+    for (int i = 0; i < static_cast<int>(panel.barTalk.size()); ++i) {
+        const sol::ui::InfoRow& line = panel.barTalk[static_cast<std::size_t>(i)];
+        const Rect row = column.row(kRowHeight);
+        rowBackground(ui, row, i);
+        Row cursor(row, theme.spacing);
+        // A fixed topic column, so five sentences of very different lengths
+        // still read as a list rather than as a paragraph. The sentence takes
+        // the rest and is clipped, because it is generated from def names and
+        // faction names and has no length anybody controls.
+        const Rect topic = cursor.cell(150.0f);
+        clipped(ui, topic, line.label, theme.textDim, theme.strongStyle);
+        clipped(ui, cursor.remaining(), line.value, theme.textPrimary);
+    }
+
+    ui.endScroll();
+}
+
 } // namespace
 
 bool stationTabOnStrip(const StationPanel& panel, int tab)
@@ -1174,6 +1229,9 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
     case StationScreenState::Refinery:
         buildRefineryTab(ui, panel, state, content);
         break;
+    case StationScreenState::Bar:
+        buildBarTab(ui, panel, state, content);
+        break;
     default:
         break;
     }
@@ -1188,6 +1246,7 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
         "Accepting a contract starts its clock; abandoning one costs standing.",
         "Scan data sells anywhere; the further out it was taken, the more it pays.",
         "Refining takes time: leave the order and come back for it.",
+        "What you hear in here is true; whether it is worth anything is your problem.",
     };
 
     Row footer(footerRow, theme.spacing);

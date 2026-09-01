@@ -594,6 +594,16 @@ modules = [
 # and unlike the Assembly Yard, whose plate line is feedstock already - a
 # station cannot sensibly have the same good on both lists.
 [[station]]
+# ⚑⚑ THE RESORT'S ONLY HOME IN THIS GALAXY, AND IT IS A COMPROMISE STATED
+# RATHER THAN HIDDEN (Phase 35 stage A). `sol.mod_resort` shipped in
+# `modules.toml` with NO recipe line anywhere in the tree, so it could not appear
+# at any seed - a def with no placement, which is a word with no reader one layer
+# out. Every archetype in this file is industrial and there is no civilian hub
+# for a resort to sit on, so it rides with the largest station that already
+# carries the rest of the room ladder. When a habitat-led archetype exists, it
+# moves. ⚑ Adding the row was NOT free: the composer draws once per recipe
+# entry off one shared stream, so it re-rolled every station composed after it
+# and moved `kGoldenComposition`. A chance edit here is local; a new row is not.
 id = "sol.station_shipyard"
 name = "Shipyard"
 weight_core = 1.3
@@ -619,5 +629,6 @@ modules = [
     "sol.mod_restaurant:0.4",
     "sol.mod_concourse:0.3",
     "sol.mod_casino:0.1",
+    "sol.mod_resort:0.2",
     "sol.mod_brokerage:0.3",
 ]

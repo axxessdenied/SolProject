@@ -22,6 +22,7 @@ struct StationScreenState
         Missions,
         Survey,
         Refinery,
+        Bar,
         TabCount,
     };
 
