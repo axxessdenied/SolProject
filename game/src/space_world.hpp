@@ -2830,12 +2830,117 @@ public:
     [[nodiscard]] const ResponseReport& lastResponse() const { return m_lastResponse; }
 
     [[nodiscard]] double shipHullFraction(sol::ecs::Entity entity) const;
+
+    // Where a pilot is, for the two callers that have an entity and need a
+    // point: the patrol anchor (Phase 36 stage B) and the console probe.
+    // Returns the origin for a dead or transform-less entity, which both
+    // callers treat as "no useful answer" rather than as a position.
+    [[nodiscard]] sol::core::DVec3 pilotPosition(sol::ecs::Entity entity) const;
     // Every hunter in the system and the hauler it is going for, for the
     // console.
     void hunterInfo(std::vector<HunterInfo>& out);
 
     // Who is currently on a call, nearest first.
     void responderInfo(std::vector<ResponderInfo>& out) const;
+
+    // --- Postures (Phase 36 stage B) ---------------------------------------
+    //
+    // Where each patrol in this system is actually standing. Exists for the
+    // same reason `responderInfo` and `lastResponse` do: the rule that decides
+    // this is a few lines in `spawnAmbientPilots`, and "the rule I wrote is the
+    // rule that ran" is a claim this project has repeatedly been wrong about.
+    // A test and the console can both count postures with it.
+    struct PatrolPost
+    {
+        // The ENTITY INDEX, not a handle: `ecs::Pool` exposes `entityIndices()`
+        // and not the entities themselves, and every other consumer in this file
+        // (`handleShipDestroyed`, `noteDamage`) is written against the index too.
+        std::uint32_t pilotIndex = 0;
+        sol::core::DVec3 post; // the station or gate it holds
+        double distanceToPost = 0.0;
+        // ⚑⚑ WHERE ITS WAYPOINT IS, WHICH IS THE ONLY THING THAT PROVES THE
+        // ANCHOR FIX. Spawn position alone cannot: a picket spawned at a gate
+        // and then re-anchored on the station by `pilot_patrol_offset` looks
+        // identical until the first think has run. This is what the flown state
+        // reports, so a test can tick the world and ask.
+        double waypointDistanceToPost = 0.0;
+        bool atGate = false; // false = the station approach posture
+        std::uint32_t factionIndex = 0xffff'ffffu;
+    };
+
+    void patrolPosts(std::vector<PatrolPost>& out) const;
+
+    // --- Notice (Phase 36 stage B) -----------------------------------------
+    //
+    // ⚑⚑⚑⚑ THE PHASE'S WHOLE BALANCE LIVES HERE, AND `017` SAID SO BEFORE A
+    // LINE WAS WRITTEN: "an inspection loop that fires too often is a tax, not
+    // a mechanic. Notice must be RARE in policed core space for a clean pilot
+    // and COMMON for a dark one." Both halves are requirements, and the second
+    // is the one a cautious rule quietly fails.
+    //
+    // ⚑⚑ IT IS A RATE PER PATROL PER SECOND, NOT A ROLL PER THINK. A think is
+    // 2 Hz and the tick is 60 Hz, so anything expressed per-call silently
+    // retunes itself the day either cadence changes - which is the shape of bug
+    // Phase 8g spent a stage on. `dt` is the only honest unit.
+    enum class NoticeReason : std::uint32_t
+    {
+        None = 0,
+        RandomCheck, // a clean pilot, occasionally, because a checkpoint checks
+        Dark,        // no transponder: the loud one
+        Wanted,      // a price posted by the faction that polices this system
+    };
+
+    [[nodiscard]] static const char* noticeReasonName(NoticeReason reason);
+
+    struct NoticeParams
+    {
+        // Per patrol per second, within `range`. A clean pilot sitting inside a
+        // core patrol's envelope for a full minute is stopped about once every
+        // twenty; a dark one about twice a minute.
+        double cleanPerSecond = 0.000'8;
+        double darkPerSecond = 0.03;
+        double wantedPerSecond = 0.01;
+        // The patrol has to be able to SEE you. Same 80 km `pilotEngageEnemy`
+        // uses, deliberately: a player learns one number for "close enough for
+        // that ship to care", and two would be two rules to discover.
+        double range = 8.0e4;
+        // After a stop, this patrol's whole system stops asking for a while.
+        // Without it a refusal is re-rolled the next frame and the mechanic is
+        // a machine gun rather than an event.
+        double cooldownSeconds = 90.0;
+    };
+
+    [[nodiscard]] const NoticeParams& noticeParams() const { return m_noticeParams; }
+
+    void setNoticeParams(const NoticeParams& params) { m_noticeParams = params; }
+
+    // What the last notice was, for the probe, the console and the tests.
+    struct NoticeReport
+    {
+        NoticeReason reason = NoticeReason::None;
+        std::uint32_t patrolIndex = kNoIndex;
+        std::uint32_t factionIndex = kNoIndex;
+        double distance = 0.0;
+        double atWorldSeconds = 0.0;
+        std::uint32_t count = 0; // how many times this session
+    };
+
+    [[nodiscard]] const NoticeReport& lastNotice() const { return m_lastNotice; }
+
+    // ⚑⚑ THE POLICY HALF, PUBLIC FOR THE SAME REASON `considerResponse` IS:
+    // whether a patrol takes an interest is not a thing a scripted drive can
+    // promise, so a test has to be able to state the rule directly. Called from
+    // the tick; returns the reason when a patrol has just decided to stop the
+    // player, and `None` on every other frame.
+    //
+    // ⚑ Stage C is what turns this into a hail, a hold and a scan. Stage B
+    // stops at the DECISION on purpose - the frequency is the thing that has to
+    // be right before there is an interaction hanging off it.
+    NoticeReason considerNotice(double dt);
+
+    // Dev/test lever: clears the cooldown so a drive does not have to wait 90 s
+    // between attempts.
+    void clearNoticeCooldown() { m_noticeCooldown = 0.0; }
 
     // What state a pilot is in. Small, but it is what lets a test state the
     // difference between `pilotPatrolTo` and `pilotTravelTo` in one line -
@@ -2856,6 +2961,28 @@ public:
     {
         return m_targets.empty() ? sol::core::DVec3{} : m_targets[0].position;
     }
+
+    // ⚑⚑⚑⚑ THE POST A PILOT IS STANDING AT (Phase 36 stage B): the nearest
+    // STATION OR GATE in the current system. This is what makes "both postures"
+    // possible, and it replaces `stationPosition()` as the anchor a patrol holds
+    // its pattern around.
+    //
+    // ⚑⚑ IT READS THE SYSTEM SPEC, NOT `m_targets`. The nav-target list is the
+    // right thing for a player's cycle key and the wrong thing for this: it also
+    // carries asteroid fields, mission objectives, escort markers and the
+    // player's own assigned berth, so a patrol anchored on "nearest nav target"
+    // would form up around a rock, or around wherever the player was cleared to
+    // dock. Stations and gates are the only two things a garrison is posted to.
+    //
+    // ⚑⚑ AND IT FIXES SOMETHING THAT WAS ALREADY WRONG. `stationPosition()` is
+    // `m_targets[0]` - ONE point for the whole system - so in the 45 systems
+    // with more than one station every patrol formed up around station 0
+    // regardless of which station it was spawned over. That was invisible while
+    // there was only one posture.
+    //
+    // Falls back to the primary planet when a system has neither, which no
+    // shipped system does (every system has at least two gates).
+    [[nodiscard]] sol::core::DVec3 nearestPost(const sol::core::DVec3& from) const;
 
     // Decrements think timers by dt and collects pilots due for a Lua think.
     struct PilotThink
@@ -3592,6 +3719,16 @@ private:
     CelestialBody m_star;
     std::vector<CelestialBody> m_planets;
     std::vector<GateInstance> m_gates;
+    // Scratch: which gates a garrison posts to, ranked (Phase 36 stage B). A
+    // member rather than a local for the same reason `m_rosterClasses` is one -
+    // `spawnAmbientPilots` runs on every system load.
+    std::vector<std::uint32_t> m_gatePostOrder;
+    NoticeParams m_noticeParams;
+    NoticeReport m_lastNotice;
+    double m_noticeCooldown = 0.0;
+    // Session state, not saved - the same footing `m_responseCooldown` is on.
+    // Seeded off the universe so two runs of the same galaxy roll alike.
+    sol::core::Rng m_noticeRng{0x36'0b'11'ceull, 0x9e37'79b9'7f4a'7c15ull};
     // ⚑ What a ship must not fly into (Phase 8y), rebuilt every tick from the
     // SAME pass and the same exclusions as m_collisionBodies — so the set you
     // avoid and the set you can hit cannot drift apart, which is the whole

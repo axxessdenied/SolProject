@@ -4024,6 +4024,37 @@ void SpaceWorld::spawnWing(std::uint32_t faction,
     }
 }
 
+core::DVec3 SpaceWorld::nearestPost(const core::DVec3& from) const
+{
+    if (m_currentSystem >= m_galaxy.systems.size()) {
+        return from;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    const core::DVec3* best = nullptr;
+    double bestDistance = 0.0;
+    const auto consider = [&](const core::DVec3& candidate) {
+        const core::DVec3 d = candidate - from;
+        const double distance = d.x * d.x + d.y * d.y + d.z * d.z; // squared is enough to rank
+        if (best == nullptr || distance < bestDistance) {
+            best = &candidate;
+            bestDistance = distance;
+        }
+    };
+    for (const sim::StationSpec& station : spec.stations) {
+        consider(station.position);
+    }
+    for (const sim::GateSpec& gate : spec.gates) {
+        consider(gate.position);
+    }
+    if (best == nullptr) {
+        // No station and no gate. No shipped system is like this - every one
+        // has at least two gates - so this is the honest fallback rather than a
+        // case: hold station on the primary planet.
+        return spec.planets.empty() ? from : spec.planets[spec.primaryPlanet].position;
+    }
+    return *best;
+}
+
 void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::SystemSpec& spec)
 {
     if (m_defs == nullptr || m_factionTable.empty()) {
@@ -4058,13 +4089,66 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
                       anchor,
                       900.0);
         } else {
+            // ⚑⚑⚑⚑ BOTH POSTURES, AND THEY COST NOTHING (Phase 36 stage B,
+            // and the user's ruling). The garrison is FINITE and where it
+            // stands is the decision: some of the wing holds the station and
+            // the rest is posted to gates. Measured on the shipped galaxy, the
+            // three candidate rules were:
+            //
+            //   one picket at every gate      +214 hulls, worst sky 9
+            //   round(baseline * gates)       +102 hulls, worst sky 9
+            //   SPLIT the existing wing         +0 hulls, worst sky 4
+            //
+            // The third watches 40 gates across 39 of the 52 policed systems
+            // and does not add a single hull to any sky. A commander with three
+            // interceptors choosing to stand one on the lane is a better answer
+            // than a commander who is issued a fourth for free - and it is the
+            // only one of the three that does not double the ambient hull count
+            // the phase's own risk section warns about.
+            //
+            // ⚑ The station always keeps at least one hull (`wing - 1`), so
+            // this can never empty the approach posture to fill the gate one.
+            const std::uint32_t wing = patrolsFor(baselineSecurity);
+            const std::uint32_t gateCount = static_cast<std::uint32_t>(spec.gates.size());
+            const std::uint32_t posted = wing == 0 ? 0u : std::min({wing / 2u, gateCount, wing - 1u});
             spawnWing(owner,
                       assets::RosterCell::Patrol,
                       factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Count),
                       baselineSecurity,
-                      patrolsFor(baselineSecurity),
+                      wing - posted,
                       anchor,
                       700.0);
+            // ⚑ Posted to the gates that lead somewhere LESS policed, nearest
+            // the bottom first. A checkpoint faces the direction trouble comes
+            // from, and the alternative - the first N gates in generation order
+            // - would be an arbitrary choice dressed up as a rule. This also
+            // means a core system watches its frontier lane rather than the
+            // lane back to another core system, which is where a smuggler
+            // actually arrives from.
+            if (posted > 0) {
+                m_gatePostOrder.clear();
+                for (std::uint32_t g = 0; g < gateCount; ++g) {
+                    m_gatePostOrder.push_back(g);
+                }
+                std::sort(
+                    m_gatePostOrder.begin(), m_gatePostOrder.end(), [&](std::uint32_t a, std::uint32_t b) {
+                        const float sa = systemSecurityBaseline(spec.gates[a].toSystem);
+                        const float sb = systemSecurityBaseline(spec.gates[b].toSystem);
+                        if (sa != sb) {
+                            return sa < sb;
+                        }
+                        return spec.gates[a].toSystem < spec.gates[b].toSystem; // stable
+                    });
+                for (std::uint32_t i = 0; i < posted; ++i) {
+                    spawnWing(owner,
+                              assets::RosterCell::Patrol,
+                              factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Count),
+                              baselineSecurity,
+                              1,
+                              spec.gates[m_gatePostOrder[i]].position,
+                              700.0);
+                }
+            }
 
             // Civilian traffic (Phase 13, note 5b). Before this, everything in
             // the sky over a station was military: three interceptors in a core
@@ -4737,6 +4821,43 @@ void SpaceWorld::traderPuppetInfo(std::vector<TraderPuppetInfo>& out)
             }
         }
         out.push_back(std::move(info));
+    }
+}
+
+void SpaceWorld::patrolPosts(std::vector<PatrolPost>& out) const
+{
+    out.clear();
+    if (m_currentSystem >= m_galaxy.systems.size()) {
+        return;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    const ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const ShipPilot& pilot = pilots.values()[i];
+        if (pilot.role != PilotRole::Patrol) {
+            continue;
+        }
+        const std::uint32_t index = pilots.entityIndices()[i];
+        const Transform* transform = m_registry.storage<Transform>().tryGet(index);
+        if (transform == nullptr) {
+            continue;
+        }
+        PatrolPost info;
+        info.pilotIndex = index;
+        info.post = nearestPost(transform->position);
+        info.distanceToPost = length(info.post - transform->position);
+        info.waypointDistanceToPost = length(info.post - pilot.waypoint);
+        info.factionIndex = pilot.factionIndex;
+        // Which KIND of post it is. Compared against the gate list rather than
+        // stored on the pilot, so this stays a fact about where the ship is
+        // rather than a label that could drift away from it.
+        for (const sim::GateSpec& gate : spec.gates) {
+            if (length(gate.position - info.post) < 1.0) {
+                info.atGate = true;
+                break;
+            }
+        }
+        out.push_back(info);
     }
 }
 
@@ -8352,6 +8473,123 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
     return m_lastResponse.diverted + m_lastResponse.spawned;
 }
 
+const char* SpaceWorld::noticeReasonName(NoticeReason reason)
+{
+    switch (reason) {
+    case NoticeReason::RandomCheck:
+        return "random check";
+    case NoticeReason::Dark:
+        return "running dark";
+    case NoticeReason::Wanted:
+        return "wanted";
+    case NoticeReason::None:
+        break;
+    }
+    return "none";
+}
+
+SpaceWorld::NoticeReason SpaceWorld::considerNotice(double dt)
+{
+    if (m_noticeCooldown > 0.0) {
+        m_noticeCooldown = std::max(0.0, m_noticeCooldown - dt);
+        return NoticeReason::None;
+    }
+    if (isDocked() || dt <= 0.0) {
+        return NoticeReason::None;
+    }
+    // ⚑⚑ THE LAW HAS TO BE ABLE TO SAY SOMETHING. Measured on the shipped
+    // galaxy: only 26 of 85 systems are held by a faction whose legality table
+    // is non-empty. The Freight Guild holds 25 systems and declares nothing
+    // illegal; 29 more are clan-held and a clan has no table at all. Stopping a
+    // pilot on behalf of a jurisdiction with nothing to charge them with is the
+    // definition of the tax `017` warns about, so it does not happen.
+    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    if (owner >= m_factionTable.size()) {
+        return NoticeReason::None;
+    }
+    const assets::FactionDef* law = jurisdictionOf(m_currentSystem);
+    if (law == nullptr || (law->contraband.empty() && law->restricted.empty())) {
+        return NoticeReason::None;
+    }
+    // ⚑ And the place has to be policed at all. `securityAnswers` is Phase 30's
+    // silence band, read here rather than re-derived: a system whose live rating
+    // has been ground to nothing by raiding is one where nobody is checking
+    // papers, which is the same answer it already gives the responder dispatch.
+    if (!securityAnswers(systemSecurity(m_currentSystem))) {
+        return NoticeReason::None;
+    }
+
+    const std::uint32_t playerIndex = playerEntityIndex();
+    const Transform* playerTransform = m_registry.storage<Transform>().tryGet(playerIndex);
+    if (playerTransform == nullptr) {
+        return NoticeReason::None;
+    }
+
+    // Which reason applies is decided ONCE for the player, not per patrol: it
+    // is a fact about the ship being looked at, and a rate that changed with
+    // how many hulls happened to be in range would make a busy system a
+    // different game rather than a busier one.
+    NoticeReason reason = NoticeReason::RandomCheck;
+    double perSecond = m_noticeParams.cleanPerSecond;
+    if (runningDark()) {
+        reason = NoticeReason::Dark;
+        perSecond = m_noticeParams.darkPerSecond;
+    } else if (m_factionSim.bounty(owner) > 0.0f) {
+        reason = NoticeReason::Wanted;
+        perSecond = m_noticeParams.wantedPerSecond;
+    }
+
+    // The nearest patrol of the OWNING faction that is in range. Somebody
+    // else's navy parked in this system does not check papers here.
+    const ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
+    std::uint32_t bestIndex = kNoIndex;
+    double bestDistance = m_noticeParams.range;
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const ShipPilot& pilot = pilots.values()[i];
+        if (pilot.role != PilotRole::Patrol || pilot.factionIndex != owner) {
+            continue;
+        }
+        const std::uint32_t index = pilots.entityIndices()[i];
+        const Transform* transform = m_registry.storage<Transform>().tryGet(index);
+        if (transform == nullptr) {
+            continue;
+        }
+        const double distance = length(transform->position - playerTransform->position);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = index;
+        }
+    }
+    if (bestIndex == kNoIndex) {
+        return NoticeReason::None;
+    }
+
+    // ⚑⚑ A RATE PER SECOND, CONVERTED HERE AND NOWHERE ELSE. The tick is 60 Hz
+    // today; expressing this per call would silently retune the whole phase the
+    // day that changes, and the balance is the phase.
+    const double chance = 1.0 - std::exp(-perSecond * dt);
+    // ⚑⚑⚑ A MEMBER RNG THAT ADVANCES, NOT A ROLL SEEDED FROM THE CLOCK. The
+    // first cut seeded a fresh `Rng` from `m_worldSeconds`, which is the idiom
+    // `requestDocking` uses - and it is wrong HERE, because that one rolls once
+    // per player action while this rolls every frame. Anything that does not
+    // advance between calls (a paused clock, a test driving this directly, two
+    // frames inside the same millisecond) returns the SAME number forever, so
+    // the rate is not low - it is zero or one. The probe found it by measuring
+    // 0 stops in 30 minutes for a dark pilot parked on top of a patrol.
+    if (static_cast<double>(m_noticeRng.nextU32()) * 0x1.0p-32 >= chance) {
+        return NoticeReason::None;
+    }
+
+    m_noticeCooldown = m_noticeParams.cooldownSeconds;
+    m_lastNotice = {.reason = reason,
+                    .patrolIndex = bestIndex,
+                    .factionIndex = owner,
+                    .distance = bestDistance,
+                    .atWorldSeconds = m_worldSeconds,
+                    .count = m_lastNotice.count + 1};
+    return reason;
+}
+
 void SpaceWorld::considerResponse(std::uint32_t targetIndex, std::uint32_t attackerIndex, core::DVec3 at)
 {
     if (m_responseCooldown > 0.0 || attackerIndex == kNoIndex || attackerIndex == targetIndex) {
@@ -8378,6 +8616,15 @@ void SpaceWorld::considerResponse(std::uint32_t targetIndex, std::uint32_t attac
     (void)respondTo(at, attackerIndex, ResponseCause::WeaponsFire);
 }
 
+core::DVec3 SpaceWorld::pilotPosition(ecs::Entity entity) const
+{
+    if (!m_registry.isAlive(entity)) {
+        return core::DVec3{};
+    }
+    const Transform* transform = m_registry.tryGet<Transform>(entity);
+    return transform == nullptr ? core::DVec3{} : transform->position;
+}
+
 double SpaceWorld::shipHullFraction(ecs::Entity entity) const
 {
     if (!m_registry.isAlive(entity)) {
@@ -8399,6 +8646,28 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
     // C): this is the one per-frame pass that already has a dt and runs whether
     // or not anything is shooting.
     m_responseCooldown = std::max(0.0, m_responseCooldown - dt);
+
+    // Notice (Phase 36 stage B) rides the same pass and for the same reason:
+    // it needs a dt, it needs every pilot visited once, and it is throttled.
+    // ⚑ Stage C is what hangs a hail off this; stage B says the line and stops.
+    if (const NoticeReason noticed = considerNotice(dt); noticed != NoticeReason::None) {
+        const std::string who = m_lastNotice.factionIndex < m_factionTable.size()
+                                    ? m_factionTable[m_lastNotice.factionIndex].name
+                                    : std::string("Patrol");
+        // Under 50 characters, which is the comms panel's measured budget -
+        // stage A shipped a 58-character line and it reached the player clipped.
+        // ⚑ Spoken by the PATROL'S faction, not Fleetcom: the sender column
+        // already carries the name, so the message does not have to - and "A "
+        // + a faction name + " patrol is running your registry." is 51
+        // characters against a ~50 budget AND reads "A Ironstar". Stage A
+        // shipped a 58-character line and it reached the player clipped; this
+        // one was caught before it was drawn.
+        say(who, "Stand by. Running your registry.");
+        SOL_LOG_INFO("notice: %s at %.0f km (%s)",
+                     noticeReasonName(noticed),
+                     m_lastNotice.distance / 1000.0,
+                     who.c_str());
+    }
 
     ecs::Pool<ShipPilot>& pilots = m_registry.storage<ShipPilot>();
     for (std::size_t i = 0; i < pilots.size(); ++i) {

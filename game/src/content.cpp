@@ -156,12 +156,24 @@ bool pilotIdle(GameContent& content, scripting::EntityHandle ship)
     return content.world().pilotIdle(scripting::toEntity(ship));
 }
 
-// Waypoint given relative to the station (Lua has no absolute-coordinate
-// source, and everything interesting orbits the station anyway).
+// Waypoint given relative to THE POST THIS PILOT IS STANDING AT - the nearest
+// station or gate to where it currently is (Phase 36 stage B).
+//
+// ⚑⚑⚑ IT USED TO BE `stationPosition()`, WHICH IS ONE POINT FOR THE WHOLE
+// SYSTEM, and that is what made a gate picket impossible: a patrol spawned at a
+// gate flew 600,000 km back to the station on its first think. The offsets Lua
+// passes are unchanged and mean the same thing; only what they are measured
+// FROM has moved, from "the system's first station" to "wherever this pilot is
+// posted". No script change, and `init.lua`'s patrol diamond now works at either
+// posture without knowing there are two.
+//
+// ⚑ It also corrects a case nobody had noticed: in the 45 shipped systems with
+// more than one station, every patrol formed up around station 0.
 bool pilotPatrolOffset(GameContent& content, scripting::EntityHandle ship, double dx, double dy, double dz)
 {
-    const core::DVec3 waypoint = content.world().stationPosition() + core::DVec3{dx, dy, dz};
-    return content.world().pilotPatrolTo(scripting::toEntity(ship), waypoint);
+    SpaceWorld& world = content.world();
+    const core::DVec3 post = world.nearestPost(world.pilotPosition(scripting::toEntity(ship)));
+    return world.pilotPatrolTo(scripting::toEntity(ship), post + core::DVec3{dx, dy, dz});
 }
 
 double pilotHull(GameContent& content, scripting::EntityHandle ship)
