@@ -1016,6 +1016,52 @@ struct RoleDef
     std::string source;
 };
 
+// Somebody who is actually in the room (Phase 35 stage C): a named person the
+// generator seats at one station in the galaxy, who is still there on a later
+// visit and who remembers whether you have been in before.
+//
+// ⚑⚑⚑⚑ THIS KIND IS THE *AUTHORED* HALF AND ONLY THE AUTHORED HALF, AND
+// NAMING THAT LINE BEFORE THE PASS BEGINS IS WHAT PHASE 32's RECORD ASKS FOR.
+// Every room in the galaxy has somebody behind the bar - that person's name is
+// generated from syllables the way a system's name has been since Phase 6, and
+// their trade is read off the station's own composition, so the engine half
+// costs no writing at all and 62 rooms of 62 have a face. A `[[character]]` row
+// is the other half: a person somebody wrote, with lines somebody wrote, in one
+// place in the galaxy. The spec's own risk note is the reason the split exists -
+// *"a character with one line is worse than no character"* - and a cast of six
+// written properly is worth more than sixty rows of filler.
+//
+// ⚑⚑ THE ANCHORS ARE A PREFERENCE OVER SEATS, NOT A COORDINATE, and every one
+// of them was measured before it was offered. Over the 62 rooms at seed 1701:
+// by owner, Freight Guild 19, Ironstar Hegemony 12, Solar Navy 5, Helios
+// Ascendancy 5, Frontier Compact 2 and 18 in clan space; by region, core 12,
+// frontier 26, fringe 24; by archetype, 1 (Foundry) to 10 (Agricultural); by
+// room, Bar 50, Restaurant 10, Concourse 1, Resort 1. ⚑ And the one that has to
+// be said out loud because it is the obvious idea and the galaxy will not hold
+// it: `shadow = true` selects **two rooms in the entire galaxy**, because only 2
+// of the 62 docks with a room also carry a black-market module. It is supported,
+// it is not a bug, and a cast that spends two rows on it has spent them all.
+//
+// An anchor that is left out means "anywhere"; several are ANDed. Ids are
+// checked by `validateCharacters`, which refuses, for `validateStationRecipes`'
+// reason: an anchor naming a faction that does not exist selects nothing, and a
+// character who is nowhere in the galaxy is indistinguishable from one nobody
+// wrote.
+struct CharacterDef
+{
+    std::string id;
+    std::string name;  // what the room calls them
+    std::string trade; // what they do, one short noun phrase
+    // Anchors. Each is optional; each narrows the seats this person will take.
+    std::string factionId;   // a `[[faction]]` id: sits in that faction's space
+    std::string archetypeId; // a `[[station]]` id: sits on that kind of dock
+    std::string moduleId;    // a `[[module]]` id: sits in that kind of room
+    std::string region;      // "core" | "frontier" | "fringe"
+    bool lawless = false;    // sits under a pirate clan's law rather than a major's
+    bool shadow = false;     // sits on a dock with a black-market module (2 seats)
+    std::string source;
+};
+
 // One production or consumption line on a station ("sol.food:0.5" in TOML).
 struct StationRate
 {
@@ -1443,6 +1489,17 @@ public:
     // hand-placed plant is an author expecting a rule that does not exist.
     [[nodiscard]] bool validateStationRecipes(std::string* outError = nullptr) const;
 
+    // Phase 35 stage C: every anchor a `[[character]]` names - a faction, a
+    // station archetype, a room module - exists, and `region` is one of the
+    // three the generator has. Refuses for `validateStationRecipes`' reason and
+    // one sharper: an anchor that resolves to nothing selects NO SEAT, so the
+    // character is simply not in the galaxy, and a person who is nowhere is
+    // indistinguishable from a person nobody wrote. ⚑ Whether an anchor that
+    // resolves finds a FREE seat in a PARTICULAR galaxy is a different question
+    // and is not askable here - it is a galaxy-level claim, and it is asserted
+    // where a galaxy is in hand (`game/test/station_cast_tests.cpp`).
+    [[nodiscard]] bool validateCharacters(std::string* outError = nullptr) const;
+
     [[nodiscard]] const ShipDef* findShip(const char* id) const;
     [[nodiscard]] const WeaponDef* findWeapon(const char* id) const;
     [[nodiscard]] const FactionDef* findFaction(const char* id) const;
@@ -1456,6 +1513,7 @@ public:
     [[nodiscard]] const ModelDef* findModel(const char* id) const;
     [[nodiscard]] const MaterialDef* findMaterial(const char* id) const;
     [[nodiscard]] const RoleDef* findRole(const char* id) const;
+    [[nodiscard]] const CharacterDef* findCharacter(const char* id) const;
 
     // Index of a model by id, or kNoModel. The renderer and the sim both key
     // off this index rather than off the string, so a name is resolved once at
@@ -1511,6 +1569,11 @@ public:
 
     [[nodiscard]] const std::vector<RoleDef>& roles() const { return m_roles; }
 
+    // The authored cast, in first-definition order - which is the order the
+    // placement pass seats them in, so a row APPENDED to the file cannot move
+    // anybody already written (Phase 35 stage C).
+    [[nodiscard]] const std::vector<CharacterDef>& characters() const { return m_characters; }
+
 private:
     std::vector<ShipDef> m_ships;
     std::vector<WeaponDef> m_weapons;
@@ -1526,6 +1589,7 @@ private:
     std::vector<ModelDef> m_models;
     std::vector<MaterialDef> m_materials;
     std::vector<RoleDef> m_roles;
+    std::vector<CharacterDef> m_characters;
 
     // Drops every synthesised row, derives one afresh for each model that
     // names no material, and re-resolves every model's index. Runs at the tail

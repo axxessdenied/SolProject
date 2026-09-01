@@ -417,4 +417,95 @@ chooseFrontTalk(std::span<const ContestCandidate> fronts, const SurveySim& surve
     return found;
 }
 
+// Somebody worth going to see (Phase 35 stage C).
+//
+// ⚑⚑ THE FIRST CANDIDATE TYPE THAT LIVES IN THIS FILE RATHER THAN IN
+// `missions.hpp`, AND THE SPLIT IS NOT ARBITRARY. The other four are dual-use:
+// a haul, a bounty, a contest and an escort are things the mission board POSTS,
+// and the bar borrows the enumerators. There is nothing to post about a person
+// being in a room, so a cast candidate exists for talk and only for talk - and
+// putting it in `missions.hpp` would have told a future reader that the board
+// was expected to grow an offer shaped like it.
+//
+// ⚑ It is filled game-side, because the cast is game-side: `sol::sim` has no
+// business knowing what a person is, which is the same line `StationSpec` draws
+// about a composition.
+struct CastCandidate
+{
+    std::uint32_t system = 0;
+    std::uint32_t station = 0;
+    std::uint32_t jumps = 0;
+    std::uint32_t visits = 0; // what the save remembers; 0 = never spoken to
+    bool authored = false;    // a `[[character]]` rather than a generated regular
+};
+
+// Which person a barkeep would point you at: an index into `people`, or false.
+//
+// ⚑⚑⚑⚑ AN AUTHORED CHARACTER OR NOBODY, AND THAT IS A RESTRICTION THE
+// MEASUREMENTS FORCED AFTER THE FIRST VERSION WAS WRITTEN THE OTHER WAY. Every
+// room in the galaxy has somebody in it, so a rule that would point at a
+// generated regular is sayable at 62 rooms of 62 - the LEAST scarce of the
+// bar's five sources, permanently. Measured: it stays at 61 or 62 rooms until
+// the player has met SIXTY of the sixty-two people alive, so it never
+// self-limits, and by the scarcity order `bar_talk` is written against it would
+// have had to be spent last, which is the same as never once the galaxy warms.
+//
+// ⚑⚑ RESTRICTED TO THE AUTHORED CAST IT IS SAYABLE AT 42 ROOMS OF 62 AND FALLS
+// TO ZERO ONCE THE SIX HAVE BEEN MET - which is a real curve, sits between the
+// hauler and the raid in scarcity, and points at content somebody wrote. The
+// division it draws is the one this stage is built on: **a regular is somebody
+// you MEET, and a character is somebody you GO TO MEET.**
+//
+// ⚑ TWO TIERS INSIDE THAT, AND THEY ARE `chooseMarketTip`'s TIERS RATHER THAN
+// NEW ONES: *"a fresh memory is not worth a conversation; a stale one is"*,
+// restated for people as somebody you have never met, nearest first; failing
+// that, the one you have seen least. ⚑ A nearest-first variant that let
+// regulars in was measured against this and rejected: it named 23 distinct
+// people instead of 18 - so the repetition is structural, a 3-jump reach in an
+// 81-system galaxy - while halving how often an authored person came up, 20
+// rooms against 42.
+//
+// ⚑ NEVER SOMEBODY IN THIS SYSTEM, which is `chooseShortageTalk`'s exclusion
+// for its reason: a room you can reach without a jump is somewhere you can walk
+// into and look, and a tip about it is a window rather than a tip. The caller
+// leaves this system's own rooms out by construction; the guard is here as well,
+// because a rule enforced only by its caller is a rule that gets called twice.
+[[nodiscard]] inline bool chooseCastTalk(std::span<const CastCandidate> people, std::uint32_t* outIndex)
+{
+    bool found = false;
+    std::uint32_t best = 0;
+    bool bestUnmet = false;
+    std::uint32_t bestVisits = 0;
+    std::uint32_t bestJumps = 0;
+    for (std::uint32_t i = 0; i < people.size(); ++i) {
+        const CastCandidate& who = people[i];
+        if (!who.authored) {
+            continue; // a regular is the face of their own room, not a destination
+        }
+        if (who.jumps == 0) {
+            continue; // in this system: walk over and meet them yourself
+        }
+        const bool unmet = who.visits == 0;
+        bool better = !found;
+        if (!better && unmet != bestUnmet) {
+            better = unmet; // tier one always beats tier two
+        } else if (!better && !unmet && who.visits != bestVisits) {
+            better = who.visits < bestVisits;
+        } else if (!better) {
+            better = who.jumps < bestJumps;
+        }
+        if (better) {
+            found = true;
+            best = i;
+            bestUnmet = unmet;
+            bestVisits = who.visits;
+            bestJumps = who.jumps;
+        }
+    }
+    if (found && outIndex != nullptr) {
+        *outIndex = best;
+    }
+    return found;
+}
+
 } // namespace sol::sim

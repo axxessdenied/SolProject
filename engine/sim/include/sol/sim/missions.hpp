@@ -304,6 +304,18 @@ public:
     void save(core::BinaryWriter& writer) const;
     [[nodiscard]] bool load(core::BinaryReader& reader);
 
+    // Jump distances from a source system, capped at `candidateReach` (0xff =
+    // out of reach).
+    //
+    // ⚑⚑ PUBLIC SINCE PHASE 35 STAGE C, AND THE ALTERNATIVE WAS A SECOND COPY OF
+    // THE SAME WALK. The bar's cast pointer needs "who is within reach of this
+    // dock" and the cast lives game-side, so the only other option was a second
+    // BFS with its own idea of the cap - which is how `formatDistance` ended up
+    // with two spellings that have already drifted apart. The reach is
+    // `MissionParams`' number and it stays that way; this only lets somebody
+    // else ask what it currently means.
+    void jumpDepths(const Galaxy& galaxy, std::uint32_t fromSystem, std::vector<std::uint8_t>& out) const;
+
 private:
     [[nodiscard]] bool objectiveInRange(const Galaxy& galaxy, const MissionObjective& objective) const;
     // Completes the mission's current objective: queues the event, advances,
@@ -311,10 +323,6 @@ private:
     // removes m_active[activeIndex]).
     [[nodiscard]] bool advanceObjective(std::uint32_t activeIndex);
     void removeActive(std::uint32_t activeIndex);
-    // Jump distances from a source system, capped at candidateReach (0xff =
-    // out of reach).
-    void jumpDepths(const Galaxy& galaxy, std::uint32_t fromSystem, std::vector<std::uint8_t>& out) const;
-
     MissionParams m_params;
     std::uint32_t m_systemCount = 0;
     std::uint32_t m_factionCount = 0;

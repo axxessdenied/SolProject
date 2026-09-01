@@ -1,0 +1,98 @@
+# The cast (engine plan Phase 35 stage C) — the people the generator seats in
+# the galaxy's rooms, who are still there on a later visit and who remember
+# whether you have been in before.
+#
+# ---------------------------------------------------------------------------
+# ⚑⚑⚑⚑ THIS FILE IS THE *AUTHORED* HALF, AND THE OTHER HALF IS ENGINE. Naming
+# that line before the pass began is what the phase's own risk register asked
+# for — *"a cast of named people is art-bound in the same way hulls are; nothing
+# here needs a mesh, but it needs WRITING, and a character with one line is worse
+# than no character"* — so:
+#
+#   the ENGINE half   every one of the galaxy's 62 rooms has somebody behind the
+#                     bar. Their name is built from syllables the way a system's
+#                     name has been since Phase 6, and their trade is read off
+#                     the station's own composition — a prospector on a mine, a
+#                     yard hand where there are berths, a fixer where there is a
+#                     back room. It costs no writing at all, and it is what makes
+#                     62 rooms of 62 have a face instead of 6 of 62.
+#
+#   the AUTHORED half is this file, plus `scripts/cast.lua`, which is where the
+#                     lines live. A row here is a person somebody wrote, in one
+#                     place in the galaxy, and they take the seat from whichever
+#                     regular would otherwise have had it.
+#
+# So a short cast written properly is the right answer and a long one is not.
+# Six rows is not a placeholder for sixty.
+#
+# ---------------------------------------------------------------------------
+# ⚑⚑⚑ THE ANCHORS ARE A PREFERENCE OVER SEATS, AND THE GALAXY IS SMALLER THAN
+# IT LOOKS. Measured over the 62 rooms at seed 1701, which is what every number
+# below is written against:
+#
+#   by owner      Freight Guild 19 · Ironstar Hegemony 12 · Solar Navy 5 ·
+#                 Helios Ascendancy 5 · Frontier Compact 2 · clan space 18
+#   by region     core 12 · frontier 26 · fringe 24
+#   by archetype  Foundry 1 … Agricultural Station 10
+#   by room       Bar 50 · Restaurant 10 · Concourse 1 · Resort 1
+#   with a fence  ⚑ 2. Only two of the sixty-two docks with a room also carry a
+#                 black-market module, so `shadow = true` selects TWO SEATS IN
+#                 THE WHOLE GALAXY. It is supported and it is not a bug — but a
+#                 cast that spends two rows on it has spent them all.
+#
+# ⚑⚑ ORDER IS LOAD-BEARING: the pass seats people in FIRST-DEFINITION ORDER and
+# each takes a free seat its anchors allow, so a tight anchor written after a
+# loose one can find its only seat already taken. Write the tightest first —
+# which is why the resort is at the top of this file and the Guild is near the
+# bottom. Nothing enforces it here; `station_cast_tests.cpp` asserts that every
+# row in this file found a seat in the shipped galaxy, which is where starvation
+# gets caught. ⚑ Appending a row cannot move anybody already written.
+#
+# ⚑ An anchor left out means "anywhere". Several are ANDed. Every id is checked
+# at load by `validateCharacters`, which REFUSES: an anchor that resolves to
+# nothing selects no seat, and a person who is nowhere in the galaxy looks
+# exactly like a person nobody wrote.
+# ---------------------------------------------------------------------------
+
+# The one resort in the galaxy, and the only person in this file with exactly
+# one seat to sit in. If stage A's resort recipe line ever stops landing, the
+# galaxy test says so by name rather than by silently leaving her out.
+[[character]]
+id = "sol.char_amaris"
+name = "Delphine Amaris"
+trade = "House manager"
+room = "sol.mod_resort"
+
+[[character]]
+id = "sol.char_okonjo"
+name = "Ruth Okonjo"
+trade = "Navy quartermaster's clerk"
+faction = "sol.navy"
+
+# Clan space: 18 rooms sit under a pirate clan's law rather than a major's, and
+# a fixer is what the room in one of them is for.
+[[character]]
+id = "sol.char_vey"
+name = "Tomas Vey"
+trade = "Fixer"
+lawless = true
+
+[[character]]
+id = "sol.char_halloran"
+name = "Iris Halloran"
+trade = "Yard foreman"
+faction = "sol.hegemony"
+
+[[character]]
+id = "sol.char_bekker"
+name = "Anton Bekker"
+trade = "Freight broker"
+faction = "sol.guild"
+
+# The loosest anchor in the file, written last on purpose: 24 rooms sit in the
+# fringe and he will take whichever of them nobody above has claimed.
+[[character]]
+id = "sol.char_soto"
+name = "Marcus Soto"
+trade = "Prospector"
+region = "fringe"

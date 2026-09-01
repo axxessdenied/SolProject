@@ -354,7 +354,16 @@ constexpr std::uint64_t kGoldenStructure = 0x06BC021EC816F5E8ull;
 // shadow operators fell from 10 to 6, and the fitted plants from 134 to 130.
 // Nothing about the composer changed. Same shape as *adding an archetype
 // resamples the mix*, one layer down.
-constexpr std::uint64_t kGoldenComposition = 0x7A589D140D59CB6Cull;
+// ⚑⚑ AND IT MOVED A SECOND TIME IN STAGE C, FOR THE SECOND OF THE TWO REASONS
+// THE PHASE SAID IT WOULD, WHICH IS WHY BOTH ARE WRITTEN DOWN HERE. Stage A
+// moved it because a recipe row RESAMPLED the galaxy; stage C moves it because a
+// CAST WAS PLACED ON IT - 62 rooms with somebody in them, 6 of them written by
+// hand. Neither move is evidence on its own, and that is not a caution invented
+// for this comment: stage 34-B's composition line moved for the wrong reason and
+// nobody looked again for a whole stage. The counts printed beside the hash are
+// what tell the two apart - 125 stations / 119 compositions did NOT change here,
+// and the seating did.
+constexpr std::uint64_t kGoldenComposition = 0xCA2BDD7809C7E019ull;
 
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine
@@ -452,6 +461,8 @@ SOL_TEST(composed_shipped_galaxy_keeps_its_recorded_composition)
     std::size_t composed = 0;
     std::size_t stations = 0;
     std::size_t shadowed = 0;
+    std::size_t seated = 0;
+    std::size_t cast = 0;
     for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
         const sol::sim::SystemSpec& system = world.galaxy().systems[s];
         for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
@@ -483,6 +494,27 @@ SOL_TEST(composed_shipped_galaxy_keeps_its_recorded_composition)
             // number moving means the galaxy moved.
             digest = hashCombine(digest, system.stations[t].shadowOwner);
             shadowed += system.stations[t].shadowOwner != sol::sim::kNoFaction ? 1 : 0;
+
+            // ⚑⚑⚑ STAGE C, AND IT GOES HERE FOR STAGE E'S REASON RESTATED
+            // RATHER THAN RE-DERIVED. Who is in a room is written by a pass
+            // inside `composeStations`, so the structure digest - which reads a
+            // galaxy straight out of `sol::sim::generateGalaxy` - would hash 125
+            // empty seats and move exactly once, for the field existing. That is
+            // precisely how stage B's composition line went blind for a whole
+            // stage. ⚑ The NAME rather than an index, because a regular's name
+            // exists in no def at all and is the only thing that says the
+            // seating actually ran; a `[[character]]` id beside it so that
+            // re-wording a name in `characters.toml` is not confused with
+            // somebody moving.
+            const game::SpaceWorld::CastSeat* seat = world.stationCast(s, t);
+            if (seat != nullptr) {
+                ++seated;
+                digest = combineText(digest, seat->name);
+                if (seat->character < defs.characters().size()) {
+                    ++cast;
+                    digest = combineText(digest, defs.characters()[seat->character].id);
+                }
+            }
         }
     }
 
@@ -507,6 +539,17 @@ SOL_TEST(composed_shipped_galaxy_keeps_its_recorded_composition)
     std::printf("  %zu station(s) name a shadow operator\n", shadowed);
     SOL_REQUIRE(shadowed > 0);
     SOL_CHECK(shadowed < stations); // and the field is not simply set everywhere
+
+    // ⚑⚑⚑ AND THE SAME GUARD A THIRD TIME, FOR THE FIELD STAGE C ADDED. It is
+    // the strongest of the three, because it can fail in two directions that
+    // mean different things: nobody seated at all is a placement pass that did
+    // not run, and NO AUTHORED CAST is `characters.toml` failing to be read
+    // while 62 generated regulars make the digest look perfectly healthy. The
+    // second is exactly the shape of failure this file exists to catch.
+    std::printf("  %zu room(s) have somebody in them, %zu of them written by hand\n", seated, cast);
+    SOL_REQUIRE(seated > 0);
+    SOL_REQUIRE(cast > 0);
+    SOL_CHECK(cast < seated); // and the cast has not quietly become the whole galaxy
 
     SOL_CHECK(checkDigest("composition", digest, kGoldenComposition));
 }

@@ -148,7 +148,34 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // hold no salvage - and the first tick would clamp it away, silently, as though
 // the galaxy had been robbed. ⚑ The capacities are NOT in the file and must not
 // be: they are derived from the composition, which is derived from the seed.
-constexpr std::uint32_t kSaveVersion = 32;
+// v33 (Phase 35 stage C): the cast. A new trailing section - who the player has
+// talked to in a bar, how often, and how they feel about it - and a v32 save
+// simply stops before it, so a reader would run off the end of the stream and
+// into the entity snapshot. ⚑ WHO IS IN WHICH ROOM IS NOT IN THE FILE and must
+// not be: it is derived from the seed through `composeStations` exactly like
+// the composition and the shadow operator, and a saved seating chart would be a
+// second copy of something the generator already knows.
+//
+// ⚑⚑⚑ AND A `[[character]]` ROW IS AUTHORED CONTENT THAT IS DELIBERATELY *NOT*
+// IN `m_authoredDigest`, WHICH IS A DECISION RATHER THAN AN OVERSIGHT. The
+// digest exists to catch a mod that makes a save's SYSTEM INDEX point somewhere
+// else entirely - that is what `digestAuthoredSystem` guards and why it hashes
+// `[[system]]` rows and nothing else. A cast row moves no index: it changes who
+// is behind one bar. Folding it in would refuse every save in existence the day
+// somebody adds a barkeep, for a change that cannot corrupt anything.
+//
+// ⚑ The cost, stated rather than discovered later: a new `[[character]]` takes
+// a seat a REGULAR had, and a regular's memory is keyed by the seat - so a
+// player who had drunk there twice meets the new arrival already knowing them.
+// That is a stale visit count on one dock against refusing every save on the
+// disk, and it is not close.
+//
+// ⚑⚑ `regard` IS WRITTEN AND NOT YET READ, WHICH IS DELIBERATE AND IS RECORDED
+// HERE RATHER THAN HIDDEN. Stage D makes a bar a second posting facility and
+// has to keep an informal lead distinguishable from a board contract; a
+// relationship is what does that, and it cannot gate anything until it has been
+// accumulating. The alternative was bumping this number twice for one feature.
+constexpr std::uint32_t kSaveVersion = 33;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -872,6 +899,7 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
             m_powerModules.push_back(static_cast<std::uint32_t>(m_modules.size()));
         }
         runtime.shadow = module.family == assets::ModuleFamily::Shadow;
+        runtime.recreation = module.family == assets::ModuleFamily::Recreation;
         m_modules.push_back(std::move(runtime));
     }
     // Ascending by output, which is what lets the composer take the FIRST plant
@@ -902,6 +930,54 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
             m_recipes[s].push_back({.module = index, .chance = entry.chance});
         }
     }
+    // The cast, with every anchor resolved to an index once (Phase 35 stage C).
+    // Same arrangement and same reason as the recipes above: `composeStations`
+    // runs with no def database in reach, and an id that names nothing is
+    // refused at load by `validateCharacters`, so reaching a `kNoIndex` below
+    // means a caller skipped that check (a test, a tool).
+    m_castDefs.clear();
+    m_castNames.clear();
+    m_castTrades.clear();
+    m_castDefs.reserve(defs.characters().size());
+    for (const assets::CharacterDef& character : defs.characters()) {
+        CastEntry entry;
+        if (!character.factionId.empty()) {
+            for (std::uint32_t f = 0; f < defs.factions().size(); ++f) {
+                if (defs.factions()[f].id == character.factionId) {
+                    entry.faction = f;
+                    break;
+                }
+            }
+        }
+        if (!character.archetypeId.empty()) {
+            for (std::uint32_t a = 0; a < defs.stations().size(); ++a) {
+                if (defs.stations()[a].id == character.archetypeId) {
+                    entry.archetype = a;
+                    break;
+                }
+            }
+        }
+        if (!character.moduleId.empty()) {
+            for (std::uint32_t m = 0; m < defs.modules().size(); ++m) {
+                if (defs.modules()[m].id == character.moduleId) {
+                    entry.room = m;
+                    break;
+                }
+            }
+        }
+        if (character.region == "core") {
+            entry.region = static_cast<std::uint32_t>(sim::Region::Core);
+        } else if (character.region == "frontier") {
+            entry.region = static_cast<std::uint32_t>(sim::Region::Frontier);
+        } else if (character.region == "fringe") {
+            entry.region = static_cast<std::uint32_t>(sim::Region::Fringe);
+        }
+        entry.lawless = character.lawless;
+        entry.shadow = character.shadow;
+        m_castDefs.push_back(entry);
+        m_castNames.push_back(character.name);
+        m_castTrades.push_back(character.trade);
+    }
     composeStations();
 
     if (!m_economyParams.commodities.empty()) {
@@ -925,6 +1001,10 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         }
     }
     m_startSystem = start;
+    // A new pilot has not met anybody. The seating chart itself is already
+    // fresh - `composeStations` rebuilt it above - but this half is the run's,
+    // not the galaxy's, and nothing else clears it.
+    m_castMemory.clear();
     resetFleetToStarter();
     initializeFactions(); // before loadSystem: ambient wings need the table
     initializeSurvey();   // before loadSystem: arrival writes the first entry
@@ -1026,6 +1106,12 @@ constexpr std::uint64_t kCompositionStream = 2'000'000;
 // stream would make re-tuning one recipe's fence chance re-roll who runs every
 // other fence in the galaxy.
 constexpr std::uint64_t kShadowStream = 3'000'000;
+
+// And the one the cast comes out of (Phase 35 stage C). A THIRD stream for the
+// second one's reason restated: who is in the room and who runs the fence are
+// independent edits, and sharing a stream would make adding a `[[character]]`
+// row rename every regular in the galaxy.
+constexpr std::uint64_t kCastStream = 4'000'000;
 
 void SpaceWorld::composeStations()
 {
@@ -1154,6 +1240,7 @@ void SpaceWorld::composeStations()
     }
 
     assignShadowOwners();
+    assignCast();
 }
 
 // ⚑⚑⚑⚑ THE STAGE, AND IT IS ONE FIELD BECAUSE THE OTHER HALF WAS ALREADY
@@ -1274,6 +1361,323 @@ std::span<const std::uint32_t> SpaceWorld::stationModules(std::uint32_t system, 
         return {};
     }
     return m_compositions[composition - m_baseArchetypeCount].modules;
+}
+
+namespace {
+
+// ---------------------------------------------------------------------------
+// The cast (Phase 35 stage C).
+//
+// ⚑⚑⚑⚑ THE NAMES ARE BUILT THE WAY A SYSTEM'S NAME IS BUILT, AND THAT IS A
+// PRECEDENT FOLLOWED RATHER THAN A SHORTCUT TAKEN. `universe.cpp` has generated
+// every system name in this galaxy out of three syllable tables since Phase 6,
+// and every clan name out of a suffix table since 8b; a regular's name is the
+// same trick pointed at people. It is the whole reason 62 rooms of 62 can have
+// a face while the authored cast stays six rows long - the alternative was
+// sixty rows of filler, which the phase's own risk register calls worse than
+// none.
+// ---------------------------------------------------------------------------
+constexpr const char* kGivenNames[] = {
+    "Ada",  "Bo",   "Cass", "Dov",  "Esme",  "Fen", "Gita",  "Hal",  "Ines",  "Joss",
+    "Kira", "Lem",  "Mira", "Nils", "Odell", "Pia", "Quill", "Rane", "Sofi",  "Tarek",
+    "Uma",  "Vess", "Wren", "Xan",  "Yusuf", "Zia", "Ari",   "Bex",  "Corin", "Dara",
+};
+constexpr const char* kFamilyNames[] = {
+    "Aldiss",  "Brannt", "Cerova",  "Dunmore",   "Eklund",  "Farrow",   "Gunnar",   "Halvard",
+    "Iversen", "Jarrah", "Kessel",  "Lindqvist", "Moreau",  "Nakamura", "Oyelaran", "Prieto",
+    "Quintal", "Reyes",  "Stavros", "Torvald",   "Ustinov", "Vance",    "Whelan",   "Yates",
+};
+
+// What a regular does for a living, read off the station's own composition
+// rather than rolled - so the person in the room is OF the place. A prospector
+// on a mine and a yard hand where there are berths is content the composer has
+// already paid for; a rolled trade would have been a second table saying
+// nothing the first one does not.
+//
+// ⚑ In priority order, most specific first, and the last row catches
+// everything: a dock with nothing distinctive still has somebody hauling
+// crates through it.
+const char* regularTrade(bool shadow, bool shipyard, bool mines, bool farms, bool industry)
+{
+    if (shadow) {
+        return "Fixer";
+    }
+    if (shipyard) {
+        return "Yard hand";
+    }
+    if (mines) {
+        return "Prospector";
+    }
+    if (farms) {
+        return "Crop hand";
+    }
+    if (industry) {
+        return "Line worker";
+    }
+    return "Hauler";
+}
+
+} // namespace
+
+std::uint64_t SpaceWorld::castKeyForCharacter(const char* id)
+{
+    // Masked to 63 bits so a person's key can never collide with `kSeatKey`'s
+    // space. It hashes the ID rather than the NAME because a name is content an
+    // author may re-word, and re-wording a line must not make a character
+    // forget the player.
+    return core::fnv1a(id != nullptr ? id : "", core::kFnvOffsetBasis) & ~kSeatKey;
+}
+
+bool SpaceWorld::castSeatSuits(const CastEntry& entry, const CastSeatFacts& seat, std::uint32_t clanBase)
+{
+    // ⚑⚑⚑⚑ THE FACTION ANCHOR READS THE *FOUNDING CLAIM*, WHICH IS THE OPPOSITE
+    // OF WHAT STAGE E CONCLUDED ABOUT THE SAME FIELD - deliberately, and for a
+    // reason that can be stated rather than a lapse nobody caught. Stage E
+    // derives shadow-ness from the LIVE holder because "is this a shadow
+    // presence" is a question about the CURRENT relationship between two
+    // parties, so an answer stored at generation time is wrong within a minute
+    // of play. Where a person SITS is not that kind of question. A Guild broker
+    // whose system is taken by the Hegemony this afternoon is still in the same
+    // bar: people do not move when a border does, and a seat re-derived from
+    // the live owner would have the whole cast teleporting several times a
+    // minute.
+    //
+    // ⚑ So both readings of `factionIndex` are right, about different
+    // questions. The trap stage E named is a STORED answer to a MOVING
+    // question; this is a stored answer to a fixed one.
+    if (entry.faction != sim::kNoFaction && seat.founder != entry.faction) {
+        return false;
+    }
+    if (entry.lawless && (seat.founder == sim::kNoFaction || seat.founder < clanBase)) {
+        return false;
+    }
+    if (entry.archetype != kNoIndex && seat.archetype != entry.archetype) {
+        return false;
+    }
+    if (entry.room != kNoIndex && seat.room != entry.room) {
+        return false;
+    }
+    if (entry.region != kNoIndex && seat.region != entry.region) {
+        return false;
+    }
+    if (entry.shadow && !seat.hasShadow) {
+        return false;
+    }
+    return true;
+}
+
+void SpaceWorld::assignCast()
+{
+    m_cast.assign(m_galaxy.systems.size(), {});
+    for (std::uint32_t s = 0; s < m_galaxy.systems.size(); ++s) {
+        m_cast[s].assign(m_galaxy.systems[s].stations.size(), {});
+    }
+    if (m_modules.empty()) {
+        return; // no `[[module]]` content: no rooms, so nobody to seat
+    }
+
+    const std::uint32_t clanBase = m_galaxyParams.factionCount;
+    core::Rng rng;
+    rng.seed(m_universeSeed, kCastStream);
+
+    // --- Pass one: a regular in every room.
+    //
+    // ⚑ THE DRAWS ARE TAKEN FOR EVERY STATION, INCLUDING THE ONES WITH NO ROOM,
+    // and it is the rule the two passes above already follow for the same
+    // reason. Drawing only where a room landed would make the stream depend on
+    // WHICH stations rolled one, so nudging a single recipe's bar chance would
+    // rename every regular after it in galaxy order - and it would make pass
+    // two below depend on the composition as well. Two wasted draws per
+    // roomless station buy a stream whose length is a function of the galaxy
+    // and nothing else.
+    std::vector<CastSeatFacts> facts;
+    std::vector<std::uint64_t> seats; // (system << 32) | station, parallel to facts
+    for (std::uint32_t s = 0; s < m_galaxy.systems.size(); ++s) {
+        for (std::uint32_t t = 0; t < m_galaxy.systems[s].stations.size(); ++t) {
+            const std::uint32_t given = rng.range(static_cast<std::uint32_t>(std::size(kGivenNames)));
+            const std::uint32_t family = rng.range(static_cast<std::uint32_t>(std::size(kFamilyNames)));
+
+            CastSeatFacts seat;
+            seat.founder = m_galaxy.systems[s].factionIndex;
+            seat.archetype = m_galaxy.systems[s].stations[t].archetype;
+            seat.region = static_cast<std::uint32_t>(m_galaxy.systems[s].region);
+            bool shipyard = false;
+            bool farms = false;
+            bool industry = false;
+            // An archetype whose output comes out of the ground rather than off
+            // anybody's dock, which is the def's own word for it and is already
+            // resolved on the economy archetype.
+            const bool mines = seat.archetype < m_baseArchetypeCount &&
+                               seat.archetype < m_economyParams.archetypes.size() &&
+                               m_economyParams.archetypes[seat.archetype].extracts;
+            float bestDraw = -1.0f;
+            for (const std::uint32_t module : stationModules(s, t)) {
+                const ModuleRuntime& runtime = m_modules[module];
+                if (runtime.shadow) {
+                    seat.hasShadow = true;
+                }
+                const std::uint32_t shipyardBit =
+                    1u << static_cast<std::uint32_t>(assets::StationScreen::Shipyard);
+                if ((runtime.screens & shipyardBit) != 0) {
+                    shipyard = true;
+                }
+                if (runtime.recreation && runtime.powerDraw > bestDraw) {
+                    bestDraw = runtime.powerDraw;
+                    seat.room = module;
+                }
+                for (std::uint32_t c = 0; c < runtime.production.size(); ++c) {
+                    if (runtime.production[c] <= 0.0f) {
+                        continue;
+                    }
+                    industry = true;
+                    // Food is the galaxy's only `cryo` good (Phase 34 stage D),
+                    // so a module producing one is a farm without anything
+                    // having to be told that it is.
+                    if (c < m_commodityClass.size() && m_commodityClass[c] == assets::GoodsClass::Cryo) {
+                        farms = true;
+                    }
+                }
+            }
+            if (seat.room == kNoIndex) {
+                continue; // no recreation module: no room, and nobody in it
+            }
+            facts.push_back(seat);
+            seats.push_back((static_cast<std::uint64_t>(s) << 32u) | t);
+            m_cast[s][t].character = kNoCharacter;
+            m_cast[s][t].name = std::string(kGivenNames[given]) + " " + kFamilyNames[family];
+            m_cast[s][t].trade = regularTrade(seat.hasShadow, shipyard, mines, farms, industry);
+        }
+    }
+
+    // --- Pass two: the authored cast, in def order, each taking one free seat
+    // its anchors allow.
+    //
+    // ⚑⚑ DEF ORDER, WHICH MAKES *WRITE THE TIGHTEST ANCHOR FIRST* AN AUTHORING
+    // RULE RATHER THAN AN ENGINE ONE - and it is written into `characters.toml`
+    // beside the cast. Sorting by how many seats an anchor selects would take
+    // that control away from the author and would make adding a row re-seat
+    // everybody; def order means an APPENDED row moves nobody, and a starved
+    // anchor is caught by name in `station_cast_tests.cpp` rather than silently
+    // dropped.
+    std::vector<std::uint32_t> eligible;
+    for (std::uint32_t i = 0; i < m_castDefs.size(); ++i) {
+        eligible.clear();
+        for (std::uint32_t index = 0; index < facts.size(); ++index) {
+            const std::uint32_t s = static_cast<std::uint32_t>(seats[index] >> 32u);
+            const std::uint32_t t = static_cast<std::uint32_t>(seats[index] & 0xFFFF'FFFFull);
+            if (m_cast[s][t].character != kNoCharacter) {
+                continue; // somebody written is already sitting there
+            }
+            if (castSeatSuits(m_castDefs[i], facts[index], clanBase)) {
+                eligible.push_back(index);
+            }
+        }
+        // ⚑ THE ROLL IS TAKEN WHETHER OR NOT THERE IS ANYWHERE TO SIT, for the
+        // rule this file has now stated three times: a character whose anchor
+        // selects nothing must not shift the seat of the character written
+        // after them.
+        const std::uint32_t roll = rng.nextU32();
+        if (eligible.empty()) {
+            continue; // no free seat: they are not in this galaxy, and a test says so
+        }
+        const std::uint32_t index = eligible[roll % eligible.size()];
+        const std::uint32_t s = static_cast<std::uint32_t>(seats[index] >> 32u);
+        const std::uint32_t t = static_cast<std::uint32_t>(seats[index] & 0xFFFF'FFFFull);
+        m_cast[s][t].character = i;
+        m_cast[s][t].name = m_castNames[i];
+        m_cast[s][t].trade = m_castTrades[i];
+    }
+}
+
+void SpaceWorld::castCandidates(std::uint32_t from, std::vector<sim::CastCandidate>& out) const
+{
+    out.clear();
+    if (from >= m_galaxy.systems.size()) {
+        return;
+    }
+    std::vector<std::uint8_t> depths;
+    m_missions.jumpDepths(m_galaxy, from, depths);
+    if (depths.size() != m_galaxy.systems.size()) {
+        return;
+    }
+    for (std::uint32_t s = 0; s < m_galaxy.systems.size(); ++s) {
+        // 0xff is jumpDepths' own "out of reach", and 0 is this system.
+        if (depths[s] == 0xffu || depths[s] == 0) {
+            continue;
+        }
+        for (std::uint32_t t = 0; t < m_galaxy.systems[s].stations.size(); ++t) {
+            const CastSeat* seat = stationCast(s, t);
+            if (seat == nullptr) {
+                continue;
+            }
+            const CastMemory* memory = castMemory(castKeyAt(s, t));
+            out.push_back({.system = s,
+                           .station = t,
+                           .jumps = depths[s],
+                           .visits = memory != nullptr ? memory->visits : 0,
+                           .authored = seat->character != kNoCharacter});
+        }
+    }
+}
+
+const SpaceWorld::CastSeat* SpaceWorld::stationCast(std::uint32_t system, std::uint32_t station) const
+{
+    if (system >= m_cast.size() || station >= m_cast[system].size()) {
+        return nullptr;
+    }
+    const CastSeat& seat = m_cast[system][station];
+    return seat.name.empty() ? nullptr : &seat;
+}
+
+std::uint64_t SpaceWorld::castKeyAt(std::uint32_t system, std::uint32_t station) const
+{
+    const CastSeat* seat = stationCast(system, station);
+    if (seat == nullptr) {
+        return 0;
+    }
+    if (seat->character == kNoCharacter) {
+        return castKeyForSeat(system, station);
+    }
+    const bool known = m_defs != nullptr && seat->character < m_defs->characters().size();
+    return castKeyForCharacter(known ? m_defs->characters()[seat->character].id.c_str() : "");
+}
+
+const SpaceWorld::CastMemory* SpaceWorld::castMemory(std::uint64_t who) const
+{
+    for (const CastMemory& memory : m_castMemory) {
+        if (memory.who == who) {
+            return &memory;
+        }
+    }
+    return nullptr;
+}
+
+void SpaceWorld::noteCastVisit(std::uint64_t who)
+{
+    if (who == 0) {
+        return;
+    }
+    for (CastMemory& memory : m_castMemory) {
+        if (memory.who == who) {
+            ++memory.visits;
+            return;
+        }
+    }
+    m_castMemory.push_back({.who = who, .visits = 1, .regard = 0});
+}
+
+void SpaceWorld::adjustCastRegard(std::uint64_t who, std::int32_t delta)
+{
+    if (who == 0) {
+        return;
+    }
+    for (CastMemory& memory : m_castMemory) {
+        if (memory.who == who) {
+            memory.regard += delta;
+            return;
+        }
+    }
+    m_castMemory.push_back({.who = who, .visits = 0, .regard = delta});
 }
 
 std::uint32_t SpaceWorld::stationScreens(std::uint32_t system, std::uint32_t station) const
@@ -10013,6 +10417,16 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
     m_missions.save(writer);   // v6: journal, board, campaign stage
     m_survey.save(writer);     // v7: knowledge, signal state, ledger, route
     m_mining.save(writer);     // v8: rock depletion, wrecks, refinery orders
+    // The cast (v33): what the player DID, and nothing else. Who is in which
+    // room is derived from the seed and is re-composed on load like every other
+    // composed fact - a table of 62 seats would be a second copy of something
+    // the generator already knows, and the two would eventually disagree.
+    writer.write(static_cast<std::uint32_t>(m_castMemory.size()));
+    for (const CastMemory& memory : m_castMemory) {
+        writer.write(memory.who);
+        writer.write(memory.visits);
+        writer.write(memory.regard);
+    }
     makeSnapshotSchema().save(m_registry, writer);
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
 }
@@ -10174,6 +10588,23 @@ bool SpaceWorld::loadFrom(const char* path)
     }
     if (!m_mining.load(reader)) {
         return false;
+    }
+
+    // The cast (v33). ⚑ NOT gated on `galaxyChanged`, unlike the sims above:
+    // there is nothing to re-initialize, because the memory is keyed by a
+    // person or a seat and not by an index into anything this load rebuilt.
+    m_castMemory.clear();
+    std::uint32_t castMemoryCount = 0;
+    if (!reader.read(castMemoryCount)) {
+        return false;
+    }
+    m_castMemory.reserve(castMemoryCount);
+    for (std::uint32_t i = 0; i < castMemoryCount; ++i) {
+        CastMemory memory;
+        if (!reader.read(memory.who) || !reader.read(memory.visits) || !reader.read(memory.regard)) {
+            return false;
+        }
+        m_castMemory.push_back(memory);
     }
 
     ecs::Registry fresh;

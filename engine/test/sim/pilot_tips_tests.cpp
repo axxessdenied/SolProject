@@ -7,6 +7,8 @@
 
 using sol::core::DVec3;
 using sol::sim::BountyCandidate;
+using sol::sim::CastCandidate;
+using sol::sim::chooseCastTalk;
 using sol::sim::chooseFrontTalk;
 using sol::sim::chooseHaulerTalk;
 using sol::sim::chooseMarketTip;
@@ -449,4 +451,53 @@ SOL_TEST(bar_talk_hauler_prefers_a_loaded_run_and_still_mentions_an_empty_one)
     SOL_CHECK(pick == 3); // and inside the loaded tier it is danger again
 
     SOL_CHECK(!chooseHaulerTalk({}, &pick));
+}
+
+// ⚑⚑⚑ THE SELECTION RULE, STATED RATHER THAN SAMPLED - `chooseMarketTip`'s own
+// reason for being deterministic. Every clause below is one the shipped galaxy
+// cannot demonstrate on its own, because a galaxy hands you whichever cases it
+// happens to contain and never the ones you need.
+SOL_TEST(bar_talk_cast_points_at_an_authored_stranger_and_never_at_the_room_next_door)
+{
+    std::uint32_t pick = 0;
+
+    // Nothing in reach: no line, rather than a line about nobody.
+    SOL_CHECK(!chooseCastTalk({}, &pick));
+
+    // A regular is never a destination, however close and however unmet. This
+    // is the restriction the measurements forced: unrestricted, the line was
+    // sayable at 62 rooms of 62 and never went quiet.
+    const CastCandidate regularNextDoor{
+        .system = 4, .station = 0, .jumps = 1, .visits = 0, .authored = false};
+    SOL_CHECK(!chooseCastTalk({&regularNextDoor, 1}, &pick));
+
+    // Somebody in this system is not a tip: you can walk over and look.
+    const CastCandidate here{.system = 1, .station = 0, .jumps = 0, .visits = 0, .authored = true};
+    SOL_CHECK(!chooseCastTalk({&here, 1}, &pick));
+
+    // Tier one beats tier two even when tier two is nearer - "a fresh memory is
+    // not worth a conversation; a stale one is", for people.
+    const CastCandidate two[] = {
+        {.system = 2, .station = 0, .jumps = 1, .visits = 4, .authored = true},
+        {.system = 3, .station = 0, .jumps = 3, .visits = 0, .authored = true},
+    };
+    SOL_REQUIRE(chooseCastTalk(two, &pick));
+    SOL_CHECK(pick == 1);
+
+    // Inside tier one, nearest wins.
+    const CastCandidate unmet[] = {
+        {.system = 2, .station = 0, .jumps = 3, .visits = 0, .authored = true},
+        {.system = 3, .station = 0, .jumps = 1, .visits = 0, .authored = true},
+    };
+    SOL_REQUIRE(chooseCastTalk(unmet, &pick));
+    SOL_CHECK(pick == 1);
+
+    // Inside tier two, the one you have seen LEAST - which is what stops a room
+    // naming the same person for the rest of the campaign.
+    const CastCandidate met[] = {
+        {.system = 2, .station = 0, .jumps = 1, .visits = 9, .authored = true},
+        {.system = 3, .station = 0, .jumps = 2, .visits = 2, .authored = true},
+    };
+    SOL_REQUIRE(chooseCastTalk(met, &pick));
+    SOL_CHECK(pick == 1);
 }

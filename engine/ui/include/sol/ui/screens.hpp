@@ -781,6 +781,18 @@ struct StationPanel
     // move when talk stops being only about this dock.
     const char* barRoom = "";
     std::span<const InfoRow> barTalk;
+    // Who is doing the talking (Phase 35 stage C), already worded - a name, a
+    // trade, and whether they have seen the player before. Every room in the
+    // galaxy has somebody in it, so this is empty only where there is no room
+    // at all and the tab is not on the strip either.
+    //
+    // ⚑⚑ A HEADING RATHER THAN A `BarLine`, AND THAT IS WHAT KEEPS THE TOPIC
+    // COLUMN A CLOSED VOCABULARY. The rows below draw their topic into a fixed
+    // 150px cell, which is the reason stage B refused to let a hook write one;
+    // a person's name is authored content of no controlled length and would
+    // have broken exactly that rule. The speaker is not a topic - they are who
+    // the whole screen is - so they belong beside the room's name.
+    const char* barKeeper = "";
     // Which tabs this station offers (Phase 34 stage C): bit `i` set means the
     // screen the GAME layer numbers `i` belongs on the strip.
     //

@@ -132,6 +132,11 @@ public:
 
     [[nodiscard]] const char* barRoom() const { return m_barRoom.c_str(); }
 
+    // Who is behind the bar, already worded (Phase 35 stage C) - name, trade,
+    // and whether they have seen the player before. Empty only where the
+    // station has no room, which is also where the tab is not on the strip.
+    [[nodiscard]] const char* barKeeper() const { return m_barKeeper.c_str(); }
+
     // The `bar_talk` hook's five builders, in the shape the pilot_hail trio
     // has: each spends one of the room's lines, appends the fact C++ picked,
     // and refuses outside the hook. `kind` is which fact to append.
@@ -142,6 +147,22 @@ public:
         Raid,
         Front,
         Hauler,
+        // Phase 35 stage C: somebody in a room within reach who is worth going
+        // to see. The only one of the five that points at a PERSON rather than
+        // at a market, a raid, a war or a run.
+        Cast,
+        // And whoever is standing in front of you, saying something of their
+        // own. Words only, like `None` - the difference is entirely the TOPIC.
+        //
+        // ⚑⚑⚑ IT IS A SEPARATE KIND *ONLY* SO THAT THE TOPIC DIFFERS, AND THAT
+        // IS STAGE A'S LESSON APPLIED RATHER THAN RESTATED. Sharing `None`'s
+        // "Talk" made a character's line and the scriptless quiet-night
+        // fallback indistinguishable to a test counting topics by name - which
+        // is the exact instrument stage A built after finding that deleting a
+        // house fact left the suite green because another line took its place.
+        // *A conserved total is not a checksum*, and two speakers under one
+        // topic is how a total gets conserved by accident.
+        Speaker,
     };
 
     [[nodiscard]] bool sayBarLine(BarFact kind, const char* message);
@@ -177,6 +198,13 @@ private:
     void runBarTalk();
     // The scriptless default, and the order it spends lines in.
     void defaultBarTalk();
+    // Lets whoever is in the room say something of their own, before the talk
+    // about the wider galaxy (Phase 35 stage C). ONE hook for the whole cast,
+    // dispatching on the character id - which is `campaign.lua`'s shape rather
+    // than a hook per person: the spine is a TABLE keyed by stage with two
+    // global entry points, and a hook per character would be a global function
+    // per row of a data file that a mod cannot extend without editing C++.
+    void runCharacterTalk(const SpaceWorld::CastSeat& seat, std::uint32_t visits, std::int32_t regard);
 
     static constexpr double kPollIntervalSeconds = 0.5;
 
@@ -193,6 +221,7 @@ private:
     std::vector<sol::sim::BountyCandidate> m_bountyCandidates;
     std::vector<sol::sim::ContestCandidate> m_contestCandidates; // Phase 8u
     std::vector<sol::sim::EscortCandidate> m_escortCandidates;   // Phase 8x
+    std::vector<sol::sim::CastCandidate> m_castCandidates;       // Phase 35 stage C
     std::vector<sol::sim::MissionEvent> m_missionEvents;         // per-tick scratch
     sol::sim::Mission m_missionDraft;
     // Bar talk (Phase 35 stage B). The cache is BOUND TO A DOCK rather than
@@ -203,6 +232,10 @@ private:
     // every other path that forgets to raise the event.
     std::vector<BarLine> m_barTalk;
     std::string m_barRoom;
+    std::string m_barKeeper;    // the worded heading
+    std::uint64_t m_barWho = 0; // the save key of whoever is in there
+    bool m_hasCharacterHook = false;
+    bool m_characterHookFailed = false;
     std::uint32_t m_barSystem = 0xffff'ffffu;
     std::uint32_t m_barStation = 0xffff'ffffu;
     std::uint32_t m_barVisits = 0;
@@ -212,6 +245,7 @@ private:
     std::string m_barRaid;
     std::string m_barFront;
     std::string m_barHauler;
+    std::string m_barCast;
     int m_barLinesLeft = 0; // > 0 only while bar_talk runs: the "inside the hook" guard
     bool m_hasBarTalkHook = false;
     bool m_barTalkHookFailed = false;

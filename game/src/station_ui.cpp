@@ -540,14 +540,37 @@ void composeHouseTalk(const SpaceWorld& world,
     }
 }
 
+std::string composeKeeperLine(const char* name, const char* trade, std::uint32_t visits)
+{
+    if (name == nullptr || name[0] == 0) {
+        return {};
+    }
+    std::string line = name;
+    if (trade != nullptr && trade[0] != 0) {
+        line += " - ";
+        line += trade;
+    }
+    // ⚑ THREE STATES AND NOT A COUNTER, because "your fourth visit" is a number
+    // a person would never say and a save file obviously would. The save holds
+    // the count; the room holds an impression of it.
+    if (visits == 1) {
+        line += " (you have met)";
+    } else if (visits > 1) {
+        line += " (a familiar face)";
+    }
+    return line;
+}
+
 void fillStationBar(std::span<const BarLine> talk,
                     const char* room,
+                    const char* keeper,
                     std::deque<std::string>& text,
                     ui::StationPanel& panel,
                     std::vector<ui::InfoRow>& talkRows)
 {
     talkRows.clear();
     panel.barRoom = room != nullptr ? room : "";
+    panel.barKeeper = keeper != nullptr ? keeper : "";
     panel.barTalk = {};
     for (const BarLine& line : talk) {
         talkRows.push_back({.label = store(text, line.topic), .value = store(text, line.text)});

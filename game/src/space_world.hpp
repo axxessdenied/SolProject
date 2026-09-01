@@ -1621,6 +1621,126 @@ public:
                                                          std::uint32_t clanCount,
                                                          std::uint32_t founder);
 
+    // --- The cast (Phase 35 stage C) ---------------------------------------
+    //
+    // ⚑⚑⚑⚑ EVERY ROOM HAS SOMEBODY, AND ONLY SOME OF THEM WERE WRITTEN BY A
+    // PERSON. That split is the stage, and it is the phase's own risk register
+    // discharged: *"a character with one line is worse than no character"*. The
+    // ENGINE half seats a regular in all 62 rooms - a name built from syllables
+    // the way a system's name has been since Phase 6, and a trade read off the
+    // station's own composition - which costs no writing at all. The AUTHORED
+    // half is `characters.toml` plus `scripts/cast.lua`, and one of those rows
+    // takes the seat a regular would otherwise have had.
+    //
+    // ⚑⚑ DERIVED FROM THE SEED AND NEVER SAVED - who sits where costs nothing
+    // on disk, exactly like the composition and the shadow operator. What IS
+    // saved is what the player did: see `castMemory` below.
+    struct CastSeat
+    {
+        // The `[[character]]` this seat was given to, or `kNoCharacter` for a
+        // regular the generator named. An index into `DefDatabase::characters`.
+        std::uint32_t character = kNoCharacter;
+        // Copied in rather than looked up, for the reason every other figure a
+        // composed station carries is: the readers of this run with no def
+        // database in reach, and a regular's name exists in no def at all.
+        std::string name;
+        std::string trade;
+    };
+
+    // Who is in the room on this dock, or nullptr where the station has no
+    // recreation module. A station with a room ALWAYS has somebody in it.
+    [[nodiscard]] const CastSeat* stationCast(std::uint32_t system, std::uint32_t station) const;
+
+    // What the save remembers about one person: whether you have met, how many
+    // times you have been in, and how they feel about you.
+    //
+    // ⚑⚑ `regard` IS WRITTEN NOW AND SPENT IN STAGE D, and saying so here is
+    // the alternative to bumping `kSaveVersion` twice for one feature. Stage D
+    // makes a bar a second posting facility and has to keep an informal lead
+    // distinguishable from a board contract; a relationship is the thing that
+    // does that, and it has to have been accumulating before it can gate
+    // anything. Nothing reads it yet, and that is recorded rather than hidden.
+    struct CastMemory
+    {
+        // ⚑⚑⚑ A UNIQUE IS A PERSON AND A REGULAR IS A CHAIR, AND THE KEY SAYS
+        // WHICH. An authored character is keyed by a hash of their `[[character]]`
+        // id, so they carry their memory even if a later build's recipes move
+        // them to a different dock - they are somebody, and somebody who moves
+        // is still them. A regular is keyed by the SEAT, `kSeatKey | system |
+        // station`, because a regular IS the room: there is nobody there to
+        // follow, and a generated name that changed under a save would be a
+        // different person wearing the same memory.
+        std::uint64_t who = 0;
+        std::uint32_t visits = 0;
+        std::int32_t regard = 0;
+    };
+
+    static constexpr std::uint32_t kNoCharacter = 0xFFFF'FFFFu;
+    // Top bit set: a seat rather than a person. `fnv1a` of an id is masked to
+    // 63 bits so the two spaces cannot collide.
+    static constexpr std::uint64_t kSeatKey = 1ull << 63;
+
+    [[nodiscard]] static std::uint64_t castKeyForSeat(std::uint32_t system, std::uint32_t station)
+    {
+        return kSeatKey | (static_cast<std::uint64_t>(system) << 20u) | station;
+    }
+
+    [[nodiscard]] static std::uint64_t castKeyForCharacter(const char* id);
+
+    // The key of whoever is in the room on this dock, or 0 where nobody is.
+    [[nodiscard]] std::uint64_t castKeyAt(std::uint32_t system, std::uint32_t station) const;
+
+    // What is remembered about `who`, or nullptr if the player has never
+    // spoken to them. SPARSE on purpose: a galaxy has 62 rooms and a save
+    // should carry the ones the player actually walked into, not a row per
+    // chair in case they ever do.
+    [[nodiscard]] const CastMemory* castMemory(std::uint64_t who) const;
+
+    // One visit, from the player walking into the room. Creates the row on the
+    // first call - which is what makes `visits == 1` mean "we have just met".
+    void noteCastVisit(std::uint64_t who);
+
+    // Move a relationship. Nothing calls this in stage C; stage D does.
+    void adjustCastRegard(std::uint64_t who, std::int32_t delta);
+
+    [[nodiscard]] std::span<const CastMemory> castMemories() const { return m_castMemory; }
+
+    // Everybody in a room within `MissionParams::candidateReach` of `from`, for
+    // the bar's fifth source (Phase 35 stage C). Rooms in `from`'s OWN system
+    // are left out: `chooseCastTalk` refuses them anyway, and a tip about a dock
+    // you can reach without jumping is a window rather than a tip.
+    //
+    // ⚑ Game-side because the cast is, and it shares `MissionSim::jumpDepths`
+    // rather than walking the gate graph again - the reach is the board's
+    // number and this only asks what it currently means.
+    void castCandidates(std::uint32_t from, std::vector<sol::sim::CastCandidate>& out) const;
+
+    // The seating rule itself, for the reason `shadowOperatorFor` is public:
+    // the shipped galaxy does not exercise all of it. Returns true when the
+    // seat at (`founder`, `region`, `archetype`, `room`, `hasShadow`) satisfies
+    // every anchor `entry` declares.
+    struct CastEntry
+    {
+        std::uint32_t faction = sol::sim::kNoFaction; // founding claim to match
+        std::uint32_t archetype = kNoIndex;
+        std::uint32_t room = kNoIndex;   // a `[[module]]` index
+        std::uint32_t region = kNoIndex; // Region, as an index
+        bool lawless = false;
+        bool shadow = false;
+    };
+
+    struct CastSeatFacts
+    {
+        std::uint32_t founder = sol::sim::kNoFaction;
+        std::uint32_t archetype = kNoIndex;
+        std::uint32_t room = kNoIndex;
+        std::uint32_t region = kNoIndex;
+        bool hasShadow = false;
+    };
+
+    [[nodiscard]] static bool
+    castSeatSuits(const CastEntry& entry, const CastSeatFacts& seat, std::uint32_t clanBase);
+
     // What goods class a commodity is, for the readouts that say so.
     [[nodiscard]] sol::assets::GoodsClass commodityClass(std::uint32_t commodity) const
     {
@@ -2843,6 +2963,19 @@ private:
     // are independent edits. Called at the tail of `composeStations`, which is
     // also what makes `loadFrom`'s re-compose cover it.
     void assignShadowOwners();
+
+    // Seats somebody in every room, at the tail of `composeStations` beside
+    // `assignShadowOwners` (Phase 35 stage C).
+    //
+    // ⚑⚑⚑ ONE STREAM, TWO PASSES, AND THE ORDER IS WHAT MAKES BOTH STABLE. Pass
+    // one draws EXACTLY ONCE PER STATION in galaxy order - for stations with no
+    // room too, which is the discipline the two passes above already follow -
+    // so its draw count is a function of the galaxy alone and nothing about
+    // rooms, recipes or the cast can move it. Pass two then seats the authored
+    // cast in DEF ORDER off the same stream, which is why a row APPENDED to
+    // `characters.toml` cannot move anybody already written. A second stream
+    // would have bought nothing that this ordering does not already give.
+    void assignCast();
     // Hands player cargo to any active Deliver objective at the docked
     // station: cargo leaves the hold, the market stock refills (the contract
     // literally fills the shortage it advertised).
@@ -3217,6 +3350,11 @@ private:
         // enum would invite a second reader to switch on it without the
         // resolution step that made it correct.
         bool shadow = false;
+        // And whether it is a ROOM (Phase 35 stage C), for the same reason and
+        // resolved the same way. A second bool rather than the family enum,
+        // following the note above rather than reopening it: two families now
+        // have a consequence here and neither of them is switched on.
+        bool recreation = false;
     };
     // One line of a recipe with its module resolved to an index.
     struct RecipeEntry
@@ -3248,6 +3386,19 @@ private:
     std::vector<std::vector<RecipeEntry>> m_recipes; // per station archetype
     std::vector<std::uint32_t> m_powerModules;       // by ascending output
     std::vector<StationComposition> m_compositions;
+    // Who is in each room, indexed [system][station] - game-side rather than a
+    // field on `sim::StationSpec`, because `sol::sim` has no business knowing
+    // what a person is. Rebuilt by `composeStations`, never serialized.
+    std::vector<std::vector<CastSeat>> m_cast;
+    // The authored cast with every anchor resolved to an index once, in def
+    // order (Phase 35 stage C). Cached for the reason `m_modules` and
+    // `m_recipes` are: `composeStations` runs with no def database in reach.
+    std::vector<CastEntry> m_castDefs;
+    std::vector<std::string> m_castNames;  // parallel to m_castDefs
+    std::vector<std::string> m_castTrades; // parallel to m_castDefs
+    // What the player did, sparse and SAVED (v33). Everything else about the
+    // cast is derived from the seed.
+    std::vector<CastMemory> m_castMemory;
     // Where the composed rows start in `m_economyParams.archetypes`. Below it
     // are the authored archetypes, which are still what a `[[station]]` with no
     // recipe runs on.

@@ -557,7 +557,7 @@ end
 -- has raided anybody yet. Say nothing at all and C++ falls back to its own
 -- wording; the house's own lines about this dock are added either way, so the
 -- room is never silent.
-function bar_talk(room, lines, canShortage, canRaid, canFront, canHauler, roll)
+function bar_talk(room, lines, canShortage, canRaid, canFront, canHauler, canCast, roll)
     local spent = 0
     -- Scarcity first: a war is the thing fewest rooms in the galaxy can tell
     -- you about, and a shortage is the thing almost all of them can.
@@ -571,6 +571,20 @@ function bar_talk(room, lines, canShortage, canRaid, canFront, canHauler, roll)
     end
     if canHauler and spent < lines then
         sol.bar_hauler("That crew in the corner are taking")
+        spent = spent + 1
+    end
+    -- Somebody to go and see (Phase 35 stage C). THIRD, and the position is the
+    -- scarcity rule above applied rather than a preference: measured, a room can
+    -- name an authored character at 42 of the 62 rooms and stops being able to
+    -- once the player has met all six, which puts it between the hauler and the
+    -- raid. The engine only ever offers an authored person for this, which is
+    -- why the number is 42 and not 62.
+    if canCast and spent < lines then
+        if roll > 0.5 then
+            sol.bar_cast("If you're headed that way, ask for")
+        else
+            sol.bar_cast("You want somebody who knows the lanes, that's")
+        end
         spent = spent + 1
     end
     if canRaid and spent < lines then

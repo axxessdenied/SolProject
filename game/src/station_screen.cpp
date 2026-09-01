@@ -1087,11 +1087,20 @@ void buildBarTab(UiContext& ui, StationPanel& panel, StationScreenState& state, 
 {
     const auto& theme = ui.theme();
     const std::size_t rows = std::max<std::size_t>(panel.barTalk.size(), 1);
-    const float contentHeight = kSectionHeight + theme.spacing + listHeight(ui, rows);
+    const bool named = panel.barKeeper[0] != '\0';
+    const float contentHeight =
+        kSectionHeight + theme.spacing + (named ? kRowHeight + theme.spacing : 0.0f) + listHeight(ui, rows);
     const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Bar]);
     Column column(list, 0.0f, theme.spacing);
 
     sectionHeader(ui, column.row(kSectionHeight), panel.barRoom[0] != '\0' ? panel.barRoom : "The room");
+    // Who is talking, above everything they say (Phase 35 stage C). Dim and
+    // unboxed on purpose: it is an attribution rather than a row, and a room
+    // whose regular is nobody in particular should not look like a room with a
+    // heading missing.
+    if (named) {
+        ui.label(column.row(kRowHeight), panel.barKeeper, theme.textDim, theme.strongStyle);
+    }
     if (panel.barTalk.empty()) {
         // Unreachable on the shipped galaxy - the house facts below are never
         // all absent - and kept because a tab that draws nothing at all is

@@ -1675,8 +1675,12 @@ int main(int argc, char** argv)
             // from a fill. Shares `stationText` with the two fills above, which
             // is why it runs after them rather than beside the trade rows: that
             // deque is cleared by fillStationOutfitting.
-            game::fillStationBar(
-                content.barTalk(), content.barRoom(), stationText, stationPanel, barTalkRows);
+            game::fillStationBar(content.barTalk(),
+                                 content.barRoom(),
+                                 content.barKeeper(),
+                                 stationText,
+                                 stationPanel,
+                                 barTalkRows);
             // Survey ledger (Phase 8e): sellable at any station, whole.
             surveyRows.clear();
             for (const sol::sim::SurveyEntry& entry : world.survey().ledger()) {

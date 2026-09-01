@@ -4036,3 +4036,129 @@ SOL_TEST(data_defs_shipped_modules_cover_every_family_gdd_12_names)
     }
     SOL_CHECK(biggestOutput > biggestDraw);
 }
+
+// ⚑⚑ THE CAST IS A DEF KIND LIKE ANY OTHER (Phase 35 stage C), AND THIS FILE'S
+// JOB IS THE PARSER'S HALF: the keys, the merge, and the two refusals the parser
+// owns. Whether an anchor names something REAL is `validateCharacters`, and
+// whether a resolving anchor finds a free seat is a question about a galaxy -
+// both live in `game/test/station_cast_tests.cpp`, where a galaxy is in hand.
+SOL_TEST(data_defs_character_reads_its_keys_and_merges_on_id_like_every_other_kind)
+{
+    const char* text = R"(
+[[character]]
+id = "sol.char_one"
+name = "Ines Vasquez"
+trade = "Freight broker"
+faction = "sol.guild"
+archetype = "sol.station_shipyard"
+room = "sol.mod_concourse"
+region = "fringe"
+shadow = true
+
+[[character]]
+id = "sol.char_two"
+name = "Nobody In Particular"
+trade = "Hauler"
+)";
+    sol::assets::DefDatabase db;
+    std::string error;
+    SOL_REQUIRE(db.mergeToml(text, std::strlen(text), "cast.toml", &error));
+    SOL_REQUIRE(db.characters().size() == 2);
+
+    const sol::assets::CharacterDef* one = db.findCharacter("sol.char_one");
+    SOL_REQUIRE(one != nullptr);
+    SOL_CHECK(one->name == "Ines Vasquez");
+    SOL_CHECK(one->trade == "Freight broker");
+    SOL_CHECK(one->factionId == "sol.guild");
+    SOL_CHECK(one->archetypeId == "sol.station_shipyard");
+    SOL_CHECK(one->moduleId == "sol.mod_concourse");
+    SOL_CHECK(one->region == "fringe");
+    SOL_CHECK(one->shadow);
+    SOL_CHECK(!one->lawless);
+    SOL_CHECK(one->source == "cast.toml");
+
+    // ⚑ EVERY ANCHOR IS OPTIONAL, and a row with none of them is the cheapest
+    // thing an author can write: somebody who could be in any room anywhere.
+    const sol::assets::CharacterDef* two = db.findCharacter("sol.char_two");
+    SOL_REQUIRE(two != nullptr);
+    SOL_CHECK(two->factionId.empty());
+    SOL_CHECK(two->archetypeId.empty());
+    SOL_CHECK(two->moduleId.empty());
+    SOL_CHECK(two->region.empty());
+    SOL_CHECK(!two->shadow);
+
+    // `mergeDef` on `id`, the same rule every other kind follows: a later layer
+    // REPLACES in place, so an index into `characters()` stays stable across a
+    // mod that only edits values - which is what lets a seat hold one.
+    const char* layer = R"(
+[[character]]
+id = "sol.char_one"
+name = "Ines Vasquez"
+trade = "Guild factor"
+region = "core"
+)";
+    SOL_REQUIRE(db.mergeToml(layer, std::strlen(layer), "mod.toml", &error));
+    SOL_CHECK(db.characters().size() == 2);
+    SOL_CHECK(db.characters()[0].id == "sol.char_one"); // still first
+    SOL_CHECK(db.characters()[0].trade == "Guild factor");
+    SOL_CHECK(db.characters()[0].region == "core");
+    // ⚑ A REPLACEMENT IS WHOLE, NOT A PATCH - the mod row wrote no `faction`,
+    // and the merged row therefore has none. Same rule as every other def kind,
+    // stated here because a cast row is mostly optional keys and reads like a
+    // patch if nobody says otherwise.
+    SOL_CHECK(db.characters()[0].factionId.empty());
+
+    // The two refusals the PARSER owns, as opposed to the validator's.
+    const char* badRegion = R"(
+[[character]]
+id = "sol.char_bad"
+name = "Bad"
+trade = "Bad"
+region = "outer"
+)";
+    sol::assets::DefDatabase reject;
+    SOL_CHECK(!reject.mergeToml(badRegion, std::strlen(badRegion), "bad.toml", &error));
+    SOL_CHECK(error.find("region") != std::string::npos);
+
+    const char* both = R"(
+[[character]]
+id = "sol.char_bad"
+name = "Bad"
+trade = "Bad"
+faction = "sol.guild"
+lawless = true
+)";
+    SOL_CHECK(!reject.mergeToml(both, std::strlen(both), "bad.toml", &error));
+    SOL_CHECK(error.find("mutually exclusive") != std::string::npos);
+
+    const char* stray = R"(
+[[character]]
+id = "sol.char_bad"
+name = "Bad"
+trade = "Bad"
+favourite_drink = "whisky"
+)";
+    SOL_CHECK(!reject.mergeToml(stray, std::strlen(stray), "bad.toml", &error));
+    SOL_CHECK(error.find("favourite_drink") != std::string::npos);
+
+    // A name and a trade are REQUIRED. A character with no trade would draw as
+    // a bare name in the one place the player sees them.
+    const char* nameless = R"(
+[[character]]
+id = "sol.char_bad"
+trade = "Bad"
+)";
+    SOL_CHECK(!reject.mergeToml(nameless, std::strlen(nameless), "bad.toml", &error));
+    const char* tradeless = R"(
+[[character]]
+id = "sol.char_bad"
+name = "Bad"
+)";
+    SOL_CHECK(!reject.mergeToml(tradeless, std::strlen(tradeless), "bad.toml", &error));
+
+    // And the unknown-kind message names it, so an author who typed `[[cast]]`
+    // is told what the word actually is.
+    const char* wrong = "[[cast]]\nid = \"x\"\n";
+    SOL_CHECK(!reject.mergeToml(wrong, std::strlen(wrong), "bad.toml", &error));
+    SOL_CHECK(error.find("character") != std::string::npos);
+}

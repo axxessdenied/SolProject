@@ -142,9 +142,22 @@ void composeHouseTalk(const SpaceWorld& world,
 // jurisdiction header updates live.
 void fillStationBar(std::span<const BarLine> talk,
                     const char* room,
+                    const char* keeper,
                     std::deque<std::string>& text,
                     sol::ui::StationPanel& panel,
                     std::vector<sol::ui::InfoRow>& talkRows);
+
+// How the room introduces whoever is behind the bar (Phase 35 stage C): a name,
+// a trade, and - once you have been in before - the fact that they know it.
+//
+// ⚑⚑ THE ATTRIBUTION IS C++'s AND THE LINES ARE LUA'S, which is the same split
+// stage B drew and is drawn again here for a narrower reason: this string is a
+// HEADING and not a `BarLine`, so it is not spent out of the room's line budget
+// and a hook cannot overflow it. What a character SAYS is `character_talk`'s.
+//
+// ⚑ `visits` is what the save carries, so this is where the save becomes
+// visible: 0 is a stranger, 1 is somebody you met once, more is a regular.
+[[nodiscard]] std::string composeKeeperLine(const char* name, const char* trade, std::uint32_t visits);
 
 // How long ago a market reading was taken, for the intel columns (Phase 8g):
 // "just now", "14m ago", "2h ago". Coarse on purpose — the number that

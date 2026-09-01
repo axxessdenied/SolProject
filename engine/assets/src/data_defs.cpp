@@ -1925,6 +1925,51 @@ bool parseCrew(const TomlValue& table,
     return true;
 }
 
+// Phase 35 stage C. Every field but `id` and `name` is optional, and every
+// optional one NARROWS where this person will sit - so a row with none of them
+// is a person who could be in any room in the galaxy, which is a legitimate
+// thing to write and is the cheapest row an author can add.
+bool parseCharacter(const TomlValue& table,
+                    const char* sourceName,
+                    std::vector<CharacterDef>& out,
+                    std::string* outError)
+{
+    CharacterDef def;
+    def.source = sourceName;
+
+    FieldReader reader{.table = table, .context = sourceName, .outError = outError};
+    reader.requireString("id", def.id);
+    if (!reader.failed) {
+        reader.context = std::string(sourceName) + ": character '" + def.id + "'";
+    }
+    reader.requireString("name", def.name);
+    reader.requireString("trade", def.trade);
+    reader.optionalString("faction", def.factionId);
+    reader.optionalString("archetype", def.archetypeId);
+    reader.optionalString("room", def.moduleId);
+    reader.optionalString("region", def.region);
+    reader.optionalBool("lawless", def.lawless);
+    reader.optionalBool("shadow", def.shadow);
+    // The one anchor pair that cannot both be true, and it is the same pair
+    // `[[system]]` already refuses: a major's space and a clan's space are the
+    // two halves of one question, so naming both selects nothing and reads as
+    // a typo rather than as a rule.
+    if (!reader.failed && def.lawless && !def.factionId.empty()) {
+        reader.fail("'lawless' and 'faction' are mutually exclusive");
+    }
+    if (!reader.failed && !def.region.empty() && def.region != "core" && def.region != "frontier" &&
+        def.region != "fringe") {
+        reader.fail("key 'region' must be \"core\", \"frontier\" or \"fringe\"");
+    }
+    reader.rejectUnknownKeys(
+        {"id", "name", "trade", "faction", "archetype", "room", "region", "lawless", "shadow"});
+    if (reader.failed) {
+        return false;
+    }
+    mergeDef(out, std::move(def));
+    return true;
+}
+
 } // namespace
 
 // --- Mount vocabulary (Phase 31 stage A2) ---
@@ -2279,6 +2324,7 @@ void DefDatabase::clear()
     m_models.clear();
     m_materials.clear();
     m_roles.clear();
+    m_characters.clear();
 }
 
 bool DefDatabase::mergeToml(const char* text,
@@ -2319,6 +2365,7 @@ bool DefDatabase::mergeToml(const char* text,
         }
     }
     std::vector<RoleDef> roles = m_roles;
+    std::vector<CharacterDef> characters = m_characters;
 
     for (const auto& [key, value] : root.members()) {
         bool (*parse)(const TomlValue&, const char*, void*, std::string*) = nullptr;
@@ -2388,6 +2435,11 @@ bool DefDatabase::mergeToml(const char* text,
                 return parseMaterial(t, s, *static_cast<std::vector<MaterialDef>*>(v), e);
             };
             target = &materials;
+        } else if (key == "character") {
+            parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
+                return parseCharacter(t, s, *static_cast<std::vector<CharacterDef>*>(v), e);
+            };
+            target = &characters;
         } else if (key == "role") {
             parse = [](const TomlValue& t, const char* s, void* v, std::string* e) {
                 return parseRole(t, s, *static_cast<std::vector<RoleDef>*>(v), e);
@@ -2397,7 +2449,8 @@ bool DefDatabase::mergeToml(const char* text,
             if (outError != nullptr) {
                 *outError = std::string(sourceName) + ": unknown def kind '" + key +
                             "' (expected ship, weapon, faction, commodity, station, module, system, "
-                            "constellation, component, crew, sound, model, material, or role)";
+                            "constellation, component, crew, sound, model, material, role, or "
+                            "character)";
             }
             return false;
         }
@@ -2430,6 +2483,7 @@ bool DefDatabase::mergeToml(const char* text,
     m_models = std::move(models);
     m_materials = std::move(materials);
     m_roles = std::move(roles);
+    m_characters = std::move(characters);
     // ⚑ At the TAIL of every merge, not as a pass a caller has to remember.
     // The database is therefore never half-resolved, and the one thing that
     // genuinely cannot be answered until every layer is in - whether a named
@@ -2664,6 +2718,49 @@ bool DefDatabase::validateStationRecipes(std::string* outError) const
     return true;
 }
 
+bool DefDatabase::validateCharacters(std::string* outError) const
+{
+    for (const CharacterDef& character : m_characters) {
+        const auto refuse = [&](const std::string& what, const std::string& id, const char* kind) {
+            if (outError != nullptr) {
+                *outError = character.source + ": character '" + character.id + "' sits " + what + " '" + id +
+                            "', which no [[" + kind + "]] row defines";
+            }
+        };
+        if (!character.factionId.empty() && findFaction(character.factionId.c_str()) == nullptr) {
+            refuse("in the space of", character.factionId, "faction");
+            return false;
+        }
+        if (!character.archetypeId.empty() && findStation(character.archetypeId.c_str()) == nullptr) {
+            refuse("on a", character.archetypeId, "station");
+            return false;
+        }
+        if (!character.moduleId.empty() && findModule(character.moduleId.c_str()) == nullptr) {
+            refuse("in a", character.moduleId, "module");
+            return false;
+        }
+        // ⚑ A ROOM THAT IS NOT A ROOM, and it is worth a refusal of its own
+        // rather than a shrug: `room = "sol.mod_fence"` parses, names a real
+        // module, and selects nothing forever, because the seat a character
+        // takes is by construction a RECREATION module - `stationRoom` picks the
+        // recreation module with the largest draw and there is nothing else it
+        // could return. An author who wrote it was expecting rooms to be
+        // arbitrary modules, which is a rule this game does not have.
+        if (!character.moduleId.empty()) {
+            const ModuleDef* module = findModule(character.moduleId.c_str());
+            if (module != nullptr && module->family != ModuleFamily::Recreation) {
+                if (outError != nullptr) {
+                    *outError = character.source + ": character '" + character.id + "' names the room '" +
+                                character.moduleId + "', which is a " + moduleFamilyName(module->family) +
+                                " module; a room is always a recreation module";
+                }
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool DefDatabase::validateSystems(std::string* outError) const
 {
     // ⚑⚑ EVERY AUTHORED SYSTEM IN THE DATABASE, STANDALONE ROWS AND
@@ -2862,6 +2959,13 @@ std::uint32_t DefDatabase::materialIndex(const char* id) const
         }
     }
     return kNoMaterial;
+}
+
+const CharacterDef* DefDatabase::findCharacter(const char* id) const
+{
+    const auto it = std::find_if(
+        m_characters.begin(), m_characters.end(), [&](const CharacterDef& d) { return d.id == id; });
+    return it != m_characters.end() ? &*it : nullptr;
 }
 
 const RoleDef* DefDatabase::findRole(const char* id) const

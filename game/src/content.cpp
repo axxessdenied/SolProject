@@ -593,6 +593,17 @@ bool barHauler(GameContent& content, const char* message)
                               message != nullptr ? message : "Somebody's taking");
 }
 
+bool barCast(GameContent& content, const char* message)
+{
+    return content.sayBarLine(GameContent::BarFact::Cast, message != nullptr ? message : "Worth a word with");
+}
+
+bool barPerson(GameContent& content, const char* message)
+{
+    return content.sayBarLine(GameContent::BarFact::Speaker,
+                              message != nullptr ? message : "They nod and say nothing.");
+}
+
 bool undock(GameContent& content)
 {
     return content.world().undock();
@@ -3770,6 +3781,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&barRaid>("sol", "bar_raid", this);
     m_vm.registerFunction<&barFront>("sol", "bar_front", this);
     m_vm.registerFunction<&barHauler>("sol", "bar_hauler", this);
+    m_vm.registerFunction<&barCast>("sol", "bar_cast", this); // Phase 35 stage C
+    m_vm.registerFunction<&barPerson>("sol", "bar_person", this);
     // Mission objectives and threat selection (Phase 8i).
     m_vm.registerFunction<&describeObjective>("sol", "objective", this);
     m_vm.registerFunction<&targetNearestHostile>("sol", "target_hostile", this);
@@ -3886,6 +3899,15 @@ bool GameContent::reloadDefs()
     // every station of that archetype in the galaxy, which reads as an economy
     // that does not balance rather than as a typo in one file.
     if (!fresh.validateStationRecipes(&error)) {
+        SOL_LOG_ERROR("data defs: %s", error.c_str());
+        return false;
+    }
+    // Phase 35 stage C, and it refuses for the same reason the seven above do,
+    // with the sharpest version of it yet: an anchor that resolves to nothing
+    // selects no seat, so the character is simply NOT IN THE GALAXY - and a
+    // person who is nowhere looks exactly like a person nobody ever wrote.
+    // There is no fallback that is not a lie about who is in the room.
+    if (!fresh.validateCharacters(&error)) {
         SOL_LOG_ERROR("data defs: %s", error.c_str());
         return false;
     }
@@ -4062,6 +4084,10 @@ void GameContent::runBootScripts()
     m_hasBarTalkHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_barTalkHookFailed = false;
+    lua_getglobal(state, "character_talk");
+    m_hasCharacterHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_characterHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -4497,10 +4523,13 @@ void GameContent::runBarTalk()
     SpaceWorld& world = *m_world;
     m_barTalk.clear();
     m_barRoom.clear();
+    m_barKeeper.clear();
+    m_barWho = 0;
     m_barShortage.clear();
     m_barRaid.clear();
     m_barFront.clear();
     m_barHauler.clear();
+    m_barCast.clear();
     m_barLinesLeft = 0;
     if (!world.isDocked()) {
         m_barSystem = 0xffff'ffffu;
@@ -4519,6 +4548,25 @@ void GameContent::runBarTalk()
     }
     m_barRoom = room->name;
     game::composeRoomLine(world, m_defs, system, station, m_barTalk);
+
+    // --- Who is in the room (Phase 35 stage C). The visit is noted BEFORE the
+    // heading is worded, so `visits == 1` is the moment you meet somebody and
+    // the room says so on the same screen rather than on the next one.
+    //
+    // ⚑⚑ THE VISIT IS THE ONLY THING THIS STAGE WRITES TO THE SAVE, and it is
+    // written here rather than in the fill for the reason the whole composition
+    // moved out of the fill in stage B: `fillStationBar` runs every frame the
+    // panel is drawn, so a counter incremented there would count FRAMES.
+    m_barWho = world.castKeyAt(system, station);
+    const SpaceWorld::CastSeat* seat = world.stationCast(system, station);
+    if (seat != nullptr) {
+        world.noteCastVisit(m_barWho);
+        const SpaceWorld::CastMemory* memory = world.castMemory(m_barWho);
+        m_barKeeper = game::composeKeeperLine(
+            seat->name.c_str(), seat->trade.c_str(), memory != nullptr ? memory->visits : 0);
+        runCharacterTalk(
+            *seat, memory != nullptr ? memory->visits : 0, memory != nullptr ? memory->regard : 0);
+    }
 
     // --- The facts, picked by C++ over the live galaxy. Which KIND gets spent
     // and in what words is the hook's; naming the place is not, for the reason
@@ -4576,6 +4624,27 @@ void GameContent::runBarTalk()
         }
     }
 
+    // ⚑⚑ THE FIFTH SOURCE, AND IT IS THE ONLY ONE THAT POINTS AT A PERSON
+    // (Phase 35 stage C). Ruled by the user, 2026-09-01: the game should be
+    // able to tell you where somebody is, because a cast seated across 45
+    // room-systems 0 to 9 jumps from the start is otherwise found only by luck.
+    // Reach is the board's `candidateReach`, so this line never names a dock
+    // further away than a contract would.
+    world.castCandidates(system, m_castCandidates);
+    if (sol::sim::chooseCastTalk(m_castCandidates, &pick)) {
+        const sol::sim::CastCandidate& who = m_castCandidates[pick];
+        const SpaceWorld::CastSeat* there = world.stationCast(who.system, who.station);
+        if (there != nullptr) {
+            const sol::sim::SystemSpec& spec = galaxy.systems[who.system];
+            // ⚑ The TRADE and not the name alone, because "ask for Ines Farrow"
+            // is a phone book and "ask for Ines Farrow, she runs freight out of
+            // there" is a reason to go. Written by C++ for the same reason the
+            // hauler's laden flag is: the hook is not given the position.
+            m_barCast = there->name + ", " + there->trade + ", at " + spec.stations[who.station].name + ", " +
+                        spec.name;
+        }
+    }
+
     // --- The words. The hook may spend up to this many lines; the budget and
     // the "inside the hook" guard are ONE number, the way answeringHail() is
     // one bool.
@@ -4594,6 +4663,7 @@ void GameContent::runBarTalk()
                              !m_barRaid.empty(),
                              !m_barFront.empty(),
                              !m_barHauler.empty(),
+                             !m_barCast.empty(),
                              roll)) {
             SOL_LOG_ERROR("bar_talk disabled until scripts reload: %s", error.c_str());
             m_barTalkHookFailed = true;
@@ -4610,6 +4680,64 @@ void GameContent::runBarTalk()
     game::composeHouseTalk(world, m_defs, system, station, m_barTalk);
 }
 
+// Whoever is in the room, saying something of their own (Phase 35 stage C).
+//
+// ⚑⚑⚑ ONE HOOK FOR THE WHOLE CAST, DISPATCHING ON THE ID, AND THAT IS WHAT
+// "following `campaign.lua`'s shape" ACTUALLY MEANS IN THIS TREE. The spec said
+// "Lua hooks per character"; the spine it names as the precedent has no hook
+// per mission - it has a TABLE keyed by stage id and two global entry points
+// (`campaign_offer`, `mission_event`) that look a row up in it. A global
+// function per `[[character]]` row would put a name from a data file into the
+// C++ that calls it, so a mod could add a character and never be able to give
+// them a line. The re-read moved this one, and it is the twenty-first estimate
+// the practice has moved.
+//
+// ⚑ THE HOOK IS TOLD WHAT THE SAVE REMEMBERS - visits and regard - because
+// that is the whole of what stage C added to the file, and a character who
+// cannot tell a stranger from a regular is a character with one line.
+//
+// ⚑ A REGULAR GETS THE SAME CALL AS A UNIQUE, with an empty id. A script that
+// only knows the six authored people simply returns for everybody else, and
+// the room still has stage A's house lines and stage B's four sources under it
+// - so nothing is ever mute, which is the rule this whole phase runs on.
+void GameContent::runCharacterTalk(const SpaceWorld::CastSeat& seat,
+                                   std::uint32_t visits,
+                                   std::int32_t regard)
+{
+    if (!m_hasCharacterHook || m_characterHookFailed) {
+        return;
+    }
+    const char* id = "";
+    if (seat.character != SpaceWorld::kNoCharacter && seat.character < m_defs.characters().size()) {
+        id = m_defs.characters()[seat.character].id.c_str();
+    }
+    // ⚑⚑ ONE LINE OF ITS OWN, *NOT* OUT OF THE ROOM'S LADDER, and the
+    // distinction is `roomTalkLines`' own words: that ladder buys sentences
+    // ABOUT THE WIDER GALAXY, and a person introducing themselves is not one.
+    // Spending from it would have made a resort's third rumour cost the same as
+    // the barkeep saying hello. It goes through `sayBarLine` all the same, so
+    // the "only inside a hook" refusal still holds and a script cannot have a
+    // character talk from `on_tick`.
+    //
+    // ⚑ AND A CHARACTER CANNOT NAME A PLACE, by construction rather than by
+    // rule: the four facts have not been picked yet at this point in
+    // `runBarTalk`, so `sol.bar_shortage` and its three siblings find an empty
+    // fact and drop the line. Words are all this hook can spend.
+    m_barLinesLeft = 1;
+    std::string error;
+    if (!m_vm.callGlobal("character_talk",
+                         &error,
+                         id,
+                         seat.name.c_str(),
+                         seat.trade.c_str(),
+                         static_cast<double>(visits),
+                         static_cast<double>(regard))) {
+        SOL_LOG_ERROR("character_talk disabled until scripts reload: %s", error.c_str());
+        m_characterHookFailed = true;
+    }
+    m_barLinesLeft = 0;
+}
+
 // ⚑⚑ THE ORDER IS SCARCITY, AND IT IS A CLAIM WITH A NUMBER BEHIND IT: spend
 // the line on the thing FEWEST ROOMS CAN TELL YOU. Measured over the 62 rooms
 // between five minutes and two sim hours, a war front is sayable at 19-37 of
@@ -4623,6 +4751,16 @@ void GameContent::defaultBarTalk()
         return;
     }
     if (!m_barHauler.empty() && sayBarLine(BarFact::Hauler, "Somebody's taking")) {
+        return;
+    }
+    // ⚑ THIRD, AND IT WAS WRITTEN SECOND FIRST. A person to go and see is the
+    // only line here that sends the player somewhere to meet somebody rather
+    // than to trade with something, which argues for spending it early - but
+    // the rule this list is ordered by is scarcity, and the measurement went
+    // against the argument. See `chooseCastTalk`: unrestricted it is sayable at
+    // 62 rooms of 62 forever, and restricting it to the authored cast is what
+    // earns it this slot at 42 falling to 0.
+    if (!m_barCast.empty() && sayBarLine(BarFact::Cast, "Worth a word with")) {
         return;
     }
     if (!m_barRaid.empty() && sayBarLine(BarFact::Raid, "Word came in that")) {
@@ -4663,6 +4801,13 @@ bool GameContent::sayBarLine(BarFact kind, const char* message)
     case BarFact::Hauler:
         topic = "Leaving";
         fact = &m_barHauler;
+        break;
+    case BarFact::Cast:
+        topic = "Ask for";
+        fact = &m_barCast;
+        break;
+    case BarFact::Speaker:
+        topic = "They say";
         break;
     }
     std::string text = message != nullptr ? message : "";

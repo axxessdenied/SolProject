@@ -284,8 +284,12 @@ SOL_TEST(no_room_in_the_shipped_galaxy_is_silent_on_the_day_it_opens)
             house.clear();
             game::composeRoomLine(world, defs, s, t, house);
             game::composeHouseTalk(world, defs, s, t, house);
-            game::fillStationBar(
-                house, game::stationRoom(world, defs, s, t)->name.c_str(), text, panel, talk);
+            game::fillStationBar(house,
+                                 game::stationRoom(world, defs, s, t)->name.c_str(),
+                                 world.stationCast(s, t)->name.c_str(),
+                                 text,
+                                 panel,
+                                 talk);
             ++docked;
             const int lines = static_cast<int>(panel.barTalk.size());
             silent += lines == 0 ? 1 : 0;
@@ -627,6 +631,7 @@ SOL_TEST(the_room_composes_when_you_walk_in_and_does_not_move_while_you_stand_th
     int roomsWithTalk = 0;
     int overBudget = 0;
     int quietNights = 0;
+    int spoke = 0; // rooms where an authored character said something (stage C)
     for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
         const sol::sim::SystemSpec& system = world.galaxy().systems[s];
         for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
@@ -640,12 +645,26 @@ SOL_TEST(the_room_composes_when_you_walk_in_and_does_not_move_while_you_stand_th
             content.tick(1.0 / 30.0);
             ++rooms;
             int said = 0;
+            int fromTheSpeaker = 0;
             for (const game::BarLine& line : content.barTalk()) {
-                for (const char* topic : {"Short", "Trouble", "The war", "Leaving", "Talk"}) {
+                // ⚑ "Ask for" JOINED THIS LIST IN STAGE C and "They say" did
+                // not, and the difference is the budget. The first four topics
+                // and the fifth are lines about the wider galaxy, spent out of
+                // `roomTalkLines`; a character's own line is a person
+                // introducing themselves and is not billed to that ladder, so
+                // counting it here would make every room with somebody written
+                // in it look one line over budget.
+                for (const char* topic : {"Short", "Trouble", "The war", "Leaving", "Ask for", "Talk"}) {
                     said += line.topic == topic ? 1 : 0;
                 }
                 quietNights += line.topic == "Talk" ? 1 : 0;
+                fromTheSpeaker += line.topic == "They say" ? 1 : 0;
             }
+            // At most one, and only where a `[[character]]` is seated: the hook
+            // is armed with exactly one line and `cast.lua` returns for a
+            // regular.
+            SOL_CHECK(fromTheSpeaker <= 1);
+            spoke += fromTheSpeaker;
             if (said == 0) {
                 std::printf("  %s (%s) said nothing about the galaxy at all\n",
                             system.stations[t].name.c_str(),
@@ -660,16 +679,23 @@ SOL_TEST(the_room_composes_when_you_walk_in_and_does_not_move_while_you_stand_th
         }
     }
     std::printf("  %d room(s) walked into: %d had something to say, %d over budget, "
-                "%d quiet nights\n",
+                "%d quiet nights, %d with an authored voice in them\n",
                 rooms,
                 roomsWithTalk,
                 overBudget,
-                quietNights);
+                quietNights,
+                spoke);
     SOL_REQUIRE(rooms > 0);
     // Every room says something about the galaxy, and none says more than the
     // room is worth. A budget nothing ever reaches is not a budget.
     SOL_CHECK(roomsWithTalk == rooms);
     SOL_CHECK(overBudget == 0);
+    // ⚑ AND THE STAGE C FLOOR, HERE RATHER THAN IN ITS OWN FILE, because this
+    // is the only test in the tree that walks the player into all 62 rooms
+    // through the real hook: `characters.toml` and `cast.lua` are two files that
+    // have to agree on six ids, and nothing else would notice if they stopped.
+    SOL_CHECK(spoke > 0);
+    SOL_CHECK(spoke < rooms); // and a regular is still a regular
 
     // Walking out empties the room, so nothing another dock said is left on the
     // screen - the same reason `openBoard` runs even where nothing is posted.
