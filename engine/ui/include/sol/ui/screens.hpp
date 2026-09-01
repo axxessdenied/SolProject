@@ -768,7 +768,22 @@ struct StationPanel
     std::span<const SurveyRow> surveyData;      // unsold ledger (Phase 8e)
     double surveyValue = 0.0;                   // what the ledger pays today
     RefinePanel refinery;                       // refining service (Phase 8f)
-    StationAction action;                       // out
+    // Which tabs this station offers (Phase 34 stage C): bit `i` set means the
+    // screen the GAME layer numbers `i` belongs on the strip.
+    //
+    // ⚑⚑ OPAQUE HERE ON PURPOSE, AND THAT IS THE SEAM RATHER THAN A SHORTCUT.
+    // `sol::ui` must not learn what a dock tab is - it lays out however many
+    // labels it is handed and has no opinion about which - and the game layer
+    // must not learn what a `[[module]]` is. So the bit ORDER belongs to
+    // exactly one file, `game/src/station_screen.cpp`, where static assertions
+    // pin it to both `game::StationScreenState::Tab` and
+    // `sol::assets::StationScreen`. Nothing in this library reads it.
+    //
+    // ⚑ All bits set is what a station with no composition gets, which is every
+    // tab: the behaviour that shipped before this phase, kept as the default so
+    // that a filler which has never heard of modules still draws a whole screen.
+    std::uint32_t screens = ~0u;
+    StationAction action; // out
 };
 
 } // namespace sol::ui

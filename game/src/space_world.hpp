@@ -1540,6 +1540,27 @@ public:
     // market indexes into.
     [[nodiscard]] std::size_t compositionCount() const { return m_compositions.size(); }
 
+    // Which dock screens one station offers, as a bit per
+    // `assets::StationScreen` (Phase 34 stage C): the UNION over the modules it
+    // is composed of, which is what turns gdd.md §12's "a mining outpost with no
+    // market floor has no Trade tab" from a sentence into a filter.
+    //
+    // ⚑ A station with no composition offers EVERY screen, the same fallback
+    // `Economy::initialize` takes when it finds no composition - a galaxy built
+    // without `[[module]]` content is the galaxy that shipped before this phase
+    // and must keep behaving like it.
+    //
+    // ⚑⚑ RULED 2026-08-31: `Factions` and `Survey` are NOT in this mask's gift.
+    // No module offers either, and neither is a facility - standings are a fact
+    // about the galaxy and a scan ledger is the player's own, with shipped hint
+    // text that says so ("scan data sells anywhere"). They are unconditional in
+    // the screen that draws the strip, not here, because this function answers
+    // one question only: what is this station EQUIPPED to do.
+    [[nodiscard]] std::uint32_t stationScreens(std::uint32_t system, std::uint32_t station) const;
+
+    // The same, for the station the player is docked at. Zero when not docked.
+    [[nodiscard]] std::uint32_t dockedStationScreens() const;
+
     [[nodiscard]] std::uint32_t commodityIndex(const char* id) const;
 
     [[nodiscard]] double playerCredits() const { return m_playerCredits; }
@@ -3098,6 +3119,18 @@ private:
         std::vector<float> feedstock;   // per commodity
         float powerOutput = 0.0f;
         float powerDraw = 0.0f;
+        // The dock screens this module offers, as a bit per
+        // `assets::StationScreen` (Phase 34 stage C). A mask rather than the
+        // def's vector because a station's screen list is a UNION over its
+        // modules, and a union of masks is an `|=` - which is the whole of the
+        // filter gdd.md §12 asks for.
+        std::uint32_t screens = 0;
+        // The refining service (Phase 8f), resolved to commodity indices here
+        // for the reason every other figure on this struct is: `composeStations`
+        // and the screens that read it run with no def database in reach.
+        // `kNoIndex` in both when the module offers no service.
+        std::uint32_t refineInput = kNoIndex;
+        std::uint32_t refineOutput = kNoIndex;
     };
     // One line of a recipe with its module resolved to an index.
     struct RecipeEntry

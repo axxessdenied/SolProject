@@ -3832,6 +3832,20 @@ SOL_TEST(data_defs_module_refuses_what_the_composer_would_have_to_believe)
     SOL_CHECK(refused("family = \"services\"\nrefine_input = \"sol.ore\"\n", "must be given together"));
     SOL_CHECK(refused("family = \"services\"\nrefine_output = \"sol.metal\"\n", "must be given together"));
 
+    // ⚑⚑ AND THE SYMMETRIC RULE, WHICH IS WHAT LET STAGE C DELETE AN EMPTY TAB.
+    // The Refining tab is gated on `screens` while the service it draws comes
+    // from the pair, so a row carrying one without the other is either a tab
+    // with nothing behind it or a service with no way in. Until stage C that
+    // mistake was invisible: the tab was on every station in the galaxy and
+    // simply read "(this station refines nothing)".
+    SOL_CHECK(refused("family = \"services\"\nscreens = [\"refinery\"]\n", "names no 'refine_input'"));
+    SOL_CHECK(refused("family = \"services\"\nrefine_input = \"sol.ore\"\n"
+                      "refine_output = \"sol.metal\"\n",
+                      "does not offer the 'refinery' screen"));
+    // ⚑ The negative control needs no line here: `sol.mod_market_floor` offers
+    // `trade` and names no pair, and every test that loads the shipped defs
+    // proves the rule leaves a screen list that does not mention refining alone.
+
     SOL_CHECK(refused("family = \"power\"\nreactor = 4\n", "reactor"));
 }
 

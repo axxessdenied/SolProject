@@ -278,6 +278,7 @@ add_executable(sol_game_tests
     test/ship_camera_tests.cpp
     test/ship_fit_tests.cpp
     test/station_composition_tests.cpp
+    test/station_screen_tests.cpp
     test/system_security_tests.cpp
     test/target_cycle_tests.cpp
     test/wing_hull_tests.cpp

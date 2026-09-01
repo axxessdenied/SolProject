@@ -4407,6 +4407,15 @@ void GameContent::runMissionBoard()
     SpaceWorld& world = *m_world;
     sol::sim::MissionSim& missions = world.missionSim();
     missions.openBoard(world.currentSystemIndex(), world.dockedStationIndex());
+    // ⚑⚑⚑ A BOARD IS A FACILITY (Phase 34 stage C). `openBoard` still runs -
+    // it is what CLEARS the last station's offers, so skipping it would leave
+    // another dock's work posted here - and then nothing is posted, because
+    // roughly two stations in five are composed without a mission board. This
+    // is the gate's real half: the tab is cosmetic, an empty board is not.
+    if ((world.dockedStationScreens() &
+         (1u << static_cast<std::uint32_t>(sol::assets::StationScreen::Missions))) == 0u) {
+        return;
+    }
     if (!m_hasBoardHook || m_boardHookFailed) {
         return; // scriptless fallback: an empty board
     }

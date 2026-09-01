@@ -1436,6 +1436,22 @@ bool parseModule(const TomlValue& table, const char* sourceName, std::vector<Mod
     if (!reader.failed && def.refineInput.empty() != def.refineOutput.empty()) {
         reader.fail("'refine_input' and 'refine_output' must be given together");
     }
+    // ⚑⚑ THE SECOND CROSS-FIELD RULE, AND STAGE C IS THE REASON IT CAN EXIST AT
+    // ALL. The Refining tab is now gated on this list, while the service the tab
+    // draws still comes from the pair above - two fields on one row that a
+    // reader has to find in agreement. Saying one without the other is a tab
+    // with nothing behind it, or a service with no way in, and until stage C
+    // that mistake showed up as the note it deleted: "(this station refines
+    // nothing)", drawn under a header on every station in the galaxy. An empty
+    // tab was a place a defect could hide; refusing at load is where it goes
+    // instead.
+    const bool offersRefining =
+        std::find(def.screens.begin(), def.screens.end(), StationScreen::Refinery) != def.screens.end();
+    if (!reader.failed && offersRefining == def.refineInput.empty()) {
+        reader.fail(offersRefining
+                        ? "offers the 'refinery' screen but names no 'refine_input'/'refine_output'"
+                        : "names 'refine_input'/'refine_output' but does not offer the 'refinery' screen");
+    }
     if (reader.failed) {
         return false;
     }

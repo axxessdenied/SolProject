@@ -1,5 +1,6 @@
 #include "station_screen.hpp"
 
+#include "sol/assets/data_defs.hpp"
 #include "sol/ui/layout.hpp"
 
 #include <algorithm>
@@ -42,6 +43,97 @@ constexpr Color kCampaign = rgba(0xF2CC59FFu);
 
 constexpr const char* const kTabLabels[StationScreenState::TabCount] = {
     "Trade", "Outfitting", "Shipyard", "Crew", "Factions", "Missions", "Survey", "Refinery"};
+
+// ---------------------------------------------------------------------------
+// The tab strip is a filter over what the station is made of (Phase 34 stage C).
+//
+// ⚑⚑⚑ THIS BLOCK IS THE HALF OF A PARALLEL PAIR THAT `data_defs.hpp` NAMED AND
+// COULD NOT PIN, AND THE ASSERTIONS BELOW ARE WHAT IT WAS PROMISED. Phase 34's
+// own risk register calls "two tables silently parallel" the defect this phase
+// produces if it produces one; `sol::assets::StationScreen` is the def
+// vocabulary and `StationScreenState::Tab` is the strip, they are deliberately
+// NOT one enum - the assets layer must not learn what a tab is, and this layer
+// owns the labels - and the mapping between them is the identity. That is a
+// claim, so it is checked entry by entry rather than asserted on the counts and
+// hoped for: a rotated table agrees with itself perfectly.
+// ---------------------------------------------------------------------------
+
+static_assert(static_cast<std::size_t>(StationScreenState::TabCount) == sol::assets::kStationScreenCount,
+              "the def vocabulary and the tab strip must have the same entries");
+static_assert(std::size(kTabLabels) == sol::assets::kStationScreenCount);
+static_assert(static_cast<int>(StationScreenState::Trade) ==
+              static_cast<int>(sol::assets::StationScreen::Trade));
+static_assert(static_cast<int>(StationScreenState::Outfitting) ==
+              static_cast<int>(sol::assets::StationScreen::Outfitting));
+static_assert(static_cast<int>(StationScreenState::Shipyard) ==
+              static_cast<int>(sol::assets::StationScreen::Shipyard));
+static_assert(static_cast<int>(StationScreenState::Crew) ==
+              static_cast<int>(sol::assets::StationScreen::Crew));
+static_assert(static_cast<int>(StationScreenState::Factions) ==
+              static_cast<int>(sol::assets::StationScreen::Factions));
+static_assert(static_cast<int>(StationScreenState::Missions) ==
+              static_cast<int>(sol::assets::StationScreen::Missions));
+static_assert(static_cast<int>(StationScreenState::Survey) ==
+              static_cast<int>(sol::assets::StationScreen::Survey));
+static_assert(static_cast<int>(StationScreenState::Refinery) ==
+              static_cast<int>(sol::assets::StationScreen::Refinery));
+
+// The identity mapping above is what lets one bit index serve both, so
+// `panel.screens` is read here with the tab's own number.
+[[nodiscard]] constexpr std::uint32_t tabBit(int tab)
+{
+    return 1u << static_cast<std::uint32_t>(tab);
+}
+
+// Whether the STATION is equipped for a tab - the union over its modules, and
+// nothing about the player.
+[[nodiscard]] bool stationOffers(const StationPanel& panel, int tab)
+{
+    return (panel.screens & tabBit(tab)) != 0u;
+}
+
+// ⚑⚑⚑⚑ THE RULING STAGE C WAS OWED, AND IT IS ONE SENTENCE: A TAB IS ON THE
+// STRIP WHEN THE STATION IS EQUIPPED FOR IT, OR WHEN THE PLAYER'S OWN HALF OF
+// IT HAS SOMETHING IN IT.
+//
+// The spec asked only for "a filter over the composition", and a plain union
+// would have been wrong in a way no test would have reported: three of these
+// eight tabs are a facility AND the only place the player can see something
+// they own. Shipyard is "Your fleet" above "For sale"; Crew is "Aboard" above
+// "For hire"; Missions is "Journal" below "Board". Measured on the shipped
+// galaxy, a plain union hides your fleet at 110 docks of 125, your crew at 77
+// and your journal at 55 - and a delivery still completes on `notifyDock`, so
+// you would be unable to watch a contract you are in the middle of.
+//
+// ⚑ Two more are not the station's to withhold at all, and no module offers
+// either: `Factions` is standings, which is a fact about the galaxy, and
+// `Survey` sells a scan ledger that is yours, with shipped hint text that says
+// it "sells anywhere". Unconditional. That also means the strip is never empty
+// - every station has at least these two - which matters more than it reads:
+// a plain union leaves about six stations of 125 with no tabs at all.
+//
+// ⚑ Outfitting is NOT on the list, deliberately. Its mount rows look like the
+// player's half, but every button on them - Fit, Remove for a refund - is work
+// an outfitter does, so a hull with mounts and no outfitter has nothing to
+// offer but the reading, and the fit summary is already in the header.
+[[nodiscard]] bool playerHasBusiness(const StationPanel& panel, int tab)
+{
+    switch (tab) {
+    case StationScreenState::Factions:
+    case StationScreenState::Survey:
+        return true; // never the station's to withhold
+    case StationScreenState::Shipyard:
+        // More than the ship you are flying: a hull parked somewhere is a thing
+        // you own and cannot otherwise see. One ship is not a fleet.
+        return panel.fleet.size() > 1;
+    case StationScreenState::Crew:
+        return !panel.crewAboard.empty();
+    case StationScreenState::Missions:
+        return !panel.missionJournal.empty();
+    default:
+        return false;
+    }
+}
 
 // The amounts a trade button moves. Fixed steps rather than a text field: the
 // world clamps to credits, hold space, and stock anyway, so "buy 100" means
@@ -552,9 +644,11 @@ void buildOutfittingTab(UiContext& ui, StationPanel& panel, StationScreenState& 
 void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
-    const float contentHeight = (kSectionHeight + theme.spacing) * 2.0f +
-                                listHeight(ui, std::max<std::size_t>(panel.fleet.size(), 1)) +
-                                listHeight(ui, std::max<std::size_t>(panel.shipCatalog.size(), 1));
+    const bool sells = stationOffers(panel, StationScreenState::Shipyard);
+    const float contentHeight =
+        (kSectionHeight + theme.spacing) * 2.0f +
+        listHeight(ui, std::max<std::size_t>(panel.fleet.size(), 1)) +
+        listHeight(ui, sells ? std::max<std::size_t>(panel.shipCatalog.size(), 1) : 1);
     const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Shipyard]);
     Column column(list, 0.0f, theme.spacing);
 
@@ -593,6 +687,16 @@ void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& st
     }
     ui.popId();
 
+    // The facility half. This tab is on the strip either because the station
+    // sells hulls or because the player owns one they are not flying; when it
+    // is only the latter, the section says so rather than reading as a shop
+    // that happens to be out of stock.
+    if (!sells) {
+        sectionHeader(ui, column.row(kSectionHeight), "For sale");
+        emptyNote(ui, column, "(no ship sales here - your fleet is listed above wherever you dock)");
+        ui.endScroll();
+        return;
+    }
     sectionHeader(ui, column.row(kSectionHeight), "For sale (a new ship is stored here until you switch)");
     const CatalogClick ship =
         catalogList(ui, column, "ships", panel.shipCatalog, {.primary = "Buy", .showCount = false});
@@ -610,9 +714,11 @@ void buildShipyardTab(UiContext& ui, StationPanel& panel, StationScreenState& st
 void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
-    const float contentHeight = (kSectionHeight + theme.spacing) * 2.0f +
-                                listHeight(ui, std::max<std::size_t>(panel.crewAboard.size(), 1)) +
-                                listHeight(ui, std::max<std::size_t>(panel.crewCatalog.size(), 1));
+    const bool hires = stationOffers(panel, StationScreenState::Crew);
+    const float contentHeight =
+        (kSectionHeight + theme.spacing) * 2.0f +
+        listHeight(ui, std::max<std::size_t>(panel.crewAboard.size(), 1)) +
+        listHeight(ui, hires ? std::max<std::size_t>(panel.crewCatalog.size(), 1) : 1);
     const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Crew]);
     Column column(list, 0.0f, theme.spacing);
 
@@ -632,6 +738,12 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                         .index = aboard.row};
     }
 
+    if (!hires) {
+        sectionHeader(ui, column.row(kSectionHeight), "For hire");
+        emptyNote(ui, column, "(no crew hall here - nobody is looking for a berth)");
+        ui.endScroll();
+        return;
+    }
     sectionHeader(ui, column.row(kSectionHeight), "For hire (one-time fee, no refund)");
     const CatalogClick hire = catalogList(ui, column, "hire", panel.crewCatalog, {.primary = "Hire"});
     if (hire.row >= 0) {
@@ -748,19 +860,32 @@ struct MissionCells
 void buildMissionsTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
-    const float contentHeight = (kSectionHeight + theme.spacing) * 2.0f +
-                                listHeight(ui, std::max<std::size_t>(panel.missionOffers.size(), 1)) +
-                                listHeight(ui, std::max<std::size_t>(panel.missionJournal.size(), 1));
+    // A board is a facility; a journal is yours. The distinction is the whole
+    // reason this tab survives a station with no board at all.
+    const bool hasBoard = stationOffers(panel, StationScreenState::Missions);
+    const float contentHeight =
+        (kSectionHeight + theme.spacing) * 2.0f +
+        listHeight(ui, hasBoard ? std::max<std::size_t>(panel.missionOffers.size(), 1) : 1) +
+        listHeight(ui, std::max<std::size_t>(panel.missionJournal.size(), 1));
     const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Missions]);
     Column column(list, 0.0f, theme.spacing);
 
     sectionHeader(ui, column.row(kSectionHeight), "Board");
-    if (panel.missionOffers.empty()) {
+    if (!hasBoard) {
+        emptyNote(ui, column, "(no mission board here)");
+    } else if (panel.missionOffers.empty()) {
         emptyNote(ui, column, "(no offers)");
     }
     ui.pushId("offers");
     char buffer[64] = {};
-    for (int i = 0; i < static_cast<int>(panel.missionOffers.size()); ++i) {
+    // ⚑ A station with no board posts nothing (`GameContent::runMissionBoard`
+    // returns before the hook runs), so this list is already empty there. Read
+    // from the strip anyway rather than trusting that: offers are SAVED and a
+    // docked load deliberately does not re-roll them, so a file written before
+    // the board became a facility can hand this tab rows to draw underneath a
+    // header that has just said there is no board. Saying both would be worse
+    // than saying either.
+    for (int i = 0; hasBoard && i < static_cast<int>(panel.missionOffers.size()); ++i) {
         const MissionRow& offer = panel.missionOffers[static_cast<std::size_t>(i)];
         const Rect row = column.row(kRowHeight);
         rowBackground(ui, row, i);
@@ -869,13 +994,14 @@ void buildRefineryTab(UiContext& ui, StationPanel& panel, StationScreenState& st
     const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::Refinery]);
     Column column(list, 0.0f, theme.spacing);
 
-    if (!refinery.refines) {
-        sectionHeader(ui, column.row(kSectionHeight), "Refining");
-        emptyNote(ui, column, "(this station refines nothing)");
-        ui.endScroll();
-        return;
-    }
-
+    // ⚑⚑ THE "(this station refines nothing)" NOTE USED TO BE HERE AND STAGE C
+    // DELETED IT, WHICH IS AS MUCH OF THIS STAGE AS ANY TAB IT ADDS. A tab that
+    // is present, selectable and empty on every station that does not refine is
+    // the absent case in its worst form: it costs a click to learn nothing. The
+    // tab is now on the strip only when a module offers the `refinery` screen,
+    // and `parseModule` refuses a module that offers it without naming the pair
+    // - so `refines` false here means the panel and the strip disagree, which
+    // is a bug rather than a station.
     char buffer[160] = {};
     std::snprintf(buffer, sizeof(buffer), "%s to %s", refinery.inputName, refinery.outputName);
     sectionHeader(ui, column.row(kSectionHeight), buffer);
@@ -937,6 +1063,14 @@ void buildRefineryTab(UiContext& ui, StationPanel& panel, StationScreenState& st
 
 } // namespace
 
+bool stationTabOnStrip(const StationPanel& panel, int tab)
+{
+    if (tab < 0 || tab >= StationScreenState::TabCount) {
+        return false;
+    }
+    return stationOffers(panel, tab) || playerHasBusiness(panel, tab);
+}
+
 bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& state)
 {
     const auto& theme = ui.theme();
@@ -971,7 +1105,43 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
         clipped(ui, cargoCell, buffer, theme.textDim, theme.bodyStyle, TextAlign::Right);
     }
 
-    (void)ui.tabs(column.row(kTabHeight), kTabLabels, state.tab);
+    // The strip this station draws, in tab order (Phase 34 stage C).
+    int strip[StationScreenState::TabCount] = {};
+    const char* labels[StationScreenState::TabCount] = {};
+    int stripCount = 0;
+    for (int tab = 0; tab < StationScreenState::TabCount; ++tab) {
+        if (!stationTabOnStrip(panel, tab)) {
+            continue;
+        }
+        strip[stripCount] = tab;
+        labels[stripCount] = kTabLabels[tab];
+        ++stripCount;
+    }
+
+    // ⚑⚑⚑ `state.tab` IS THE TAB'S IDENTITY, NEVER ITS PLACE ON THIS STRIP, AND
+    // THAT DISTINCTION IS THE BUG THIS STAGE WOULD OTHERWISE HAVE SHIPPED.
+    // `UiContext::tabs` ends with `clamp(selected, 0, count - 1)` because it was
+    // written for a fixed strip; hand it a remembered `Refinery` at a station
+    // with three tabs and it silently returns a DIFFERENT tab, which is the
+    // player's place lost with no way to notice. So the index is derived per
+    // station, and what is remembered is only written back when the player
+    // actually moved - a Refinery you were reading survives a dock at an
+    // outpost that has none, and is still there at the next refinery.
+    int selected = 0;
+    for (int i = 0; i < stripCount; ++i) {
+        if (strip[i] == state.tab) {
+            selected = i;
+            break;
+        }
+    }
+    if (ui.tabs(column.row(kTabHeight), std::span(labels, static_cast<std::size_t>(stripCount)), selected)) {
+        state.tab = strip[selected];
+    }
+    // What to draw this frame: the remembered tab when this station has it, and
+    // otherwise the first one it does have. `stripCount` is at least two by
+    // construction - Factions and Survey are unconditional - but a screen that
+    // draws nothing is a better failure than one that indexes past its labels.
+    const int shown = stripCount > 0 ? strip[selected] : -1;
 
     // Footer first: the content region is whatever the tabs and the footer
     // leave, and it has to be known before the tab draws into it.
@@ -979,7 +1149,7 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
     const Rect footerRow = {{body.min.x, body.max.y - kFooterHeight}, {body.max.x, body.max.y}};
     const Rect content = {body.min, {body.max.x, footerRow.min.y - theme.spacing}};
 
-    switch (state.tab) {
+    switch (shown) {
     case StationScreenState::Trade:
         buildTradeTab(ui, panel, state, content);
         break;
@@ -1022,7 +1192,9 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
 
     Row footer(footerRow, theme.spacing);
     const Rect undockCell = footer.cellFromRight(150.0f);
-    ui.label(footer.remaining(), kHints[state.tab], theme.textDisabled, theme.smallStyle);
+    if (shown >= 0) {
+        ui.label(footer.remaining(), kHints[shown], theme.textDisabled, theme.smallStyle);
+    }
     const bool undock = ui.button(undockCell, "Undock");
 
     ui.popId();

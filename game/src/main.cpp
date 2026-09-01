@@ -1605,6 +1605,12 @@ int main(int argc, char** argv)
                 tradeRows.push_back(row);
             }
             stationPanel.trade.stationName = world.dockedStationName();
+            // What this station is EQUIPPED to do (Phase 34 stage C), as the
+            // union over the modules it was composed of. The screen decides
+            // what to do with it: two of the eight tabs are never the
+            // station's to withhold, and three more survive on the player's
+            // own half of them. See `playerHasBusiness`.
+            stationPanel.screens = world.dockedStationScreens();
             // ⚑ The DEF decides whether there is a jurisdiction at all - that is
             // what carries the table - and the HOLDER supplies the name, which
             // for a clan is not the same faction. See `jurisdictionName`.

@@ -124,7 +124,21 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // composer runs again with it, which is the same bargain `initializeFactions`
 // and the economy layout already make. What breaks a v29 save is that its stock
 // row per market was recorded against a market whose rates no longer exist.
-constexpr std::uint32_t kSaveVersion = 30;
+// v31 (Phase 34 stage C): station SERVICES follow the modules too, and this is
+// the narrowest of the four breaks rather than the widest - which is exactly
+// why it is worth stating. Nothing about the galaxy moved: the composer takes
+// no new draw, both geometry digests and the structure digest are untouched,
+// and every station is composed of what it was composed of in v30. What moved
+// is who ANSWERS for a service. Refining came off `[[station]]` and onto
+// `sol.mod_refinery_service`, which sits in the Refinery's recipe at chance
+// 0.85, so two of the galaxy's twelve refineries have the production line and
+// not the counter - and a v30 save with refined metal waiting at one of those
+// two could never collect it, because the tab that collects it is no longer
+// drawn there. The mission board moved the same way. ⚑⚑ A save is broken by a
+// station that no longer does a job the save is MID-WAY THROUGH, not only by
+// one whose rates changed; that is a fourth distinct reason for a bump and the
+// first that is about an outstanding order rather than about a market row.
+constexpr std::uint32_t kSaveVersion = 31;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -816,6 +830,15 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
         applyModuleRates(module.feedstock, runtime.feedstock);
         runtime.powerOutput = module.powerOutput;
         runtime.powerDraw = module.powerDraw;
+        for (const assets::StationScreen screen : module.screens) {
+            runtime.screens |= 1u << static_cast<std::uint32_t>(screen);
+        }
+        // Both or neither: `parseModule` refuses a module that names one without
+        // the other, and refuses a `refinery` screen with no pair behind it.
+        if (!module.refineInput.empty() && !module.refineOutput.empty()) {
+            runtime.refineInput = commodityIndex(module.refineInput.c_str());
+            runtime.refineOutput = commodityIndex(module.refineOutput.c_str());
+        }
         if (module.family == assets::ModuleFamily::Power && module.powerOutput > 0.0f) {
             m_powerModules.push_back(static_cast<std::uint32_t>(m_modules.size()));
         }
@@ -1095,6 +1118,28 @@ std::span<const std::uint32_t> SpaceWorld::stationModules(std::uint32_t system, 
         return {};
     }
     return m_compositions[composition - m_baseArchetypeCount].modules;
+}
+
+std::uint32_t SpaceWorld::stationScreens(std::uint32_t system, std::uint32_t station) const
+{
+    constexpr std::uint32_t kEveryScreen = (1u << assets::kStationScreenCount) - 1u;
+    const std::span<const std::uint32_t> modules = stationModules(system, station);
+    if (modules.empty()) {
+        return kEveryScreen; // no composition: the galaxy that shipped before this phase
+    }
+    std::uint32_t screens = 0;
+    for (const std::uint32_t module : modules) {
+        screens |= m_modules[module].screens;
+    }
+    return screens;
+}
+
+std::uint32_t SpaceWorld::dockedStationScreens() const
+{
+    if (!isDocked()) {
+        return 0;
+    }
+    return stationScreens(m_currentSystem, m_dockedStation);
 }
 
 void SpaceWorld::initializeFactions()
@@ -2871,6 +2916,26 @@ bool SpaceWorld::dockedRefinePair(std::uint32_t& input, std::uint32_t& output) c
     const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
     if (m_dockedStation >= spec.stations.size()) {
         return false;
+    }
+    // ⚑⚑⚑ THE SERVICE IS THE MODULE'S NOW, AND THAT IS THE WHOLE OF WHAT STAGE C
+    // MOVED HERE. `sol.mod_refinery_service` sits in the Refinery's recipe at
+    // chance 0.85, so roughly one refinery in seven has the production line and
+    // not the counter - which is the first time two stations of one archetype
+    // differ in a SERVICE rather than in a rate. The archetype below is still
+    // the answer for a station with no composition, the same fallback every
+    // other reader of a composed station takes.
+    const std::span<const std::uint32_t> modules = stationModules(m_currentSystem, m_dockedStation);
+    for (const std::uint32_t module : modules) {
+        const ModuleRuntime& runtime = m_modules[module];
+        if (runtime.refineInput == kNoIndex || runtime.refineOutput == kNoIndex) {
+            continue;
+        }
+        input = runtime.refineInput;
+        output = runtime.refineOutput;
+        return true;
+    }
+    if (!modules.empty()) {
+        return false; // composed, and none of its modules offers the service
     }
     const std::vector<assets::StationDef>& stations = m_defs->stations();
     const std::uint32_t archetype = spec.stations[m_dockedStation].archetype;

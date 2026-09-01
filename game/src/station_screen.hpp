@@ -40,6 +40,19 @@ struct StationScreenState
     std::string selectedMount;
 };
 
+// Whether a tab belongs on THIS station's strip (Phase 34 stage C).
+//
+// ⚑⚑⚑ EXPOSED BECAUSE IT IS A RULING RATHER THAN A DETAIL. The rule is one
+// sentence - *a tab is on the strip when the station is equipped for it, or
+// when the player's own half of it has something in it* - and it decides what
+// roughly a third of the docks in the galaxy will and will not offer. A rule
+// that consequential should have a name a test can call, rather than living
+// inside the loop that draws the strip where only a click could reach it. The
+// reasoning, and the two screens no station may withhold, are at the definition.
+//
+// `tab` is a `StationScreenState::Tab`; anything else is false.
+[[nodiscard]] bool stationTabOnStrip(const sol::ui::StationPanel& panel, int tab);
+
 // The docked-station screen (engine plan Phase 8d), drawn on the in-repo UI
 // stack. Reads the panel the game already fills for the provisional dev screen
 // and writes back through the same seam - `panel.action` and
