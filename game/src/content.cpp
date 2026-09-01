@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <span>
 #include <utility>
 
@@ -3356,6 +3357,101 @@ double dockedStationIndex(GameContent& content)
     return station == 0xffff'ffffu ? -1.0 : static_cast<double>(station);
 }
 
+// --- Candidate strings, shared by the board and the room (Phase 35 stage D) ---
+//
+// ⚑⚑ ONE SPELLING PER CANDIDATE KIND, AND THE ALTERNATIVE WAS THE MISTAKE
+// THIS TREE HAS ALREADY MADE ONCE. `runMissionBoard` built these inline; the
+// bar's lead needs the same four formats for the same Lua parsers, and a second
+// copy of a format string is how `game::formatDistance` ended up with two
+// spellings that have already drifted apart. Each returns ONE entry, or empty
+// for a candidate whose indices do not resolve - the callers skip those, which
+// is what the board's per-loop guards used to do.
+
+// Joins one candidate onto a `;`-separated list, skipping the ones that did
+// not resolve. Empty entries are DROPPED rather than appended as blanks: a
+// stray `;;` would parse as a candidate with no fields in every one of the
+// Lua patterns downstream.
+void appendEntry(std::string& list, const std::string& entry)
+{
+    if (entry.empty()) {
+        return;
+    }
+    if (!list.empty()) {
+        list += ";";
+    }
+    list += entry;
+}
+
+[[nodiscard]] std::string haulEntry(const SpaceWorld& world, const sol::sim::HaulCandidate& c)
+{
+    if (c.system >= world.galaxy().systems.size() || c.commodity >= world.commodityIds().size()) {
+        return {};
+    }
+    const sol::sim::SystemSpec& spec = world.galaxy().systems[c.system];
+    if (c.station >= spec.stations.size()) {
+        return {};
+    }
+    char buffer[64];
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%.0f:%.2f:%u",
+                  static_cast<double>(c.units),
+                  static_cast<double>(c.severity),
+                  c.jumps);
+    return std::to_string(c.system) + ":" + std::to_string(c.station) + ":" +
+           world.commodityIds()[c.commodity] + ":" + buffer + ":" + spec.name + ":" +
+           spec.stations[c.station].name;
+}
+
+[[nodiscard]] std::string bountyEntry(const SpaceWorld& world, const sol::sim::BountyCandidate& c)
+{
+    if (c.clan >= world.factions().size() || c.system >= world.galaxy().systems.size()) {
+        return {};
+    }
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.intensity), c.jumps);
+    return std::to_string(c.system) + ":" + std::to_string(c.clan + 1) + ":" + buffer + ":" +
+           world.galaxy().systems[c.system].name + ":" + world.factions()[c.clan].name;
+}
+
+[[nodiscard]] std::string contestEntry(const SpaceWorld& world, const sol::sim::ContestCandidate& c)
+{
+    if (c.owner >= world.factions().size() || c.attacker >= world.factions().size() ||
+        c.system >= world.galaxy().systems.size()) {
+        return {};
+    }
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.pressure), c.jumps);
+    return std::to_string(c.system) + ":" + std::to_string(c.owner + 1) + ":" +
+           std::to_string(c.attacker + 1) + ":" + buffer + ":" + world.galaxy().systems[c.system].name +
+           ":" + world.factions()[c.owner].name + ":" + world.factions()[c.attacker].name;
+}
+
+[[nodiscard]] std::string escortEntry(const SpaceWorld& world, const sol::sim::EscortCandidate& c)
+{
+    if (c.system >= world.galaxy().systems.size()) {
+        return {};
+    }
+    const sol::sim::SystemSpec& spec = world.galaxy().systems[c.system];
+    if (c.station >= spec.stations.size()) {
+        return {};
+    }
+    char buffer[64];
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%.0f:%.2f:%u",
+                  static_cast<double>(c.cargo),
+                  static_cast<double>(c.danger),
+                  c.jumps);
+    // A deadheading hauler has no commodity worth naming, and `commodity`
+    // stays set from its last run - the same trap sol.traders() fell into.
+    const char* hauling = c.cargo > 0.0f && c.commodity < world.commodityIds().size()
+                              ? world.commodityIds()[c.commodity].c_str()
+                              : "-";
+    return std::to_string(c.trader) + ":" + std::to_string(c.system) + ":" + std::to_string(c.station) +
+           ":" + hauling + ":" + buffer + ":" + spec.name + ":" + spec.stations[c.station].name;
+}
+
 // --- The mission builder (Lua board hook assembles a draft, then posts) ---
 
 bool missionBegin(GameContent& content,
@@ -3554,6 +3650,36 @@ bool missionPost(GameContent& content)
     return true;
 }
 
+// ⚑⚑ THE SAME DRAFT, THE SAME BUILDER VERBS, A DIFFERENT MOUTH (Phase 35
+// stage D). A lead is assembled with `sol.mission_begin`, `sol.mission_deadline`
+// and the objective verbs exactly as a board contract is - only the posting verb
+// differs, and it differs because the two go into different lists. Anything else
+// would have been a second builder API saying the same things.
+//
+// ⚑ REFUSED OUTSIDE THE HOOK, which is `sayBarLine`'s guard for the same
+// reason: `postLead` would happily take a lead from `on_tick`, and a room the
+// player is not standing in has no business offering anybody work.
+bool missionLead(GameContent& content)
+{
+    if (!content.composingBarLead()) {
+        SOL_LOG_WARN("mission_lead: only valid inside bar_lead");
+        return false;
+    }
+    if (!content.missionDraftOpen()) {
+        SOL_LOG_WARN("mission_lead: no draft (call sol.mission_begin first)");
+        return false;
+    }
+    content.setMissionDraftOpen(false);
+    SpaceWorld& world = content.world();
+    std::string error;
+    if (!world.missionSim().postLead(
+            world.galaxy(), world.economy(), world.factionSim(), content.missionDraft(), &error)) {
+        SOL_LOG_WARN("mission_lead: '%s' refused: %s", content.missionDraft().title.c_str(), error.c_str());
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool GameContent::initialize(const std::string& dataDirectory,
@@ -3730,6 +3856,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&missionObjEscort>("sol", "mission_obj_escort", this);
     m_vm.registerFunction<&missionObjFlyTo>("sol", "mission_obj_flyto", this);
     m_vm.registerFunction<&missionPost>("sol", "mission_post", this);
+    m_vm.registerFunction<&missionLead>("sol", "mission_lead", this);
     // Exploration (Phase 8e). sol.set_loot is the signal_loot hook's builder;
     // the rest are read-outs plus two dev levers (scan, chart).
     m_vm.registerFunction<&listKnowledge>("sol", "knowledge", this);
@@ -4088,6 +4215,10 @@ void GameContent::runBootScripts()
     m_hasCharacterHook = lua_isfunction(state, -1);
     lua_pop(state, 1);
     m_characterHookFailed = false;
+    lua_getglobal(state, "bar_lead");
+    m_hasBarLeadHook = lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    m_barLeadHookFailed = false;
 }
 
 void GameContent::rebuildWatchList()
@@ -4530,7 +4661,21 @@ void GameContent::runBarTalk()
     m_barFront.clear();
     m_barHauler.clear();
     m_barCast.clear();
+    m_barShortagePick = kNoPick;
+    m_barRaidPick = kNoPick;
+    m_barFrontPick = kNoPick;
+    m_barHaulerPick = kNoPick;
+    m_barLead = -1;
     m_barLinesLeft = 0;
+    // ⚑⚑⚑⚑ UNBOUND HERE, AHEAD OF EVERY EARLY RETURN BELOW, AND A PROBE
+    // CAUGHT THE VERSION THAT WAS NOT. `openRoom` started out inside
+    // `composeBarLead`, which only runs at a dock that HAS a room - so the last
+    // room's lead stayed posted and stayed takeable at every dock without one.
+    // Measured before the fix: 71 docks offering a lead in a galaxy with 62
+    // rooms, and 122 of 125 once the galaxy was warm. Clearing where the state
+    // is cleared, rather than where it is filled, is the only placement that
+    // covers the undocked path and the no-room path as well as the ordinary one.
+    world.missionSim().openRoom(0xffff'ffffu, 0xffff'ffffu);
     if (!world.isDocked()) {
         m_barSystem = 0xffff'ffffu;
         m_barStation = 0xffff'ffffu;
@@ -4578,6 +4723,7 @@ void GameContent::runBarTalk()
     missions.haulCandidates(galaxy, world.economy(), system, station, m_haulCandidates);
     if (sol::sim::chooseShortageTalk(
             m_haulCandidates, world.economy().markets(), world.survey(), world.worldSeconds(), &pick)) {
+        m_barShortagePick = pick;
         const sol::sim::HaulCandidate& haul = m_haulCandidates[pick];
         const sol::sim::SystemSpec& spec = galaxy.systems[haul.system];
         const sol::assets::CommodityDef* good =
@@ -4590,6 +4736,7 @@ void GameContent::runBarTalk()
 
     missions.bountyCandidates(galaxy, world.factionSim(), system, m_bountyCandidates);
     if (sol::sim::chooseRaidTalk(m_bountyCandidates, world.survey(), &pick)) {
+        m_barRaidPick = pick;
         const sol::sim::BountyCandidate& raid = m_bountyCandidates[pick];
         if (raid.clan < world.factions().size()) {
             m_barRaid = world.factions()[raid.clan].name + " hit " + galaxy.systems[raid.system].name;
@@ -4603,6 +4750,7 @@ void GameContent::runBarTalk()
     // board beside them would have gated away.
     missions.frontCandidates(galaxy, world.factionSim(), system, m_contestCandidates);
     if (sol::sim::chooseFrontTalk(m_contestCandidates, world.survey(), &pick)) {
+        m_barFrontPick = pick;
         const sol::sim::ContestCandidate& front = m_contestCandidates[pick];
         if (front.owner < world.factions().size() && front.attacker < world.factions().size()) {
             m_barFront = world.factions()[front.attacker].name + " is pressing " +
@@ -4612,6 +4760,7 @@ void GameContent::runBarTalk()
 
     missions.escortCandidates(galaxy, world.economy(), world.factionSim(), system, m_escortCandidates);
     if (sol::sim::chooseHaulerTalk(m_escortCandidates, &pick)) {
+        m_barHaulerPick = pick;
         const sol::sim::EscortCandidate& run = m_escortCandidates[pick];
         if (run.system < galaxy.systems.size() && run.station < galaxy.systems[run.system].stations.size()) {
             const sol::sim::SystemSpec& spec = galaxy.systems[run.system];
@@ -4677,7 +4826,122 @@ void GameContent::runBarTalk()
         defaultBarTalk();
     }
     m_barLinesLeft = 0;
+
+    // --- And whether any of it is work (Phase 35 stage D). AFTER the talk and
+    // BEFORE the house lines, because that is where it belongs in the
+    // conversation: the room gossips, then turns to business, then goes back to
+    // talking about itself.
+    composeBarLead(system, station);
     game::composeHouseTalk(world, m_defs, system, station, m_barTalk);
+}
+
+// ---------------------------------------------------------------------------
+// The lead (Phase 35 stage D): whether any of what was just said is work.
+//
+// ⚑⚑⚑⚑ THE ORDER IS THE TALK's SCARCITY ORDER, WITH ONE GATE ON TOP, AND
+// BOTH HALVES ARE THE PHASE'S OWN RULES RATHER THAN NEW ONES. Spend the slot on
+// the work FEWEST ROOMS COULD HAVE OFFERED - which is `defaultBarTalk`'s rule
+// applied to jobs instead of sentences - and put the scarcest of all behind the
+// relationship, because it is the one thing a room can sell that the board
+// beside it structurally cannot.
+//
+// ⚑⚑ THE GATE IS ON *WHICH* WORK AND NEVER ON *WHETHER THERE IS ANY*, AND
+// that distinction is the one this project has now paid for three times: Phase
+// 8u rep-gated the only war contract on a board and hid the feature from every
+// new pilot; Phase 8x required cargo on the only escort and posted nothing at
+// the player's own start station; stage A's ruling was that the room is never
+// mute. A stranger walking in gets the hauler, the raid or the shortage in all
+// 62 rooms of a warm galaxy. What being a regular buys is the war.
+//
+// ⚑ AND A QUIET NIGHT IS A REAL ANSWER (ruled by the user, 2026-09-01).
+// Measured at t=0: 39 of the 62 rooms can raise a lead and every one of the 39
+// is a hauler leaving, so 23 rooms have conversation and no work on day one.
+// Nothing is invented to fill them - `postLead` exists precisely to refuse work
+// the sim did not generate, and a fallback that made some up would be defeating
+// the guarantee this whole stage is built on.
+void GameContent::composeBarLead(std::uint32_t system, std::uint32_t station)
+{
+    SpaceWorld& world = *m_world;
+    sol::sim::MissionSim& missions = world.missionSim();
+    // Binds the room. The UNBIND is at the top of `runBarTalk`, ahead of the
+    // early returns, because this is not the only path out of that function -
+    // see the note there and the numbers the probe printed before it moved.
+    missions.openRoom(system, station);
+
+    const SpaceWorld::CastMemory* memory = world.castMemory(m_barWho);
+    const std::int32_t regard = memory != nullptr ? memory->regard : 0;
+
+    const char* kind = nullptr;
+    std::string candidate;
+    if (m_barFrontPick != kNoPick && regard >= kRegardForFront) {
+        kind = "front";
+        candidate = contestEntry(world, m_contestCandidates[m_barFrontPick]);
+    } else if (m_barHaulerPick != kNoPick) {
+        kind = "hauler";
+        candidate = escortEntry(world, m_escortCandidates[m_barHaulerPick]);
+    } else if (m_barRaidPick != kNoPick) {
+        kind = "raid";
+        candidate = bountyEntry(world, m_bountyCandidates[m_barRaidPick]);
+    } else if (m_barShortagePick != kNoPick) {
+        kind = "shortage";
+        candidate = haulEntry(world, m_haulCandidates[m_barShortagePick]);
+    }
+    if (kind == nullptr || candidate.empty()) {
+        return; // a quiet night
+    }
+
+    // ⚑⚑ WHO PAYS IS NOT WHO OWNS THE DOCK, AND THAT IS THE HALF OF THIS THAT
+    // MAKES THE WAR LEAD POSSIBLE AT ALL. `postLead` validates a Hold objective
+    // against `contestCandidates` gated on the MISSION's poster, so a lead that
+    // names one of the two combatants passes where the board beside it - gated
+    // on the station's owner - would have enumerated nothing to match. For the
+    // other three the house pays, exactly as the board's do.
+    std::uint32_t poster = world.systemOwnerFaction(system);
+    if (std::strcmp(kind, "front") == 0) {
+        const sol::sim::ContestCandidate& front = m_contestCandidates[m_barFrontPick];
+        // The side that is not this station's owner is the one that needs
+        // outside guns; where the house IS a party it pays for its own side.
+        poster = front.owner == poster || front.attacker == poster
+                     ? poster
+                     : (front.pressure >= 0.5f ? front.attacker : front.owner);
+    }
+    if (poster >= world.factions().size()) {
+        return; // ownerless, and no combatant to bill it to
+    }
+
+    const std::size_t before = missions.leads().size();
+    if (m_hasBarLeadHook && !m_barLeadHookFailed) {
+        sol::core::Rng rng(world.galaxy().seed ^ (static_cast<std::uint64_t>(station) << 32u),
+                           (static_cast<std::uint64_t>(system) << 20u) | m_barVisits);
+        const double roll = static_cast<double>(rng.nextU32()) * 0x1.0p-32;
+        m_composingLead = true;
+        std::string error;
+        if (!m_vm.callGlobal("bar_lead",
+                             &error,
+                             kind,
+                             candidate.c_str(),
+                             static_cast<double>(poster + 1),
+                             world.factions()[poster].name.c_str(),
+                             static_cast<double>(regard),
+                             roll)) {
+            SOL_LOG_ERROR("bar_lead disabled until scripts reload: %s", error.c_str());
+            m_barLeadHookFailed = true;
+        }
+        m_composingLead = false;
+    }
+    if (missions.leads().size() == before) {
+        return; // no hook, or it declined the work
+    }
+
+    // ⚑ THE ROW CARRIES THE HOOK's OWN TITLE, so the words are still Lua's and
+    // the topic is still C++'s - stage B's split, unmoved. A sixth topic and not
+    // a reuse of "Talk", for the reason stage C gave when it gave a character
+    // its own: two speakers under one topic is how a test counting topics by
+    // name stops being able to tell them apart.
+    m_barLead = static_cast<int>(before);
+    m_barTalk.push_back({.topic = "Work",
+                         .text = missions.leads()[before].title,
+                         .lead = m_barLead});
 }
 
 // Whoever is in the room, saying something of their own (Phase 35 stage C).
@@ -4856,8 +5120,10 @@ void GameContent::runMissionBoard()
         return; // ownerless station: nobody to post work
     }
 
-    // Candidate strings, faction_candidates-style. Hauls:
-    // "system:station:commodityId:units:severity:jumps:systemName:stationName"
+    // Candidate strings, faction_candidates-style; the four formats are
+    // `haulEntry` and friends above, shared with the room's lead since Phase 35
+    // stage D so the two mouths cannot start spelling a candidate differently.
+    // Hauls: "system:station:commodityId:units:severity:jumps:sysName:stName".
     m_haulCandidates.clear();
     missions.haulCandidates(world.galaxy(),
                             world.economy(),
@@ -4866,20 +5132,7 @@ void GameContent::runMissionBoard()
                             m_haulCandidates);
     std::string hauls;
     for (const sol::sim::HaulCandidate& c : m_haulCandidates) {
-        if (!hauls.empty()) {
-            hauls += ";";
-        }
-        char buffer[64];
-        std::snprintf(buffer,
-                      sizeof(buffer),
-                      "%.0f:%.2f:%u",
-                      static_cast<double>(c.units),
-                      static_cast<double>(c.severity),
-                      c.jumps);
-        const sol::sim::SystemSpec& spec = world.galaxy().systems[c.system];
-        hauls += std::to_string(c.system) + ":" + std::to_string(c.station) + ":" +
-                 world.commodityIds()[c.commodity] + ":" + buffer + ":" + spec.name + ":" +
-                 spec.stations[c.station].name;
+        appendEntry(hauls, haulEntry(world, c));
     }
     // Bounties: "system:clanIndex1based:intensity:jumps:systemName:clanName".
     m_bountyCandidates.clear();
@@ -4887,16 +5140,7 @@ void GameContent::runMissionBoard()
         world.galaxy(), world.factionSim(), world.currentSystemIndex(), m_bountyCandidates);
     std::string bounties;
     for (const sol::sim::BountyCandidate& c : m_bountyCandidates) {
-        if (c.clan >= world.factions().size()) {
-            continue;
-        }
-        if (!bounties.empty()) {
-            bounties += ";";
-        }
-        char buffer[64];
-        std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.intensity), c.jumps);
-        bounties += std::to_string(c.system) + ":" + std::to_string(c.clan + 1) + ":" + buffer + ":" +
-                    world.galaxy().systems[c.system].name + ":" + world.factions()[c.clan].name;
+        appendEntry(bounties, bountyEntry(world, c));
     }
 
     // Contests (Phase 8u):
@@ -4906,18 +5150,7 @@ void GameContent::runMissionBoard()
         world.galaxy(), world.factionSim(), world.currentSystemIndex(), owner, m_contestCandidates);
     std::string contests;
     for (const sol::sim::ContestCandidate& c : m_contestCandidates) {
-        if (c.owner >= world.factions().size() || c.attacker >= world.factions().size()) {
-            continue;
-        }
-        if (!contests.empty()) {
-            contests += ";";
-        }
-        char buffer[64];
-        std::snprintf(buffer, sizeof(buffer), "%.2f:%u", static_cast<double>(c.pressure), c.jumps);
-        contests += std::to_string(c.system) + ":" + std::to_string(c.owner + 1) + ":" +
-                    std::to_string(c.attacker + 1) + ":" + buffer + ":" +
-                    world.galaxy().systems[c.system].name + ":" + world.factions()[c.owner].name + ":" +
-                    world.factions()[c.attacker].name;
+        appendEntry(contests, contestEntry(world, c));
     }
 
     // Escorts (Phase 8x §E):
@@ -4930,31 +5163,7 @@ void GameContent::runMissionBoard()
         world.galaxy(), world.economy(), world.factionSim(), world.currentSystemIndex(), m_escortCandidates);
     std::string escorts;
     for (const sol::sim::EscortCandidate& c : m_escortCandidates) {
-        if (c.system >= world.galaxy().systems.size()) {
-            continue;
-        }
-        const sol::sim::SystemSpec& spec = world.galaxy().systems[c.system];
-        if (c.station >= spec.stations.size()) {
-            continue;
-        }
-        if (!escorts.empty()) {
-            escorts += ";";
-        }
-        char buffer[64];
-        std::snprintf(buffer,
-                      sizeof(buffer),
-                      "%.0f:%.2f:%u",
-                      static_cast<double>(c.cargo),
-                      static_cast<double>(c.danger),
-                      c.jumps);
-        // A deadheading hauler has no commodity worth naming, and `commodity`
-        // stays set from its last run - the same trap sol.traders() fell into.
-        const char* hauling = c.cargo > 0.0f && c.commodity < world.commodityIds().size()
-                                  ? world.commodityIds()[c.commodity].c_str()
-                                  : "-";
-        escorts += std::to_string(c.trader) + ":" + std::to_string(c.system) + ":" +
-                   std::to_string(c.station) + ":" + hauling + ":" + buffer + ":" + spec.name + ":" +
-                   spec.stations[c.station].name;
+        appendEntry(escorts, escortEntry(world, c));
     }
 
     std::string error;

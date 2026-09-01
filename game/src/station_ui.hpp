@@ -94,6 +94,18 @@ struct BarLine
 {
     std::string topic;
     std::string text;
+    // Phase 35 stage D: this line is an offer of work and there is a lead
+    // behind it, at `lead` in `MissionSim::leads()`. -1 for the other lines,
+    // which is every line stages A to C composed.
+    //
+    // ⚑⚑ A FIELD ON THE LINE RATHER THAN A SECOND LIST NEXT TO IT, WHICH IS
+    // THE OPPOSITE OF THE CALL MADE ONE LAYER DOWN IN `MissionSim` AND FOR THE
+    // SAME REASON. Down there a lead needed its own list because the board's
+    // list runs on a different clock; up here it needs to be ON a line because
+    // the whole point is that the work is something a person in the room SAID.
+    // A lead drawn under its own heading would be a second board with a
+    // barstool in front of it.
+    int lead = -1;
 };
 
 // What the house itself has to say about the dock it is standing on (Phase 35

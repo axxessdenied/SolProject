@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 namespace game {
 
@@ -572,8 +573,20 @@ void fillStationBar(std::span<const BarLine> talk,
     panel.barRoom = room != nullptr ? room : "";
     panel.barKeeper = keeper != nullptr ? keeper : "";
     panel.barTalk = {};
+    char action[16] = {};
     for (const BarLine& line : talk) {
-        talkRows.push_back({.label = store(text, line.topic), .value = store(text, line.text)});
+        // ⚑ THE ACTION IS THE LEAD'S INDEX AS A STRING, WHICH IS `InfoRow`'s OWN
+        // CONTRACT AND NOT A SHORTCUT: "an opaque id the screen writes back when
+        // it is clicked ... what a row's action means is the filler's business".
+        // The Bar tab never parses it; `stationAction` does, on the way back.
+        if (line.lead >= 0) {
+            std::snprintf(action, sizeof(action), "%d", line.lead);
+        }
+        talkRows.push_back({.label = store(text, line.topic),
+                            .value = store(text, line.text),
+                            .detail = "",
+                            .button = line.lead >= 0 ? "Take it" : "",
+                            .action = line.lead >= 0 ? store(text, action) : ""});
     }
     panel.barTalk = talkRows;
 }
@@ -621,6 +634,12 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action)
         break;
     case Kind::AcceptMission:
         (void)world.acceptMission(static_cast<std::uint32_t>(action.index));
+        break;
+    case Kind::AcceptLead:
+        // The row handed its action back untouched (Phase 35 stage D); this is
+        // the filler's half of `InfoRow`'s bargain, where the string means
+        // something again.
+        (void)world.acceptLead(static_cast<std::uint32_t>(std::atoi(action.id)));
         break;
     case Kind::AbandonMission:
         (void)world.abandonMission(static_cast<std::uint32_t>(action.index));

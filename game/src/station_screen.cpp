@@ -1108,6 +1108,7 @@ void buildBarTab(UiContext& ui, StationPanel& panel, StationScreenState& state, 
         // only ever here because a module put a room on this station.
         emptyNote(ui, column, "(nobody is saying anything)");
     }
+    ui.pushId("talk");
     for (int i = 0; i < static_cast<int>(panel.barTalk.size()); ++i) {
         const sol::ui::InfoRow& line = panel.barTalk[static_cast<std::size_t>(i)];
         const Rect row = column.row(kRowHeight);
@@ -1119,8 +1120,25 @@ void buildBarTab(UiContext& ui, StationPanel& panel, StationScreenState& state, 
         // faction names and has no length anybody controls.
         const Rect topic = cursor.cell(150.0f);
         clipped(ui, topic, line.label, theme.textDim, theme.strongStyle);
+        // ⚑⚑ THE BUTTON IS TAKEN OFF THE END OF THE ROW *BEFORE* THE SENTENCE
+        // CLAIMS THE REST, WHICH IS THE ONLY ORDER THAT WORKS. `remaining()`
+        // hands back everything left, so measuring the sentence first would
+        // leave the button drawing on top of it - and only ONE row in a room
+        // ever has a button, so the bug would be invisible on the other four.
+        // Every line keeps its full width when there is nothing to take.
+        if (line.action[0] != '\0') {
+            ui.pushId(i);
+            if (ui.button(inset(cursor.cellFromRight(90.0f), 2.0f), line.button)) {
+                // The action goes back UNREAD, which is `InfoRow`'s contract in
+                // its own words - "the screen never interprets either string".
+                // `stationAction` turns it into a lead index on the way out.
+                panel.action = {.kind = StationAction::Kind::AcceptLead, .id = line.action};
+            }
+            ui.popId();
+        }
         clipped(ui, cursor.remaining(), line.value, theme.textPrimary);
     }
+    ui.popId();
 
     ui.endScroll();
 }

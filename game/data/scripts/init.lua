@@ -24,6 +24,7 @@
 --   sol.mission_candidates()        raw shortage/bounty candidates (dev)
 --   sol.campaign_stage() / sol.set_campaign_stage(n)  spine progress (dev)
 --   sol.mission_begin/deadline/min_rep/obj_*/post     board-hook builder
+--   sol.mission_lead()              post the draft as a room lead (bar_lead)
 --   sol.knowledge() / sol.signals()  what is known / found sites here (Phase 8e)
 --   sol.pulse() / sol.scan()        fire a scan pulse / resolve the target (dev)
 --   sol.salvage()                   empty the nearest resolved site in range
@@ -604,5 +605,129 @@ function bar_talk(room, lines, canShortage, canRaid, canFront, canHauler, canCas
         -- has news is a galaxy where news means nothing, so a quiet night is a
         -- real answer - and the house still has its own lines below this one.
         sol.bar_says("Quiet night. Nobody's come through with anything worth repeating.")
+    end
+end
+
+-- Work heard in the room rather than read off a board (Phase 35 stage D).
+--
+-- C++ has already decided WHICH fact there is work in and hands over that one
+-- candidate, in the same colon-delimited shape `mission_board` gets its lists
+-- in. This hook writes the terms: title, pay, clock, and the objective. It is
+-- the same builder the board uses - only the posting verb differs, because a
+-- lead goes into its own list.
+--
+--   kind      "front" | "hauler" | "raid" | "shortage"
+--   candidate one entry, formatted exactly as the board's lists are
+--   poster    who pays, 1-based; for a war this is one of the two SIDES and
+--             not necessarily whoever owns the dock, which is the whole reason
+--             a room can offer a war contract the board beside it cannot
+--   regard    how well the person offering it knows you (a lead taken = +1)
+--
+-- ⚑ RETURNING WITHOUT POSTING IS A REAL ANSWER. C++ adds no row when nothing
+-- was posted, and the room still has everything else it said - the house is
+-- never mute, but it is not always hiring.
+--
+-- ⚑ NO REP GATE ANYWHERE IN HERE, DELIBERATELY, AND IT IS THE CLEAREST
+-- DIFFERENCE BETWEEN THE TWO SURFACES. The board gates its best hauls at rep 10
+-- and its desperate wars at rep 10; this is somebody asking you personally,
+-- and being asked personally is exactly what not having a reputation yet
+-- looks like. What the room asks for instead is that it knows you, and C++
+-- applies that before this is ever called.
+function bar_lead(kind, candidate, poster, posterName, regard, roll)
+    -- Informal work pays a little over the board for the same job: no contract,
+    -- no faction backing you if it goes wrong, and somebody had to vouch.
+    local premium = 1.15 + 0.1 * roll
+
+    if kind == "shortage" then
+        local system, station, commodity, units, severity, jumps, sysName, stName =
+            string.match(candidate, "^(%d+):(%d+):([^:]+):([%d%.]+):([%d%.]+):(%d+):([^:]+):([^:]+)$")
+        if system == nil then return end
+        system, station = tonumber(system), tonumber(station)
+        units, severity, jumps = tonumber(units), tonumber(severity), tonumber(jumps)
+        local take = math.floor(math.min(units, 25 + 20 * jumps))
+        if take < 1 then return end
+        local good = string.gsub(commodity, "^sol%.", "")
+        local reward = math.floor(take * (6 + 4 * jumps) * (1 + severity) * premium)
+        if sol.mission_begin(string.format("They need %d %s at %s", take, good, stName),
+                             poster, reward, 2 + jumps, 2, "") then
+            sol.mission_deadline(480 + 420 * jumps)
+            sol.mission_obj_deliver(system, station, commodity, take,
+                                    string.format("Deliver %d %s to %s (%s)", take, good,
+                                                  stName, sysName))
+            sol.mission_lead()
+        end
+        return
+    end
+
+    if kind == "raid" then
+        local system, clan, intensity, jumps, sysName, clanName =
+            string.match(candidate, "^(%d+):(%d+):([%d%.]+):(%d+):([^:]+):([^:]+)$")
+        if system == nil then return end
+        system, clan = tonumber(system), tonumber(clan)
+        intensity, jumps = tonumber(intensity), tonumber(jumps)
+        local kills = math.min(2 + math.floor(intensity), 4)
+        local reward = math.floor(kills * (350 + 150 * jumps + 120 * intensity) * premium)
+        if sol.mission_begin(string.format("Somebody wants %s answered for in %s",
+                                           clanName, sysName),
+                             poster, reward, 3 + jumps, 2, "") then
+            sol.mission_deadline(600 + 420 * jumps + 240 * kills)
+            sol.mission_obj_kill(clan, kills, system,
+                                 string.format("Destroy %d %s raiders in %s", kills,
+                                               clanName, sysName))
+            sol.mission_lead()
+        end
+        return
+    end
+
+    if kind == "hauler" then
+        local trader, system, station, commodity, cargo, danger, jumps, sysName, stName =
+            string.match(candidate,
+                         "^(%d+):(%d+):(%d+):([^:]+):([%d%.]+):([%d%.]+):(%d+):([^:]+):([^:]+)$")
+        if trader == nil then return end
+        trader, system = tonumber(trader), tonumber(system)
+        cargo, danger, jumps = tonumber(cargo), tonumber(danger), tonumber(jumps)
+        -- ⚑ NO DANGER FLOOR, WHICH IS WHERE THIS PARTS COMPANY WITH THE BOARD.
+        -- `mission_board` refuses a run under 0.05 danger because paying a
+        -- pilot to watch a schedule tick over is not work. Nobody in a bar is
+        -- pricing risk: a crew leaving tonight would rather not leave alone,
+        -- and at t=0 this is the ONLY lead in the galaxy - measured, 39 of the
+        -- 62 rooms, every one of them a hauler, and none of them laden.
+        local reward = math.floor((250 + 1800 * danger + 220 * jumps + 3 * cargo) * premium)
+        local title = cargo > 0
+            and string.format("A crew leaving for %s wants company", sysName)
+            or string.format("Somebody deadheading to %s wants company", sysName)
+        if sol.mission_begin(title, poster, reward, 3 + jumps, 2, "") then
+            sol.mission_deadline(300 + 120 * jumps)
+            sol.mission_obj_escort(trader, system,
+                                   string.format("Keep hauler #%d alive to %s", trader, stName))
+            sol.mission_lead()
+        end
+        return
+    end
+
+    if kind == "front" then
+        local system, holder, attacker, pressure, jumps, sysName, holderName, attackerName =
+            string.match(candidate,
+                         "^(%d+):(%d+):(%d+):([%d%.]+):(%d+):([^:]+):([^:]+):([^:]+)$")
+        if system == nil then return end
+        system, holder, attacker = tonumber(system), tonumber(holder), tonumber(attacker)
+        pressure, jumps = tonumber(pressure), tonumber(jumps)
+        -- Which side is asking is C++'s call, not this hook's: it is the side
+        -- that is paying, and it has already been validated as a party to the
+        -- fight. All this decides is how it is put.
+        local defending = poster == holder
+        local title = defending
+            and string.format("%s is quietly hiring guns for %s", posterName, sysName)
+            or string.format("%s is quietly hiring guns against %s", posterName, sysName)
+        local text = defending
+            and string.format("Break the %s push on %s", attackerName, sysName)
+            or string.format("Take %s from %s", sysName, holderName)
+        local reward = math.floor((1400 + 500 * jumps) * (1 + pressure) * premium)
+        if sol.mission_begin(title, poster, reward, 8, 2, "") then
+            sol.mission_deadline(1200 + 600 * jumps)
+            sol.mission_obj_hold(system, poster, text)
+            sol.mission_lead()
+        end
+        return
     end
 end

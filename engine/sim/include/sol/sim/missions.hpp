@@ -167,6 +167,15 @@ struct MissionParams
     float shortageThreshold = 0.25f;       // stock/capacity below: shortage
     float bountyIntensityThreshold = 0.4f; // raid intensity above: bounty
     double boardRefreshInterval = 180.0;   // seconds docked between refreshes
+    // How many informal leads a room may hold at once (Phase 35 stage D).
+    //
+    // ⚑⚑ ONE, AND THE NUMBER IS THE WHOLE DIFFERENCE BETWEEN THE TWO
+    // SURFACES. A board is a list you read down; a room is a conversation, and
+    // a conversation that hands you eight jobs is a list with a barstool in
+    // front of it. `maxOffers` is 8 for a board and this is 1 for the same
+    // reason `init.lua` posts at most one war contract and one escort: some
+    // work is one thing happening rather than a menu.
+    std::uint32_t maxLeads = 1;
 };
 
 class MissionSim
@@ -251,6 +260,42 @@ public:
 
     [[nodiscard]] const std::vector<Mission>& offers() const { return m_offers; }
 
+    // --- The room (informal leads, Phase 35 stage D) ---
+    //
+    // ⚑⚑⚑⚑ A SECOND LIST AND NOT A FLAG ON THE FIRST ONE, AND THE SPEC
+    // ASKED FOR EXACTLY THIS IN WORDS - "what it must not do is make the two
+    // surfaces the same list". Reading the code turned that from a design
+    // preference into a correctness requirement: `openBoard` CLEARS the offers,
+    // and `GameContent` re-runs it on `boardRefreshInterval` (180 s) for as long
+    // as the player stands on the dock, while the room composes ONCE when they
+    // walk in and is ruled never to move until they undock. One vector under
+    // two clocks means the bar's row outlives the offer behind it three minutes
+    // into every visit, and no test in this tree would have said so.
+    //
+    // ⚑ The validation is not duplicated: `postLead` and `postOffer` are one
+    // check parameterised on where it is standing, so there is still exactly one
+    // definition of *a rumour is never a lie*.
+    void openRoom(std::uint32_t system, std::uint32_t station);
+
+    [[nodiscard]] std::uint32_t roomSystem() const { return m_roomSystem; }
+
+    [[nodiscard]] std::uint32_t roomStation() const { return m_roomStation; }
+
+    // Validates and stores an informal lead, against the ROOM's binding. Same
+    // rules as `postOffer` otherwise, campaign chains included.
+    bool postLead(const Galaxy& galaxy,
+                  const Economy& economy,
+                  const FactionSim& factions,
+                  Mission mission,
+                  std::string* outError = nullptr);
+
+    [[nodiscard]] const std::vector<Mission>& leads() const { return m_leads; }
+
+    // Takes a lead. Identical to `accept` from the journal's side - what makes
+    // a lead a lead is where it was heard, and once it is in the journal it is
+    // work like any other.
+    bool acceptLead(std::uint32_t leadIndex, float standingWithPoster, std::string* outError = nullptr);
+
     // --- The journal (active missions) ---
     // standingWithPoster enforces the offer's minRep gate.
     bool accept(std::uint32_t offerIndex, float standingWithPoster, std::string* outError = nullptr);
@@ -318,6 +363,19 @@ public:
 
 private:
     [[nodiscard]] bool objectiveInRange(const Galaxy& galaxy, const MissionObjective& objective) const;
+    // Everything `postOffer` checked before Phase 35 stage D, with the place it
+    // is standing passed in rather than read off the board. A lead is held to
+    // the same standard as a contract and that is the point of the phase: the
+    // guarantee already existed and this stage wires a second mouth to it.
+    [[nodiscard]] bool validateOffer(const Galaxy& galaxy,
+                                     const Economy& economy,
+                                     const FactionSim& factions,
+                                     const Mission& mission,
+                                     std::uint32_t fromSystem,
+                                     std::uint32_t fromStation,
+                                     std::string* outError) const;
+    // Moves a validated mission out of `from` and into the journal.
+    bool activate(std::vector<Mission>& from, std::uint32_t index, float standing, std::string* outError);
     // Completes the mission's current objective: queues the event, advances,
     // and returns true when the whole mission just completed (the caller
     // removes m_active[activeIndex]).
@@ -329,10 +387,20 @@ private:
     std::uint32_t m_commodityCount = 0;
     std::uint32_t m_traderCount = 0;
     std::vector<Mission> m_offers;
+    // ⚑⚑ DELIBERATELY NOT SAVED, AND THAT IS WHY THIS PHASE STILL OWES ONLY
+    // ONE `kSaveVersion` BUMP (ruled by the user, 2026-09-01). A lead is one of
+    // the things said in the room, and the room's talk is derived on arrival and
+    // re-derived on load - `GameContent` arms it from the dock BINDING rather
+    // than from the dock event precisely so a loaded save opens on a composed
+    // room. Serialising the lead would give one line of the conversation a
+    // longer life than the conversation. `load` clears it for the same reason.
+    std::vector<Mission> m_leads;
     std::vector<Mission> m_active;
     std::vector<MissionEvent> m_events;
     std::uint32_t m_boardSystem = kNoFaction;
     std::uint32_t m_boardStation = kNoFaction;
+    std::uint32_t m_roomSystem = kNoFaction;
+    std::uint32_t m_roomStation = kNoFaction;
     double m_boardAccumulator = 0.0;
     std::uint32_t m_tracked = 0;
     std::uint32_t m_campaignStage = 0;

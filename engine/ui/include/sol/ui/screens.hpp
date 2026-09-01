@@ -712,6 +712,10 @@ struct StationAction
         HireCrew,
         FireCrew,
         AcceptMission,
+        // Phase 35 stage D: work heard in the room rather than read off the
+        // board. A separate kind and not an `AcceptMission` with a flag,
+        // because it indexes a different list - see `MissionSim::leads()`.
+        AcceptLead,
         AbandonMission,
         TrackMission,
         SellSurveyData, // Phase 8e: the whole ledger, at any station

@@ -169,6 +169,19 @@ public:
 
     [[nodiscard]] bool composingBarTalk() const { return m_barLinesLeft > 0; }
 
+    // True only while the `bar_lead` hook is running, so `sol.mission_lead`
+    // cannot post a lead from `on_tick` (the guard `composingBarTalk` is for
+    // the five line builders).
+    [[nodiscard]] bool composingBarLead() const { return m_composingLead; }
+
+    // Which row of `barTalk()` is the takeable one, or -1 for a quiet night.
+    [[nodiscard]] int barLead() const { return m_barLead; }
+
+    // How much regard the room has to hold before it will point the player at a
+    // war (Phase 35 stage D). One lead taken is one point, so this is "you have
+    // done two jobs on somebody's word here".
+    static constexpr std::int32_t kRegardForFront = 2;
+
 private:
     struct WatchedFile
     {
@@ -205,6 +218,12 @@ private:
     // global entry points, and a hook per character would be a global function
     // per row of a data file that a mod cannot extend without editing C++.
     void runCharacterTalk(const SpaceWorld::CastSeat& seat, std::uint32_t visits, std::int32_t regard);
+    // Whether any of what the room just said is work, and posts it if so
+    // (Phase 35 stage D). Runs between the talk and the house's own lines.
+    void composeBarLead(std::uint32_t system, std::uint32_t station);
+
+    // "no candidate of this kind was picked this visit".
+    static constexpr std::uint32_t kNoPick = 0xffff'ffffu;
 
     static constexpr double kPollIntervalSeconds = 0.5;
 
@@ -246,6 +265,18 @@ private:
     std::string m_barFront;
     std::string m_barHauler;
     std::string m_barCast;
+    // Which candidate each fact was picked from, so the lead can have the
+    // NUMBERS the sentence threw away (Phase 35 stage D). Valid only for the
+    // duration of one `runBarTalk`, which is the whole life of the scratch
+    // vectors they index.
+    std::uint32_t m_barShortagePick = kNoPick;
+    std::uint32_t m_barRaidPick = kNoPick;
+    std::uint32_t m_barFrontPick = kNoPick;
+    std::uint32_t m_barHaulerPick = kNoPick;
+    int m_barLead = -1; // which row of m_barTalk is takeable, or -1
+    bool m_composingLead = false;
+    bool m_hasBarLeadHook = false;
+    bool m_barLeadHookFailed = false;
     int m_barLinesLeft = 0; // > 0 only while bar_talk runs: the "inside the hook" guard
     bool m_hasBarTalkHook = false;
     bool m_barTalkHookFailed = false;

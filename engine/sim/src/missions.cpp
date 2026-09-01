@@ -269,6 +269,13 @@ void MissionSim::openBoard(std::uint32_t system, std::uint32_t station)
     m_boardAccumulator = 0.0;
 }
 
+void MissionSim::openRoom(std::uint32_t system, std::uint32_t station)
+{
+    m_leads.clear();
+    m_roomSystem = system;
+    m_roomStation = station;
+}
+
 float MissionSim::boardRoll()
 {
     return m_rng.nextFloat01();
@@ -307,20 +314,14 @@ bool MissionSim::objectiveInRange(const Galaxy& galaxy, const MissionObjective& 
     return false;
 }
 
-bool MissionSim::postOffer(const Galaxy& galaxy,
-                           const Economy& economy,
-                           const FactionSim& factions,
-                           Mission mission,
-                           std::string* outError)
+bool MissionSim::validateOffer(const Galaxy& galaxy,
+                              const Economy& economy,
+                              const FactionSim& factions,
+                              const Mission& mission,
+                              std::uint32_t fromSystem,
+                              std::uint32_t fromStation,
+                              std::string* outError) const
 {
-    if (m_boardSystem == kNoFaction) {
-        setError(outError, "no board open");
-        return false;
-    }
-    if (m_offers.size() >= m_params.maxOffers) {
-        setError(outError, "board full");
-        return false;
-    }
     if (mission.poster >= m_factionCount) {
         setError(outError, "bad poster faction");
         return false;
@@ -341,7 +342,11 @@ bool MissionSim::postOffer(const Galaxy& galaxy,
     }
     if (mission.campaign()) {
         const auto sameId = [&](const Mission& other) { return other.campaignId == mission.campaignId; };
+        // ⚑ THE LEADS ARE IN THIS CHECK TOO (Phase 35 stage D). A campaign leg
+        // offered on the board and again by somebody in the bar is the same leg
+        // twice, and the player could take both.
         if (std::any_of(m_offers.begin(), m_offers.end(), sameId) ||
+            std::any_of(m_leads.begin(), m_leads.end(), sameId) ||
             std::any_of(m_active.begin(), m_active.end(), sameId)) {
             setError(outError, "campaign mission already offered or active");
             return false;
@@ -356,7 +361,7 @@ bool MissionSim::postOffer(const Galaxy& galaxy,
         const MissionObjective& objective = mission.objectives[0];
         if (objective.kind == ObjectiveKind::Deliver) {
             std::vector<HaulCandidate> candidates;
-            haulCandidates(galaxy, economy, m_boardSystem, m_boardStation, candidates);
+            haulCandidates(galaxy, economy, fromSystem, fromStation, candidates);
             const auto match =
                 std::find_if(candidates.begin(), candidates.end(), [&](const HaulCandidate& c) {
                     return c.system == objective.system && c.station == objective.station &&
@@ -368,7 +373,7 @@ bool MissionSim::postOffer(const Galaxy& galaxy,
             }
         } else if (objective.kind == ObjectiveKind::Kill) {
             std::vector<BountyCandidate> candidates;
-            bountyCandidates(galaxy, factions, m_boardSystem, candidates);
+            bountyCandidates(galaxy, factions, fromSystem, candidates);
             const auto match =
                 std::find_if(candidates.begin(), candidates.end(), [&](const BountyCandidate& c) {
                     return c.system == objective.system && c.clan == objective.faction;
@@ -379,7 +384,7 @@ bool MissionSim::postOffer(const Galaxy& galaxy,
             }
         } else if (objective.kind == ObjectiveKind::Hold) {
             std::vector<ContestCandidate> candidates;
-            contestCandidates(galaxy, factions, m_boardSystem, mission.poster, candidates);
+            contestCandidates(galaxy, factions, fromSystem, mission.poster, candidates);
             const auto match =
                 std::find_if(candidates.begin(), candidates.end(), [&](const ContestCandidate& c) {
                     // The named side must be one of the two actually fighting,
@@ -393,7 +398,7 @@ bool MissionSim::postOffer(const Galaxy& galaxy,
             }
         } else if (objective.kind == ObjectiveKind::Escort) {
             std::vector<EscortCandidate> candidates;
-            escortCandidates(galaxy, economy, factions, m_boardSystem, candidates);
+            escortCandidates(galaxy, economy, factions, fromSystem, candidates);
             const auto match =
                 std::find_if(candidates.begin(), candidates.end(), [&](const EscortCandidate& c) {
                     // Both halves are checked: a board cannot sell a run to
@@ -410,14 +415,72 @@ bool MissionSim::postOffer(const Galaxy& galaxy,
             return false;
         }
     }
+    return true;
+}
+
+bool MissionSim::postOffer(const Galaxy& galaxy,
+                           const Economy& economy,
+                           const FactionSim& factions,
+                           Mission mission,
+                           std::string* outError)
+{
+    if (m_boardSystem == kNoFaction) {
+        setError(outError, "no board open");
+        return false;
+    }
+    if (m_offers.size() >= m_params.maxOffers) {
+        setError(outError, "board full");
+        return false;
+    }
+    if (!validateOffer(galaxy, economy, factions, mission, m_boardSystem, m_boardStation, outError)) {
+        return false;
+    }
     mission.currentObjective = 0;
     m_offers.push_back(std::move(mission));
     return true;
 }
 
-bool MissionSim::accept(std::uint32_t offerIndex, float standingWithPoster, std::string* outError)
+// ⚑⚑⚑⚑ THE WHOLE OF PHASE 35 STAGE D's GUARANTEE IS THAT THIS SHARES A
+// VALIDATOR WITH THE BOARD, AND THE SPEC PRICED IT CORRECTLY: "mostly wiring an
+// existing guarantee to a second mouth". A lead is refused unless the sim would
+// itself have enumerated the work, from where the room is standing - so a
+// barkeep can no more invent a shortage than a board can.
+//
+// ⚑⚑ AND THE ONE THING A ROOM CAN SELL THAT THE BOARD BESIDE IT CANNOT COMES
+// OUT OF THIS FOR FREE, WHICH IS WORTH SAYING BECAUSE IT LOOKS LIKE IT SHOULD
+// NEED AN EXCEPTION. `contestCandidates` gates on the POSTER being a party to
+// the fight, not on the station's owner being one, so a lead that names one of
+// the two combatants as its poster validates cleanly even where the board next
+// door is forbidden to post the same war. Measured on the shipped galaxy: 16
+// rooms of 62 at five sim minutes, 10 at thirty.
+bool MissionSim::postLead(const Galaxy& galaxy,
+                          const Economy& economy,
+                          const FactionSim& factions,
+                          Mission mission,
+                          std::string* outError)
 {
-    if (offerIndex >= m_offers.size()) {
+    if (m_roomSystem == kNoFaction) {
+        setError(outError, "no room open");
+        return false;
+    }
+    if (m_leads.size() >= m_params.maxLeads) {
+        setError(outError, "room full");
+        return false;
+    }
+    if (!validateOffer(galaxy, economy, factions, mission, m_roomSystem, m_roomStation, outError)) {
+        return false;
+    }
+    mission.currentObjective = 0;
+    m_leads.push_back(std::move(mission));
+    return true;
+}
+
+bool MissionSim::activate(std::vector<Mission>& from,
+                          std::uint32_t index,
+                          float standing,
+                          std::string* outError)
+{
+    if (index >= from.size()) {
         setError(outError, "no such offer");
         return false;
     }
@@ -425,14 +488,30 @@ bool MissionSim::accept(std::uint32_t offerIndex, float standingWithPoster, std:
         setError(outError, "journal full");
         return false;
     }
-    if (standingWithPoster < m_offers[offerIndex].minRep) {
+    if (standing < from[index].minRep) {
         setError(outError, "reputation too low");
         return false;
     }
-    m_active.push_back(std::move(m_offers[offerIndex]));
-    m_offers.erase(m_offers.begin() + offerIndex);
+    m_active.push_back(std::move(from[index]));
+    from.erase(from.begin() + index);
     m_events.push_back({.kind = MissionEventKind::Accepted, .mission = m_active.back(), .objective = 0});
     return true;
+}
+
+bool MissionSim::accept(std::uint32_t offerIndex, float standingWithPoster, std::string* outError)
+{
+    return activate(m_offers, offerIndex, standingWithPoster, outError);
+}
+
+// ⚑⚑ ONCE IT IS IN THE JOURNAL A LEAD IS WORK LIKE ANY OTHER, AND NOTHING
+// DOWNSTREAM LEARNS WHERE IT CAME FROM. That is not an omission: a `Mission`
+// that carried its origin would be a `Mission` field, `m_active` is saved, and
+// carrying it would cost the second `kSaveVersion` bump this phase was ruled not
+// to pay. What the room is owed for the introduction is settled in the room, at
+// the moment the lead is taken, where the person is still in front of you.
+bool MissionSim::acceptLead(std::uint32_t leadIndex, float standingWithPoster, std::string* outError)
+{
+    return activate(m_leads, leadIndex, standingWithPoster, outError);
 }
 
 bool MissionSim::abandon(std::uint32_t activeIndex)
@@ -746,6 +825,12 @@ bool MissionSim::load(core::BinaryReader& reader)
     }
     m_rng.setRawState(rngState);
     m_events.clear();
+    // ⚑ The room is derived, not restored (Phase 35 stage D). A save carries no
+    // lead and the dock BINDING recomposes one on the first tick after a load,
+    // which is the same path a docked load already takes for the talk itself.
+    m_leads.clear();
+    m_roomSystem = kNoFaction;
+    m_roomStation = kNoFaction;
     return true;
 }
 

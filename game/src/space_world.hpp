@@ -2021,6 +2021,10 @@ public:
     // Player accept/abandon with the game-side gates (docked; standing with
     // the poster enforces the offer's min_rep tier).
     bool acceptMission(std::uint32_t offerIndex, std::string* outError = nullptr);
+    // Takes work offered in the room rather than posted on the board (Phase 35
+    // stage D), and moves the regard of whoever offered it. Indexes
+    // `MissionSim::leads()`.
+    bool acceptLead(std::uint32_t leadIndex, std::string* outError = nullptr);
     bool abandonMission(std::uint32_t activeIndex);
 
     // True once after each successful dock (and death-respawn re-dock);

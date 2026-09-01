@@ -1938,6 +1938,38 @@ bool SpaceWorld::warpToStationOffset(std::uint32_t station, const core::DVec3& o
     return true;
 }
 
+// ⚑⚑⚑⚑ TAKING A LEAD IS WHERE THE RELATIONSHIP MOVES, AND THE SITE IS THE
+// RULING RATHER THAN A CONVENIENCE (the user, 2026-09-01: the bar and the board
+// are told apart by `regard`). Completing the work would be the obvious place
+// and it is the one place this cannot go: a `MissionEvent` carries a `Mission`
+// snapshot, `m_active` is SAVED, and for the journal to know whose lead it was
+// carrying, `Mission` would need a field - which is the second `kSaveVersion`
+// bump this phase was ruled not to pay, and which stage C's own note in the
+// header predicted. So it is settled in the room, at the moment it is taken,
+// while the person who offered it is still standing in front of you. What the
+// FINISHED work pays is faction standing, which the board already wires.
+//
+// ⚑ One point, and it is spent on the same currency the room reads back: the
+// war lead - the one thing a room can offer that the board beside it cannot -
+// asks for `kRegardForFront`. Two jobs taken with somebody is what makes you a
+// regular there.
+bool SpaceWorld::acceptLead(std::uint32_t leadIndex, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("accept_lead: not docked", outError);
+    }
+    if (leadIndex >= m_missions.leads().size()) {
+        return refuse("accept_lead: no such lead", outError);
+    }
+    const std::uint32_t poster = m_missions.leads()[leadIndex].poster;
+    std::string error;
+    if (!m_missions.acceptLead(leadIndex, m_factionSim.standing(poster), &error)) {
+        return refuse("accept_lead: " + error, outError);
+    }
+    adjustCastRegard(castKeyAt(currentSystemIndex(), dockedStationIndex()), 1);
+    return true;
+}
+
 bool SpaceWorld::acceptMission(std::uint32_t offerIndex, std::string* outError)
 {
     if (!isDocked()) {

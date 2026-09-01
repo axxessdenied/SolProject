@@ -11,6 +11,7 @@
 #include <sol/test/test.hpp>
 
 using sol::sim::BountyCandidate;
+using sol::sim::ContestCandidate;
 using sol::sim::Economy;
 using sol::sim::EconomyArchetype;
 using sol::sim::EconomyCommodity;
@@ -888,4 +889,211 @@ SOL_TEST(mission_save_load_round_trips_exactly)
     mismatched.initialize(world.galaxy, MissionParams{}, 4, 1, 0, 1);
     sol::core::BinaryReader again(std::span<const std::byte>(writer.data()));
     SOL_CHECK(!mismatched.load(again));
+}
+
+// ---------------------------------------------------------------------------
+// Informal leads (engine plan Phase 35 stage D): a bar is a second posting
+// facility, and the whole of what makes that safe is that it shares this
+// file's validator with the board.
+// ---------------------------------------------------------------------------
+
+// ⚑⚑ THE SPEC PRICED THIS STAGE AS "mostly wiring an existing guarantee to a
+// second mouth" AND THAT IS EXACTLY WHAT THIS ASSERTS. Every refusal below is
+// one `postOffer` already made; none of them is re-implemented for leads, and
+// the test is here so that a future split of the two paths fails loudly.
+SOL_TEST(a_lead_is_held_to_the_same_truth_a_board_contract_is)
+{
+    MissionWorld world;
+    world.missions.openRoom(0, 0);
+
+    // The shortage the sim really generated posts.
+    SOL_CHECK(world.missions.postLead(world.galaxy, world.economy, world.factions, haulOffer(400.0f)));
+
+    // ... and one bigger than the gap, or aimed at a system with no shortage,
+    // or naming an innocent faction, does not: a barkeep can no more invent
+    // work than a board can. A fresh world per refusal, because a room holds
+    // one lead and the first success above already filled this one.
+    MissionParams roomy;
+    roomy.maxLeads = 4;
+    MissionWorld other(7, roomy);
+    other.missions.openRoom(0, 0);
+    SOL_CHECK(!other.missions.postLead(other.galaxy, other.economy, other.factions, haulOffer(800.0f)));
+    Mission elsewhere = haulOffer(100.0f);
+    elsewhere.objectives[0].system = 2;
+    SOL_CHECK(!other.missions.postLead(other.galaxy, other.economy, other.factions, elsewhere));
+    Mission wrongClan = bountyOffer(3);
+    wrongClan.objectives[0].faction = 0;
+    SOL_CHECK(!other.missions.postLead(other.galaxy, other.economy, other.factions, wrongClan));
+    SOL_CHECK(other.missions.leads().empty());
+
+    // A room nobody has walked into refuses everything, the way a closed board
+    // does - and this is the check the shipped code leans on hardest, because
+    // it is what stops work heard two systems ago being takeable here.
+    MissionWorld shut;
+    SOL_CHECK(!shut.missions.postLead(shut.galaxy, shut.economy, shut.factions, haulOffer(400.0f)));
+}
+
+// ⚑⚑⚑⚑ THE SPEC's MUST-NOT, ASSERTED AS A PROPERTY OF THE DATA STRUCTURE
+// RATHER THAN OF THE SCREEN: "what it must not do is make the two surfaces the
+// same list". Reading the code turned that from taste into correctness -
+// `GameContent` re-runs `openBoard` every 180 s while the player stands on a
+// dock, and the room composes ONCE when they walk in and is ruled not to move
+// until they undock. Under one vector the bar's row would outlive the offer
+// behind it three minutes into every visit, and nothing would have said so.
+SOL_TEST(the_board_and_the_room_are_two_lists_under_two_clocks)
+{
+    MissionWorld world;
+    world.missions.openBoard(0, 0);
+    world.missions.openRoom(0, 0);
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, haulOffer(400.0f)));
+    SOL_REQUIRE(world.missions.postLead(world.galaxy, world.economy, world.factions, bountyOffer(3)));
+    SOL_CHECK(world.missions.offers().size() == 1);
+    SOL_CHECK(world.missions.leads().size() == 1);
+
+    // The board's own refresh is the clock that would cost a lead its offer
+    // under a shared list. Here it takes the offers and leaves the lead.
+    world.missions.openBoard(0, 0);
+    SOL_CHECK(world.missions.offers().empty());
+    SOL_REQUIRE(world.missions.leads().size() == 1);
+    SOL_CHECK(world.missions.leads()[0].title == "Bounty: S2 Raiders");
+
+    // And walking into another room takes the lead and leaves the board.
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, haulOffer(400.0f)));
+    world.missions.openRoom(1, 0);
+    SOL_CHECK(world.missions.leads().empty());
+    SOL_CHECK(world.missions.offers().size() == 1);
+    SOL_CHECK(world.missions.roomSystem() == 1);
+    SOL_CHECK(world.missions.boardSystem() == 0);
+}
+
+// ⚑ A ROOM HOLDS ONE. A board is a list you read down; a conversation that
+// hands you eight jobs is a list with a barstool in front of it.
+SOL_TEST(a_room_offers_one_piece_of_work_and_a_board_offers_a_list)
+{
+    MissionWorld world;
+    world.missions.openRoom(0, 0);
+    SOL_CHECK(world.missions.postLead(world.galaxy, world.economy, world.factions, haulOffer(400.0f)));
+    SOL_CHECK(!world.missions.postLead(world.galaxy, world.economy, world.factions, bountyOffer(3)));
+    SOL_CHECK(world.missions.leads().size() == 1);
+    SOL_CHECK(world.missions.params().maxLeads < world.missions.params().maxOffers);
+}
+
+// ⚑⚑ TAKING A LEAD IS TAKING A MISSION, and once it is in the journal nothing
+// downstream can tell where it came from - which is deliberate rather than
+// missed: a `Mission` that carried its origin would be a SAVED field, and this
+// phase was ruled to owe only one `kSaveVersion` bump.
+SOL_TEST(a_lead_taken_becomes_a_mission_like_any_other)
+{
+    MissionWorld world;
+    world.missions.openRoom(0, 0);
+    Mission gated = haulOffer(400.0f);
+    gated.minRep = 10.0f;
+    SOL_REQUIRE(world.missions.postLead(world.galaxy, world.economy, world.factions, gated));
+
+    SOL_CHECK(!world.missions.acceptLead(0, 0.0f));  // the same standing gate
+    SOL_CHECK(!world.missions.acceptLead(9, 50.0f)); // and the same range check
+    SOL_REQUIRE(world.missions.acceptLead(0, 50.0f));
+    SOL_CHECK(world.missions.leads().empty());
+    SOL_REQUIRE(world.missions.active().size() == 1);
+    SOL_CHECK(world.missions.active()[0].title == "Relief run");
+
+    // The Accepted event fires exactly as it does off a board, so every
+    // consequence downstream - journal, HUD, mission_event - is reached the
+    // same way.
+    std::vector<MissionEvent> events;
+    world.missions.takeEvents(events);
+    SOL_REQUIRE(events.size() == 1);
+    SOL_CHECK(events[0].kind == MissionEventKind::Accepted);
+
+    // And it completes, which is the phase's exit criterion in miniature: the
+    // dock it was heard at need never have had a board at all.
+    SOL_CHECK(world.missions.recordDelivery(0, 1, 0, 400.0f) == 400.0f);
+    SOL_CHECK(world.missions.active().empty());
+    events.clear();
+    world.missions.takeEvents(events);
+    SOL_REQUIRE(!events.empty());
+    SOL_CHECK(events.back().kind == MissionEventKind::Completed);
+}
+
+// ⚑⚑⚑⚑ THE ONE THING A ROOM CAN SELL THAT THE BOARD BESIDE IT CANNOT, AND IT
+// NEEDED NO EXCEPTION IN THE VALIDATOR - WHICH IS THE FINDING RATHER THAN THE
+// FEATURE. Stage B split `frontCandidates` (every war in reach) from
+// `contestCandidates` (the wars the board's owner is a party to) because the
+// gate is a rule about who will PAY. Both posting paths check a Hold against
+// the GATED list parameterised on the MISSION's poster, so a lead naming one of
+// the two combatants validates cleanly at a station whose own board is
+// forbidden to post that same war. Measured on the shipped galaxy: 16 rooms of
+// 62 at five sim minutes, 10 at thirty.
+SOL_TEST(a_room_can_sell_a_war_the_board_beside_it_is_forbidden_to_post)
+{
+    ContestWorld world; // faction 1 is pressing faction 0 in system 1
+    world.missions.openRoom(0, 0);
+
+    // Start where the two surfaces agree: faction 0 owns this station and IS a
+    // party, so both can sell the same war.
+    SOL_CHECK(world.missions.postOffer(world.galaxy, world.economy, world.factions, holdOffer(1, 0, 0)));
+    SOL_CHECK(world.missions.postLead(world.galaxy, world.economy, world.factions, holdOffer(1, 0, 0)));
+
+    // Now the case that matters. A board owned by faction 2 - a bystander -
+    // enumerates no contest at all, and refuses.
+    std::vector<ContestCandidate> forABystander;
+    world.missions.contestCandidates(world.galaxy, world.factions, 0, 2, forABystander);
+    SOL_CHECK(forABystander.empty());
+    world.missions.openBoard(0, 0);
+    SOL_CHECK(!world.missions.postOffer(world.galaxy, world.economy, world.factions, holdOffer(1, 2, 2)));
+
+    // The war itself is a fact whoever owns the dock, so a room can point at
+    // EITHER of the two sides actually fighting...
+    std::vector<ContestCandidate> everyWar;
+    world.missions.frontCandidates(world.galaxy, world.factions, 0, everyWar);
+    SOL_REQUIRE(everyWar.size() == 1);
+    SOL_CHECK(everyWar[0].owner == 0 && everyWar[0].attacker == 1);
+    MissionParams roomy;
+    roomy.maxLeads = 2;
+    ContestWorld room(7, roomy);
+    room.missions.openRoom(0, 0);
+    SOL_CHECK(room.missions.postLead(room.galaxy, room.economy, room.factions, holdOffer(1, 1, 1)));
+
+    // ... and a bystander still cannot be sold as a side, on either surface.
+    // The guarantee is about WHO IS FIGHTING, not about which mouth is talking,
+    // and this is the half that keeps "a rumour is never a lie" true.
+    SOL_CHECK(!room.missions.postLead(room.galaxy, room.economy, room.factions, holdOffer(1, 2, 2)));
+}
+
+// ⚑⚑ THE LEAD IS DERIVED AND IS NOT IN THE FILE, WHICH IS WHY THIS PHASE STILL
+// OWES ONLY ONE `kSaveVersion` BUMP (ruled by the user, 2026-09-01). A lead is
+// one of the things said in the room; the room's talk is composed on arrival
+// and re-composed on load, and serialising one line of a conversation would
+// give it a longer life than the conversation it belongs to.
+SOL_TEST(a_lead_is_not_in_the_save_and_a_taken_one_is)
+{
+    MissionWorld world;
+    world.missions.openBoard(0, 0);
+    world.missions.openRoom(0, 0);
+    SOL_REQUIRE(world.missions.postOffer(world.galaxy, world.economy, world.factions, haulOffer(400.0f)));
+    SOL_REQUIRE(world.missions.postLead(world.galaxy, world.economy, world.factions, bountyOffer(3)));
+    SOL_REQUIRE(world.missions.acceptLead(0, 0.0f));
+    // A second lead, standing at the moment of the save and NOT taken.
+    SOL_REQUIRE(world.missions.postLead(world.galaxy, world.economy, world.factions, bountyOffer(2)));
+
+    sol::core::BinaryWriter writer;
+    world.missions.save(writer);
+    MissionWorld restored(999);
+    // Leave a lead standing in the restoring world, so this proves `load`
+    // CLEARS one rather than merely failing to fill one - the difference
+    // between a guard and a coincidence.
+    restored.missions.openRoom(0, 0);
+    SOL_REQUIRE(
+        restored.missions.postLead(restored.galaxy, restored.economy, restored.factions, haulOffer(400.0f)));
+    SOL_REQUIRE(restored.missions.leads().size() == 1);
+    sol::core::BinaryReader reader(std::span<const std::byte>(writer.data()));
+    SOL_REQUIRE(restored.missions.load(reader));
+
+    // The board came back; the journal came back with the taken lead in it;
+    // the untaken lead did not come back at all.
+    SOL_CHECK(restored.missions.offers().size() == 1);
+    SOL_REQUIRE(restored.missions.active().size() == 1);
+    SOL_CHECK(restored.missions.active()[0].title == "Bounty: S2 Raiders");
+    SOL_CHECK(restored.missions.leads().empty());
+    SOL_CHECK(restored.missions.roomSystem() == kNoFaction);
 }
