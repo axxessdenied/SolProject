@@ -36,6 +36,11 @@ void FactionSim::initialize(const Galaxy& galaxy, const FactionSimParams& params
         }
     }
     m_standings = params.initialStandings;
+    // Phase 36 stage A: nobody starts wanted. Sized off m_count rather than off
+    // initialStandings so a params list that is short (which `standing` already
+    // tolerates by bounds-checking) cannot leave this vector a different length
+    // from the one every accessor here bounds-checks against.
+    m_bounty.assign(m_count, 0.0f);
     m_raidIntensity.assign(m_systemCount, 0.0f);
     m_lastRaider.assign(m_systemCount, kNoFaction);
 
@@ -321,6 +326,38 @@ void FactionSim::addStanding(std::uint32_t faction, float delta)
     }
 }
 
+float FactionSim::bounty(std::uint32_t faction) const
+{
+    return faction < m_count ? m_bounty[faction] : 0.0f;
+}
+
+bool FactionSim::wanted() const
+{
+    for (const float posted : m_bounty) {
+        if (posted > 0.0f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void FactionSim::addBounty(std::uint32_t faction, float credits)
+{
+    if (faction < m_count) {
+        // Floored at zero and NOT clamped by clampScore: that one is the
+        // -100..100 reputation band, and a bounty is credits. Sharing it would
+        // silently cap every price in the game at a hundred.
+        m_bounty[faction] = std::max(0.0f, m_bounty[faction] + credits);
+    }
+}
+
+void FactionSim::setBounty(std::uint32_t faction, float credits)
+{
+    if (faction < m_count) {
+        m_bounty[faction] = std::max(0.0f, credits);
+    }
+}
+
 void FactionSim::recordShipKill(std::uint32_t victimFaction)
 {
     if (victimFaction >= m_count) {
@@ -559,6 +596,12 @@ void FactionSim::save(core::BinaryWriter& writer) const
     for (const float value : m_standings) {
         writer.write(value);
     }
+    // Phase 36 stage A (save v34): beside the standings, because it answers the
+    // other half of the same question - what a faction thinks of you, and what
+    // it has offered to have done about it.
+    for (const float value : m_bounty) {
+        writer.write(value);
+    }
     for (const float value : m_raidIntensity) {
         writer.write(value);
     }
@@ -603,6 +646,11 @@ bool FactionSim::load(core::BinaryReader& reader)
         }
     }
     for (float& value : m_standings) {
+        if (!reader.read(value)) {
+            return false;
+        }
+    }
+    for (float& value : m_bounty) {
         if (!reader.read(value)) {
             return false;
         }

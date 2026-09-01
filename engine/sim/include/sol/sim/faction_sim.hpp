@@ -198,6 +198,40 @@ public:
     // The player traded credits' worth of goods at a faction's station.
     void recordTrade(std::uint32_t faction, double credits);
 
+    // --- Bounties (Phase 36 stage A, decisions/017) ------------------------
+    //
+    // ⚑⚑⚑ PER FACTION, NEVER GLOBAL, AND `017` REJECTED THE ALTERNATIVE BY
+    // NAME: "a global wanted level (one number, all factions) ... incompatible
+    // with the reputation web already built: bounties are per faction because
+    // standing is per faction, and one number would flatten the system's best
+    // feature." So this is a vector exactly parallel to `m_standings`, written
+    // and read the same way, saved beside it.
+    //
+    // ⚑⚑ A BOUNTY IS NOT NEGATIVE STANDING AND THE TWO MUST NOT BE FOLDED.
+    // Standing is what a faction THINKS of you and it moves both ways on its
+    // own; a bounty is a PRICE somebody has posted, it only goes up until it is
+    // settled, and it is the thing another pilot can collect. Phase 34's
+    // `BountyCandidate` is a different noun again - a warm raid paired with the
+    // clan that made it, raw material for a contract - and nothing here is
+    // related to it beyond the word.
+    //
+    // ⚑ Credits, so it can be printed, paid and compared against a fine
+    // without a second unit. Zero means "not wanted", which is the state every
+    // faction starts in and the only one this stage can produce: stage D is the
+    // first writer that is not a dev lever.
+    [[nodiscard]] float bounty(std::uint32_t faction) const;
+
+    // True when any faction has posted a price at all - the cheap question the
+    // HUD and the bar both want, without walking the vector at every call site.
+    [[nodiscard]] bool wanted() const;
+
+    // Adds to the posted price (negative settles it); clamped at zero, because
+    // paying off more than you owe does not leave a faction owing you.
+    void addBounty(std::uint32_t faction, float credits);
+
+    // Dev/test override, the mirror of setStanding.
+    void setBounty(std::uint32_t faction, float credits);
+
     [[nodiscard]] float raidIntensity(std::uint32_t system) const;
     [[nodiscard]] std::uint32_t lastRaider(std::uint32_t system) const;
 
@@ -277,6 +311,8 @@ private:
     std::vector<float> m_relations;          // count^2, kept symmetric
     std::vector<std::uint8_t> m_atWar;       // count^2, hysteresis state
     std::vector<float> m_standings;          // player, per faction
+    // Phase 36 stage A: parallel to m_standings, in credits, 0 = not wanted.
+    std::vector<float> m_bounty;
     std::vector<float> m_raidIntensity;      // per system, decaying
     std::vector<std::uint32_t> m_lastRaider; // per system, kNoFaction = none
     // Territory (Phase 8u). m_foundingClaim mirrors the generated plan and

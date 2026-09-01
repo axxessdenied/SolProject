@@ -938,6 +938,14 @@ int main(int argc, char** argv)
             (void)world.hailTarget(); // says why on the comms panel when it can't
         }
 
+        // The transponder (Phase 36 stage A). No guard and no refusal: unlike
+        // every other verb around it this one cannot fail, because it is a
+        // switch on your own hull rather than a request made of the world.
+        // setTransponder says what happened on the comms panel either way.
+        if (gameplayPressed(game::Action::ToggleTransponder)) {
+            (void)world.toggleTransponder();
+        }
+
         // Scan pulse: reveals contacts within the fitted scanner's range.
         if (gameplayPressed(game::Action::ScanPulse)) {
             if (world.pulseScan() < 0) {
@@ -1357,6 +1365,7 @@ int main(int argc, char** argv)
         hud.assist = world.shipInput().assist;
         hud.boost = world.shipInput().boost;
         hud.cruise = world.shipInput().cruise;
+        hud.runningDark = world.runningDark();
         hud.commandLabel = game::commandModeChip(world.commandMode());
         switch (cameraMode) {
         case game::CameraMode::Cockpit:

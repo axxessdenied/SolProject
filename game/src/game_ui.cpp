@@ -403,6 +403,11 @@ void drawFlightPanel(DrawList& list,
         {hud.assist ? "ASSIST" : "MANUAL", hud.assist ? kFriendly : kWarning, true},
         {"BOOST", kWarning, hud.boost},
         {"CRUISE", kAccent, hud.cruise},
+        // Phase 36 stage A. kWarning rather than kAccent: running dark is a
+        // state with a cost attached, and it reads beside BOOST rather than
+        // beside CRUISE for that reason. Conditional, so it is furniture-free
+        // in the 99% of play where the transponder is simply on.
+        {"DARK", kWarning, hud.runningDark},
         // Names the mode rather than lighting a lamp: with seven of them, "AUTO"
         // would be true of six things the ship does very differently.
         {hud.commandLabel, rgba(0xCC99FFFFu), hud.commandLabel[0] != '\0'},

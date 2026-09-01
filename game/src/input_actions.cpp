@@ -77,6 +77,17 @@ const ActionInfo kActions[] = {
      "cycle_fire_group",
      "Cycle Fire Group",
      InputChord::ofKey(Key::P)},
+    // Phase 36 stage A. Num5 because the entry above says P was "the last
+    // unbound letter in the shipped layout" and that was two phases ago - the
+    // number row is the pips, and this is the fifth thing on the same console.
+    // ⚑ Ships BOUND rather than available, unlike four of Phase 28's seven
+    // commands: a player who cannot find this key cannot discover half the
+    // phase, and an unbound default makes the exit criterion unflyable as shipped.
+    {Action::ToggleTransponder,
+     ActionGroup::Systems,
+     "toggle_transponder",
+     "Transponder",
+     InputChord::ofKey(Key::Num5)},
 
     {Action::CycleNavTarget,
      ActionGroup::Targeting,

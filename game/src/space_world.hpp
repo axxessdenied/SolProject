@@ -1390,6 +1390,61 @@ public:
     // Drops any clearance, saying why on the comms line when `reason` is set.
     void clearClearance(const char* reason);
 
+    // --- The transponder (Phase 36 stage A, decisions/017) -----------------
+    //
+    // What your ship tells everybody about itself, and the only piece of legal
+    // state that is a SWITCH rather than a consequence. On is the default and
+    // the honest state; off is "running dark".
+    //
+    // ⚑⚑⚑⚑ DARK COSTS YOU CLEARANCE, AND THAT IS THE PHASE'S FIRST RULING
+    // (the user, 2026-09-01). A station will not clear a ship that will not
+    // identify itself. It is enforced through the `dock_request` hook rather
+    // than hardcoded here - the hook is handed `dark` and decides, exactly as
+    // it already decides on `hostile` - so a mod can author a station that does
+    // not care, and the scriptless default refuses on the same terms.
+    //
+    // ⚑⚑ WHY THE SWITCH NEEDS A PRICE AT ALL: without one, dark is strictly
+    // dominant. A player flips it once on session one and never touches it
+    // again, the mechanic has no idle state, and stage B would be tuning a
+    // condition nobody ever leaves. Clearance is the cheapest real price in the
+    // tree because `DockClearance` is ALREADY a timed, revocable grant - which
+    // is also why going dark while holding one drops it, the first time that
+    // revocability has ever been used for anything but a timeout.
+    [[nodiscard]] bool transponderOn() const { return m_transponderOn; }
+
+    // True when the ship is running dark. Spelled both ways on purpose: every
+    // caller reads better one way or the other, and a `!` in a UI condition is
+    // how a lamp ends up lit backwards.
+    [[nodiscard]] bool runningDark() const { return !m_transponderOn; }
+
+    // Sets it, and says so on the comms channel. Returns true when the state
+    // actually changed, so a caller can tell a toggle from a no-op.
+    //
+    // ⚑ Switching OFF drops any docking clearance in hand: the grant was made
+    // to somebody who was identifying themselves, and they have stopped.
+    bool setTransponder(bool on);
+
+    bool toggleTransponder() { return setTransponder(!m_transponderOn); }
+
+    // ⚑⚑⚑ WHAT YOU BROADCAST, AND IT IS DERIVED RATHER THAN STORED. A
+    // registration is a fact about the hull and the save it lives in, not a
+    // thing the player edits, so storing it would be a save field with one
+    // writer and no author. Composed from the active ship's radio name and a
+    // registration drawn from the universe seed, which makes it stable for a
+    // playthrough, different between playthroughs, and free on disk.
+    //
+    // ⚑ Stage E's spoofer is what makes this a stored override rather than a
+    // pure function, and that is stage E's save bump to owe - not this one's.
+    [[nodiscard]] std::string broadcastIdentity() const;
+
+    // What a listener hears: the identity, or the empty string when dark.
+    // The one place the switch and the identity are combined, so no caller has
+    // to remember to check both.
+    [[nodiscard]] std::string broadcastHeard() const
+    {
+        return m_transponderOn ? broadcastIdentity() : std::string();
+    }
+
     // --- Comms (Phase 8r) ---
     // A short transient log of what has been said to the player. Built for
     // docking clearance, but deliberately not named after it: the pilot-info
@@ -3449,6 +3504,10 @@ private:
     // says it once per approach rather than sixty times a second.
     double m_berthRefusalTimer = 0.0;
     std::vector<CommsMessage> m_comms;
+
+    // Phase 36 stage A. Saved (v34): it is a decision the player made and a
+    // reload that quietly re-lit it would be the game undoing a choice.
+    bool m_transponderOn = true;
 
     // Pilot comms (Phase 8s). What a pilot has already said, so a second hail
     // repeats them instead of re-rolling. Keyed by the whole Entity — index AND

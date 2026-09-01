@@ -40,6 +40,12 @@ enum class Action : std::uint32_t
     // setting on the ship's own console - the same kind of thing as the four
     // pip rows above it - and not a way of choosing what to shoot at.
     CycleFireGroup,
+    // Phase 36 stage A. In Systems for the same reason CycleFireGroup is: it is
+    // a setting on the ship's own console, not a way of choosing what to shoot
+    // at or where to fly. Num5 because it sits beside the four pip keys, which
+    // is where a hand already goes to change what the ship is doing about
+    // itself - and because every letter A-Z was already bound.
+    ToggleTransponder,
 
     // Targeting & navigation.
     //

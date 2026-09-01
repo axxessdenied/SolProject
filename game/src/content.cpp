@@ -1596,6 +1596,60 @@ double setStanding(GameContent& content, double factionIndex, double value)
     return world.factionSim().standing(static_cast<std::uint32_t>(faction));
 }
 
+// --- The transponder and bounties (Phase 36 stage A) ---
+
+// Reads the switch. A verb rather than a field on some table because the answer
+// changes mid-frame and a snapshot would be stale the moment a patrol asked.
+bool transponderOn(GameContent& content)
+{
+    return content.world().transponderOn();
+}
+
+// Throws the switch from a script or the dev console. Goes through
+// setTransponder rather than at the member, so a script flipping it speaks on
+// the comms channel and drops a clearance exactly as the player's key does -
+// a lever that skipped those would make the console lie about the game.
+bool setTransponder(GameContent& content, bool on)
+{
+    return content.world().setTransponder(on);
+}
+
+// What the ship is broadcasting, or "" when it is broadcasting nothing. One
+// verb rather than two, because "am I dark" and "what do they hear" are the
+// same question asked by the two different callers this phase will grow.
+const char* broadcastHeard(GameContent& content)
+{
+    static std::string heard;
+    heard = content.world().broadcastHeard();
+    return heard.c_str();
+}
+
+// The posted price per faction, 1-based like every other faction verb here.
+double bountyOf(GameContent& content, double factionIndex)
+{
+    SpaceWorld& world = content.world();
+    const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
+    if (faction >= world.factions().size()) {
+        SOL_LOG_WARN("bounty: faction %d out of range", static_cast<int>(factionIndex));
+        return 0.0;
+    }
+    return static_cast<double>(world.factionSim().bounty(static_cast<std::uint32_t>(faction)));
+}
+
+// Dev lever, the mirror of set_rep. Stage D is the first writer that is not
+// this, which is why it exists now: a field with no writer cannot be tested.
+double setBounty(GameContent& content, double factionIndex, double credits)
+{
+    SpaceWorld& world = content.world();
+    const std::size_t faction = static_cast<std::size_t>(factionIndex) - 1;
+    if (faction >= world.factions().size()) {
+        SOL_LOG_WARN("set_bounty: faction %d out of range", static_cast<int>(factionIndex));
+        return 0.0;
+    }
+    world.factionSim().setBounty(static_cast<std::uint32_t>(faction), static_cast<float>(credits));
+    return static_cast<double>(world.factionSim().bounty(static_cast<std::uint32_t>(faction)));
+}
+
 // --- Exploration & scanning (Phase 8e) ---
 
 [[nodiscard]] const char* regionWord(sol::sim::Region region)
@@ -3825,6 +3879,12 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listRelations>("sol", "relations", this);
     m_vm.registerFunction<&listRaids>("sol", "raids", this);
     m_vm.registerFunction<&setStanding>("sol", "set_rep", this);
+    // Phase 36 stage A.
+    m_vm.registerFunction<&transponderOn>("sol", "transponder", this);
+    m_vm.registerFunction<&setTransponder>("sol", "set_transponder", this);
+    m_vm.registerFunction<&broadcastHeard>("sol", "broadcast", this);
+    m_vm.registerFunction<&bountyOf>("sol", "bounty", this);
+    m_vm.registerFunction<&setBounty>("sol", "set_bounty", this);
     m_vm.registerFunction<&factionCandidates>("sol", "faction_candidates", this);
     m_vm.registerFunction<&factionRaid>("sol", "faction_raid", this);
     m_vm.registerFunction<&listTerritory>("sol", "territory", this);
@@ -4479,7 +4539,13 @@ void GameContent::tick(double dt)
                                  standing,
                                  static_cast<double>(sol::sim::kBerthCount),
                                  hostile,
-                                 dockRoll)) {
+                                 dockRoll,
+                                 // Phase 36 stage A: whether the ship asking is
+                                 // running dark. APPENDED, because Lua ignores
+                                 // arguments a function does not declare - so an
+                                 // existing mod's six-parameter dock_request
+                                 // keeps working and simply never refuses on it.
+                                 m_world->runningDark())) {
                 SOL_LOG_ERROR("dock_request disabled until scripts reload: %s", error.c_str());
                 m_dockRequestHookFailed = true;
             }
@@ -4489,7 +4555,22 @@ void GameContent::tick(double dt)
             // The scriptless default, so the feature works with no scripts at
             // all. The refusal is the one Phase 8b already wrote — it just
             // reaches the player now instead of the log nobody reads.
-            if (hostile) {
+            //
+            // ⚑⚑ THE DARK REFUSAL IS IN BOTH PLACES ON PURPOSE (Phase 36 stage
+            // A, and the user's ruling). The hook owns the policy so a mod can
+            // author a station that does not care; the default owns the same
+            // rule so the game still enforces it with no scripts loaded at all.
+            // A price that only exists inside `init.lua` is a price that
+            // vanishes the moment somebody's script errors, and this one is the
+            // entire idle cost of running dark.
+            //
+            // ⚑ Ordered ABOVE `hostile` because it is the more specific answer:
+            // a hostile station has a reason to turn you away that has nothing
+            // to do with the transponder, and telling a dark pilot they are
+            // unwelcome teaches them nothing about the switch they just threw.
+            if (m_world->runningDark()) {
+                m_world->denyDocking(dockStation, "Unidentified contact. Squawk or stay out.");
+            } else if (hostile) {
                 m_world->denyDocking(dockStation,
                                      std::string("Clearance denied. ") + ownerName + " wants you gone.");
             } else {

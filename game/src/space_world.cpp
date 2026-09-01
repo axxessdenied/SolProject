@@ -175,7 +175,7 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // has to keep an informal lead distinguishable from a board contract; a
 // relationship is what does that, and it cannot gate anything until it has been
 // accumulating. The alternative was bumping this number twice for one feature.
-constexpr std::uint32_t kSaveVersion = 33;
+constexpr std::uint32_t kSaveVersion = 34;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -1005,6 +1005,10 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     // fresh - `composeStations` rebuilt it above - but this half is the run's,
     // not the galaxy's, and nothing else clears it.
     m_castMemory.clear();
+    // A new pilot is broadcasting. Same reason as the line above: the switch is
+    // the RUN's state, not the galaxy's, and a new game inheriting the last
+    // one's would open with a ship no station will clear and no way to know why.
+    m_transponderOn = true;
     resetFleetToStarter();
     initializeFactions(); // before loadSystem: ambient wings need the table
     initializeSurvey();   // before loadSystem: arrival writes the first entry
@@ -5644,6 +5648,58 @@ void SpaceWorld::clearClearance(const char* reason)
     rebuildDynamicTargets();
 }
 
+// --- The transponder (Phase 36 stage A, decisions/017) ---------------------
+
+bool SpaceWorld::setTransponder(bool on)
+{
+    if (m_transponderOn == on) {
+        return false;
+    }
+    m_transponderOn = on;
+    if (on) {
+        say(kFleetcom, "Transponder active. Broadcasting " + broadcastIdentity() + ".");
+        return true;
+    }
+    say(kFleetcom, "Transponder off. You are running dark.");
+    // ⚑⚑ THE GRANT WAS MADE TO SOMEBODY WHO WAS IDENTIFYING THEMSELVES, AND
+    // THEY HAVE STOPPED. Phase 8r built the clearance as a timed, REVOCABLE
+    // grant and nothing until now has ever revoked one for a reason other than
+    // running out of seconds; this is the first. Doing it here rather than in
+    // the approach check is stage 35-D's lesson applied ahead of the bug:
+    // state is dropped where the thing that invalidates it HAPPENS, not where
+    // somebody later notices.
+    clearClearance("Transponder lost. Clearance rescinded.");
+    return true;
+}
+
+std::string SpaceWorld::broadcastIdentity() const
+{
+    // The hull half. Falls back to a generic rather than an empty string: an
+    // identity that is blank is indistinguishable from running dark, and those
+    // are the two states this whole phase exists to tell apart.
+    std::string hull = "Ship";
+    if (m_activeShip < m_fleet.size() && m_defs != nullptr) {
+        if (const assets::ShipDef* def = m_defs->findShip(m_fleet[m_activeShip].defId.c_str())) {
+            hull = radioName(def->name);
+        }
+    }
+    // The registration half. Drawn from the universe seed alone, so it is the
+    // same for the whole playthrough, different in the next one, and costs
+    // nothing on disk. Two letters and three digits is a plate, not a hash:
+    // it has to be readable aloud in a comms line.
+    core::Rng rng(m_universeSeed, 0x7261'6e64'6f6d'0036ull);
+    const std::uint32_t a = rng.nextU32();
+    const std::uint32_t b = rng.nextU32();
+    char plate[8] = {};
+    plate[0] = static_cast<char>('A' + (a % 26u));
+    plate[1] = static_cast<char>('A' + ((a / 26u) % 26u));
+    plate[2] = '-';
+    plate[3] = static_cast<char>('0' + (b % 10u));
+    plate[4] = static_cast<char>('0' + ((b / 10u) % 10u));
+    plate[5] = static_cast<char>('0' + ((b / 100u) % 10u));
+    return hull + " " + plate;
+}
+
 bool SpaceWorld::requestDocking()
 {
     if (isDocked()) {
@@ -9908,6 +9964,9 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
             SOL_LOG_WARN("ship destroyed - HARDCORE: run over; save will be deleted");
             m_hardcoreDeathPending = true;
             m_playerCredits = 1'000.0;
+            // A hardcore death is a new run, so it gets a new run's switch -
+            // the same reset the new-game path does, for the same reason.
+            m_transponderOn = true;
             resetFleetToStarter();
             m_lastDockSystem = kNoIndex;
             m_lastDockStation = kNoIndex;
@@ -10459,6 +10518,11 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         writer.write(memory.visits);
         writer.write(memory.regard);
     }
+    // The transponder (v34, Phase 36 stage A): a switch the player threw, so a
+    // reload that quietly re-lit it would be the game undoing a decision. One
+    // byte, unconditional - a bool written only when false is a save format you
+    // have to read twice to know how long it is (v21's own rule, one phase on).
+    writer.write(static_cast<std::uint8_t>(m_transponderOn ? 1 : 0));
     makeSnapshotSchema().save(m_registry, writer);
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
 }
@@ -10639,6 +10703,15 @@ bool SpaceWorld::loadFrom(const char* path)
         m_castMemory.push_back(memory);
     }
 
+    // The transponder (v34). Read into a local and applied at the bottom with
+    // the other player fields, not assigned here: every `return false` between
+    // this point and there would otherwise leave the live world half-loaded
+    // with a switch from a save that was rejected.
+    std::uint8_t transponderOn = 1;
+    if (!reader.read(transponderOn)) {
+        return false;
+    }
+
     ecs::Registry fresh;
     if (!makeSnapshotSchema().load(fresh, reader)) {
         return false;
@@ -10655,6 +10728,10 @@ bool SpaceWorld::loadFrom(const char* path)
     m_thrusters.clear();
     m_playerCredits = credits;
     m_playerCargo = std::move(cargo);
+    // ⚑ Straight to the member rather than through setTransponder: that one
+    // speaks on the comms channel and revokes a clearance, and a LOAD is not a
+    // player throwing a switch. Restoring state must never look like an event.
+    m_transponderOn = transponderOn != 0;
     m_hardcore = hardcore != 0;
     m_worldSeconds = worldSeconds; // intel ages continue where they left off
     m_hardcoreDeathPending = false;

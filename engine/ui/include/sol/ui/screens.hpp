@@ -119,6 +119,10 @@ struct FlightHud
     bool assist = true;
     bool boost = false;
     bool cruise = false;
+    // Phase 36 stage A. The negative is the state worth drawing: a transponder
+    // is on for the whole of ordinary play, so a lamp that is lit 99% of the
+    // time is furniture. This lights only when the ship is running dark.
+    bool runningDark = false;
     // What the ship has been told to do for itself, or "" when it is being
     // flown by hand (Phase 28). Was `bool autopilot`, and the widening is the
     // same one the game layer made: with seven modes instead of one, a lit

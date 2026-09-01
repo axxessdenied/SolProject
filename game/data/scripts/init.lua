@@ -445,7 +445,18 @@ end
 -- one of sol.grant_docking(berth, message) or sol.deny_docking(message); say
 -- nothing and C++ falls back to its own rule, which grants unless you are
 -- hostile. The roll is the only entropy, so this stays a pure function.
-function dock_request(station, owner, standing, berths, hostile, roll)
+--
+-- ⚑ `dark` (Phase 36 stage A) is whether the ship asking has its transponder
+-- off. A station will not clear a contact that will not identify itself, and
+-- that is the phase's first ruling rather than a flavour choice: without a
+-- price paid BEFORE you are ever caught, running dark is strictly dominant and
+-- nobody ever switches it back on. C++ enforces the same rule when no script
+-- answers, so deleting this branch makes stations chattier, not laxer.
+function dock_request(station, owner, standing, berths, hostile, roll, dark)
+    if dark then
+        sol.deny_docking("Unidentified contact. Squawk or stay out.")
+        return
+    end
     -- Keep every line short: the comms panel's sender column already says who
     -- is talking, and a line that repeats the station's name is the line that
     -- runs off the end of the panel.
