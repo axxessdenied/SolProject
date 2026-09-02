@@ -462,3 +462,137 @@ requires = "sol.hull_section"
   id = "core_sensor"
   kind = "subsystem"
   size = "medium"
+
+# ---------------------------------------------------------------------------
+# ⚑⚑⚑⚑ THE FIRST COVERT HULL, AND THE FIRST SHIPPED HULL TO SPEND
+# `signature` (Phase 37 stage D). Both keys have been authorable and unread
+# since Phase 32: `HullRole` was deliberately left vocabulary (ruling 11), and
+# `ShipDef::signature`'s own comment says "no shipped hull uses that,
+# deliberately... the key is what makes the eventual family a data pass". This
+# is that data pass. Three phases inherited the vocabulary; this one spends it.
+#
+# ⚑⚑⚑ IT REUSES `model = "ship"` LIKE EVERY OTHER HULL IN THIS FILE, WHICH
+# IS THE HONEST CHOICE AND THE SPEC SAID SO IN ADVANCE: "a covert hull that
+# reuses an existing mesh is honest; a covert hull that blocks the phase on
+# Blender is not." One station mesh and three ship meshes are the standing
+# evidence that art is the slow half of this project.
+#
+# ⚑⚑⚑⚑ WHAT IT COSTS, BECAUSE A QUIET HULL THAT GAVE UP NOTHING WOULD BE
+# STRICTLY BETTER THAN THE SHUTTLE AND THE PHASE WOULD HAVE SHIPPED A FREE
+# UPGRADE. Against the Interceptor it costs 10000 more and is slower, thinner in
+# the shield and softer in the hull; against the Freighter it carries a fifth of
+# the cargo. What it buys is `signature = 0.55` BEFORE any fitting - a patrol
+# takes an interest at roughly half the rate and reads the hold at half the
+# speed against a 60 s grant that does not move. Fitted with the Null Signature
+# Suite it reaches the 0.35 floor `SpaceWorld::kMinSignature` clamps at, which is
+# the quietest a ship in this game can be.
+#
+# ⚑⚑ 40 UNITS OF HOLD IS THE WHOLE DESIGN IN ONE NUMBER. A smuggler's run is
+# not a freighter's: it is a small load of something worth 180-230 cr a unit,
+# and 40 units of Combat Stims is about 7300 cr of cargo - a real run for a hull
+# that costs 34000. A hold big enough to be worth inspecting and small enough
+# that the cargo is the point.
+#
+# ⚑ SOLD ONLY BY THE BLACK MARKET, and that gate is the same `factions`
+# allowlist Phase 37 stage C put on the Null Signature Suite - not a second
+# mechanism. It is on the fence's OWN counter rather than in a Shipyard tab,
+# because exactly ONE of the eight fence docks in the shipped galaxy rolled a
+# shipyard module and a hull sold at one dock of 125 is a hull nobody finds.
+[[ship]]
+id = "sol.ghostline"
+name = "Ghostline"
+class = "light"
+role = "covert"
+model = "ship"
+scale = 0.9
+forward_accel = 85.0
+reverse_accel = 50.0
+lateral_accel = 45.0
+vertical_accel = 45.0
+max_speed = 300.0
+max_turn_rate = [2.0, 1.6, 3.0]
+angular_accel = [9.0, 6.5, 12.0]
+boost_accel_scale = 3.2
+boost_speed_scale = 1.9
+cruise_speed_scale = 25000.0
+cruise_accel_scale = 12000.0
+shield_strength = 60.0
+shield_regen = 9.0
+shield_regen_delay = 4.0
+armor = 20.0
+hull = 70.0
+weapon_capacitor = 80.0
+weapon_recharge = 14.0
+# ⚑⚑ A LONGER PULSE THAN ANYTHING ELSE THAT FLIES, and it is the covert
+# family's own logic restated at hull scale: `NoticeParams::range` is 80 km
+# against a pulse measured in hundreds of thousands, so seeing a picket before
+# it sees you is what a quiet hull is FOR. The Threat Scanner multiplies this;
+# the hull is why it is worth multiplying.
+scan_range = 3.2e8
+scan_speed = 1.1
+cargo = 40.0
+price = 34000.0
+mass = 7000.0
+power_output = 7.0
+crew_berths = 1
+# ⚑⚑⚑⚑ THE KEY THIS PHASE EXISTS TO SPEND. 1.0 is "ordinary" - a ratio
+# against the hull nobody has tuned - so 0.55 is a hull that is HALF as
+# interesting to a patrol before a single credit is spent on kit.
+signature = 0.55
+# The Ninth Shift and nobody else. No `min_rep`: a fence that would not sell
+# you the hull could not sell you the run either, and the standing tier in this
+# phase is on the Null Signature Suite where Phase 37 stage E can open it.
+factions = ["sol.ninth_shift"]
+
+  # The same nose gun every hull in this file carries, and it is the ONLY gun:
+  # a covert hull that could also win a fight would not have to be quiet.
+  [[ship.mount]]
+  id = "gun_nose"
+  kind = "fixed"
+  size = "small"
+  at = [0.0, -0.1, -6.6]
+  fit = "sol.pulse_cannon"
+
+  [[ship.mount]]
+  id = "drive_port"
+  kind = "engine"
+  size = "small"
+  at = [-1.5, 0.15, 5.0]
+  aim = [0.0, 0.0, 1.0]
+
+  [[ship.mount]]
+  id = "drive_starboard"
+  kind = "engine"
+  size = "small"
+  at = [1.5, 0.15, 5.0]
+  aim = [0.0, 0.0, 1.0]
+
+  [[ship.mount]]
+  id = "shield_core"
+  kind = "shield"
+  size = "small"
+
+  # ⚑⚑⚑ TWO SUBSYSTEM MOUNTS, WHICH IS ONE MORE THAN ANY OTHER HULL HAS AND
+  # IS THE WHOLE REASON TO FLY THIS RATHER THAN A FITTED SHUTTLE. Phase 36 stage
+  # E gave the shuttle ONE `covert_bay` and made the choice a real one by making
+  # it exclusive - a dampener OR a threat scanner, never both. This hull is where
+  # the covert family stops being a trade-off and becomes a loadout, and that is
+  # what 34000 cr and a 40-unit hold are being paid for.
+  [[ship.mount]]
+  id = "covert_bay"
+  kind = "subsystem"
+  size = "small"
+
+  [[ship.mount]]
+  id = "covert_bay_aft"
+  kind = "subsystem"
+  size = "small"
+
+  # One utility mount, so a pod or a survey dish is still a choice rather than
+  # an assumption. Dorsal, forward of the fin - the Interceptor's rule.
+  [[ship.mount]]
+  id = "rack_spine"
+  kind = "utility"
+  size = "small"
+  at = [0.0, 1.62, 0.4]
+  aim = [0.0, 1.0, 0.0]

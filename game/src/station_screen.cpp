@@ -1219,9 +1219,10 @@ void buildBlackMarketTab(UiContext& ui, StationPanel& panel, StationScreenState&
     for (const TradeRow& row : panel.trade.rows) {
         goods += row.backRoom ? 1u : 0u;
     }
-    const float contentHeight = (kSectionHeight + theme.spacing) * 2.0f +
+    const float contentHeight = (kSectionHeight + theme.spacing) * 3.0f +
                                 listHeight(ui, std::max<std::size_t>(goods, 1)) +
-                                listHeight(ui, std::max<std::size_t>(panel.blackMarketCatalog.size(), 1));
+                                listHeight(ui, std::max<std::size_t>(panel.blackMarketCatalog.size(), 1)) +
+                                listHeight(ui, std::max<std::size_t>(panel.blackMarketShips.size(), 1));
     const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::BlackMarket]);
     Column column(list, 0.0f, theme.spacing);
 
@@ -1294,6 +1295,49 @@ void buildBlackMarketTab(UiContext& ui, StationPanel& panel, StationScreenState&
     }
     if (panel.blackMarketCatalog.empty()) {
         clipped(ui, column.row(kRowHeight), "No kit on offer here.", theme.textDim, theme.bodyStyle);
+    }
+    ui.popId();
+
+    // ⚑⚑⚑ HULLS WITH NO HISTORY (Phase 37 stage D). A `sol.mod_ghost_dock`
+    // strips a hull into parts with no history - that is the module's authored
+    // description and its whole economic function - so a hull sold over the same
+    // counter is the trade running the other way. `owned` rather than a Fit
+    // target, because a ship is not fitted to anything: buying one parks it here
+    // until the player switches to it, which is what the Shipyard tab says too.
+    sectionHeader(ui, column.row(kSectionHeight), "Hulls");
+    ui.pushId("blackmarketships");
+    for (int i = 0; i < static_cast<int>(panel.blackMarketShips.size()); ++i) {
+        const OutfitRow& item = panel.blackMarketShips[static_cast<std::size_t>(i)];
+        const Rect row = column.row(kRowHeight);
+        rowBackground(ui, row, i);
+        Row cursor(row, theme.spacing);
+        ui.pushId(i);
+        const bool locked = item.lockedReason[0] != '\0';
+        const Rect action = cursor.cellFromRight(locked ? kButtonWidth * 3.2f : kButtonWidth);
+        const Rect ownedCell = cursor.cellFromRight(kNumberWidth * 0.8f);
+        const Rect priceCell = cursor.cellFromRight(kNumberWidth);
+        const Rect detailCell = cursor.cellFromRight(cursor.remaining().width() * 0.5f);
+        clipped(ui, cursor.remaining(), item.name, theme.textPrimary, theme.strongStyle);
+        clipped(ui, detailCell, item.detail, theme.textDim, theme.smallStyle);
+        char buffer[64] = {};
+        std::snprintf(buffer, sizeof(buffer), "%.0f cr", static_cast<double>(item.price));
+        clipped(ui, priceCell, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
+        std::snprintf(buffer, sizeof(buffer), "owned %d", item.fitted);
+        clipped(ui,
+                ownedCell,
+                buffer,
+                item.fitted > 0 ? theme.accent : theme.textDim,
+                theme.smallStyle,
+                TextAlign::Right);
+        if (locked) {
+            clipped(ui, action, item.lockedReason, theme.accent, theme.smallStyle, TextAlign::Right);
+        } else if (ui.button(inset(action, 2.0f), "Buy")) {
+            panel.action = {.kind = StationAction::Kind::BuyShip, .id = item.id};
+        }
+        ui.popId();
+    }
+    if (panel.blackMarketShips.empty()) {
+        clipped(ui, column.row(kRowHeight), "No hulls in the bay.", theme.textDim, theme.bodyStyle);
     }
     ui.popId();
     ui.endScroll();

@@ -92,7 +92,7 @@ SOL_TEST(mountRowsBelongToTheHullAboveThemAndStopAtTheNextOne)
     SOL_CHECK(forge::mountRowsOf(doc, shuttle).size() == 5);
     SOL_CHECK(forge::mountRowsOf(doc, interceptor).size() == 5);
     SOL_CHECK(forge::mountRowsOf(doc, freighter).size() == 9);
-    SOL_CHECK(doc.count("ship.mount") == 19);
+    SOL_CHECK(doc.count("ship.mount") == 26);
 
     // And the run really is contiguous and in file order.
     const std::vector<std::size_t> rows = forge::mountRowsOf(doc, shuttle);

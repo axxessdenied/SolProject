@@ -106,7 +106,12 @@ SOL_TEST(the_chase_camera_frames_every_shipped_hull)
     const std::vector<Hull> hulls = shippedHulls(defs);
     // Three hulls ship; a parse that produced none would satisfy the loop by
     // never entering it.
-    SOL_CHECK(hulls.size() == 3);
+    //
+    // ⚑⚑ FOUR SINCE PHASE 37 STAGE D. The Ghostline is the first covert hull and
+    // it reuses `model = "ship"` at scale 0.9, so it frames like the other two
+    // that do - but the count is here so that a fourth hull cannot arrive
+    // without somebody checking the camera can see it.
+    SOL_CHECK(hulls.size() == 4);
 
     for (const Hull& hull : hulls) {
         const float half = hullHalfAngle(game::ShipCamera::chaseOffset(hull.radius), hull.radius);

@@ -548,11 +548,25 @@ enum class CommandMode : std::uint32_t
 // when nothing is engaged, which is what makes the chip vanish.
 [[nodiscard]] const char* commandModeChip(CommandMode mode);
 
+// ⚑⚑⚑⚑ WHAT A PILOT CAME OUT TO DO, AND SINCE PHASE 37 STAGE D IT IS NOT
+// ALWAYS THE CELL THAT DECIDES. The first three come from the `RosterCell` a
+// wing was sent as - `spawnWing`'s own comment says "the job is the cell's, not
+// a caller's opinion of it" - and that is right for a hull that could be doing
+// any of them. `Covert` is the exception, and it is an exception on purpose:
+// a `HullRole::Covert` hull is a statement about the job BEFORE anybody is sent
+// anywhere, so the hull overrides the cell. See `pilotRoleFor`.
+//
+// ⚑⚑ APPENDED, AND IT COSTS NO SAVE BUMP. `ShipPilot::role` is already a
+// `std::uint32_t` in the entity snapshot, so a new VALUE rides in a field that
+// is already the right width - which is the distinction Phase 36 stage C
+// established when it added an inspection state, against a new FIELD which
+// would have moved every record.
 enum class PilotRole : std::uint32_t
 {
     Fighter = 0,
     Trader,
     Patrol,
+    Covert,
 };
 
 enum class PilotState : std::uint32_t
@@ -790,6 +804,11 @@ factionRoster(const GameFaction& faction, sol::assets::RosterCell cell, sol::ass
 // is, and the answer is a syndicate: no territory, no flag, and a row on the
 // same list as the Solar Navy.
 [[nodiscard]] const char* factionKindLabel(const GameFaction& faction);
+
+// What Lua calls a pilot's job, and the one place those words live. See the
+// definition: `pilot_think` branches on this STRING with no else clause, so a
+// role missing from the script is a pilot that never acts.
+[[nodiscard]] const char* pilotRoleName(PilotRole role);
 
 // --- Response (Phase 30 stage C) -------------------------------------------
 //

@@ -361,10 +361,20 @@ void hopsFrom(const sim::Galaxy& galaxy,
     return open == std::string::npos ? shipName : shipName.substr(0, open);
 }
 
+} // namespace
+
 // What Lua calls a pilot's job. Shared by the pilot_think hook and Phase 8s's
 // pilot_hail, in one place so the two can never disagree about what a "trader"
 // is - a hook that branches on the string would break silently if they did.
-[[nodiscard]] const char* pilotRoleName(PilotRole role)
+//
+// ⚑⚑ LIFTED OUT OF THE ANONYMOUS NAMESPACE IN PHASE 37 STAGE D, because the
+// sentence above turned out to be a claim a test could check and could not
+// reach. `pilot_think` is an `if/elseif` chain with no else, so a role the
+// script has never heard of makes its pilot do NOTHING - silently, and looking
+// exactly like a calm ship. `every_pilot_role_the_engine_can_name_has_a_branch_
+// in_the_shipped_script` reads this function for the vocabulary rather than
+// listing the words, so a fifth role fails there until the script learns it.
+const char* pilotRoleName(PilotRole role)
 {
     switch (role) {
     case PilotRole::Fighter:
@@ -373,9 +383,13 @@ void hopsFrom(const sim::Galaxy& galaxy,
         return "trader";
     case PilotRole::Patrol:
         return "patrol";
+    case PilotRole::Covert:
+        return "covert";
     }
     return "fighter";
 }
+
+namespace {
 
 constexpr double kCollisionRestitution = 0.15;
 
@@ -4199,7 +4213,7 @@ void SpaceWorld::spawnWing(std::uint32_t faction,
     // The job is the cell's, not a caller's opinion of it - and it is the cell
     // ASKED for, so a wing flying a substituted roster is still doing what it
     // was sent to do.
-    const PilotRole role = pilotRoleFor(cell);
+    const PilotRole cellRole = pilotRoleFor(cell);
     for (std::uint32_t i = 0; i < count; ++i) {
         const std::uint32_t pick =
             chooseWingHull(std::span<const std::uint32_t>(m_rosterClasses), baselineSecurity, i, count);
@@ -4208,6 +4222,24 @@ void SpaceWorld::spawnWing(std::uint32_t faction,
             SOL_LOG_WARN("wing: no ship def '%s'", roster[pick].c_str());
             return;
         }
+        // ⚑⚑⚑⚑ `HullRole` GETS ITS FIRST READER HERE, THREE PHASES AFTER IT
+        // WAS AUTHORED. Phase 32 ruling 11 made it deliberately unread
+        // vocabulary and Phase 36 said so again in writing when it shipped
+        // covert COMPONENTS instead; this is the line that spends it.
+        //
+        // ⚑⚑⚑ AND IT IS AN EXCEPTION TO THE RULE THREE LINES UP, WHICH IS
+        // WORTH SAYING RATHER THAN SLIPPING IN. "The job is the cell's" is
+        // right for a hull that could be doing any job - an interceptor sent as
+        // a raider IS a raider. A covert hull is not that: it is a statement
+        // about the job made when the hull was bought, and a clan that put one
+        // in its raider roster did not send it out to trade blows. So the HULL
+        // wins, and only for this one role.
+        //
+        // ⚑⚑ THE ALTERNATIVE WAS A FOURTH ROSTER CELL, and it would have been
+        // worse: `builds_no` and the four substitution rules would all have had
+        // to learn a cell that means "the same job, quietly", and every faction
+        // in the game would have grown a column it had nothing to say about.
+        const PilotRole role = def->role == assets::HullRole::Covert ? PilotRole::Covert : cellRole;
         const core::DVec3 position =
             anchor + core::DVec3{spread * (1.0 + i), 300.0 + 250.0 * i, -spread * 0.5 * i};
         const ecs::Entity entity = spawnShipAt(*def, *m_defs, position, m_factionTable[faction].name.c_str());

@@ -38,6 +38,7 @@ void fillStationOutfitting(const SpaceWorld& world,
                            std::vector<ui::MountRow>& mountRows,
                            std::vector<ui::OutfitRow>& componentRows,
                            std::vector<ui::OutfitRow>& blackMarketRows,
+                           std::vector<ui::OutfitRow>& blackMarketShipRows,
                            std::vector<ui::OutfitRow>& weaponRows,
                            std::vector<ui::OutfitRow>& crewCatalogRows,
                            std::vector<ui::OutfitRow>& crewAboardRows,
@@ -49,6 +50,7 @@ void fillStationOutfitting(const SpaceWorld& world,
     mountRows.clear();
     componentRows.clear();
     blackMarketRows.clear();
+    blackMarketShipRows.clear();
     weaponRows.clear();
     crewCatalogRows.clear();
     crewAboardRows.clear();
@@ -219,18 +221,36 @@ void fillStationOutfitting(const SpaceWorld& world,
                                   .price = 0.0f,
                                   .fitted = 1});
     }
+    const auto ownedCount = [&world](const std::string& id) {
+        int owned = 0;
+        for (const OwnedShip& ship : world.fleet()) {
+            owned += ship.defId == id ? 1 : 0;
+        }
+        return owned;
+    };
     for (const assets::ShipDef& def : defs.ships()) {
-        if (!world.stationSells(def.gate)) {
+        // Two shelves, the fence's checked first - `fillStationOutfitting`'s
+        // component loop above says why at length, and a hull is the same rule.
+        const bool fenced = world.stationFenceCarries(def.gate);
+        if (!fenced && !world.stationSells(def.gate)) {
             continue;
         }
-        shipRows.push_back({.id = def.id.c_str(),
-                            .name = def.name.c_str(),
-                            .detail = store(text,
-                                            "cargo " + formatNumber(def.cargoCapacity) + ", pwr " +
-                                                formatNumber(def.powerOutput) + ", berths " +
-                                                std::to_string(def.crewBerths)),
-                            .price = def.price,
-                            .fitted = 0});
+        (fenced ? blackMarketShipRows : shipRows)
+            .push_back({.id = def.id.c_str(),
+                        .name = def.name.c_str(),
+                        .detail = store(text,
+                                        "cargo " + formatNumber(def.cargoCapacity) + ", pwr " +
+                                            formatNumber(def.powerOutput) + ", berths " +
+                                            std::to_string(def.crewBerths)),
+                        .price = def.price,
+                        // ⚑⚑ HOW MANY OF THESE THE PLAYER ALREADY OWNS, AND IT WAS A
+                        // HARDCODED 0 UNTIL PHASE 37 STAGE D. The Shipyard tab
+                        // never drew this field so nothing was wrong; the black
+                        // market's Hulls shelf DOES draw it, and a row that said
+                        // "owned 0" the frame after a purchase was a lie the
+                        // moment it had a reader. A field nobody displays is a
+                        // field nobody checks.
+                        .fitted = ownedCount(def.id)});
     }
     for (std::size_t i = 0; i < world.fleet().size(); ++i) {
         const OwnedShip& ship = world.fleet()[i];
@@ -326,6 +346,7 @@ void fillStationOutfitting(const SpaceWorld& world,
     panel.mounts = mountRows;
     panel.components = componentRows;
     panel.blackMarketCatalog = blackMarketRows;
+    panel.blackMarketShips = blackMarketShipRows;
     // Whose back room, for the heading that is the whole point of the tab.
     const std::uint32_t fenceFaction = world.dockedFenceFaction();
     panel.fenceOperator =

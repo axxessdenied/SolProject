@@ -209,7 +209,18 @@ color = [0.9, 0.2, 0.15]
 kind = "pirate"
 aggression = 0.8
 forgiveness = 0.2
-ships_raider = ["sol.interceptor"]
+# ⚑⚑⚑⚑ A SECOND HULL IN THE RAIDER CELL SINCE PHASE 37 STAGE D, AND IT IS THE
+# ONLY WAY A COVERT PILOT EVER GETS INTO THE SKY. The shadow faction declares
+# `builds_no` for all three cells and holds no territory, so it spawns nothing
+# ever; the clans are who run its fences, and a clan flying a hull it bought
+# from one is the fiction and the mechanism at once.
+#
+# ⚑⚑ THE ROLE COMES OFF THE HULL, NOT OFF THIS CELL. `spawnWing` reads
+# `HullRole::Covert` and hands the pilot `PilotRole::Covert` instead of the
+# cell's `Fighter` - so this one line changes what a wing DOES, not just what
+# it looks like. A Ghostline raider takes the cargo and leaves at 0.7 hull; the
+# Interceptor beside it still fights to 0.3.
+ships_raider = ["sol.interceptor", "sol.ghostline"]
 # ⚑⚑ THE FIRST TWO DECLARED-EMPTY CELLS IN THIS GAME (Phase 32 stage C), and
 # they are what the description above has said since 8b: clans working the
 # edges of the shipping lanes do not run scheduled freight and do not police
@@ -233,7 +244,9 @@ color = [0.95, 0.5, 0.1]
 kind = "pirate"
 aggression = 0.95
 forgiveness = 0.1
-ships_raider = ["sol.interceptor"]
+# Same as the Corsairs above: raiders who treat wrecks as a harvest have every
+# reason to own a hull with no history.
+ships_raider = ["sol.interceptor", "sol.ghostline"]
 # Same declaration as the Corsairs above, for the same reason: raiders who
 # treat wrecks as a harvest neither haul nor patrol.
 builds_no = ["patrol", "trader"]

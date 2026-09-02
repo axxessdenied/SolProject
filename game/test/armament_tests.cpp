@@ -736,7 +736,11 @@ SOL_TEST(a_shipped_fixed_gun_mount_sits_ahead_of_the_pilots_seat)
     }
     // Two shipped hulls carry a fixed gun; a parse that produced no mounts
     // would satisfy the loop above by never entering it.
-    SOL_CHECK(checked == 2);
+    //
+    // ⚑⚑ THREE SINCE PHASE 37 STAGE D. The Ghostline carries the same nose gun
+    // at the same z, and that is the point of the hull rather than an oversight:
+    // a covert hull that could also win a fight would not have to be quiet.
+    SOL_CHECK(checked == 3);
 }
 
 // --- Traverse (Phase 31 stage C2) -------------------------------------------
@@ -1944,6 +1948,14 @@ SOL_TEST(every_shipped_external_mount_carries_a_fitting_that_can_be_drawn)
     // freighter. The count is here so that a hull losing its mounts cannot pass
     // this by having nothing left to check.
     //
+    // ⚑⚑⚑ THIRTEEN SINCE PHASE 37 STAGE D, AND THE +3 IS AS MUCH A STATEMENT AS
+    // THE -1 BELOW. The Ghostline has SEVEN mounts and this counts three of
+    // them: two drives and a utility rack. Its nose gun is a weapon mount and is
+    // skipped above; the other three are INTERNAL - a shield core and TWO
+    // `covert_bay` subsystems - and that ratio is the hull. More of its budget
+    // is spent inside, on kit nobody can see, than on anything bolted to its
+    // skin, which is what a covert hull ought to look like in a mount list.
+    //
     // ⚑⚑ IT WAS ELEVEN UNTIL PHASE 36 STAGE E, AND THE DROP IS THE RULING.
     // The shuttle's `bay_starboard` became an internal `covert_bay`, so it is
     // no longer an external mount and is no longer counted here - the hull did
@@ -1951,5 +1963,5 @@ SOL_TEST(every_shipped_external_mount_carries_a_fitting_that_can_be_drawn)
     // not carrying guns; that trade is the design" is a sentence about a
     // conversion, and this number going DOWN by exactly one is what says the
     // conversion happened rather than a sixth mount being handed out.
-    SOL_CHECK(checked == 10);
+    SOL_CHECK(checked == 13);
 }

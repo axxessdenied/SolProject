@@ -417,6 +417,7 @@ SOL_TEST(the_locked_row_is_on_the_shelf_and_says_what_it_would_take)
     std::vector<sol::ui::MountRow> mounts;
     std::vector<sol::ui::OutfitRow> components;
     std::vector<sol::ui::OutfitRow> blackMarket;
+    std::vector<sol::ui::OutfitRow> blackMarketShips;
     std::vector<sol::ui::OutfitRow> weapons;
     std::vector<sol::ui::OutfitRow> crewCatalog;
     std::vector<sol::ui::OutfitRow> crewAboard;
@@ -430,6 +431,7 @@ SOL_TEST(the_locked_row_is_on_the_shelf_and_says_what_it_would_take)
                                 mounts,
                                 components,
                                 blackMarket,
+                                blackMarketShips,
                                 weapons,
                                 crewCatalog,
                                 crewAboard,

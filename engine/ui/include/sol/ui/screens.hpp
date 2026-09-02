@@ -858,6 +858,18 @@ struct StationPanel
     // the Outfitting catalog, so a Buy goes through the action channel that
     // already exists - a fence is a counter, not a new kind of transaction.
     std::span<const OutfitRow> blackMarketCatalog;
+    // ⚑⚑⚑ AND THE HULLS IT SELLS (Phase 37 stage D). A separate span rather
+    // than more rows in the catalogue above, because a ship's Buy is a
+    // different ACTION - `BuyShip` against `BuyFitting` - and folding them would
+    // have made the draw guess which one a row meant from its contents.
+    //
+    // ⚑⚑ IT EXISTS AT ALL BECAUSE OF A MEASUREMENT: exactly ONE of the eight
+    // fence docks in the shipped galaxy rolled a Shipyard module, so a covert
+    // hull gated to the black market and left to the ordinary Shipyard tab
+    // would have been for sale at one dock in 125 - and at a different one on
+    // any other seed. The fence has a counter; a hull is something you buy
+    // over it.
+    std::span<const OutfitRow> blackMarketShips;
     // Which tabs this station offers (Phase 34 stage C): bit `i` set means the
     // screen the GAME layer numbers `i` belongs on the strip.
     //

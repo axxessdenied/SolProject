@@ -696,8 +696,8 @@ SOL_TEST(defDocumentKeepsShipMountRowsSeparateFromShips)
     // rows that merely start with the word. (Eighteen until Phase 31 stage C1
     // gave the freighter the second weapon mount the base game had nowhere
     // else to put.)
-    SOL_CHECK(doc.count("ship") == 3);
-    SOL_CHECK(doc.count("ship.mount") == 19);
+    SOL_CHECK(doc.count("ship") == 4);
+    SOL_CHECK(doc.count("ship.mount") == 26);
     SOL_CHECK(doc.find("ship", "turret_dorsal") == nullptr);
 
     // A mount row's `id` is readable as a row of its own, which is what the
@@ -746,7 +746,7 @@ SOL_TEST(defDocumentEditOnAHullLeavesItsMountsAlone)
     const assets::DefKey* berths = again->find("crew_berths");
     SOL_REQUIRE(berths != nullptr);
     SOL_CHECK(berths->value() == "4");
-    SOL_CHECK(reparsed.count("ship.mount") == 19);
+    SOL_CHECK(reparsed.count("ship.mount") == 26);
     for (const assets::DefRow& row : reparsed.rows) {
         SOL_CHECK(!(row.type == "ship.mount" && row.find("crew_berths") != nullptr));
     }

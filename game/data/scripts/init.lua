@@ -119,6 +119,33 @@ function pilot_think(ship, role, state, attitude, pirate)
         elseif state == "idle" then
             nextLeg(ship, patrolLegs, patrolLeg)
         end
+    elseif role == "covert" then
+        -- Phase 37 stage D. A covert raider came for the cargo and nothing
+        -- else: it never joins the local war, and it breaks off at 0.7 hull
+        -- rather than 0.3.
+        --
+        -- The threshold is the whole character. A fighter at 0.3 has already
+        -- lost most of a hull to win the exchange; this one leaves with 70% of
+        -- its own still on, which reads from the cockpit as a ship that decides
+        -- the trade is not worth it and goes. It is the trader's rule pointed
+        -- the other way: a hauler runs because it cannot fight, and this runs
+        -- because it would rather not be identified.
+        --
+        -- No `pilot_engage_enemy`, and that is the line that makes it a
+        -- different pilot rather than a timid fighter: a clan's war with the
+        -- Navy is not what a hull bought from a fence came out to do. It will
+        -- answer something already shooting at it, take a hauler if one is
+        -- there, and otherwise leave the player alone unless the player is
+        -- hostile to it.
+        if hull < 0.7 then
+            if state ~= "flee" then sol.pilot_flee(ship) end
+        elseif state ~= "attack" then
+            local busy = sol.pilot_under_fire(ship) and sol.pilot_engage_threat(ship)
+            if not busy then busy = sol.pilot_hunt_trader(ship) end
+            if not busy and attitude == "hostile" then
+                sol.pilot_attack_player(ship)
+            end
+        end
     elseif role == "trader" then
         -- A hauler is not a warship. It runs the moment something shoots at
         -- it rather than waiting to lose 40% of its hull first: shields take

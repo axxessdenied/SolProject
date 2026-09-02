@@ -3336,7 +3336,12 @@ SOL_TEST(data_defs_every_shipped_gun_mount_is_external_and_placed)
     }
     // Four gun mounts across three hulls; a hull whose mounts stopped parsing
     // would pass every check above by having none to fail.
-    SOL_CHECK(checked == 4);
+    //
+    // ⚑⚑ FIVE ACROSS FOUR SINCE PHASE 37 STAGE D. The Ghostline carries one
+    // nose gun at the same z as the other two light hulls, which is the covert
+    // hull saying what it is: one gun and no second thought about winning a
+    // fight.
+    SOL_CHECK(checked == 5);
 }
 
 // ⚑ WHERE `weapon =` WENT (Phase 31 stage B). Each hull's gun is now a `fit`

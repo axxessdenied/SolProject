@@ -3006,6 +3006,15 @@ radius = 1.0
 //   sol.shuttle      scale 1.0    12.0 m   declares light (20-45 m)     is skiff
 //   sol.interceptor  scale 0.8     9.6 m   declares light (20-45 m)     is skiff
 //   sol.freighter    scale 4.0    48.0 m   declares heavy (120-300 m)   is medium
+//   sol.ghostline    scale 0.9    10.8 m   declares light (20-45 m)     is skiff
+//
+// ⚑⚑ THE GHOSTLINE JOINED THE QUEUE IN PHASE 37 STAGE D RATHER THAN JUMPING
+// IT, AND THAT IS THE RULING ABOVE APPLIED TO NEW CONTENT. It is the first
+// covert hull and it reuses the same 12 m box at scale 0.9, so it lands out of
+// band exactly like the two light hulls it sits beside. The spec asked for this
+// in advance - "a covert hull that reuses an existing mesh is honest; one that
+// blocks the phase on Blender is not" - and the alternative, tuning `scale` to
+// make the row green, is precisely the "fix" this test exists to stop.
 //
 // ⚑⚑ IT IS PINNED AS THE EXPECTED STATE, NOT AS A FAILURE. The user's ruling
 // is that the bands are right, the content is wrong, and the meshes are not
@@ -3013,18 +3022,18 @@ radius = 1.0
 // real hull lands its row here changes to `InBand` on purpose. What the test
 // stops is somebody "fixing" the warning by re-tuning `scale` or re-declaring
 // the class, which would throw away 11.3's intent to flatter a placeholder.
-SOL_TEST(theThreeShippedHullsAreAllOutsideTheClassBandTheyDeclare)
+SOL_TEST(everyShippedHullIsOutsideTheClassBandItDeclares)
 {
     sol::assets::DefDatabase defs;
     std::string error;
     SOL_REQUIRE(forge::loadModelCatalog(SOL_MODEL_DATA_DIR, defs, &error));
     SOL_CHECK(error.empty());
-    SOL_REQUIRE(defs.ships().size() == 3);
+    SOL_REQUIRE(defs.ships().size() == 4);
 
     const std::vector<forge::AssetEntry> entries = forge::listMeshes(SOL_MESH_SOURCE_DIR, "");
     const std::vector<forge::MeshLength> lengths = forge::measureModelMeshes(defs, entries);
     const std::vector<forge::HullBand> bands = forge::hullBands(defs, lengths);
-    SOL_REQUIRE(bands.size() == 3);
+    SOL_REQUIRE(bands.size() == 4);
 
     using sol::assets::HullClass;
 
@@ -3037,13 +3046,14 @@ SOL_TEST(theThreeShippedHullsAreAllOutsideTheClassBandTheyDeclare)
         sol::assets::HullRole role;
     };
 
-    const Expected kHulls[3] = {
+    const Expected kHulls[4] = {
         {"sol.shuttle", 12.0f, HullClass::Light, HullClass::Skiff, sol::assets::HullRole::Logistics},
         {"sol.interceptor", 9.6f, HullClass::Light, HullClass::Skiff, sol::assets::HullRole::Line},
         {"sol.freighter", 48.0f, HullClass::Heavy, HullClass::Medium, sol::assets::HullRole::Logistics},
+        {"sol.ghostline", 10.8f, HullClass::Light, HullClass::Skiff, sol::assets::HullRole::Covert},
     };
 
-    for (std::size_t i = 0; i < 3; ++i) {
+    for (std::size_t i = 0; i < 4; ++i) {
         const forge::HullBand& band = bands[i];
         const Expected& want = kHulls[i];
         if (band.shipId != want.shipId) {
@@ -3068,9 +3078,11 @@ SOL_TEST(theThreeShippedHullsAreAllOutsideTheClassBandTheyDeclare)
         SOL_CHECK(band.status() == forge::HullBand::Status::OutOfBand);
     }
 
-    // ⚑ And all three share ONE mesh, which is the fact the whole phase is
-    // about: the spine is three rows over a single 12 m box.
-    SOL_CHECK(bands[0].mesh == bands[1].mesh);
-    SOL_CHECK(bands[1].mesh == bands[2].mesh);
+    // ⚑ And all FOUR share ONE mesh, which is the fact the whole phase is
+    // about: the spine is four rows over a single 12 m box. The covert hull did
+    // not change that and was not allowed to - see the note above the table.
+    for (std::size_t i = 1; i < bands.size(); ++i) {
+        SOL_CHECK(bands[i].mesh == bands[0].mesh);
+    }
     SOL_CHECK(bands[0].mesh == "ship");
 }
