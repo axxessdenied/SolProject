@@ -270,6 +270,23 @@ public:
     // What it actually costs to take a unit out (above mid) and what a unit
     // handed over actually pays (below mid).
     [[nodiscard]] float buyPrice(std::uint32_t market, std::uint32_t commodity) const;
+    // ⚑⚑⚑ WHAT `buy` WOULD ACTUALLY CHARGE FOR `units`, WITHOUT MOVING ANY.
+    // NOT `units * price()` and not `units * buyPrice()`: the price is taken at
+    // the midpoint of the stock the trade moves, so the total is quadratic in
+    // the quantity. `buy` is written in terms of this, so the quote and the
+    // charge cannot drift apart.
+    [[nodiscard]] float quoteBuy(std::uint32_t market, std::uint32_t commodity, float units) const;
+
+    // ⚑⚑⚑⚑ THE LARGEST PART OF `units` THAT `budget` COVERS, WHICH A CALLER
+    // CANNOT WORK OUT FOR ITSELF. Dividing a purse by the marginal price
+    // over-estimates by ~17% on a trade big enough to move the price, and
+    // `SpaceWorld::playerBuy` did exactly that from Phase 8 until Phase 37 -
+    // charging the real total against a count clamped with the wrong one and
+    // leaving the player in DEBT on any good, not just an expensive one.
+    // Converges from below, so the result never exceeds the budget.
+    [[nodiscard]] float
+    unitsWithin(std::uint32_t market, std::uint32_t commodity, float units, double budget) const;
+
     [[nodiscard]] float sellPrice(std::uint32_t market, std::uint32_t commodity) const;
     [[nodiscard]] float stock(std::uint32_t market, std::uint32_t commodity) const;
     // How much of one good this market can warehouse; 0 when it has no hold

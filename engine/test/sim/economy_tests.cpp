@@ -176,6 +176,64 @@ SOL_TEST(economy_price_falls_as_stock_rises)
     SOL_CHECK(std::abs(economy.price(0, 0) - 20.0f) < 1.0e-3f); // base * maxScale
 }
 
+// ⚑⚑⚑⚑ A BUDGET CANNOT BE DIVIDED BY A PRICE, AND THIS IS THE ARITHMETIC THAT
+// PUT A PLAYER IN DEBT FOR TWENTY-NINE PHASES. `SpaceWorld::playerBuy` clamped
+// its unit count with `credits / price()` and then paid `buy`'s real total. Two
+// things make those differ and both point the same way: the spread, and the
+// fact that the price is taken at the MIDPOINT of the stock the trade moves, so
+// the total is quadratic in the quantity rather than linear.
+//
+// ⚑⚑⚑ THE TEST MEASURES THE GAP RATHER THAN ASSERTING IT EXISTS, because the
+// gap is the whole finding: on a big trade the naive division buys materially
+// more than the purse covers, and "materially" is a number.
+SOL_TEST(economy_a_purse_buys_fewer_units_than_dividing_it_by_the_price_suggests)
+{
+    const Galaxy galaxy = tinyGalaxy();
+    Economy economy;
+    economy.initialize(galaxy, tinyParams(), 1);
+
+    // ⚑ The quote IS the charge. Written first, because every other assertion
+    // here is only worth anything if the two cannot drift.
+    const float quoted = economy.quoteBuy(0, 0, 250.0f);
+    Economy mirror;
+    mirror.initialize(galaxy, tinyParams(), 1);
+    const TradeResult charged = mirror.buy(0, 0, 250.0f);
+    SOL_CHECK(quoted == charged.credits);
+    SOL_REQUIRE(quoted > 0.0f);
+
+    // ⚑⚑ And it is NOT what a caller would have computed. `price()` is the
+    // pre-trade marginal price with no spread on it.
+    const float naive = 250.0f * economy.price(0, 0);
+    std::printf("  250 units: quoted %.1f, naive %.1f (%.1f%% under)\n",
+                static_cast<double>(quoted),
+                static_cast<double>(naive),
+                static_cast<double>(100.0f * (quoted - naive) / quoted));
+    SOL_CHECK(naive < quoted);
+
+    // ⚑⚑⚑ THE CLAMP ITSELF, WHICH IS THE FIX. Give it exactly what the naive
+    // division would have spent and it buys FEWER units than that division
+    // asked for - and what it does buy is inside the budget, which is the
+    // property `playerBuy` needed and never had.
+    const double budget = static_cast<double>(naive);
+    const float allowed = economy.unitsWithin(0, 0, 250.0f, budget);
+    const float naiveUnits = static_cast<float>(budget) / economy.price(0, 0);
+    std::printf("  a %.0f cr purse: %.2f units allowed, %.2f by division\n",
+                budget,
+                static_cast<double>(allowed),
+                static_cast<double>(naiveUnits));
+    SOL_CHECK(allowed < naiveUnits);
+    SOL_CHECK(static_cast<double>(economy.quoteBuy(0, 0, allowed)) <= budget);
+    // ...and the division would have overrun it, which is the defect stated as
+    // a number rather than as a story.
+    SOL_CHECK(static_cast<double>(economy.quoteBuy(0, 0, naiveUnits)) > budget);
+
+    // ⚑ A purse that covers the whole trade is not clamped at all, so nothing
+    // about an ordinary affordable buy changed.
+    SOL_CHECK(economy.unitsWithin(0, 0, 10.0f, 1.0e9) == 10.0f);
+    SOL_CHECK(economy.unitsWithin(0, 0, 10.0f, 0.0) == 0.0f);
+    SOL_CHECK(economy.unitsWithin(0, 0, 0.0f, 1.0e9) == 0.0f);
+}
+
 SOL_TEST(economy_player_trades_move_stock_and_clamp)
 {
     const Galaxy galaxy = tinyGalaxy();

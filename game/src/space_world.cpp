@@ -6376,10 +6376,35 @@ sim::TradeResult SpaceWorld::playerBuy(std::uint32_t commodity, float units)
         return {};
     }
     units = std::min(units, m_playerCargoCapacity - playerCargoTotal());
-    const float unitPrice = m_economy.price(market, commodity);
-    if (unitPrice > 0.0f) {
-        units = std::min(units, static_cast<float>(m_playerCredits / unitPrice));
-    }
+    // ⚑⚑⚑⚑ THE PURSE CLAMP ASKS THE ECONOMY NOW, AND FROM PHASE 8 UNTIL PHASE 37
+    // IT DID NOT. It read `m_playerCredits / m_economy.price(...)` - the
+    // pre-trade MARGINAL price, with no spread and no allowance for the price
+    // rising as the trade fills - and then paid `Economy::buy`'s real total,
+    // unchecked. Both errors point the same way, so the count was always too
+    // high and `m_playerCredits` could land BELOW ZERO.
+    //
+    // ⚑⚑⚑⚑ AND IT WAS NEVER CONTRABAND-SPECIFIC, WHICH IS WHAT THE GUARD FOUND
+    // AND THE FIRST TELLING OF THIS GOT WRONG. It was found buying stims and the
+    // obvious story - "the first cargo dear enough to reach the boundary" - is
+    // FALSE. With the hold empty and the 100 button pressed, a new pilot's 1000
+    // cr overdraws on **Refined Metal at 40 cr** (-63), Machinery (-58),
+    // Structural Alloy (-61), Hull Plate (-57) and Hull Section (-52) as well as
+    // on stims (-69). Every one of those is reachable at the first dock of a new
+    // game.
+    //
+    // ⚑⚑⚑ SO WHAT KEPT IT HIDDEN FOR TWENTY-NINE PHASES WAS NOT THE PRICES, IT
+    // WAS THAT NOBODY LOOKED. `playerBuy` had no test in `game/test` at all, and
+    // a player pressing 100 on a cheap good with a nearly-full purse sees a
+    // number go slightly negative and reads it as their own arithmetic.
+    // Contraband made it CONSPICUOUS - dear enough that even the 10 button does
+    // it - rather than possible. *An error found at the edge of new content is
+    // not necessarily an error that new content created.*
+    //
+    // ⚑⚑ THE CLAMP CANNOT BE DONE HERE. The cost of `u` units is quadratic in
+    // `u` because the price moves as the trade fills, so only the layer that
+    // owns the curve can invert it - which is why this is `unitsWithin` in
+    // `sol::sim` rather than a better division in this file.
+    units = m_economy.unitsWithin(market, commodity, units, m_playerCredits);
     const sim::TradeResult result = m_economy.buy(market, commodity, units);
     m_playerCredits -= result.credits;
     m_playerCargo[commodity] += result.units;

@@ -316,6 +316,65 @@ void Economy::refreshTickPrices()
     }
 }
 
+// ⚑⚑⚑⚑ WHAT A BUY WOULD COST, WITHOUT MOVING ANYTHING - AND `buy` IS WRITTEN
+// IN TERMS OF IT SO THE TWO CANNOT DRIFT. That is the whole point of extracting
+// it: a caller that wants to know the price before committing was previously
+// left to multiply `price()` by a unit count, which is NOT what this charges
+// and is what let `SpaceWorld::playerBuy` overdraw a player into debt for
+// twenty-nine phases.
+//
+// ⚑⚑ TWO THINGS MAKE THE TOTAL EXCEED `units * price()`, AND BOTH ARE
+// DELIBERATE. The spread is one; the other is that the price is taken at the
+// MIDPOINT of the stock the trade moves rather than at the pre-trade marginal
+// price. The curve is linear in stock, so the midpoint *is* the exact average -
+// and without it a big block clears at a price that only moves afterwards,
+// which let a buy-and-sell-back at one station turn a profit that no spread was
+// ever going to cover.
+float Economy::quoteBuy(std::uint32_t market, std::uint32_t commodity, float units) const
+{
+    if (market >= m_markets.size() || commodity >= m_params.commodities.size() || units <= 0.0f) {
+        return 0.0f;
+    }
+    const float stock = m_markets[market].stock[commodity];
+    const float moved = std::min(units, stock);
+    return moved * priceAtStock(market, commodity, stock - moved * 0.5f) * (1.0f + m_params.priceSpread);
+}
+
+// ⚑⚑⚑⚑ THE LARGEST TRADE A PURSE COVERS, AND IT LIVES HERE BECAUSE THE CURVE
+// DOES. A caller cannot compute this from `price()`: the cost of `u` units is
+// quadratic in `u` (linear price times linear quantity), so dividing a budget by
+// the marginal price always over-estimates - by 17% on the shipped galaxy's most
+// expensive cargo, which is exactly how a 1000 cr pilot ended a five-crate
+// purchase at -69 cr.
+//
+// ⚑⚑⚑ BISECTION RATHER THAN THE CLOSED FORM, ON PURPOSE. The quadratic is
+// solvable and the solution would hardcode the shape of `priceAtStock` a second
+// time - `buy`'s midpoint comment already depends on it once, and a curve that
+// stopped being linear would leave this silently wrong instead of merely
+// approximate. Bisecting on `quoteBuy` is correct for ANY monotone cost, and it
+// converges from BELOW, so the answer never exceeds the budget by a rounding
+// error - which is the one failure mode a fix for an overdraw must not have.
+float Economy::unitsWithin(std::uint32_t market, std::uint32_t commodity, float units, double budget) const
+{
+    if (units <= 0.0f || budget <= 0.0) {
+        return 0.0f;
+    }
+    if (static_cast<double>(quoteBuy(market, commodity, units)) <= budget) {
+        return units; // the purse covers the whole trade
+    }
+    float affordable = 0.0f;
+    float tooMuch = units;
+    for (int i = 0; i < 40; ++i) {
+        const float mid = 0.5f * (affordable + tooMuch);
+        if (static_cast<double>(quoteBuy(market, commodity, mid)) <= budget) {
+            affordable = mid;
+        } else {
+            tooMuch = mid;
+        }
+    }
+    return affordable;
+}
+
 TradeResult Economy::buy(std::uint32_t market, std::uint32_t commodity, float units)
 {
     TradeResult result;
@@ -324,14 +383,7 @@ TradeResult Economy::buy(std::uint32_t market, std::uint32_t commodity, float un
     }
     StationMarket& station = m_markets[market];
     result.units = std::min(units, station.stock[commodity]);
-    // Priced at the midpoint of the stock the trade actually moves, not at
-    // the pre-trade marginal price. The curve is linear in stock, so the
-    // midpoint *is* the exact average — and without it a big block clears at
-    // a price that only moves afterwards, which let a buy-and-sell-back at
-    // one station turn a profit that no spread was ever going to cover.
-    result.credits = result.units *
-                     priceAtStock(market, commodity, station.stock[commodity] - result.units * 0.5f) *
-                     (1.0f + m_params.priceSpread);
+    result.credits = quoteBuy(market, commodity, units);
     station.stock[commodity] -= result.units;
     return result;
 }

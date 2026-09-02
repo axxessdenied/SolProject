@@ -6,6 +6,8 @@
 #include "station_screen.hpp"
 #include "station_ui.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -591,4 +593,144 @@ SOL_TEST(marking_a_row_back_room_moves_it_off_the_trade_board_and_onto_the_fence
     SOL_CHECK(tradeSplit < tradeWhole);
     // ...and arrived on the fence's.
     SOL_CHECK(fenceSplit > fenceEmpty);
+}
+
+// ⚑⚑⚑⚑ A TRADE CANNOT LEAVE A PILOT IN DEBT, AND UNTIL THIS TEST NO GAME TEST
+// CALLED `playerBuy` AT ALL. That absence is the finding: the verb that moves
+// the player's money had no guard in this directory, so an arithmetic error in
+// it survived from Phase 8 to Phase 37 and was found by a person clicking Buy.
+//
+// ⚑⚑⚑⚑ IT LIVES IN THE FENCE'S FILE BECAUSE THAT IS WHERE IT WAS FOUND, AND
+// THE FIRST THING IT DID WAS REFUTE THE STORY IT WAS WRITTEN TO TELL. The
+// observed case was five crates of Combat Stims taking 1000 cr to **-69 cr**,
+// and the obvious explanation - "contraband is the first cargo dear enough to
+// reach the boundary" - is wrong. With the hold emptied between attempts this
+// sweep overdraws on **Refined Metal at 40 cr** too, and on Machinery, Alloy,
+// Hull Plate and Hull Section: eight of thirty-three attempts, every one of them
+// reachable at the first dock of a new game with the 100 button.
+//
+// ⚑⚑⚑ SO IT GUARDS EVERY GOOD THE DOCK SELLS, NOT THE ILLICIT PAIR. A fence
+// happens to stock eleven commodities including the two dearest in the game,
+// which makes it the widest single counter to sweep - that, and not the
+// contraband, is why the test is here.
+//
+// ⚑⚑ THE ASSERTION IS ON THE INVARIANT, NOT ON THE NUMBER. "-69" is a fact
+// about one seed's prices; "a purchase never spends money that is not there" is
+// the rule, and it is checked at every amount the trade buttons offer.
+SOL_TEST(no_purchase_at_any_counter_can_spend_more_than_the_pilot_has)
+{
+    DefDatabase defs;
+    SOL_REQUIRE(loadShippedDefs(defs));
+    game::SpaceWorld world;
+    world.spawn(game::kDefaultUniverseSeed);
+    game::GameContent content;
+    SOL_REQUIRE(content.initialize(SOL_DEF_DATA_DIR, {}, &world));
+    SOL_REQUIRE(world.generateUniverse(content.defs()));
+
+    bool docked = false;
+    for (std::uint32_t sys = 0; sys < world.galaxy().systems.size() && !docked; ++sys) {
+        const sol::sim::SystemSpec& system = world.galaxy().systems[sys];
+        for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
+            if (!hasShadowModule(world, content.defs(), sys, t)) {
+                continue;
+            }
+            SOL_REQUIRE(world.enterSystem(sys));
+            SOL_REQUIRE(world.warpToStationOffset(t, {150.0, 0.0, 0.0}));
+            SOL_REQUIRE(world.tryDockNearestStation(2000.0));
+            docked = true;
+            break;
+        }
+    }
+    SOL_REQUIRE(docked);
+
+    // ⚑⚑⚑⚑ THE HOLD IS EMPTIED BEFORE EVERY ATTEMPT, AND FORGETTING IT MADE THIS
+    // TEST VACUOUS ON ITS FIRST RUN. `playerBuy` clamps to cargo space BEFORE it
+    // clamps to money, the hold is 50 units, and the commodity list starts with
+    // Foodstuffs at 10 cr - so the cheap goods filled the hold, every later buy
+    // moved ZERO units, and the whole sweep passed with the defect restored. A
+    // purse test that never spends is not a purse test.
+    const auto emptyHold = [&] {
+        for (std::uint32_t c = 0; c < world.commodityIds().size(); ++c) {
+            if (world.playerCargo(c) > 0.0f) {
+                (void)world.playerSell(c, world.playerCargo(c));
+            }
+        }
+    };
+
+    // The amounts the trade buttons offer, against the balance a new pilot has.
+    constexpr float kAmounts[] = {1.0f, 10.0f, 100.0f};
+    std::uint32_t tried = 0;
+    std::uint32_t spent = 0;
+    double worst = 0.0;
+    for (std::uint32_t c = 0; c < world.commodityIds().size(); ++c) {
+        if (!world.dockedStationStocks(c)) {
+            continue;
+        }
+        for (const float amount : kAmounts) {
+            // A fresh 1000 cr purse and an empty hold for every attempt, which
+            // is the state the reported case was in.
+            emptyHold();
+            world.addCredits(1000.0 - world.playerCredits());
+            const double before = world.playerCredits();
+            const float price = world.economy().price(world.dockedMarket(), c);
+            const sol::sim::TradeResult result = world.playerBuy(c, amount);
+            const double after = world.playerCredits();
+            ++tried;
+            if (after < 0.0) {
+                std::printf("  %s x%.0f at %.2f: %.0f cr -> %.0f cr\n",
+                            world.commodityIds()[c].c_str(),
+                            static_cast<double>(amount),
+                            static_cast<double>(price),
+                            before,
+                            after);
+            }
+            SOL_CHECK(after >= 0.0);
+            // And the money that left equals the money the trade charged, so a
+            // clamp that simply refused everything would not pass this.
+            SOL_CHECK(std::abs((before - after) - static_cast<double>(result.credits)) < 0.01);
+            if (result.units > 0.0f) {
+                ++spent;
+                // How close to the bone the tightest trade ran. This is the
+                // anti-vacuity number: a sweep where nothing ever approaches
+                // zero is a sweep that never reached the clamp.
+                worst = std::max(worst, 1.0 - after / before);
+            }
+        }
+    }
+    std::printf("  %u attempt(s) at %s, %u moved units; the tightest spent %.1f%% of the purse\n",
+                tried,
+                world.dockedStationName(),
+                spent,
+                worst * 100.0);
+    SOL_REQUIRE(tried > 0);
+    // ⚑⚑ ANTI-VACUITY, AND IT IS EXACTLY WHAT THE FIRST VERSION OF THIS TEST
+    // LACKED. At least one trade has to have spent nearly the whole purse, or
+    // the boundary this exists to guard was never approached at all.
+    SOL_REQUIRE(spent > 0);
+    SOL_CHECK(worst > 0.95);
+
+    // ⚑⚑ THE COUNTERFACTUAL, so this is not passing because the fence was too
+    // cheap to reach the boundary. The old clamp was `credits / price()`; if
+    // 1000 cr buys the whole 100-unit block of the dearest good here, the
+    // boundary is never crossed and this test proves nothing.
+    std::uint32_t dearest = 0;
+    float best = 0.0f;
+    for (std::uint32_t c = 0; c < world.commodityIds().size(); ++c) {
+        const float price =
+            world.dockedStationStocks(c) ? world.economy().price(world.dockedMarket(), c) : 0.0f;
+        if (price > best) {
+            best = price;
+            dearest = c;
+        }
+    }
+    world.addCredits(1000.0 - world.playerCredits());
+    const float naiveUnits = static_cast<float>(1000.0 / static_cast<double>(best));
+    const float honestUnits = world.economy().unitsWithin(world.dockedMarket(), dearest, 100.0f, 1000.0);
+    std::printf("  dearest here is %s at %.2f: division says %.2f units, the market says %.2f\n",
+                world.commodityIds()[dearest].c_str(),
+                static_cast<double>(best),
+                static_cast<double>(naiveUnits),
+                static_cast<double>(honestUnits));
+    SOL_CHECK(naiveUnits < 100.0f);      // the purse really is the binding limit
+    SOL_CHECK(honestUnits < naiveUnits); // and the old sum really was too generous
 }
