@@ -265,6 +265,7 @@ add_executable(sol_game_tests
     test/autosave_settings_tests.cpp
     test/catalog_gate_tests.cpp
     test/command_mode_tests.cpp
+    test/contraband_tests.cpp
     test/economy_content_tests.cpp
     test/faction_roster_tests.cpp
     test/galaxy_golden_tests.cpp

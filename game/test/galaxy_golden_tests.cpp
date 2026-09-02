@@ -363,7 +363,16 @@ constexpr std::uint64_t kGoldenStructure = 0x06BC021EC816F5E8ull;
 // nobody looked again for a whole stage. The counts printed beside the hash are
 // what tell the two apart - 125 stations / 119 compositions did NOT change here,
 // and the seating did.
-constexpr std::uint64_t kGoldenComposition = 0xCA2BDD7809C7E019ull;
+// ⚑⚑⚑ AND A THIRD TIME IN PHASE 37 STAGE A, FOR THE ONE REASON THAT IS SUPPOSED
+// TO BE LOCAL: a CHANCE moved, not a row. `sol.mod_black_clinic` went 0.08 ->
+// 0.30 on the Breaker Yard because at 0.08 it landed on ZERO of the eleven
+// yards - authored-but-absent content whose absence left an illicit good with
+// no producer. The counts beside the hash are the evidence that it WAS local
+// and this is what the comment above asks a reader to check: 125 stations, 119
+// distinct compositions and 130 plants are all UNCHANGED from stage C, and only
+// the two docks that gained a clinic differ. A resample would have moved all
+// three, which is exactly what an added row did in stage A.
+constexpr std::uint64_t kGoldenComposition = 0xC739BB34ACDCFB4Bull;
 
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine

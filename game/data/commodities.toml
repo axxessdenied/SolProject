@@ -228,3 +228,53 @@ name = "Hull Section"
 tier = "assembly"
 goods_class = "bulk"
 base_price = 200.0
+
+# ---------------------------------------------------------------------------
+# The illicit branch (Phase 37 stage A), and it is the first branch in this file
+# whose supply chain is not visible from a market floor.
+#
+# ⚑⚑⚑⚑ `illicit` IS A WAREHOUSE FACT, NOT A LAW. What a jurisdiction forbids
+# lives in `factions.toml` and varies by faction — the same crate is legal in
+# Guild space and ten years in Hegemony space, which is decisions/017's whole
+# point and Phase 33 stage D's shipped mechanism. The goods class says something
+# narrower and physical: NO LAWFUL MODULE CARRIES A HOLD FOR THESE. A station
+# stocks a good only if it has a hold of that good's class, so an illicit good
+# has capacity zero at all 119 lawful docks and a real capacity at the six that
+# rolled a shadow module. The black market's monopoly is a consequence of the
+# storage vocabulary Phase 34 stage D shipped, not of a permission check
+# somebody wrote — decisions/016 promised exactly this in one line and nothing
+# had claimed it until now.
+#
+# ⚑⚑ WHICH IS WHY sol.salvage DID NOT MOVE. It is the Hegemony's contraband and
+# it stays `hazardous`, because a breaker yard warehouses it in the open and
+# most of the galaxy simply has no hazmat hold. Phase 33 ruling 10 chose salvage
+# on purpose and that choice stands; these two are additions to a law that
+# touched two of nine goods, not a replacement for it.
+#
+# ⚑⚑ AND THEY ARE MADE AND BURNT LIKE EVERYTHING ELSE, BECAUSE THE ECONOMY'S OWN
+# GUARD DOES NOT CARE THAT A TRADE IS CRIMINAL.
+# `shipped_content_makes_and_burns_every_commodity_somewhere` binds every row in
+# this file, and a contraband good produced by nobody would sit at half capacity
+# forever and read as scenery. So the black market has a supply chain: a ghost
+# dock strips hulls into parts nobody can account for, an unlicensed clinic
+# cooks stims, and the fence is where both of them go to be somebody else's
+# problem. That chain lives entirely on shadow modules, which is what keeps it
+# off every lawful station's books.
+#
+# ⚑ Priced above hull plate and below a hull section: high enough that a hold of
+# either is worth the pod Phase 36 made you give up to run quiet, low enough
+# that one run does not end the economy.
+
+[[commodity]]
+id = "sol.stims"
+name = "Combat Stims"
+tier = "consumer"
+goods_class = "illicit"
+base_price = 145.0
+
+[[commodity]]
+id = "sol.hot_parts"
+name = "Stripped Components"
+tier = "component"
+goods_class = "illicit"
+base_price = 185.0

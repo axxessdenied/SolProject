@@ -281,7 +281,7 @@ struct FieldReader
             ModuleStorage store;
             if (!parseGoodsClass(std::string_view(text).substr(0, colon), store.goods)) {
                 fail(std::string("'") + key + "' entry '" + text +
-                     "' names no goods class (bulk, cryo, hazardous)");
+                     "' names no goods class (bulk, cryo, hazardous, illicit)");
                 return;
             }
             char* end = nullptr;
@@ -934,7 +934,8 @@ bool parseCommodity(const TomlValue& table,
     std::string goodsText;
     reader.optionalString("goods_class", goodsText, &def.hasGoodsClass);
     if (!reader.failed && def.hasGoodsClass && !parseGoodsClass(goodsText, def.goodsClass)) {
-        reader.fail("'goods_class' is not a goods class: '" + goodsText + "' (bulk, cryo, hazardous)");
+        reader.fail("'goods_class' is not a goods class: '" + goodsText +
+                    "' (bulk, cryo, hazardous, illicit)");
     }
 
     reader.rejectUnknownKeys({"id",
@@ -2114,7 +2115,7 @@ constexpr const char* kStationScreenNames[] = {
 static_assert(std::size(kStationScreenNames) == kStationScreenCount,
               "a station screen is missing its def spelling");
 
-constexpr const char* kGoodsClassNames[] = {"bulk", "cryo", "hazardous"};
+constexpr const char* kGoodsClassNames[] = {"bulk", "cryo", "hazardous", "illicit"};
 
 static_assert(std::size(kGoodsClassNames) == kGoodsClassCount, "a goods class is missing its def spelling");
 

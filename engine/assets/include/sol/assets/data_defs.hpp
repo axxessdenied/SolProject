@@ -705,7 +705,8 @@ enum class Legality : std::uint32_t
 // caller who knows which system is the one that can say it.
 [[nodiscard]] Legality factionLegalityOf(const FactionDef& faction, std::string_view commodityId);
 
-// What a hold can hold (gdd.md §12's Storage family: bulk, cryo, hazardous).
+// What a hold can hold (gdd.md §12's Storage family: bulk, cryo, hazardous,
+// and Phase 37 stage A's illicit).
 //
 // ⚑⚑ A GOODS CLASS IS NOT A MATERIAL TIER AND THE TWO MUST NOT BE MERGED.
 // `CommodityTier` says where a good sits in the tree that MAKES it; a goods
@@ -722,9 +723,26 @@ enum class Legality : std::uint32_t
 // has no hold for, including contraband.**
 enum class GoodsClass : std::uint32_t
 {
-    Bulk = 0,   // ore, plate, sections: cheap, heavy, wants volume
-    Cryo,       // foodstuffs and anything that spoils
-    Hazardous,  // reactive, radioactive, or the sort of thing a patrol asks about
+    Bulk = 0,  // ore, plate, sections: cheap, heavy, wants volume
+    Cryo,      // foodstuffs and anything that spoils
+    Hazardous, // reactive, radioactive, or the sort of thing a patrol asks about
+    // Phase 37 stage A. The class that no LEGITIMATE hold admits, which is what
+    // makes it different in kind from the three above rather than a fourth
+    // flavour of the same idea: bulk, cryo and hazardous each describe a
+    // physical problem some stations solved and others did not, and this one
+    // describes a station that would be admitting to something. Only shadow
+    // modules carry a hold for it, so `capacityOf` is zero for an illicit good
+    // at every lawful dock in the galaxy and the black market's monopoly is a
+    // WAREHOUSE FACT rather than a permission check - which is decisions/016's
+    // "stock_capacity becomes per goods class, which is what lets a station be
+    // unable to store contraband" finally getting its reader.
+    //
+    // A LEGALITY IS STILL NOT A GOODS CLASS. What a jurisdiction forbids lives
+    // in FactionDef::contraband and varies by faction (Phase 33 stage D); this
+    // says only where a crate can physically sit. sol.salvage is contraband to
+    // the Hegemony and stays `hazardous`, because a breaker yard really does
+    // warehouse it in the open.
+    Illicit,
     Count,
 };
 

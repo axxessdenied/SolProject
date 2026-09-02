@@ -484,6 +484,22 @@ void composeHouseTalk(const SpaceWorld& world,
             if (world.stationStocks(system, station, c)) {
                 continue;
             }
+            // ⚑⚑⚑ A LAWFUL DOCK DOES NOT ADVERTISE CONTRABAND BY NAME (Phase 37
+            // stage A). Every illicit good is unstockable at all 117 docks with
+            // no shadow module, so without this the warehouse line at nearly
+            // every station in the galaxy would read "no hold here for Combat
+            // Stims, Stripped Components" - the Freight Guild's own counter
+            // volunteering the black market's catalogue to a stranger.
+            //
+            // ⚑⚑ IT IS NOT A LIE AND THAT IS WHY IT IS SAFE: the line answers
+            // "why did my cargo not appear on the board", and a player cannot
+            // be holding an illicit good they have nowhere to have bought yet.
+            // The eight docks that CAN take it are exactly the eight that do
+            // not reach this branch for those goods, so nothing that is
+            // tradeable anywhere is hidden from the place it trades.
+            if (world.commodityClass(c) == assets::GoodsClass::Illicit) {
+                continue;
+            }
             ++count;
             const assets::CommodityDef* def = defs.findCommodity(world.commodityIds()[c].c_str());
             const std::string name = def != nullptr ? def->name : world.commodityIds()[c];

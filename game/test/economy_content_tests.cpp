@@ -127,6 +127,47 @@ struct Flow
     return flow;
 }
 
+// ⚑⚑⚑⚑ HOW MANY MODULE INSTANCES THE GALAXY EXPECTS TO DRAW BEHIND ONE GOOD'S
+// FLOW, WHICH IS WHAT DECIDES WHETHER THE SAMPLE BELOW CAN BE CHECKED AT ALL
+// (Phase 37 stage A). The 5% band is a statement about a LARGE sample: bulk
+// goods are touched by chance-1.0 modules on a hundred-odd stations, so a
+// recipe bug is the only thing that can move them. The black market is not like
+// that - its whole supply chain is a fence at chance 0.15 and a clinic at 0.30
+// on ELEVEN breaker yards, so the expected instance count is about five and a
+// half, and ONE station landing differently is a ten percent swing. Below
+// roughly twenty expected instances the 5% check cannot tell a recipe bug from
+// a coin flip, and asserting it anyway would be pinning one seed's rounding.
+//
+// ⚑⚑ THE THRESHOLD IS DERIVED, NOT PICKED. One instance has to be worth less
+// than the tolerance for the tolerance to mean anything: 1/N <= 0.05 gives
+// N >= 20. That is the same arithmetic the band itself is made of, so the two
+// numbers move together if either is ever retuned.
+//
+// ⚑ WHAT STILL BINDS BELOW THE FLOOR: made > 0, burnt > 0, and the [0.85,
+// 1.6] ratio - which are the DESIGN statements. Only the sampled-vs-declared
+// comparison, which exists to catch a whole module sitting in the wrong recipe,
+// needs a sample it can see one in.
+constexpr double kSampleFloorInstances = 20.0;
+
+[[nodiscard]] double expectedDrawsOf(const DefDatabase& defs, const Mix& mix, const std::string& commodityId)
+{
+    double draws = 0.0;
+    for (std::size_t a = 0; a < defs.stations().size(); ++a) {
+        const double count = mix.counts[a];
+        for (const sol::assets::StationModuleEntry& entry : defs.stations()[a].modules) {
+            const sol::assets::ModuleDef* module = defs.findModule(entry.moduleId.c_str());
+            if (module == nullptr) {
+                continue;
+            }
+            if (rateOf(module->produces, commodityId) > 0.0 || rateOf(module->consumes, commodityId) > 0.0 ||
+                rateOf(module->feedstock, commodityId) > 0.0) {
+                draws += count * entry.chance;
+            }
+        }
+    }
+    return draws;
+}
+
 // ⚑⚑⚑ WHAT THE GALAXY ACTUALLY DOES, WHICH SINCE PHASE 34 STAGE B IS NOT THE
 // SAME QUESTION. Every station is composed of modules and runs on the rates its
 // own module list adds up to, so an archetype-level sum is an EXPECTATION and
@@ -224,18 +265,57 @@ SOL_TEST(shipped_content_makes_no_commodity_much_faster_than_it_is_burnt)
         // twenty-five draws a galaxy takes, and still catches a whole module
         // sitting in the wrong recipe.
         const Flow declared = declaredFlowOf(defs, mix, commodity.id);
+        const double draws = expectedDrawsOf(defs, mix, commodity.id);
+        const bool sampleIsBigEnough = draws >= kSampleFloorInstances;
+        // ⚑⚑⚑⚑ THE GUARD ON THE GUARD, AND A MUTATION BOUGHT IT. Raising
+        // `kSampleFloorInstances` to a billion switches the 5% check off for
+        // EVERY good and left the whole suite green - a weakening mutation
+        // nothing could see, which is the shape Phase 34 stage E recorded as a
+        // vacuously-true assertion. So the floor is required to admit exactly
+        // what it was introduced for: every LAWFUL good stays above it and
+        // stays checked, and only the black market's own supply chain is
+        // allowed below. Raise the floor and this fails first.
+        //
+        // ⚑⚑⚑⚑ AND IT FOUND A LAWFUL GOOD ALREADY IN THE SMALL-SAMPLE REGIME ON
+        // ITS FIRST RUN, WHICH IS THE MORE INTERESTING HALF. `sol.hull_section`
+        // is made by six Assembly Yards and burnt by five Shipyards - ELEVEN
+        // draws - so its 5% check has been passing since Phase 33 stage E
+        // because the sample happened to land close, not because eleven draws
+        // can hold a five percent band. That is a fact about the shipped
+        // content, not about this phase, and it is named here with its number
+        // rather than left to weaken the rule for everybody - the same bargain
+        // `sol.mod_drydock` gets in `data_defs_tests.cpp` one directory over.
+        const bool namedSmallSample = commodity.id == "sol.hull_section";
+        if (commodity.goodsClass != sol::assets::GoodsClass::Illicit && !namedSmallSample) {
+            if (!sampleIsBigEnough) {
+                std::printf("  %s draws only %.1f module instance(s), below the sample floor of %.1f"
+                            " - a lawful good must stay checkable\n",
+                            commodity.id.c_str(),
+                            draws,
+                            kSampleFloorInstances);
+            }
+            SOL_CHECK(sampleIsBigEnough);
+        }
         for (int half = 0; half < 2; ++half) {
             const double sampled = half == 0 ? flow.made : flow.burnt;
             const double expected = half == 0 ? declared.made : declared.burnt;
-            if (expected > 0.0 && std::abs(sampled - expected) > expected * 0.05) {
-                std::printf("  %s %s: the composed galaxy does %.4f/s against an expected %.4f/s\n",
+            const bool off = expected > 0.0 && std::abs(sampled - expected) > expected * 0.05;
+            // Printed whether or not it is asserted on: the numbers are the
+            // diagnosis, and a reader should still see a small-sample good
+            // drifting rather than have it silently swallowed.
+            if (off) {
+                std::printf("  %s %s: the composed galaxy does %.4f/s against an expected %.4f/s"
+                            " (%.1f expected module instance(s)%s)\n",
                             commodity.id.c_str(),
                             half == 0 ? "made" : "burnt",
                             sampled,
-                            expected);
-                anyOutOfBand = true;
+                            expected,
+                            draws,
+                            sampleIsBigEnough ? "" : " - below the sample floor, not asserted");
             }
-            SOL_CHECK(expected <= 0.0 || std::abs(sampled - expected) <= expected * 0.05);
+            anyOutOfBand = anyOutOfBand || (off && sampleIsBigEnough);
+            SOL_CHECK(!sampleIsBigEnough || expected <= 0.0 ||
+                      std::abs(sampled - expected) <= expected * 0.05);
         }
     }
     if (anyOutOfBand) {

@@ -4027,11 +4027,31 @@ SOL_TEST(data_defs_shipped_modules_cover_every_family_gdd_12_names)
     // ruling. A market floor that quietly consumed something, or a casino that
     // produced it, would be an economy nobody could find by reading
     // `stations.toml` - which is exactly what the decomposition must not cost.
+    //
+    // ⚑⚑⚑⚑ PHASE 37 STAGE A ADDS SHADOW TO THAT LIST, AND THE REASON THE RULE
+    // GIVES IS WHY IT IS ALLOWED TO RATHER THAN AN EXCEPTION TO IT. The stated
+    // danger is "an economy nobody could find by reading `stations.toml`" - it
+    // is a DISCOVERABILITY rule, not a claim that only two families can move
+    // goods. And discoverability is enforced elsewhere and unconditionally:
+    // `every_recipe_reproduces_its_archetype_rate_list_in_expectation` requires
+    // each archetype's declared `produces`/`consumes`/`feedstock` to equal the
+    // chance-weighted sum of its recipe's modules, so the Breaker Yard's own
+    // row in `stations.toml` reads `"sol.stims:0.0108"` and a reader who never
+    // opens `modules.toml` still finds the whole black market.
+    //
+    // ⚑⚑ WHAT WOULD NOT BE ALLOWED, so the widening is not a blank cheque: a
+    // RECREATION or SERVICES module with a rate line still fails, which is the
+    // casino and the market floor the original rule was written against. Shadow
+    // is admitted because it is an INDUSTRY that lies about being one - a ghost
+    // dock strips hulls and a clinic cooks stims - and because every illicit
+    // good it touches is one no lawful hold can warehouse, which
+    // `contraband_tests.cpp` checks in both directions.
     for (const sol::assets::ModuleDef& module : db.modules()) {
         const bool hasRates =
             !module.produces.empty() || !module.consumes.empty() || !module.feedstock.empty();
         const bool mayHaveRates = module.family == sol::assets::ModuleFamily::Industry ||
-                                  module.family == sol::assets::ModuleFamily::Habitat;
+                                  module.family == sol::assets::ModuleFamily::Habitat ||
+                                  module.family == sol::assets::ModuleFamily::Shadow;
         if (hasRates && !mayHaveRates) {
             std::printf("  '%s' is %s and carries a rate line; only industry and habitat may\n",
                         module.id.c_str(),

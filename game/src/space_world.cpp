@@ -175,7 +175,18 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // has to keep an informal lead distinguishable from a board contract; a
 // relationship is what does that, and it cannot gate anything until it has been
 // accumulating. The alternative was bumping this number twice for one feature.
-constexpr std::uint32_t kSaveVersion = 34;
+// v35 (Phase 37 stage A): two new commodities and a fourth goods class. A saved
+// market row is a float count of units held against a PER-COMMODITY capacity
+// (that is v32's own reason), and both the market vectors and the player's hold
+// are indexed by commodity - so a v34 save read into this build has vectors one
+// size short of what every reader now expects. ⚑ This is the same shape as v32
+// rather than a new one, which is worth saying plainly: the row count moved,
+// and every number in the file that was addressed by commodity index is now
+// addressed against a longer list. ⚑⚑ THE CAPACITIES THEMSELVES ARE STILL NOT
+// IN THE FILE and must not be - illicit capacity is derived from whether a
+// station composed a shadow module, which is derived from the seed, exactly
+// like every other capacity since v32.
+constexpr std::uint32_t kSaveVersion = 35;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES

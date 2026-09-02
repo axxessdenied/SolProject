@@ -93,7 +93,9 @@ SOL_TEST(a_stations_capacity_is_the_sum_of_the_holds_its_modules_carry)
     SOL_REQUIRE(buildShippedGalaxy(defs, world));
 
     const auto commodityCount = static_cast<std::uint32_t>(world.commodityIds().size());
-    SOL_REQUIRE(commodityCount == 9);
+    // 9 -> 11 (Phase 37 stage A: Combat Stims and Stripped Components). A count
+    // pinned so the test notices the file moving under it, not an invariant.
+    SOL_REQUIRE(commodityCount == 11);
 
     // The class of each commodity, straight from the file.
     std::vector<GoodsClass> classOf(commodityCount, GoodsClass::Bulk);
@@ -237,7 +239,7 @@ SOL_TEST(a_fresh_galaxy_does_not_open_with_every_good_on_every_dock)
     }
 
     // ⚑⚑⚑⚑ AND HERE IS THE HONEST LIMIT OF WHAT THIS STAGE CAN DO, MEASURED
-    // RATHER THAN CLAIMED. Seven of the nine goods are `bulk`, every station
+    // RATHER THAN CLAIMED. Seven of the eleven goods are `bulk`, every station
     // touches at least one bulk good, and a station must be able to hold what
     // its own modules touch (test 2) - so **every station has a bulk hold and
     // therefore stocks all seven bulk goods**. With three goods classes and a

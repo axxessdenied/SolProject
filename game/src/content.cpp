@@ -1034,6 +1034,58 @@ std::string dispatchResponse(GameContent& content, double x, double y, double z)
 // criterion made runnable rather than a thing to be eyeballed system by system.
 // Baselines only: the live rating moves under the player's feet, and what stage
 // A claims is a property of the GENERATOR.
+// ⚑⚑⚑ WHERE THE BLACK MARKET IS (Phase 37 stage A). Eight docks of 125 carry a
+// shadow module, and without this a drive has no way at all to find one: the
+// map names systems, not the modules inside a station, and stage A ships no
+// screen that says "there is a fence here". The census in
+// `contraband_tests.cpp` answers the same question for the 81-system probe
+// galaxy; this answers it for the 85-system galaxy the GAME boots, which is a
+// different set of indices - the discrepancy Phase 36 stage B recorded.
+//
+// ⚑ It reports whether each dock actually STOCKS the illicit goods, because
+// "has a shadow module" and "can warehouse contraband" are the two halves stage
+// A joined and a drive should be able to see them come apart.
+std::string shadowDocks(GameContent& content)
+{
+    const game::SpaceWorld& world = content.world();
+    std::string out;
+    char buffer[256];
+    std::size_t found = 0;
+    for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+        const sol::sim::SystemSpec& system = world.galaxy().systems[s];
+        for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
+            bool shadow = false;
+            for (const std::uint32_t module : world.stationModules(s, t)) {
+                shadow =
+                    shadow || (module < content.defs().modules().size() &&
+                               content.defs().modules()[module].family == sol::assets::ModuleFamily::Shadow);
+            }
+            if (!shadow) {
+                continue;
+            }
+            ++found;
+            std::size_t illicit = 0;
+            for (std::uint32_t c = 0; c < world.commodityIds().size(); ++c) {
+                if (world.commodityClass(c) == sol::assets::GoodsClass::Illicit &&
+                    world.stationStocks(s, t, c)) {
+                    ++illicit;
+                }
+            }
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "system %2u station %u  %-28s %zu illicit good(s) stocked\n",
+                          s,
+                          t,
+                          system.stations[t].name.c_str(),
+                          illicit);
+            out += buffer;
+        }
+    }
+    std::snprintf(buffer, sizeof(buffer), "%zu dock(s) with a shadow module\n", found);
+    out += buffer;
+    return out;
+}
+
 std::string securityHistogram(GameContent& content)
 {
     // ⚑ Counted by `SpaceWorld::securityHistogram` rather than here (stage F).
@@ -4048,6 +4100,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&systemDanger>("sol", "danger", this);
     m_vm.registerFunction<&systemSecurity>("sol", "security", this);
     m_vm.registerFunction<&securityHistogram>("sol", "security_map", this);
+    m_vm.registerFunction<&shadowDocks>("sol", "fences", this);
     m_vm.registerFunction<&dispatchResponse>("sol", "respond", this);
     m_vm.registerFunction<&enterSystemAt>("sol", "enter_system", this);
     m_vm.registerFunction<&escortCandidates>("sol", "escort_candidates", this);

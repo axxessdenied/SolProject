@@ -509,29 +509,72 @@ power_draw = 1.0
 # ⚑ The fence carries a hazardous hold of its own, which is not decoration: a
 # station cannot stock what it has no hold for, so a fence that could not hold
 # the goods it fences would be a shopfront with no back room.
+#
+# ⚑⚑⚑⚑ AND SINCE PHASE 37 STAGE A THESE FOUR ARE THE ONLY MODULES IN THE GAME
+# THAT CARRY AN `illicit` HOLD, WHICH IS THE WHOLE BLACK MARKET. `commodities.
+# toml` puts Combat Stims and Stripped Components in a goods class no lawful
+# module warehouses, and a station stocks a good only if it has a hold of that
+# good's class - so the six docks that rolled one of these are the only places
+# in the galaxy either good can physically sit. Nothing gates it; there is
+# simply nowhere else to put it.
+#
+# ⚑⚑⚑ THE SUPPLY CHAIN IS HERE AND NOWHERE ELSE, AND IT HAS TO BE.
+# `shipped_content_makes_and_burns_every_commodity_somewhere` binds every good
+# in the game, so contraband nobody produces would fail the economy's own guard
+# two files away. The ghost dock strips hulls into parts with no history, the
+# clinic cooks stims, and the fence is the demand side for both - which is what
+# a fence IS, the point where a good leaves the modelled economy.
+#
+# ⚑⚑ A RATE LINE HERE MUST COME WITH A HOLD FOR WHAT IT TOUCHES.
+# `every_station_can_hold_what_its_own_modules_make_and_burn` is checked per
+# STATION and these modules roll independently, so a clinic that landed without
+# a fence beside it would be a production line with nowhere to put its output -
+# which does not fail loudly, it tapers to zero and reads as a shortage
+# somewhere else. Every one of these three carries its own illicit hold.
 # ---------------------------------------------------------------------------
 
 [[module]]
 id = "sol.mod_fence"
 name = "Fence"
 family = "shadow"
-stores = ["hazardous:250"]
+# The demand side of both illicit lines: what a fence takes in leaves the
+# modelled economy, which is exactly what `consumes` means here. Five of these
+# land in the shipped galaxy against two ghost docks and (at 0.30) about three
+# clinics, so the consumption rates are the SMALL half of each ratio - see the
+# census in `contraband_tests.cpp`, which is the number these were chosen from.
+consumes = ["sol.stims:0.012", "sol.hot_parts:0.010"]
+stores = ["hazardous:250", "illicit:180"]
 power_draw = 2.0
 
 [[module]]
 id = "sol.mod_black_clinic"
 name = "Unlicensed Clinic"
 family = "shadow"
+produces = ["sol.stims:0.036"]
+stores = ["illicit:90"]
 power_draw = 3.0
 
 [[module]]
 id = "sol.mod_ghost_dock"
 name = "Ghost Dock"
 family = "shadow"
+# A hull comes in and leaves as parts with no history. It is the only illicit
+# producer that is not a chance edit away from not existing: two of these land
+# in the shipped galaxy where the clinic landed NONE at its authored 0.08.
+produces = ["sol.hot_parts:0.028"]
+stores = ["illicit:140"]
 power_draw = 5.0
 
+# NAMED GAP, INHERITED RATHER THAN CREATED (Phase 37 stage A): this module is
+# in NO archetype recipe and therefore lands on zero stations. It has been dead
+# content since Phase 34 stage E authored it. Giving it a row is the one edit
+# that RESAMPLES the galaxy - `composeStations` draws once per recipe entry, so
+# an ADDED row moves every composition after it, where a changed CHANCE is
+# local - so stage A declines to spend that and records it instead. It carries
+# the hold it would need, so the day it is placed it works.
 [[module]]
 id = "sol.mod_data_haven"
 name = "Data Haven"
 family = "shadow"
+stores = ["illicit:120"]
 power_draw = 4.0

@@ -109,9 +109,9 @@ name = "Mining Outpost"
 weight_core = 0.5
 weight_frontier = 1.5
 weight_fringe = 2.0
-produces = ["sol.ore:0.345"]
+produces = ["sol.ore:0.345", "sol.hot_parts:0.0014"]
 produces_from = "field"
-consumes = ["sol.food:0.05", "sol.hull_plate:0.013"]
+consumes = ["sol.food:0.05", "sol.hull_plate:0.013", "sol.stims:0.00096", "sol.hot_parts:0.0008"]
 stock_capacity = 2500
 modules = [
     "sol.mod_ore_extractor",
@@ -143,7 +143,7 @@ weight_frontier = 1.6
 weight_fringe = 1.7
 produces = ["sol.metal:0.20"]
 feedstock = ["sol.ore:0.31"]
-consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013", "sol.stims:0.00072", "sol.hot_parts:0.0006"]
 stock_capacity = 2500
 refine_input = "sol.ore"
 refine_output = "sol.metal"
@@ -273,7 +273,7 @@ weight_frontier = 0.9
 weight_fringe = 1.2
 produces = ["sol.ore_ferrous:0.20"]
 produces_from = "field"
-consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013", "sol.stims:0.00096", "sol.hot_parts:0.0008"]
 stock_capacity = 2500
 modules = [
     "sol.mod_ferrous_extractor",
@@ -417,14 +417,20 @@ modules = [
 # Sited outward, where the hulls actually die: the fringe is where raiding and
 # contested space are, and nobody puts a scrapyard in a core system if they can
 # help it.
+# ⚑⚑ THE CLINIC'S CHANCE WENT 0.08 -> 0.30 IN PHASE 37 STAGE A, AND A CHANCE IS
+# THE EDIT THAT IS SAFE HERE. `composeStations` draws once per recipe entry
+# UNCONDITIONALLY, so changing a chance is local while ADDING A ROW resamples
+# every composition after it. At the authored 0.08 the clinic landed on ZERO of
+# the 11 breaker yards - authored-but-absent content - which left the stims line
+# with no producer and would have failed the economy's own made-and-burnt guard.
 [[station]]
 id = "sol.station_breaker"
 name = "Breaker Yard"
 weight_core = 0.2
 weight_frontier = 0.6
 weight_fringe = 0.7
-produces = ["sol.salvage:0.17"]
-consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
+produces = ["sol.salvage:0.17", "sol.stims:0.0108", "sol.hot_parts:0.0028"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013", "sol.stims:0.0018", "sol.hot_parts:0.0015"]
 stock_capacity = 2500
 modules = [
     "sol.mod_breaker_line",
@@ -440,7 +446,7 @@ modules = [
     "sol.mod_outfitter:0.2",
     "sol.mod_fence:0.15",
     "sol.mod_ghost_dock:0.1",
-    "sol.mod_black_clinic:0.08",
+    "sol.mod_black_clinic:0.30",
 ]
 
 # Core-leaning, because its output is alloy and alloy's customer is the
@@ -456,7 +462,7 @@ weight_frontier = 0.9
 weight_fringe = 0.3
 produces = ["sol.alloy:0.085"]
 feedstock = ["sol.salvage:0.13"]
-consumes = ["sol.food:0.035", "sol.hull_plate:0.013"]
+consumes = ["sol.food:0.035", "sol.hull_plate:0.013", "sol.stims:0.0012", "sol.hot_parts:0.001"]
 stock_capacity = 2500
 refine_input = "sol.salvage"
 refine_output = "sol.alloy"
