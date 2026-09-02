@@ -3785,6 +3785,50 @@ private:
     // units taken. The only writer of `m_playerCargo` in the game that is
     // neither a trade, a take, nor death.
     float seizeContraband();
+    // ⚑⚑⚑⚑ THE OTHER END OF THE AXIS (Phase 37 stage E), AND IT IS ONE
+    // SENTENCE APPLIED IN TWO PLACES: *where a good is contraband to the
+    // jurisdiction you are standing in, moving it moves two reputations in
+    // opposite directions.* This is the stop's half; `recordPlayerTrade` below
+    // is the counter's half, and both call this.
+    //
+    // ⚑⚑⚑ THERE IS NO RATE AND THAT IS THE DESIGN. The gain is exactly the
+    // negation of what the law spent - not a tuned fraction of it - so the
+    // invariant a test can state is an IDENTITY rather than a number somebody
+    // has to keep in step with `contrabandStanding`. decisions/017 asks for
+    // standing "earned by the acts that cost standing with the law"; a rate
+    // would have made it "earned by a fraction of" and left a knob whose only
+    // safe value is 1. Phase 37 stage C's own lesson: a constant that can only
+    // ever hold one value is a comment pretending to be code.
+    //
+    // ⚑⚑ AND THE PRICE IS STRUCTURAL RATHER THAN AUTHORED, WHICH IS THE
+    // PHASE RISK REGISTER'S TEST ("if shadow standing has no price, the
+    // allegiance is a bonus"). Every point credited here is a point some
+    // jurisdiction just took away, because the caller only reaches this line on
+    // the branch where the law charged. A pilot who never smuggles never earns
+    // any, and there is no path to the Null Signature Suite's +25 that does not
+    // run through 25 points of somebody's ill will. ⚑ Silent when no
+    // `kind = "shadow"` def is loaded - a mod, and several trimmed test def
+    // sets - because `shadowFactionIndex` is `kNoFaction` there and
+    // `FactionSim::addStanding` bounds-checks.
+    void creditShadowStanding(float delta);
+    // ⚑⚑⚑ WHOSE GOODWILL A TRADE EARNS, WHICH WAS `systemOwnerFaction`
+    // UNCONDITIONALLY FROM PHASE 8 UNTIL PHASE 37 STAGE E. The back room's rows
+    // go through `playerBuy`/`playerSell` like every other row, so buying
+    // contraband in a Hegemony-held station's back room EARNED HEGEMONY
+    // GOODWILL - the law thanking you for smuggling in its own space. Four
+    // answers now, and the two new ones are the stage:
+    //
+    //   1. their goods, banned here -> +The Ninth Shift, -the law, same size;
+    //   2. contraband here but not the fence's trade (salvage under the
+    //      Ironstar) -> NOTHING. You do not earn credit with a government for
+    //      selling it something it bans, and inventing a punishment for an
+    //      open-counter sale Phase 33 shipped is not this stage's business;
+    //   3. the fence's trade where nobody objects (the Guild's two fences, all
+    //      of clan space) -> NOTHING. A transaction no one with an opinion
+    //      witnessed changes no one's opinion, and crediting the shadow here
+    //      would be the free +25 the risk register warns about;
+    //   4. anything else -> the owner's goodwill, exactly as before.
+    void recordPlayerTrade(std::uint32_t commodity, double credits);
     // Records what an answer came to, says the line, and closes the ruling.
     // One choke point so `m_lastInspection` cannot be written three ways.
     void settleVerdict(InspectionVerdict verdict,

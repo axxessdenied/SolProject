@@ -6440,9 +6440,7 @@ sim::TradeResult SpaceWorld::playerBuy(std::uint32_t commodity, float units)
     const sim::TradeResult result = m_economy.buy(market, commodity, units);
     m_playerCredits -= result.credits;
     m_playerCargo[commodity] += result.units;
-    if (const std::uint32_t owner = systemOwnerFaction(m_currentSystem); owner < m_factionTable.size()) {
-        m_factionSim.recordTrade(owner, result.credits); // commerce goodwill
-    }
+    recordPlayerTrade(commodity, result.credits);
     return result;
 }
 
@@ -6456,9 +6454,7 @@ sim::TradeResult SpaceWorld::playerSell(std::uint32_t commodity, float units)
     const sim::TradeResult result = m_economy.sell(market, commodity, units);
     m_playerCredits += result.credits;
     m_playerCargo[commodity] -= result.units;
-    if (const std::uint32_t owner = systemOwnerFaction(m_currentSystem); owner < m_factionTable.size()) {
-        m_factionSim.recordTrade(owner, result.credits);
-    }
+    recordPlayerTrade(commodity, result.credits);
     return result;
 }
 
@@ -9246,6 +9242,50 @@ float SpaceWorld::seizeContraband()
     return taken;
 }
 
+void SpaceWorld::creditShadowStanding(float delta)
+{
+    if (delta <= 0.0f) {
+        return;
+    }
+    m_factionSim.addStanding(shadowFactionIndex(), delta);
+}
+
+void SpaceWorld::recordPlayerTrade(std::uint32_t commodity, double credits)
+{
+    if (credits <= 0.0) {
+        return;
+    }
+    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    // ⚑⚑ THE KEY IS THE JURISDICTION'S OPINION, NOT THE GOODS CLASS, and the
+    // two are deliberately different questions. `GoodsClass::Illicit` says which
+    // WAREHOUSE will hold a crate and is the same answer in all 81 systems;
+    // `commodityLegality` reads whoever holds this system RIGHT NOW. A crate of
+    // stims is the fence's trade everywhere and a crime in 25 systems, and it
+    // takes both to be the act this axis is about.
+    const bool bannedHere = commodityLegality(m_currentSystem, commodity) == assets::Legality::Contraband;
+    const bool theirTrade = commodityClass(commodity) == assets::GoodsClass::Illicit;
+    if (bannedHere && theirTrade) {
+        m_factionSim.recordTrade(shadowFactionIndex(), credits);
+        if (owner < m_factionTable.size()) {
+            // ⚑ The same magnitude `recordTrade` would have added, negated. It
+            // is spelled out rather than routed through `recordTrade` because
+            // that function floors at a positive credit count by contract, and
+            // giving it a negative would be reading it backwards.
+            m_factionSim.addStanding(owner,
+                                     -static_cast<float>(credits) * m_factionSim.params().commerceRate);
+        }
+        return;
+    }
+    // Cases 2 and 3 in the header: somebody with an opinion was involved, or
+    // nobody was. Either way no goodwill is owed.
+    if (bannedHere || theirTrade) {
+        return;
+    }
+    if (owner < m_factionTable.size()) {
+        m_factionSim.recordTrade(owner, credits); // commerce goodwill
+    }
+}
+
 void SpaceWorld::queueVerdict(InspectionOutcome outcome)
 {
     // ⚑⚑ ONLY THE TWO OUTCOMES SOMEBODY READ A HOLD FOR, AND THAT IS THE
@@ -9388,6 +9428,23 @@ void SpaceWorld::inspectionSeize(double bounty, const std::string& message)
     // order of the two turned out not to matter.
     m_factionSim.addStanding(m_verdictFaction, standing);
     m_factionSim.addBounty(m_verdictFaction, posted);
+    // ⚑⚑⚑⚑ AND THE OTHER END OF IT (Phase 37 stage E). The same number,
+    // negated, to the people whose crate this was - so the act that made you a
+    // criminal here is the act that makes you known there.
+    //
+    // ⚑⚑⚑ GUARDED ON WHAT WAS ABOARD RATHER THAN ON THE VERDICT, and the
+    // `Ran` arm is why. `applyDefaultVerdict` answers a runner with this
+    // function whatever the hold held, so keying off the call site would have
+    // paid a pilot who fled an empty-handed stop - free standing with the one
+    // faction whose standing is supposed to cost something, and reachable
+    // without ever touching contraband. `m_pendingVerdict.found` was taken at
+    // queue time, before the crates moved, so it still knows what was there
+    // even on the arm where the patrol never got to look. ⚑ The fiction is
+    // exact: the Ninth Shift knows what you were carrying because they sold it
+    // to you.
+    if (m_pendingVerdict.found.worst == assets::Legality::Contraband) {
+        creditShadowStanding(-standing);
+    }
     settleVerdict(present ? InspectionVerdict::Seizure : InspectionVerdict::Fled,
                   0.0,
                   units,

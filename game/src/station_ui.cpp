@@ -177,12 +177,27 @@ void fillStationOutfitting(const SpaceWorld& world,
         // writes what it would take, because the fence's whole stock today is
         // one thing nobody can buy and an empty shelf says the feature is
         // broken rather than that the door is locked.
+        //
+        // ⚑⚑⚑⚑ AND IT NAMES WHERE YOU ARE, NOT ONLY WHERE THE DOOR IS
+        // (Phase 37 stage E). Stage C wrote "Needs 25.0 with The Ninth Shift"
+        // against a number NOTHING IN THE GAME COULD MOVE, so one figure was the
+        // whole truth. This stage is the one that moves it - and a player who
+        // has just paid twelve points of Solar Navy goodwill for twelve points
+        // here would have come back to a row reading exactly what it read
+        // before. *A threshold with no progress beside it is indistinguishable
+        // from a threshold nobody is approaching*, which is the same failure as
+        // the empty shelf two paragraphs up, one stage later. ⚑ It fits the
+        // same cell: 32 characters against the 40 `station_fence_tests.cpp`
+        // holds this line to, and the faction name it also requires is still in
+        // it.
         if (!world.stationSellsAtFence(def.gate)) {
             const std::uint32_t fenceFaction = world.dockedFenceFaction();
             const char* who =
                 fenceFaction < world.factions().size() ? world.factions()[fenceFaction].name.c_str() : "them";
-            row.lockedReason =
-                store(text, "Needs " + formatNumber(def.gate.minRep) + " with " + std::string(who));
+            const float have = world.factionSim().standing(fenceFaction);
+            row.lockedReason = store(text,
+                                     formatNumber(have) + " / " + formatNumber(def.gate.minRep) + " with " +
+                                         std::string(who));
             row.targetMount = "";
         }
         blackMarketRows.push_back(row);

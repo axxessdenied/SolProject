@@ -190,6 +190,30 @@ SOL_TEST(an_illicit_good_can_be_warehoused_only_where_a_shadow_module_is)
 // ⚑ Without this, the obvious next edit is "move salvage to illicit", which
 // would silently delete the phase's own best demonstration that jurisdiction is
 // real.
+//
+// ⚑⚑⚑⚑ STAGE E REVERSED HALF OF THIS, AND THE REVERSAL IS THE POINT RATHER
+// THAN A CONCESSION. As stage A wrote it, the second assertion was "no faction's
+// table names an illicit good" - and that is a STRONGER claim than the rule it
+// cites. It made the two vocabularies disagree by keeping one of them EMPTY:
+// stims and stripped components were contraband in 0 of 81 systems, so the same
+// crate meant `legal` in every jurisdiction in the galaxy. That is the exact
+// sentence decisions/017 forbids - "the same crate is medicine, a licensed
+// pharmaceutical, or ten years, depending on whose space you are in" - and the
+// phase's own exit ("carry it into Hegemony space and lose it to the stop")
+// could not happen, with this suite green.
+//
+// ⚑⚑⚑ SO THE ASSERTION NOW BINDS THE RULE IN BOTH DIRECTIONS INSTEAD OF ONE.
+// The class is not the law iff the two vocabularies CROSS - neither is a subset
+// of the other:
+//   1. a contraband good that is NOT illicit  -> sol.salvage, Hazardous, and
+//      warehoused in the open at every breaker yard;
+//   2. an illicit good that is NOT contraband somewhere a real jurisdiction
+//      holds -> stims at the Guild's two fences and in all of clan space.
+// Direction 2 is evidence the old form could not produce, because a set nobody
+// ever names is trivially not the law. ⚑ This is the third time in this arc
+// that a guard has been read for its REASON rather than obeyed as written
+// (Phase 37 stage A lesson 6, Phase 34 stage B); the reason survived and the
+// assertion did not.
 SOL_TEST(the_illicit_class_is_a_warehouse_fact_and_not_a_law)
 {
     DefDatabase defs;
@@ -209,15 +233,50 @@ SOL_TEST(the_illicit_class_is_a_warehouse_fact_and_not_a_law)
     }
     SOL_CHECK(bansSalvage);
 
-    // And no faction's table names an illicit good, which is what makes stage
-    // C's fence a market rather than a second legality mechanism.
+    // Direction 1: salvage is banned by somebody and is not illicit, so a table
+    // is not reading the class.
+    SOL_CHECK(salvage->goodsClass != sol::assets::GoodsClass::Illicit);
+
+    // Direction 2: every illicit good must be LEGAL under at least one faction
+    // that keeps a table at all, or the class has quietly become the law. The
+    // Freight Guild and the Frontier Compact declare nothing and hold 25 of the
+    // galaxy's 81 systems between them; the pirate templates declare nothing
+    // either, which is why clan space is where a smuggler breathes out.
+    std::size_t illicitGoods = 0;
+    for (const sol::assets::CommodityDef& good : defs.commodities()) {
+        if (good.goodsClass != sol::assets::GoodsClass::Illicit) {
+            continue;
+        }
+        ++illicitGoods;
+        std::size_t bans = 0;
+        std::size_t permits = 0;
+        for (const sol::assets::FactionDef& faction : defs.factions()) {
+            bool banned = false;
+            for (const std::string& id : faction.contraband) {
+                banned = banned || id == good.id;
+            }
+            (banned ? bans : permits) += 1;
+        }
+        std::printf("  %-16s banned by %zu faction(s), legal to %zu\n", good.id.c_str(), bans, permits);
+        // Banned by SOMEBODY - or the phase's exit cannot happen - and legal to
+        // somebody else, or the class and the law have coincided.
+        SOL_CHECK(bans > 0);
+        SOL_CHECK(permits > 0);
+    }
+    SOL_REQUIRE(illicitGoods > 0);
+
+    // And the crossing itself, stated once: the two vocabularies overlap and
+    // neither contains the other.
+    bool bannedGoodThatIsNotIllicit = false;
     for (const sol::assets::FactionDef& faction : defs.factions()) {
         for (const std::string& id : faction.contraband) {
             const sol::assets::CommodityDef* good = defs.findCommodity(id.c_str());
             SOL_REQUIRE(good != nullptr);
-            SOL_CHECK(good->goodsClass != sol::assets::GoodsClass::Illicit);
+            bannedGoodThatIsNotIllicit =
+                bannedGoodThatIsNotIllicit || good->goodsClass != sol::assets::GoodsClass::Illicit;
         }
     }
+    SOL_CHECK(bannedGoodThatIsNotIllicit);
 }
 
 // ⚑⚑ A RATE LINE WITHOUT A HOLD IS A PRODUCTION LINE WITH NOWHERE TO PUT ITS

@@ -116,6 +116,16 @@ ships_trader = ["sol.freighter", "sol.shuttle"]
 # Law: a hull that has been cut up is evidence before it is cargo, and the Navy
 # wants to know whose it was. Licensed, not forbidden - the fleet has no quarrel
 # with the breaking trade, only with not knowing.
+#
+# ⚑⚑ AND THE TWO THE BLACK MARKET SELLS, WHICH PHASE 37 STAGE E ADDED BECAUSE
+# NOBODY EVER HAD. Stage A authored stims and stripped components as
+# `GoodsClass::Illicit` - a class about which WAREHOUSE will hold them, and
+# nothing more - and no table anywhere named them, so a hold full of the black
+# market's own stock was judged CLEAN in all 81 systems and the phase's own exit
+# sentence could not happen. The Navy polices lanes: a pilot flying on combat
+# stims is the one who does not stop when told to, and a component with its
+# serial ground off is a hull nobody can give back.
+contraband = ["sol.stims", "sol.hot_parts"]
 restricted = ["sol.salvage"]
 
 [[faction]]
@@ -161,7 +171,12 @@ station_bias = ["sol.station_factory:2.6", "sol.station_refinery:2.2",
 # Salvage is what a wreck pays out (Phase 33 stage C), so a pilot who lives by
 # killing things earns a hold full of the one good the most heavily policed
 # space in the galaxy will not have. That is a route decision, not a rule.
-contraband = ["sol.salvage"]
+#
+# ⚑ Stage E puts the black market's own two goods beside it, and for the
+# Ironstar they are the SAME offence rather than a second one: a stripped
+# component is its salvage one step further along, sold by somebody who has
+# removed the part of it that said whose it was.
+contraband = ["sol.salvage", "sol.stims", "sol.hot_parts"]
 restricted = ["sol.hull_plate"]
 
 [[faction]]
@@ -199,6 +214,11 @@ station_bias = ["sol.station_factory:2.8", "sol.station_mine:0.35",
 # Law: an enclave that trades knowledge for distance would rather know exactly
 # what mass is arriving. Salvage is uncatalogued mass by definition, so it comes
 # in under permit or not at all.
+#
+# ⚑ Its first `contraband` row, and it is the same sentence taken one step
+# further: a chemistry the enclave did not formulate and a component whose
+# provenance it cannot read are not mass it can catalogue at any price.
+contraband = ["sol.stims", "sol.hot_parts"]
 restricted = ["sol.salvage"]
 
 [[faction]]
