@@ -588,8 +588,6 @@ sim::ShipTuning toShipTuning(const assets::ShipFlightTuning& flight)
 void SpaceWorld::spawn(std::uint64_t universeSeed)
 {
     m_universeSeed = universeSeed;
-    // Placeholder star so rendering before generateUniverse stays sane.
-    m_star = {.name = "(void)", .position = {}, .radius = 6.96e8};
 
     // The first bubble, and the reason `playerRegistry()` may assume there is
     // always one: the player is created inside a system's frame and moves
@@ -2686,7 +2684,7 @@ void SpaceWorld::rebuildDynamicTargets()
 
 std::uint32_t SpaceWorld::targetSignalIndex() const
 {
-    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    const std::size_t total = m_targets.size() + playerShips().size();
     if (total == 0) {
         return kNoIndex;
     }
@@ -2700,7 +2698,7 @@ std::uint32_t SpaceWorld::targetSignalIndex() const
 
 std::uint32_t SpaceWorld::targetBodyIndex() const
 {
-    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    const std::size_t total = m_targets.size() + playerShips().size();
     if (total == 0) {
         return kNoIndex;
     }
@@ -2708,7 +2706,7 @@ std::uint32_t SpaceWorld::targetBodyIndex() const
     if (index == m_starTargetIndex) {
         return 0; // body 0 is the star, matching SurveySim's numbering
     }
-    if (index >= m_planetTargetBase && index < m_planetTargetBase + m_planets.size()) {
+    if (index >= m_planetTargetBase && index < m_planetTargetBase + planets().size()) {
         return static_cast<std::uint32_t>(index - m_planetTargetBase + 1);
     }
     return kNoIndex;
@@ -2817,7 +2815,7 @@ void SpaceWorld::tickScanning(double dt)
         stopScan();
         return;
     }
-    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    const std::size_t total = m_targets.size() + playerShips().size();
     if (total == 0) {
         stopScan();
         return;
@@ -2930,7 +2928,7 @@ bool SpaceWorld::scanCurrentTarget()
     // Phase 8z: the same lever finishes a structure scan, through the same
     // choke point the held scan uses. A console shortcut that identified a
     // station by its own route would be a second implementation (8u).
-    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    const std::size_t total = m_targets.size() + playerShips().size();
     if (total > 0 && identifyStructure(m_targetIndex % total)) {
         return true;
     }
@@ -3171,6 +3169,47 @@ void SpaceWorld::ensureWorldPools(ecs::Registry& registry)
     (void)registry.storage<MinerPuppet>();
 }
 
+bool SpaceWorld::bubbleReportAt(std::size_t slot, BubbleReport& out) const
+{
+    if (slot >= m_bubbles.size()) {
+        return false;
+    }
+    const SystemBubble& bubble = *m_bubbles[slot];
+    const ecs::Registry& registry = bubble.registry;
+    out = BubbleReport{};
+    out.system = bubble.system;
+    out.entities = registry.aliveCount();
+    out.ships = registry.storage<ShipPilot>().size();
+    out.projectiles = registry.storage<Projectile>().size();
+    out.wrecks = registry.storage<WreckMarker>().size();
+    out.player = registry.storage<PlayerShip>().size() == 1;
+    out.starRadius = bubble.star.radius;
+    out.planets = bubble.planets.size();
+    const ecs::Pool<ShipDefense>& defenses = registry.storage<ShipDefense>();
+    const ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
+    const ecs::Pool<Transform>& transforms = registry.storage<Transform>();
+    bool any = false;
+    std::size_t placed = 0;
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const std::uint32_t entityIndex = pilots.entityIndices()[i];
+        if (const Transform* transform = transforms.tryGet(entityIndex)) {
+            out.shipCentroid = out.shipCentroid + transform->position;
+            ++placed;
+        }
+        const ShipDefense* defense = defenses.tryGet(entityIndex);
+        if (defense == nullptr || defense->tuning.hull <= 0.0f) {
+            continue;
+        }
+        const float fraction = defense->state.hull / defense->tuning.hull;
+        out.worstHull = any ? std::min(out.worstHull, fraction) : fraction;
+        any = true;
+    }
+    if (placed > 0) {
+        out.shipCentroid = out.shipCentroid * (1.0 / static_cast<double>(placed));
+    }
+    return true;
+}
+
 ecs::Registry* SpaceWorld::registryFor(std::uint32_t system)
 {
     for (const std::unique_ptr<SystemBubble>& bubble : m_bubbles) {
@@ -3191,16 +3230,76 @@ const ecs::Registry* SpaceWorld::registryFor(std::uint32_t system) const
     return nullptr;
 }
 
-ecs::Registry& SpaceWorld::openBubble(std::uint32_t system)
+void SpaceWorld::furnishBubble(SystemBubble& bubble)
 {
-    m_bubbles.push_back(std::make_unique<SystemBubble>());
-    SystemBubble& bubble = *m_bubbles.back();
-    bubble.system = system;
     // Before anything reads it, and that ordering is the whole reason this
     // function exists rather than a bare push_back: a bubble whose pools are
     // created lazily by the first EMPLACE asserts on the first const READ, and
     // a system with no NPC in it never emplaces a ShipPilot.
     ensureWorldPools(bubble.registry);
+    // ⚑⚑ A STREAM PER SYSTEM (Phase 38 stage B). The seed is the one the
+    // generator already uses for a system's own draws at `:6090` and `:6206`,
+    // so "this system's randomness" means one thing in this file. The stream a
+    // bubble draws from must not depend on how many OTHER bubbles are
+    // instantiated - that is Phase 37 stage B's finding, and a shared stream is
+    // exactly how a sixteenth faction displaced every trader loss after it.
+    bubble.chunkRng = core::Rng(m_universeSeed ^ (static_cast<std::uint64_t>(bubble.system) << 32), 909);
+    // The statics of its own system, because avoidance and the collision build
+    // both push them and both run per bubble now. A bubble whose star came
+    // from the player's system is a system whose ships dodge nothing and fly
+    // into a sun that is not drawn.
+    bubble.planets.clear();
+    if (bubble.system >= m_galaxy.systems.size()) {
+        // `spawn()` opens the first bubble before a galaxy exists. The
+        // placeholder star it used to assign to `m_star` directly lives here
+        // now, for the same reason it existed: rendering before
+        // generateUniverse has to stay sane.
+        bubble.star = {.name = "(void)", .position = {}, .radius = 6.96e8};
+        return;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[bubble.system];
+    bubble.star = {.name = spec.name, .position = {}, .radius = spec.starRadius};
+    for (const sim::PlanetSpec& planet : spec.planets) {
+        bubble.planets.push_back({.name = planet.name, .position = planet.position, .radius = planet.radius});
+    }
+}
+
+void SpaceWorld::fillSystemSky(SystemBubble& bubble)
+{
+    const sim::SystemSpec& spec = m_galaxy.systems[bubble.system];
+    instantiateSystemEntities(bubble.registry, spec);
+    // Rocks and wrecks (Phase 8f): depletion decides which rocks are still
+    // there to spawn, and both the field list and the depletion are a pure
+    // function of the seed and the system - so this is the same sky whether
+    // the player is standing in it or not.
+    instantiateMiningEntities(bubble);
+    // Ambient faction presence (Phase 8b): owner wings + raid incursions.
+    spawnAmbientPilots(bubble, spec);
+}
+
+bool SpaceWorld::instantiateSystem(std::uint32_t system)
+{
+    if (system >= m_galaxy.systems.size() || m_bubbles.size() >= kMaxBubbles) {
+        return false;
+    }
+    // Already open: hand it back as it stands. Building the sky a second time
+    // on top of the first is exactly the failure stage A shipped and caught
+    // (`re_entering_the_system_you_are_in_rebuilds_its_sky_rather_than_
+    // doubling_it`), and this is the second door into that room.
+    if (registryFor(system) != nullptr) {
+        return true;
+    }
+    (void)openBubble(system);
+    fillSystemSky(*m_bubbles.back());
+    return true;
+}
+
+ecs::Registry& SpaceWorld::openBubble(std::uint32_t system)
+{
+    m_bubbles.push_back(std::make_unique<SystemBubble>());
+    SystemBubble& bubble = *m_bubbles.back();
+    bubble.system = system;
+    furnishBubble(bubble);
     return bubble.registry;
 }
 
@@ -3249,8 +3348,9 @@ void SpaceWorld::initializeMining()
     m_collectName.clear();
 }
 
-void SpaceWorld::instantiateMiningEntities()
+void SpaceWorld::instantiateMiningEntities(SystemBubble& bubble)
 {
+    ecs::Registry& registry = bubble.registry;
     // Phase 19: what a rock and its chunks are drawn as comes from the ORE's
     // def row, so ice and raw ore need not be the same grey lump. Resolved
     // once into a table rather than per rock, for the same reason the station
@@ -3275,35 +3375,43 @@ void SpaceWorld::instantiateMiningEntities()
     }
     m_chunkModels = chunkModels; // the chunk spawn happens later, on a cut
 
+    // ⚑ The fields of THIS system rather than `m_fields`, which is the
+    // player's side data (Phase 38 stage B). Both are a pure function of the
+    // seed, so asking again costs a generator call and buys the right answer
+    // for a bubble the player is not standing in.
+    std::vector<sim::AsteroidFieldSpec> fields;
+    m_mining.fieldsFor(m_galaxy, bubble.system, fields);
     std::vector<sim::RockSpec> rocks;
-    for (std::uint32_t field = 0; field < m_fields.size(); ++field) {
-        m_mining.rocksFor(m_galaxy, m_currentSystem, field, rocks);
+    for (std::uint32_t field = 0; field < fields.size(); ++field) {
+        m_mining.rocksFor(m_galaxy, bubble.system, field, rocks);
         for (std::uint32_t index = 0; index < rocks.size(); ++index) {
             const sim::RockSpec& rock = rocks[index];
-            if (m_mining.unitsLeft(m_currentSystem, field, index, rock.yieldUnits) <= 0.0f) {
+            if (m_mining.unitsLeft(bubble.system, field, index, rock.yieldUnits) <= 0.0f) {
                 continue; // cut to nothing on an earlier visit; it broke up
             }
-            const ecs::Entity entity = playerRegistry().create();
-            playerRegistry().emplace<Transform>(
+            const ecs::Entity entity = registry.create();
+            registry.emplace<Transform>(
                 entity, Transform{.position = rock.position, .previousPosition = rock.position});
             const float scale = static_cast<float>(rock.radius);
-            playerRegistry().emplace<RenderShape>(entity,
-                                                  RenderShape{.scale = {scale, scale, scale},
-                                                              .model = rock.commodity < rockModels.size()
-                                                                           ? rockModels[rock.commodity]
-                                                                           : roleModel(kRoleRock)});
-            playerRegistry().emplace<MineableRock>(entity,
-                                                   MineableRock{.field = field,
-                                                                .index = index,
-                                                                .commodity = rock.commodity,
-                                                                .totalUnits = rock.yieldUnits,
-                                                                .tumbleAxis = rock.tumbleAxis,
-                                                                .tumbleRate = rock.tumbleRate});
+            registry.emplace<RenderShape>(entity,
+                                          RenderShape{.scale = {scale, scale, scale},
+                                                      .model = rock.commodity < rockModels.size()
+                                                                   ? rockModels[rock.commodity]
+                                                                   : roleModel(kRoleRock)});
+            registry.emplace<MineableRock>(entity,
+                                           MineableRock{.field = field,
+                                                        .index = index,
+                                                        .commodity = rock.commodity,
+                                                        .totalUnits = rock.yieldUnits,
+                                                        .tumbleAxis = rock.tumbleAxis,
+                                                        .tumbleRate = rock.tumbleRate});
         }
     }
 }
 
-void SpaceWorld::spawnCutChunk(const core::DVec3& origin,
+void SpaceWorld::spawnCutChunk(SystemBubble& bubble,
+                               const core::DVec3& cutter,
+                               const core::DVec3& origin,
                                double surface,
                                std::uint32_t commodity,
                                float units)
@@ -3311,77 +3419,89 @@ void SpaceWorld::spawnCutChunk(const core::DVec3& origin,
     // Ore breaks off *toward the beam* — with a spread, but not at random.
     // Scattering it evenly means most of what you cut simply leaves, and the
     // loop becomes chasing debris rather than mining.
-    const core::DVec3 toShip = shipState().position - origin;
+    const core::DVec3 toShip = cutter - origin;
     const double distance = length(toShip);
     core::DVec3 direction =
-        distance > 1.0 ? toShip * (1.0 / distance) : sim::randomPlayfieldDirection(m_chunkRng);
-    direction = direction + sim::randomPlayfieldDirection(m_chunkRng) * kChunkSpread;
+        distance > 1.0 ? toShip * (1.0 / distance) : sim::randomPlayfieldDirection(bubble.chunkRng);
+    direction = direction + sim::randomPlayfieldDirection(bubble.chunkRng) * kChunkSpread;
     const double spread = length(direction);
     direction = spread > 1.0e-6 ? direction * (1.0 / spread) : core::DVec3{0.0, 0.0, 1.0};
-    spawnOreChunk(origin + direction * surface,
-                  direction * (kChunkDriftSpeed * (0.6 + 0.8 * m_chunkRng.nextDouble01())),
+    spawnOreChunk(bubble,
+                  origin + direction * surface,
+                  direction * (kChunkDriftSpeed * (0.6 + 0.8 * bubble.chunkRng.nextDouble01())),
                   commodity,
                   units);
 }
 
-void SpaceWorld::spawnOreChunk(const core::DVec3& position,
+void SpaceWorld::spawnOreChunk(SystemBubble& bubble,
+                               const core::DVec3& position,
                                const core::DVec3& velocity,
                                std::uint32_t commodity,
                                float units)
 {
-    const ecs::Entity entity = playerRegistry().create();
-    playerRegistry().emplace<Transform>(entity,
-                                        Transform{.position = position, .previousPosition = position});
-    playerRegistry().emplace<RenderShape>(entity,
-                                          RenderShape{.scale = {6.0f, 6.0f, 6.0f},
-                                                      .model = commodity < m_chunkModels.size()
-                                                                   ? m_chunkModels[commodity]
-                                                                   : roleModel(kRoleOreChunk)});
-    playerRegistry().emplace<OreChunk>(
+    ecs::Registry& registry = bubble.registry;
+    const ecs::Entity entity = registry.create();
+    registry.emplace<Transform>(entity, Transform{.position = position, .previousPosition = position});
+    registry.emplace<RenderShape>(entity,
+                                  RenderShape{.scale = {6.0f, 6.0f, 6.0f},
+                                              .model = commodity < m_chunkModels.size()
+                                                           ? m_chunkModels[commodity]
+                                                           : roleModel(kRoleOreChunk)});
+    registry.emplace<OreChunk>(
         entity,
         OreChunk{
             .velocity = velocity, .lifetime = kChunkLifetimeSeconds, .commodity = commodity, .units = units});
 }
 
-float SpaceWorld::cutRock(std::uint32_t entityIndex, float units)
+float SpaceWorld::cutRock(SystemBubble& bubble,
+                          const core::DVec3& cutter,
+                          std::uint32_t entityIndex,
+                          float units)
 {
-    MineableRock* rock = playerRegistry().storage<MineableRock>().tryGet(entityIndex);
+    ecs::Registry& registry = bubble.registry;
+    MineableRock* rock = registry.storage<MineableRock>().tryGet(entityIndex);
     if (rock == nullptr) {
         return 0.0f;
     }
-    const float taken = m_mining.mineRock(m_currentSystem, rock->field, rock->index, rock->totalUnits, units);
+    // ⚑ `m_currentSystem` until stage B. Depletion is recorded against a
+    // system, so cutting a rock in a bubble the player is not standing in would
+    // have taken the ore out of the player's OWN field.
+    const float taken = m_mining.mineRock(bubble.system, rock->field, rock->index, rock->totalUnits, units);
     if (taken <= 0.0f) {
         return 0.0f;
     }
     // What comes off drifts: the beam breaks the rock, the ship still has to
     // go and get it. Chunks are capped so a fat bite arrives as several.
-    const core::DVec3 origin = playerRegistry().storage<Transform>().get(entityIndex).position;
-    const double surface =
-        static_cast<double>(playerRegistry().storage<RenderShape>().get(entityIndex).scale.x);
+    const core::DVec3 origin = registry.storage<Transform>().get(entityIndex).position;
+    const double surface = static_cast<double>(registry.storage<RenderShape>().get(entityIndex).scale.x);
     float remaining = taken;
     while (remaining > 0.0f) {
         const float chunk = std::min(remaining, kChunkUnitCeiling);
         remaining -= chunk;
-        spawnCutChunk(origin, surface, rock->commodity, chunk);
+        spawnCutChunk(bubble, cutter, origin, surface, rock->commodity, chunk);
     }
     return taken;
 }
 
-float SpaceWorld::cutWreck(std::uint32_t entityIndex, float units)
+float SpaceWorld::cutWreck(SystemBubble& bubble,
+                           const core::DVec3& cutter,
+                           std::uint32_t entityIndex,
+                           float units)
 {
-    const WreckMarker* marker = playerRegistry().storage<WreckMarker>().tryGet(entityIndex);
+    const ecs::Registry& registry = bubble.registry;
+    const WreckMarker* marker = registry.storage<WreckMarker>().tryGet(entityIndex);
     if (marker == nullptr) {
         return 0.0f;
     }
     std::uint32_t commodity = 0;
     const float taken = m_mining.cutWreckCargo(marker->id, units, &commodity);
-    const core::DVec3 origin = playerRegistry().storage<Transform>().get(entityIndex).position;
+    const core::DVec3 origin = registry.storage<Transform>().get(entityIndex).position;
     if (taken > 0.0f) {
         float remaining = taken;
         while (remaining > 0.0f) {
             const float chunk = std::min(remaining, kChunkUnitCeiling);
             remaining -= chunk;
-            spawnCutChunk(origin, 25.0, commodity, chunk);
+            spawnCutChunk(bubble, cutter, origin, 25.0, commodity, chunk);
         }
         return taken;
     }
@@ -3496,11 +3616,11 @@ bool SpaceWorld::mineAhead()
     }
     // Dev path: one press empties what the beam would take a while to grind.
     if (isWreck) {
-        (void)cutWreck(entityIndex, 1.0e6f);
+        (void)cutWreck(playerBubble(), shipState().position, entityIndex, 1.0e6f);
         return true;
     }
     const MineableRock rock = playerRegistry().storage<MineableRock>().get(entityIndex);
-    if (cutRock(entityIndex, 1.0e6f) <= 0.0f) {
+    if (cutRock(playerBubble(), shipState().position, entityIndex, 1.0e6f) <= 0.0f) {
         return false;
     }
     playerRegistry().destroy(playerRegistry().entityFromIndex(entityIndex));
@@ -4051,16 +4171,21 @@ float SpaceWorld::collectRefined()
     return taken;
 }
 
-void SpaceWorld::tickMining(double dt)
+void SpaceWorld::tickSystemMining(SystemBubble& bubble, double dt)
 {
-    // Coarse layer first: wrecks age and refinery orders cook whether the
-    // player is watching them or three systems away (decisions/005).
-    m_mining.tick(dt);
+    // ⚑⚑ THE COARSE HALF LEFT THIS FUNCTION AT STAGE B. `m_mining.tick(dt)`
+    // opened it until then - wreck decay and refinery orders, which happen
+    // whether the player is watching them or three systems away
+    // (decisions/005). That is galaxy-wide work and it now runs ONCE, above the
+    // per-system loop in `tick`; leaving it here would have aged every wreck in
+    // the game once per instantiated system.
+    ecs::Registry& registry = bubble.registry;
+    const bool playersBubble = &bubble == m_bubbles.front().get();
 
     // Rocks tumble. It is the cheapest thing that makes a field read as a
     // place rather than a diagram.
-    ecs::Pool<MineableRock>& rocks = playerRegistry().storage<MineableRock>();
-    ecs::Pool<Transform>& transforms = playerRegistry().storage<Transform>();
+    ecs::Pool<MineableRock>& rocks = registry.storage<MineableRock>();
+    ecs::Pool<Transform>& transforms = registry.storage<Transform>();
     for (std::size_t i = 0; i < rocks.size(); ++i) {
         const MineableRock& rock = rocks.values()[i];
         Transform& transform = transforms.get(rocks.entityIndices()[i]);
@@ -4071,10 +4196,18 @@ void SpaceWorld::tickMining(double dt)
     }
 
     // Chunks drift, are gathered, or are lost.
+    //
+    // ⚑⚑ THE DRIFT IS THE SYSTEM'S AND THE GATHERING IS THE PLAYER'S, AND THAT
+    // SEAM IS NEW (Phase 38 stage B). `shipPosition` is a point in the PLAYER's
+    // frame; two systems both place their contents around a barycentre origin,
+    // so a chunk drifting in a bubble the player is not in would have measured
+    // itself against a collector a light-year away and read as being in range.
+    // The one guard is `playersBubble`, and it is why the range test below is
+    // reachable at all.
     const core::DVec3 shipPosition = shipState().position;
     const double collectRange = static_cast<double>(m_collectorRange);
     float space = m_playerCargoCapacity - playerCargoTotal();
-    ecs::Pool<OreChunk>& chunks = playerRegistry().storage<OreChunk>();
+    ecs::Pool<OreChunk>& chunks = registry.storage<OreChunk>();
     std::vector<std::uint32_t> spent;
     for (std::size_t i = 0; i < chunks.size(); ++i) {
         const std::uint32_t entityIndex = chunks.entityIndices()[i];
@@ -4087,7 +4220,7 @@ void SpaceWorld::tickMining(double dt)
             spent.push_back(entityIndex);
             continue;
         }
-        if (isDocked() || length(transform.position - shipPosition) > collectRange) {
+        if (!playersBubble || isDocked() || length(transform.position - shipPosition) > collectRange) {
             continue;
         }
         // A full hold cannot gather: the chunks keep drifting until they are
@@ -4111,14 +4244,14 @@ void SpaceWorld::tickMining(double dt)
         }
     }
     for (const std::uint32_t entityIndex : spent) {
-        playerRegistry().destroy(playerRegistry().entityFromIndex(entityIndex));
+        registry.destroy(registry.entityFromIndex(entityIndex));
     }
 
     // Reconcile wreck entities with the sim: newly killed ships get a hull to
     // cut, decayed and emptied ones stop being there. Done here rather than
     // in handleShipDestroyed so no pool changes shape mid-iteration.
     bool wrecksChanged = false;
-    ecs::Pool<WreckMarker>& markers = playerRegistry().storage<WreckMarker>();
+    ecs::Pool<WreckMarker>& markers = registry.storage<WreckMarker>();
     std::vector<std::uint32_t> goneEntities;
     std::vector<std::uint32_t> present;
     for (std::size_t i = 0; i < markers.size(); ++i) {
@@ -4131,18 +4264,23 @@ void SpaceWorld::tickMining(double dt)
         }
     }
     for (const std::uint32_t entityIndex : goneEntities) {
-        playerRegistry().destroy(playerRegistry().entityFromIndex(entityIndex));
+        registry.destroy(registry.entityFromIndex(entityIndex));
         wrecksChanged = true;
     }
     std::vector<std::uint32_t> here;
-    m_mining.wrecksIn(m_currentSystem, here);
+    // ⚑ `m_currentSystem` until stage B, which is the player's system rather
+    // than this bubble's. A `WreckRecord` has carried its own system since
+    // Phase 8f, so the wrong one here would have materialised the player's
+    // wrecks in every other bubble - at their own coordinates, in a frame they
+    // do not belong to.
+    m_mining.wrecksIn(bubble.system, here);
     for (const std::uint32_t id : here) {
         if (std::find(present.begin(), present.end(), id) != present.end()) {
             continue;
         }
         const sim::WreckRecord* wreck = m_mining.wreck(id);
-        const ecs::Entity entity = playerRegistry().create();
-        playerRegistry().emplace<Transform>(
+        const ecs::Entity entity = registry.create();
+        registry.emplace<Transform>(
             entity, Transform{.position = wreck->position, .previousPosition = wreck->position});
         // ⚑ Phase 19 stage E: a wreck is drawn as THE SHIP THAT DIED, at that
         // hull's own scale, because `WreckRecord::defId` has carried "the
@@ -4168,22 +4306,14 @@ void SpaceWorld::tickMining(double dt)
                 wreckScale = victim->scale * kWreckOversize;
             }
         }
-        playerRegistry().emplace<RenderShape>(
+        registry.emplace<RenderShape>(
             entity, RenderShape{.scale = {wreckScale, wreckScale, wreckScale}, .model = wreckModel});
-        playerRegistry().emplace<WreckMarker>(entity, WreckMarker{.id = id});
+        registry.emplace<WreckMarker>(entity, WreckMarker{.id = id});
         wrecksChanged = true;
     }
-    if (wrecksChanged) {
+    // The nav list is the player's, so only their sky can change it.
+    if (wrecksChanged && playersBubble) {
         rebuildDynamicTargets();
-    }
-
-    // The collection ticker is a HUD readout, not state: it fades.
-    if (m_collectTicker > 0.0f) {
-        m_collectTickerAge += dt;
-        if (m_collectTickerAge > 2.0) {
-            m_collectTicker = 0.0f;
-            m_collectTickerAge = 0.0;
-        }
     }
 }
 
@@ -4239,7 +4369,8 @@ const char* factionKindLabel(const GameFaction& faction)
     return "major";
 }
 
-void SpaceWorld::spawnWing(std::uint32_t faction,
+void SpaceWorld::spawnWing(SystemBubble& bubble,
+                           std::uint32_t faction,
                            assets::RosterCell cell,
                            std::span<const std::string> roster,
                            float baselineSecurity,
@@ -4295,14 +4426,23 @@ void SpaceWorld::spawnWing(std::uint32_t faction,
         const PilotRole role = def->role == assets::HullRole::Covert ? PilotRole::Covert : cellRole;
         const core::DVec3 position =
             anchor + core::DVec3{spread * (1.0 + i), 300.0 + 250.0 * i, -spread * 0.5 * i};
-        const ecs::Entity entity = spawnShipAt(*def, *m_defs, position, m_factionTable[faction].name.c_str());
+        const ecs::Entity entity =
+            spawnShipAt(bubble, *def, *m_defs, position, m_factionTable[faction].name.c_str());
         ShipPilot pilot{.role = role, .factionIndex = faction};
         pilot.state = state;
         if (waypoint != nullptr) {
             pilot.waypoint = *waypoint;
             pilot.respondTimer = kResponseGiveUpSeconds;
         }
-        playerRegistry().emplace<ShipPilot>(entity, pilot);
+        // ⚑⚑⚑ INTO THE SAME REGISTRY THE HULL WENT INTO, WHICH IS NOT WHAT
+        // THIS SAID (Phase 38 stage B). `spawnShipAt` was given the bubble and
+        // this line was not, so a wing spawned into any bubble but the
+        // player's got its hull in one registry and its ShipPilot in another -
+        // a ship nothing would ever fly, and an entity index in the player's
+        // pilot pool belonging to somebody else's ship. Nothing could have
+        // caught it: the compiler is happy either way and both registries have
+        // the pool.
+        bubble.registry.emplace<ShipPilot>(entity, pilot);
     }
 }
 
@@ -4337,8 +4477,9 @@ core::DVec3 SpaceWorld::nearestPost(const core::DVec3& from) const
     return *best;
 }
 
-void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::SystemSpec& spec)
+void SpaceWorld::spawnAmbientPilots(SystemBubble& bubble, const sim::SystemSpec& spec)
 {
+    const std::uint32_t systemIndex = bubble.system;
     if (m_defs == nullptr || m_factionTable.empty()) {
         return;
     }
@@ -4363,7 +4504,8 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             // ⚑ `RosterCell::Count` as the fallback is this site saying it has
             // never had one, which is what reading `faction.shipsRaider` bare
             // used to say by omission.
-            spawnWing(owner,
+            spawnWing(bubble,
+                      owner,
                       assets::RosterCell::Raider,
                       factionRoster(faction, assets::RosterCell::Raider, assets::RosterCell::Count),
                       baselineSecurity,
@@ -4393,7 +4535,8 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             const std::uint32_t wing = patrolsFor(baselineSecurity);
             const std::uint32_t gateCount = static_cast<std::uint32_t>(spec.gates.size());
             const std::uint32_t posted = wing == 0 ? 0u : std::min({wing / 2u, gateCount, wing - 1u});
-            spawnWing(owner,
+            spawnWing(bubble,
+                      owner,
                       assets::RosterCell::Patrol,
                       factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Count),
                       baselineSecurity,
@@ -4422,7 +4565,8 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
                         return spec.gates[a].toSystem < spec.gates[b].toSystem; // stable
                     });
                 for (std::uint32_t i = 0; i < posted; ++i) {
-                    spawnWing(owner,
+                    spawnWing(bubble,
+                              owner,
                               assets::RosterCell::Patrol,
                               factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Count),
                               baselineSecurity,
@@ -4448,7 +4592,8 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
             // No Lua change: pilot_think's role == "trader" branch already
             // flies a two-leg station circuit, and PilotRole::Trader,
             // PilotState::Travel and shipsTrader all predate this.
-            spawnWing(owner,
+            spawnWing(bubble,
+                      owner,
                       assets::RosterCell::Trader,
                       factionRoster(faction, assets::RosterCell::Trader, assets::RosterCell::Count),
                       baselineSecurity,
@@ -4471,7 +4616,8 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
         const std::span<const std::string> roster =
             factionRoster(attacker, assets::RosterCell::Raider, assets::RosterCell::Patrol);
         const std::uint32_t count = std::clamp(static_cast<std::uint32_t>(contest.pressure * 4.0f), 1u, 4u);
-        spawnWing(contest.attacker,
+        spawnWing(bubble,
+                  contest.attacker,
                   assets::RosterCell::Raider,
                   roster,
                   baselineSecurity,
@@ -4480,6 +4626,7 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
                   1'200.0);
         if (owner < m_factionTable.size()) {
             spawnWing(
+                bubble,
                 owner,
                 assets::RosterCell::Patrol,
                 factionRoster(m_factionTable[owner], assets::RosterCell::Patrol, assets::RosterCell::Count),
@@ -4496,6 +4643,7 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
         if (intensity >= 0.5f && raider < m_factionTable.size() && raider != owner) {
             const std::uint32_t count = std::min(3u, static_cast<std::uint32_t>(intensity + 0.5f));
             spawnWing(
+                bubble,
                 raider,
                 assets::RosterCell::Raider,
                 factionRoster(m_factionTable[raider], assets::RosterCell::Raider, assets::RosterCell::Count),
@@ -4534,25 +4682,26 @@ core::Quat lookAlong(const core::DVec3& direction)
 // Removes a spawned ship without the death path's consequences: no wreck, no
 // loot, no kill credit. A puppet leaving the player's system has not died,
 // it has stopped being drawn.
-void SpaceWorld::despawnShip(std::uint32_t entityIndex)
+void SpaceWorld::despawnShip(SystemBubble& bubble, std::uint32_t entityIndex)
 {
-    for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
-        if (m_spawnedShips[i].entity.index == entityIndex) {
-            m_spawnedShips.erase(m_spawnedShips.begin() + static_cast<std::ptrdiff_t>(i));
+    for (std::size_t i = 0; i < bubble.spawnedShips.size(); ++i) {
+        if (bubble.spawnedShips[i].entity.index == entityIndex) {
+            bubble.spawnedShips.erase(bubble.spawnedShips.begin() + static_cast<std::ptrdiff_t>(i));
             break;
         }
     }
-    playerRegistry().destroy(playerRegistry().entityFromIndex(entityIndex));
+    bubble.registry.destroy(bubble.registry.entityFromIndex(entityIndex));
 }
 
-bool SpaceWorld::traderLegSegment(std::uint32_t traderIndex, TraderLegPlacement& out) const
+bool SpaceWorld::traderLegSegment(std::uint32_t traderIndex,
+                                  std::uint32_t system,
+                                  TraderLegPlacement& out) const
 {
     core::DVec3& from = out.from;
     core::DVec3& to = out.to;
     float& progress = out.progress;
     const sim::TraderRoute route = m_economy.route(traderIndex);
-    if (route.system != m_currentSystem || route.leg == sim::TraderLeg::None ||
-        route.leg == sim::TraderLeg::Jump) {
+    if (route.system != system || route.leg == sim::TraderLeg::None || route.leg == sim::TraderLeg::Jump) {
         return false;
     }
     const auto stationOf = [&](std::uint32_t market) {
@@ -4561,7 +4710,7 @@ bool SpaceWorld::traderLegSegment(std::uint32_t traderIndex, TraderLegPlacement&
     };
     const core::DVec3 origin = stationOf(route.fromMarket);
     const core::DVec3 destination = stationOf(route.toMarket);
-    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    const sim::SystemSpec& spec = m_galaxy.systems[system];
     const auto hops = [&](std::uint32_t a, std::uint32_t b) {
         return static_cast<std::uint32_t>(m_economy.hopCount(a, b));
     };
@@ -4594,7 +4743,7 @@ bool SpaceWorld::traderLegSegment(std::uint32_t traderIndex, TraderLegPlacement&
         m_economy.markets()[route.leg == sim::TraderLeg::Depart ? route.toMarket : route.fromMarket]
             .systemIndex;
     const std::uint32_t gate =
-        sim::gateTowardSystem(std::span<const sim::GateSpec>(spec.gates), m_currentSystem, otherSystem, hops);
+        sim::gateTowardSystem(std::span<const sim::GateSpec>(spec.gates), system, otherSystem, hops);
     if (gate == sim::kNoGate) {
         return false; // no lane out of here toward it: draw nothing rather than a guess
     }
@@ -4607,28 +4756,42 @@ bool SpaceWorld::traderLegSegment(std::uint32_t traderIndex, TraderLegPlacement&
     return true;
 }
 
-void SpaceWorld::syncTraderPuppets()
+void SpaceWorld::beginPuppetReconcile(double dt)
+{
+    // Re-asserted from scratch every tick: a hold on a trader's clock is a
+    // fact about what is happening to its body right now, and a body that is
+    // gone can hold nothing.
+    m_puppetPresent.assign(m_economy.traders().size(), 0);
+    m_economy.clearDetained();
+
+    const std::size_t marketCount = m_economy.markets().size();
+    if (m_minerHold.size() != marketCount) {
+        m_minerHold.assign(marketCount, 0.0);
+    }
+    for (double& hold : m_minerHold) {
+        hold = std::max(0.0, hold - dt);
+    }
+    m_minerPresent.assign(marketCount, 0);
+}
+
+void SpaceWorld::syncTraderPuppets(SystemBubble& bubble)
 {
     if (m_defs == nullptr || m_factionTable.empty() || m_economy.markets().empty()) {
         return;
     }
+    ecs::Registry& registry = bubble.registry;
     const std::size_t fleet = m_economy.traders().size();
-    m_puppetPresent.assign(fleet, 0);
-    // Re-asserted from scratch every tick, like m_puppetPresent: a hold on a
-    // trader's clock is a fact about what is happening to its body right now,
-    // and a body that is gone can hold nothing.
-    m_economy.clearDetained();
 
     // Existing bodies first: anything whose record has moved on stops being
     // here, and anything whose leg has changed under it is rebuilt rather than
     // left flying at a destination nobody is going to.
     std::vector<ecs::Entity> doomed;
-    ecs::Pool<TraderPuppet>& puppets = playerRegistry().storage<TraderPuppet>();
+    ecs::Pool<TraderPuppet>& puppets = registry.storage<TraderPuppet>();
     for (std::size_t i = 0; i < puppets.size(); ++i) {
         TraderPuppet& puppet = puppets.values()[i];
-        const ecs::Entity entity = playerRegistry().entityFromIndex(puppets.entityIndices()[i]);
+        const ecs::Entity entity = registry.entityFromIndex(puppets.entityIndices()[i]);
         TraderLegPlacement leg;
-        if (puppet.traderIndex >= fleet || !traderLegSegment(puppet.traderIndex, leg) ||
+        if (puppet.traderIndex >= fleet || !traderLegSegment(puppet.traderIndex, bubble.system, leg) ||
             length(leg.to - puppet.destination) > 1.0) {
             doomed.push_back(entity);
             continue;
@@ -4640,7 +4803,7 @@ void SpaceWorld::syncTraderPuppets()
         // trader loop, which would fly it in circles off its own lane) are put
         // back on the leg it is actually here to fly. Done before the pacing
         // below, which declines to touch anything not on its leg.
-        ShipPilot* pilot = playerRegistry().tryGet<ShipPilot>(entity);
+        ShipPilot* pilot = registry.tryGet<ShipPilot>(entity);
         if (pilot != nullptr && pilot->threatTimer > 0.0f) {
             m_economy.detainTrader(puppet.traderIndex);
         }
@@ -4652,10 +4815,10 @@ void SpaceWorld::syncTraderPuppets()
         }
         // Recorded rather than recomputed by prey selection: this is the only
         // place that knows which of the two clocks moved the hauler this tick.
-        puppet.paced = keepTraderOnSchedule(entity, leg) ? 1u : 0u;
+        puppet.paced = keepTraderOnSchedule(registry, entity, leg) ? 1u : 0u;
     }
     for (const ecs::Entity entity : doomed) {
-        despawnShip(entity.index);
+        despawnShip(bubble, entity.index);
     }
 
     // Then the fleet: every trader flying a leg here that has no body yet gets
@@ -4666,7 +4829,7 @@ void SpaceWorld::syncTraderPuppets()
             continue;
         }
         TraderLegPlacement leg;
-        if (!traderLegSegment(t, leg)) {
+        if (!traderLegSegment(t, bubble.system, leg)) {
             continue;
         }
         const sim::TraderRoute route = m_economy.route(t);
@@ -4712,17 +4875,17 @@ void SpaceWorld::syncTraderPuppets()
             continue;
         }
         const core::DVec3 position = traderScheduledPoint(leg);
-        const ecs::Entity entity = spawnShipAt(*def, *m_defs, position, owner.name.c_str());
-        playerRegistry().emplace<ShipPilot>(entity,
-                                            ShipPilot{.role = PilotRole::Trader,
-                                                      .state = PilotState::Travel,
-                                                      .waypoint = leg.to,
-                                                      .factionIndex = faction});
-        playerRegistry().emplace<TraderPuppet>(entity, TraderPuppet{.traderIndex = t, .destination = leg.to});
+        const ecs::Entity entity = spawnShipAt(bubble, *def, *m_defs, position, owner.name.c_str());
+        registry.emplace<ShipPilot>(entity,
+                                    ShipPilot{.role = PilotRole::Trader,
+                                              .state = PilotState::Travel,
+                                              .waypoint = leg.to,
+                                              .factionIndex = faction});
+        registry.emplace<TraderPuppet>(entity, TraderPuppet{.traderIndex = t, .destination = leg.to});
         // Pointed down its lane on the frame it appears. steerTravel would
         // turn it anyway, but a system full of haulers facing nowhere is what
         // the player would see in the first second after a jump.
-        Transform& transform = playerRegistry().storage<Transform>().get(entity.index);
+        Transform& transform = registry.storage<Transform>().get(entity.index);
         transform.orientation = lookAlong(leg.to - position);
         transform.previousOrientation = transform.orientation;
         // Appearing mid-leg is the normal case, so a new body has to answer
@@ -4730,19 +4893,22 @@ void SpaceWorld::syncTraderPuppets()
         // this one? Skipping it would leave a hauler briefly advertised as
         // huntable while being uncatchable, and hand it its lane speed a tick
         // late into the bargain.
-        playerRegistry().storage<TraderPuppet>().get(entity.index).paced =
-            keepTraderOnSchedule(entity, leg) ? 1u : 0u;
+        registry.storage<TraderPuppet>().get(entity.index).paced =
+            keepTraderOnSchedule(registry, entity, leg) ? 1u : 0u;
         m_puppetPresent[t] = 1;
     }
 }
 
-bool SpaceWorld::chooseMinerRock(MinerPuppet& miner, const core::DVec3& from, bool sameField) const
+bool SpaceWorld::chooseMinerRock(const ecs::Registry& registry,
+                                 MinerPuppet& miner,
+                                 const core::DVec3& from,
+                                 bool sameField) const
 {
     // 8f's rocks are real entities with real depletion, so the miner works one
     // of those rather than a point in a field: a rock that has been cut to
     // nothing is not spawned, which means a miner can never be found working
     // ground that is already gone.
-    const ecs::Pool<MineableRock>& rocks = playerRegistry().storage<MineableRock>();
+    const ecs::Pool<MineableRock>& rocks = registry.storage<MineableRock>();
     m_minerRocks.clear();
     m_minerRockEntities.clear();
     std::uint32_t nearest = kNoIndex;
@@ -4755,8 +4921,8 @@ bool SpaceWorld::chooseMinerRock(MinerPuppet& miner, const core::DVec3& from, bo
             continue; // an outpost sells one thing; it works the rock holding it
         }
         const std::uint32_t index = rocks.entityIndices()[i];
-        const Transform* transform = playerRegistry().storage<Transform>().tryGet(index);
-        const RenderShape* shape = playerRegistry().storage<RenderShape>().tryGet(index);
+        const Transform* transform = registry.storage<Transform>().tryGet(index);
+        const RenderShape* shape = registry.storage<RenderShape>().tryGet(index);
         if (transform == nullptr || shape == nullptr) {
             continue;
         }
@@ -4799,14 +4965,17 @@ bool SpaceWorld::chooseMinerRock(MinerPuppet& miner, const core::DVec3& from, bo
     return true;
 }
 
-bool SpaceWorld::minerWorkPoint(const MinerPuppet& miner, core::DVec3& rock, core::DVec3& hold) const
+bool SpaceWorld::minerWorkPoint(const ecs::Registry& registry,
+                                const MinerPuppet& miner,
+                                core::DVec3& rock,
+                                core::DVec3& hold) const
 {
-    const Transform* transform = playerRegistry().storage<Transform>().tryGet(miner.rock);
-    if (transform == nullptr || playerRegistry().storage<MineableRock>().tryGet(miner.rock) == nullptr) {
+    const Transform* transform = registry.storage<Transform>().tryGet(miner.rock);
+    if (transform == nullptr || registry.storage<MineableRock>().tryGet(miner.rock) == nullptr) {
         return false; // cut to nothing, or the system changed under it
     }
     rock = transform->position;
-    const RenderShape* shape = playerRegistry().storage<RenderShape>().tryGet(miner.rock);
+    const RenderShape* shape = registry.storage<RenderShape>().tryGet(miner.rock);
     const double radius = shape != nullptr ? static_cast<double>(shape->scale.x) : 0.0;
     // On the station's side of the rock, so a ship coming out from the dock
     // meets the miner rather than the rock it is hiding behind.
@@ -4816,19 +4985,13 @@ bool SpaceWorld::minerWorkPoint(const MinerPuppet& miner, core::DVec3& rock, cor
     return true;
 }
 
-void SpaceWorld::syncMinerPuppets(double dt)
+void SpaceWorld::syncMinerPuppets(SystemBubble& bubble, double dt)
 {
     if (m_defs == nullptr || m_factionTable.empty() || m_economy.markets().empty()) {
         return;
     }
+    ecs::Registry& registry = bubble.registry;
     const std::size_t marketCount = m_economy.markets().size();
-    if (m_minerHold.size() != marketCount) {
-        m_minerHold.assign(marketCount, 0.0);
-    }
-    for (double& hold : m_minerHold) {
-        hold = std::max(0.0, hold - dt);
-    }
-    m_minerPresent.assign(marketCount, 0);
 
     // Which outposts here are actually digging. Not "which are extractors":
     // satisfaction is the station's own answer to how much of its nominal
@@ -4838,7 +5001,7 @@ void SpaceWorld::syncMinerPuppets(double dt)
     // the books, and a still field means the books have stopped.
     const auto digs = [&](std::uint32_t market) {
         const sim::StationMarket& row = m_economy.markets()[market];
-        if (row.systemIndex != m_currentSystem || row.archetype >= m_economyParams.archetypes.size()) {
+        if (row.systemIndex != bubble.system || row.archetype >= m_economyParams.archetypes.size()) {
             return false;
         }
         return m_economyParams.archetypes[row.archetype].extracts && m_economy.satisfaction(market) > 0.0f &&
@@ -4846,17 +5009,17 @@ void SpaceWorld::syncMinerPuppets(double dt)
     };
 
     std::vector<ecs::Entity> doomed;
-    ecs::Pool<MinerPuppet>& miners = playerRegistry().storage<MinerPuppet>();
+    ecs::Pool<MinerPuppet>& miners = registry.storage<MinerPuppet>();
     for (std::size_t i = 0; i < miners.size(); ++i) {
         MinerPuppet& miner = miners.values()[i];
-        const ecs::Entity entity = playerRegistry().entityFromIndex(miners.entityIndices()[i]);
+        const ecs::Entity entity = registry.entityFromIndex(miners.entityIndices()[i]);
         if (miner.market >= marketCount || !digs(miner.market) || m_minerPresent[miner.market] != 0) {
             doomed.push_back(entity);
             continue;
         }
         m_minerPresent[miner.market] = 1;
-        ShipPilot* pilot = playerRegistry().tryGet<ShipPilot>(entity);
-        Transform* transform = playerRegistry().tryGet<Transform>(entity);
+        ShipPilot* pilot = registry.tryGet<ShipPilot>(entity);
+        Transform* transform = registry.tryGet<Transform>(entity);
         if (pilot == nullptr || transform == nullptr) {
             continue;
         }
@@ -4876,13 +5039,13 @@ void SpaceWorld::syncMinerPuppets(double dt)
         miner.rockSeconds -= static_cast<float>(dt);
         core::DVec3 rock;
         core::DVec3 hold;
-        if (miner.rockSeconds <= 0.0f || !minerWorkPoint(miner, rock, hold)) {
-            if (!chooseMinerRock(miner, transform->position, true)) {
+        if (miner.rockSeconds <= 0.0f || !minerWorkPoint(registry, miner, rock, hold)) {
+            if (!chooseMinerRock(registry, miner, transform->position, true)) {
                 doomed.push_back(entity); // the field is worked out under it
                 continue;
             }
             miner.rockSeconds = static_cast<float>(kMinerRockSeconds);
-            if (!minerWorkPoint(miner, rock, hold)) {
+            if (!minerWorkPoint(registry, miner, rock, hold)) {
                 doomed.push_back(entity);
                 continue;
             }
@@ -4890,7 +5053,7 @@ void SpaceWorld::syncMinerPuppets(double dt)
         pilot->waypoint = hold;
     }
     for (const ecs::Entity entity : doomed) {
-        despawnShip(entity.index);
+        despawnShip(bubble, entity.index);
     }
 
     for (std::uint32_t market = 0; market < marketCount; ++market) {
@@ -4911,12 +5074,12 @@ void SpaceWorld::syncMinerPuppets(double dt)
         }
         const core::DVec3 station = m_galaxy.systems[row.systemIndex].stations[row.stationIndex].position;
         MinerPuppet miner{.market = market, .commodity = commodity};
-        if (!chooseMinerRock(miner, station, false)) {
+        if (!chooseMinerRock(registry, miner, station, false)) {
             continue; // no rock of that kind here; the draw is failing anyway
         }
         core::DVec3 rock;
         core::DVec3 hold;
-        if (!minerWorkPoint(miner, rock, hold)) {
+        if (!minerWorkPoint(registry, miner, rock, hold)) {
             continue;
         }
         miner.rockSeconds = static_cast<float>(kMinerRockSeconds);
@@ -4955,14 +5118,14 @@ void SpaceWorld::syncMinerPuppets(double dt)
         // Placed where it works rather than at the station: an outpost's draw
         // has been running since the galaxy was made, so the player arriving
         // must find the field already being worked, not a ship setting out.
-        const ecs::Entity entity = spawnShipAt(*def, *m_defs, hold, owner.name.c_str());
-        playerRegistry().emplace<ShipPilot>(entity,
-                                            ShipPilot{.role = PilotRole::Trader,
-                                                      .state = PilotState::Travel,
-                                                      .waypoint = hold,
-                                                      .factionIndex = faction});
-        playerRegistry().emplace<MinerPuppet>(entity, miner);
-        Transform& transform = playerRegistry().storage<Transform>().get(entity.index);
+        const ecs::Entity entity = spawnShipAt(bubble, *def, *m_defs, hold, owner.name.c_str());
+        registry.emplace<ShipPilot>(entity,
+                                    ShipPilot{.role = PilotRole::Trader,
+                                              .state = PilotState::Travel,
+                                              .waypoint = hold,
+                                              .factionIndex = faction});
+        registry.emplace<MinerPuppet>(entity, miner);
+        Transform& transform = registry.storage<Transform>().get(entity.index);
         transform.orientation = lookAlong(rock - hold); // nose on the rock it is cutting
         transform.previousOrientation = transform.orientation;
         m_minerPresent[market] = 1;
@@ -4994,7 +5157,7 @@ void SpaceWorld::minerPuppetInfo(std::vector<MinerPuppetInfo>& out)
             const sim::StationMarket& row = m_economy.markets()[miner.market];
             info.station = m_galaxy.systems[row.systemIndex].stations[row.stationIndex].name;
         }
-        for (const SpawnedShip& spawned : m_spawnedShips) {
+        for (const SpawnedShip& spawned : playerShips()) {
             if (spawned.entity.index == entityIndex) {
                 info.name = spawned.name;
                 break;
@@ -5027,9 +5190,11 @@ core::DVec3 SpaceWorld::traderScheduledPoint(const TraderLegPlacement& leg) cons
 // inside the approach window the ship owns it, which is the part with
 // anything to look at. That handover IS the Simulation-LOD promotion: coarse
 // where nobody is watching, full fidelity where they are.
-bool SpaceWorld::keepTraderOnSchedule(ecs::Entity entity, const TraderLegPlacement& leg)
+bool SpaceWorld::keepTraderOnSchedule(ecs::Registry& registry,
+                                      ecs::Entity entity,
+                                      const TraderLegPlacement& leg)
 {
-    ShipPilot* pilot = playerRegistry().tryGet<ShipPilot>(entity);
+    ShipPilot* pilot = registry.tryGet<ShipPilot>(entity);
     if (pilot != nullptr && pilot->state != PilotState::Travel) {
         return false; // fighting or running: its own business, and Lua's
     }
@@ -5049,8 +5214,8 @@ bool SpaceWorld::keepTraderOnSchedule(ecs::Entity entity, const TraderLegPlaceme
     if (elapsed <= window || remaining <= window) {
         return false; // near an endpoint: it flies itself
     }
-    Transform* transform = playerRegistry().tryGet<Transform>(entity);
-    FlightBody* body = playerRegistry().tryGet<FlightBody>(entity);
+    Transform* transform = registry.tryGet<Transform>(entity);
+    FlightBody* body = registry.tryGet<FlightBody>(entity);
     if (transform == nullptr || body == nullptr) {
         return false;
     }
@@ -5067,7 +5232,7 @@ bool SpaceWorld::keepTraderOnSchedule(ecs::Entity entity, const TraderLegPlaceme
         // Handed over already moving at the speed steerTravel's own profile
         // wants at the approach distance, so the release is a continuation
         // rather than a hauler stalling at the edge of the window.
-        const ShipControl* control = playerRegistry().tryGet<ShipControl>(entity);
+        const ShipControl* control = registry.tryGet<ShipControl>(entity);
         const double envelope =
             control != nullptr ? static_cast<double>(control->tuning.maxSpeed) * 2.0 : 200.0;
         body->velocity = lane * (envelope / distance);
@@ -5096,7 +5261,7 @@ void SpaceWorld::traderPuppetInfo(std::vector<TraderPuppetInfo>& out)
         info.state = pilot != nullptr
                          ? kStateNames[static_cast<std::uint32_t>(pilot->state) % std::size(kStateNames)]
                          : "none";
-        for (const SpawnedShip& spawned : m_spawnedShips) {
+        for (const SpawnedShip& spawned : playerShips()) {
             if (spawned.entity.index == entityIndex) {
                 info.name = spawned.name;
                 break;
@@ -5227,7 +5392,7 @@ void SpaceWorld::hunterInfo(std::vector<HunterInfo>& out)
         const Transform* to =
             pilot.hasTarget != 0 ? playerRegistry().storage<Transform>().tryGet(pilot.targetIndex) : nullptr;
         info.distance = to != nullptr ? length(to->position - from->position) : 0.0;
-        for (const SpawnedShip& spawned : m_spawnedShips) {
+        for (const SpawnedShip& spawned : playerShips()) {
             if (spawned.entity.index == entityIndex) {
                 info.name = spawned.name;
             } else if (pilot.hasTarget != 0 && spawned.entity.index == pilot.targetIndex) {
@@ -5263,7 +5428,7 @@ void SpaceWorld::leaveSystemFor(std::uint32_t destination)
     // the one direction a "drop the old one" reading does not cover.
     auto arrival = std::make_unique<SystemBubble>();
     arrival->system = destination;
-    ensureWorldPools(arrival->registry);
+    furnishBubble(*arrival);
     ecs::Registry& leaving = m_bubbles.front()->registry;
     // ⚑⚑ THE SCHEMA IS WHAT MOVES WITH YOU, AND IT IS THE SAME LIST THE SAVE
     // WRITES. A component the world does not persist is one it rebuilds, and a
@@ -5279,7 +5444,7 @@ void SpaceWorld::leaveSystemFor(std::uint32_t destination)
     // player has left, and this is the line it changes.
     m_bubbles.clear();
     m_bubbles.push_back(std::move(arrival));
-    m_spawnedShips.clear();
+    playerShips().clear();
     m_combatEffects.clear();
     m_thrusters.clear();
     if (m_audio != nullptr) {
@@ -5295,19 +5460,19 @@ void SpaceWorld::leaveSystemFor(std::uint32_t destination)
     }
 }
 
-void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
+void SpaceWorld::instantiateSystemEntities(ecs::Registry& registry, const sim::SystemSpec& spec)
 {
     auto addStatic = [&](core::DVec3 position,
                          core::Vec3 scale,
                          ModelId model,
                          core::Quat orientation = core::Quat::identity()) {
-        const ecs::Entity e = playerRegistry().create();
-        playerRegistry().emplace<Transform>(e,
-                                            Transform{.position = position,
-                                                      .previousPosition = position,
-                                                      .orientation = orientation,
-                                                      .previousOrientation = orientation});
-        playerRegistry().emplace<RenderShape>(e, RenderShape{.scale = scale, .model = model});
+        const ecs::Entity e = registry.create();
+        registry.emplace<Transform>(e,
+                                    Transform{.position = position,
+                                              .previousPosition = position,
+                                              .orientation = orientation,
+                                              .previousOrientation = orientation});
+        registry.emplace<RenderShape>(e, RenderShape{.scale = scale, .model = model});
     };
     // ⚑ Phase 9 stage H: a station's model comes from its ARCHETYPE's def row
     // rather than from a name compiled in here. `StationSpec::archetype` indexes
@@ -5362,11 +5527,11 @@ void SpaceWorld::instantiateSystemEntities(const sim::SystemSpec& spec)
 
 void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
 {
-    m_star = {.name = spec.name, .position = {}, .radius = spec.starRadius};
-    m_planets.clear();
-    for (const sim::PlanetSpec& planet : spec.planets) {
-        m_planets.push_back({.name = planet.name, .position = planet.position, .radius = planet.radius});
-    }
+    // ⚑ The star and the planets are the BUBBLE's since stage B - they are
+    // read by the per-system tick, so they belong to the frame rather than to
+    // the view - and `furnishBubble` has already written them from this same
+    // spec. What is left here is everything that exists to be SHOWN to
+    // somebody: gates, the target cycle, signals, fields, the survey fog.
     m_gates.clear();
     // The hub the gates are measured from, which is what gives each one its
     // facing (Phase 8w). generateGalaxy places a gate at hub + bearing *
@@ -5390,11 +5555,11 @@ void SpaceWorld::rebuildSystemSideData(const sim::SystemSpec& spec)
     for (const GateInstance& gate : m_gates) {
         m_targets.push_back({.name = gate.name, .position = gate.position, .surfaceRadius = 0.0});
     }
-    for (const CelestialBody& planet : m_planets) {
+    for (const CelestialBody& planet : planets()) {
         m_targets.push_back(
             {.name = planet.name, .position = planet.position, .surfaceRadius = planet.radius});
     }
-    m_targets.push_back({.name = m_star.name, .position = m_star.position, .surfaceRadius = m_star.radius});
+    m_targets.push_back({.name = sun().name, .position = sun().position, .surfaceRadius = sun().radius});
     m_planetTargetBase = spec.stations.size() + m_gates.size();
     m_starTargetIndex = m_targets.size() - 1;
     m_signalTargetBase = m_targets.size();
@@ -5553,18 +5718,24 @@ ModelId SpaceWorld::roleModel(const char* role) const
     return static_cast<ModelId>(index);
 }
 
-void SpaceWorld::rebuildAvoidance()
+void SpaceWorld::rebuildAvoidance(const SystemBubble& bubble)
 {
     // ⚑ Built from the same pools and the same exclusions as the collision
     // bodies below, so "what I avoid" and "what I can hit" are one statement
     // (Phase 8y). Statics first, movers after, and m_avoidStatics is the seam:
     // a ship that must not dodge other ships takes the front of the list.
+    //
+    // ⚑⚑ ONE SCRATCH BUFFER, REFILLED PER BUBBLE (Phase 38 stage B). The list
+    // describes one system and is consumed inside the same iteration that
+    // builds it, so nesting the tick costs no per-system copy of it - which is
+    // the same bargain `m_collisionBodies` takes below.
     m_avoidance.clear();
-    const ecs::Pool<FlightBody>& bodies = playerRegistry().storage<FlightBody>();
-    const ecs::Pool<RenderShape>& shapes = playerRegistry().storage<RenderShape>();
-    const ecs::Pool<Transform>& transforms = playerRegistry().storage<Transform>();
-    const ecs::Pool<Projectile>& projectiles = playerRegistry().storage<Projectile>();
-    const ecs::Pool<OreChunk>& oreChunks = playerRegistry().storage<OreChunk>();
+    const ecs::Registry& registry = bubble.registry;
+    const ecs::Pool<FlightBody>& bodies = registry.storage<FlightBody>();
+    const ecs::Pool<RenderShape>& shapes = registry.storage<RenderShape>();
+    const ecs::Pool<Transform>& transforms = registry.storage<Transform>();
+    const ecs::Pool<Projectile>& projectiles = registry.storage<Projectile>();
+    const ecs::Pool<OreChunk>& oreChunks = registry.storage<OreChunk>();
     for (std::size_t i = 0; i < shapes.size(); ++i) {
         const std::uint32_t entityIndex = shapes.entityIndices()[i];
         if (bodies.contains(entityIndex) || projectiles.contains(entityIndex) ||
@@ -5585,8 +5756,8 @@ void SpaceWorld::rebuildAvoidance()
         m_avoidance.push_back(
             {.position = transforms.get(entityIndex).position, .radius = radius, .handle = entityIndex});
     }
-    m_avoidance.push_back({.position = m_star.position, .radius = m_star.radius});
-    for (const CelestialBody& planet : m_planets) {
+    m_avoidance.push_back({.position = bubble.star.position, .radius = bubble.star.radius});
+    for (const CelestialBody& planet : bubble.planets) {
         m_avoidance.push_back({.position = planet.position, .radius = planet.radius});
     }
     m_avoidStatics = m_avoidance.size();
@@ -5636,11 +5807,14 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     m_answeringHail = HailMemory{};
     clearCommand(); // the target list is about to change under it
     const sim::SystemSpec& spec = m_galaxy.systems[systemIndex];
-    instantiateSystemEntities(spec);
+    // ⚑ ONE DEFINITION OF WHAT A SYSTEM'S SKY IS (Phase 38 stage B). Statics,
+    // rocks and ambient traffic were three calls spelled out here, and stage B
+    // needed the same three for a bubble the player is NOT arriving in - so
+    // they became `fillSystemSky` rather than a second copy that would drift.
+    // The side data below is the half that stays here, because all of it -
+    // gates, the target cycle, the survey fog - exists to be shown to a player.
+    fillSystemSky(playerBubble());
     rebuildSystemSideData(spec);
-    // Rocks and wrecks (Phase 8f): rebuildSystemSideData has just refreshed
-    // m_fields, and depletion decides which rocks are still there to spawn.
-    instantiateMiningEntities();
 
     // Arrival point: off the gate we came through, facing the playfield; on
     // a fresh start, just off the first station (or the hub failing that).
@@ -5683,9 +5857,6 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
 
     // You always know what you are touching (Phase 8z §B).
     identifyTouchedObjects(fromSystem);
-
-    // Ambient faction presence (Phase 8b): owner wings + raid incursions.
-    spawnAmbientPilots(systemIndex, spec);
 }
 
 void SpaceWorld::identifyTouchedObjects(std::uint32_t fromSystem)
@@ -6038,11 +6209,14 @@ bool SpaceWorld::killCoarseTrader(std::uint32_t traderIndex)
     // trader with a body in front of the player dies the way a real one does —
     // explosion, wreck, loot, and the coarse loss falling out of the same path
     // below — rather than being struck off the books while its hull flies on.
-    ecs::Pool<TraderPuppet>& puppets = playerRegistry().storage<TraderPuppet>();
-    for (std::size_t i = 0; i < puppets.size(); ++i) {
-        if (puppets.values()[i].traderIndex == traderIndex) {
-            handleShipDestroyed(puppets.entityIndices()[i]);
-            return true;
+    for (std::size_t slot = 0; slot < m_bubbles.size(); ++slot) {
+        SystemBubble& bubble = *m_bubbles[slot];
+        const ecs::Pool<TraderPuppet>& puppets = bubble.registry.storage<TraderPuppet>();
+        for (std::size_t i = 0; i < puppets.size(); ++i) {
+            if (puppets.values()[i].traderIndex == traderIndex) {
+                handleShipDestroyed(bubble, puppets.entityIndices()[i]);
+                return true;
+            }
         }
     }
     const sim::TraderRoute route = m_economy.route(traderIndex);
@@ -6061,11 +6235,14 @@ bool SpaceWorld::killMinerPuppet(std::uint32_t market)
     // raider's shot kills it — explosion, wreck, loot, the outpost's draw
     // stopping — or the lever answers false and the drive has to go somewhere
     // there is a mine.
-    ecs::Pool<MinerPuppet>& miners = playerRegistry().storage<MinerPuppet>();
-    for (std::size_t i = 0; i < miners.size(); ++i) {
-        if (miners.values()[i].market == market) {
-            handleShipDestroyed(miners.entityIndices()[i]);
-            return true;
+    for (std::size_t slot = 0; slot < m_bubbles.size(); ++slot) {
+        SystemBubble& bubble = *m_bubbles[slot];
+        const ecs::Pool<MinerPuppet>& miners = bubble.registry.storage<MinerPuppet>();
+        for (std::size_t i = 0; i < miners.size(); ++i) {
+            if (miners.values()[i].market == market) {
+                handleShipDestroyed(bubble, miners.entityIndices()[i]);
+                return true;
+            }
         }
     }
     return false;
@@ -6230,7 +6407,7 @@ void SpaceWorld::denyDocking(std::uint32_t station, const std::string& message)
 
 bool SpaceWorld::hailTarget()
 {
-    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    const std::size_t total = m_targets.size() + playerShips().size();
     // The same wrap currentTargetInfo() applies, because a targeted ship can
     // die out from under m_targetIndex and the hail must ask about whatever
     // the HUD is currently showing rather than about a stale slot.
@@ -6239,7 +6416,7 @@ bool SpaceWorld::hailTarget()
         say("Comms", "No ship selected to hail.");
         return false;
     }
-    const SpawnedShip& ship = m_spawnedShips[index - m_targets.size()];
+    const SpawnedShip& ship = playerShips()[index - m_targets.size()];
     const core::DVec3 position = playerRegistry().storage<Transform>().get(ship.entity.index).position;
     const double distance = length(position - shipState().position);
     if (distance > kHailRange) {
@@ -6632,15 +6809,15 @@ void SpaceWorld::applyDefs(const assets::DefDatabase& defs)
         applyActiveLoadout();
     } else if (const assets::ShipDef* playerDef = defs.findShip(kPlayerShipDefId)) {
         // Pre-universe (fleet not initialized yet): raw starter def.
-        applyShipDef(playerEntityIndex(), *playerDef, defs);
+        applyShipDef(playerRegistry(), playerEntityIndex(), *playerDef, defs);
         applyCockpitOf(*playerDef);
     } else {
         SOL_LOG_WARN("player ship def '%s' missing; keeping current tuning", kPlayerShipDefId);
     }
 
-    for (const SpawnedShip& spawned : m_spawnedShips) {
+    for (const SpawnedShip& spawned : playerShips()) {
         if (const assets::ShipDef* def = defs.findShip(spawned.defId.c_str())) {
-            applyShipDef(spawned.entity.index, *def, defs);
+            applyShipDef(playerRegistry(), spawned.entity.index, *def, defs);
         }
     }
 }
@@ -6751,7 +6928,7 @@ void SpaceWorld::applyActiveLoadout()
         return;
     }
     const assets::ShipDef def = resolvedShipDef(activeShip());
-    applyShipDef(playerEntityIndex(), def, *m_defs);
+    applyShipDef(playerRegistry(), playerEntityIndex(), def, *m_defs);
     // ⚑ ONLY THE PLAYER'S SHIP GETS THIS CALL, and this is the only place it
     // is made (Phase 31 stage C3). The resolved def carries WHICH gun is in
     // WHICH mount; the saved fit carries which trigger the pilot wired it to,
@@ -7240,15 +7417,16 @@ bool SpaceWorld::fireCrew(const char* crewId, std::string* outError)
     return true;
 }
 
-void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
+void SpaceWorld::applyShipDef(ecs::Registry& registry,
+                              std::uint32_t entityIndex,
                               const assets::ShipDef& def,
                               const assets::DefDatabase& defs)
 {
-    RenderShape& shape = playerRegistry().storage<RenderShape>().get(entityIndex);
+    RenderShape& shape = registry.storage<RenderShape>().get(entityIndex);
     shape.scale = {def.scale, def.scale, def.scale};
     shape.model = modelIdFromName(defs, def.model, "ship def", kRoleShip);
-    playerRegistry().storage<ShipControl>().get(entityIndex).tuning = toShipTuning(def.flight);
-    if (isPlayerEntity(playerRegistry(), entityIndex)) {
+    registry.storage<ShipControl>().get(entityIndex).tuning = toShipTuning(def.flight);
+    if (isPlayerEntity(registry, entityIndex)) {
         m_playerCargoCapacity = def.cargoCapacity;
         m_scanRange = def.scanRange > 0.0f ? def.scanRange : 1.0f;
         m_scanSpeed = def.scanSpeed > 0.0f ? def.scanSpeed : 1.0f;
@@ -7256,7 +7434,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
         m_signature = std::max(def.signature, kMinSignature);
     }
 
-    ShipPower& power = playerRegistry().storage<ShipPower>().get(entityIndex);
+    ShipPower& power = registry.storage<ShipPower>().get(entityIndex);
     power.tuning.weaponCapacitor = def.power.weaponCapacitor;
     power.tuning.weaponRechargeRate = def.power.weaponRecharge;
     if (power.state.weaponCharge > power.tuning.weaponCapacitor) {
@@ -7264,7 +7442,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
     }
 
     // Def edits (and hot-reloads) refit the defenses at full strength.
-    ShipDefense& defense = playerRegistry().storage<ShipDefense>().get(entityIndex);
+    ShipDefense& defense = registry.storage<ShipDefense>().get(entityIndex);
     defense.tuning = sim::DefenseTuning{.shieldStrength = def.defense.shieldStrength,
                                         .shieldRegenRate = def.defense.shieldRegen,
                                         .shieldRegenDelay = def.defense.shieldRegenDelay,
@@ -7295,7 +7473,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
     // has been to a shipyard. That is the repair rule this stage arrives at
     // rather than invents: the game already healed a hull at a refit and this
     // heals the mounts with it.
-    ShipMounts& mounts = playerRegistry().storage<ShipMounts>().get(entityIndex);
+    ShipMounts& mounts = registry.storage<ShipMounts>().get(entityIndex);
     mounts = ShipMounts{};
     for (const assets::ShipMount& mount : def.mounts) {
         if (mounts.count >= kMaxShipMounts) {
@@ -7320,7 +7498,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
         condition.hp = condition.maxHp;
     }
 
-    ShipArmament& armament = playerRegistry().storage<ShipArmament>().get(entityIndex);
+    ShipArmament& armament = registry.storage<ShipArmament>().get(entityIndex);
     armament = ShipArmament{};
     for (std::uint32_t m = 0; m < def.mounts.size(); ++m) {
         const assets::ShipMount& mount = def.mounts[m];
@@ -7407,7 +7585,7 @@ void SpaceWorld::applyShipDef(std::uint32_t entityIndex,
     // internal mount (`decisions/014` rule 2 says it is never drawn), and kit
     // nobody has authored art for (which leaves the mount bare, exactly as an
     // unarted gun does).
-    ShipFittings& fittings = playerRegistry().storage<ShipFittings>().get(entityIndex);
+    ShipFittings& fittings = registry.storage<ShipFittings>().get(entityIndex);
     fittings = ShipFittings{};
     for (std::uint32_t m = 0; m < def.mounts.size(); ++m) {
         const assets::ShipMount& mount = def.mounts[m];
@@ -7624,10 +7802,10 @@ int SpaceWorld::threatTier(std::uint32_t entityIndex) const
     return m_factionSim.playerHostile(pilot->factionIndex) ? kHostileThreatTier : 2;
 }
 
-GunneryFrame SpaceWorld::gunneryFrame(std::uint32_t entityIndex) const
+GunneryFrame SpaceWorld::gunneryFrame(const ecs::Registry& registry, std::uint32_t entityIndex) const
 {
     GunneryFrame frame;
-    const Transform& transform = playerRegistry().storage<Transform>().get(entityIndex);
+    const Transform& transform = registry.storage<Transform>().get(entityIndex);
     frame.position = transform.position;
     frame.orientation = transform.orientation;
     frame.forward = toDVec3(rotate(transform.orientation, core::Vec3{0.0f, 0.0f, -1.0f}));
@@ -7693,7 +7871,7 @@ GunneryFrame SpaceWorld::gunneryFrame(std::uint32_t entityIndex) const
 
 std::uint32_t SpaceWorld::targetShipEntityIndex() const
 {
-    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    const std::size_t total = m_targets.size() + playerShips().size();
     if (total == 0) {
         return kNoIndex;
     }
@@ -7703,7 +7881,7 @@ std::uint32_t SpaceWorld::targetShipEntityIndex() const
     if (index < m_targets.size()) {
         return kNoIndex; // a station, a planet, a gate, a field: not a gunnery target
     }
-    const ecs::Entity ship = m_spawnedShips[index - m_targets.size()].entity;
+    const ecs::Entity ship = playerShips()[index - m_targets.size()].entity;
     return playerRegistry().isAlive(ship) ? ship.index : kNoIndex;
 }
 
@@ -7796,10 +7974,10 @@ void normalizeFireGroup(ShipArmament& armament)
 // HUD's lead marker and the prospecting readout - and with guns plural each
 // of them has a different right answer, so leaving them to pick a gun each
 // would be three heuristics nobody wrote down.
-ArmamentSummary SpaceWorld::armamentSummary(std::uint32_t entityIndex) const
+ArmamentSummary SpaceWorld::armamentSummary(const ecs::Registry& registry, std::uint32_t entityIndex) const
 {
     ArmamentSummary summary;
-    const ShipArmament* armament = playerRegistry().storage<ShipArmament>().tryGet(entityIndex);
+    const ShipArmament* armament = registry.storage<ShipArmament>().tryGet(entityIndex);
     if (armament == nullptr) {
         return summary;
     }
@@ -7839,29 +8017,34 @@ ArmamentSummary SpaceWorld::armamentSummary(std::uint32_t entityIndex) const
     return summary;
 }
 
-ecs::Entity SpaceWorld::spawnShipAt(const assets::ShipDef& def,
+ecs::Entity SpaceWorld::spawnShipAt(SystemBubble& bubble,
+                                    const assets::ShipDef& def,
                                     const assets::DefDatabase& defs,
                                     const core::DVec3& position,
                                     const char* factionName)
 {
-    const ecs::Entity e = playerRegistry().create();
-    playerRegistry().emplace<Transform>(e, Transform{.position = position, .previousPosition = position});
-    playerRegistry().emplace<RenderShape>(e, RenderShape{});
-    playerRegistry().emplace<FlightBody>(e);
+    ecs::Registry& registry = bubble.registry;
+    const ecs::Entity e = registry.create();
+    registry.emplace<Transform>(e, Transform{.position = position, .previousPosition = position});
+    registry.emplace<RenderShape>(e, RenderShape{});
+    registry.emplace<FlightBody>(e);
     // Default input is assist-on with zero commands = station-keeping until a
     // pilot (Phase 6 AI) writes real commands.
-    playerRegistry().emplace<ShipControl>(e);
-    playerRegistry().emplace<ShipPower>(e);
-    playerRegistry().emplace<ShipDefense>(e);
-    playerRegistry().emplace<ShipArmament>(e);
-    playerRegistry().emplace<ShipFittings>(e);
-    playerRegistry().emplace<ShipMounts>(e);
-    applyShipDef(e.index, def, defs);
+    registry.emplace<ShipControl>(e);
+    registry.emplace<ShipPower>(e);
+    registry.emplace<ShipDefense>(e);
+    registry.emplace<ShipArmament>(e);
+    registry.emplace<ShipFittings>(e);
+    registry.emplace<ShipMounts>(e);
+    applyShipDef(registry, e.index, def, defs);
     std::string name = def.name;
     if (factionName != nullptr && factionName[0] != '\0') {
         name += std::string(" (") + factionName + ")";
     }
-    m_spawnedShips.push_back({.entity = e, .defId = def.id, .name = std::move(name)});
+    // ⚑ Into THIS system's ship list. An entity index is issued per registry
+    // and every registry starts at zero, so a world-scoped list keyed on the
+    // index alone would hand one system's death the other system's ship def.
+    bubble.spawnedShips.push_back({.entity = e, .defId = def.id, .name = std::move(name)});
     return e;
 }
 
@@ -7872,7 +8055,7 @@ ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def, const asset
     const double distance = 150.0 + 100.0 * static_cast<double>(def.scale);
     const core::DVec3 position =
         player.position + core::DVec3{forward.x * distance, forward.y * distance, forward.z * distance};
-    const ecs::Entity e = spawnShipAt(def, defs, position, nullptr);
+    const ecs::Entity e = spawnShipAt(playerBubble(), def, defs, position, nullptr);
     Transform& transform = playerRegistry().storage<Transform>().get(e.index);
     transform.orientation = player.orientation;
     transform.previousOrientation = player.orientation;
@@ -7881,7 +8064,7 @@ ecs::Entity SpaceWorld::spawnShipFromDef(const assets::ShipDef& def, const asset
 
 TargetInfo SpaceWorld::currentTargetInfo() const
 {
-    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    const std::size_t total = m_targets.size() + playerShips().size();
     // m_targetIndex can go stale when a targeted ship dies; wrap it here.
     const std::size_t index = total > 0 ? m_targetIndex % total : 0;
 
@@ -7896,10 +8079,10 @@ TargetInfo SpaceWorld::currentTargetInfo() const
 TargetInfo SpaceWorld::contactInfo(std::size_t shipSlot) const
 {
     TargetInfo info;
-    if (shipSlot >= m_spawnedShips.size()) {
+    if (shipSlot >= playerShips().size()) {
         return info;
     }
-    const SpawnedShip& ship = m_spawnedShips[shipSlot];
+    const SpawnedShip& ship = playerShips()[shipSlot];
     const Transform& transform = playerRegistry().storage<Transform>().get(ship.entity.index);
     info.nav = NavTarget{.name = ship.name, .position = transform.position, .surfaceRadius = 0.0};
     info.isShip = true;
@@ -7927,7 +8110,7 @@ SpaceWorld::NavKind SpaceWorld::navTargetKind(std::size_t index) const
     if (index < m_planetTargetBase) {
         return NavKind::Gate;
     }
-    if (index < m_planetTargetBase + m_planets.size()) {
+    if (index < m_planetTargetBase + planets().size()) {
         return NavKind::Planet;
     }
     if (index == m_starTargetIndex) {
@@ -8047,7 +8230,7 @@ std::uint32_t SpaceWorld::navTargetBody(std::size_t index) const
     if (index == m_starTargetIndex) {
         return 0;
     }
-    if (index >= m_planetTargetBase && index < m_planetTargetBase + m_planets.size()) {
+    if (index >= m_planetTargetBase && index < m_planetTargetBase + planets().size()) {
         return static_cast<std::uint32_t>(index - m_planetTargetBase + 1);
     }
     return kNoIndex;
@@ -8176,13 +8359,13 @@ bool SpaceWorld::selectBookmark(std::uint32_t id)
 
 std::size_t SpaceWorld::currentTargetIndex() const
 {
-    const std::size_t total = m_targets.size() + m_spawnedShips.size();
+    const std::size_t total = m_targets.size() + playerShips().size();
     return total > 0 ? m_targetIndex % total : 0;
 }
 
 bool SpaceWorld::selectTarget(std::size_t index)
 {
-    if (index >= m_targets.size() + m_spawnedShips.size()) {
+    if (index >= m_targets.size() + playerShips().size()) {
         return false;
     }
     // ⚑ Phase 8z: the one choke point every outright selection goes through —
@@ -8244,7 +8427,7 @@ void SpaceWorld::contactOrder(std::vector<std::size_t>& out, std::vector<int>& t
 {
     out.clear();
     tiers.clear();
-    if (m_spawnedShips.empty()) {
+    if (playerShips().empty()) {
         return;
     }
     const core::DVec3 playerPosition =
@@ -8263,9 +8446,9 @@ void SpaceWorld::contactOrder(std::vector<std::size_t>& out, std::vector<int>& t
     };
 
     std::vector<Ranked> ranked;
-    ranked.reserve(m_spawnedShips.size());
-    for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
-        const SpawnedShip& ship = m_spawnedShips[i];
+    ranked.reserve(playerShips().size());
+    for (std::size_t i = 0; i < playerShips().size(); ++i) {
+        const SpawnedShip& ship = playerShips()[i];
         const core::DVec3 offset =
             playerRegistry().storage<Transform>().get(ship.entity.index).position - playerPosition;
         ranked.push_back({.slot = i, .tier = tierOf(ship), .distanceSquared = dot(offset, offset)});
@@ -8348,8 +8531,8 @@ bool SpaceWorld::selectNearestHostile()
 
 bool SpaceWorld::targetShipByName(const char* namePart)
 {
-    for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
-        if (m_spawnedShips[i].name.find(namePart) != std::string::npos) {
+    for (std::size_t i = 0; i < playerShips().size(); ++i) {
+        if (playerShips()[i].name.find(namePart) != std::string::npos) {
             m_contactSlot = i;
             m_targetIndex = m_targets.size() + i;
             return true;
@@ -8366,7 +8549,7 @@ ecs::Entity SpaceWorld::spawnPilotFromDef(const assets::ShipDef& def,
     const ecs::Entity e = spawnShipFromDef(def, defs);
     playerRegistry().emplace<ShipPilot>(e, ShipPilot{.role = role, .factionIndex = factionIndex});
     if (factionIndex < m_factionTable.size()) {
-        m_spawnedShips.back().name = def.name + " (" + m_factionTable[factionIndex].name + ")";
+        playerShips().back().name = def.name + " (" + m_factionTable[factionIndex].name + ")";
     }
     return e;
 }
@@ -8588,7 +8771,7 @@ bool SpaceWorld::pilotHuntTrader(ecs::Entity entity)
     // the shortest would walk a ship past the range its best gun already
     // reached; a gun that cannot reach from here simply misses, which costs
     // charge and nothing else.
-    const ArmamentSummary armament = armamentSummary(entity.index);
+    const ArmamentSummary armament = armamentSummary(playerRegistry(), entity.index);
     const double engageRange = armament.armed && armament.maxRange > 0.0f
                                    ? static_cast<double>(armament.maxRange)
                                    : kTraderArrivalRange;
@@ -8706,6 +8889,20 @@ namespace {
 
 std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offenderIndex, ResponseCause cause)
 {
+    return respondTo(playerBubble(), position, offenderIndex, cause);
+}
+
+void SpaceWorld::considerResponse(std::uint32_t targetIndex, std::uint32_t attackerIndex, core::DVec3 at)
+{
+    considerResponse(playerBubble(), targetIndex, attackerIndex, at);
+}
+
+std::uint32_t SpaceWorld::respondTo(SystemBubble& bubble,
+                                    core::DVec3 position,
+                                    std::uint32_t offenderIndex,
+                                    ResponseCause cause)
+{
+    ecs::Registry& registry = bubble.registry;
     // ⚑⚑ THE CAUSE IS READ SINCE PHASE 36 STAGE D, AND WHAT IT DECIDES IS
     // WHETHER THE LAW IS ALLOWED TO CONJURE HULLS. Weapons fire is somebody
     // dying, so a short-handed garrison tops itself up from the nearest
@@ -8716,12 +8913,12 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
     // end of a 600,000 km lane, which is `017`'s tax arriving by a side door.
     const bool topUp = cause == ResponseCause::WeaponsFire;
     m_lastResponse = ResponseReport{};
-    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    const std::uint32_t owner = systemOwnerFaction(bubble.system);
     if (owner >= m_factionTable.size() || m_defs == nullptr) {
         return 0;
     }
-    const float live = systemSecurity(m_currentSystem);
-    const float baseline = systemSecurityBaseline(m_currentSystem);
+    const float live = systemSecurity(bubble.system);
+    const float baseline = systemSecurityBaseline(bubble.system);
     m_lastResponse.live = live;
     m_lastResponse.responderFaction = owner;
     // ⚑ Nobody comes, and that is an ANSWER rather than a failure: it is the
@@ -8746,7 +8943,7 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
     };
 
     std::vector<Candidate> candidates;
-    const ecs::Pool<ShipPilot>& pilots = playerRegistry().storage<ShipPilot>();
+    const ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
     for (std::size_t i = 0; i < pilots.size(); ++i) {
         const ShipPilot& pilot = pilots.values()[i];
         const std::uint32_t index = pilots.entityIndices()[i];
@@ -8764,8 +8961,8 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
         if (pilot.role == PilotRole::Trader) {
             continue;
         }
-        const Transform* transform = playerRegistry().storage<Transform>().tryGet(index);
-        const ShipDefense* defense = playerRegistry().storage<ShipDefense>().tryGet(index);
+        const Transform* transform = registry.storage<Transform>().tryGet(index);
+        const ShipDefense* defense = registry.storage<ShipDefense>().tryGet(index);
         if (transform == nullptr || defense == nullptr || !defense->state.alive()) {
             continue;
         }
@@ -8781,7 +8978,7 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
         if (m_lastResponse.diverted >= wanted) {
             break;
         }
-        if (pilotTravelTo(playerRegistry().entityFromIndex(candidate.index), position)) {
+        if (pilotTravelTo(registry.entityFromIndex(candidate.index), position)) {
             ++m_lastResponse.diverted;
         }
     }
@@ -8809,7 +9006,7 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
     // HOW MANY come is the garrison's size, and the live rating decides only
     // how far away they start and therefore how long they take.
     const std::uint32_t shortfall = wanted - m_lastResponse.diverted;
-    const sim::SystemSpec& spec = m_galaxy.systems[m_currentSystem];
+    const sim::SystemSpec& spec = m_galaxy.systems[bubble.system];
     core::DVec3 origin = playfieldHub(spec);
     double best = std::numeric_limits<double>::max();
     bool found = false;
@@ -8822,7 +9019,13 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
         }
     }
     if (!found) {
-        for (const GateInstance& gate : m_gates) {
+        // ⚑ Out of the SPEC rather than out of `m_gates`, which is the player's
+        // side data (Phase 38 stage B). A wing launched toward an incident in
+        // another bubble would otherwise have started from a gate belonging to
+        // the system the player happens to be standing in - a point in the
+        // wrong frame, and one that reads as plausible because both systems
+        // place their contents around a barycentre origin.
+        for (const sim::GateSpec& gate : spec.gates) {
             const double distance = length(gate.position - position);
             if (distance < best) {
                 best = distance;
@@ -8835,8 +9038,9 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
     const std::span<const std::string> roster =
         faction.pirate() ? factionRoster(faction, assets::RosterCell::Raider, assets::RosterCell::Count)
                          : factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Raider);
-    const std::size_t before = playerRegistry().storage<ShipPilot>().size();
-    spawnWing(owner,
+    const std::size_t before = registry.storage<ShipPilot>().size();
+    spawnWing(bubble,
+              owner,
               faction.pirate() ? assets::RosterCell::Raider : assets::RosterCell::Patrol,
               roster,
               baseline,
@@ -8845,8 +9049,7 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
               700.0,
               PilotState::Travel,
               &position);
-    m_lastResponse.spawned =
-        static_cast<std::uint32_t>(playerRegistry().storage<ShipPilot>().size() - before);
+    m_lastResponse.spawned = static_cast<std::uint32_t>(registry.storage<ShipPilot>().size() - before);
     if (m_lastResponse.spawned > 0) {
         SOL_LOG_INFO("response: %u launched from %.0f km out, live %+.3f, reach %.0f km",
                      m_lastResponse.spawned,
@@ -9605,30 +9808,34 @@ void SpaceWorld::applyDefaultVerdict(const PendingVerdict& pending)
                                                 : "Nothing here we care about. Fly on."); // 35
 }
 
-void SpaceWorld::considerResponse(std::uint32_t targetIndex, std::uint32_t attackerIndex, core::DVec3 at)
+void SpaceWorld::considerResponse(SystemBubble& bubble,
+                                  std::uint32_t targetIndex,
+                                  std::uint32_t attackerIndex,
+                                  core::DVec3 at)
 {
-    if (m_responseCooldown > 0.0 || attackerIndex == kNoIndex || attackerIndex == targetIndex) {
+    ecs::Registry& registry = bubble.registry;
+    if (bubble.responseCooldown > 0.0 || attackerIndex == kNoIndex || attackerIndex == targetIndex) {
         return;
     }
-    const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    const std::uint32_t owner = systemOwnerFaction(bubble.system);
     if (owner >= m_factionTable.size()) {
         return;
     }
     // Somebody the local law protects. There is no CRIME until Phase 36, so
     // the trigger is the thing that already exists: a hull belonging to the
     // faction that polices this system taking fire from one that does not.
-    const ShipPilot* victim = playerRegistry().storage<ShipPilot>().tryGet(targetIndex);
+    const ShipPilot* victim = registry.storage<ShipPilot>().tryGet(targetIndex);
     if (victim == nullptr || victim->factionIndex != owner) {
         return;
     }
-    if (!isPlayerEntity(playerRegistry(), attackerIndex)) {
-        const ShipPilot* attacker = playerRegistry().storage<ShipPilot>().tryGet(attackerIndex);
+    if (!isPlayerEntity(registry, attackerIndex)) {
+        const ShipPilot* attacker = registry.storage<ShipPilot>().tryGet(attackerIndex);
         if (attacker == nullptr || attacker->factionIndex == owner) {
             return; // friendly fire is not an incident anybody is dispatched to
         }
     }
-    m_responseCooldown = kResponseCooldownSeconds;
-    (void)respondTo(at, attackerIndex, ResponseCause::WeaponsFire);
+    bubble.responseCooldown = kResponseCooldownSeconds;
+    (void)respondTo(bubble, at, attackerIndex, ResponseCause::WeaponsFire);
 }
 
 core::DVec3 SpaceWorld::pilotPosition(ecs::Entity entity) const
@@ -9657,11 +9864,6 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
     static constexpr const char* kStateNames[] = {"idle", "patrol", "attack", "flee", "travel", "inspect"};
     constexpr float kThinkInterval = 0.5f; // 2 Hz strategy; steering runs at 60
 
-    // The dispatch throttle ages with the pilots it throttles (Phase 30 stage
-    // C): this is the one per-frame pass that already has a dt and runs whether
-    // or not anything is shooting.
-    m_responseCooldown = std::max(0.0, m_responseCooldown - dt);
-
     // Notice (Phase 36 stage B) rides the same pass and for the same reason:
     // it needs a dt, it needs every pilot visited once, and it is throttled.
     // ⚑ Stage C is what hangs a hail off this; stage B says the line and stops.
@@ -9686,24 +9888,25 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
         }
     }
 
+    // ⚑⚑⚑ THIS PASS IS PLAYER-SCOPED AND STAYS SO (Phase 38 stage B), WHICH IS
+    // A STATEMENT ABOUT THE COOLING BUBBLE AND NOT AN OMISSION. Every
+    // `sol.pilot_*` binding Lua answers with resolves an entity index against
+    // the player's registry, so handing `pilot_think` a pilot out of another
+    // bubble would be the cross-registry reach the phase's ruling exists to
+    // make unaskable. The consequence is the LOD statement: the system you have
+    // left keeps flying, and nobody in it changes their mind. A raider in
+    // Attack goes on attacking, guns keep firing, hulls keep taking damage -
+    // the fight continues - but nothing re-targets, breaks off or picks a new
+    // beat until the player is back to watch it.
+    //
+    // ⚑ `threatTimer` and `respondTimer` used to age in the loop below and now
+    // age in `tickSystem`'s pilot pass instead: they are world clocks, and a
+    // clock that only runs where the player is standing would pin a cooling
+    // bubble open forever. `thinkTimer` stays here, because it throttles THIS
+    // dispatch and nothing else.
     ecs::Pool<ShipPilot>& pilots = playerRegistry().storage<ShipPilot>();
     for (std::size_t i = 0; i < pilots.size(); ++i) {
         ShipPilot& pilot = pilots.values()[i];
-        // The threat window ages here rather than in the steering pass: this
-        // is the one loop that visits every pilot exactly once with a dt, and
-        // a pilot with no hull left to shoot at still has to forget.
-        if (pilot.threatTimer > 0.0f) {
-            pilot.threatTimer = std::max(0.0f, pilot.threatTimer - static_cast<float>(dt));
-        }
-        // A dispatched responder gives up on the same terms and for the same
-        // reason (Phase 30 stage C): a call you have been flying at for three
-        // minutes without finding anything is a call that is over.
-        if (pilot.respondTimer > 0.0f) {
-            pilot.respondTimer = std::max(0.0f, pilot.respondTimer - static_cast<float>(dt));
-            if (pilot.respondTimer == 0.0f && pilot.state == PilotState::Travel) {
-                pilot.state = PilotState::Idle; // Lua's next think puts it back on its beat
-            }
-        }
         pilot.thinkTimer -= static_cast<float>(dt);
         if (pilot.thinkTimer > 0.0f) {
             continue;
@@ -9793,7 +9996,7 @@ bool SpaceWorld::engageCommand(CommandMode mode)
     if (isDocked()) {
         return false;
     }
-    if (commandNeedsTarget(mode) && m_targets.empty() && m_spawnedShips.empty()) {
+    if (commandNeedsTarget(mode) && m_targets.empty() && playerShips().empty()) {
         return false;
     }
 
@@ -10088,20 +10291,13 @@ sim::FlightInput SpaceWorld::standingCommandInput(const TargetInfo& target)
     return input;
 }
 
-void SpaceWorld::tick(double dt)
+// The player's flight input for this tick: the docked pin, the commanded or
+// manual input, the two cruise refusals, and the write into their own
+// `ShipControl`. Split out of `tick` at Phase 38 stage B so that the one thing
+// in the flight half that is about a PERSON rather than about a system can be
+// called from inside the per-system loop exactly once - see `tickSystem`.
+void SpaceWorld::tickPlayerFlightInput(double dt)
 {
-    // The run's own clock. Market intel is stamped against it, so it advances
-    // whether the player is docked or flying — a price you read an hour ago
-    // is an hour old either way.
-    m_worldSeconds += dt;
-    // What nothing may fly into, this tick (Phase 8y). Before any steering,
-    // the player's autopilot included.
-    {
-        const std::uint32_t zone = core::frameProfiler().beginZone("sim.avoidance");
-        rebuildAvoidance();
-        core::frameProfiler().addCounter(zone, m_avoidance.size());
-        core::frameProfiler().endZone(zone);
-    }
     const std::uint32_t playerIndex = playerEntityIndex();
     if (isDocked()) {
         // Parked: flight input is ignored and the ship stays pinned to the
@@ -10154,11 +10350,60 @@ void SpaceWorld::tick(double dt)
         }
         playerRegistry().storage<ShipControl>().get(playerIndex).input = m_appliedInput;
     }
+}
+
+// ⚑⚑⚑⚑ ONE SYSTEM'S TICK (Phase 38 stage B). Eight of the profiler's zones
+// live in here - avoidance, pilots, flight, the two collision halves,
+// projectiles, weapons and the fine half of mining - and every one of them was
+// written against `m_registry` and then against `playerRegistry()`. They take a
+// bubble now, which is what `decisions/015`'s "the tick becomes a loop over
+// instantiated systems" actually costs once the frame is structural: not a
+// filter per query, but one parameter that the compiler checks 300 times.
+//
+// ⚑⚑⚑ WHAT STAYED OUTSIDE, AND IT IS NOT AN OVERSIGHT. The coarse sims
+// (economy, factions, missions), scanning, docking, the gate crossing and the
+// player's own feedback are all either galaxy-wide or about the one entity that
+// is only ever in one bubble. A per-system loop around any of them would run
+// them k times and be wrong k-1 of those times.
+//
+// ⚑⚑ THE SCRATCH BUFFERS ARE STILL SINGLE. `m_avoidance`, `m_collisionBodies`,
+// `m_collisionShipIndices` and `m_contacts` are cleared and refilled inside
+// this function, so nesting the tick costs no per-system copy of any of them -
+// and `sim::resolveCollisions` is O(n^2) with no broadphase, so k systems cost
+// k*n^2 here where one global list with a frame filter would cost (kn)^2.
+void SpaceWorld::tickSystem(SystemBubble& bubble, double dt)
+{
+    ecs::Registry& registry = bubble.registry;
+    // The player is in exactly one bubble and it is the front one - that is
+    // what `playerRegistry()` means. Asked once here rather than per site,
+    // because the interesting sites below are inside pool walks where the
+    // answer is a property of the WALK and not of the entity.
+    const bool playersBubble = &bubble == m_bubbles.front().get();
+    // What nothing may fly into, this tick (Phase 8y). Before any steering,
+    // the player's autopilot included.
+    {
+        const std::uint32_t zone = core::frameProfiler().beginZone("sim.avoidance");
+        rebuildAvoidance(bubble);
+        core::frameProfiler().addCounter(zone, m_avoidance.size());
+        core::frameProfiler().endZone(zone);
+    }
+    // ⚑⚑ THE PLAYER'S OWN INPUT SITS BETWEEN THEIR SYSTEM'S AVOIDANCE AND
+    // THEIR SYSTEM'S STEERING, AND THAT IS WHY IT IS CALLED FROM IN HERE. It
+    // is player-scoped work - one entity, one autopilot, one cruise guard - so
+    // it must run once rather than once per bubble; but 8y's rule is that
+    // nothing steers before `m_avoidance` describes the sky it is steering
+    // through, and `m_avoidance` describes exactly one system at a time now.
+    if (playersBubble) {
+        tickPlayerFlightInput(dt);
+    }
 
     // NPC pilots: C++ steering flies whatever state Lua's pilot_think chose.
     {
         SOL_PROFILE_ZONE_NAMED(pilotZone, "sim.pilots");
-        ecs::Pool<ShipPilot>& pilots = playerRegistry().storage<ShipPilot>();
+        // The law's dispatch throttle ages with the pilots it throttles (Phase
+        // 30 stage C), and per system since stage B - see the field comment.
+        bubble.responseCooldown = std::max(0.0, bubble.responseCooldown - dt);
+        ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
         SOL_PROFILE_COUNT(pilotZone, pilots.size());
         // ⚑ Two spans over one list (Phase 8y §C). A ship going somewhere
         // dodges everything, other ships included; a ship in a FIGHT sees only
@@ -10171,9 +10416,36 @@ void SpaceWorld::tick(double dt)
         for (std::size_t i = 0; i < pilots.size(); ++i) {
             ShipPilot& pilot = pilots.values()[i];
             const std::uint32_t entityIndex = pilots.entityIndices()[i];
-            ShipControl* control = playerRegistry().storage<ShipControl>().tryGet(entityIndex);
-            const Transform* transform = playerRegistry().storage<Transform>().tryGet(entityIndex);
-            const FlightBody* body = playerRegistry().storage<FlightBody>().tryGet(entityIndex);
+            // ⚑⚑⚑⚑ THE TWO SIMULATION CLOCKS AGE HERE NOW, AND THAT MOVE IS
+            // STAGE C'S WHOLE RETENTION POLICY WORKING (Phase 38 stage B).
+            // Both aged in `collectDuePilotThinks` until this stage - the pass
+            // that hands Lua its pilots - and that pass is PLAYER-SCOPED and
+            // stays so, because `pilot_think` and every `sol.pilot_*` binding
+            // resolve an entity index against the player's registry. A clock
+            // that only ages where the player is standing is a clock that never
+            // runs down anywhere else: `threatTimer` is exactly what stage C
+            // reads to decide a fight is still live, so a bubble left behind
+            // would have been pinned open forever by a threat nobody could
+            // forget. This is the one thing in the pilot pass that is about the
+            // WORLD rather than about a decision.
+            if (pilot.threatTimer > 0.0f) {
+                pilot.threatTimer = std::max(0.0f, pilot.threatTimer - static_cast<float>(dt));
+            }
+            // A dispatched responder gives up on the same terms and for the
+            // same reason (Phase 30 stage C): a call you have been flying at
+            // for three minutes without finding anything is a call that is
+            // over. Going Idle hands it back to `pilot_think` - which in a
+            // bubble the player is not in means it simply stands down, and
+            // standing down is the right answer there too.
+            if (pilot.respondTimer > 0.0f) {
+                pilot.respondTimer = std::max(0.0f, pilot.respondTimer - static_cast<float>(dt));
+                if (pilot.respondTimer == 0.0f && pilot.state == PilotState::Travel) {
+                    pilot.state = PilotState::Idle;
+                }
+            }
+            ShipControl* control = registry.storage<ShipControl>().tryGet(entityIndex);
+            const Transform* transform = registry.storage<Transform>().tryGet(entityIndex);
+            const FlightBody* body = registry.storage<FlightBody>().tryGet(entityIndex);
             if (control == nullptr || transform == nullptr || body == nullptr) {
                 continue;
             }
@@ -10188,7 +10460,7 @@ void SpaceWorld::tick(double dt)
             // hostile (Phase 8b live find: permanent aggro besieged the pad
             // after a standing recovered; raiders, by contrast, keep theirs).
             if (pilot.state == PilotState::Attack && pilot.role == PilotRole::Patrol &&
-                pilot.hasTarget != 0 && isPlayerEntity(playerRegistry(), pilot.targetIndex) &&
+                pilot.hasTarget != 0 && isPlayerEntity(registry, pilot.targetIndex) &&
                 pilot.factionIndex < m_factionTable.size() &&
                 !m_factionSim.playerHostile(pilot.factionIndex)) {
                 pilot.state = PilotState::Idle;
@@ -10241,8 +10513,8 @@ void SpaceWorld::tick(double dt)
                 // steering below is succeeding. `input.trigger` is never
                 // written, which is the difference between an inspection and an
                 // execution.
-                const Transform* held = playerRegistry().storage<Transform>().tryGet(pilot.targetIndex);
-                const FlightBody* heldBody = playerRegistry().storage<FlightBody>().tryGet(pilot.targetIndex);
+                const Transform* held = registry.storage<Transform>().tryGet(pilot.targetIndex);
+                const FlightBody* heldBody = registry.storage<FlightBody>().tryGet(pilot.targetIndex);
                 if (pilot.hasTarget == 0 || held == nullptr || heldBody == nullptr) {
                     pilot.state = PilotState::Idle; // tickInspection ends the hold next frame
                     break;
@@ -10258,10 +10530,8 @@ void SpaceWorld::tick(double dt)
                 break;
             }
             case PilotState::Attack: {
-                const Transform* targetTransform =
-                    playerRegistry().storage<Transform>().tryGet(pilot.targetIndex);
-                const FlightBody* targetBody =
-                    playerRegistry().storage<FlightBody>().tryGet(pilot.targetIndex);
+                const Transform* targetTransform = registry.storage<Transform>().tryGet(pilot.targetIndex);
+                const FlightBody* targetBody = registry.storage<FlightBody>().tryGet(pilot.targetIndex);
                 if (pilot.hasTarget == 0 || targetTransform == nullptr || targetBody == nullptr) {
                     pilot.state = PilotState::Idle;
                     break;
@@ -10276,7 +10546,7 @@ void SpaceWorld::tick(double dt)
                 // The FIRST projectile gun in mount order supplies the lead, and
                 // an all-hitscan fit supplies none - which reads as instant, the
                 // meaning the single weapon gave a zero speed before it.
-                const ArmamentSummary armament = armamentSummary(entityIndex);
+                const ArmamentSummary armament = armamentSummary(registry, entityIndex);
                 const double projectileSpeed = armament.leadSpeed > 1.0f
                                                    ? static_cast<double>(armament.leadSpeed)
                                                    : 1.0e9; // hitscan: effectively instant
@@ -10313,10 +10583,9 @@ void SpaceWorld::tick(double dt)
                     // the moment Lua stops flying the fight.
                     if (pilot.role == PilotRole::Fighter &&
                         distance < static_cast<double>(armament.maxRange) &&
-                        (playerRegistry().storage<TraderPuppet>().tryGet(pilot.targetIndex) != nullptr ||
-                         playerRegistry().storage<MinerPuppet>().tryGet(pilot.targetIndex) != nullptr)) {
-                        if (ShipPilot* hunted =
-                                playerRegistry().storage<ShipPilot>().tryGet(pilot.targetIndex)) {
+                        (registry.storage<TraderPuppet>().tryGet(pilot.targetIndex) != nullptr ||
+                         registry.storage<MinerPuppet>().tryGet(pilot.targetIndex) != nullptr)) {
+                        if (ShipPilot* hunted = registry.storage<ShipPilot>().tryGet(pilot.targetIndex)) {
                             hunted->threatIndex = entityIndex;
                             hunted->threatTimer = static_cast<float>(kThreatMemorySeconds);
                         }
@@ -10325,8 +10594,7 @@ void SpaceWorld::tick(double dt)
                 break;
             }
             case PilotState::Flee: {
-                const Transform* threatTransform =
-                    playerRegistry().storage<Transform>().tryGet(pilot.targetIndex);
+                const Transform* threatTransform = registry.storage<Transform>().tryGet(pilot.targetIndex);
                 const core::DVec3 threat = threatTransform != nullptr
                                                ? threatTransform->position
                                                : self.position + core::DVec3{0.0, 0.0, 1.0};
@@ -10343,11 +10611,11 @@ void SpaceWorld::tick(double dt)
     // input is written by pilots — zero/station-keeping until Phase 6 AI).
     // ENG pips scale the flight envelope; WEP pips recharge the capacitor;
     // SYS pips scale shield regen.
-    ecs::Pool<ShipPower>& powers = playerRegistry().storage<ShipPower>();
-    ecs::Pool<ShipDefense>& defenses = playerRegistry().storage<ShipDefense>();
+    ecs::Pool<ShipPower>& powers = registry.storage<ShipPower>();
+    ecs::Pool<ShipDefense>& defenses = registry.storage<ShipDefense>();
     {
         SOL_PROFILE_ZONE("sim.flight");
-        playerRegistry().view<Transform, FlightBody, ShipControl>().each(
+        registry.view<Transform, FlightBody, ShipControl>().each(
             [&](ecs::Entity entity, Transform& transform, FlightBody& body, ShipControl& control) {
                 transform.previousPosition = transform.position;
                 transform.previousOrientation = transform.orientation;
@@ -10380,7 +10648,7 @@ void SpaceWorld::tick(double dt)
                 // on you. Shooting the turning out of a ship is what a
                 // `thruster` mount is for, and nothing in the game declares one
                 // yet.
-                const ShipMounts* condition = playerRegistry().tryGet<ShipMounts>(entity);
+                const ShipMounts* condition = registry.tryGet<ShipMounts>(entity);
                 if (condition != nullptr) {
                     const float drive = driveFraction(*condition);
                     if (drive < 1.0f) {
@@ -10441,9 +10709,9 @@ void SpaceWorld::tick(double dt)
 
     // Ships first, so body slot i corresponds to m_collisionShipIndices[i];
     // statics (scenery without FlightBody, then celestials) follow.
-    const ecs::Pool<FlightBody>& bodies = playerRegistry().storage<FlightBody>();
-    const ecs::Pool<RenderShape>& shapes = playerRegistry().storage<RenderShape>();
-    const ecs::Pool<Transform>& transforms = playerRegistry().storage<Transform>();
+    const ecs::Pool<FlightBody>& bodies = registry.storage<FlightBody>();
+    const ecs::Pool<RenderShape>& shapes = registry.storage<RenderShape>();
+    const ecs::Pool<Transform>& transforms = registry.storage<Transform>();
     for (std::size_t i = 0; i < shapes.size(); ++i) {
         const std::uint32_t entityIndex = shapes.entityIndices()[i];
         if (!bodies.contains(entityIndex)) {
@@ -10461,8 +10729,8 @@ void SpaceWorld::tick(double dt)
             .inverseMass = 1.0 / (scale * scale * scale), // mass ~ volume
         });
     }
-    ecs::Pool<Projectile>& projectiles = playerRegistry().storage<Projectile>();
-    const ecs::Pool<OreChunk>& oreChunks = playerRegistry().storage<OreChunk>();
+    ecs::Pool<Projectile>& projectiles = registry.storage<Projectile>();
+    const ecs::Pool<OreChunk>& oreChunks = registry.storage<OreChunk>();
     for (std::size_t i = 0; i < shapes.size(); ++i) {
         const std::uint32_t entityIndex = shapes.entityIndices()[i];
         if (bodies.contains(entityIndex) || projectiles.contains(entityIndex) ||
@@ -10492,12 +10760,12 @@ void SpaceWorld::tick(double dt)
              .radius = modelBaseRadius(shape.model) * static_cast<double>(shape.scale.x),
              .inverseMass = 0.0});
     }
-    m_collisionBodies.push_back({.previousPosition = m_star.position,
-                                 .position = m_star.position,
+    m_collisionBodies.push_back({.previousPosition = bubble.star.position,
+                                 .position = bubble.star.position,
                                  .velocity = {},
-                                 .radius = m_star.radius,
+                                 .radius = bubble.star.radius,
                                  .inverseMass = 0.0});
-    for (const CelestialBody& planet : m_planets) {
+    for (const CelestialBody& planet : bubble.planets) {
         m_collisionBodies.push_back({.previousPosition = planet.position,
                                      .position = planet.position,
                                      .velocity = {},
@@ -10523,8 +10791,8 @@ void SpaceWorld::tick(double dt)
     for (std::size_t i = 0; i < m_collisionShipIndices.size(); ++i) {
         const sim::CollisionBody& body = m_collisionBodies[i];
         const std::uint32_t entityIndex = m_collisionShipIndices[i];
-        playerRegistry().storage<Transform>().get(entityIndex).position = body.position;
-        playerRegistry().storage<FlightBody>().get(entityIndex).velocity = body.velocity;
+        registry.storage<Transform>().get(entityIndex).position = body.position;
+        registry.storage<FlightBody>().get(entityIndex).velocity = body.velocity;
     }
 
     // Impact damage (k*v^2) through the facing the hit arrived on.
@@ -10540,14 +10808,15 @@ void SpaceWorld::tick(double dt)
         }
         const std::uint32_t entityIndex = m_collisionShipIndices[bodySlot];
         ShipDefense* defense = defenses.tryGet(entityIndex);
-        if (defense == nullptr || !defense->state.alive() || isDamageImmune(entityIndex)) {
+        if (defense == nullptr || !defense->state.alive() || isDamageImmune(registry, entityIndex)) {
             return;
         }
-        const core::Quat orientation = playerRegistry().storage<Transform>().get(entityIndex).orientation;
+        const core::Quat orientation = registry.storage<Transform>().get(entityIndex).orientation;
         const sim::ShieldFacing facing = sim::facingForHit(orientation, toSource);
         const sim::DamageResult result =
             sim::applyDamage(defense->state, defense->tuning, facing, static_cast<float>(damage));
-        noteDamage(entityIndex,
+        noteDamage(bubble,
+                   entityIndex,
                    m_collisionBodies[bodySlot].position + toSource * m_collisionBodies[bodySlot].radius,
                    result);
         if (result.destroyed) {
@@ -10559,7 +10828,7 @@ void SpaceWorld::tick(double dt)
         applyImpact(contact.bodyB, contact.normal, contact.impactSpeed);
     }
     for (const DestroyedShip& destroyed : destroyedShips) {
-        handleShipDestroyed(destroyed.victim, destroyed.attacker);
+        handleShipDestroyed(bubble, destroyed.victim, destroyed.attacker);
     }
     destroyedShips.clear();
 
@@ -10574,7 +10843,7 @@ void SpaceWorld::tick(double dt)
     for (std::size_t p = 0; p < projectiles.size(); ++p) {
         Projectile& projectile = projectiles.values()[p];
         const std::uint32_t projectileIndex = projectiles.entityIndices()[p];
-        Transform& transform = playerRegistry().storage<Transform>().get(projectileIndex);
+        Transform& transform = registry.storage<Transform>().get(projectileIndex);
         transform.previousPosition = transform.position;
         transform.position += projectile.velocity * dt;
         projectile.lifetime -= dt;
@@ -10602,13 +10871,14 @@ void SpaceWorld::tick(double dt)
             if (bestSlot < shipCount) {
                 const std::uint32_t targetIndex = m_collisionShipIndices[bestSlot];
                 if (ShipDefense* defense = defenses.tryGet(targetIndex);
-                    defense != nullptr && defense->state.alive() && !isDamageImmune(targetIndex)) {
+                    defense != nullptr && defense->state.alive() && !isDamageImmune(registry, targetIndex)) {
                     const core::DVec3 toSource = normalize(projectile.velocity) * -1.0;
                     const sim::ShieldFacing facing = sim::facingForHit(
-                        playerRegistry().storage<Transform>().get(targetIndex).orientation, toSource);
+                        registry.storage<Transform>().get(targetIndex).orientation, toSource);
                     const sim::DamageResult result =
                         sim::applyDamage(defense->state, defense->tuning, facing, projectile.damage);
-                    noteDamage(targetIndex,
+                    noteDamage(bubble,
+                               targetIndex,
                                transform.previousPosition +
                                    (transform.position - transform.previousPosition) * bestT,
                                result,
@@ -10625,10 +10895,10 @@ void SpaceWorld::tick(double dt)
         }
     }
     for (const std::uint32_t index : deadProjectiles) {
-        playerRegistry().destroy(playerRegistry().entityFromIndex(index));
+        registry.destroy(registry.entityFromIndex(index));
     }
     for (const DestroyedShip& destroyed : destroyedShips) {
-        handleShipDestroyed(destroyed.victim, destroyed.attacker);
+        handleShipDestroyed(bubble, destroyed.victim, destroyed.attacker);
     }
     destroyedShips.clear();
     profiler.endZone(projectileZone);
@@ -10645,7 +10915,7 @@ void SpaceWorld::tick(double dt)
     // `drawWeaponCharge` spends one shared pool of energy, so a ship's guns
     // have to be walked together and in a defined order.
     const std::uint32_t weaponZone = profiler.beginZone("sim.weapons");
-    ecs::Pool<ShipArmament>& armaments = playerRegistry().storage<ShipArmament>();
+    ecs::Pool<ShipArmament>& armaments = registry.storage<ShipArmament>();
 
     struct PendingBolt
     {
@@ -10665,6 +10935,10 @@ void SpaceWorld::tick(double dt)
     struct PendingCut
     {
         std::uint32_t entityIndex;
+        // Where the beam came FROM, which is what the chunks leave toward. A
+        // field on the record rather than a question asked later, because
+        // "later" is after the pool walk and the ship might be anybody's.
+        core::DVec3 cutter;
         core::DVec3 impact;
         float units;
         bool wreck;
@@ -10674,7 +10948,7 @@ void SpaceWorld::tick(double dt)
     for (std::size_t a = 0; a < armaments.size(); ++a) {
         ShipArmament& armament = armaments.values()[a];
         const std::uint32_t entityIndex = armaments.entityIndices()[a];
-        const ShipControl* control = playerRegistry().storage<ShipControl>().tryGet(entityIndex);
+        const ShipControl* control = registry.storage<ShipControl>().tryGet(entityIndex);
         // ⚑ The trigger is read out here and the cooldowns tick BELOW it, on
         // every gun, whether or not it is down. A cooldown that only ran while
         // the trigger was held would give every gun a free first shot after any
@@ -10688,13 +10962,12 @@ void SpaceWorld::tick(double dt)
         // Only while the trigger is down, because nothing below the trigger
         // check reads it and this runs for every armed ship in the system
         // every tick - most of which are not shooting at any given moment.
-        const GunneryFrame frame = trigger ? gunneryFrame(entityIndex) : GunneryFrame{};
+        const GunneryFrame frame = trigger ? gunneryFrame(registry, entityIndex) : GunneryFrame{};
         ShipPower* power = powers.tryGet(entityIndex);
         // ⚑ ONE READ PER SHIP, on the same rule as the frame above: which
         // mounts are still there is a fact about the SHIP, and the inner loop
         // only needs to index it (Phase 31 stage F).
-        const ShipMounts* mounts =
-            playerRegistry().tryGet<ShipMounts>(playerRegistry().entityFromIndex(entityIndex));
+        const ShipMounts* mounts = registry.tryGet<ShipMounts>(registry.entityFromIndex(entityIndex));
 
         for (std::uint32_t g = 0; g < armament.count; ++g) {
             ShipWeapon& weapon = armament.weapons[g];
@@ -10755,7 +11028,7 @@ void SpaceWorld::tick(double dt)
             // capacitor is paid. The player's own gun is at the listener; every
             // other ship's is out in the world.
             if (m_audio != nullptr) {
-                if (isPlayerEntity(playerRegistry(), entityIndex)) {
+                if (isPlayerEntity(registry, entityIndex)) {
                     m_audio->play2D(m_audio->cues().weaponFire);
                 } else {
                     m_audio->playAt(m_audio->cues().weaponFire, muzzle);
@@ -10773,12 +11046,11 @@ void SpaceWorld::tick(double dt)
                 double miningT = 2.0;
                 std::uint32_t miningEntity = kNoIndex;
                 bool miningWreck = false;
-                if (weapon.miningPower > 0.0f && isPlayerEntity(playerRegistry(), entityIndex)) {
-                    const ecs::Pool<MineableRock>& rockPool = playerRegistry().storage<MineableRock>();
-                    const ecs::Pool<WreckMarker>& wreckPool = playerRegistry().storage<WreckMarker>();
+                if (weapon.miningPower > 0.0f && isPlayerEntity(registry, entityIndex)) {
+                    const ecs::Pool<MineableRock>& rockPool = registry.storage<MineableRock>();
+                    const ecs::Pool<WreckMarker>& wreckPool = registry.storage<WreckMarker>();
                     const auto sweepCuttable = [&](std::uint32_t candidate, bool isWreck) {
-                        const RenderShape& candidateShape =
-                            playerRegistry().storage<RenderShape>().get(candidate);
+                        const RenderShape& candidateShape = registry.storage<RenderShape>().get(candidate);
                         const double radius = modelBaseRadius(candidateShape.model) *
                                               static_cast<double>(candidateShape.scale.x);
                         double hitT = 0.0;
@@ -10823,23 +11095,25 @@ void SpaceWorld::tick(double dt)
                     // itself is deferred: it spawns chunk entities, and nothing
                     // may change a pool's shape while this loop walks one.
                     pendingCuts.push_back({.entityIndex = miningEntity,
+                                           .cutter = frame.position,
                                            .impact = muzzle + (beamEnd - muzzle) * miningT,
                                            .units = weapon.miningPower /
                                                     (weapon.rateOfFire > 0.01f ? weapon.rateOfFire : 0.01f),
                                            .wreck = miningWreck});
                 } else if (hit) {
                     if (ShipDefense* defense = defenses.tryGet(bestTarget);
-                        defense != nullptr && defense->state.alive() && !isDamageImmune(bestTarget)) {
+                        defense != nullptr && defense->state.alive() &&
+                        !isDamageImmune(registry, bestTarget)) {
                         // Which of the target's shields eats it: the arrival
                         // direction is the BEAM's, not the shooter's nose, so a
                         // turret firing aft off a fleeing freighter lands on the
                         // shield actually facing it.
                         const sim::ShieldFacing facing = sim::facingForHit(
-                            playerRegistry().storage<Transform>().get(bestTarget).orientation,
-                            bearing * -1.0);
+                            registry.storage<Transform>().get(bestTarget).orientation, bearing * -1.0);
                         const sim::DamageResult result =
                             sim::applyDamage(defense->state, defense->tuning, facing, weapon.damage);
-                        noteDamage(bestTarget, muzzle + (beamEnd - muzzle) * bestT, result, entityIndex);
+                        noteDamage(
+                            bubble, bestTarget, muzzle + (beamEnd - muzzle) * bestT, result, entityIndex);
                         if (result.destroyed) { // deferred: mid-iteration
                             destroyedShips.push_back({.victim = bestTarget, .attacker = entityIndex});
                         }
@@ -10867,18 +11141,18 @@ void SpaceWorld::tick(double dt)
         }
     }
     for (const DestroyedShip& destroyed : destroyedShips) {
-        handleShipDestroyed(destroyed.victim, destroyed.attacker);
+        handleShipDestroyed(bubble, destroyed.victim, destroyed.attacker);
     }
     for (const PendingCut& cut : pendingCuts) {
         if (cut.wreck) {
-            (void)cutWreck(cut.entityIndex, cut.units);
+            (void)cutWreck(bubble, cut.cutter, cut.entityIndex, cut.units);
             m_combatEffects.spawnImpact(cut.impact, false);
             if (m_audio != nullptr) {
                 m_audio->playAt(m_audio->cues().miningCut, cut.impact);
             }
             continue;
         }
-        const MineableRock* rock = playerRegistry().storage<MineableRock>().tryGet(cut.entityIndex);
+        const MineableRock* rock = registry.storage<MineableRock>().tryGet(cut.entityIndex);
         if (rock == nullptr) {
             continue; // two beams on one rock in a tick; the first broke it up
         }
@@ -10886,35 +11160,87 @@ void SpaceWorld::tick(double dt)
         const std::uint32_t index = rock->index;
         const std::uint32_t commodity = rock->commodity;
         const float total = rock->totalUnits;
-        (void)cutRock(cut.entityIndex, cut.units);
+        (void)cutRock(bubble, cut.cutter, cut.entityIndex, cut.units);
         m_combatEffects.spawnImpact(cut.impact, false);
         if (m_audio != nullptr) {
             m_audio->playAt(m_audio->cues().miningCut, cut.impact);
         }
-        if (m_mining.unitsLeft(m_currentSystem, field, index, total) <= 0.0f) {
-            playerRegistry().destroy(playerRegistry().entityFromIndex(cut.entityIndex)); // it broke up
+        if (m_mining.unitsLeft(bubble.system, field, index, total) <= 0.0f) {
+            registry.destroy(registry.entityFromIndex(cut.entityIndex)); // it broke up
             m_rockEvents.push_back({.commodity = commodity, .units = total});
         }
     }
     for (const PendingBolt& bolt : newBolts) {
-        const ecs::Entity e = playerRegistry().create();
-        playerRegistry().emplace<Transform>(e,
-                                            Transform{.position = bolt.position,
-                                                      .previousPosition = bolt.position,
-                                                      .orientation = bolt.orientation,
-                                                      .previousOrientation = bolt.orientation});
-        playerRegistry().emplace<RenderShape>(e,
-                                              RenderShape{.scale = {0.3f, 0.3f, 4.0f}, .model = bolt.model});
-        playerRegistry().emplace<Projectile>(e,
-                                             Projectile{.velocity = bolt.velocity,
-                                                        .lifetime = bolt.lifetime,
-                                                        .damage = bolt.damage,
-                                                        .shooterIndex = bolt.shooterIndex});
+        const ecs::Entity e = registry.create();
+        registry.emplace<Transform>(e,
+                                    Transform{.position = bolt.position,
+                                              .previousPosition = bolt.position,
+                                              .orientation = bolt.orientation,
+                                              .previousOrientation = bolt.orientation});
+        registry.emplace<RenderShape>(e, RenderShape{.scale = {0.3f, 0.3f, 4.0f}, .model = bolt.model});
+        registry.emplace<Projectile>(e,
+                                     Projectile{.velocity = bolt.velocity,
+                                                .lifetime = bolt.lifetime,
+                                                .damage = bolt.damage,
+                                                .shooterIndex = bolt.shooterIndex});
     }
     profiler.endZone(weaponZone);
 
+    // Mining (Phase 8f): rock tumble, chunk drift and collection, and the
+    // wreck reconcile. The eighth and last per-system zone.
+    {
+        const std::uint32_t zone = profiler.beginZone("sim.mining");
+        tickSystemMining(bubble, dt);
+        profiler.endZone(zone);
+    }
+}
+
+void SpaceWorld::tick(double dt)
+{
+    core::Profiler& profiler = core::frameProfiler();
+    // The run's own clock. Market intel is stamped against it, so it advances
+    // whether the player is docked or flying — a price you read an hour ago
+    // is an hour old either way.
+    m_worldSeconds += dt;
+    // Coarse-layer mining (Phase 8f): wrecks age and refinery orders cook
+    // whether the player is watching them or three systems away
+    // (decisions/005). ⚑ Hoisted out of `sim.mining` at Phase 38 stage B and
+    // given its own zone: it is galaxy-wide work that must run ONCE, and the
+    // zone it used to share is per-system now, so leaving it there would have
+    // ticked the whole coarse layer k times and measured it as k systems'
+    // worth of rock tumble.
+    {
+        const std::uint32_t zone = profiler.beginZone("sim.coarse.mining");
+        m_mining.tick(dt);
+        profiler.endZone(zone);
+    }
+
+    // ⚑⚑⚑⚑ THE TICK NESTS (Phase 38 stage B). One pass per instantiated
+    // system, in bubble order, and the player's is the front one - so the
+    // scratch buffers, `m_appliedInput` and the thruster/audio feedback below
+    // all describe the player's system by the time anything reads them.
+    //
+    // ⚑⚑ INDEXED RATHER THAN RANGE-FOR ON PURPOSE. Stage C is what starts
+    // opening and closing bubbles against a retention policy, and this is the
+    // loop it will do it from; an iterator into `m_bubbles` would not survive
+    // that, where an index and a size re-read each pass will.
+    for (std::size_t bubbleSlot = 0; bubbleSlot < m_bubbles.size(); ++bubbleSlot) {
+        tickSystem(*m_bubbles[bubbleSlot], dt);
+    }
+
     // Feedback bookkeeping.
     m_combatEffects.tick(dt);
+    // The collection ticker is a HUD readout, not state: it fades. ⚑ It sat at
+    // the bottom of `tickMining` until stage B and moved here rather than into
+    // the per-system half, because it counts what the PLAYER scooped up and
+    // there is only one of those however many systems are running.
+    if (m_collectTicker > 0.0f) {
+        m_collectTickerAge += dt;
+        if (m_collectTickerAge > 2.0) {
+            m_collectTicker = 0.0f;
+            m_collectTickerAge = 0.0;
+        }
+    }
     if (m_playerDamageTimer > 0.0f) {
         m_playerDamageTimer -= static_cast<float>(dt);
         if (m_playerDamageTimer < 0.0f) {
@@ -10936,14 +11262,6 @@ void SpaceWorld::tick(double dt)
             }
         }
         m_audio->setEngineThrottle(throttle);
-    }
-
-    // Mining (Phase 8f): rock tumble, chunk drift and collection, wreck decay
-    // and reconciliation, refinery orders.
-    {
-        const std::uint32_t zone = profiler.beginZone("sim.mining");
-        tickMining(dt);
-        profiler.endZone(zone);
     }
 
     // Coarse-layer economy: galaxy-wide, same clock as everything else
@@ -10970,14 +11288,26 @@ void SpaceWorld::tick(double dt)
     // after the economy tick, because that is the one place a trader's route
     // can change — this is the LOD promotion §2 committed to and the coarse
     // layer has been waiting for since Phase 7.
+    //
+    // ⚑⚑ "HERE" IS A SET NOW, NOT A COMPARISON (Phase 38 stage B). Both
+    // reconciles asked `== m_currentSystem`; they ask each instantiated bubble
+    // in turn instead, which is `decisions/015`'s policy said out loud. The
+    // presence marks they keep are indexed by trader and by market - both
+    // galaxy-wide - so they are cleared ONCE above the loop: clearing them per
+    // bubble would let each pass unmark what the one before it had claimed and
+    // spawn the whole fleet again.
     {
         const std::uint32_t zone = profiler.beginZone("sim.puppets");
-        syncTraderPuppets();
-        // And a ship at the rock for every outpost here that is digging
-        // (Phase 8x stage 6). Same reconcile, same rule, a different coarse
-        // actor: an extractor's draw is activity the sim has been performing
-        // since Phase 8g with nothing in the sky to show for it.
-        syncMinerPuppets(dt);
+        beginPuppetReconcile(dt);
+        for (std::size_t bubbleSlot = 0; bubbleSlot < m_bubbles.size(); ++bubbleSlot) {
+            SystemBubble& bubble = *m_bubbles[bubbleSlot];
+            syncTraderPuppets(bubble);
+            // And a ship at the rock for every outpost here that is digging
+            // (Phase 8x stage 6). Same reconcile, same rule, a different coarse
+            // actor: an extractor's draw is activity the sim has been
+            // performing since Phase 8g with nothing in the sky to show for it.
+            syncMinerPuppets(bubble, dt);
+        }
         profiler.endZone(zone);
     }
 
@@ -11088,7 +11418,8 @@ void SpaceWorld::tick(double dt)
 // disabling a distinct act from killing: a freighter whose drive you shot off
 // is still a whole freighter, and one you shot to pieces has an intact drive
 // in the wreck. Spending one hit twice is the point.
-void SpaceWorld::damageMounts(std::uint32_t targetIndex,
+void SpaceWorld::damageMounts(ecs::Registry& registry,
+                              std::uint32_t targetIndex,
                               const core::DVec3& hitPosition,
                               const sim::DamageResult& result)
 {
@@ -11096,9 +11427,9 @@ void SpaceWorld::damageMounts(std::uint32_t targetIndex,
     if (reaching <= 0.0f) {
         return; // the facing held; nothing under it was touched
     }
-    const ecs::Entity entity = playerRegistry().entityFromIndex(targetIndex);
-    ShipMounts* mounts = playerRegistry().tryGet<ShipMounts>(entity);
-    const Transform* transform = playerRegistry().tryGet<Transform>(entity);
+    const ecs::Entity entity = registry.entityFromIndex(targetIndex);
+    ShipMounts* mounts = registry.tryGet<ShipMounts>(entity);
+    const Transform* transform = registry.tryGet<Transform>(entity);
     if (mounts == nullptr || transform == nullptr || mounts->count == 0) {
         return;
     }
@@ -11149,7 +11480,7 @@ void SpaceWorld::damageMounts(std::uint32_t targetIndex,
     // Spending a hit on one place, and announcing it if that finishes it. A
     // lambda because there are two passes below and only one of them picks a
     // mount by where the shot came in.
-    const RenderShape* shape = playerRegistry().tryGet<RenderShape>(entity);
+    const RenderShape* shape = registry.tryGet<RenderShape>(entity);
     const float hullScale = shape != nullptr ? shape->scale.x : 1.0f;
     auto spendOn = [&](MountCondition& mount, float amount) {
         mount.hp -= amount;
@@ -11168,7 +11499,7 @@ void SpaceWorld::damageMounts(std::uint32_t targetIndex,
         const core::DVec3 where = transform->position + toDVec3(rotate(transform->orientation, at));
         m_combatEffects.spawnExplosion(where, hullScale * 0.5f);
         if (m_audio != nullptr) {
-            if (isPlayerEntity(playerRegistry(), targetIndex)) {
+            if (isPlayerEntity(registry, targetIndex)) {
                 m_audio->play2D(m_audio->cues().explosion);
                 m_audio->play2D(m_audio->cues().alarm);
             } else {
@@ -11231,11 +11562,13 @@ void SpaceWorld::damageMounts(std::uint32_t targetIndex,
     }
 }
 
-void SpaceWorld::noteDamage(std::uint32_t targetIndex,
+void SpaceWorld::noteDamage(SystemBubble& bubble,
+                            std::uint32_t targetIndex,
                             const core::DVec3& hitPosition,
                             const sim::DamageResult& result,
                             std::uint32_t attackerIndex)
 {
+    ecs::Registry& registry = bubble.registry;
     // ⚑⚑ FIRST, AND ABOVE THE PLAYER EARLY-OUT BELOW (Phase 31 stage F). It
     // is in this function because this is the one funnel every hit in the game
     // passes through carrying all three facts it needs - who was hit, where,
@@ -11243,7 +11576,7 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex,
     // twenty lines down is about who gets a bounty assist. The player's own
     // mounts are shot off exactly like everybody else's, and hanging this off
     // the bottom of the function is how they would not be.
-    damageMounts(targetIndex, hitPosition, result);
+    damageMounts(registry, targetIndex, hitPosition, result);
 
     const bool shieldHit = result.shieldAbsorbed >= result.armorAbsorbed + result.hullDamage;
     m_combatEffects.spawnImpact(hitPosition, shieldHit);
@@ -11251,7 +11584,7 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex,
         const sol::audio::SoundId cue = shieldHit ? m_audio->cues().hitShield : m_audio->cues().hitHull;
         // A hit on the player is a hit on the listener: 2D, because the sound
         // is your own hull and it has no direction to come from.
-        if (isPlayerEntity(playerRegistry(), targetIndex)) {
+        if (isPlayerEntity(registry, targetIndex)) {
             m_audio->play2D(cue);
             // The alarm is for damage that is actually costing you something.
             // Every shield hit would make it a drone rather than a warning.
@@ -11262,14 +11595,14 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex,
             m_audio->playAt(cue, hitPosition);
         }
     }
-    if (isPlayerEntity(playerRegistry(), targetIndex)) {
+    if (isPlayerEntity(registry, targetIndex)) {
         m_playerDamageTimer = kDamageFlashSeconds;
         return; // the player assisting their own death is not a thing
     }
     // Phase 8l: re-arm the victim's assist window so a kill someone else
     // finishes still counts toward a bounty the player was fighting for.
-    if (isPlayerEntity(playerRegistry(), attackerIndex)) {
-        if (ShipDefense* defense = playerRegistry().storage<ShipDefense>().tryGet(targetIndex)) {
+    if (isPlayerEntity(registry, attackerIndex)) {
+        if (ShipDefense* defense = registry.storage<ShipDefense>().tryGet(targetIndex)) {
             defense->playerAssist = kAssistSeconds;
         }
     }
@@ -11280,7 +11613,7 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex,
     // it rather than from whatever entity 0 happened to be, and a raider
     // cruising off after cargo can answer the patrol on its tail.
     if (attackerIndex != kNoIndex && attackerIndex != targetIndex) {
-        if (ShipPilot* pilot = playerRegistry().storage<ShipPilot>().tryGet(targetIndex)) {
+        if (ShipPilot* pilot = registry.storage<ShipPilot>().tryGet(targetIndex)) {
             pilot->threatIndex = attackerIndex;
             pilot->threatTimer = static_cast<float>(kThreatMemorySeconds);
         }
@@ -11290,23 +11623,37 @@ void SpaceWorld::noteDamage(std::uint32_t targetIndex,
     // site that knows who shot whom for certain, and every hit funnels through
     // it. `considerResponse` decides whether it is an incident and throttles a
     // burst of hits into one call.
-    considerResponse(targetIndex, attackerIndex, hitPosition);
+    considerResponse(bubble, targetIndex, attackerIndex, hitPosition);
 }
 
-void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t attackerIndex)
+void SpaceWorld::handleShipDestroyed(SystemBubble& bubble,
+                                     std::uint32_t entityIndex,
+                                     std::uint32_t attackerIndex)
 {
+    // ⚑⚑⚑⚑ FOUR CONSEQUENCES USED TO BE KEYED ON `m_currentSystem` AND ARE
+    // KEYED ON `bubble.system` NOW (Phase 38 stage B): the mission kill, the
+    // contest pressure, the trader loss and the wreck. `m_currentSystem` is
+    // where the PLAYER is standing, which was the same thing as where the
+    // dying ship was for thirty phases and stops being so the moment a second
+    // bubble ticks. The wreck is the one that shows: its `position` is a DVec3
+    // in the dead ship's own frame, so charging it to the player's system puts
+    // a derelict in open space beside the player's star.
+    //
+    // ⚑ This is Phase 37 stage E's finding one phase later - key a consequence
+    // on the FACTS, not on the call site - and the fact was always in hand,
+    // because it is the registry the victim was walked out of.
+    ecs::Registry& registry = bubble.registry;
     // Fireball at the wreck site, scaled by the hull.
-    const core::DVec3 wreckPosition = playerRegistry().storage<Transform>().get(entityIndex).position;
-    m_combatEffects.spawnExplosion(wreckPosition,
-                                   playerRegistry().storage<RenderShape>().get(entityIndex).scale.x);
+    const core::DVec3 wreckPosition = registry.storage<Transform>().get(entityIndex).position;
+    m_combatEffects.spawnExplosion(wreckPosition, registry.storage<RenderShape>().get(entityIndex).scale.x);
     if (m_audio != nullptr) {
-        if (isPlayerEntity(playerRegistry(), entityIndex)) {
+        if (isPlayerEntity(registry, entityIndex)) {
             m_audio->play2D(m_audio->cues().explosion);
         } else {
             m_audio->playAt(m_audio->cues().explosion, wreckPosition);
         }
     }
-    if (isPlayerEntity(playerRegistry(), entityIndex)) {
+    if (isPlayerEntity(registry, entityIndex)) {
         // Cargo is lost either way (decisions/007).
         std::fill(m_playerCargo.begin(), m_playerCargo.end(), 0.0f);
         if (m_hardcore) {
@@ -11348,12 +11695,12 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
             SOL_LOG_WARN(
                 "ship destroyed - respawning in %s (insurance %.0f cr)", currentSystemName(), deductible);
         }
-        Transform& transform = playerRegistry().storage<Transform>().get(entityIndex);
+        Transform& transform = registry.storage<Transform>().get(entityIndex);
         transform = Transform{.position = m_playerSpawn, .previousPosition = m_playerSpawn};
-        playerRegistry().storage<FlightBody>().get(entityIndex) = FlightBody{};
-        ShipDefense& defense = playerRegistry().storage<ShipDefense>().get(entityIndex);
+        registry.storage<FlightBody>().get(entityIndex) = FlightBody{};
+        ShipDefense& defense = registry.storage<ShipDefense>().get(entityIndex);
         sim::resetDefense(defense.state, defense.tuning);
-        ShipPower& power = playerRegistry().storage<ShipPower>().get(entityIndex);
+        ShipPower& power = registry.storage<ShipPower>().get(entityIndex);
         power.state = sim::PowerState{.weaponCharge = power.tuning.weaponCapacitor};
         // ⚑⚑ AND THE MOUNTS (Phase 31 stage F2). `decisions/007` is that death
         // costs the cargo and an insurance deductible and puts you back in THE
@@ -11366,8 +11713,7 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
         // leave broken - transform, body, defences, capacitor - and mount
         // condition is simply the newest member of it. That is why the omission
         // was invisible: nothing here was wrong, something was missing.
-        if (ShipMounts* mounts =
-                playerRegistry().tryGet<ShipMounts>(playerRegistry().entityFromIndex(entityIndex))) {
+        if (ShipMounts* mounts = registry.tryGet<ShipMounts>(registry.entityFromIndex(entityIndex))) {
             repairMounts(*mounts);
         }
         return;
@@ -11379,10 +11725,10 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
     // Mission credit is broader - a bounty asks whether the player was in
     // the fight, and a kill stolen by local security still leaves the raider
     // dead, which is what the contract paid for.
-    if (const ShipPilot* pilot = playerRegistry().storage<ShipPilot>().tryGet(entityIndex);
+    if (const ShipPilot* pilot = registry.storage<ShipPilot>().tryGet(entityIndex);
         pilot != nullptr && pilot->factionIndex < m_factionTable.size()) {
-        const bool playerKilled = isPlayerEntity(playerRegistry(), attackerIndex);
-        const ShipDefense* defense = playerRegistry().storage<ShipDefense>().tryGet(entityIndex);
+        const bool playerKilled = isPlayerEntity(registry, attackerIndex);
+        const ShipDefense* defense = registry.storage<ShipDefense>().tryGet(entityIndex);
         const bool playerAssisted = defense != nullptr && defense->playerAssist > 0.0;
 
         if (playerKilled) {
@@ -11393,18 +11739,18 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
                          playerAttitudeName(pilot->factionIndex));
         }
         if (playerKilled || playerAssisted) {
-            m_missions.notifyKill(pilot->factionIndex, m_currentSystem);
+            m_missions.notifyKill(pilot->factionIndex, bubble.system);
             // Territory (Phase 8u): the same "was the player in this fight"
             // rule 8l defined decides whether a kill pushes a contest back.
             // Only the player's kills reach here - nothing simulates a war's
             // attrition, so crediting ambient dogfights would invent state
             // the sim does not have and make the meter a lie.
-            const float before = m_factionSim.contestOf(m_currentSystem).pressure;
-            m_factionSim.recordContestKill(m_currentSystem, pilot->factionIndex);
-            const float after = m_factionSim.contestOf(m_currentSystem).pressure;
+            const float before = m_factionSim.contestOf(bubble.system).pressure;
+            m_factionSim.recordContestKill(bubble.system, pilot->factionIndex);
+            const float after = m_factionSim.contestOf(bubble.system).pressure;
             if (after < before) {
                 SOL_LOG_INFO("contest in system %u: pressure %.2f -> %.2f",
-                             m_currentSystem,
+                             bubble.system,
                              static_cast<double>(before),
                              static_cast<double>(after));
             }
@@ -11424,17 +11770,17 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
     //
     // despawnShip() is the no-consequence sibling of this, and stays that way:
     // a trader that merely flies out of the player's system has not been lost.
-    if (const TraderPuppet* puppet = playerRegistry().storage<TraderPuppet>().tryGet(entityIndex);
+    if (const TraderPuppet* puppet = registry.storage<TraderPuppet>().tryGet(entityIndex);
         puppet != nullptr && m_economy.loseTrader(puppet->traderIndex)) {
-        m_factionSim.recordTraderLoss(m_currentSystem, puppet->traderIndex);
+        m_factionSim.recordTraderLoss(bubble.system, puppet->traderIndex);
         // Who fired is known here and nowhere else (Phase 8x §E). It matters
         // for exactly one thing: an escort contract on a hauler the player
         // shot themselves is a failure they are charged for, not a loss they
         // are excused. 8l's assist window counts, so finishing your own charge
         // off through local security is the same betrayal.
-        if (isPlayerEntity(playerRegistry(), attackerIndex)) {
+        if (isPlayerEntity(registry, attackerIndex)) {
             m_playerKilledTraders.push_back(puppet->traderIndex);
-        } else if (const ShipDefense* defense = playerRegistry().storage<ShipDefense>().tryGet(entityIndex);
+        } else if (const ShipDefense* defense = registry.storage<ShipDefense>().tryGet(entityIndex);
                    defense != nullptr && defense->playerAssist > 0.0) {
             m_playerKilledTraders.push_back(puppet->traderIndex);
         }
@@ -11445,7 +11791,7 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
     // has to reach the draw or the ship was scenery. It is the only way the
     // player can reach into a station's production directly — and it is
     // temporary, because the outpost sends another ship out.
-    if (const MinerPuppet* miner = playerRegistry().storage<MinerPuppet>().tryGet(entityIndex);
+    if (const MinerPuppet* miner = registry.storage<MinerPuppet>().tryGet(entityIndex);
         miner != nullptr && miner->market < m_minerHold.size()) {
         m_minerHold[miner->market] = kMinerReplacementLegs * m_economy.params().traderLegSeconds;
         const sim::StationMarket& row = m_economy.markets()[miner->market];
@@ -11454,26 +11800,26 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
                      m_minerHold[miner->market]);
     }
 
-    for (std::size_t i = 0; i < m_spawnedShips.size(); ++i) {
-        if (m_spawnedShips[i].entity.index != entityIndex) {
+    for (std::size_t i = 0; i < bubble.spawnedShips.size(); ++i) {
+        if (bubble.spawnedShips[i].entity.index != entityIndex) {
             continue;
         }
-        SOL_LOG_INFO("'%s' destroyed", m_spawnedShips[i].defId.c_str());
+        SOL_LOG_INFO("'%s' destroyed", bubble.spawnedShips[i].defId.c_str());
 
         // A wreck stays where it fell (Phase 8f). The record is what persists
         // — the entity to cut is materialized by tickMining, here and after a
         // jump back or a reload — and its contents are composed now, from the
         // ship that actually died, so a later def edit cannot rewrite it.
-        const core::DVec3 where = playerRegistry().storage<Transform>().get(entityIndex).position;
-        const std::string defId = m_spawnedShips[i].defId;
-        const std::string name = m_spawnedShips[i].name;
-        const ShipPilot* pilot = playerRegistry().storage<ShipPilot>().tryGet(entityIndex);
+        const core::DVec3 where = registry.storage<Transform>().get(entityIndex).position;
+        const std::string defId = bubble.spawnedShips[i].defId;
+        const std::string name = bubble.spawnedShips[i].name;
+        const ShipPilot* pilot = registry.storage<ShipPilot>().tryGet(entityIndex);
         const std::uint32_t faction = pilot != nullptr ? pilot->factionIndex : kNoIndex;
         const std::uint64_t seed =
             core::Rng(
                 m_universeSeed ^ (static_cast<std::uint64_t>(entityIndex + 1) * 0x9e37'79b9'7f4a'7c15ull), 13)
                 .nextU64();
-        const std::uint32_t wreckId = m_mining.addWreck(m_currentSystem, where, defId, name, seed);
+        const std::uint32_t wreckId = m_mining.addWreck(bubble.system, where, defId, name, seed);
         if (wreckId != 0) {
             const assets::ShipDef* def = m_defs != nullptr ? m_defs->findShip(defId.c_str()) : nullptr;
             // Scriptless default first, so a hull always holds something even
@@ -11481,7 +11827,7 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
             // cut into.
             (void)m_mining.setWreckContents(wreckId, defaultWreckLoot(def, seed));
             m_wreckEvents.push_back({.id = wreckId,
-                                     .system = m_currentSystem,
+                                     .system = bubble.system,
                                      .defId = defId,
                                      .factionName = faction < m_factionTable.size()
                                                         ? m_factionTable[faction].name
@@ -11489,8 +11835,8 @@ void SpaceWorld::handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t at
                                      .seed = seed});
         }
 
-        playerRegistry().destroy(m_spawnedShips[i].entity);
-        m_spawnedShips.erase(m_spawnedShips.begin() + static_cast<std::ptrdiff_t>(i));
+        registry.destroy(bubble.spawnedShips[i].entity);
+        bubble.spawnedShips.erase(bubble.spawnedShips.begin() + static_cast<std::ptrdiff_t>(i));
         return;
     }
 }
@@ -11711,7 +12057,7 @@ void SpaceWorld::appendFittingInstances(float alpha, bool includeShip, std::vect
             continue;
         }
 
-        const GunneryFrame frame = gunneryFrame(entityIndex);
+        const GunneryFrame frame = gunneryFrame(playerRegistry(), entityIndex);
         const core::DVec3 hullPosition =
             transform->previousPosition + (transform->position - transform->previousPosition) * alphaD;
         const core::Quat hullRotation = nlerp(transform->previousOrientation, transform->orientation, alpha);
@@ -12096,9 +12442,10 @@ bool SpaceWorld::loadFrom(const char* path)
         if (!reader.read(bubble->system) || !schema.load(bubble->registry, reader)) {
             return false;
         }
-        // A snapshot only carries the pools the save had in it, so a bubble
-        // read back off disk needs the same treatment a fresh one gets.
-        ensureWorldPools(bubble->registry);
+        // A snapshot only carries the pools the save had in it, and it carries
+        // no statics and no random stream at all, so a bubble read back off
+        // disk needs the same furnishing a fresh one gets.
+        furnishBubble(*bubble);
         const std::size_t players = bubble->registry.storage<PlayerShip>().size();
         if (players > 1) {
             return false; // two players in one sky is not a world this can load
@@ -12122,7 +12469,7 @@ bool SpaceWorld::loadFrom(const char* path)
     m_bubbles = std::move(fresh);
     // Def-spawned entities were replaced wholesale; their def association is
     // gone (visuals persist via the saved RenderShape).
-    m_spawnedShips.clear();
+    playerShips().clear();
     m_combatEffects.clear();
     m_thrusters.clear();
     m_playerCredits = credits;

@@ -1590,8 +1590,14 @@ public:
     // years away are reported by the same code.
     void drainTraderLosses();
     // Dev lever (sol.trader_kill): kills a coarse trader the way the running
-    // game would - through its body if it has one here, so the wreck, the loot
-    // and the standing hit are all real.
+    // game would - through its body if it has one in ANY instantiated system,
+    // so the wreck, the loot and the standing hit are all real.
+    //
+    // ⚑ "Here" meant the player's sky until Phase 38 stage B, which was the
+    // only sky there was. A hauler flying a leg through a bubble the player has
+    // left has a body exactly like one flying past their nose, and the lever's
+    // own rule - reach only states the sim can reach - is what makes finding it
+    // the right answer rather than a convenience.
     bool killCoarseTrader(std::uint32_t traderIndex);
     // Dev lever (sol.miner_kill): the same, one actor over. There is no
     // recordless road here — a miner IS its body — so this only ever destroys a
@@ -2594,14 +2600,78 @@ public:
 
     [[nodiscard]] std::size_t instantiatedSystemCount() const { return m_bubbles.size(); }
 
+    // ⚑⚑⚑⚑ OPENS A SYSTEM THE PLAYER IS NOT IN, AND TICKS IT FROM THE NEXT
+    // FRAME (Phase 38 stage B). This is the mechanism half of the cooling
+    // bubble: a bubble with its own statics, its own rocks and its own ambient
+    // traffic, ticked by the same eight per-system zones the player's is,
+    // charging its kills and its wrecks to its own system.
+    //
+    // ⚑⚑⚑ THE POLICY HALF IS STAGE C AND NOTHING HERE PRE-EMPTS IT. Stage B
+    // never calls this on its own - `instantiatedSystemCount()` is still 1 for
+    // the whole of a played session, and `the_world_instantiates_exactly_one_
+    // system_and_it_is_the_players` still holds - because WHEN to open one,
+    // how long to keep it and how many may be open at once are the three
+    // questions stage C exists to answer against the O(n^2) collision pass.
+    // What this buys now is that the nesting is exercisable rather than merely
+    // written, which is the difference this project has twice paid for.
+    //
+    // Idempotent: a system already instantiated is returned as it stands, sky
+    // and all, rather than built a second time on top of itself - the bug the
+    // plural registry actually caused in stage A, said once so it cannot
+    // happen again through this door.
+    bool instantiateSystem(std::uint32_t system);
+
     [[nodiscard]] std::uint32_t instantiatedSystemAt(std::size_t slot) const
     {
         return slot < m_bubbles.size() ? m_bubbles[slot]->system : kNoIndex;
     }
 
-    [[nodiscard]] const CelestialBody& sun() const { return m_star; }
+    // ⚑⚑ WHAT ONE BUBBLE HOLDS (Phase 38 stage B). The only way to look into a
+    // system the player is not standing in - every other reader in this file
+    // asks the player's, and goes on being right while doing it, which is
+    // exactly how a bug in the nested tick would stay invisible. Stage D hangs
+    // the console readout off this and stage C adds the retention clock; what
+    // is here is the half stage B actually produces.
+    struct BubbleReport
+    {
+        std::uint32_t system = kNoIndex;
+        std::size_t entities = 0;
+        std::size_t ships = 0; // hulls with a pilot: the traffic, not the scenery
+        std::size_t projectiles = 0;
+        // Hulls that have been left in it. A wreck record carries its own system
+        // and its own position, so which bubble materialises one is the whole
+        // question the fine half of mining answers per system.
+        std::size_t wrecks = 0;
+        bool player = false;
+        // The statics this bubble ticks against. Avoidance and the collision
+        // build both push the star and every planet as spheres, so these two
+        // numbers ARE the frame as far as the per-system tick is concerned -
+        // a bubble reporting the player's star is one whose ships dodge a sun
+        // that is not there and fly through the one that is.
+        double starRadius = 0.0;
+        std::size_t planets = 0;
+        // Where its traffic is, averaged. Not decoration: it is the only way
+        // from outside this class to see that a bubble is being TICKED rather
+        // than merely held, because everything else a foreign bubble owns
+        // (its counts, its hulls) can sit still for a hundred frames and be
+        // right. Stage C's console readout wants it for the same reason.
+        sol::core::DVec3 shipCentroid;
+        // The hull fraction of the most damaged ship in it, 1.0 when nothing
+        // has been shot and 0.0 when the bubble holds no ships at all. This is
+        // the number the cooling bubble is a claim about - stage C's exit is
+        // that it does not reset when the player leaves - and it is here so the
+        // stage that builds the tick can watch the tick move it.
+        float worstHull = 0.0f;
+    };
 
-    [[nodiscard]] std::span<const CelestialBody> planets() const { return m_planets; }
+    [[nodiscard]] bool bubbleReportAt(std::size_t slot, BubbleReport& out) const;
+
+    // The player's sky. Both were plain members until stage B moved them onto
+    // the bubble; every reader outside the tick wants the system being drawn,
+    // which is the player's, and says so here rather than by omission.
+    [[nodiscard]] const CelestialBody& sun() const { return m_bubbles.front()->star; }
+
+    [[nodiscard]] std::span<const CelestialBody> planets() const { return m_bubbles.front()->planets; }
 
     [[nodiscard]] std::span<const GateInstance> gates() const { return m_gates; }
 
@@ -2675,7 +2745,7 @@ public:
     // selection). Returns a default-constructed info for a stale slot.
     [[nodiscard]] TargetInfo contactInfo(std::size_t shipSlot) const;
 
-    [[nodiscard]] std::size_t contactCount() const { return m_spawnedShips.size(); }
+    [[nodiscard]] std::size_t contactCount() const { return playerShips().size(); }
 
     // Phase 15: `step` is +1 forward or -1 backward. A parameter rather than a
     // second function so the two directions cannot drift apart - the fog walk
@@ -2766,11 +2836,25 @@ public:
     // `playerWeapon()`, which handed out a reference to the one gun: with
     // guns plural there is no "the" weapon to return, and every caller of the
     // old accessor turned out to want a summary rather than a gun anyway.
-    [[nodiscard]] ArmamentSummary playerArmament() const { return armamentSummary(playerEntityIndex()); }
+    [[nodiscard]] ArmamentSummary playerArmament() const
+    {
+        return armamentSummary(playerRegistry(), playerEntityIndex());
+    }
 
     // The same, for any entity that has an armament; all-zero for one that
-    // does not (a station, a rock, an unarmed hull).
-    [[nodiscard]] ArmamentSummary armamentSummary(std::uint32_t entityIndex) const;
+    // does not (a station, a rock, an unarmed hull). ⚑ Takes the registry
+    // since stage B: the firing pass asks this of every armed ship in the
+    // bubble it is walking, and an index means nothing without one.
+    [[nodiscard]] ArmamentSummary armamentSummary(const sol::ecs::Registry& registry,
+                                                  std::uint32_t entityIndex) const;
+
+    // ⚑ And the same question asked of the player's sky, which is the only one
+    // a caller outside this class can name - the same shape, and for the same
+    // reason, as `shipMounts` and `playerGuns` above.
+    [[nodiscard]] ArmamentSummary armamentSummary(std::uint32_t entityIndex) const
+    {
+        return armamentSummary(playerRegistry(), entityIndex);
+    }
 
     // The player's guns as the SIM holds them, in mount order. A view of the
     // live component rather than a copy, and the only way to see a gun the
@@ -2808,12 +2892,16 @@ public:
     // stage C2). Public because the console probe reports a gun's live bearing
     // and stage E will draw one: `layGun` is the only definition of where a
     // gun points, and it needs this to be reachable from outside the tick.
-    [[nodiscard]] GunneryFrame gunneryFrame(std::uint32_t entityIndex) const;
+    [[nodiscard]] GunneryFrame gunneryFrame(const sol::ecs::Registry& registry,
+                                            std::uint32_t entityIndex) const;
 
     // The player's, which is the one the console probe asks for - the same
     // shape as `playerGuns()` beside it, and for the same reason: the entity
     // index of the player's own ship is not something a caller should know.
-    [[nodiscard]] GunneryFrame playerGunneryFrame() const { return gunneryFrame(playerEntityIndex()); }
+    [[nodiscard]] GunneryFrame playerGunneryFrame() const
+    {
+        return gunneryFrame(playerRegistry(), playerEntityIndex());
+    }
 
     // --- Fire groups (Phase 31 stage C3) ---
     //
@@ -3010,6 +3098,12 @@ public:
     // HOW FAR one will come, and WHETHER one comes at all, read the LIVE
     // rating, because that is the single place 019 allows the live number to
     // touch enforcement: patrols that are busy really are slower to arrive.
+    //
+    // ⚑ THE PUBLIC ONE IS THE PLAYER'S SYSTEM, AND SAYS SO BY TAKING NO FRAME
+    // (Phase 38 stage B). Lua and the tests dispatch into the sky the player is
+    // standing in, which is the only one either of them can name; the private
+    // overload below is what the damage path uses, and it answers with the
+    // bubble the incident actually happened in.
     std::uint32_t respondTo(sol::core::DVec3 position, std::uint32_t offenderIndex, ResponseCause cause);
 
     // ⚑⚑ THE INCIDENT HOOK, AND IT IS PUBLIC BECAUSE IT IS THE POLICY HALF.
@@ -3565,6 +3659,13 @@ public:
     void collectDuePilotThinks(double dt, std::vector<PilotThink>& out);
 
 private:
+    // ⚑⚑ ONE INSTANTIATED SYSTEM AND EVERYTHING IN IT (Phase 38 stage A,
+    // extended by stage B). Declared here and defined down among the members,
+    // because from stage B onward it is a PARAMETER of most of the private
+    // simulation - the tick, the spawn path, the death path - and a nested
+    // struct cannot be used before it is at least named.
+    struct SystemBubble;
+
     // --- The model catalog (Phase 9) ---
     // These read `[[model]]` defs, which is why they are members: before this
     // they were a hardcoded switch over a five-member enum, and there was no
@@ -3653,8 +3754,33 @@ private:
     // through `leaveSystemFor`, which needs the new bubble in hand before the
     // old one is released.
     sol::ecs::Registry& openBubble(std::uint32_t system);
-    // ECS statics (stations, gates) for a system spec.
-    void instantiateSystemEntities(const sol::sim::SystemSpec& spec);
+    // ⚑⚑⚑⚑ ONE SYSTEM'S TICK (Phase 38 stage B), and the reason `tick` is a
+    // loop now. Eight of the profiler's zones live in here - avoidance, pilots,
+    // flight, the two collision halves, projectiles, weapons and the fine half
+    // of mining - because each of them is a question about one system's
+    // contents. Everything the tick does that is galaxy-wide or about the one
+    // entity that is only ever in a single bubble stays in `tick` itself.
+    void tickSystem(SystemBubble& bubble, double dt);
+    // The player's own flight input, called from inside the per-system loop on
+    // the player's bubble only. It has to sit between that system's avoidance
+    // and that system's steering, which is why it is not simply hoisted out.
+    void tickPlayerFlightInput(double dt);
+    // Everything a bubble needs before anything ticks it or reads it: its
+    // pools, the statics of its own system, and its own random stream. Three
+    // sites make a bubble - `openBubble`, the arrival in `leaveSystemFor`, and
+    // the load - and a bubble half-furnished by one of them is a system whose
+    // ships dodge the wrong star. `bubble.system` must already be set.
+    void furnishBubble(SystemBubble& bubble);
+    // Everything that makes a system a place: its statics, its rocks and the
+    // ambient traffic its owner and its raiders put there. Shared by the
+    // player's arrival in `loadSystem` and by `instantiateSystem`, so a bubble
+    // the player is not in is furnished exactly the way theirs is - which is
+    // the whole claim the cooling bubble rests on.
+    void fillSystemSky(SystemBubble& bubble);
+    // ECS statics (stations, gates) for a system spec, into that system's own
+    // bubble. Takes the registry since stage B: the sky it builds belongs to
+    // the arriving frame, and until stage A there was only one to build into.
+    void instantiateSystemEntities(sol::ecs::Registry& registry, const sol::sim::SystemSpec& spec);
     // Non-ECS state (celestials, nav targets, gate list) for a system spec;
     // used alone after a snapshot load, which already carries the statics.
     void rebuildSystemSideData(const sol::sim::SystemSpec& spec);
@@ -3663,7 +3789,8 @@ private:
     // on a kill is handled by handleShipDestroyed). `attackerIndex` is who
     // dealt it, or kNoIndex where nobody is to blame (a ram) - when it is the
     // player, the target's assist window is re-armed (Phase 8l).
-    void noteDamage(std::uint32_t targetIndex,
+    void noteDamage(SystemBubble& bubble,
+                    std::uint32_t targetIndex,
                     const sol::core::DVec3& hitPosition,
                     const sol::sim::DamageResult& result,
                     std::uint32_t attackerIndex = kNoIndex);
@@ -3679,7 +3806,8 @@ private:
     // roadmap's own wording for this stage: *external hits resolved against
     // `at`*. An internal mount is reached through armour rather than aimed at,
     // and picking WHICH of several a hull hides is a rule this does not have.
-    void damageMounts(std::uint32_t targetIndex,
+    void damageMounts(sol::ecs::Registry& registry,
+                      std::uint32_t targetIndex,
                       const sol::core::DVec3& hitPosition,
                       const sol::sim::DamageResult& result);
 
@@ -3688,7 +3816,8 @@ private:
     // in" has to be answerable about it on its own - see the definition.
     void appendFittingInstances(float alpha, bool includeShip, std::vector<RenderInstance>& out) const;
 
-    void applyShipDef(std::uint32_t entityIndex,
+    void applyShipDef(sol::ecs::Registry& registry,
+                      std::uint32_t entityIndex,
                       const sol::assets::ShipDef& def,
                       const sol::assets::DefDatabase& defs);
     // Re-applies the active ship's resolved def to the player entity
@@ -3700,14 +3829,30 @@ private:
     // A docked ship is inside the station and takes no damage — otherwise
     // hostiles camp the pad and re-kill on respawn (fatal under decisions/007
     // hardcore, where each death would delete the save).
-    [[nodiscard]] bool isDamageImmune(std::uint32_t entityIndex) const
+    // ⚑⚑⚑ THE ONE IDENTITY COMPARISON STAGE A DID NOT CONVERT, BECAUSE THE
+    // SURVEY THAT FOUND THE OTHER SIXTEEN GREPPED THE .CPP. It is the same
+    // coincidence as all of them: indices are issued per registry and every
+    // registry starts at zero, so slot 0 of a bubble the player is not in was
+    // "the player" here - and this one grants DAMAGE IMMUNITY, so the wrong
+    // answer is an NPC that cannot be shot for as long as the player is docked.
+    [[nodiscard]] bool isDamageImmune(const sol::ecs::Registry& registry, std::uint32_t entityIndex) const
     {
-        return entityIndex == playerEntityIndex() && isDocked();
+        return isPlayerEntity(registry, entityIndex) && isDocked();
     }
 
     // Resets the fleet to the single new-game starter ship.
     void resetFleetToStarter();
-    void handleShipDestroyed(std::uint32_t entityIndex, std::uint32_t attackerIndex = kNoIndex);
+    // ⚑⚑ TAKES THE BUBBLE THE VICTIM DIED IN (Phase 38 stage B), which is the
+    // stage's whole point one function down: the four coarse attributions in
+    // here used to be keyed on `m_currentSystem` - the system the player is
+    // STANDING IN - so a hauler killed in a bubble the player had left charged
+    // the loss, the contest pressure and the wreck to the wrong system, and the
+    // wreck's position is a DVec3 that would then sit in open space beside the
+    // player's star. Phase 37 stage E's lesson exactly: key a consequence on
+    // the facts, not on the call site.
+    void handleShipDestroyed(SystemBubble& bubble,
+                             std::uint32_t entityIndex,
+                             std::uint32_t attackerIndex = kNoIndex);
     // Rebuilds the runtime faction table (majors + jittered clans) and
     // (re)initializes the FactionSim and MissionSim against the current
     // galaxy; called by generateUniverse and by loadFrom after a galaxy
@@ -3816,17 +3961,37 @@ private:
     void initializeMining();
     // Instantiates this system's rocks and wrecks as entities. Rocks come
     // from the seed; a rock already cut to nothing is simply not spawned.
-    void instantiateMiningEntities();
-    // Advances tumble, chunk drift, and proximity collection.
-    void tickMining(double dt);
+    void instantiateMiningEntities(SystemBubble& bubble);
+    // Advances tumble, chunk drift, proximity collection and the wreck
+    // reconcile, for one system. ⚑ The COARSE half - wreck decay and refinery
+    // orders - left this function at Phase 38 stage B and runs once in `tick`,
+    // above the loop: it is galaxy-wide work, and ticking it once per
+    // instantiated system would have aged every wreck in the game k times.
+    void tickSystemMining(SystemBubble& bubble, double dt);
     // Cuts `units` out of a rock or wreck entity and spills what came off as
     // drifting chunks. Returns what actually came out.
-    float cutRock(std::uint32_t entityIndex, float units);
-    float cutWreck(std::uint32_t entityIndex, float units);
+    float
+    cutRock(SystemBubble& bubble, const sol::core::DVec3& cutter, std::uint32_t entityIndex, float units);
+    float
+    cutWreck(SystemBubble& bubble, const sol::core::DVec3& cutter, std::uint32_t entityIndex, float units);
     // One chunk off a cut surface: it leaves toward whoever is cutting, with
     // a spread, so mining is gathering rather than chasing.
-    void spawnCutChunk(const sol::core::DVec3& origin, double surface, std::uint32_t commodity, float units);
-    void spawnOreChunk(const sol::core::DVec3& position,
+    //
+    // ⚑ `cutter` is that ship's position, and it is a PARAMETER since Phase 38
+    // stage B rather than `shipState().position`. Cutting happens to be
+    // player-only today - the mining branch of the firing pass is gated on
+    // `isPlayerEntity` - so reading the player's own transform was right by
+    // accident, through a guard in a different function. In a bubble the player
+    // is not standing in it would have thrown every chunk toward a point in
+    // another system's frame.
+    void spawnCutChunk(SystemBubble& bubble,
+                       const sol::core::DVec3& cutter,
+                       const sol::core::DVec3& origin,
+                       double surface,
+                       std::uint32_t commodity,
+                       float units);
+    void spawnOreChunk(SystemBubble& bubble,
+                       const sol::core::DVec3& position,
                        const sol::core::DVec3& velocity,
                        std::uint32_t commodity,
                        float units);
@@ -3940,10 +4105,9 @@ private:
     [[nodiscard]] sol::sim::SignalLoot defaultLoot(const SignalInstance& signal) const;
     // Ambient NPC population for a freshly instantiated system: owner
     // patrol/raider wings by region security plus raid-intensity incursions.
-    void spawnAmbientPilots(std::uint32_t systemIndex, const sol::sim::SystemSpec& spec);
+    void spawnAmbientPilots(SystemBubble& bubble, const sol::sim::SystemSpec& spec);
 
     ResponseReport m_lastResponse;
-    double m_responseCooldown = 0.0;
 
     // ⚑⚑⚑ LIFTED OUT OF `spawnAmbientPilots` (Phase 30 stage C), WHERE IT WAS
     // A LAMBDA. decisions/019 called this "stage C's first requirement" and
@@ -3962,7 +4126,8 @@ private:
     // is the cell ASKED FOR, so a substituted roster still flies the asked-for
     // job; the security is what `chooseWingHull` ranks the roster against.
     // Every one of the seven call sites already had both in hand.
-    void spawnWing(std::uint32_t faction,
+    void spawnWing(SystemBubble& bubble,
+                   std::uint32_t faction,
                    sol::assets::RosterCell cell,
                    std::span<const std::string> roster,
                    float baselineSecurity,
@@ -3974,33 +4139,61 @@ private:
     // Rebuilds m_avoidance for this tick from the same source the collision
     // bodies come from (Phase 8y). Runs before any steering, because a ship
     // that steers on last tick's picture of a moving fleet is steering at
-    // where things were.
-    void rebuildAvoidance();
+    // where things were - and per bubble since stage B, because "what I can
+    // fly into" is a question about one system.
+    void rebuildAvoidance(const SystemBubble& bubble);
     // Warns the player off an obstruction they are cruising at, and cuts the
     // drive when there is no longer room to stop (Phase 8y §D). Manual flight
     // only: autopilot slows itself, and sub-cruise flight is the player's own.
     void guardManualCruise(double dt);
+    // The two response entry points with the frame they happened in. The
+    // public ones above are these with `playerBubble()` filled in - which is
+    // what "an incident where the player is standing" means, and the only
+    // thing a Lua caller or a test could have meant by naming no system.
+    std::uint32_t respondTo(SystemBubble& bubble,
+                            sol::core::DVec3 position,
+                            std::uint32_t offenderIndex,
+                            ResponseCause cause);
+    void considerResponse(SystemBubble& bubble,
+                          std::uint32_t targetIndex,
+                          std::uint32_t attackerIndex,
+                          sol::core::DVec3 at);
+
+    // ⚑⚑ THE ONCE-PER-TICK HALF OF BOTH RECONCILES (Phase 38 stage B). The
+    // presence marks are indexed by TRADER and by MARKET, which are galaxy-wide
+    // things, so clearing them per bubble would let the second bubble unmark
+    // everything the first had just claimed and spawn the whole fleet twice.
+    // The miner hold clock ages here for the same reason: it is measured in
+    // seconds, and k systems would have spent k*dt of it.
+    void beginPuppetReconcile(double dt);
     // Reconciles trader bodies with the coarse fleet (Phase 8x): a body for
     // every EconomyTrader flying an in-system leg here, and none for anyone
     // else. Runs after the economy tick, which is the moment the set goes
     // stale. The record decides who exists; this only draws the consequence.
-    void syncTraderPuppets();
+    //
+    // ⚑ "Here" means this BUBBLE since stage B - `decisions/015`'s "the
+    // player's system, plus..." spelled as a set rather than as a comparison.
+    void syncTraderPuppets(SystemBubble& bubble);
     // Reconciles miner bodies with the extractor stations here (Phase 8x stage
     // 6): a ship at the rock for every outpost in this system that is actually
     // drawing, and none for one that has stopped — because its warehouse is
     // full, because the rock ran out, or because the player shot its last
     // miner. Runs beside the trader reconcile for the same reason: the economy
     // tick is the one moment any of that can change.
-    void syncMinerPuppets(double dt);
+    void syncMinerPuppets(SystemBubble& bubble, double dt);
     // The rock a miner should be working: the nearest one holding what its
     // outpost digs on the first pick, then round the same field. Answers false
     // when there is nothing of that commodity left in the sky.
-    [[nodiscard]] bool
-    chooseMinerRock(MinerPuppet& miner, const sol::core::DVec3& from, bool sameField) const;
+    [[nodiscard]] bool chooseMinerRock(const sol::ecs::Registry& registry,
+                                       MinerPuppet& miner,
+                                       const sol::core::DVec3& from,
+                                       bool sameField) const;
     // Where a miner should sit to work the rock it has picked (its hold point
     // off the surface), and where that rock is. False when the rock is gone.
-    [[nodiscard]] bool
-    minerWorkPoint(const MinerPuppet& miner, sol::core::DVec3& rock, sol::core::DVec3& hold) const;
+    [[nodiscard]] bool minerWorkPoint(const sol::ecs::Registry& registry,
+                                      const MinerPuppet& miner,
+                                      sol::core::DVec3& rock,
+                                      sol::core::DVec3& hold) const;
 
     // The leg a trader is currently flying: its two ends in system space, how
     // far along the record says it is, and how long the leg is quoted at.
@@ -4013,18 +4206,31 @@ private:
         double legSeconds = 0.0;
     };
 
-    [[nodiscard]] bool traderLegSegment(std::uint32_t traderIndex, TraderLegPlacement& out) const;
+    // ⚑ Takes the system it is being asked about since stage B. It used to
+    // compare the route against `m_currentSystem` and answer false for
+    // everywhere else, which is the same thing while exactly one system is
+    // instantiated and the wrong question the moment two are.
+    [[nodiscard]] bool
+    traderLegSegment(std::uint32_t traderIndex, std::uint32_t system, TraderLegPlacement& out) const;
     // Where the record says a trader is, on its schedule rather than its
     // engines. See keepTraderOnSchedule for why the two differ.
     [[nodiscard]] sol::core::DVec3 traderScheduledPoint(const TraderLegPlacement& leg) const;
     // True when the record moved the trader this tick rather than its engines,
     // which is what makes it uncatchable and so unhuntable.
-    bool keepTraderOnSchedule(sol::ecs::Entity entity, const TraderLegPlacement& leg);
-    // Removes a spawned ship with none of the death path's consequences.
-    void despawnShip(std::uint32_t entityIndex);
+    bool keepTraderOnSchedule(sol::ecs::Registry& registry,
+                              sol::ecs::Entity entity,
+                              const TraderLegPlacement& leg);
+    // Removes a spawned ship with none of the death path's consequences, out
+    // of the bubble it was spawned into - a puppet that has flown out of the
+    // record's leg has to stop being drawn in ITS system, not in the player's.
+    void despawnShip(SystemBubble& bubble, std::uint32_t entityIndex);
     // Spawn at an explicit position (ambient wings); the public
-    // spawnShipFromDef wraps this at a point ahead of the player.
-    sol::ecs::Entity spawnShipAt(const sol::assets::ShipDef& def,
+    // spawnShipFromDef wraps this at a point ahead of the player. ⚑ Takes the
+    // bubble since stage B: a hull spawned into one system's registry has to be
+    // recorded in that same system's ship list, because an entity INDEX means
+    // nothing without the registry that issued it.
+    sol::ecs::Entity spawnShipAt(SystemBubble& bubble,
+                                 const sol::assets::ShipDef& def,
                                  const sol::assets::DefDatabase& defs,
                                  const sol::core::DVec3& position,
                                  const char* factionName);
@@ -4040,6 +4246,23 @@ private:
     [[nodiscard]] sol::ecs::Registry& playerRegistry() { return m_bubbles.front()->registry; }
 
     [[nodiscard]] const sol::ecs::Registry& playerRegistry() const { return m_bubbles.front()->registry; }
+
+    // The bubble itself, for the handful of places that want more of it than
+    // the registry — the death path, the puppet reconcile, and the tick.
+    [[nodiscard]] SystemBubble& playerBubble() { return *m_bubbles.front(); }
+
+    [[nodiscard]] const SystemBubble& playerBubble() const { return *m_bubbles.front(); }
+
+    // ⚑ `m_spawnedShips` until stage B, and the rename is the point: everything
+    // that reads it — the target cycle, the contact list, the hail table, the
+    // Lua bindings — wants the ships the PLAYER can see, and now says so. The
+    // three sites that wanted a particular system's ships take the bubble.
+    [[nodiscard]] std::vector<SpawnedShip>& playerShips() { return m_bubbles.front()->spawnedShips; }
+
+    [[nodiscard]] const std::vector<SpawnedShip>& playerShips() const
+    {
+        return m_bubbles.front()->spawnedShips;
+    }
 
     // The bubble for a system, or null when that system is not instantiated.
     // Null is the ordinary answer for 80 of the 81 systems and callers must
@@ -4104,10 +4327,45 @@ private:
     {
         std::uint32_t system = kNoIndex;
         sol::ecs::Registry registry;
+        // ⚑⚑⚑ THE STATICS ARE PART OF THE FRAME, NOT PART OF THE VIEW (Phase
+        // 38 stage B). `rebuildAvoidance` and the collision build both push the
+        // star and every planet as spheres, so a bubble ticked against the
+        // PLAYER's star is a system whose ships dodge a sun that is not there
+        // and fly through the one that is. Two systems both place their
+        // contents around a barycentre origin, which is precisely why the
+        // wrong answer looks plausible.
+        //
+        // ⚑ Only the two the tick reads. Gates, stations, signals, fields and
+        // the target cycle stay player-scoped in `rebuildSystemSideData`,
+        // because every one of them exists to be shown to somebody.
+        CelestialBody star;
+        std::vector<CelestialBody> planets;
+        // The ships this system's sky was filled with, and the display names
+        // the targeting list reads. Per bubble because an entity INDEX is per
+        // registry: two bubbles both issue slot 7, and a world-scoped list
+        // keyed on the index alone would hand one system's death the other
+        // system's ship def. It is also what the death path looks a victim up
+        // in, so a kill in a bubble the player is not in has to find it here.
+        std::vector<SpawnedShip> spawnedShips;
+        // ⚑⚑ A PER-SYSTEM STREAM, BECAUSE HOW MANY BUBBLES ARE INSTANTIATED IS
+        // NOT A FACT ABOUT ANY OF THEM (Phase 38 stage B; Phase 37 stage B's
+        // lesson exactly). `m_chunkRng` was one world-scoped stream, so an NPC
+        // miner cutting rock in a second bubble displaced every draw the
+        // player's system made after it — the sixteenth faction moving every
+        // trader loss, one layer down. Seeded the way the generator already
+        // seeds a system, at `:6090` and `:6206`.
+        sol::core::Rng chunkRng{0x51ed'2701ull, 909};
+        // ⚑⚑ THE LAW'S DISPATCH THROTTLE, PER JURISDICTION (Phase 38 stage B).
+        // It was `m_responseCooldown`, one number for the whole galaxy, which
+        // is the same thing while one system is instantiated and plainly wrong
+        // once two are: a firefight in the bubble you left would have bought a
+        // raider ten quiet seconds in the system you are standing in, from a
+        // police force that had heard nothing. It ages in the per-system pilot
+        // pass for the same reason `threatTimer` does.
+        double responseCooldown = 0.0;
     };
 
     std::vector<std::unique_ptr<SystemBubble>> m_bubbles;
-    std::vector<SpawnedShip> m_spawnedShips;
     // Scratch for syncTraderPuppets: which coarse traders already have a body.
     // A member so the per-tick reconcile does not allocate.
     std::vector<std::uint8_t> m_puppetPresent;
@@ -4426,10 +4684,7 @@ private:
     float m_collectTicker = 0.0f;    // units collected, for the HUD readout
     double m_collectTickerAge = 0.0;
     std::string m_collectName;
-    sol::core::Rng m_chunkRng{0x51ed'2701ull, 909}; // chunk drift only; not saved
 
-    CelestialBody m_star;
-    std::vector<CelestialBody> m_planets;
     std::vector<GateInstance> m_gates;
     // Scratch: which gates a garrison posts to, ranked (Phase 36 stage B). A
     // member rather than a local for the same reason `m_rosterClasses` is one -
@@ -4438,7 +4693,7 @@ private:
     NoticeParams m_noticeParams;
     NoticeReport m_lastNotice;
     double m_noticeCooldown = 0.0;
-    // Session state, not saved - the same footing `m_responseCooldown` is on.
+    // Session state, not saved - the same footing `SystemBubble::responseCooldown` is on.
     // Seeded off the universe so two runs of the same galaxy roll alike.
     sol::core::Rng m_noticeRng{0x36'0b'11'ceull, 0x9e37'79b9'7f4a'7c15ull};
     // The stop (Phase 36 stage C). Transient, like `m_clearance` beside it and
@@ -4484,7 +4739,7 @@ private:
     std::size_t m_targetIndex = 0;
     // The slot each target class last held, so switching between them with
     // T and C resumes rather than restarting (Phase 8h). m_contactSlot is an
-    // index into m_spawnedShips, not into the combined target space.
+    // index into the player's ship list, not into the combined target space.
     std::size_t m_navSlot = 0;
     std::size_t m_contactSlot = 0;
     // Pushed in by the frame loop (Phase 8j); pure view state, never saved.
