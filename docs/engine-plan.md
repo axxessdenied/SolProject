@@ -3362,7 +3362,7 @@ Every clause is true of the nine `.wav` cues today, and the script has said so s
 
 **Suites: `platform.unit` 27 → 35, `game.unit` 41 → 59.** Windows dev 13/13 + dev-gpu 2/2, release 17/17 + release-gpu 5/5; clang-format clean by exit code.
 
-### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28 through 37 SHIPPED**, the rest are sketches to be spec'd before starting)
+### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28 through 37 SHIPPED, 38 SPEC'D**, the rest are sketches to be spec'd before starting)
 
 **From the user, 2026-08-28**, as eleven asks in one message: ship classes by size and role; parts, upgrades and subsystems; hardpoints on hulls with Forge authoring and in-game visuals; stations built from modules; a wider material tree with contraband; a black-market faction; transponders and running dark; authored systems and constellations for narrative control; ship commands with a right-click menu; multiple owned ships, captains and fleets; and station lore with characters who know things.
 
@@ -3382,7 +3382,7 @@ Every clause is true of the nine `.wav` cues today, and the script has said so s
 
 And the other half is genuinely empty: **zero** occurrences of hardpoint, transponder, contraband, smuggling, crime or fleet anywhere in the engine; `generateGalaxy` reads nothing from disk; `ui::InputState` has exactly one mouse button; and there are **eight meshes in the whole game — one ship, one station.**
 
-**How to read this section.** These are *sketches at survey depth*, not specs. Each names what it depends on, what the code actually says today, the stages it probably falls into, and the exit criterion that would prove it. **Each gets a full spec, written against a fresh re-read of the code, immediately before it starts** — the same discipline every phase since 8a has used, and the one that caught stage 24-V's estimate before a line was written. This project's record is that **twenty-eight consecutive** roadmap estimates have been moved by that re-read; treat every number below as a hypothesis.
+**How to read this section.** These are *sketches at survey depth*, not specs. Each names what it depends on, what the code actually says today, the stages it probably falls into, and the exit criterion that would prove it. **Each gets a full spec, written against a fresh re-read of the code, immediately before it starts** — the same discipline every phase since 8a has used, and the one that caught stage 24-V's estimate before a line was written. This project's record is that **twenty-nine consecutive** roadmap estimates have been moved by that re-read; treat every number below as a hypothesis.
 
 **⚑⚑⚑ AND THE FIRST SPEC WRITTEN OFF THIS SECTION IMMEDIATELY MADE THAT NINE.** Phase 28's sketch was re-read against the code the same day it was written and was **wrong in the cheap direction in three places** — the player's ship already has a one-slot command system (the autopilot) with four guards that generalise; the right-click/right-drag rule it named as the phase's risk was already solved, measured and committed by Phase 15; and the Controls screen it promised to grow already scales. **The refuted wording is quoted inside Phase 28 rather than deleted**, because the evidence for the estimate lesson is worth more than a tidy document. ⚑ *A sketch written by the same session that read the code is still a sketch.*
 
@@ -4581,17 +4581,113 @@ Buy a crate of something at a fence and find that **no lawful station in the gal
 
 Specced now so that v1 builds nothing that forecloses it (GDD §9).
 
-#### Phase 38 — Many Systems At Once
+#### Phase 38 — Many Systems At Once (spec'd 2026-09-02)
 
-**Depends on**: nothing in the arc; blocks 39, 40, 41. **v2, and the largest single item in it.**
+**Depends on**: nothing in the arc for its *machinery*. **Its written exit depended on Phase 39, which is the first thing this spec had to move.** Blocks 39, 40, 41. **v2, and the largest single item in it.** ⚑ **Spec'd 2026-09-02 against a fresh re-read of the code, the twenty-ninth consecutive roadmap estimate the practice has moved.**
 
-**Priced against the code.** `space_world.hpp:36` says exactly one system is instantiated. `despawnSystem()` destroys everything but the player on a jump. **Positions are metres in the current system's barycentre frame** — not a rendering convention but what every `DVec3` in the ECS means. **132 references to `m_currentSystem`** in a 7,198-line file, **45 external callers of `currentSystemIndex()`**, **15 component storages** written against one frame. A global frame is refused on the space-scale constraint. See `docs/decisions/015-multi-system-simulation.md`.
+**The sketch this replaces, quoted rather than deleted.** *Priced*: "`space_world.hpp:36` says exactly one system is instantiated. `despawnSystem()` destroys everything but the player on a jump. Positions are metres in the current system's barycentre frame — not a rendering convention but what every `DVec3` in the ECS means. **132 references to `m_currentSystem`** in a 7,198-line file, **45 external callers of `currentSystemIndex()`**, **15 component storages** written against one frame." *Stages*: "(A) an entity carries a system index and `Transform` means 'in that system's frame'; (B) the tick becomes a loop over instantiated systems — the player's plus every system holding a player asset; (C) every query that reads a position learns to ask which frame, radar/targeting/picking first; (D) the save format grows the index." *Exit*: "leave a ship in one system, jump twice, come back, and find it where it was — having been simulated the whole time, not restored."
 
-**Stages.** (A) an entity carries a system index and `Transform` means "in that system's frame"; (B) the tick becomes a loop over instantiated systems — the player's plus every system holding a player asset; (C) every query that reads a position learns to ask which frame, radar/targeting/picking first, because omitting that filter shows a ship two jumps away as a contact at 300 m; (D) the save format grows the index.
+**Every sentence of the diagnosis is still true and every number in it is stale. Stage D is not a stage, stage C's wording names the expensive implementation, and the exit cannot be flown.**
 
-**Exit**: leave a ship in one system, jump twice, come back, and find it where it was — having been simulated the whole time, not restored.
+##### The headline: this is not an ECS change, and `engine/` needs nothing at all
 
-**Risk**: nothing in this phase is player-visible except an absence of bugs, which makes it the hardest phase in the arc to verify by playing. Its exit criterion has to be instrumented.
+`grep -rl currentSystem engine/` returns **one file**, and the match is `const char* currentSystem` — a display name in `ui/screens.hpp:704`, not a frame. The whole of `sol::sim` — `collision`, `flight`, `steering`, `weapons`, `damage`, `power`, `docking`, `predation` — takes positions as arguments and hands positions back; it has never known which frame they are in and does not need to learn. `Registry`, `Pool`, `View` and `Snapshot` have no notion of a frame either: a component is any trivially-copyable struct.
+
+**`docs/decisions/015` calls this "a frame-of-reference change to the ECS". The ECS has no frame to change.** The assumption lives entirely in `game/src/space_world.{hpp,cpp}` as a convention — stated in a comment at `space_world.hpp:39-43`, honoured by 151 references to one member. That is a real narrowing: the phase touches two files plus a filter's worth of edits elsewhere, and **the engine libraries are untouched**.
+
+##### The numbers, re-measured — the one phase whose cost grows with everything written since it was priced
+
+| | priced 2026-08-28 | measured 2026-09-02 |
+| --- | ---: | ---: |
+| `space_world.cpp`, lines | 7,198 | **12,063** (+68%) |
+| `m_currentSystem` references | 132 | **151** |
+| external `currentSystemIndex()` callers | 45 | **73** (40 `content.cpp`, 18 `game/test`, 15 other) |
+| component types | 15 | **17** (15 in the save schema) |
+| `m_registry` references in `space_world.cpp` | — | **313** |
+| functions that walk a component pool | — | **24** |
+| `ecs::View` uses in 12,063 lines | — | **1** (`:10236`) |
+| `== playerEntityIndex()` identity comparisons | — | **17** |
+
+The 73 external callers are almost entirely benign, and the decision doc predicted that correctly: *"most are queries that become 'the player's system' and are correct unchanged."* All 40 in `content.cpp` are Lua bindings answering *where is the player*, and they stay as they are. **The 24 pool-walking functions are the phase.**
+
+##### The exit had nothing to leave behind, and the sketch contradicted itself about it
+
+*"Leave a ship in one system"* — there is no such thing. An owned ship you are not flying is `OwnedShip{storedSystem, storedStation}` (`space_world.hpp:1344`): a row in the save file, parked at a station, switchable only while docked at that exact station. **The player has no representation of a ship of theirs in space without them, and GDD §14.4 is the reason — a captain is what puts one there, and a captain is Phase 39.**
+
+So 015's policy — *"the player's system, plus every system holding a player asset"* — has a second set that is **provably always empty today**. The phase as written would build the machinery and have nothing to put in it. The sketch half-knew: its own risk line says the exit *"has to be instrumented"*, and then it writes a flyable one.
+
+⚑ **And the obvious repair is worse than the disease.** Making a parked hull an entity satisfies 015's sentence literally and then **instantiates an entire system — traders, raiders, patrols, mining — because one ship of yours sits on a pad there.** That is *"full entities in every system"*, the alternative 015 explicitly rejected, arriving one storage slot at a time.
+
+##### The exit, rewritten: the cooling bubble
+
+**The system you have just left keeps ticking for as long as a fight in it is still live.** Fly out of a losing engagement, cross back, and the raider that was on 30% hull is still on 30% hull, still there, still holding whatever grudge it had. Today it is a brand-new full-health spawn, because `despawnSystem` (`:5190`) deleted the one you were fighting and `spawnAmbientPilots` made another.
+
+This is the phase's whole machinery exercised by a player, on the pillar it exists to serve, **needing nothing from Phase 39**. It is a smaller retention policy than 015's and a strictly weaker claim, and it is the one that can be flown this phase. 015's *"every system holding a player asset"* stays as the policy the mechanism is built to accept — Phase 39 turns it on by creating the assets.
+
+**Exit**: fight a raider down to a known hull fraction, jump out, spend a minute in the next system, jump back, and find the same ship at the same damage — with the console reporting it was ticked, not restored. ⚑ Plus the instrumented half the sketch asked for: a test that runs a two-system tick against a one-system control and asserts position, velocity and damage agree tick-for-tick.
+
+##### The ruling on representation, and what it buys: **a `Registry` per instantiated system**
+
+015's Decision section says *"an entity gains a system index"*. **The user's ruling amends that**: the frame becomes structural rather than a field, because a cross-system question then cannot be asked by accident — the other system's entities are not in the pools.
+
+What that buys, measured:
+
+- **The 24 pool-walking functions need no filter.** They take a `Registry&` instead of reading `m_registry`. That is a mechanical parameter change, not 24 correctness judgements — and this project logged **two "green while wrong" misses of exactly the missing-filter shape in Phase 37 alone** (stage C's contraband back on the Trade tab, 361 of 361 green; stage D's covert hull on the wrong shelf, 366 of 366 green).
+- **Collision stays `O(n²)` *per system*, by construction.** `collision.hpp:37` states its own limit in its own words: *"O(n^2) pairs — fine at encounter scale (1-20 ships + a handful of statics)"*, and `space_world.cpp:10405` logs `n*(n-1)/2` as the pass counter. There is no broadphase. **One global body list with a frame filter — which is exactly what the sketch's stage C describes — is `O((kn)²)`; nesting the loop is `O(k·n²)`.** The sketch's own wording points at the factor-of-`k` implementation.
+- **`despawnSystem` becomes "drop a registry"**, and `m_avoidance` / `m_collisionBodies` / `m_collisionShipIndices` / `m_contacts` stay single scratch buffers, cleared and refilled inside the loop — **no per-system copies of anything.**
+
+What it costs: **313 `m_registry` references each answer "which registry"**. Thirty-nine of them already name the player on the same line and become the player's registry unchanged; the rest are a compiler question, not a judgement. That is the trade the ruling takes: **313 mechanical edits the build checks, in place of ~20 filters nothing checks.**
+
+##### ⚑⚑⚑⚑ The seventeen identity comparisons, and the component that has answered them since Phase 7
+
+**"Is this the player" is written seventeen times as an index comparison** — `:5183`, `:7159`, `:7523`, `:7571`, `:9514`, `:10643`, `:10661`, `:11053`, `:11136`, `:11147`, `:11153`, `:11184`, `:11190`, `:11264`, `:11315`, plus two against the cached `playerIndex` (`:5197`, `:10081`). `playerEntityIndex()` is `m_registry.storage<PlayerShip>().entityIndices()[0]` (`space_world.hpp:3956`).
+
+**A second registry makes every one of them ambiguous**, because indices are per-registry and both start at zero. And the case is not hypothetical: `Projectile::shooterIndex` is a bare entity index, a bolt outlives the jump that leaves it behind, and the death path at `:11264` reads `attackerIndex == playerEntityIndex()` to decide whether a kill was the player's. **Under a cooling bubble that is an NPC kill credited to the player, because two registries reused slot zero.**
+
+**The component that answers it correctly has existed since Phase 7 and has never been asked.** `PlayerShip` appears at exactly three places in 12,063 lines: registered in the snapshot schema (`:422`), emplaced once (`:597`), and counted on load (`:11952`). Its `entityIndices()[0]` is read to *produce* an index, and then everything compares indices. The correct test is `registry.storage<PlayerShip>().contains(index)` **on that registry** — false in every registry but one, which is the whole point. *A singleton's identity was expressed as its address, and the name it was given was never used.*
+
+##### ⚑⚑⚑ Four attributions keyed on the player's system rather than on where it happened
+
+The death path hands the coarse sims a system index, and the index it hands them is **`m_currentSystem`**:
+
+| Site | What it records |
+| --- | --- |
+| `:11276` | `m_missions.notifyKill(faction, m_currentSystem)` |
+| `:11283` | `m_factionSim.recordContestKill(m_currentSystem, faction)` |
+| `:11309` | `m_factionSim.recordTraderLoss(m_currentSystem, trader)` |
+| `:11356` | `m_mining.addWreck(m_currentSystem, where, …)` |
+
+A hauler killed in the bubble you left charges the loss, the contest pressure and the wreck to **the system you are standing in now** — and the wreck's `position` is a `DVec3` in the wrong frame, so it would sit in open space beside the player's star. This is Phase 37 stage E's lesson arriving again: **key a consequence on the facts, not on the call site.** Each of the four has the answering system in hand — it is the registry the dying entity was walked out of.
+
+##### ⚑⚑ Audio is a third output path, and 015 does not mention it
+
+015 says *"rendering and UI are unaffected in kind"*, and that holds — `buildRenderInstances` (`:11390`) is **one site** and takes a filter in one line, as do the two particle appends. Audio is neither rendering nor UI, and it *is* affected: **five `playAt` sites** — `:10646` weapon fire, `:10760` and `:10775` mining cut, `:11057` and `:11187` explosion, `:11144` hull and shield hit — hand a raw system-frame `DVec3` to a mixer with **one listener**, set from the player's transform. A gunfight in the cooling bubble plays in the player's ear at zero distance. `despawnSystem` already knows this in miniature: it calls `stopAll()` because *"a one-shot does not track its emitter"*.
+
+##### ⚑⚑ Two things already do this correctly, outside the ECS, and have since Phase 8
+
+The representation the phase needs is not new. `WreckRecord` (`sim/mining.hpp:73`) carries `std::uint32_t system` beside `core::DVec3 position`; `Bookmark` (`sim/survey.hpp:129-130`) carries the same pair, commented *"sim space, meters"*. **A wreck you leave behind is where you left it today**, and rock depletion and coarse trader routes are the same trick. Phase 38 is not making persistence possible. It is making it *simulated* — which is the whole of 015's argument, and worth remembering when the cost lands.
+
+##### Stages
+
+Four again, but not the same four: **the sketch's D collapses into A, and its C evaporates into B under the ruling.**
+
+- **(A) The registry becomes plural, and the player is the one entity that crosses.** Registries keyed by instantiated system; `m_registry` becomes `registryFor(system)` and `playerRegistry()`. **`despawnSystem` becomes dropping a registry.** A jump *migrates* the player entity between two registries — and the snapshot schema is already the definition of what moves with you, so `migrateEntity` reuses its id table. **The seventeen identity comparisons become `PlayerShip::contains` in this stage**, because everything after it is wrong without them. ⚑ The save costs **one to ten lines** in any design — `saveTo` already writes the whole registry through `makeSnapshotSchema()` (`:416`) and `kSaveVersion` refuses old files at the header — so *"the save format grows the index"* is not a stage and is folded in here. **`kSaveVersion` bumps.**
+- **(B) The tick nests.** Eight of the tick's fifteen profiler zones become per-system: `sim.avoidance`, `sim.pilots`, integration, `sim.collision.build`, `sim.collision.resolve`, `sim.projectiles`, `sim.weapons`, `sim.mining`. The rest — `sim.coarse.*`, `sim.scanning`, `sim.docking`, gate crossing — are player-scoped and stay outside it. **The four attributions above are fixed in this stage**, because this is the stage that can first produce an event in a system the player is not in. Puppet sync (`traderLegSegment:4501`, `syncMinerPuppets`) changes `== m_currentSystem` to *∈ instantiated*.
+- **(C) The retention policy and its cap.** A system stays instantiated while a fight in it is live — any `ShipPilot` in `Attack`, any `threatTimer`, any projectile — with a **hard ceiling in sim-seconds**, so a stalemate cannot pin a bubble forever, and a **hard cap on instantiated systems**, so the `O(n²)` pass can never be surprised. The interface is written to accept 015's *"every system holding a player asset"* unchanged, so Phase 39 adds a predicate and nothing else.
+- **(D) Audio, render and the probe.** The five `playAt` sites take the listener's system; the three instance builders take a frame; and the console gets the readout the exit needs — which systems are instantiated, how long each has left, and how many entities each holds.
+
+##### Risks
+
+- **⚑⚑⚑ THE PHASE'S OWN FAILURE MODE IS SILENCE, AND THE RULING IS THE ANSWER TO IT.** A missed frame does not crash; it makes something act on a thing a light-year away. `pilotEngageEnemy` (`:8315`) is the worst case rather than radar: it walks the whole `ShipPilot` pool and takes the nearest hostile inside `kSensorRange = 8.0e4` m (`:8321`), and two systems both place their contents around a barycentre origin — so ships near their own star *are* near each other in coordinates. The per-registry ruling was taken over a field on `Transform` because this arc has twice shipped a stage whose entire point was invisible to every guard it wrote. **Any stage that ends up reaching across registries by index is a design error, not a bug to fix in place.**
+- **⚑⚑⚑ DETERMINISM, AND IT IS PHASE 37 STAGE B'S LESSON EXACTLY.** `m_chunkRng` and `m_noticeRng` are world-scoped streams. Once the tick loops over `k` systems, **how many systems are instantiated changes every draw after the first** — exactly as a sixteenth faction displaced every trader loss after it. Both need a per-system stream, and the code already writes one twice: `core::Rng rng(m_universeSeed ^ (system << 32), …)` at `:6090` and `:6206`. *A determinism guard over generation does not cover a simulation.*
+- **⚑⚑ THE `O(n²)` PASS IS THE ONLY THING WITH A CURVE IN IT, AND THE CAP IS WHAT PRICES IT.** Nested, `k` systems cost `k·n²`; filtered, `(kn)²`. Stage C's cap is what turns that from a hope into a number, and it must be asserted by a test rather than claimed by a comment.
+- **⚑⚑ THE COOLING BUBBLE IS A NEW POLICY AND IT MUST NOT GROW.** It exists to make the phase flyable. Anything it tempts the phase into — persistent ambient population, systems that never cool, a second LOD tier — belongs to 39 or later, and the cap plus the sim-second ceiling are the fence around it.
+- **⚑ THE ESTIMATE WILL AGE THE SAME WAY AGAIN.** `space_world.cpp` grew 68% in the four phases this item waited. If Phase 38 slips again, re-measure the table above before starting: it is the only entry in the arc where waiting is itself a cost.
+
+##### The user's two rulings (2026-09-02), both taken before a line was written
+
+1. **⚑⚑⚑⚑ THE EXIT IS THE COOLING BUBBLE.** The system you left keeps ticking while its fight is live, so the phase has something a person can fly rather than only something a test can assert. Chosen over making parked hulls entities — which satisfies 015's sentence and instantiates a whole system for a hull on a pad — and over an instrumented-only exit, because in this arc the flight is what finds the bugs.
+2. **⚑⚑⚑⚑ A `Registry` PER INSTANTIATED SYSTEM, AMENDING 015.** The frame is structural, not a field: a cross-system query is unaskable rather than merely wrong. **313 mechanical edits the compiler checks, in place of ~20 filters nothing checks** — taken on this repo's own evidence that a guard cannot see a missing filter.
 
 ---
 

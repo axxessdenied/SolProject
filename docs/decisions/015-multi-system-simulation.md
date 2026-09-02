@@ -1,7 +1,8 @@
 # 015 — A ship you own exists whether or not you are looking at it
 
 - **Date**: 2026-08-28
-- **Status**: accepted
+- **Status**: accepted; **first bullet of the Decision amended 2026-09-02** by the
+  Phase 38 spec (see “Amendment” below). The decision itself stands.
 
 ## Context
 
@@ -55,6 +56,36 @@ fleets.**
 the fuller end**, which is the same pattern as Phase 27's four decisions. The
 counter-argument is recorded below rather than discarded, because it stays valid
 if the price proves worse than estimated.
+
+### Amendment, 2026-09-02 (Phase 38 spec)
+
+**The first bullet is amended: the frame is a property of the *registry*, not a
+field on the entity.** One `sol::ecs::Registry` per instantiated system, rather
+than a system index every query has to remember to filter on. Everything else
+above is unchanged — no galactic frame, a *set* of ticked systems, the bubble
+generalised rather than deleted.
+
+The re-read that produced the Phase 38 spec found three reasons:
+
+- **A frame filter is a thing you can forget, and nothing notices.** Phase 37
+  shipped two stages whose entire point was invisible to every guard they wrote
+  (361 of 361 green, then 366 of 366). Per-registry makes a cross-system query
+  *unaskable* instead of merely wrong, and turns ~20 silent judgement calls into
+  313 `m_registry` sites the compiler asks about.
+- **`resolveCollisions` is `O(n²)` with no broadphase** — `sim/collision.hpp:37`
+  says so in its own words. One global body list with a frame filter is
+  `O((kn)²)`; a registry per system is `O(k·n²)` by construction.
+- **"Is this the player" is written 17 times as an index comparison** against
+  `playerEntityIndex()`, and indices are per-registry. The `PlayerShip`
+  component that answers it unambiguously has existed since Phase 7 and is read
+  at exactly three places, none of which is an identity test.
+
+⚑ **Two consequences below need correcting rather than amending.** *"Rendering
+and UI are unaffected in kind"* holds, but **audio is a third output path and is
+affected**: five `playAt` sites hand a system-frame `DVec3` to a mixer with one
+listener at the player's ear. And *"the largest single item in the v2 arc"* is
+now larger — `space_world.cpp` grew from 7,198 lines to **12,063** in the four
+phases between this decision and the spec written against it.
 
 ## Alternatives considered
 
