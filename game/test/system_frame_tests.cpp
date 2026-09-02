@@ -24,6 +24,13 @@
 // changes it — so these tests open one by hand through `instantiateSystem`,
 // which is the mechanism half stage C will call and nothing more.
 //
+// ⚑⚑⚑⚑ STAGE C IS THE POLICY, AND IT IS THE LAST SECTION OF THIS FILE. When a
+// system stays open, for how long, and how many at once — plus the one bug
+// keeping a bubble actually creates, which is that the slot the player vacates
+// is the next one that registry hands out. Its headline is that the spec's own
+// wording could not be built as written: see the block above
+// `a_ship_left_damaged_in_a_system_is_still_there_and_still_damaged`.
+//
 // ⚑⚑⚑ WHY A CONTROL WORLD RATHER THAN AN ASSERTION ABOUT ONE. The failure mode
 // of a nested tick is not a crash, it is a shared thing that two systems both
 // write: a scratch buffer refilled by whoever went last, a random stream drawn
@@ -40,6 +47,8 @@
 
 #include <sol/assets/data_defs.hpp>
 #include <sol/ecs/ecs.hpp>
+#include <sol/platform/file_io.hpp>
+#include <sol/sim/flight.hpp>
 #include <sol/test/test.hpp>
 
 namespace {
@@ -96,12 +105,21 @@ struct Galaxy
 
 } // namespace
 
-// ⚑⚑⚑⚑ THE STAGE'S OWN INVARIANT, AND THE LINE STAGE C CHANGES. Exactly one
-// system is instantiated at a time and it is the one the player is standing in.
-// Everything else in stage A is a refactor whose exit is that nothing moved;
-// this is the one new fact, and it is stated so that the stage which stops it
-// from being true has to come here and say so.
-SOL_TEST(the_world_instantiates_exactly_one_system_and_it_is_the_players)
+// ⚑⚑⚑⚑ STAGE A'S INVARIANT, NARROWED BY STAGE C TO THE THING THAT IS STILL
+// TRUE — AND IT PASSED UNCHANGED, WHICH IS THE POINT WORTH RECORDING. Stage A
+// said "exactly one system is instantiated at a time", and stated it so that
+// the stage which stopped it being true would have to come here and say so.
+// Stage C stopped it being true, and this test did not fail: six ordinary
+// crossings retain nothing, because retention has an ENTRY CONDITION and a
+// quiet system does not meet it.
+//
+// So what it pins now is the more useful half — **an ordinary jump costs
+// nothing**. The cooling bubble is not a tax on every gate you fly through; it
+// is a thing that happens when you leave a fight, and a player who never
+// fights never pays for it. A retention policy that quietly held every system
+// you passed through would sail through every other test in this file and
+// would show up here and nowhere else.
+SOL_TEST(a_quiet_crossing_retains_nothing_and_leaves_one_system_instantiated)
 {
     Galaxy g;
     SOL_CHECK(g.world.instantiatedSystemCount() == 1);
@@ -443,13 +461,18 @@ SOL_TEST(instantiating_a_system_twice_does_not_double_its_sky)
     SOL_CHECK(g.report(0).entities == playerEntities);
 }
 
-// ⚑⚑ AND A JUMP STILL LEAVES EXACTLY ONE, WHICH IS STAGE C'S LINE AND NOT
-// STAGE B'S. `leaveSystemFor` releases every bubble and opens a fresh one for
-// the destination; that is what keeps `the_world_instantiates_exactly_one_
-// system_and_it_is_the_players` true through a played session even though the
-// machinery for more now exists and is exercised above. Said here so that the
-// stage which starts retaining a bubble has to come and change it deliberately.
-SOL_TEST(a_jump_still_releases_every_bubble_including_ones_opened_by_hand)
+// ⚑⚑⚑⚑ A JUMP RELEASES A BUBBLE ON A DEAD CLOCK, AND STAGE C IS THE STAGE THAT
+// CAME AND CHANGED THIS. Stage B's version asserted that a jump leaves exactly
+// one bubble however many were open, and said so precisely to make the stage
+// that starts retaining one arrive here deliberately. What survives of it is
+// the half that is still true and is now a statement about the POLICY rather
+// than about the mechanism: a system whose window has run out is released by
+// the crossing, and a `kMaxInstantiatedSystems`-wide world does not leak.
+//
+// ⚑ `instantiateSystem` puts a bubble on a full window, so the clock is wound
+// down here rather than waited out - `kCoolingSeconds` of sim time is 7,200
+// ticks and this is a test, not a flight.
+SOL_TEST(a_jump_releases_the_bubbles_whose_window_has_run_out)
 {
     Galaxy g;
     const std::uint32_t elsewhere = g.furnishedSystem(0);
@@ -457,10 +480,21 @@ SOL_TEST(a_jump_still_releases_every_bubble_including_ones_opened_by_hand)
     SOL_REQUIRE(elsewhere != 0xffff'ffffu && destination != 0xffff'ffffu);
     SOL_REQUIRE(g.world.instantiateSystem(elsewhere));
     SOL_REQUIRE(g.world.instantiatedSystemCount() == 2);
+    SOL_REQUIRE(g.report(1).holdSeconds == game::kCoolingSeconds);
 
+    // Run the window out. The bubble is released by the tick's own sweep, and
+    // the player has not gone anywhere - which is the half of the policy that
+    // is nothing to do with jumping.
+    g.run(static_cast<int>(game::kCoolingSeconds * 60.0) + 2);
+    SOL_CHECK(g.world.instantiatedSystemCount() == 1);
+    SOL_CHECK(g.world.instantiatedSystemAt(0) == g.world.currentSystemIndex());
+
+    // And a jump out of a quiet system retains nothing, so the count comes back
+    // to one across a crossing too.
     SOL_REQUIRE(g.world.enterSystem(destination));
     SOL_CHECK(g.world.instantiatedSystemCount() == 1);
     SOL_CHECK(g.world.instantiatedSystemAt(0) == destination);
+    SOL_CHECK(g.report(0).holdSeconds == 0.0);
 }
 
 // ⚑⚑⚑⚑ A BUBBLE TICKS AGAINST ITS OWN STAR, AND THIS IS THE ONE FRAME BUG WITH
@@ -550,4 +584,447 @@ SOL_TEST(a_system_ticks_the_same_however_many_others_are_instantiated)
     // said from the other end.
     SOL_CHECK(alone.report(0).shipCentroid.x == crowded.report(0).shipCentroid.x);
     SOL_CHECK(alone.report(0).entities == crowded.report(0).entities);
+}
+
+// ---------------------------------------------------------------------------
+// Stage C: the retention policy and its cap.
+//
+// ⚑⚑⚑⚑ THE FINDING THAT SHAPED THE WHOLE STAGE, BECAUSE IT INVERTS THE SPEC'S
+// OWN WORDING. The spec asks for a system that "stays instantiated while a
+// fight in it is live — any `ShipPilot` in `Attack`, any `threatTimer`, any
+// projectile". Read as a per-tick predicate that is unbuildable, and not for a
+// subtle reason: THE PLAYER LEAVING IS WHAT ENDS THE FIGHT. `tickSystem`'s
+// Attack case drops a pilot to Idle the instant `pilot.targetIndex` stops
+// resolving, and the migrate retires the player out of the registry they were
+// being shot in — so every raider that was shooting at you stands down one tick
+// after you jump, and nobody re-engages, because the think pass is
+// player-scoped (stage B's recorded LOD statement). `threatTimer` is six
+// seconds and a bolt lives less. A "while live" reading therefore closes the
+// bubble about five seconds into the minute the phase's own exit spends next
+// door — every test green, and the feature simply never happening.
+//
+// So the fight is the ENTRY condition, asked once at the moment of departure,
+// and `kCoolingSeconds` is the retention. The ceiling is not a backstop against
+// a rare stalemate; it is the mechanism.
+// ---------------------------------------------------------------------------
+
+// ⚑⚑⚑⚑ THE PHASE'S EXIT, AND THE ENTITY HANDLE IS THE ASSERTION. Fight a ship
+// down to a known hull fraction, jump out, spend a minute somewhere else, jump
+// back, and find the SAME ship on the SAME damage.
+//
+// ⚑⚑⚑ "SAME DAMAGE" IS THE WEAKER HALF AND IT IS WORTH SAYING WHY. A sky built
+// by `fillSystemSky` is a pure function of the spec and the seed, so a
+// regenerated system comes back with the same ships at the same full health in
+// the same places — an assertion about counts or hulls alone would pass over a
+// world that had thrown the fight away and made a new one. What a regenerated
+// sky CANNOT reproduce is a `sol::ecs::Entity` that was never destroyed: a
+// fresh registry hands out its slots from zero. `shipHullFraction(mark)`
+// answering at all, two crossings later, is the identity claim; the number it
+// answers with is the damage claim; and the drift below is the claim that the
+// bubble was ticked rather than parked.
+//
+// ⚑⚑⚑ AND THE SPEC'S OWN EXIT SENTENCE OVERSTATES IT, WHICH IS WORTH SAYING
+// ONCE. "Fly out of a losing engagement, cross back, and the raider that was on
+// 30% hull is still on 30% hull" describes a system that was PAUSED. The one
+// this stage builds was RUNNING: the ship marked below goes out at 0.383 and
+// comes back at 0.183, because the fight it was in carried on without the
+// player in it - which is the feature, not a defect in it. So the equality is
+// asserted across the CROSSING, where nothing may change, and an inequality
+// across the minute, where a great deal may.
+SOL_TEST(a_ship_left_damaged_in_a_system_is_still_there_and_still_damaged)
+{
+    Galaxy g;
+    const std::uint32_t here = g.world.currentSystemIndex();
+    const std::uint32_t elsewhere = g.furnishedSystem(0);
+    SOL_REQUIRE(elsewhere != 0xffff'ffffu && elsewhere != here);
+
+    // A hull in the water with a pilot, so what is left behind is traffic
+    // rather than scenery.
+    const sol::assets::ShipDef* def = g.content.defs().findShip("sol.interceptor");
+    SOL_REQUIRE(def != nullptr);
+    const sol::ecs::Entity mark = g.world.spawnPilotFromDef(*def, g.content.defs(), game::PilotRole::Fighter);
+    SOL_REQUIRE(g.world.shipHullFraction(mark) == 1.0);
+
+    // Shoot it, through the player's own guns and the real damage path — which
+    // is also what puts bolts in the air and a threat on the clock, the entry
+    // condition the retention is about to be asked for.
+    sol::sim::FlightInput trigger;
+    trigger.trigger = true;
+    for (int i = 0; i < 180; ++i) {
+        g.world.setShipInput(trigger);
+        g.world.tick(1.0 / 60.0);
+    }
+    g.world.setShipInput(sol::sim::FlightInput{});
+    const double wounded = g.world.shipHullFraction(mark);
+    SOL_REQUIRE(wounded < 1.0); // anti-vacuity: there is damage to preserve
+    SOL_REQUIRE(wounded > 0.0); // and something survived to carry it
+
+    // Out. The system behind stays open because a fight was live in it.
+    SOL_REQUIRE(g.world.enterSystem(elsewhere));
+    SOL_REQUIRE(g.world.instantiatedSystemCount() == 2);
+    SOL_REQUIRE(g.world.instantiatedSystemAt(1) == here);
+    const game::SpaceWorld::BubbleReport left = g.report(1);
+    SOL_CHECK(left.holdSeconds == game::kCoolingSeconds);
+    SOL_CHECK(!left.player);
+
+    // A minute next door, which is the exit's own wording.
+    g.run(60 * 60);
+    const game::SpaceWorld::BubbleReport cooling = g.report(1);
+    SOL_REQUIRE(cooling.system == here);
+    // It was TICKED, not parked: its traffic is somewhere else than it was.
+    SOL_CHECK(length(cooling.shipCentroid - left.shipCentroid) > 0.0);
+    // And the clock ran down by about the minute that passed.
+    SOL_CHECK(cooling.holdSeconds < left.holdSeconds - 59.0);
+    SOL_CHECK(cooling.holdSeconds > 0.0);
+
+    // Back. The bubble is taken up rather than rebuilt.
+    SOL_REQUIRE(g.world.enterSystem(here));
+    SOL_CHECK(g.world.instantiatedSystemCount() == 1);
+    const game::SpaceWorld::BubbleReport home = g.report(0);
+    SOL_CHECK(home.player);
+    SOL_CHECK(home.holdSeconds == 0.0); // off the clock: the player is in it
+
+    // ⚑⚑⚑⚑ THE EXIT, AND IT IS NOT THE EQUALITY THE SPEC'S SENTENCE IMPLIES.
+    // "The raider that was on 30% hull is still on 30% hull" describes a bubble
+    // that was FROZEN, and a cooling bubble is one that was RUNNING — this ship
+    // went in at 0.383 and came out at 0.183, because the system kept fighting
+    // over it while the player was a jump away. The exact claim is therefore
+    // made across the CROSSING, where nothing may change at all, and the
+    // inequality is made across the minute, where a great deal may.
+    SOL_CHECK(home.worstHull == cooling.worstHull);
+    SOL_CHECK(home.ships == cooling.ships);
+    // The same entity: a handle into a registry that was rebuilt would not
+    // resolve, and one into a regenerated sky would answer a full hull.
+    const double after = g.world.shipHullFraction(mark);
+    SOL_CHECK(after > 0.0);      // still there
+    SOL_CHECK(after < 1.0);      // and not handed back a fresh spawn
+    SOL_CHECK(after <= wounded); // nothing healed it while nobody was watching
+}
+
+// ⚑⚑⚑ AND THE SAME CROSSING WITHOUT A FIGHT GIVES YOU A NEW SYSTEM, WHICH IS
+// THE ANTI-VACUITY OF THE TEST ABOVE AND THE ONLY WAY TO SEE THAT IT MEASURED
+// ANYTHING. Every assertion in the exit test would read identically against a
+// world that simply never released any bubble at all. What separates those is
+// the negative: leave a QUIET system and the ship you left in it is gone,
+// because the bubble was released and the next arrival generates a sky.
+SOL_TEST(a_ship_left_in_a_quiet_system_is_not_there_when_you_come_back)
+{
+    Galaxy g;
+    const std::uint32_t here = g.world.currentSystemIndex();
+    const std::uint32_t elsewhere = g.furnishedSystem(0);
+    SOL_REQUIRE(elsewhere != 0xffff'ffffu && elsewhere != here);
+
+    const sol::assets::ShipDef* def = g.content.defs().findShip("sol.interceptor");
+    SOL_REQUIRE(def != nullptr);
+    const sol::ecs::Entity mark = g.world.spawnPilotFromDef(*def, g.content.defs(), game::PilotRole::Fighter);
+    SOL_REQUIRE(g.world.shipHullFraction(mark) == 1.0);
+
+    // Nothing shoots at anything. Long enough for any threat the arrival itself
+    // raised to age past `kThreatMemorySeconds`.
+    g.run(10 * 60);
+    SOL_REQUIRE(g.world.enterSystem(elsewhere));
+    SOL_CHECK(g.world.instantiatedSystemCount() == 1); // released, not retained
+
+    SOL_REQUIRE(g.world.enterSystem(here));
+    SOL_CHECK(g.world.instantiatedSystemCount() == 1);
+    // The handle names a registry that no longer exists. `shipHullFraction`
+    // answers 0 for an entity that is not there.
+    SOL_CHECK(g.world.shipHullFraction(mark) == 0.0);
+}
+
+// ⚑⚑⚑⚑ THE BUBBLE YOU LEFT HAS STOPPED FIGHTING YOU, AND THE ASSERTION IS
+// TAKEN BEFORE A SINGLE TICK RUNS. That timing is the whole test. `Registry::
+// create` pops a LIFO free list, so the slot the player vacates on a jump is
+// the very next index that registry hands out — and a raider left holding
+// `targetIndex` does not merely lose its target, it inherits a new one.
+//
+// ⚑⚑⚑⚑ AND THE MUTATION TEST SAYS THIS HAZARD IS CURRENTLY UNREACHABLE, WHICH
+// IS RECORDED HERE RATHER THAN PAPERED OVER. Breaking `forgetDepartedPlayer`
+// outright survives every assertion in this suite EXCEPT the one below, and the
+// reason is an ordering nobody wrote down: the only things that spawn into a
+// retained bubble are the two puppet reconciles, and they run in `sim.puppets`
+// AFTER the per-bubble loop — so on the first tick after a jump the pilot pass
+// reads a slot that is still empty, `tickSystem`'s Attack case drops the pilot
+// to Idle, and the inheritor arrives to find nobody hunting it. The dangling
+// index is real; the window in which it can be dereferenced is currently zero
+// ticks wide.
+//
+// So `forgetDepartedPlayer` is structure rather than a live fix, exactly like
+// stage B's per-system chunk stream — and it is worth having for the same
+// reason: the alternative is a correctness property held up by the relative
+// order of two passes in `tick`, with nothing anywhere saying so. What this
+// test can still pin exactly is the instant of departure, where the difference
+// between "forgotten" and "about to be forgotten" is visible.
+SOL_TEST(the_system_you_jump_out_of_stops_fighting_you_the_moment_you_leave)
+{
+    Galaxy g;
+    const std::uint32_t here = g.world.currentSystemIndex();
+    const std::uint32_t elsewhere = g.furnishedSystem(0);
+    SOL_REQUIRE(elsewhere != 0xffff'ffffu && elsewhere != here);
+
+    const sol::assets::ShipDef* def = g.content.defs().findShip("sol.interceptor");
+    SOL_REQUIRE(def != nullptr);
+    const sol::ecs::Entity hunter =
+        g.world.spawnPilotFromDef(*def, g.content.defs(), game::PilotRole::Fighter);
+    SOL_REQUIRE(g.world.pilotAttackPlayer(hunter));
+    SOL_REQUIRE(g.world.pilotStateOf(hunter) == game::PilotState::Attack);
+    SOL_REQUIRE(g.report(0).fighting > 0); // anti-vacuity: somebody IS fighting
+
+    // Out, mid-attack. The fight is live, so the bubble is kept - which is the
+    // only condition under which a stale target could ever be read at all.
+    SOL_REQUIRE(g.world.enterSystem(elsewhere));
+    SOL_REQUIRE(g.world.instantiatedSystemCount() == 2);
+    SOL_REQUIRE(g.world.instantiatedSystemAt(1) == here);
+
+    // ⚑ NO TICK HAS RUN. Nobody in that bubble is in `Attack` any more, and
+    // that is a fact about `leaveSystemFor` rather than about the pilot pass
+    // that would have reached the same answer one tick later.
+    SOL_CHECK(g.report(1).fighting == 0);
+
+    // And it stays that way, rather than being an instant that passes: nothing
+    // re-engages in a bubble the player is not in, because the think pass is
+    // player-scoped. That is stage B's LOD statement, read from outside.
+    g.run(600);
+    const game::SpaceWorld::BubbleReport left = g.report(1);
+    SOL_REQUIRE(left.system == here);
+    SOL_REQUIRE(left.ships > 0); // anti-vacuity: there is somebody to mis-target
+    SOL_CHECK(left.fighting == 0);
+    SOL_CHECK(left.projectiles == 0);
+    SOL_CHECK(left.worstHull == 1.0f);
+}
+
+// ⚑⚑⚑⚑ THE CAP IS ASSERTED RATHER THAN CLAIMED, WHICH THE SPEC ASKS FOR IN
+// THOSE WORDS — `sim::resolveCollisions` is O(n^2) with no broadphase, so k
+// bubbles cost k*n^2 and this is the only thing that bounds k. Both doors are
+// tried: `instantiateSystem`, which the console and these tests open a system
+// through, and a retention, which is how the running game opens one.
+//
+// ⚑⚑ AND THE EVICTION IS COLDEST-FIRST. The bubble the player has just backed
+// out of carries a full window, so it is never the one dropped — the fight you
+// most recently ran from is the one you are most likely to turn around and fly
+// back into. What goes is the one nearest release, which loses the least.
+SOL_TEST(the_instantiated_system_count_never_passes_its_cap)
+{
+    Galaxy g;
+    // Fill to the cap by hand and then keep asking. The refusal is the point:
+    // a door that quietly ignored the cap would leave the pass unbounded.
+    std::uint32_t opened = 0;
+    for (std::uint32_t k = 0; k < 12; ++k) {
+        const std::uint32_t candidate = g.furnishedSystem(k);
+        if (candidate == 0xffff'ffffu) {
+            break;
+        }
+        if (g.world.instantiateSystem(candidate)) {
+            ++opened;
+        }
+        SOL_CHECK(g.world.instantiatedSystemCount() <= game::SpaceWorld::kMaxInstantiatedSystems);
+    }
+    SOL_REQUIRE(opened > 0); // anti-vacuity: the door works at all
+    SOL_CHECK(g.world.instantiatedSystemCount() == game::SpaceWorld::kMaxInstantiatedSystems);
+
+    // Now age them unevenly, so "coldest" names one bubble rather than a tie,
+    // and check that a retention evicts THAT one and not the player's and not
+    // the one just left.
+    g.run(60);
+    double coldest = game::kCoolingSeconds * 2.0;
+    std::uint32_t coldestSystem = 0xffff'ffffu;
+    for (std::size_t slot = 1; slot < g.world.instantiatedSystemCount(); ++slot) {
+        const game::SpaceWorld::BubbleReport r = g.report(slot);
+        if (r.holdSeconds < coldest) {
+            coldest = r.holdSeconds;
+            coldestSystem = r.system;
+        }
+    }
+    SOL_REQUIRE(coldestSystem != 0xffff'ffffu);
+
+    // A jump out of a live fight wants a slot that is not there.
+    const std::uint32_t here = g.world.currentSystemIndex();
+    const sol::assets::ShipDef* def = g.content.defs().findShip("sol.interceptor");
+    SOL_REQUIRE(def != nullptr);
+    const sol::ecs::Entity hunter =
+        g.world.spawnPilotFromDef(*def, g.content.defs(), game::PilotRole::Fighter);
+    SOL_REQUIRE(g.world.pilotAttackPlayer(hunter));
+
+    std::uint32_t destination = 0xffff'ffffu;
+    for (std::uint32_t k = 0; k < 12 && destination == 0xffff'ffffu; ++k) {
+        const std::uint32_t candidate = g.furnishedSystem(k);
+        if (candidate == 0xffff'ffffu) {
+            break;
+        }
+        bool open = false;
+        for (std::size_t slot = 0; slot < g.world.instantiatedSystemCount(); ++slot) {
+            open = open || g.world.instantiatedSystemAt(slot) == candidate;
+        }
+        if (!open) {
+            destination = candidate;
+        }
+    }
+    SOL_REQUIRE(destination != 0xffff'ffffu); // anti-vacuity: somewhere new to go
+
+    SOL_REQUIRE(g.world.enterSystem(destination));
+    SOL_CHECK(g.world.instantiatedSystemCount() == game::SpaceWorld::kMaxInstantiatedSystems);
+    // The player's is the front one, the system just left is retained, and the
+    // coldest is the one that went.
+    SOL_CHECK(g.world.instantiatedSystemAt(0) == destination);
+    bool keptTheOneJustLeft = false;
+    bool keptTheColdest = false;
+    for (std::size_t slot = 0; slot < g.world.instantiatedSystemCount(); ++slot) {
+        keptTheOneJustLeft = keptTheOneJustLeft || g.world.instantiatedSystemAt(slot) == here;
+        keptTheColdest = keptTheColdest || g.world.instantiatedSystemAt(slot) == coldestSystem;
+    }
+    SOL_CHECK(keptTheOneJustLeft);
+    SOL_CHECK(!keptTheColdest);
+}
+
+// ⚑⚑⚑ JUMPING BACK INTO A RETAINED BUBBLE DOES NOT BUILD ITS SKY A SECOND
+// TIME. This is stage A's doubled-garrison bug through its THIRD door, and the
+// first two are why it is worth a test of its own: `enterSystem` on the system
+// you are standing in (stage A, caught by a picket count) and
+// `instantiateSystem` called twice (stage B, said directly). Stage C adds an
+// arrival that finds the destination already open, which is the one door where
+// the sky in the bubble is not the sky the spec would generate — so a filled
+// one would not merely be doubled, it would be a rebuilt system with a stale
+// population inside it.
+SOL_TEST(returning_to_a_retained_system_does_not_refill_its_sky)
+{
+    Galaxy g;
+    const std::uint32_t here = g.world.currentSystemIndex();
+    const std::uint32_t elsewhere = g.furnishedSystem(0);
+    SOL_REQUIRE(elsewhere != 0xffff'ffffu && elsewhere != here);
+
+    const sol::assets::ShipDef* def = g.content.defs().findShip("sol.interceptor");
+    SOL_REQUIRE(def != nullptr);
+    const sol::ecs::Entity hunter =
+        g.world.spawnPilotFromDef(*def, g.content.defs(), game::PilotRole::Fighter);
+    SOL_REQUIRE(g.world.pilotAttackPlayer(hunter));
+
+    SOL_REQUIRE(g.world.enterSystem(elsewhere));
+    SOL_REQUIRE(g.world.instantiatedSystemCount() == 2);
+    g.run(60);
+    const game::SpaceWorld::BubbleReport away = g.report(1);
+    SOL_REQUIRE(away.system == here);
+    SOL_REQUIRE(away.ships > 0);
+
+    SOL_REQUIRE(g.world.enterSystem(here));
+    const game::SpaceWorld::BubbleReport home = g.report(0);
+    SOL_CHECK(home.system == here);
+    SOL_CHECK(home.player);
+    // One player arrived and one sky was already there: the entity count is the
+    // bubble's plus the player, and the hulls are the same hulls.
+    SOL_CHECK(home.entities == away.entities + 1);
+    SOL_CHECK(home.ships == away.ships);
+}
+
+// ⚑⚑ THE CLOCK SURVIVES A SAVE (v38). The bubbles have been written since v37,
+// so the cooling ones are in the file whether or not their clocks are — and a
+// file carrying five retained systems and no clocks loads a world that drops
+// four of them on its first tick. Saving mid-retreat and finding the wounded
+// raider gone is the phase's exit failing at a save point, which is exactly
+// where a player would not think to look for it.
+SOL_TEST(a_save_carries_the_retention_clock_and_the_player_stays_at_the_front)
+{
+    Galaxy g;
+    const std::uint32_t elsewhere = g.furnishedSystem(0);
+    SOL_REQUIRE(elsewhere != 0xffff'ffffu);
+    const std::uint32_t retained = g.world.currentSystemIndex();
+
+    const sol::assets::ShipDef* def = g.content.defs().findShip("sol.interceptor");
+    SOL_REQUIRE(def != nullptr);
+    const sol::ecs::Entity hunter =
+        g.world.spawnPilotFromDef(*def, g.content.defs(), game::PilotRole::Fighter);
+    SOL_REQUIRE(g.world.pilotAttackPlayer(hunter));
+    SOL_REQUIRE(g.world.enterSystem(elsewhere));
+    g.run(60);
+    SOL_REQUIRE(g.world.instantiatedSystemCount() == 2);
+    const double held = g.report(1).holdSeconds;
+    SOL_REQUIRE(held > 0.0 && held < game::kCoolingSeconds);
+
+    const std::string dir = std::string(SOL_GAME_TEST_SCRATCH_DIR) + "/saves";
+    SOL_REQUIRE(sol::platform::createDirectories(dir.c_str()));
+    const std::string path = dir + "/phase38_retention.sav";
+    SOL_REQUIRE(g.world.saveTo(path.c_str(), "cooling"));
+
+    // Run the window out, so the world being loaded INTO has let the bubble go.
+    // Without this the load could leave the pre-existing one standing and read
+    // as a pass, which is the shape a save test fails at most often.
+    g.run(static_cast<int>(game::kCoolingSeconds * 60.0) + 2);
+    SOL_REQUIRE(g.world.instantiatedSystemCount() == 1);
+
+    SOL_REQUIRE(g.world.loadFrom(path.c_str()));
+    SOL_CHECK(g.world.instantiatedSystemCount() == 2);
+    // The player is at the front however the file ordered them, and off the
+    // clock - a loaded world must never have the player standing in a system
+    // that is counting down.
+    SOL_CHECK(g.report(0).player);
+    SOL_CHECK(g.report(0).holdSeconds == 0.0);
+    SOL_CHECK(g.world.instantiatedSystemAt(0) == elsewhere);
+    SOL_CHECK(g.world.instantiatedSystemAt(1) == retained);
+    SOL_CHECK(g.report(1).holdSeconds == held);
+    SOL_CHECK(!g.report(1).player);
+}
+
+// ⚑⚑⚑⚑ COMING BACK TO A COOLING SYSTEM LEAVES ITS SHIPS TARGETABLE, AND THIS
+// IS THE BUG THE FLIGHT FOUND. `leaveSystemFor` ended with
+// `playerShips().clear()`, which reads as obvious housekeeping and was: it
+// clears the ARRIVAL bubble's ship list, and while every arrival was a brand
+// new bubble that list was empty, so the line was a no-op that had been
+// correct for two stages by accident.
+//
+// The moment an arrival can be a bubble that already has ships in it, the same
+// line throws away the display names of hulls that are still alive and still
+// flying - and `spawnedShips` is what the targeting cycle, the hail and the
+// death path all look a hull up in. The symptom this test asserts is the mild
+// one: you back out of a fight, come straight back, see the raider on your
+// screen, and cannot target it, cannot hail it and are given no name for it.
+//
+// ⚑⚑⚑⚑ THE SEVERE ONE IS THAT SUCH A SHIP CANNOT DIE. `handleShipDestroyed`
+// walks `spawnedShips` for the victim and does its whole job - the wreck, the
+// kill credit, the contest pressure AND `registry.destroy` - inside that loop,
+// so a hull that is not in the list is never destroyed. It stays in the sky on
+// a dead hull, is hit again, and runs the entire death path again on every
+// subsequent hit, pushing wreck records and kill credits without bound. That is
+// what took the flight down: one crash, `0x80000003`, on the build before this
+// line was removed, and none since across several runs of the same churn.
+//
+// ⚑ It is the third form of the same mistake this phase keeps finding - a line
+// that is correct only because something else is being thrown away.
+SOL_TEST(returning_to_a_cooling_system_leaves_its_ships_targetable)
+{
+    Galaxy g;
+    const std::uint32_t here = g.world.currentSystemIndex();
+    const std::uint32_t elsewhere = g.furnishedSystem(0);
+    SOL_REQUIRE(elsewhere != 0xffff'ffffu && elsewhere != here);
+
+    const sol::assets::ShipDef* def = g.content.defs().findShip("sol.interceptor");
+    SOL_REQUIRE(def != nullptr);
+    const sol::ecs::Entity hostile =
+        g.world.spawnPilotFromDef(*def, g.content.defs(), game::PilotRole::Fighter);
+    SOL_REQUIRE(g.world.pilotAttackPlayer(hostile));
+
+    // What the player could target before they left.
+    std::size_t before = 0;
+    for (int i = 0; i < 60; ++i) {
+        g.world.cycleContact(1);
+        if (g.world.targetShipEntityIndex() != 0xffff'ffffu) {
+            ++before;
+        }
+    }
+    SOL_REQUIRE(before > 0); // anti-vacuity: there was something to target
+
+    SOL_REQUIRE(g.world.enterSystem(elsewhere));
+    SOL_REQUIRE(g.world.instantiatedSystemCount() == 2);
+    g.run(120);
+    SOL_REQUIRE(g.world.enterSystem(here));
+    SOL_REQUIRE(g.world.instantiatedSystemCount() == 1);
+    SOL_REQUIRE(g.report(0).ships > 0); // the ships ARE there...
+
+    // ...and the player can still take hold of them.
+    std::size_t after = 0;
+    for (int i = 0; i < 60; ++i) {
+        g.world.cycleContact(1);
+        if (g.world.targetShipEntityIndex() != 0xffff'ffffu) {
+            ++after;
+        }
+    }
+    SOL_CHECK(after > 0);
 }

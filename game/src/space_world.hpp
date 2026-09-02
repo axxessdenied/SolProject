@@ -1281,6 +1281,29 @@ inline constexpr double kCruiseWarningRepeatSeconds = 6.0;
 // back on its lane instead of fleeing forever.
 inline constexpr double kThreatMemorySeconds = 6.0;
 
+// ⚑⚑⚑⚑ HOW LONG A SYSTEM KEEPS RUNNING AFTER YOU JUMP OUT OF A FIGHT IN IT
+// (Phase 38 stage C). This is the cooling bubble's whole duration and the only
+// thing that closes one.
+//
+// ⚑⚑⚑ THE SPEC WROTE THE POLICY AS "STAYS INSTANTIATED WHILE A FIGHT IN IT IS
+// LIVE", AND THAT PREDICATE CANNOT BE RE-ASKED ONCE THE PLAYER IS GONE —
+// BECAUSE THE PLAYER LEAVING IS WHAT ENDS THE FIGHT. `tickSystem`'s Attack case
+// drops a pilot to Idle the moment `pilot.targetIndex` stops resolving, and the
+// migrate retires the player out of the registry they were being shot in, so
+// every raider that was shooting at you stands down ONE TICK after the jump.
+// Nobody re-engages either: the think pass is player-scoped, which is stage B's
+// recorded LOD statement. What is left is `threatTimer` — six seconds, above —
+// and whatever bolts are still in the air. A per-tick "while live" reading
+// therefore releases the bubble about five seconds into the minute the phase's
+// own exit spends in the next system.
+//
+// So the fight is the ENTRY condition, asked once at the moment of departure,
+// and this constant is the retention. Two minutes: the exit is "spend a minute
+// in the next system and jump back", and a gate-to-gate crossing sits well
+// inside it. Counted DOWN only, never refreshed — a refresh is how "a stalemate
+// pins a bubble forever" gets back in through the door the ceiling closes.
+inline constexpr double kCoolingSeconds = 120.0;
+
 // How the player is looking at the world this frame (Phase 8j). The frame loop
 // owns the camera and the UI scale, and pushes both in here once per frame;
 // the world never computes them. It is held rather than passed because a click
@@ -2556,9 +2579,12 @@ public:
     // ⚑⚑ THE BUBBLE CENSUS (Phase 38 stage A). How many systems are
     // instantiated, and which — the readout the phase's exit criterion is
     // measured against, and the only externally visible sign that the world is
-    // plural at all. Stage A's answer is always one, and
-    // `the_world_instantiates_exactly_one_system_and_it_is_the_players` is what
-    // says so; stage C is what makes it interesting.
+    // plural at all.
+    //
+    // ⚑ STAGE C IS WHAT MADE IT INTERESTING. It is 1 for an ordinary played
+    // session — a quiet crossing retains nothing — and more than 1 for
+    // `kCoolingSeconds` after the player jumps out of a system with a live
+    // fight in it, never above `kMaxInstantiatedSystems`.
     // Creates EVERY component pool the world uses, up front. Const
     // `storage<T>()` asserts the pool exists, and the read-only paths (the
     // HUD's prospect readout) run in systems that may hold no rock, no wreck
@@ -2600,6 +2626,22 @@ public:
 
     [[nodiscard]] std::size_t instantiatedSystemCount() const { return m_bubbles.size(); }
 
+    // ⚑⚑⚑⚑ THE HARD CAP, AND IT IS PUBLIC BECAUSE THE SPEC ASKS FOR IT TO BE
+    // ASSERTED BY A TEST RATHER THAN CLAIMED BY A COMMENT (Phase 38 stage C,
+    // in those words). `sim::resolveCollisions` is O(n^2) with no broadphase
+    // and says so in its own header, so k bubbles cost k*n^2 — and this is the
+    // k. Measured on the shipped galaxy in a DEBUG build, ticking for 600
+    // frames: one bubble 0.067 ms, four 0.47 ms, six 0.64 ms against a 16.7 ms
+    // frame. Systems run 25–136 entities and 4–15 ships, so the fattest one
+    // measured is 9,180 pairs on its own.
+    //
+    // ⚑⚑ NOT THE SAME NUMBER AS `kMaxBubbles`, AND THE DIFFERENCE IS THE
+    // POINT. That one is a save-file sanity limit — the count past which a
+    // number read off disk is corruption rather than a world. This one is a
+    // policy about how much simulation the game will pay for at once, and it
+    // is the fence the spec's risk section asks for around the cooling bubble.
+    static constexpr std::size_t kMaxInstantiatedSystems = 6;
+
     // ⚑⚑⚑⚑ OPENS A SYSTEM THE PLAYER IS NOT IN, AND TICKS IT FROM THE NEXT
     // FRAME (Phase 38 stage B). This is the mechanism half of the cooling
     // bubble: a bubble with its own statics, its own rocks and its own ambient
@@ -2638,6 +2680,13 @@ public:
         std::size_t entities = 0;
         std::size_t ships = 0; // hulls with a pilot: the traffic, not the scenery
         std::size_t projectiles = 0;
+        // ⚑⚑ HOW MANY OF THOSE SHIPS ARE IN A FIGHT (Phase 38 stage C): pilots
+        // in `Attack`. It is the retention predicate made visible, and it is
+        // the only way from outside this class to see that the bubble you left
+        // has stopped fighting YOU - which is a claim about the instant of
+        // departure, before any tick, and therefore about something no count
+        // taken later can distinguish.
+        std::size_t fighting = 0;
         // Hulls that have been left in it. A wreck record carries its own system
         // and its own position, so which bubble materialises one is the whole
         // question the fine half of mining answers per system.
@@ -2662,6 +2711,12 @@ public:
         // that it does not reset when the player leaves - and it is here so the
         // stage that builds the tick can watch the tick move it.
         float worstHull = 0.0f;
+        // ⚑⚑ SIM-SECONDS THIS BUBBLE HAS LEFT (Phase 38 stage C), and 0 on the
+        // player's own — which is held by the player being in it rather than by
+        // a clock, so 0 here means "not on the clock" and never "about to go".
+        // Reading it beside `worstHull` is how a test says the hull did not
+        // reset AND that the bubble holding it was on its way out.
+        double holdSeconds = 0.0;
     };
 
     [[nodiscard]] bool bubbleReportAt(std::size_t slot, BubbleReport& out) const;
@@ -3748,7 +3803,64 @@ private:
     // system is releasing the bubble, and nothing has to decide what belongs
     // to it. The player is moved out FIRST - into a fresh bubble for the
     // destination - and that crossing is what a jump actually is.
-    void leaveSystemFor(std::uint32_t destination);
+    //
+    // ⚑⚑⚑⚑ AND SINCE STAGE C IT DOES NOT ALWAYS RELEASE, AND THE ARRIVAL IS
+    // NOT ALWAYS FRESH. Returns true when the destination's bubble was built
+    // here and still needs its sky, false when the player has jumped back into
+    // a bubble that was RETAINED and is standing in the system as they left
+    // it. That return value is the whole difference between the phase's exit
+    // happening and not: `loadSystem` fills a sky only when it is told to, and
+    // filling one over a retained bubble would build the destination's traffic
+    // a second time on top of the traffic already flying in it — stage A's bug
+    // through the third door.
+    [[nodiscard]] bool leaveSystemFor(std::uint32_t destination);
+
+    // ⚑⚑⚑⚑ WHY A SYSTEM THE PLAYER IS NOT IN STAYS INSTANTIATED, AND FOR HOW
+    // LONG (Phase 38 stage C). Returns 0 for "let it go". This one function is
+    // the entire retention policy, and it is ONE function on purpose: 015's
+    // "the player's system, plus every system holding a player asset" is the
+    // policy this stage's interface was written to accept unchanged, and
+    // Phase 39 turns it on by adding a second clause HERE and nothing else
+    // anywhere. It returns seconds rather than a bool for the same reason — a
+    // parked asset is not held for two minutes, it is held while it is parked,
+    // and a predicate could not say so.
+    [[nodiscard]] double bubbleRetentionSeconds(const SystemBubble& bubble) const;
+
+    // Is a fight going on in this bubble right now: anyone in `Attack`, anyone
+    // shot inside the last `kThreatMemorySeconds`, or a bolt still in the air.
+    // ⚑ Asked ONCE per departure, with the player still in the bubble — see
+    // `kCoolingSeconds` for why asking it a second time answers no.
+    [[nodiscard]] static bool bubbleHoldsLiveFight(const SystemBubble& bubble);
+
+    // Ages every retained bubble by `dt` and drops the ones that have run out.
+    // Runs after the per-system tick rather than before it, so a bubble whose
+    // last second is this one is still simulated for it.
+    void releaseCooledBubbles(double dt);
+
+    // Drops retained bubbles, COLDEST first, until `kMaxInstantiatedSystems`
+    // is met. Coldest is the one nearest release, so it loses the least — and
+    // the bubble the player has just backed out of carries a full window and
+    // is therefore never the one evicted, which is the case they are most
+    // likely to turn around and fly back into.
+    void enforceBubbleCap();
+
+    // ⚑⚑⚑⚑ NOTHING IN THE BUBBLE YOU LEFT MAY STILL NAME YOU (Phase 38 stage
+    // C), and this is the first stage where that sentence has teeth. An entity
+    // index is per registry and `Registry::create` pops a LIFO free list, so
+    // the player's slot is the very next one handed out in the system they
+    // left — and both puppet reconciles spawn hulls into every instantiated
+    // bubble on every tick. Left alone, the raider that was shooting at you
+    // keeps its `targetIndex` and simply transfers the fight to whichever
+    // hauler inherits your slot, at full aggression, in a system nobody is
+    // watching.
+    //
+    // Exactly three fields in the whole component set can name the departed
+    // player — `ShipPilot::targetIndex`, `ShipPilot::threatIndex` and
+    // `Projectile::shooterIndex` — and all three are retired here.
+    // (`MinerPuppet::rock` is the fourth entity reference and cannot be the
+    // player; a survey that only greps the .cpp misses it, which is why this
+    // one was taken against the component structs.)
+    void forgetDepartedPlayer(SystemBubble& bubble, std::uint32_t departedIndex);
     // Creates the bubble for a system with every pool the world uses already
     // present, and returns it. Only `spawn` calls it: every other arrival goes
     // through `leaveSystemFor`, which needs the new bubble in hand before the
@@ -4363,6 +4475,15 @@ private:
         // police force that had heard nothing. It ages in the per-system pilot
         // pass for the same reason `threatTimer` does.
         double responseCooldown = 0.0;
+        // ⚑⚑⚑⚑ SIM-SECONDS THIS BUBBLE HAS LEFT BEFORE IT IS RELEASED (Phase
+        // 38 stage C). Zero on the player's own bubble — that one is held open
+        // by the player standing in it, not by a clock, and a jump back into a
+        // retained bubble clears this rather than pausing it.
+        //
+        // Written once, at the moment the player jumps out of a system with a
+        // live fight in it, and only ever counted DOWN. `kCoolingSeconds` is
+        // where the reasoning lives, including why it is not re-evaluated.
+        double holdSeconds = 0.0;
     };
 
     std::vector<std::unique_ptr<SystemBubble>> m_bubbles;

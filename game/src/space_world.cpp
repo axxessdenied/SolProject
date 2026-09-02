@@ -205,7 +205,13 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // tagged with the system whose frame its positions are in, rather than one
 // registry whose frame was implied. v36 files are refused whole at the header,
 // as every earlier version has been - there is no migration and never has been.
-constexpr std::uint32_t kSaveVersion = 37;
+// ⚑⚑ v38 (Phase 38 stage C): each of those registries now says how long it has
+// left. Stage A wrote the list and stage C is the stage that puts more than one
+// thing in it, so the retention clock rides beside the system index - the
+// smallest field this phase could have added, and the one without which a save
+// taken mid-retreat loads a world that discards its cooling bubbles on the
+// first tick.
+constexpr std::uint32_t kSaveVersion = 38;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -3183,6 +3189,7 @@ bool SpaceWorld::bubbleReportAt(std::size_t slot, BubbleReport& out) const
     out.projectiles = registry.storage<Projectile>().size();
     out.wrecks = registry.storage<WreckMarker>().size();
     out.player = registry.storage<PlayerShip>().size() == 1;
+    out.holdSeconds = bubble.holdSeconds;
     out.starRadius = bubble.star.radius;
     out.planets = bubble.planets.size();
     const ecs::Pool<ShipDefense>& defenses = registry.storage<ShipDefense>();
@@ -3192,6 +3199,9 @@ bool SpaceWorld::bubbleReportAt(std::size_t slot, BubbleReport& out) const
     std::size_t placed = 0;
     for (std::size_t i = 0; i < pilots.size(); ++i) {
         const std::uint32_t entityIndex = pilots.entityIndices()[i];
+        if (pilots.values()[i].state == PilotState::Attack) {
+            ++out.fighting;
+        }
         if (const Transform* transform = transforms.tryGet(entityIndex)) {
             out.shipCentroid = out.shipCentroid + transform->position;
             ++placed;
@@ -3279,7 +3289,12 @@ void SpaceWorld::fillSystemSky(SystemBubble& bubble)
 
 bool SpaceWorld::instantiateSystem(std::uint32_t system)
 {
-    if (system >= m_galaxy.systems.size() || m_bubbles.size() >= kMaxBubbles) {
+    // ⚑⚑ THE CAP IS CHECKED HERE TOO, AND IT IS THE POLICY CAP NOW (Phase 38
+    // stage C). It was `kMaxBubbles`, the save-file sanity limit, because
+    // stage B had no policy to check against. This door is the one the tests
+    // and the console open a system through, so a cap it did not honour would
+    // be a cap the O(n^2) pass could still be surprised by.
+    if (system >= m_galaxy.systems.size() || m_bubbles.size() >= kMaxInstantiatedSystems) {
         return false;
     }
     // Already open: hand it back as it stands. Building the sky a second time
@@ -3291,6 +3306,15 @@ bool SpaceWorld::instantiateSystem(std::uint32_t system)
     }
     (void)openBubble(system);
     fillSystemSky(*m_bubbles.back());
+    // ⚑⚑⚑ AND IT GOES ON THE CLOCK, BECAUSE EVERY BUBBLE BUT THE PLAYER'S IS
+    // HELD BY ONE (Phase 38 stage C). That is the stage's invariant said as
+    // code: a bubble the player is not standing in exists only because
+    // something is holding it open, the only holder is the retention window,
+    // and a non-front bubble on zero seconds is a contradiction the sweep
+    // would resolve by dropping it on the next tick. A system opened through
+    // this door is on the same policy as one the player backed out of - it is
+    // the mechanism, not an exemption from the mechanism.
+    m_bubbles.back()->holdSeconds = kCoolingSeconds;
     return true;
 }
 
@@ -5407,7 +5431,142 @@ void SpaceWorld::hunterInfo(std::vector<HunterInfo>& out)
     }
 }
 
-void SpaceWorld::leaveSystemFor(std::uint32_t destination)
+bool SpaceWorld::bubbleHoldsLiveFight(const SystemBubble& bubble)
+{
+    // A bolt in the air is a fight on its own: it has a shooter, a victim it
+    // is closing on, and it will land whether or not anybody is still steering
+    // toward anybody.
+    if (!bubble.registry.storage<Projectile>().empty()) {
+        return true;
+    }
+    const ecs::Pool<ShipPilot>& pilots = bubble.registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const ShipPilot& pilot = pilots.values()[i];
+        // ⚑ ANY fight, not only one the player was in - the user's ruling, and
+        // the spec's own wording. A raider running down a hauler two jumps
+        // away is a fight, and a system that stops mid-way through one so that
+        // the same hauler can be freshly alive next time you look is the exact
+        // reset this phase exists to remove. It also means the cap gets
+        // exercised in ordinary play rather than only in a fighting retreat.
+        if (pilot.state == PilotState::Attack || pilot.state == PilotState::Flee ||
+            pilot.threatTimer > 0.0f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+double SpaceWorld::bubbleRetentionSeconds(const SystemBubble& bubble) const
+{
+    if (bubbleHoldsLiveFight(bubble)) {
+        return kCoolingSeconds;
+    }
+    // ⚑⚑⚑ PHASE 39'S CLAUSE GOES HERE AND IS THE ONLY THING IT ADDS.
+    // `decisions/015` asks for "the player's system, plus every system holding
+    // a player asset", and the second half is provably empty today: an owned
+    // ship you are not flying is an `OwnedShip{storedSystem, storedStation}`
+    // row parked at a station, and there is no representation of a ship of
+    // yours in space without you until a captain puts one there. When there
+    // is, it reads
+    //
+    //     if (bubbleHoldsPlayerAsset(bubble)) { return kHeldIndefinitely; }
+    //
+    // which is why this returns SECONDS rather than a bool: a parked asset is
+    // not held for two minutes, it is held for as long as it is parked, and a
+    // predicate has nowhere to put that difference.
+    return 0.0;
+}
+
+void SpaceWorld::forgetDepartedPlayer(SystemBubble& bubble, std::uint32_t departedIndex)
+{
+    ecs::Registry& registry = bubble.registry;
+    ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        ShipPilot& pilot = pilots.values()[i];
+        if (pilot.hasTarget != 0 && pilot.targetIndex == departedIndex) {
+            pilot.hasTarget = 0;
+            pilot.targetIndex = 0;
+            // The three states that are ABOUT a target. `Patrol` and `Travel`
+            // fly to a waypoint and do not care, and `Idle` is where the other
+            // three were going to land anyway - the Attack case in `tickSystem`
+            // drops to Idle the moment the target stops resolving, one tick
+            // later. Doing it here rather than letting that happen is what
+            // makes the difference between "the target is gone" and "the
+            // target is now whoever took its slot".
+            if (pilot.state == PilotState::Attack || pilot.state == PilotState::Flee ||
+                pilot.state == PilotState::Inspect) {
+                pilot.state = PilotState::Idle;
+            }
+        }
+        // ⚑⚑ THE GRUDGE GOES WITH THE TARGET, AND THIS HALF IS STRUCTURE
+        // RATHER THAN A FIX - SAID PLAINLY BECAUSE THE MUTATION TEST SAYS SO.
+        // Deleting these three lines breaks nothing any guard can see, and the
+        // reason is that all three readers of `threatIndex` resolve it against
+        // `playerRegistry()` - `pilotEngageThreat` and the two think-pass
+        // sites - so a stale one in a bubble the player is not in is never
+        // dereferenced at all, and `threatTimer` ages to nothing in six
+        // seconds either way. It is here so that "nothing left behind names
+        // you" is true of the whole component set rather than true of two
+        // fields out of three, which is the difference between a rule and a
+        // coincidence. What actually matters to the player is the DAMAGE, and
+        // that is deliberately untouched.
+        if (pilot.threatIndex == departedIndex) {
+            pilot.threatIndex = 0;
+            pilot.threatTimer = 0.0f;
+        }
+    }
+    // Bolts the player fired and left behind keep flying - they are part of the
+    // frame and something is about to be hit by them - but they are ownerless
+    // now. `kNoIndex` is the value the damage path already understands: it
+    // skips the threat write, and `isPlayerEntity` is bounds-checked and
+    // answers false, so a kill by an abandoned bolt is credited to nobody
+    // rather than to whoever inherits the slot.
+    ecs::Pool<Projectile>& projectiles = registry.storage<Projectile>();
+    for (std::size_t i = 0; i < projectiles.size(); ++i) {
+        Projectile& projectile = projectiles.values()[i];
+        if (projectile.shooterIndex == departedIndex) {
+            projectile.shooterIndex = kNoIndex;
+        }
+    }
+}
+
+void SpaceWorld::enforceBubbleCap()
+{
+    while (m_bubbles.size() > kMaxInstantiatedSystems) {
+        // From slot 1: the player's bubble is the front one and is never a
+        // candidate, whatever the cap says.
+        std::size_t coldest = 1;
+        for (std::size_t i = 2; i < m_bubbles.size(); ++i) {
+            if (m_bubbles[i]->holdSeconds < m_bubbles[coldest]->holdSeconds) {
+                coldest = i;
+            }
+        }
+        // ⚑⚑ DROPPING A BUBBLE RUNS NO DEATH PATH, AND THAT IS BOTH WHY IT IS
+        // SAFE AND WHY IT IS LOSSY. Nothing is killed, so nothing is recorded:
+        // no wreck, no kill credit, no standing change. The system simply
+        // reverts to being generated fresh on the next arrival, which is the
+        // pre-Phase-38 behaviour - a degradation, never a corruption. Nothing
+        // dangles either: every reference that outlives a bubble is coarse-layer
+        // state keyed by SYSTEM (wrecks, rock depletion, trader routes,
+        // standing), and the one world-scoped list of entity indices,
+        // `m_collisionShipIndices`, is per-tick scratch refilled inside the
+        // per-bubble loop.
+        m_bubbles.erase(m_bubbles.begin() + static_cast<std::ptrdiff_t>(coldest));
+    }
+}
+
+void SpaceWorld::releaseCooledBubbles(double dt)
+{
+    for (std::size_t i = m_bubbles.size(); i > 1; --i) {
+        SystemBubble& bubble = *m_bubbles[i - 1];
+        bubble.holdSeconds -= dt;
+        if (bubble.holdSeconds <= 0.0) {
+            m_bubbles.erase(m_bubbles.begin() + static_cast<std::ptrdiff_t>(i - 1));
+        }
+    }
+}
+
+bool SpaceWorld::leaveSystemFor(std::uint32_t destination)
 {
     // ⚑⚑⚑ THIS USED TO BE A FILTERED TEARDOWN AND IS A CROSSING PLUS A DROP
     // NOW (Phase 38 stage A). `despawnSystem` walked the Transform pool, kept
@@ -5426,10 +5585,47 @@ void SpaceWorld::leaveSystemFor(std::uint32_t destination)
     // `posting_a_picket_adds_no_hulls_to_the_sky`, which counted a doubled
     // garrison - the first thing the plural registry broke, and it broke it in
     // the one direction a "drop the old one" reading does not cover.
-    auto arrival = std::make_unique<SystemBubble>();
-    arrival->system = destination;
-    furnishBubble(*arrival);
+    // ⚑⚑⚑⚑ THE DESTINATION MAY ALREADY BE OPEN, AND THAT IS THE PHASE'S EXIT
+    // (Phase 38 stage C). A bubble retained when the player last left it is
+    // taken back as it stands - the same hulls, on the same damage, where the
+    // tick has flown them to since - rather than generated again. Searched
+    // from slot 1 because you cannot arrive in the bubble you are LEAVING:
+    // the front one is the system the player is standing in, and re-entering
+    // it is a re-roll of that sky (stage A's `enterSystem(here)` case), not a
+    // reunion with it.
+    std::unique_ptr<SystemBubble> arrival;
+    for (std::size_t i = 1; i < m_bubbles.size(); ++i) {
+        if (m_bubbles[i]->system == destination) {
+            arrival = std::move(m_bubbles[i]);
+            m_bubbles.erase(m_bubbles.begin() + static_cast<std::ptrdiff_t>(i));
+            break;
+        }
+    }
+    const bool fresh = arrival == nullptr;
+    if (fresh) {
+        arrival = std::make_unique<SystemBubble>();
+        arrival->system = destination;
+        furnishBubble(*arrival);
+    } else {
+        // ⚑ NOT re-furnished. `furnishBubble` reseeds the system's chunk
+        // stream, so running it over a bubble that has been drawing from that
+        // stream for two minutes would rewind it - the determinism risk the
+        // spec names, arriving through the one door that looks like tidying up.
+        // The statics it would write are already there and already correct.
+        //
+        // The clock stops because the player is in it: a bubble the player is
+        // standing in is held open by that and not by a countdown, and leaving
+        // it again is what sets a new window.
+        arrival->holdSeconds = 0.0;
+    }
+    // ⚑⚑ ASKED WITH THE PLAYER STILL IN THE BUBBLE, WHICH IS THE ONLY MOMENT
+    // IT CAN BE ASKED. One tick later every pilot that was attacking the
+    // player has dropped to Idle for want of a target, so this exact call
+    // moved below the migrate would answer "no fight here" in precisely the
+    // case the retention exists for. `kCoolingSeconds` carries the reasoning.
+    const double hold = bubbleRetentionSeconds(*m_bubbles.front());
     ecs::Registry& leaving = m_bubbles.front()->registry;
+    const std::uint32_t departedIndex = playerEntityIndex();
     // ⚑⚑ THE SCHEMA IS WHAT MOVES WITH YOU, AND IT IS THE SAME LIST THE SAVE
     // WRITES. A component the world does not persist is one it rebuilds, and a
     // jump is exactly when that rebuild happens - so "what survives a save" and
@@ -5437,27 +5633,68 @@ void SpaceWorld::leaveSystemFor(std::uint32_t destination)
     // rather than a convenience. The player's entity INDEX is not preserved and
     // cannot be; `playerEntityIndex()` recomputes from the pool, which is why
     // nothing had to learn about this.
-    (void)makeSnapshotSchema().migrate(
-        leaving, arrival->registry, leaving.entityFromIndex(playerEntityIndex()));
-    // ⚑⚑⚑ STAGE A KEEPS NOTHING ELSE, AND THAT IS THE STAGE'S INVARIANT:
-    // exactly one bubble, always. Stage C is what starts keeping a system the
-    // player has left, and this is the line it changes.
-    m_bubbles.clear();
-    m_bubbles.push_back(std::move(arrival));
-    playerShips().clear();
+    (void)makeSnapshotSchema().migrate(leaving, arrival->registry, leaving.entityFromIndex(departedIndex));
+    // ⚑⚑⚑⚑ AND NOTHING LEFT BEHIND MAY STILL NAME THE PLAYER. The slot they
+    // just vacated is the next one `Registry::create` hands out in that
+    // registry, and the puppet reconciles spawn into every instantiated bubble
+    // on every tick — so a raider left holding `targetIndex` would transfer
+    // the fight, at full aggression, to whichever hauler inherits it. This was
+    // free while the bubble was dropped on the same line; it is a live bug the
+    // moment one is kept.
+    forgetDepartedPlayer(*m_bubbles.front(), departedIndex);
+    // ⚑⚑⚑⚑ THIS WAS `m_bubbles.clear()`, AND STAGE C IS THE STAGE THE SPEC
+    // SAID WOULD COME HERE AND CHANGE IT. The system the player has just left
+    // keeps running for `kCoolingSeconds` when a fight was live in it at the
+    // moment of departure, and is released now when it was not. Retained
+    // bubbles the player did not just leave keep their own clocks and their
+    // own slots; the player's is always the front one, because that is what
+    // `playerRegistry()` means and every player-scoped reader in this file
+    // depends on it.
+    std::vector<std::unique_ptr<SystemBubble>> kept;
+    kept.reserve(m_bubbles.size() + 1);
+    kept.push_back(std::move(arrival));
+    if (hold > 0.0) {
+        m_bubbles.front()->holdSeconds = hold;
+        kept.push_back(std::move(m_bubbles.front()));
+    }
+    for (std::size_t i = 1; i < m_bubbles.size(); ++i) {
+        kept.push_back(std::move(m_bubbles[i]));
+    }
+    m_bubbles = std::move(kept);
+    enforceBubbleCap();
+    // ⚑⚑⚑⚑ THE SHIP LIST IS NOT CLEARED HERE ANY MORE, AND THAT LINE WAS A
+    // BUG THE MOMENT AN ARRIVAL COULD BE A BUBBLE THAT ALREADY HAD ONE (Phase
+    // 38 stage C). `playerShips()` is `m_bubbles.front()->spawnedShips` - the
+    // ARRIVAL's list - and it is what the targeting cycle, the hail and the
+    // death path look a hull up in. While every arrival was a fresh bubble the
+    // clear was a no-op on an empty vector, which is exactly why it survived
+    // stage B unnoticed; on a RETAINED bubble it throws away the names of
+    // ships that are still alive and still flying in it, so a player who backs
+    // out of a fight and comes straight back finds the raider on their screen
+    // and cannot target it, cannot hail it, and gets no name for it.
+    //
+    // ⚑ Nothing replaces it: the list belongs to the bubble, so a bubble that
+    // is dropped takes its list with it and a bubble that is kept keeps one
+    // that is still true. The identical line in `loadFrom` is left alone - a
+    // loaded bubble is freshly constructed and its list is genuinely empty.
     m_combatEffects.clear();
     m_thrusters.clear();
     if (m_audio != nullptr) {
-        // Every voice in flight was positioned in the system being torn down,
-        // and a one-shot does not track its emitter - so leaving them running
-        // would play the old system's explosions in the new one's coordinates.
+        // Every voice in flight was positioned in the system being left, and a
+        // one-shot does not track its emitter - so leaving them running would
+        // play the old system's explosions in the new one's coordinates.
         //
-        // ⚑ This is the miniature of what stage D owes the whole phase: the
-        // five `playAt` sites hand a system-frame position to a mixer with one
-        // listener, and `decisions/015` says rendering and UI are unaffected
-        // without noticing that audio is a third output path.
+        // ⚑⚑ AND IT IS NOT A TEARDOWN ANY MORE, WHICH MAKES THIS STAGE D'S
+        // PROBLEM RATHER THAN A TIDY-UP (Phase 38 stage C). The system behind
+        // the player is still running and still firing, and its next shot goes
+        // to a mixer with one listener at coordinates belonging to a different
+        // star - so silencing what is already in flight is now only half of an
+        // answer. The five `playAt` sites take the listener's system in stage
+        // D; `decisions/015` says rendering and UI are unaffected in kind and
+        // never noticed that audio is a third output path.
         m_audio->stopAll();
     }
+    return fresh;
 }
 
 void SpaceWorld::instantiateSystemEntities(ecs::Registry& registry, const sim::SystemSpec& spec)
@@ -5786,7 +6023,7 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     // bubble, `instantiateSystemEntities` included - which is why the entities
     // it spawns land in the right frame without knowing there is such a thing
     // as a frame.
-    leaveSystemFor(systemIndex);
+    const bool freshSky = leaveSystemFor(systemIndex);
     m_currentSystem = systemIndex;
     // Knowledge (Phase 8e): being here is what makes a system known, and a
     // gate names where it leads — the map grows along the lanes you fly.
@@ -5813,7 +6050,21 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     // they became `fillSystemSky` rather than a second copy that would drift.
     // The side data below is the half that stays here, because all of it -
     // gates, the target cycle, the survey fog - exists to be shown to a player.
-    fillSystemSky(playerBubble());
+    // ⚑⚑⚑⚑ ONLY WHEN THE BUBBLE IS NEW (Phase 38 stage C). A retained bubble
+    // arrives with its sky already in it - the same hulls, still carrying the
+    // damage they were left on - and filling one over the top is the doubled
+    // garrison stage A shipped, through a third door. This single condition is
+    // the difference between the phase's exit happening and the player being
+    // handed a freshly generated system that merely looks like the one they
+    // fought in.
+    //
+    // ⚑ The side data below is NOT conditional and must not become so: gates,
+    // the target cycle and the survey fog are the player's view of wherever
+    // they now are, they were built for the system being left, and they are
+    // rebuilt on every arrival however the sky got there.
+    if (freshSky) {
+        fillSystemSky(playerBubble());
+    }
     rebuildSystemSideData(spec);
 
     // Arrival point: off the gate we came through, facing the playfield; on
@@ -11227,6 +11478,12 @@ void SpaceWorld::tick(double dt)
     for (std::size_t bubbleSlot = 0; bubbleSlot < m_bubbles.size(); ++bubbleSlot) {
         tickSystem(*m_bubbles[bubbleSlot], dt);
     }
+    // ⚑⚑⚑ AND THE COOLING BUBBLES AGE (Phase 38 stage C). AFTER the loop
+    // rather than before it: a bubble whose last second is this one is still
+    // simulated for it, so what the player finds on jumping back is a system
+    // that ran out the whole window rather than one short. The player's own
+    // bubble is never a candidate - it is held open by the player being in it.
+    releaseCooledBubbles(dt);
 
     // Feedback bookkeeping.
     m_combatEffects.tick(dt);
@@ -12236,6 +12493,15 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
     writer.write(static_cast<std::uint32_t>(m_bubbles.size()));
     for (const std::unique_ptr<SystemBubble>& bubble : m_bubbles) {
         writer.write(bubble->system);
+        // ⚑⚑⚑ AND HOW LONG IT HAS LEFT (v38, Phase 38 stage C). The bubbles
+        // have been written since v37, so the cooling ones are in the file
+        // whether or not their clocks are - and a file that carried five
+        // retained systems and no clocks would load a world that dropped four
+        // of them on its first tick. Saving in the middle of a fighting
+        // retreat and finding the wounded raider gone is the phase's own exit
+        // failing at a save point, which is exactly where a player would not
+        // think to look for it. One double, beside the system it belongs to.
+        writer.write(bubble->holdSeconds);
         schema.save(bubble->registry, writer);
     }
     return platform::writeFileBytes(path, writer.data().data(), writer.size());
@@ -12439,7 +12705,8 @@ bool SpaceWorld::loadFrom(const char* path)
     std::size_t playerBubble = kMaxBubbles;
     for (std::uint32_t i = 0; i < bubbleCount; ++i) {
         auto bubble = std::make_unique<SystemBubble>();
-        if (!reader.read(bubble->system) || !schema.load(bubble->registry, reader)) {
+        if (!reader.read(bubble->system) || !reader.read(bubble->holdSeconds) ||
+            !schema.load(bubble->registry, reader)) {
             return false;
         }
         // A snapshot only carries the pools the save had in it, and it carries
@@ -12467,6 +12734,17 @@ bool SpaceWorld::loadFrom(const char* path)
         return false; // the header and the sky disagree about where the player is
     }
     m_bubbles = std::move(fresh);
+    // ⚑⚑ THE PLAYER'S BUBBLE IS OFF THE CLOCK AND THE REST ARE HELD TO THE
+    // POLICY (Phase 38 stage C). The first is a repair of the swap above
+    // rather than a defensive line: whichever bubble held the player was
+    // written with a zero, but a file naming a different one is a file that
+    // would leave the player standing in a system on a countdown. The second
+    // is `kMaxBubbles` versus `kMaxInstantiatedSystems` - the load's own guard
+    // is the corruption limit, which is deliberately far looser than the
+    // policy, so a save written before the cap changed cannot hand the
+    // O(n^2) pass more systems than this build is willing to tick.
+    m_bubbles.front()->holdSeconds = 0.0;
+    enforceBubbleCap();
     // Def-spawned entities were replaced wholesale; their def association is
     // gone (visuals persist via the saved RenderShape).
     playerShips().clear();
