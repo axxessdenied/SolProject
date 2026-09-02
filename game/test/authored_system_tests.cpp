@@ -86,7 +86,11 @@ station = "sol.station_refinery"
 {
     std::uint32_t major = 0;
     for (const sol::assets::FactionDef& faction : defs.factions()) {
-        if (faction.kind == sol::assets::FactionKind::Pirate) {
+        // ⚑ `!= Major` since Phase 37 stage B, which is the production rule's own
+        // spelling: this is a mirror, and a mirror that has drifted is worse
+        // than none. A shadow faction is not a claimant either, and it is the
+        // one whose position among the majors would be counted by accident.
+        if (faction.kind != sol::assets::FactionKind::Major) {
             continue;
         }
         if (faction.id == id) {

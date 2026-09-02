@@ -219,7 +219,10 @@ void fillStationOutfitting(const SpaceWorld& world,
     const sol::sim::FactionSim& factionSim = world.factionSim();
     for (std::size_t i = 0; i < world.factions().size(); ++i) {
         const std::uint32_t faction = static_cast<std::uint32_t>(i);
-        std::string detail = world.factions()[i].pirate ? "pirate clan" : "major";
+        // ⚑ The word comes from `factionKindLabel` since Phase 37 stage B rather
+        // than from a ternary here, because there are three answers now and the
+        // console's `sol.factions` prints the same three.
+        std::string detail = game::factionKindLabel(world.factions()[i]);
         // ⚑ How much ground they hold goes BEFORE the war list (Phase 8u).
         // The war list is unbounded - a major at seed 1701 is at war with all
         // ten pirate clans - and it already overruns this column, so anything

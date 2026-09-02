@@ -703,7 +703,44 @@ struct GameFaction
     std::string defId; // majors: own def id; clans: template def id (gates)
     std::string name;
     sol::core::Vec3 color = {1.0f, 1.0f, 1.0f};
-    bool pirate = false;
+    // ⚑⚑⚑⚑ THIS WAS `bool pirate` AND ONE BIT WAS ANSWERING SIX UNRELATED
+    // QUESTIONS (Phase 37 stage B). `FactionKind` used to be an asset-layer
+    // word that `initializeFactions` read once and threw away, so nothing
+    // downstream could ask what KIND a faction was - only whether it was a
+    // pirate. Six sites read that bit and meant six different things by it:
+    // whether this owner fences past `min_rep`, the player's opening standing,
+    // the default cross-kind enmity, raiders-or-patrols, which `RosterCell`
+    // its wings fly, and which way the security sign points.
+    //
+    // ⚑⚑ A SECOND BOOL BESIDE IT WOULD HAVE BEEN THE SAME BUG WITH MORE
+    // STATES - `pirate && shadow` is nonsense and nothing but convention would
+    // have stopped it. The kind is carried instead and `pirate()` is derived,
+    // so every one of those six sites still reads exactly the sentence it read
+    // before and the fourth state is unrepresentable.
+    //
+    // ⚑⚑⚑ AND FIVE OF THE SIX TURNED OUT TO BE UNREACHABLE FOR A SHADOW
+    // FACTION WITHOUT A LINE BEING WRITTEN, which is worth saying plainly
+    // because the spec budgeted a third arm for all six. Every one of them
+    // except the opening standing is keyed off `systemOwnerFaction` - and a
+    // faction that claims nothing is never a system's owner. "Claims nothing"
+    // is not a property this table has to enforce; it is what makes those five
+    // questions unaskable.
+    //
+    // ⚑ Clans carry their TEMPLATE's kind, exactly as they carry its `defId`
+    // and its roster: a clan stamped from a pirate template is a pirate.
+    sol::assets::FactionKind kind = sol::assets::FactionKind::Major;
+
+    // "Raids and is raided", which is the behaviour the old bool named. Kept as
+    // the spelling every reader already used so the kind's arrival is not a
+    // rewrite of six unrelated decisions.
+    [[nodiscard]] bool pirate() const { return kind == sol::assets::FactionKind::Pirate; }
+
+    // ⚑ The black market (Phase 37, `decisions/017`): no territory, no
+    // stations of its own, present wherever a station composed a shadow
+    // module. Its rows sit LAST in `m_factionTable`, after the clans - see
+    // `initializeFactions`, where that ordering is load-bearing rather than
+    // tidy.
+    [[nodiscard]] bool shadow() const { return kind == sol::assets::FactionKind::Shadow; }
     float aggression = 0.5f;
     float forgiveness = 0.5f;
     std::vector<std::string> shipsPatrol;
@@ -738,6 +775,21 @@ struct GameFaction
 // haul in INTERCEPTORS rather than not haul at all.
 [[nodiscard]] std::span<const std::string>
 factionRoster(const GameFaction& faction, sol::assets::RosterCell cell, sol::assets::RosterCell fallback);
+
+// ⚑⚑⚑ WHAT A FACTION IS, IN ONE WORD, AND THE ONE PLACE THE THREE WORDS LIVE
+// (Phase 37 stage B). Two screens print this - the dock's Factions tab and the
+// console's `sol.factions` - and until this stage both carried their own
+// `pirate ? "pirate clan" : "major"`. Two copies of a two-word vocabulary was
+// survivable; two copies of a THREE-word one where the third word is the game's
+// only secret organisation is how a black market gets labelled "major" on one
+// screen and named correctly on the other.
+//
+// ⚑⚑ "syndicate" RATHER THAN "shadow", AND THE DIFFERENCE IS WHO IS READING.
+// `shadow` is the def keyword and the module family - author vocabulary. A
+// player reading the Factions tab is being told what sort of organisation this
+// is, and the answer is a syndicate: no territory, no flag, and a row on the
+// same list as the Solar Navy.
+[[nodiscard]] const char* factionKindLabel(const GameFaction& faction);
 
 // --- Response (Phase 30 stage C) -------------------------------------------
 //
@@ -1940,6 +1992,26 @@ public:
 
     [[nodiscard]] const std::vector<GameFaction>& factions() const { return m_factionTable; }
 
+    // ⚑⚑⚑ WHERE THE SHADOW ROWS START, WHICH IS ALSO WHERE MAJORS + CLANS END
+    // (Phase 37 stage B). `kNoFaction` when no `kind = "shadow"` def is loaded,
+    // which is every galaxy built from a def set that does not carry one - a
+    // mod, and the trimmed def sets several test suites build.
+    //
+    // ⚑⚑ THE ACCESSOR EXISTS BECAUSE THE ARITHMETIC STOPPED WORKING. The table
+    // is majors, then clans, then shadow; before this stage its size minus the
+    // clan count WAS the major count, and that identity is now false. It is the
+    // same shape as `assignShadowOwners`'s clanBase - a boundary in a table
+    // whose sections are ordered by construction - and it is exposed rather
+    // than recomputed so the next reader does not re-derive it wrongly.
+    [[nodiscard]] std::uint32_t shadowFactionBase() const { return m_shadowBase; }
+
+    // The one black market, or `kNoFaction`. Ruling 1 of Phase 37 is that there
+    // is exactly ONE hand-authored shadow faction, so the base index IS the
+    // identity; this spelling is what callers who mean "the Ninth Shift" should
+    // say, and it will stop compiling rather than quietly pick the first of two
+    // if that ruling is ever reversed.
+    [[nodiscard]] std::uint32_t shadowFactionIndex() const { return m_shadowBase; }
+
     [[nodiscard]] const sol::sim::FactionSim& factionSim() const { return m_factionSim; }
 
     [[nodiscard]] sol::sim::FactionSim& factionSim() { return m_factionSim; }
@@ -2032,7 +2104,7 @@ public:
         if (magnitude == 0.0f || owner >= m_factionTable.size()) {
             return 0.0f;
         }
-        return m_factionTable[owner].pirate ? -magnitude : magnitude;
+        return m_factionTable[owner].pirate() ? -magnitude : magnitude;
     }
 
     // The galaxy's gradient, counted once (Phase 30 stage F). Two callers
@@ -4016,7 +4088,8 @@ private:
     // recipe runs on.
     std::uint32_t m_baseArchetypeCount = 0;
     MiningFeedstock m_feedstock;
-    std::vector<GameFaction> m_factionTable; // majors + clans, sim order
+    std::vector<GameFaction> m_factionTable;           // majors + clans + shadow, sim order
+    std::uint32_t m_shadowBase = sol::sim::kNoFaction; // first shadow row, or kNoFaction
     sol::sim::FactionSim m_factionSim;
     sol::sim::MissionSim m_missions;
     std::vector<sol::sim::MissionEvent> m_missionEvents; // buffered for Lua

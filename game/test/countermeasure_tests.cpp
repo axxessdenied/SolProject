@@ -601,7 +601,7 @@ SOL_TEST(the_strongest_kit_is_fenced_in_clan_space_and_refused_in_the_core)
         if (owner >= g.world.factions().size() || g.world.galaxy().systems[s].stations.empty()) {
             continue;
         }
-        const bool pirate = g.world.factions()[owner].pirate;
+        const bool pirate = g.world.factions()[owner].pirate();
         if ((pirate && clan > 0) || (!pirate && lawful > 0)) {
             continue;
         }

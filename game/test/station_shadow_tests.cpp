@@ -148,12 +148,12 @@ SOL_TEST(a_shadow_operator_is_always_a_pirate_clan)
             }
             ++checked;
             SOL_REQUIRE(owner < world.factions().size());
-            if (!world.factions()[owner].pirate) {
+            if (!world.factions()[owner].pirate()) {
                 std::printf("  %s is run by %s, which is not a clan\n",
                             list[t].name.c_str(),
                             world.factions()[owner].name.c_str());
             }
-            SOL_CHECK(world.factions()[owner].pirate);
+            SOL_CHECK(world.factions()[owner].pirate());
             operators.push_back(owner);
         }
     }
@@ -200,7 +200,7 @@ SOL_TEST(no_station_hosts_the_shadow_operation_of_the_clan_that_founded_it)
             }
             ++checked;
             if (system.factionIndex < world.factions().size() &&
-                world.factions()[system.factionIndex].pirate) {
+                world.factions()[system.factionIndex].pirate()) {
                 ++underClanLaw; // a dock already under clan law, hosting a RIVAL clan's fence
             }
             if (owner == system.factionIndex) {

@@ -557,10 +557,23 @@ struct WeaponDef
     std::string source;
 };
 
+// ⚑⚑⚑ THREE KINDS, AND ONLY TWO OF THEM ARE EVER HANDED GROUND (Phase 37
+// stage B). `Major` and `Pirate` are both claimants - one takes a capital in
+// def order, the other is stamped per lawless neighbourhood - and every site
+// that counts factions was written when those were the only two answers.
+//
+// ⚑⚑ A `Shadow` FACTION CLAIMS NOTHING, AND THAT IS THE WHOLE DEFINITION
+// (`decisions/017`, gdd.md §7). It holds no system, takes no capital, gets no
+// station-bias row and is never a jurisdiction; it exists wherever a station
+// composed a `shadow` module, inside somebody else's walls. Three sites in
+// `generateUniverse` ask "is this a pirate?" as a stand-in for "is this a
+// claimant?", and a third kind is what tells those two questions apart - see
+// the third arms there, which say so in their own comments.
 enum class FactionKind : std::uint32_t
 {
     Major = 0, // authored territory claimant (generator capital)
     Pirate,    // clan template; instantiated per lawless fringe neighborhood
+    Shadow,    // claims nothing; lives inside other people's stations
 };
 
 // One side's declared initial standing toward another faction ("id:standing"

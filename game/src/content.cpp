@@ -1763,7 +1763,7 @@ std::string listFactions(GameContent& content)
             lines += "\n";
         }
         lines += std::to_string(i + 1) + ": " + factions[i].name +
-                 (factions[i].pirate ? " (pirate clan)" : " (major)");
+                 (std::string(" (") + game::factionKindLabel(factions[i]) + ")");
     }
     return lines;
 }
@@ -3354,8 +3354,8 @@ std::string factionCandidates(GameContent& content, double factionIndex)
         joined +=
             std::to_string(candidate.system) + ":" + world.galaxy().systems[candidate.system].name + ":" +
             buffer + ":" +
-            (candidate.owner < world.factions().size() && world.factions()[candidate.owner].pirate ? "p"
-                                                                                                   : "m");
+            (candidate.owner < world.factions().size() && world.factions()[candidate.owner].pirate() ? "p"
+                                                                                                     : "m");
     }
     return joined;
 }
@@ -4678,7 +4678,7 @@ void GameContent::tick(double dt)
                                     &error,
                                     static_cast<double>(decision.faction + 1),
                                     faction.name.c_str(),
-                                    faction.pirate,
+                                    faction.pirate(),
                                     static_cast<double>(faction.aggression),
                                     static_cast<double>(faction.forgiveness),
                                     static_cast<double>(decision.roll))) {
@@ -5570,7 +5570,7 @@ void GameContent::runMissionBoard()
                          world.dockedStationName(),
                          static_cast<double>(owner + 1),
                          world.factions()[owner].name.c_str(),
-                         world.factions()[owner].pirate,
+                         world.factions()[owner].pirate(),
                          hauls.c_str(),
                          bounties.c_str(),
                          contests.c_str(),

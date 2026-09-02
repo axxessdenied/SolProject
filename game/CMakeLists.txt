@@ -285,6 +285,7 @@ add_executable(sol_game_tests
     test/verdict_tests.cpp
     test/countermeasure_tests.cpp
     test/station_lead_tests.cpp
+    test/shadow_faction_tests.cpp
     test/station_cast_tests.cpp
     test/station_composition_tests.cpp
     test/station_screen_tests.cpp

@@ -1028,7 +1028,7 @@ SOL_TEST(a_system_that_changes_hands_changes_who_the_rating_says_polices_it)
     SOL_REQUIRE(held != sol::sim::kNoFaction);
     std::uint32_t clan = sol::sim::kNoFaction;
     for (std::uint32_t f = 0; f < world.factions().size(); ++f) {
-        if (world.factions()[f].pirate) {
+        if (world.factions()[f].pirate()) {
             clan = f;
             break;
         }
@@ -1094,7 +1094,7 @@ SOL_TEST(a_major_that_takes_a_clan_stronghold_actually_garrisons_it)
     SOL_REQUIRE(stronghold != sol::sim::kNoFaction);
     std::uint32_t major = sol::sim::kNoFaction;
     for (std::uint32_t f = 0; f < world.factions().size(); ++f) {
-        if (!world.factions()[f].pirate) {
+        if (world.factions()[f].kind == sol::assets::FactionKind::Major) {
             major = f;
             break;
         }
@@ -1160,7 +1160,7 @@ SOL_TEST(the_one_place_nobody_holds_still_reads_exactly_zero)
     // Without the guard this is the only visible symptom there is.
     std::uint32_t clan = sol::sim::kNoFaction;
     for (std::uint32_t f = 0; f < world.factions().size(); ++f) {
-        if (world.factions()[f].pirate) {
+        if (world.factions()[f].pirate()) {
             clan = f;
             break;
         }
@@ -1222,7 +1222,7 @@ SOL_TEST(the_security_histogram_counts_clan_space_as_clan_space)
     SOL_REQUIRE(held != sol::sim::kNoFaction);
     std::uint32_t clan = sol::sim::kNoFaction;
     for (std::uint32_t f = 0; f < world.factions().size(); ++f) {
-        if (world.factions()[f].pirate) {
+        if (world.factions()[f].pirate()) {
             clan = f;
             break;
         }

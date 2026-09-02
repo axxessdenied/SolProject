@@ -39,6 +39,24 @@ struct FactionAgentParams
     float aggression = 0.5f;  // 0..1: appetite for raiding on a decision roll
     float forgiveness = 0.5f; // 0..1: scales relation drift back to baseline
     bool pirate = false;      // generated clan (raids on standing, not war)
+    // ⚑⚑⚑⚑ DOES THIS AGENT CONTEST TERRITORY AT ALL, AND IT GATES THE DECISION
+    // DRAW RATHER THAN THE DECISION (Phase 37 stage B). Every agent has taken a
+    // roll every decision interval since Phase 8b, because every agent was a
+    // claimant. A shadow faction holds no system, and `raidCandidates` seeds its
+    // search from systems the faction HOLDS - so its frontier is empty, its
+    // candidate list is empty, and its roll has exactly one possible outcome
+    // however it lands.
+    //
+    // ⚑⚑⚑ THE POINT IS NOT THE WASTED ROLL, IT IS WHOSE ROLL IT DISPLACES. This
+    // sim draws decision rolls and TRADER-LOSS rolls from one stream, so an
+    // agent that can never act still moves every loss after it, forever - and
+    // adding one to a shipped galaxy would silently re-run four phases of
+    // economy measurements. Skipping the draw is what makes "a faction that
+    // claims nothing changes nothing" true of the live simulation and not only
+    // of the generated galaxy. ⚑ It is a STATIC property of the def, never a
+    // live territory check: gating on "holds no systems right now" would mean a
+    // major losing its last system re-seeded everybody else's fate.
+    bool territorial = true;
 };
 
 struct FactionSimParams

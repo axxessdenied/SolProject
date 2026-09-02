@@ -846,8 +846,10 @@ bool parseFaction(const TomlValue& table,
             def.kind = FactionKind::Major;
         } else if (kind == "pirate") {
             def.kind = FactionKind::Pirate;
+        } else if (kind == "shadow") {
+            def.kind = FactionKind::Shadow;
         } else {
-            reader.fail("'kind' must be \"major\" or \"pirate\"");
+            reader.fail("'kind' must be \"major\", \"pirate\" or \"shadow\"");
         }
     }
     if (!reader.failed && (def.aggression < 0.0f || def.aggression > 1.0f || def.forgiveness < 0.0f ||
@@ -2860,9 +2862,18 @@ bool DefDatabase::validateSystems(std::string* outError) const
                     row, "'at_system' names '" + system.atSystemFactionId + "', which is not a [[faction]]");
             }
             if (faction->kind != FactionKind::Major) {
+                // ⚑ THE MESSAGE NAMES THE KIND RATHER THAN GUESSING IT (Phase 37
+                // stage B). This said "which is a clan template" back when
+                // `!= Major` had exactly one other answer; a shadow faction
+                // holds no capital for a completely different reason, and an
+                // author who wrote `at_system = "sol.ninth_shift"` would have
+                // been told their black market was a clan template.
                 return refuse(row,
-                              "'at_system' names '" + system.atSystemFactionId +
-                                  "', which is a clan template and holds no capital");
+                              "'at_system' names '" + system.atSystemFactionId + "', which is a " +
+                                  (faction->kind == FactionKind::Pirate
+                                       ? "clan template"
+                                       : "shadow faction that claims no territory") +
+                                  " and holds no capital");
             }
         }
         // ⚑⚑ AN ANCHOR MUST BE DECLARED EARLIER, AND THAT IS CHECKED HERE

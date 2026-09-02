@@ -119,7 +119,25 @@ SOL_TEST(the_shipped_clans_declare_the_cells_they_do_not_field)
 
     std::uint32_t clans = 0;
     std::uint32_t majors = 0;
+    std::uint32_t shadow = 0;
     for (const sol::assets::FactionDef& faction : defs.factions()) {
+        // ⚑⚑⚑ THE THIRD KIND DECLARES ALL THREE CELLS AND IT IS THE ONLY ROW IN
+        // THE FILE THAT DOES (Phase 37 stage B). These rosters are what a
+        // faction spawns in the space it HOLDS, and the black market holds
+        // none - so "we field nothing" is not a tuning choice for it the way
+        // the clans' two cells were, it is what the kind means. Asserted here
+        // rather than left to the majors' `!buildsNo[i]` sweep below, which
+        // this row would have failed with no explanation of why.
+        if (faction.kind == sol::assets::FactionKind::Shadow) {
+            ++shadow;
+            for (std::size_t i = 0; i < sol::assets::kRosterCellCount; ++i) {
+                SOL_CHECK(faction.buildsNo[i]);
+            }
+            SOL_CHECK(faction.shipsPatrol.empty());
+            SOL_CHECK(faction.shipsRaider.empty());
+            SOL_CHECK(faction.shipsTrader.empty());
+            continue;
+        }
         if (faction.kind == sol::assets::FactionKind::Pirate) {
             ++clans;
             SOL_CHECK(faction.buildsNo[cell(RosterCell::Trader)]);
@@ -141,6 +159,10 @@ SOL_TEST(the_shipped_clans_declare_the_cells_they_do_not_field)
     }
     SOL_CHECK(clans == 2);
     SOL_CHECK(majors == 5);
+    // Ruling 1 of Phase 37: exactly ONE, hand-authored, not a template. If a
+    // second ever ships, `SpaceWorld::shadowFactionIndex()` stops being an
+    // identity and this is the line that says so first.
+    SOL_CHECK(shadow == 1);
 }
 
 // ⚑⚑⚑ AND WHAT THAT DECLARATION ACTUALLY CHANGED, MEASURED RATHER THAN
@@ -161,7 +183,7 @@ SOL_TEST(the_clan_declaration_is_what_stops_it_hauling_in_its_own_gunships)
 
     game::GameFaction declared;
     declared.defId = clan->id;
-    declared.pirate = true;
+    declared.kind = sol::assets::FactionKind::Pirate;
     declared.shipsPatrol = clan->shipsPatrol;
     declared.shipsRaider = clan->shipsRaider;
     declared.shipsTrader = clan->shipsTrader;
@@ -200,7 +222,7 @@ SOL_TEST(the_roster_readout_fits_the_console_panel)
     SOL_REQUIRE(defs.mergeDirectory(SOL_DEF_DATA_DIR, &error));
 
     const std::vector<std::string> lines = game::rosterLines(defs);
-    // Two lines per faction, and seven ship.
+    // Two lines per faction, and eight ship.
     SOL_CHECK(lines.size() == defs.factions().size() * 2);
     SOL_REQUIRE(!lines.empty());
 

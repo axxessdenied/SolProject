@@ -84,6 +84,12 @@ void FactionSim::tick(double dt, Economy* economy, std::uint32_t shelteredSystem
     while (m_decisionAccumulator >= m_params.decisionInterval) {
         m_decisionAccumulator -= m_params.decisionInterval;
         for (std::uint32_t f = 0; f < m_count; ++f) { // index order: determinism
+            // ⚑ See `FactionAgentParams::territorial`: a non-claimant takes no
+            // roll, because the roll decides a raid it can never reach and the
+            // draw would displace every trader loss after it.
+            if (!m_params.agents[f].territorial) {
+                continue;
+            }
             m_dueDecisions.push_back({.faction = f, .roll = m_rng.nextFloat01()});
         }
     }

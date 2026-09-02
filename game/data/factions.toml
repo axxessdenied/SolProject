@@ -1,7 +1,23 @@
-# Faction defs (Phase 8b). kind: major | pirate. Majors claim territory
-# from core capitals in def order; pirate defs are clan templates — the
-# galaxy generator stamps one clan per lawless fringe neighborhood from
+# Faction defs (Phase 8b). kind: major | pirate | shadow. Majors claim
+# territory from core capitals in def order; pirate defs are clan templates —
+# the galaxy generator stamps one clan per lawless fringe neighborhood from
 # them, jittering color and personality per clan seed.
+#
+# ⚑⚑⚑⚑ A `shadow` FACTION CLAIMS NOTHING, AND EVERY GENERATION SITE HAD TO
+# LEARN THAT ON PURPOSE (Phase 37 stage B). The counting site in
+# `generateUniverse` was a TERNARY — "pirate template, else claimant" — so a
+# `kind = "shadow"` row added with no other change would have been counted as a
+# major, handed a capital by `claimTerritory`, and every system in the galaxy
+# would have been redistributed around a faction whose entire definition is
+# that it owns nothing. Two more sites had the same shape written as
+# `if (pirate) continue`. All three ask `== Major` now. The guard is the golden
+# galaxy digest, and it says the strongest thing this stage has to say: adding
+# the row below moved NOTHING.
+#
+# ⚑⚑ A shadow faction is appended LAST to the runtime faction table, after the
+# clans, because a clan's index is `factionCount + clanIndex` computed by hand
+# in three places. Its own index therefore exists only after a galaxy has been
+# generated — which is why, like a clan, it has no `station_bias` row.
 #
 # aggression drives raid appetite, forgiveness the drift back to baseline.
 # relations are "faction_id:standing" (-100..100); declare each pair from
@@ -221,3 +237,71 @@ ships_raider = ["sol.interceptor"]
 # Same declaration as the Corsairs above, for the same reason: raiders who
 # treat wrecks as a harvest neither haul nor patrol.
 builds_no = ["patrol", "trader"]
+
+
+# ---------------------------------------------------------------------------
+# ⚑⚑⚑⚑ THE BLACK MARKET, AND IT IS A FACTION RATHER THAN A PLACE (Phase 37
+# stage B; `decisions/017`, gdd.md §7). No territory, no stations of its own, no
+# jurisdiction and no law — it is present wherever a station composed one of
+# the four `family = "shadow"` modules, inside somebody else's walls, and the
+# nine docks that did are the whole of its address in the shipped galaxy.
+#
+# ⚑⚑⚑ ONE HAND-AUTHORED FACTION, NOT A TEMPLATE STAMPED LIKE A CLAN (ruled
+# 2026-09-01). Every fence in the galaxy is the same people, which is what makes
+# the opposed reputation axis ONE number a player can watch move rather than N
+# weak ones — and it is why this row is not jittered the way a clan is.
+# ---------------------------------------------------------------------------
+
+[[faction]]
+id = "sol.ninth_shift"
+name = "The Ninth Shift"
+description = "The shift that is not on the roster; works every station's back rooms and owns none of them."
+# Ashen, and deliberately the least saturated accent in the file: five majors
+# and two clan templates all shout, and the one organisation that does not want
+# to be seen should not be the brightest marker on a map.
+color = [0.55, 0.5, 0.6]
+kind = "shadow"
+# ⚑⚑⚑ THE FIRST ZERO IN THIS COLUMN, AND IT IS A STATEMENT RATHER THAN A
+# TUNING. `aggression` is the bar a faction's decision roll must beat to move
+# against somebody's territory; 0 means it never does, ever. That is not a
+# safety rail bolted on — `raidCandidates` seeds its search from systems the
+# faction HOLDS, so a faction that holds nothing has an empty frontier and can
+# reach nowhere. The zero says out loud what the mechanism already guarantees.
+aggression = 0.0
+# The highest in the file, above the Guild's 0.8: relations drift back to
+# baseline fastest between forgiving factions, and a black market does not keep
+# grudges. It keeps prices.
+forgiveness = 0.9
+# ⚑⚑⚑⚑ THESE TWO ROWS ARE THE WHOLE REASON THIS FACTION AUTHORS RELATIONS AT
+# ALL, AND THEY FIX A DEFAULT THAT IS WRONG. Unspecified pairs that differ in
+# pirate-ness open at -60, and a shadow faction is not a pirate — so without
+# these lines the black market would open at open war with every clan in the
+# galaxy, which is to say with the people who RUN its fences. Clans inherit
+# their template's rows, so two lines cover all ten.
+#
+# ⚑⚑ AND THE MAJORS ARE DELIBERATELY ABSENT. Shadow-vs-major takes no default
+# at all, so every major opens at 0 — not friendly, not at war, no opinion. That
+# is exactly right for an organisation whose entire position is that officially
+# it does not exist, and it is the number Phase 37 stage E moves.
+#
+# ⚑ The Corsairs work the shipping lanes and the Ninth Shift moves what comes
+# off them; the Reavers treat wrecks as a harvest, which is a ghost dock's
+# supply chain described from the other end. The Corsair number is the higher
+# of the two because a fence needs cargo more than it needs hulls.
+relations = ["sol.corsairs:30", "sol.reavers:25"]
+# ⚑⚑⚑ THE FIRST FACTION IN THE GAME TO DECLARE ALL THREE CELLS, AND IT IS THE
+# only honest answer. These three rosters are what a faction spawns IN THE
+# SPACE IT HOLDS — patrols in its systems, raiders out of them, haulers on a
+# schedule between them — and this faction holds no space. Leaving them
+# unspecified would warn at load and mean "nobody has decided yet"; saying it
+# outright means somebody did.
+#
+# ⚑⚑ IT WILL HAVE TO BE UN-DECLARED WHEN COVERT HULLS ARRIVE (Phase 37 stage
+# D), AND THAT IS THE POINT OF SAYING IT NOW. A cell named here and also listed
+# is refused at load, so the day this faction flies something the change is a
+# visible edit to this block rather than a roster quietly filling up.
+builds_no = ["patrol", "raider", "trader"]
+# No `station_bias`: it builds nothing, because it owns nowhere to build it.
+# No `contraband` and no `restricted`: those are a JURISDICTION's table, and
+# this faction has no jurisdiction. It is the only party in the galaxy with an
+# opinion about cargo and no power to act on it, which is what a market is.

@@ -186,7 +186,22 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // IN THE FILE and must not be - illicit capacity is derived from whether a
 // station composed a shadow module, which is derived from the seed, exactly
 // like every other capacity since v32.
-constexpr std::uint32_t kSaveVersion = 35;
+// v36 (Phase 37 stage B): the shadow faction. This one is NOT about a vector
+// getting longer - the faction table is rebuilt from the defs on load, not read
+// from the file - it is about `MissionSim::load`, which writes the faction count
+// into its own block and REFUSES a save whose count does not match
+// (`missions.cpp:795`, "galaxy/defs mismatch"). A v35 save read into this build
+// would fail there, deep inside a section, rather than at the version check
+// where a player gets a sentence about it. ⚑ Bumping is what turns a confusing
+// failure into an honest one; it does not create the incompatibility.
+//
+// ⚑⚑ AND THE FACTION TABLE ITSELF IS STILL NOT IN THE FILE, which is the same
+// rule the composition and the shadow operator follow: it is derived from the
+// defs and the seed. What IS in the file is every index that points at it, and
+// this stage appends the new rows LAST precisely so that every one of those
+// indices - majors at their generator positions, clans at `factionCount +
+// clanIndex` - still means what it meant when it was written.
+constexpr std::uint32_t kSaveVersion = 36;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -579,9 +594,26 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     m_galaxyParams = sim::GalaxyParams{};
     m_galaxyParams.seed = m_universeSeed;
     // Majors claim territory; pirate defs are clan templates (Phase 8b).
+    //
+    // ⚑⚑⚑⚑ THIS WAS A TERNARY AND A TERNARY HAS NO THIRD ANSWER (Phase 37 stage
+    // B). Written when `kind` had two values, it read "not a pirate" as "a
+    // claimant" - so a `kind = "shadow"` def added with no other change would
+    // have INCREMENTED `factionCount`, and `claimTerritory` hands out capitals
+    // and territory by that number. The faction whose entire definition is
+    // "claims nothing" would have been handed a capital and every system in the
+    // galaxy would have been redistributed around it. The count is the
+    // dangerous line in this stage, and the golden digest is the guard.
     for (const assets::FactionDef& faction : defs.factions()) {
-        (faction.kind == assets::FactionKind::Pirate ? m_galaxyParams.pirateTemplateCount
-                                                     : m_galaxyParams.factionCount) += 1;
+        switch (faction.kind) {
+        case assets::FactionKind::Major:
+            m_galaxyParams.factionCount += 1;
+            break;
+        case assets::FactionKind::Pirate:
+            m_galaxyParams.pirateTemplateCount += 1;
+            break;
+        case assets::FactionKind::Shadow:
+            break; // claims nothing: counted by neither, and that is the point
+        }
     }
     for (const assets::StationDef& station : defs.stations()) {
         sim::StationRule rule;
@@ -604,13 +636,21 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     // known until the galaxy is generated, so a row for them cannot exist yet;
     // and the two pirate templates describe raiders, not builders. Named as a
     // gap rather than half-built.
+    //
+    // ⚑⚑ A SHADOW FACTION IS SKIPPED FOR A DIFFERENT REASON AND THE ROWS ARE
+    // POSITIONAL, WHICH IS WHY THE SKIP MATTERS (Phase 37 stage B). A clan has
+    // no row because its index does not exist yet; a shadow faction has none
+    // because it builds nothing anywhere - it owns no ground to build it on.
+    // But `bias[majorIndex]` is addressed by position among the CLAIMANTS, so
+    // letting a shadow def through would not merely add a dead row, it would
+    // shift every major's row after it onto somebody else's territory.
     {
         const std::vector<assets::StationDef>& stationDefs = defs.stations();
         std::uint32_t majorIndex = 0;
         bool anyBias = false;
         std::vector<std::vector<float>> bias;
         for (const assets::FactionDef& faction : defs.factions()) {
-            if (faction.kind == assets::FactionKind::Pirate) {
+            if (faction.kind != assets::FactionKind::Major) {
                 continue;
             }
             std::vector<float> row(stationDefs.size(), 1.0f);
@@ -657,10 +697,13 @@ bool SpaceWorld::generateUniverse(const assets::DefDatabase& defs)
     // things an authored system can say about a faction - who owns it, and
     // whose capital it takes - resolve through this one rule, because it is
     // the rule `claimTerritory` hands capitals and territory out by.
+    // ⚑ `!= Major` rather than `== Pirate` since Phase 37 stage B, for the
+    // reason the bias rows above give: this counts positions among the
+    // CLAIMANTS, and a shadow faction is not one.
     const auto majorIndexOf = [&defs](const std::string& id) {
         std::uint32_t majorIndex = 0;
         for (const assets::FactionDef& faction : defs.factions()) {
-            if (faction.kind == assets::FactionKind::Pirate) {
+            if (faction.kind != assets::FactionKind::Major) {
                 continue;
             }
             if (faction.id == id) {
@@ -1741,20 +1784,41 @@ bool SpaceWorld::dockedStationStocks(std::uint32_t commodity) const
 void SpaceWorld::initializeFactions()
 {
     m_factionTable.clear();
+    m_shadowBase = sim::kNoFaction;
     if (m_defs == nullptr) {
         return;
     }
-    // Majors in def order (their generator indices), then clans.
+    // Majors in def order (their generator indices), then clans, then shadow.
+    //
+    // ⚑⚑⚑⚑ THE SHADOW ROWS GO LAST AND THAT IS LOAD-BEARING RATHER THAN TIDY
+    // (Phase 37 stage B). A clan's faction index is `factionCount + clanIndex`,
+    // computed by hand in three places - `assignShadowOwners` says so under the
+    // comment "the arithmetic is the table lookup, without the table" - so a
+    // shadow row inserted among the majors would shift every clan index by one
+    // and every one of those hand computations would silently name the wrong
+    // faction. Appending keeps majors at their generator indices and clans at
+    // theirs, and the new rows sit past the end of everything that arithmetic
+    // can reach.
+    //
+    // ⚑⚑ THE COST OF APPENDING, STATED HERE BECAUSE IT IS INVISIBLE AT THE
+    // CALL SITE: `m_factionTable.size() - m_galaxy.clans.size()` is no longer
+    // the major count. Nothing in this file computed it that way; one test did,
+    // and it now asks `shadowFactionBase()` instead.
     std::vector<const assets::FactionDef*> pirateTemplates;
+    std::vector<const assets::FactionDef*> shadowDefs;
     for (const assets::FactionDef& def : m_defs->factions()) {
         if (def.kind == assets::FactionKind::Pirate) {
             pirateTemplates.push_back(&def);
             continue;
         }
+        if (def.kind == assets::FactionKind::Shadow) {
+            shadowDefs.push_back(&def);
+            continue;
+        }
         m_factionTable.push_back({.defId = def.id,
                                   .name = def.name,
                                   .color = {def.color[0], def.color[1], def.color[2]},
-                                  .pirate = false,
+                                  .kind = assets::FactionKind::Major,
                                   .aggression = def.aggression,
                                   .forgiveness = def.forgiveness,
                                   .shipsPatrol = def.shipsPatrol,
@@ -1780,7 +1844,7 @@ void SpaceWorld::initializeFactions()
                                   .color = {jitterChannel(base.color[0]),
                                             jitterChannel(base.color[1]),
                                             jitterChannel(base.color[2])},
-                                  .pirate = true,
+                                  .kind = assets::FactionKind::Pirate,
                                   .aggression = jitterWeight(base.aggression),
                                   .forgiveness = jitterWeight(base.forgiveness),
                                   .shipsPatrol = base.shipsPatrol,
@@ -1789,16 +1853,55 @@ void SpaceWorld::initializeFactions()
                                   .buildsNo = {base.buildsNo[0], base.buildsNo[1], base.buildsNo[2]}});
     }
 
+    // ⚑⚑ UNJITTERED, UNLIKE A CLAN, AND THAT IS RULING 1 IN ONE LINE. A clan
+    // is a TEMPLATE stamped once per lawless neighbourhood with its colour and
+    // personality jittered per clan seed, so no two are quite the same faction.
+    // There is exactly one Ninth Shift and every fence in the galaxy is theirs,
+    // which is what makes the opposed axis Phase 37 stage E is after ONE number
+    // a player can watch move rather than N weak ones.
+    if (!shadowDefs.empty()) {
+        m_shadowBase = static_cast<std::uint32_t>(m_factionTable.size());
+    }
+    for (const assets::FactionDef* def : shadowDefs) {
+        m_factionTable.push_back({.defId = def->id,
+                                  .name = def->name,
+                                  .color = {def->color[0], def->color[1], def->color[2]},
+                                  .kind = assets::FactionKind::Shadow,
+                                  .aggression = def->aggression,
+                                  .forgiveness = def->forgiveness,
+                                  .shipsPatrol = def->shipsPatrol,
+                                  .shipsRaider = def->shipsRaider,
+                                  .shipsTrader = def->shipsTrader,
+                                  .buildsNo = {def->buildsNo[0], def->buildsNo[1], def->buildsNo[2]}});
+    }
+
     // FactionSim params: authored relations resolve def ids to table
     // indices (clans inherit their template's rows); unspecified
     // major-pirate pairs open at the default enmity.
+    //
+    // ⚑⚑⚑ A SHADOW FACTION TAKES THE CROSS-KIND DEFAULT AGAINST EVERY CLAN AND
+    // THAT IS THE ONE THING `pirate = false` GETS WRONG FOR FREE (Phase 37
+    // stage B). The pair loop below asks whether two rows differ in
+    // pirate-ness, which is the right question when there are two kinds; with
+    // three it opens the black market at -60 against the very people who run
+    // its fences. Fixed in the DATA rather than here - `factions.toml` declares
+    // the two rows against the pirate templates and clans inherit their
+    // template's, which is the mechanism this file already has. ⚑ The other
+    // half is right for free and is worth naming so nobody "fixes" it:
+    // shadow-vs-major gets NO default enmity, because a secret organisation is
+    // not at war with the law, it is hidden from it.
     const std::uint32_t count = static_cast<std::uint32_t>(m_factionTable.size());
     sim::FactionSimParams params;
     params.agents.reserve(count);
     for (const GameFaction& faction : m_factionTable) {
-        params.agents.push_back(
-            {.aggression = faction.aggression, .forgiveness = faction.forgiveness, .pirate = faction.pirate});
-        params.initialStandings.push_back(faction.pirate ? kClanInitialStanding : 0.0f);
+        params.agents.push_back({.aggression = faction.aggression,
+                                 .forgiveness = faction.forgiveness,
+                                 .pirate = faction.pirate(),
+                                 // The one place the kind reaches the sim, and it
+                                 // reaches it as a capability rather than a name:
+                                 // `sol::sim` still never learns what a def is.
+                                 .territorial = !faction.shadow()});
+        params.initialStandings.push_back(faction.pirate() ? kClanInitialStanding : 0.0f);
     }
     params.baselineRelations.assign(static_cast<std::size_t>(count) * count, 0.0f);
     const auto setPair = [&](std::uint32_t a, std::uint32_t b, float value) {
@@ -1807,7 +1910,7 @@ void SpaceWorld::initializeFactions()
     };
     for (std::uint32_t a = 0; a < count; ++a) {
         for (std::uint32_t b = a + 1; b < count; ++b) {
-            if (m_factionTable[a].pirate != m_factionTable[b].pirate) {
+            if (m_factionTable[a].pirate() != m_factionTable[b].pirate()) {
                 setPair(a, b, kDefaultPirateRelation);
             }
         }
@@ -1825,7 +1928,13 @@ void SpaceWorld::initializeFactions()
                     found = true;
                 }
             }
-            if (!found && a < majorCount) { // clans: silence per-clan repeats
+            // ⚑ Clans silence per-clan repeats - ten clans stamped from one
+            // template would print one typo ten times. A shadow row is a single
+            // hand-authored def like a major, so it warns like one (Phase 37
+            // stage B), and it is the row most likely to name a faction that
+            // does not exist because its whole relation list is authored
+            // against OTHER people's ids.
+            if (!found && (a < majorCount || m_factionTable[a].shadow())) {
                 SOL_LOG_WARN("faction '%s': relation to unknown faction '%s' ignored",
                              def->id.c_str(),
                              relation.otherId.c_str());
@@ -1884,7 +1993,7 @@ bool SpaceWorld::stationSells(const assets::CatalogGate& gate) const
     }
     // Pirate stations fence anything their defs allow, standing be damned
     // (docking already required non-hostile standing).
-    return faction.pirate || m_factionSim.standing(owner) >= gate.minRep;
+    return faction.pirate() || m_factionSim.standing(owner) >= gate.minRep;
 }
 
 bool SpaceWorld::stationStocksRequirement(const assets::CatalogGate& gate) const
@@ -3986,6 +4095,19 @@ factionRoster(const GameFaction& faction, assets::RosterCell cell, assets::Roste
     return *rosters[fallbackIndex];
 }
 
+const char* factionKindLabel(const GameFaction& faction)
+{
+    switch (faction.kind) {
+    case assets::FactionKind::Pirate:
+        return "pirate clan";
+    case assets::FactionKind::Shadow:
+        return "syndicate";
+    case assets::FactionKind::Major:
+        break;
+    }
+    return "major";
+}
+
 void SpaceWorld::spawnWing(std::uint32_t faction,
                            assets::RosterCell cell,
                            std::span<const std::string> roster,
@@ -4083,12 +4205,12 @@ void SpaceWorld::spawnAmbientPilots(std::uint32_t systemIndex, const sim::System
     // ⚑⚑ Phase 30 stage B: the two per-region tables that used to sit here are
     // curves on the security BASELINE now - see `patrolsFor` and friends in the
     // header, including why they must not read the live rating. The branch is
-    // still on `faction.pirate` rather than on the sign, because the roster is
+    // still on `faction.pirate()` rather than on the sign, because the roster is
     // what actually differs; the sign only decides how many.
     const float baselineSecurity = systemSecurityBaseline(systemIndex);
     if (owner < m_factionTable.size()) {
         const GameFaction& faction = m_factionTable[owner];
-        if (faction.pirate) {
+        if (faction.pirate()) {
             // ⚑ `RosterCell::Count` as the fallback is this site saying it has
             // never had one, which is what reading `faction.shipsRaider` bare
             // used to say by omission.
@@ -4899,7 +5021,8 @@ void SpaceWorld::responderInfo(std::vector<ResponderInfo>& out) const
         info.secondsLeft = static_cast<double>(pilot.respondTimer);
         info.state = pilot.state;
         info.position = transform->position;
-        info.pirate = pilot.factionIndex < m_factionTable.size() && m_factionTable[pilot.factionIndex].pirate;
+        info.pirate =
+            pilot.factionIndex < m_factionTable.size() && m_factionTable[pilot.factionIndex].pirate();
         out.push_back(std::move(info));
     }
     std::sort(out.begin(), out.end(), [](const ResponderInfo& a, const ResponderInfo& b) {
@@ -8484,11 +8607,11 @@ std::uint32_t SpaceWorld::respondTo(core::DVec3 position, std::uint32_t offender
     }
     const GameFaction& faction = m_factionTable[owner];
     const std::span<const std::string> roster =
-        faction.pirate ? factionRoster(faction, assets::RosterCell::Raider, assets::RosterCell::Count)
-                       : factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Raider);
+        faction.pirate() ? factionRoster(faction, assets::RosterCell::Raider, assets::RosterCell::Count)
+                         : factionRoster(faction, assets::RosterCell::Patrol, assets::RosterCell::Raider);
     const std::size_t before = m_registry.storage<ShipPilot>().size();
     spawnWing(owner,
-              faction.pirate ? assets::RosterCell::Raider : assets::RosterCell::Patrol,
+              faction.pirate() ? assets::RosterCell::Raider : assets::RosterCell::Patrol,
               roster,
               baseline,
               shortfall,
@@ -9305,7 +9428,8 @@ void SpaceWorld::collectDuePilotThinks(double dt, std::vector<PilotThink>& out)
             .role = pilotRoleName(pilot.role),
             .state = kStateNames[static_cast<std::uint32_t>(pilot.state) % std::size(kStateNames)],
             .attitude = attitude,
-            .pirate = pilot.factionIndex < m_factionTable.size() && m_factionTable[pilot.factionIndex].pirate,
+            .pirate =
+                pilot.factionIndex < m_factionTable.size() && m_factionTable[pilot.factionIndex].pirate(),
         });
     }
 }
