@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -2511,7 +2512,7 @@ public:
 
     [[nodiscard]] const sol::sim::ShipTuning& shipTuning() const
     {
-        return m_registry.storage<ShipControl>().get(playerEntityIndex()).tuning;
+        return playerRegistry().storage<ShipControl>().get(playerEntityIndex()).tuning;
     }
 
     // The input the ship actually flew last tick (autopilot's when engaged,
@@ -2524,17 +2525,17 @@ public:
 
     [[nodiscard]] const sol::sim::PowerState& playerPower() const
     {
-        return m_registry.storage<ShipPower>().get(playerEntityIndex()).state;
+        return playerRegistry().storage<ShipPower>().get(playerEntityIndex()).state;
     }
 
     [[nodiscard]] const sol::sim::PowerTuning& powerTuning() const
     {
-        return m_registry.storage<ShipPower>().get(playerEntityIndex()).tuning;
+        return playerRegistry().storage<ShipPower>().get(playerEntityIndex()).tuning;
     }
 
     [[nodiscard]] const ShipDefense& playerDefense() const
     {
-        return m_registry.storage<ShipDefense>().get(playerEntityIndex());
+        return playerRegistry().storage<ShipDefense>().get(playerEntityIndex());
     }
 
     // The same for ANY ship, or null for something that has no defences - a
@@ -2543,7 +2544,59 @@ public:
     // that is not the player's (Phase 31 stage F2 wanted the shields too).
     [[nodiscard]] const ShipDefense* shipDefense(sol::ecs::Entity entity) const
     {
-        return m_registry.tryGet<ShipDefense>(entity);
+        return playerRegistry().tryGet<ShipDefense>(entity);
+    }
+
+    // ⚑⚑ THE BUBBLE CENSUS (Phase 38 stage A). How many systems are
+    // instantiated, and which — the readout the phase's exit criterion is
+    // measured against, and the only externally visible sign that the world is
+    // plural at all. Stage A's answer is always one, and
+    // `the_world_instantiates_exactly_one_system_and_it_is_the_players` is what
+    // says so; stage C is what makes it interesting.
+    // Creates EVERY component pool the world uses, up front. Const
+    // `storage<T>()` asserts the pool exists, and the read-only paths (the
+    // HUD's prospect readout) run in systems that may hold no rock, no wreck
+    // and no loose ore.
+    //
+    // ⚑⚑⚑ IT COVERED THE THREE MINING POOLS AND HAD TO GROW TO ALL OF THEM
+    // (Phase 38 stage A). It was `ensureMiningPools` while one long-lived
+    // registry served the whole run: everything else had been emplaced at
+    // least once by the time anything read it, so the assert never fired. A
+    // bubble is FRESH, and a system with no NPC in it has no `ShipPilot` pool
+    // until one spawns — so the first const read is the assert.
+    // ⚑ Public and static for the same reason `isPlayerEntity` is: it is a
+    // pure operation on a Registry, and the guard for it needs a registry
+    // this class did not make.
+    static void ensureWorldPools(sol::ecs::Registry& registry);
+
+    // ⚑⚑⚑⚑ IS THIS THE PLAYER, ASKED OF THE POOL RATHER THAN OF AN INDEX
+    // (Phase 38 stage A). The question was written seventeen times as
+    // `entityIndex == playerEntityIndex()`, which is an index into ONE
+    // registry — and indices are per-registry and every registry starts at
+    // zero, so with a second bubble in the world that comparison is a
+    // coincidence rather than an identity. `Projectile::shooterIndex` is the
+    // case that makes it concrete: a bolt outlives the jump that leaves it
+    // behind, and `handleShipDestroyed` decides a kill was the player's this
+    // way.
+    //
+    // `PlayerShip` has answered it correctly since Phase 7 and was never
+    // asked: it appeared at exactly three places in this file — registered in
+    // the snapshot schema, emplaced once, counted on load. It is false in
+    // every registry but one, which is the whole point.
+    [[nodiscard]] static bool isPlayerEntity(const sol::ecs::Registry& registry, std::uint32_t entityIndex)
+    {
+        return registry.storage<PlayerShip>().contains(entityIndex);
+    }
+
+    // ⚑ Public because the guard for it needs a registry that is NOT the
+    // player's, and stage A never has one at rest — `a_foreign_registrys_slot_
+    // zero_is_not_the_player` builds one to make the coincidence concrete.
+
+    [[nodiscard]] std::size_t instantiatedSystemCount() const { return m_bubbles.size(); }
+
+    [[nodiscard]] std::uint32_t instantiatedSystemAt(std::size_t slot) const
+    {
+        return slot < m_bubbles.size() ? m_bubbles[slot]->system : kNoIndex;
     }
 
     [[nodiscard]] const CelestialBody& sun() const { return m_star; }
@@ -2725,7 +2778,7 @@ public:
     // this rather than the fleet entry.
     [[nodiscard]] std::span<const ShipWeapon> playerGuns() const
     {
-        const ShipArmament& armament = m_registry.storage<ShipArmament>().get(playerEntityIndex());
+        const ShipArmament& armament = playerRegistry().storage<ShipArmament>().get(playerEntityIndex());
         return {armament.weapons, armament.count};
     }
 
@@ -2740,7 +2793,8 @@ public:
     // latent trap stage E was the first to spring.
     [[nodiscard]] std::span<const MountCondition> shipMounts(std::uint32_t entityIndex) const
     {
-        const ShipMounts* mounts = m_registry.tryGet<ShipMounts>(m_registry.entityFromIndex(entityIndex));
+        const ShipMounts* mounts =
+            playerRegistry().tryGet<ShipMounts>(playerRegistry().entityFromIndex(entityIndex));
         return mounts != nullptr ? std::span<const MountCondition>{mounts->mounts, mounts->count}
                                  : std::span<const MountCondition>{};
     }
@@ -2848,9 +2902,17 @@ public:
         m_combatEffects.appendInstances(alpha, out);
     }
 
+    // ⚑ ACROSS EVERY INSTANTIATED BUBBLE, NOT JUST THE PLAYER'S (Phase 38
+    // stage A). The boot log and the console read this; a figure that stopped
+    // counting at the player's own system would report a shrinking world at
+    // exactly the moment stage B makes it bigger.
     [[nodiscard]] std::uint32_t entityCount() const
     {
-        return static_cast<std::uint32_t>(m_registry.aliveCount());
+        std::size_t total = 0;
+        for (const std::unique_ptr<SystemBubble>& bubble : m_bubbles) {
+            total += bubble->registry.aliveCount();
+        }
+        return static_cast<std::uint32_t>(total);
     }
 
     // Puts the world back to the state it had at construction and spawns a
@@ -3561,6 +3623,12 @@ private:
     // clipped once and left behind does not.
     static constexpr double kAssistSeconds = 10.0;
     static constexpr std::uint32_t kNoIndex = 0xffff'ffffu;
+    // ⚑ A FORMAT BOUND, NOT THE POLICY CAP. What may be instantiated at once
+    // is stage C's decision, made against the O(n^2) collision pass; this is
+    // only the number past which a bubble count read off disk is corruption
+    // rather than a world. Deliberately loose enough that stage C cannot bump
+    // into it by accident and tight enough that it cannot allocate a galaxy.
+    static constexpr std::uint32_t kMaxBubbles = 64;
 
     // The parked-ship position for a station (clear of its collision sphere).
     [[nodiscard]] sol::core::DVec3 dockPoint(std::uint32_t stationIndex) const;
@@ -3569,8 +3637,22 @@ private:
     // there: at the gate arriving from fromSystem, or near the first station
     // when fromSystem is kNoFaction-tagged invalid (new game / load).
     void loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem);
-    // Destroys every entity of the current system except the player.
-    void despawnSystem();
+    // Moves the player into `destination`'s bubble and releases the one they
+    // were in, along with every transient view of it (spawned-ship list,
+    // combat effects, thrusters, sound).
+    // ⚑⚑⚑ WHAT USED TO BE A TEARDOWN IS A DROP NOW (Phase 38 stage A).
+    // `despawnSystem` walked the Transform pool, collected everything that was
+    // not the player and destroyed it one entity at a time — a filter, and one
+    // that had to be right. A bubble is the system's contents, so leaving a
+    // system is releasing the bubble, and nothing has to decide what belongs
+    // to it. The player is moved out FIRST - into a fresh bubble for the
+    // destination - and that crossing is what a jump actually is.
+    void leaveSystemFor(std::uint32_t destination);
+    // Creates the bubble for a system with every pool the world uses already
+    // present, and returns it. Only `spawn` calls it: every other arrival goes
+    // through `leaveSystemFor`, which needs the new bubble in hand before the
+    // old one is released.
+    sol::ecs::Registry& openBubble(std::uint32_t system);
     // ECS statics (stations, gates) for a system spec.
     void instantiateSystemEntities(const sol::sim::SystemSpec& spec);
     // Non-ECS state (celestials, nav targets, gate list) for a system spec;
@@ -3760,10 +3842,6 @@ private:
     [[nodiscard]] std::uint32_t rollHauledCommodity(sol::core::Rng& rng, bool canCarryAssemblies) const;
     // The docked station archetype's refinery pair, resolved from the defs.
     bool dockedRefinePair(std::uint32_t& input, std::uint32_t& output) const;
-    // Creates the mining component pools up front. Const storage<T>() asserts
-    // the pool exists, and the read-only paths (the HUD's prospect readout)
-    // run in systems that may hold no rock, no wreck, and no loose ore.
-    void ensureMiningPools();
     // Pulse cooldown plus target-scan progress for the player's current
     // target; resolves the target when the scan completes.
     void tickScanning(double dt);
@@ -3951,10 +4029,40 @@ private:
                                  const sol::core::DVec3& position,
                                  const char* factionName);
 
+    // The bubble the player is standing in. Every player-scoped question in
+    // this file — what the HUD reads, what the autopilot flies, what a station
+    // screen shows — is asked of this one, and that stays true when stage B
+    // gives the tick more than one to walk.
+    //
+    // ⚑ `m_bubbles` is never empty after `spawn()`: the player's entity is
+    // created in a bubble and moves between bubbles, and there is no state in
+    // which they are in none.
+    [[nodiscard]] sol::ecs::Registry& playerRegistry() { return m_bubbles.front()->registry; }
+
+    [[nodiscard]] const sol::ecs::Registry& playerRegistry() const { return m_bubbles.front()->registry; }
+
+    // The bubble for a system, or null when that system is not instantiated.
+    // Null is the ordinary answer for 80 of the 81 systems and callers must
+    // treat it as one, which is the whole reason this returns a pointer.
+    [[nodiscard]] sol::ecs::Registry* registryFor(std::uint32_t system);
+    [[nodiscard]] const sol::ecs::Registry* registryFor(std::uint32_t system) const;
+
     [[nodiscard]] std::uint32_t playerEntityIndex() const
     {
-        return m_registry.storage<PlayerShip>().entityIndices()[0];
+        return playerRegistry().storage<PlayerShip>().entityIndices()[0];
     }
+
+    // ⚑⚑⚑ THERE IS DELIBERATELY NO ONE-ARGUMENT OVERLOAD, AND THAT IS STAGE
+    // B'S WORKLIST. All sixteen call sites spell `playerRegistry()` out, so
+    // `isPlayerEntity(playerRegistry(),` greps to exactly the set of places
+    // that have to be re-read when the tick starts walking somebody else's
+    // bubble - and a site inside a pool walk must then be handed THAT walk's
+    // registry instead. A convenience overload would have made those sites
+    // look already-answered.
+    //
+    // The seventeenth comparison is not in the list because it no longer
+    // exists: `despawnSystem` kept `entityIndex != playerIndex` to decide what
+    // to destroy, and dropping a bubble does not have to decide.
 
     // The flight input the commanded ship flies this tick, or the player's when
     // no command is running or the player has taken over; also arrives,
@@ -3971,7 +4079,34 @@ private:
     // guard sequence stays readable as a sequence.
     [[nodiscard]] sol::sim::FlightInput standingCommandInput(const TargetInfo& target);
 
-    sol::ecs::Registry m_registry;
+    // ⚑⚑⚑⚑ ONE REGISTRY PER INSTANTIATED SYSTEM (Phase 38 stage A, amending
+    // `decisions/015`, whose first bullet said "an entity gains a system
+    // index"). The frame is a property of the REGISTRY, not a field on the
+    // entity: a cross-system question is unaskable rather than merely wrong,
+    // because the other system's entities are not in these pools at all.
+    //
+    // ⚑⚑⚑ WHY NOT A FIELD AND A FILTER. A filter is a thing you can forget,
+    // and nothing notices — Phase 37 shipped two stages whose entire point was
+    // invisible to every guard they wrote (361 of 361 green, then 366 of 366).
+    // And `sim::resolveCollisions` is O(n^2) with no broadphase and says so in
+    // its own header: one global body list with a frame filter is O((kn)^2)
+    // where a registry per system is O(k*n^2) by construction.
+    //
+    // ⚑⚑ HELD BY POINTER SO REFERENCES STAY VALID. Stage B adds and drops
+    // bubbles inside the tick, and `registryFor` hands out a reference; a
+    // vector of values would rehome every live one on a reallocation.
+    //
+    // ⚑ STAGE A HAS EXACTLY ONE, ALWAYS. The plural is built and exercised
+    // here — a jump creates the destination's bubble, migrates the player into
+    // it and drops the old one — but nothing yet CREATES a second live bubble.
+    // That is stage B, and it is what re-opens every pool walk below.
+    struct SystemBubble
+    {
+        std::uint32_t system = kNoIndex;
+        sol::ecs::Registry registry;
+    };
+
+    std::vector<std::unique_ptr<SystemBubble>> m_bubbles;
     std::vector<SpawnedShip> m_spawnedShips;
     // Scratch for syncTraderPuppets: which coarse traders already have a body.
     // A member so the per-tick reconcile does not allocate.

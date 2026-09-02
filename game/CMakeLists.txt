@@ -294,6 +294,7 @@ add_executable(sol_game_tests
     test/station_screen_tests.cpp
     test/station_shadow_tests.cpp
     test/station_storage_tests.cpp
+    test/system_frame_tests.cpp
     test/system_security_tests.cpp
     test/target_cycle_tests.cpp
     test/wing_hull_tests.cpp

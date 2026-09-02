@@ -158,3 +158,95 @@ SOL_TEST(snapshot_rejectsGarbageAndTruncation)
         }
     }
 }
+
+// ⚑⚑⚑ THE SCHEMA IS ALSO WHAT MAKES A FRESH REGISTRY READABLE (Phase 38 stage
+// A). `Registry::storage<T>() const` ASSERTS the pool exists, so a registry
+// that has never had a T emplaced cannot be read for one — which never came up
+// while a process made one registry at startup and one per load, and comes up
+// immediately once registries are made at runtime.
+SOL_TEST(snapshot_ensurePoolsMakesEveryRegisteredComponentReadable)
+{
+    const Snapshot schema = makeSchema();
+    Registry registry;
+    schema.ensurePools(registry);
+
+    // The const overload is the one that asserts; a non-const read would have
+    // created the pool and hidden exactly the failure this is about.
+    const Registry& readOnly = registry;
+    SOL_CHECK(readOnly.storage<Pos>().empty());
+    SOL_CHECK(readOnly.storage<Hp>().empty());
+
+    // And it is idempotent: openBubble-shaped callers run it on every new
+    // registry, and a second call must not disturb what is already there.
+    registry.emplace<Hp>(registry.create(), Hp{.value = 7});
+    schema.ensurePools(registry);
+    SOL_CHECK(readOnly.storage<Hp>().size() == 1);
+}
+
+// ⚑⚑⚑⚑ WHAT MOVES WITH YOU IS WHAT THE WORLD KEEPS, AND THAT IS ONE LIST.
+// A jump between two systems is an entity crossing between two registries, and
+// the components that survive it are exactly the ones the save writes — stated
+// once, here, rather than as a second list somebody has to keep in step.
+SOL_TEST(snapshot_migrateMovesEveryRegisteredComponentAndRetiresTheOriginal)
+{
+    const Snapshot schema = makeSchema();
+    Registry from;
+    Registry to;
+    schema.ensurePools(from);
+    schema.ensurePools(to);
+
+    const Entity bystander = from.create();
+    from.emplace<Hp>(bystander, Hp{.value = 3});
+    const Entity traveller = from.create();
+    from.emplace<Pos>(traveller, Pos{.x = 11.0, .y = -22.0});
+    from.emplace<Hp>(traveller, Hp{.value = 42});
+
+    const Entity arrived = schema.migrate(from, to, traveller);
+
+    SOL_CHECK(to.isAlive(arrived));
+    SOL_REQUIRE(to.tryGet<Pos>(arrived) != nullptr);
+    SOL_CHECK(to.tryGet<Pos>(arrived)->x == 11.0);
+    SOL_CHECK(to.tryGet<Pos>(arrived)->y == -22.0);
+    SOL_REQUIRE(to.tryGet<Hp>(arrived) != nullptr);
+    SOL_CHECK(to.tryGet<Hp>(arrived)->value == 42);
+
+    // Gone from the source, and nothing else went with it.
+    SOL_CHECK(!from.isAlive(traveller));
+    SOL_CHECK(from.storage<Pos>().empty());
+    SOL_CHECK(from.storage<Hp>().size() == 1);
+    SOL_REQUIRE(from.tryGet<Hp>(bystander) != nullptr);
+    SOL_CHECK(from.tryGet<Hp>(bystander)->value == 3);
+    SOL_CHECK(to.storage<Hp>().size() == 1);
+}
+
+// ⚑⚑⚑⚑ AND THE INDEX DOES NOT COME WITH IT, WHICH IS THE WHOLE HAZARD OF A
+// SECOND REGISTRY. Two registries hand out the same indices; slot zero in one
+// is a different object from slot zero in the other. A caller holding an index
+// across a migrate is holding a number that now means something else — so this
+// asserts the arrival is NOT reachable by the departure's index, on a pair of
+// registries arranged so that the two indices genuinely differ.
+SOL_TEST(snapshot_migrateDoesNotPreserveTheEntityIndex)
+{
+    const Snapshot schema = makeSchema();
+    Registry from;
+    Registry to;
+    schema.ensurePools(from);
+    schema.ensurePools(to);
+
+    // Slot 0 in `from` is the traveller; slot 0 in `to` is somebody else, so
+    // the two cannot answer to the same number.
+    const Entity traveller = from.create();
+    from.emplace<Hp>(traveller, Hp{.value = 42});
+    SOL_REQUIRE(traveller.index == 0);
+    const Entity resident = to.create();
+    to.emplace<Hp>(resident, Hp{.value = 9});
+    SOL_REQUIRE(resident.index == 0);
+
+    const Entity arrived = schema.migrate(from, to, traveller);
+    SOL_CHECK(arrived.index != traveller.index);
+    // The number the caller was holding now names the resident, and reading it
+    // would have returned the wrong ship rather than failing.
+    SOL_REQUIRE(to.tryGet<Hp>(Entity{traveller.index, resident.generation}) != nullptr);
+    SOL_CHECK(to.tryGet<Hp>(Entity{traveller.index, resident.generation})->value == 9);
+    SOL_CHECK(to.tryGet<Hp>(arrived)->value == 42);
+}

@@ -35,6 +35,8 @@ public:
             .valueSize = static_cast<std::uint32_t>(sizeof(T)),
             .save = &saveComponent<T>,
             .load = &loadComponent<T>,
+            .ensure = &ensureComponent<T>,
+            .move = &moveComponent<T>,
         });
     }
 
@@ -127,10 +129,46 @@ public:
         return !reader.failed();
     }
 
+    // Creates the pool for every registered component. `Registry::storage<T>()
+    // const` ASSERTS the pool exists, so a registry that has never had a given
+    // component emplaced cannot be read for one — and a registry that has just
+    // been created has had none. Any code that makes fresh registries at
+    // runtime, rather than one at startup and one per load, needs this.
+    void ensurePools(Registry& registry) const
+    {
+        for (const Entry& entry : m_entries) {
+            entry.ensure(registry);
+        }
+    }
+
+    // Moves every registered component of `entity` into a new entity in
+    // another registry, and retires the original. Returns the handle in `to`.
+    //
+    // The entity INDEX is not preserved and cannot be: an index is issued by
+    // the registry that owns the slot, and two registries hand out the same
+    // ones. Callers holding an index across a migrate are holding a number
+    // that now means something else.
+    //
+    // Components NOT registered with this schema do not move. That is the
+    // same rule the save follows, stated once: the schema is what the world
+    // keeps, and anything outside it is derived state that is rebuilt.
+    [[nodiscard]] Entity migrate(Registry& from, Registry& to, Entity entity) const
+    {
+        SOL_ASSERT(from.isAlive(entity));
+        const Entity moved = to.create();
+        for (const Entry& entry : m_entries) {
+            entry.move(from, to, entity, moved);
+        }
+        from.destroy(entity);
+        return moved;
+    }
+
 private:
     struct Entry;
     using SaveFn = void (*)(const Entry&, Registry&, core::BinaryWriter&);
     using LoadFn = bool (*)(Registry&, core::BinaryReader&, std::uint32_t, const std::vector<bool>&);
+    using EnsureFn = void (*)(Registry&);
+    using MoveFn = void (*)(Registry&, Registry&, Entity, Entity);
 
     struct Entry
     {
@@ -138,6 +176,8 @@ private:
         std::uint32_t valueSize = 0;
         SaveFn save = nullptr;
         LoadFn load = nullptr;
+        EnsureFn ensure = nullptr;
+        MoveFn move = nullptr;
     };
 
     [[nodiscard]] const Entry* findEntry(std::uint32_t stableId) const
@@ -186,6 +226,20 @@ private:
             pool.emplace(indices[i], value);
         }
         return true;
+    }
+
+    template <typename T>
+    static void ensureComponent(Registry& registry)
+    {
+        (void)registry.storage<T>();
+    }
+
+    template <typename T>
+    static void moveComponent(Registry& from, Registry& to, Entity src, Entity dst)
+    {
+        if (const T* value = from.tryGet<T>(src); value != nullptr) {
+            to.emplace<T>(dst, *value);
+        }
     }
 
     std::vector<Entry> m_entries;
