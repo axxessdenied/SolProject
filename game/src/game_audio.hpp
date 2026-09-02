@@ -14,6 +14,7 @@
 #include "sol/core/random.hpp"
 #include "sol/platform/audio.hpp"
 
+#include <cstdint>
 #include <span>
 #include <string>
 #include <vector>
@@ -64,12 +65,44 @@ public:
 
     [[nodiscard]] const std::string& cueName(sol::audio::SoundId sound) const;
 
-    // A cue at a place in the world: attenuated and panned against the ear.
-    void playAt(sol::audio::SoundId cue, const sol::core::DVec3& position);
-    // A cue that belongs to the player: their own gun, the UI, an alarm.
+    // ⚑⚑⚑⚑ A CUE AT A PLACE IN THE WORLD, AND `system` IS WHICH WORLD (Phase
+    // 38 stage D). The mixer has ONE listener and a `DVec3` is metres in one
+    // system's barycentre frame, so a position without a frame beside it is
+    // only meaningful while exactly one system exists - which stopped being
+    // true when stage C left a system running behind the player. A cue from
+    // any system but the ear's is dropped here.
+    //
+    // ⚑⚑⚑ AND WHAT IT COSTS TO GET WRONG IS NOT A NOISE, IT IS A SILENCE.
+    // `sounds.toml` caps `sol.explosion` at 4 concurrent voices, the two hit
+    // cues at 6 and `sol.weapon_fire` at 4, and `Mixer::claimVoice` STEALS the
+    // oldest when a cue is at its cap. Those numbers were tuned in Phase 8t
+    // against the only fight there could be. The mixer's `kAudibleGain` does
+    // not save it either: at 0.0005 an explosion stays worth a voice out to
+    // ~6,000 km of coordinate separation and a hull hit to ~1,280 km, while
+    // two ships in DIFFERENT systems sit ~160 km apart in coordinates, because
+    // both systems lay their contents around a barycentre origin. That is the
+    // spec's own `pilotEngageEnemy` argument arriving in the mixer: the shots
+    // of a fight the player cannot see would take the slots their own fight is
+    // heard through.
+    void playAt(sol::audio::SoundId cue, const sol::core::DVec3& position, std::uint32_t system);
+    // A cue that belongs to the player: their own gun, the UI, an alarm. No
+    // frame, because there is no position to be in one - it is played AT the
+    // listener, so it is in the listener's by construction.
     void play2D(sol::audio::SoundId cue);
 
     void setListener(const sol::core::DVec3& position, const sol::core::Quat& orientation);
+
+    // ⚑⚑ THE EAR'S FRAME, AND IT IS SET APART FROM THE EAR'S POSE ON PURPOSE.
+    // The pose comes from the render loop, which runs AFTER `world.tick`; the
+    // frame changes INSIDE `tick`, in the middle of a jump. Taking both from
+    // the render loop would leave the ear a frame behind across exactly the
+    // crossing the cooling bubble is about - the arrival's first tick silenced
+    // and the departed system's played. So SpaceWorld sets this where it sets
+    // its own frame (see `SpaceWorld::enterFrame`).
+    void setListenerSystem(std::uint32_t system) { m_listenerSystem = system; }
+
+    [[nodiscard]] std::uint32_t listenerSystem() const { return m_listenerSystem; }
+
     void setVolumes(float master, float effects);
     // Throttle 0..1 drives the one looping voice; 0 leaves it running silent
     // rather than restarting it every time the player coasts.
@@ -88,6 +121,12 @@ public:
     [[nodiscard]] sol::platform::AudioDeviceInfo deviceInfo() const { return m_device.info(); }
 
     [[nodiscard]] std::uint64_t playedCues() const { return m_played; }
+
+    // Positional cues refused because they happened in a system the ear is not
+    // in (Phase 38 stage D). Reported by `sol.audio`, and it is the only way
+    // to see this working from outside: what the fix produces is a sound that
+    // does not happen.
+    [[nodiscard]] std::uint64_t outOfFrameCues() const { return m_outOfFrame; }
 
     // The gains last posted to the mixer. Reading them back is what proves a
     // slider reached the audio system rather than only the settings file; that
@@ -118,6 +157,10 @@ private:
     std::vector<Cue> m_cueTable;
     CueSet m_cues;
     std::uint64_t m_played = 0;
+    std::uint64_t m_outOfFrame = 0;
+    // The system the ear is in. Starts where `SpaceWorld::spawn` opens its
+    // first bubble, which is 0 until a galaxy exists.
+    std::uint32_t m_listenerSystem = 0;
     float m_engineThrottle = -1.0f; // forces the first update through
     float m_masterVolume = -1.0f;   // ditto: the first setVolumes always posts
     float m_effectsVolume = -1.0f;

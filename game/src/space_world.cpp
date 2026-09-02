@@ -5684,13 +5684,15 @@ bool SpaceWorld::leaveSystemFor(std::uint32_t destination)
         // one-shot does not track its emitter - so leaving them running would
         // play the old system's explosions in the new one's coordinates.
         //
-        // ⚑⚑ AND IT IS NOT A TEARDOWN ANY MORE, WHICH MAKES THIS STAGE D'S
-        // PROBLEM RATHER THAN A TIDY-UP (Phase 38 stage C). The system behind
-        // the player is still running and still firing, and its next shot goes
-        // to a mixer with one listener at coordinates belonging to a different
-        // star - so silencing what is already in flight is now only half of an
-        // answer. The five `playAt` sites take the listener's system in stage
-        // D; `decisions/015` says rendering and UI are unaffected in kind and
+        // ⚑⚑ AND IT IS NOT A TEARDOWN ANY MORE, WHICH IS WHY IT IS ONLY HALF OF
+        // AN ANSWER (Phase 38 stage C, paid in stage D). The system behind the
+        // player is still running and still firing, so silencing the voices
+        // already in flight says nothing about its NEXT shot. That half is the
+        // ear's frame: `GameAudio` holds the listener's system now and refuses
+        // a positional cue from any other, so this line has gone back to
+        // meaning exactly what it says - the voices in flight belong to the
+        // system being left, and a one-shot does not track its emitter.
+        // `decisions/015` says rendering and UI are unaffected in kind, and
         // never noticed that audio is a third output path.
         m_audio->stopAll();
     }
@@ -6010,6 +6012,28 @@ void SpaceWorld::rebuildAvoidance(const SystemBubble& bubble)
     }
 }
 
+void SpaceWorld::setAudio(GameAudio* audio)
+{
+    m_audio = audio;
+    // The ear arrives after the galaxy does - `content.initialize` runs the
+    // generator, and `main.cpp` hands the device over afterwards - so the frame
+    // is pushed here as well as from `enterFrame`. Without it the listener sits
+    // in system 0 until the player's first jump, and every positional cue
+    // before then is refused as foreign.
+    if (m_audio != nullptr) {
+        m_audio->setListenerSystem(m_currentSystem);
+    }
+}
+
+void SpaceWorld::enterFrame(std::uint32_t systemIndex)
+{
+    m_currentSystem = systemIndex;
+    m_combatEffects.setFrame(systemIndex);
+    if (m_audio != nullptr) {
+        m_audio->setListenerSystem(systemIndex);
+    }
+}
+
 void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
 {
     // ⚑ Jumping out from under a hold is running, and it is recorded as such
@@ -6024,7 +6048,7 @@ void SpaceWorld::loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem)
     // it spawns land in the right frame without knowing there is such a thing
     // as a frame.
     const bool freshSky = leaveSystemFor(systemIndex);
-    m_currentSystem = systemIndex;
+    enterFrame(systemIndex);
     // Knowledge (Phase 8e): being here is what makes a system known, and a
     // gate names where it leads — the map grows along the lanes you fly.
     m_survey.notifyArrival(m_galaxy, systemIndex);
@@ -11282,7 +11306,7 @@ void SpaceWorld::tickSystem(SystemBubble& bubble, double dt)
                 if (isPlayerEntity(registry, entityIndex)) {
                     m_audio->play2D(m_audio->cues().weaponFire);
                 } else {
-                    m_audio->playAt(m_audio->cues().weaponFire, muzzle);
+                    m_audio->playAt(m_audio->cues().weaponFire, muzzle, bubble.system);
                 }
             }
 
@@ -11397,9 +11421,9 @@ void SpaceWorld::tickSystem(SystemBubble& bubble, double dt)
     for (const PendingCut& cut : pendingCuts) {
         if (cut.wreck) {
             (void)cutWreck(bubble, cut.cutter, cut.entityIndex, cut.units);
-            m_combatEffects.spawnImpact(cut.impact, false);
+            m_combatEffects.spawnImpact(bubble.system, cut.impact, false);
             if (m_audio != nullptr) {
-                m_audio->playAt(m_audio->cues().miningCut, cut.impact);
+                m_audio->playAt(m_audio->cues().miningCut, cut.impact, bubble.system);
             }
             continue;
         }
@@ -11412,9 +11436,14 @@ void SpaceWorld::tickSystem(SystemBubble& bubble, double dt)
         const std::uint32_t commodity = rock->commodity;
         const float total = rock->totalUnits;
         (void)cutRock(bubble, cut.cutter, cut.entityIndex, cut.units);
-        m_combatEffects.spawnImpact(cut.impact, false);
+        // ⚑ A cut can only happen where the player is standing today - the
+        // beam is gated on `isPlayerEntity` above - so this frame is always the
+        // listener's. Named anyway, because "the site is unreachable" is not a
+        // reason to write a line that would be wrong when it is not, and stage
+        // B left the mining path per-system exactly so an NPC could cut.
+        m_combatEffects.spawnImpact(bubble.system, cut.impact, false);
         if (m_audio != nullptr) {
-            m_audio->playAt(m_audio->cues().miningCut, cut.impact);
+            m_audio->playAt(m_audio->cues().miningCut, cut.impact, bubble.system);
         }
         if (m_mining.unitsLeft(bubble.system, field, index, total) <= 0.0f) {
             registry.destroy(registry.entityFromIndex(cut.entityIndex)); // it broke up
@@ -11676,6 +11705,7 @@ void SpaceWorld::tick(double dt)
 // is still a whole freighter, and one you shot to pieces has an intact drive
 // in the wreck. Spending one hit twice is the point.
 void SpaceWorld::damageMounts(ecs::Registry& registry,
+                              std::uint32_t system,
                               std::uint32_t targetIndex,
                               const core::DVec3& hitPosition,
                               const sim::DamageResult& result)
@@ -11754,13 +11784,13 @@ void SpaceWorld::damageMounts(ecs::Registry& registry,
         // something deep inside the ship belongs.
         const core::Vec3 at{mount.at[0] * hullScale, mount.at[1] * hullScale, mount.at[2] * hullScale};
         const core::DVec3 where = transform->position + toDVec3(rotate(transform->orientation, at));
-        m_combatEffects.spawnExplosion(where, hullScale * 0.5f);
+        m_combatEffects.spawnExplosion(system, where, hullScale * 0.5f);
         if (m_audio != nullptr) {
             if (isPlayerEntity(registry, targetIndex)) {
                 m_audio->play2D(m_audio->cues().explosion);
                 m_audio->play2D(m_audio->cues().alarm);
             } else {
-                m_audio->playAt(m_audio->cues().explosion, where);
+                m_audio->playAt(m_audio->cues().explosion, where, system);
             }
         }
     };
@@ -11833,10 +11863,10 @@ void SpaceWorld::noteDamage(SystemBubble& bubble,
     // twenty lines down is about who gets a bounty assist. The player's own
     // mounts are shot off exactly like everybody else's, and hanging this off
     // the bottom of the function is how they would not be.
-    damageMounts(registry, targetIndex, hitPosition, result);
+    damageMounts(registry, bubble.system, targetIndex, hitPosition, result);
 
     const bool shieldHit = result.shieldAbsorbed >= result.armorAbsorbed + result.hullDamage;
-    m_combatEffects.spawnImpact(hitPosition, shieldHit);
+    m_combatEffects.spawnImpact(bubble.system, hitPosition, shieldHit);
     if (m_audio != nullptr) {
         const sol::audio::SoundId cue = shieldHit ? m_audio->cues().hitShield : m_audio->cues().hitHull;
         // A hit on the player is a hit on the listener: 2D, because the sound
@@ -11849,7 +11879,7 @@ void SpaceWorld::noteDamage(SystemBubble& bubble,
                 m_audio->play2D(m_audio->cues().alarm);
             }
         } else {
-            m_audio->playAt(cue, hitPosition);
+            m_audio->playAt(cue, hitPosition, bubble.system);
         }
     }
     if (isPlayerEntity(registry, targetIndex)) {
@@ -11902,12 +11932,13 @@ void SpaceWorld::handleShipDestroyed(SystemBubble& bubble,
     ecs::Registry& registry = bubble.registry;
     // Fireball at the wreck site, scaled by the hull.
     const core::DVec3 wreckPosition = registry.storage<Transform>().get(entityIndex).position;
-    m_combatEffects.spawnExplosion(wreckPosition, registry.storage<RenderShape>().get(entityIndex).scale.x);
+    m_combatEffects.spawnExplosion(
+        bubble.system, wreckPosition, registry.storage<RenderShape>().get(entityIndex).scale.x);
     if (m_audio != nullptr) {
         if (isPlayerEntity(registry, entityIndex)) {
             m_audio->play2D(m_audio->cues().explosion);
         } else {
-            m_audio->playAt(m_audio->cues().explosion, wreckPosition);
+            m_audio->playAt(m_audio->cues().explosion, wreckPosition, bubble.system);
         }
     }
     if (isPlayerEntity(registry, entityIndex)) {
@@ -12352,8 +12383,39 @@ void SpaceWorld::appendFittingInstances(float alpha, bool includeShip, std::vect
 
 void SpaceWorld::resetForNewGame(std::uint64_t seed)
 {
+    // ⚑⚑⚑⚑ THE DEVICE IS CARRIED ACROSS THE RESET, AND IT WAS NOT (Phase 38
+    // stage D). `*this = SpaceWorld{}` is a whole-object wipe, which is what
+    // makes this correct about a RUN's state and wrong about the two things
+    // that are not a run's: the def database and the audio device, both
+    // borrowed from `main`. `m_defs` is put back by `applyDefs`, which
+    // `GameContent::restartForNewGame` calls - what the comment on that
+    // function means by "the other half of the reset". Nothing ever put the
+    // device back, and there is no third borrowed pointer.
+    //
+    // ⚑⚑⚑⚑ WHAT IT COST IS EVERY SOUND IN THE GAME EXCEPT THE UI'S. This game
+    // boots to a menu, so the first thing any player does is start a run,
+    // which is this function - and from that moment `m_audio` was null at
+    // every one of the guarded cue sites. No gunfire, no hits, no explosions,
+    // no mining beam, no docking chime, no proximity alarm, for the whole of a
+    // session. Every one of those sites is written `if (m_audio != nullptr)`,
+    // because a machine with no output endpoint has to keep playing, and that
+    // is exactly the shape that turns a dropped pointer into silence rather
+    // than a crash.
+    //
+    // ⚑⚑⚑ FOUND BY STAGE D'S FLIGHT AND BY NOTHING ELSE. A six-ship firefight
+    // moved `sol.audio()`'s play count by zero while a console
+    // `sol.play_sound_at` moved it by one - and the difference between those
+    // two is the pointer: the console reaches the device through
+    // `GameContent`, whose copy no reset touches. Pre-existing since the reset
+    // was written in Phase 27; the audio stage is simply the one that had a
+    // reason to read that number.
+    GameAudio* const device = m_audio;
     *this = SpaceWorld{};
     spawn(seed);
+    // Through `setAudio` rather than by assigning the member, so the ear is
+    // told which system it is in as well as which device it is - the reset
+    // wiped `m_currentSystem` too.
+    setAudio(device);
 }
 
 bool readSaveInfo(const char* path, SaveInfo& out)
@@ -12784,7 +12846,7 @@ bool SpaceWorld::loadFrom(const char* path)
 
     // The snapshot carries the system's statics; only the non-ECS side data
     // (celestials, targets, gates, spawn anchor) needs rebuilding.
-    m_currentSystem = systemIndex;
+    enterFrame(systemIndex);
     // ⚑ This path does NOT go through loadSystem, so transient state reset
     // there is not reset here (the rule Phase 8r wrote down after m_dockedBerth
     // survived a load). A jump is transient state: clearing it is what stops a

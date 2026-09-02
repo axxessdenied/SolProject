@@ -127,8 +127,14 @@ float GameAudio::rollPitch(float jitter)
     return 1.0f + m_rng.rangeFloat(-jitter, jitter);
 }
 
-void GameAudio::playAt(audio::SoundId cue, const core::DVec3& position)
+void GameAudio::playAt(audio::SoundId cue, const core::DVec3& position, std::uint32_t system)
 {
+    // Before the cue lookup and before any voice is claimed: a sound from
+    // another system has no business spending an instance cap. See the header.
+    if (system != m_listenerSystem) {
+        ++m_outOfFrame;
+        return;
+    }
     const Cue* entry = cueFor(cue);
     if (entry == nullptr) {
         return;

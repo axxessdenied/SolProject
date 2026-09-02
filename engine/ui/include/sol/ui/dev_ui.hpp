@@ -24,6 +24,13 @@ struct OverlayStats
     std::uint32_t lodDrawn[3] = {};
     std::uint64_t simTicks = 0;
     std::uint32_t simEntities = 0;
+    // How many systems are being ticked this frame (Phase 38 stage D). One for
+    // the whole of the game's history until the cooling bubble; more than one
+    // means a system the player has left is still running, which is otherwise
+    // invisible by design - no radar contact, no spark, no sound. Zero draws
+    // the row exactly as it read before, so a caller that never sets it loses
+    // nothing.
+    std::uint32_t simSystems = 0;
     float simAlpha = 0.0f;
     // Where the frame actually went (Phase 8n). Non-owning; null draws the
     // overlay exactly as it was before the profiler existed. Passed rather

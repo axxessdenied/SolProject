@@ -34,14 +34,22 @@ void CombatEffects::burst(const core::DVec3& position,
 }
 
 // Sized to read at combat ranges (~250-800 m), not just up close.
-void CombatEffects::spawnImpact(const core::DVec3& position, bool shieldHit)
+void CombatEffects::spawnImpact(std::uint32_t system, const core::DVec3& position, bool shieldHit)
 {
+    if (system != m_system) {
+        ++m_outOfFrame;
+        return; // another star's fight - see the header
+    }
     const core::Vec3 color = shieldHit ? core::Vec3{0.7f, 1.4f, 2.6f} : core::Vec3{2.6f, 1.1f, 0.35f};
     burst(position, 14, 8.0f, 45.0f, color, 1.5f, 0.35f);
 }
 
-void CombatEffects::spawnExplosion(const core::DVec3& position, float scale)
+void CombatEffects::spawnExplosion(std::uint32_t system, const core::DVec3& position, float scale)
 {
+    if (system != m_system) {
+        ++m_outOfFrame;
+        return;
+    }
     // Hot white core, orange fireball, lingering embers.
     burst(position, 30, 2.0f, 20.0f * scale, {3.0f, 2.6f, 2.2f}, 6.5f * scale, 0.5f);
     burst(position, 80, 10.0f, 70.0f * scale, {2.8f, 1.2f, 0.3f}, 4.5f * scale, 0.9f);

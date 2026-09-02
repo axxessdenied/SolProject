@@ -90,10 +90,23 @@ void DevUi::build(const OverlayStats& stats)
                     // nobody reads by the second day.
                     ImGui::Text("lod  %u / %u / %u", stats.lodDrawn[0], stats.lodDrawn[1], stats.lodDrawn[2]);
                 }
-                ImGui::Text("sim  tick %llu   entities %u   alpha %.2f",
-                            static_cast<unsigned long long>(stats.simTicks),
-                            stats.simEntities,
-                            stats.simAlpha);
+                if (stats.simSystems > 1) {
+                    // Only once a second system is actually being ticked, on
+                    // the same argument the lod row above makes: a field that
+                    // reads "systems 1" every frame is a field nobody reads by
+                    // the second day, and one that reads 2 is the whole of
+                    // what a cooling bubble looks like from outside.
+                    ImGui::Text("sim  tick %llu   entities %u   systems %u   alpha %.2f",
+                                static_cast<unsigned long long>(stats.simTicks),
+                                stats.simEntities,
+                                stats.simSystems,
+                                stats.simAlpha);
+                } else {
+                    ImGui::Text("sim  tick %llu   entities %u   alpha %.2f",
+                                static_cast<unsigned long long>(stats.simTicks),
+                                stats.simEntities,
+                                stats.simAlpha);
+                }
                 // Gameplay controls are rebindable (Phase 8k), so this crib names the
                 // shipped layout rather than claiming to be the live one - the engine
                 // dev UI has no way to reach the game's binding table, and a hint that

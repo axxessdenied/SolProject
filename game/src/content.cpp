@@ -295,12 +295,13 @@ std::string audioReport(GameContent& content)
                " cue(s) loaded";
     }
     const platform::AudioDeviceInfo info = gameAudio->deviceInfo();
-    char buffer[224] = {};
+    char buffer[288] = {};
     (void)std::snprintf(buffer,
                         sizeof(buffer),
                         "audio: %u Hz, %u frame buffer, %zu cue(s), vol %.2f/%.2f, "
                         "%u voice(s) active, "
-                        "%llu played, %llu stolen, %llu dropped, %llu underrun(s)",
+                        "%llu played, %llu stolen, %llu dropped, %llu out of frame, "
+                        "%llu underrun(s)",
                         info.sampleRate,
                         info.bufferFrames,
                         gameAudio->cueCount(),
@@ -310,6 +311,7 @@ std::string audioReport(GameContent& content)
                         static_cast<unsigned long long>(gameAudio->playedCues()),
                         static_cast<unsigned long long>(gameAudio->stolenVoices()),
                         static_cast<unsigned long long>(gameAudio->droppedCommands()),
+                        static_cast<unsigned long long>(gameAudio->outOfFrameCues()),
                         static_cast<unsigned long long>(gameAudio->underruns()));
     return buffer;
 }
@@ -346,7 +348,9 @@ bool playSoundAt(GameContent& content, const char* id, double x, double y, doubl
         SOL_LOG_WARN("play_sound_at: no cue '%s'", id);
         return false;
     }
-    gameAudio->playAt(cue, core::DVec3{x, y, z});
+    // A console cue is placed in the player's own sky by definition: the
+    // coordinates a person types are the ones the HUD is showing them.
+    gameAudio->playAt(cue, core::DVec3{x, y, z}, content.world().currentSystemIndex());
     return true;
 }
 
@@ -2782,6 +2786,72 @@ std::string listWrecks(GameContent& content)
     return lines.empty() ? std::string("(no wrecks)") : lines;
 }
 
+// ⚑⚑⚑⚑ WHAT IS ACTUALLY RUNNING RIGHT NOW (Phase 38 stage D), AND IT IS THE
+// ONLY WAY TO SEE THE PHASE'S EXIT FROM OUTSIDE THE GAME. The cooling bubble is
+// a system that keeps ticking behind the player, and everything it produces is
+// deliberately unseeable: no ships on radar, no sparks in the sky, no sound.
+// Stage C could only be flown by marking a hull with `sol.spawn_ship` and
+// asking whether it survived a round trip - a binary, and one that says nothing
+// about whether the bubble was ticked or merely parked.
+//
+// ⚑⚑ `holdSeconds` IS WHAT SEPARATES A HELD BUBBLE FROM THE PLAYER'S OWN, AND
+// IT READS 0 ON THE PLAYER'S. That one is held by the player being in it, not
+// by a clock, so 0 there means "not on the clock" rather than "about to go" -
+// which is why the player's line says so in words instead of printing a
+// number. Everything else on the line comes straight off `BubbleReport`.
+std::string listBubbles(GameContent& content)
+{
+    SpaceWorld& world = content.world();
+    std::string lines;
+    for (std::size_t slot = 0; slot < world.instantiatedSystemCount(); ++slot) {
+        SpaceWorld::BubbleReport report;
+        if (!world.bubbleReportAt(slot, report)) {
+            continue;
+        }
+        char hold[48];
+        if (report.player) {
+            (void)std::snprintf(hold, sizeof(hold), "held by the player");
+        } else {
+            (void)std::snprintf(hold, sizeof(hold), "%.0f s left", report.holdSeconds);
+        }
+        char buffer[256];
+        (void)std::snprintf(buffer,
+                            sizeof(buffer),
+                            "#%zu %s%s %zu ent, %zu ships (%zu fighting), %zu bolt(s), "
+                            "%zu wreck(s), hull %.2f, %s",
+                            slot,
+                            report.system < world.galaxy().systems.size()
+                                ? world.galaxy().systems[report.system].name.c_str()
+                                : "?",
+                            report.player ? " [PLAYER]" : "",
+                            report.entities,
+                            report.ships,
+                            report.fighting,
+                            report.projectiles,
+                            report.wrecks,
+                            static_cast<double>(report.worstHull),
+                            hold);
+        lines += (lines.empty() ? "" : "\n") + std::string(buffer);
+    }
+    // The cap is a policy this readout should show rather than leave to be
+    // rediscovered, and the two suppression counters are the stage D half: a
+    // number that climbs while a second bubble fights is the frame guard
+    // working, and one that climbs with a single system instantiated is a
+    // frame being got wrong somewhere.
+    char tail[192];
+    const GameAudio* gameAudio = content.audio();
+    (void)std::snprintf(
+        tail,
+        sizeof(tail),
+        "%zu of %zu instantiated; %llu burst(s) and %llu cue(s) refused out of frame",
+        world.instantiatedSystemCount(),
+        SpaceWorld::kMaxInstantiatedSystems,
+        static_cast<unsigned long long>(world.outOfFrameBursts()),
+        static_cast<unsigned long long>(gameAudio != nullptr ? gameAudio->outOfFrameCues() : 0ull));
+    lines += (lines.empty() ? "" : "\n") + std::string(tail);
+    return lines;
+}
+
 // Dev pacing: empties whatever the boresight is on without holding the beam.
 bool mineAhead(GameContent& content)
 {
@@ -4191,6 +4261,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listFields>("sol", "fields", this);
     m_vm.registerFunction<&listRocks>("sol", "rocks", this);
     m_vm.registerFunction<&listWrecks>("sol", "wrecks", this);
+    m_vm.registerFunction<&listBubbles>("sol", "bubbles", this);
     m_vm.registerFunction<&mineAhead>("sol", "mine", this);
     m_vm.registerFunction<&warpToRock>("sol", "warp_rock", this);
     m_vm.registerFunction<&selectTargetByName>("sol", "target", this);

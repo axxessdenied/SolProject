@@ -2721,6 +2721,13 @@ public:
 
     [[nodiscard]] bool bubbleReportAt(std::size_t slot, BubbleReport& out) const;
 
+    // ⚑⚑ PARTICLE BURSTS REFUSED BECAUSE THEY HAPPENED SOMEWHERE ELSE (Phase
+    // 38 stage D). The audio half of the same claim lives on `GameAudio`; both
+    // are on `sol.bubbles`, and both exist because what this stage produces is
+    // an ABSENCE - a spark that is not drawn and a sound that is not played -
+    // and an absence is not something a console can be pointed at.
+    [[nodiscard]] std::uint64_t outOfFrameBursts() const { return m_combatEffects.outOfFrameBursts(); }
+
     // The player's sky. Both were plain members until stage B moved them onto
     // the bubble; every reader outside the tick wants the system being drawn,
     // which is the player's, and says so here rather than by omission.
@@ -2874,7 +2881,9 @@ public:
     // pointer rather than owning one - the same shape as the dev UI. Null is
     // normal: a machine with no output endpoint runs the whole game silently,
     // and every call site is guarded rather than the sound being faked.
-    void setAudio(GameAudio* audio) { m_audio = audio; }
+    // ⚑ Out of line since Phase 38 stage D: the ear is given the player's
+    // frame as it is attached. `GameAudio` is only forward-declared here.
+    void setAudio(GameAudio* audio);
 
     // --- Picking (Phase 8j) ---
     // How the world is being viewed, for the click-to-select in target_pick.hpp.
@@ -3793,6 +3802,23 @@ private:
     // there: at the gate arriving from fromSystem, or near the first station
     // when fromSystem is kNoFaction-tagged invalid (new game / load).
     void loadSystem(std::uint32_t systemIndex, std::uint32_t fromSystem);
+
+    // ⚑⚑⚑⚑ THE ONE PLACE THE PLAYER'S FRAME CHANGES, AND THE TWO COSMETIC
+    // SINKS ARE TOLD FROM IT (Phase 38 stage D). `m_currentSystem` is what
+    // every positional output path means by "here": the mixer has one listener
+    // and `CombatEffects` has one particle buffer, and a `DVec3` handed to
+    // either of them is metres in a barycentre frame that has to be this one.
+    // Both sinks refuse anything from another system now, so both have to be
+    // told which system that is, and being told it in the same statement that
+    // sets it is what keeps them from drifting apart.
+    //
+    // ⚑⚑ IT IS NOT THE RENDER LOOP'S JOB, WHICH IS WHY IT IS NOT WHERE THE
+    // LISTENER'S POSE COMES FROM. A jump happens inside `tick`; the pose is
+    // set after `tick` returns. A frame taken from the same place as the pose
+    // would be one tick stale across exactly the crossing this phase exists
+    // for, dropping the arrival's own sounds and playing the departed
+    // system's - the two errors the stage is here to prevent, both at once.
+    void enterFrame(std::uint32_t systemIndex);
     // Moves the player into `destination`'s bubble and releases the one they
     // were in, along with every transient view of it (spawned-ship list,
     // combat effects, thrusters, sound).
@@ -3918,7 +3944,13 @@ private:
     // roadmap's own wording for this stage: *external hits resolved against
     // `at`*. An internal mount is reached through armour rather than aimed at,
     // and picking WHICH of several a hull hides is a rule this does not have.
+    // ⚑ `system` is the frame `hitPosition` is in (Phase 38 stage D). This is
+    // the one output site in the death path that had no bubble in hand - it
+    // takes a registry, because that is all it needs to find a mount - and the
+    // spec's list of `playAt` sites does not name it. A fireball has to know
+    // which star it went off beside, so the frame comes in as a value.
     void damageMounts(sol::ecs::Registry& registry,
+                      std::uint32_t system,
                       std::uint32_t targetIndex,
                       const sol::core::DVec3& hitPosition,
                       const sol::sim::DamageResult& result);

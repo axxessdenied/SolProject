@@ -1358,6 +1358,7 @@ int main(int argc, char** argv)
         }
         stats.simTicks = simLoop.tickCount();
         stats.simEntities = world.entityCount();
+        stats.simSystems = static_cast<std::uint32_t>(world.instantiatedSystemCount());
         stats.simAlpha = simAlpha;
         stats.profiler = &profiler;
 

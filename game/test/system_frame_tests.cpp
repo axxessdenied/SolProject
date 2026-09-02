@@ -31,6 +31,22 @@
 // wording could not be built as written: see the block above
 // `a_ship_left_damaged_in_a_system_is_still_there_and_still_damaged`.
 //
+// ⚑⚑⚑⚑ STAGE D IS THE OUTPUT PATHS, AND WHAT IT SHIPS IS AN ABSENCE. Every
+// position in this game is metres in one system's barycentre frame, and the
+// two cosmetic sinks - the mixer's single listener and the one particle buffer
+// - had no idea such a thing existed, because until stage C there was only
+// ever one frame to be in. Its tests are therefore shaped differently from the
+// rest of this file: what they assert is that nothing happened, so each one
+// carries its own proof that there was something to suppress.
+//
+// ⚑⚑⚑ AND THE COST OF GETTING IT WRONG IS NOT A NOISE IN THE WRONG PLACE, IT
+// IS A SILENCE IN THE RIGHT ONE. `sounds.toml` caps `sol.explosion` at four
+// concurrent voices and `Mixer::claimVoice` steals the oldest at the cap;
+// `CombatEffects::kMaxParticles` is 2,000 for the whole game and `burst` drops
+// the overflow. Both numbers were tuned against the only fight there could be.
+// A fight in a cooling bubble spends them, and the player's own explosion is
+// the one that goes missing.
+
 // ⚑⚑⚑ WHY A CONTROL WORLD RATHER THAN AN ASSERTION ABOUT ONE. The failure mode
 // of a nested tick is not a crash, it is a shared thing that two systems both
 // write: a scratch buffer refilled by whoever went last, a random stream drawn
@@ -39,7 +55,9 @@
 // them show up as a second world diverging from the first.
 
 #include "asset_paths.hpp"
+#include "combat_effects.hpp"
 #include "content.hpp"
+#include "game_audio.hpp"
 #include "space_world.hpp"
 
 #include <string>
@@ -1027,4 +1045,264 @@ SOL_TEST(returning_to_a_cooling_system_leaves_its_ships_targetable)
         }
     }
     SOL_CHECK(after > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Stage D: audio, render and the probe.
+// ---------------------------------------------------------------------------
+
+// The player's own sky, drawn. `buildParticleInstances` is what `main.cpp`
+// hands the renderer, so this is literally what is on screen: thruster plumes
+// plus every combat spark in flight. With no input on the stick the thrusters
+// contribute nothing, which is what makes a plain count meaningful here.
+namespace {
+
+[[nodiscard]] std::size_t drawnParticles(const game::SpaceWorld& world)
+{
+    std::vector<game::ParticleInstance> instances;
+    world.buildParticleInstances(0.0f, instances);
+    return instances.size();
+}
+
+} // namespace
+
+// ⚑⚑⚑⚑ THE STAGE'S OWN EXIT: A FIGHT YOU HAVE LEFT IS NOT DRAWN IN THE SKY YOU
+// ARE IN. The cooling bubble keeps shooting after the player jumps out — that
+// is the feature, and it is what `a_ship_left_damaged_in_a_system_is_still_
+// there_and_still_damaged` measures from the other end. Every one of those
+// shots ran through `noteDamage`, which spawned a spark, and through the death
+// path, which spawned a fireball; both went into ONE particle buffer, in
+// coordinates belonging to a star the player is no longer near.
+//
+// ⚑⚑⚑ AND THE COORDINATES DO NOT SAVE IT, WHICH IS WHY THIS IS NOT A THEORETICAL
+// TIDY-UP. Both systems lay their contents around a barycentre origin, so two
+// ships in different systems sit within a couple of hundred kilometres of each
+// other AS NUMBERS. That is the phase's own `pilotEngageEnemy` argument — the
+// spec calls it the worst frame bug in the phase — arriving one output path
+// over: a fireball from next door does not land somewhere absurd and get
+// culled, it lands plausibly close and is drawn.
+//
+// ⚑⚑ THE POSITIVE CONTROL IS THE FIRST HALF OF THE TEST AND IT IS NOT
+// DECORATION. A guard that dropped every burst in the game would satisfy the
+// second half perfectly.
+SOL_TEST(a_fight_in_the_system_you_left_is_not_drawn_in_the_one_you_are_in)
+{
+    Galaxy g;
+    const std::uint32_t here = g.world.currentSystemIndex();
+    const std::uint32_t elsewhere = g.furnishedSystem(0);
+    SOL_REQUIRE(elsewhere != 0xffff'ffffu && elsewhere != here);
+
+    const sol::assets::ShipDef* def = g.content.defs().findShip("sol.interceptor");
+    SOL_REQUIRE(def != nullptr);
+    const sol::ecs::Entity mark = g.world.spawnPilotFromDef(*def, g.content.defs(), game::PilotRole::Fighter);
+    SOL_REQUIRE(g.world.shipHullFraction(mark) == 1.0);
+
+    // The player's own fight, in the player's own system. Sparks are what a hit
+    // looks like, so this is the control: the mechanism draws, when it should.
+    sol::sim::FlightInput trigger;
+    trigger.trigger = true;
+    std::size_t seenAtHome = 0;
+    for (int i = 0; i < 180; ++i) {
+        g.world.setShipInput(trigger);
+        g.world.tick(1.0 / 60.0);
+        seenAtHome = std::max(seenAtHome, drawnParticles(g.world));
+    }
+    g.world.setShipInput(sol::sim::FlightInput{});
+    SOL_REQUIRE(seenAtHome > 0);                  // the sky the player is in is drawn
+    SOL_REQUIRE(g.world.outOfFrameBursts() == 0); // and nothing was refused to get it
+    SOL_REQUIRE(g.world.shipHullFraction(mark) < 1.0);
+
+    // Out, leaving a live fight behind — the retention entry condition.
+    SOL_REQUIRE(g.world.enterSystem(elsewhere));
+    SOL_REQUIRE(g.world.instantiatedSystemCount() == 2);
+    SOL_REQUIRE(g.world.instantiatedSystemAt(1) == here);
+    // The jump clears what was in flight (`leaveSystemFor`), so the sky the
+    // player arrives in starts empty and anything counted below is new.
+    SOL_REQUIRE(drawnParticles(g.world) == 0);
+
+    // A minute next door, sampled every frame rather than at the end: a spark
+    // lives 0.35 s and a fireball 1.5 s, so a check taken only once could miss
+    // every one of them and read as a pass.
+    std::size_t worstFrame = 0;
+    for (int i = 0; i < 110 * 60; ++i) {
+        g.world.tick(1.0 / 60.0);
+        worstFrame = std::max(worstFrame, drawnParticles(g.world));
+    }
+    // ⚑ ANTI-VACUITY, AND IT IS THE ASSERTION THAT MAKES THE ONE BELOW MEAN
+    // ANYTHING: the bubble behind really was producing combat events for that
+    // whole minute. Without this the test would pass just as well against a
+    // world that had quietly released the system on the way out.
+    SOL_CHECK(g.world.outOfFrameBursts() > 0);
+    SOL_CHECK(worstFrame == 0);
+}
+
+// ⚑⚑⚑⚑ WHAT THIS SUITE DOES *NOT* COVER, RECORDED RATHER THAN LEFT TO BE
+// REDISCOVERED. Eleven mutations were run against stage D and three survived,
+// and neither reason is "the guard is missing".
+//
+// ⚑⚑⚑ THE FIGHT A COOLING BUBBLE CARRIES ON IS INERTIAL: IT LANDS HITS AND
+// FINISHES NOBODY. Charging `noteDamage`'s spark to the player's system is
+// caught by the test above; charging `handleShipDestroyed`'s fireball or
+// `damageMounts`' is not, and neither is deleting `spawnExplosion`'s frame
+// check outright. All three survive for ONE reason, and it is stage B's
+// recorded LOD statement rather than a hole in the guards: nobody in a system
+// the player has left re-targets or presses an attack, so the shooting that
+// continues is the shooting already in flight. Over 110 sim-seconds of a
+// retained fight in the shipped galaxy, hits land continuously and NOT ONE
+// hull or mount is destroyed. Shooting the mark down to 0.30 before leaving
+// does not fix it either - at that hull it breaks off, and then there is no
+// fight left behind at all.
+//
+// ⚑⚑ AND EVERY AUDIO CALL SITE IS UNREACHABLE FROM A UNIT TEST, WHICH IS WHY
+// `GameAudio` GREW A COUNTER AT ALL. `m_audio` is null in every test in this
+// repository - the ear needs a device and a cooked bank - so a mutation that
+// hands `playAt` the wrong system changes nothing any test can see. The sink's
+// own refusal is pinned directly instead, one test down. The call sites are
+// held by the same `bubble.system` the particle sites use, on the same lines.
+
+// ⚑⚑⚑⚑ AND THE REASON THE CHECK IS AT THE SPAWN RATHER THAN AT THE DRAW.
+// `CombatEffects` owns a random stream and `burst` takes six numbers out of it
+// per particle — 84 for one impact spark, some 900 for a fireball. One stream,
+// for the whole world. So a fight the player cannot see would change what the
+// player's own sparks look like, which is precisely the determinism shape the
+// phase's risk list names for `m_chunkRng` and `m_noticeRng`.
+//
+// ⚑⚑⚑ THE DIFFERENCE IS THAT THOSE TWO ARE NOT LIVE AND THIS ONE IS. Stage B
+// recorded both as structure rather than a fix: `m_chunkRng` is drawn only when
+// something cuts rock, and cutting is player-gated. `CombatEffects::m_rng` is
+// drawn by every hit in the game, and stage C made hits happen where the player
+// is not. It became a live shared stream the moment the cooling bubble shipped,
+// in a class the spec's risk list never mentions.
+//
+// Filtering at draw time would have left it exactly as broken, because by then
+// the numbers are already spent. This pins the ordering: refused BEFORE
+// `burst`, so a foreign event costs the stream nothing.
+SOL_TEST(a_burst_from_another_frame_never_reaches_the_particle_stream)
+{
+    game::CombatEffects clean;
+    game::CombatEffects disturbed;
+    clean.setFrame(3);
+    disturbed.setFrame(3);
+
+    // The same fight in the same frame, except that the second buffer is also
+    // being offered everything a cooling bubble would offer it.
+    disturbed.spawnImpact(7, sol::core::DVec3{100.0, 0.0, 0.0}, false);
+    disturbed.spawnExplosion(7, sol::core::DVec3{0.0, 100.0, 0.0}, 2.0f);
+    clean.spawnImpact(3, sol::core::DVec3{0.0, 0.0, 0.0}, true);
+    disturbed.spawnImpact(3, sol::core::DVec3{0.0, 0.0, 0.0}, true);
+
+    SOL_CHECK(disturbed.outOfFrameBursts() == 2);
+    SOL_CHECK(clean.outOfFrameBursts() == 0);
+
+    std::vector<game::ParticleInstance> left;
+    std::vector<game::ParticleInstance> right;
+    clean.appendInstances(0.0f, left);
+    disturbed.appendInstances(0.0f, right);
+    SOL_REQUIRE(!left.empty()); // anti-vacuity: there are particles to disagree about
+    SOL_REQUIRE(left.size() == right.size());
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        // Every field, not just the count: the stream decides direction, speed,
+        // colour, size and lifetime, and a shifted stream would keep the count
+        // exactly while changing all five.
+        SOL_CHECK(left[i].position.x == right[i].position.x);
+        SOL_CHECK(left[i].position.y == right[i].position.y);
+        SOL_CHECK(left[i].position.z == right[i].position.z);
+        SOL_CHECK(left[i].size == right[i].size);
+        SOL_CHECK(left[i].color.x == right[i].color.x);
+        SOL_CHECK(left[i].color.w == right[i].color.w);
+    }
+}
+
+// ⚑⚑⚑ THE EAR HAS A FRAME NOW, AND THIS IS THE ONLY PLACE THE AUDIO HALF CAN BE
+// ASSERTED. `GameAudio` needs a device and a cooked bank before it will play
+// anything, so a test cannot watch a voice start; what it CAN watch is the
+// refusal, which is why the counter exists at all. The check sits above
+// `cueFor` deliberately — a cue from another system must not even look its
+// sample up, because the cost being avoided is the instance cap, not the mix.
+SOL_TEST(the_ear_refuses_a_positional_cue_from_a_system_it_is_not_in)
+{
+    game::GameAudio audio;
+    SOL_REQUIRE(audio.listenerSystem() == 0);
+    audio.setListenerSystem(4);
+    SOL_CHECK(audio.listenerSystem() == 4);
+
+    audio.playAt(sol::audio::kNoSound, sol::core::DVec3{}, 9);
+    audio.playAt(sol::audio::kNoSound, sol::core::DVec3{}, 0);
+    SOL_CHECK(audio.outOfFrameCues() == 2);
+
+    // And a cue from the ear's own system is NOT refused — it goes on to the
+    // cue table and dies there for want of a device, which is a different
+    // thing and has to be, or the guard above would be indistinguishable from
+    // an audio system that never plays anything.
+    audio.playAt(sol::audio::kNoSound, sol::core::DVec3{}, 4);
+    SOL_CHECK(audio.outOfFrameCues() == 2);
+}
+
+// ⚑⚑⚑⚑ THE EAR CROSSES WITH THE PLAYER, NOT A TICK BEHIND THEM, AND THAT IS THE
+// WHOLE REASON THE LISTENER'S FRAME IS SET APART FROM THE LISTENER'S POSE. The
+// pose comes from the render loop, which runs after `world.tick` returns. A
+// jump happens INSIDE `tick`. Had the frame been taken from the same place as
+// the pose, then for one tick after every crossing the ear would have been in
+// the system the player just left — playing that system's shots and refusing
+// the arrival's. Both of the stage's errors at once, at exactly the moment the
+// phase is about.
+// ⚑⚑⚑⚑ THE BUG THIS STAGE'S FLIGHT FOUND, AND NO TEST IN THIS REPOSITORY
+// COULD HAVE: A NEW GAME THREW THE AUDIO DEVICE AWAY. `resetForNewGame` is
+// `*this = SpaceWorld{}` followed by `spawn`, which is right about everything
+// belonging to a RUN and wrong about the two pointers borrowed from `main`.
+// `m_defs` is put back by `applyDefs`; the device was not put back by anything.
+//
+// ⚑⚑⚑ AND THE GAME BOOTS TO A MENU, SO THIS IS NOT AN EDGE CASE - IT IS EVERY
+// SESSION. The first thing anyone does is start a run. From that moment
+// `m_audio` was null at every cue site in the game, all of which are written
+// `if (m_audio != nullptr)` so that a machine with no sound card still plays.
+// The result is total silence for everything except the UI clicks, which go
+// through `GameContent`'s own copy of the pointer.
+//
+// ⚑⚑ THE SEAM IS THE LISTENER'S FRAME, WHICH IS WHY THIS TEST CAN EXIST AT
+// ALL. Before stage D there was nothing the world wrote into `GameAudio` that
+// a test could read back without a device, so "does the world still hold the
+// device" was unaskable from outside. It is askable now: scribble a system
+// number no galaxy has onto the ear, reset, and see whether anything wrote
+// over it.
+SOL_TEST(a_new_game_keeps_the_audio_device_it_was_handed)
+{
+    Galaxy g;
+    game::GameAudio audio;
+    g.world.setAudio(&audio);
+    SOL_REQUIRE(audio.listenerSystem() == g.world.currentSystemIndex());
+
+    constexpr std::uint32_t kScribble = 0xBADF00Du; // no galaxy has this system
+    audio.setListenerSystem(kScribble);
+    g.world.resetForNewGame(game::kDefaultUniverseSeed);
+
+    SOL_CHECK(audio.listenerSystem() != kScribble); // something wrote to it
+    SOL_CHECK(audio.listenerSystem() == g.world.currentSystemIndex());
+    g.world.setAudio(nullptr);
+}
+
+SOL_TEST(the_ear_changes_system_in_the_same_statement_the_player_does)
+{
+    Galaxy g;
+    const std::uint32_t elsewhere = g.furnishedSystem(0);
+    const std::uint32_t third = g.furnishedSystem(1);
+    SOL_REQUIRE(elsewhere != 0xffff'ffffu && third != 0xffff'ffffu && elsewhere != third);
+    SOL_REQUIRE(g.world.enterSystem(elsewhere));
+
+    // ⚑ ATTACHED AFTER THE GALAXY EXISTS AND AFTER A CROSSING, BECAUSE THAT IS
+    // THE REAL ORDER: `content.initialize` runs the generator, and `main.cpp`
+    // hands the device over afterwards. So the ear cannot wait for the next
+    // jump to learn where it is - it has to be told as it is attached, or every
+    // positional cue until then is refused as foreign.
+    game::GameAudio audio;
+    SOL_REQUIRE(audio.listenerSystem() != elsewhere); // it starts in 0 and is not there
+    g.world.setAudio(&audio);
+    SOL_CHECK(audio.listenerSystem() == elsewhere);
+
+    // And thereafter it crosses in the same statement the player does.
+    SOL_REQUIRE(g.world.enterSystem(third));
+    SOL_CHECK(audio.listenerSystem() == third);
+    SOL_CHECK(audio.listenerSystem() == g.world.currentSystemIndex());
+
+    g.world.setAudio(nullptr);
 }
