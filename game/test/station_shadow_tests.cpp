@@ -123,13 +123,20 @@ SOL_TEST(a_station_names_a_shadow_operator_exactly_when_it_has_a_shadow_module)
     SOL_CHECK(withModule < stations); // and it is a minority, not the default
 }
 
-// ⚑⚑ THE RULING, AS A TEST: the operator is a pirate clan, never a major and
-// never the law. Ruled 2026-08-31 - Phase 37's shadow faction has not shipped,
-// so a field pointed at it would be a null column on all 125 stations; a clan is
-// a criminal organisation that already exists and already fences past `min_rep`.
-// When Phase 37 stage A adds `kind = "shadow"`, this is the assertion that has
-// to be re-pointed, and it says so.
-SOL_TEST(a_shadow_operator_is_always_a_pirate_clan)
+// ⚑⚑⚑⚑ THE RULING, RE-POINTED EXACTLY AS THE OLD ONE SAID IT WOULD BE. This
+// test used to read `a_shadow_operator_is_always_a_pirate_clan`, and its comment
+// ended "when Phase 37 adds `kind = \"shadow\"`, this is the assertion that has to
+// be re-pointed, and it says so." Phase 34 stage E chose a clan because the
+// shadow faction had not shipped and a field pointed at nothing would have been
+// a null column on all 125 stations calling itself vocabulary. It has shipped.
+//
+// ⚑⚑⚑ AND THE ASSERTION GOT STRONGER RATHER THAN JUST DIFFERENT. "A clan" was
+// a statement about a KIND and left ten candidates; this is a statement about
+// an IDENTITY and leaves one, so every fence in the galaxy answering to the
+// same people is now a thing a test can say. That is ruling 1 of the phase -
+// one hand-authored black market, so the opposed axis is one number - checked
+// against the galaxy rather than against the def file.
+SOL_TEST(a_shadow_operator_is_always_the_one_black_market)
 {
     DefDatabase defs;
     SOL_REQUIRE(loadShippedDefs(defs));
@@ -137,8 +144,10 @@ SOL_TEST(a_shadow_operator_is_always_a_pirate_clan)
     SOL_REQUIRE(buildShippedGalaxy(defs, world));
     SOL_REQUIRE(!world.factions().empty());
 
+    const std::uint32_t shadow = world.shadowFactionIndex();
+    SOL_REQUIRE(shadow != sol::sim::kNoFaction);
+
     std::size_t checked = 0;
-    std::vector<std::uint32_t> operators;
     for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
         const auto& list = world.galaxy().systems[s].stations;
         for (std::uint32_t t = 0; t < list.size(); ++t) {
@@ -148,41 +157,37 @@ SOL_TEST(a_shadow_operator_is_always_a_pirate_clan)
             }
             ++checked;
             SOL_REQUIRE(owner < world.factions().size());
-            if (!world.factions()[owner].pirate()) {
-                std::printf("  %s is run by %s, which is not a clan\n",
+            if (owner != shadow) {
+                std::printf("  %s is run by %s, not the black market\n",
                             list[t].name.c_str(),
                             world.factions()[owner].name.c_str());
             }
-            SOL_CHECK(world.factions()[owner].pirate());
-            operators.push_back(owner);
+            SOL_CHECK(owner == shadow);
+            SOL_CHECK(world.factions()[owner].shadow());
+            // ⚑ And never the law: a faction that claims nothing is never a
+            // holder, so a fence is never the local authority's own shop. That
+            // used to be a comparison this pass had to make by hand.
+            SOL_CHECK(owner != world.systemOwnerFaction(s));
         }
     }
-
-    std::sort(operators.begin(), operators.end());
-    const std::size_t distinct =
-        static_cast<std::size_t>(std::unique(operators.begin(), operators.end()) - operators.begin());
-    std::printf("  %zu shadow operator(s) drawn from %zu distinct clan(s)\n", checked, distinct);
+    std::printf("  %zu operator(s), all of them %s\n", checked, world.factions()[shadow].name.c_str());
     SOL_REQUIRE(checked > 0);
-    // A uniform roll over ten clans that produced one name every time would be a
-    // picker reading a constant, which is the failure a "they are all clans"
-    // check cannot see on its own.
-    SOL_CHECK(distinct > 1);
 }
 
-// ⚑⚑⚑ THE RULE THAT MAKES THE FIELD MEAN ANYTHING: a fence the local boss runs
-// is his own shop, not a shadow presence. The composer skips the FOUNDING
-// holder, which is all it can see - `initializeFactions` has not run when it
-// draws - and this checks that half. Test 5 checks the half that has to survive
-// the border moving.
+// ⚑⚑⚑⚑ THE FOUNDER RULE IS RETIRED AND THIS IS WHAT SURVIVED IT (Phase 37
+// stage C). Phase 34 stage E had a real problem: the operator was a pirate clan,
+// a clan founds systems, and a fence run by the clan that founded the place is
+// the local boss's own shop rather than a shadow presence. So the picker stepped
+// off the founding holder, and `no_station_hosts_the_shadow_operation_of_the_
+// clan_that_founded_it` guarded it.
 //
-// ⚑⚑ AND THIS TEST IS VACUOUS ON THE SHIPPED SEED, WHICH IS WRITTEN DOWN HERE
-// RATHER THAN LEFT TO BE REDISCOVERED. Measured: deleting the skip from
-// `assignShadowOwners` leaves this assertion - and every other one in the
-// project - green, because at seed 1701 none of the ten rolls lands on its own
-// founder. What it really guards is that the field never drifts INTO that state;
-// the rule itself is guarded by `the_picking_rule_steps_off_a_founder_it_lands_on`
-// below, which is why that test exists at all.
-SOL_TEST(no_station_hosts_the_shadow_operation_of_the_clan_that_founded_it)
+// ⚑⚑⚑ THE RULE DID NOT BECOME WRONG - ITS SUBJECT WENT AWAY. There is one
+// black market now and it claims nothing, so it can never found or hold
+// anything, and "the operator is not the founder" is true by construction at
+// every station in every galaxy. Kept as an assertion rather than deleted with
+// the picker, because it is the property the design still depends on: the day
+// somebody gives the shadow faction a capital, this is what says so.
+SOL_TEST(the_black_market_never_runs_a_fence_in_ground_it_founded)
 {
     DefDatabase defs;
     SOL_REQUIRE(loadShippedDefs(defs));
@@ -190,7 +195,6 @@ SOL_TEST(no_station_hosts_the_shadow_operation_of_the_clan_that_founded_it)
     SOL_REQUIRE(buildShippedGalaxy(defs, world));
 
     std::size_t checked = 0;
-    std::size_t underClanLaw = 0;
     for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
         const sol::sim::SystemSpec& system = world.galaxy().systems[s];
         for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
@@ -199,115 +203,44 @@ SOL_TEST(no_station_hosts_the_shadow_operation_of_the_clan_that_founded_it)
                 continue;
             }
             ++checked;
-            if (system.factionIndex < world.factions().size() &&
-                world.factions()[system.factionIndex].pirate()) {
-                ++underClanLaw; // a dock already under clan law, hosting a RIVAL clan's fence
-            }
-            if (owner == system.factionIndex) {
-                std::printf(
-                    "  %s is founded by and fenced for faction %u\n", system.stations[t].name.c_str(), owner);
-            }
-            SOL_CHECK(owner != system.factionIndex);
-            // And it is a shadow presence at t = 0, when the live owner and the
-            // founding claim still agree - the reading the plan's own sentence
-            // asks for, checked at the one moment it is easy.
-            SOL_CHECK(world.stationHasShadowPresence(s, t));
+            SOL_CHECK(owner != system.factionIndex);         // the founding claim
+            SOL_CHECK(owner != world.systemOwnerFaction(s)); // and the live holder
         }
     }
-    std::printf("  %zu operator(s) checked, %zu of them on docks under clan law\n", checked, underClanLaw);
+    std::printf("  %zu fence(s), none of them in their operator's own space\n", checked);
     SOL_REQUIRE(checked > 0);
 }
 
-// ⚑⚑⚑⚑ AND THIS IS THE ONE THAT ACTUALLY GUARDS THE SKIP, BECAUSE THE TEST
-// ABOVE CANNOT. Measured while writing this file: at seed 1701 no roll lands on
-// its own founder - ten shadow stations against ten clans - so deleting the skip
-// from the composer outright leaves the entire suite green. A rule the shipped
-// galaxy never exercises is a rule with no test behind it, whatever a
-// galaxy-level assertion appears to say about it. So the rule is a function, and
-// this hands it the case the galaxy declines to produce.
-SOL_TEST(the_picking_rule_steps_off_a_founder_it_lands_on)
-{
-    constexpr std::uint32_t kBase = 5;  // five majors, clans start here
-    constexpr std::uint32_t kClans = 4; // indices 5, 6, 7, 8
+// ⚑⚑⚑⚑ `the_picking_rule_steps_off_a_founder_it_lands_on` LIVED HERE AND WENT
+// WITH THE RULE IT TESTED (Phase 37 stage C). It existed for a measured reason
+// worth keeping on the record: the shipped seed never exercised the skip - ten
+// shadow stations, ten clans, and at 1701 no roll landed on its own founder - so
+// the galaxy-level guard above was VACUOUSLY TRUE and deleting the skip entirely
+// left the whole suite green. The answer was a named function a test could hand
+// the case the galaxy declined to produce.
+//
+// ⚑⚑ `shadowOperatorFor` IS DELETED NOW, and with it the roll, the step-off and
+// the single-clan case: against one hand-authored black market the whole
+// function collapses to a constant. A test for a function that no longer exists
+// is not a test, and this note is here so the vacuity finding is not lost with
+// it - it is the reason `where_the_shadow_row_sits_in_def_order_changes_nothing_
+// about_the_galaxy` in `shadow_faction_tests.cpp` was written the way it was.
 
-    // The ordinary case: nobody to avoid, the roll is the answer.
-    SOL_CHECK(game::SpaceWorld::shadowOperatorFor(0, kBase, kClans, sol::sim::kNoFaction) == 5);
-    SOL_CHECK(game::SpaceWorld::shadowOperatorFor(3, kBase, kClans, sol::sim::kNoFaction) == 8);
-
-    // The case the shipped seed never produces: the roll names the founder.
-    SOL_CHECK(game::SpaceWorld::shadowOperatorFor(0, kBase, kClans, 5) == 6);
-    SOL_CHECK(game::SpaceWorld::shadowOperatorFor(2, kBase, kClans, 7) == 8);
-    // ...including the wrap, which a "+1" with no modulo would run off the end.
-    SOL_CHECK(game::SpaceWorld::shadowOperatorFor(3, kBase, kClans, 8) == 5);
-
-    // A major founded the place: no clan is ever the founder, so no step.
-    SOL_CHECK(game::SpaceWorld::shadowOperatorFor(1, kBase, kClans, 2) == 6);
-
-    // The degenerate galaxies, where the honest answer is nobody.
-    SOL_CHECK(game::SpaceWorld::shadowOperatorFor(0, kBase, 0, sol::sim::kNoFaction) == sol::sim::kNoFaction);
-    SOL_CHECK(game::SpaceWorld::shadowOperatorFor(0, kBase, 1, 5) == sol::sim::kNoFaction);
-}
-
-// ⚑⚑⚑⚑ THE ONE THIS FILE IS FOR. Hand the system to the very clan that runs its
-// fence and the fence stops being a shadow presence, because it is now the
-// local boss's own shop - while the OPERATOR does not move, because who runs it
-// was never a fact about the border. A stored verdict passes tests 1-3 and fails
-// this one, which is exactly the discrimination the stage needed and exactly
-// what no t = 0 test can provide.
-SOL_TEST(a_clan_that_takes_a_system_inherits_its_own_fence_and_it_stops_being_shadow)
-{
-    DefDatabase defs;
-    SOL_REQUIRE(loadShippedDefs(defs));
-    game::SpaceWorld world;
-    SOL_REQUIRE(buildShippedGalaxy(defs, world));
-
-    // The first dock in the galaxy with an operator on it.
-    std::uint32_t system = 0;
-    std::uint32_t station = 0;
-    std::uint32_t owner = sol::sim::kNoFaction;
-    for (std::uint32_t s = 0; s < world.galaxy().systems.size() && owner == sol::sim::kNoFaction; ++s) {
-        const auto& list = world.galaxy().systems[s].stations;
-        for (std::uint32_t t = 0; t < list.size(); ++t) {
-            if (world.stationShadowOwner(s, t) != sol::sim::kNoFaction) {
-                system = s;
-                station = t;
-                owner = world.stationShadowOwner(s, t);
-                break;
-            }
-        }
-    }
-    SOL_REQUIRE(owner != sol::sim::kNoFaction);
-    SOL_REQUIRE(owner < world.factions().size());
-
-    const std::uint32_t before = world.systemOwnerFaction(system);
-    std::printf("  %s: held by %u, fenced for %s\n",
-                world.galaxy().systems[system].name.c_str(),
-                before,
-                world.factions()[owner].name.c_str());
-    SOL_REQUIRE(before != owner); // otherwise the flip below proves nothing
-    SOL_CHECK(world.stationHasShadowPresence(system, station));
-
-    // The dev/test lever Phase 8u left for exactly this: hand the place over.
-    SOL_REQUIRE(world.factionSim().flipSystem(system, owner));
-    SOL_CHECK(world.systemOwnerFaction(system) == owner);
-
-    // The operator is untouched - it is a fact about the station, not the border.
-    SOL_CHECK(world.stationShadowOwner(system, station) == owner);
-    // And the verdict has moved with the border, which is the whole stage.
-    std::printf("  after the flip: operator %u, shadow presence %d\n",
-                world.stationShadowOwner(system, station),
-                world.stationHasShadowPresence(system, station) ? 1 : 0);
-    SOL_CHECK(!world.stationHasShadowPresence(system, station));
-
-    // Hand it back to somebody else and it is a shadow presence again. A
-    // one-way check would pass on a function that simply returned false after
-    // any flip at all.
-    const std::uint32_t other = owner == 0 ? 1u : 0u;
-    SOL_REQUIRE(other < world.factions().size());
-    SOL_REQUIRE(world.factionSim().flipSystem(system, other));
-    SOL_CHECK(world.stationShadowOwner(system, station) == owner);
-    SOL_CHECK(world.stationHasShadowPresence(system, station));
-}
+// ⚑⚑⚑⚑ AND THE TEST THIS FILE WAS WRITTEN FOR IS GONE TOO, WHICH IS THE
+// LOUDEST THING IN THIS COMMIT AND IS NOT A REGRESSION.
+// `a_clan_that_takes_a_system_inherits_its_own_fence_and_it_stops_being_shadow`
+// handed a system to the very clan running its fence and checked that the fence
+// stopped being a shadow presence while the OPERATOR did not move. It was the
+// only test in the project that could tell a stored verdict from a derived one,
+// and the file's own header calls it "the one this file exists for".
+//
+// ⚑⚑⚑ IT CANNOT BE WRITTEN AGAINST THE SHIPPED DESIGN ANY MORE, because its
+// premise - that the operator is somebody who can hold territory - is exactly
+// what ruling 1 of Phase 37 removed. `stationHasShadowPresence` is now
+// `shadowOwner != kNoFaction` and there is nothing left to derive. ⚑ What
+// replaced its guarantee is `the_black_market_never_runs_a_fence_in_ground_it_
+// founded` above, which asserts the same property from the other end: not "the
+// comparison still works" but "the thing it compared can never happen".
 
 // ⚑ Derived from the seed and never serialized, the rule the whole phase runs
 // on: two worlds built from one seed name the same operators, and the field is

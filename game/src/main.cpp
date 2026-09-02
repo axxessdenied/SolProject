@@ -522,6 +522,7 @@ int main(int argc, char** argv)
     std::vector<std::uint32_t> tradeCommodity;
     std::vector<sol::ui::MountRow> mountRows;
     std::vector<sol::ui::OutfitRow> componentRows;
+    std::vector<sol::ui::OutfitRow> blackMarketRows;
     std::vector<sol::ui::OutfitRow> weaponRows;
     std::vector<sol::ui::OutfitRow> crewCatalogRows;
     std::vector<sol::ui::OutfitRow> crewAboardRows;
@@ -1608,6 +1609,15 @@ int main(int argc, char** argv)
                     .stock = world.economy().stock(market, i),
                     .cargo = world.playerCargo(i),
                 };
+                // ⚑⚑⚑ WHICH COUNTER SELLS IT (Phase 37 stage C), AND IT COMES OFF
+                // THE GOODS CLASS RATHER THAN OFF THE LAW. `illicit` is the class
+                // no lawful station module warehouses, so a station stocking one
+                // of these has a back room by definition - the row is on this
+                // list at all only because `dockedStationStocks` said yes, and
+                // that is capacity, which for this class only a shadow module
+                // provides. Nothing has to look up the operator to know which
+                // shelf the crate is on.
+                row.backRoom = world.commodityClass(i) == sol::assets::GoodsClass::Illicit;
                 // What the holder of THIS system says about the good (Phase 33
                 // stage D). `Unpoliced` never reaches a row - it is a fact
                 // about the system and is shown once, on the panel.
@@ -1670,6 +1680,7 @@ int main(int argc, char** argv)
                                         stationPanel,
                                         mountRows,
                                         componentRows,
+                                        blackMarketRows,
                                         weaponRows,
                                         crewCatalogRows,
                                         crewAboardRows,

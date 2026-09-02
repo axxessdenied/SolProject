@@ -372,7 +372,16 @@ constexpr std::uint64_t kGoldenStructure = 0x06BC021EC816F5E8ull;
 // distinct compositions and 130 plants are all UNCHANGED from stage C, and only
 // the two docks that gained a clinic differ. A resample would have moved all
 // three, which is exactly what an added row did in stage A.
-constexpr std::uint64_t kGoldenComposition = 0xC739BB34ACDCFB4Bull;
+// ⚑⚑⚑⚑ AND A FOURTH TIME IN PHASE 37 STAGE C, FOR A REASON THE PHASE NAMED IN
+// ADVANCE AND WHICH IS THE OPPOSITE OF STAGE B'S. Stage B added a whole faction
+// and this number was required NOT to move - that was its strongest assertion.
+// Stage C re-points `StationSpec::shadowOwner` from a per-station pirate-clan
+// roll at The Ninth Shift, and this digest hashes that field per station
+// precisely so the re-point is visible. ⚑ THE EVIDENCE THAT IT IS THE RIGHT
+// MOVE IS THE COUNTS BESIDE IT: 125 stations, 119 distinct compositions and 8
+// shadow docks are ALL UNCHANGED. Nothing was resampled; one column was
+// rewritten, which is what the stage said it would do.
+constexpr std::uint64_t kGoldenComposition = 0xFD691E40F45D9348ull;
 
 // ⚑ One row per C library this project has actually built and run on. A libm
 // that is not listed is REPORTED, not failed: nothing is broken on a machine

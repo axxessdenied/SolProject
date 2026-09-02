@@ -42,7 +42,18 @@ constexpr float kNumberWidth = 82.0f;
 constexpr Color kCampaign = rgba(0xF2CC59FFu);
 
 constexpr const char* const kTabLabels[StationScreenState::TabCount] = {
-    "Trade", "Outfitting", "Shipyard", "Crew", "Factions", "Missions", "Survey", "Refinery", "Bar"};
+    "Trade",
+    "Outfitting",
+    "Shipyard",
+    "Crew",
+    "Factions",
+    "Missions",
+    "Survey",
+    "Refinery",
+    "Bar",
+    // ⚑ Two words the player reads, where the def spelling is `black_market`.
+    // The strip owns its labels; the assets layer owns the keyword.
+    "Black Market"};
 
 // ---------------------------------------------------------------------------
 // The tab strip is a filter over what the station is made of (Phase 34 stage C).
@@ -78,6 +89,8 @@ static_assert(static_cast<int>(StationScreenState::Survey) ==
 static_assert(static_cast<int>(StationScreenState::Refinery) ==
               static_cast<int>(sol::assets::StationScreen::Refinery));
 static_assert(static_cast<int>(StationScreenState::Bar) == static_cast<int>(sol::assets::StationScreen::Bar));
+static_assert(static_cast<int>(StationScreenState::BlackMarket) ==
+              static_cast<int>(sol::assets::StationScreen::BlackMarket));
 
 // The identity mapping above is what lets one bit index serve both, so
 // `panel.screens` is read here with the tab's own number.
@@ -407,6 +420,102 @@ struct TradeCells
     return cells;
 }
 
+// ⚑⚑⚑⚑ ONE GOODS ROW, DRAWN BY BOTH COUNTERS (Phase 37 stage C). The dock
+// has two of them at a station with a back room, and the row is the same
+// object either side of the curtain: same price, same stock, same Buy. Lifting
+// it out of `buildTradeTab` rather than writing a second loop is this file's
+// own standing rule - `game::formatDistance` and `map_ui.cpp`'s copy of it are
+// the counter-example, and that one has already drifted.
+//
+// ⚑⚑ `visual` IS SEPARATE FROM `index` BECAUSE THE TWO SHELVES ARE FILTERED
+// VIEWS OF ONE LIST. `index` is what the trade action means - a position in
+// `panel.trade.rows`, which is what maps back to a commodity - and `visual` is
+// only the alternating row background. Folding them would make the second
+// counter's Buy button move the wrong crate.
+void tradeGoodsRow(
+    UiContext& ui, StationPanel& panel, Column& column, int index, int visual, float amount, float cargoFree)
+{
+    const auto& theme = ui.theme();
+    const TradeRow& goods = panel.trade.rows[static_cast<std::size_t>(index)];
+    char buffer[64] = {};
+    const Rect row = column.row(kRowHeight);
+    rowBackground(ui, row, visual);
+    const TradeCells cells = tradeCells(ui, row);
+    ui.pushId(index);
+
+    // ⚑⚑ THE TAG TAKES ITS SPACE OUT OF THE NAME CELL AND IS DRAWN FIRST,
+    // so a long commodity name elides and the word CONTRABAND never does.
+    // That ordering is the whole reason this is not one formatted string:
+    // the tag is the only part of the row a player can be arrested over.
+    //
+    // ⚑ No new theme colour. `negative` for forbidden and `accent` for
+    // licensed are the two the theme already has, and they happen to say
+    // the right things - danger and information - while the WORD carries
+    // the meaning either way. A third severity colour would be a change to
+    // every screen in the game for one column.
+    Rect nameCell = cells.name;
+    if (goods.legality != TradeLegality::Legal) {
+        const bool forbidden = goods.legality == TradeLegality::Contraband;
+        Row nameCursor(cells.name, theme.spacing);
+        const Rect tag = nameCursor.cellFromRight(kLegalityWidth);
+        nameCell = nameCursor.remaining();
+        clipped(ui,
+                tag,
+                forbidden ? "CONTRABAND" : "RESTRICTED",
+                forbidden ? theme.negative : theme.accent,
+                theme.smallStyle,
+                TextAlign::Right);
+    }
+    clipped(ui, nameCell, goods.name, theme.textPrimary, theme.strongStyle);
+    std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(goods.price));
+    clipped(ui, cells.price, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
+
+    // Best price seen elsewhere. Green when it beats the local price by
+    // enough to be worth the trip, dim when the reading has gone stale —
+    // the market has moved since, and pretending otherwise would make
+    // bought intel a one-time unlock instead of something worth
+    // refreshing.
+    if (goods.hasElsewhere) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%.2f  %s  %s",
+                      static_cast<double>(goods.elsewherePrice),
+                      goods.elsewhereName,
+                      goods.elsewhereAge);
+        const bool worthIt = goods.elsewherePrice > goods.price * 1.15f;
+        const auto color = goods.elsewhereStale ? theme.textDim
+                           : worthIt            ? theme.positive
+                                                : theme.textPrimary;
+        clipped(ui, cells.elsewhere, buffer, color, theme.smallStyle, TextAlign::Right);
+    } else {
+        clipped(ui, cells.elsewhere, "-", theme.textDim, theme.smallStyle, TextAlign::Right);
+    }
+
+    std::snprintf(buffer, sizeof(buffer), "%.0f", static_cast<double>(goods.stock));
+    clipped(ui, cells.stock, buffer, theme.textDim, theme.bodyStyle, TextAlign::Right);
+    std::snprintf(buffer, sizeof(buffer), "%.0f", static_cast<double>(goods.cargo));
+    clipped(ui,
+            cells.held,
+            buffer,
+            goods.cargo > 0.0f ? theme.accent : theme.textDim,
+            theme.bodyStyle,
+            TextAlign::Right);
+
+    // The world clamps a trade to credits, hold space, and stock, so a
+    // button is disabled only when it could do nothing at all.
+    const bool canBuy =
+        goods.stock > 0.0f && cargoFree >= 1.0f && panel.trade.credits >= static_cast<double>(goods.price);
+    const bool canSell = goods.cargo > 0.0f;
+    if (ui.button(inset(cells.buy, 2.0f), "Buy", canBuy)) {
+        panel.trade.action = {.row = index, .units = amount, .isBuy = true};
+    }
+    if (ui.button(inset(cells.sell, 2.0f), "Sell", canSell)) {
+        panel.trade.action = {.row = index, .units = amount, .isBuy = false};
+    }
+
+    ui.popId();
+}
+
 void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
 {
     const auto& theme = ui.theme();
@@ -466,7 +575,15 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
 
     const Rect captionRow = outer.row(24.0f);
     const Rect view = outer.remaining();
-    const float contentHeight = listHeight(ui, panel.trade.rows.size());
+    // ⚑ Counted rather than taken from the span, since Phase 37 stage C: the
+    // back room's rows are in `panel.trade.rows` and are not drawn here, and a
+    // scroll region sized for rows that are not there is a screen that scrolls
+    // past its own end.
+    std::size_t shown = 0;
+    for (const TradeRow& goods : panel.trade.rows) {
+        shown += goods.backRoom ? 0u : 1u;
+    }
+    const float contentHeight = listHeight(ui, shown);
     const float barInset = scrollbarInset(ui, view, contentHeight);
     const TradeCells captions =
         tradeCells(ui, {captionRow.min, {captionRow.max.x - barInset, captionRow.max.y}});
@@ -482,85 +599,18 @@ void buildTradeTab(UiContext& ui, StationPanel& panel, StationScreenState& state
     const float cargoFree = panel.trade.cargoCapacity - panel.trade.cargoUsed;
 
     ui.pushId("goods");
-    char buffer[64] = {};
+    int visual = 0;
     for (int i = 0; i < static_cast<int>(panel.trade.rows.size()); ++i) {
-        const TradeRow& goods = panel.trade.rows[static_cast<std::size_t>(i)];
-        const Rect row = column.row(kRowHeight);
-        rowBackground(ui, row, i);
-        const TradeCells cells = tradeCells(ui, row);
-        ui.pushId(i);
-
-        // ⚑⚑ THE TAG TAKES ITS SPACE OUT OF THE NAME CELL AND IS DRAWN FIRST,
-        // so a long commodity name elides and the word CONTRABAND never does.
-        // That ordering is the whole reason this is not one formatted string:
-        // the tag is the only part of the row a player can be arrested over.
-        //
-        // ⚑ No new theme colour. `negative` for forbidden and `accent` for
-        // licensed are the two the theme already has, and they happen to say
-        // the right things - danger and information - while the WORD carries
-        // the meaning either way. A third severity colour would be a change to
-        // every screen in the game for one column.
-        Rect nameCell = cells.name;
-        if (goods.legality != TradeLegality::Legal) {
-            const bool forbidden = goods.legality == TradeLegality::Contraband;
-            Row nameCursor(cells.name, theme.spacing);
-            const Rect tag = nameCursor.cellFromRight(kLegalityWidth);
-            nameCell = nameCursor.remaining();
-            clipped(ui,
-                    tag,
-                    forbidden ? "CONTRABAND" : "RESTRICTED",
-                    forbidden ? theme.negative : theme.accent,
-                    theme.smallStyle,
-                    TextAlign::Right);
+        // ⚑⚑⚑ THE BACK ROOM'S STOCK IS NOT ON THIS SHELF (Phase 37 stage C).
+        // Until this stage the illicit goods were listed here, at market price,
+        // with a Buy button and no sign of whose counter it was - which is
+        // exactly what the stage sequence predicted and exactly what it was
+        // asked to fix. They are the same rows; they are drawn on the Black
+        // Market tab instead.
+        if (panel.trade.rows[static_cast<std::size_t>(i)].backRoom) {
+            continue;
         }
-        clipped(ui, nameCell, goods.name, theme.textPrimary, theme.strongStyle);
-        std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(goods.price));
-        clipped(ui, cells.price, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
-
-        // Best price seen elsewhere. Green when it beats the local price by
-        // enough to be worth the trip, dim when the reading has gone stale —
-        // the market has moved since, and pretending otherwise would make
-        // bought intel a one-time unlock instead of something worth
-        // refreshing.
-        if (goods.hasElsewhere) {
-            std::snprintf(buffer,
-                          sizeof(buffer),
-                          "%.2f  %s  %s",
-                          static_cast<double>(goods.elsewherePrice),
-                          goods.elsewhereName,
-                          goods.elsewhereAge);
-            const bool worthIt = goods.elsewherePrice > goods.price * 1.15f;
-            const auto color = goods.elsewhereStale ? theme.textDim
-                               : worthIt            ? theme.positive
-                                                    : theme.textPrimary;
-            clipped(ui, cells.elsewhere, buffer, color, theme.smallStyle, TextAlign::Right);
-        } else {
-            clipped(ui, cells.elsewhere, "-", theme.textDim, theme.smallStyle, TextAlign::Right);
-        }
-
-        std::snprintf(buffer, sizeof(buffer), "%.0f", static_cast<double>(goods.stock));
-        clipped(ui, cells.stock, buffer, theme.textDim, theme.bodyStyle, TextAlign::Right);
-        std::snprintf(buffer, sizeof(buffer), "%.0f", static_cast<double>(goods.cargo));
-        clipped(ui,
-                cells.held,
-                buffer,
-                goods.cargo > 0.0f ? theme.accent : theme.textDim,
-                theme.bodyStyle,
-                TextAlign::Right);
-
-        // The world clamps a trade to credits, hold space, and stock, so a
-        // button is disabled only when it could do nothing at all.
-        const bool canBuy = goods.stock > 0.0f && cargoFree >= 1.0f &&
-                            panel.trade.credits >= static_cast<double>(goods.price);
-        const bool canSell = goods.cargo > 0.0f;
-        if (ui.button(inset(cells.buy, 2.0f), "Buy", canBuy)) {
-            panel.trade.action = {.row = i, .units = amount, .isBuy = true};
-        }
-        if (ui.button(inset(cells.sell, 2.0f), "Sell", canSell)) {
-            panel.trade.action = {.row = i, .units = amount, .isBuy = false};
-        }
-
-        ui.popId();
+        tradeGoodsRow(ui, panel, column, i, visual++, amount, cargoFree);
     }
     ui.popId();
     ui.endScroll();
@@ -1145,6 +1195,110 @@ void buildBarTab(UiContext& ui, StationPanel& panel, StationScreenState& state, 
 
 } // namespace
 
+// --- The back room (Phase 37 stage C) ---------------------------------------
+
+// ⚑⚑⚑⚑ THE FENCE'S COUNTER, AND IT IS A PLACE RATHER THAN A FORMATTING
+// CHANGE. Before this stage the illicit goods sat on the ordinary Trade tab at
+// eight docks - market price, Buy button, no legality label, and nothing at all
+// saying whose counter it was. The playtest note on it was exact: "what the
+// stage sequence predicted, and still worth a look." This is the look.
+//
+// ⚑⚑⚑ THE HEADING IS THE FEATURE. `017` says the black market is a FACTION
+// and not a place, so the one thing this screen must do that the Trade tab
+// could not is say the faction's name - the same name the Factions tab carries
+// a standing for. Everything else here is a shelf.
+//
+// ⚑⚑ TWO SECTIONS, NOT TWO TABS, because they are one counter: cargo the
+// lawful galaxy has nowhere to put, and kit no lawful outfitter carries. A
+// player who came to sell a crate should see what the money is for without
+// changing screens.
+void buildBlackMarketTab(UiContext& ui, StationPanel& panel, StationScreenState& state, const Rect& content)
+{
+    const auto& theme = ui.theme();
+    std::size_t goods = 0;
+    for (const TradeRow& row : panel.trade.rows) {
+        goods += row.backRoom ? 1u : 0u;
+    }
+    const float contentHeight = (kSectionHeight + theme.spacing) * 2.0f +
+                                listHeight(ui, std::max<std::size_t>(goods, 1)) +
+                                listHeight(ui, std::max<std::size_t>(panel.blackMarketCatalog.size(), 1));
+    const Rect list = ui.beginScroll(content, contentHeight, state.scroll[StationScreenState::BlackMarket]);
+    Column column(list, 0.0f, theme.spacing);
+
+    // Whose back room this is. Never empty where the tab is on the strip - the
+    // tab is on the strip exactly where a shadow module composed, and a shadow
+    // module has an operator - so there is no "unknown" case to word.
+    char heading[128] = {};
+    std::snprintf(heading,
+                  sizeof(heading),
+                  "%s%s",
+                  panel.fenceOperator[0] != '\0' ? panel.fenceOperator : "The back room",
+                  panel.fenceOperator[0] != '\0' ? " - the back room" : "");
+    sectionHeader(ui, column.row(kSectionHeight), heading);
+
+    const float amount = kTradeAmounts[state.tradeAmount];
+    const float cargoFree = panel.trade.cargoCapacity - panel.trade.cargoUsed;
+    ui.pushId("contraband");
+    int visual = 0;
+    for (int i = 0; i < static_cast<int>(panel.trade.rows.size()); ++i) {
+        if (!panel.trade.rows[static_cast<std::size_t>(i)].backRoom) {
+            continue;
+        }
+        tradeGoodsRow(ui, panel, column, i, visual++, amount, cargoFree);
+    }
+    if (goods == 0) {
+        clipped(ui, column.row(kRowHeight), "Nothing in the hold today.", theme.textDim, theme.bodyStyle);
+    }
+    ui.popId();
+
+    sectionHeader(ui, column.row(kSectionHeight), "Kit");
+    ui.pushId("blackmarket");
+    for (int i = 0; i < static_cast<int>(panel.blackMarketCatalog.size()); ++i) {
+        const OutfitRow& item = panel.blackMarketCatalog[static_cast<std::size_t>(i)];
+        const Rect row = column.row(kRowHeight);
+        rowBackground(ui, row, i);
+        Row cursor(row, theme.spacing);
+        ui.pushId(i);
+        // ⚑⚑ A LOCKED ROW TAKES A WIDER CELL THAN A BUTTON, because the whole
+        // reason it is on the screen is the sentence in it. "Needs 25 with The
+        // Ninth Shift" drawn into a 78px Buy-button cell elides to "Need..." -
+        // the same defect Phase 35 stage A and Phase 36's roster readout each
+        // paid for once, and both times only a screenshot caught it. The width
+        // is measured against the longest reason this content can produce, and
+        // `the_locked_row_is_on_the_shelf_and_says_what_it_would_take` keeps
+        // the two in step.
+        const bool locked = item.lockedReason[0] != '\0';
+        const Rect action = cursor.cellFromRight(locked ? kButtonWidth * 3.2f : kButtonWidth);
+        const Rect priceCell = cursor.cellFromRight(kNumberWidth);
+        const Rect nameCell = cursor.cellFromRight(cursor.remaining().width() * 0.42f);
+        clipped(ui, cursor.remaining(), item.name, theme.textPrimary, theme.strongStyle);
+        clipped(ui, nameCell, item.detail, theme.textDim, theme.smallStyle);
+        char buffer[64] = {};
+        std::snprintf(buffer, sizeof(buffer), "%.0f cr", static_cast<double>(item.price));
+        clipped(ui, priceCell, buffer, theme.textPrimary, theme.bodyStyle, TextAlign::Right);
+
+        // ⚑⚑⚑⚑ A LOCKED ROW SAYS WHAT IT COSTS, AND THAT IS THE WHOLE REASON
+        // IT IS ON THE SCREEN. Every other catalog in this game answers a gate
+        // by leaving the row OFF; this counter stocks the one thing in the game
+        // a player cannot have yet, and an empty shelf would have been
+        // indistinguishable from a fence with nothing to sell. The word is in
+        // `theme.accent` rather than `negative` because it is a price, not a
+        // refusal - somebody can pay it.
+        if (locked) {
+            clipped(ui, action, item.lockedReason, theme.accent, theme.smallStyle, TextAlign::Right);
+        } else if (ui.button(inset(action, 2.0f), "Buy", item.targetMount[0] != '\0')) {
+            panel.action = {
+                .kind = StationAction::Kind::BuyFitting, .id = item.id, .mount = item.targetMount};
+        }
+        ui.popId();
+    }
+    if (panel.blackMarketCatalog.empty()) {
+        clipped(ui, column.row(kRowHeight), "No kit on offer here.", theme.textDim, theme.bodyStyle);
+    }
+    ui.popId();
+    ui.endScroll();
+}
+
 bool stationTabOnStrip(const StationPanel& panel, int tab)
 {
     if (tab < 0 || tab >= StationScreenState::TabCount) {
@@ -1259,6 +1413,9 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
     case StationScreenState::Bar:
         buildBarTab(ui, panel, state, content);
         break;
+    case StationScreenState::BlackMarket:
+        buildBlackMarketTab(ui, panel, state, content);
+        break;
     default:
         break;
     }
@@ -1274,6 +1431,7 @@ bool buildStationScreen(UiContext& ui, StationPanel& panel, StationScreenState& 
         "Scan data sells anywhere; the further out it was taken, the more it pays.",
         "Refining takes time: leave the order and come back for it.",
         "What you hear in here is true; whether it is worth anything is your problem.",
+        "Nobody lawful has a hold for any of this; standing here is not standing anywhere else.",
     };
 
     Row footer(footerRow, theme.spacing);

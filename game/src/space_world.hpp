@@ -1726,42 +1726,26 @@ public:
     // about the station: the operator does not change when the border does.
     [[nodiscard]] std::uint32_t stationShadowOwner(std::uint32_t system, std::uint32_t station) const;
 
-    // Whether that operator is somebody other than the law here - which is what
-    // makes it a SHADOW presence rather than a facility.
+    // Whether there is a back room here at all - a counter somebody other than
+    // the law is standing behind.
     //
-    // ⚑⚑⚑⚑ DERIVED PER CALL AND NEVER STORED, AND THIS IS THE WHOLE POINT OF
-    // THE STAGE. It reads `systemOwnerFaction`, which is the LIVE holder, not
-    // `SystemSpec::factionIndex`, which is the founding claim - the same
-    // distinction `commodityLegality` was corrected to in Phase 33 stage D and
-    // the same one the garrison sign records in `universe.hpp`. Ownership has
-    // been dynamic since Phase 8u and the shipped galaxy changes hands several
-    // times a minute, so a stored answer here would be right at t=0 and wrong
-    // for the rest of the session - and every test written at t=0 would agree
-    // with it, because that is the one moment the two fields cannot disagree.
+    // ⚑⚑⚑⚑ THIS USED TO BE A COMPARISON AND PHASE 37 STAGE C RETIRED THE
+    // OTHER HALF OF IT, WHICH IS WORTH RECORDING RATHER THAN QUIETLY DELETING.
+    // Phase 34 stage E wrote it as `owner != systemOwnerFaction(system)` and
+    // was right to: the operator was a pirate CLAN, a clan can take the system
+    // its own fence sits in, and on the day it did the fence stopped being a
+    // shadow presence and became the local boss's shop. That reading had to be
+    // derived per call and never stored, because ownership has been dynamic
+    // since Phase 8u and a stored answer would have been right at t=0 and wrong
+    // for the rest of the session.
     //
-    // ⚑⚑ SO THE CLAN THAT TAKES A SYSTEM INHERITS ITS OWN FENCE, and the fence
-    // stops being a shadow presence at the moment it does. Nothing has to
-    // notice; the comparison simply stops being true. Phase 37, whose shadow
-    // faction claims no territory at all, is the reader this is built for.
+    // ⚑⚑ THE RULE DID NOT TURN OUT TO BE WRONG - ITS SUBJECT WENT AWAY. Ruling
+    // 1 of Phase 37 is one hand-authored black market, and a faction that claims
+    // nothing can never be a system's holder, so the comparison is now true at
+    // every station in every galaxy. A condition that cannot be false is a
+    // comment pretending to be code, so it is a comment.
     [[nodiscard]] bool stationHasShadowPresence(std::uint32_t system, std::uint32_t station) const;
 
-    // The picking rule itself, given one roll in [0, clanCount) and the faction
-    // that founded the place: the clan that roll names, stepped on by one if
-    // that clan is the founder, or `kNoFaction` when there is no other clan to
-    // step to. `clanBase` is where clan indices start (`factionCount`).
-    //
-    // ⚑⚑⚑ IT IS A NAMED FUNCTION RATHER THAN FOUR LINES INSIDE THE LOOP FOR ONE
-    // MEASURED REASON: THE SHIPPED SEED DOES NOT EXERCISE THE SKIP. Ten shadow
-    // stations, ten clans, and at seed 1701 no roll lands on its own founder -
-    // so a galaxy-level test of "nobody fences for the clan that founded them"
-    // is VACUOUSLY TRUE, and deleting the skip entirely was measured to leave
-    // the whole suite green. The rule needs somewhere a test can hand it the
-    // case the galaxy declines to produce, which is what stage C did for
-    // `stationTabOnStrip` and for the same reason.
-    [[nodiscard]] static std::uint32_t shadowOperatorFor(std::uint32_t roll,
-                                                         std::uint32_t clanBase,
-                                                         std::uint32_t clanCount,
-                                                         std::uint32_t founder);
 
     // --- The cast (Phase 35 stage C) ---------------------------------------
     //
@@ -2174,6 +2158,27 @@ public:
     // Whether the docked station's owner stocks a gated def (Phase 8a caveat
     // fix: catalogs are the owner faction's; pirates fence past min_rep).
     [[nodiscard]] bool stationSells(const sol::assets::CatalogGate& gate) const;
+
+    // ⚑⚑⚑ THE SECOND COUNTER, EXPOSED FOR THE ONE CALLER THAT HAS TO SORT ROWS
+    // ONTO TWO SHELVES (Phase 37 stage C). `stationSells` folds both owners into
+    // one answer, which is what every purchase path wants; the dock screen wants
+    // to know WHICH of them said yes, because that is the difference between the
+    // Outfitting list and the back room. Not a permission check - a permission
+    // check that disagreed with `stationSells` would be the shop window bug its
+    // own comment was written against.
+    [[nodiscard]] bool stationSellsAtFence(const sol::assets::CatalogGate& gate) const;
+
+    // Which faction runs the back room of the dock the player is standing on,
+    // or `kNoFaction` at the 117 docks that have none.
+    [[nodiscard]] std::uint32_t dockedFenceFaction() const;
+
+    // ⚑⚑⚑ WHOSE SHELF A ROW BELONGS ON, WHICH IS NOT WHETHER IT CAN BE BOUGHT.
+    // An item is the fence's when its gate's allowlist names the fence's owner -
+    // data, not policy. `stationSellsAtFence` then says whether they would
+    // actually hand it over, and the two disagree on purpose: the fence stocks
+    // one thing no player can afford in standing yet, and it is on the screen
+    // with its price named rather than silently absent.
+    [[nodiscard]] bool stationFenceCarries(const sol::assets::CatalogGate& gate) const;
     // The commodity half of the gate (Phase 33 stage B): a station will not
     // sell a fitting it has none of the material for. Called by `stationSells`
     // rather than beside it, so no caller can ask half the question.
@@ -3607,6 +3612,11 @@ private:
     // galaxy; called by generateUniverse and by loadFrom after a galaxy
     // regeneration.
     void initializeFactions();
+
+    // One seller's answer to one gate: the allowlist against that faction's def
+    // id, the `min_rep` against that faction's standing. `stationSells` and
+    // `stationSellsAtFence` are the two questions built out of it.
+    [[nodiscard]] bool counterSells(std::uint32_t seller, const sol::assets::CatalogGate& gate) const;
     // Rolls a module list for every station in the galaxy and turns each one
     // into an economy archetype of its own (Phase 34 stage B). Called by
     // generateUniverse and by loadFrom after a galaxy regeneration, for

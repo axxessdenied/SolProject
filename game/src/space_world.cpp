@@ -1163,7 +1163,6 @@ constexpr std::uint64_t kCompositionStream = 2'000'000;
 // exists at all: composing and staffing are independent edits, and sharing a
 // stream would make re-tuning one recipe's fence chance re-roll who runs every
 // other fence in the galaxy.
-constexpr std::uint64_t kShadowStream = 3'000'000;
 
 // And the one the cast comes out of (Phase 35 stage C). A THIRD stream for the
 // second one's reason restated: who is in the room and who runs the fence are
@@ -1301,86 +1300,64 @@ void SpaceWorld::composeStations()
     assignCast();
 }
 
-// ⚑⚑⚑⚑ THE STAGE, AND IT IS ONE FIELD BECAUSE THE OTHER HALF WAS ALREADY
-// THERE. gdd.md §12's Shadow family has been rolling onto stations since stage
-// B - `stations.toml` carries `sol.mod_fence:0.08` and friends, and the shipped
-// galaxy composes ten of them - so a station's shadow PRESENCE has had
-// somewhere to live all along, in the composition. What has had nowhere to live
-// is WHOSE it is, and that is what this pass writes.
+// ⚑⚑⚑⚑ WHOSE BACK ROOM IT IS, AND SINCE PHASE 37 STAGE C THE ANSWER IS
+// ALWAYS THE SAME PEOPLE. Phase 34 stage E had to point this field at a pirate
+// clan picked by a uniform roll, because the shadow faction had not shipped and
+// pointing it at nothing would have left a null column on all 125 stations and
+// called it vocabulary. It has shipped. Ruling 1 of this phase is that there is
+// exactly ONE hand-authored black market, so the operator stopped being a
+// CHOICE and became an IDENTITY - and a function that picks between candidates
+// is the wrong shape for a question with one answer.
 //
-// ⚑⚑⚑ THE OPERATOR IS A PIRATE CLAN (ruled 2026-08-31). Phase 37's shadow
-// faction - the one that claims nothing and lives inside other people's
-// stations - has not shipped, so pointing the field at it today would leave a
-// null column on all 125 stations and call it vocabulary. A clan is a criminal
-// organisation that already exists, already has a reputation axis, and already
-// fences past `min_rep`; Phase 37 stage A re-points the picker at `kind =
-// "shadow"` and nothing else about this field moves.
+// ⚑⚑⚑ WHAT WENT WITH `shadowOperatorFor`, DELETED RATHER THAN LEFT STANDING:
+// the uniform roll, the step off the founding holder (a fence the local boss
+// runs is his own shop, not a shadow presence - true of a clan, meaningless for
+// a faction that can never hold a system), the single-clan case, and the whole
+// `kShadowStream` RNG. Dead code left standing reads as a rule that still
+// applies, and every one of those four was a rule about clans.
 //
-// ⚑⚑ AND IT IS NEVER THE CLAN THAT FOUNDED THE PLACE, which is the one rule
-// that makes the field mean something: a fence the local boss runs is his own
-// shop, not a shadow presence. The skip is against the FOUNDING claim because
-// that is all this pass can see - `initializeFactions` has not run yet and
-// `m_factionTable` is empty here - and the live comparison lives in
-// `stationHasShadowPresence`, which is the half that has to stay honest as
-// borders move.
-std::uint32_t SpaceWorld::shadowOperatorFor(std::uint32_t roll,
-                                            std::uint32_t clanBase,
-                                            std::uint32_t clanCount,
-                                            std::uint32_t founder)
-{
-    if (clanCount == 0) {
-        return sim::kNoFaction;
-    }
-    std::uint32_t owner = clanBase + roll % clanCount;
-    if (owner == founder) {
-        // One step is enough, and cyclic so it terminates: there is only ever
-        // one faction to avoid, so the next clan along is by definition not it -
-        // unless it is the same clan, which is the single-clan galaxy below.
-        owner = clanBase + (roll + 1) % clanCount;
-    }
-    // A galaxy with one clan that founded this system: nobody else can run the
-    // fence, so nobody does. Returning the founder would say the local boss
-    // fences against himself, which is the one answer that is never true.
-    return owner == founder ? sim::kNoFaction : owner;
-}
-
+// ⚑⚑ THE GOLDEN DIGEST MOVES HERE AND THAT IS EXPECTED, unlike stage B where
+// it must not. `galaxy_golden_tests.cpp` hashes `shadowOwner` per station
+// precisely so that re-pointing it is visible; the recorded value is updated in
+// the same commit that moves it.
 void SpaceWorld::assignShadowOwners()
 {
-    const std::size_t clanCount = m_galaxy.clans.size();
-    if (clanCount == 0) {
-        return; // no clans: nobody to run a fence, and the field stays kNoFaction
+    // ⚑⚑⚑⚑ THE INDEX IS COMPUTED, NOT LOOKED UP, AND THE REASON IS THE ONE
+    // PHASE 34 STAGE E ALREADY WROTE DOWN HERE: THIS PASS RUNS INSIDE
+    // `composeStations`, WHICH RUNS BEFORE `initializeFactions`. There is no
+    // `m_factionTable` yet - `m_shadowBase` is still `kNoFaction` at this point
+    // - so reading the accessor would have quietly assigned nobody and left
+    // every shadow test looking at an empty column. The old pass said exactly
+    // this about `clanBase` under the comment "the arithmetic is the table
+    // lookup, without the table"; the same sentence now covers a second index.
+    //
+    // ⚑⚑⚑ AND THIS IS WHERE STAGE B'S "APPENDED LAST" EARNS ITS KEEP A SECOND
+    // TIME. Majors take [0, factionCount), clans take the `clanCount` after
+    // them, and the shadow rows begin where the clans end - so the index is
+    // knowable from the galaxy alone, before any table is built. Had the row
+    // been slotted among the majors there would be no arithmetic to do it with.
+    // `the_arithmetic_that_names_the_operator_agrees_with_the_table` is the
+    // guard that the two ways of getting this number stay the same number.
+    bool authored = false;
+    if (m_defs != nullptr) {
+        for (const assets::FactionDef& def : m_defs->factions()) {
+            authored = authored || def.kind == assets::FactionKind::Shadow;
+        }
     }
-    // Clan faction indices continue past the majors - `spawnClans` writes
-    // `params.factionCount + clanIndex` - and `initializeFactions` builds the
-    // runtime table in exactly that order, majors in def order then clans in
-    // galaxy order. So the arithmetic is the table lookup, without the table.
-    const std::uint32_t clanBase = m_galaxyParams.factionCount;
-    core::Rng rng;
-    rng.seed(m_universeSeed, kShadowStream);
-
+    if (!authored) {
+        return; // no black market in this def set: nobody runs a back room
+    }
+    const std::uint32_t shadowBase =
+        m_galaxyParams.factionCount + static_cast<std::uint32_t>(m_galaxy.clans.size());
     for (std::uint32_t s = 0; s < m_galaxy.systems.size(); ++s) {
         sim::SystemSpec& system = m_galaxy.systems[s];
         for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
-            // ⚑ THE ROLL IS TAKEN FOR EVERY STATION, INCLUDING THE ONES WITH NO
-            // SHADOW MODULE - the same rule the composition loop above follows,
-            // for the same reason. Drawing only where a fence landed would make
-            // the stream depend on WHICH stations rolled one, so nudging a
-            // single recipe's fence chance would re-staff every fence after it
-            // in galaxy order. One wasted roll per station buys a station's
-            // operator being a function of its own position and nothing else.
-            const std::uint32_t roll = rng.range(static_cast<std::uint32_t>(clanCount));
-            bool shadow = false;
             for (const std::uint32_t module : stationModules(s, t)) {
                 if (m_modules[module].shadow) {
-                    shadow = true;
+                    system.stations[t].shadowOwner = shadowBase;
                     break;
                 }
             }
-            if (!shadow) {
-                continue;
-            }
-            system.stations[t].shadowOwner =
-                shadowOperatorFor(roll, clanBase, static_cast<std::uint32_t>(clanCount), system.factionIndex);
         }
     }
 }
@@ -1396,13 +1373,16 @@ std::uint32_t SpaceWorld::stationShadowOwner(std::uint32_t system, std::uint32_t
 
 bool SpaceWorld::stationHasShadowPresence(std::uint32_t system, std::uint32_t station) const
 {
-    const std::uint32_t owner = stationShadowOwner(system, station);
-    if (owner == sim::kNoFaction) {
-        return false;
-    }
-    // The LIVE holder. See the header: the founding claim is what this pass
-    // avoided at generation time, and it is the wrong thing to ask now.
-    return owner != systemOwnerFaction(system);
+    // ⚑⚑⚑ THE LIVE-HOLDER COMPARISON WENT WITH THE CLAN PICKER (Phase 37 stage
+    // C). This used to read `owner != systemOwnerFaction(system)`, and it had to:
+    // the operator was a clan, a clan can TAKE the system its own fence sits in,
+    // and on the day it did the fence stopped being a shadow presence and became
+    // the local boss's shop. A faction that claims nothing can never be the
+    // holder, so that comparison is now true for every station in every galaxy
+    // - and a condition that cannot be false is a comment pretending to be
+    // code. ⚑ The half that survives is the one that always mattered: is there
+    // a back room here at all.
+    return stationShadowOwner(system, station) != sim::kNoFaction;
 }
 
 std::span<const std::uint32_t> SpaceWorld::stationModules(std::uint32_t system, std::uint32_t station) const
@@ -1969,6 +1949,47 @@ const char* SpaceWorld::playerAttitudeName(std::uint32_t faction) const
     return m_factionSim.playerFriendly(faction) ? "friendly" : "neutral";
 }
 
+// ⚑⚑⚑⚑ ONE COUNTER'S ANSWER, AND IT IS THE HALF THAT EXISTED BEFORE PHASE 37
+// STAGE C. The allowlist is checked against THIS seller's def id and the
+// `min_rep` against THIS seller's standing, which is what makes a gate a
+// question about a relationship rather than about a station.
+bool SpaceWorld::counterSells(std::uint32_t seller, const assets::CatalogGate& gate) const
+{
+    if (seller >= m_factionTable.size()) {
+        return false;
+    }
+    const GameFaction& faction = m_factionTable[seller];
+    if (!gate.factions.empty() &&
+        std::find(gate.factions.begin(), gate.factions.end(), faction.defId) == gate.factions.end()) {
+        return false;
+    }
+    // Pirate stations fence anything their defs allow, standing be damned
+    // (docking already required non-hostile standing).
+    return faction.pirate() || m_factionSim.standing(seller) >= gate.minRep;
+}
+
+// ⚑⚑⚑⚑ WHOSE COUNTER IS THIS, WHICH IS THE ONE GENUINELY NEW MECHANISM IN
+// PHASE 37 AND THE THING THE SPEC SAID THE PHASE WAS FOR. This function opened
+// with `systemOwnerFaction(m_currentSystem)` and had exactly one notion of who
+// was selling - the holder of the SYSTEM. A shadow presence is a fact about a
+// STATION: `decisions/016` chose `StationSpec::shadowOwner` precisely because
+// "a station today has no owner at all", and a back room inside somebody else's
+// walls is the case a per-system question cannot express. So there are two
+// counters at a fence dock, and this asks both.
+//
+// ⚑⚑⚑ EITHER, NOT BOTH, AND THE ORDER DOES NOT MATTER. A gate that names no
+// faction is a thing anybody sells and the lawful counter answers first; a gate
+// that names the black market is refused by the lawful counter and taken by the
+// fence. What the two owners share is nothing at all - different allowlists,
+// different standings - which is exactly why one number could not carry it.
+//
+// ⚑⚑ THE FUNCTION STAYS ONE QUESTION, which is the bargain its own comment
+// struck at Phase 32 stage D: "a condition every caller has to remember is a
+// condition one of them will eventually forget, and the one that forgets would
+// be a shop window listing something the counter refuses to sell." Six call
+// sites ask `stationSells` and none of them had to learn what a fence is.
+// `stationSellsAtFence` exists for the ONE caller that has to know which shelf
+// a row belongs on, and it is a UI question rather than a permission one.
 bool SpaceWorld::stationSells(const assets::CatalogGate& gate) const
 {
     if (!isDocked()) {
@@ -1983,17 +2004,60 @@ bool SpaceWorld::stationSells(const assets::CatalogGate& gate) const
         return false;
     }
     const std::uint32_t owner = systemOwnerFaction(m_currentSystem);
+    // ⚑ An ownerless station is an open market and always was - `sol.lantern`,
+    // the one authored lawless system, is the whole of that case. It is checked
+    // BEFORE the fence, so a back room in nobody's space is not asked to
+    // justify itself either.
     if (owner >= m_factionTable.size()) {
-        return true; // ownerless station: open market
+        return true;
     }
-    const GameFaction& faction = m_factionTable[owner];
-    if (!gate.factions.empty() &&
-        std::find(gate.factions.begin(), gate.factions.end(), faction.defId) == gate.factions.end()) {
+    return counterSells(owner, gate) || stationSellsAtFence(gate);
+}
+
+// ⚑⚑⚑ WHETHER THE *FENCE* WOULD SELL IT, ASKED SEPARATELY BECAUSE ONE CALLER
+// GENUINELY NEEDS TO KNOW AND IT IS NOT A PERMISSION QUESTION. The dock screen
+// has two shelves now and a row has to go on one of them; "the lawful outfitter
+// will not carry this and the back room will" is what puts it behind the
+// curtain. Every other caller wants `stationSells` and the difference is none
+// of their business.
+//
+// ⚑⚑ IT IGNORES `requiresCommodity` ON PURPOSE - `stationSells` has already
+// asked, and asking twice would let a material shortage move a row from one
+// shelf to the other rather than off the screen.
+bool SpaceWorld::stationSellsAtFence(const assets::CatalogGate& gate) const
+{
+    return counterSells(dockedFenceFaction(), gate);
+}
+
+std::uint32_t SpaceWorld::dockedFenceFaction() const
+{
+    return isDocked() ? stationShadowOwner(m_currentSystem, dockedStationIndex()) : sim::kNoFaction;
+}
+
+// ⚑⚑⚑⚑ WHOSE LINE IS THIS, WHICH IS A DIFFERENT QUESTION FROM WHETHER THEY
+// WOULD SELL IT TO YOU, AND THE DIFFERENCE IS THE STAGE'S ONE VISIBLE ROW.
+// `stationSellsAtFence` folds the allowlist and the standing together; this asks
+// only the first half. The Null Signature Suite names the black market and wants
+// +25 with them, and player standing there is 0 until Phase 37 stage E - so the
+// two answers disagree at every fence in the galaxy today. A shelf built on
+// "would they sell it" alone would have been EMPTY, and an empty shelf and a
+// fence with nothing to sell are the same picture.
+//
+// ⚑⚑ IT IS THE ALLOWLIST AND NOTHING ELSE, so it is data rather than policy: an
+// item is the fence's when its def names the fence's owner. A gate that names
+// nobody is carried by everybody and stays on the lawful shelf, which is why the
+// empty-allowlist case returns false rather than true.
+bool SpaceWorld::stationFenceCarries(const assets::CatalogGate& gate) const
+{
+    if (gate.factions.empty()) {
         return false;
     }
-    // Pirate stations fence anything their defs allow, standing be damned
-    // (docking already required non-hostile standing).
-    return faction.pirate() || m_factionSim.standing(owner) >= gate.minRep;
+    const std::uint32_t fence = dockedFenceFaction();
+    if (fence >= m_factionTable.size()) {
+        return false;
+    }
+    return std::find(gate.factions.begin(), gate.factions.end(), m_factionTable[fence].defId) !=
+           gate.factions.end();
 }
 
 bool SpaceWorld::stationStocksRequirement(const assets::CatalogGate& gate) const

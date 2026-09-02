@@ -503,8 +503,24 @@ power_draw = 1.0
 # ---------------------------------------------------------------------------
 # Shadow — black-market services (gdd.md §7, §13), present on stations of ANY
 # owner, which is the whole mechanism that lets Phase 37's shadow faction
-# operate without holding a single system. No screens: the fence's own screen
-# arrives with the faction that runs it.
+# operate without holding a single system.
+#
+# ⚑⚑⚑⚑ THE SCREEN ARRIVED (Phase 37 stage C). This block used to end "no
+# screens: the fence's own screen arrives with the faction that runs it", and
+# The Ninth Shift is that faction. `black_market` is the only entry in
+# `StationScreen` that no lawful module offers, so the tab is on the strip at
+# exactly the docks that rolled one of these four and nowhere else.
+#
+# ⚑⚑⚑ ALL FOUR DECLARE IT, NOT JUST THE FENCE, AND THE RULE IS DERIVED RATHER
+# THAN CHOSEN: A MODULE THAT CAN WAREHOUSE CONTRABAND CAN TRADE IT. Each of
+# these carries an `illicit` hold, and a hold is what makes a station able to
+# stock the goods at all - so giving the screen to `sol.mod_fence` alone would
+# have left the ghost docks and clinics holding stock with no counter to sell
+# it over. That is not a tidy edge case: the shipped galaxy has five fences
+# against two ghost docks and about three clinics, and they roll INDEPENDENTLY,
+# so a dock with a clinic and no fence is an ordinary composition.
+# `every_dock_that_can_warehouse_contraband_has_a_counter_to_sell_it_over` is
+# the guard, and it is the same shape as the rate-line-needs-a-hold rule below.
 #
 # ⚑ The fence carries a hazardous hold of its own, which is not decoration: a
 # station cannot stock what it has no hold for, so a fence that could not hold
@@ -544,6 +560,7 @@ family = "shadow"
 # census in `contraband_tests.cpp`, which is the number these were chosen from.
 consumes = ["sol.stims:0.012", "sol.hot_parts:0.010"]
 stores = ["hazardous:250", "illicit:180"]
+screens = ["black_market"]
 power_draw = 2.0
 
 [[module]]
@@ -552,6 +569,7 @@ name = "Unlicensed Clinic"
 family = "shadow"
 produces = ["sol.stims:0.036"]
 stores = ["illicit:90"]
+screens = ["black_market"]
 power_draw = 3.0
 
 [[module]]
@@ -563,6 +581,7 @@ family = "shadow"
 # in the shipped galaxy where the clinic landed NONE at its authored 0.08.
 produces = ["sol.hot_parts:0.028"]
 stores = ["illicit:140"]
+screens = ["black_market"]
 power_draw = 5.0
 
 # NAMED GAP, INHERITED RATHER THAN CREATED (Phase 37 stage A): this module is
@@ -577,4 +596,5 @@ id = "sol.mod_data_haven"
 name = "Data Haven"
 family = "shadow"
 stores = ["illicit:120"]
+screens = ["black_market"]
 power_draw = 4.0

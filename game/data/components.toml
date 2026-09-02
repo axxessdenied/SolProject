@@ -290,6 +290,23 @@ signature_mul = 0.6
 # dampener; not everyone will sell you the good one. A fence that stocks what
 # no lawful outfitter will is Phase 37's whole subject, and pre-empting it here
 # with a clan-only key would be this phase authoring that one's content.
+#
+# ⚑⚑⚑⚑ PHASE 37 STAGE C IS THAT PHASE AND IT ADDED THE ALLOWLIST, WHICH FIXES
+# AN ACCIDENT PHASE 36 RECORDED RATHER THAN INVENTING A RULE. `stationSells`
+# short-circuits on `faction.pirate()` BEFORE it reads `min_rep`, so with no
+# allowlist this - the strongest countermeasure in the game - was sold to a
+# stranger at every clan station in the galaxy and refused to a decorated
+# veteran in the core. Naming the black market makes the lawful counter refuse
+# it everywhere, and the fence the only place it is sold.
+#
+# ⚑⚑⚑ AND THE `min_rep` NOW READS AGAINST THE NINTH SHIFT'S STANDING, WHICH IS
+# ZERO FOR EVERY PLAYER AND WHICH NOTHING IN THE GAME MOVES UNTIL PHASE 37
+# STAGE E. That is deliberate and was ruled 2026-09-01 with the cost stated: this
+# row is VISIBLE AND REFUSED, with its price in standing named on the row, and
+# it is the one locked door in the game. The alternative was shipping the fence
+# with nothing to want. ⚑ If stage E slips, this line is the thing to revisit -
+# a permanently unbuyable row is dead content, and it is only not dead because
+# the next stage is what opens it.
 [[component]]
 id = "sol.signature_dampener_mk2"
 name = "Null Signature Suite"
@@ -300,6 +317,7 @@ price = 11000.0
 mass = 520.0
 power_draw = 3.5
 signature_mul = 0.35
+factions = ["sol.ninth_shift"]
 min_rep = 25.0
 
 # ⚑⚑ THE THIRD LEG OF THE TRADE, AND IT MOVES NO NEW STAT. A `covert_bay` that

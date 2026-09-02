@@ -336,6 +336,16 @@ struct TradeRow
     // Under whose law you are standing, not what the good IS (Phase 33 stage
     // D). The same crate is `Legal` one jump away.
     TradeLegality legality = TradeLegality::Legal;
+    // ⚑⚑⚑ WHICH SHELF THIS ROW BELONGS ON (Phase 37 stage C). The dock has two
+    // counters at a station with a back room, and the goods no lawful module
+    // can warehouse are sold over the second one. ⚑ A FLAG RATHER THAN A SECOND
+    // ROW LIST, because the trade action is an index into `rows` and splitting
+    // the span would have meant two action channels and two mappings back to a
+    // commodity - a lot of machinery to express "draw these ones over there".
+    // ⚑ It is deliberately NOT `legality`: the same crate is contraband in one
+    // jurisdiction and fine in the next, and this is a fact about the GOOD -
+    // nowhere lawful can put it down.
+    bool backRoom = false;
 };
 
 struct TradeAction
@@ -381,6 +391,18 @@ struct OutfitRow
     // which is the only reason a refusal would otherwise be invisible: the
     // station action has no channel to report one back through.
     const char* targetMount = "";
+    // ⚑⚑⚑⚑ WHY THIS ROW IS ON THE SCREEN AND STILL REFUSED (Phase 37 stage C),
+    // already worded - "Requires +25 with The Ninth Shift". Empty is the
+    // ordinary case and means the row is buyable.
+    //
+    // ⚑⚑⚑ A REFUSAL A PLAYER CANNOT READ IS DEAD CONTENT, AND THAT IS THE ONLY
+    // REASON THIS FIELD EXISTS. Every other catalog in the game answers a gate
+    // by leaving the row OFF - an outfitting list that is shorter at a frontier
+    // station is Phase 33 stage B's whole design. The fence is the one counter
+    // where the gate is the point: it stocks something you cannot have yet, and
+    // a shelf that silently omitted it would be a shelf with nothing to want.
+    // So the row stays and names its price, and the price is in standing.
+    const char* lockedReason = "";
 };
 
 // One place on the active hull and what is in it (Phase 31 stage B). This is
@@ -823,6 +845,19 @@ struct StationPanel
     // have broken exactly that rule. The speaker is not a topic - they are who
     // the whole screen is - so they belong beside the room's name.
     const char* barKeeper = "";
+    // ⚑⚑⚑ THE BACK ROOM (Phase 37 stage C). Empty at the 117 docks with no
+    // shadow module, which is also where the tab is off the strip.
+    //
+    // ⚑⚑ `fenceOperator` IS THE WHOLE ANSWER TO "NO FENCE IDENTITY". Before
+    // this stage the illicit goods sat on the ordinary Trade tab at market
+    // price with a Buy button and nothing saying whose counter it was; a black
+    // market that is a faction rather than a place has to say the faction's
+    // name somewhere, and this is that somewhere.
+    const char* fenceOperator = "";
+    // What the fence sells that no lawful outfitter carries. Same row type as
+    // the Outfitting catalog, so a Buy goes through the action channel that
+    // already exists - a fence is a counter, not a new kind of transaction.
+    std::span<const OutfitRow> blackMarketCatalog;
     // Which tabs this station offers (Phase 34 stage C): bit `i` set means the
     // screen the GAME layer numbers `i` belongs on the strip.
     //

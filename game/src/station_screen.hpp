@@ -23,6 +23,7 @@ struct StationScreenState
         Survey,
         Refinery,
         Bar,
+        BlackMarket,
         TabCount,
     };
 

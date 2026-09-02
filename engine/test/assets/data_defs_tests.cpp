@@ -3803,15 +3803,27 @@ SOL_TEST(data_defs_module_family_screen_and_goods_class_names_round_trip)
     // somebody adds a screen here and forgets the strip, the label, the hint and
     // the `static_assert` in `station_screen.cpp` that ties the two enums
     // together. A literal is the only form of this check that can fail.
-    SOL_CHECK(sol::assets::kStationScreenCount == 9);
+    // ⚑⚑⚑ TEN SINCE PHASE 37 STAGE C, AND THE LITERAL EARNED ITS KEEP ON THE
+    // DAY: adding `black_market` failed HERE first, which is exactly what the
+    // paragraph above says the literal is for. The four things it sends a reader
+    // to check - the strip entry, the label, the hint line and the
+    // `static_assert` in `station_screen.cpp` - were all owed and are all done.
+    SOL_CHECK(sol::assets::kStationScreenCount == 10);
     SOL_CHECK(static_cast<std::uint32_t>(StationScreen::Outfitting) == 1);
     SOL_CHECK(static_cast<std::uint32_t>(StationScreen::Survey) == 6);
     // Appended rather than slotted in beside Missions, which is what kept every
     // number above where it was.
     SOL_CHECK(static_cast<std::uint32_t>(StationScreen::Bar) == 8);
     SOL_CHECK(std::strcmp(sol::assets::stationScreenName(StationScreen::Bar), "bar") == 0);
+    // Appended again, for the same reason, and it is the only value here no
+    // lawful module offers.
+    SOL_CHECK(static_cast<std::uint32_t>(StationScreen::BlackMarket) == 9);
+    SOL_CHECK(std::strcmp(sol::assets::stationScreenName(StationScreen::BlackMarket), "black_market") == 0);
     StationScreen screen{};
     SOL_CHECK(sol::assets::parseStationScreen("bar", screen) && screen == StationScreen::Bar);
+    SOL_CHECK(sol::assets::parseStationScreen("black_market", screen) &&
+              screen == StationScreen::BlackMarket);
+    SOL_CHECK(!sol::assets::parseStationScreen("blackmarket", screen)); // the spelling is exact
 
     sol::assets::ModuleFamily family{};
     SOL_CHECK(!sol::assets::parseModuleFamily("Power", family)); // spellings are lowercase

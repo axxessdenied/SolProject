@@ -37,6 +37,7 @@ void fillStationOutfitting(const SpaceWorld& world,
                            ui::StationPanel& panel,
                            std::vector<ui::MountRow>& mountRows,
                            std::vector<ui::OutfitRow>& componentRows,
+                           std::vector<ui::OutfitRow>& blackMarketRows,
                            std::vector<ui::OutfitRow>& weaponRows,
                            std::vector<ui::OutfitRow>& crewCatalogRows,
                            std::vector<ui::OutfitRow>& crewAboardRows,
@@ -47,6 +48,7 @@ void fillStationOutfitting(const SpaceWorld& world,
     text.clear();
     mountRows.clear();
     componentRows.clear();
+    blackMarketRows.clear();
     weaponRows.clear();
     crewCatalogRows.clear();
     crewAboardRows.clear();
@@ -144,19 +146,44 @@ void fillStationOutfitting(const SpaceWorld& world,
     }
 
     for (const assets::ComponentDef& def : defs.components()) {
-        if (!world.stationSells(def.gate)) {
+        // ⚑⚑⚑ TWO SHELVES SINCE PHASE 37 STAGE C, AND THE FENCE'S IS CHECKED
+        // FIRST. `stationSells` is the OR over both counters, so an item the
+        // black market carries would appear on the lawful list too the moment
+        // the player's standing with them cleared its gate - the shop window
+        // bug that function's own comment was written against, arriving from
+        // the other direction. The fence's line is never on the lawful shelf.
+        const bool fence = world.stationFenceCarries(def.gate);
+        if (!fence && !world.stationSells(def.gate)) {
             continue; // owner faction doesn't stock it (Phase 8b catalogs)
         }
-        componentRows.push_back(
-            {.id = def.id.c_str(),
-             .name = def.name.c_str(),
-             .detail =
-                 store(text,
-                       std::string(assets::mountSizeName(def.size)) + " " + assets::mountKindName(def.mount) +
-                           ", " + formatNumber(def.powerDraw) + " pwr, " + formatNumber(def.mass) + " kg"),
-             .price = def.price,
-             .fitted = fittedCount(active, def.id),
-             .targetMount = store(text, targetFor(def.id, def.mount, def.size))});
+        sol::ui::OutfitRow row{
+            .id = def.id.c_str(),
+            .name = def.name.c_str(),
+            .detail =
+                store(text,
+                      std::string(assets::mountSizeName(def.size)) + " " + assets::mountKindName(def.mount) +
+                          ", " + formatNumber(def.powerDraw) + " pwr, " + formatNumber(def.mass) + " kg"),
+            .price = def.price,
+            .fitted = fittedCount(active, def.id),
+            .targetMount = store(text, targetFor(def.id, def.mount, def.size))};
+        if (!fence) {
+            componentRows.push_back(row);
+            continue;
+        }
+        // ⚑⚑ THE ROW STAYS AND NAMES ITS PRICE. Every other catalog in this
+        // file answers a gate by leaving the row off; this one keeps it and
+        // writes what it would take, because the fence's whole stock today is
+        // one thing nobody can buy and an empty shelf says the feature is
+        // broken rather than that the door is locked.
+        if (!world.stationSellsAtFence(def.gate)) {
+            const std::uint32_t fenceFaction = world.dockedFenceFaction();
+            const char* who =
+                fenceFaction < world.factions().size() ? world.factions()[fenceFaction].name.c_str() : "them";
+            row.lockedReason =
+                store(text, "Needs " + formatNumber(def.gate.minRep) + " with " + std::string(who));
+            row.targetMount = "";
+        }
+        blackMarketRows.push_back(row);
     }
     for (const assets::WeaponDef& def : defs.weapons()) {
         if (!world.stationSells(def.gate)) {
@@ -298,6 +325,11 @@ void fillStationOutfitting(const SpaceWorld& world,
 
     panel.mounts = mountRows;
     panel.components = componentRows;
+    panel.blackMarketCatalog = blackMarketRows;
+    // Whose back room, for the heading that is the whole point of the tab.
+    const std::uint32_t fenceFaction = world.dockedFenceFaction();
+    panel.fenceOperator =
+        fenceFaction < world.factions().size() ? world.factions()[fenceFaction].name.c_str() : "";
     panel.weapons = weaponRows;
     panel.crewCatalog = crewCatalogRows;
     panel.crewAboard = crewAboardRows;

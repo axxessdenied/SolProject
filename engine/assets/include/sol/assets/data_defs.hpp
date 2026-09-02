@@ -1259,6 +1259,19 @@ enum class StationScreen : std::uint32_t
     // is where a room you go to for gossip belongs relative to eight tabs you go
     // to for business.
     Bar,
+    // ⚑⚑⚑⚑ THE FENCE'S OWN COUNTER (Phase 37 stage C), APPENDED FOR STAGE
+    // A'S REASON RESTATED: the strip draws in enum order, so a value's position
+    // here is a UI decision made in an assets header, and appending keeps every
+    // existing number where it was.
+    //
+    // ⚑⚑⚑ IT IS THE ONLY SCREEN IN THE GAME NO LAWFUL MODULE OFFERS. Every
+    // other value here is declared by a `commerce`, `services` or `recreation`
+    // module that any station may compose; this one is declared by the four
+    // `shadow` modules and nothing else, so the tab is on the strip at exactly
+    // the docks that rolled a back room. `modules.toml` promised it in one line
+    // - "no screens: the fence's own screen arrives with the faction that runs
+    // it" - and this is that faction arriving.
+    BlackMarket,
     Count,
 };
 

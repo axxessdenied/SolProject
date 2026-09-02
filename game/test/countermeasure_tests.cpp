@@ -120,6 +120,52 @@ struct Galaxy
         return world.undock();
     }
 
+    // ⚑⚑⚑⚑ THE BACK ROOM'S ROAD, WHICH IS THE ONLY ROAD TO THE Mk2 SINCE PHASE
+    // 37 STAGE C. The suite carries `factions = ["sol.ninth_shift"]` now, so no
+    // lawful counter and no clan counter will sell it - the accident this file
+    // measured in Phase 36 ("fenced in clan space and refused in the core") is
+    // fixed, and the fix moved the only place it can be bought.
+    //
+    // ⚑⚑⚑ IT BUYS THE STANDING THE SAME WAY `dockAndFit` ALREADY BUYS THE
+    // SYSTEM OWNER'S, AND THAT IS NOT A DODGE AROUND THE GATE - it is the gate
+    // being exercised. Player standing with the black market is 0 and nothing
+    // in the game moves it until Phase 37 stage E; a fixture that could not set
+    // it would be a fixture that cannot reach the kit at all, and the three
+    // tests below measure the KIT rather than the counter.
+    //
+    // ⚑⚑ WHERE IT ENDS DOES NOT MATTER: `standOff` re-enters `lawfulSystem()`
+    // itself, so all three cases are still measured against the same patrol in
+    // the same place. That is also what a player does - buy the suite at a
+    // fence, then take it somewhere it is worth having.
+    [[nodiscard]] bool dockAtFenceAndFit(const char* componentId)
+    {
+        for (std::uint32_t s = 0; s < world.galaxy().systems.size(); ++s) {
+            const sol::sim::SystemSpec& system = world.galaxy().systems[s];
+            for (std::uint32_t t = 0; t < system.stations.size(); ++t) {
+                if (!world.stationHasShadowPresence(s, t)) {
+                    continue;
+                }
+                if (!world.enterSystem(s) || !world.warpToStationOffset(t, {150.0, 0.0, 0.0}) ||
+                    !world.tryDockNearestStation(2'000.0)) {
+                    continue;
+                }
+                world.addCredits(100'000.0);
+                world.factionSim().setStanding(world.stationShadowOwner(s, t), 50.0f);
+                std::string error;
+                if (!world.buyFitting(componentId, nullptr, &error)) {
+                    std::printf("  the fence at %s refused '%s': %s\n",
+                                system.stations[t].name.c_str(),
+                                componentId,
+                                error.c_str());
+                    return false;
+                }
+                return world.undock();
+            }
+        }
+        std::printf("  no dock in the galaxy has a back room\n");
+        return false;
+    }
+
     [[nodiscard]] bool dockHere()
     {
         for (std::size_t i = 0; i < world.navTargets().size(); ++i) {
@@ -292,7 +338,7 @@ SOL_TEST(a_dampener_makes_a_patrol_take_an_interest_less_often)
     const std::uint32_t quietStops = noticesOver(quiet.world, 30);
 
     Galaxy quietest;
-    SOL_REQUIRE(quietest.dockAndFit(kDampenerMk2));
+    SOL_REQUIRE(quietest.dockAtFenceAndFit(kDampenerMk2));
     (void)quietest.standOff(2'000.0);
     SOL_REQUIRE(quietest.world.setTransponder(false));
     const std::uint32_t quietestStops = noticesOver(quietest.world, 30);
@@ -329,7 +375,7 @@ SOL_TEST(a_dampener_stretches_the_read_against_a_hold_clock_that_does_not_move)
     SOL_CHECK(loud.world.lastInspection().outcome == Outcome::Complied);
 
     Galaxy quiet;
-    SOL_REQUIRE(quiet.dockAndFit(kDampenerMk2));
+    SOL_REQUIRE(quiet.dockAtFenceAndFit(kDampenerMk2));
     const Post quietPatrol = quiet.standOff(1'000.0);
     SOL_REQUIRE(quiet.world.beginInspection(quietPatrol.pilotIndex, Notice::Dark));
     const double quietSeconds = quiet.runToEnd(120.0);
@@ -372,7 +418,7 @@ SOL_TEST(a_dampened_ship_lapses_a_stop_that_reads_an_undampened_one)
     SOL_REQUIRE(!loud.world.heldForInspection());
 
     Galaxy quiet;
-    SOL_REQUIRE(quiet.dockAndFit(kDampenerMk2));
+    SOL_REQUIRE(quiet.dockAtFenceAndFit(kDampenerMk2));
     const Post quietPatrol = quiet.standOff(kSpotDistance);
     SOL_REQUIRE(quiet.world.beginInspection(quietPatrol.pilotIndex, Notice::Dark));
     quiet.runToEnd(120.0);
@@ -578,22 +624,32 @@ SOL_TEST(a_dampener_survives_a_save_without_the_format_moving)
     SOL_CHECK(reader.world.signature() == fitted);
 }
 
-// ⚑⚑⚑ THE FENCE ALREADY EXISTS AND NOTHING IN THIS STAGE BUILT IT. The Mk2
-// carries `min_rep = 25`, which a major will not waive - but `stationSells`
-// short-circuits on `faction.pirate` before it ever reads the number ("pirate
-// stations fence anything their defs allow, standing be damned"). So the
-// strongest countermeasure in the game is sold to a stranger in clan space and
-// refused to one in the core, and that is a consequence of a line Phase 8b
-// wrote rather than a key this stage authored. ⚑ It is also why the def uses
-// `min_rep` and not a `factions` allowlist: an allowlist would have made this
-// phase author Phase 37's content.
-SOL_TEST(the_strongest_kit_is_fenced_in_clan_space_and_refused_in_the_core)
+// ⚑⚑⚑⚑ THIS TEST USED TO ASSERT AN ACCIDENT AND NOW ASSERTS ITS FIX, WHICH IS
+// THE POINT OF KEEPING IT RATHER THAN DELETING IT. Phase 36 measured, and wrote
+// down, that `stationSells` short-circuits on `faction.pirate()` BEFORE it reads
+// `min_rep` - so the Mk2's `min_rep = 25` was waived at every clan station and
+// enforced everywhere else, and *the strongest countermeasure in the game was
+// sold to a stranger in clan space and refused to a decorated veteran in the
+// core*. It said so as `the_strongest_kit_is_fenced_in_clan_space_and_refused_
+// in_the_core`, and it ended: "that is why the def uses `min_rep` and not a
+// `factions` allowlist - an allowlist would have made this phase author Phase
+// 37's content."
+//
+// ⚑⚑⚑ THIS IS PHASE 37. The allowlist is authored, the accident is closed, and
+// the Mk2 is sold at exactly one kind of counter in the galaxy. ⚑ The clan half
+// is the half worth still checking: a clan station fences anything its defs
+// allow, so it is the counter most likely to leak the suite back out, and it is
+// now refused there for the allowlist's reason rather than waved through for the
+// pirate bit's.
+SOL_TEST(the_strongest_kit_is_sold_at_a_fence_and_nowhere_else_in_the_galaxy)
 {
     Galaxy g;
     const sol::assets::ComponentDef* mk2 = g.content.defs().findComponent(kDampenerMk2);
     SOL_REQUIRE(mk2 != nullptr);
     SOL_REQUIRE(mk2->gate.minRep > 0.0f);
-    SOL_REQUIRE(mk2->gate.factions.empty());
+    // Named, so demoting the row to an open catalogue entry fails here first.
+    SOL_REQUIRE(mk2->gate.factions.size() == 1);
+    SOL_CHECK(mk2->gate.factions[0] == "sol.ninth_shift");
 
     int lawful = 0, clan = 0;
     for (std::uint32_t s = 0; s < g.world.galaxy().systems.size() && (lawful == 0 || clan == 0); ++s) {
@@ -609,26 +665,28 @@ SOL_TEST(the_strongest_kit_is_fenced_in_clan_space_and_refused_in_the_core)
         if (!probe.world.enterSystem(s) || !probe.dockHere()) {
             continue;
         }
-        // Standing starts at 0 with everybody, which is under the Mk2's gate.
-        const bool sells = probe.world.stationSells(mk2->gate);
-        if (pirate) {
-            ++clan;
-            SOL_CHECK(sells);
-        } else {
-            ++lawful;
-            SOL_CHECK(!sells);
-        }
+        // ⚑ Standing is bought to 50 at BOTH counters, which is what makes this
+        // an allowlist test rather than a restatement of the `min_rep` one. The
+        // suite is still refused, because the lawful counter is not on its list
+        // and this dock has no other.
+        probe.world.factionSim().setStanding(owner, 50.0f);
+        (pirate ? clan : lawful) += 1;
+        SOL_CHECK(!probe.world.stationSells(mk2->gate));
     }
-    // Anti-vacuity, and it is a real question about the shipped galaxy rather
-    // than a formality: 29 of 85 systems are clan-held, and a fence needs one
-    // of them to have somewhere to dock.
-    std::printf("  probed %d lawful station(s) and %d clan station(s)\n", lawful, clan);
+    std::printf("  probed %d lawful station(s) and %d clan station(s), neither sells it\n", lawful, clan);
     SOL_REQUIRE(lawful == 1);
     SOL_REQUIRE(clan == 1);
+
+    // And a back room does, once the standing is there. Same gate, same player,
+    // different counter - which is the whole of Phase 37 stage C in four lines.
+    Galaxy fence;
+    SOL_REQUIRE(fence.dockAtFenceAndFit(kDampenerMk2));
+    SOL_CHECK(fence.world.activeShip().fittingAt("covert_bay") != nullptr);
 
     // The Mk1 is the one a new pilot can actually buy, which is what makes the
     // phase's exit flyable from the ship the game opens in.
     const sol::assets::ComponentDef* mk1 = g.content.defs().findComponent(kDampenerMk1);
     SOL_REQUIRE(mk1 != nullptr);
     SOL_CHECK(mk1->gate.minRep <= 0.0f);
+    SOL_CHECK(mk1->gate.factions.empty());
 }
