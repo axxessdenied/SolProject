@@ -3362,7 +3362,7 @@ Every clause is true of the nine `.wav` cues today, and the script has said so s
 
 **Suites: `platform.unit` 27 → 35, `game.unit` 41 → 59.** Windows dev 13/13 + dev-gpu 2/2, release 17/17 + release-gpu 5/5; clang-format clean by exit code.
 
-### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28 through 38 SHIPPED**, the rest are sketches to be spec'd before starting)
+### The Depth Arc — Phases 28–41 📋 (planned 2026-08-28; **28 through 38 SHIPPED**, **39 spec'd**, 40 and 41 are sketches to be spec'd before starting)
 
 **From the user, 2026-08-28**, as eleven asks in one message: ship classes by size and role; parts, upgrades and subsystems; hardpoints on hulls with Forge authoring and in-game visuals; stations built from modules; a wider material tree with contraband; a black-market faction; transponders and running dark; authored systems and constellations for narrative control; ship commands with a right-click menu; multiple owned ships, captains and fleets; and station lore with characters who know things.
 
@@ -4752,13 +4752,139 @@ Four again, but not the same four: **the sketch's D collapses into A, and its C 
 
 ---
 
-#### Phase 39 — Captains and Standing Orders
+#### Phase 39 — Captains and Standing Orders 📋 (spec'd 2026-09-02)
 
-**Depends on**: 38, 28 (the command vocabulary). **v2.**
+**Depends on**: 38 for half its machinery. **Its written dependency on 28 is the first thing this spec had to move, and its written dependency on 38 is the second.** Blocks 40. **v2.** ⚑ **Spec'd 2026-09-02 against a fresh re-read of the code, the thirtieth consecutive roadmap estimate the practice has moved** — and the fifth in a row moved *before* a line was written.
 
-`OwnedShip` already stores a ship, its fit, its crew and where it is parked. A captain is crew given a ship instead of a bonus, accepting Phase 28's vocabulary plus orders that outlive a session: mine here, haul between there and there, patrol this, sell above X.
+**The sketch this replaces, quoted rather than deleted.** *Depends on*: "38, 28 (the command vocabulary)." *Diagnosis*: "`OwnedShip` already stores a ship, its fit, its crew and where it is parked. A captain is crew given a ship instead of a bonus, accepting Phase 28's vocabulary plus orders that outlive a session: mine here, haul between there and there, patrol this, sell above X." *Exit*: "hire a captain, give them a freighter and a route, fly away, and come back richer without having flown the route."
 
-**Exit**: hire a captain, give them a freighter and a route, fly away, and come back richer without having flown the route.
+**The first sentence is true. The second is false in both of its clauses, the dependency on 28 is backwards, and the exit is the one order the machinery Phase 38 built cannot carry.**
+
+##### ⚑⚑⚑⚑ The headline: crew are DEFS, not people, so there is nothing here to give an order *to*
+
+*"A captain is crew given a ship instead of a bonus"* reads as an escalation of a thing that exists. It is not. `OwnedShip::crewIds` (`space_world.hpp:1367`) is a `std::vector<std::string>` **of catalog ids**, and `CrewDef` (`data_defs.hpp:499`) is `{id, name, role, price, modifiers, gate, source}` — seven fields, none of which is an identity. `crew.toml` ships **three** rows: Engineer, Navigator, Quartermaster.
+
+So two hired Engineers are the same string twice. They cannot be told apart, cannot be named, cannot be addressed, and `fireCrew(crewId)` (`:7679`) dismisses *a* copy rather than *that one*. **There is no object in this game that a standing order could be given to**, and there never has been: a crew member is a modifier that occupies a berth, which is exactly what `decisions/006` says it is — *"No personalities, no management, no leveling, no wages, no crew death mechanics."*
+
+⚑⚑⚑ **And 006 already named this phase, four months early, in its Alternatives section**: *"Officers with personalities/skills (Starsector-style) — real design surface (leveling, loyalty, permadeath interplay with Q6). Out of scope for v1; nothing in the trivial version blocks upgrading later."* Its last consequence is the instruction this phase follows: *"Any richer crew system post-v1 must grow out of this data model or consciously replace it."* **Phase 39 is the consciously-replace branch, and that is a decision doc rather than a line in a phase spec** — see `docs/decisions/020-captains-as-people.md`.
+
+⚑⚑ **A second finding rides on the first: you cannot crew a stored ship at all.** `hireCrew` opens with `if (!isDocked() || m_defs == nullptr || m_fleet.empty())` and then writes `m_fleet[m_activeShip]` — the ship you are flying, unconditionally. It is not alone: **eleven sites in `space_world.cpp` index `m_fleet[m_activeShip]` directly**, and every fleet mutation the game has (`buyFitting`, `sellFitting`, `hireCrew`, `fireCrew`, the fire-group edit at `:3143`) is one of them. The only two calls that name a *stored* ship, `sellShip` and `switchShip`, both refuse unless you are docked at **that exact station** (`:7604`). The sketch's *"they take a ship out of your storage and fly it"* has no path through this file, and the missing path is not the captain — it is **the ability to do anything at all to a hull you are not sitting in.**
+
+##### The numbers, measured 2026-09-02
+
+| | |
+| --- | ---: |
+| `space_world.cpp`, lines — when `015` was written / at the Phase 38 spec / now | 7,198 / 12,063 / **12,916** |
+| Crew defs in the shipped game | **3** |
+| Fields on `CrewDef` that distinguish one hire from another | **0** |
+| `m_fleet[m_activeShip]` sites (every fleet mutation is one) | **11** |
+| Player faction rows in `m_factionTable` | **0** |
+| `ShipPilot::factionIndex` references — `space_world.cpp` / `content.cpp` | **59** / **31** |
+| `m_factionTable` references in `space_world.cpp` | **92** |
+| `FactionKind` values | **3** (Major, Pirate, Shadow) |
+| Recurring costs anywhere against `m_playerCredits` | **0** |
+| `kMaxInstantiatedSystems` / systems in the shipped galaxy | **6** / **80** |
+| `maxTradeJumps` — systems one haul can cross | **5 hops, 6 systems** |
+| Coarse haulers the promotion seam already runs | **120** |
+| `traderLegSeconds` / `jumpSeconds` / `gateDistance` | **90 s** / **20 s** / **6.0e8 m** |
+| `kSaveVersion` | **38** |
+
+##### ⚑⚑⚑⚑ `bubbleRetentionSeconds`' second clause is three functions and a comment that stops being true
+
+Phase 38 stage C left the hook and wrote Phase 39's line into it, at `space_world.cpp:5464`: *"PHASE 39'S CLAUSE GOES HERE AND IS THE ONLY THING IT ADDS."* The clause it drafts is `if (bubbleHoldsPlayerAsset(bubble)) { return kHeldIndefinitely; }`. **Three things in the same file refuse it.**
+
+1. **`releaseCooledBubbles` (`:5558`) does not consult `bubbleRetentionSeconds` at all.** It decrements `holdSeconds` by `dt` every tick and drops the bubble at zero. The retention function is asked **once**, at departure. An indefinite hold therefore cannot be a large number — it runs out — and cannot be a re-asked predicate either, because re-asking *is* the refresh that `kCoolingSeconds`' own comment forbids in its own words: *"Counted DOWN only, never refreshed — a refresh is how 'a stalemate pins a bubble forever' gets back in through the door the ceiling closes."* **Phase 39 must open that door, and it must open it for one reason only.**
+
+2. **`enforceBubbleCap` (`:5533`) breaks down when holds are equal.** It picks the minimum `holdSeconds` from slot 1 upward; among bubbles all sharing one indefinite sentinel the winner is *whichever is earliest in the vector*, which is arrival order and nothing else. Two captains, and which one survives a seventh system is arbitrary.
+
+3. **⚑⚑⚑ And `enforceBubbleCap`'s safety argument is false the moment a captain exists.** Its comment justifies dropping a bubble like this: *"Nothing dangles either: every reference that outlives a bubble is coarse-layer state keyed by SYSTEM (wrecks, rock depletion, trader routes, standing)."* That is exactly right today and exactly wrong afterwards — **an `OwnedShip` row is not coarse-layer state keyed by system; it is the player's property, and the thing it would name is an entity inside the bubble being erased.** Where the eviction of an ambient bubble is *"a degradation, never a corruption"*, the eviction of a captain's bubble is the player's freighter and its cargo ceasing to exist with no death path, no wreck and no log line.
+
+⚑ **`instantiateSystem` (`:3297`) simply returns `false` at the cap**, which is the failure made concrete: past six systems, a captain's ship is not destroyed and not refused — it is never simulated, silently.
+
+##### ⚑⚑⚑⚑ And a hauling captain is not in a system; it is in six
+
+This is where the phase's cost actually lives, and the sketch's own exit is the order that triggers it.
+
+`maxTradeJumps` is **5**, so a haul crosses up to **six** of the galaxy's eighty systems in sequence. Under `015` as written each of those systems must be instantiated as the captain enters it — and `instantiateSystem` calls `fillSystemSky` (`:3277`), which is `instantiateSystemEntities` + `instantiateMiningEntities` + `spawnAmbientPilots`: **the statics, every undepleted rock, and the owner's ambient wings.** Phase 38 measured what that is: **25–136 entities and 4–15 ships per system, with a fattest measured 9,180 collision pairs.**
+
+**So one captain running one route makes the game simulate a rolling window of somebody else's entire traffic in order to move 150 units of ore** — and the cost Phase 38 priced (0.067 ms at one bubble, 0.47 at four, **0.64 at six**, debug, against a 16.7 ms frame) was priced as a **transient**: a two-minute window after a fighting retreat. Phase 39 as written turns it into the **steady state**, and then the second captain has nowhere to go.
+
+⚑⚑⚑ **The estimate does not move because the phase is hard. It moves because the phase's central sentence contains two orders with different costs and only one of them is what `015` priced.** *"Mine here"* and *"patrol this"* are **stationary** — one system, one bubble, held while the order stands. *"Haul between there and there"* is **itinerant**, and it is the one order the bubble model cannot hold at any cap. The sketch names both in one breath and prices neither.
+
+##### The ruling: split by order, and the declined alternative is adopted only where its objection never reached
+
+`015`'s Alternatives section declines *"Coarse away, real when near"* with a recorded reason: *"my escort died to a raid while I was two jumps away becomes a die roll rather than a fight that happened."* **That objection is about combat.** It says nothing about a freighter crossing 600,000 km of empty lane on a schedule — which is precisely what `TraderLeg::Depart` already is, for **120 haulers**, and which nobody has ever called a weaker claim about this galaxy.
+
+So the representation is chosen by what the order *is*:
+
+- **Stationary orders are full entities in a held bubble.** Mine here, patrol this, guard this station. This is `015` unamended and Phase 38's hook turned on, and it is where the objection bites: a captain you left mining gets jumped by raiders and that is a fight that happened, in the sky, with a wreck.
+- **Itinerant orders ride the coarse layer while between systems and promote when you are co-located.** Haul A↔B, escort that. `Depart` / `Jump` / `Arrive` already decompose a haul; `TraderPuppet` already states the relationship in its own comment — *"The entity is a view and the trader is the record: this holds only the index that ties them, so nothing about the haul can drift out of step with the economy that owns it"* — and it is already *"deliberately not serialised — a puppet is rebuilt from the record on load."* A captain's hauler is that same seam pointed at a record the player owns.
+
+⚑⚑ **The precedent for the coarse half already shipped and nobody has ever objected to it: `RefineJob`.** The player leaves ore at a refinery in one system, flies two jumps away, and comes back to a finished job — **a player asset, in a named system, converting value on a coarse clock, with no bubble and no entity** (`sim/mining.hpp:90`). `SurveyEntry` is the same shape. GDD §14.4's *"a ship you own that is not in your system has to actually exist"* is therefore already not a claim about everything the player owns. It is a claim about **ships**, and specifically about ships that can be **shot at** — which is what the split preserves and what a flat coarse model would have given away.
+
+##### ⚑⚑⚑⚑ There is no answer to "whose ship is that", and it is this phase's version of the seventeen comparisons
+
+Every hostility decision in the game routes through one `std::uint32_t`: `ShipPilot::factionIndex`, read **59 times in `space_world.cpp` and 31 in `content.cpp`**, against a `m_factionTable` referenced **92 times**. `FactionSim::relation(a, b)` answers NPC-vs-NPC and `playerHostile(faction)` answers NPC-vs-player.
+
+**There is no player faction row, and the unaffiliated value is worse than useless**: `0xffff'ffffu` is documented at `space_world.hpp:613` as *"unaffiliated console spawns (which Lua treats as unconditionally player-hostile, the pre-8b rule)"*. So a captain's hull spawned today is one of two things — **hostile to its own owner**, or **wearing some NPC faction's colours**, which makes it inherit that faction's wars and makes `PreyCandidate::faction` read it as that faction's hauler. `respondTo`'s owner check, prey selection at `:8975`, the radar's three-way contact sort, the hail panel and the death path's kill attribution all consume the same field.
+
+**A captain's ship is a third case the model has never had, and Phase 37's record says which shape wins.** That phase turned `bool pirate` into a carried `FactionKind` precisely because *"a second bool beside it would have been the same bug with more states — `pirate && shadow` is nonsense and nothing but convention would have stopped it."* The same argument applies here: **carry the ownership, derive the predicates**, so that "is this mine" is asked of a thing rather than inferred from a number's absence. This is Phase 38's seventeen identity comparisons arriving one layer out — and unlike that one, **there is no component sitting unread that already answers it.** It has to be built.
+
+##### ⚑⚑ The wage has no clock to hang on, and the ruling avoids inventing one
+
+`grep -rin "wage\|upkeep\|salary\|payroll"` over `game/` and `engine/` returns **station archetypes only** — a coarse-economy line the player never pays. Every player transaction in this game is instantaneous: `buyShip`, `hireCrew`, `playerBuy`, `playerSell`, `refineFee`, `kInsuranceRate`. **There is no recurring drain on `m_playerCredits` anywhere**, and `decisions/006` refuses one by name.
+
+A captain who costs nothing to keep is a strictly dominant purchase and turns the fleet into a ratchet. A captain on a wage introduces the game's first cost that runs while the player is not looking, which is a real feel decision and a new clock. **The ruling takes neither: a captain is paid a cut of what their ship earns**, charged at the event that already exists — a haul completing, ore delivered, a bounty paid. No new clock, an idle captain costs nothing rather than bleeding you, and a bad route is visibly worse rather than silently expensive.
+
+##### ⚑⚑ Phase 28 gives this phase an interface, not a vocabulary — and the dependency is written backwards
+
+The sketch's *"Depends on: 38, 28 (the command vocabulary)"* is its weakest line. `CommandMode` is `{None, Autopilot, Orbit, MatchSpeed, KeepDistance, Hold, Follow}` (`space_world.hpp:518`). Against Phase 39's needs it fails on all three axes at once:
+
+| | Phase 28's modes | Phase 39's orders |
+| --- | --- | --- |
+| What they name | a **picked target** (`commandNeedsTarget` excludes only `Hold`) | a **place**: a field, a market, a system |
+| Where they reach | inside the player's own system | across the gate graph |
+| How long they last | **deliberately not saved** — Phase 28 decision 2: *"per-session flight state like throttle and pips"* | must outlive the session, which is the whole feature |
+
+**Not one of the six transfers.** What *does* transfer is the shape of the seam: `commandInput()` returns *"the `FlightInput` the ship flies itself with this tick"*, and that is exactly what a captain's hull needs when it is a live entity. **Phase 28 built the socket; Phase 39 brings its own plug.** ⚑ GDD §14.1 also records that `align to` was specified and never shipped — so *"the same vocabulary"* was never even complete on its own side.
+
+##### What already exists and must be reused rather than rebuilt
+
+- **`resolvedShipDef(const OwnedShip&)`** is public and its own comment says why: *"the only way to ask what a fit resolves to WITHOUT being docked, which a test has to be able to do."* A captain's hull is an `OwnedShip` resolved through a function that has always been able to do it. There is no new hull model in this phase.
+- **`MissionKind::Escort` already carries a coarse trader index** (`missions.hpp:59`), with `EscortCandidate` and `escortCandidates()` beside it. *"Escort that"* is the same objective pointed at a captain instead of at the player.
+- **`Economy::buyPrice` / `sellPrice` are per market, per commodity.** *"Sell when the price clears X"* is a comparison, not machinery.
+- **`FactionSim::danger(system)`** is the exposure a coarse haul already runs, and it is what makes a captain's route a decision rather than an annuity.
+- **The Crew tab exists and is tab 4 of ten.** GDD §14.2 says captains are *"hired at a crew hall"* — this phase adds no tab, and adding one would break `station_screen.cpp`'s ten `static_assert`s pinning the strip to the def vocabulary entry by entry.
+- **`SpaceWorld::BubbleReport`** is how a test sees into a bubble the player is not in, and it is how stage C's guards will be written.
+
+##### Stages
+
+Five, one per ruling plus the two halves of the representation. **The user took the widest scope on orders (all five of GDD §14.2), so the phase is wide rather than deep, and every stage after A ships exactly one order set.**
+
+- **(A) A captain is a person, and a stored hull can be given to one.** The `Captain` record — a name, an id, the fleet index it flies, its cut — hired and dismissed at the Crew tab beside the three passive-bonus rows, which stay exactly as they are. `OwnedShip` learns it is assigned. **The eleven `m_fleet[m_activeShip]` sites are surveyed here and the ones that must grow a stored-ship arm are grown here**, because everything after this is wrong without it. **`kSaveVersion` bumps**: a person is a new save-format promise. **Exit**: buy a freighter, leave it parked, hire a captain, give them that hull, and read them back on the Crew tab and from `sol.captains()` — with nothing flying yet.
+- **(B) The itinerant half: haul between there and there.** The standing order record and the coarse agent, riding `Depart` / `Jump` / `Arrive`; the cut charged at arrival; exposure to `FactionSim::danger` so a route through a contested system is a decision. Promotion to a full entity whenever the player is co-located, on `TraderPuppet`'s seam. **Exit**: give a captain a two-hop route, fly away, come back richer — **and meet your own freighter on the lane wearing your fit**, which is the half that makes it not a spreadsheet.
+- **⚑⚑ CHECKPOINT AFTER B.** A and B are the whole loop the sketch's exit describes and are playable without C, D or E. On this arc's record a stage that has been flown changes the estimate for the one after it — and B is where the two-representation seam is either right or visibly wrong.
+- **(C) The stationary half: mine here.** `bubbleHoldsPlayerAsset`, and the **three** functions that actually have to change rather than the one the hook promised: `bubbleRetentionSeconds`, `releaseCooledBubbles` (the forbidden refresh, opened for exactly one reason), and `enforceBubbleCap` (a captain-held bubble is never the eviction victim, and the comment justifying the eviction is rewritten rather than left to be false). The cap is re-priced against a *steady* six. **Exit**: leave a captain working a field, jump two systems away, spend a minute, come back and find the same hull at the same rock with a fuller hold — with the console reporting it was ticked, not restored.
+- **(D) Whose ship is that: patrol this, and escort that.** Ownership carried rather than inferred, and the derived predicates it feeds — prey selection, response dispatch, the contact sort, the hail panel, and the death path when your captain is the one who dies (wreck, insurance, standing, and a log line the player can find). The two combat orders ship here because neither means anything until hostility answers correctly in both directions. **Exit**: a raider jumps your captain in a system you are standing in, and the patrol you posted comes to help — then the same fight happens in a system you left, and you find the wreck when you return.
+- **(E) Sell when the price clears X, and the ledger.** The condition on a haul order, what a captain does when the price never clears, and the readout: each captain's row says where they are, what they are doing, and what they have earned. `sol.captains()` is the probe. **Exit**: set a floor above the market, watch the captain sit on the cargo rather than dump it, then drop the floor and watch the sale land in your credits.
+
+**Phase exit**: run a three-captain fleet for a session — one hauling, one mining, one on patrol — and be able to answer, from the Crew tab alone, where each is and what they have made. Then fly to one of them and find them where the screen said they were.
+
+##### Risks
+
+- **⚑⚑⚑⚑ THE PHASE'S OWN FAILURE MODE IS A CAPTAIN THAT IS BOTH THINGS OR NEITHER.** Two representations with one seam is the whole design, and its defect is a captain who is a coarse record *and* an entity at once (two hulls, two holds, double income) or a captain who falls between them at the crossing (a hull that never promotes, a record that never resumes). Phase 38's guard shape is the answer and it is already written: **a control world.** The same captain, observed and unobserved, must agree on position, cargo and credits — and the crossing must be asserted in both directions, because the promotion and the demotion are different code.
+- **⚑⚑⚑ THE CAP EVICTION IS A DATA-LOSS BUG WAITING FOR STAGE C.** `enforceBubbleCap` deletes a bubble with no death path. Today that is a degradation; with a captain in it, it is the player's freighter and cargo vanishing silently. Stage C must make a captain-held bubble un-evictable *and* decide what happens at the seventh — and "the captain reverts to a coarse record" is a legitimate answer that the split makes available.
+- **⚑⚑⚑ DETERMINISM, WHICH PHASE 38 RECORDED AS STRUCTURE AND THIS PHASE MAKES LIVE.** Stage B of that phase noted `m_chunkRng` and `m_noticeRng` were per-system *structure, not a live fix*, because *"`m_chunkRng` is drawn only when something cuts rock and cutting is player-gated."* **A mining captain is the first thing in this game that cuts rock without a player**, so that stream goes live in stage C exactly as `CombatEffects`' RNG went live in Phase 38 stage C. Check it there rather than discovering it.
+- **⚑⚑ A PERSON IS A NEW KIND OF SAVE-FORMAT PROMISE.** A fitting can be dropped on load with a warning; a named captain the player hired cannot. Decide the missing-def behaviour in stage A, not in stage E.
+- **⚑⚑ ALL FIVE ORDERS IS THE WIDEST SCOPE AVAILABLE AND THE PHASE MUST NOT ALSO GROW A FLEET.** A commander, a formation, or an order resolved *by composition* is **Phase 40**. The fence: every order in this phase is given to exactly one captain, and nothing here reads more than one captain at a time.
+- **⚑ THE ESTIMATE WILL AGE.** `space_world.cpp` grew 7% during Phase 38 alone (12,063 → 12,916) and 79% since `015` was written. Re-measure the table above if this phase slips.
+
+##### The user's four rulings (2026-09-02), all taken before a line was written
+
+1. **⚑⚑⚑⚑ THE REPRESENTATION IS SPLIT BY ORDER.** Stationary orders hold a bubble and are full entities — `015` unamended, where its own objection bites. Itinerant orders ride the coarse layer between systems and promote when the player is co-located. Chosen over `015`-literal (which contradicts a public, test-asserted cap at the sixth system and turns a two-minute transient into the steady state) and over flat-coarse (which is the alternative `015` declined, and this ruling adopts it only for the empty lane its objection never reached). See the amendment in `docs/decisions/015`.
+2. **⚑⚑⚑⚑ A CAPTAIN IS A NAMED INSTANCE — A PERSON.** The first instance of a person this game has ever had, consciously replacing `decisions/006`'s model for this branch and leaving `CrewDef` passive bonuses standing beside it untouched. Chosen over a `can_captain` flag on a def, which would have left "my captain" unable to be a particular person and left Phase 40 with no commander to name. Recorded in `docs/decisions/020-captains-as-people.md`.
+3. **⚑⚑⚑ A CAPTAIN IS PAID A CUT OF WHAT THEIR SHIP EARNS.** Charged at an event that already exists, so no new clock and nothing ticking while the player is away; an idle captain costs nothing rather than bleeding. Chosen over a one-time fee (which makes every captain pure upside after the first payment) and over a wage on the clock (the conventional answer, and the one `006` refused by name).
+4. **⚑⚑⚑ ALL FIVE ORDERS OF GDD §14.2 SHIP: mine here, haul between there and there, patrol this, escort that, sell when the price clears X.** The widest scope offered, taken deliberately — and it is what makes the phase five stages rather than three. The fence is that the phase stays one captain wide: fleets are Phase 40.
 
 ---
 

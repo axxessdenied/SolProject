@@ -1,7 +1,10 @@
 # 006 — Crew: trivial passive-bonus version in v1
 
 - **Date**: 2026-08-15
-- **Status**: accepted
+- **Status**: accepted, and still accepted for what it covers. **Its final
+  consequence was exercised 2026-09-02**: `020-captains-as-people.md` is the
+  conscious replacement for the officer branch this document deferred. Passive-bonus
+  crew are unchanged, not deprecated and not migrated — a ship carries both.
 
 ## Context
 

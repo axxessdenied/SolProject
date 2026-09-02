@@ -1,8 +1,9 @@
 # 015 — A ship you own exists whether or not you are looking at it
 
 - **Date**: 2026-08-28
-- **Status**: accepted; **first bullet of the Decision amended 2026-09-02** by the
-  Phase 38 spec (see “Amendment” below). The decision itself stands.
+- **Status**: accepted; **amended twice on 2026-09-02** — the first bullet of the
+  Decision by the Phase 38 spec, and the second bullet by the Phase 39 spec (see
+  the two “Amendment” sections below). The decision itself stands.
 
 ## Context
 
@@ -86,6 +87,45 @@ affected**: five `playAt` sites hand a system-frame `DVec3` to a mixer with one
 listener at the player's ear. And *"the largest single item in the v2 arc"* is
 now larger — `space_world.cpp` grew from 7,198 lines to **12,063** in the four
 phases between this decision and the spec written against it.
+
+### Amendment, 2026-09-02 (Phase 39 spec) — the second bullet, split by order
+
+**The second bullet is amended.** *“The player’s system, plus every system
+holding a player asset”* holds for a **stationary** asset and does not hold for
+an **itinerant** one. An owned ship working a field or standing a patrol keeps
+its system instantiated, exactly as written. An owned ship hauling between two
+markets rides the coarse layer while it is between systems and promotes to a
+full entity whenever the player is co-located.
+
+Three measurements forced it, all taken against the code Phase 38 shipped:
+
+- **`kMaxInstantiatedSystems` is 6 and `instantiateSystem` returns `false` past
+  it.** Under the unamended bullet, the sixth captain is the last one that
+  exists, and the seventh is not refused — it is silently never simulated.
+- **`releaseCooledBubbles` counts `holdSeconds` down unconditionally**, so an
+  indefinite hold needs the refresh `kCoolingSeconds`’ own comment forbids; and
+  **`enforceBubbleCap`’s safety argument** — *“nothing dangles: every reference
+  that outlives a bubble is coarse-layer state keyed by SYSTEM”* — stops being
+  true the moment an `OwnedShip` names an entity inside one. Evicting an
+  ambient bubble is a degradation; evicting a captain’s is the player’s
+  freighter vanishing with no death path.
+- **`maxTradeJumps` is 5**, so one haul crosses up to six of eighty systems,
+  and each one entered gets a full sky built for it (`fillSystemSky`: statics,
+  rocks, ambient wings — 25–136 entities and 4–15 ships). One captain moving
+  150 units of ore would make the game simulate a rolling window of somebody
+  else’s traffic, and Phase 38’s 0.64 ms at six bubbles was priced as a
+  two-minute **transient**, not a steady state.
+
+⚑⚑ **This adopts the declined alternative below only where its own objection
+never reached.** That objection is recorded as *“my escort died to a raid while
+I was two jumps away becomes a die roll rather than a fight that happened”* —
+which is about **combat**, and combat is exactly the half kept as full
+entities. It says nothing about a freighter crossing 600,000 km of empty lane
+on a schedule, which is what `TraderLeg::Depart` already is for 120 haulers.
+And the precedent already shipped: **`RefineJob` is a player asset in a named
+system converting value on a coarse clock with no bubble and no entity**, and
+nobody has ever called it a spreadsheet. Recorded in full in
+`020-captains-as-people.md`.
 
 ## Alternatives considered
 

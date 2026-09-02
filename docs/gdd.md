@@ -134,15 +134,16 @@ Recorded here so v1 does not paint over it: **multi-system entity simulation** (
 | Q2 | Shield facings (directional) vs. single bubble | ✅ Decided: directional (`decisions/002`) | Phase 6 |
 | Q3 | Power management UI (pips vs. module toggles) | ✅ Decided: Elite-style pips (`decisions/003`) | Phase 6 |
 | Q4 | Time compression out of combat (SETA-like) | ✅ Decided: no — 1× real time, tune cruise/layout instead (`decisions/005`) | Phase 7 |
-| Q5 | Crew/officers as passive bonuses | ✅ Decided: trivial version in v1 — hired flat passive bonuses on module machinery (`decisions/006`) | Phase 8 |
+| Q5 | Crew/officers as passive bonuses | ✅ Decided: trivial version in v1 — hired flat passive bonuses on module machinery (`decisions/006`); **the officer branch it deferred is decided in v2 by `decisions/020`, and both models stand side by side** | Phase 8, Phase 39 |
 | Q6 | Death penalty severity / ironman modes | ✅ Decided: insurance deductible default + opt-in hardcore (`decisions/007`) | Phase 8 |
 | Q7 | Story campaign vs. pure sandbox + anchors | ✅ Decided: authored campaign spine, sandbox complete without it (`decisions/008`) | Phase 8 |
 | Q8 | Hardpoints: unified named mounts vs. mounts beside slot counts | ✅ Decided: **unified named mounts**; slot counts retire (`decisions/014`) | Phase 31 |
-| Q9 | Do owned ships exist while the player is elsewhere? | ✅ Decided: **full entities in every system that holds one**; the frame-of-reference change is its own phase (`decisions/015`) | Phase 38 |
+| Q9 | Do owned ships exist while the player is elsewhere? | ✅ Decided: **full entities in every system that holds one**; the frame-of-reference change is its own phase (`decisions/015`). **Amended twice 2026-09-02**: the frame is per-registry rather than a field (Phase 38 spec), and the policy is **split by order** — a stationary asset holds its system, an itinerant one rides the coarse layer between systems and promotes when the player arrives (Phase 39 spec, `decisions/020`) | Phase 38 |
 | Q10 | Station modules: composition, construction, or both | ✅ Decided: **generator composes in v1, player constructs in v2** (`decisions/016`) | Phase 34 |
 | Q11 | How deep does law enforcement go | ✅ Decided: **full inspection loop** — hail, hold, timed cargo scan, consequence (`decisions/017`) | Phase 36 |
 | Q12 | Authored systems: how placed, how modded | ✅ Decided: **TOML systems + constellations with placement rules** (`decisions/018`) | Phase 29 |
 | Q13 | System security: static, dynamic, and what "negative" means | ✅ Decided: **static baseline − live danger, on a signed scale whose negative half is pirate-policed**; response diverts before it spawns (`decisions/019`) | Phase 30 |
+| Q14 | What a captain **is**, and how their ship exists when you are not there | ✅ Decided: **a named person** — the game's first instance of one — paid **a cut of what their ship earns**, never a wage; their ship is a **full entity in a held system for a stationary order and a coarse record between systems for an itinerant one** (`decisions/020`) | Phase 39 |
 
 Decisions get recorded in `docs/decisions/` and reflected here.
 
@@ -296,6 +297,8 @@ Two ways to give an order, and **both are first-class**:
 ### 14.2 Captains and standing orders **[v2]**
 
 A **captain** is crew you give a *ship* to instead of a bonus. Hired at a crew hall, they take a ship out of your storage and fly it. A captain accepts the same command vocabulary as your own ship plus **standing orders** that outlive the session: mine here, haul between there and there, patrol this, escort that, sell when the price clears X.
+
+**⚑⚑⚑ THE FIRST SENTENCE IS THE ONE THE CODE REFUTED, AND IT IS KEPT HERE BECAUSE IT IS WHAT WAS PROMISED (spec'd 2026-09-02, `decisions/020`).** Crew in this game are **defs, not people**: `OwnedShip::crewIds` is a list of catalog id strings, so two hired Engineers are one string twice — unnameable, and unable to be given anything. **A captain is therefore not an escalation of crew; it is the first instance of a person the game has ever had**, and it stands beside passive-bonus crew rather than replacing them. Two more things came out of that re-read: a captain is paid **a cut of what their ship earns**, never a wage — there is no recurring cost anywhere in this game and `decisions/006` refused one by name — and their ship exists **two ways**, a full entity in a held system for a stationary order and a coarse record between systems for an itinerant one, because a hauling captain is not in one system but in six (§14.4 and `decisions/015`, amended).
 
 ### 14.3 Fleets and formations **[v2]**
 
