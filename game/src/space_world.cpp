@@ -230,7 +230,7 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // something worse, which is silently drop every floor the player set and start
 // dumping their cargo at whatever the market offered. That is the case the
 // version number exists for.
-constexpr std::uint32_t kSaveVersion = 44;
+constexpr std::uint32_t kSaveVersion = 45;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -7908,6 +7908,14 @@ void SpaceWorld::killCaptain(std::size_t captainIndex, std::uint32_t system)
     // the one it already had, and inventing a reputation hit here would make
     // being attacked lower your standing with your attacker.
 
+    // ⚑⚑⚑ THE KEY OUTLIVES THE PERSON, AND IT HAS TO, because the hall that
+    // hired them is derived from the seed and would offer them again the moment
+    // they left `m_captains` - see the filter in `captainCandidates`. Recorded
+    // HERE rather than in `removeCaptain`, which is also the erase a DISMISSAL
+    // goes through: the two calls look alike and mean opposite things.
+    if (std::find(m_lostCaptains.begin(), m_lostCaptains.end(), captain.who) == m_lostCaptains.end()) {
+        m_lostCaptains.push_back(captain.who);
+    }
     removeCaptain(captainIndex);
     if (fleetIndex < m_fleet.size()) {
         removeFleetShip(fleetIndex);
@@ -9294,12 +9302,33 @@ void SpaceWorld::captainCandidates(std::vector<CaptainCandidate>& out) const
 
         std::snprintf(id, sizeof(id), "cap:%u:%u:%u", m_currentSystem, m_dockedStation, slot);
         const std::uint64_t who = castKeyForCharacter(id);
-        // Already in your employ: they are not standing in the hall. Nothing
-        // else is kept - a captain you DISMISS falls out of `m_captains` and is
-        // therefore on offer again, which is honest and costs no storage.
+        // Already in your employ: they are not standing in the hall. A captain
+        // you DISMISS falls out of `m_captains` and is therefore on offer
+        // again, which is honest and costs no storage.
         const bool hired = std::any_of(
             m_captains.begin(), m_captains.end(), [who](const Captain& c) { return c.who == who; });
         if (hired) {
+            continue;
+        }
+        // ⚑⚑⚑⚑ AND DEAD IS NOT THE SAME AS DISMISSED, WHICH THE PHASE EXIT
+        // FOUND BY WALKING BACK INTO THE HALL. A roster is a pure function of
+        // the dock, and `killCaptain` erases the person from `m_captains` - so
+        // the slot that produced them simply produced them again, and a captain
+        // the game had just announced as "lost with all hands" was standing in
+        // the same crew hall twenty minutes later asking for a berth, at the
+        // same cut. That refutes ruling 14 (*"the hull is gone and so is the
+        // person"*) as a fact the player can see, and it refutes it in the one
+        // place the ruling is supposed to bite: `killCaptain`'s own comment
+        // says a captain "is a name that was drawn once", and the name is drawn
+        // from a seed that does not know they are dead.
+        //
+        // ⚑⚑ THE DEAD ARE THEREFORE KEPT AND THE DISMISSED ARE NOT, and the
+        // asymmetry is the whole point rather than an inconsistency: dismissal
+        // is a door the player can walk back through, and death is the one
+        // consequence in this game that flying back cannot undo. It costs one
+        // 64-bit key per captain who dies - `CastMemory`'s bargain exactly, a
+        // sparse record of what HAPPENED beside a roster derived from the seed.
+        if (std::find(m_lostCaptains.begin(), m_lostCaptains.end(), who) != m_lostCaptains.end()) {
             continue;
         }
         out.push_back({.name = std::string(kGivenNames[given]) + " " + kFamilyNames[family],
@@ -15384,6 +15413,16 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         writer.write(captain.ledger.paid);
         writer.write(captain.ledger.losses);
     }
+    // ⚑⚑ WHO DIED (v45), AND IT IS A LIST OF KEYS RATHER THAN OF PEOPLE. A
+    // crew hall's roster is a pure function of the dock's seed, so the only
+    // thing a save has to carry about a dead captain is that they are dead;
+    // their name, trade and cut are all re-derivable and none of them is the
+    // identity. Same bargain as `CastMemory` above: a sparse record of what
+    // happened, beside a composed world that does not know it happened.
+    writer.write(static_cast<std::uint32_t>(m_lostCaptains.size()));
+    for (const std::uint64_t who : m_lostCaptains) {
+        writer.write(who);
+    }
     m_economy.save(writer);
     m_factionSim.save(writer); // v5: relations, war flags, standings, raids
     m_missions.save(writer);   // v6: journal, board, campaign stage
@@ -15677,6 +15716,29 @@ bool SpaceWorld::loadFrom(const char* path)
         }
         held[captain.ship] = 1u;
     }
+    // Who died (v45), read where the writer put it: after the roster and before
+    // the economy. ⚑ The bound is the roster size a galaxy could ever offer -
+    // `kCaptainsPerHall` at every station of every system - because a file
+    // claiming more dead captains than the galaxy has SEATS did not come from
+    // this game, and the allocation it would otherwise ask for is attacker
+    // -chosen. Same standard as every other count in this loader.
+    std::uint32_t lostCount = 0;
+    if (!reader.read(lostCount)) {
+        return false;
+    }
+    std::uint64_t seats = 0;
+    for (const sim::SystemSpec& spec : m_galaxy.systems) {
+        seats += static_cast<std::uint64_t>(spec.stations.size()) * kCaptainsPerHall;
+    }
+    if (static_cast<std::uint64_t>(lostCount) > seats) {
+        return false;
+    }
+    std::vector<std::uint64_t> lost(lostCount);
+    for (std::uint64_t& who : lost) {
+        if (!reader.read(who)) {
+            return false;
+        }
+    }
     // The economy layout is derived from galaxy+params; rebuild it against
     // the (possibly regenerated) galaxy, then restore its dynamic state.
     if (!m_economyParams.commodities.empty()) {
@@ -15811,6 +15873,7 @@ bool SpaceWorld::loadFrom(const char* path)
     m_fleet = std::move(fleet);
     m_activeShip = activeIndex;
     m_captains = std::move(captains);
+    m_lostCaptains = std::move(lost);
     if (galaxyChanged) {
         // Recompute the new-game anchor (hardcore respawn) for this galaxy.
         m_startSystem = 0;

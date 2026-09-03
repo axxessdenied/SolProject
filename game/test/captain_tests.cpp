@@ -2627,6 +2627,95 @@ SOL_TEST(a_save_carries_the_sell_floor_and_refuses_one_no_captain_could_hold_out
 // ⚑ It asserts almost nothing on purpose. It is a measurement, and the numbers
 // are the output; the only guards are that the captain actually worked and that
 // the run is long enough to see a curve if there is one.
+// ⚑⚑⚑⚑ THE PHASE EXIT'S OWN FINDING: A DEAD CAPTAIN WAS BACK IN THE HALL
+// THAT HIRED THEM. Nothing in the suite could see it, because every test here
+// asks the world about `captains()` and the hall is derived from the DOCK'S
+// SEED - so `killCaptain` erasing the person from `m_captains` handed the slot
+// straight back to `captainCandidates`, which had one filter on it and that
+// filter was "already in your employ". The exit flight watched it happen: a
+// captain announced on the comms channel as "lost with all hands in Lyrth" was
+// standing in Lyrth Gamma's crew hall twenty minutes later at the same cut,
+// which refutes ruling 14 in the one place a player can see.
+//
+// ⚑⚑⚑ THE TEST IS THE ASYMMETRY, NOT THE FILTER, and both halves have to be
+// in one test or either is satisfiable by a bug. A hall that offers nobody
+// passes "the dead one is gone" perfectly; a hall that offers everybody passes
+// "the dismissed one came back". What is asserted is that the SAME hall treats
+// the two erasures differently, and that the two people beside them are
+// untouched either way - this file's own anti-vacuity rule.
+SOL_TEST(a_dead_captain_stays_dead_and_a_dismissed_one_comes_back)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+
+    std::vector<CaptainCandidate> hall;
+    w.captainCandidates(hall);
+    SOL_REQUIRE(hall.size() == SpaceWorld::kCaptainsPerHall);
+    const std::uint64_t doomed = hall[0].who;
+    const std::string doomedName = hall[0].name;
+    const std::uint64_t bystanderA = hall[1].who;
+    const std::uint64_t bystanderB = hall[2].who;
+
+    // Somebody to kill, with a hull under them: the death path is the one the
+    // game runs, not an erase.
+    const std::size_t slot = buyAndArmAMiner(fixture);
+    SOL_REQUIRE(slot != 0);
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+    SOL_REQUIRE(w.captains()[captain].who == doomed);
+    SOL_REQUIRE(w.orderMine(captain));
+    SOL_REQUIRE(runUntil(w, [&] { return w.captains()[captain].mine.rockStep > 0u; }));
+    SOL_REQUIRE(w.killCaptainPuppet(captain));
+    SOL_REQUIRE(w.captains().empty());
+
+    // The hall the money hired them out of, asked again.
+    w.captainCandidates(hall);
+    SOL_CHECK(hall.size() == SpaceWorld::kCaptainsPerHall - 1);
+    SOL_CHECK(std::none_of(
+        hall.begin(), hall.end(), [doomed](const CaptainCandidate& c) { return c.who == doomed; }));
+    // ⚑ THE OTHER TWO ARE UNCHANGED, which is what says the roster was
+    // filtered rather than re-rolled - the draws rule this file opens with.
+    SOL_CHECK(std::any_of(
+        hall.begin(), hall.end(), [bystanderA](const CaptainCandidate& c) { return c.who == bystanderA; }));
+    SOL_CHECK(std::any_of(
+        hall.begin(), hall.end(), [bystanderB](const CaptainCandidate& c) { return c.who == bystanderB; }));
+    std::printf("  %s died and the hall is %zu deep\n", doomedName.c_str(), hall.size());
+
+    // ⚑⚑ AND THE OTHER HALF: A DISMISSAL IS A DOOR YOU CAN WALK BACK THROUGH.
+    // Stage A chose that deliberately ("a captain you DISMISS falls out of
+    // `m_captains` and is therefore on offer again"), so the fix must not have
+    // quietly made every erasure permanent.
+    SOL_REQUIRE(w.hireCaptain(0));
+    const std::uint64_t rehired = w.captains().back().who;
+    SOL_REQUIRE(w.dismissCaptain(w.captains().size() - 1));
+    w.captainCandidates(hall);
+    SOL_CHECK(std::any_of(
+        hall.begin(), hall.end(), [rehired](const CaptainCandidate& c) { return c.who == rehired; }));
+
+    // ⚑⚑⚑ AND IT SURVIVES A SAVE, which is the half that makes it a fact
+    // about the GAME rather than about this session. The roster is composed
+    // from the seed on load, so a death that is not written down is a death
+    // that is undone by quitting - the same shape as every other "what the
+    // player DID" record in this file's save block.
+    const std::string dir = std::string(SOL_GAME_TEST_SCRATCH_DIR) + "/captains-exit";
+    SOL_REQUIRE(sol::platform::createDirectories(dir.c_str()));
+    const std::string path = dir + "/dead.sav";
+    SOL_REQUIRE(w.saveTo(path.c_str(), "Dead"));
+
+    Fixture reloaded;
+    SOL_REQUIRE(reloaded.world().loadFrom(path.c_str()));
+    SOL_REQUIRE(reloaded.walkIn(dock));
+    std::vector<CaptainCandidate> after;
+    reloaded.world().captainCandidates(after);
+    SOL_CHECK(after.size() == SpaceWorld::kCaptainsPerHall - 1);
+    SOL_CHECK(std::none_of(
+        after.begin(), after.end(), [doomed](const CaptainCandidate& c) { return c.who == doomed; }));
+    std::printf("  and after a reload the hall is still %zu deep\n", after.size());
+}
+
 SOL_TEST(what_a_mining_captain_earns_per_minute_across_an_hour)
 {
     Fixture fixture;

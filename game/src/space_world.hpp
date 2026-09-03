@@ -5480,6 +5480,13 @@ private:
     // Captains in the player's employ (Phase 39 stage A). Saved; the crew
     // hall's candidates are not, and are filtered against this.
     std::vector<Captain> m_captains;
+    // ⚑⚑⚑ AND THE ONES WHO DIED, WHICH IS A SECOND FILTER ON THE SAME HALL
+    // (the phase exit). `castKeyForCharacter` keys, saved at v45, kept because
+    // a roster derived from a seed cannot know that one of its three people is
+    // dead - it would offer them again, which is what the exit flight watched
+    // it do. Not written by a DISMISSAL: that is a door the player may walk
+    // back through, and this list is for the one consequence that has no door.
+    std::vector<std::uint64_t> m_lostCaptains;
     const sol::assets::DefDatabase* m_defs = nullptr;
     bool m_hardcore = false;
     bool m_hardcoreDeathPending = false;
