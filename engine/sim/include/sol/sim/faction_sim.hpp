@@ -208,6 +208,13 @@ public:
     }
 
     void setStanding(std::uint32_t faction, float value); // dev cheat
+    // The same, one system over (Phase 39 stage D): pins how raided a system
+    // has recently been, which is the larger half of what `danger` is made of.
+    // ⚑ A cheat rather than a test-only entry point, on `setStanding`'s own
+    // precedent - the coarse hazard a captain is exposed to is a thing a DRIVE
+    // has to be able to cause too, because the alternative is flying around
+    // waiting for a clan to raid the system you left somebody in.
+    void setRaidIntensity(std::uint32_t system, float value);
     // Clamped relative change (mission rewards/penalties, Phase 8c).
     void addStanding(std::uint32_t faction, float delta);
     // The player destroyed one of victimFaction's ships: standing falls with

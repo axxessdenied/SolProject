@@ -466,6 +466,41 @@ void fillStationOutfitting(const SpaceWorld& world,
                                 : ordered ? "cancel their orders first"
                                           : store(text, "cuts " + formatNumber(beam) + " units a second");
 
+        // ⚑⚑ THE TWO COMBAT ORDERS, ON "WORK THIS SYSTEM"'S OWN SHAPE (stage
+        // D): a row rather than a destination, because neither names a place
+        // the player could pick out of a list. The note carries the refusal for
+        // the reason the mining note does - "no guns on that hull" is a thing a
+        // player fixes at the outfitter, and it is not guessable from a greyed
+        // button.
+        const float guns = hasShip ? world.shipGunPower(world.fleet()[captain.ship]) : 0.0f;
+        panel.captainCanPatrol = hasShip && parkedHere && !ordered && guns > 0.0f;
+        panel.captainPatrolNote =
+            !hasShip       ? "give them a hull first"
+            : guns <= 0.0f ? "that hull carries no guns"
+            : !parkedHere  ? "their ship is not on this dock"
+            : ordered      ? "cancel their orders first"
+                           : store(text, "holds the dock and the gates, " + formatNumber(guns) + " dps");
+        // ⚑ AND THE ESCORT HAS ONE REFUSAL THE OTHERS DO NOT: THERE CAN ONLY BE
+        // ONE. That is ruling 4's fence - a second hull holding station on the
+        // same point is a FLEET, which is Phase 40 - and it is said here rather
+        // than only in `orderEscort`, because a player who has one escort and
+        // presses the button on a second captain is owed the reason.
+        std::size_t escorts = 0;
+        for (const game::Captain& other : world.captains()) {
+            if (game::escorting(other.order.kind)) {
+                ++escorts;
+            }
+        }
+        const bool escortTaken = escorts > 0 && !game::escorting(captain.order.kind);
+        panel.captainCanEscort = hasShip && parkedHere && !ordered && guns > 0.0f && !escortTaken;
+        panel.captainEscortNote =
+            !hasShip       ? "give them a hull first"
+            : guns <= 0.0f ? "that hull carries no guns"
+            : escortTaken  ? "somebody already flies as your escort"
+            : !parkedHere  ? "their ship is not on this dock"
+            : ordered      ? "cancel their orders first"
+                           : store(text, "flies your wing wherever you go, " + formatNumber(guns) + " dps");
+
         // ⚑ The destination list is offered only when an order would actually
         // be taken. `orderHaul` refuses a hull that is not on this dock and one
         // already on a run; both are read above rather than discovered by the
@@ -1002,6 +1037,16 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action, in
         // selection is the whole of it.
         if (selectedCaptain >= 0) {
             (void)world.orderMine(static_cast<std::size_t>(selectedCaptain));
+        }
+        break;
+    case Kind::OrderPatrol:
+        if (selectedCaptain >= 0) {
+            (void)world.orderPatrol(static_cast<std::size_t>(selectedCaptain));
+        }
+        break;
+    case Kind::OrderEscort:
+        if (selectedCaptain >= 0) {
+            (void)world.orderEscort(static_cast<std::size_t>(selectedCaptain));
         }
         break;
     case Kind::CancelOrder:

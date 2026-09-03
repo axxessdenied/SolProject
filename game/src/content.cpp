@@ -1794,6 +1794,51 @@ std::string listCaptains(GameContent& content)
             lines += buffer;
             continue;
         }
+        // ⚑⚑ THE TWO COMBAT ORDERS REPORT A COUNT TOO, AND IT IS THE SAME
+        // ARGUMENT ONE ORDER KIND ALONG (stage D). "On the beat" reads
+        // identically in a system that is being ticked and in one that was
+        // rebuilt around a sleeping captain; the leg of the beat they are on
+        // does not, so a probe taken before a jump and again after tells the
+        // two apart. `beat` lives on the BODY rather than the record, so this
+        // also answers the question the whole split turns on - is there a hull
+        // in the sky for this person, or only a row in a save file.
+        if (game::fighting(captain.order.kind)) {
+            const bool escort = captain.order.kind == game::OrderKind::Escort;
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "\n   %s%s%s",
+                          escort ? "flying as your escort" : "patrolling ",
+                          escort ? "" : marketName(world, captain.order.marketA).c_str(),
+                          captain.order.stopping ? " (standing down)" : "");
+            lines += buffer;
+            std::vector<game::CaptainPuppetInfo> bodies;
+            world.captainPuppetInfo(bodies);
+            const game::CaptainPuppetInfo* body = nullptr;
+            for (const game::CaptainPuppetInfo& info : bodies) {
+                if (info.captainIndex == i) {
+                    body = &info;
+                    break;
+                }
+            }
+            if (body != nullptr) {
+                std::snprintf(buffer,
+                              sizeof(buffer),
+                              "\n   in your sky, %.0f km off, leg %u of the beat",
+                              body->distance / 1000.0,
+                              body->beat);
+                lines += buffer;
+            } else {
+                lines += "\n   no body in your system";
+            }
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "\n   %.0f cr earned, %.0f cr paid out, %u load(s) lost",
+                          captain.ledger.earned,
+                          captain.ledger.paid,
+                          captain.ledger.losses);
+            lines += buffer;
+            continue;
+        }
         // The ORDER, then what they are doing about it - the two records the
         // stage keeps apart, kept apart in the readout as well.
         lines += "\n   hauling " + marketName(world, captain.order.marketA) + " <-> " +
@@ -1884,6 +1929,21 @@ bool captainKill(GameContent& content, double captain)
 bool orderMine(GameContent& content, double captain)
 {
     return captain >= 1.0 && content.world().orderMine(static_cast<std::size_t>(captain) - 1);
+}
+
+// The two combat orders (stage D), on `sol.order_mine`'s shape and for its
+// reason: neither names a place, so there is nothing to number and no list to
+// print. ⚑ Both go through the same `orderPatrol`/`orderEscort` the Crew tab
+// presses, so the console cannot reach a state the screen cannot - which is
+// what made the drive able to find stage B's two unloadable saves.
+bool orderPatrol(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().orderPatrol(static_cast<std::size_t>(captain) - 1);
+}
+
+bool orderEscort(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().orderEscort(static_cast<std::size_t>(captain) - 1);
 }
 
 bool cancelOrder(GameContent& content, double captain)
@@ -3785,6 +3845,25 @@ bool setContest(GameContent& content, double systemIndex, double factionIndex, d
     return world.factionSim().contestOf(system).attacker == attacker;
 }
 
+// ⚑⚑ DEV LEVER (Phase 39 stage D): pin how raided a system has recently been,
+// which is the larger half of what `sol.danger` is made of. It exists because
+// the stage's own exit is "the same fight happens in a system you left", and
+// the only honest way to watch that in a cockpit is to make the system
+// dangerous on purpose - `sol.set_contest` cannot do it, because a core system's
+// owner is not a candidate to attack it, and waiting for a clan to raid the
+// place you happened to leave somebody is waiting on a die roll for hours.
+// `FactionSim::setStanding`'s precedent, one row over.
+bool setRaidIntensity(GameContent& content, double systemIndex, double value)
+{
+    SpaceWorld& world = content.world();
+    const auto system = static_cast<std::uint32_t>(systemIndex);
+    if (system >= world.galaxy().systems.size()) {
+        return false;
+    }
+    world.factionSim().setRaidIntensity(system, static_cast<float>(value));
+    return true;
+}
+
 // Dev lever: hand a system over outright, ending any contest.
 bool flipSystem(GameContent& content, double systemIndex, double factionIndex)
 {
@@ -4475,6 +4554,8 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&listHaulDestinations>("sol", "haul_destinations", this);
     m_vm.registerFunction<&orderHaul>("sol", "order_haul", this);
     m_vm.registerFunction<&orderMine>("sol", "order_mine", this);
+    m_vm.registerFunction<&orderPatrol>("sol", "order_patrol", this);
+    m_vm.registerFunction<&orderEscort>("sol", "order_escort", this);
     m_vm.registerFunction<&captainKill>("sol", "captain_kill", this);
     m_vm.registerFunction<&cancelOrder>("sol", "cancel_order", this);
     m_vm.registerFunction<&listCaptainShips>("sol", "captain_ships", this);
@@ -4494,6 +4575,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&setBounty>("sol", "set_bounty", this);
     m_vm.registerFunction<&factionCandidates>("sol", "faction_candidates", this);
     m_vm.registerFunction<&factionRaid>("sol", "faction_raid", this);
+    m_vm.registerFunction<&setRaidIntensity>("sol", "set_raid_intensity", this);
     m_vm.registerFunction<&listTerritory>("sol", "territory", this);
     m_vm.registerFunction<&contestReport>("sol", "contest", this);
     m_vm.registerFunction<&setContest>("sol", "set_contest", this);

@@ -224,7 +224,7 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // refuses to let change under a file - and the haul beside it is the leg
 // clock, because a save taken mid-run has to load into the same haul rather
 // than teleporting a laden hull to one end of it.
-constexpr std::uint32_t kSaveVersion = 41;
+constexpr std::uint32_t kSaveVersion = 42;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -5020,15 +5020,27 @@ void SpaceWorld::syncCaptainPuppets(SystemBubble& bubble)
     for (std::size_t i = 0; i < puppets.size(); ++i) {
         CaptainPuppet& puppet = puppets.values()[i];
         const ecs::Entity entity = registry.entityFromIndex(puppets.entityIndices()[i]);
-        // ⚑⚑⚑ A STATIONARY CAPTAIN'S HULL IS NOT THIS FUNCTION'S TO JUDGE, AND
-        // WITHOUT THIS LINE IT WOULD DELETE ONE EVERY TICK (stage C). The test
-        // below is "is this body still on the leg the record says it is flying",
-        // and a mining captain has no leg - so `captainLegSegment` answers false
-        // and the hull is doomed, one tick after `tickMiningCaptains` spawned
-        // it, forever. One component, two owners, and the ORDER is what divides
-        // them.
+        // ⚑⚑⚑ A HULL THIS FUNCTION DOES NOT OWN IS NOT ITS TO JUDGE, AND WITHOUT
+        // THIS LINE IT DELETES ONE EVERY TICK (stage C). The test below is "is
+        // this body still on the leg the record says it is flying", and an order
+        // with no leg answers false - so the hull is doomed one tick after the
+        // function that owns it spawned it, forever.
+        //
+        // ⚑⚑⚑⚑ AND STAGE D ADDED A THIRD OWNER WITHOUT WIDENING THE DIVIDER,
+        // WHICH IS THIS COMMENT'S OWN WARNING COMING TRUE ONE STAGE AFTER IT WAS
+        // WRITTEN. `escorting()` is not `stationary()` - deliberately, because
+        // an escort holds no bubble - so an escort's hull fell straight through
+        // to the doom below and was destroyed and respawned EVERY TICK. It
+        // looked like it worked: a body was always there when anything asked.
+        // What it actually was is a brand new hull sixty times a second, with
+        // full shields, no memory of the fight it was in, and an order it could
+        // never finish standing down from. ⚑ Caught by asserting that the body
+        // is the SAME BODY rather than that a body exists - which is Phase 38's
+        // "a count, not a state" pointed at an entity id.
+        //
+        // One component, three owners now, and the ORDER is what divides them.
         if (puppet.captainIndex < m_captains.size() &&
-            stationary(m_captains[puppet.captainIndex].order.kind)) {
+            !itinerant(m_captains[puppet.captainIndex].order.kind)) {
             continue;
         }
         TraderLegPlacement leg;
@@ -5069,7 +5081,7 @@ void SpaceWorld::syncCaptainPuppets(SystemBubble& bubble)
             continue;
         }
         if (stationary(m_captains[c].order.kind)) {
-            continue; // `tickMiningCaptains` gives that one its body
+            continue; // `tickStationaryCaptains` gives that one its body
         }
         TraderLegPlacement leg;
         if (!captainLegSegment(c, bubble.system, leg)) {
@@ -5217,7 +5229,7 @@ void SpaceWorld::settleCaptainMineSale(Captain& captain)
                  cut);
 }
 
-void SpaceWorld::tickMiningCaptains(SystemBubble& bubble, double dt)
+void SpaceWorld::tickStationaryCaptains(SystemBubble& bubble, double dt)
 {
     if (m_defs == nullptr || m_factionTable.empty() || m_economy.markets().empty() || m_captains.empty()) {
         return;
@@ -5249,6 +5261,26 @@ void SpaceWorld::tickMiningCaptains(SystemBubble& bubble, double dt)
         if (pilot == nullptr || transform == nullptr) {
             continue;
         }
+
+        // ⚑⚑⚑⚑ THE SECOND STATIONARY ORDER FORKS HERE, ABOVE THE THREE LINES
+        // BELOW RATHER THAN UNDER THEM - AND PUTTING IT UNDER THEM IS THE BUG A
+        // LIVE FLIGHT FOUND. Those lines are the MINING state machine: being
+        // shot at stops the work, and a hull that is not in `Travel` is
+        // fighting, so the tick leaves it to Lua and the steering. For a patrol
+        // both readings invert. Being shot at IS the work; and `Attack` is the
+        // state this function itself just set, so `state != Travel -> continue`
+        // meant a patrol was skipped on every tick after the one where it
+        // spotted something. It locked on across the system and then never ran
+        // the code that closes the distance - which is why the fix in
+        // `tickPatrolBeat` measured as no fix at all until this moved.
+        //
+        // ⚑ `stationary()` still decides the REPRESENTATION in one place; this
+        // decides the JOB, and the job now owns its whole state machine.
+        if (captain.order.kind == OrderKind::Patrol) {
+            tickPatrolBeat(bubble, entity, puppet, captain, dt);
+            continue;
+        }
+
         // Being shot at stops the work and nothing else does. `syncMinerPuppets`'
         // rule, word for word: Attack and Flee are Lua's, Idle and Patrol go
         // back on the job, and the threat has to have gone cold first or the
@@ -5439,28 +5471,527 @@ void SpaceWorld::tickMiningCaptains(SystemBubble& bubble, double dt)
         const assets::ShipDef def = resolvedShipDef(m_fleet[captain.ship]);
         const sim::StationMarket& row = m_economy.markets()[captain.order.marketA];
         const core::DVec3 dock = m_galaxy.systems[row.systemIndex].stations[row.stationIndex].position;
-        // Allegiance follows the ground it works, which is `syncMinerPuppets`'
-        // rule in the same situation and is WRONG in the same way stage D exists
-        // to fix. Never unaffiliated: Lua reads that as unconditionally
-        // player-hostile, and a hull of yours opening fire on you is the one
-        // thing this must not be.
+        // Allegiance still follows the ground it works, and it no longer decides
+        // anything the player can feel: stage D moved every hostility question
+        // onto `playerOwnedHull`, and what is left here is a row for the NPC-vs-
+        // NPC readers that have always needed one. Never unaffiliated, because
+        // Lua reads that as unconditionally player-hostile.
         std::uint32_t faction = systemOwnerFaction(row.systemIndex);
         if (faction >= m_factionTable.size()) {
             faction = 0;
         }
-        const ecs::Entity entity =
-            spawnShipAt(bubble, def, *m_defs, dock, m_factionTable[faction].name.c_str());
-        registry.emplace<ShipPilot>(entity,
-                                    ShipPilot{.role = PilotRole::Trader,
-                                              .state = PilotState::Travel,
-                                              .waypoint = dock,
-                                              .factionIndex = faction});
+        // ⚑⚑⚑ AND THE NAME IS THE PERSON'S, WHICH THIS ARM HAD WRONG SINCE
+        // STAGE C. The itinerant spawn writes `captain.name` and says in its own
+        // comment why - "target the hull and the game says Bex Torvald, not
+        // Hegemony" - and this one wrote `m_factionTable[faction].name`, so
+        // exactly the hull the player flies two systems to check on was the one
+        // that would not tell them whose it was. Found by pointing the contact
+        // panel at a mining captain while writing this stage.
+        const ecs::Entity entity = spawnShipAt(bubble, def, *m_defs, dock, captain.name.c_str());
+        registry.emplace<ShipPilot>(
+            entity,
+            ShipPilot{.role = captain.order.kind == OrderKind::Patrol ? PilotRole::Patrol : PilotRole::Trader,
+                      .state = PilotState::Travel,
+                      .waypoint = dock,
+                      .factionIndex = faction});
         registry.emplace<CaptainPuppet>(entity, CaptainPuppet{.captainIndex = c, .destination = dock});
         m_captainPresent[c] = 1;
-        SOL_LOG_INFO("%s's %s is working the rock in %s",
+        SOL_LOG_INFO("%s's %s is %s in %s",
+                     captain.name.c_str(),
+                     def.name.c_str(),
+                     captain.order.kind == OrderKind::Patrol ? "on the beat" : "working the rock",
+                     m_galaxy.systems[bubble.system].name.c_str());
+    }
+}
+
+namespace {
+// Declared here and defined with the other pilot helpers further down: stage D
+// is the first caller ABOVE that definition, because a captain under a combat
+// order picks its own target in C++ rather than waiting for `pilot_think`.
+sol::sim::PowerPips pipsForPilot(PilotState state);
+} // namespace
+
+void SpaceWorld::tickEscortCaptains(SystemBubble& bubble, double dt)
+{
+    // ⚑⚑⚑⚑ THE PLAYER'S BUBBLE AND NOWHERE ELSE, WHICH IS THE ORDER'S OWN
+    // DEFINITION AND NOT A RESTRICTION ON IT (stage D). An escort is defined as
+    // being where the player is; the player is in the front bubble; so every
+    // other bubble has nothing to do here. ⚑ It is checked rather than assumed
+    // because `tick` calls this from inside the per-system loop, which is where
+    // the two calls above it belong and where this one has exactly one system
+    // to act on.
+    if (m_defs == nullptr || m_captains.empty() || &bubble != m_bubbles.front().get()) {
+        return;
+    }
+    ecs::Registry& registry = bubble.registry;
+
+    // Bodies first, `tickStationaryCaptains`' opening and its reason: an escort
+    // whose order has been taken away, or who followed you through a gate,
+    // stops having a hull HERE. ⚑ The jump is the interesting case and it needs
+    // no code of its own: a gate leaves this bubble behind and the arm below
+    // gives the captain a fresh body in the new one, which is the same bargain
+    // `MinerPuppet` makes about a rock - the record is durable and the body is
+    // rebuilt wherever it is needed.
+    std::vector<ecs::Entity> doomed;
+    ecs::Pool<CaptainPuppet>& puppets = registry.storage<CaptainPuppet>();
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        CaptainPuppet& puppet = puppets.values()[i];
+        const ecs::Entity entity = registry.entityFromIndex(puppets.entityIndices()[i]);
+        if (puppet.captainIndex >= m_captains.size()) {
+            continue; // `syncCaptainPuppets` owns that one and dooms it there
+        }
+        const Captain& captain = m_captains[puppet.captainIndex];
+        if (!escorting(captain.order.kind)) {
+            continue;
+        }
+        if (captain.ship >= m_fleet.size()) {
+            doomed.push_back(entity);
+            continue;
+        }
+        m_captainPresent[puppet.captainIndex] = 1;
+        ShipPilot* pilot = registry.tryGet<ShipPilot>(entity);
+        Transform* transform = registry.tryGet<Transform>(entity);
+        if (pilot == nullptr || transform == nullptr) {
+            continue;
+        }
+        // Called off: in to the nearest pad in whatever system you are both
+        // standing in, which is the closest an escort has to a home dock -
+        // a patrol has the market it was posted from and this order has no
+        // place in it at all (`orderEscort`'s own reason for leaving
+        // `marketA` unset).
+        if (captain.order.stopping) {
+            const std::uint32_t pad = nearestStationTo(bubble.system, transform->position);
+            if (pad != kNoIndex && standCaptainDownAt(bubble, entity, puppet.captainIndex, pad, dt)) {
+                doomed.push_back(entity);
+            }
+            continue;
+        }
+
+        // ⚑⚑ AN ESCORT PICKS FIGHTS AND A HAULER DOES NOT, WHICH IS WHAT
+        // `fighting()` NAMES. `tickPatrolBeat` makes the same call against the
+        // same reach; what differs is only what it does when the sky is empty,
+        // because a patrol has a beat to walk and an escort has you.
+        if (pilot->threatTimer <= 0.0f) {
+            const std::uint32_t enemy =
+                nearestPlayerEnemy(bubble, transform->position, sim::preyReach(m_galaxyParams.gateDistance));
+            if (enemy != kNoIndex) {
+                pilot->state = PilotState::Attack;
+                pilot->targetIndex = enemy;
+                pilot->hasTarget = 1;
+                if (ShipPower* power = registry.tryGet<ShipPower>(entity)) {
+                    power->state.pips = pipsForPilot(pilot->state);
+                }
+                // Closed on the cruise drive first, for `tickPatrolBeat`'s
+                // reason and through the same handover: combat steering takes
+                // about a day to cross a system.
+                if (const Transform* prey = registry.tryGet<Transform>(registry.entityFromIndex(enemy));
+                    prey != nullptr) {
+                    (void)cruiseCaptainToward(registry, entity, prey->position, kCaptainEngageRange, dt);
+                }
+                continue;
+            }
+            if (pilot->state == PilotState::Attack) {
+                pilot->state = PilotState::Travel;
+                pilot->hasTarget = 0;
+            }
+        }
+        if (pilot->state == PilotState::Attack || pilot->state == PilotState::Flee) {
+            continue; // in a fight; the steering flies it
+        }
+        // ⚑⚑ STATION IS KEPT OFF THE PLAYER'S SHIP AND THE STANDOFF IS WHY IT
+        // IS NOT ZERO. `cruiseCaptainToward` stops at `arrival` and hands the
+        // hull to its own steering inside that, so an escort settles a few
+        // kilometres off rather than trying to occupy the same point as the
+        // ship it is flying with - which is `kCaptainDeliverRange`'s job at a
+        // dock, doing the same job against something that moves.
+        const core::DVec3 station = shipState().position;
+        puppet.destination = station;
+        pilot->waypoint = station;
+        if (pilot->state == PilotState::Idle || pilot->state == PilotState::Patrol) {
+            pilot->state = PilotState::Travel;
+        }
+        (void)cruiseCaptainToward(registry, entity, station, kCaptainDeliverRange, dt);
+    }
+    for (const ecs::Entity entity : doomed) {
+        despawnShip(bubble, entity.index);
+    }
+
+    // Then the people: an escort with no hull in this sky gets one, alongside
+    // the player rather than at a dock - they are flying WITH you, and the
+    // first thing the order should look like is a second ship on your wing.
+    for (std::uint32_t c = 0; c < static_cast<std::uint32_t>(m_captains.size()); ++c) {
+        if (m_captainPresent[c] != 0) {
+            continue;
+        }
+        const Captain& captain = m_captains[c];
+        if (!escorting(captain.order.kind) || captain.ship >= m_fleet.size() || isDocked()) {
+            continue;
+        }
+        const assets::ShipDef def = resolvedShipDef(m_fleet[captain.ship]);
+        const core::DVec3 at = shipState().position + core::DVec3{kCaptainDeliverRange, 0.0, 0.0};
+        std::uint32_t faction = systemOwnerFaction(bubble.system);
+        if (faction >= m_factionTable.size()) {
+            faction = 0;
+        }
+        const ecs::Entity entity = spawnShipAt(bubble, def, *m_defs, at, captain.name.c_str());
+        registry.emplace<ShipPilot>(entity,
+                                    ShipPilot{.role = PilotRole::Patrol,
+                                              .state = PilotState::Travel,
+                                              .waypoint = shipState().position,
+                                              .factionIndex = faction});
+        registry.emplace<CaptainPuppet>(
+            entity, CaptainPuppet{.captainIndex = c, .destination = shipState().position});
+        m_captainPresent[c] = 1;
+        SOL_LOG_INFO("%s's %s is on your wing in %s",
                      captain.name.c_str(),
                      def.name.c_str(),
                      m_galaxy.systems[bubble.system].name.c_str());
+    }
+}
+
+std::uint32_t SpaceWorld::captainBeatLeg(std::size_t captainIndex) const
+{
+    for (const std::unique_ptr<SystemBubble>& bubble : m_bubbles) {
+        const ecs::Registry& registry = bubble->registry;
+        const ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
+        for (std::size_t i = 0; i < pilots.size(); ++i) {
+            const std::uint32_t index = pilots.entityIndices()[i];
+            const CaptainPuppet* puppet = registry.tryGet<CaptainPuppet>(registry.entityFromIndex(index));
+            if (puppet != nullptr && puppet->captainIndex == captainIndex) {
+                return puppet->beat;
+            }
+        }
+    }
+    return 0;
+}
+
+float SpaceWorld::heldBubbleRiskPerSecond(std::uint32_t system) const
+{
+    // ⚑⚑ THE NUMBER `rollHeldBubbleHazard` ROLLS AGAINST, AS A QUERY. Stage A's
+    // rule and Phase 38's silent audio are why it exists at all: a probe that
+    // reports a STATE cannot tell "the patrol is helping" from "the patrol is
+    // posted", and a test that measures the help by racing two worlds against
+    // one shared random stream is measuring a coin flip. This is the rule
+    // itself, so a guard that stopped being counted fails immediately rather
+    // than half the time.
+    if (system >= m_galaxy.systems.size()) {
+        return 0.0f;
+    }
+    const float danger = m_factionSim.danger(system);
+    if (danger <= 0.0f) {
+        return 0.0f;
+    }
+    std::uint32_t guards = 0;
+    bool exposed = false;
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (!stationary(m_captains[i].order.kind) || captainSystem(i) != system) {
+            continue;
+        }
+        if (m_captains[i].order.kind == OrderKind::Patrol) {
+            ++guards;
+        }
+        exposed = true;
+    }
+    if (!exposed) {
+        return 0.0f;
+    }
+    float risk = danger * m_factionSim.params().traderLossPerSecond;
+    for (std::uint32_t g = 0; g < guards; ++g) {
+        risk *= 0.5f;
+    }
+    return risk;
+}
+
+void SpaceWorld::rollHeldBubbleHazard(double dt)
+{
+    // ⚑⚑⚑⚑ THE GAP THIS CLOSES IS THAT A POSTED CAPTAIN WAS SAFE PRECISELY
+    // BECAUSE NOBODY WAS LOOKING, and it took two of this project's own rulings
+    // to make it. `rollCaptainAttrition` skips a system that is being simulated
+    // - correctly, because rolling a coarse loss against a hull that is also
+    // being modelled is the "a captain that is both things" defect the phase's
+    // risk register names first - and a stationary captain's system is ALWAYS
+    // instantiated, because their order is what holds it open. Meanwhile Phase
+    // 38 scoped `pilot_think` to the player's bubble, so nothing in that system
+    // ever decides to attack them either. Two correct rules, one hole between.
+    //
+    // ⚑⚑⚑ SO THE HAZARD IS PRICED WHERE IT LIVES, WHICH IS THE COARSE LAYER
+    // (the user's ruling 12, over reopening the fine layer's decisions). The
+    // alternative was letting hostility re-target inside every held bubble,
+    // which contradicts Phase 38's ruling in its own words and pays per-frame
+    // for a fight nobody is watching.
+    if (m_captains.empty() || m_factionSim.params().traderLossPerSecond <= 0.0f) {
+        return;
+    }
+    for (std::size_t slot = 0; slot < m_bubbles.size(); ++slot) {
+        const SystemBubble& bubble = *m_bubbles[slot];
+        // The player's own system is never rolled. It is fully simulated AND
+        // watched: a raider there is a raider the player can see, shoot at and
+        // lose a captain to honestly, which is `attrition`'s own rule and the
+        // reason it has always had one.
+        if (slot == 0 || bubble.system >= m_galaxy.systems.size()) {
+            continue;
+        }
+        // ⚑⚑⚑ AND A PATROL POSTED HERE IS WHAT BRINGS IT DOWN, WHICH IS THE
+        // ORDER'S WHOLE MEANING WHEN THE PLAYER IS NOT THERE TO WATCH IT WORK.
+        // The exit's second half - "the same fight happens in a system you left"
+        // - is this roll, and an order that could not change the number would
+        // have made "patrol this" a thing you only ever see working in the one
+        // system you happen to be standing in.
+        // Each guard halves it, and a patrol is exposed to its own roll: a
+        // guard that could not be shot at is an invulnerable one, and a system
+        // with two of them is safer without being safe. ⚑ THE RULE ITSELF LIVES
+        // IN `heldBubbleRiskPerSecond` and is READ here rather than restated,
+        // because a probe that computes the number a second way is a probe that
+        // can agree with itself while the game does something else.
+        const float risk = heldBubbleRiskPerSecond(bubble.system) * static_cast<float>(dt);
+        if (risk <= 0.0f) {
+            continue;
+        }
+        std::vector<std::size_t> exposed;
+        for (std::size_t i = 0; i < m_captains.size(); ++i) {
+            if (stationary(m_captains[i].order.kind) && captainSystem(i) == bubble.system) {
+                exposed.push_back(i);
+            }
+        }
+        if (exposed.empty() || m_captainRng.nextFloat01() >= risk) {
+            continue;
+        }
+        // ⚑ THE VICTIM IS THE FIRST EXPOSED CAPTAIN AND NOT A DRAW, because the
+        // roll above has already decided that something happened and a second
+        // random choice would only make the same event harder to reproduce in a
+        // test. Spawn order, which is `choosePrey`'s tie-break for the same
+        // reason.
+        const std::size_t victim = exposed.front();
+        // Through the body when there is one, so a raid in a held bubble leaves
+        // the same wreck a raid in the player's own does. `killCaptainPuppet`
+        // walks the ordinary death path; the direct call is the fallback for
+        // the tick before a body has been spawned.
+        if (!killCaptainPuppet(victim)) {
+            killCaptain(victim, bubble.system);
+        }
+        return; // one loss per tick: the roll is per system, the consequence is not
+    }
+}
+
+std::uint32_t
+SpaceWorld::nearestPlayerEnemy(const SystemBubble& bubble, const core::DVec3& from, double reach) const
+{
+    // ⚑⚑⚑⚑ HOSTILITY DERIVED FROM THE PLAYER'S STANDING, WHICH IS THE WHOLE
+    // POINT OF THE STAGE POINTED THE OTHER WAY (stage D). Every other hostility
+    // question in this game asks "is A hostile to B" of two faction rows.
+    // A captain has no row - that is the phase spec's diagnosis - so the
+    // question a hull of the player's has to ask is "is this hostile to the
+    // person who hired me", and `playerHostile` has always been able to answer
+    // it. The same bit `pilotHuntTrader` now reads about a captain, read back.
+    //
+    // ⚑ AND IT SKIPS OTHER HULLS OF THE PLAYER'S, which is not defensive: two
+    // captains in one system is reachable today (a miner and the patrol posted
+    // to cover them), and without this the patrol's first act would be to open
+    // fire on the ship it was hired to protect.
+    const ecs::Registry& registry = bubble.registry;
+    const ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
+    std::uint32_t best = kNoIndex;
+    double bestDistance = 0.0;
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const ShipPilot& pilot = pilots.values()[i];
+        const std::uint32_t index = pilots.entityIndices()[i];
+        if (playerOwnedHull(registry, index) || isPlayerEntity(registry, index)) {
+            continue;
+        }
+        const bool hostile =
+            pilot.factionIndex >= m_factionTable.size() || m_factionSim.playerHostile(pilot.factionIndex);
+        if (!hostile) {
+            continue;
+        }
+        const Transform* transform = registry.storage<Transform>().tryGet(index);
+        const ShipDefense* defense = registry.storage<ShipDefense>().tryGet(index);
+        if (transform == nullptr || defense == nullptr || !defense->state.alive()) {
+            continue;
+        }
+        const double distance = length(transform->position - from);
+        if (distance > reach) {
+            continue;
+        }
+        // Ties to the earlier entity, which is spawn order - `choosePrey`'s own
+        // rule, so two patrols handed the same sky pick the same target.
+        if (best == kNoIndex || distance < bestDistance) {
+            bestDistance = distance;
+            best = index;
+        }
+    }
+    return best;
+}
+
+bool SpaceWorld::standCaptainDownAt(
+    SystemBubble& bubble, ecs::Entity entity, std::size_t captainIndex, std::uint32_t station, double dt)
+{
+    // ⚑⚑ ONE PLACE THAT ENDS A COMBAT ORDER, because a patrol and an escort end
+    // it identically and the half that is easy to get wrong is the same for
+    // both: the hull has to be back on a PAD. `OwnedShip{storedSystem,
+    // storedStation}` is the field every other screen in this game reads to say
+    // where a ship of yours is, so a captain who stood down anywhere else is a
+    // hull the player cannot find, sell, board or hand back.
+    Captain& captain = m_captains[captainIndex];
+    ecs::Registry& registry = bubble.registry;
+    Transform* transform = registry.tryGet<Transform>(entity);
+    const sim::SystemSpec& spec = m_galaxy.systems[bubble.system];
+    if (transform == nullptr || station >= spec.stations.size()) {
+        return false;
+    }
+    const core::DVec3 pad = spec.stations[station].position;
+    if (CaptainPuppet* puppet = registry.tryGet<CaptainPuppet>(entity); puppet != nullptr) {
+        puppet->destination = pad;
+    }
+    if (ShipPilot* pilot = registry.tryGet<ShipPilot>(entity); pilot != nullptr) {
+        pilot->waypoint = pad;
+        pilot->hasTarget = 0;
+        if (pilot->state != PilotState::Travel) {
+            pilot->state = PilotState::Travel;
+        }
+    }
+    (void)cruiseCaptainToward(registry, entity, pad, kCaptainDeliverRange * 0.5, dt);
+    if (length(transform->position - pad) > kCaptainDeliverRange) {
+        return false; // still on the way in
+    }
+    if (captain.ship < m_fleet.size()) {
+        OwnedShip& hull = m_fleet[captain.ship];
+        hull.storedSystem = bubble.system;
+        hull.storedStation = station;
+    }
+    captain.order = {};
+    captain.mine = {};
+    SOL_LOG_INFO("%s stands down at %s", captain.name.c_str(), spec.stations[station].name.c_str());
+    return true;
+}
+
+std::uint32_t SpaceWorld::nearestStationTo(std::uint32_t system, const core::DVec3& from) const
+{
+    if (system >= m_galaxy.systems.size()) {
+        return kNoIndex;
+    }
+    const sim::SystemSpec& spec = m_galaxy.systems[system];
+    std::uint32_t best = kNoIndex;
+    double bestDistance = 0.0;
+    for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(spec.stations.size()); ++i) {
+        const double distance = length(spec.stations[i].position - from);
+        if (best == kNoIndex || distance < bestDistance) {
+            bestDistance = distance;
+            best = i;
+        }
+    }
+    return best;
+}
+
+void SpaceWorld::tickPatrolBeat(
+    SystemBubble& bubble, ecs::Entity entity, CaptainPuppet& puppet, const Captain& captain, double dt)
+{
+    ecs::Registry& registry = bubble.registry;
+    ShipPilot* pilot = registry.tryGet<ShipPilot>(entity);
+    Transform* transform = registry.tryGet<Transform>(entity);
+    if (pilot == nullptr || transform == nullptr || captain.order.marketA >= m_economy.markets().size()) {
+        return;
+    }
+
+    // Fleeing is Lua's call and it stands: a hull down to its last hull points
+    // running for the dock is a decision, and re-issuing Attack over it every
+    // tick would pin it in the fight until it died. `syncCaptainPuppets` makes
+    // the same concession about a captain's route for the same reason.
+    if (pilot->state == PilotState::Flee) {
+        return;
+    }
+
+    // COMING IN TO STAND DOWN BEATS EVERYTHING ELSE, including a fight: the
+    // player has called them off, and a patrol that stopped to shoot on the way
+    // home is one that never gets there while the system stays busy.
+    if (captain.order.stopping) {
+        const sim::StationMarket& home = m_economy.markets()[captain.order.marketA];
+        if (standCaptainDownAt(bubble, entity, puppet.captainIndex, home.stationIndex, dt)) {
+            despawnShip(bubble, entity.index);
+        }
+        return;
+    }
+
+    // ⚑⚑⚑ THE DECISION IS MADE IN C++ AND IN EVERY BUBBLE, WHICH IS STAGE C's
+    // PRECEDENT RATHER THAN A HOLE IN PHASE 38's. That phase scoped
+    // `pilot_think` to the player's bubble so Lua could not reach across
+    // registries, and recorded the cost in its own words: "nothing re-targets,
+    // breaks off or picks a new beat until the player is back to watch it". A
+    // captain is the exception the ruling already carved, because
+    // `tickStationaryCaptains` has picked rocks in bubbles the player is not in
+    // since stage C - it is C++, it takes the bubble as an argument, and it
+    // touches only entities the player owns and what they can see.
+    //
+    // What that buys is the half of the exit the player WATCHES: post a patrol,
+    // fly out, get jumped, and the hull you paid for comes over. The half they
+    // do NOT watch is priced coarsely instead - see `rollHeldBubbleHazard` -
+    // because a fight nobody is looking at should cost a die roll rather than a
+    // frame of collision resolution.
+    const std::uint32_t enemy =
+        nearestPlayerEnemy(bubble, transform->position, sim::preyReach(m_galaxyParams.gateDistance));
+    if (enemy != kNoIndex) {
+        pilot->state = PilotState::Attack;
+        pilot->targetIndex = enemy;
+        pilot->hasTarget = 1;
+        if (ShipPower* power = registry.tryGet<ShipPower>(entity)) {
+            power->state.pips = pipsForPilot(pilot->state);
+        }
+        // ⚑⚑⚑⚑ AND IT HAS TO GET THERE, WHICH THE FIRST CUT DID NOT AND A LIVE
+        // FLIGHT IS WHAT FOUND IT. `preyReach` is 2 x gateDistance - hundreds of
+        // thousands of kilometres - and `PilotState::Attack` steering is
+        // COMBAT-scale, which `PilotState`'s own comment says out loud: "Patrol's
+        // steering is combat-scale - it closes to 50 m and stops - and a trade leg
+        // is hundreds of thousands of kilometres, which is a distance only the
+        // cruise envelope crosses in a sane time." So the first version spotted a
+        // raider across the system, locked on, and closed 22 km in seventy
+        // seconds. Measured in flight: the guard the player had paid for watched
+        // from 47,000 km while their own hull burned.
+        //
+        // ⚑⚑⚑ THE REACH IS RIGHT AND THE APPROACH WAS MISSING, which is the
+        // distinction that took a drive to see. `preyReach` documents its own
+        // bound as the LOD bubble's diameter, saying no "only to a lock that
+        // geometry already made impossible" - correct for a HUNTER, which
+        // re-decides at 2 Hz and whose prey pops back onto a schedule, so "a long
+        // chase costs it nothing". A guard is the opposite case: the chase IS the
+        // job, and a lock it cannot act on is worse than no lock, because every
+        // screen reports it as the order working. Third time this phase that a
+        // rule borrowed from a neighbour arrived carrying its endpoints'
+        // assumptions.
+        if (const Transform* prey = registry.tryGet<Transform>(registry.entityFromIndex(enemy));
+            prey != nullptr) {
+            (void)cruiseCaptainToward(registry, entity, prey->position, kCaptainEngageRange, dt);
+        }
+        return; // inside the handover the steering flies the fight
+    }
+    // Nothing to shoot: back on the beat rather than left pointing at wherever
+    // the last kill happened. `pilotHuntTrader`'s own rule when its prey is
+    // gone, and it exists for the same reason - a hull that keeps its Attack
+    // state here flies at a ghost for as long as the system stays quiet.
+    if (pilot->state == PilotState::Attack) {
+        pilot->state = PilotState::Travel;
+        pilot->hasTarget = 0;
+    }
+
+    // ⚑⚑ THE BEAT IS THE DOCK AND THE GATES, AND THE GATES ARE THE POINT.
+    // Anything hostile that is not already here arrives through one, so a beat
+    // that walks them is the difference between a guard and an ornament. The
+    // dock is in the loop because it is what the player was standing on when
+    // they gave the order, and a patrol that never comes home reads as lost.
+    const sim::SystemSpec& spec = m_galaxy.systems[bubble.system];
+    const sim::StationMarket& row = m_economy.markets()[captain.order.marketA];
+    const std::uint32_t stops = 1u + static_cast<std::uint32_t>(spec.gates.size());
+    if (puppet.beat >= stops) {
+        puppet.beat = 0;
+    }
+    const core::DVec3 stop =
+        puppet.beat == 0 ? spec.stations[row.stationIndex].position : spec.gates[puppet.beat - 1].position;
+    puppet.destination = stop;
+    pilot->waypoint = stop;
+    if (pilot->state == PilotState::Idle || pilot->state == PilotState::Patrol) {
+        pilot->state = PilotState::Travel;
+    }
+    (void)cruiseCaptainToward(registry, entity, stop, kCaptainDeliverRange, dt);
+    if (length(transform->position - stop) <= kCaptainCruiseInside) {
+        puppet.beat = (puppet.beat + 1u) % stops;
     }
 }
 
@@ -5543,6 +6074,8 @@ void SpaceWorld::captainPuppetInfo(std::vector<CaptainPuppetInfo>& out)
         info.distance = length(transform.position - here);
         info.speed = length(body.velocity);
         info.paced = puppet.paced != 0;
+        info.beat = puppet.beat;
+        info.entity = entityIndex;
         out.push_back(std::move(info));
     }
 }
@@ -7253,7 +7786,142 @@ bool SpaceWorld::killMinerPuppet(std::uint32_t market)
     return false;
 }
 
-bool SpaceWorld::killCaptainPuppet(std::size_t captainIndex)
+void SpaceWorld::killCaptain(std::size_t captainIndex, std::uint32_t system)
+{
+    // ⚑⚑⚑⚑ THE HULL IS GONE AND SO IS THE PERSON (the user's ruling 14, taken
+    // before a line was written). The two softer answers were both on the table
+    // and both were refused for the same reason stage C's own comment gives
+    // about the interim it left: a death the player can shrug off is a positive
+    // statement that the danger is free, and this phase's whole economic point
+    // is that a captain is a business decision. Replacing the hull at the last
+    // dock would have mirrored the player's own death exactly and cost almost
+    // nothing; keeping the captain alive to be re-assigned would have made an
+    // 8-20% cut a bet with no downside. The order you gave is what killed them.
+    //
+    // ⚑⚑⚑ AND IT IS THE ONE CONSEQUENCE IN THIS GAME THAT CANNOT BE UNDONE BY
+    // FLYING BACK. Everything else the player loses is recoverable - a hold, a
+    // deductible, a standing, even their own ship. A captain is a name that was
+    // drawn once and is not in any def, so there is nothing to restore them
+    // FROM: `CastSeat`'s "a regular's name exists in no def at all", which
+    // stage A read as a save-format convenience, is a design fact here.
+    if (captainIndex >= m_captains.size()) {
+        return;
+    }
+    const Captain& captain = m_captains[captainIndex];
+    const std::uint32_t fleetIndex = captain.ship;
+    const char* where =
+        system < m_galaxy.systems.size() ? m_galaxy.systems[system].name.c_str() : "deep space";
+
+    // INSURANCE, AND IT IS THE SAME FIVE PER CENT THAT CHANGES HANDS WHEN THE
+    // PLAYER DIES - the other way. `kInsuranceRate` is the deductible you pay to
+    // wake at the last dock in a hull you keep; a hull flown by somebody else is
+    // not covered like that, and what comes back is a token against a total
+    // loss. Borrowed rather than invented on this project's own rule: a new
+    // constant here would be a second number meaning "what insurance is worth"
+    // with nothing to keep the two in step.
+    double payout = 0.0;
+    if (fleetIndex < m_fleet.size()) {
+        payout = kInsuranceRate * shipValue(m_fleet[fleetIndex]);
+        m_playerCredits += payout;
+    }
+
+    // THE LINE THE PLAYER CAN FIND, and it is said through `say` rather than
+    // only logged because a death two systems away has no other channel: the
+    // console is where the player's own ship reports what happened to it, and
+    // this is the same event happening to a ship of theirs somebody else was
+    // flying. The wreck is what they find when they fly back; this is how they
+    // know to.
+    char line[192] = {};
+    if (payout > 0.0) {
+        std::snprintf(
+            line, sizeof(line), "lost with all hands in %s - insurance pays %.0f cr", where, payout);
+    } else {
+        std::snprintf(line, sizeof(line), "lost with all hands in %s", where);
+    }
+    say(captain.name, line);
+    SOL_LOG_WARN("%s was killed in %s (insurance %.0f cr)", captain.name.c_str(), where, payout);
+
+    // ⚑⚑ THE STANDING CONSEQUENCE IS THAT THERE IS NONE, AND SAYING SO IS THE
+    // POINT. The spec's list reads "wreck, insurance, standing, and a log line";
+    // the standing half turned out to be a defect to close rather than an event
+    // to add - see the guard in `handleShipDestroyed`, where killing your own
+    // hull used to move your reputation with whichever government's colours it
+    // happened to be wearing. Being the VICTIM moves nothing: a faction that
+    // burns your freighter has not changed its opinion of you, it has acted on
+    // the one it already had, and inventing a reputation hit here would make
+    // being attacked lower your standing with your attacker.
+
+    removeCaptain(captainIndex);
+    if (fleetIndex < m_fleet.size()) {
+        removeFleetShip(fleetIndex);
+    }
+}
+
+void SpaceWorld::removeCaptain(std::size_t captainIndex)
+{
+    // ⚑⚑⚑ A CAPTAIN INDEX IS HELD IN FOUR PLACES AND THREE OF THEM ARE NOT
+    // `m_captains`. `sellShip`'s comment is the precedent - "an erase renumbers
+    // the tail; without this a captain silently inherits the hull that moved
+    // into the slot" - and this is that hazard with one more table on it,
+    // because a `CaptainPuppet` in a bubble the player is not standing in holds
+    // an index too and nothing else would ever renumber it.
+    if (captainIndex >= m_captains.size()) {
+        return;
+    }
+    const auto index = static_cast<std::uint32_t>(captainIndex);
+    m_captains.erase(m_captains.begin() + static_cast<std::ptrdiff_t>(captainIndex));
+    if (captainIndex < m_captainPresent.size()) {
+        m_captainPresent.erase(m_captainPresent.begin() + static_cast<std::ptrdiff_t>(captainIndex));
+    }
+    if (captainIndex < m_captainDetained.size()) {
+        m_captainDetained.erase(m_captainDetained.begin() + static_cast<std::ptrdiff_t>(captainIndex));
+    }
+    // EVERY BUBBLE, NOT ONLY THE PLAYER'S. A captain can die in a system the
+    // player has left, and the hull of a DIFFERENT captain two systems further
+    // out is what would inherit the dead one's index.
+    for (const std::unique_ptr<SystemBubble>& bubble : m_bubbles) {
+        ecs::Pool<CaptainPuppet>& puppets = bubble->registry.storage<CaptainPuppet>();
+        for (std::size_t i = 0; i < puppets.size(); ++i) {
+            CaptainPuppet& puppet = puppets.values()[i];
+            if (puppet.captainIndex > index) {
+                --puppet.captainIndex;
+            } else if (puppet.captainIndex == index) {
+                // The dead captain's own body, on the tick it is being walked
+                // out. Pointed past the end so `syncCaptainPuppets` dooms it
+                // rather than re-reading a slot that now holds somebody else.
+                puppet.captainIndex = kNoIndex;
+            }
+        }
+    }
+}
+
+void SpaceWorld::removeFleetShip(std::size_t fleetIndex)
+{
+    // `sellShip`'s tail, lifted out whole because stage D is its second caller
+    // and a second copy of an index shift is how the two stop agreeing. ⚑ The
+    // equal case IS written here and is not in `sellShip`: that one refuses a
+    // hull somebody is flying, so it cannot reach it; this one is called
+    // BECAUSE somebody was flying it, and `removeCaptain` has already gone.
+    if (fleetIndex >= m_fleet.size()) {
+        return;
+    }
+    m_fleet.erase(m_fleet.begin() + static_cast<std::ptrdiff_t>(fleetIndex));
+    if (m_activeShip > fleetIndex) {
+        --m_activeShip;
+    }
+    for (Captain& captain : m_captains) {
+        if (captain.ship == kNoIndex) {
+            continue;
+        }
+        if (captain.ship > fleetIndex) {
+            --captain.ship;
+        } else if (captain.ship == fleetIndex) {
+            captain.ship = kNoIndex; // unreachable today; not left dangling if it ever is
+        }
+    }
+}
+
+bool SpaceWorld::killCaptainPuppet(std::size_t captainIndex, bool byPlayer)
 {
     // ⚑ `killMinerPuppet`'s lever against a different body, and it exists for
     // the same reason that one does: the consequence of a captain's hull dying
@@ -7266,9 +7934,45 @@ bool SpaceWorld::killCaptainPuppet(std::size_t captainIndex)
         const ecs::Pool<CaptainPuppet>& puppets = bubble.registry.storage<CaptainPuppet>();
         for (std::size_t i = 0; i < puppets.size(); ++i) {
             if (puppets.values()[i].captainIndex == captainIndex) {
-                handleShipDestroyed(bubble, puppets.entityIndices()[i]);
+                handleShipDestroyed(
+                    bubble, puppets.entityIndices()[i], byPlayer ? playerEntityIndex() : kNoIndex);
                 return true;
             }
+        }
+    }
+    return false;
+}
+
+bool SpaceWorld::killAnyNpcByPlayer(std::uint32_t* outFaction)
+{
+    SystemBubble& bubble = playerBubble();
+    ecs::Registry& registry = bubble.registry;
+    const ecs::Pool<ShipPilot>& pilots = registry.storage<ShipPilot>();
+    for (std::size_t i = 0; i < pilots.size(); ++i) {
+        const std::uint32_t index = pilots.entityIndices()[i];
+        if (index == playerEntityIndex() || playerOwnedHull(registry, index)) {
+            continue;
+        }
+        if (pilots.values()[i].factionIndex >= m_factionTable.size()) {
+            continue; // an unaffiliated console spawn has no standing to move
+        }
+        if (outFaction != nullptr) {
+            *outFaction = pilots.values()[i].factionIndex;
+        }
+        handleShipDestroyed(bubble, index, playerEntityIndex());
+        return true;
+    }
+    return false;
+}
+
+bool SpaceWorld::bubbleHoldsPlayerAssetIn(std::uint32_t system) const
+{
+    // Asked of the RECORD, which is `bubbleHoldsPlayerAsset`'s own rule and the
+    // one thing that function must get right: the order is what holds a system
+    // open, so this can answer for a system whose bubble is already gone.
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (stationary(m_captains[i].order.kind) && captainSystem(i) == system) {
+            return true;
         }
     }
     return false;
@@ -7463,6 +8167,22 @@ bool SpaceWorld::hailTarget()
     if (pilot == nullptr) {
         say("Comms", ship.name + " does not answer."); // an inert console spawn
         return false;
+    }
+
+    // ⚑⚑⚑ HAILING SOMEBODY WHO WORKS FOR YOU IS NOT A FIRST CONTACT (stage D).
+    // The panel below opens negotiations with a stranger - their faction, your
+    // standing with it, whether they will trade a tip - and every one of those
+    // is the wrong question to ask an employee. Worse, it answered them off the
+    // colours the hull was wearing, so your own captain reported a faction you
+    // have no relationship with and an attitude toward yourself. A captain
+    // answers as themselves, and that is the whole exchange.
+    if (playerOwnedHull(playerRegistry(), ship.entity.index)) {
+        const CaptainPuppet* puppet = playerRegistry().tryGet<CaptainPuppet>(ship.entity);
+        const std::size_t who = puppet != nullptr ? puppet->captainIndex : m_captains.size();
+        if (who < m_captains.size()) {
+            say(m_captains[who].name, captainHailLine(who));
+            return true;
+        }
     }
 
     m_pendingHail = HailRequest{};
@@ -8367,20 +9087,14 @@ bool SpaceWorld::sellShip(std::size_t fleetIndex, std::string* outError)
     const double refund = kResaleRate * shipValue(ship);
     SOL_LOG_INFO("sold '%s' (+%.0f cr)", ship.defId.c_str(), refund);
     m_playerCredits += refund;
-    m_fleet.erase(m_fleet.begin() + static_cast<std::ptrdiff_t>(fleetIndex));
-    if (m_activeShip > fleetIndex) {
-        --m_activeShip;
-    }
-    // ⚑⚑⚑ AND EVERY CAPTAIN'S INDEX SHIFTS WITH IT, exactly as
-    // `m_activeShip` does one line up. `Captain::ship` is a fleet index and an
-    // erase renumbers the tail; without this a captain silently inherits the
-    // hull that moved into the slot. The guard above means none of them can be
-    // holding THIS one, so the equal case cannot arise and is not written.
-    for (Captain& captain : m_captains) {
-        if (captain.ship != kNoIndex && captain.ship > fleetIndex) {
-            --captain.ship;
-        }
-    }
+    // ⚑⚑⚑ AND EVERY CAPTAIN'S INDEX SHIFTS WITH IT, exactly as `m_activeShip`
+    // does. `Captain::ship` is a fleet index and an erase renumbers the tail;
+    // without this a captain silently inherits the hull that moved into the
+    // slot. ⚑ The shift moved into `removeFleetShip` at stage D, which gave it
+    // a second caller: a captain's hull can now be deleted by DYING as well as
+    // by being sold, and two copies of an index shift is how the two stop
+    // agreeing about the tail.
+    removeFleetShip(fleetIndex);
     return true;
 }
 
@@ -8805,6 +9519,36 @@ float SpaceWorld::shipMiningPower(const OwnedShip& ship) const
     return power;
 }
 
+float SpaceWorld::shipGunPower(const OwnedShip& ship) const
+{
+    // ⚑⚑ `shipMiningPower`'s twin, over the same mounts and by the same
+    // argument (stage D). The two combat orders refuse a hull that cannot
+    // shoot, exactly as "mine here" refuses one that cannot cut, and the
+    // failure they prevent is the same silent one: a beat flown by a freighter
+    // is an order that every screen reports as working right up until the
+    // hull is shot down without returning fire.
+    //
+    // ⚑ DAMAGE PER SECOND RATHER THAN A GUN COUNT, because the question the
+    // refusal asks is "can this hull hurt anything" and a mount holding a
+    // mining laser answers no while counting as a weapon everywhere else -
+    // which is precisely the freighter a player would try to post first.
+    if (m_defs == nullptr) {
+        return 0.0f;
+    }
+    float power = 0.0f;
+    const assets::ShipDef def = resolvedShipDef(ship);
+    for (const assets::ShipMount& mount : def.mounts) {
+        if (!assets::mountTakesWeapon(mount.kind) || mount.fit.empty()) {
+            continue;
+        }
+        const assets::WeaponDef* weapon = m_defs->findWeapon(mount.fit.c_str());
+        if (weapon != nullptr && weapon->damage > 0.0f) {
+            power += weapon->damage * std::max(weapon->rateOfFire, 0.0f);
+        }
+    }
+    return power;
+}
+
 bool SpaceWorld::orderMine(std::size_t captainIndex, std::string* outError)
 {
     // EVERY DOOR `orderHaul` CHECKS, IN THE SAME ORDER AND FOR THE SAME
@@ -8863,6 +9607,148 @@ bool SpaceWorld::orderMine(std::size_t captainIndex, std::string* outError)
     return true;
 }
 
+bool SpaceWorld::orderPatrol(std::size_t captainIndex, std::string* outError)
+{
+    // `orderMine`'s doors again, and it is a THIRD copy of the same six lines
+    // on purpose rather than a shared helper: each order refuses on its own
+    // last clause and the shared part is where the player's name for the
+    // refusal comes from. A helper would have to take the error strings back
+    // out as parameters, which is the same code with an indirection on it.
+    if (!isDocked()) {
+        return refuse("must be docked to give a captain an order", outError);
+    }
+    if (captainIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.ship >= m_fleet.size()) {
+        return refuse("'" + captain.name + "' has no ship", outError);
+    }
+    const OwnedShip& ship = m_fleet[captain.ship];
+    if (ship.storedSystem != m_currentSystem || ship.storedStation != m_dockedStation) {
+        return refuse("'" + captain.name + "' is not here - their ship is stored elsewhere", outError);
+    }
+    if (captain.order.kind != OrderKind::None) {
+        return refuse("'" + captain.name + "' already has orders - cancel them first", outError);
+    }
+    const std::uint32_t here = dockedMarket();
+    if (here == kNoIndex) {
+        return refuse("a patrol is posted from a dock, and this one has no market", outError);
+    }
+    // ⚑⚑⚑ AND THE ONE CLAUSE THAT IS THIS ORDER'S OWN: A HULL WITH NOTHING IN
+    // ITS WEAPON MOUNTS IS NOT A PATROL. It is `orderMine`'s beam check pointed
+    // at the other kind of hardpoint, and the failure it prevents is silent: a
+    // hull posted to a beat flies the beat, finds a raider, closes on it and is
+    // shot down without ever returning fire, and every screen in the game
+    // reports that as the order working.
+    //
+    // ⚑⚑⚑⚑ BUT IT IS A FLOOR AND NOT A JUDGEMENT, AND THE SHIPPED DATA IS WHY
+    // - found by a test that asserted the opposite and failed. `sol.mining_laser`
+    // has `damage = 3.0` beside its `mining_power = 4.0`, and so does its mk2,
+    // because `WeaponDef`'s own comment insists on it: "0 leaves a weapon a
+    // weapon - a mining laser is an ordinary hardpoint choice, not a mode". So
+    // EVERY weapon this game ships can hurt something, and the state this clause
+    // refuses is reachable only through an EMPTY mount - a hull whose fitting
+    // was sold, or a mod's hull with no weapon hardpoint at all.
+    //
+    // ⚑⚑ WHICH MEANS THE REAL ANSWER TO "CAN THIS HULL FIGHT" IS A NUMBER AND
+    // NOT A BOOLEAN, and it is given to the player rather than enforced: the
+    // Crew tab prints the hull's damage per second beside the button, exactly as
+    // the mining row prints "cuts 13.0 units a second". A freighter with one
+    // mining laser CAN be posted to a beat, at nine damage a second, and finding
+    // out that this is not enough is a thing the player is allowed to do. The
+    // alternative is an invented threshold, and this file has no honest number
+    // to put in one.
+    if (shipGunPower(ship) <= 0.0f) {
+        return refuse("'" + captain.name + "' has no guns on that hull", outError);
+    }
+    captain.order = {.kind = OrderKind::Patrol, .marketA = here, .marketB = kNoIndex, .stopping = false};
+    captain.mine = {};
+    // The hull leaves the pad, `orderMine`'s two lines and its reason: a ship
+    // out on a beat cannot be sold, boarded or handed back, and none of those
+    // three doors needed a clause about patrolling either.
+    OwnedShip& hull = m_fleet[captain.ship];
+    hull.storedSystem = kNoIndex;
+    hull.storedStation = kNoIndex;
+    SOL_LOG_INFO("%s will patrol %s", captain.name.c_str(), m_galaxy.systems[m_currentSystem].name.c_str());
+    return true;
+}
+
+bool SpaceWorld::orderEscort(std::size_t captainIndex, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("must be docked to give a captain an order", outError);
+    }
+    if (captainIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.ship >= m_fleet.size()) {
+        return refuse("'" + captain.name + "' has no ship", outError);
+    }
+    const OwnedShip& ship = m_fleet[captain.ship];
+    if (ship.storedSystem != m_currentSystem || ship.storedStation != m_dockedStation) {
+        return refuse("'" + captain.name + "' is not here - their ship is stored elsewhere", outError);
+    }
+    if (captain.order.kind != OrderKind::None) {
+        return refuse("'" + captain.name + "' already has orders - cancel them first", outError);
+    }
+    if (shipGunPower(ship) <= 0.0f) {
+        return refuse("'" + captain.name + "' has no guns on that hull", outError);
+    }
+    // ⚑⚑⚑ AND THE FENCE, WHICH IS RULING 4's AND IS CHECKED RATHER THAN
+    // ASSUMED. "Every order in this phase is given to exactly one captain, and
+    // nothing here reads more than one captain at a time" - and a second escort
+    // is the first thing in this game that would have been a FLEET: two hulls
+    // holding station on one point, resolving an order between them. That is
+    // Phase 40 and it is refused here by name rather than allowed to arrive as
+    // a bug in stage E's readout.
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        if (i != captainIndex && escorting(m_captains[i].order.kind)) {
+            return refuse("'" + m_captains[i].name + "' is already flying as your escort", outError);
+        }
+    }
+    // ⚑⚑ NO MARKET, AND IT IS THE ONLY ORDER WITH NONE. The other three name a
+    // place; this one names a person who moves, so `marketA` stays unset and
+    // `captainSystem` answers from the player. Writing the dock in here "for
+    // symmetry" is how a field that means "where they are" starts meaning
+    // "where they were hired", which is the shape `CaptainOrder`'s own comment
+    // refuses for `stopping`.
+    captain.order = {.kind = OrderKind::Escort, .marketA = kNoIndex, .marketB = kNoIndex, .stopping = false};
+    captain.mine = {};
+    OwnedShip& hull = m_fleet[captain.ship];
+    hull.storedSystem = kNoIndex;
+    hull.storedStation = kNoIndex;
+    SOL_LOG_INFO("%s will fly as your escort", captain.name.c_str());
+    return true;
+}
+
+std::string SpaceWorld::captainHailLine(std::size_t captainIndex) const
+{
+    if (captainIndex >= m_captains.size()) {
+        return "Standing by.";
+    }
+    const Captain& captain = m_captains[captainIndex];
+    switch (captain.order.kind) {
+    case OrderKind::Mine:
+        return captain.mine.phase == MinePhase::Selling ? "Hold's full, taking it in now."
+                                                        : "Still cutting. Plenty of rock left out here.";
+    case OrderKind::Patrol:
+        return "On the beat. Quiet so far.";
+    case OrderKind::Escort:
+        return "Right behind you. Say the word.";
+    case OrderKind::Haul: {
+        const sim::TraderRoute route = captainRoute(captainIndex);
+        return route.leg == sim::TraderLeg::Arrive ? "Nearly in. Cargo's intact."
+               : route.leg == sim::TraderLeg::Jump ? "Between gates. Nothing to report."
+                                                   : "Loaded and running. See you at the far end.";
+    }
+    case OrderKind::None:
+        break;
+    }
+    return "Waiting on orders.";
+}
+
 bool SpaceWorld::cancelOrder(std::size_t captainIndex, std::string* outError)
 {
     if (captainIndex >= m_captains.size()) {
@@ -8888,10 +9774,32 @@ bool SpaceWorld::cancelOrder(std::size_t captainIndex, std::string* outError)
     // spent real minutes cutting and throwing it away to save one flight across
     // one system is not a saving anybody asked for. They take the load in and
     // park.
-    if (stationary(captain.order.kind)) {
+    // ⚑⚑⚑⚑ AND `stationary()` IS THE WRONG PREDICATE FOR *THIS* RULE, WHICH A
+    // TEST CAUGHT AND WHICH IS THE STAGE'S SECOND BORROWED-RULE FAILURE (stage
+    // D). It is exactly right for the REPRESENTATION - a patrol holds a bubble
+    // for the same reason a mining order does - and it is wrong here, because
+    // the reason a mining captain waits is THE HOLD, and a patrol has no hold.
+    // Reading `stationary()` sent a cancelled patrol into `MinePhase::Selling`,
+    // a phase its tick never looks at, and the order simply never ended: the
+    // Crew tab said "standing down" forever. ⚑ Stage C's own headline was a
+    // pace borrowed from a neighbouring order carrying its endpoint's
+    // assumptions; this is the same shape one stage on, and the lesson holds -
+    // a predicate that names the right SET can still answer the wrong QUESTION.
+    if (captain.order.kind == OrderKind::Mine) {
         captain.order.stopping = true;
         captain.mine.phase = MinePhase::Selling;
         SOL_LOG_INFO("%s will bring the load in and stand down", captain.name.c_str());
+        return true;
+    }
+    // ⚑⚑ A COMBAT ORDER STANDS DOWN BY COMING HOME, which is the same courtesy
+    // one sentence up with the reason changed. There is no cargo to save, so
+    // this could safely end on the spot - and a hull abandoned in open space is
+    // one the player then has to fly out and collect, because `OwnedShip` parks
+    // at a PAD and nowhere else. They fly back to a dock and park, and the tick
+    // that flies them is the same one that was flying the beat.
+    if (fighting(captain.order.kind)) {
+        captain.order.stopping = true;
+        SOL_LOG_INFO("%s is coming in to stand down", captain.name.c_str());
         return true;
     }
     if (captain.haul.leg.phase == sim::TraderPhase::InTransit) {
@@ -9687,6 +10595,16 @@ int SpaceWorld::threatTier(std::uint32_t entityIndex) const
     if (pilot->state == PilotState::Attack && pilot->hasTarget != 0 &&
         isPlayerEntity(playerRegistry(), pilot->targetIndex)) {
         return 0;
+    }
+    // ⚑⚑⚑ A HULL OF YOURS IS NEVER A THREAT TO YOU, AND BEFORE STAGE D IT
+    // COULD BE. A captain's freighter wore the local owner's colours, so
+    // flying your own trade route through a government you had angered painted
+    // YOUR OWN SHIP red on the radar - and this function is deliberately the
+    // same one a turret asks before opening fire, so the ring would have
+    // agreed with the radar and shot it. Asked of the thing, above the faction
+    // number, because the faction number is exactly what was wrong.
+    if (playerOwnedHull(playerRegistry(), entityIndex)) {
+        return 2;
     }
     // An unaffiliated console spawn has no faction to consult and Lua treats
     // it as unconditionally player-hostile (the pre-8b rule).
@@ -10596,6 +11514,21 @@ bool SpaceWorld::pilotHuntTrader(ecs::Entity entity)
             m_factionSim.relation(pilot->factionIndex, other) < m_factionSim.params().hostileThreshold;
         m_preyHostile[other] = hostile ? 1u : 0u;
     }
+    // ⚑⚑⚑⚑ AND ONE ROW MORE THAN THE FACTION TABLE HAS, WHICH IS THE PHASE
+    // SPEC'S OWN DIAGNOSIS ANSWERED WHERE IT COSTS ONE LINE (stage D). "There
+    // is no player faction row" is true and stays true: this row lives for the
+    // length of this function, is never saved, never hashed and never seen by
+    // the other ninety-two readers of `m_factionTable`. What a hunter needs
+    // about the player is one bit - am I hostile to them - and `playerHostile`
+    // has always been able to answer it.
+    //
+    // ⚑⚑⚑ WHAT PUTS A CANDIDATE ON THIS ROW IS OWNERSHIP AND NEVER A FACTION
+    // NUMBER (`playerOwnedHull`). Before this a captain's hull wore the local
+    // owner's colours, so a raider hunted it exactly when it was at war with a
+    // government the player may never have met - and left it alone while
+    // hunting the player themselves.
+    const std::uint32_t playerPreyRow = static_cast<std::uint32_t>(m_factionTable.size());
+    m_preyHostile.push_back(m_factionSim.playerHostile(pilot->factionIndex) ? 1u : 0u);
 
     m_preyCandidates.clear();
     const ecs::Pool<TraderPuppet>& puppets = playerRegistry().storage<TraderPuppet>();
@@ -10635,6 +11568,37 @@ bool SpaceWorld::pilotHuntTrader(ecs::Entity entity)
                                     .faction = crew->factionIndex,
                                     .paced = false,
                                     .inbound = true});
+    }
+
+    // ⚑⚑⚑ AND THE PLAYER'S OWN CAPTAINS ARE PREY (stage D), which is the half of
+    // "whose ship is that" that the player FEELS rather than reads. A freighter
+    // of yours on a lane was invisible to every raider in the game: prey came
+    // from the `TraderPuppet` and `MinerPuppet` pools and a captain is in
+    // neither. ⚑ Paced for the same reason a coarse trader is - through the
+    // middle of a leg the schedule outruns every hull in the game - and inbound
+    // is read off the record for an itinerant captain and asserted for a
+    // stationary one, because "will still be here when you arrive" is what a
+    // ship parked at a rock or holding a beat is the truest case of.
+    const ecs::Pool<CaptainPuppet>& mine = playerRegistry().storage<CaptainPuppet>();
+    for (std::size_t i = 0; i < mine.size(); ++i) {
+        const std::uint32_t index = mine.entityIndices()[i];
+        const Transform* body = playerRegistry().storage<Transform>().tryGet(index);
+        const ShipDefense* defense = playerRegistry().storage<ShipDefense>().tryGet(index);
+        if (body == nullptr || defense == nullptr || !defense->state.alive()) {
+            continue;
+        }
+        const CaptainPuppet& puppet = mine.values()[i];
+        if (puppet.captainIndex >= m_captains.size()) {
+            continue;
+        }
+        const OrderKind kind = m_captains[puppet.captainIndex].order.kind;
+        m_preyCandidates.push_back(
+            {.index = index,
+             .position = body->position,
+             .faction = playerPreyRow,
+             .paced = puppet.paced != 0,
+             .inbound = stationary(kind) || escorting(kind) ||
+                        captainRoute(puppet.captainIndex).leg == sim::TraderLeg::Arrive});
     }
 
     const std::uint32_t prey = sim::choosePrey(
@@ -10853,6 +11817,16 @@ std::uint32_t SpaceWorld::respondTo(SystemBubble& bubble,
         // the resident wing is the local law, which is decisions/019 decision 2
         // meaning what it says.
         if (pilot.role == PilotRole::Trader) {
+            continue;
+        }
+        // ⚑⚑⚑ AND NEITHER IS A SHIP OF YOURS, WHICH THE FACTION FILTER ABOVE
+        // WOULD HAVE LET THROUGH (stage D). A hauling captain was already
+        // excluded by the line above, for the wrong reason - it is a Trader,
+        // not because it is yours - and a PATROL captain is `PilotRole::Patrol`
+        // wearing the local owner's colours, so the government would have
+        // conscripted a hull the player paid for into answering its calls. You
+        // hired them; the Hegemony did not.
+        if (playerOwnedHull(registry, index)) {
             continue;
         }
         const Transform* transform = registry.storage<Transform>().tryGet(index);
@@ -13126,6 +14100,10 @@ void SpaceWorld::tick(double dt)
     for (std::size_t bubbleSlot = 0; bubbleSlot < m_bubbles.size(); ++bubbleSlot) {
         tickSystem(*m_bubbles[bubbleSlot], dt);
     }
+    // ⚑⚑⚑ AND THE HAZARD IN THE BUBBLES NOBODY IS WATCHING (the user's ruling
+    // 12, stage D). Between the loop and the cooling sweep, because it can kill
+    // a captain and killing one releases the bubble their order was holding.
+    rollHeldBubbleHazard(dt);
     // ⚑⚑⚑ AND THE COOLING BUBBLES AGE (Phase 38 stage C). AFTER the loop
     // rather than before it: a bubble whose last second is this one is still
     // simulated for it, so what the player finds on jumping back is a system
@@ -13231,7 +14209,14 @@ void SpaceWorld::tick(double dt)
             // sits after `syncCaptainPuppets` so that the two never argue over
             // one `CaptainPuppet` - each skips the other's order kinds, and the
             // order is what says which.
-            tickMiningCaptains(bubble, dt);
+            tickStationaryCaptains(bubble, dt);
+            // ⚑⚑ AND THE ESCORT, WHICH IS NEITHER OF THOSE TWO AND SO GETS ITS
+            // OWN LINE (stage D). It is not a promotion, because there is no
+            // coarse record to promote; and it does not hold a bubble, because
+            // the bubble it wants is the player's and that one is never cooled.
+            // It skips every bubble but the front one, and `escorting()` is what
+            // keeps it from arguing with the two calls above over one puppet.
+            tickEscortCaptains(bubble, dt);
             // And a ship at the rock for every outpost here that is digging
             // (Phase 8x stage 6). Same reconcile, same rule, a different coarse
             // actor: an extractor's draw is activity the sim has been
@@ -13574,33 +14559,23 @@ void SpaceWorld::handleShipDestroyed(SystemBubble& bubble,
     // on the FACTS, not on the call site - and the fact was always in hand,
     // because it is the registry the victim was walked out of.
     ecs::Registry& registry = bubble.registry;
-    // ⚑⚑⚑⚑ A CAPTAIN'S HULL DYING COSTS THE PLAYER THE LOAD, AND THAT IS AN
-    // INTERIM WITH A DATE ON IT (Phase 39 stage C). The full death path - a
-    // wreck, an insurance answer, a standing consequence and a line the player
-    // can find - is stage D's, and stage B already took the same interim on the
-    // itinerant half in its own words: "danger takes the HOLD and not the hull,
-    // because the death path is stage D's". What stage C changes is that the
-    // hazard stopped being theoretical: a mining captain sits in a live bubble
-    // with the local traffic, so raiders can and do reach them while the player
-    // is two systems away.
+    // ⚑⚑⚑⚑ AND THE HULL IS BURIED, WHICH IS THE INTERIM STAGES B AND C BOTH
+    // WROTE A DATE ON (stage D). Both took the cargo and left the ship, in the
+    // same words - "danger takes the HOLD and not the hull, because the death
+    // path is stage D's" - and both said what that cost: the body was respawned
+    // at the dock on the next tick with the hold intact, so being killed was a
+    // positive statement that the danger is free.
     //
-    // Without this the body is simply respawned at the dock on the next tick
-    // with the hold intact, so being killed costs NOTHING - which is worse than
-    // a missing death path, because it is a positive statement that the danger
-    // is free. The ore in the hold is the part that can be taken today; the
-    // hull is what stage D has to bury.
+    // `killCaptain` is the whole of it and it is called here, in the one
+    // function every death in the game already routes through, because the fact
+    // that decides it is the registry the victim was walked out of. See there
+    // for what the player loses; what this site owes is only that the order of
+    // operations is right - the captain is struck off BEFORE the wreck is made
+    // below, so the wreck is composed from `bubble.spawnedShips`, which copied
+    // the name at spawn and does not care that the person is gone.
     if (const CaptainPuppet* puppet = registry.storage<CaptainPuppet>().tryGet(entityIndex);
         puppet != nullptr && puppet->captainIndex < m_captains.size()) {
-        Captain& captain = m_captains[puppet->captainIndex];
-        if (stationary(captain.order.kind) && captain.mine.units > 0.0f) {
-            SOL_LOG_WARN("%s lost %.0f units in %s",
-                         captain.name.c_str(),
-                         static_cast<double>(captain.mine.units),
-                         m_galaxy.systems[bubble.system].name.c_str());
-            captain.mine.units = 0.0f;
-            captain.mine.phase = MinePhase::Cutting;
-            ++captain.ledger.losses;
-        }
+        killCaptain(puppet->captainIndex, bubble.system);
     }
     // Fireball at the wreck site, scaled by the hull.
     const core::DVec3 wreckPosition = registry.storage<Transform>().get(entityIndex).position;
@@ -13685,8 +14660,18 @@ void SpaceWorld::handleShipDestroyed(SystemBubble& bubble,
     // Mission credit is broader - a bounty asks whether the player was in
     // the fight, and a kill stolen by local security still leaves the raider
     // dead, which is what the contract paid for.
+    //
+    // ⚑⚑⚑⚑ AND NEITHER RULE APPLIES TO A HULL OF YOUR OWN, WHICH IS A LIVE
+    // DEFECT STAGE D CLOSES RATHER THAN A CASE IT ADDS. A captain's freighter
+    // wore the local owner's colours, so putting a stray shot into your own
+    // ship called `recordShipKill` against a government you had never fought -
+    // you lost standing, their enemies liked you better, a bounty contract
+    // took credit, and a territory contest moved. Every one of those is
+    // "whose ship is that" answered wrong, and the answer is the same one
+    // `threatTier` and the hail now give: ask the thing.
     if (const ShipPilot* pilot = registry.storage<ShipPilot>().tryGet(entityIndex);
-        pilot != nullptr && pilot->factionIndex < m_factionTable.size()) {
+        pilot != nullptr && pilot->factionIndex < m_factionTable.size() &&
+        !playerOwnedHull(registry, entityIndex)) {
         const bool playerKilled = isPlayerEntity(registry, attackerIndex);
         const ShipDefense* defense = registry.storage<ShipDefense>().tryGet(entityIndex);
         const bool playerAssisted = defense != nullptr && defense->playerAssist > 0.0;
@@ -14207,6 +15192,13 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         writer.write(captain.cut);
         // The order (v40), then the haul. Two records because they answer two
         // questions - see `CaptainOrder`.
+        //
+        // ⚑⚑ v42 ADDS NO FIELD AND STILL BUMPS, AND THAT IS THE FORMAT BEING
+        // HONEST RATHER THAN CAUTIOUS. `OrderKind` gained `Patrol` and `Escort`
+        // (stage D), so this same `uint8_t` now has two values a v41 save could
+        // never hold - and worse, a v41 reader would take them silently, since
+        // 3 and 4 are perfectly good bytes. The version is the only thing that
+        // can say the vocabulary changed.
         writer.write(static_cast<std::uint8_t>(captain.order.kind));
         writer.write(captain.order.marketA);
         writer.write(captain.order.marketB);

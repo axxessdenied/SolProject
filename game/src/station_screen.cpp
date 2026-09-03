@@ -853,7 +853,9 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                            listHeight(ui, std::max<std::size_t>(giveable, 1)) +
                            // The order section: one status row plus wherever
                            // they could be sent (Phase 39 stage B).
-                           listHeight(ui, 1) + kRowHeight + // "Work this system" (stage C)
+                           // Three rows that name no place: "Work this system"
+                           // (stage C) and the two combat orders (stage D).
+                           listHeight(ui, 1) + kRowHeight * 3.0f +
                            listHeight(ui, std::max<std::size_t>(panel.haulDestinations.size(), 1)) +
                            listHeight(ui, hires ? std::max<std::size_t>(panel.captainHires.size(), 1) : 1)
                      : 0.0f) +
@@ -975,6 +977,33 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             clipped(ui, mineCells.detail, panel.captainMineNote, theme.textDim);
             if (ui.button(inset(mineCells.primary, 2.0f), "Mine", panel.captainCanMine)) {
                 panel.action = {.kind = StationAction::Kind::OrderMine, .index = panel.selectedCaptain};
+            }
+            ui.popId();
+
+            // ⚑ SIX GLYPHS EACH, WHICH IS `kButtonWidth`'S RULE AND IS WHY
+            // THESE ARE NOT "Patrol here" AND "Escort me". Stage B measured the
+            // cell off a screenshot at about seven glyphs and paid for a
+            // ten-glyph label by having two buttons overlap; the labels here
+            // were picked to that number rather than trimmed back to it later.
+            const Rect patrolRow = column.row(kRowHeight);
+            rowBackground(ui, patrolRow, 0);
+            const CatalogCells patrolCells = catalogCells(ui, patrolRow, false, false);
+            ui.pushId("patrol");
+            clipped(ui, patrolCells.name, "Patrol this system", theme.textPrimary);
+            clipped(ui, patrolCells.detail, panel.captainPatrolNote, theme.textDim);
+            if (ui.button(inset(patrolCells.primary, 2.0f), "Patrol", panel.captainCanPatrol)) {
+                panel.action = {.kind = StationAction::Kind::OrderPatrol, .index = panel.selectedCaptain};
+            }
+            ui.popId();
+
+            const Rect escortRow = column.row(kRowHeight);
+            rowBackground(ui, escortRow, 1);
+            const CatalogCells escortCells = catalogCells(ui, escortRow, false, false);
+            ui.pushId("escort");
+            clipped(ui, escortCells.name, "Fly as my escort", theme.textPrimary);
+            clipped(ui, escortCells.detail, panel.captainEscortNote, theme.textDim);
+            if (ui.button(inset(escortCells.primary, 2.0f), "Escort", panel.captainCanEscort)) {
+                panel.action = {.kind = StationAction::Kind::OrderEscort, .index = panel.selectedCaptain};
             }
             ui.popId();
 

@@ -683,6 +683,12 @@ struct CaptainPuppet
     // the FIELD and the body picks a rock out of it - `MinerPuppet`'s bargain,
     // against a record the player owns.
     std::uint32_t rock = 0xffff'ffffu;
+    // Which leg of the beat a PATROL captain is flying (stage D): 0 is the dock
+    // they were posted from and 1..n are the system's gates, which is where
+    // anything hostile arrives from. ⚑ Transient for `rock`'s reason and one
+    // more: a beat is a loop, so the only thing a reload can get wrong is which
+    // end of it the hull resumes at, and it flies to the next one either way.
+    std::uint32_t beat = 0;
 };
 
 // One captain's body, for the console probe and the tests. Same job as
@@ -696,7 +702,41 @@ struct CaptainPuppetInfo
     double distance = 0.0; // from the player, meters
     double speed = 0.0;
     bool paced = false;
+    // Which leg of a patrol's beat the body is flying (stage D). ⚑ Off the
+    // BODY, which is the point: it is the number that moves while nobody is
+    // watching, and a probe that reports a state instead cannot tell a system
+    // that went on running from one rebuilt around a sleeping captain.
+    std::uint32_t beat = 0;
+    // Which entity is drawing this captain, so a caller can ask whether it is
+    // the SAME body a moment later. ⚑ The thing a probe reporting "there is a
+    // body" cannot see, and the defect it exists to catch is real: an escort
+    // was being rebuilt every tick and every such probe read it as working.
+    std::uint32_t entity = 0;
 };
+
+// ⚑⚑⚑⚑ "IS THIS SHIP MINE", ASKED OF THE THING (Phase 39 stage D). This is the
+// whole of what stage D adds to the ownership question, and it is one line
+// because stage B already built the carrier: `CaptainPuppet` sits on every hull
+// of the player's that is in the sky, and its own comment named this stage as
+// what it was for.
+//
+// ⚑⚑⚑ THE ALTERNATIVE WAS A PLAYER ROW IN `m_factionTable`, AND PHASE 37's
+// RULING IS WHY IT IS NOT TAKEN. That phase turned `bool pirate` into a carried
+// `FactionKind` because "a second bool beside it would have been the same bug
+// with more states". A synthetic faction row is the same shape once more: the
+// table is saved, hashed and read ninety-two times, and every one of those sites
+// would start answering a question it was never asked - `relation(player, X)`,
+// `atWar(player, X)`, a colour on the map, a row in the standings screen. So
+// ownership is CARRIED on the hull and each predicate DERIVES what it needs,
+// which is five short reads instead of one long lie.
+//
+// ⚑⚑ THROUGH `tryGet` AND NEVER THROUGH `storage<T>()`, which is `threatTier`'s
+// hard-won rule in this same file: `Registry::storage<T>() const` ASSERTS the
+// pool exists, and a bubble that has never held a captain has no pool to ask.
+[[nodiscard]] inline bool playerOwnedHull(const sol::ecs::Registry& registry, std::uint32_t entityIndex)
+{
+    return registry.tryGet<CaptainPuppet>(registry.entityFromIndex(entityIndex)) != nullptr;
+}
 
 // A body for an extractor station's ore draw (Phase 8x stage 6). The same
 // puppet relationship a trader has, against a different coarse actor: an
@@ -1363,6 +1403,16 @@ inline constexpr double kCaptainCruiseSpeed = 4.0e8 / 90.0;
 // kilometre, and `chooseWorkRock`'s clearance test is what makes those safe.
 // This is the distance below which the pace keeps its hands off.
 inline constexpr double kCaptainCruiseInside = 8.0e3;
+
+// ⚑⚑ WHERE A CAPTAIN UNDER A COMBAT ORDER STOPS CRUISING AND STARTS FIGHTING
+// (stage D). `cruiseCaptainToward` hands over at `arrival + kCaptainCruiseInside`,
+// so this is a 10 km run-in on the combat drive - close enough that the fight
+// starts promptly, far enough that a hull does not arrive already inside its own
+// guns' geometry. ⚑ It exists because the first cut had no run-in at all, and a
+// live flight is what found that: `PilotState::Attack` steering is combat-scale,
+// so a patrol that locks on across a system closes at about 300 m/s against a
+// `preyReach` of hundreds of thousands of kilometres.
+inline constexpr double kCaptainEngageRange = 2.0e3;
 // How long an outpost's draw stops after its miner is killed (Phase 8x stage
 // 6). ⚑ Not picked: traderLegSeconds is the economy's own figure for crossing
 // a system, which is exactly what a replacement has to fly. Killing the ship
@@ -1526,6 +1576,12 @@ enum class OrderKind : std::uint8_t
     None = 0, // idle: parked wherever they last landed
     Haul,     // run between two markets, carrying whatever pays
     Mine,     // work this system's rock and sell it at the dock you were given
+    // ⚑⚑⚑ THE TWO COMBAT ORDERS (stage D), AND THEY SHIP TOGETHER BECAUSE
+    // NEITHER MEANS ANYTHING UNTIL HOSTILITY ANSWERS CORRECTLY IN BOTH
+    // DIRECTIONS. A patrol that cannot be shot at is a decoration and an escort
+    // that its own side reads as an enemy is worse than none.
+    Patrol, // hold the system you were posted to and fight what is hostile to you
+    Escort, // fly wing on the player, wherever the player goes
 };
 
 // ⚑⚑⚑ A STATIONARY ORDER HOLDS A BUBBLE, AND THAT IS THE WHOLE OF WHAT THIS
@@ -1534,7 +1590,44 @@ enum class OrderKind : std::uint8_t
 // its representation decided in one place instead of in five.
 [[nodiscard]] inline constexpr bool stationary(OrderKind kind)
 {
-    return kind == OrderKind::Mine;
+    return kind == OrderKind::Mine || kind == OrderKind::Patrol;
+}
+
+// ⚑⚑⚑⚑ AND `Escort` IS NEITHER HALF OF THE SPLIT, WHICH IS A THIRD ANSWER AND
+// NOT A HOLE IN THE FIRST TWO (stage D). The phase's first ruling divides orders
+// by WHERE THE SHIP IS WHEN NOBODY IS LOOKING: a stationary order holds a bubble
+// open because the hull is somewhere the player is not, and an itinerant one
+// rides the coarse layer for the same reason. An escort is defined as being
+// wherever the PLAYER is, and the player's own bubble is never cooled and never
+// evicted - so there is no unobserved half for either representation to cover.
+// It holds no bubble, keeps no coarse leg, and needs neither.
+//
+// ⚑⚑ WHICH IS ALSO WHY IT IS THE ONE ORDER WITH NO PLACE IN IT. The other three
+// name a market; this one names a person who moves, so `captainSystem` answers
+// it from the player rather than from the order.
+[[nodiscard]] inline constexpr bool escorting(OrderKind kind)
+{
+    return kind == OrderKind::Escort;
+}
+
+// ⚑⚑⚑ THE THIRD ARM, AND IT IS SPELLED OUT BECAUSE `!stationary()` STOPPED
+// MEANING IT AT STAGE D. Until the combat orders there were two kinds and the
+// negation of one was the other; `Escort` is neither, so every reader that
+// wrote `!stationary()` to mean "rides the coarse layer" silently acquired a
+// third case. `syncCaptainPuppets` was one, and it destroyed and respawned an
+// escort's hull every tick until this predicate existed to say what it meant.
+[[nodiscard]] inline constexpr bool itinerant(OrderKind kind)
+{
+    return kind == OrderKind::Haul;
+}
+
+// Whether an order is one a captain fights under. Not the same question as
+// "will they defend themselves" - every captain does that, because
+// `pilot_think` has always let a hull under fire answer - but whether looking
+// for a fight is the JOB. A hauler that goes hunting has abandoned the run.
+[[nodiscard]] inline constexpr bool fighting(OrderKind kind)
+{
+    return kind == OrderKind::Patrol || kind == OrderKind::Escort;
 }
 
 struct CaptainOrder
@@ -1953,7 +2046,39 @@ public:
     // The same lever against a captain's body (Phase 39 stage C): kills the
     // hull wherever it is, through the ordinary death path. False when that
     // captain has no body in any open bubble.
-    bool killCaptainPuppet(std::size_t captainIndex);
+    // ⚑ `byPlayer` ATTACHES THE ATTRIBUTION, and it is a parameter rather than
+    // a second lever because the whole question stage D asks about a kill is
+    // WHO MADE IT: the same shot has to cost the player a hull either way and
+    // cost them a reputation only when it was somebody else's ship.
+    bool killCaptainPuppet(std::size_t captainIndex, bool byPlayer = false);
+    // Dev lever: destroy the first hull in the player's own sky that is NOT
+    // theirs, as though the player fired the shot, reporting whose it was. ⚑ It
+    // is the ANTI-VACUITY half of the attribution guard and that is the whole
+    // reason it exists: `recordShipKill` deleted outright would pass every
+    // assertion about a captain's death being free, and only a kill that still
+    // costs standing can tell the two apart.
+    bool killAnyNpcByPlayer(std::uint32_t* outFaction);
+    // Whether a captain's standing order is holding `system` open. The public
+    // face of `bubbleHoldsPlayerAsset`, asked by system rather than by bubble
+    // so a caller can ask about a system that has already been released.
+    [[nodiscard]] bool bubbleHoldsPlayerAssetIn(std::uint32_t system) const;
+
+    // ⚑⚑⚑ THE DEATH PATH (stage D): the hull is buried, the person is gone,
+    // insurance pays a token and the player is told. Called from
+    // `handleShipDestroyed` for any body carrying a `CaptainPuppet`, so a
+    // captain dies the same way through a raider's guns, a dev lever and the
+    // coarse hazard roll. `system` is the bubble they died in, for the line.
+    void killCaptain(std::size_t captainIndex, std::uint32_t system);
+    // Strike a captain off, renumbering every index that pointed past them -
+    // the two parallel vectors AND the `CaptainPuppet` in every open bubble.
+    void removeCaptain(std::size_t captainIndex);
+    // Delete a hull from the fleet, renumbering `m_activeShip` and every
+    // `Captain::ship` past it. `sellShip`'s tail, with a second caller since
+    // stage D.
+    void removeFleetShip(std::size_t fleetIndex);
+    // What a captain says when you hail them: where they are, what they are
+    // doing about the order you gave, and nothing about a faction.
+    [[nodiscard]] std::string captainHailLine(std::size_t captainIndex) const;
 
     // How many traders have been lost since this session started. A probe, not
     // sim state: it is never saved, and nothing reads it but the console.
@@ -2445,11 +2570,23 @@ public:
     // mining tick runs at it, so the ship the order accepted is the ship that
     // works. Zero means the hull cannot mine at all.
     [[nodiscard]] float shipMiningPower(const OwnedShip& ship) const;
+    // The same sum over the same mounts, in damage per second: what the two
+    // combat orders refuse a hull for lacking (stage D).
+    [[nodiscard]] float shipGunPower(const OwnedShip& ship) const;
 
     // Stands the order down. Immediate when they are parked; at the end of the
     // current leg for a haul, and at the next delivery for a mining order - see
     // `CaptainOrder::stopping`, which is a HAZARD for one of those and plain
     // courtesy for the other.
+    // ⚑⚑⚑ THE TWO COMBAT ORDERS (stage D). "Patrol this" is a STATIONARY order
+    // and so holds a bubble open exactly as "mine here" does - the captain is
+    // somewhere the player is not, which is the whole of what `stationary()`
+    // decides. "Escort that" is neither half of the split, because the thing it
+    // follows is the player and the player's own bubble is never cooled; see
+    // `escorting()`. Both refuse a hull with no guns, and there is at most one
+    // escort at a time because a second is a fleet (ruling 4's fence).
+    bool orderPatrol(std::size_t captainIndex, std::string* outError = nullptr);
+    bool orderEscort(std::size_t captainIndex, std::string* outError = nullptr);
     bool cancelOrder(std::size_t captainIndex, std::string* outError = nullptr);
 
     // ⚑⚑⚑⚑ WHERE A CAPTAIN IS, THROUGH THE SAME DECOMPOSITION THE COARSE FLEET
@@ -4832,7 +4969,65 @@ private:
     // work rather than syncing a view of it: choose a rock, hold off it, cut,
     // take the load in when it is full. `CaptainMine` is what survives a save,
     // and it holds a FIELD rather than a rock for that reason.
-    void tickMiningCaptains(SystemBubble& bubble, double dt);
+    // ⚑ AND IT IS NOT ONLY MINING SINCE STAGE D, WHICH IS WHY IT IS NOT CALLED
+    // THAT ANY MORE. Everything above holds for a patrol word for word - the
+    // bubble is held open for as long as the order stands, the hull in it IS
+    // the job, and there is no coarse record to reconcile against. The two
+    // orders fork on `order.kind` at one line inside, and nowhere else.
+    void tickStationaryCaptains(SystemBubble& bubble, double dt);
+    // One patrol captain's tick: pick a fight if there is one in reach, and
+    // otherwise walk the dock and the gates (stage D).
+    // Flies a captain under a combat order in to `station` and, once they are
+    // there, parks the hull and ends the order. True on the tick they land -
+    // the caller is what removes the body, because a patrol and an escort keep
+    // their bodies in different pools of doomed entities.
+    bool standCaptainDownAt(SystemBubble& bubble,
+                            sol::ecs::Entity entity,
+                            std::size_t captainIndex,
+                            std::uint32_t station,
+                            double dt);
+    // The closest station in `system` to a point in it, or `kNoIndex` for a
+    // system with no stations at all.
+    [[nodiscard]] std::uint32_t nearestStationTo(std::uint32_t system, const sol::core::DVec3& from) const;
+    void tickPatrolBeat(SystemBubble& bubble,
+                        sol::ecs::Entity entity,
+                        CaptainPuppet& puppet,
+                        const Captain& captain,
+                        double dt);
+    // The nearest live hull in `bubble` that is hostile TO THE PLAYER, within
+    // `reach`, skipping the player and everything the player owns. `kNoIndex`
+    // for an empty sky (stage D).
+    [[nodiscard]] std::uint32_t
+    nearestPlayerEnemy(const SystemBubble& bubble, const sol::core::DVec3& from, double reach) const;
+    // Every captain flying as the player's escort gets a body in the player's
+    // bubble and keeps station on them (stage D).
+    void tickEscortCaptains(SystemBubble& bubble, double dt);
+    // ⚑⚑⚑ THE HAZARD IN A BUBBLE NOBODY IS WATCHING (the user's ruling 12).
+    // A stationary captain's system is ALWAYS instantiated, so
+    // `rollCaptainAttrition`'s "not in a system that is being simulated" skips
+    // it forever and the coarse layer could never touch one; and `pilot_think`
+    // is player-scoped, so nothing in that bubble ever DECIDES to attack it
+    // either. Between the two, a posted captain was safe precisely because
+    // nobody was looking. This is the roll that closes it, and a patrol posted
+    // to the same system is what brings it down.
+    void rollHeldBubbleHazard(double dt);
+
+public:
+    // The per-second risk a captain posted to `system` is under, which is the
+    // rule `rollHeldBubbleHazard` rolls against rather than a second copy of
+    // it. Zero where nothing of the player's is posted, or where the system is
+    // quiet. ⚑ A probe on the MODEL: it is how a patrol's contribution is
+    // asserted without racing two worlds against one random stream.
+    [[nodiscard]] float heldBubbleRiskPerSecond(std::uint32_t system) const;
+    // Which leg of its beat a patrol captain's BODY is flying, across every
+    // open bubble, or 0 where there is no body. ⚑ Off the body on purpose:
+    // it is the number that moves while nobody is watching, which is what
+    // separates a system that went on running from one rebuilt around a
+    // sleeping captain. `captainPuppetInfo` answers the same question for the
+    // player's own sky; this one can see the systems they have left.
+    [[nodiscard]] std::uint32_t captainBeatLeg(std::size_t captainIndex) const;
+
+private:
     // Ensures every captain under a stationary order has their system open,
     // over the cap if it comes to that (the user's ruling 11). ⚑ Called from
     // `tickCaptains` rather than from the bubble loop, because a bubble that

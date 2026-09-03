@@ -816,6 +816,12 @@ struct StationAction
         // no place, so the captain is the selection and there is no row to
         // turn into a world id. The executor reads `selectedCaptain` alone.
         OrderMine,
+        // ⚑ AND THE TWO COMBAT ORDERS CARRY NOTHING FOR THE SAME REASON (stage
+        // D). "Patrol this" names the system the player is standing in and
+        // "escort that" names the player themselves, so neither has a row to
+        // turn into a world id and both read `selectedCaptain` alone.
+        OrderPatrol,
+        OrderEscort,
         CancelOrder, // index = the employed captain
     };
     Kind kind = Kind::None;
@@ -879,7 +885,13 @@ struct StationPanel
     // greyed button with no sentence beside it would send them to look for a
     // bug instead of to a shipyard.
     bool captainCanMine = false;
-    const char* captainMineNote = ""; // why not, or what the beam cuts at
+    const char* captainMineNote = "";
+    // The two combat orders (stage D), on the mining row's own pattern: a live
+    // flag and a note that says why when it is not.
+    bool captainCanPatrol = false;
+    const char* captainPatrolNote = "";
+    bool captainCanEscort = false;
+    const char* captainEscortNote = ""; // why not, or what the beam cuts at
     // IN, not out: which captain the player has aimed the fleet list at, or -1.
     // Same argument as `selectedMount` above - the screen owns it because it is
     // a thing the player is holding rather than a thing the world knows.

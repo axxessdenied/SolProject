@@ -392,6 +392,13 @@ void FactionSim::recordTrade(std::uint32_t faction, double credits)
         clampScore(m_standings[faction] + static_cast<float>(credits) * m_params.commerceRate);
 }
 
+void FactionSim::setRaidIntensity(std::uint32_t system, float value)
+{
+    if (system < m_raidIntensity.size()) {
+        m_raidIntensity[system] = value;
+    }
+}
+
 float FactionSim::raidIntensity(std::uint32_t system) const
 {
     return system < m_raidIntensity.size() ? m_raidIntensity[system] : 0.0f;
