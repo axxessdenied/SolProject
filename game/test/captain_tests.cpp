@@ -2327,3 +2327,285 @@ SOL_TEST(a_patrol_closes_the_distance_to_something_it_has_locked_on_to)
     // any assertion that only asked for movement in the right direction.
     SOL_CHECK(after < before * 0.25);
 }
+
+// ⚑⚑⚑⚑ THE ROUND TRIP THAT WAS MISSING, AND ITS ABSENCE IS WHY A FULL GREEN
+// GATE SHIPPED A SAVE THE GAME REFUSES TO OPEN (stage E, on stage D's defect).
+// Every other save test in this file predates the combat orders: the four
+// round-trips cover a bare captain, a haul, an order given but not yet ticked,
+// and a mining captain, and every `orderPatrol`/`orderEscort` call in the suite
+// lives in a test that never saves. So the writer emitted `Patrol` (3) and
+// `Escort` (4) - the v42 comment says that is precisely why the version bumped
+// - while the reader twelve lines further down still refused anything above
+// `Mine` (2), and nothing asked.
+//
+// It asserts BOTH kinds because they fail for one reason and a test that only
+// covered the patrol would leave the escort's bound to be discovered the same
+// way. The escort is also the only order that names no market at all, so it is
+// the case most likely to be refused by a later invariant written for the ones
+// that do.
+SOL_TEST(a_save_carries_a_patrol_and_an_escort_rather_than_refusing_its_own_bytes)
+{
+    Fixture fixture;
+    const Dock dock = fixture.findDock(screenBit(StationScreen::Crew) | screenBit(StationScreen::Shipyard) |
+                                       screenBit(StationScreen::Outfitting));
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+    w.addCredits(1'000'000.0);
+
+    const std::size_t guardHull = buyAndArmAFighter(fixture);
+    SOL_REQUIRE(guardHull != 0);
+    const std::size_t guard = hireAndGive(fixture, guardHull);
+    SOL_REQUIRE(guard != kNone);
+    SOL_REQUIRE(w.orderPatrol(guard));
+
+    const std::size_t wingHull = buyAndArmAFighter(fixture);
+    SOL_REQUIRE(wingHull != 0);
+    const std::size_t wing = hireAndGive(fixture, wingHull);
+    SOL_REQUIRE(wing != kNone);
+    SOL_REQUIRE(w.orderEscort(wing));
+
+    // Let the bodies exist and the beat advance, so what is written is a posted
+    // captain mid-order rather than one on the tick they were given it.
+    for (int i = 0; i < 40; ++i) {
+        w.tick(kCoarseStep);
+    }
+    SOL_REQUIRE(w.captains()[guard].order.kind == game::OrderKind::Patrol);
+    SOL_REQUIRE(w.captains()[wing].order.kind == game::OrderKind::Escort);
+    const std::uint32_t postedAt = w.captains()[guard].order.marketA;
+    SOL_REQUIRE(postedAt != 0xffff'ffffu);
+
+    const std::string dir = std::string(SOL_GAME_TEST_SCRATCH_DIR) + "/captains-e";
+    SOL_REQUIRE(sol::platform::createDirectories(dir.c_str()));
+    const std::string path = dir + "/combat.sav";
+    SOL_REQUIRE(w.saveTo(path.c_str(), "Combat"));
+
+    // ⚑ THE ASSERTION THAT MATTERS IS THIS ONE. Before the fix `loadFrom`
+    // returned false here, on a file the same build had just written.
+    Fixture reloaded;
+    SOL_REQUIRE(reloaded.world().loadFrom(path.c_str()));
+    SOL_REQUIRE(reloaded.world().captains().size() == 2);
+    SOL_CHECK(reloaded.world().captains()[guard].order.kind == game::OrderKind::Patrol);
+    SOL_CHECK(reloaded.world().captains()[guard].order.marketA == postedAt);
+    SOL_CHECK(reloaded.world().captains()[wing].order.kind == game::OrderKind::Escort);
+    std::printf("  a patrol and an escort survived the round trip\n");
+}
+
+// ⚑⚑⚑⚑ THE STAGE'S EXIT AS A TEST: A FLOOR ABOVE THE MARKET HOLDS THE LOAD, AND
+// DROPPING IT LANDS THE SALE. The two halves have to be one test because either
+// alone is satisfiable by a bug. A captain who never sells passes "the floor
+// held the cargo" perfectly - that is also what a broken captain does - and one
+// who always sells passes "dropping the floor banked it" without the floor ever
+// having done anything. What is asserted is the TRANSITION: the same hull, the
+// same load, the same market, no sale under the floor and a sale once it drops.
+SOL_TEST(a_sell_floor_holds_the_load_and_dropping_it_lands_the_sale)
+{
+    Fixture fixture;
+    const Dock yard = fixture.findDock(screenBit(StationScreen::Crew) | screenBit(StationScreen::Shipyard) |
+                                       screenBit(StationScreen::Trade));
+    SOL_REQUIRE(yard.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(yard));
+    const std::size_t hull = fixture.buyAnyShip();
+    SOL_REQUIRE(hull != 0);
+    SOL_REQUIRE(fixture.world().hireCaptain(0));
+    SOL_REQUIRE(fixture.world().assignCaptain(0, hull));
+    fixture.world().addCredits(1'000'000.0);
+    SOL_REQUIRE(fixture.world().buyMarketIntel());
+    std::vector<SpaceWorld::HaulDestination> places;
+    fixture.world().haulDestinations(places);
+    SOL_REQUIRE(!places.empty());
+
+    // ⚑ THE FLOOR IS THE MAXIMUM, WHICH IS WHAT MAKES THE FIRST HALF CERTAIN
+    // RATHER THAN LIKELY. A realised margin on these lanes is a few per cent
+    // against a 5% spread, so +50% is a floor no honest trade on this galaxy
+    // clears - the test does not have to hunt for a route that happens to be
+    // bad, which would be a measurement of the galaxy rather than of the rule.
+    SOL_REQUIRE(fixture.world().orderHaul(0, places[0].market, 0.50f));
+    SOL_CHECK(fixture.world().captains()[0].order.floor == 0.50f);
+
+    // Fly legs until the captain is carrying something. A leg that found no
+    // margin at all buys nothing, and an empty hold cannot demonstrate a floor.
+    bool laden = false;
+    for (int legs = 0; legs < 6 && !laden; ++legs) {
+        SOL_REQUIRE(runUntilParked(fixture.world(), 0));
+        laden = fixture.world().captains()[0].haul.leg.cargo > 0.0f &&
+                fixture.world().captains()[0].haul.outlay > 0.0;
+        if (!laden) {
+            fixture.world().tick(kCoarseStep); // let it depart again
+        }
+    }
+    SOL_REQUIRE(laden); // nothing was ever worth loading: that is a finding
+
+    // THE FIRST HALF. Carry it across several arrivals under the floor: the
+    // hold must survive every one of them, and the ledger must not move.
+    const double heldOutlay = fixture.world().captains()[0].haul.outlay;
+    const double earnedBefore = fixture.world().captains()[0].ledger.earned;
+    const double paidBefore = fixture.world().captains()[0].ledger.paid;
+    int arrivals = 0;
+    for (int legs = 0; legs < 4; ++legs) {
+        fixture.world().tick(kCoarseStep);
+        if (!runUntilParked(fixture.world(), 0)) {
+            break;
+        }
+        ++arrivals;
+        const game::Captain& held = fixture.world().captains()[0];
+        SOL_CHECK(held.haul.leg.cargo > 0.0f);     // the load is still aboard
+        SOL_CHECK(held.haul.outlay == heldOutlay); // and it was never part-sold
+        SOL_CHECK(held.ledger.earned == earnedBefore);
+        SOL_CHECK(held.ledger.paid == paidBefore);
+    }
+    SOL_REQUIRE(arrivals >= 2); // it kept flying rather than parking: ruling 16
+    std::printf("  held %.0f units through %d arrival(s) under a +50%% floor\n",
+                static_cast<double>(fixture.world().captains()[0].haul.leg.cargo),
+                arrivals);
+
+    // THE SECOND HALF. ⚑⚑ THE FLOOR IS DROPPED WHILE THEY ARE IN TRANSIT, AND
+    // THAT IS TO ISOLATE THE SALE RATHER THAN FOR REALISM. Settling at a dock
+    // goes through `captainThink`, which sells AND THEN BUYS THE NEXT LOAD in
+    // the same tick - so credits measured across it move by two transactions
+    // and no clean identity can be read off them. `captainArrive` only settles
+    // and parks. Dropping the floor mid-leg puts the sale in the arrival, where
+    // it is the only thing that happened.
+    fixture.world().tick(kCoarseStep); // depart with the held load
+    SOL_REQUIRE(fixture.world().captains()[0].haul.leg.phase == sol::sim::TraderPhase::InTransit);
+    SOL_REQUIRE(fixture.world().setSellFloor(0, 0.0f));
+    SOL_CHECK(fixture.world().captains()[0].order.floor == 0.0f);
+    const double creditsBefore = fixture.world().playerCredits();
+    SOL_REQUIRE(runUntilParked(fixture.world(), 0));
+    const game::Captain& after = fixture.world().captains()[0];
+    const double gained = fixture.world().playerCredits() - creditsBefore;
+    const double booked = after.ledger.earned - earnedBefore;
+    SOL_REQUIRE(booked != 0.0); // the sale the floor had been refusing
+    std::printf(
+        "  floor dropped: credits %+.0f, ledger %+.0f, basis released %.0f\n", gained, booked, heldOutlay);
+    // ⚑⚑⚑ THE IDENTITY, AND IT IS THE ONE THAT WOULD CATCH A FLOOR THAT HAD
+    // QUIETLY PART-SETTLED A LOAD ON AN ARRIVAL IT REFUSED. Credits take the
+    // whole sale less the cut; the ledger takes the PROFIT less the cut. The
+    // difference between them is exactly the cost basis - the money that left
+    // the player's account at the buy and has now come back - so it must equal
+    // the outlay the hold was carrying while the floor was still on. If any
+    // earlier arrival had released part of that basis, the two would no longer
+    // differ by the whole of it.
+    SOL_CHECK(std::abs((gained - booked) - heldOutlay) < 1.0);
+    SOL_CHECK(after.haul.outlay < heldOutlay); // the basis really left the hold
+}
+
+// ⚑⚑⚑⚑ STANDING DOWN IGNORES THE FLOOR, AND WITHOUT THIS THE FEATURE EATS THE
+// PLAYER'S CAPITAL. Ruling 7 funds the cargo out of the player's credits at the
+// BUY, so an unsold hold is money already spent. A cancel clears the order -
+// and with it the floor the load was being judged by - so if the last arrival
+// refuses the sale, the hull parks with the player's money in its hold and no
+// order left that would ever settle it. The money is not lost to a raid or a
+// bad trade: it is unreachable, which is worse, because nothing says so.
+SOL_TEST(a_captain_standing_down_takes_what_the_load_fetches_rather_than_stranding_it)
+{
+    Fixture fixture;
+    const Dock yard = fixture.findDock(screenBit(StationScreen::Crew) | screenBit(StationScreen::Shipyard) |
+                                       screenBit(StationScreen::Trade));
+    SOL_REQUIRE(yard.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(yard));
+    const std::size_t hull = fixture.buyAnyShip();
+    SOL_REQUIRE(hull != 0);
+    SOL_REQUIRE(fixture.world().hireCaptain(0));
+    SOL_REQUIRE(fixture.world().assignCaptain(0, hull));
+    fixture.world().addCredits(1'000'000.0);
+    SOL_REQUIRE(fixture.world().buyMarketIntel());
+    std::vector<SpaceWorld::HaulDestination> places;
+    fixture.world().haulDestinations(places);
+    SOL_REQUIRE(!places.empty());
+    SOL_REQUIRE(fixture.world().orderHaul(0, places[0].market, 0.50f));
+
+    bool laden = false;
+    for (int legs = 0; legs < 6 && !laden; ++legs) {
+        SOL_REQUIRE(runUntilParked(fixture.world(), 0));
+        laden = fixture.world().captains()[0].haul.leg.cargo > 0.0f &&
+                fixture.world().captains()[0].haul.outlay > 0.0;
+        if (!laden) {
+            fixture.world().tick(kCoarseStep);
+        }
+    }
+    SOL_REQUIRE(laden);
+    const double creditsBefore = fixture.world().playerCredits();
+
+    // Stand them down while they are holding a load the floor refuses. ⚑⚑ THEY
+    // ARE PARKED, WHICH IS THE PATH THAT CARRIED THE DEFECT: `cancelOrder`'s
+    // last branch ends the order ON THE SPOT rather than setting `stopping`,
+    // because a parked captain has no leg to finish. That branch never had to
+    // think about the hold, since before the floor existed a parked captain had
+    // always just sold - so "parked AND laden" is a state this stage created.
+    SOL_REQUIRE(fixture.world().captains()[0].haul.leg.phase == sol::sim::TraderPhase::Idle);
+    SOL_REQUIRE(fixture.world().cancelOrder(0));
+    for (int legs = 0; legs < 4; ++legs) {
+        if (fixture.world().captains()[0].order.kind == game::OrderKind::None) {
+            break;
+        }
+        fixture.world().tick(kCoarseStep);
+        if (!runUntilParked(fixture.world(), 0)) {
+            break;
+        }
+    }
+    const game::Captain& after = fixture.world().captains()[0];
+    SOL_CHECK(after.order.kind == game::OrderKind::None); // the order really ended
+    // THE ASSERTION THAT MATTERS: the hold is empty and the money came back.
+    // Not that it came back at a PROFIT - the floor said this was a bad trade
+    // and it was right - but that it came back at all.
+    SOL_CHECK(after.haul.leg.cargo <= 0.0f);
+    SOL_CHECK(after.haul.outlay <= 0.0);
+    SOL_CHECK(fixture.world().playerCredits() > creditsBefore);
+    std::printf("  stood down holding a load: recovered %.0f cr rather than stranding it\n",
+                fixture.world().playerCredits() - creditsBefore);
+}
+
+// The floor rides the save, and a file naming one this game cannot hold out for
+// is refused. ⚑ The upper bound is the half worth pinning: a floor of infinity
+// read off disk is a captain who can never sell anything again, whose hold
+// never clears, who therefore never buys another load, and who flies an empty
+// route forever with the player's money locked in it.
+SOL_TEST(a_save_carries_the_sell_floor_and_refuses_one_no_captain_could_hold_out_for)
+{
+    Fixture fixture;
+    const Dock yard = fixture.findDock(screenBit(StationScreen::Crew) | screenBit(StationScreen::Shipyard) |
+                                       screenBit(StationScreen::Trade));
+    SOL_REQUIRE(yard.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(yard));
+    const std::size_t hull = fixture.buyAnyShip();
+    SOL_REQUIRE(hull != 0);
+    SOL_REQUIRE(fixture.world().hireCaptain(0));
+    SOL_REQUIRE(fixture.world().assignCaptain(0, hull));
+    fixture.world().addCredits(1'000'000.0);
+    SOL_REQUIRE(fixture.world().buyMarketIntel());
+    std::vector<SpaceWorld::HaulDestination> places;
+    fixture.world().haulDestinations(places);
+    SOL_REQUIRE(!places.empty());
+    SOL_REQUIRE(fixture.world().orderHaul(0, places[0].market, 0.25f));
+    for (int i = 0; i < 40; ++i) {
+        fixture.world().tick(kCoarseStep);
+    }
+    SOL_REQUIRE(fixture.world().captains()[0].order.floor == 0.25f);
+
+    const std::string dir = std::string(SOL_GAME_TEST_SCRATCH_DIR) + "/captains-floor";
+    SOL_REQUIRE(sol::platform::createDirectories(dir.c_str()));
+    const std::string path = dir + "/floor.sav";
+    SOL_REQUIRE(fixture.world().saveTo(path.c_str(), "Floor"));
+
+    Fixture reloaded;
+    SOL_REQUIRE(reloaded.world().loadFrom(path.c_str()));
+    SOL_REQUIRE(reloaded.world().captains().size() == 1);
+    SOL_CHECK(reloaded.world().captains()[0].order.floor == 0.25f);
+
+    // ⚑ The clamp is on the way IN as well, so a console line or a script
+    // cannot set a floor the loader would then refuse to read back.
+    SOL_REQUIRE(fixture.world().setSellFloor(0, 99.0f));
+    SOL_CHECK(fixture.world().captains()[0].order.floor == game::kMaxSellFloor);
+    SOL_REQUIRE(fixture.world().setSellFloor(0, -1.0f));
+    SOL_CHECK(fixture.world().captains()[0].order.floor == 0.0f);
+    // And it refuses on an order that has no load it bought.
+    SOL_REQUIRE(fixture.world().cancelOrder(0));
+    (void)runUntilParked(fixture.world(), 0);
+    for (int i = 0; i < 20 && fixture.world().captains()[0].order.kind != game::OrderKind::None; ++i) {
+        fixture.world().tick(kCoarseStep);
+    }
+    SOL_CHECK(!fixture.world().setSellFloor(0, 0.25f));
+    std::printf("  floor round-tripped at 25%%, clamped at %.0f%%, refused with no haul\n",
+                static_cast<double>(game::kMaxSellFloor) * 100.0);
+}

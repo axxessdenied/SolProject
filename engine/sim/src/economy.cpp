@@ -402,7 +402,7 @@ TradeResult Economy::buy(std::uint32_t market, std::uint32_t commodity, float un
     return result;
 }
 
-float Economy::quoteSell(std::uint32_t market, std::uint32_t commodity, float units) const
+float Economy::sellableUnits(std::uint32_t market, std::uint32_t commodity, float units) const
 {
     if (market >= m_markets.size() || commodity >= m_params.commodities.size() || units <= 0.0f) {
         return 0.0f;
@@ -411,7 +411,16 @@ float Economy::quoteSell(std::uint32_t market, std::uint32_t commodity, float un
     const float capacity = station.archetype < m_params.archetypes.size()
                                ? m_params.archetypes[station.archetype].capacityFor(commodity)
                                : 0.0f;
-    const float moved = std::min(units, std::max(0.0f, capacity - station.stock[commodity]));
+    return std::min(units, std::max(0.0f, capacity - station.stock[commodity]));
+}
+
+float Economy::quoteSell(std::uint32_t market, std::uint32_t commodity, float units) const
+{
+    const float moved = sellableUnits(market, commodity, units);
+    if (moved <= 0.0f) {
+        return 0.0f;
+    }
+    const StationMarket& station = m_markets[market];
     return moved * priceAtStock(market, commodity, station.stock[commodity] + moved * 0.5f) *
            (1.0f - m_params.priceSpread);
 }
@@ -423,10 +432,7 @@ TradeResult Economy::sell(std::uint32_t market, std::uint32_t commodity, float u
         return result;
     }
     StationMarket& station = m_markets[market];
-    const float capacity = station.archetype < m_params.archetypes.size()
-                               ? m_params.archetypes[station.archetype].capacityFor(commodity)
-                               : 0.0f;
-    result.units = std::min(units, std::max(0.0f, capacity - station.stock[commodity]));
+    result.units = sellableUnits(market, commodity, units);
     // The quote, taken before the stock moves - which is what makes it the same
     // number a caller could have asked for in advance. `buy` has been written
     // this way against `quoteBuy` since Phase 37 and this is the mirror of it.

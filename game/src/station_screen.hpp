@@ -48,6 +48,15 @@ struct StationScreenState
     // Give buttons grey themselves, which is the self-healing the fill relies
     // on rather than an invariant anybody has to maintain.
     int selectedCaptain = -1;
+    // Which of `kSellFloors` the Crew tab's strip is on (Phase 39 stage E).
+    // Screen state for `tradeAmount`'s exact reason - it is a thing the player
+    // is holding, not a thing the world knows - and it does double duty: it is
+    // the floor a new haul order is given, AND the control that re-aims the
+    // floor on an order already standing.
+    //
+    // ⚑ It starts at 0 ("none"), so a player who never touches the strip gives
+    // the order every haul got before this field existed.
+    int sellFloor = 0;
 };
 
 // Whether a tab belongs on THIS station's strip (Phase 34 stage C).

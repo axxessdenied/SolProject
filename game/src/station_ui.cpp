@@ -58,6 +58,26 @@ namespace {
     if (order.kind == game::OrderKind::Mine) {
         return "working the rock, selling at " + name(order.marketA);
     }
+    // ⚑⚑⚑⚑ AND THE TWO COMBAT ORDERS HAVE ONE END AND NONE, WHICH IS THE
+    // SENTENCE ABOVE ARRIVING A STAGE LATE (stage E, fixing stage D). The
+    // clause above was written to stop a one-ended order printing
+    // "<-> nowhere" - and then stage D added two more order kinds and every one
+    // of them fell into the `return` below, so a patrol read
+    // "Solaris Alpha (Solaris) <-> nowhere" and an escort, which names no
+    // market at all and says so where it is created, read "nowhere <-> nowhere"
+    // in the heading of its own section.
+    //
+    // This is stage D's own headline finding one layer out: a default that was
+    // correct for the two cases that existed silently acquires every case added
+    // afterwards. The guard against a sixth is that this switch is now
+    // exhaustive on the kinds that name places, so an order kind added later
+    // has to be answered here rather than defaulting into the haul's shape.
+    if (order.kind == game::OrderKind::Patrol) {
+        return "patrolling " + name(order.marketA);
+    }
+    if (order.kind == game::OrderKind::Escort) {
+        return "flying your wing";
+    }
     return name(order.marketA) + " <-> " + name(order.marketB);
 }
 
@@ -373,6 +393,14 @@ void fillStationOutfitting(const SpaceWorld& world,
                                 world.fleet()[captain.ship].storedSystem == world.currentSystemIndex() &&
                                 world.fleet()[captain.ship].storedStation == world.dockedStationIndex();
         const bool ordered = captain.order.kind != game::OrderKind::None;
+        // ⚑⚑ ONE PLACE, BECAUSE TWO READERS OF ONE RULE IS HOW THEY DRIFT. The
+        // row says "holding out" and the strip's caption says it at length, and
+        // they are the same fact about the same captain - this file's own
+        // `firstFreeMountFor` bargain, which it states a few lines down about
+        // the order buttons.
+        const bool holdingOut = ordered && captain.order.kind == game::OrderKind::Haul &&
+                                captain.order.floor > 0.0f && captain.haul.leg.cargo > 0.0f &&
+                                captain.haul.outlay > 0.0;
 
         // ⚑⚑⚑ THE ROUTE GOES IN THE HEADING AND THE STATE STAYS IN THE ROW,
         // AND THE DRIVE IS WHAT SORTED THEM. Two station names with their
@@ -411,6 +439,41 @@ void fillStationOutfitting(const SpaceWorld& world,
             if (captain.order.stopping) {
                 status += ", standing down";
             }
+        } else if (game::fighting(captain.order.kind)) {
+            // ⚑⚑⚑⚑ THE ARM THE SCREEN WAS MISSING, AND THE PREDICATE FOR IT WAS
+            // ALREADY WRITTEN (stage E, fixing stage D). This chain was
+            // `!hasShip` / `!ordered` / `Mine` / else, and the `else` meant "a
+            // haul" for exactly as long as Haul and Mine were the only orders.
+            // Stage D added two, so a captain out on a beat reached
+            // `captainRoute`, whose haul leg is empty, and the row read "at the
+            // dock" while the hull was 40,000 km away crossing the system.
+            //
+            // The sharp half is that `game::fighting()` exists and the CONSOLE
+            // asks it - `listCaptains` has had this arm since stage D. The
+            // screen and the console were two readers of one question and only
+            // one of them was taught the answer, which is this file's own
+            // "the screen knew and the world did not" with the halves swapped.
+            // ⚑ THE BEAT LEG IS THE COUNT, NOT THE STATE - the mining arm's own
+            // rule, and it earns its place for the same reason: "on the beat"
+            // reads identically whether the system is being ticked or was
+            // rebuilt around a sleeping captain, and a number that has moved
+            // since the player last looked cannot. `captainBeatLeg` is the
+            // const probe that can see it, and unlike `captainPuppetInfo` it
+            // looks across EVERY open bubble - which is the half that matters
+            // here, because a patrol is posted in a system the player is not
+            // standing in far more often than not.
+            //
+            // ⚑ An escort has no body while the player is docked, and this tab
+            // is only ever drawn while they are - so the two orders get two
+            // sentences rather than one with a hole in it.
+            if (captain.order.kind == game::OrderKind::Escort) {
+                status = "on your wing when you undock";
+            } else {
+                status = "on the beat, leg " + std::to_string(world.captainBeatLeg(index) + 1u);
+            }
+            if (captain.order.stopping) {
+                status += ", standing down";
+            }
         } else {
             const sol::sim::TraderRoute route = world.captainRoute(index);
             const char* word = route.leg == sol::sim::TraderLeg::Depart   ? "outbound"
@@ -421,10 +484,26 @@ void fillStationOutfitting(const SpaceWorld& world,
             if (route.leg != sol::sim::TraderLeg::None) {
                 status += ", " + formatNumber(route.progress * 100.0f) + "%";
             }
+            // ⚑⚑⚑⚑ THE ONE SENTENCE THAT STOPS THIS FEATURE READING AS A BUG
+            // (stage E). A captain under a floor flies the route with a full
+            // hold and banks nothing, indefinitely - which is exactly what a
+            // broken captain looks like, and `captainThink` said so in the
+            // comment it left against this stage. Two words in the row is the
+            // whole difference between "it is deciding" and "it is stuck", and
+            // it is bounded, so it belongs in the row rather than the heading.
+            if (holdingOut) {
+                status += ", holding out";
+            }
             if (captain.order.stopping) {
                 status += ", standing down";
             }
         }
+        // The floor strip's inputs. ⚑ The live order's value, not the strip's:
+        // a player who walks away and comes back sees what their captain is
+        // actually holding out for, and the strip re-seats itself onto it.
+        panel.captainOnHaul = ordered && captain.order.kind == game::OrderKind::Haul;
+        panel.captainSellFloor = captain.order.floor;
+        panel.captainHoldingOut = holdingOut;
         panel.captainRoute = ordered ? store(text, haulEnds(world, captain.order)) : "";
         // ⚑⚑⚑ AND WHAT THE ROUTE HAS ACTUALLY MADE, WHICH IS RULING 3's OWN
         // PROMISE MADE VISIBLE: "a bad route is visibly worse rather than
@@ -1027,9 +1106,23 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action, in
             std::vector<SpaceWorld::HaulDestination> places;
             world.haulDestinations(places);
             if (static_cast<std::size_t>(action.index) < places.size()) {
+                // ⚑ THE STRIP'S VALUE RIDES IN ON THE ACTION (stage E), so the
+                // floor the player set before pressing Haul is the floor the
+                // run starts with, rather than a second click they have to
+                // remember after the captain has already bought a load.
                 (void)world.orderHaul(static_cast<std::size_t>(selectedCaptain),
-                                      places[static_cast<std::size_t>(action.index)].market);
+                                      places[static_cast<std::size_t>(action.index)].market,
+                                      action.units);
             }
+        }
+        break;
+    case Kind::SetSellFloor:
+        // ⚑ Re-aims a run already in flight, which is the only action here that
+        // changes an order instead of giving or ending one. It refuses on any
+        // other order kind in the world, so a strip left on screen by a stale
+        // frame cannot put a floor on a patrol.
+        if (selectedCaptain >= 0) {
+            (void)world.setSellFloor(static_cast<std::size_t>(selectedCaptain), action.units);
         }
         break;
     case Kind::OrderMine:

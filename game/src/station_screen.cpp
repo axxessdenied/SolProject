@@ -172,6 +172,35 @@ constexpr float kTradeAmounts[] = {1.0f, 10.0f, 100.0f};
 constexpr const char* const kTradeAmountLabels[] = {"1", "10", "100"};
 constexpr int kTradeAmountCount = 3;
 
+// The sell floors the Crew tab offers (Phase 39 stage E, the user's ruling 17),
+// on `kTradeAmounts`' pattern immediately above and for its stated reason: the
+// world clamps the value anyway, so a fixed strip says "as much of this as the
+// order will take" without the station screen growing numeric entry it has
+// never had.
+//
+// ⚑⚑ THE FIRST ENTRY IS ZERO AND IT IS NOT A SPECIAL CASE - it is a floor of
+// nothing, which is the exact code path every haul took before the field
+// existed, so the feature's off state is the old behaviour rather than a branch
+// around it.
+//
+// ⚑⚑⚑⚑ THREE GLYPHS, AND THE FOURTH ONE CLIPPED - THE FOURTH CELL-WIDTH BUG OF
+// THIS PHASE AND THE FOURTH FOUND ONLY BY PHOTOGRAPHING THE SCREEN. These read
+// "none" / "+10%" / "+25%" / "+50%" for exactly one drive, and the strip came
+// back as `no...  +...  +...  +...` - every label elided past recognition, four
+// controls that could not be told apart. The trade amounts beside them are "1",
+// "10", "100" and fit the same cell, which is the measurement: a 52 px cell
+// holds THREE glyphs of this font, not five, and `kTradeAmounts` never
+// discovered that because it never needed a fourth.
+//
+// The "+" was the cheapest glyph to lose: the caption already says the number
+// is over the load's cost, so the sign was saying it twice. The cell is 60 px
+// as well, so a three-glyph label is inside it with room rather than exactly at
+// the edge - the failure mode here is silent and only a screenshot can see it.
+constexpr float kSellFloorCellWidth = 60.0f;
+constexpr float kSellFloors[] = {0.0f, 0.10f, 0.25f, 0.50f};
+constexpr const char* const kSellFloorLabels[] = {"0%", "10%", "25%", "50%"};
+constexpr int kSellFloorCount = 4;
+
 [[nodiscard]] float listHeight(const UiContext& ui, std::size_t rows)
 {
     return static_cast<float>(rows) * (kRowHeight + ui.theme().spacing);
@@ -855,7 +884,11 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                            // they could be sent (Phase 39 stage B).
                            // Three rows that name no place: "Work this system"
                            // (stage C) and the two combat orders (stage D).
-                           listHeight(ui, 1) + kRowHeight * 3.0f +
+                           // Plus the sell-floor strip (stage E), which is a
+                           // row of the same height and is always drawn - a
+                           // control that appeared and vanished as an order
+                           // came and went would move every row under it.
+                           listHeight(ui, 1) + kRowHeight * 4.0f +
                            listHeight(ui, std::max<std::size_t>(panel.haulDestinations.size(), 1)) +
                            listHeight(ui, hires ? std::max<std::size_t>(panel.captainHires.size(), 1) : 1)
                      : 0.0f) +
@@ -1007,6 +1040,69 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
             }
             ui.popId();
 
+            // ⚑⚑⚑⚑ THE SELL FLOOR (stage E, the user's ruling 17), AND IT SITS
+            // ABOVE THE DESTINATION LIST BECAUSE IT IS A CONDITION ON THE RUN
+            // RATHER THAN A SEPARATE ORDER. A player reads down this section as
+            // one sentence - hold out for this much, running to there - and the
+            // strip has to be set before the Haul button is pressed for that
+            // reading to be true of what actually happens.
+            //
+            // ⚑⚑ A SELECTABLE STRIP AND NOT A NUMBER, which is the Trade tab's
+            // `kTradeAmounts` idiom rather than a new widget: the station screen
+            // has never had numeric entry and the world clamps the value anyway.
+            // What the labels have to fit is `kSellFloorCellWidth`, and that
+            // budget is three glyphs rather than the seven `kButtonWidth` gives
+            // a button - measured off a screenshot after this row shipped a
+            // drive with all four labels elided. See `kSellFloorLabels`.
+            const Rect floorRow = column.row(kRowHeight);
+            rowBackground(ui, floorRow, 0);
+            {
+                Row cursor(floorRow, theme.spacing);
+                ui.pushId("floor");
+                // ⚑ RIGHT TO LEFT so the strip ends where the order buttons in
+                // every row above it end, and the labels stay in reading order.
+                for (int i = kSellFloorCount - 1; i >= 0; --i) {
+                    const Rect cell = cursor.cellFromRight(kSellFloorCellWidth);
+                    // ⚑⚑ THE WORLD'S VALUE DECIDES WHICH IS LIT WHEN AN ORDER IS
+                    // STANDING, not the player's last click. Otherwise walking
+                    // away and coming back shows the strip on whatever was
+                    // pressed most recently on some other captain, which is a
+                    // screen telling the player something untrue about their
+                    // own standing order - this file's own "the screen knew and
+                    // the world did not", pointed the other way.
+                    const bool live =
+                        panel.captainOnHaul ? panel.captainSellFloor == kSellFloors[i] : state.sellFloor == i;
+                    if (ui.selectable(cell, kSellFloorLabels[i], live)) {
+                        state.sellFloor = i;
+                        if (panel.captainOnHaul) {
+                            panel.action = {.kind = StationAction::Kind::SetSellFloor,
+                                            .index = panel.selectedCaptain,
+                                            .units = kSellFloors[i]};
+                        }
+                    }
+                }
+                ui.popId();
+                // ⚑ The caption carries the state, because "holding out" is the
+                // one thing about this feature a player could mistake for a
+                // broken captain, and the row it would otherwise be read off is
+                // three rows up.
+                //
+                // ⚑⚑ RIGHT-ALIGNED, which is `kTradeAmounts`' own arrangement
+                // and not a preference: `remaining()` is the whole rest of the
+                // row, so a left-aligned caption sits hard against the far edge
+                // of the panel with a hand's width of nothing between it and
+                // the controls it labels. The first photograph of this row
+                // showed exactly that. Right-aligned it reads as one phrase
+                // running into the strip.
+                const Rect rest = cursor.remaining();
+                ui.label(rest,
+                         panel.captainHoldingOut ? "Sell floor - holding a load it has not cleared"
+                                                 : "Sell floor over the load's cost",
+                         panel.captainHoldingOut ? theme.textPrimary : theme.textDim,
+                         theme.bodyStyle,
+                         TextAlign::Right);
+            }
+
             const CaptainClick where = captainList(ui,
                                                    column,
                                                    "haul",
@@ -1015,7 +1111,9 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                                                    nullptr,
                                                    "(no route can be given from here)");
             if (where.row >= 0) {
-                panel.action = {.kind = StationAction::Kind::OrderHaul, .index = where.row};
+                panel.action = {.kind = StationAction::Kind::OrderHaul,
+                                .index = where.row,
+                                .units = kSellFloors[state.sellFloor]};
             }
         }
 

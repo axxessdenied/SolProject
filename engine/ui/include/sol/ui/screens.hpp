@@ -823,12 +823,19 @@ struct StationAction
         OrderPatrol,
         OrderEscort,
         CancelOrder, // index = the employed captain
+        // ⚑⚑ THE ONLY ACTION THAT RE-AIMS AN ORDER INSTEAD OF GIVING OR ENDING
+        // ONE (Phase 39 stage E). `units` carries the floor as a fraction, on
+        // `OrderRefine`'s precedent - which is why that field was already here
+        // and no new payload was needed. It is separate from `OrderHaul`
+        // because the stage's exit changes the floor on a run already in
+        // flight, which an argument to the verb that CREATES the run cannot do.
+        SetSellFloor,
     };
     Kind kind = Kind::None;
     const char* id = "";    // def id (component/weapon/ship/crew actions)
     const char* mount = ""; // mount id (fitting actions, Phase 31 stage B)
     int index = -1;         // fleet index, or mission offer/journal index
-    float units = 0.0f;     // refinery order size
+    float units = 0.0f;     // refinery order size, or a captain's sell floor
 };
 
 // The docked station's refinery service (Phase 8f). Absent — refines false —
@@ -892,6 +899,18 @@ struct StationPanel
     const char* captainPatrolNote = "";
     bool captainCanEscort = false;
     const char* captainEscortNote = ""; // why not, or what the beam cuts at
+    // The sell floor (stage E). ⚑ `captainOnHaul` is what decides whether the
+    // strip is drawn at all, and it is a separate field rather than being
+    // inferred from `captainRoute` being non-empty: three of the five order
+    // kinds set a route string and none of them buys a load, so a floor row
+    // under a patrol would be a control that does nothing.
+    bool captainOnHaul = false;
+    // What the WORLD currently holds for them, so the strip can show the live
+    // order's floor rather than whatever the player last clicked. IN, not out.
+    float captainSellFloor = 0.0f;
+    // Whether they are carrying a load the floor has refused - the state most
+    // likely to read as a broken captain, so the screen says it in words.
+    bool captainHoldingOut = false;
     // IN, not out: which captain the player has aimed the fleet list at, or -1.
     // Same argument as `selectedMount` above - the screen owns it because it is
     // a thing the player is holding rather than a thing the world knows.

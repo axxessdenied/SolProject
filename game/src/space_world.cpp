@@ -224,7 +224,13 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // refuses to let change under a file - and the haul beside it is the leg
 // clock, because a save taken mid-run has to load into the same haul rather
 // than teleporting a laden hull to one end of it.
-constexpr std::uint32_t kSaveVersion = 42;
+// v43 (Phase 39 stage E): the sell floor on a haul order - the margin over the
+// hold's cost a captain will not sell under. A field with a meaningful zero, so
+// a v42 reader would not have crashed on a v43 file; it would have done
+// something worse, which is silently drop every floor the player set and start
+// dumping their cargo at whatever the market offered. That is the case the
+// version number exists for.
+constexpr std::uint32_t kSaveVersion = 43;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -9432,7 +9438,7 @@ void SpaceWorld::haulDestinations(std::vector<HaulDestination>& out) const
     });
 }
 
-bool SpaceWorld::orderHaul(std::size_t captainIndex, std::uint32_t market, std::string* outError)
+bool SpaceWorld::orderHaul(std::size_t captainIndex, std::uint32_t market, float floor, std::string* outError)
 {
     if (!isDocked()) {
         return refuse("must be docked to give a captain a route", outError);
@@ -9475,7 +9481,16 @@ bool SpaceWorld::orderHaul(std::size_t captainIndex, std::uint32_t market, std::
         sim::kUnreachableHops) {
         return refuse("no route there inside a hauler's range", outError);
     }
-    captain.order = {.kind = OrderKind::Haul, .marketA = here, .marketB = market, .stopping = false};
+    // ⚑ THE FLOOR IS CLAMPED HERE RATHER THAN TRUSTED, on the same rule the
+    // save loader applies to the same field: this is the one door the value
+    // comes in by, and a floor past `kMaxSellFloor` is a captain who can never
+    // sell. Clamping rather than refusing, because unlike the ten conditions
+    // above it there is no way for a player using the screen to ask for one.
+    captain.order = {.kind = OrderKind::Haul,
+                     .marketA = here,
+                     .marketB = market,
+                     .stopping = false,
+                     .floor = core::clamp(floor, 0.0f, kMaxSellFloor)};
     captain.haul.leg.origin = here;
     captain.haul.leg.market = here;
     captain.haul.leg.phase = sim::TraderPhase::Idle;
@@ -9547,6 +9562,23 @@ float SpaceWorld::shipGunPower(const OwnedShip& ship) const
         }
     }
     return power;
+}
+
+bool SpaceWorld::setSellFloor(std::size_t captainIndex, float floor)
+{
+    if (captainIndex >= m_captains.size()) {
+        return false;
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.order.kind != OrderKind::Haul) {
+        return false;
+    }
+    // Clamped rather than refused, for `orderHaul`'s reason: the screen cannot
+    // ask for a value outside the presets, so a caller that does is a script or
+    // a console line, and the useful answer is the nearest floor this game can
+    // actually hold out for.
+    captain.order.floor = core::clamp(floor, 0.0f, kMaxSellFloor);
+    return true;
 }
 
 bool SpaceWorld::orderMine(std::size_t captainIndex, std::string* outError)
@@ -9807,6 +9839,21 @@ bool SpaceWorld::cancelOrder(std::size_t captainIndex, std::string* outError)
         SOL_LOG_INFO("%s will stand down at the end of this leg", captain.name.c_str());
         return true;
     }
+    // ⚑⚑⚑⚑ AND THE HOLD IS SETTLED BEFORE THE ORDER GOES, WHICH STAGE E HAD TO
+    // ADD AND WHICH WAS UNREACHABLE UNTIL IT DID. This branch ends the order on
+    // the spot because the captain is parked at a market with nothing in
+    // flight - and before the sell floor existed, a parked captain had always
+    // just sold, so the hold was always empty here and clearing the order cost
+    // nothing. A floor makes "parked AND laden" an ordinary state, and then
+    // this line strands the player's money: ruling 7 bought that cargo out of
+    // their credits, the order that would have settled it is gone, and no
+    // arrival will ever come round again. Nothing anywhere would have said so.
+    //
+    // The floor is deliberately IGNORED. Standing down is the player saying the
+    // run is over, and a floor is an instruction about which trades to wait
+    // for - there is nothing left to wait for. Better a bad price than money
+    // that cannot be reached.
+    settleCaptainSale(captain, captain.haul.leg.market, /*ignoreFloor=*/true);
     captain.order = {};
     SOL_LOG_INFO("%s stands down", captain.name.c_str());
     return true;
@@ -9872,7 +9919,7 @@ bool SpaceWorld::systemIsInstantiated(std::uint32_t system) const
     return false;
 }
 
-void SpaceWorld::settleCaptainSale(Captain& captain, std::uint32_t market)
+void SpaceWorld::settleCaptainSale(Captain& captain, std::uint32_t market, bool ignoreFloor)
 {
     CaptainHaul& haul = captain.haul;
     CaptainLedger& ledger = captain.ledger;
@@ -9880,6 +9927,56 @@ void SpaceWorld::settleCaptainSale(Captain& captain, std::uint32_t market)
         return;
     }
     const float aboard = haul.leg.cargo;
+    // ⚑⚑⚑⚑ THE FLOOR IS JUDGED BEFORE THE STOCK MOVES, BECAUSE `sell` CANNOT BE
+    // UNDONE (stage E). This is the whole of "sell when the price clears X":
+    // quote what this end would pay for the units it could actually take, price
+    // the share of the outlay those units carry, and refuse the trade if the
+    // margin is under what the player asked for.
+    //
+    // ⚑⚑⚑ THE BASIS IS THE SHARE, NOT THE WHOLE OUTLAY, and getting that wrong
+    // would have made the floor fire on good trades: a market with room for
+    // half the load pays half the revenue, and scoring that against ALL of the
+    // cost reads as a 50% loss on a run that is breaking even. It is the same
+    // apportionment the settle below already does for the cut, asked one step
+    // earlier - which is why `sellableUnits` had to exist.
+    //
+    // ⚑⚑⚑⚑ AND A CAPTAIN STANDING DOWN IGNORES THE FLOOR, WHICH IS NOT A
+    // COURTESY BUT THE FIELD REFUSING TO EAT THE PLAYER'S CAPITAL. Ruling 7
+    // funds the cargo out of the player's credits at the BUY, so an unsold hold
+    // is money already spent and not yet recovered. Without this clause a
+    // cancel while the floor is unmet clears the order - and with it the floor
+    // it was judged by - and parks a hull with the player's money still sitting
+    // in its hold, recoverable by nothing: the order is gone, so no arrival
+    // will ever settle it again. Standing down is the player saying "we are
+    // done", and being done means taking what the load fetches.
+    const bool holdOut = captain.order.floor > 0.0f && !captain.order.stopping && !ignoreFloor;
+    const float movable = m_economy.sellableUnits(market, haul.leg.commodity, aboard);
+    if (movable > 0.0f && holdOut && haul.outlay > 0.0) {
+        const double quoted = static_cast<double>(m_economy.quoteSell(market, haul.leg.commodity, aboard));
+        const double basis = haul.outlay * static_cast<double>(movable / aboard);
+        if (quoted < basis * (1.0 + static_cast<double>(captain.order.floor))) {
+            // ⚑⚑⚑⚑ AND THE LOAD RIDES ON RATHER THAN WAITING HERE (the user's
+            // ruling 16). The captain keeps flying the route and tests the
+            // floor again at the other end, which is the behaviour the full
+            // warehouse branch below already has - and it is the answer to the
+            // warning `captainThink` left against this exact moment: a captain
+            // parked at one end holding cargo "would look identical to a broken
+            // one". A hull that is always on a leg never does. It also means a
+            // market that moves in the player's favour gets taken the next time
+            // round, which a captain sitting at the far end would miss.
+            SOL_LOG_INFO("%s held %.0f %s at %s: %.0f cr is under the %.0f%% floor on %.0f",
+                         captain.name.c_str(),
+                         static_cast<double>(movable),
+                         haul.leg.commodity < m_commodityIds.size()
+                             ? m_commodityIds[haul.leg.commodity].c_str()
+                             : "cargo",
+                         m_galaxy.systems[m_economy.markets()[market].systemIndex].name.c_str(),
+                         quoted,
+                         static_cast<double>(captain.order.floor) * 100.0,
+                         basis);
+            return;
+        }
+    }
     const sim::TradeResult sold = m_economy.sell(market, haul.leg.commodity, aboard);
     if (sold.units <= 0.0f) {
         // A full warehouse: the load stays in the hold and rides on to the
@@ -15203,6 +15300,9 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         writer.write(captain.order.marketA);
         writer.write(captain.order.marketB);
         writer.write(static_cast<std::uint8_t>(captain.order.stopping ? 1 : 0));
+        // The sell floor (v43). Rides with the order because it is part of what
+        // the player TOLD them, not part of what they are doing about it.
+        writer.write(captain.order.floor);
         writer.write(static_cast<std::uint8_t>(captain.haul.leg.phase));
         writer.write(captain.haul.leg.origin);
         writer.write(captain.haul.leg.market);
@@ -15410,6 +15510,7 @@ bool SpaceWorld::loadFrom(const char* path)
     }
     std::vector<Captain> captains(captainCount);
     std::vector<std::uint8_t> held(fleetCount, 0u);
+    std::uint8_t escorts = 0u;
     for (Captain& captain : captains) {
         if (!reader.readString(captain.name) || !reader.readString(captain.trade) ||
             !reader.read(captain.who) || !reader.read(captain.ship) || !reader.read(captain.cut)) {
@@ -15419,7 +15520,8 @@ bool SpaceWorld::loadFrom(const char* path)
         std::uint8_t phase = 0;
         std::uint8_t stopping = 0;
         if (!reader.read(kind) || !reader.read(captain.order.marketA) ||
-            !reader.read(captain.order.marketB) || !reader.read(stopping) || !reader.read(phase) ||
+            !reader.read(captain.order.marketB) || !reader.read(stopping) ||
+            !reader.read(captain.order.floor) || !reader.read(phase) ||
             !reader.read(captain.haul.leg.origin) || !reader.read(captain.haul.leg.market) ||
             !reader.read(captain.haul.leg.travelRemaining) || !reader.read(captain.haul.leg.legTotal) ||
             !reader.read(captain.haul.leg.commodity) || !reader.read(captain.haul.leg.cargo) ||
@@ -15434,7 +15536,24 @@ bool SpaceWorld::loadFrom(const char* path)
             !reader.read(captain.ledger.losses)) {
             return false;
         }
-        if (kind > static_cast<std::uint8_t>(OrderKind::Mine) ||
+        // ⚑⚑⚑⚑ THE BOUND IS THE LAST ORDER KIND AND NOT THE LAST ONE THAT
+        // EXISTED WHEN THIS LINE WAS WRITTEN (stage E, fixing stage D). This
+        // read `OrderKind::Mine` while the writer twelve lines up was already
+        // emitting `Patrol` (3) and `Escort` (4) - and the comment beside that
+        // writer says v42 exists PRECISELY because those two values now ship.
+        // So the game wrote a save with a posted captain and then refused to
+        // open it: the third time this phase that the two halves of one format
+        // disagreed, and the first that a full green gate could not see,
+        // because every save round-trip in the suite predates the combat
+        // orders. A bound named after a member is a bound that has to be
+        // revisited every time the enum grows; naming the LAST one keeps it
+        // honest, and the `static_assert` below is what makes a sixth kind fail
+        // here rather than in a player's save file.
+        static_assert(static_cast<std::uint8_t>(OrderKind::Escort) == 4,
+                      "OrderKind gained a member: widen this bound, bump kSaveVersion, and add the "
+                      "new kind to the save round-trip test - a reader that refuses a byte its own "
+                      "writer emits is a save the game writes and then cannot open.");
+        if (kind > static_cast<std::uint8_t>(OrderKind::Escort) ||
             phase > static_cast<std::uint8_t>(sim::TraderPhase::InTransit) ||
             minePhase > static_cast<std::uint8_t>(MinePhase::Selling)) {
             return false;
@@ -15453,6 +15572,17 @@ bool SpaceWorld::loadFrom(const char* path)
             captain.haul.outlay < 0.0 || captain.mine.units < 0.0f || captain.mine.rockSeconds < 0.0) {
             return false;
         }
+        // ⚑⚑ THE FLOOR HAS AN UPPER BOUND AS WELL AS A LOWER ONE, AND THE UPPER
+        // ONE IS THE INTERESTING HALF (v43). Negative is nonsense - it would
+        // mean insisting on a loss. But a floor read off disk as infinity, or
+        // as some enormous multiple, is a captain who can never sell anything
+        // ever again: the hold never clears, so no new load is ever bought, and
+        // the hull flies its route empty for the rest of the save with the
+        // player's money locked in it. `kMaxSellFloor` is what the UI can
+        // actually offer, so a file outside it did not come from this game.
+        if (!(captain.order.floor >= 0.0f) || captain.order.floor > kMaxSellFloor) {
+            return false;
+        }
         // ⚑⚑ A STATIONARY ORDER MUST NAME A MARKET, AND THAT IS NOT A TIDINESS
         // CHECK (stage C). `captainSystem` reads the system out of
         // `order.marketA` for a mining captain, and `bubbleHoldsPlayerAsset`
@@ -15463,6 +15593,19 @@ bool SpaceWorld::loadFrom(const char* path)
         // and then cannot make sense of, with nothing said about it.
         if (stationary(captain.order.kind) && captain.order.marketA == kNoIndex) {
             return false;
+        }
+        // ⚑⚑ AND AT MOST ONE ESCORT, WHICH IS THE SAME KIND OF CHECK FOR THE
+        // SAME KIND OF REASON. `orderEscort` refuses a second one outright and
+        // `space_world.hpp` states the rule where the two combat orders are
+        // declared, so a file carrying two describes a fleet - and a fleet is
+        // Phase 40, refused here by name exactly as stage D refused it at the
+        // door it came in by. The loader's standard through this whole block is
+        // that a state the game cannot PRODUCE is a state it will not ACCEPT.
+        if (escorting(captain.order.kind)) {
+            if (escorts != 0u) {
+                return false;
+            }
+            escorts = 1u;
         }
         // A captain with no ship cannot be flying one, and an order pointing at
         // a hull that is not theirs is the two-truths defect stage A refused.

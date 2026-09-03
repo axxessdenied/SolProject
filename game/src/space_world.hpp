@@ -1359,6 +1359,31 @@ inline constexpr double kMinerPathClearance = 200.0;
 // full would cut ore it has nowhere to put. Nine tenths is a rock's worth of
 // margin at any beam this game ships.
 inline constexpr float kCaptainHoldFullFraction = 0.9f;
+// ⚑⚑⚑ THE SELL FLOORS THE CREW TAB OFFERS (stage E, the user's ruling 17), AND
+// THEY ARE PRESETS BECAUSE THE STATION SCREEN HAS NO NUMBER ENTRY AND SHOULD NOT
+// GROW ONE FOR THIS. It is the Trade tab's own idiom - `kTradeAmounts` is three
+// fixed steps for the same reason - and it keeps every label inside the seven
+// glyphs `kButtonWidth` actually fits, which is a constraint three separate
+// flights of this phase have now measured off a screenshot.
+//
+// ⚑⚑ THE FIRST ENTRY IS ZERO AND THAT IS LOAD BEARING: it is not "no floor" as
+// a special case, it is a floor of nothing, which evaluates to the exact code
+// path every haul took before this field existed. The feature's OFF state is
+// therefore the old behaviour rather than a branch around it.
+//
+// ⚑ The top of the range is 50% and not more because `priceSpread` is 5% and a
+// realised round-trip margin on these lanes runs a few per cent: 50% is already
+// "I would rather hold this cargo indefinitely than sell it here", which is the
+// strongest thing the instrument needs to be able to say. Anything past it is
+// indistinguishable from never selling, and the save loader refuses it.
+// ⚑ THE VALUES THEMSELVES LIVE ON THE SCREEN (`kSellFloors` in
+// station_screen.cpp), NOT HERE, and that is the fill/execute seam being
+// honoured rather than a duplication: the station screen does not include this
+// header - it talks to the world only through `ui::StationPanel` - and
+// `kTradeAmounts` sits on the same side of the same line for the same reason.
+// What the world owns is the BOUND, because the world is what has to survive a
+// value arriving from a console line or a save file rather than from a button.
+inline constexpr float kMaxSellFloor = 0.50f;
 // How near the dock a captain has to get before the load counts as delivered.
 // ⚑ Deliberately generous and deliberately NOT a docking: a captain does not
 // use the player's dock machinery (that opens a station screen and moves the
@@ -1660,6 +1685,28 @@ struct CaptainOrder
     // The hazard this field exists to avoid is an ITINERANT hazard, and saying
     // so is cheaper than a second rule that happens to have the same effect.
     bool stopping = false;
+
+    // ⚑⚑⚑⚑ "SELL WHEN THE PRICE CLEARS X" (stage E), AND X IS A MARGIN OVER
+    // WHAT THE LOAD COST RATHER THAN A PRICE (the user's ruling 15). A price
+    // was the literal wording and it cannot work here, for a reason stage B
+    // fixed in place: AN ORDER NAMES TWO PLACES AND NEVER A CARGO. The captain
+    // picks whatever pays on each leg, so one absolute number would have to
+    // mean something sensible for ore at ~8 cr a unit and machinery at ~90 -
+    // and any value good for one is nonsense for the other. A margin is scale
+    // free, means the same thing whatever got loaded, and says what the player
+    // actually wants: do not take a bad trade.
+    //
+    // Zero is "sell at whatever it fetches", which is exactly the behaviour
+    // every haul had before this field existed - so the default is not merely a
+    // safe value, it is the old code path, and a save that predates the field
+    // reads as one written by a player who never set a floor.
+    //
+    // ⚑⚑ IT IS JUDGED AGAINST THE OUTLAY, WHICH IS THE ONLY HONEST BASE. The
+    // alternative is the price the captain expected at departure, and that is
+    // the number stage B proved is a lie by the time the hull arrives: the far
+    // market moves ~20% during a 200 s leg, which is the ~17% average loss this
+    // field exists to let the player refuse.
+    float floor = 0.0f;
 };
 
 // What a captain is doing about the order right now.
@@ -2543,9 +2590,29 @@ public:
     void haulDestinations(std::vector<HaulDestination>& out) const;
 
     // Sets the run: from the market this captain's hull is parked at, to
-    // `market`. ⚑ Refuses while they are already flying one, rather than
-    // re-pointing a laden hull at a market it did not buy for.
-    bool orderHaul(std::size_t captainIndex, std::uint32_t market, std::string* outError = nullptr);
+    // `market`, holding out for at least `floor` over what each load cost
+    // (stage E; zero is "sell at whatever it fetches", the behaviour every haul
+    // had before the floor existed). ⚑ Refuses while they are already flying
+    // one, rather than re-pointing a laden hull at a market it did not buy for.
+    bool orderHaul(std::size_t captainIndex,
+                   std::uint32_t market,
+                   float floor = 0.0f,
+                   std::string* outError = nullptr);
+
+    // ⚑⚑⚑⚑ CHANGES THE FLOOR ON AN ORDER THAT IS ALREADY STANDING, AND THE
+    // STAGE'S EXIT IS WHY IT HAS TO EXIST SEPARATELY (stage E). "Set a floor
+    // above the market, watch them sit on the cargo, THEN DROP THE FLOOR and
+    // watch the sale land" is a change to a live order - so a floor that could
+    // only be given at `orderHaul` time would make the phase's last exit
+    // unreachable except by cancelling the run, which settles the load and
+    // destroys the thing being demonstrated.
+    //
+    // ⚑ It is the ONE field of a standing order that can be re-aimed mid-run,
+    // and that is not an inconsistency: the two markets cannot change because a
+    // laden hull bought for a destination, but the floor is a judgement about a
+    // sale that has not happened yet. Refuses on anything but a haul, because
+    // no other order kind has a load it bought.
+    bool setSellFloor(std::size_t captainIndex, float floor);
 
     // --- Mine here (Phase 39 stage C) --------------------------------------
     //
@@ -4951,7 +5018,11 @@ private:
     // units that actually moved, and the hold's cost basis shrinks with them.
     // Called at both ends - a market that could not take the load leaves it
     // aboard, and the next stop is where the rest of it settles.
-    void settleCaptainSale(Captain& captain, std::uint32_t market);
+    // ⚑ `ignoreFloor` is for the one caller that is ENDING the order rather
+    // than working it (stage E): a floor says which trades to wait for, and a
+    // captain standing down has nothing left to wait for. Without it, cancelling
+    // a laden captain leaves the player's money in a hold no order will settle.
+    void settleCaptainSale(Captain& captain, std::uint32_t market, bool ignoreFloor = false);
     void beginCaptainTransit(Captain& captain, std::uint32_t destination);
     // The coarse loss roll (`FactionSim::attrition`'s rule, applied to a hull
     // the player owns). ⚑⚑⚑ IT SKIPS EVERY INSTANTIATED SYSTEM, not just the

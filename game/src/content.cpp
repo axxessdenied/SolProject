@@ -1861,6 +1861,24 @@ std::string listCaptains(GameContent& content)
                           ? world.commodityIds()[captain.haul.leg.commodity].c_str()
                           : "cargo");
         lines += buffer;
+        // ⚑⚑⚑ THE FLOOR, AND WHAT IT IS COSTING RIGHT NOW (stage E). Printed
+        // only when one is set, because "no floor" is the ordinary case and a
+        // line saying so on every captain is noise. The second clause is the
+        // one that earns its place: a laden hull that is under a floor is the
+        // single state in this game most likely to be read as a broken captain
+        // - it flies its route forever and banks nothing - so the readout has
+        // to say that it is DECIDING rather than stuck. That is the answer to
+        // `captainThink`'s own warning about this exact behaviour.
+        if (captain.order.floor > 0.0f) {
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "\n   holding out for +%.0f%% over the load's cost%s",
+                          static_cast<double>(captain.order.floor) * 100.0,
+                          captain.haul.leg.cargo > 0.0f && captain.haul.outlay > 0.0
+                              ? " - carrying a load it has not cleared"
+                              : "");
+            lines += buffer;
+        }
         // COUNTS, NOT A STATE (stage A's rule, and Phase 38's audio bug is why).
         // What a route is wrong about first is the money, so the money is the
         // number this prints - and `losses` says how much of the difference the
@@ -1911,6 +1929,22 @@ bool orderHaul(GameContent& content, double captain, double destination)
         return false;
     }
     return content.world().orderHaul(static_cast<std::size_t>(captain) - 1, places[slot].market);
+}
+
+// ⚑⚑⚑ THE FLOOR AS ITS OWN VERB RATHER THAN A THIRD ARGUMENT TO
+// `sol.order_haul`, AND THE ARITY RULE BELOW IS ONLY HALF THE REASON. Adding an
+// argument to a shipped verb would break every console line and drive script
+// that already calls it, since the binding checks arity exactly. But the
+// deciding reason is that this stage's exit CHANGES the floor on an order that
+// is already standing - "then drop the floor and watch the sale land" - which
+// an argument to the verb that CREATES the order cannot express at all.
+//
+// Takes whole per cent, so `sol.sell_floor(1, 25)` reads the way the Crew tab's
+// "+25%" button does; the world clamps it.
+bool sellFloor(GameContent& content, double captain, double percent)
+{
+    return captain >= 1.0 && content.world().setSellFloor(static_cast<std::size_t>(captain) - 1,
+                                                          static_cast<float>(percent) / 100.0f);
 }
 
 // ⚑ NO SECOND ARGUMENT, AND THAT IS THE ORDER'S OWN SHAPE RATHER THAN A
@@ -4553,6 +4587,7 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&recallCaptain>("sol", "recall_captain", this);
     m_vm.registerFunction<&listHaulDestinations>("sol", "haul_destinations", this);
     m_vm.registerFunction<&orderHaul>("sol", "order_haul", this);
+    m_vm.registerFunction<&sellFloor>("sol", "sell_floor", this);
     m_vm.registerFunction<&orderMine>("sol", "order_mine", this);
     m_vm.registerFunction<&orderPatrol>("sol", "order_patrol", this);
     m_vm.registerFunction<&orderEscort>("sol", "order_escort", this);

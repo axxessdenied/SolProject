@@ -322,6 +322,22 @@ public:
     // curve. A hauler pinned to one route by an order has no such luxury.
     [[nodiscard]] float quoteSell(std::uint32_t market, std::uint32_t commodity, float units) const;
 
+    // ⚑⚑⚑ HOW MANY OF `units` THIS MARKET COULD ACTUALLY TAKE, WITHOUT MOVING
+    // ANY - the third member of the quote/settle bargain, added in Phase 39
+    // stage E. `quoteSell` and `sell` had each computed this clamp inline, so
+    // this REMOVES a duplication rather than adding a function: both now call
+    // it, which is what keeps "the quote is the number the payment uses" true
+    // of the quantity as well as of the price.
+    //
+    // ⚑⚑ IT EXISTS BECAUSE A CALLER MAY HAVE TO REFUSE A SALE. A price floor
+    // has to be judged against the revenue for the units that would MOVE, not
+    // for the whole hold - a market with room for half the load would otherwise
+    // be scored on half the revenue against all of the cost and read as a
+    // disaster, which is the same error `settleCaptainSale` already corrects
+    // when it apportions the cost basis. And the judgement has to happen before
+    // `sell`, because `sell` moves the stock and there is no putting it back.
+    [[nodiscard]] float sellableUnits(std::uint32_t market, std::uint32_t commodity, float units) const;
+
     // ⚑⚑⚑⚑ HOW MUCH OF A GOOD IS ALREADY IN THE AIR TOWARD A MARKET, AND IT
     // WENT PUBLIC IN PHASE 39 STAGE B. `traderThink` has subtracted this from a
     // destination's headroom since Phase 8g for a reason it states in its own
