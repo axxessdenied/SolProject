@@ -1,7 +1,8 @@
 # 020 — Captains are people, and a captain's ship exists two ways
 
 - **Date**: 2026-09-02
-- **Status**: accepted
+- **Status**: accepted; **decision 1's framing corrected 2026-09-02 by stage A**
+  (see the correction below). The decision itself stands, and it got cheaper.
 - **Supersedes for this branch**: `006-crew-passive-bonuses.md` (its final
   consequence: *"Any richer crew system post-v1 must grow out of this data
   model or consciously replace it."* This is the conscious replacement.)
@@ -46,7 +47,28 @@ things the sentence assumes are not true of the tree:
 
 ## Decision
 
-### 1. A captain is a named instance — the first person in this game
+### 1. A captain is a named instance — and Phase 35 already built one
+
+> **⚑⚑⚑⚑ Correction, 2026-09-02, from stage A.** This section first read
+> *"the first person in this game"*. That is false, and cheaply so: **Phase 35
+> shipped one.** `CastSeat` seats a named person in every one of the galaxy's 62
+> rooms, `CastMemory{who, visits, regard}` is a **saved, sparse relationship
+> ledger**, and `castKeyForCharacter` vs `castKeyForSeat` already draws the line
+> this decision needed — in a comment that states it outright: *"A UNIQUE IS A
+> PERSON AND A REGULAR IS A CHAIR."* `regard` is live, earned by taking a lead
+> and spent at `kRegardForFront`.
+>
+> **So a captain reuses that identity SPACE rather than opening a second one**,
+> and the parallel-table defect Phase 34's risk register names is refused at
+> design time instead of discovered later. Two consequences follow, both good:
+> the "new kind of save-format promise" this document lists below **does not
+> exist** (a captain's name is *copied in*, exactly as `CastSeat` copies its
+> own, so there is no def to go missing on load); and Phase 40's commander has
+> an identity scheme waiting for it.
+>
+> *The general lesson: "this game has never had X" is a claim about the code,
+> and it ages exactly like a roadmap estimate. Grep before writing it into a
+> decision doc.*
 
 A `Captain` is a record with identity: a name, an id, the fleet index of the
 hull it flies, and its cut. It is hired and dismissed at the Crew tab, beside
@@ -61,10 +83,25 @@ which Phase 40 immediately needs, because a fleet has a commander.
 Rejected: no person at all, with the standing order carried by the ship. The
 cheapest answer, and it deletes §14.2's fantasy rather than shipping it.
 
-**Consequence**: a person is a new kind of save-format promise. A fitting whose
-def has gone missing can be dropped on load with a warning; a named captain the
-player hired cannot be. The missing-def behaviour is decided in the phase's
-first stage.
+**Consequence, as it turned out**: there is **no** new save-format promise. The
+phase spec's risk register expected one — *"a fitting can be dropped on load
+with a warning; a named captain the player hired cannot"* — and the answer is
+that a captain's **name is copied in**, following `CastSeat`'s own stated reason
+(*"a regular's name exists in no def at all"*). A captain references no def, so
+nothing about them can go missing. The save writes `m_captains` and nothing
+else; who is standing in a crew hall is re-derived from the seed on load, and a
+captain you **dismiss** is on offer there again, which costs no storage and
+reads as somebody going back to looking for work.
+
+**Where captains come from (the user, at stage A): the crew hall now, the bar
+later.** A candidate is generated per `sol.mod_crew_hall` dock from the seed,
+reusing the cast's name tables and key space — GDD §14.2's own words, *"hired at
+a crew hall"*. **Hiring the regular you already drink with is a second door,
+deferred rather than dropped**, and it is the lever that would finally make the
+Bar load-bearing. It was not taken in stage A because it breaks an invariant
+`castKeyForSeat` states outright: a regular *is* the chair, so hiring one out of
+it leaves the seat regenerating the same seed-derived name — two of them — and
+vacating a chair is real machinery this stage did not need.
 
 ### 2. A captain's ship exists two ways, and the order decides which
 
