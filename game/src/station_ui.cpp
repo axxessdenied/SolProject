@@ -423,7 +423,16 @@ void fillStationOutfitting(const SpaceWorld& world,
             // whether the system is being ticked or was rebuilt around a
             // sleeping captain; a number that has gone up since the player
             // last looked cannot.
-            status = captain.mine.phase == game::MinePhase::Selling ? "taking a load in" : "at the rock";
+            // ⚑⚑⚑ A STALLED MINER IS ITS OWN STATE AND NOT A THIRD SHADE OF
+            // "taking a load in" (stage E, ruling 18). A captain whose market
+            // is full stands at the counter indefinitely, and for two hours of
+            // measured play this row said "taking a load in" the whole time
+            // while the ledger never moved again. The rock count was the only
+            // tell and it reads as a number that has simply stopped - which is
+            // what a captain between trips looks like too.
+            status = captain.mine.stalledSeconds > 0.0                ? "hold full - nowhere to sell"
+                     : captain.mine.phase == game::MinePhase::Selling ? "taking a load in"
+                                                                      : "at the rock";
             // ⚑ THE GOOD'S NAME AND NOT ITS DEF ID, WHICH THE FLIGHT CAUGHT AND
             // NO TEST WOULD HAVE. The console prints `sol.ore_ferrous` because a
             // console is talking about defs; the Trade tab three tabs away says

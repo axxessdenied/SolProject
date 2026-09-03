@@ -1778,7 +1778,13 @@ std::string listCaptains(GameContent& content)
                           "\n   mining, selling at %s%s\n   %s, %.0f %s aboard, %u rock(s) worked",
                           marketName(world, captain.order.marketA).c_str(),
                           captain.order.stopping ? " (standing down after this load)" : "",
-                          captain.mine.phase == game::MinePhase::Selling ? "taking a load in" : "at the rock",
+                          // ⚑ The stall is its own word here for the screen's
+                          // reason (stage E, ruling 18): a captain whose market
+                          // is full reads as one between trips otherwise, and
+                          // the count beside it stops moving either way.
+                          captain.mine.stalledSeconds > 0.0                ? "hold full, nowhere to sell"
+                          : captain.mine.phase == game::MinePhase::Selling ? "taking a load in"
+                                                                           : "at the rock",
                           static_cast<double>(captain.mine.units),
                           captain.mine.commodity < world.commodityIds().size()
                               ? world.commodityIds()[captain.mine.commodity].c_str()

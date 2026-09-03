@@ -230,7 +230,7 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // something worse, which is silently drop every floor the player set and start
 // dumping their cargo at whatever the market offered. That is the case the
 // version number exists for.
-constexpr std::uint32_t kSaveVersion = 43;
+constexpr std::uint32_t kSaveVersion = 44;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -5194,12 +5194,12 @@ bool SpaceWorld::chooseCaptainRock(const ecs::Registry& registry,
     return true;
 }
 
-void SpaceWorld::settleCaptainMineSale(Captain& captain)
+bool SpaceWorld::settleCaptainMineSale(Captain& captain)
 {
     CaptainMine& mine = captain.mine;
     const std::uint32_t market = captain.order.marketA;
     if (mine.units <= 0.0f || market >= m_economy.markets().size()) {
-        return;
+        return false;
     }
     const float aboard = mine.units;
     const sim::TradeResult sold = m_economy.sell(market, mine.commodity, aboard);
@@ -5209,7 +5209,14 @@ void SpaceWorld::settleCaptainMineSale(Captain& captain)
         // own reason: tipping a hold into space is a galaxy-wide leak of goods.
         // The hold is already at its stop fraction, so nothing more is cut and
         // the next run in is the one that clears.
-        return;
+        //
+        // ⚑⚑ AND THE CALLER IS TOLD, BECAUSE THIS IS NOT ALWAYS TEMPORARY. Two
+        // hours of measurement says a captain reaches this line and never
+        // leaves it: one freighter fills one station's ore capacity in half an
+        // hour and the price sits on its floor thereafter. "The next run in is
+        // the one that clears" is true of a busy market and false of a full
+        // one, and nothing here could tell them apart.
+        return false;
     }
     // ⚑⚑⚑⚑ RULING 6 NEEDED NO SPECIAL CASE HERE, AND THAT IS THE STAGE'S
     // CHEAPEST FINDING. "The cut is of the PROFIT, never of the sale" was
@@ -5233,6 +5240,7 @@ void SpaceWorld::settleCaptainMineSale(Captain& captain)
                  m_galaxy.systems[row.systemIndex].stations[row.stationIndex].name.c_str(),
                  gross,
                  cut);
+    return true;
 }
 
 void SpaceWorld::tickStationaryCaptains(SystemBubble& bubble, double dt)
@@ -5316,7 +5324,50 @@ void SpaceWorld::tickStationaryCaptains(SystemBubble& bubble, double dt)
             if (length(transform->position - dock) > kCaptainDeliverRange) {
                 continue;
             }
-            settleCaptainMineSale(captain);
+            const bool sold = settleCaptainMineSale(captain);
+            // ⚑⚑⚑⚑ THE WAREHOUSE THAT WILL NOT TAKE ANY MORE (stage E, the
+            // user's ruling 18). Measured over two hours on the shipped galaxy:
+            // one freighter fills one station's ore capacity in about thirty
+            // minutes and then earns NOTHING for the rest of the run, standing
+            // at the counter with a full hold. Before this, the game said
+            // nothing at all about it - the Crew tab went on reading "taking a
+            // load in" and the rock count simply stopped moving, so a captain
+            // that had permanently stopped working looked exactly like one
+            // between trips. That is the "looks identical to a broken one"
+            // failure this phase has now hit three times, and here it was not
+            // even a false alarm: the captain really had stopped.
+            if (sold) {
+                mine.stalledSeconds = 0.0;
+            } else if (mine.units > 0.0f) {
+                // The FIRST tick of a stall is the one that speaks, which is
+                // what makes `kMinerStallSeconds` uncritical: the player knows
+                // immediately and the timer only decides when the captain gives
+                // up, not when they are told.
+                if (mine.stalledSeconds <= 0.0) {
+                    const std::string& where =
+                        m_galaxy.systems[row.systemIndex].stations[row.stationIndex].name;
+                    char line[192] = {};
+                    std::snprintf(
+                        line, sizeof(line), "%s will not take any more - holding the load", where.c_str());
+                    say(captain.name, line);
+                    SOL_LOG_WARN(
+                        "%s cannot sell at %s: the warehouse is full", captain.name.c_str(), where.c_str());
+                }
+                mine.stalledSeconds += dt;
+            }
+            if (mine.stalledSeconds >= kMinerStallSeconds) {
+                OwnedShip& stalledHull = m_fleet[captain.ship];
+                stalledHull.storedSystem = row.systemIndex;
+                stalledHull.storedStation = row.stationIndex;
+                captain.order = {};
+                captain.mine = {};
+                SOL_LOG_WARN("%s stands down at %s with nowhere to sell",
+                             captain.name.c_str(),
+                             m_galaxy.systems[row.systemIndex].stations[row.stationIndex].name.c_str());
+                say(captain.name, "nothing more to do here - standing down");
+                doomed.push_back(entity);
+                continue;
+            }
             if (captain.order.stopping) {
                 // Stood down at the counter, and the hull is parked where it
                 // landed - `captainArrive`'s line, which is what makes "fly to
@@ -15322,6 +15373,11 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         writer.write(captain.mine.rockSeconds);
         writer.write(captain.mine.commodity);
         writer.write(captain.mine.units);
+        // How long they have stood at a counter that will not take the load
+        // (v44). Saved for the same reason `rockSeconds` beside it is: a clock
+        // the captain is already partway through, and a reload that zeroed it
+        // would repeat the announcement and restart the half-hour wait.
+        writer.write(captain.mine.stalledSeconds);
         // And the ledger (v41, moved out of the haul), which is one person's
         // lifetime rather than one order kind's - see `CaptainLedger`.
         writer.write(captain.ledger.earned);
@@ -15532,8 +15588,8 @@ bool SpaceWorld::loadFrom(const char* path)
         if (!reader.read(minePhase) || !reader.read(captain.mine.field) ||
             !reader.read(captain.mine.rockStep) || !reader.read(captain.mine.rockSeconds) ||
             !reader.read(captain.mine.commodity) || !reader.read(captain.mine.units) ||
-            !reader.read(captain.ledger.earned) || !reader.read(captain.ledger.paid) ||
-            !reader.read(captain.ledger.losses)) {
+            !reader.read(captain.mine.stalledSeconds) || !reader.read(captain.ledger.earned) ||
+            !reader.read(captain.ledger.paid) || !reader.read(captain.ledger.losses)) {
             return false;
         }
         // ⚑⚑⚑⚑ THE BOUND IS THE LAST ORDER KIND AND NOT THE LAST ONE THAT
@@ -15569,7 +15625,8 @@ bool SpaceWorld::loadFrom(const char* path)
         // the player's money already spent.
         if (captain.haul.leg.legTotal < 0.0 || captain.haul.leg.travelRemaining < 0.0 ||
             captain.haul.leg.travelRemaining > captain.haul.leg.legTotal || captain.haul.leg.cargo < 0.0f ||
-            captain.haul.outlay < 0.0 || captain.mine.units < 0.0f || captain.mine.rockSeconds < 0.0) {
+            captain.haul.outlay < 0.0 || captain.mine.units < 0.0f || captain.mine.rockSeconds < 0.0 ||
+            captain.mine.stalledSeconds < 0.0) {
             return false;
         }
         // ⚑⚑ THE FLOOR HAS AN UPPER BOUND AS WELL AS A LOWER ONE, AND THE UPPER

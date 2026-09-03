@@ -2609,3 +2609,247 @@ SOL_TEST(a_save_carries_the_sell_floor_and_refuses_one_no_captain_could_hold_out
     std::printf("  floor round-tripped at 25%%, clamped at %.0f%%, refused with no haul\n",
                 static_cast<double>(game::kMaxSellFloor) * 100.0);
 }
+
+// ⚑⚑⚑⚑ THE PHASE'S ECONOMIC QUESTION, AS AN INSTRUMENT RATHER THAN AS A POINT.
+// Stage C measured a mining captain at ~1,030 cr/min over 425 s and stage B
+// measured hauling's best route at 12.8, and the eighty-fold gap between them is
+// what the phase exit has to rule on. But both are SINGLE POINTS from SHORT
+// runs, and the thing that decides whether the gap is real is a curve: a mining
+// captain sells its whole hold into ONE market (`order.marketA`), `quoteSell`
+// clamps to `capacity - stock`, and `priceAtStock` falls from 2.0x base at an
+// empty warehouse to 0.5x at a full one. So a miner may be crashing its own
+// price, and 1,030 cr/min may be the first five minutes of a decaying curve
+// rather than a steady state.
+//
+// Stations do consume (`archetype.consumption` in `Economy::produce`), so there
+// IS a drain - the question is purely whether it keeps up. This measures it.
+//
+// ⚑ It asserts almost nothing on purpose. It is a measurement, and the numbers
+// are the output; the only guards are that the captain actually worked and that
+// the run is long enough to see a curve if there is one.
+SOL_TEST(what_a_mining_captain_earns_per_minute_across_an_hour)
+{
+    Fixture fixture;
+    const Dock dock = findMiningDock(fixture);
+    SOL_REQUIRE(dock.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(dock));
+    SpaceWorld& w = fixture.world();
+    // ⚑⚑ THE FREIGHTER SPECIFICALLY, BECAUSE THE TWO NUMBERS THIS EXISTS TO
+    // COMPARE WERE BOTH MEASURED ON ONE. `buyAnyShip` takes the first hull the
+    // catalog offers, which is the 8,000 cr Shuttle with a 4.0 units/s beam and
+    // a 50-unit hold - measuring that against stage B's 200-unit freighter
+    // hauler would be comparing two different ships and calling it an economy.
+    w.addCredits(1'000'000.0);
+    const std::size_t slot = w.fleet().size();
+    SOL_REQUIRE(w.buyShip("sol.freighter"));
+    SOL_REQUIRE(w.switchShip(slot));
+    SOL_REQUIRE(armMiningBeam(fixture));
+    SOL_REQUIRE(w.switchShip(0));
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+    std::printf("  hull %s, %.1f units/s beam, hold %.0f\n",
+                w.fleet()[slot].defId.c_str(),
+                static_cast<double>(w.shipMiningPower(w.fleet()[slot])),
+                static_cast<double>(w.resolvedShipDef(w.fleet()[slot]).cargoCapacity));
+
+    // The same hour of warm-up the hauling curve gets, so the two are measured
+    // against the same galaxy rather than one against tick zero.
+    for (int i = 0; i < 7200; ++i) {
+        w.tick(kCoarseStep);
+    }
+
+    SOL_REQUIRE(w.orderMine(captain));
+    const std::uint32_t market = w.captains()[captain].order.marketA;
+    SOL_REQUIRE(market < w.economy().markets().size());
+
+    constexpr double kBucketSeconds = 300.0; // five sim-minutes
+    constexpr int kBuckets = 24;             // two hours
+    double previousGross = 0.0;
+    double firstRate = 0.0;
+    double lastRate = 0.0;
+    std::printf("  min |    cr/min | cumulative |  ore stock | ore price | hold\n");
+    for (int bucket = 0; bucket < kBuckets; ++bucket) {
+        for (double t = 0.0; t < kBucketSeconds; t += kCoarseStep) {
+            w.tick(kCoarseStep);
+        }
+        const Captain& who = w.captains()[captain];
+        const double gross = who.ledger.earned + who.ledger.paid;
+        const double rate = (gross - previousGross) / (kBucketSeconds / 60.0);
+        previousGross = gross;
+        const std::uint32_t ore = who.mine.commodity;
+        std::printf("  %3d | %9.0f | %10.0f | %10.0f | %9.2f | %4.0f\n",
+                    (bucket + 1) * 5,
+                    rate,
+                    gross,
+                    static_cast<double>(w.economy().markets()[market].stock[ore]),
+                    static_cast<double>(w.economy().price(market, ore)),
+                    static_cast<double>(who.mine.units));
+        if (bucket == 0) {
+            firstRate = rate;
+        }
+        lastRate = rate;
+    }
+    std::printf("  first five minutes %.0f cr/min, last five %.0f cr/min (%.0f%% of it)\n",
+                firstRate,
+                lastRate,
+                firstRate > 0.0 ? lastRate / firstRate * 100.0 : 0.0);
+    SOL_CHECK(previousGross > 0.0); // the captain actually worked
+
+    // ⚑⚑⚑⚑ THE FINDING, AS A GUARD RATHER THAN A PRINTOUT (the user's ruling
+    // 18 and 20). Two things have to be true and neither was true before this
+    // stage: the market really does saturate - so the curve above is a fact
+    // about the game and not about this run - and the captain SAYS SO and
+    // stands down instead of standing at a full counter for ever. The second is
+    // what stops "a mining captain has stopped earning" from being invisible.
+    const std::uint32_t ore = w.captains().empty() ? 0u : w.captains()[0].mine.commodity;
+    (void)ore;
+    SOL_CHECK(lastRate < firstRate); // the curve decays; it is not a flat line
+    // Either they stood down (the order is gone), or they are visibly stalled.
+    // ⚑ Both are the reported state - what must NOT happen is a captain still
+    // nominally mining with a full hold and a silent ledger.
+    const bool stoodDown =
+        captain >= w.captains().size() || w.captains()[captain].order.kind == game::OrderKind::None;
+    const bool sayingSo = !stoodDown && w.captains()[captain].mine.stalledSeconds > 0.0;
+    std::printf("  ended: %s\n",
+                stoodDown ? "stood down with nowhere to sell"
+                          : (sayingSo ? "stalled and saying so" : "still working"));
+    SOL_CHECK(stoodDown || sayingSo);
+}
+
+// ⚑⚑⚑⚑ THE OTHER HALF OF THE SAME QUESTION, AND IT HAS TO BE ASKED OR THE
+// ANSWER IS HALF-MEASURED. The mining curve above collapses to zero because a
+// miner fills ONE warehouse. A hauler erodes its own spread the same way - it
+// buys at A, which raises A's price, and sells at B, which lowers B's - so
+// "hauling is the sustainable one" is a claim about a curve nobody has drawn.
+// Same hull, same buckets, same table, so the two can be laid side by side.
+//
+// ⚑ It walks destinations first, because 12 of 20 near routes never trade at
+// all (stage B, and the stage E flight saw it live on the shipped start lane).
+// A route that never loads measures nothing, so the test finds one that does
+// and says which it used.
+SOL_TEST(what_a_hauling_captain_earns_per_minute_across_two_hours)
+{
+    Fixture fixture;
+    const Dock yard = fixture.findDock(screenBit(StationScreen::Crew) | screenBit(StationScreen::Shipyard) |
+                                       screenBit(StationScreen::Trade));
+    SOL_REQUIRE(yard.system != kNone);
+    SOL_REQUIRE(fixture.walkIn(yard));
+    SpaceWorld& w = fixture.world();
+    w.addCredits(2'000'000.0);
+    const std::size_t slot = w.fleet().size();
+    SOL_REQUIRE(w.buyShip("sol.freighter"));
+    const std::size_t captain = hireAndGive(fixture, slot);
+    SOL_REQUIRE(captain != kNone);
+    SOL_REQUIRE(w.buyMarketIntel());
+
+    // ⚑⚑⚑ THE ECONOMY IS WARMED FIRST, AND WITHOUT THIS THE MEASUREMENT IS OF
+    // THE WRONG WORLD. `generateUniverse` seeds every market at its archetype's
+    // starting stock, so at t=0 the galaxy is nearly FLAT - there are no spreads
+    // to arbitrage because production, consumption and 120 coarse traders have
+    // not run yet. Measuring a hauler there says "no route in the galaxy pays",
+    // which is a fact about tick zero and not about the economy. A player meets
+    // their first captain hours in.
+    for (int i = 0; i < 7200; ++i) { // an hour of coarse economy
+        w.tick(kCoarseStep);
+    }
+
+    std::vector<SpaceWorld::HaulDestination> places;
+    w.haulDestinations(places);
+    SOL_REQUIRE(!places.empty());
+
+    // Find a destination this captain will actually load for. One leg out is
+    // enough to tell: `captainThink` buys at departure or it does not.
+    //
+    // ⚑⚑ THE PLAYER FOLLOWS THE HULL BETWEEN ATTEMPTS, AND THAT IS NOT
+    // BOOKKEEPING. A cancelled haul parks the hull wherever it LANDED, and
+    // `orderHaul` refuses unless the player is standing on that same dock - so
+    // a loop that re-walks to the original yard silently fails every attempt
+    // after the first with "their ship is stored elsewhere", and the test reads
+    // as "no route in the galaxy trades" when it never asked one.
+    bool loaded = false;
+    std::string routeName, routeSystem;
+    std::uint32_t routeHops = 0;
+    for (int attempt = 0; attempt < 12 && !loaded; ++attempt) {
+        const auto& hull = w.fleet()[slot];
+        const Dock at{hull.storedSystem, hull.storedStation};
+        if (at.system == kNone || !fixture.walkIn(at)) {
+            break;
+        }
+        w.haulDestinations(places);
+        if (places.empty()) {
+            break;
+        }
+        const std::size_t pick = static_cast<std::size_t>(attempt) % places.size();
+        std::string why;
+        const bool given = w.orderHaul(captain, places[pick].market, 0.0f, &why);
+        std::printf("    attempt %d: from station %u/%u, %zu destination(s), -> %s (%s): %s\n",
+                    attempt,
+                    at.system,
+                    at.station,
+                    places.size(),
+                    places[pick].station.c_str(),
+                    places[pick].system.c_str(),
+                    given ? "ordered" : why.c_str());
+        if (!given) {
+            continue;
+        }
+        for (int i = 0; i < 400 && !loaded; ++i) {
+            w.tick(kCoarseStep);
+            loaded = w.captains()[captain].haul.leg.cargo > 0.0f;
+        }
+        if (loaded) {
+            routeName = places[pick].station;
+            routeSystem = places[pick].system;
+            routeHops = places[pick].hops;
+            break;
+        }
+        SOL_REQUIRE(w.cancelOrder(captain));
+        for (int i = 0; i < 4000 && w.captains()[captain].order.kind != game::OrderKind::None; ++i) {
+            w.tick(kCoarseStep);
+        }
+    }
+    SOL_REQUIRE(loaded); // no reachable route ever loaded: that is itself a finding
+    std::printf("  route: %s (%s), %u jump(s)\n", routeName.c_str(), routeSystem.c_str(), routeHops);
+
+    constexpr double kBucketSeconds = 300.0;
+    constexpr int kBuckets = 24; // two hours, to match the mining curve
+    double previousGross = 0.0;
+    double firstHour = 0.0;
+    double secondHour = 0.0;
+    std::printf("  min |    cr/min | cumulative | cargo\n");
+    for (int bucket = 0; bucket < kBuckets; ++bucket) {
+        for (double t = 0.0; t < kBucketSeconds; t += kCoarseStep) {
+            w.tick(kCoarseStep);
+        }
+        const Captain& who = w.captains()[captain];
+        const double gross = who.ledger.earned + who.ledger.paid;
+        const double rate = (gross - previousGross) / (kBucketSeconds / 60.0);
+        previousGross = gross;
+        std::printf("  %3d | %9.1f | %10.0f | %5.0f\n",
+                    (bucket + 1) * 5,
+                    rate,
+                    gross,
+                    static_cast<double>(who.haul.leg.cargo));
+        if (bucket == kBuckets / 2 - 1) {
+            firstHour = gross;
+        }
+    }
+    secondHour = previousGross - firstHour;
+    std::printf(
+        "  two hours of hauling: %.0f cr total, %.1f cr/min mean\n", previousGross, previousGross / 120.0);
+    SOL_REQUIRE(previousGross > 0.0);
+    // ⚑⚑⚑⚑ THE GUARD, AND IT IS THE OPPOSITE ONE TO THE MINING CURVE'S (ruling
+    // 20). A hauler erodes its own spread the same way a miner fills its own
+    // warehouse - it buys at one end and sells at the other, moving both prices
+    // against itself - so the question "does hauling also collapse" is a real
+    // one and the answer measured here is no. The second hour must earn a
+    // meaningful share of the first, which is what fails if somebody breaks the
+    // trade loop, the margin floor, or the price impact arithmetic that stage B
+    // put in - and it is the assertion behind saying hauling is the SUSTAINED
+    // half of this economy rather than merely the smaller one.
+    SOL_CHECK(secondHour > firstHour * 0.4);
+    std::printf("  hour 1 %.0f cr, hour 2 %.0f cr (%.0f%% of it) - sustained, not a spike\n",
+                firstHour,
+                secondHour,
+                firstHour > 0.0 ? secondHour / firstHour * 100.0 : 0.0);
+}

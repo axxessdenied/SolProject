@@ -1384,6 +1384,25 @@ inline constexpr float kCaptainHoldFullFraction = 0.9f;
 // What the world owns is the BOUND, because the world is what has to survive a
 // value arriving from a console line or a save file rather than from a button.
 inline constexpr float kMaxSellFloor = 0.50f;
+// ⚑⚑⚑ HOW LONG A MINING CAPTAIN WAITS AT A WAREHOUSE THAT WILL NOT TAKE THE
+// LOAD BEFORE STANDING ITSELF DOWN (the user's ruling 18), AND IT IS MEASURED
+// RATHER THAN PICKED. Over a two-hour run on the shipped galaxy the market
+// recovers in fits, whenever a coarse trader buys ore away, and the dead gaps
+// between those recoveries measured 5, 10 and 20 minutes before a terminal one
+// that never recovered. Twenty minutes sits at the top of the recoverable range
+// and well inside the terminal one.
+//
+// ⚑⚑ IT IS DELIBERATELY NOT SET ABOVE THE LONGEST RECOVERABLE GAP. Standing a
+// captain down during a lull costs the player one thin bucket of ore and a
+// re-post; never standing them down costs them a hull that reads as employed
+// and is not, which is the whole defect this exists to close. The cheap error
+// is the one to make.
+//
+// ⚑ THE REPORT DOES NOT WAIT FOR THIS AT ALL. The player is told the moment the
+// hold first fails to clear, which is what makes the exact value uncritical: by
+// the time it expires they have known for twenty minutes, and the stand-down is
+// the captain stopping rather than the news.
+inline constexpr double kMinerStallSeconds = 1200.0;
 // How near the dock a captain has to get before the load counts as delivered.
 // ⚑ Deliberately generous and deliberately NOT a docking: a captain does not
 // use the player's dock machinery (that opens a station screen and moves the
@@ -1779,6 +1798,19 @@ struct CaptainMine
     double rockSeconds = 0.0;    // before moving to the next rock
     std::uint32_t commodity = 0; // what is in the hold
     float units = 0.0f;          // how much of it
+    // ⚑⚑⚑⚑ HOW LONG THEY HAVE BEEN AT THE COUNTER UNABLE TO SELL (stage E's
+    // exit measurement, the user's ruling 18). A mining captain sells its whole
+    // hold into the ONE market `order.marketA` names, and that warehouse is
+    // finite: measured on the shipped galaxy, a freighter with an 8 units/s
+    // beam fills Lyrth Gamma's ferrous ore from 450 to its 1,200 cap in about
+    // thirty minutes, at which point `quoteSell` returns zero and the captain
+    // sits at the counter with a full hold earning nothing - for the last
+    // twenty-five minutes of a two-hour run, without one line of output.
+    //
+    // ⚑ Zero means "sold something recently", so the FIRST tick this goes
+    // positive is the moment to speak - no second "have I said this" flag, and
+    // a save that reloads mid-stall does not repeat the announcement.
+    double stalledSeconds = 0.0;
 };
 
 struct Captain
@@ -5123,7 +5155,10 @@ private:
     // FOR MINING AND THAT IS WORTH SAYING: ruling 6 takes a cut of the PROFIT,
     // and ore out of the ground cost nothing, so the profit IS the sale and the
     // same arithmetic answers both.
-    void settleCaptainMineSale(Captain& captain);
+    // True when the sale actually moved something. ⚑ The caller needs the
+    // difference between "sold" and "the warehouse is full", because the second
+    // one is a captain with nothing left to do and stage E has to say so.
+    bool settleCaptainMineSale(Captain& captain);
     // The rock a mining captain should be on, chosen out of its own bubble.
     // Same two rules `chooseMinerRock` follows and for the same reasons -
     // nearest, and only if the straight line to it misses every other rock -
