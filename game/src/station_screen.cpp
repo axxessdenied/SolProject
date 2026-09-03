@@ -848,9 +848,13 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
     }
     const bool hasCaptains = !panel.captains.empty() || hires;
     const float contentHeight =
-        (kSectionHeight + theme.spacing) * (hasCaptains ? 5.0f : 2.0f) +
+        (kSectionHeight + theme.spacing) * (hasCaptains ? 6.0f : 2.0f) +
         (hasCaptains ? listHeight(ui, std::max<std::size_t>(panel.captains.size(), 1)) +
                            listHeight(ui, std::max<std::size_t>(giveable, 1)) +
+                           // The order section: one status row plus wherever
+                           // they could be sent (Phase 39 stage B).
+                           listHeight(ui, 1) +
+                           listHeight(ui, std::max<std::size_t>(panel.haulDestinations.size(), 1)) +
                            listHeight(ui, hires ? std::max<std::size_t>(panel.captainHires.size(), 1) : 1)
                      : 0.0f) +
         listHeight(ui, std::max<std::size_t>(panel.crewAboard.size(), 1)) +
@@ -863,14 +867,17 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
         const CaptainClick employed = captainList(
             ui, column, "captains", panel.captains, "Select", "Dismiss", "(nobody flies for you yet)");
         if (employed.row >= 0) {
-            const bool holds = panel.captains[static_cast<std::size_t>(employed.row)].assigned;
+            // ⚑⚑⚑ SELECT MEANS SELECT ON EVERY ROW SINCE STAGE B, AND IT USED
+            // TO MEAN "HAND IT BACK" ON HALF OF THEM. Stage A gave a captain
+            // holding a hull no selectable state, because the only thing a
+            // selection aimed at was a Give and no hull could legally go to
+            // them. Stage B gives that selection a second job - the standing
+            // order - and a captain with a ship is exactly who an order is for,
+            // so a person you cannot point at is a person you cannot employ.
+            // Recall moved into the order section, where handing a ship back
+            // sits beside the other thing you do with a captain who has one.
             if (employed.secondary) {
                 panel.action = {.kind = StationAction::Kind::DismissCaptain, .index = employed.row};
-            } else if (holds) {
-                // Selecting somebody who already has a ship would aim the Give
-                // buttons at a captain no hull could legally go to, so the
-                // primary means "hand it back" on those rows instead.
-                panel.action = {.kind = StationAction::Kind::RecallCaptain, .index = employed.row};
             } else {
                 panel.action = {.kind = StationAction::Kind::SelectCaptain, .index = employed.row};
             }
@@ -905,6 +912,63 @@ void buildCrewTab(UiContext& ui, StationPanel& panel, StationScreenState& state,
                 ui.popId();
             }
             ui.popId();
+        }
+
+        // ⚑⚑ THE STANDING ORDER (Phase 39 stage B). One status line for the
+        // selected captain and, when an order would actually be taken, the
+        // places they could be sent. Both halves are decided in the fill - see
+        // `panel.captainStatus` - so this draws what it is told rather than
+        // re-deriving a rule the world would refuse on.
+        char heading[192] = {};
+        if (panel.captainRoute[0] != '\0') {
+            std::snprintf(heading, sizeof(heading), "Standing order - %s", panel.captainRoute);
+        } else {
+            std::snprintf(heading, sizeof(heading), "Standing order");
+        }
+        sectionHeader(ui, column.row(kSectionHeight), heading);
+        if (panel.selectedCaptain < 0 ||
+            static_cast<std::size_t>(panel.selectedCaptain) >= panel.captains.size()) {
+            emptyNote(ui, column, "(select a captain above)");
+        } else {
+            const CaptainRow& who = panel.captains[static_cast<std::size_t>(panel.selectedCaptain)];
+            const Rect row = column.row(kRowHeight);
+            rowBackground(ui, row, 0);
+            const CatalogCells cells = catalogCells(ui, row, false, true);
+            ui.pushId("order");
+            clipped(ui, cells.name, who.name, theme.textPrimary, theme.strongStyle);
+            clipped(ui, cells.detail, panel.captainStatus, theme.textDim);
+            // Two buttons, and only one of them is ever live: a captain with an
+            // order can be stood down, a captain without one whose hull is on
+            // this dock can be handed back. Greyed rather than hidden, which is
+            // Phase 28's decision 3 and the only channel a refusal has here.
+            //
+            // ⚑⚑⚑⚑ SIX GLYPHS, AND THE DRIVE IS WHY. These read "Stand down"
+            // and "Hand back" until the tab was photographed, and the two
+            // OVERLAPPED: `kButtonWidth` is 78 px less a 2 px inset, which is
+            // about seven glyphs of the real font, so a ten-glyph label runs
+            // out of its cell and straight under the button beside it. That is
+            // stage A's clipped price cell on a different control - and it is
+            // invisible to `ui.unit` for the same reason it was there, because
+            // the synthetic test font ships only `hud` and `heading`. The
+            // instrument for a cell width in this project is a screenshot.
+            if (ui.button(inset(cells.primary, 2.0f), "Cancel", panel.captainCanStandDown)) {
+                panel.action = {.kind = StationAction::Kind::CancelOrder, .index = panel.selectedCaptain};
+            }
+            if (ui.button(inset(cells.secondary, 2.0f), "Recall", panel.captainCanRecall)) {
+                panel.action = {.kind = StationAction::Kind::RecallCaptain, .index = panel.selectedCaptain};
+            }
+            ui.popId();
+
+            const CaptainClick where = captainList(ui,
+                                                   column,
+                                                   "haul",
+                                                   panel.haulDestinations,
+                                                   "Haul", // six glyphs is the cell; see above
+                                                   nullptr,
+                                                   "(no route can be given from here)");
+            if (where.row >= 0) {
+                panel.action = {.kind = StationAction::Kind::OrderHaul, .index = where.row};
+            }
         }
 
         sectionHeader(ui, column.row(kSectionHeight), "Looking for a berth");

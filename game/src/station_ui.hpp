@@ -33,6 +33,7 @@ void fillStationOutfitting(const SpaceWorld& world,
                            std::vector<sol::ui::FleetRow>& fleetRows,
                            std::vector<sol::ui::CaptainRow>& captainRows,
                            std::vector<sol::ui::CaptainRow>& captainHireRows,
+                           std::vector<sol::ui::CaptainRow>& haulRows,
                            std::vector<sol::ui::FactionRow>& factionRows);
 
 // Fills the Missions tab (Phase 8c): the board's offers (with the min_rep

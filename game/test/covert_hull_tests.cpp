@@ -334,6 +334,7 @@ SOL_TEST(the_fill_puts_the_covert_hull_on_the_back_rooms_shelf_and_not_the_shipy
     std::vector<sol::ui::FleetRow> fleet;
     std::vector<sol::ui::CaptainRow> captains;
     std::vector<sol::ui::CaptainRow> captainHires;
+    std::vector<sol::ui::CaptainRow> haulRows;
     std::vector<sol::ui::FactionRow> factions;
     game::fillStationOutfitting(world,
                                 content.defs(),
@@ -350,6 +351,7 @@ SOL_TEST(the_fill_puts_the_covert_hull_on_the_back_rooms_shelf_and_not_the_shipy
                                 fleet,
                                 captains,
                                 captainHires,
+                                haulRows,
                                 factions);
 
     const auto names = [](const std::span<const sol::ui::OutfitRow>& rows) {
@@ -402,6 +404,7 @@ SOL_TEST(the_fill_puts_the_covert_hull_on_the_back_rooms_shelf_and_not_the_shipy
                                 fleet,
                                 captains,
                                 captainHires,
+                                haulRows,
                                 factions);
     SOL_REQUIRE(panel.blackMarketShips.size() == 1);
     std::printf("  after buying one: owned %d\n", panel.blackMarketShips[0].fitted);

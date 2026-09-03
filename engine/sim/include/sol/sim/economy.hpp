@@ -206,6 +206,24 @@ struct TraderRoute
     float progress = 0.0f; // 0..1 along this leg
 };
 
+// ⚑⚑⚑⚑ WHERE A HAULER IS, DERIVED FROM ITS OWN CLOCK — AND FREE RATHER THAN A
+// MEMBER SINCE PHASE 39 STAGE B. `Economy::route` was this, reading
+// `m_traders[i]`; a captain's haul is the SAME RECORD with the player's name on
+// it, so leaving this inside the class would have meant a second copy of the
+// decomposition living in `space_world.cpp` — the "second answer to one
+// question" this file refuses everywhere else. `Economy::route` is now a lookup
+// plus this call, so the coarse fleet and the player's captains cannot disagree
+// about what `Depart` means.
+//
+// The two systems and the hop count are passed in because they are facts about
+// the GALAXY rather than about the record, and a pure function is what lets a
+// caller that owns neither market table ask the question.
+[[nodiscard]] TraderRoute routeOf(const EconomyTrader& trader,
+                                  const EconomyParams& params,
+                                  std::uint32_t fromSystem,
+                                  std::uint32_t toSystem,
+                                  std::uint32_t hops);
+
 // A haul that finished this tick (Phase 8x stage 5). Shaped exactly like
 // FactionSim's TraderLoss, and for the same reason: the two ends of a haul are
 // the two answers an escort contract can get, so they are reported the same
@@ -288,6 +306,39 @@ public:
     unitsWithin(std::uint32_t market, std::uint32_t commodity, float units, double budget) const;
 
     [[nodiscard]] float sellPrice(std::uint32_t market, std::uint32_t commodity) const;
+    // ⚑⚑⚑ WHAT `sell` WOULD ACTUALLY PAY FOR `units`, WITHOUT MOVING ANY - the
+    // mirror of `quoteBuy`, added in Phase 39 stage B because a captain has to
+    // price a ROUND TRIP before committing the player's money to it. Same
+    // bargain as the buy side: `sell` is written in terms of this, so the quote
+    // and the payment cannot drift apart, and it clamps to the room the market
+    // actually has exactly as `sell` does.
+    //
+    // ⚑⚑ A CALLER THAT USES `sellPrice() * units` INSTEAD IS OVER-ESTIMATING,
+    // and by more than it looks: the price falls as the sale fills the
+    // warehouse, so the revenue is quadratic in the quantity in the same way
+    // the cost is. `Economy::traderThink` estimates with the marginal price on
+    // both sides and gets away with it only because it ranks across EVERY
+    // reachable market and so lands on routes where a hold barely moves the
+    // curve. A hauler pinned to one route by an order has no such luxury.
+    [[nodiscard]] float quoteSell(std::uint32_t market, std::uint32_t commodity, float units) const;
+
+    // ⚑⚑⚑⚑ HOW MUCH OF A GOOD IS ALREADY IN THE AIR TOWARD A MARKET, AND IT
+    // WENT PUBLIC IN PHASE 39 STAGE B. `traderThink` has subtracted this from a
+    // destination's headroom since Phase 8g for a reason it states in its own
+    // words - *"without this the whole fleet answers the same shortage at once
+    // and most of them arrive to a warehouse that filled up while they were in
+    // the air"* - and while it was private, the player's captains were the only
+    // haulers in the galaxy that could not see it. The measurement is blunt:
+    // pinned to a two- or three-hop route, a captain planning blind LOST money
+    // on most of them, because it bought into a shortage a hundred and twenty
+    // coarse traders were already on their way to fill, arrived to a full
+    // warehouse, and carried the load home to sell at the origin.
+    //
+    // ⚑ It counts the COARSE fleet only. A second captain hauling the same good
+    // to the same market is not in here, which is honest for a phase whose
+    // stated fence is that nothing reads more than one captain at a time -
+    // fleets are Phase 40, and that is where two of them learn about each other.
+    [[nodiscard]] float inbound(std::uint32_t market, std::uint32_t commodity) const;
     [[nodiscard]] float stock(std::uint32_t market, std::uint32_t commodity) const;
     // How much of one good this market can warehouse; 0 when it has no hold
     // for it (Phase 34 stage D took the commodity argument, because a station
@@ -365,7 +416,6 @@ private:
     void refreshTickPrices();
     void refreshMarketPrices(std::uint32_t market);
     void refreshInbound();
-    [[nodiscard]] float inbound(std::uint32_t market, std::uint32_t commodity) const;
     void traderThink(const Galaxy& galaxy, EconomyTrader& trader);
     // The one place a trader leaves a market. Origin, destination and the
     // leg's clock are three facts about one decision; a caller that set two of

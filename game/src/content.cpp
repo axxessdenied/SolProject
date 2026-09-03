@@ -1701,27 +1701,168 @@ std::string listFleet(GameContent& content)
 // silent, because nothing ever printed the NUMBER. So this says how many people
 // are in your employ, who each of them is, and exactly which hull they hold -
 // the three facts a stage-B route will be wrong about first.
+// Which part of a haul, in the words the coarse fleet's own decomposition uses.
+const char* legWord(sol::sim::TraderLeg leg)
+{
+    switch (leg) {
+    case sol::sim::TraderLeg::Depart:
+        return "outbound";
+    case sol::sim::TraderLeg::Jump:
+        return "between gates";
+    case sol::sim::TraderLeg::Arrive:
+        return "inbound";
+    case sol::sim::TraderLeg::None:
+        break;
+    }
+    return "parked";
+}
+
+// The station a market index names, for a readout that has to say WHERE.
+std::string marketName(const SpaceWorld& world, std::uint32_t market)
+{
+    if (market >= world.economy().markets().size()) {
+        return "nowhere";
+    }
+    const sol::sim::StationMarket& row = world.economy().markets()[market];
+    if (row.systemIndex >= world.galaxy().systems.size()) {
+        return "nowhere";
+    }
+    const sol::sim::SystemSpec& spec = world.galaxy().systems[row.systemIndex];
+    if (row.stationIndex >= spec.stations.size()) {
+        return spec.name;
+    }
+    return spec.stations[row.stationIndex].name + " (" + spec.name + ")";
+}
+
 std::string listCaptains(GameContent& content)
 {
     SpaceWorld& world = content.world();
     if (world.captains().empty()) {
         return "no captains";
     }
+    char buffer[256] = {};
     std::string lines = std::to_string(world.captains().size()) + " captain(s)";
     for (std::size_t i = 0; i < world.captains().size(); ++i) {
         const game::Captain& captain = world.captains()[i];
         lines += "\n" + std::to_string(i + 1) + ": " + captain.name + " (" + captain.trade + "), " +
                  std::to_string(static_cast<int>(captain.cut * 100.0f + 0.5f)) + "% of takings - ";
-        if (captain.ship < world.fleet().size()) {
-            const game::OwnedShip& ship = world.fleet()[captain.ship];
-            const auto& systems = world.galaxy().systems;
-            lines += "flying " + ship.defId + " (fleet " + std::to_string(captain.ship + 1) + ")";
-            if (ship.storedSystem < systems.size()) {
-                lines += " at " + systems[ship.storedSystem].name;
-            }
-        } else {
+        if (captain.ship >= world.fleet().size()) {
             lines += "no ship";
+            continue;
         }
+        const game::OwnedShip& ship = world.fleet()[captain.ship];
+        const auto& systems = world.galaxy().systems;
+        lines += "flying " + ship.defId + " (fleet " + std::to_string(captain.ship + 1) + ")";
+        const std::uint32_t system = world.captainSystem(i);
+        if (system < systems.size()) {
+            lines += " at " + systems[system].name;
+        }
+        if (captain.order.kind == game::OrderKind::None) {
+            lines += "\n   no orders";
+            continue;
+        }
+        // The ORDER, then what they are doing about it - the two records the
+        // stage keeps apart, kept apart in the readout as well.
+        lines += "\n   hauling " + marketName(world, captain.order.marketA) + " <-> " +
+                 marketName(world, captain.order.marketB);
+        if (captain.order.stopping) {
+            lines += " (standing down at the end of this leg)";
+        }
+        const sol::sim::TraderRoute route = world.captainRoute(i);
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "\n   %s %s, %.0f%% of the leg, %.0f %s aboard",
+                      legWord(route.leg),
+                      (route.leg == sol::sim::TraderLeg::None
+                           ? "at " + marketName(world, captain.haul.leg.market)
+                           : "to " + marketName(world, captain.haul.leg.market))
+                          .c_str(),
+                      static_cast<double>(route.progress) * 100.0,
+                      static_cast<double>(captain.haul.leg.cargo),
+                      captain.haul.leg.commodity < world.commodityIds().size()
+                          ? world.commodityIds()[captain.haul.leg.commodity].c_str()
+                          : "cargo");
+        lines += buffer;
+        // COUNTS, NOT A STATE (stage A's rule, and Phase 38's audio bug is why).
+        // What a route is wrong about first is the money, so the money is the
+        // number this prints - and `losses` says how much of the difference the
+        // route itself ate.
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "\n   %.0f cr earned, %.0f cr paid out, %u haul(s) lost",
+                      captain.haul.earned,
+                      captain.haul.paid,
+                      captain.haul.losses);
+        lines += buffer;
+    }
+    return lines;
+}
+
+// Everywhere this dock could send a captain, numbered the way `sol.order_haul`
+// takes it.
+std::string listHaulDestinations(GameContent& content)
+{
+    std::vector<SpaceWorld::HaulDestination> places;
+    content.world().haulDestinations(places);
+    if (places.empty()) {
+        return content.world().isDocked() ? "nowhere you remember a price from" : "not docked";
+    }
+    std::string lines;
+    for (std::size_t i = 0; i < places.size(); ++i) {
+        if (!lines.empty()) {
+            lines += "\n";
+        }
+        lines += std::to_string(i + 1) + ": " + places[i].station + " (" + places[i].system + "), " +
+                 std::to_string(places[i].hops) + " jump(s)";
+    }
+    return lines;
+}
+
+// Takes the number `sol.haul_destinations` prints rather than a market index,
+// so a console session reads the same way it looks. Same rule as the four
+// stage A verbs.
+bool orderHaul(GameContent& content, double captain, double destination)
+{
+    if (captain < 1.0 || destination < 1.0) {
+        return false;
+    }
+    std::vector<SpaceWorld::HaulDestination> places;
+    content.world().haulDestinations(places);
+    const auto slot = static_cast<std::size_t>(destination) - 1;
+    if (slot >= places.size()) {
+        return false;
+    }
+    return content.world().orderHaul(static_cast<std::size_t>(captain) - 1, places[slot].market);
+}
+
+bool cancelOrder(GameContent& content, double captain)
+{
+    return captain >= 1.0 && content.world().cancelOrder(static_cast<std::size_t>(captain) - 1);
+}
+
+// THE PROMOTION, ASKED OF THE SKY RATHER THAN OF THE RECORD. The failure mode
+// of a two-representation seam is the two disagreeing, so this reports what is
+// DRAWN - and `paced` says which clock moved it, which is the one fact that
+// separates "the record is flying this" from "the hull is flying itself".
+std::string listCaptainShips(GameContent& content)
+{
+    std::vector<game::CaptainPuppetInfo> bodies;
+    content.world().captainPuppetInfo(bodies);
+    if (bodies.empty()) {
+        return "no captain of yours is in this system";
+    }
+    char buffer[192] = {};
+    std::string lines = std::to_string(bodies.size()) + " captain hull(s) here";
+    for (const game::CaptainPuppetInfo& body : bodies) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "\n%s: %s at %.0f km, %.0f m/s%s",
+                      body.name.c_str(),
+                      body.ship.c_str(),
+                      body.distance / 1000.0,
+                      body.speed,
+                      body.paced ? " (on the record's schedule)" : "");
+        lines += buffer;
     }
     return lines;
 }
@@ -4280,6 +4421,10 @@ void GameContent::registerBindings()
     m_vm.registerFunction<&dismissCaptain>("sol", "dismiss_captain", this);
     m_vm.registerFunction<&assignCaptain>("sol", "assign_captain", this);
     m_vm.registerFunction<&recallCaptain>("sol", "recall_captain", this);
+    m_vm.registerFunction<&listHaulDestinations>("sol", "haul_destinations", this);
+    m_vm.registerFunction<&orderHaul>("sol", "order_haul", this);
+    m_vm.registerFunction<&cancelOrder>("sol", "cancel_order", this);
+    m_vm.registerFunction<&listCaptainShips>("sol", "captain_ships", this);
     m_vm.registerFunction<&insuranceQuote>("sol", "insurance_quote", this);
     m_vm.registerFunction<&addCredits>("sol", "add_credits", this);
     m_vm.registerFunction<&warpOffset>("sol", "warp", this);

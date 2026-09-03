@@ -217,7 +217,14 @@ constexpr std::uint32_t kSaveMagic = 0x37'4c'4f'53u; // "SOL7"
 // re-rolled on load exactly as the cast's seating is - so this writes
 // `m_captains` and nothing else. The hall filters against it, which is why
 // there is no second list of who has been taken.
-constexpr std::uint32_t kSaveVersion = 39;
+// v40 (Phase 39 stage B): what you TOLD a captain, and what they are doing
+// about it. The order is two market indices - safe in a save for exactly the
+// reason `MarketMemory::market` already is, since the market table is one row
+// per station in system-then-station order over a galaxy the content digest
+// refuses to let change under a file - and the haul beside it is the leg
+// clock, because a save taken mid-run has to load into the same haul rather
+// than teleporting a laden hull to one end of it.
+constexpr std::uint32_t kSaveVersion = 40;
 
 // ---------------------------------------------------------------------------
 // ⚑⚑⚑⚑ WHAT THE AUTHORED HALF OF THIS GALAXY WAS MADE OF, IN EIGHT BYTES
@@ -3207,6 +3214,7 @@ void SpaceWorld::ensureWorldPools(ecs::Registry& registry)
     makeSnapshotSchema().ensurePools(registry);
     (void)registry.storage<TraderPuppet>();
     (void)registry.storage<MinerPuppet>();
+    (void)registry.storage<CaptainPuppet>(); // Phase 39 stage B, same footing
 }
 
 bool SpaceWorld::bubbleReportAt(std::size_t slot, BubbleReport& out) const
@@ -4755,11 +4763,29 @@ bool SpaceWorld::traderLegSegment(std::uint32_t traderIndex,
                                   std::uint32_t system,
                                   TraderLegPlacement& out) const
 {
+    return legSegment(m_economy.route(traderIndex), traderIndex, system, out);
+}
+
+bool SpaceWorld::captainLegSegment(std::size_t captainIndex,
+                                   std::uint32_t system,
+                                   TraderLegPlacement& out) const
+{
+    return legSegment(captainRoute(captainIndex), captainLaneSlot(captainIndex), system, out);
+}
+
+bool SpaceWorld::legSegment(const sim::TraderRoute& route,
+                            std::uint32_t slot,
+                            std::uint32_t system,
+                            TraderLegPlacement& out) const
+{
     core::DVec3& from = out.from;
     core::DVec3& to = out.to;
     float& progress = out.progress;
-    const sim::TraderRoute route = m_economy.route(traderIndex);
     if (route.system != system || route.leg == sim::TraderLeg::None || route.leg == sim::TraderLeg::Jump) {
+        return false;
+    }
+    if (route.fromMarket >= m_economy.markets().size() || route.toMarket >= m_economy.markets().size() ||
+        system >= m_galaxy.systems.size()) {
         return false;
     }
     const auto stationOf = [&](std::uint32_t market) {
@@ -4777,7 +4803,7 @@ bool SpaceWorld::traderLegSegment(std::uint32_t traderIndex,
     // would let the whole convoy converge again on the way in and pile up at
     // the destination, which is the same stack one leg later.
     const auto inSlot = [&](const core::DVec3& start, const core::DVec3& end) {
-        const core::DVec3 offset = sim::laneSlotOffset(traderIndex, end - start, kTraderLaneSpacing);
+        const core::DVec3 offset = sim::laneSlotOffset(slot, end - start, kTraderLaneSpacing);
         from = start + offset;
         to = end + offset;
     };
@@ -4821,6 +4847,12 @@ void SpaceWorld::beginPuppetReconcile(double dt)
     // gone can hold nothing.
     m_puppetPresent.assign(m_economy.traders().size(), 0);
     m_economy.clearDetained();
+    // The captains' two, on the same footing and for the same reason: both are
+    // indexed by a galaxy-wide id, so both are cleared ONCE above the bubble
+    // loop. A captain under fire is a fact about their body right now, and a
+    // body that is gone can hold nothing.
+    m_captainPresent.assign(m_captains.size(), 0);
+    m_captainDetained.assign(m_captains.size(), 0);
 
     const std::size_t marketCount = m_economy.markets().size();
     if (m_minerHold.size() != marketCount) {
@@ -4954,6 +4986,139 @@ void SpaceWorld::syncTraderPuppets(SystemBubble& bubble)
         registry.storage<TraderPuppet>().get(entity.index).paced =
             keepTraderOnSchedule(registry, entity, leg) ? 1u : 0u;
         m_puppetPresent[t] = 1;
+    }
+}
+
+void SpaceWorld::syncCaptainPuppets(SystemBubble& bubble)
+{
+    if (m_defs == nullptr || m_factionTable.empty() || m_economy.markets().empty() || m_captains.empty()) {
+        return;
+    }
+    ecs::Registry& registry = bubble.registry;
+
+    // Existing bodies first: a captain whose record has moved on stops being
+    // here, and one whose leg changed under them is rebuilt rather than left
+    // flying at a destination nobody is going to. `syncTraderPuppets`' opening,
+    // against a different record.
+    std::vector<ecs::Entity> doomed;
+    ecs::Pool<CaptainPuppet>& puppets = registry.storage<CaptainPuppet>();
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        CaptainPuppet& puppet = puppets.values()[i];
+        const ecs::Entity entity = registry.entityFromIndex(puppets.entityIndices()[i]);
+        TraderLegPlacement leg;
+        if (puppet.captainIndex >= m_captains.size() ||
+            !captainLegSegment(puppet.captainIndex, bubble.system, leg) ||
+            length(leg.to - puppet.destination) > 1.0) {
+            doomed.push_back(entity);
+            continue;
+        }
+        m_captainPresent[puppet.captainIndex] = 1;
+        ShipPilot* pilot = registry.tryGet<ShipPilot>(entity);
+        // Being shot at holds the haul's clock, exactly as it holds a coarse
+        // trader's - and this is the one place that can see it, because a
+        // threat is a fact about a BODY and the coarse layer has none.
+        if (pilot != nullptr && pilot->threatTimer > 0.0f) {
+            m_captainDetained[puppet.captainIndex] = 1;
+        }
+        // A captain's ROUTE is not Lua's to choose - it belongs to the record -
+        // but its fight-or-flight is. Attack and Flee are left alone; Idle and
+        // Patrol are put back on the leg the record says they are flying.
+        if (pilot != nullptr && (pilot->state == PilotState::Idle || pilot->state == PilotState::Patrol)) {
+            pilot->state = PilotState::Travel;
+        }
+        if (pilot != nullptr && pilot->state == PilotState::Travel) {
+            pilot->waypoint = leg.to;
+        }
+        puppet.paced = keepTraderOnSchedule(registry, entity, leg) ? 1u : 0u;
+    }
+    for (const ecs::Entity entity : doomed) {
+        despawnShip(bubble, entity.index);
+    }
+
+    // Then the people: every captain flying a leg here with no body yet gets
+    // one, placed where the RECORD says they already are rather than at the
+    // start of the leg. Walking in on a haul must find it in progress.
+    for (std::uint32_t c = 0; c < static_cast<std::uint32_t>(m_captains.size()); ++c) {
+        if (m_captainPresent[c] != 0) {
+            continue;
+        }
+        TraderLegPlacement leg;
+        if (!captainLegSegment(c, bubble.system, leg)) {
+            continue;
+        }
+        const Captain& captain = m_captains[c];
+        if (captain.ship >= m_fleet.size()) {
+            continue;
+        }
+        // THE HULL IS THE PLAYER'S OWN, WEARING THE PLAYER'S FIT, THROUGH THE
+        // FUNCTION WHOSE COMMENT ALREADY SAID IT COULD BE ASKED WITHOUT BEING
+        // DOCKED. `resolvedShipDef` is "the ship as flown" - since Phase 31
+        // stage B its mounts carry what is actually in them - so there is no
+        // new hull model in this phase and the freighter the player meets on
+        // the lane is the one they outfitted, not a generic one of its class.
+        const assets::ShipDef def = resolvedShipDef(m_fleet[captain.ship]);
+        // Allegiance follows the ground it is trading between, which is a
+        // trader's own rule and is WRONG in a way stage D exists to fix: this
+        // hull inherits that faction's wars and reads to prey selection as that
+        // faction's hauler. It is never left unaffiliated, because Lua reads
+        // that as unconditionally player-hostile and a freighter of yours
+        // opening fire on you is the one thing this must not be.
+        const sim::TraderRoute route = captainRoute(c);
+        std::uint32_t faction = systemOwnerFaction(m_economy.markets()[route.fromMarket].systemIndex);
+        if (faction >= m_factionTable.size()) {
+            faction = systemOwnerFaction(m_economy.markets()[route.toMarket].systemIndex);
+        }
+        if (faction >= m_factionTable.size()) {
+            faction = 0;
+        }
+        const core::DVec3 position = traderScheduledPoint(leg);
+        // THE NAME IN THE SLOT A FACTION WOULD HAVE TAKEN, and it is the whole
+        // payoff of the stage's exit: target the hull and the game says "Bex
+        // Torvald", not "Hegemony". A person is what this phase added, and the
+        // sky is where the player finds out it worked.
+        const ecs::Entity entity = spawnShipAt(bubble, def, *m_defs, position, captain.name.c_str());
+        registry.emplace<ShipPilot>(entity,
+                                    ShipPilot{.role = PilotRole::Trader,
+                                              .state = PilotState::Travel,
+                                              .waypoint = leg.to,
+                                              .factionIndex = faction});
+        registry.emplace<CaptainPuppet>(entity, CaptainPuppet{.captainIndex = c, .destination = leg.to});
+        Transform& transform = registry.storage<Transform>().get(entity.index);
+        transform.orientation = lookAlong(leg.to - position);
+        transform.previousOrientation = transform.orientation;
+        registry.storage<CaptainPuppet>().get(entity.index).paced =
+            keepTraderOnSchedule(registry, entity, leg) ? 1u : 0u;
+        m_captainPresent[c] = 1;
+        SOL_LOG_INFO("%s's %s is in %s",
+                     captain.name.c_str(),
+                     def.name.c_str(),
+                     m_galaxy.systems[bubble.system].name.c_str());
+    }
+}
+
+void SpaceWorld::captainPuppetInfo(std::vector<CaptainPuppetInfo>& out)
+{
+    out.clear();
+    ecs::Registry& registry = playerRegistry();
+    ecs::Pool<CaptainPuppet>& puppets = registry.storage<CaptainPuppet>();
+    const core::DVec3 here = shipState().position;
+    for (std::size_t i = 0; i < puppets.size(); ++i) {
+        const CaptainPuppet& puppet = puppets.values()[i];
+        const std::uint32_t entityIndex = puppets.entityIndices()[i];
+        if (puppet.captainIndex >= m_captains.size()) {
+            continue;
+        }
+        const Captain& captain = m_captains[puppet.captainIndex];
+        const Transform& transform = registry.storage<Transform>().get(entityIndex);
+        const FlightBody& body = registry.storage<FlightBody>().get(entityIndex);
+        CaptainPuppetInfo info;
+        info.captainIndex = puppet.captainIndex;
+        info.name = captain.name;
+        info.ship = captain.ship < m_fleet.size() ? m_fleet[captain.ship].defId : std::string();
+        info.distance = length(transform.position - here);
+        info.speed = length(body.velocity);
+        info.paced = puppet.paced != 0;
+        out.push_back(std::move(info));
     }
 }
 
@@ -7644,12 +7809,6 @@ bool SpaceWorld::sellShip(std::size_t fleetIndex, std::string* outError)
     // would delete a ship that is mid-haul with no death path and no wreck -
     // the same shape as the eviction hazard the phase spec's risk register
     // names. Refused with a reason rather than silently unassigning.
-    // ⚑⚑⚑⚑ A HULL SOMEBODY IS FLYING IS NOT YOURS TO SELL (Phase 39
-    // stage A). In this stage it is only tidiness; from stage B on the hull is
-    // in another system on a route, and selling it out from under its captain
-    // would delete a ship that is mid-haul with no death path and no wreck -
-    // the same shape as the eviction hazard the phase spec's risk register
-    // names. Refused with a reason rather than silently unassigning.
     if (const Captain* holder = captainOf(fleetIndex); holder != nullptr) {
         return refuse("'" + holder->name + "' is flying that ship - recall them first", outError);
     }
@@ -7687,6 +7846,19 @@ bool SpaceWorld::switchShip(std::size_t fleetIndex, std::string* outError)
     }
     if (resolvedShipDef(target).cargoCapacity < playerCargoTotal()) {
         return refuse("cargo would not fit that ship's hold", outError);
+    }
+    // ⚑⚑⚑⚑ AND NOR IS A HULL SOMEBODY IS FLYING YOURS TO CLIMB INTO - THE HOLE
+    // STAGE A LEFT, FOUND BY WRITING STAGE B'S LOADER. `sellShip` grew this
+    // guard and `switchShip` beside it did not, and the two are not the same
+    // severity: taking the active seat in a captain's hull sets
+    // `captain.ship == m_activeShip`, which is a state the v39 LOADER REFUSES
+    // OUTRIGHT (`captain.ship == activeIndex` returns false). So the door was
+    // not "a captain and the player share a hull" - it was a save file the game
+    // writes happily and then declines to open, with nothing at either end
+    // saying why. Stage A's own words, applied where they were missed: one
+    // action does one thing, and recalling them first is that action.
+    if (const Captain* holder = captainOf(fleetIndex); holder != nullptr) {
+        return refuse("'" + holder->name + "' is flying that ship - recall them first", outError);
     }
     OwnedShip& current = m_fleet[m_activeShip];
     current.storedSystem = m_currentSystem;
@@ -7900,6 +8072,23 @@ bool SpaceWorld::recallCaptain(std::size_t captainIndex, std::string* outError)
     if (captain.ship == kNoIndex) {
         return refuse("'" + captain.name + "' has no ship", outError);
     }
+    // ⚑⚑⚑⚑ AND NOT WHILE THEY HAVE ORDERS, WHICH THE LIVE DRIVE FOUND AND NO
+    // TEST DID. A captain given a route but not yet under way is still parked
+    // on your dock, so every condition below passes and the hull came back -
+    // leaving a person with no ship and a standing order to run one, which is
+    // the exact `ship == kNoIndex && order.kind != None` pair the v40 LOADER
+    // REFUSES. Second path to a save the game writes happily and then declines
+    // to open, and the same shape as the `switchShip` hole above.
+    //
+    // ⚑⚑⚑ THE SHARP HALF IS WHERE THE RULE ALREADY WAS: the Crew tab's fill
+    // computes `captainCanRecall = parkedHere && !ordered` and greys the button
+    // correctly, so the SCREEN knew and the WORLD did not. This file states the
+    // hazard about `firstFreeMountFor` in its own words - duplicating a rule in
+    // the screen is how the button and the transaction drift apart - and this
+    // is that, with the screen being the half that was right.
+    if (captain.order.kind != OrderKind::None) {
+        return refuse("'" + captain.name + "' has orders - stand them down first", outError);
+    }
     // ⚑⚑⚑ BOUNDS-CHECKED RATHER THAN TRUSTED, AND THE MUTATION PASS IS
     // WHY. `sellShip` refuses to sell a hull somebody is holding, so this index
     // cannot dangle - which made this line a correctness property held up by a
@@ -7918,6 +8107,529 @@ bool SpaceWorld::recallCaptain(std::size_t captainIndex, std::string* outError)
     SOL_LOG_INFO("%s hands back '%s'", captain.name.c_str(), ship.defId.c_str());
     captain.ship = kNoIndex;
     return true;
+}
+
+// --- Standing orders (Phase 39 stage B) -------------------------------------
+
+double SpaceWorld::haulLegSeconds(std::uint32_t fromMarket, std::uint32_t toMarket) const
+{
+    const std::vector<sim::StationMarket>& markets = m_economy.markets();
+    if (fromMarket >= markets.size() || toMarket >= markets.size()) {
+        return 0.0;
+    }
+    // The coarse fleet's own numbers, not a second set. `traderLegSeconds` is
+    // documented as "in-system travel per endpoint" and `jumpSeconds` as per
+    // gate transit, and this is `Economy::beginTransit`'s line verbatim - so a
+    // captain and a hauler crossing the same lane take the same time over it,
+    // and `sim::routeOf` decomposes both the same way.
+    const std::uint8_t hops =
+        m_economy.hopCount(markets[fromMarket].systemIndex, markets[toMarket].systemIndex);
+    const sim::EconomyParams& params = m_economy.params();
+    return params.traderLegSeconds * 2.0 +
+           static_cast<double>(hops == sim::kUnreachableHops ? 0u : hops) * params.jumpSeconds;
+}
+
+void SpaceWorld::haulDestinations(std::vector<HaulDestination>& out) const
+{
+    out.clear();
+    const std::uint32_t here = dockedMarket();
+    if (!isDocked() || here == kNoIndex) {
+        return; // a run starts from the dock you are standing on
+    }
+    const std::vector<sim::StationMarket>& markets = m_economy.markets();
+    const std::uint32_t hereSystem = markets[here].systemIndex;
+    // THE LIST IS WHAT THE PLAYER REMEMBERS, WHICH IS `SurveySim`'s LEDGER AND
+    // NOT THE MARKET TABLE. You cannot send a captain somewhere you have never
+    // seen a price from - the same knowledge the Trade tab's "elsewhere" column
+    // and the map's trade overlay read, so buying market intel is what widens a
+    // fleet's reach and this phase adds no second notion of "known".
+    for (const sim::MarketMemory& memory : m_survey.marketMemory()) {
+        if (memory.market == here || memory.market >= markets.size()) {
+            continue;
+        }
+        const std::uint32_t system = markets[memory.market].systemIndex;
+        const std::uint8_t hops = m_economy.hopCount(hereSystem, system);
+        if (hops == sim::kUnreachableHops) {
+            continue; // past `maxTradeJumps`: the economy would not plan it either
+        }
+        const sim::SystemSpec& spec = m_galaxy.systems[system];
+        out.push_back({.market = memory.market,
+                       .station = spec.stations[markets[memory.market].stationIndex].name,
+                       .system = spec.name,
+                       .hops = hops});
+    }
+    std::sort(out.begin(), out.end(), [](const HaulDestination& a, const HaulDestination& b) {
+        if (a.hops != b.hops) {
+            return a.hops < b.hops;
+        }
+        return a.station < b.station;
+    });
+}
+
+bool SpaceWorld::orderHaul(std::size_t captainIndex, std::uint32_t market, std::string* outError)
+{
+    if (!isDocked()) {
+        return refuse("must be docked to give a captain a route", outError);
+    }
+    if (captainIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.ship >= m_fleet.size()) {
+        return refuse("'" + captain.name + "' has no ship", outError);
+    }
+    // THE SAME DOCK AGAIN, AND FOR STAGE A'S REASON RATHER THAN FOR SYMMETRY:
+    // a route starts where the hull is, so if the hull is not here there is no
+    // "from", and the destination list the player picked out of was measured
+    // from somewhere else entirely.
+    const OwnedShip& ship = m_fleet[captain.ship];
+    if (ship.storedSystem != m_currentSystem || ship.storedStation != m_dockedStation) {
+        return refuse("'" + captain.name + "' is not here - their ship is stored elsewhere", outError);
+    }
+    if (captain.haul.leg.phase == sim::TraderPhase::InTransit) {
+        // Cannot be reached through the door above (a hull in transit is stored
+        // nowhere), and said here anyway: re-pointing a LADEN hull at a market
+        // it did not buy for is the one way an order change loses money silently.
+        return refuse("'" + captain.name + "' is on a haul - cancel the order first", outError);
+    }
+    const std::uint32_t here = dockedMarket();
+    if (here == kNoIndex) {
+        return refuse("no market here to run a route from", outError);
+    }
+    if (market >= m_economy.markets().size()) {
+        return refuse("no such market", outError);
+    }
+    if (market == here) {
+        return refuse("that is the dock you are standing on", outError);
+    }
+    if (m_survey.remembered(market) == nullptr) {
+        return refuse("you have never seen that market's prices", outError);
+    }
+    if (m_economy.hopCount(m_currentSystem, m_economy.markets()[market].systemIndex) ==
+        sim::kUnreachableHops) {
+        return refuse("no route there inside a hauler's range", outError);
+    }
+    captain.order = {.kind = OrderKind::Haul, .marketA = here, .marketB = market, .stopping = false};
+    captain.haul.leg.origin = here;
+    captain.haul.leg.market = here;
+    captain.haul.leg.phase = sim::TraderPhase::Idle;
+    const sim::StationMarket& far = m_economy.markets()[market];
+    SOL_LOG_INFO("%s will run %s <-> %s (%.0f s a leg)",
+                 captain.name.c_str(),
+                 dockedStationName(),
+                 m_galaxy.systems[far.systemIndex].stations[far.stationIndex].name.c_str(),
+                 haulLegSeconds(here, market));
+    return true;
+}
+
+bool SpaceWorld::cancelOrder(std::size_t captainIndex, std::string* outError)
+{
+    if (captainIndex >= m_captains.size()) {
+        return refuse("no such captain", outError);
+    }
+    Captain& captain = m_captains[captainIndex];
+    if (captain.order.kind == OrderKind::None) {
+        return refuse("'" + captain.name + "' has no orders", outError);
+    }
+    // NOT DOCKED-GATED, and it is the only captain verb that is not. Every
+    // other one moves a hull or a person between you and a dock you are both
+    // standing on; calling somebody off a route is a message, and requiring a
+    // flight to the far end of their own run to send it would make a bad order
+    // cost more to cancel than it cost to give.
+    if (captain.haul.leg.phase == sim::TraderPhase::InTransit) {
+        captain.order.stopping = true;
+        SOL_LOG_INFO("%s will stand down at the end of this leg", captain.name.c_str());
+        return true;
+    }
+    captain.order = {};
+    SOL_LOG_INFO("%s stands down", captain.name.c_str());
+    return true;
+}
+
+sim::TraderRoute SpaceWorld::captainRoute(std::size_t captainIndex) const
+{
+    if (captainIndex >= m_captains.size()) {
+        return {};
+    }
+    const sim::EconomyTrader& leg = m_captains[captainIndex].haul.leg;
+    const std::vector<sim::StationMarket>& markets = m_economy.markets();
+    if (leg.origin >= markets.size() || leg.market >= markets.size()) {
+        return {};
+    }
+    const std::uint32_t fromSystem = markets[leg.origin].systemIndex;
+    const std::uint32_t toSystem = markets[leg.market].systemIndex;
+    const std::uint8_t hops = m_economy.hopCount(fromSystem, toSystem);
+    // THE SAME DECOMPOSITION THE COARSE FLEET READS, and that is the whole
+    // reason `routeOf` was lifted out of `Economy` this stage. A second copy of
+    // "elapsed < legSeconds means Depart" living in this file is how a captain
+    // and a hauler would eventually disagree about where the gate is.
+    return sim::routeOf(
+        leg, m_economy.params(), fromSystem, toSystem, hops == sim::kUnreachableHops ? 0u : hops);
+}
+
+std::uint32_t SpaceWorld::captainSystem(std::size_t captainIndex) const
+{
+    if (captainIndex >= m_captains.size()) {
+        return kNoIndex;
+    }
+    const Captain& captain = m_captains[captainIndex];
+    if (captain.ship >= m_fleet.size()) {
+        return kNoIndex;
+    }
+    const sim::TraderRoute route = captainRoute(captainIndex);
+    if (route.leg == sim::TraderLeg::None) {
+        return m_fleet[captain.ship].storedSystem; // parked at a station somewhere
+    }
+    return route.system == sim::kNoSystem ? kNoIndex : route.system;
+}
+
+bool SpaceWorld::systemIsInstantiated(std::uint32_t system) const
+{
+    for (const std::unique_ptr<SystemBubble>& bubble : m_bubbles) {
+        if (bubble->system == system) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void SpaceWorld::settleCaptainSale(Captain& captain, std::uint32_t market)
+{
+    CaptainHaul& haul = captain.haul;
+    if (haul.leg.cargo <= 0.0f || market >= m_economy.markets().size()) {
+        return;
+    }
+    const float aboard = haul.leg.cargo;
+    const sim::TradeResult sold = m_economy.sell(market, haul.leg.commodity, aboard);
+    if (sold.units <= 0.0f) {
+        // A full warehouse: the load stays in the hold and rides on to the
+        // other end, which is `Economy`'s own answer and for its own reason -
+        // tipping it into space is a galaxy-wide leak of goods.
+        return;
+    }
+    // THE COST BASIS LEAVES THE HOLD WITH THE UNITS THAT SOLD, rather than the
+    // whole outlay being settled against a partial sale. A market that can only
+    // take half the load would otherwise book the entire purchase against half
+    // the revenue and read as a disastrous run, and the captain would be paid
+    // nothing on the half that actually made money.
+    const double share = core::clamp(static_cast<double>(sold.units / aboard), 0.0, 1.0);
+    const double basis = haul.outlay * share;
+    const double gross = static_cast<double>(sold.credits);
+    const double profit = gross - basis;
+    // THE CUT IS OF THE PROFIT AND NEVER OF THE SALE (the user's ruling 6,
+    // taken before a line was written). On a thin margin a cut of the gross
+    // takes more than the run made, so a bad route would DRAIN the player
+    // rather than merely underperform - and ruling 3's "an idle captain costs
+    // nothing rather than bleeding" would stop being true of a working one. A
+    // haul that loses money pays them nothing; it does not bill them either,
+    // because a captain has no purse of their own to bill from.
+    const double cut = profit > 0.0 ? profit * static_cast<double>(captain.cut) : 0.0;
+    m_playerCredits += gross - cut;
+    haul.outlay -= basis;
+    haul.leg.cargo = std::max(0.0f, aboard - sold.units);
+    haul.earned += profit - cut;
+    haul.paid += cut;
+    SOL_LOG_INFO("%s sold %.0f %s for %.0f cr (%.0f profit, %.0f to them)",
+                 captain.name.c_str(),
+                 static_cast<double>(sold.units),
+                 haul.leg.commodity < m_commodityIds.size() ? m_commodityIds[haul.leg.commodity].c_str()
+                                                            : "cargo",
+                 gross,
+                 profit,
+                 cut);
+}
+
+void SpaceWorld::beginCaptainTransit(Captain& captain, std::uint32_t destination)
+{
+    CaptainHaul& haul = captain.haul;
+    haul.leg.origin = haul.leg.market;
+    haul.leg.market = destination;
+    haul.leg.phase = sim::TraderPhase::InTransit;
+    haul.leg.legTotal = haulLegSeconds(haul.leg.origin, destination);
+    haul.leg.travelRemaining = haul.leg.legTotal;
+    // THE HULL IS PARKED NOWHERE WHILE IT IS FLYING, AND THAT IS WHAT MAKES THE
+    // THREE STORED-SHIP RULES HOLD WITHOUT A FOURTH BEING WRITTEN. `sellShip`,
+    // `switchShip` and `recallCaptain` all refuse a hull whose stored station is
+    // not the one you are standing on, and `kNoIndex` is never that - so a ship
+    // mid-haul cannot be sold, boarded or handed back through any door, and none
+    // of the three needed a new clause about routes.
+    OwnedShip& ship = m_fleet[captain.ship];
+    ship.storedSystem = kNoIndex;
+    ship.storedStation = kNoIndex;
+}
+
+void SpaceWorld::captainThink(Captain& captain, std::uint32_t here, std::uint32_t there)
+{
+    CaptainHaul& haul = captain.haul;
+    // Room may have opened here since arrival: shift what the last stop could
+    // not take before thinking about a new load. `traderThink`'s own opening.
+    settleCaptainSale(captain, here);
+    if (haul.leg.cargo > 0.0f) {
+        beginCaptainTransit(captain, there); // laden: no room aboard for a new haul
+        return;
+    }
+
+    const float capacity = resolvedShipDef(m_fleet[captain.ship]).cargoCapacity;
+    if (capacity > 1.0f) {
+        // WHAT TO CARRY IS THE CAPTAIN'S JUDGEMENT, WHICH IS WHAT THE CUT BUYS.
+        // The ranking is `Economy::traderThink`'s - return on capital per
+        // second, so nobody ever declines to haul something cheap with a good
+        // margin - with its market loop deleted, because the ORDER names the
+        // market, and with its PRICES replaced. That replacement is the whole
+        // finding of this stage.
+        //
+        // ⚑⚑⚑⚑ A HAUL PRICED AT THE MARGINAL PRICE IS PRICED AT A LIE, AND
+        // THE FIRST MEASUREMENT OF THIS STAGE WAS EIGHT ROUTES OUT OF EIGHT
+        // LOSING MONEY. `Economy::buy` charges at the midpoint of the stock the
+        // trade moves and `sell` pays at the midpoint of the stock it fills, so
+        // a 200-unit hold costs about 1.4x its quoted price and fetches about
+        // 0.8x - which turns a route that reads as a 20% margin into a 40%
+        // loss. `traderThink` estimates the same way and gets away with it only
+        // because it ranks across EVERY reachable market and so lands where a
+        // hold barely moves the curve; a captain pinned to one route by an
+        // order has no such luxury. `quoteBuy`/`quoteSell` are the honest
+        // numbers and they are what this asks. Phase 37 found this exact
+        // arithmetic in `playerBuy`'s purse clamp; this is the same error in
+        // the PROFIT ESTIMATE, one layer along.
+        //
+        // ⚑⚑⚑ AND THE SIZE IS PART OF THE JUDGEMENT, NOT A CONSTANT. Price
+        // impact grows with the block, so on a thin route a half-load clears
+        // where a full one does not - and the difference between a captain who
+        // deadheads forever and one who earns is being willing to carry less.
+        // Four sizes rather than a bisection: the profit curve over size is
+        // concave from zero, so a coarse sample lands near the peak, and the
+        // alternative would be `unitsWithin`'s machinery for a number nobody is
+        // going to audit to the credit.
+        static constexpr float kLoadFractions[] = {1.0f, 0.75f, 0.5f, 0.25f};
+        const auto seconds = static_cast<float>(std::max(1.0, haulLegSeconds(here, there)));
+        float bestRate = 0.0f;
+        float bestUnits = 0.0f;
+        std::uint32_t best = kNoIndex;
+        for (std::uint32_t c = 0; c < static_cast<std::uint32_t>(m_commodityIds.size()); ++c) {
+            const float onHand = std::min(capacity, m_economy.stock(here, c));
+            if (onHand <= 1.0f) {
+                continue;
+            }
+            // A station with no hold for the good has negative room and is
+            // never scored, which is how a captain learns not to fly salvage to
+            // a dock that cannot take it.
+            //
+            // ⚑⚑ AND THE ROOM IS WHAT WILL BE LEFT ONCE EVERYTHING ALREADY
+            // FLYING THERE HAS LANDED. `traderThink` has subtracted `inbound`
+            // since Phase 8g and said why, and while it was private a captain
+            // was the one hauler in the galaxy planning blind - it would buy
+            // into a shortage a hundred and twenty coarse traders were already
+            // on their way to fill. ⚑ HONESTY ABOUT THIS ONE: it was added on
+            // the theory that it explained the losses below, and it did not -
+            // the numbers came out byte-identical, because `inbound` is zero at
+            // most (market, commodity) pairs with 120 traders spread over
+            // sixteen hundred of them. It is kept because it is the rule every
+            // other hauler follows, not because it moved anything.
+            const float room =
+                m_economy.capacityOf(there, c) - m_economy.stock(there, c) - m_economy.inbound(there, c);
+            if (room <= 1.0f) {
+                continue;
+            }
+            for (const float fraction : kLoadFractions) {
+                const float units = std::min(onHand * fraction, room);
+                if (units <= 1.0f) {
+                    continue;
+                }
+                const float cost = m_economy.quoteBuy(here, c, units);
+                const float revenue = m_economy.quoteSell(there, c, units);
+                const float profit = revenue - cost;
+                // ⚑⚑⚑⚑ A MARGIN THAT DOES NOT CLEAR THE SPREAD IS NOT A TRADE,
+                // AND THIS IS THE THIRD THING THE MEASUREMENT FOUND. Ranking by
+                // rate takes the BEST rate available, which on a fixed route
+                // through a galaxy a hundred and twenty haulers are already
+                // arbitraging is routinely near zero: one measured leg tied up
+                // 2,999 cr for four minutes to make ELEVEN. That is not merely
+                // a poor trade, it is a losing one, because the estimate is
+                // made at departure and a three-hop leg is long enough for the
+                // far market to move about 20% under it - so a 0.4% expectation
+                // realises as a 16% loss about as often as not.
+                //
+                // ⚑⚑⚑ THE FLOOR IS `priceSpread` AND IT IS BORROWED RATHER
+                // THAN INVENTED. That constant is already the number this
+                // economy uses to say what a thin margin IS - its own comment:
+                // "without a spread a thin margin is indistinguishable from a
+                // good one and a round trip at one station is free". So the
+                // rule is that a haul must clear the spread AGAIN, over and
+                // above paying it, which is the smallest honest definition of
+                // "worth the trip" available without inventing a taste number.
+                if (!(cost > 0.0f) || !(profit > cost * m_economy.params().priceSpread)) {
+                    continue;
+                }
+                const float rate = profit / (cost * seconds);
+                if (rate > bestRate) {
+                    bestRate = rate;
+                    bestUnits = units;
+                    best = c;
+                }
+            }
+        }
+        if (best != kNoIndex) {
+            // THE PURSE CLAMP GOES THROUGH `unitsWithin`, AND PHASE 37 IS WHY.
+            // The cost of `u` units is quadratic in `u` because the price moves
+            // as the trade fills, so dividing the purse by the marginal price
+            // over-estimates by ~17% on a trade big enough to matter - which is
+            // exactly how `playerBuy` put the player in DEBT for twenty-nine
+            // phases. A captain buying is the second caller of that lesson, and
+            // it is a worse one: nobody is watching this trade happen.
+            const float units = m_economy.unitsWithin(here, best, bestUnits, m_playerCredits);
+            if (units > 0.0f) {
+                const sim::TradeResult bought = m_economy.buy(here, best, units);
+                m_playerCredits -= bought.credits;
+                haul.leg.commodity = best;
+                haul.leg.cargo = bought.units;
+                haul.outlay += bought.credits;
+                SOL_LOG_INFO("%s loaded %.0f %s for %.0f cr",
+                             captain.name.c_str(),
+                             static_cast<double>(bought.units),
+                             m_commodityIds[best].c_str(),
+                             static_cast<double>(bought.credits));
+            }
+        }
+    }
+    // Empty or not, the leg is flown. The order is a RUN between two places,
+    // and an empty return is what a hauler on a fixed route actually does - a
+    // captain who sat at one end waiting for a margin would be answering stage
+    // E's question ("what a captain does when the price never clears") three
+    // stages early, and would look identical to a broken one.
+    beginCaptainTransit(captain, there);
+}
+
+void SpaceWorld::captainArrive(Captain& captain)
+{
+    CaptainHaul& haul = captain.haul;
+    const std::uint32_t market = haul.leg.market;
+    settleCaptainSale(captain, market);
+    haul.leg.phase = sim::TraderPhase::Idle;
+    haul.leg.origin = market; // parked: the leg it just flew is over
+    haul.leg.travelRemaining = 0.0;
+    haul.leg.legTotal = 0.0;
+    // AND THE HULL IS PARKED WHERE IT LANDED, which is what makes "fly to one
+    // of them and find them where the screen said they were" a question with an
+    // answer: `OwnedShip::storedSystem` is what every other screen in the game
+    // already reads to say where a ship of yours is, so a captain's hull answers
+    // it through the field that has always meant that.
+    const sim::StationMarket& row = m_economy.markets()[market];
+    OwnedShip& ship = m_fleet[captain.ship];
+    ship.storedSystem = row.systemIndex;
+    ship.storedStation = row.stationIndex;
+}
+
+void SpaceWorld::rollCaptainAttrition(std::size_t captainIndex, double dt)
+{
+    Captain& captain = m_captains[captainIndex];
+    if (captain.haul.leg.cargo <= 0.0f) {
+        return; // an empty hull has nothing to lose, and stage D owns the hull
+    }
+    const float perSecond = m_factionSim.params().traderLossPerSecond;
+    if (perSecond <= 0.0f) {
+        return;
+    }
+    const sim::TraderRoute route = captainRoute(captainIndex);
+    // Depart and Arrive only - `FactionSim::attrition`'s rule and its reason:
+    // those are exactly the windows a body can exist in, so every loss rolled
+    // here is one the player could have flown to and prevented. The gate network
+    // is the safe part of a haul because it is honestly nowhere.
+    if (route.leg != sim::TraderLeg::Depart && route.leg != sim::TraderLeg::Arrive) {
+        return;
+    }
+    if (route.system >= m_galaxy.systems.size()) {
+        return;
+    }
+    // AND NOT IN A SYSTEM THAT IS BEING SIMULATED. `attrition` skips only the
+    // player's own system; this skips every INSTANTIATED one, because since
+    // Phase 38 those are not the same set. A captain with a body in a live
+    // bubble is being simulated at full fidelity, and rolling a coarse loss
+    // against it as well is precisely the failure the phase's risk register
+    // names first: a captain that is both things at once.
+    //
+    // WHAT THAT BUYS IN THIS STAGE IS A SAFE HARBOUR, AND IT IS HONEST RATHER
+    // THAN IDEAL: the fine layer cannot kill a captain's hull yet either,
+    // because the death path - wreck, insurance, standing, and a log line the
+    // player can find - is stage D's. So a promoted captain is currently
+    // invulnerable. Better a documented gap than a hull that dies in the sky
+    // with nothing that knows how to report it.
+    if (systemIsInstantiated(route.system)) {
+        return;
+    }
+    const float risk = m_factionSim.danger(route.system) * perSecond * static_cast<float>(dt);
+    if (risk <= 0.0f) {
+        return; // quiet system: no roll at all, so peace costs no entropy
+    }
+    if (m_captainRng.nextFloat01() >= risk) {
+        return;
+    }
+    // THE HOLD IS GONE; THE HULL AND THE PERSON ARE NOT, AND THE LEG GOES ON.
+    // `Economy::loseTrader` sends its trader back to the market it left, because
+    // there the hauler itself is what was destroyed and the fleet slot is
+    // recycled. A captain is somebody the player hired: killing them needs a
+    // wreck, an insurance answer, a standing consequence and a line the player
+    // can find, and every one of those is stage D. So stage B takes the cargo -
+    // which is what makes a route through a contested system a decision - and
+    // leaves the ship to the stage that can bury it.
+    SOL_LOG_WARN("%s lost their cargo in %s (%.0f cr written off)",
+                 captain.name.c_str(),
+                 m_galaxy.systems[route.system].name.c_str(),
+                 captain.haul.outlay);
+    captain.haul.earned -= captain.haul.outlay;
+    captain.haul.outlay = 0.0;
+    captain.haul.leg.cargo = 0.0f;
+    ++captain.haul.losses;
+}
+
+void SpaceWorld::tickCaptains(double dt)
+{
+    if (m_captains.empty() || m_economy.markets().empty() || m_defs == nullptr) {
+        return;
+    }
+    for (std::size_t i = 0; i < m_captains.size(); ++i) {
+        Captain& captain = m_captains[i];
+        if (captain.order.kind != OrderKind::Haul) {
+            continue;
+        }
+        if (captain.ship >= m_fleet.size()) {
+            // Unreachable through any door this file opens - `sellShip` and
+            // `switchShip` both refuse a hull somebody is flying - and stood
+            // down rather than left pointing at a slot, because the alternative
+            // to a guard here is an index that dangles for a whole session.
+            captain.order = {};
+            continue;
+        }
+        if (captain.haul.leg.phase == sim::TraderPhase::Idle) {
+            if (captain.order.stopping) {
+                captain.order = {};
+                SOL_LOG_INFO("%s stands down", captain.name.c_str());
+                continue;
+            }
+            const std::uint32_t here = captain.haul.leg.market;
+            // The other end of the run. A captain standing at neither - which
+            // no path here produces - is sent to A, so a recovered order is a
+            // run rather than a stall.
+            const std::uint32_t there =
+                here == captain.order.marketA ? captain.order.marketB : captain.order.marketA;
+            if (here >= m_economy.markets().size() || there >= m_economy.markets().size()) {
+                captain.order = {};
+                continue;
+            }
+            captainThink(captain, here, there);
+            continue;
+        }
+        // Being shot at: the delivery waits, the fight does not. `Economy`'s own
+        // line, through the same one-tick-lagged flag the trader reconcile
+        // writes and the coarse step reads.
+        if (i < m_captainDetained.size() && m_captainDetained[i] != 0) {
+            continue;
+        }
+        rollCaptainAttrition(i, dt);
+        captain.haul.leg.travelRemaining -= dt;
+        if (captain.haul.leg.travelRemaining <= 0.0) {
+            captainArrive(captain);
+        }
+    }
 }
 
 void SpaceWorld::applyShipDef(ecs::Registry& registry,
@@ -11798,6 +12510,17 @@ void SpaceWorld::tick(double dt)
         profiler.endZone(zone);
     }
 
+    // The player's own coarse layer (Phase 39 stage B): captains on a standing
+    // order think, fly, arrive and are exposed to what their route runs
+    // through. Immediately after the economy tick and before the reconcile
+    // below, because a captain trades against the prices that tick just moved
+    // and the reconcile has to see the leg they ended up on.
+    {
+        const std::uint32_t zone = profiler.beginZone("sim.coarse.captains");
+        tickCaptains(dt);
+        profiler.endZone(zone);
+    }
+
     // Bodies for the coarse traders flying a leg here (Phase 8x). Immediately
     // after the economy tick, because that is the one place a trader's route
     // can change — this is the LOD promotion §2 committed to and the coarse
@@ -11816,6 +12539,11 @@ void SpaceWorld::tick(double dt)
         for (std::size_t bubbleSlot = 0; bubbleSlot < m_bubbles.size(); ++bubbleSlot) {
             SystemBubble& bubble = *m_bubbles[bubbleSlot];
             syncTraderPuppets(bubble);
+            // And a hull for every captain of yours flying a leg through here
+            // (Phase 39 stage B). The promotion the phase's split is built on:
+            // the record goes on being the truth and the body is paced to it,
+            // so there is never a moment when a captain is two things.
+            syncCaptainPuppets(bubble);
             // And a ship at the rock for every outpost here that is digging
             // (Phase 8x stage 6). Same reconcile, same rule, a different coarse
             // actor: an extractor's draw is activity the sim has been
@@ -12761,6 +13489,23 @@ bool SpaceWorld::saveTo(const char* path, std::string_view displayName)
         writer.write(captain.who);
         writer.write(captain.ship);
         writer.write(captain.cut);
+        // The order (v40), then the haul. Two records because they answer two
+        // questions - see `CaptainOrder`.
+        writer.write(static_cast<std::uint8_t>(captain.order.kind));
+        writer.write(captain.order.marketA);
+        writer.write(captain.order.marketB);
+        writer.write(static_cast<std::uint8_t>(captain.order.stopping ? 1 : 0));
+        writer.write(static_cast<std::uint8_t>(captain.haul.leg.phase));
+        writer.write(captain.haul.leg.origin);
+        writer.write(captain.haul.leg.market);
+        writer.write(captain.haul.leg.travelRemaining);
+        writer.write(captain.haul.leg.legTotal);
+        writer.write(captain.haul.leg.commodity);
+        writer.write(captain.haul.leg.cargo);
+        writer.write(captain.haul.outlay);
+        writer.write(captain.haul.earned);
+        writer.write(captain.haul.paid);
+        writer.write(captain.haul.losses);
     }
     m_economy.save(writer);
     m_factionSim.save(writer); // v5: relations, war flags, standings, raids
@@ -12949,7 +13694,41 @@ bool SpaceWorld::loadFrom(const char* path)
             !reader.read(captain.who) || !reader.read(captain.ship) || !reader.read(captain.cut)) {
             return false;
         }
+        std::uint8_t kind = 0;
+        std::uint8_t phase = 0;
+        std::uint8_t stopping = 0;
+        if (!reader.read(kind) || !reader.read(captain.order.marketA) ||
+            !reader.read(captain.order.marketB) || !reader.read(stopping) || !reader.read(phase) ||
+            !reader.read(captain.haul.leg.origin) || !reader.read(captain.haul.leg.market) ||
+            !reader.read(captain.haul.leg.travelRemaining) || !reader.read(captain.haul.leg.legTotal) ||
+            !reader.read(captain.haul.leg.commodity) || !reader.read(captain.haul.leg.cargo) ||
+            !reader.read(captain.haul.outlay) || !reader.read(captain.haul.earned) ||
+            !reader.read(captain.haul.paid) || !reader.read(captain.haul.losses)) {
+            return false;
+        }
+        if (kind > static_cast<std::uint8_t>(OrderKind::Haul) ||
+            phase > static_cast<std::uint8_t>(sim::TraderPhase::InTransit)) {
+            return false;
+        }
+        captain.order.kind = static_cast<OrderKind>(kind);
+        captain.order.stopping = stopping != 0;
+        captain.haul.leg.phase = static_cast<sim::TraderPhase>(phase);
+        // THE SAME SHAPE `Economy::load` USES ON ITS OWN TRADERS, and for the
+        // same reason: a clock read off disk that runs backwards or a hold that
+        // is negative describes a haul this code cannot fly, and the failure it
+        // would otherwise produce is a captain stuck in transit forever with
+        // the player's money already spent.
+        if (captain.haul.leg.legTotal < 0.0 || captain.haul.leg.travelRemaining < 0.0 ||
+            captain.haul.leg.travelRemaining > captain.haul.leg.legTotal || captain.haul.leg.cargo < 0.0f ||
+            captain.haul.outlay < 0.0) {
+            return false;
+        }
+        // A captain with no ship cannot be flying one, and an order pointing at
+        // a hull that is not theirs is the two-truths defect stage A refused.
         if (captain.ship == kNoIndex) {
+            if (captain.order.kind != OrderKind::None || captain.haul.leg.phase != sim::TraderPhase::Idle) {
+                return false;
+            }
             continue;
         }
         if (captain.ship >= fleetCount || captain.ship == activeIndex || held[captain.ship] != 0u) {

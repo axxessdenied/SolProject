@@ -649,6 +649,45 @@ struct TraderPuppet
     std::uint32_t paced = 0;
 };
 
+// A body for one of the player's captains (Phase 39 stage B). The same
+// relationship `TraderPuppet` states in its own comment, pointed at a record the
+// PLAYER owns: the entity is a view, the captain's haul is the record, and this
+// holds only the index that ties them.
+//
+// ⚑⚑⚑⚑ IT IS ALSO THE ONLY THING IN THE SKY THAT SAYS WHOSE SHIP THIS IS, AND
+// THAT IS DELIBERATELY ALL IT SAYS THIS STAGE. `ShipPilot::factionIndex` has no
+// row for the player - `0xffff'ffffu` is documented as unconditionally
+// player-hostile - so a captain's hull wears the local owner's colours for now
+// and inherits that faction's wars, which is the phase spec's "there is no
+// answer to whose ship is that" and is STAGE D's to fix. What stage B owes
+// stage D is a carrier for the ownership rather than a predicate inferred from
+// a number's absence, and this is it (Phase 37's ruling: carry the ownership,
+// derive the predicates).
+//
+// Transient like `TraderPuppet` - rebuilt from the record on load.
+struct CaptainPuppet
+{
+    std::uint32_t captainIndex = 0;
+    // Where this leg ends, in system space. Recomputed when the leg changes
+    // rather than every tick, exactly as a trader's is.
+    sol::core::DVec3 destination;
+    // The record moved it this tick rather than its engines.
+    std::uint32_t paced = 0;
+};
+
+// One captain's body, for the console probe and the tests. Same job as
+// `TraderPuppetInfo`: the failure mode of a promotion is the record and the sky
+// disagreeing, so this reports what is DRAWN and which captain it stands for.
+struct CaptainPuppetInfo
+{
+    std::uint32_t captainIndex = 0;
+    std::string name;
+    std::string ship;
+    double distance = 0.0; // from the player, meters
+    double speed = 0.0;
+    bool paced = false;
+};
+
 // A body for an extractor station's ore draw (Phase 8x stage 6). The same
 // puppet relationship a trader has, against a different coarse actor: an
 // outpost marked produces_from = "field" pulls real rock out of MiningSim
@@ -1398,6 +1437,67 @@ struct OwnedShip
 // copies for this reason - "a regular's name exists in no def at all" - and a
 // captain's name exists in no def either: it is drawn from the same syllable
 // tables the cast uses. There IS no def to go missing on load.
+// ---------------------------------------------------------------------------
+// A standing order (Phase 39 stage B).
+//
+// ⚑⚑⚑⚑ THE ORDER AND THE HAUL ARE TWO RECORDS BECAUSE THEY ANSWER TWO
+// QUESTIONS. The order is what you TOLD them - two markets, and it does not
+// change while they work. The haul is what they are DOING about it right now -
+// a leg, a hold, a clock. Folding them together is how "cancel the route" and
+// "the leg they are on" become one field that has to mean both, and this file
+// has paid for that shape before (`TraderPuppet`'s own comment: the entity is a
+// view and the trader is the record).
+enum class OrderKind : std::uint8_t
+{
+    None = 0, // idle: parked wherever they last landed
+    Haul,     // run between two markets, carrying whatever pays
+};
+
+struct CaptainOrder
+{
+    OrderKind kind = OrderKind::None;
+    // The two ends of the run, as economy market indices. ⚑ A market index is
+    // save-format-safe here for the same reason `MarketMemory::market` already
+    // is: the table is built one row per station in system-then-station order
+    // from a galaxy that is regenerated from the seed, and a galaxy that
+    // changed under the save is refused whole at the header by the content
+    // digest.
+    std::uint32_t marketA = 0xffff'ffffu;
+    std::uint32_t marketB = 0xffff'ffffu;
+    // ⚑⚑ A CANCEL TAKES EFFECT AT THE NEXT ARRIVAL, NOT AT THE NEXT TICK.
+    // Stopping a captain mid-leg would leave a laden hull between two gates
+    // with nothing that knows how to park it - which is the "falls between the
+    // two representations" defect the phase's risk register names, arrived at
+    // by the player pressing a button. They finish the leg and stand down.
+    bool stopping = false;
+};
+
+// What a captain is doing about the order right now.
+//
+// ⚑⚑⚑ IT IS AN `EconomyTrader`, FIELD FOR FIELD, AND THAT IS THE WHOLE POINT.
+// A captain's haul is the coarse fleet's haul with the player's name on it: the
+// same clock, the same phases, the same `Depart`/`Jump`/`Arrive` decomposition
+// through `sim::routeOf`. Declaring a parallel struct with the same seven
+// fields is how the two would slowly stop meaning the same thing - Phase 34's
+// parallel-table defect, one layer out.
+//
+// The money is what a coarse trader has no use for: it trades against nothing,
+// while a captain spends and earns the PLAYER's credits.
+struct CaptainHaul
+{
+    sol::sim::EconomyTrader leg;
+    // What the hold cost, and the base the cut is taken over (ruling 6). Held
+    // across the leg because the profit is not knowable at either end alone.
+    double outlay = 0.0;
+    // Lifetime, for the readout: what they have handed you and what they have
+    // taken. `earned` is NET of the cut, so the two numbers add up to the gross
+    // and neither has to be inferred from the other.
+    double earned = 0.0;
+    double paid = 0.0;
+    // Hauls that ended with an empty hold because the route was dangerous.
+    std::uint32_t losses = 0;
+};
+
 struct Captain
 {
     std::string name;  // copied in; lives in no def
@@ -1418,7 +1518,17 @@ struct Captain
     std::uint32_t ship = 0xffff'ffffu;
     // What they take of what the ship earns, as a fraction (ruling 3 of the
     // phase spec). Drawn per candidate, so shopping around is worth doing.
+    //
+    // ⚑⚑⚑ OF THE PROFIT, NOT OF THE SALE (stage B, the user's ruling 6). The
+    // hold's cost comes off first and a haul that loses money pays them
+    // nothing, which is what makes 8-20% a share of the upside rather than a
+    // toll: on a thin margin a cut of the gross takes more than the run made,
+    // and a bad route would drain the player instead of merely underperforming.
     float cut = 0.0f;
+
+    // What you told them, and what they are doing about it (stage B).
+    CaptainOrder order;
+    CaptainHaul haul;
 };
 
 // Somebody looking for a berth in the docked station's crew hall.
@@ -1767,6 +1877,8 @@ public:
     [[nodiscard]] bool traderBodyPosition(std::uint32_t traderIndex, sol::core::DVec3* out) const;
     // Every trader body in the system, for the console.
     void traderPuppetInfo(std::vector<TraderPuppetInfo>& out);
+    // Every captain's body in the player's own sky (Phase 39 stage B).
+    void captainPuppetInfo(std::vector<CaptainPuppetInfo>& out);
     // Every miner body in the system, and the outposts that are drawing
     // without one — because the two disagreeing is what a broken promotion
     // looks like from the outside (Phase 8x stage 6).
@@ -2117,6 +2229,58 @@ public:
     bool dismissCaptain(std::size_t captainIndex, std::string* outError = nullptr);
     bool assignCaptain(std::size_t captainIndex, std::size_t fleetIndex, std::string* outError = nullptr);
     bool recallCaptain(std::size_t captainIndex, std::string* outError = nullptr);
+
+    // --- Standing orders (Phase 39 stage B) --------------------------------
+    //
+    // ⚑⚑⚑ AN ORDER NAMES TWO PLACES AND NEVER A CARGO, AND THAT IS THE SKETCH
+    // TAKEN AT ITS WORD: *"haul between there and there"*. What to carry is the
+    // captain's judgement at each end, chosen the way `Economy::traderThink`
+    // already chooses - return on capital per second, across the spread - which
+    // is what the cut is paying for. Stage E's *"sell when the price clears X"*
+    // is a CONDITION layered on this, not a different order.
+
+    // A haul is priced and timed by the coarse fleet's own numbers, so a
+    // captain and a hauler crossing the same lane take the same time over it.
+    // Public because the order screen quotes the round trip before you commit.
+    [[nodiscard]] double haulLegSeconds(std::uint32_t fromMarket, std::uint32_t toMarket) const;
+
+    // Somewhere a captain could be sent: a market the player REMEMBERS, which
+    // is `SurveySim`'s ledger and therefore the same knowledge the Trade tab's
+    // "elsewhere" column and the map's overlay read. You cannot order a run to
+    // a market you have never seen a price from, which is the fence that keeps
+    // this from being a galaxy-wide dropdown.
+    struct HaulDestination
+    {
+        std::uint32_t market = kNoIndex;
+        std::string station;
+        std::string system;
+        std::uint32_t hops = 0;
+    };
+
+    // Sorted by hops then by name, nearest first. Empty while not docked: the
+    // run starts from the dock you are standing on, so there is no "from"
+    // otherwise. The docked market itself is left out - a run to where you are
+    // standing is not a run.
+    void haulDestinations(std::vector<HaulDestination>& out) const;
+
+    // Sets the run: from the market this captain's hull is parked at, to
+    // `market`. ⚑ Refuses while they are already flying one, rather than
+    // re-pointing a laden hull at a market it did not buy for.
+    bool orderHaul(std::size_t captainIndex, std::uint32_t market, std::string* outError = nullptr);
+    // Stands the order down. Immediate when they are parked; at the end of the
+    // current leg when they are not - see `CaptainOrder::stopping`.
+    bool cancelOrder(std::size_t captainIndex, std::string* outError = nullptr);
+
+    // ⚑⚑⚑⚑ WHERE A CAPTAIN IS, THROUGH THE SAME DECOMPOSITION THE COARSE FLEET
+    // USES (`sim::routeOf`). `TraderLeg::None` means parked; a `system` of
+    // `sim::kNoSystem` on `Jump` means between gates and is the answer rather
+    // than a failure. This is the probe the two-representation seam is checked
+    // with: the record's answer must not move when the player walks in on it.
+    [[nodiscard]] sol::sim::TraderRoute captainRoute(std::size_t captainIndex) const;
+
+    // Which system a captain's hull is in, or `kNoIndex` between gates and for
+    // one with no ship. Parked counts: the hull is at a station somewhere.
+    [[nodiscard]] std::uint32_t captainSystem(std::size_t captainIndex) const;
 
     // --- Factions & reputation (Phase 8b) ---
     static constexpr float kClanInitialStanding = -20.0f;   // dockable, wary
@@ -4417,6 +4581,36 @@ private:
     // ⚑ "Here" means this BUBBLE since stage B - `decisions/015`'s "the
     // player's system, plus..." spelled as a set rather than as a comparison.
     void syncTraderPuppets(SystemBubble& bubble);
+    // ⚑⚑⚑⚑ THE PROMOTION, ON `TraderPuppet`'s OWN SEAM (Phase 39 stage B). A
+    // captain flying a leg through a system that happens to be instantiated
+    // gets a body; the RECORD goes on being the truth and the body is paced to
+    // it by the same `keepTraderOnSchedule` a hauler uses. That is the whole
+    // answer to "is a captain both things at once": there is one clock, and the
+    // entity never owns it.
+    void syncCaptainPuppets(SystemBubble& bubble);
+    // The coarse half: think, fly, arrive, and be exposed to what the route
+    // runs through. Ticked immediately after the economy, because that is where
+    // the prices it just traded against moved.
+    void tickCaptains(double dt);
+    // One captain's decision at a market: what to carry to the other end, and
+    // what it costs. False when nothing there is worth the run - the hull
+    // deadheads rather than sitting, which is `traderThink`'s own answer.
+    void captainThink(Captain& captain, std::uint32_t here, std::uint32_t there);
+    void captainArrive(Captain& captain);
+    // Sells whatever is aboard into `market` and books the money: the player is
+    // paid the whole sale, the captain takes their cut of the PROFIT on the
+    // units that actually moved, and the hold's cost basis shrinks with them.
+    // Called at both ends - a market that could not take the load leaves it
+    // aboard, and the next stop is where the rest of it settles.
+    void settleCaptainSale(Captain& captain, std::uint32_t market);
+    void beginCaptainTransit(Captain& captain, std::uint32_t destination);
+    // The coarse loss roll (`FactionSim::attrition`'s rule, applied to a hull
+    // the player owns). ⚑⚑⚑ IT SKIPS EVERY INSTANTIATED SYSTEM, not just the
+    // player's: a captain with a BODY in the sky is being simulated, and
+    // rolling a coarse loss against it as well is exactly the "a captain is
+    // both things at once" defect the phase's risk register names.
+    void rollCaptainAttrition(std::size_t captainIndex, double dt);
+    [[nodiscard]] bool systemIsInstantiated(std::uint32_t system) const;
     // Reconciles miner bodies with the extractor stations here (Phase 8x stage
     // 6): a ship at the rock for every outpost in this system that is actually
     // drawing, and none for one that has stopped — because its warehouse is
@@ -4455,6 +4649,24 @@ private:
     // instantiated and the wrong question the moment two are.
     [[nodiscard]] bool
     traderLegSegment(std::uint32_t traderIndex, std::uint32_t system, TraderLegPlacement& out) const;
+    // The geometry half of the above, against any route at all (Phase 39 stage
+    // B). ⚑⚑ A captain's hull flies the SAME lane a hauler does - out to the
+    // gate that starts the shortest path, in from the gate at the far end - so
+    // the lane belongs to the route rather than to the fleet the route came
+    // from. `slot` is only what spaces bodies apart in the lane; captains take
+    // slots past the end of the coarse fleet so the two can never share one.
+    [[nodiscard]] bool legSegment(const sol::sim::TraderRoute& route,
+                                  std::uint32_t slot,
+                                  std::uint32_t system,
+                                  TraderLegPlacement& out) const;
+    [[nodiscard]] bool
+    captainLegSegment(std::size_t captainIndex, std::uint32_t system, TraderLegPlacement& out) const;
+
+    // The lane slot a captain's body takes, past every trader's.
+    [[nodiscard]] std::uint32_t captainLaneSlot(std::size_t captainIndex) const
+    {
+        return static_cast<std::uint32_t>(m_economy.traders().size() + captainIndex);
+    }
     // Where the record says a trader is, on its schedule rather than its
     // engines. See keepTraderOnSchedule for why the two differ.
     [[nodiscard]] sol::core::DVec3 traderScheduledPoint(const TraderLegPlacement& leg) const;
@@ -4678,6 +4890,22 @@ private:
     // the database applyDefs last saw (owned by GameContent, outlives us).
     std::vector<OwnedShip> m_fleet;
     std::size_t m_activeShip = 0;
+    // Per captain, whether their body was under fire this tick (Phase 39 stage
+    // B). ⚑ The same one-tick-lagged shape `Economy::m_detained` has and for
+    // the same reason: the reconcile is what can see a fight, and it runs after
+    // the coarse step. A captain being shot at does not advance their haul -
+    // the delivery waits, the fight does not.
+    std::vector<std::uint8_t> m_captainDetained;
+    // ...and which of them already have a body in some bubble this tick. Same
+    // shape and same reason as `m_puppetPresent`: it is indexed by CAPTAIN,
+    // which is galaxy-wide, so it is cleared once above the per-bubble loop
+    // rather than inside it - clearing it per bubble would let each pass unmark
+    // what the one before it claimed and spawn a second hull for the same person.
+    std::vector<std::uint8_t> m_captainPresent;
+    // The attrition roll's stream. Session state seeded off the universe, on
+    // exactly the footing `m_noticeRng` beside it is: two runs of the same
+    // galaxy roll alike, and nothing about it belongs in a save file.
+    sol::core::Rng m_captainRng{0x39'b0'ca'70ull, 0x9e37'79b9'7f4a'7c15ull};
     // Captains in the player's employ (Phase 39 stage A). Saved; the crew
     // hall's candidates are not, and are filtered against this.
     std::vector<Captain> m_captains;

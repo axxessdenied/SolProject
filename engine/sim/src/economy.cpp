@@ -163,20 +163,34 @@ std::uint8_t Economy::hopCount(std::uint32_t fromSystem, std::uint32_t toSystem)
 
 TraderRoute Economy::route(std::uint32_t traderIndex) const
 {
-    TraderRoute out;
     if (traderIndex >= m_traders.size()) {
-        return out;
+        return {};
     }
     const EconomyTrader& trader = m_traders[traderIndex];
     if (trader.origin >= m_markets.size() || trader.market >= m_markets.size()) {
-        return out;
+        return {};
     }
     const std::uint32_t fromSystem = m_markets[trader.origin].systemIndex;
     const std::uint32_t toSystem = m_markets[trader.market].systemIndex;
+    const std::uint8_t hops = hopCount(fromSystem, toSystem);
+    // ⚑ The lookup is this function's whole remaining job (Phase 39 stage B):
+    // the decomposition itself moved to `routeOf` so a captain's haul reads its
+    // clock the same way. `kUnreachable` folds to zero hops here as it always
+    // did — a route the table cannot cost is drawn as a single system-to-system
+    // run rather than refused, because the record is already flying it.
+    return routeOf(trader, m_params, fromSystem, toSystem, hops == kUnreachable ? 0u : hops);
+}
+
+TraderRoute routeOf(const EconomyTrader& trader,
+                    const EconomyParams& params,
+                    std::uint32_t fromSystem,
+                    std::uint32_t toSystem,
+                    std::uint32_t hops)
+{
+    TraderRoute out;
     out.fromMarket = trader.origin;
     out.toMarket = trader.market;
-    const std::uint8_t hops = hopCount(fromSystem, toSystem);
-    out.hops = hops == kUnreachable ? 0u : hops;
+    out.hops = hops;
 
     if (trader.phase == TraderPhase::Idle) {
         out.system = toSystem; // parked, and `origin == market` says so
@@ -185,7 +199,7 @@ TraderRoute Economy::route(std::uint32_t traderIndex) const
 
     // The clock, read back. Elapsed is clamped because a tick subtracts before
     // it checks, so the last instant of a leg is momentarily past its end.
-    const double legSeconds = m_params.traderLegSeconds;
+    const double legSeconds = params.traderLegSeconds;
     const double total = trader.legTotal;
     const double elapsed = std::clamp(total - trader.travelRemaining, 0.0, std::max(total, 0.0));
     if (legSeconds <= 0.0) {
@@ -388,6 +402,20 @@ TradeResult Economy::buy(std::uint32_t market, std::uint32_t commodity, float un
     return result;
 }
 
+float Economy::quoteSell(std::uint32_t market, std::uint32_t commodity, float units) const
+{
+    if (market >= m_markets.size() || commodity >= m_params.commodities.size() || units <= 0.0f) {
+        return 0.0f;
+    }
+    const StationMarket& station = m_markets[market];
+    const float capacity = station.archetype < m_params.archetypes.size()
+                               ? m_params.archetypes[station.archetype].capacityFor(commodity)
+                               : 0.0f;
+    const float moved = std::min(units, std::max(0.0f, capacity - station.stock[commodity]));
+    return moved * priceAtStock(market, commodity, station.stock[commodity] + moved * 0.5f) *
+           (1.0f - m_params.priceSpread);
+}
+
 TradeResult Economy::sell(std::uint32_t market, std::uint32_t commodity, float units)
 {
     TradeResult result;
@@ -399,9 +427,10 @@ TradeResult Economy::sell(std::uint32_t market, std::uint32_t commodity, float u
                                ? m_params.archetypes[station.archetype].capacityFor(commodity)
                                : 0.0f;
     result.units = std::min(units, std::max(0.0f, capacity - station.stock[commodity]));
-    result.credits = result.units *
-                     priceAtStock(market, commodity, station.stock[commodity] + result.units * 0.5f) *
-                     (1.0f - m_params.priceSpread);
+    // The quote, taken before the stock moves - which is what makes it the same
+    // number a caller could have asked for in advance. `buy` has been written
+    // this way against `quoteBuy` since Phase 37 and this is the mirror of it.
+    result.credits = quoteSell(market, commodity, units);
     station.stock[commodity] += result.units;
     return result;
 }

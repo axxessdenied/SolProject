@@ -31,6 +31,29 @@ namespace {
 
 } // namespace
 
+// The two ends of a haul order, in the words the player picked them by
+// (Phase 39 stage B). A station name alone is ambiguous across eighty systems,
+// so both carry their system - the same shape `sol.captains` prints, because
+// the screen and the console disagreeing about where somebody is would be the
+// exact failure this stage's seam can produce.
+[[nodiscard]] std::string haulEnds(const SpaceWorld& world, const game::CaptainOrder& order)
+{
+    const auto name = [&world](std::uint32_t market) -> std::string {
+        if (market >= world.economy().markets().size()) {
+            return "nowhere";
+        }
+        const sol::sim::StationMarket& row = world.economy().markets()[market];
+        if (row.systemIndex >= world.galaxy().systems.size()) {
+            return "nowhere";
+        }
+        const sol::sim::SystemSpec& spec = world.galaxy().systems[row.systemIndex];
+        return row.stationIndex < spec.stations.size()
+                   ? spec.stations[row.stationIndex].name + " (" + spec.name + ")"
+                   : spec.name;
+    };
+    return name(order.marketA) + " <-> " + name(order.marketB);
+}
+
 void fillStationOutfitting(const SpaceWorld& world,
                            const assets::DefDatabase& defs,
                            std::deque<std::string>& text,
@@ -46,6 +69,7 @@ void fillStationOutfitting(const SpaceWorld& world,
                            std::vector<ui::FleetRow>& fleetRows,
                            std::vector<ui::CaptainRow>& captainRows,
                            std::vector<ui::CaptainRow>& captainHireRows,
+                           std::vector<ui::CaptainRow>& haulRows,
                            std::vector<ui::FactionRow>& factionRows)
 {
     text.clear();
@@ -60,6 +84,7 @@ void fillStationOutfitting(const SpaceWorld& world,
     fleetRows.clear();
     captainRows.clear();
     captainHireRows.clear();
+    haulRows.clear();
     factionRows.clear();
 
     const OwnedShip& active = world.activeShip();
@@ -298,8 +323,16 @@ void fillStationOutfitting(const SpaceWorld& world,
             const assets::ShipDef* def = defs.findShip(held.defId.c_str());
             detail += " - flying ";
             detail += def != nullptr ? def->name : held.defId;
-            if (held.storedSystem < world.galaxy().systems.size()) {
-                detail += " at " + world.galaxy().systems[held.storedSystem].name;
+            // ⚑ WHERE THEY ARE, NOT WHERE THE HULL IS PARKED. `storedSystem` is
+            // `kNoIndex` for the whole of a leg, so reading it here left a
+            // captain on a route with no location at all - which is exactly the
+            // failure the comment above this loop names. `captainSystem` answers
+            // parked and flying alike, and only goes quiet between gates, where
+            // "nowhere" is the honest answer rather than a gap.
+            if (const std::uint32_t at = world.captainSystem(i); at < world.galaxy().systems.size()) {
+                detail += " at " + world.galaxy().systems[at].name;
+            } else {
+                detail += " (between gates)";
             }
         } else {
             detail += " - no ship";
@@ -315,6 +348,93 @@ void fillStationOutfitting(const SpaceWorld& world,
         captainHireRows.push_back(
             {.name = store(text, who.name),
              .detail = store(text, who.trade + ", " + formatNumber(who.cut * 100.0f) + "% of takings")});
+    }
+
+    // The standing order (Phase 39 stage B), for whoever the player has aimed
+    // the tab at. ⚑⚑ EVERY ONE OF THESE THREE IS THE SAME PREDICATE THE WORLD
+    // WOULD REFUSE ON, asked here so the section can say WHY rather than
+    // offering a button that would silently do nothing - `firstFreeMountFor`'s
+    // own bargain, which this file already states: duplicating the rule is how
+    // the button and the transaction drift apart, so these ask the same fields
+    // the refusals read.
+    if (panel.selectedCaptain >= 0 &&
+        static_cast<std::size_t>(panel.selectedCaptain) < world.captains().size()) {
+        const auto index = static_cast<std::size_t>(panel.selectedCaptain);
+        const game::Captain& captain = world.captains()[index];
+        const bool hasShip = captain.ship < world.fleet().size();
+        const bool parkedHere = hasShip &&
+                                world.fleet()[captain.ship].storedSystem == world.currentSystemIndex() &&
+                                world.fleet()[captain.ship].storedStation == world.dockedStationIndex();
+        const bool ordered = captain.order.kind != game::OrderKind::None;
+
+        // ⚑⚑⚑ THE ROUTE GOES IN THE HEADING AND THE STATE STAYS IN THE ROW,
+        // AND THE DRIVE IS WHAT SORTED THEM. Two station names with their
+        // systems is a string of uncontrolled length - "Lyrioa Gamma (Lyrioa)
+        // <-> Hammerfall Alpha (Hammerfall)" is 52 characters before anything
+        // else is said - and the detail cell is a fixed ~600 px, so the first
+        // photograph of this tab showed it clipped mid-word at "(Hamm". That is
+        // the Bar tab's lesson restated (a person's name is not a topic): a
+        // heading spans the width and a cell does not, so anything the CONTENT
+        // sizes belongs in the heading. What is left in the row is bounded by
+        // construction - a word, a percentage and two numbers.
+        std::string status;
+        if (!hasShip) {
+            status = "no ship - give them one from the list above";
+        } else if (!ordered) {
+            status = parkedHere ? "parked here, no orders" : "parked elsewhere, no orders";
+        } else {
+            const sol::sim::TraderRoute route = world.captainRoute(index);
+            const char* word = route.leg == sol::sim::TraderLeg::Depart   ? "outbound"
+                               : route.leg == sol::sim::TraderLeg::Arrive ? "inbound"
+                               : route.leg == sol::sim::TraderLeg::Jump   ? "between gates"
+                                                                          : "at the dock";
+            status = word;
+            if (route.leg != sol::sim::TraderLeg::None) {
+                status += ", " + formatNumber(route.progress * 100.0f) + "%";
+            }
+            if (captain.order.stopping) {
+                status += ", standing down";
+            }
+        }
+        panel.captainRoute = ordered ? store(text, haulEnds(world, captain.order)) : "";
+        // ⚑⚑⚑ AND WHAT THE ROUTE HAS ACTUALLY MADE, WHICH IS RULING 3's OWN
+        // PROMISE MADE VISIBLE: "a bad route is visibly worse rather than
+        // silently expensive". It is not decoration - the stage's measurement
+        // found routes that lose money for a reason no estimate can see (the
+        // far market moves while you fly), so the number a player needs is what
+        // came back, not what was projected. Shown from the first haul, because
+        // a captain who has run one leg and made nothing is exactly the case
+        // this is for.
+        if (hasShip && (captain.haul.earned != 0.0 || captain.haul.paid > 0.0)) {
+            char money[96] = {};
+            std::snprintf(money,
+                          sizeof(money),
+                          " - %.0f cr to you, %.0f to them",
+                          captain.haul.earned,
+                          captain.haul.paid);
+            status += money;
+            if (captain.haul.losses > 0) {
+                status += ", " + std::to_string(captain.haul.losses) + " lost";
+            }
+        }
+        panel.captainStatus = store(text, status);
+        panel.captainCanStandDown = ordered;
+        panel.captainCanRecall = parkedHere && !ordered;
+
+        // ⚑ The destination list is offered only when an order would actually
+        // be taken. `orderHaul` refuses a hull that is not on this dock and one
+        // already on a run; both are read above rather than discovered by the
+        // player pressing a row and watching nothing happen.
+        if (hasShip && parkedHere && !ordered) {
+            std::vector<SpaceWorld::HaulDestination> places;
+            world.haulDestinations(places);
+            for (const SpaceWorld::HaulDestination& place : places) {
+                haulRows.push_back({.name = store(text, place.station),
+                                    .detail = store(text,
+                                                    place.system + ", " + std::to_string(place.hops) +
+                                                        " jump" + (place.hops == 1 ? "" : "s"))});
+            }
+        }
     }
 
     // Factions tab (Phase 8b): standings plus each faction's wars.
@@ -413,6 +533,7 @@ void fillStationOutfitting(const SpaceWorld& world,
     panel.fleet = fleetRows;
     panel.captains = captainRows;
     panel.captainHires = captainHireRows;
+    panel.haulDestinations = haulRows;
     panel.factions = factionRows;
 }
 
@@ -805,13 +926,34 @@ void executeStationAction(SpaceWorld& world, const ui::StationAction& action, in
         break;
     case Kind::AssignCaptain:
         if (selectedCaptain >= 0) {
+            // ⚑ THE SELECTION SURVIVES THE GIVE SINCE STAGE B, and it used to
+            // be cleared here. Handing somebody a hull is now the FIRST half of
+            // a two-step - the second is the route - and dropping the selection
+            // in between meant re-finding the same person in the list to finish
+            // the job you were plainly in the middle of.
             (void)world.assignCaptain(static_cast<std::size_t>(selectedCaptain),
                                       static_cast<std::size_t>(action.index));
-            selectedCaptain = -1; // they have a ship now: nothing left to aim
         }
         break;
     case Kind::RecallCaptain:
         (void)world.recallCaptain(static_cast<std::size_t>(action.index));
+        break;
+    case Kind::OrderHaul:
+        // The row index becomes a market HERE and nowhere else, which is the
+        // same bargain `AssignCaptain` strikes with a fleet slot: the screen
+        // names rows and one place turns a row into a world id. Rebuilt rather
+        // than remembered, because the list is rebuilt every frame.
+        if (selectedCaptain >= 0) {
+            std::vector<SpaceWorld::HaulDestination> places;
+            world.haulDestinations(places);
+            if (static_cast<std::size_t>(action.index) < places.size()) {
+                (void)world.orderHaul(static_cast<std::size_t>(selectedCaptain),
+                                      places[static_cast<std::size_t>(action.index)].market);
+            }
+        }
+        break;
+    case Kind::CancelOrder:
+        (void)world.cancelOrder(static_cast<std::size_t>(action.index));
         break;
     }
 }

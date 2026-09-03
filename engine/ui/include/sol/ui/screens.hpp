@@ -440,6 +440,12 @@ struct FleetRow
 // rule one list along: which captain the player is holding is a thing the
 // SCREEN owns, and it is handed to the fill so that one place decides which
 // hulls a Give would be legal for.
+//
+// ⚑ A THIRD LIST USES THIS SHAPE SINCE STAGE B - where a captain could be sent.
+// A place is not a person, and the row is reused anyway for the reason the
+// paragraph above already gives: these lists differ in what the BUTTON does,
+// not in what a row is. `assigned` is unused there and `selected` marks the end
+// of a run they are already on.
 struct CaptainRow
 {
     const char* name = "";
@@ -800,6 +806,12 @@ struct StationAction
         DismissCaptain, // index = the employed captain
         AssignCaptain,  // index = the FLEET slot; the captain is the selection
         RecallCaptain,  // index = the employed captain
+        // Standing orders (Phase 39 stage B). `OrderHaul` carries the slot in
+        // the destination list rather than a market index, for the same reason
+        // `AssignCaptain` carries a fleet slot: a screen names rows, and the
+        // one place that turns a row into a world id is the executor.
+        OrderHaul,
+        CancelOrder, // index = the employed captain
     };
     Kind kind = Kind::None;
     const char* id = "";    // def id (component/weapon/ship/crew actions)
@@ -845,6 +857,17 @@ struct StationPanel
     std::span<const FleetRow> fleet;
     std::span<const CaptainRow> captains;     // in your employ (Phase 39 stage A)
     std::span<const CaptainRow> captainHires; // standing in this dock's crew hall
+    // Where the SELECTED captain could be sent (Phase 39 stage B), empty
+    // whenever an order could not legally be given - so the section says why
+    // rather than offering buttons that would be refused.
+    std::span<const CaptainRow> haulDestinations;
+    const char* captainStatus = ""; // what the selected captain is doing, prebuilt
+    // The two ends of their run, or empty. It rides the section HEADING rather
+    // than the row because two station names with their systems is a string the
+    // content sizes, and a heading spans the width where a cell does not.
+    const char* captainRoute = "";
+    bool captainCanStandDown = false; // they have an order to cancel
+    bool captainCanRecall = false;    // their hull is parked on this dock, idle
     // IN, not out: which captain the player has aimed the fleet list at, or -1.
     // Same argument as `selectedMount` above - the screen owns it because it is
     // a thing the player is holding rather than a thing the world knows.

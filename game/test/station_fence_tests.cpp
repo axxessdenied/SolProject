@@ -425,6 +425,7 @@ SOL_TEST(the_locked_row_is_on_the_shelf_and_says_what_it_would_take)
     std::vector<sol::ui::FleetRow> fleet;
     std::vector<sol::ui::CaptainRow> captains;
     std::vector<sol::ui::CaptainRow> captainHires;
+    std::vector<sol::ui::CaptainRow> haulRows;
     std::vector<sol::ui::FactionRow> factions;
     game::fillStationOutfitting(world,
                                 content.defs(),
@@ -441,6 +442,7 @@ SOL_TEST(the_locked_row_is_on_the_shelf_and_says_what_it_would_take)
                                 fleet,
                                 captains,
                                 captainHires,
+                                haulRows,
                                 factions);
 
     // The heading is the fence identity the ordinary Trade tab could not carry.

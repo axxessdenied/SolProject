@@ -189,3 +189,38 @@ evidence if it is ever taken.
   composition are the next phase.
 - **`006` stays accepted for what it covers.** Passive-bonus crew are not
   deprecated, not migrated, and not touched. A ship can carry both.
+
+---
+
+## Amendment 2 (2026-09-02, Phase 39 stage B) — what "a cut of what their ship earns" turned out to mean
+
+Decision 3 above says *a cut of what their ship earns* and stops there. Building
+the haul forced two questions it does not answer, and the user ruled on both
+before a line was written.
+
+**The cut is of the PROFIT, never of the sale.** The hold's cost is subtracted
+first, and a haul that loses money pays the captain nothing (it does not bill
+them either — a captain has no purse of their own). Chosen over a cut of the
+gross, which on a thin margin takes more than the run made: that would turn a
+bad route into an active drain and make decision 3's own *"an idle captain costs
+nothing rather than bleeding"* false of a **working** one. It also makes the
+8–20% band mean something a player can shop on, because it is a share of the
+upside rather than a toll on turnover.
+
+**The player's credits fund the cargo, charged at the moment the captain buys.**
+A haul ties up capital: the purchase leaves the account at departure and the
+sale lands at arrival, so a fleet is a business that has to be financed and a
+broke player cannot run one — and the attrition roll costs cargo that was
+actually paid for. Chosen over settling net at arrival, which never touches the
+account and makes a captain a pure faucet whose only downside is a die roll.
+**The price of this ruling is real and is new to this game: credits move while
+the player is not looking.** It is not the recurring drain `006` refused — it is
+an investment that returns — but it is the first time the number changes without
+the player pressing anything, and the Crew tab carries the ledger for exactly
+that reason.
+
+**Consequence for stage E.** *"Sell when the price clears X"* stops being a
+convenience and becomes the instrument for a measured problem: a captain
+committed at departure and settling ~200 seconds later loses about 17% when the
+far market moves against them, and a floor is what lets the player refuse that
+trade rather than watch it.
